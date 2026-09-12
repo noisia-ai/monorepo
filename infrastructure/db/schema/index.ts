@@ -5731,6 +5731,18 @@ export const signalSemanticContextProposalRunEvents = pgTable(
     index("idx_signal_semantic_context_proposal_events").on(table.runId, table.createdAt, table.id)]
 );
 
+export const signalSemanticContextAutomaticCohortValidations = pgTable(
+  "signal_semantic_context_automatic_cohort_validations",
+  {
+    operationId: uuid("operation_id").primaryKey()
+      .references(() => signalGovernanceControlOperations.id, { onDelete: "restrict" }),
+    cohortDigest: text("cohort_digest").notNull(),
+    validatedAt: timestamp("validated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [check("signal_semantic_context_automatic_cohort_validation_digest",
+    sql`${table.cohortDigest} ~ '^sha256:[0-9a-f]{64}$'`)]
+);
+
 export const signalCompetitorLifecycleEvents = pgTable(
   "signal_competitor_lifecycle_events",
   {

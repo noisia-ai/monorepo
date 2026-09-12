@@ -1316,6 +1316,9 @@ export async function processSignalSemanticContextProposalRunV1(args: {
   const finish = await args.pool.connect();
   try {
     await finish.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+    // Valid automatic cohorts can write two immutable versions for every ready
+    // proposal. Keep this bounded publication above managed-role defaults.
+    await finish.query("SET LOCAL statement_timeout='10min'");
     const locked = await finish.query<RunRow>(`${runSelect} FROM signal_semantic_context_proposal_runs run
       WHERE run.id=$1::uuid AND run.lease_token=$2::uuid FOR UPDATE`, [run.id, lease.token]);
     const current = locked.rows[0];
@@ -1406,7 +1409,8 @@ export async function processSignalSemanticContextProposalRunV1(args: {
     ]);
     if (updated.rowCount !== 1) throw new SignalSemanticContextProposalExecutionError("semantic_context_proposal_completion_conflict");
     await finish.query(`UPDATE signal_semantic_context_proposal_outbox SET status='completed',
-      completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE run_id=$1::uuid`, [current.id]);
+      lease_token=NULL,lease_expires_at=NULL,completed_at=clock_timestamp(),updated_at=clock_timestamp()
+      WHERE run_id=$1::uuid`, [current.id]);
     await insertRunEvent(finish, current, "budget-settled", "budget_settled",
       { settled_micro_usd: actual.toString() });
     await insertRunEvent(finish, current, "completed", "completed",
@@ -1514,15 +1518,20 @@ async function appendSignalSemanticContextProposalsInternalV1(args: {
     `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') value`
   )).rows[0]!.value : null;
   const policyByKey = new Map(automaticPolicy?.decisions.map((decision) => [decision.element_key, decision]) ?? []);
+  const orderedProposals = [...args.proposals].sort((a, b) => a.element_key.localeCompare(b.element_key));
+  const existing = await args.queryable.query<{ element_key: string }>(`SELECT element.element_key
+    FROM signal_semantic_context_element_versions element
+    WHERE element.generation_id=$1::uuid AND element.element_key=ANY($2::text[]) AND NOT EXISTS(
+      SELECT 1 FROM signal_semantic_context_element_versions successor
+      WHERE successor.supersedes_element_id=element.id)
+    ORDER BY element.element_key LIMIT 1`, [generation.id, orderedProposals.map((proposal) => proposal.element_key)]);
+  if (existing.rowCount) {
+    throw new SignalSemanticContextProposalExecutionError("semantic_context_element_exists", 409);
+  }
   let eventIndex = 0;
   const initialElements = new Map<string, { id: string; artifact_id: string; evidence_group_id: string;
     element_digest: string; source_refs_digest: string }>();
-  for (const proposal of [...args.proposals].sort((a, b) => a.element_key.localeCompare(b.element_key))) {
-    const exists = await args.queryable.query(`SELECT 1 FROM signal_semantic_context_element_versions element
-      WHERE element.generation_id=$1::uuid AND element.element_key=$2 AND NOT EXISTS(
-        SELECT 1 FROM signal_semantic_context_element_versions successor
-        WHERE successor.supersedes_element_id=element.id)`, [generation.id, proposal.element_key]);
-    if (exists.rowCount) throw new SignalSemanticContextProposalExecutionError("semantic_context_element_exists", 409);
+  for (const proposal of orderedProposals) {
     const refs = canonicalRefs(proposal.source_refs);
     const sourceRefsDigest = signalSemanticContextProposalDigestV1(refs);
     const automaticDecision = policyByKey.get(proposal.element_key);
@@ -1609,7 +1618,7 @@ async function appendSignalSemanticContextProposalsInternalV1(args: {
     ]);
   }
   if (automaticPolicy && policyTimestamp) {
-    for (const proposal of [...args.proposals].sort((a, b) => a.element_key.localeCompare(b.element_key))) {
+    for (const proposal of orderedProposals) {
       const decision = policyByKey.get(proposal.element_key)!;
       if (decision.outcome !== "ready") continue;
       const predecessor = initialElements.get(proposal.element_key)!;
@@ -2319,7 +2328,10 @@ function shortHash(value: string) { return createHash("sha256").update(value).di
 function sha256(value: string) { return `sha256:${createHash("sha256").update(value).digest("hex")}`; }
 function safeError(error: unknown, run: RunRow) {
   const databaseMessage = error instanceof Error ? error.message : "";
-  const databaseCode = databaseMessage.includes("not bound to one settled run")
+  const sqlState = error instanceof Error && "code" in error ? String(error.code) : "";
+  const databaseCode = sqlState === "57014" && databaseMessage.includes("statement timeout")
+    ? "semantic_context_publication_timeout"
+    : databaseMessage.includes("not bound to one settled run")
     ? "semantic_context_automatic_run_authority_invalid"
     : databaseMessage.includes("automatic policy cohort is incomplete")
       ? "semantic_context_automatic_cohort_invalid"

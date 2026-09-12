@@ -133,6 +133,15 @@ test("paid Claude response append survives revocation only through exact receipt
   assert.match(append,/args\.automatic_run_authority && authorityInput/u);
 });
 
+test("large automatic cohorts get one collision preflight and a bounded publication timeout",()=>{
+  const process=body(semantic,"processSignalSemanticContextProposalRunV1");
+  const append=body(semantic,"appendSignalSemanticContextProposalsInternalV1");
+  assert.match(process,/BEGIN ISOLATION LEVEL SERIALIZABLE[\s\S]*SET LOCAL statement_timeout='10min'/u);
+  assert.match(append,/element\.element_key=ANY\(\$2::text\[\]\)/u);
+  assert.match(append,/const orderedProposals = \[\.\.\.args\.proposals\]/u);
+  assert.doesNotMatch(append,/element\.element_key=\$2/u);
+});
+
 test("settled Stage1 advances automatically with DB-owned actor and deterministic recovery",()=>{
   const exact=body(adapter,"loadCompletedSemanticParentV1");
   for(const marker of ["signal_brand_context_processing_receipts","signal_processing_admissions",

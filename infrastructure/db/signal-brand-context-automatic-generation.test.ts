@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 const migration=readFile(new URL('./migrations/0153_signal_brand_context_preparation.sql',import.meta.url),'utf8');
+const checkpoint=readFile(new URL('./migrations/0163_signal_semantic_context_cohort_validation_checkpoint.sql',import.meta.url),'utf8');
 // SQL contract checks, not a simulation of executing PostgreSQL. The composed
 // synthetic PG journey owns the positive automatic/empty and save-only queries.
 test('automatic empty authority requires a paid run from the exact admitted preparation, not a completed save',async()=>{
@@ -31,4 +32,23 @@ test('publication preserves every baseline blocker when automatic provenance is 
  assert.match(body,/automatic_policy_outcome='exception' AND signal_semantic_context_automatic_policy_valid_v1\(id\)/u);
  assert.match(body,/value='pending_elements' AND pending=quarantined/u);
  assert.doesNotMatch(body,/brand_context_preparation->>'generation_id'/u,'a loose existence marker cannot unlock the baseline');
+});
+
+test('automatic cohort checkpoint validates once and is invalidated before every later row mutation',async()=>{
+ const sql=await checkpoint;
+ for(const marker of [
+   'CREATE TABLE IF NOT EXISTS signal_semantic_context_automatic_cohort_validations',
+   'REVOKE ALL ON signal_semantic_context_automatic_cohort_validations FROM PUBLIC',
+   'BEFORE INSERT OR DELETE ON signal_semantic_context_element_versions',
+   'BEFORE INSERT OR DELETE ON signal_semantic_context_events',
+   'DELETE FROM signal_semantic_context_automatic_cohort_validations',
+   'IF EXISTS(SELECT 1 FROM signal_semantic_context_automatic_cohort_validations checkpoint',
+   'IF NOT signal_semantic_context_automatic_operation_run_valid_v1(target_operation_id)',
+   'invalid_count<>0',
+   'appended_event_keys<>input_keys',
+   'INSERT INTO signal_semantic_context_automatic_cohort_validations(operation_id,cohort_digest)'
+ ])assert.ok(sql.includes(marker),marker);
+ assert.match(sql,/SECURITY DEFINER\s+SET search_path=pg_catalog,public/gu);
+ assert.doesNotMatch(sql,/event_index\s*=|event_index<>|current_setting\(|set_config\(/u,
+   'no caller-spoofable or missing-final-row shortcut may suppress cohort validation');
 });
