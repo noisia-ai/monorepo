@@ -31,8 +31,9 @@ function fixture(count = 3) {
   const members = census.groups.map((group, rank) => ({ group_key: group.group_key, rank, similarity: 0.8 }));
   const communities: SignalTopicEditorialNumericCommunitiesV1 = { contract_version: "signal-topic-centroid-community-plan-v1",
     configuration_digest: census.configuration_digest, communities: [{ community_key: "community-all", members, community_digest: digest({ members }) }] };
-  return { census, communities, context, expected_census_digest: digest(census), expected_community_plan_digest: digest(communities),
-    expected_source_context_digest: census.context_digest, expected_editorial_context_digest: digest(context),
+  const fixtureContext=structuredClone(context);
+  return { census, communities, context:fixtureContext, expected_census_digest: digest(census), expected_community_plan_digest: digest(communities),
+    expected_source_context_digest: census.context_digest, expected_editorial_context_digest: digest(fixtureContext),
     load_evidence: async (request: { refs: Array<{ ref_id: string; root_id: string; chunk_index: number; start: number; end: number; chunk_sha256: string }> }) =>
       request.refs.map(ref => ({ ...ref, root_text: "HEAD Alexa ejecuta mis rutinas TAIL" })) };
 }
@@ -47,7 +48,8 @@ async function resultFixture() {
   })));
   const review = buildSignalTopicEditorialGlobalReviewV1({ plan: input.plan, screening, groups: input.groups });
   const global_result = { contract_version: "signal-topic-editorial-global-result-v1", concepts: [{ concept_key: "topic-rutinas", kind: "topic",
-    label: "Rutinas inteligentes", definition: "Rutinas con Alexa.", locale: "es-MX", member_group_keys: ["open:cluster-0", "open:cluster-2"] }],
+    label: "Rutinas inteligentes", definition: "Rutinas con Alexa.", locale: "es-MX", priority_rank: 1,
+    priority_rationale: "Tema central para automatización doméstica.", member_group_keys: ["open:cluster-0", "open:cluster-2"] }],
     noise_group_keys: ["open:cluster-1"], unresolved_group_keys: [] };
   return { input, screening, review, global_result, previous_selection: [], selection_mapping: [] };
 }

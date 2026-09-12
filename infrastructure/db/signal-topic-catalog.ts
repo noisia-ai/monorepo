@@ -23,6 +23,7 @@ import {
   type SignalTopicDefinitionV1,
   type SignalTopicReadinessV1,
   type SignalTopicScopeV1,
+  type SignalTopicEditorialBrandContextV1,
   type UpdateSignalTopicInputV1
 } from "@noisia/query-engine";
 import { insertSignalTaxonomyDraftCoreV1 } from "./signal-taxonomy-profile";
@@ -108,6 +109,8 @@ export type SignalTopicEmbeddingPreflightStoreV1 = {
 };
 
 export type SignalTopicInheritedContextStoreV1 = {
+  /** Private opt-in projection from the exact rows included in context_digest. */
+  editorial_context?: SignalTopicEditorialBrandContextV1;
   context_digest: string;
   embedding_text: string;
   negative_embedding_text: string;
@@ -131,7 +134,13 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   workspace_id: string;
   complete_context?: boolean;
   require_current_semantic_authority?: boolean;
+  include_editorial_context?: boolean;
+  /** Server-only alternative to rebuilding the same mutable authority in JS. */
+  semantic_authority_check?: "database";
 }): Promise<SignalTopicInheritedContextStoreV1> {
+  if (args.include_editorial_context && (!args.complete_context || !args.require_current_semantic_authority)) {
+    throw new SignalTopicCatalogError("topic_editorial_complete_context_required");
+  }
   const governed = await loadSignalSemanticResolutionGovernedContextV1(args.queryable, args.workspace_id,
     { complete_brand_context: args.complete_context });
   const contextRows = <T>(rows: T[], limit: number) => args.complete_context ? rows : rows.slice(0, limit);
@@ -239,27 +248,34 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
     if (!acquisition?.organization_id || !acquisition.brand_id || !acquisition.timezone) {
       throw new SignalTopicCatalogError("brand_context_source_stale");
     }
-    try {
-      const live = await resolveSignalBrandContextAuthorityV1({
-        queryable: { async query<Row extends Record<string, unknown>>(sql: string, params?: unknown[]) {
-          const result = await args.queryable.query<Row>(sql, params);
-          return { rows: result.rows, rowCount: null };
-        } },
-        workspace: { id: args.workspace_id, organizationId: acquisition.organization_id,
-          subject: { type: "brand", id: acquisition.brand_id }, timezone: acquisition.timezone }
-      });
-      if (published.brand_os_digest !== live.brandOsDigest || published.knowledge_digest !== live.knowledgeDigest
-        || published.locale_context_digest !== live.localeContextDigest) {
-        throw new SignalTopicCatalogError("brand_context_source_stale");
+    if (args.semantic_authority_check === "database") {
+      const current = (await args.queryable.query<{ current: boolean }>(
+        'SELECT signal_brand_context_processing_source_current_v1($1::uuid) AS current', [published.generation_id])).rows[0];
+      if (current?.current !== true) throw new SignalTopicCatalogError("brand_context_source_stale");
+    } else {
+      try {
+        const live = await resolveSignalBrandContextAuthorityV1({
+          queryable: { async query<Row extends Record<string, unknown>>(sql: string, params?: unknown[]) {
+            const result = await args.queryable.query<Row>(sql, params);
+            return { rows: result.rows, rowCount: null };
+          } },
+          workspace: { id: args.workspace_id, organizationId: acquisition.organization_id,
+            subject: { type: "brand", id: acquisition.brand_id }, timezone: acquisition.timezone }
+        });
+        if (published.brand_os_digest !== live.brandOsDigest || published.knowledge_digest !== live.knowledgeDigest
+          || published.locale_context_digest !== live.localeContextDigest) {
+          throw new SignalTopicCatalogError("brand_context_source_stale");
+        }
+      } catch (error) {
+        if (error instanceof SignalSemanticContextProposalExecutionError
+          && ["brand_os_snapshot_required", "brand_os_snapshot_stale", "locale_market_authority_required"].includes(error.code)) {
+          throw new SignalTopicCatalogError("brand_context_source_stale");
+        }
+        throw error;
       }
-    } catch (error) {
-      if (error instanceof SignalSemanticContextProposalExecutionError
-        && ["brand_os_snapshot_required", "brand_os_snapshot_stale", "locale_market_authority_required"].includes(error.code)) {
-        throw new SignalTopicCatalogError("brand_context_source_stale");
-      }
-      throw error;
     }
   }
+
   const brief = objectValue(acquisition?.acquisition_brief);
   const languages = Array.from(new Set(stringArray(explicitPlan ? brief.languages : published?.locale_variants)
     .map(canonicalSignalWorkspaceTopicLocaleV1))).sort();
@@ -355,7 +371,21 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
           .map((item) => `Brand ${item.kind}: ${item.display_text}`).join("\n"))
       }];
     })) as SignalTopicInheritedContextStoreV1["embedding_contexts"];
+  const editorialStrings = (items: string[]) => [...new Set(items.map(item => item.trim()).filter(Boolean))].sort();
   return {
+    ...(args.include_editorial_context ? { editorial_context: {
+      brand_name: brand.brand_name.trim(),
+      default_locale: primaryLocale ?? (() => { throw new SignalTopicCatalogError("workspace_topic_locale_required"); })(),
+      summary: commonLines.join("\n").trim(),
+      audiences: editorialStrings(contextItems.filter(item => item.source_type === "brand_os_audience").map(item => item.content)),
+      categories: editorialStrings([brand.industry, brand.industry_sub,
+        ...identities.filter(item => item.scope === "category").map(item => item.entity_label)]
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)),
+      competitors: editorialStrings(identities.filter(item => item.scope === "competitor").map(item => item.entity_label)),
+      positive_anchors: editorialStrings(positiveSemanticElements.map(item => item.display_text)),
+      negative_anchors: editorialStrings(negativeSemanticElements.filter(item => item.kind !== "abstention_rule").map(item => item.display_text)),
+      abstention_anchors: editorialStrings(negativeSemanticElements.filter(item => item.kind === "abstention_rule").map(item => item.display_text)),
+    } } : {}),
     context_digest: sha256(stableJson(context)),
     embedding_text: embeddingContexts.primary_brand.positive_text,
     negative_embedding_text: embeddingContexts.primary_brand.negative_text,

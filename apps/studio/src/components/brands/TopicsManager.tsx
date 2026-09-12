@@ -311,7 +311,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
           ? <Link className="admin-button" href={dataHref} prefetch={false}>{t("actions.import")}</Link> : null}
     </section> : null}
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
-    <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId} />
+    <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId} onCatalogAvailable={refreshAvailableCatalog} />
     <section className="admin-section topics-manager__toolbar">
       <div className="topics-manager__tabs" role="tablist" aria-label={t("tabs.label")}>
         {(["topics", "discovered", "archived"] as const).map((item) => <button

@@ -21,13 +21,15 @@ function source(locale:Locale|null,brief:unknown=null,successor?:{status:string;
   let profileDigest=signalBrandOsCanonicalSnapshotHashV1(sealed);
   let sources:Array<{id:string;source_kind:string;file_hash:null;content_digest:string}>=[];
   let currentBrief=brief;
+  let databaseCurrent=true;
   const canonical=(value:string)=>{try{return new Intl.Locale(value).toString();}catch{return value;}};
   const authority={brand_os_digest:profileDigest,knowledge_digest:signalSemanticContextProposalDigestV1({sources:[],chunks:[]}),
     locale_context_digest:signalSemanticContextProposalDigestV1({primary_locale:selected?.primary_locale==null?null:canonical(selected.primary_locale),
       locale_variants:[...new Set(selected?.locale_variants.map(canonical)??[])].sort(),markets:[...(selected?.markets??[])].sort(),timezone:selected?.timezone})};
   const queryable={async query<Row extends Record<string,unknown>>(sql:string,params?:unknown[]){queries.push(sql);let rows:unknown[]=[];
     assert.ok(!/^\s*(INSERT|UPDATE|DELETE)/u.test(sql));
-    if(sql.includes('AS workspace_id, brand.id::text AS brand_id'))rows=[{workspace_id:workspaceId,brand_id:workspaceId,
+    if(sql.includes('SELECT signal_brand_context_processing_source_current_v1'))rows=[{current:databaseCurrent}];
+    else if(sql.includes('AS workspace_id, brand.id::text AS brand_id'))rows=[{workspace_id:workspaceId,brand_id:workspaceId,
       brand_name:'Synthetic brand',brand_slug:'synthetic',brand_handles:[],description:'Brand evidence',industry:null,industry_sub:null,countries:['MX']}];
     else if(sql.includes("SELECT 'primary_brand'::text AS scope"))rows=[{scope:'primary_brand',entity_id:workspaceId,entity_label:'Synthetic brand',aliases:[]}];
     else if(sql.includes("SELECT 'brand_objective' AS kind"))rows=[];
@@ -57,11 +59,28 @@ function source(locale:Locale|null,brief:unknown=null,successor?:{status:string;
     else throw new Error('Unexpected context query');
     return{rows:rows as Row[],rowCount:rows.length};}};
   return{queryable,queries,drift(kind:'brand_os'|'knowledge'|'locale'|'unreconciled'){
+    databaseCurrent=false;
     if(kind==='knowledge')sources=[{id:workspaceId,source_kind:'text',file_hash:null,content_digest:sha('new KB')}];
     else if(kind==='locale')currentBrief={primary_locale:'en-US',languages:['en-US'],countries:['US']};
     else{live={...live,description:'Changed description'};if(kind==='brand_os')profileDigest=signalBrandOsCanonicalSnapshotHashV1(live);}
   }};
 }
+test('private editorial projection reuses the full canonical context without changing its source digest',async()=>{
+  const locale={primary_locale:'es-MX',locale_variants:['es-MX'],markets:['MX'],timezone:'America/Mexico_City'};
+  const original=await loadSignalTopicInheritedContextStoreV1({...source(locale),workspace_id:workspaceId,
+    complete_context:true,require_current_semantic_authority:true});
+  const projected=await loadSignalTopicInheritedContextStoreV1({...source(locale),workspace_id:workspaceId,
+    complete_context:true,require_current_semantic_authority:true,include_editorial_context:true});
+  const {editorial_context,...rest}=projected;
+  assert.deepEqual(rest,original);assert.equal(editorial_context?.brand_name,'Synthetic brand');
+  assert.equal(editorial_context?.default_locale,'es-MX');assert.match(editorial_context?.summary??'',/Brand evidence/u);
+  assert.deepEqual(editorial_context?.positive_anchors,['Published benefit']);
+  assert.deepEqual(editorial_context?.negative_anchors,[]);assert.deepEqual(editorial_context?.abstention_anchors,[]);
+  const incomplete=source(locale);
+  await assert.rejects(loadSignalTopicInheritedContextStoreV1({...incomplete,workspace_id:workspaceId,include_editorial_context:true}),
+    /topic_editorial_complete_context_required/u);
+  assert.equal(incomplete.queries.length,0);
+});
 for(const [country,primary,timezone] of [['JP','ja-JP','Asia/Tokyo'],['BR','pt-BR','America/Sao_Paulo'],['MX','es-MX','America/Mexico_City']]){
   test(`${country}: Topics and prototype inputs inherit the published locale without a hidden acquisition brief`,async()=>{
     const f=source({primary_locale:primary!,locale_variants:[primary!],markets:[country!],timezone:timezone!});
@@ -226,4 +245,16 @@ test('missing catalog does not hide semantic publication blockers behind an impo
     const status=await loadSignalWorkspaceTopicPrototypesV1({database:f.database,workspace_id:workspaceId,actor_user_id:workspaceId});
     assert.equal(status.availability,availability);assert.equal(status.is_current,false);assert.deepEqual(f.writes,[]);
   }
+});
+
+test('database authority check preserves exact context and rejects stale sources',async()=>{
+ const locale={primary_locale:'es-MX',locale_variants:['es-MX'],markets:['MX'],timezone:'America/Mexico_City'};
+ const f=source(locale),args={workspace_id:workspaceId,complete_context:true,require_current_semantic_authority:true};
+ const expected=await loadSignalTopicInheritedContextStoreV1({...f,...args});
+ const current=await loadSignalTopicInheritedContextStoreV1({...f,...args,semantic_authority_check:'database'});
+ assert.deepEqual(current,expected);
+ for(const kind of ['brand_os','knowledge','locale','unreconciled'] as const){
+  const stale=source(locale);stale.drift(kind);
+  await assert.rejects(loadSignalTopicInheritedContextStoreV1({...stale,...args,semantic_authority_check:'database'}),/brand_context_source_stale/u);
+ }
 });

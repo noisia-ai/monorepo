@@ -36,7 +36,7 @@ function group(): SignalTopicEditorialScreeningGroupV1 {
     neighbors: never[] = [], metrics = { cohesion: null, outlier_ratio: null }, dossier = { contract_version: "signal-topic-group-dossier-v1",
       scope_counts, locale_counts, platform_counts, month_counts, brand_affinity, neighbors, metrics,
       evidence: evidence.map(({ text: _text, ...item }) => item) };
-  return { group_key: "open:cluster-0001", lane: "open", group_digest: digest("group"), dossier_digest: digest(dossier),
+  return { group_key: "open:cluster-0001", lane: "open", group_digest: digest("group"), source_dossier_digest: digest(dossier), dossier_digest: digest(dossier),
     community_key: "community-1", root_count: 1, chunk_count: 1, terms: ["rutina"], scope_counts, locale_counts,
     platform_counts, month_counts, brand_affinity, neighbors, metrics, evidence };
 }
@@ -97,6 +97,7 @@ test("simulated Anthropic transport settles screening and global JSON schema res
           rationale: null, cited_ref_ids: [item.evidence[0]!.ref_id] }] });
       return response({ contract_version: "signal-topic-editorial-global-result-v1", concepts: [{ concept_key: "topic-alexa-routines",
         kind: "topic", label: "Rutinas de Alexa+", definition: "Conversaciones consolidadas sobre rutinas con Alexa+.", locale: "es-MX",
+        priority_rank: 1, priority_rationale: "Rutinas observadas en la evidencia.",
         member_group_keys: [item.group_key] }], noise_group_keys: [], unresolved_group_keys: [] });
     } });
   const result = await runSignalTopicEditorialConsolidationV1({ execution_key: "transport-e2e", plan, groups: [item], store, provider });
@@ -164,4 +165,21 @@ test("unpriced cache tokens and preflight request mutations fail closed", async 
   assert.equal(untouched.events.length, 0);
   assert.equal(signalTopicEditorialAnthropicCostV1({ input_tokens: 100, output_tokens: 20,
     cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, "screening"), 600);
+});
+
+test("provider-disabled permits only an already settled replay and never authorizes a new send", async () => {
+  const { request } = requestFor(), ledger = new Ledger(); let sends = 0;
+  const output = { contract_version: "signal-topic-editorial-screening-output-v1", batch_index: 0, decisions: [] };
+  const first = createAnthropicSignalTopicEditorialRunnerProviderV1({ api_key: "unit_test_key_123456789", provider_enabled: true,
+    ledger, fetch_impl: async () => { sends++; return response(output); } });
+  await first.complete(request);
+  const before = [...ledger.events];
+  const disabled = createAnthropicSignalTopicEditorialRunnerProviderV1({ api_key: "", provider_enabled: false, ledger,
+    fetch_impl: async () => { assert.fail("disabled transport"); } });
+  assert.deepEqual(await disabled.complete(request), output); assert.equal(sends, 1);
+  assert.equal(ledger.events.filter(event => event.startsWith("authorize:")).length, before.filter(event => event.startsWith("authorize:")).length);
+  const empty = new Ledger();
+  await assert.rejects(createAnthropicSignalTopicEditorialRunnerProviderV1({ api_key: "", provider_enabled: false, ledger: empty })
+    .complete(request), /provider_disabled/u);
+  assert.equal(empty.events.some(event => event.startsWith("authorize:")), false);
 });

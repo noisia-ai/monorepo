@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { SignalWorkspaceTopicDetailV1 } from "@noisia/db";
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
 import { SignalEChart } from "./SignalEChart";
+import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "./SignalTopicChartOptions";
+import { SignalTopicSentimentLegend } from "./SignalTopicsPrimitives";
 
 type Identity = { workspace_id: string; generation_id: string | null; scope_digest: string; term_key: string };
 const count = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -59,25 +61,27 @@ export function SignalWorkspaceTopicDetailMetrics({ detail, loading = false, onS
   const number = (value: number) => value.toLocaleString(locale);
   const sentiment = detail?.sentiment;
   const classified = sentiment ? sentiment.positive + sentiment.neutral + sentiment.negative : 0;
+  const trendOption = useMemo(() => buildSignalTopicTrendOption((detail?.series ?? []).map((point) => ({
+    label: formatTopicDate(point.date, locale),
+    value: point.mention_count
+  })), t("mentions"), false), [detail?.series, locale, t]);
+  const sentimentOption = useMemo(() => buildSignalTopicSentimentOption({
+    positive: sentiment?.positive ?? 0,
+    neutral: sentiment?.neutral ?? 0,
+    negative: sentiment?.negative ?? 0
+  }, { positive: t("positive"), neutral: t("neutral"), negative: t("negative") }, false), [sentiment, t]);
   return <div aria-busy={loading} className="signal-v2-tn__native-detail-metrics">
     <div className="signal-v2-tn__detail-charts">
       <article><strong>{t("presence")}</strong>
-        {detail?.series.length ? <SignalEChart className="signal-v2-tn__trend" ariaLabel={t("presence")} option={{ animation: false,
-          grid: { left: 40, right: 12, top: 20, bottom: 30 }, xAxis: { type: "category", data: detail.series.map(point => point.date) },
-          yAxis: { type: "value", minInterval: 1 }, series: [{ type: "line", name: t("mentions"), showSymbol: false,
-            data: detail.series.map(point => point.mention_count), lineStyle: { color: "#1689f5" } }] }} />
+        {detail?.series.length ? <SignalEChart className="signal-v2-tn__trend" ariaLabel={t("presence")} option={trendOption} />
           : <div className="signal-v2-tn__trend"><p>{t(loading ? "loading" : "unavailable")}</p></div>}
         {detail && detail.undated_mentions > 0 ? <small>{t("undated", { count: number(detail.undated_mentions) })}</small> : null}
       </article>
       <article><strong>{t("sentiment")}</strong>
-        {classified > 0 && sentiment ? <><SignalEChart className="signal-v2-tn__sentiment-chart" ariaLabel={t("sentiment")} option={{ animation: false,
-          series: [{ type: "pie", radius: ["48%", "72%"], label: { show: false }, data: [
-            { name: t("positive"), value: sentiment.positive, itemStyle: { color: "#008060" } },
-            { name: t("neutral"), value: sentiment.neutral, itemStyle: { color: "#d7d7d7" } },
-            { name: t("negative"), value: sentiment.negative, itemStyle: { color: "#d72c0d" } }
-          ] }] }} /><div className="signal-v2-tn__sentiment-legend">
-          {(["positive", "neutral", "negative"] as const).map(key => <div key={key}><i className={`is-${key}`} /><span>{t(key)}</span><strong>{number(sentiment[key])}</strong></div>)}
-        </div></> : <div className="signal-v2-tn__sentiment-chart"><p>{t(loading ? "loading" : "unavailable")}</p></div>}
+        {classified > 0 && sentiment ? <><SignalEChart className="signal-v2-tn__sentiment-chart" ariaLabel={t("sentiment")} option={sentimentOption} />
+          <SignalTopicSentimentLegend counts={{ positive: number(sentiment.positive), neutral: number(sentiment.neutral), negative: number(sentiment.negative) }}
+            labels={{ positive: t("positive"), neutral: t("neutral"), negative: t("negative") }} />
+        </> : <div className="signal-v2-tn__sentiment-chart"><p>{t(loading ? "loading" : "unavailable")}</p></div>}
         {sentiment ? <small>{t("unclassified", { count: number(sentiment.unclassified) })}</small> : null}
         <p className="signal-v2-tn__evidence-intro">{t("sentimentMeaning")}</p>
       </article>
@@ -88,4 +92,9 @@ export function SignalWorkspaceTopicDetailMetrics({ detail, loading = false, onS
       </button>) : <p>{t(loading ? "loading" : detail ? "noRelationships" : "unavailable")}</p>}
     </div>
   </div>;
+}
+
+function formatTopicDate(value: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "UTC" })
+    .format(new Date(`${value}T00:00:00Z`));
 }

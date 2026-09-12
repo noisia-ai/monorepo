@@ -14,6 +14,8 @@ import {
   type SignalTopicEditorialRunnerStateV1,
   type SignalTopicEditorialRunnerStoreV1,
 } from "./signal-topic-consolidation-editorial-runner-v1";
+import { buildSignalTopicEditorialRepairRequestV1, signalTopicEditorialSemanticRepairErrorV1,
+  validateSignalTopicEditorialRepairRequestV1 } from "./signal-topic-consolidation-editorial-repair-v1";
 
 const digest = (value: unknown) => signalTopicEditorialDigestV1(value);
 const textDigest = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -34,7 +36,7 @@ function group(index: number): SignalTopicEditorialScreeningGroupV1 {
       brand_affinity, neighbors, metrics, evidence: evidence.map(({ text: _text, ...item }) => item),
     };
   return { group_key: `open:cluster-${String(index).padStart(4, "0")}`, lane: "open", group_digest: digest(["group", index]),
-    dossier_digest: digest(dossier), community_key: `community-${Math.floor(index / 8)}`, root_count: 1, chunk_count: 1,
+    source_dossier_digest: digest(dossier), dossier_digest: digest(dossier), community_key: `community-${Math.floor(index / 8)}`, root_count: 1, chunk_count: 1,
     terms: [`term-${index}`], scope_counts, locale_counts, platform_counts, month_counts, brand_affinity, neighbors, metrics, evidence };
 }
 
@@ -62,24 +64,25 @@ class FixtureProvider implements SignalTopicEditorialRunnerProviderV1 {
   calls: SignalTopicEditorialRunnerProviderRequestV1[] = [];
   constructor(private readonly corrupt: "none" | "duplicate-screening" | "duplicate-global" = "none") {}
   async complete(request: SignalTopicEditorialRunnerProviderRequestV1) {
-    assert.deepEqual(Object.keys(request).sort(), ["contract_version", "idempotency_key", "model", "phase", "request_body", "request_digest"]);
+    assert.deepEqual(Object.keys(request).sort(), ["contract_version", "idempotency_key", "model", "phase", ...(request.repair ? ["repair"] : []), "request_body", "request_digest"]);
     assert.equal(request.model, SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1);
-    this.calls.push(request); const input = payload(request);
+    this.calls.push(request); const input = payload(request.repair ? validateSignalTopicEditorialRepairRequestV1(request).original : request);
     if (request.phase === "screening") {
-      const groups = input.groups as SignalTopicEditorialScreeningGroupV1[], batchIndex = input.batch_index as number;
-      const decisions = groups.map((item, index) => ({ group_key: item.group_key, disposition: "topic",
+      const groups = input.groups as Array<[string,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,unknown,Array<[string,...unknown[]]>]>, batchIndex = input.batch_index as number;
+      const decisions = groups.map((item, index) => ({ group_key: item[0], disposition: "topic",
         candidate: { candidate_key: `b${String(batchIndex).padStart(4, "0")}-candidate-${index}`,
           label: `Tema ${batchIndex}-${index}`, definition: "Conversaciones verificables sobre Alexa+.", locale: "es-MX" },
-        confidence: 0.8, rationale: null, cited_ref_ids: [item.evidence[0]!.ref_id] }));
+        confidence: 0.8, rationale: null, cited_ref_ids: [item[12][0]![0]] }));
       if (this.corrupt === "duplicate-screening" && decisions.length > 1) decisions[1] = { ...decisions[0]! };
       return { contract_version: "signal-topic-editorial-screening-output-v1", batch_index: batchIndex, decisions };
     }
-    const eligible = input.eligible as Array<{ group_key: string }>, fixedNoise = input.fixed_noise as string[],
-      members = eligible.map(item => item.group_key);
+    const eligible = input.eligible as Array<[string, ...unknown[]]>, fixedNoise = input.fixed_noise as string[],
+      members = eligible.map(item => item[0]);
     if (this.corrupt === "duplicate-global" && members.length > 1) members[1] = members[0]!;
     return { contract_version: "signal-topic-editorial-global-result-v1", concepts: [{ concept_key: "topic-alexa-experience",
       kind: "topic", label: "Experiencia con Alexa+", definition: "Conversaciones consolidadas sobre la experiencia con Alexa+.",
-      locale: "es-MX", member_group_keys: members }], noise_group_keys: fixedNoise, unresolved_group_keys: [] };
+      locale: "es-MX", priority_rank: 1, priority_rationale: "Tema central para la experiencia de marca.",
+      member_group_keys: members }], noise_group_keys: fixedNoise, unresolved_group_keys: [] };
   }
 }
 
@@ -118,16 +121,78 @@ test("checkpoints after a bounded number of batches and continues without replay
   assert.deepEqual(provider.calls.map(item => item.phase), ["screening", "screening", "screening", "global"]);
 });
 
+test("schema-valid invalid screening is repaired once under a distinct deterministic identity", async () => {
+  const groups = [group(0), group(1)], plan = planFor(groups, 10), store = new MemoryStore();
+  const valid = new FixtureProvider(), invalid = new FixtureProvider("duplicate-screening");
+  const requests: SignalTopicEditorialRunnerProviderRequestV1[] = [];
+  const provider: SignalTopicEditorialRunnerProviderV1 = { complete: async request => {
+    requests.push(request);
+    if (request.phase === "screening" && !("repair" in request)) return invalid.complete(request);
+    if ("repair" in request) return valid.complete({ ...requests[0]! });
+    return valid.complete(request);
+  } };
+  const result = await runSignalTopicEditorialConsolidationV1({ execution_key: "repair-screen", plan, groups, store, provider });
+  assert.equal(result.status, "completed");assert.equal(requests.length, 3);
+  assert.ok("repair" in requests[1]!);assert.notEqual(requests[1]!.request_digest, requests[0]!.request_digest);
+  assert.notEqual(requests[1]!.idempotency_key, requests[0]!.idempotency_key);
+});
+
+test("repair identity seals original, error and response; metadata drift and recursive repair fail closed", async () => {
+  const groups = [group(0)], plan = planFor(groups), batch = plan.batches[0]!;
+  const original: SignalTopicEditorialRunnerProviderRequestV1 = { contract_version: "signal-topic-editorial-provider-request-v1",
+    phase: "screening", model: plan.model, idempotency_key: batch.batch_key, request_digest: batch.request_digest, request_body: batch.request_body };
+  const response = { contract_version: "signal-topic-editorial-screening-output-v1", batch_index: 0, decisions: [] };
+  const repair = buildSignalTopicEditorialRepairRequestV1({ original, response, error_code: "topic_editorial_output_invalid" });
+  const reordered = { decisions: [], batch_index: 0, contract_version: response.contract_version };
+  assert.deepEqual(buildSignalTopicEditorialRepairRequestV1({ original, response: reordered, error_code: "topic_editorial_output_invalid" }), repair);
+  assert.deepEqual(validateSignalTopicEditorialRepairRequestV1(repair).original, original);
+  assert.notEqual(repair.request_digest, original.request_digest);
+  assert.equal(repair.repair.parent_response_digest, digest(response));
+  const changed = buildSignalTopicEditorialRepairRequestV1({ original, response: { ...response, batch_index: 1 }, error_code: "topic_editorial_output_invalid" });
+  assert.notEqual(changed.request_digest, repair.request_digest);assert.notEqual(changed.idempotency_key, repair.idempotency_key);
+  for (const mutate of [
+    { ...repair, request_digest: original.request_digest },
+    { ...repair, repair: { ...repair.repair, parent_response_digest: digest("wrong") } },
+    { ...repair, request_body: repair.request_body + " " },
+  ]) assert.throws(() => validateSignalTopicEditorialRepairRequestV1(mutate), /repair_request_invalid/);
+  assert.throws(() => buildSignalTopicEditorialRepairRequestV1({ original: repair, response, error_code: "topic_editorial_output_invalid" }), /repair_request_invalid/);
+  assert.equal(signalTopicEditorialSemanticRepairErrorV1("screening", response, Error("topic_editorial_output_invalid")), "topic_editorial_output_invalid");
+  for (const code of ["processing_forbidden", "topic_editorial_request_invalid", "topic_editorial_source_stale", "connection timeout"])
+    assert.equal(signalTopicEditorialSemanticRepairErrorV1("screening", response, Error(code)), null);
+  assert.equal(signalTopicEditorialSemanticRepairErrorV1("screening", { invalid: true }, Error("topic_editorial_output_invalid")), null);
+});
+
+test("repair capacity refuses oversized invalid output before another provider call", async () => {
+  const groups = [group(0)], plan = planFor(groups), store = new MemoryStore();let calls = 0;
+  await assert.rejects(runSignalTopicEditorialConsolidationV1({ execution_key: "large-invalid", plan, groups, store,
+    provider: { complete: async () => { calls++;return { contract_version: "signal-topic-editorial-screening-output-v1", batch_index: 0,
+      decisions: [{ group_key: groups[0]!.group_key, disposition: "noise", candidate: null, confidence: null,
+        rationale: "x".repeat(1_500_000), cited_ref_ids: [] }] }; } } }), /repair_capacity_exceeded/);
+  assert.equal(calls, 1);assert.equal(store.state?.screening_outputs.length, 0);
+});
+
+test("source groups string must be canonical and match separate groups before any provider call", async () => {
+  const groups = [group(0)], original = planFor(groups);
+  for (const value of ["not JSON", "[]", original.batches[0]!.source_groups_body + " ",
+    original.batches[0]!.source_groups_body.replace("term-0", "changed")]) {
+    const plan = structuredClone(original);plan.batches[0]!.source_groups_body = value;
+    const { plan_digest: _digest, ...body } = plan;plan.plan_digest = digest(body);
+    const provider = new FixtureProvider(), store = new MemoryStore();
+    await assert.rejects(runSignalTopicEditorialConsolidationV1({ execution_key: "source-seal", plan, groups, store, provider }), /source_groups_invalid/);
+    assert.equal(provider.calls.length, 0);assert.equal(store.saves, 0);
+  }
+});
+
 test("fails closed on duplicate group coverage from screening, global review or input dossiers", async () => {
   const groups = [group(0), group(1)], plan = planFor(groups, 10);
   const screeningStore = new MemoryStore(), duplicateScreening = new FixtureProvider("duplicate-screening");
   await assert.rejects(runSignalTopicEditorialConsolidationV1({ execution_key: "duplicate-screen", plan, groups,
-    store: screeningStore, provider: duplicateScreening }), /coverage_invalid/);
+    store: screeningStore, provider: duplicateScreening }), /repair_invalid/);
   assert.equal(screeningStore.state?.screening_outputs.length, 0);
 
   const globalStore = new MemoryStore(), duplicateGlobal = new FixtureProvider("duplicate-global");
   await assert.rejects(runSignalTopicEditorialConsolidationV1({ execution_key: "duplicate-global", plan, groups,
-    store: globalStore, provider: duplicateGlobal }), /members_invalid|coverage_invalid/);
+    store: globalStore, provider: duplicateGlobal }), /repair_invalid/);
   assert.equal(globalStore.state?.phase, "global");
 
   const untouchedStore = new MemoryStore(), untouchedProvider = new FixtureProvider();

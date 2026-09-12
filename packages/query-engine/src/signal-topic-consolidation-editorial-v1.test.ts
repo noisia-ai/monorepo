@@ -4,6 +4,7 @@ import test from "node:test";
 import {buildSignalTopicEditorialScreeningPlanV1,signalTopicEditorialDigestV1,
   buildSignalTopicEditorialGlobalReviewV1,validateSignalTopicEditorialGlobalResultV1,
   validateSignalTopicEditorialScreeningCoverageV1,validateSignalTopicEditorialScreeningOutputV1,
+  preflightSignalTopicEditorialCapacityV1,
   SIGNAL_TOPIC_EDITORIAL_GLOBAL_SCHEMA_V1,SIGNAL_TOPIC_EDITORIAL_SCREENING_SCHEMA_V1} from "./signal-topic-consolidation-editorial-v1";
 
 const sha=(value:unknown)=>signalTopicEditorialDigestV1(value);
@@ -17,7 +18,7 @@ const group=(index:number)=>{const text=`Alexa evidence ${index}`,chunk_sha256=t
   dossier={contract_version:"signal-topic-group-dossier-v1",scope_counts,locale_counts,platform_counts,month_counts,brand_affinity,neighbors,metrics,
     evidence:evidence.map(({text:_text,...item})=>item)};
   return {group_key:`open:cluster-${String(index).padStart(4,"0")}`,lane:"open" as const,group_digest:sha(["group",index]),
-    dossier_digest:sha(dossier),community_key:`community-${Math.floor(index/8)}`,root_count:1,chunk_count:1,
+    source_dossier_digest:sha(dossier),dossier_digest:sha(dossier),community_key:`community-${Math.floor(index/8)}`,root_count:1,chunk_count:1,
     terms:[`term-${index}`],scope_counts,locale_counts,platform_counts,month_counts,brand_affinity,neighbors,metrics,evidence};};
 const context={brand_name:"Alexa+",default_locale:"es-MX",summary:"Asistente de voz con IA generativa.",audiences:["hogares"],
   categories:["asistentes de voz"],competitors:["Google Assistant"],positive_anchors:["rutinas"],negative_anchors:["Alexandra"],abstention_anchors:["ruido"]};
@@ -27,15 +28,22 @@ const planFor=(groups:ReturnType<typeof group>[],batch_size?:number)=>buildSigna
 test("plans every one of 1,652 groups exactly once in bounded Sonnet batches",()=>{
   const groups=Array.from({length:1_652},(_,index)=>group(index));
   const plan=planFor(groups);
+  const capacity=preflightSignalTopicEditorialCapacityV1({plan,groups});
   assert.equal(plan.model,"claude-sonnet-4-6");assert.equal(plan.batches.length,42);
   assert.equal(plan.batches.flatMap(batch=>batch.group_keys).length,1_652);
   assert.equal(new Set(plan.batches.flatMap(batch=>batch.group_keys)).size,1_652);
   assert.ok(plan.batches.every(batch=>batch.group_keys.length<=40&&Buffer.byteLength(batch.request_body)<1_500_000));
   assert.ok(plan.batches[0]?.request_body.includes("información no confiable"));
   const providerBody=JSON.parse(plan.batches[0]!.request_body) as {max_tokens:number;output_config:{format:{schema:unknown}}};
-  assert.equal(providerBody.max_tokens,16_384);
+  assert.equal(providerBody.max_tokens,8_192);
   assert.deepEqual(providerBody.output_config.format.schema,SIGNAL_TOPIC_EDITORIAL_SCREENING_SCHEMA_V1);
   assert.equal(plan.source_context_digest,sha("source-context"));assert.equal(plan.editorial_context_digest,sha(context));
+  assert.equal(capacity.group_count,1_652);assert.equal(capacity.screening_request_count,42);
+  assert.ok(capacity.estimated_screening_input_tokens.every(tokens=>tokens<=900_000));
+  assert.ok(capacity.estimated_global_input_tokens<=900_000);
+  assert.equal(capacity.maximum_reserved_micro_usd,
+    capacity.screening_request_bytes.reduce((sum,bytes)=>sum+bytes*3+8_192*15,0)+capacity.global_request_bytes*3+32_768*15);
+  assert.ok(capacity.maximum_reserved_micro_usd<=30_000_000,JSON.stringify(capacity));
   const byKey=new Map(groups.map(item=>[item.group_key,item]));
   const outputs=plan.batches.map(batch=>validateSignalTopicEditorialScreeningOutputV1(batch,{
     contract_version:"signal-topic-editorial-screening-output-v1",batch_index:batch.batch_index,decisions:batch.group_keys.map((group_key,index)=>({
@@ -94,14 +102,16 @@ test("global review merges eligible groups while preserving fixed Noise and exac
   ]}),screening=validateSignalTopicEditorialScreeningCoverageV1(plan,[output]);
   const review=buildSignalTopicEditorialGlobalReviewV1({plan,screening,groups});
   const providerBody=JSON.parse(review.request_body) as {output_config:{format:{schema:unknown}};messages:Array<{content:string}>};
-  const editorialPayload=JSON.parse(providerBody.messages[0]!.content) as {eligible:Array<Record<string,unknown>>};
+  const editorialPayload=JSON.parse(providerBody.messages[0]!.content) as {context:typeof context;eligible_fields:string[];eligible:unknown[][]};
   assert.deepEqual(providerBody.output_config.format.schema,SIGNAL_TOPIC_EDITORIAL_GLOBAL_SCHEMA_V1);
-  assert.deepEqual(Object.keys(editorialPayload.eligible[0]!).sort(),["brand_affinity","candidate","cited_ref_ids","community_key","confidence","evidence",
-    "group_key","locale_counts","metrics","month_counts","neighbors","platform_counts","rationale","root_count","scope_counts","screening_disposition","terms"]);
-  assert.equal((editorialPayload.eligible[0]!.evidence as unknown[]).length,1);
+  assert.equal(editorialPayload.context.brand_name,"Alexa+");
+  assert.equal(editorialPayload.eligible_fields.length,10);
+  assert.equal(editorialPayload.eligible[0]!.length,10);
+  assert.equal(editorialPayload.eligible[0]![0],groups[0]!.group_key);
   const result=validateSignalTopicEditorialGlobalResultV1({review,screening,value:{
     contract_version:"signal-topic-editorial-global-result-v1",concepts:[{concept_key:"topic-smart-routines",kind:"topic",
-      label:"Rutinas inteligentes",definition:"Configuración y uso de rutinas por voz.",locale:"es-MX",
+      label:"Rutinas inteligentes",definition:"Configuración y uso de rutinas por voz.",locale:"es-MX",priority_rank:1,
+      priority_rationale:"Alta relación con automatización doméstica.",
       member_group_keys:[groups[1]!.group_key,groups[0]!.group_key]}],noise_group_keys:[groups[2]!.group_key],unresolved_group_keys:[]}});
   assert.equal(result.concepts.length,1);assert.deepEqual(result.concepts[0]!.member_group_keys,[groups[0]!.group_key,groups[1]!.group_key]);
   assert.deepEqual(result.noise_group_keys,[groups[2]!.group_key]);
@@ -110,7 +120,7 @@ test("global review merges eligible groups while preserving fixed Noise and exac
     root_count:item.root_count+1})},screening,value:result}),/request_invalid/);
 });
 
-test("global review rejects mixed Topic/Narrative concepts and non-dominant locales",()=>{
+test("global review rejects mixed Topic/Narrative concepts and non-editorial locales",()=>{
   const groups=[group(10),group(11)],plan=planFor(groups,10),batch=plan.batches[0]!;
   const screening=validateSignalTopicEditorialScreeningCoverageV1(plan,[validateSignalTopicEditorialScreeningOutputV1(batch,{
     contract_version:"signal-topic-editorial-screening-output-v1",batch_index:0,decisions:[
@@ -119,9 +129,9 @@ test("global review rejects mixed Topic/Narrative concepts and non-dominant loca
     ]})]),review=buildSignalTopicEditorialGlobalReviewV1({plan,screening,groups});
   const base={contract_version:"signal-topic-editorial-global-result-v1" as const,noise_group_keys:[],unresolved_group_keys:[]};
   assert.throws(()=>validateSignalTopicEditorialGlobalResultV1({review,screening,value:{...base,concepts:[{
-    concept_key:"topic-mixed",kind:"topic",label:"Mezcla",definition:"Mezcla incompatible.",locale:"es-MX",
+    concept_key:"topic-mixed",kind:"topic",label:"Mezcla",definition:"Mezcla incompatible.",locale:"es-MX",priority_rank:1,priority_rationale:"Prioridad de prueba.",
     member_group_keys:groups.map(item=>item.group_key)}]}}),/members_invalid/);
   assert.throws(()=>validateSignalTopicEditorialGlobalResultV1({review,screening,value:{...base,
-    concepts:[{concept_key:"topic-one",kind:"topic",label:"Tema",definition:"Tema estable.",locale:"en-US",member_group_keys:[groups[0]!.group_key]}],
+    concepts:[{concept_key:"topic-one",kind:"topic",label:"Tema",definition:"Tema estable.",locale:"en-US",priority_rank:1,priority_rationale:"Prioridad de prueba.",member_group_keys:[groups[0]!.group_key]}],
     unresolved_group_keys:[groups[1]!.group_key]}}),/locale_invalid/);
 });

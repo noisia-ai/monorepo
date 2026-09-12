@@ -5,7 +5,11 @@ import { useLocale, useTranslations } from "next-intl";
 import type { SignalTopicConsolidationStatusV1 } from "@noisia/db";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { WorkspaceTopicEditorialControls } from "./WorkspaceTopicEditorialCard";
+
 import { AdminStatus } from "@/components/admin/AdminWorkspacePrimitives";
+import { submitWorkspaceTopicConsolidationIntentV1, workspaceTopicConsolidationIntentV1,
+  WorkspaceTopicConsolidationRequestError, type WorkspaceTopicConsolidationIntentV1 } from "@/lib/data-os/workspace-topic-consolidation-request";
 
 export type WorkspaceTopicConsolidationView = SignalTopicConsolidationStatusV1;
 
@@ -99,15 +103,20 @@ export function WorkspaceTopicConsolidationCard({ value, disabled = false, onAct
   </section>;
 }
 
-export function WorkspaceTopicConsolidationControls({ workspaceId, disabled = false }: {
-  workspaceId: string; disabled?: boolean;
+export function WorkspaceTopicConsolidationControls({ workspaceId, disabled = false, onCatalogAvailable }: {
+  workspaceId: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation");
   const [value, setValue] = useState<WorkspaceTopicConsolidationView | null>(null);
   const [reading, setReading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(false);
+  const [loadError, setLoadError] = useState(false);
   const request = useRef<AbortController | null>(null);
+  const submission = useRef<AbortController | null>(null);
+  const intent = useRef<WorkspaceTopicConsolidationIntentV1 | null>(null);
+  const currentWorkspace = useRef(workspaceId);
+  currentWorkspace.current = workspaceId;
   const mounted = useRef(true);
   const read = useCallback(async () => {
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
@@ -116,16 +125,24 @@ export function WorkspaceTopicConsolidationControls({ workspaceId, disabled = fa
         { cache: "no-store", signal: controller.signal });
       const body = await response.json() as unknown;
       if (!response.ok || !validWorkspaceTopicConsolidationView(body, workspaceId)) throw new Error("load");
-      if (mounted.current && !controller.signal.aborted) { setValue(body); setError(false); }
+      if (mounted.current && !controller.signal.aborted && currentWorkspace.current === workspaceId) {
+        setValue(body); setLoadError(false);
+        const pending = intent.current;
+        if (pending?.workspace_id === workspaceId && body.execution && ["queued", "running", "ready"].includes(body.status)
+          && (pending.body.action === "retry_numeric" ? body.execution.execution_id === pending.body.execution_id
+            : body.source_execution_id === pending.body.source_execution_id)) {
+          intent.current = null; setError(false);
+        }
+      }
     } catch {
-      if (mounted.current && !controller.signal.aborted) setError(true);
+      if (mounted.current && !controller.signal.aborted && currentWorkspace.current === workspaceId) setLoadError(true);
     } finally {
-      if (mounted.current && request.current === controller) { request.current = null; setReading(false); }
+      if (mounted.current && currentWorkspace.current === workspaceId && request.current === controller) { request.current = null; setReading(false); }
     }
   }, [workspaceId]);
   useEffect(() => {
-    mounted.current = true; void read();
-    return () => { mounted.current = false; request.current?.abort(); };
+    mounted.current = true; intent.current = null; setValue(null); setReading(true); setSubmitting(false); setError(false); setLoadError(false); void read();
+    return () => { mounted.current = false; request.current?.abort(); submission.current?.abort(); submission.current = null; };
   }, [read]);
   useEffect(() => {
     if (!value || !["queued", "running"].includes(value.status)) return;
@@ -133,30 +150,42 @@ export function WorkspaceTopicConsolidationControls({ workspaceId, disabled = fa
     return () => window.clearInterval(timer);
   }, [read, value]);
   const prepare = async () => {
-    if (!value || disabled || submitting) return;
-    const body = value.status === "failed" && value.execution?.retry_available
+    if (!value || value.workspace_id !== workspaceId || disabled || submitting || submission.current) return;
+    const body: WorkspaceTopicConsolidationIntentV1["body"] | null = value.status === "failed" && value.execution?.retry_available
       ? { action: "retry_numeric", execution_id: value.execution.execution_id }
       : value.status === "ready_to_prepare" && value.can_request && value.source_execution_id && value.quote_reference
         ? { action: "prepare_numeric", source_execution_id: value.source_execution_id, quote_reference: value.quote_reference }
         : null;
     if (!body) return;
+    const pending = workspaceTopicConsolidationIntentV1({ workspace_id: workspaceId, body,
+      previous: intent.current, createKey: () => crypto.randomUUID() });
+    intent.current = pending;
+    const controller = new AbortController(); submission.current = controller;
     setSubmitting(true); setError(false);
     try {
-      const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation`, {
-        method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
-        body: JSON.stringify(body)
-      });
-      const next = await response.json() as unknown;
-      if (!response.ok || !validWorkspaceTopicConsolidationView(next, workspaceId)) throw new Error("request");
-      if (mounted.current) setValue(next);
-    } catch {
-      if (mounted.current) { setError(true); await read(); }
-    } finally { if (mounted.current) setSubmitting(false); }
+      const receipt = await submitWorkspaceTopicConsolidationIntentV1({ intent: pending, fetcher: fetch, signal: controller.signal });
+      if (!mounted.current || controller.signal.aborted || currentWorkspace.current !== workspaceId) return;
+      intent.current = null;
+      setValue({ ...value, status: "queued", can_request: false, quote_reference: null, quote_expires_at: null,
+        execution: { execution_id: receipt.execution_id, status: "queued", retry_available: false, error_code: null } });
+      await read();
+    } catch (cause) {
+      if (mounted.current && !controller.signal.aborted && currentWorkspace.current === workspaceId) {
+        if (cause instanceof WorkspaceTopicConsolidationRequestError && cause.quoteRejected) intent.current = null;
+        setError(true); await read();
+      }
+    } finally {
+      if (submission.current === controller) submission.current = null;
+      if (mounted.current && !controller.signal.aborted && currentWorkspace.current === workspaceId) setSubmitting(false);
+    }
   };
   if (reading && !value) return null;
-  if (!value) return error ? <p className="team-msg team-msg--error" role="alert">{t("loadError")}</p> : null;
+  if (!value || value.workspace_id !== workspaceId) return loadError ? <p className="team-msg team-msg--error" role="alert">{t("loadError")}</p> : null;
   return <>
     <WorkspaceTopicConsolidationCard disabled={disabled || submitting} onAction={() => void prepare()} value={value} />
+    {value.status === "ready" && value.execution ? <WorkspaceTopicEditorialControls
+      key={`${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId} numericExecutionId={value.execution.execution_id} disabled={disabled} onCatalogAvailable={onCatalogAvailable} /> : null}
     {error ? <p className="team-msg team-msg--error" role="alert">{t("requestError")}</p> : null}
+    {loadError && !error ? <p className="team-msg team-msg--error" role="alert">{t("loadError")}</p> : null}
   </>;
 }

@@ -8,9 +8,15 @@ const sql=readFileSync(new URL('./0176_signal_topic_consolidation_editorial.sql'
 const lease: SignalTopicEditorialLeaseV1={execution_id:'00000000-0000-4000-8000-000000000001',execution_token:'00000000-0000-4000-8000-000000000002',
   workspace_id:'00000000-0000-4000-8000-000000000003',actor_user_id:'00000000-0000-4000-8000-000000000004',numeric_run_id:'00000000-0000-4000-8000-000000000005',
   source_execution_id:'00000000-0000-4000-8000-000000000006',worker_job_id:'private-fixture'};
-test('0176 uses the exact Query Engine Sonnet request configuration',()=>{
- const literal=sql.match(/SELECT '(\{"contract_version":"signal-topic-editorial-execution-config-v1".*?\})'::jsonb/u)?.[1];
+test('forward-only 0178 uses the exact current Query Engine Sonnet request configuration',()=>{
+ const current=readFileSync(new URL('./0178_signal_topic_editorial_catalog_contract.sql',import.meta.url),'utf8');
+ const literal=current.match(/SELECT '(\{"contract_version":"signal-topic-editorial-execution-config-v1".*?\})'::jsonb/u)?.[1];
  assert.ok(literal);assert.deepEqual(JSON.parse(literal),SIGNAL_TOPIC_EDITORIAL_EXECUTION_CONFIGURATION_V1);
+ assert.match(current,/topic_editorial_contract_upgrade_requires_empty_ledger/u);
+ assert.match(current,/hard_cap_micro_usd BETWEEN 1 AND 30000000/u);
+ assert.match(current,/max_execution_micro_usd BETWEEN 1 AND 30000000/u);
+ assert.match(current,/cap:=least\(a\.max_execution_micro_usd,30000000\)/u);
+ assert.match(current,/NEW\.execution_cap_micro_usd NOT BETWEEN 1 AND 30000000/u);
 });
 test('provider disabled is the default and rejects before even connecting or reserving',async()=>{
  let connections=0;const database={connect:async()=>{connections++;throw Error('unexpected database');}};

@@ -74,6 +74,8 @@ test("the client wrapper calls only the provider-free consolidation endpoint and
   assert.match(source, /topics\/consolidation/u);
   assert.match(source, /action: "prepare_numeric"/u);
   assert.match(source, /action: "retry_numeric"/u);
-  assert.match(source, /"Idempotency-Key": crypto\.randomUUID\(\)/u);
+  assert.match(source, /workspaceTopicConsolidationIntentV1/u);
+  assert.match(source, /previous: intent\.current/u);
+  assert.match(source, /submitWorkspaceTopicConsolidationIntentV1/u);
   assert.doesNotMatch(source, /review_with_claude|authorize_interpretation|provider_execution_enabled:\s*true/u);
 });

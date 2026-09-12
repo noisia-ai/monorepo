@@ -6,6 +6,7 @@ import {
   signalTopicEditorialDigestV1,
   signalTopicEditorialGlobalOutputSchemaV1,
   signalTopicEditorialScreeningOutputSchemaV1,
+  validateSignalTopicEditorialRepairRequestV1,
   type SignalTopicEditorialRunnerProviderRequestV1,
   type SignalTopicEditorialRunnerProviderV1,
 } from "@noisia/query-engine";
@@ -89,12 +90,16 @@ function configurationFor(request: SignalTopicEditorialRunnerProviderRequestV1) 
 
 function validateRequest(request: SignalTopicEditorialRunnerProviderRequestV1) {
   if (!exactKeys(request as unknown as Record<string, unknown>,
-    ["contract_version", "phase", "idempotency_key", "model", "request_digest", "request_body"])
+    ["contract_version", "phase", "idempotency_key", "model", "request_digest", "request_body", ...(request.repair === undefined ? [] : ["repair"])])
     || request.contract_version !== "signal-topic-editorial-provider-request-v1"
     || (request.phase !== "screening" && request.phase !== "global")
     || request.model !== SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1
     || !/^[A-Za-z0-9_.:-]{1,240}$/u.test(request.idempotency_key)
     || !digestPattern.test(request.request_digest)) throw transportError("request_invalid", "definitely_not_sent");
+  if (request.repair !== undefined) {
+    try { validateSignalTopicEditorialRepairRequestV1(request); }
+    catch { throw transportError("request_invalid", "definitely_not_sent"); }
+  }
   let body: Record<string, unknown> | null;
   try { body = object(JSON.parse(request.request_body)); } catch { body = null; }
   const configuration = configurationFor(request), output = object(body?.output_config), format = object(output?.format),
@@ -180,6 +185,19 @@ function decodeReceipt(request: SignalTopicEditorialRunnerProviderRequestV1,
     cost_micro_usd: cost, output_digest, error_code: null }) };
 }
 
+/** Decode durable bytes during recovery; this never reads credentials or sends. */
+export function decodeSignalTopicEditorialAnthropicReceiptV1(request: SignalTopicEditorialRunnerProviderRequestV1,
+  receipt: SignalTopicEditorialAnthropicRawReceiptV1): SignalTopicEditorialAnthropicCompletionV1 {
+  validateRequest(request);
+  if (receipt.request_digest !== request.request_digest || receipt.idempotency_key !== request.idempotency_key
+    || sha(receipt.bytes) !== receipt.sha256 || receipt.bytes.byteLength > RESPONSE_BYTES_LIMIT
+    || !Number.isSafeInteger(receipt.http_status) || receipt.http_status < 100 || receipt.http_status > 599
+    || receipt.provider_request_id !== null && !requestIdPattern.test(receipt.provider_request_id))
+    throw transportError("ledger_replay_invalid", "outcome_unknown");
+  if (receipt.complete !== true) throw transportError("response_incomplete", "outcome_unknown");
+  return decodeReceipt(request, receipt);
+}
+
 function validateReplay(request: SignalTopicEditorialRunnerProviderRequestV1,
   completion: SignalTopicEditorialAnthropicCompletionV1): SignalTopicEditorialAnthropicCompletionV1 {
   const completionRow = object(completion), settlementRow = object(completionRow?.settlement);
@@ -261,12 +279,6 @@ export function createAnthropicSignalTopicEditorialRunnerProviderV1(args: {
 }): SignalTopicEditorialRunnerProviderV1 {
   return { complete: async request => {
     validateRequest(request);
-    if (!args.provider_enabled) throw transportError("provider_disabled", "definitely_not_sent");
-    if (!args.api_key || !/^[A-Za-z0-9_-]{16,512}$/u.test(args.api_key))
-      throw transportError("provider_configuration_invalid", "definitely_not_sent");
-    const timeout = args.timeout_ms ?? DEFAULT_TIMEOUT_MS;
-    if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > DEFAULT_TIMEOUT_MS)
-      throw transportError("provider_configuration_invalid", "definitely_not_sent");
     let replay: SignalTopicEditorialAnthropicCompletionV1 | null;
     try { replay = await args.ledger.load(request); }
     catch { throw transportError("ledger_read_unknown", "outcome_unknown"); }
@@ -276,9 +288,18 @@ export function createAnthropicSignalTopicEditorialRunnerProviderV1(args: {
         throw transportError(completion.settlement.error_code!, "known_response_invalid", completion.settlement);
       return completion.output;
     }
+    if (!args.provider_enabled) throw transportError("provider_disabled", "definitely_not_sent");
+    if (!args.api_key || !/^[A-Za-z0-9_-]{16,512}$/u.test(args.api_key))
+      throw transportError("provider_configuration_invalid", "definitely_not_sent");
+    const timeout = args.timeout_ms ?? DEFAULT_TIMEOUT_MS;
+    if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > DEFAULT_TIMEOUT_MS)
+      throw transportError("provider_configuration_invalid", "definitely_not_sent");
     let authorization: SignalTopicEditorialAnthropicSendAuthorizationV1;
     try { authorization = await args.ledger.authorize_send(request); }
-    catch { throw transportError("send_authority_unknown", "outcome_unknown"); }
+    catch (error) {
+      if (error instanceof SignalTopicEditorialAnthropicErrorV1) throw error;
+      throw transportError("send_authority_unknown", "outcome_unknown");
+    }
     if (authorization !== "authorized") {
       if (authorization !== "definitely_not_sent" && authorization !== "outcome_unknown")
         throw transportError("send_authority_unknown", "outcome_unknown");

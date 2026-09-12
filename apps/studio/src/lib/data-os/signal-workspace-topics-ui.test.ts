@@ -6,7 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
 import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
-import { SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
+import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
+import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "../../components/signal-v2/SignalTopicChartOptions";
 Object.assign(globalThis, { React });
 const data: SignalWorkspaceTopicsOverviewV1 = {
   contract_version: "signal-workspace-topics-serving-v1", source: "workspace_computed", workspace_id: "workspace", corpus_id: null,
@@ -22,14 +23,18 @@ async function render(locale: string, payload = data, surface: "summary" | "topi
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   return renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
-    createElement(SignalV2WorkspaceTopics, { data: payload, loading: false, surface, refreshFailed, onRefresh: async () => true, onOpenTopics: () => undefined, manageTopicsHref: "/studio/brands/brand/topics", onApplyFilter: async () => true, workspaceTimezone: "America/Mexico_City" })));
+    createElement(SignalV2WorkspaceTopics, { brandName: "Alexa Plus", data: payload, loading: false, surface, refreshFailed,
+      onRefresh: async () => true, onOpenTopics: () => undefined, onOpenMentions: () => undefined,
+      manageTopicsHref: "/studio/brands/brand/topics", onApplyFilter: async () => true, workspaceTimezone: "America/Mexico_City" })));
 }
 test("native Signal renders computed multilabel counts without claiming calibrated quality or a study corpus", async () => {
   const html = await render("es-MX");
   assert.match(html, /Pertenencia calculada/); assert.match(html, /no está calibrada/);
   assert.match(html, /sumar más de 100%/); assert.match(html, /Delivery/); assert.match(html, /Support/);
   assert.match(html, /En Topics seleccionados/); assert.match(html, /Zona horaria del workspace: America\/Mexico_City/);
+  assert.match(html, /Datos: Alexa Plus/);
   assert.doesNotMatch(html, /Precisión:|studio\/corpora|Investigar insights/);
+  assert.ok(html.indexOf("Topics seleccionados") < html.indexOf("Pertenencia calculada"));
 });
 test("empty completed catalogue is actionable without creating synthetic Topics or narratives", async () => {
   const html = await render("en-US", { ...data, terms: [] });
@@ -117,12 +122,37 @@ test("the shared ranking retains governed comparison and renders true zero volum
   assert.match(html, /aria-pressed="true"/); assert.doesNotMatch(html, /ranking-metrics--native/);
 });
 
+test("the shared ranking card preserves the Laika view switch for native catalogues", () => {
+  const html = renderToStaticMarkup(createElement(SignalTopicsRankingCard, {
+    activeView: "list", eyebrow: "Presence", title: "Selected Topics", viewLabel: "Topics view",
+    views: [{ key: "chart", label: "Chart" }, { key: "list", label: "List" }], onViewChange: () => undefined
+  }, createElement("p", null, "Real catalogue")));
+  assert.match(html, /signal-v2-tn__ranking/); assert.match(html, /aria-label="Topics view"/);
+  assert.match(html, /aria-pressed="true"[^>]*>List/); assert.match(html, /Real catalogue/);
+});
+
+test("shared Laika chart primitives preserve real values for governed and native Topics", () => {
+  const trend = buildSignalTopicTrendOption([{ label: "1 Sep", value: 0 }, { label: "2 Sep", value: 12 }], "Mentions", false) as {
+    animation: boolean; xAxis: { data: string[] }; series: Array<{ areaStyle: { opacity: number }; data: number[] }>;
+  };
+  assert.equal(trend.animation, false); assert.deepEqual(trend.xAxis.data, ["1 Sep", "2 Sep"]);
+  assert.deepEqual(trend.series[0]!.data, [0, 12]); assert.equal(trend.series[0]!.areaStyle.opacity, 0.18);
+  const sentiment = buildSignalTopicSentimentOption({ positive: 3, neutral: 2, negative: 5 },
+    { positive: "Positive", neutral: "Neutral", negative: "Negative" }, false) as {
+      animation: boolean; graphic: Array<{ style: { text: string } }>;
+      series: Array<{ data: Array<{ value: number }> }>;
+    };
+  assert.equal(sentiment.animation, false); assert.equal(sentiment.graphic[0]!.style.text, "10");
+  assert.deepEqual(sentiment.series[0]!.data.map(item => item.value), [3, 2, 5]);
+});
+
 test("the real native Topics route opens one evidence mention through the enriched Mentions view", async () => {
   const source = await readFile(
     new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url),
     "utf8"
   );
-  assert.match(source, /<SignalV2WorkspaceTopics[\s\S]*workspaceTimezone=\{data\.workspace\.timezone\}/u);
+  assert.match(source, /<SignalV2WorkspaceTopics[\s\S]*brandName=\{brandName\}[\s\S]*workspaceTimezone=\{data\.workspace\.timezone\}/u);
+  assert.match(source, /onOpenMentions=\{\(\) => void navigateToModule\("mentions"\)\}/u);
   assert.match(source, /onOpenMention=\{mentionId => \{[\s\S]*new URLSearchParams\(\{ view: "all_conversations", mention: mentionId \}\)[\s\S]*navigateToModule\("mentions", "push", params\)/u);
   assert.match(source, /initialMention=\{mentionsData\.native \? mentionsData\.record \?\? null : initialMention\}/u);
 });

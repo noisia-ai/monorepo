@@ -4,9 +4,14 @@ import {
   buildSignalTopicEditorialGlobalReviewV1, buildSignalTopicEditorialScreeningPlanV1, signalTopicEditorialDigestV1,
   validateSignalTopicEditorialScreeningCoverageV1, validateSignalTopicEditorialScreeningOutputV1,
   validateSignalTopicEditorialGlobalResultV1,
+  validateSignalTopicEditorialRepairRequestV1, signalTopicEditorialSemanticRepairErrorV1,
+  signalTopicEditorialScreeningOutputSchemaV1, signalTopicEditorialGlobalOutputSchemaV1,
+  type SignalTopicEditorialRunnerProviderRequestV1,
   type SignalTopicEditorialScreeningPlanV1, type SignalTopicEditorialScreeningGroupV1,
   type SignalTopicEditorialRunnerStoreV1, type SignalTopicEditorialRunnerStateV1,
 } from '@noisia/query-engine';
+import { cacheSignalTopicEditorialPlanV1, readSignalTopicEditorialPlanCacheV1, clearSignalTopicEditorialPlanCacheV1 } from './signal-topic-editorial-plan-cache';
+import { verifySignalTopicEditorialContextRevisionV1 } from './signal-topic-editorial-context-cache';
 import { loadSignalTopicInheritedContextStoreV1 } from './signal-topic-catalog';
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from './signal-workspace-capabilities';
 import { parseSignalTopicAtomicCensusV1, parseSignalTopicCommunityPlanV1,
@@ -39,8 +44,7 @@ export const SIGNAL_TOPIC_EDITORIAL_EXECUTION_CONFIGURATION_V1 = {
 async function tx<T>(database: SignalTopicEditorialDatabaseV1, work: (client: PoolClient) => Promise<T>, readOnly = false): Promise<T> {
   const client = await database.connect();
   try {
-    await client.query(readOnly ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN');
-    await client.query('SET LOCAL search_path=public,extensions,pg_temp');
+    await client.query(`${readOnly ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN'}; SET LOCAL search_path=public,extensions,pg_temp`);
     const result = await work(client); await client.query('COMMIT'); return result;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -59,7 +63,7 @@ async function requireRead(client: PoolClient, workspace: string, actor: string)
 }
 async function currentContext(client: PoolClient, workspace: string, expected: string) {
   const current = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: workspace,
-    complete_context: true, require_current_semantic_authority: true });
+    complete_context: true, require_current_semantic_authority: true, semantic_authority_check: "database" });
   if (current.context_digest !== expected) fail('topic_editorial_source_stale');
 }
 
@@ -67,9 +71,15 @@ async function currentContext(client: PoolClient, workspace: string, expected: s
 export function validateSignalTopicEditorialPlanV1(plan: SignalTopicEditorialScreeningPlanV1): SignalTopicEditorialScreeningGroupV1[] {
   if (plan.batch_size !== 40 || plan.batches.length !== Math.ceil(plan.expected_group_count / 40)) fail('topic_editorial_plan_invalid');
   const payloads = plan.batches.map(batch => JSON.parse(JSON.parse(batch.request_body).messages[0].content) as {
-    context: Parameters<typeof buildSignalTopicEditorialScreeningPlanV1>[0]['context']; groups: SignalTopicEditorialScreeningGroupV1[];
+    context: Parameters<typeof buildSignalTopicEditorialScreeningPlanV1>[0]['context']; groups: Array<[string,...unknown[]]>;
   });
-  const groups = payloads.flatMap(payload => payload.groups);
+  const groups = plan.batches.flatMap((batch,index) => {
+    const sourceGroups = JSON.parse(batch.source_groups_body) as SignalTopicEditorialScreeningGroupV1[];
+    if (payloads[index]?.groups.length !== sourceGroups.length
+      || payloads[index]?.groups.some((row,groupIndex) => row[0] !== sourceGroups[groupIndex]?.group_key))
+      fail('topic_editorial_plan_invalid');
+    return sourceGroups;
+  });
   const rebuilt = buildSignalTopicEditorialScreeningPlanV1({ expected_group_count: plan.expected_group_count,
     source_context_digest: plan.source_context_digest, editorial_context_digest: plan.editorial_context_digest,
     context: payloads[0]!.context, groups, batch_size: 40 });
@@ -134,8 +144,16 @@ export async function loadSignalTopicConsolidationEditorialStatusV1(args: {
 export async function loadSignalTopicConsolidationEditorialSourceV1(args: {
   database: SignalTopicEditorialDatabaseV1; workspace_id: string; actor_user_id: string; numeric_run_id: string;
 }): Promise<{ numeric_run_id: string; source_binding: Record<string, unknown>; census: SignalTopicAtomicCensusV1;
-  community_plan: SignalTopicConsolidationCommunityPlanV1 }> {
-  return tx(args.database, async client => {
+  census_snapshot_digest: string; community_plan: SignalTopicConsolidationCommunityPlanV1 }> {
+  return tx(args.database, client => readSignalTopicConsolidationEditorialSourceWithQueryableV1({ ...args, queryable: client }), true);
+}
+
+/** The caller owns the repeatable-read transaction; reuse for source plus evidence snapshots. */
+export async function readSignalTopicConsolidationEditorialSourceWithQueryableV1(args: {
+  queryable: PoolClient; workspace_id: string; actor_user_id: string; numeric_run_id: string;
+}): Promise<{ numeric_run_id: string; source_binding: Record<string, unknown>; census: SignalTopicAtomicCensusV1;
+  census_snapshot_digest: string; community_plan: SignalTopicConsolidationCommunityPlanV1 }> {
+    const client = args.queryable;
     await requireRead(client, args.workspace_id, args.actor_user_id);
     const binding = await value<Record<string, unknown> | null>(client, 'SELECT signal_topic_editorial_source_v1($1) value', [args.numeric_run_id]);
     if (!binding || binding.workspace_id !== args.workspace_id) return fail('topic_editorial_source_stale');
@@ -153,7 +171,10 @@ export async function loadSignalTopicConsolidationEditorialSourceV1(args: {
       FROM signal_topic_atomic_groups g JOIN signal_topic_consolidation_runs r ON r.id=g.consolidation_run_id
       WHERE g.consolidation_run_id=$1 AND g.workspace_id=$2 ORDER BY g.group_key COLLATE "C"`, [args.numeric_run_id, args.workspace_id])).rows;
     const census = parseSignalTopicAtomicCensusV1({ contract_version: 'signal-topic-consolidation-v1', ...run, groups });
-    if (signalTopicEditorialDigestV1(census) !== binding.census_digest) fail('topic_editorial_census_changed');
+    // The original census digest seals pre-JSONB JS number serialization. The
+    // immutable relational projection can round-trip float text differently,
+    // so the editorial snapshot receives its own digest while retaining the
+    // original digest in source_binding for end-to-end numeric lineage.
     const communities = (await client.query<Record<string, unknown>>(`SELECT c.community_key,c.community_digest,
       jsonb_agg(jsonb_build_object('group_key',g.group_key,'rank',m.rank,'similarity',m.similarity) ORDER BY m.rank,g.group_key COLLATE "C") members
       FROM signal_topic_consolidation_communities c JOIN signal_topic_consolidation_community_members m ON m.community_id=c.id
@@ -162,38 +183,128 @@ export async function loadSignalTopicConsolidationEditorialSourceV1(args: {
     const community_plan = parseSignalTopicCommunityPlanV1({ contract_version: 'signal-topic-centroid-community-plan-v1',
       configuration_digest: census.configuration_digest, communities }, census.groups.map(group => group.group_key));
     if (signalTopicEditorialDigestV1(community_plan) !== binding.community_plan_digest) fail('topic_editorial_community_changed');
-    return { numeric_run_id: args.numeric_run_id, source_binding: binding, census, community_plan };
-  }, true);
+    return { numeric_run_id: args.numeric_run_id, source_binding: binding, census,
+      census_snapshot_digest: signalTopicEditorialDigestV1(census), community_plan };
 }
 
-async function owner(client: PoolClient, lease: SignalTopicEditorialLeaseV1, lock = false) {
+async function ownerSnapshot(client: PoolClient, lease: SignalTopicEditorialLeaseV1, lock = false) {
   const row = (await client.query<{ plan: SignalTopicEditorialScreeningPlanV1; state_body: string | null; state_digest: string | null }>(
     `SELECT plan,state_body,state_digest FROM signal_topic_editorial_executions WHERE id=$1 AND workspace_id=$2
-      AND actor_user_id=$3 AND numeric_run_id=$4 ${lock ? 'FOR UPDATE' : ''}`,
-    [lease.execution_id, lease.workspace_id, lease.actor_user_id, lease.numeric_run_id])).rows[0];
+      AND actor_user_id=$3 AND numeric_run_id=$4 AND source_engine_execution_id=$5 ${lock ? 'FOR UPDATE' : ''}`,
+    [lease.execution_id, lease.workspace_id, lease.actor_user_id, lease.numeric_run_id, lease.source_execution_id])).rows[0];
   if (!row) return fail('topic_editorial_lease_conflict');
   await client.query('SELECT signal_topic_editorial_assert_lease_v1($1,$2,false)', [lease.execution_id, lease.execution_token]); return row;
 }
-/** Every save is a short CAS transaction. The runner/provider never retains its connection. */
+type VerifiedPlan = { plan: SignalTopicEditorialScreeningPlanV1; groups: SignalTopicEditorialScreeningGroupV1[] };
+const leaseIdentity = (lease: SignalTopicEditorialLeaseV1) => canonical([lease.execution_id, lease.execution_token,
+  lease.workspace_id, lease.actor_user_id, lease.numeric_run_id, lease.source_execution_id]);
+async function reusableOwner(client: PoolClient, database: SignalTopicEditorialDatabaseV1, lease: SignalTopicEditorialLeaseV1, lock = false) {
+  try {
+    const row = (await client.query<{ plan_digest: string; state_body: string | null; state_digest: string | null }>(
+      `SELECT plan_digest,state_body,state_digest,signal_topic_editorial_assert_lease_v1(id,$6,false) AS lease_check
+        FROM signal_topic_editorial_executions WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3
+        AND numeric_run_id=$4 AND source_engine_execution_id=$5 ${lock ? 'FOR UPDATE' : ''}`,
+      [lease.execution_id, lease.workspace_id, lease.actor_user_id, lease.numeric_run_id, lease.source_execution_id, lease.execution_token])).rows[0];
+    if (!row) return fail('topic_editorial_lease_conflict');
+    const cached = readSignalTopicEditorialPlanCacheV1<VerifiedPlan>(database, leaseIdentity(lease), row.plan_digest);
+    if (cached) return { ...row, ...cached };
+    const snapshot = await ownerSnapshot(client, lease, lock);
+    if (row.plan_digest !== snapshot.plan.plan_digest) fail('topic_editorial_owner_snapshot_invalid');
+    return { ...snapshot, groups: validateSignalTopicEditorialPlanV1(snapshot.plan) };
+  } catch (error) { clearSignalTopicEditorialPlanCacheV1(database, leaseIdentity(lease)); throw error; }
+}
+/** Hot-path ownership is scoped and live, but never transfers the sealed dossier. */
+async function compactOwner(client: PoolClient, lease: SignalTopicEditorialLeaseV1, source = false) {
+  const row = (await client.query<{ context_digest: string; revision: string | null }>(
+    `SELECT source_binding->>'context_digest' AS context_digest,
+      ${source ? 'signal_topic_editorial_context_revision_v1(workspace_id)' : 'NULL::text'} AS revision,
+      signal_topic_editorial_assert_lease_v1(id,$6,false) AS lease_check
+      FROM signal_topic_editorial_executions WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3
+      AND numeric_run_id=$4 AND source_engine_execution_id=$5`,
+    [lease.execution_id, lease.workspace_id, lease.actor_user_id, lease.numeric_run_id, lease.source_execution_id, lease.execution_token])).rows[0];
+  return row ?? fail('topic_editorial_lease_conflict');
+}
+async function currentOwnedContext(database: SignalTopicEditorialDatabaseV1, client: PoolClient, lease: SignalTopicEditorialLeaseV1) {
+  try {
+    const row = await compactOwner(client, lease, true);
+    await verifySignalTopicEditorialContextRevisionV1({ database,
+      key: canonical([lease.execution_id, lease.execution_token, lease.workspace_id, lease.actor_user_id,
+        lease.numeric_run_id, lease.source_execution_id, row.context_digest]), revision: row.revision,
+      validate: () => currentContext(client, lease.workspace_id, row.context_digest),
+      reread: () => value<string>(client, 'SELECT signal_topic_editorial_context_revision_v1($1) value', [lease.workspace_id]) });
+  } catch (error) { clearSignalTopicEditorialPlanCacheV1(database, leaseIdentity(lease)); throw error; }
+}
+/** Recover the admitted snapshot, even when current Brand OS or policy changed.
+ * Only the live owner lease is required; no new provider authority is granted. */
+export async function loadSignalTopicEditorialOwnerInputV1(args: {
+  database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1;
+}): Promise<{ plan: SignalTopicEditorialScreeningPlanV1; groups: SignalTopicEditorialScreeningGroupV1[] }> {
+  try { return await tx(args.database, async client => {
+    const row = await ownerSnapshot(client, args.lease);
+    const seal = (await client.query<{ plan_digest: string; source_digest: string; source_binding: Record<string, unknown> }>(
+      'SELECT plan_digest,source_digest,source_binding FROM signal_topic_editorial_executions WHERE id=$1 AND workspace_id=$2',
+      [args.lease.execution_id, args.lease.workspace_id])).rows[0];
+    if (!seal || seal.plan_digest !== row.plan.plan_digest || seal.source_digest !== signalTopicEditorialDigestV1(seal.source_binding)
+      || seal.source_binding.workspace_id !== args.lease.workspace_id || seal.source_binding.numeric_run_id !== args.lease.numeric_run_id
+      || seal.source_binding.source_engine_execution_id !== args.lease.source_execution_id
+      || seal.source_binding.context_digest !== row.plan.source_context_digest) fail('topic_editorial_owner_snapshot_invalid');
+    return cacheSignalTopicEditorialPlanV1(args.database, leaseIdentity(args.lease), row.plan.plan_digest,
+      { plan: row.plan, groups: validateSignalTopicEditorialPlanV1(row.plan) });
+  }, true);
+  } catch (error) { clearSignalTopicEditorialPlanCacheV1(args.database, leaseIdentity(args.lease)); throw error; }
+}
+/** Every save is a short CAS transaction. The runner/provider never retains its connection.
+ * The admitted plan is immutable in SQL. Validate it once per store, then check its
+ * durable digest on every scoped lease read without retransmitting the dossier. */
 export function createSignalTopicEditorialRunnerStoreV1(args: {
   database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1;
 }): SignalTopicEditorialRunnerStoreV1 {
+  let admitted: { plan: SignalTopicEditorialScreeningPlanV1; groups: SignalTopicEditorialScreeningGroupV1[] } | null = null;
+  async function checkpoint(client: PoolClient, lock = false) {
+    try {
+      if (!admitted) {
+        const initial = await reusableOwner(client, args.database, args.lease, lock);
+        admitted = { plan: initial.plan, groups: initial.groups };
+        return { ...initial, ...admitted };
+      }
+      const row = (await client.query<{ plan_digest: string; state_body: string | null; state_digest: string | null }>(
+        `SELECT plan_digest,state_body,state_digest,signal_topic_editorial_assert_lease_v1(id,$6,false) AS lease_check
+         FROM signal_topic_editorial_executions WHERE id=$1 AND workspace_id=$2 AND actor_user_id=$3
+         AND numeric_run_id=$4 AND source_engine_execution_id=$5 ${lock ? 'FOR UPDATE' : ''}`,
+        [args.lease.execution_id, args.lease.workspace_id, args.lease.actor_user_id, args.lease.numeric_run_id,
+          args.lease.source_execution_id, args.lease.execution_token])).rows[0] ?? fail('topic_editorial_lease_conflict');
+      if (row.plan_digest !== admitted.plan.plan_digest) fail('topic_editorial_owner_snapshot_invalid');
+      return { ...row, ...admitted };
+    } catch (error) { admitted = null; clearSignalTopicEditorialPlanCacheV1(args.database, leaseIdentity(args.lease)); throw error; }
+  }
   return {
     load: async executionKey => tx(args.database, async client => {
       if (executionKey !== args.lease.execution_id) fail('topic_editorial_execution_key_invalid');
-      const row = await owner(client, args.lease); return row.state_body === null ? null : { ...JSON.parse(row.state_body), state_digest: row.state_digest };
+      const row = await checkpoint(client); return row.state_body === null ? null : { ...JSON.parse(row.state_body), state_digest: row.state_digest };
     }, true),
     save: async input => tx(args.database, async client => {
       if (input.execution_key !== args.lease.execution_id || input.state.execution_key !== input.execution_key) fail('topic_editorial_execution_key_invalid');
-      const row = await owner(client, args.lease, true), groups = validateSignalTopicEditorialPlanV1(row.plan);
+      const row = await checkpoint(client, true);
       const { state_digest, ...body } = input.state;
       if (body.contract_version !== 'signal-topic-editorial-runner-v1' || body.plan_digest !== row.plan.plan_digest
-        || signalTopicEditorialDigestV1(body) !== state_digest || row.state_digest !== input.expected_state_digest) fail('topic_editorial_state_conflict');
-      for (const output of body.screening_outputs) validateSignalTopicEditorialScreeningOutputV1(row.plan.batches[output.batch_index]!, output);
-      if (body.phase !== 'screening') {
+        || signalTopicEditorialDigestV1(body) !== state_digest || row.state_digest !== input.expected_state_digest
+        || !Array.isArray(body.screening_outputs) || !['screening', 'global', 'completed'].includes(body.phase)) fail('topic_editorial_state_conflict');
+      const prior = row.state_body === null ? null : JSON.parse(row.state_body) as Omit<SignalTopicEditorialRunnerStateV1, 'state_digest'>;
+      const previous = new Map(prior?.screening_outputs.map(output => [output.batch_index, output]));
+      const seen = new Set<number>();
+      for (const output of body.screening_outputs) {
+        const batch = row.plan.batches[output.batch_index] ?? fail('topic_editorial_state_conflict');
+        if (seen.has(output.batch_index)) fail('topic_editorial_state_conflict');
+        seen.add(output.batch_index);
+        const retained = previous.get(output.batch_index);
+        if (!retained || canonical(retained) !== canonical(output)) validateSignalTopicEditorialScreeningOutputV1(batch, output);
+      }
+      // SQL independently proves append-only paid history on every update. Only
+      // phase transitions need whole-census coverage and the global reconstruction.
+      if (body.phase !== 'screening' && (prior?.phase !== body.phase || canonical(prior.global) !== canonical(body.global))) {
         const screening = validateSignalTopicEditorialScreeningCoverageV1(row.plan, body.screening_outputs);
         if (body.global) {
-          const review = buildSignalTopicEditorialGlobalReviewV1({ plan: row.plan, screening, groups });
+          const review = buildSignalTopicEditorialGlobalReviewV1({ plan: row.plan, screening, groups: row.groups });
           if (body.global.request_digest !== review.request_digest || body.phase !== 'completed') fail('topic_editorial_global_invalid');
           validateSignalTopicEditorialGlobalResultV1({ review, screening, value: body.global.result });
         }
@@ -206,13 +317,13 @@ export function createSignalTopicEditorialRunnerStoreV1(args: {
 /** Builds/seals the one global request from paid screening checkpoints, never browser input. */
 export async function bindSignalTopicEditorialGlobalRequestV1(args: { database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1 }) {
   return tx(args.database, async client => {
-    const row = await owner(client, args.lease, true), groups = validateSignalTopicEditorialPlanV1(row.plan);
+    const row = await reusableOwner(client, args.database, args.lease, true), groups = row.groups;
     if (!row.state_body) return fail('topic_editorial_screening_incomplete');
     const state = JSON.parse(row.state_body) as SignalTopicEditorialRunnerStateV1;
     const screening = validateSignalTopicEditorialScreeningCoverageV1(row.plan, state.screening_outputs);
     const review = buildSignalTopicEditorialGlobalReviewV1({ plan: row.plan, screening, groups });
     const prior = (await client.query<{ request_digest: string; request_body: string }>(`SELECT request_digest,request_body
-      FROM signal_topic_editorial_requests WHERE execution_id=$1 AND phase='global'`, [args.lease.execution_id])).rows[0];
+      FROM signal_topic_editorial_requests WHERE execution_id=$1 AND phase='global' AND parent_request_id IS NULL`, [args.lease.execution_id])).rows[0];
     if (prior && (prior.request_digest !== review.request_digest || prior.request_body !== review.request_body)) fail('topic_editorial_global_replay_conflict');
     if (!prior) await client.query(`INSERT INTO signal_topic_editorial_requests(workspace_id,execution_id,phase,batch_index,request_digest,request_body,
       configuration,receipts,reserved_micro_usd) VALUES($1,$2,'global',0,$3,$4,$5::jsonb,$6::jsonb,$7::bigint)`,
@@ -222,27 +333,91 @@ export async function bindSignalTopicEditorialGlobalRequestV1(args: { database: 
   });
 }
 
+/** Bind exactly one semantic repair to a paid parent. No provider/send authority is granted here. */
+export async function bindSignalTopicEditorialRepairRequestV1(args: {
+  database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1; request: SignalTopicEditorialRunnerProviderRequestV1;
+}): Promise<SignalTopicEditorialRunnerProviderRequestV1> {
+  const validated = validateSignalTopicEditorialRepairRequestV1(args.request), request = validated.request;
+  return tx(args.database, async client => {
+    const execution = await reusableOwner(client, args.database, args.lease, true), groups = execution.groups;
+    const parents = (await client.query<{ id: string; phase: 'screening' | 'global'; batch_index: number; request_digest: string;
+      request_body: string; configuration: unknown; receipts: unknown; parent_request_id: string | null; response_output: unknown;
+      response_http_status: number; response_complete: boolean }>(`SELECT p.id,p.phase,p.batch_index,p.request_digest,p.request_body,
+      p.configuration,p.receipts,p.parent_request_id,c.response_output,c.response_http_status,c.response_complete
+      FROM signal_topic_editorial_requests p JOIN signal_topic_editorial_calls c ON c.request_id=p.id AND c.execution_id=p.execution_id
+      WHERE p.execution_id=$1 AND p.workspace_id=$2 AND p.request_digest=$3 AND c.status='settled'`,
+    [args.lease.execution_id, args.lease.workspace_id, request.repair.parent_request_digest])).rows;
+    if (parents.length !== 1) fail('topic_editorial_repair_parent_invalid');
+    const parent = parents[0] ?? fail('topic_editorial_repair_parent_invalid');
+    if (parent.parent_request_id !== null || parent.phase !== request.phase
+      || parent.response_http_status !== 200 || parent.response_complete !== true || parent.request_body !== validated.original.request_body
+      || parent.request_digest !== validated.original.request_digest) fail('topic_editorial_repair_parent_invalid');
+    const configuration = parent.phase === 'screening' ? SIGNAL_TOPIC_EDITORIAL_SCREENING_CONFIGURATION_V1 : SIGNAL_TOPIC_EDITORIAL_GLOBAL_CONFIGURATION_V1;
+    if (canonical(parent.configuration) !== canonical(configuration)) fail('topic_editorial_repair_parent_invalid');
+    const schema = parent.phase === 'screening' ? signalTopicEditorialScreeningOutputSchemaV1 : signalTopicEditorialGlobalOutputSchemaV1;
+    const parsed = schema.safeParse(parent.response_output);
+    if (!parsed.success || signalTopicEditorialDigestV1(parsed.data) !== request.repair.parent_response_digest
+      || signalTopicEditorialDigestV1(parsed.data) !== signalTopicEditorialDigestV1(validated.response)) fail('topic_editorial_repair_response_invalid');
+    let validate: () => unknown;
+    if (parent.phase === 'screening') {
+      const batch = execution.plan.batches[parent.batch_index];
+      if (!batch || batch.request_digest !== parent.request_digest || batch.request_body !== parent.request_body
+        || batch.batch_key !== request.repair.parent_idempotency_key || canonical(parent.receipts) !== canonical(batch.group_receipts))
+        fail('topic_editorial_repair_parent_invalid');
+      validate = () => validateSignalTopicEditorialScreeningOutputV1(batch!, parsed.data);
+    } else {
+      if (!execution.state_body) fail('topic_editorial_screening_incomplete');
+      const state = JSON.parse(execution.state_body!) as SignalTopicEditorialRunnerStateV1;
+      const screening = validateSignalTopicEditorialScreeningCoverageV1(execution.plan, state.screening_outputs);
+      const review = buildSignalTopicEditorialGlobalReviewV1({ plan: execution.plan, screening, groups });
+      if (parent.batch_index !== 0 || review.request_digest !== parent.request_digest || review.request_body !== parent.request_body
+        || request.repair.parent_idempotency_key !== `topic-consolidation-global-v1:${review.request_digest.slice(7, 23)}`
+        || canonical(parent.receipts) !== canonical(review.eligible_group_receipts)) fail('topic_editorial_repair_parent_invalid');
+      validate = () => validateSignalTopicEditorialGlobalResultV1({ review, screening, value: parsed.data });
+    }
+    let errorCode: string | null = null;
+    try { validate(); } catch (error) { errorCode = signalTopicEditorialSemanticRepairErrorV1(parent.phase, parsed.data, error); }
+    if (errorCode === null || errorCode !== request.repair.error_code) fail('topic_editorial_repair_error_unproven');
+    const parentOutputBody = canonical(parsed.data);
+    const prior = (await client.query<{ request_digest: string; request_body: string; repair_binding: unknown; repair_parent_output_body: string }>(
+      `SELECT request_digest,request_body,repair_binding,repair_parent_output_body FROM signal_topic_editorial_requests
+       WHERE execution_id=$1 AND parent_request_id=$2`, [args.lease.execution_id, parent.id])).rows;
+    if (prior.length > 1 || prior[0] && (prior[0].request_digest !== request.request_digest || prior[0].request_body !== request.request_body
+      || canonical(prior[0].repair_binding) !== canonical(request.repair) || prior[0].repair_parent_output_body !== parentOutputBody))
+      fail('topic_editorial_repair_replay_conflict');
+    if (!prior.length) await client.query(`INSERT INTO signal_topic_editorial_requests(workspace_id,execution_id,phase,batch_index,
+      request_digest,request_body,configuration,receipts,reserved_micro_usd,parent_request_id,repair_binding,repair_parent_output_body)
+      VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::bigint,$10,$11::jsonb,$12)`,
+    [args.lease.workspace_id, args.lease.execution_id, parent.phase, parent.batch_index, request.request_digest, request.request_body,
+      JSON.stringify(configuration), JSON.stringify(parent.receipts), String(Buffer.byteLength(request.request_body, 'utf8') * 3 + configuration.max_output_tokens * 15),
+      parent.id, JSON.stringify(request.repair), parentOutputBody]);
+    return request;
+  });
+}
+
 // These server-only seams commit and release their connection before returning.
 // There is intentionally no transport, provider client or queue wiring here.
 export async function reserveSignalTopicEditorialCallV1(args: { database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1;
   request_digest: string; provider_available?: boolean }): Promise<{ call_id: string; attempt_token: string; status: string; reserved_micro_usd: string }> {
   if (args.provider_available !== true) return fail('topic_editorial_provider_disabled');
-  return tx(args.database, async client => {
-    const row = await owner(client, args.lease); await currentContext(client, args.lease.workspace_id, row.plan.source_context_digest);
+  try { return await tx(args.database, async client => {
+    await currentOwnedContext(args.database, client, args.lease);
     return value(client, 'SELECT reserve_signal_topic_editorial_call_v1($1,$2,$3,$4) value',
       [args.lease.execution_id, args.lease.execution_token, args.request_digest, true]);
   });
+  } catch (error) { clearSignalTopicEditorialPlanCacheV1(args.database, leaseIdentity(args.lease)); throw error; }
 }
 export async function markSentSignalTopicEditorialCallV1(args: { database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1;
   call_id: string; attempt_token: string; provider_available?: boolean }): Promise<boolean> {
   if (args.provider_available !== true) return fail('topic_editorial_provider_disabled');
-  return tx(args.database, async client => {
-    const row = await owner(client, args.lease); await currentContext(client, args.lease.workspace_id, row.plan.source_context_digest);
+  try { return await tx(args.database, async client => {
+    await currentOwnedContext(args.database, client, args.lease);
     const bound = (await client.query('SELECT 1 FROM signal_topic_editorial_calls WHERE id=$1 AND execution_id=$2', [args.call_id,args.lease.execution_id])).rowCount;
     if (!bound) fail('topic_editorial_call_scope_invalid');
     return value(client, 'SELECT mark_sent_signal_topic_editorial_call_v1($1,$2,$3,$4) value',
       [args.call_id,args.attempt_token,args.lease.execution_token,true]);
   });
+  } catch (error) { clearSignalTopicEditorialPlanCacheV1(args.database, leaseIdentity(args.lease)); throw error; }
 }
 export async function persistSignalTopicEditorialResponseV1(args: { database: SignalTopicEditorialDatabaseV1; call_id: string; attempt_token: string;
   response_body_private: string; response_storage_key: string }): Promise<{ status: string; replayed: boolean }> {
@@ -259,7 +434,7 @@ export async function failSignalTopicEditorialCallV1(args: { database: SignalTop
 }
 export async function loadSignalTopicEditorialPaidResponseV1(args: { database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1; request_digest: string }): Promise<unknown | null> {
   return tx(args.database, async client => {
-    await owner(client,args.lease);
+    await compactOwner(client,args.lease);
     const row = (await client.query<{ response_output: unknown }>(`SELECT c.response_output FROM signal_topic_editorial_calls c
       JOIN signal_topic_editorial_requests r ON r.id=c.request_id WHERE c.execution_id=$1 AND r.request_digest=$2 AND c.status='settled'`,
     [args.lease.execution_id,args.request_digest])).rows[0];return row?.response_output ?? null;
@@ -273,10 +448,12 @@ export async function heartbeatSignalTopicEditorialExecutionV1(args: { database:
   return tx(args.database, client => value<boolean>(client,'SELECT heartbeat_signal_topic_editorial_execution_v1($1,$2) value',[args.lease.execution_id,args.lease.execution_token]));
 }
 export async function finishSignalTopicEditorialExecutionV1(args: { database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1 }) {
-  return tx(args.database, client => value<boolean>(client,'SELECT finish_signal_topic_editorial_execution_v1($1,$2) value',[args.lease.execution_id,args.lease.execution_token]));
+  try { return await tx(args.database, client => value<boolean>(client,'SELECT finish_signal_topic_editorial_execution_v1($1,$2) value',[args.lease.execution_id,args.lease.execution_token]));
+  } finally { clearSignalTopicEditorialPlanCacheV1(args.database, leaseIdentity(args.lease)); }
 }
 export async function failSignalTopicEditorialExecutionV1(args: { database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1; error_code: string }) {
-  return tx(args.database, client => value<boolean>(client,'SELECT fail_signal_topic_editorial_execution_v1($1,$2,$3) value',[args.lease.execution_id,args.lease.execution_token,args.error_code]));
+  try { return await tx(args.database, client => value<boolean>(client,'SELECT fail_signal_topic_editorial_execution_v1($1,$2,$3) value',[args.lease.execution_id,args.lease.execution_token,args.error_code]));
+  } finally { clearSignalTopicEditorialPlanCacheV1(args.database, leaseIdentity(args.lease)); }
 }
 export async function recoverSignalTopicEditorialExecutionsV1(args: { database: SignalTopicEditorialDatabaseV1; limit?: number }) {
   return tx(args.database, client => value<number>(client,'SELECT recover_signal_topic_editorial_executions_v1($1) value',[args.limit ?? 10]));

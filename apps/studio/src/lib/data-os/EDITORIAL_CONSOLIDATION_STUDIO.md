@@ -1,0 +1,25 @@
+# Editorial consolidation in Studio
+
+The numeric control stays free. Once it is ready, its editorial section exposes an explicit quote and a separate authorization. GET status alone never hydrates corpus evidence. Only GET with `quote=1` builds the private server plan. POST accepts exactly an action, numeric control ID, opaque SQL quote reference and confirmed cap; retry/completion accept the scoped execution ID. It rejects browser plans, evidence, actor, provider and configuration fields.
+
+The maximum is the policy cap returned by SQL, capped at 20,000,000 microUSD. It is a total limit, not an estimate or a charge. The unchecked confirmation names the exact amount. A changed cap requires a fresh quote and confirmation. Quote expiration hides the amount and disables authorization. Historical confirmed/reserved/ambiguous costs come only from the current status read; they are hidden if that read fails.
+
+## Private quote snapshot
+
+Studio requires `REDIS_URL` and `NOISIA_SIGNAL_TOPIC_EDITORIAL_QUOTE_KEY`, a canonical base64 encoding of 32 random bytes. This dedicated server secret is never returned to the browser or logged. The existing Worker receipt storage uses a private object bucket and has no reusable encryption-key contract for Studio. Keep the key stable across Studio replicas. Rotating it invalidates outstanding quotes, without affecting durable requests or results.
+
+`NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED=true` and `NOISIA_SIGNAL_TOPIC_EDITORIAL_PROVIDER_ENABLED=true` are explicit Studio deployment readiness declarations. They do not grant authority or establish that an external provider is healthy. Worker independently requires its lane/provider settings and API credential, plus SQL source/admission/lease/cap fences. Install matching SQL and deploy compatible consumers before declaring the lane available in Studio. Defaults hide new authorization; saved history remains readable, and free catalog completion does not require the paid flags or cache.
+
+Redis stores an AES-256-GCM encrypted JSON snapshot. AAD and hashed keys bind workspace, session actor, numeric control and quote reference. No corpus text is stored there in plaintext. Snapshots are bounded to 64 MiB, physically expire after 15 minutes, and only the latest snapshot is retained for an actor/workspace/numeric control. Superseding a quote in another tab can require quoting again. **SQL quote validity remains at most five minutes**; the longer cache TTL never extends authorization. Missing, expired or unauthentic snapshots fail closed; POST never rebuilds a plan silently.
+
+## Durable actions and recovery
+
+Authorization sends the cached exact server plan to the existing atomic SQL0178 request, which revalidates actor, source, policy, configuration, quote, cap and idempotency under its locks. The committed receipt is returned before any status refresh. A lost response keeps the same key, original reference and confirmed cap. Postcommit replay reads the historical owner scoped by workspace/actor/key, even if cache/runtime/source changed; SQL still revalidates live actor authority. It creates no second admission, reservation or outbox.
+
+`retry_editorial` targets the same numeric/editorial owner and exposes no higher cap or new plan. The UI offers it only to the current processing actor for a safe failed owner with no uncertain/in-flight calls and while the provider-free editorial Worker lane is enabled. It may recover settled paid receipts after policy, source or provider drift. If recovery reaches a missing call, the SQL reserve/send fences still require current policy, source, provider and budget authority; recovery itself never grants permission for a new send. Renewal of an expired editorial admission is not supplied by this cut.
+
+The normal Worker saves the validated global result automatically. After `review_ready` is stalled for at least 60 seconds, `complete_catalog` offers provider-free recovery. Studio scopes the owner; `materializeSignalTopicEditorialExecutionV1` derives and validates the immutable state/hash/census and delegates to the idempotent SQL materializer. Its durable identity is the owner and sealed state, rather than a new paid admission. The HTTP receipt echoes the request key for client correlation. Replaying a completed owner returns its existing revision. No transport, cost, reservation or serving activation is created. Refreshing the working catalog uses the existing editor-dirty guard.
+
+## Verification
+
+`pnpm --filter @noisia/studio exec tsx --test src/lib/data-os/workspace-topic-editorial.test.ts` covers strict commands, capped/redacted DTOs, ciphertext/scope/tamper checks, runtime-off behavior, missing/expired snapshots, changed confirmation, source/revocation denial, durable postcommit replay, free materialization, cross-tenant reads, request continuity and ES/EN rendered confirmation/expiry. Numeric-control regression tests remain in the Studio test manifest. No UAT, PostgreSQL migration or provider calls are part of these checks.

@@ -1,8 +1,11 @@
 import { z } from "zod";
+import { buildSignalTopicEditorialRepairRequestV1, signalTopicEditorialSemanticRepairErrorV1,
+  type SignalTopicEditorialRepairBindingV1 } from "./signal-topic-consolidation-editorial-repair-v1";
 import {
   SIGNAL_TOPIC_EDITORIAL_SCREENING_CONFIGURATION_V1,
   SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1,
   buildSignalTopicEditorialGlobalReviewV1,
+  buildSignalTopicEditorialScreeningPlanV1,
   signalTopicEditorialDigestV1,
   signalTopicEditorialGlobalOutputSchemaV1,
   signalTopicEditorialScreeningOutputSchemaV1,
@@ -35,6 +38,7 @@ export type SignalTopicEditorialRunnerProviderRequestV1 = Readonly<{
   model: typeof SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1;
   request_digest: string;
   request_body: string;
+  repair?: SignalTopicEditorialRepairBindingV1;
 }>;
 
 /** The caller owns transport and credentials. This contract intentionally exposes neither. */
@@ -110,12 +114,17 @@ function validatePlan(plan: SignalTopicEditorialScreeningPlanV1) {
     batchKeys.add(batch.batch_key);
     const receipts = new Set(batch.group_receipts.map(item => item.group_key));
     if (receipts.size !== batch.group_keys.length || batch.group_keys.some(key => !receipts.has(key) || !groupKeyPattern.test(key))
-      || batch.group_receipts.some(item => !digestPattern.test(item.group_digest) || !digestPattern.test(item.dossier_digest)
+      || batch.group_receipts.some(item => !digestPattern.test(item.group_digest) || !digestPattern.test(item.source_dossier_digest) || !digestPattern.test(item.dossier_digest)
         || (() => { try { return Intl.getCanonicalLocales(item.expected_locale)[0] !== item.expected_locale; } catch { return true; } })()
         || item.evidence_ref_ids.length > 10 || new Set(item.evidence_ref_ids).size !== item.evidence_ref_ids.length
         || item.evidence_ref_ids.some(ref => !digestPattern.test(ref))))
       fail("topic_editorial_runner_plan_invalid");
     groupKeys.push(...batch.group_keys);
+    let sourceGroups: unknown;
+    try { sourceGroups = JSON.parse(batch.source_groups_body); } catch { fail("topic_editorial_runner_source_groups_invalid"); }
+    if (!Array.isArray(sourceGroups) || sourceGroups.length !== batch.group_keys.length
+      || sourceGroups.some((group, index) => group?.group_key !== batch.group_keys[index]))
+      fail("topic_editorial_runner_source_groups_invalid");
   }
   if (groupKeys.length !== plan.expected_group_count || new Set(groupKeys).size !== groupKeys.length)
     fail("topic_editorial_runner_group_coverage_invalid");
@@ -127,6 +136,18 @@ function validateGroupsBeforeProvider(plan: SignalTopicEditorialScreeningPlanV1,
   const expected = new Set(groupKeys);
   if (groups.length !== groupKeys.length || new Set(groups.map(item => item.group_key)).size !== groups.length
     || groups.some(item => !expected.has(item.group_key))) fail("topic_editorial_runner_group_coverage_invalid");
+  // Rebuild the canonical string envelope from separately supplied groups. This
+  // validates source_groups_body, its coverage and every request digest without
+  // putting floating point dossier fields into a SQL JSON digest.
+  let rebuilt: SignalTopicEditorialScreeningPlanV1;
+  try {
+    const body = JSON.parse(plan.batches[0]!.request_body) as { messages: Array<{ content: string }> };
+    const context = JSON.parse(body.messages[0]!.content).context as Parameters<typeof buildSignalTopicEditorialScreeningPlanV1>[0]["context"];
+    rebuilt = buildSignalTopicEditorialScreeningPlanV1({ expected_group_count: plan.expected_group_count,
+      source_context_digest: plan.source_context_digest, editorial_context_digest: plan.editorial_context_digest,
+      context, groups, batch_size: plan.batch_size });
+  } catch { return fail("topic_editorial_runner_source_groups_invalid"); }
+  if (rebuilt.plan_digest !== plan.plan_digest) fail("topic_editorial_runner_source_groups_invalid");
   const decisions = [...groupKeys].sort().map(group_key => ({ group_key, disposition: "noise" as const,
     candidate: null, confidence: null, rationale: null, cited_ref_ids: [] }));
   buildSignalTopicEditorialGlobalReviewV1({ plan, groups, screening: {
@@ -167,6 +188,20 @@ async function persist(store: SignalTopicEditorialRunnerStoreV1, previous: Signa
   return state;
 }
 
+async function completeValidated<T>(provider: SignalTopicEditorialRunnerProviderV1,
+  original: SignalTopicEditorialRunnerProviderRequestV1, validate: (value: unknown) => T): Promise<T> {
+  // The provider ledger replays settled originals/children; this method never
+  // retries a transport or asks for a second repair of the same logical call.
+  const raw = await provider.complete(original);
+  try { return validate(raw); } catch (error) {
+    const code = signalTopicEditorialSemanticRepairErrorV1(original.phase, raw, error);
+    if (!code) throw error;
+    const repair = buildSignalTopicEditorialRepairRequestV1({ original, response: raw, error_code: code });
+    const repaired = await provider.complete(repair);
+    try { return validate(repaired); } catch { throw new Error("topic_editorial_repair_invalid"); }
+  }
+}
+
 export async function runSignalTopicEditorialConsolidationV1(args: {
   execution_key: string;
   plan: SignalTopicEditorialScreeningPlanV1;
@@ -194,9 +229,9 @@ export async function runSignalTopicEditorialConsolidationV1(args: {
   for (const batch of args.plan.batches) {
     if (completedIndexes.has(batch.batch_index)) continue;
     if (executed >= limit) break;
-    const raw = await args.provider.complete({ contract_version: "signal-topic-editorial-provider-request-v1", phase: "screening",
-      idempotency_key: batch.batch_key, model, request_digest: batch.request_digest, request_body: batch.request_body });
-    const output = validateSignalTopicEditorialScreeningOutputV1(batch, raw);
+    const output = await completeValidated(args.provider, { contract_version: "signal-topic-editorial-provider-request-v1", phase: "screening",
+      idempotency_key: batch.batch_key, model, request_digest: batch.request_digest, request_body: batch.request_body },
+    raw => validateSignalTopicEditorialScreeningOutputV1(batch, raw));
     const screening_outputs = [...state.screening_outputs, output].sort((a, b) => a.batch_index - b.batch_index);
     state = await persist(args.store, state, { contract_version: SIGNAL_TOPIC_EDITORIAL_RUNNER_CONTRACT_V1,
       execution_key: args.execution_key, plan_digest: args.plan.plan_digest,
@@ -214,10 +249,10 @@ export async function runSignalTopicEditorialConsolidationV1(args: {
     const result = validateSignalTopicEditorialGlobalResultV1({ review, screening, value: state.global.result });
     return { status: "completed", state, screening, review, result };
   }
-  const raw = await args.provider.complete({ contract_version: "signal-topic-editorial-provider-request-v1", phase: "global",
+  const result = await completeValidated(args.provider, { contract_version: "signal-topic-editorial-provider-request-v1", phase: "global",
     idempotency_key: `topic-consolidation-global-v1:${review.request_digest.slice(7, 23)}`, model,
-    request_digest: review.request_digest, request_body: review.request_body });
-  const result = validateSignalTopicEditorialGlobalResultV1({ review, screening, value: raw });
+    request_digest: review.request_digest, request_body: review.request_body },
+  value => validateSignalTopicEditorialGlobalResultV1({ review, screening, value }));
   state = await persist(args.store, state, { contract_version: SIGNAL_TOPIC_EDITORIAL_RUNNER_CONTRACT_V1,
     execution_key: args.execution_key, plan_digest: args.plan.plan_digest, phase: "completed",
     screening_outputs: state.screening_outputs, global: { request_digest: review.request_digest, result } });

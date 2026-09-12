@@ -16,6 +16,46 @@ export function SignalTopicsKpi({ help, label, secondary, tone, value }: {
   </article>;
 }
 
+export function SignalTopicsRankingCard<View extends string>({
+  activeView,
+  children,
+  eyebrow,
+  onViewChange,
+  title,
+  viewLabel,
+  views
+}: {
+  activeView: View;
+  children?: ReactNode;
+  eyebrow: ReactNode;
+  onViewChange: (view: View) => void;
+  title: ReactNode;
+  viewLabel: string;
+  views: ReadonlyArray<{ key: View; label: string }>;
+}) {
+  return <section className="signal-v2-card signal-v2-tn__ranking">
+    <header className="signal-v2-card__heading">
+      <div><small>{eyebrow}</small><h2>{title}</h2></div>
+      <div className="signal-v2-tn__view-switch" role="group" aria-label={viewLabel}>
+        {views.map((view) => <button type="button" key={view.key} aria-pressed={view.key === activeView}
+          onClick={() => onViewChange(view.key)}>{view.label}</button>)}
+      </div>
+    </header>
+    {children}
+  </section>;
+}
+
+export function SignalTopicSentimentLegend({ counts, labels }: {
+  counts: { negative: ReactNode; neutral: ReactNode; positive: ReactNode };
+  labels: { negative: string; neutral: string; positive: string };
+}) {
+  return <div className="signal-v2-tn__sentiment-legend">
+    {(["positive", "neutral", "negative"] as const).map((key) => <div key={key}>
+      <i aria-hidden className={`is-${key}`} /><span>{labels[key]}</span><strong>{counts[key]}</strong>
+    </div>)}
+  </div>;
+}
+
 export function SignalTopicsRankingList({ entries, labels, selectedKey, onSelect }: {
   entries: Array<{ key: string; label: string; count: number; formattedCount: string; share: string; change?: ReactNode }>;
   labels: { term: string; count: string; share: string; change?: string };

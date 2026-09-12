@@ -47,7 +47,16 @@ import { SignalMetricHelp } from "@/components/signal-v2/SignalMetricHelp";
 import { SignalSourceIcon } from "@/components/signal-v2/SignalSourceIcon";
 import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
 import { fetchSignalJsonWithRetry } from "@/lib/data-os/signal-client-fetch";
-import { SignalTopicsKpi as TnKpi, SignalTopicsRankingList } from "./SignalTopicsPrimitives";
+import {
+  SignalTopicSentimentLegend,
+  SignalTopicsKpi as TnKpi,
+  SignalTopicsRankingCard,
+  SignalTopicsRankingList
+} from "./SignalTopicsPrimitives";
+import {
+  buildSignalTopicSentimentOption,
+  buildSignalTopicTrendOption
+} from "./SignalTopicChartOptions";
 
 const BLUE = "#1689f5";
 const BLUE_SOFT = "#8fcef9";
@@ -70,8 +79,8 @@ export function SignalV2TopicsNarratives(props: Omit<Parameters<typeof LegacySig
   data: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1;
 }) {
   if (props.data.contract_version === "signal-workspace-topics-serving-v1") return <SignalV2WorkspaceTopics
-    data={props.data} loading={props.loading} manageTopicsHref={props.manageTopicsHref}
-    onApplyFilter={props.onApplyFilter} workspaceTimezone={props.filter.timezone} />;
+    brandName={props.brandName} data={props.data} loading={props.loading} manageTopicsHref={props.manageTopicsHref}
+    onApplyFilter={props.onApplyFilter} onOpenMentions={props.onOpenMentions} workspaceTimezone={props.filter.timezone} />;
   return <LegacySignalV2TopicsNarratives {...props} data={props.data} />;
 }
 
@@ -750,38 +759,24 @@ function LegacySignalV2TopicsNarratives({
         </section>
       ) : (
         <div className="signal-v2-tn__grid">
-          <section className="signal-v2-card signal-v2-tn__ranking">
-            <header className="signal-v2-card__heading">
-              <div>
-                <small>{t("ranking.eyebrow")}</small>
-                <h2>
-                  <SignalMetricHelp
-                    content={{
-                      title: t(`helpers.${kind}.title`),
-                      body: t(`helpers.${kind}.body`),
-                      reading: t(`helpers.${kind}.reading`)
-                    }}
-                    label={kind === "topic" ? t("ranking.topics") : t("ranking.narratives")}
-                  />
-                </h2>
-              </div>
-              <div className="signal-v2-tn__view-switch" role="group" aria-label={t("ranking.viewLabel")}>
-                <button
-                  aria-pressed={rankingView === "map"}
-                  onClick={() => setRankingView("map")}
-                  type="button"
-                >
-                  {t("ranking.map")}
-                </button>
-                <button
-                  aria-pressed={rankingView === "list"}
-                  onClick={() => setRankingView("list")}
-                  type="button"
-                >
-                  {t("ranking.list")}
-                </button>
-              </div>
-            </header>
+          <SignalTopicsRankingCard
+            activeView={rankingView}
+            eyebrow={t("ranking.eyebrow")}
+            onViewChange={setRankingView}
+            title={<SignalMetricHelp
+              content={{
+                title: t(`helpers.${kind}.title`),
+                body: t(`helpers.${kind}.body`),
+                reading: t(`helpers.${kind}.reading`)
+              }}
+              label={kind === "topic" ? t("ranking.topics") : t("ranking.narratives")}
+            />}
+            viewLabel={t("ranking.viewLabel")}
+            views={[
+              { key: "map", label: t("ranking.map") },
+              { key: "list", label: t("ranking.list") }
+            ]}
+          >
             {rankingView === "map" ? (
               <div className="signal-v2-tn__conversation-map">
                 <div className="signal-v2-tn__map-legend" aria-label={t("ranking.sentimentLegend")}>
@@ -809,7 +804,7 @@ function LegacySignalV2TopicsNarratives({
                 share: formatShare(term.share_of_included, locale), change: <ShareDelta value={term.share_delta} locale={locale} /> }))} />
               </>
             )}
-          </section>
+          </SignalTopicsRankingCard>
 
           <section className="signal-v2-card signal-v2-tn__detail">
             <header className="signal-v2-card__heading">
@@ -932,23 +927,18 @@ function LegacySignalV2TopicsNarratives({
                       className="signal-v2-tn__sentiment-chart"
                       option={sentimentOption}
                     />
-                    <div className="signal-v2-tn__sentiment-legend">
-                      <div>
-                        <i className="is-positive" />
-                        <span>{t("sentiment.positive")}</span>
-                        <strong>{detail.sentiment.positive_mentions}</strong>
-                      </div>
-                      <div>
-                        <i className="is-neutral" />
-                        <span>{t("sentiment.neutral")}</span>
-                        <strong>{detail.sentiment.neutral_mentions}</strong>
-                      </div>
-                      <div>
-                        <i className="is-negative" />
-                        <span>{t("sentiment.negative")}</span>
-                        <strong>{detail.sentiment.negative_mentions}</strong>
-                      </div>
-                    </div>
+                    <SignalTopicSentimentLegend
+                      counts={{
+                        positive: formatNumber(detail.sentiment.positive_mentions, locale),
+                        neutral: formatNumber(detail.sentiment.neutral_mentions, locale),
+                        negative: formatNumber(detail.sentiment.negative_mentions, locale)
+                      }}
+                      labels={{
+                        positive: t("sentiment.positive"),
+                        neutral: t("sentiment.neutral"),
+                        negative: t("sentiment.negative")
+                      }}
+                    />
                   </article>
                 </div>
                 <div className="signal-v2-tn__preview">
@@ -1230,53 +1220,10 @@ function buildTrendOption(
   locale: string,
   seriesName: string
 ): EChartsCoreOption {
-  const points = detail?.series ?? [];
-  return {
-    animation: true,
-    grid: { top: 16, right: 8, bottom: 36, left: 40 },
-    tooltip: {
-      trigger: "axis",
-      confine: true,
-      backgroundColor: "#fff",
-      borderColor: "#d3d3d3",
-      borderWidth: 1,
-      textStyle: { color: TEXT, fontFamily: "Product Sans, Google Sans, sans-serif", fontSize: 12 },
-      extraCssText: "border-radius:8px;box-shadow:0 7px 22px rgba(0,0,0,.14)"
-    },
-    xAxis: {
-      type: "category",
-      boundaryGap: false,
-      data: points.map((point) => formatDate(point.period_start, locale, true)),
-      axisLine: { lineStyle: { color: GRID } },
-      axisTick: { show: false },
-      axisLabel: {
-        color: MUTED,
-        fontFamily: "Product Sans, Google Sans, sans-serif",
-        fontSize: 10,
-        hideOverlap: true
-      }
-    },
-    yAxis: {
-      type: "value",
-      minInterval: 1,
-      axisLabel: {
-        color: MUTED,
-        fontFamily: "Product Sans, Google Sans, sans-serif",
-        fontSize: 10
-      },
-      splitLine: { lineStyle: { color: GRID } }
-    },
-    series: [{
-      name: seriesName,
-      type: "line",
-      smooth: 0.28,
-      showSymbol: false,
-      lineStyle: { color: BLUE, width: 2 },
-      itemStyle: { color: BLUE },
-      areaStyle: { color: BLUE_SOFT, opacity: 0.18 },
-      data: points.map((point) => point.mention_count)
-    }]
-  };
+  return buildSignalTopicTrendOption((detail?.series ?? []).map((point) => ({
+    label: formatDate(point.period_start, locale, true),
+    value: point.mention_count
+  })), seriesName);
 }
 
 function buildSentimentOption(
@@ -1284,48 +1231,11 @@ function buildSentimentOption(
   labels: { negative: string; neutral: string; positive: string }
 ): EChartsCoreOption {
   const sentiment = detail?.sentiment;
-  const total = sentiment?.classified_mentions ?? 0;
-  return {
-    tooltip: {
-      trigger: "item",
-      confine: true,
-      formatter: (params: unknown) => {
-        const item = params as { name?: string; value?: number; percent?: number };
-        return `<strong>${item.name ?? ""}</strong><br/>${item.value ?? 0} · ${Number(item.percent ?? 0).toFixed(1)}%`;
-      },
-      backgroundColor: "#fff",
-      borderColor: "#d3d3d3",
-      borderWidth: 1,
-      textStyle: { color: TEXT, fontFamily: "Product Sans, Google Sans, sans-serif", fontSize: 12 },
-      extraCssText: "border-radius:8px;box-shadow:0 7px 22px rgba(0,0,0,.14)"
-    },
-    graphic: [{
-      type: "text",
-      left: "center",
-      top: "middle",
-      style: {
-        text: String(total),
-        fill: TEXT,
-        font: "700 24px Product Sans, Google Sans, sans-serif",
-        textAlign: "center",
-        textVerticalAlign: "middle"
-      }
-    }],
-    series: [{
-      type: "pie",
-      radius: ["58%", "78%"],
-      center: ["50%", "50%"],
-      minAngle: 2,
-      itemStyle: { borderColor: "#fff", borderWidth: 2 },
-      label: { show: false },
-      emphasis: { scaleSize: 4 },
-      data: [
-        { name: labels.positive, value: sentiment?.positive_mentions ?? 0, itemStyle: { color: "#008060" } },
-        { name: labels.neutral, value: sentiment?.neutral_mentions ?? 0, itemStyle: { color: "#d7d7d7" } },
-        { name: labels.negative, value: sentiment?.negative_mentions ?? 0, itemStyle: { color: "#d72c0d" } }
-      ]
-    }]
-  };
+  return buildSignalTopicSentimentOption({
+    positive: sentiment?.positive_mentions ?? 0,
+    neutral: sentiment?.neutral_mentions ?? 0,
+    negative: sentiment?.negative_mentions ?? 0
+  }, labels);
 }
 
 function buildConversationMapOption(

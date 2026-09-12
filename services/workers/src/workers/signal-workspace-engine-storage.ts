@@ -13,6 +13,8 @@ type StoredFile = { storage_key: string; sha256: string; size_bytes: number; med
 type Envelope = { contract_version: "workspace-engine-parts-v1"; sha256: string; size_bytes: number;
   parts: Array<{ key: string; sha256: string; size_bytes: number }> };
 export type WorkspaceEngineStorageV1 = {
+  /** Verify configured private storage before a new paid send. No artifact is written. */
+  assertReady?(): Promise<void>;
   put(args: { workspace_id: string; execution_id: string; file: string; sha256: string; size_bytes: number;
     media_type: string }): Promise<StoredFile>;
   get(args: { workspace_id: string; execution_id: string; stored: StoredFile; destination: string }): Promise<void>;
@@ -75,6 +77,7 @@ export function createWorkspaceEngineStorageV1(options: {
     if (actual.length !== content.length || hash(actual) !== hash(content)) return fail("verification_failed");
   }
   return {
+    assertReady: privateBucket,
     async put(args) {
       await privateBucket();
       const prefix = prefixFor(args.workspace_id, args.execution_id), name = basename(args.file);

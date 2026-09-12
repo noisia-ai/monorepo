@@ -46,6 +46,16 @@ se usaba para comprensión editorial/insights; no acreditaba clasificación comp
 actual corrige esa debilidad: BERTopic y la propagación determinística/local cubren la población;
 Claude interpreta grupos compactos y resuelve decisiones editoriales.
 
+La auditoría histórica completa está en
+[`AUDIT_HISTORICAL_TOPIC_SIGNAL_RUNTIME_2026-09-12.md`](./AUDIT_HISTORICAL_TOPIC_SIGNAL_RUNTIME_2026-09-12.md).
+Separa cuatro recorridos que antes se relataban como uno: T&B estratégico, taxonomía histórica de
+Laika, laboratorio BERTopic y Signal Pulse. No se encontró un recibo que acredite una sola pasada de
+Claude sobre unas 30,000 menciones crudas. El recibo grande verificable de T&B fue una muestra de
+1,500 sobre un corpus aproximado de 40,000; la cifra posterior de 50,000 era capacidad declarada en
+código. Laika usaba una muestra determinista de 100 menciones para proponer términos y luego
+clasificaba pendientes por lotes. Su sistema visual y su disciplina de evidencia son reutilizables;
+esa muestra no acredita cobertura semántica completa.
+
 ## Dossier de grupo
 
 Cada uno de los 1,652 grupos se presenta al modelo mediante un objeto acotado:
@@ -72,8 +82,12 @@ digest forma parte del request. El modelo sólo puede referirse a grupos y evide
    relevancia, idioma y disposición, y propone fusiones/nombres/definiciones. Una validación global
    posterior impide grupos omitidos, duplicados o asignados a conceptos incompatibles.
 
-El presupuesto del corte tendrá tope explícito de USD 20 para consolidación, dentro de los USD 32
-disponibles comunicados por el operador. El preflight mostrará máximo, reserva y saldo. Una respuesta
+El presupuesto del corte tendrá tope explícito de USD 30 para consolidación, dentro de los USD 32
+adicionales comunicados por el operador. El preflight exacto reserva como máximo USD 29.081754 para
+el plan real de 1,652 grupos. El ledger común de la organización ya suma USD 5.270440 del día entre
+Claude y Voyage; la política UAT conserva esa exposición y añade exactamente USD 32 de autoridad,
+para un daily cap absoluto de USD 37.270440 y una exposición conservadora de USD 34.352194 si esta
+ejecución reservara su máximo. El preflight mostrará máximo, reserva y saldo. Una respuesta
 pagada nunca se descarta por un error de UI; cada request conserva recibo y recuperación.
 
 ## Signal común
@@ -114,7 +128,7 @@ lenguaje visual.
 1. Materializar descriptores/digests para todos los grupos atómicos sin proveedor.
 2. Proponer comunidades por similitud usando embeddings existentes.
 3. Mostrar censo, costo máximo y acción de interpretación en Topics.
-4. Ejecutar Sonnet 4.6 con tope de USD 20, recibos por batch y cobertura 1,652/1,652 o excepciones
+4. Ejecutar Sonnet 4.6 con tope de USD 30, recibos por batch y cobertura 1,652/1,652 o excepciones
    explícitas.
 5. Materializar catálogo consolidado, Noise y linaje; no alterar la generación actual hasta que el
    sucesor valide.
@@ -156,7 +170,8 @@ Estado al 12 de septiembre, después del inicio de este plan:
   alimentar presencia temporal, sentimiento, evidencia inline y relaciones.
 - SQL0174 y el Worker C2 preparan el censo exacto, centroides y comunidades sin proveedor. El contrato
   editorial revisa los 1,652 grupos en 42 lotes de Sonnet 4.6 y después ejecuta una revisión global
-  que fusiona candidatos en un máximo de 500 Topics/Narratives, conservando Noise y sin resolver.
+  que busca entre 24 y 80 Topics/Narratives y aplica un hard cap de 120, conservando Noise y sin
+  resolver. El validador rechaza cualquier salida que exceda ese límite.
 - SQL0175 añade una única acción cliente gratuita para preparar ese censo. La política, admisión,
   outbox, lease, recuperación y ACL se probaron sobre PostgreSQL 17 con pgvector. El ensayo descubrió
   y cerró antes de UAT un decimal que el digest canónico no podía sellar: el umbral ahora se expresa
@@ -164,16 +179,23 @@ Estado al 12 de septiembre, después del inicio de este plan:
 - Los dossiers calculan afinidad positiva, negativa y de abstención contra las guías publicadas de
   Brand OS usando sus embeddings existentes; no vuelven a llamar a Voyage. La ejecución de prueba de
   1,652 grupos, la cola durable, typechecks, build de Studio y suites focales están cerrados localmente.
-- La auditoría de legacy confirmó que el corpus grande se recorría en lotes de 30 menciones con
-  concurrencia cuatro y que una jerarquización posterior nombraba grupos. También encontró pérdidas
-  silenciosas que no se trasladan: el resumen retenía sólo top 60 y una mención tomaba el primer
-  cluster coincidente. La taxonomía visual madura de Laika era otro flujo: proponía 5–20 conceptos por
-  tipo desde Brand OS y sólo 100 menciones deterministas. Su UI es reutilizable; su muestra no acredita
-  cobertura semántica completa.
+- La auditoría de legacy confirmó que T&B podía recorrer menciones en lotes de 30 con concurrencia
+  cuatro, pero el recibo de runtime conservado procesó una muestra de 1,500 sobre un corpus aproximado
+  de 40,000. El tope posterior de 50,000 estaba en código y no prueba una ejecución completa. También
+  encontró pérdidas silenciosas que no se trasladan: el resumen retenía sólo top 60 y una mención
+  tomaba el primer cluster coincidente. La taxonomía visual madura de Laika era otro flujo: proponía
+  5–20 conceptos por tipo desde Brand OS y 100 menciones deterministas para el descubrimiento. Su UI
+  es reutilizable; esa muestra no acredita cobertura semántica completa.
 - La ficha oficial vigente de Sonnet 4.6 confirma USD 3/MTok de entrada, USD 15/MTok de salida, 1M de
   contexto y 128K de salida máxima. El producto mantendrá un límite menor por request y el tope global
-  de USD 20 definido arriba.
+  de USD 30 definido arriba.
 
-Pendiente inmediato: terminar la autoridad numérica gratuita y su cola, aplicar SQL0174–0175 una sola
-vez en UAT, correr el censo real de Alexa Plus y usar su distribución de comunidades para sellar la
-admisión editorial pagada. Ninguna generación actual se sustituye antes de validar el sucesor.
+El censo numérico ya terminó en UAT: 1,652 grupos atómicos forman 88 comunidades y conservan linaje
+exacto a 30,556 raíces. El runtime editorial y la materialización del sucesor pasaron un ensayo
+compuesto con 43 respuestas HTTP simuladas, caída posterior al resultado, recuperación gratuita y
+rollback final; la selección y el serving actual permanecieron byte-estables.
+
+Pendiente inmediato: aplicar SQL0178–0179 una sola vez en UAT, instalar una política temporal que
+añada exactamente USD 32 sobre la exposición ya confirmada, desplegar Studio y Worker con proveedor
+apagado, comprobar cero llamadas y entonces ejecutar la autorización desde Topics. Ninguna generación
+actual se sustituye antes de auditar idioma, relevancia, fusiones, Noise, cobertura y citas del sucesor.

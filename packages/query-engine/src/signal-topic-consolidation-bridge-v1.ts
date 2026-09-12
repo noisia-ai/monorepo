@@ -19,7 +19,7 @@ export type SignalTopicEditorialNumericCensusV1 = {
     group_key: string; lane: "open" | "guided"; stable_cluster_id: string; local_label: number;
     group_digest: string; root_count: number; chunk_count: number; terms: string[];
     dossier_digest: string;
-    dossier: Omit<SignalTopicEditorialScreeningGroupV1, "group_key" | "lane" | "group_digest" | "dossier_digest" | "community_key" | "root_count" | "chunk_count" | "terms" | "evidence"> & {
+    dossier: Omit<SignalTopicEditorialScreeningGroupV1, "group_key" | "lane" | "group_digest" | "source_dossier_digest" | "dossier_digest" | "community_key" | "root_count" | "chunk_count" | "terms" | "evidence"> & {
       contract_version: "signal-topic-group-dossier-v1"; evidence: Array<Omit<SignalTopicEditorialEvidenceV1, "text">>;
     };
     centroid: { artifact_id: string; artifact_sha256: string; centroid_key: string; centroid_digest: string } | null;
@@ -35,7 +35,7 @@ export type SignalTopicEditorialEvidenceLoadV1 = Pick<SignalTopicEditorialEviden
   "ref_id" | "root_id" | "chunk_index" | "start" | "end" | "chunk_sha256"> & { root_text: string };
 export type SignalTopicEditorialPreparedInputV1 = {
   contract_version: "signal-topic-editorial-prepared-input-v1";
-  workspace_id: string; source_execution_id: string; census_digest: string; community_plan_digest: string;
+  workspace_id: string; source_execution_id: string; census_digest: string; source_census_digest: string; community_plan_digest: string;
   source_context_digest: string; editorial_context_digest: string; context: SignalTopicEditorialBrandContextV1;
   expected_group_count: number; groups: SignalTopicEditorialScreeningGroupV1[];
   root_lineage: Array<{ group_key: string; group_digest: string;
@@ -49,6 +49,10 @@ const sha = (value: string) => `sha256:${createHash("sha256").update(value).dige
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 const unique = (values: string[], code: string) => { if (new Set(values).size !== values.length) fail(code); };
 const natural = (value: number) => Number.isSafeInteger(value) && value >= 0;
+/** A high-affiliation representative plus the boundary representative lets the
+ * editorial pass distinguish a coherent group from a mixed one. The complete
+ * ten-reference dossier remains sealed in the numeric source for drill-down. */
+export const SIGNAL_TOPIC_EDITORIAL_EVIDENCE_PER_GROUP_V1 = 2;
 const coordinates = ({ ref_id, root_id, chunk_index, start, end, chunk_sha256 }: SignalTopicEditorialEvidenceLoadV1 | Omit<SignalTopicEditorialEvidenceV1, "text">) =>
   ({ ref_id, root_id, chunk_index, start, end, chunk_sha256 });
 
@@ -56,12 +60,14 @@ const coordinates = ({ ref_id, root_id, chunk_index, start, end, chunk_sha256 }:
  * The injected loader must enforce access/source ownership; this bridge verifies the bytes. */
 export async function prepareSignalTopicEditorialInputV1(args: {
   census: SignalTopicEditorialNumericCensusV1; expected_census_digest: string;
+  source_census_digest?: string;
   communities: SignalTopicEditorialNumericCommunitiesV1; expected_community_plan_digest: string;
   context: SignalTopicEditorialBrandContextV1; expected_source_context_digest: string; expected_editorial_context_digest: string;
   load_evidence: (request: { workspace_id: string; source_execution_id: string; census_digest: string;
     refs: Array<ReturnType<typeof coordinates>> }) => Promise<SignalTopicEditorialEvidenceLoadV1[]>;
 }): Promise<SignalTopicEditorialPreparedInputV1> {
-  const seals = { census: args.expected_census_digest, communities: args.expected_community_plan_digest,
+  const seals = { census: args.expected_census_digest, source_census: args.source_census_digest ?? args.expected_census_digest,
+    communities: args.expected_community_plan_digest,
     source_context: args.expected_source_context_digest, editorial_context: args.expected_editorial_context_digest };
   const census = structuredClone(args.census), communities = structuredClone(args.communities), context = structuredClone(args.context);
   if (census.contract_version !== "signal-topic-consolidation-v1" || !uuidPattern.test(census.workspace_id) || !uuidPattern.test(census.source_execution_id)
@@ -96,7 +102,7 @@ export async function prepareSignalTopicEditorialInputV1(args: {
     if (digest(group.dossier) !== group.dossier_digest) fail("dossier_digest_invalid");
     const rootIds = new Set(group.roots.map(root => root.root_id));
     if (group.dossier.neighbors.some(item => !groupKeys.has(item.group_key))) fail("neighbor_unknown");
-    for (const ref of group.dossier.evidence) {
+    for (const ref of group.dossier.evidence.slice(0,SIGNAL_TOPIC_EDITORIAL_EVIDENCE_PER_GROUP_V1)) {
       if (!rootIds.has(ref.root_id)) fail("evidence_root_foreign");
       if (!natural(ref.chunk_index) || !natural(ref.start) || !natural(ref.end) || ref.end <= ref.start || !shaPattern.test(ref.chunk_sha256)
         || digest({ root_id: ref.root_id, chunk_index: ref.chunk_index, start: ref.start, end: ref.end, chunk_sha256: ref.chunk_sha256 }) !== ref.ref_id)
@@ -121,17 +127,18 @@ export async function prepareSignalTopicEditorialInputV1(args: {
     if (sha(text) !== item.chunk_sha256) fail("loaded_evidence_hash_invalid");
     texts.set(item.ref_id, text);
   }
-  const groups = census.groups.map(group => ({ group_key: group.group_key, lane: group.lane, group_digest: group.group_digest,
-    dossier_digest: group.dossier_digest, community_key: byCommunity.get(group.group_key)!, root_count: group.root_count,
+  const groups = census.groups.map(group => {const evidence=group.dossier.evidence.slice(0,SIGNAL_TOPIC_EDITORIAL_EVIDENCE_PER_GROUP_V1),
+    editorialDossier={...group.dossier,evidence};return ({ group_key: group.group_key, lane: group.lane, group_digest: group.group_digest,
+    source_dossier_digest:group.dossier_digest,dossier_digest:digest(editorialDossier), community_key: byCommunity.get(group.group_key)!, root_count: group.root_count,
     chunk_count: group.chunk_count, terms: group.terms, scope_counts: group.dossier.scope_counts,
     locale_counts: group.dossier.locale_counts, platform_counts: group.dossier.platform_counts, month_counts: group.dossier.month_counts,
     brand_affinity: group.dossier.brand_affinity, neighbors: group.dossier.neighbors, metrics: group.dossier.metrics,
-    evidence: group.dossier.evidence.map(ref => ({ ...ref, text: texts.get(ref.ref_id)! }))
-  })).sort((a, b) => compare(a.group_key, b.group_key));
+    evidence: evidence.map(ref => ({ ...ref, text: texts.get(ref.ref_id)! }))
+  });}).sort((a, b) => compare(a.group_key, b.group_key));
   const plan = buildSignalTopicEditorialScreeningPlanV1({ source_context_digest: census.context_digest,
     editorial_context_digest: seals.editorial_context, context, expected_group_count: census.expected_group_count, groups });
   const header = { contract_version: "signal-topic-editorial-prepared-input-v1" as const, workspace_id: census.workspace_id,
-    source_execution_id: census.source_execution_id, census_digest: seals.census,
+    source_execution_id: census.source_execution_id, census_digest: seals.census, source_census_digest: seals.source_census,
     community_plan_digest: seals.communities, source_context_digest: census.context_digest,
     editorial_context_digest: seals.editorial_context, context, expected_group_count: census.expected_group_count, groups,
     root_lineage: census.groups.map(group => ({ group_key: group.group_key, group_digest: group.group_digest,
@@ -141,6 +148,7 @@ export async function prepareSignalTopicEditorialInputV1(args: {
 
 export type SignalTopicSuccessorConceptV1 = {
   concept_key: string; kind: "topic" | "narrative"; label: string; definition: string; locale: string;
+  priority_rank: number; priority_rationale: string;
   semantic_identity_digest: string; definition_revision: number; selected: boolean; source: "model" | "human";
 };
 export type SignalTopicSuccessorGroupV1 = { group_key: string; group_digest: string;
@@ -224,7 +232,8 @@ export function buildSignalTopicSuccessorCatalogV1(args: {
     ...result.unresolved_group_keys.map(group_key => ({ group_key, group_digest: groupDefinitions.get(group_key)!.group_digest, disposition: "unresolved" as const, concept_key: null, source: "model" as const })),
   ].sort((a, b) => compare(a.group_key, b.group_key));
   const concepts: SignalTopicSuccessorConceptV1[] = result.concepts.map(concept => ({ concept_key: concept.concept_key, kind: concept.kind,
-    label: concept.label, definition: concept.definition, locale: concept.locale, definition_revision: 1, source: "model", selected: false,
+    label: concept.label, definition: concept.definition, locale: concept.locale, priority_rank: concept.priority_rank,
+    priority_rationale: concept.priority_rationale, definition_revision: 1, source: "model", selected: false,
     semantic_identity_digest: signalTopicSuccessorSemanticIdentityV1(concept, groups.filter(group => group.concept_key === concept.concept_key), args.input.source_context_digest) }));
   const header = { contract_version: "signal-topic-successor-catalog-v1" as const, revision: 1, previous_revision_digest: null,
     input_digest: args.input.input_digest, source_context_digest: args.input.source_context_digest, global_result_digest: digest(result),
@@ -235,7 +244,7 @@ export function buildSignalTopicSuccessorCatalogV1(args: {
 /** One explicit full revision; deletion/reassignment never erases atomic evidence.
  * Selection survives cosmetic edits only; semantic/membership changes clear it. */
 export function reviseSignalTopicSuccessorCatalogV1(args: { input: SignalTopicEditorialPreparedInputV1; prior: SignalTopicSuccessorCatalogV1;
-  expected_revision_digest: string; concepts: Array<Pick<SignalTopicSuccessorConceptV1, "concept_key" | "kind" | "label" | "definition" | "locale">>;
+  expected_revision_digest: string; concepts: Array<Pick<SignalTopicSuccessorConceptV1, "concept_key" | "kind" | "label" | "definition" | "locale" | "priority_rank" | "priority_rationale">>;
   groups: Array<Pick<SignalTopicSuccessorGroupV1, "group_key" | "disposition" | "concept_key">>;
 }): SignalTopicSuccessorCatalogV1 {
   inputValid(args.input);
@@ -256,12 +265,15 @@ export function reviseSignalTopicSuccessorCatalogV1(args: { input: SignalTopicEd
     const memberGroups = groups.filter(group => group.concept_key === concept.concept_key), prior = args.prior.concepts.find(item => item.concept_key === concept.concept_key);
     if (!memberGroups.length || !/^(topic|narrative)-[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(concept.concept_key) || !concept.concept_key.startsWith(`${concept.kind}-`)
       || !["topic", "narrative"].includes(concept.kind) || !concept.label.trim() || concept.label.length > 160
-      || !concept.definition.trim() || concept.definition.length > 1200 || Intl.getCanonicalLocales(concept.locale)[0] !== concept.locale)
+      || !concept.definition.trim() || concept.definition.length > 500 || Intl.getCanonicalLocales(concept.locale)[0] !== concept.locale
+      || !Number.isSafeInteger(concept.priority_rank) || concept.priority_rank < 1 || concept.priority_rank > 120
+      || !concept.priority_rationale.trim() || concept.priority_rationale.length > 280)
       fail("revision_concept_invalid");
     const semantic_identity_digest = signalTopicSuccessorSemanticIdentityV1(concept, memberGroups, args.input.source_context_digest);
     return { ...concept, semantic_identity_digest, definition_revision: (prior?.definition_revision ?? 0) + 1, source: "human" as const,
       selected: prior?.semantic_identity_digest === semantic_identity_digest && prior.selected === true };
-  }).sort((a, b) => compare(a.concept_key, b.concept_key));
+  }).sort((a, b) => a.priority_rank-b.priority_rank || compare(a.concept_key, b.concept_key));
+  if(concepts.some((item,index)=>item.priority_rank!==index+1)) fail("revision_priority_invalid");
   const header = { ...priorBody, revision: args.prior.revision + 1, previous_revision_digest: revision_digest, concepts, groups,
     roots: buildRoots(args.input, groups), selection_mapping: args.prior.selection_mapping.filter(mapping =>
       concepts.some(concept => concept.concept_key === mapping.concept_key && concept.semantic_identity_digest === mapping.semantic_identity_digest)),

@@ -126,6 +126,29 @@ test("0177 keeps the shared numeric trigger from reading sibling-table columns",
   assert.match(sql, /REVOKE ALL ON FUNCTION signal_topic_consolidation_numeric_content_guard_v1\(\) FROM PUBLIC/u);
 });
 
+test("0178 upgrades the editorial prompt/schema and explicit cap before the paid ledger is used", () => {
+  const sql = readFileSync(new URL("./0178_signal_topic_editorial_catalog_contract.sql", import.meta.url), "utf8");
+  assert.match(sql,/topic_editorial_contract_upgrade_requires_empty_ledger/u);
+  assert.match(sql,/CREATE OR REPLACE FUNCTION signal_topic_editorial_configuration_v1\(\)/u);
+  assert.match(sql,/sha256:08f97c1229f3a2603a69d5224c97492b7d0cb32bb2c65c868233fae06a551f2e/u);
+  assert.match(sql,/sha256:c411a17c3d93c2fa73f7d81cdd755a97de45a379f9513ca0f17075681cdd3503/u);
+  assert.match(sql,/sha256:13996f4e96d9aeac84712100447d6c0a1ab289bee242f187cf434ef8ddc2121d/u);
+  assert.match(sql,/sha256:12ad951109d4713e94cffb61def501a1987035b15eb485362117dc88b5c559c2/u);
+  assert.match(sql,/REVOKE ALL ON FUNCTION signal_topic_editorial_configuration_v1\(\) FROM PUBLIC/u);
+  // The original all-requests slot is replaced by two scoped partial unique indexes.
+  assert.match(sql, /pg_get_constraintdef\(oid\)='UNIQUE \(execution_id, phase, batch_index\)'/u);
+  assert.match(sql, /CREATE UNIQUE INDEX topic_editorial_original_request_slot/u);
+  assert.match(sql, /CREATE UNIQUE INDEX topic_editorial_one_repair_per_parent/u);
+  const allowed = "ALTER TABLE signal_topic_editorial_requests DROP CONSTRAINT %I";
+  assert.equal(sql.split(allowed).length, 2);
+  const capConstraints = [
+    "DROP CONSTRAINT signal_topic_editorial_executions_hard_cap_micro_usd_check",
+    "DROP CONSTRAINT signal_processing_consolidation_action",
+  ];
+  for (const constraint of capConstraints) assert.equal(sql.split(constraint).length, 2);
+  assert.doesNotMatch(capConstraints.reduce((body,constraint) => body.replace(constraint,''),sql.replace(allowed, '')), /\b(?:DROP|TRUNCATE)\b/iu);
+});
+
 test("exact kNN rejects an unbounded group census before opening PostgreSQL", async () => {
   let connected = false;
   await assert.rejects(computeSignalTopicConsolidationCentroidsV1({

@@ -4,8 +4,8 @@ import {
   requestSignalTopicConsolidationV1,
   retrySignalTopicConsolidationV1,
   SignalTopicConsolidationControlError,
-  type SignalTopicConsolidationStatusV1,
 } from "@noisia/db";
+import type { WorkspaceTopicConsolidationReceiptV1 } from "./workspace-topic-consolidation-request";
 
 type Access = { database?: Pick<Pool, "connect">; workspaceId: string; actorUserId: string };
 export type WorkspaceTopicConsolidationCommandV1 =
@@ -44,17 +44,19 @@ export async function loadWorkspaceTopicConsolidationForActorV1(args: Access & {
 
 export async function requestWorkspaceTopicConsolidationForActorV1(args: Access & {
   idempotencyKey: string; body: unknown;
-}): Promise<SignalTopicConsolidationStatusV1> {
+}): Promise<WorkspaceTopicConsolidationReceiptV1> {
   if (!KEY.test(args.idempotencyKey)) throw new SignalTopicConsolidationControlError("topic_consolidation_request_invalid", 422);
   const command = parseWorkspaceTopicConsolidationCommandV1(args.body);
   if (!command) throw new SignalTopicConsolidationControlError("topic_consolidation_request_invalid", 422);
   const access = await options(args);
-  if (command.action === "prepare_numeric") {
-    await requestSignalTopicConsolidationV1({ ...access, source_execution_id: command.source_execution_id,
-      idempotency_key: args.idempotencyKey, quote_reference: command.quote_reference });
-    return loadSignalTopicConsolidationStatusV1({ ...access, source_execution_id: command.source_execution_id });
-  }
-  await retrySignalTopicConsolidationV1({ ...access, execution_id: command.execution_id,
-    idempotency_key: args.idempotencyKey });
-  return loadSignalTopicConsolidationStatusV1(access);
+  const receipt = command.action === "prepare_numeric"
+    ? await requestSignalTopicConsolidationV1({ ...access, source_execution_id: command.source_execution_id,
+      idempotency_key: args.idempotencyKey, quote_reference: command.quote_reference })
+    : await retrySignalTopicConsolidationV1({ ...access, execution_id: command.execution_id,
+      idempotency_key: args.idempotencyKey });
+  // The transaction is committed. A separate status read must not turn this
+  // durable acceptance into an apparent mutation failure.
+  return { contract_version: "signal-topic-consolidation-request-receipt-v1", workspace_id: args.workspaceId,
+    action: command.action, execution_id: receipt.execution_id, idempotency_key: args.idempotencyKey,
+    replayed: receipt.replayed };
 }

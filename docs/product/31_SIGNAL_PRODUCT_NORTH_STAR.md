@@ -1342,3 +1342,38 @@ SIGNAL_10C2_EXECUTION_AUTHORIZED=false
 SIGNAL_10C2_EXECUTED=false
 SIGNAL_10D_READY=false
 ```
+
+## Addendum 2026-09-12 · Cobertura computacional y edición semántica
+
+Este addendum nutre el Compass sin sustituir los checkpoints anteriores. La
+[`auditoría histórica de Topics y Signal`](./PROMPT_LOOPING/AUDIT_HISTORICAL_TOPIC_SIGNAL_RUNTIME_2026-09-12.md)
+separó recorridos que la memoria operativa había mezclado: T&B estratégico, taxonomía histórica de
+Laika, laboratorio BERTopic y Signal Pulse. No se encontró un recibo que pruebe una sola pasada de
+Claude sobre unas 30,000 menciones crudas. El runtime grande conservado de T&B procesó una muestra de
+1,500 sobre un corpus aproximado de 40,000; sus máximos posteriores eran capacidad declarada, no
+evidencia de ejecución.
+
+La regla de producto queda explícita: embeddings, clustering y propagación determinística cubren la
+población completa; Claude interpreta dossiers de grupos, nombra, define, prioriza y decide
+`Topic` / `Narrative` / `Noise` / `Unresolved`; Signal sirve métricas, evidencia y relaciones desde
+materializaciones SQL con linaje. Voyage aporta geometría semántica y retrieval, pero no decide qué se
+publica. La carga incremental debe reutilizar el catálogo vigente, conservar candidatos emergentes y
+evitar reprocesar el corpus histórico cuando no cambió su autoridad.
+
+Para la consolidación vigente de 1,652 grupos, el contrato busca **24–80 conceptos** y aplica un
+**hard cap de 120**. La cifra previa de 500 era obsoleta. La cobertura exacta del validador evita
+omisiones y duplicados, pero no acredita precisión semántica: antes de activar una generación siguen
+siendo obligatorios QA de sobre-fusión, sub-fusión, idioma, relevancia de marca, Noise y evidencia.
+
+Laika continúa como referencia visual vendida para series, sentimiento, relaciones y evidencia. Sus
+componentes y su disciplina de linaje son reutilizables. Su clasificación proveedor-por-mención y su
+muestra de descubrimiento de 100 menciones no son el runtime de escala para corpus de 100K–2M. Este
+addendum no declara corrida pagada, activación UAT ni Gate 10D.
+
+```text
+SIGNAL_FULL_POPULATION_COMPUTE_PRINCIPLE=true
+SIGNAL_EDITORIAL_TARGET_RANGE=24..80
+SIGNAL_EDITORIAL_HARD_CAP=120
+SIGNAL_EDITORIAL_CONSOLIDATION_UAT_PROVEN=false
+SIGNAL_10D_READY=false
+```
