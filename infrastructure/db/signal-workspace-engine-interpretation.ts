@@ -369,8 +369,6 @@ export async function settleSignalWorkspaceEngineTerminalBillingV1(args:{databas
    ||receipt.billing_status!=='unreconciled'||receipt.provider_request_id!==args.expected_provider_request_id||receipt.call_id!==row.id
    ||receipt.attempt_token!==row.attempt_token||receipt.workspace_id!==row.workspace_id||receipt.execution_id!==row.catalog_execution_id
    ||receipt.request_digest!==row.request_digest||receipt.provider_model!==row.call_configuration.model)return fail('workspace_engine_interpretation_terminal_billing_unavailable');
-  if((await c.query("SELECT 1 FROM engine_cost_events WHERE retry_of_call_id=$1::uuid LIMIT 1",[row.id])).rows.length)
-   return fail('workspace_engine_interpretation_terminal_billing_retry_exists');
   const usage=receipt.usage;
   if(!usage||Object.keys(usage).sort().join(',')!=='cache_creation_input_tokens,cache_read_input_tokens,input_tokens,output_tokens'
    ||!Object.values(usage).every(n=>Number.isSafeInteger(n)&&n>=0&&n<=2147483647))return fail('workspace_engine_interpretation_terminal_billing_invalid');
