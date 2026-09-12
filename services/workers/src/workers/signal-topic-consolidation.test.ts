@@ -94,14 +94,17 @@ test("binds exact normalized centroids and produces a total kNN community partit
         const second = Array.from({ length: 1024 }, (_, index) => index === 0 ? 0.8 : index === 1 ? 0.6 : 0);
         return { artifact_id: uuid(910_001), artifact_sha256: sha("centroid-artifact"), centroids: [
           { group_key: keys[0]!, vector: first, centroid_digest: signalTopicConsolidationDigestV1(first),
-            neighbors: [{ group_key: keys[1]!, similarity: 0.8 }],brand_affinity:{positive:[{guide_key:"scope:brand",score:0.9}],negative:[],abstention:[]} },
+            neighbors: [{ group_key: keys[1]!, similarity: 0.8 }],brand_affinity:{positive:[
+              {guide_key:"topic:z-higher-score",score:0.9},{guide_key:"scope:brand",score:0.7}
+            ],negative:[],abstention:[]} },
           { group_key: keys[1]!, vector: second, centroid_digest: signalTopicConsolidationDigestV1(second),
             neighbors: [{ group_key: keys[0]!, similarity: 0.8 }],brand_affinity:{positive:[],negative:[],abstention:[]} },
         ] };
       } });
     assert.equal(result.community_status,"ready");
     assert.equal(result.census.groups.filter(group => group.centroid !== null).length,2);
-    assert.deepEqual(result.census.groups[0]?.dossier.brand_affinity.positive,[{guide_key:"scope:brand",score:0.9}]);
+    assert.deepEqual(result.census.groups[0]?.dossier.brand_affinity.positive,
+      [{guide_key:"topic:z-higher-score",score:0.9},{guide_key:"scope:brand",score:0.7}]);
     assert.equal(result.community_plan?.communities.length,1);
     assert.equal(result.community_plan?.communities[0]?.members.length,2);
   } finally { await rm(directory,{ recursive: true, force: true }); }

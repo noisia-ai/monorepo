@@ -120,7 +120,8 @@ function parseCountEntries(value: unknown, code: string, max: number) {
 function parseAffinities(value: unknown, code: string) {
   const result = array(value, code, 32).map((item) => { const row = object(item, code); exact(row, ["guide_key", "score"], code);
     return { guide_key: string(row.guide_key, code, 200), score: unit(row.score, code) }; });
-  unique(result.map(item => item.guide_key), code); return lexical(result, item => item.guide_key);
+  unique(result.map(item => item.guide_key), code);
+  return result.sort((a, b) => b.score - a.score || asciiCompare(a.guide_key, b.guide_key));
 }
 function parseDossier(value: unknown, knownRoots: ReadonlyMap<string, SignalTopicConsolidationRootV1>, groupKey: string): SignalTopicConsolidationDossierV1 {
   const row = object(value, "topic_consolidation_dossier_invalid");
