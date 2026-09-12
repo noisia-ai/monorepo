@@ -55,7 +55,18 @@ function stageFailure(stage: string, error: unknown): Error {
   if (known) return new Error(known);
   const sqlState = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
     ? error.code : null;
-  return new Error(`signal_topic_consolidation_${stage}_${databaseFailure.get(sqlState ?? "") ?? "failed"}`);
+  const databaseCode = databaseFailure.get(sqlState ?? "");
+  if (databaseCode) return new Error(`signal_topic_consolidation_${stage}_${databaseCode}`);
+  const stackFrame = error instanceof Error
+    ? error.stack?.split("\n").slice(1).map(line => line.trim()).find(line => line.startsWith("at ")) ?? null
+    : null;
+  console.error("Signal topic consolidation stage diagnostic", {
+    stage,
+    error_name: error instanceof Error ? error.name : typeof error,
+    sql_state: sqlState && /^[0-9A-Z]{5}$/u.test(sqlState) ? sqlState : null,
+    stack_frame: stackFrame,
+  });
+  return new Error(`signal_topic_consolidation_${stage}_failed`);
 }
 async function atStage<T>(stage: string, work: () => Promise<T>): Promise<T> {
   try { return await work(); } catch (error) { throw stageFailure(stage, error); }

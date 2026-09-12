@@ -584,7 +584,10 @@ const transaction = async <T>(database: SignalTopicConsolidationDatabaseV1, work
   try {
     await client.query("BEGIN"); await client.query("SET LOCAL search_path=public,extensions,pg_temp");
     const result = await work(client); await client.query("COMMIT"); return result;
-  } catch (caught) { await client.query("ROLLBACK"); throw caught; } finally { client.release(); }
+  } catch (caught) {
+    try { await client.query("ROLLBACK"); } catch { /* Preserve the original failure. */ }
+    throw caught;
+  } finally { client.release(); }
 };
 const chunks = <T>(items: readonly T[], size: number): T[][] => {
   const pages: T[][] = []; for (let offset = 0; offset < items.length; offset += size) pages.push(items.slice(offset, offset + size)); return pages;
