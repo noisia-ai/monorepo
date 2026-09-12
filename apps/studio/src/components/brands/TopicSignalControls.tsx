@@ -11,9 +11,15 @@ export function canChangeTopicSignalSelectionV1(state: TopicSignalSelectionV1 | 
   working: { definitionRevision: number; definitionDigest: string }, blocked: boolean) {
   if (!state?.can_select || blocked) return false;
   if (state.selected) return true;
-  return state.definition_revision === working.definitionRevision
-    && state.definition_digest === working.definitionDigest
+  return state.definition_digest === working.definitionDigest
     && canSelectTopicSignalV1(state, false, false);
+}
+
+export function topicSignalSelectionExpectedDefinitionV1(state: TopicSignalSelectionV1,
+  working: { definitionRevision: number; definitionDigest: string }) {
+  return state.selected
+    ? { definitionRevision: state.definition_revision, definitionDigest: state.definition_digest }
+    : working;
 }
 
 export function TopicSignalControls({ workspaceId, termKey, definitionRevision, definitionDigest, dirty, disabled = false, signalHref = null, refreshKey = null, onAccessDenied }: {
@@ -110,9 +116,10 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
     if (!value) {
       if (!canSelectTopicSignalV1(state, dirty, false)) return;
       const key = crypto.randomUUID();
+      const expected = topicSignalSelectionExpectedDefinitionV1(state, { definitionRevision, definitionDigest });
       value = { key, workspace_id: workspaceId, term_key: termKey, request_scope: state.request_scope,
-        body: { action: "select_signal", selected: !state.selected, expected_definition_revision: state.definition_revision,
-          expected_definition_digest: state.definition_digest, expected_selection_revision: state.selection_revision,
+        body: { action: "select_signal", selected: !state.selected, expected_definition_revision: expected.definitionRevision,
+          expected_definition_digest: expected.definitionDigest, expected_selection_revision: state.selection_revision,
           generation_id: state.generation_id, idempotency_key: key } };
       try { sessionStorage.setItem(topicSignalSelectionStorageKeyV1(workspaceId, termKey, state.request_scope), JSON.stringify(value)); }
       catch { /* keep exact intent in memory; never auto-resend */ }
@@ -138,7 +145,7 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
     } finally { sending.current = false; if (alive.current && run === epoch.current) setBusy(false); }
   };
   const state = data?.workspace_id === workspaceId && data.term_key === termKey ? data : null;
-  const matches = state?.definition_revision === definitionRevision && state.definition_digest === definitionDigest;
+  const matches = state?.definition_digest === definitionDigest;
   const canChange = canChangeTopicSignalSelectionV1(state, { definitionRevision, definitionDigest },
     dirty || busy || disabled || Boolean(error));
   return <div className="topics-manager__cost-notice" aria-busy={busy}>

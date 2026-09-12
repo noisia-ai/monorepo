@@ -5,6 +5,7 @@ import test from "node:test";
 import type { Pool } from "pg";
 
 import { validateSignalWorkspaceSourceInputV1 } from "@noisia/query-engine";
+import { getPositiveNumber } from "../url/search";
 
 import {
   buildAdminWorkspaceConnectorInput,
@@ -40,6 +41,13 @@ test("Admin connector creation separates transport from acquisition scope", () =
   });
 });
 
+test("Admin pagination accepts only PostgreSQL-safe positive integers", () => {
+  assert.equal(getPositiveNumber("3", 1), 3);
+  for (const value of [undefined, "0", "-1", "1.5", "NaN", "2147483648"]) {
+    assert.equal(getPositiveNumber(value, 1), 1);
+  }
+});
+
 test("single-brand loaders preserve access and lookup without querying workspace details", async (t) => {
   const brandId = "10000000-0000-4000-8000-000000000001";
   const workspaceId = "10000000-0000-4000-8000-000000000002";
@@ -51,6 +59,11 @@ test("single-brand loaders preserve access and lookup without querying workspace
   const originalPool = globalThis.noisiaStudioPgPool;
   globalThis.noisiaStudioPgPool = { async query(sql: string, values: unknown[]) {
     queries.push(sql);
+    if (sql.includes("WITH filtered AS MATERIALIZED")) {
+      assert.deepEqual(values, ["summary", "fixture", "active", 9, 30]);
+      assert.doesNotMatch(sql, /mentions|signal_population_memberships|import_batches/iu);
+      return { rows: [{ brand_id: brandId, total_count: "1", safe_page: "1" }] };
+    }
     if (sql.includes("FROM brands brand") && sql.includes("JOIN users actor")) {
       assert.equal(values.length, 2);
       assert.equal(values[1], actor.id);
@@ -63,6 +76,12 @@ test("single-brand loaders preserve access and lookup without querying workspace
         ? [{ brand_name: row.brand_name, workspace_id: row.workspace_id }] : [] };
     }
     if (sql.includes("FROM brands brand")) {
+      if (values.length === 2) {
+        assert.deepEqual(values, [null, [brandId]]);
+        assert.match(sql, /brand\.id=ANY\(\$2::uuid\[\]\)/u);
+        assert.match(sql, /membership\.removed_at IS NULL\s+AND FALSE/u);
+        return { rows: [row] };
+      }
       assert.equal(values.length, 1);
       return { rows: values[0] === brandId || values[0] === row.brand_slug ? [row] : [] };
     }
@@ -107,6 +126,27 @@ test("single-brand loaders preserve access and lookup without querying workspace
       actorActive = false;
       assert.equal(await getAdminBrandWorkspaceIdentity(actor, brandId), null);
       assert.equal(queries.length, 5, "a revoked internal actor cannot receive identity data");
+    });
+    await t.test("Brand index resolves the page before reading corpus receipts", async () => {
+      queries.length = 0;
+      actorActive = true;
+      row.workspace_id = workspaceId;
+      const { listAdminBrandWorkspacePage, loadAdminBrandWorkspacePageCorpus } = await import("../data/admin-workspace");
+      assert.deepEqual(await listAdminBrandWorkspacePage({ ...actor, userType: "client" }, {
+        query: "summary", organization: "fixture", status: "active", page: 9, pageSize: 30
+      }), { rows: [], page: 1, pageSize: 30, total: 0, totalPages: 1 });
+      assert.equal(queries.length, 0);
+      const page = await listAdminBrandWorkspacePage(actor, {
+        query: "summary", organization: "fixture", status: "active", page: 9, pageSize: 30
+      });
+      assert.equal(page.total, 1);
+      assert.equal(page.page, 1);
+      assert.equal(page.rows.length, 1);
+      assert.equal(page.rows[0]?.brandId, brandId);
+      assert.equal(page.rows[0]?.corpus, null);
+      assert.equal(queries.length, 2, "brand identities render before corpus reconciliation completes");
+      assert.deepEqual(await loadAdminBrandWorkspacePageCorpus(actor, [workspaceId]), new Map());
+      assert.equal(queries.length, 3, "canonical corpus authority remains a separate streamed read");
     });
   } finally {
     globalThis.noisiaStudioPgPool = originalPool;

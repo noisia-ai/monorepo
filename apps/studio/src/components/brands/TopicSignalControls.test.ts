@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { canChangeTopicSignalSelectionV1 } from "./TopicSignalControls";
+import { canChangeTopicSignalSelectionV1, topicSignalSelectionExpectedDefinitionV1 } from "./TopicSignalControls";
 import type { TopicSignalSelectionV1 } from "@/lib/data-os/signal-topic-selection-ui";
 
 const digestA = `sha256:${"a".repeat(64)}`;
@@ -30,14 +30,27 @@ test("a selected serving definition can be removed while a newer working definit
     { definitionRevision: 2, definitionDigest: digestB }, false), false);
 });
 
-test("selecting requires the exact current working definition and every local edit/access fence", () => {
+test("selecting accepts an editorial-only revision but blocks semantic and local edits", () => {
   const unselected = { ...state, selected: false };
   assert.equal(canChangeTopicSignalSelectionV1(unselected,
     { definitionRevision: 1, definitionDigest: digestA }, false), true);
   assert.equal(canChangeTopicSignalSelectionV1(unselected,
+    { definitionRevision: 2, definitionDigest: digestA }, false), true);
+  assert.equal(canChangeTopicSignalSelectionV1(unselected,
+    { definitionRevision: 2, definitionDigest: digestB }, false), false);
+  assert.equal(canChangeTopicSignalSelectionV1(unselected,
     { definitionRevision: 1, definitionDigest: digestA }, true), false);
   assert.equal(canChangeTopicSignalSelectionV1({ ...state, can_select: false },
     { definitionRevision: 2, definitionDigest: digestB }, false), false);
+});
+
+test("selection sends the working revision while removal preserves the selected identity", () => {
+  assert.deepEqual(topicSignalSelectionExpectedDefinitionV1({ ...state, selected: false },
+    { definitionRevision: 2, definitionDigest: digestA }),
+  { definitionRevision: 2, definitionDigest: digestA });
+  assert.deepEqual(topicSignalSelectionExpectedDefinitionV1(state,
+    { definitionRevision: 2, definitionDigest: digestB }),
+  { definitionRevision: 1, definitionDigest: digestA });
 });
 
 test("the client Topics entry keeps Brand OS in its scoped journey", async () => {

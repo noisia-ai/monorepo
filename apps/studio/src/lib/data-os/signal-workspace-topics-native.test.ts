@@ -29,9 +29,12 @@ test("selection survives a newer compatible generation without becoming a paid a
   assert.equal(nativeTopicSelectionViewV1(scope, "delivery", undefined, state, overview, { ...caps, can_execute_topics: false, can_adopt_topics: false }).can_select, true);
   assert.equal(nativeTopicSelectionViewV1(scope, "delivery", undefined, state, overview, { ...caps, can_select_signal: false }).can_select, false);
 });
-test("changed meaning or stale generation keeps selection removable but not falsely current", () => {
-  const edited = { ...overview, terms: [{ ...overview.terms[0]!, definition_revision: 2 }] };
-  const result = nativeTopicSelectionViewV1(scope, "delivery", undefined, state, edited, caps);
+test("editorial revision stays current while changed meaning or stale generation does not", () => {
+  const renamed = { ...overview, terms: [{ ...overview.terms[0]!, definition_revision: 2 }] };
+  assert.equal(nativeTopicSelectionViewV1(scope, "delivery", undefined, state, renamed, caps).is_current, true);
+  const changed = { ...overview, terms: [{ ...overview.terms[0]!, definition_revision: 2,
+    definition_digest: `sha256:${"c".repeat(64)}` }] };
+  const result = nativeTopicSelectionViewV1(scope, "delivery", undefined, state, changed, caps);
   assert.equal(result.selected, true); assert.equal(result.is_current, false);
   assert.equal(nativeTopicSelectionViewV1(scope, "delivery", undefined, state, null, caps).is_current, false);
 });

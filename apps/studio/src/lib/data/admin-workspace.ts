@@ -150,6 +150,51 @@ export async function listAdminBrandWorkspaces(user: AdminUser): Promise<AdminBr
   return loadAdminBrandWorkspaceRows(user);
 }
 
+export type AdminBrandWorkspacePage = {
+  rows: AdminBrandWorkspaceRow[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+/** The brand index resolves filters and pagination before it touches corpus
+ * receipts. Only the visible workspaces pay for the canonical corpus summary,
+ * and this projection omits the legacy population coverage that the page never
+ * renders. Detail, Dashboard, Data and Reports keep their existing contract. */
+export async function listAdminBrandWorkspacePage(user: AdminUser, args: {
+  query: string;
+  organization: string;
+  status: string;
+  page: number;
+  pageSize: number;
+}): Promise<AdminBrandWorkspacePage> {
+  if (user.userType !== "noisia_internal") return { rows: [], page: 1, pageSize: args.pageSize, total: 0, totalPages: 1 };
+  if (!Number.isSafeInteger(args.page) || args.page < 1 || !Number.isSafeInteger(args.pageSize) || args.pageSize < 1 || args.pageSize > 100) {
+    throw new Error("admin_brand_workspace_page_invalid");
+  }
+  const index = await pool.query<{ brand_id: string | null; total_count: number | string; safe_page: number | string }>(
+    ADMIN_BRAND_WORKSPACE_PAGE_INDEX_SQL,
+    [args.query, args.organization, args.status, args.page, args.pageSize]
+  );
+  const total = Number(index.rows[0]?.total_count ?? 0);
+  const page = Number(index.rows[0]?.safe_page ?? 1);
+  if (!Number.isSafeInteger(total) || total < 0 || !Number.isSafeInteger(page) || page < 1) throw new Error("admin_brand_workspace_page_invalid");
+  const ids = index.rows.flatMap(row => row.brand_id ? [row.brand_id] : []);
+  if (!ids.length) return { rows: [], page, pageSize: args.pageSize, total, totalPages: Math.max(1, Math.ceil(total / args.pageSize)) };
+  const result = await pool.query<AdminBrandSqlRow>(adminBrandWorkspacesSql({ restrictIds: true, omitLegacyCoverage: true }), [null, ids]);
+  const rows = result.rows.map(row => ({ ...mapBrandWorkspaceRow(row), corpus: null }));
+  return { rows, page, pageSize: args.pageSize, total, totalPages: Math.max(1, Math.ceil(total / args.pageSize)) };
+}
+
+/** Keep expensive receipt reconciliation outside the brand index's first paint.
+ * The page streams these canonical values after brand identity and navigation are
+ * already usable; detail pages retain the same strict summary contract. */
+export async function loadAdminBrandWorkspacePageCorpus(user: AdminUser, workspaceIds: string[]) {
+  if (user.userType !== "noisia_internal") return new Map<string, AdminWorkspaceCorpusSummaryV1>();
+  return loadAdminWorkspaceCorpusSummariesV1({ queryable: pool, actor_user_id: user.id, workspace_ids: workspaceIds });
+}
+
 async function loadAdminBrandWorkspaceRows(user: AdminUser, brandLookup: string | null = null) {
   const result = await pool.query<AdminBrandSqlRow>(ADMIN_BRAND_WORKSPACES_SQL, [brandLookup]);
   const corpus = await loadAdminWorkspaceCorpusSummariesV1({ queryable: pool, actor_user_id: user.id,
@@ -541,7 +586,8 @@ function brandPriorities(brand: AdminBrandWorkspaceRow) {
   return items;
 }
 
-const ADMIN_BRAND_WORKSPACES_SQL = `
+function adminBrandWorkspacesSql(options: { restrictIds?: boolean; omitLegacyCoverage?: boolean } = {}) {
+  return `
   SELECT
     brand.id::text AS brand_id,
     COALESCE(brand.display_name, brand.name) AS brand_name,
@@ -604,6 +650,7 @@ const ADMIN_BRAND_WORKSPACES_SQL = `
       AND membership.workspace_id = workspace.id
       AND membership.membership_status = 'included'
       AND membership.removed_at IS NULL
+      ${options.omitLegacyCoverage ? "AND FALSE" : ""}
   ) coverage ON true
   LEFT JOIN LATERAL (
     SELECT
@@ -661,7 +708,37 @@ const ADMIN_BRAND_WORKSPACES_SQL = `
       AND analysis.strategic_contract_version = 'signal-tb-strategic-v1'
   ) report_state ON true
   WHERE ($1::text IS NULL OR brand.id::text=$1 OR brand.slug=$1)
+    ${options.restrictIds ? "AND brand.id=ANY($2::uuid[])" : ""}
   ORDER BY lower(COALESCE(brand.display_name, brand.name)), brand.id
+`;
+}
+
+const ADMIN_BRAND_WORKSPACES_SQL = adminBrandWorkspacesSql();
+
+const ADMIN_BRAND_WORKSPACE_PAGE_INDEX_SQL = `
+  WITH filtered AS MATERIALIZED (
+    SELECT brand.id::text brand_id,
+      lower(COALESCE(brand.display_name, brand.name)) sort_name
+    FROM brands brand
+    JOIN organizations organization ON organization.id=brand.organization_id
+    WHERE ($1::text='' OR strpos(lower(COALESCE(brand.display_name,brand.name)),$1)>0
+      OR strpos(lower(brand.slug),$1)>0 OR strpos(lower(COALESCE(brand.industry,'')),$1)>0)
+      AND ($2::text='' OR strpos(lower(COALESCE(organization.display_name,organization.legal_name,organization.slug)),$2)>0
+        OR lower(organization.id::text)=$2)
+      AND ($3::text='' OR brand.status=$3)
+  ), page_state AS (
+    SELECT count(*)::integer total_count,
+      LEAST($4::integer,GREATEST(CEIL(count(*)::numeric/$5::integer)::integer,1)) safe_page
+    FROM filtered
+  ), visible AS (
+    SELECT filtered.brand_id,filtered.sort_name
+    FROM filtered
+    ORDER BY filtered.sort_name,filtered.brand_id
+    LIMIT $5::integer OFFSET (((SELECT safe_page FROM page_state)-1)*$5::integer)
+  )
+  SELECT visible.brand_id,page_state.total_count,page_state.safe_page
+  FROM page_state LEFT JOIN visible ON true
+  ORDER BY visible.sort_name NULLS LAST,visible.brand_id NULLS LAST
 `;
 
 const ADMIN_WORKSPACE_SOURCES_SQL = `

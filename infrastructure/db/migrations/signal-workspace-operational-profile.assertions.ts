@@ -84,8 +84,22 @@ export async function assertWorkspaceOperationalProfileJourneyV1(args:{database:
     await selection.selectSignalWorkspaceTopicV1({...scope,term_key:topicKey,selected:true,idempotency_key:randomUUID(),expected_selection_revision:0,
      expected_definition_revision:topic.definition_revision,expected_definition_digest:topic.definition_digest,generation_id:parent.generation_id});
     const before=await totals(),key=randomUUID();
-    const changed=await updateSignalTopicStoreV1({pool:database,...scope,term_key:topicKey,idempotency_key:key,input:{expected_definition_revision:topic.definition_revision,
-     expected_definition_digest:topic.definition_digest,definition:topic.definition+' Synthetic pending definition.'}});
+    const firstSelection=await selection.loadSignalWorkspaceTopicSelectionV1(scope);
+    const removedForRename=await selection.selectSignalWorkspaceTopicV1({...scope,term_key:topicKey,selected:false,idempotency_key:randomUUID(),
+     expected_selection_revision:firstSelection.revision,expected_definition_revision:topic.definition_revision,
+     expected_definition_digest:topic.definition_digest,generation_id:parent.generation_id});
+    const renamed=await updateSignalTopicStoreV1({pool:database,...scope,term_key:topicKey,idempotency_key:randomUUID(),input:{
+     expected_definition_revision:topic.definition_revision,expected_definition_digest:topic.definition_digest,label:`${topic.label} renamed`}});
+    const renamedTopic=renamed.topics.find(row=>row.term_key===topicKey)!;
+    assert.equal(renamedTopic.definition_digest,topic.definition_digest);
+    await selection.selectSignalWorkspaceTopicV1({...scope,term_key:topicKey,selected:true,idempotency_key:randomUUID(),
+     expected_selection_revision:removedForRename.revision,expected_definition_revision:renamedTopic.definition_revision,
+     expected_definition_digest:renamedTopic.definition_digest,generation_id:parent.generation_id});
+    const renamedView=await loadSignalWorkspaceTopicsOverviewV1(scope);
+    assert.equal(renamedView?.terms.find(row=>row.term_key===topicKey)?.label,renamedTopic.label);
+    assert.equal(renamedView?.terms.find(row=>row.term_key===topicKey)?.mention_count!>0,true);
+    const changed=await updateSignalTopicStoreV1({pool:database,...scope,term_key:topicKey,idempotency_key:key,input:{expected_definition_revision:renamedTopic.definition_revision,
+     expected_definition_digest:renamedTopic.definition_digest,definition:topic.definition+' Synthetic pending definition.'}});
     workingB=changed.profile!.id;assert.notEqual(workingB,operationalA);
     await query("UPDATE signal_taxonomy_profiles SET status='retired' WHERE id=$1",[operationalA]);
     assert.deepEqual(await totals(),before,'editing a draft creates no engine, outbox or cost');

@@ -6,7 +6,7 @@ import { loadSignalWorkspaceTopicsOverviewV1 } from "./signal-workspace-topics-s
 
 const id = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
 const sha = (value: string) => `sha256:${value.repeat(64).slice(0, 64)}`;
-const workspaceId = id("1"), actorId = id("2"), profileA = id("3"), generationId = id("4");
+const workspaceId = id("1"), actorId = id("2"), profileA = id("3"), generationId = id("4"), workingProfile = id("11");
 const topicAContent = {
   term_key: "service",
   label: "Service A",
@@ -24,7 +24,9 @@ const topicA = {
   created_at: "2026-09-11T10:00:00.000Z",
   updated_at: "2026-09-11T10:00:00.000Z"
 };
-test("Signal resolves Topic definitions from the served generation profile, not a newer working draft", async () => {
+const workingTopicA = { ...topicA, label: "Servicio al cliente", definition_revision: 2,
+  updated_at: "2026-09-11T11:00:00.000Z" };
+test("Signal keeps served semantics while applying a safe working label", async () => {
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   const client = {
@@ -67,9 +69,15 @@ test("Signal resolves Topic definitions from the served generation profile, not 
           decision_policy_digest: sha("9") },
         correction_digest: identity!.correction_digest, source_valid: true
       }] };
+      if (sql.includes("SELECT id::text,taxonomy_id::text,version,status,context_hash")) return { rows: [
+        { id: profileA, taxonomy_id: id("7"), version: 3, status: "active", context_hash: sha("3"),
+          created_at: "2026-09-11", updated_at: "2026-09-11", catalog_role: "analysis_materialized", source_catalog_profile_id: null },
+        { id: workingProfile, taxonomy_id: id("12"), version: 2, status: "draft", context_hash: sha("2"),
+          created_at: "2026-09-11", updated_at: "2026-09-11", catalog_role: "working", source_catalog_profile_id: null }
+      ] };
       if (sql.includes("term.metadata->'topic' definition")) {
         topicQueries.push({ sql, params });
-        return { rows: [{ definition: topicA }] };
+        return { rows: [{ definition: topicQueries.length === 1 ? topicA : workingTopicA }] };
       }
       if (sql.includes("WITH source_generation AS MATERIALIZED")) return { rows: [{
         denominator: 12, processed: 12, assigned_unique: 12, abstained: 0, unresolved: 0, withheld: 0,
@@ -87,10 +95,11 @@ test("Signal resolves Topic definitions from the served generation profile, not 
     database: { async connect() { return client as never; } }, workspace_id: workspaceId,
     actor_user_id: actorId
   });
-  assert.equal(topicQueries.length, 1);
+  assert.equal(topicQueries.length, 2);
   assert.equal(topicQueries[0]!.params[1], profileA);
   assert.match(topicQueries[0]!.sql, /id=\$2::uuid/u);
+  assert.deepEqual(topicQueries[1]!.params, [workspaceId, workingProfile]);
   assert.equal(overview?.is_current, true);
   assert.deepEqual(overview?.terms.map(term => [term.label, term.definition_revision, term.mention_count]),
-    [["Service A", 1, 12]]);
+    [["Servicio al cliente", 1, 12]]);
 });

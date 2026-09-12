@@ -13,7 +13,7 @@ import { AdminCorpusCoverage, AdminCorpusReceipt, AdminCorpusStatus } from "@/co
 import { AdminBrandFilters } from "@/components/admin/AdminBrandFilters";
 import { PermanentDeleteBrandButton } from "@/components/brands/AdminEntityActions";
 import { requireStudioUser } from "@/lib/auth/guards";
-import { listAdminBrandWorkspaces } from "@/lib/data/admin-workspace";
+import { listAdminBrandWorkspacePage, loadAdminBrandWorkspacePageCorpus } from "@/lib/data/admin-workspace";
 import {
   getPositiveNumber,
   getSearchParam,
@@ -62,21 +62,14 @@ async function BrandWorkspaceResults({ params, user }: {
   const status = getSearchParam(params, "status") ?? "";
   const page = getPositiveNumber(getSearchParam(params, "page"), 1);
   const pageSize = 30;
-  const rows = (await listAdminBrandWorkspaces(user)).filter((brand) => {
-    const queryMatches = !query || [brand.brandName, brand.brandSlug, brand.industry]
-      .some((value) => value?.toLocaleLowerCase().includes(query));
-    const organizationMatches = !organization
-      || brand.organizationName.toLocaleLowerCase().includes(organization)
-      || brand.organizationId.toLocaleLowerCase() === organization;
-    return queryMatches && organizationMatches && (!status || brand.brandStatus === status);
-  });
-  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
-  const safePage = Math.min(page, totalPages);
-  const visible = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const result = await listAdminBrandWorkspacePage(user, { query, organization, status, page, pageSize });
+  const { rows: visible, page: safePage, totalPages, total } = result;
+  const corpusPromise = loadAdminBrandWorkspacePageCorpus(user,
+    visible.flatMap(brand => brand.workspaceId ? [brand.workspaceId] : []));
 
   return <>
       <AdminResourceSection
-        actions={<span className="admin-table__muted">{t("brands.table.count", { count: rows.length })}</span>}
+        actions={<span className="admin-table__muted">{t("brands.table.count", { count: total })}</span>}
         className="admin-brands-index"
         subtitle={t("brands.table.subtitle")}
         title={t("brands.table.title")}
@@ -126,9 +119,15 @@ async function BrandWorkspaceResults({ params, user }: {
                         <small>{brand.organizationName}{brand.industry ? ` · ${brand.industry}` : ""}</small>
                       </div>
                     </td>
-                    <td><AdminCorpusReceipt corpus={brand.corpus} /></td>
-                    <td><AdminCorpusCoverage corpus={brand.corpus} /></td>
-                    <td><AdminCorpusStatus corpus={brand.corpus} /></td>
+                    <td><Suspense fallback={<CorpusCellPending />}>
+                      <BrandCorpusReceipt corpusPromise={corpusPromise} workspaceId={brand.workspaceId} />
+                    </Suspense></td>
+                    <td><Suspense fallback={<CorpusCellPending />}>
+                      <BrandCorpusCoverage corpusPromise={corpusPromise} workspaceId={brand.workspaceId} />
+                    </Suspense></td>
+                    <td><Suspense fallback={<CorpusCellPending />}>
+                      <BrandCorpusStatus corpusPromise={corpusPromise} workspaceId={brand.workspaceId} />
+                    </Suspense></td>
                     <td><AdminStatus state={reportTone(brand.reportState)}>{t(`reports.states.${brand.reportState}`)}</AdminStatus></td>
                     <td className="admin-table__muted">{formatAdminDate(brand.latestActivityAt, locale)}</td>
                     <td>
@@ -160,6 +159,26 @@ async function BrandWorkspaceResults({ params, user }: {
         </nav>
       ) : null}
     </>;
+}
+
+type CorpusPromise = ReturnType<typeof loadAdminBrandWorkspacePageCorpus>;
+const corpusFor = async (promise: CorpusPromise, workspaceId: string | null) =>
+  workspaceId ? (await promise).get(workspaceId) ?? null : null;
+
+async function BrandCorpusReceipt({ corpusPromise, workspaceId }: { corpusPromise: CorpusPromise; workspaceId: string | null }) {
+  return <AdminCorpusReceipt corpus={await corpusFor(corpusPromise, workspaceId)} />;
+}
+
+async function BrandCorpusCoverage({ corpusPromise, workspaceId }: { corpusPromise: CorpusPromise; workspaceId: string | null }) {
+  return <AdminCorpusCoverage corpus={await corpusFor(corpusPromise, workspaceId)} />;
+}
+
+async function BrandCorpusStatus({ corpusPromise, workspaceId }: { corpusPromise: CorpusPromise; workspaceId: string | null }) {
+  return <AdminCorpusStatus corpus={await corpusFor(corpusPromise, workspaceId)} />;
+}
+
+function CorpusCellPending() {
+  return <span aria-hidden="true" className="admin-table__muted">…</span>;
 }
 
 function pageHref(params: Record<string, string | string[] | undefined>, page: number) {

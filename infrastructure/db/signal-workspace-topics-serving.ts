@@ -9,6 +9,7 @@ import {
 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { loadSignalWorkspaceClassificationInputV1, SignalWorkspaceClassificationError } from "./signal-workspace-classification";
+import { loadSignalTopicWorkingProfileWithQueryableV1 } from "./signal-topic-catalog";
 
 type Database = Pick<Pool, "connect">;
 type Filters = { date_from?: string | null; date_to?: string | null };
@@ -106,7 +107,27 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
       AND (($2::uuid IS NOT NULL AND id=$2::uuid) OR ($2::uuid IS NULL AND status IN('draft','activating','active')))
       ORDER BY version DESC LIMIT 1) profile JOIN taxonomy_terms term ON term.taxonomy_id=profile.taxonomy_id
     ORDER BY term.term_key`, [args.workspace_id, generation?.taxonomy_profile_id ?? null])).rows;
-  const topics = topicRows.map(row => signalTopicDefinitionSchemaV1.parse(row.definition)).filter(topic => topic.lifecycle !== "archived");
+  const workingProfile = generation
+    ? await loadSignalTopicWorkingProfileWithQueryableV1({ queryable: client, workspace_id: args.workspace_id })
+    : null;
+  const workingTopicRows = workingProfile ? (await client.query<{ definition: unknown }>(`SELECT term.metadata->'topic' definition
+    FROM signal_taxonomy_profiles profile JOIN taxonomy_terms term ON term.taxonomy_id=profile.taxonomy_id
+    WHERE profile.workspace_id=$1::uuid AND profile.id=$2::uuid AND profile.kind='topic'
+      AND profile.metadata->>'contract_version'='signal-topic-catalog-v1'
+    ORDER BY term.term_key`, [args.workspace_id, workingProfile.id])).rows : [];
+  const workingTopics = new Map(workingTopicRows.map(row => {
+    const topic = signalTopicDefinitionSchemaV1.parse(row.definition); return [topic.term_key, topic] as const;
+  }));
+  // A label is editorial presentation, excluded from the semantic digest. Let a
+  // user rename a served Topic without discarding the computed memberships or
+  // pretending that a semantic edit was classified. Keep the generation's
+  // revision/digest as the membership identity.
+  const topics = topicRows.map(row => signalTopicDefinitionSchemaV1.parse(row.definition)).map(topic => {
+    const working = workingTopics.get(topic.term_key);
+    return working && working.definition_digest === topic.definition_digest && working.lifecycle === topic.lifecycle
+      ? { ...topic, label: working.label, updated_at: working.updated_at }
+      : topic;
+  }).filter(topic => topic.lifecycle !== "archived");
   let isCurrent = false;
   if (generation) {
     const input = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
@@ -201,8 +222,7 @@ population AS MATERIALIZED (
 function displayedTopics(ctx: Context, includeUnselected = false) {
   return ctx.topics.filter(topic => {
     const selected = ctx.selection.items[topic.term_key];
-    return includeUnselected || selected?.selected && selected.definition_digest === topic.definition_digest
-      && selected.definition_revision === topic.definition_revision;
+    return includeUnselected || selected?.selected && selected.definition_digest === topic.definition_digest;
   });
 }
 function populationParams(args: Args, ctx: Context) {

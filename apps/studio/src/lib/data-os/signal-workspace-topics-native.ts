@@ -68,7 +68,7 @@ export function nativeTopicSelectionViewV1(scope: ActorScope, termKey: string, i
     selected: selected?.selected ?? false, definition_revision: term?.definition_revision ?? selected!.definition_revision,
     definition_digest: term?.definition_digest ?? selected!.definition_digest, generation_id: overview?.generation_id ?? selected?.generation_id ?? null,
     is_current: Boolean(overview?.is_current && term && overview.generation_id && (!selected?.selected
-      || selected.definition_digest === term.definition_digest && selected.definition_revision === term.definition_revision)), mention_count: term?.mention_count ?? null,
+      || selected.definition_digest === term.definition_digest)), mention_count: term?.mention_count ?? null,
     request_receipt: receipt && idempotencyKey ? { idempotency_key: idempotencyKey, selected: receipt.selection.selected } : null };
 }
 export async function selectNativeTopicSignalV1(scope: ActorScope, termKey: string, body: {

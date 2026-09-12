@@ -80,10 +80,14 @@ test('native projection retains all chunks, pending multilabel membership, durab
   assert.equal((await selection.loadSignalWorkspaceTopicSelectionV1(f.access)).items[topic.term_key]?.generation_id,request.generation_id,'selection retains its original receipt');
   const {loadSignalWorkspaceTopicsOverviewV1}=await import('../signal-workspace-topics-serving');
   assert.equal((await loadSignalWorkspaceTopicsOverviewV1(f.access))?.terms.find(row=>row.term_key===topic.term_key)?.mention_count,3,'new compatible generation refreshes the existing selection');
-  await updateSignalTopicStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,idempotency_key:randomUUID(),
+  const renamed=await updateSignalTopicStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,idempotency_key:randomUUID(),
    input:{...(await currentTopicDefinitionCasV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key})),label:'Renamed locally'}});
   assert.equal((await projection.loadSignalWorkspaceTopicProjectionStatusV1(f.access)).latest_complete?.is_current,true);
-  await selection.selectSignalWorkspaceTopicV1({...select,generation_id:next.generation_id,expected_selection_revision:1,idempotency_key:randomUUID()});
+  const renamedTopic=renamed.topics.find(row=>row.term_key===topic.term_key)!;
+  assert.equal(renamedTopic.definition_digest,topic.definition_digest);
+  await selection.selectSignalWorkspaceTopicV1({...select,generation_id:next.generation_id,expected_selection_revision:1,
+   expected_definition_revision:renamedTopic.definition_revision,expected_definition_digest:renamedTopic.definition_digest,idempotency_key:randomUUID()});
+  assert.equal((await loadSignalWorkspaceTopicsOverviewV1(f.access))?.terms.find(row=>row.term_key===topic.term_key)?.label,'Renamed locally');
   await setSignalTopicLifecycleStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,lifecycle:'archived',idempotency_key:randomUUID(),...(await currentTopicDefinitionCasV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key}))});
   const archived=await selection.loadSignalWorkspaceTopicSelectionV1(f.access);assert.equal(archived.items[topic.term_key]?.selected,false);
   await setSignalTopicLifecycleStoreV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key,lifecycle:'draft',idempotency_key:randomUUID(),...(await currentTopicDefinitionCasV1({pool:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id,term_key:topic.term_key}))});

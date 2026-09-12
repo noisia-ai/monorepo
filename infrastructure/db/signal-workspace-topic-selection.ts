@@ -3,6 +3,7 @@ import {signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 import {loadSignalWorkspaceTopicProjectionStatusWithQueryableV1,type SignalWorkspaceProjectionQueryableV1} from './signal-workspace-topic-projection';
 import type {SignalWorkspaceClassificationDatabaseV1} from './signal-workspace-classification';
+import {loadSignalTopicWorkingProfileWithQueryableV1} from './signal-topic-catalog';
 export class SignalWorkspaceTopicSelectionError extends Error {
  constructor(readonly code:string,readonly status=409){super(code);this.name='SignalWorkspaceTopicSelectionError';}
 }
@@ -58,8 +59,7 @@ export async function selectSignalWorkspaceTopicV1(args:{database:SignalWorkspac
   if(!state)return fail('workspace_topic_selection_workspace_not_found',404);
   await authorize(client,args.workspace_id,args.actor_user_id,true);
   if(state.revision!==args.expected_selection_revision)return fail('workspace_topic_selection_revision_conflict');
-  const profile=(await client.query<{id:string;taxonomy_id:string}>(`SELECT id,taxonomy_id FROM signal_taxonomy_profiles
-   WHERE workspace_id=$1::uuid AND kind='topic' AND status IN('draft','active','activating') ORDER BY version DESC LIMIT 1`,[args.workspace_id])).rows[0];
+  const profile=await loadSignalTopicWorkingProfileWithQueryableV1({queryable:client,workspace_id:args.workspace_id});
   if(!profile)return fail('workspace_topic_selection_catalog_unavailable');
   let source_engine_execution_id=state.items[args.term_key]?.source_engine_execution_id??null,mapping_digest=state.items[args.term_key]?.mapping_digest??null;
   if(args.selected){
@@ -68,17 +68,19 @@ export async function selectSignalWorkspaceTopicV1(args:{database:SignalWorkspac
    const valid=(await client.query(`SELECT 1 FROM signal_classification_generations generation CROSS JOIN LATERAL jsonb_array_elements(generation.input_snapshot->'topics') topic
     JOIN taxonomy_terms term ON term.term_key=topic->'definition'->>'term_key' WHERE generation.id=$1::uuid AND generation.workspace_id=$2::uuid
      AND topic->'definition'->>'term_key'=$3 AND topic->'definition'->>'definition_digest'=$4
-     AND (topic->'definition'->>'definition_revision')::int=$5 AND term.taxonomy_id=$6::uuid AND term.status IN('candidate','active')
+     AND term.taxonomy_id=$5::uuid AND term.status IN('candidate','active')
      AND topic->'definition'->>'lifecycle'<>'archived' AND term.metadata->'topic'->>'definition_digest'=$4
-     AND (term.metadata->'topic'->>'definition_revision')::int=$5 AND term.metadata->'topic'->>'lifecycle'<>'archived'`,[args.generation_id,args.workspace_id,args.term_key,args.expected_definition_digest,args.expected_definition_revision,profile.taxonomy_id])).rows.length>0;
+     AND (term.metadata->'topic'->>'definition_revision')::int=$6 AND term.metadata->'topic'->>'lifecycle'<>'archived'`,[args.generation_id,args.workspace_id,args.term_key,args.expected_definition_digest,profile.taxonomy_id,args.expected_definition_revision])).rows.length>0;
    if(!valid)return fail('workspace_topic_selection_definition_changed');
    const membership=(await client.query(`SELECT 1 FROM signal_classification_assignments assignment
     JOIN signal_classification_generations generation ON generation.id=assignment.generation_id
+    CROSS JOIN LATERAL jsonb_array_elements(generation.input_snapshot->'topics') topic
     JOIN taxonomy_terms term ON term.id=assignment.taxonomy_term_id WHERE generation.id=$1::uuid AND term.term_key=$2
-     AND assignment.definition_digest=$3 AND assignment.definition_revision=$4
+     AND topic->'definition'->>'term_key'=$2 AND topic->'definition'->>'definition_digest'=$3
+     AND assignment.definition_digest=$3 AND assignment.definition_revision=(topic->'definition'->>'definition_revision')::int
      AND (assignment.membership_basis='computed_cluster' OR assignment.resolution_method='human' AND assignment.disposition='approved')
      AND signal_workspace_classification_assignment_current_v1(assignment,generation) LIMIT 1`,
-    [args.generation_id,args.term_key,args.expected_definition_digest,args.expected_definition_revision])).rows.length>0;
+    [args.generation_id,args.term_key,args.expected_definition_digest])).rows.length>0;
    if(!membership)return fail('workspace_topic_selection_membership_required');
    source_engine_execution_id=projection.source_engine_execution_id;mapping_digest=projection.mapping_digest;
   }
