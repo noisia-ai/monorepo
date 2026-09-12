@@ -102,7 +102,11 @@ export async function loadWorkspaceTopicEditorialForActorV1(args: Access & { wit
     view.quote = { reference: quote.quote_reference, expires_at: quote.quote_expires_at, maximum_micro_usd: quote.maximum_micro_usd,
       group_count: quote.expected_group_count, screening_count: quote.screening_request_count, global_count: 1 };
     clean(view);
-    await dependencies.cache().put({ workspace_id: access.workspace_id, actor_user_id: access.actor_user_id, numeric_execution_id: access.numeric_execution_id, numeric_run_id: scope.numeric_run_id, quote: view.quote, plan: input.plan });
+    const snapshot = { workspace_id: access.workspace_id, actor_user_id: access.actor_user_id, numeric_execution_id: access.numeric_execution_id,
+      numeric_run_id: scope.numeric_run_id, quote: view.quote, plan: input.plan };
+    // A cache is only an acceleration. Defer serialization and consume both factory
+    // and write failures; neither may delay or reject the public quote response.
+    setImmediate(() => { void Promise.resolve().then(() => dependencies.cache().put(snapshot)).catch(() => undefined); });
     return view;
   } catch (error) {
     if (error instanceof SignalTopicEditorialStoreError && ["topic_editorial_source_stale", "brand_context_source_stale", "brand_context_semantic_context_required"].includes(error.code))
@@ -139,11 +143,28 @@ export async function requestWorkspaceTopicEditorialForActorV1(args: Omit<Access
       if (scope.execution_id) fail("topic_editorial_existing_execution");
       if (!scope.source_current) fail("topic_editorial_source_stale");
       if (!dependencies.available()) fail("topic_editorial_runtime_unavailable");
-      const snapshot = await dependencies.cache().get(access, command.quote_reference);
-      if (!snapshot || snapshot.numeric_run_id !== scope.numeric_run_id || Date.parse(snapshot.quote.expires_at) <= dependencies.now())
-        fail("topic_editorial_quote_expired");
-      if (snapshot.quote.maximum_micro_usd !== command.confirmed_maximum_micro_usd) fail("topic_editorial_confirmation_invalid", 422);
-      plan = snapshot.plan;
+      const deadline = Number(command.quote_reference.split(".")[1]);
+      if (deadline * 1000 <= dependencies.now()) fail("topic_editorial_quote_expired");
+      const snapshot = await Promise.resolve().then(() => dependencies.cache().get(access, command.quote_reference)).catch(() => null);
+      if (snapshot) {
+        if (snapshot.workspace_id !== access.workspace_id || snapshot.actor_user_id !== access.actor_user_id
+          || snapshot.numeric_execution_id !== access.numeric_execution_id || snapshot.numeric_run_id !== scope.numeric_run_id
+          || snapshot.quote.reference !== command.quote_reference || Date.parse(snapshot.quote.expires_at) !== deadline * 1000)
+          fail("topic_editorial_quote_expired");
+        if (snapshot.quote.maximum_micro_usd !== command.confirmed_maximum_micro_usd) fail("topic_editorial_confirmation_invalid", 422);
+        plan = snapshot.plan;
+      } else {
+        // Rebuild only on the server. Reusing the original deadline makes SQL's
+        // reference sensitive to any actor/source/plan/policy/config/cap drift.
+        const input = await dependencies.input({ ...access, numeric_run_id: scope.numeric_run_id });
+        const quote = await dependencies.quote({ ...access, numeric_run_id: scope.numeric_run_id, plan: input.plan, deadline });
+        if (quote.workspace_id !== access.workspace_id || quote.status !== "ready_to_authorize"
+          || quote.quote_reference !== command.quote_reference || !quote.quote_expires_at
+          || Date.parse(quote.quote_expires_at) !== deadline * 1000) fail("topic_editorial_quote_expired");
+        if (quote.maximum_micro_usd !== command.confirmed_maximum_micro_usd) fail("topic_editorial_confirmation_invalid", 422);
+        plan = input.plan;
+      }
+      if (deadline * 1000 <= dependencies.now()) fail("topic_editorial_quote_expired");
     }
     result = await dependencies.request({ ...access, numeric_run_id: scope.numeric_run_id, plan,
       idempotency_key: args.idempotencyKey, quote_reference: command.quote_reference });

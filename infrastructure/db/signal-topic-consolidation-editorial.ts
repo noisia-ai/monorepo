@@ -88,13 +88,17 @@ export function validateSignalTopicEditorialPlanV1(plan: SignalTopicEditorialScr
 }
 export async function quoteSignalTopicConsolidationEditorialV1(args: {
   database: SignalTopicEditorialDatabaseV1; workspace_id: string; actor_user_id: string; numeric_run_id: string; plan: SignalTopicEditorialScreeningPlanV1;
+  /** Original quote deadline, in Unix seconds. SQL revalidates its remaining validity. */
+  deadline?: number;
 }): Promise<SignalTopicEditorialQuoteV1> {
+  if (args.deadline !== undefined && (!Number.isSafeInteger(args.deadline) || args.deadline <= 0 || args.deadline > 9_999_999_999))
+    fail('topic_editorial_quote_expired');
   scope(args.workspace_id, args.actor_user_id); validateSignalTopicEditorialPlanV1(args.plan);
   return tx(args.database, async client => {
     await requireRead(client, args.workspace_id, args.actor_user_id);
     await currentContext(client, args.workspace_id, args.plan.source_context_digest);
-    const row = await value<Record<string, unknown>>(client, 'SELECT signal_topic_editorial_quote_v1($1,$2,$3,$4::jsonb) value',
-      [args.workspace_id, args.actor_user_id, args.numeric_run_id, JSON.stringify(args.plan)]);
+    const row = await value<Record<string, unknown>>(client, 'SELECT signal_topic_editorial_quote_v1($1,$2,$3,$4::jsonb,$5::bigint) value',
+      [args.workspace_id, args.actor_user_id, args.numeric_run_id, JSON.stringify(args.plan), args.deadline ?? null]);
     return { contract_version: 'signal-topic-editorial-quote-v1', workspace_id: args.workspace_id, status: String(row.status),
       quote_reference: typeof row.quote_reference === 'string' ? row.quote_reference : null,
       quote_expires_at: typeof row.quote_expires_at === 'string' ? row.quote_expires_at : null,

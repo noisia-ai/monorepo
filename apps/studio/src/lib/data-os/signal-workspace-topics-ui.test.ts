@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
+import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
 import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
 import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
 import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "../../components/signal-v2/SignalTopicChartOptions";
@@ -166,3 +167,27 @@ test("native volume chart preserves exact keys and counts, with no fabricated se
   assert.equal(option.animation, false); assert.equal(option.tooltip.renderMode, "richText");
   assert.doesNotMatch(JSON.stringify(option), /sentiment|positive|negative|scatter/);
 });
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: evidence without an occurrence date stays unavailable instead of becoming Unix epoch`, async () => {
+    const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+    const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+      { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+      createElement(SignalEvidenceDrawer, {
+        ariaLabel: "Evidence",
+        closeLabel: "Close",
+        eyebrow: "Topic",
+        intro: "Source evidence",
+        loading: false,
+        loadingLabel: "Loading",
+        onClose: () => undefined,
+        openOriginalLabel: "Open original",
+        openingEnrichedLabel: "Opening",
+        records: [{ body: "Real mention without a published date", id: "mention", occurredAt: null, platform: "reddit" }],
+        title: "Topic",
+        viewEnrichedLabel: "Open mention"
+      })));
+    assert.match(html, /<time>—<\/time>/);
+    assert.doesNotMatch(html, /1970|Jan 1|1 ene|1 de ene/i);
+  });
+}

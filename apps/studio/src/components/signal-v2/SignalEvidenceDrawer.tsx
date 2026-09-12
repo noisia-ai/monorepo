@@ -10,7 +10,7 @@ import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 export type SignalEvidenceDrawerRecord = {
   body: string;
   id: string;
-  occurredAt: string;
+  occurredAt: string | null;
   originalUrl?: string | null;
   platform?: string | null;
   quote?: string | null;
@@ -135,7 +135,8 @@ export function SignalEvidenceDrawer({
   );
 }
 
-function formatDrawerDate(value: string, locale: string) {
+function formatDrawerDate(value: string | null, locale: string) {
+  if (!value?.trim()) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat(locale, {

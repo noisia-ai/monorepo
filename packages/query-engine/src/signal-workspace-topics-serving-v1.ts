@@ -50,7 +50,7 @@ export type SignalWorkspaceTopicEvidencePageV1 = {
     mention_id: string;
     text: string;
     platform: string;
-    occurred_at: string;
+    occurred_at: string | null;
     url: string | null;
     evidence_fragment: { chunk_index: number; start: number; end: number; chunk_sha256: string } | null;
   }>;

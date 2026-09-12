@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import Redis from "ioredis";
 import { createElement, type ComponentProps } from "react";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -7,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { readFile } from "node:fs/promises";
 import type { SignalTopicEditorialScreeningPlanV1 } from "@noisia/query-engine";
 import { WorkspaceTopicEditorialCard } from "../../components/brands/WorkspaceTopicEditorialCard";
-import { RedisEditorialQuoteCache, editorialQuoteRuntimeAvailableV1, editorialRecoveryRuntimeAvailableV1, type EditorialQuoteSnapshot } from "./workspace-topic-editorial-cache";
+import { RedisEditorialQuoteCache, getEditorialQuoteCacheV1, editorialQuoteRuntimeAvailableV1, editorialRecoveryRuntimeAvailableV1, type EditorialQuoteSnapshot } from "./workspace-topic-editorial-cache";
 import { parseWorkspaceTopicEditorialCommandV1, validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1,
   submitWorkspaceTopicEditorialIntentV1, WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialViewV1 } from "./workspace-topic-editorial-contract";
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1, type WorkspaceTopicEditorialDependenciesV1 } from "./signal-topic-editorial-control";
@@ -48,7 +49,9 @@ test("commands accept only explicit capped authorization or scoped retry", () =>
 });
 test("quote is server-built, redacted, capped and cache never contains the database connection", async () => {
   const f = fixture(); const result = await loadWorkspaceTopicEditorialForActorV1({ ...access, numericExecutionId: numeric, withQuote: true }, f.deps);
-  assert.deepEqual(result, ready); assert.deepEqual(f.calls, ["status", "input", "quote", "put"]);
+  assert.deepEqual(result, ready); assert.deepEqual(f.calls, ["status", "input", "quote"]);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.deepEqual(f.calls, ["status", "input", "quote", "put"]);
   assert.equal("database" in f.stored()!, false);
   assert.doesNotMatch(JSON.stringify(result), /private|provider|model|plan_digest|actor_user_id|ledger/u);
 });
@@ -59,19 +62,106 @@ test("default runtime is closed; status polling never loads private evidence", a
   const result = await loadWorkspaceTopicEditorialForActorV1({ ...access, numericExecutionId: numeric, withQuote: true }, f.deps);
   assert.equal(result.status, "runtime_unavailable"); assert.equal(result.quote, null); assert.deepEqual(f.calls, ["status"]);
   const off = { REDIS_URL: "redis://unused", NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED: "true", NOISIA_SIGNAL_TOPIC_EDITORIAL_PROVIDER_ENABLED: "true" };
-  assert.equal(editorialQuoteRuntimeAvailableV1(off), false);
+  assert.equal(editorialQuoteRuntimeAvailableV1(off), true);
+  assert.equal(editorialQuoteRuntimeAvailableV1({ ...off, REDIS_URL: undefined }), true);
   assert.equal(editorialQuoteRuntimeAvailableV1({ ...off, NOISIA_SIGNAL_TOPIC_EDITORIAL_QUOTE_KEY: Buffer.alloc(32, 7).toString("base64") }), true);
   assert.equal(editorialRecoveryRuntimeAvailableV1({ NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED: "true" }), true);
 });
-test("missing, expired or mismatched cap fails before request and never rebuilds the plan", async () => {
-  for (const mode of ["missing", "expired", "cap", "drift", "revoked"] as const) {
-    const f = fixture(); if (mode === "missing") f.clear(); if (mode === "expired") f.deps.now = () => Date.parse(expires);
+test("expired quotes, cap mismatch, source drift and revoked actors fail before request or rebuilding", async () => {
+  for (const mode of ["expired", "cap", "drift", "revoked"] as const) {
+    const f = fixture(); if (mode === "expired") f.deps.now = () => Date.parse(expires);
     if (mode === "drift" || mode === "revoked") f.deps.inspect = async () => ({ numeric_run_id: run, execution_id: null,
       can_request: mode !== "revoked", source_current: mode !== "drift", retry_available: false, completion: null, replay: null });
     await assert.rejects(requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "request-key", body: { ...command,
       confirmed_maximum_micro_usd: mode === "cap" ? "29000000" : "30000000" } }, f.deps));
     assert.equal(f.calls.includes("request"), false); assert.equal(f.calls.includes("input"), false);
   }
+});
+test("quote returns before a pending cache write and consumes write/factory errors", async () => {
+  for (const mode of ["pending", "reject", "factory"] as const) {
+    const f = fixture(); let rejectWrite!: (reason: Error) => void;
+    f.deps.cache = () => {
+      if (mode === "factory") throw new Error("cache unavailable");
+      return { get: async () => null, put: async () => {
+        f.calls.push("put");
+        if (mode === "reject") throw new Error("request too large");
+        return new Promise<void>((_resolve, reject) => { rejectWrite = reject; });
+      } };
+    };
+    const result = await loadWorkspaceTopicEditorialForActorV1({ ...access, numericExecutionId: numeric, withQuote: true }, f.deps);
+    assert.deepEqual(result, ready); assert.equal(f.calls.includes("put"), false);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    if (mode === "pending") rejectWrite(new Error("late cache failure"));
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+});
+test("cache miss, connection failure or missing cache config reconstructs only server input with the original deadline", async () => {
+  for (const mode of ["missing", "read_failure", "factory_failure"] as const) {
+    const f = fixture(); f.clear();
+    if (mode !== "missing") f.deps.cache = () => {
+      if (mode === "factory_failure") throw new Error("missing cache key");
+      return { put: async () => {}, get: async () => { throw new Error("Redis unavailable"); } };
+    };
+    const originalQuote = f.deps.quote;
+    f.deps.quote = async args => {
+      assert.equal(args.deadline, 1789236000); assert.equal(args.plan, plan);
+      assert.equal(args.actor_user_id, actor); assert.equal(args.workspace_id, workspace); assert.equal(args.numeric_run_id, run);
+      return originalQuote(args);
+    };
+    f.deps.input = async args => {
+      assert.equal(args.actor_user_id, actor); assert.equal(args.workspace_id, workspace); assert.equal(args.numeric_run_id, run);
+      f.calls.push("input"); return { plan } as Awaited<ReturnType<typeof f.deps.input>>;
+    };
+    const receipt = await requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "original-key", body: command }, f.deps);
+    assert.equal(receipt.execution_id, execution);
+    assert.deepEqual(f.calls.slice(-3), ["input", "quote", "request"]);
+  }
+});
+test("reconstructed quote must match reference, expiry, workspace, cap and current SQL authority exactly", async () => {
+  for (const mode of ["reference", "expiry", "workspace", "cap", "source", "policy", "expired_during_rebuild"] as const) {
+    const f = fixture(); f.clear(); const original = f.deps.quote;
+    f.deps.quote = async args => {
+      const value = await original(args);
+      if (mode === "reference") value.quote_reference = `v1.1789236000.${"b".repeat(64)}`;
+      if (mode === "expiry") value.quote_expires_at = new Date(Date.parse(expires) + 1000).toISOString();
+      if (mode === "workspace") value.workspace_id = actor;
+      if (mode === "cap") value.maximum_micro_usd = "29000000";
+      if (mode === "source") value.status = "source_stale";
+      if (mode === "policy") value.status = "policy_required";
+      if (mode === "expired_during_rebuild") f.deps.now = () => Date.parse(expires);
+      return value;
+    };
+    await assert.rejects(requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "original-key", body: command }, f.deps),
+      /topic_editorial_quote_expired|topic_editorial_confirmation_invalid/u);
+    assert.equal(f.calls.includes("request"), false);
+  }
+});
+test("cache hits are fenced to the exact actor/workspace/control/run/reference/deadline", async () => {
+  for (const field of ["workspace_id", "actor_user_id", "numeric_execution_id", "numeric_run_id", "reference", "expires_at"] as const) {
+    const f = fixture(), changed = structuredClone(snapshot);
+    if (field === "reference") changed.quote.reference = `v1.1789236000.${"b".repeat(64)}`;
+    else if (field === "expires_at") changed.quote.expires_at = new Date(Date.parse(expires) + 1000).toISOString();
+    else changed[field] = execution;
+    f.deps.cache = () => ({ put: async () => {}, get: async () => changed });
+    await assert.rejects(requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "original-key", body: command }, f.deps), /topic_editorial_quote_expired/u);
+    assert.equal(f.calls.includes("request"), false);
+  }
+});
+test("reconstructed plan reaches SQL final fence; post-commit replay never reconstructs or depends on cache", async () => {
+  const f = fixture(); f.clear();
+  f.deps.request = async () => { f.calls.push("request"); throw new Error("topic_editorial_source_stale"); };
+  await assert.rejects(requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "original-key", body: command }, f.deps), /source_stale/u);
+  let durable = false, commits = 0;
+  f.deps.request = async args => { assert.equal(args.plan, plan); assert.equal(args.quote_reference, reference); assert.equal(args.idempotency_key, "original-key");
+    if (durable) return { execution_id: execution, worker_job_id: "private", replayed: true };
+    durable = true; commits++; throw new Error("connection lost after commit"); };
+  await assert.rejects(requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "original-key", body: command }, f.deps), /after commit/u);
+  f.deps.inspect = async () => ({ numeric_run_id: run, execution_id: execution, can_request: true, source_current: false,
+    retry_available: false, completion: null, replay: { plan, quote_reference: reference, maximum_micro_usd: "30000000" } });
+  f.deps.now = () => Date.parse(expires) + 1; f.deps.available = () => false;
+  f.deps.input = async () => { throw new Error("must not rebuild"); }; f.deps.cache = () => { throw new Error("must not cache"); };
+  assert.equal((await requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "original-key", body: command }, f.deps)).replayed, true);
+  assert.equal(commits, 1);
 });
 test("committed receipt returns before status; replay uses durable owner even with runtime/cache/source unavailable", async () => {
   const f = fixture(); f.deps.status = async () => { throw new Error("status failed after commit"); };
@@ -130,6 +220,24 @@ test("encrypted snapshots wait for a cold Redis connection before the first comm
   const cache = new RedisEditorialQuoteCache(redis as unknown as ConstructorParameters<typeof RedisEditorialQuoteCache>[0], Buffer.alloc(32, 7), ready);
   const pending = cache.put(snapshot); await Promise.resolve(); assert.equal(commands, 0);
   release(); await pending; assert.equal(commands, 1); assert.deepEqual(await cache.get(snapshot, reference), snapshot);
+});
+test("a 17 MB private snapshot issues no Redis write", async () => {
+  const redis = { get: async () => null, eval: async () => { throw new Error("oversized Redis command"); } };
+  const cache = new RedisEditorialQuoteCache(redis as unknown as ConstructorParameters<typeof RedisEditorialQuoteCache>[0], Buffer.alloc(32, 7));
+  const large = { ...snapshot, plan: { ...plan, private_evidence: "x".repeat(17_000_000) } as unknown as SignalTopicEditorialScreeningPlanV1 };
+  await cache.put(large);
+});
+test("Redis error events and abandoned connection failures are handled without transport", async t => {
+  const connect = t.mock.method(Redis.prototype, "connect", async () => { throw new Error("synthetic connection failure"); });
+  assert.equal(globalThis.noisiaTopicEditorialQuoteRedis, undefined);
+  const cache = getEditorialQuoteCacheV1({ REDIS_URL: "redis://unused:6379", NOISIA_SIGNAL_TOPIC_EDITORIAL_QUOTE_KEY: Buffer.alloc(32, 7).toString("base64") });
+  const redis = globalThis.noisiaTopicEditorialQuoteRedis!;
+  assert.ok(redis.listenerCount("error") > 0);
+  assert.doesNotThrow(() => redis.emit("error", new Error("synthetic Redis error")));
+  await assert.rejects(cache.get(snapshot, reference), /topic_editorial_cache_unavailable/u);
+  getEditorialQuoteCacheV1({ REDIS_URL: "redis://unused:6379", NOISIA_SIGNAL_TOPIC_EDITORIAL_QUOTE_KEY: Buffer.alloc(32, 7).toString("base64") });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(connect.mock.callCount(), 2); assert.equal(globalThis.noisiaTopicEditorialQuoteRedis, undefined);
 });
 test("uncertain HTTP keeps the original cap/quote/key and checks receipt scope", async () => {
   const intent = workspaceTopicEditorialIntentV1(workspace, command, null, () => "original-key");
