@@ -15,7 +15,7 @@ grupos. Este recibo no declara el producto completo ni listo para producción.
 | Workspace ID | `979b8f96-3366-463d-8ee8-8c0cce460a71` |
 | Slug | `alexa-plus-e2e-2026-09-12` |
 | Ejecución de análisis | `46c735c7-dcb0-4fa4-aa42-2ef0b0b7a93d` |
-| Commit UAT | `7ac8644bd0bd5adafdac302affee8b91df5e28e8` |
+| Commit UAT | `a11021614006bee08f1396be2bff61e2705b70b1` |
 
 La marca se creó desde la interfaz, con Brand OS, Knowledge Base y competidores editables.
 Brand Context v2 quedó preparado como autoridad semántica para el recorrido. Las llamadas de
@@ -103,10 +103,21 @@ reemplaza con otra llamada por perder el estado del navegador.
   no completar en más de 80 s a mostrar 50 de 43,159 y abrir la mención enfocada en **18.3 s**.
   La evidencia y su enlace original quedaron comprobados. La reducción es material, aunque la
   lectura completa de aproximadamente 16 s sigue siendo deuda de escala del backend y no un SLO
-  aceptado para producción.
+  aceptado para producción. Un `EXPLAIN ANALYZE` de sólo lectura atribuyó aproximadamente 12.8 s
+  a recalcular `sha256(text_clean)` sobre 43,159 raíces y 134 MB de texto; raíces, preparación y
+  membresías terminaron por debajo de 0.8 s. No es Redis ni la búsqueda vectorial. El corte seguro
+  siguiente es persistir un digest byte-exacto mantenido por trigger, hacer backfill y validar la
+  restricción antes de cambiar el lector. Una simulación sin mutar UAT redujo el statement a 1.5 s
+  y el loader a 4.0 s. `mentions.text_hash` no es sustituto porque usa otra normalización.
 - **Capacidad transitoria:** el Worker se amplió temporalmente a dos réplicas durante la
   clasificación y volvió a una réplica después de comprobar cero jobs reclamables. Studio y
   Worker quedaron activos en `7ac8644`; el ajuste no reinició el análisis ni alteró su generación.
+- **Catálogo parcial:** `a110216` mantiene visibles los Topics materializados cuando la reparación
+  editorial termina inválida y explica que siguen editables y seleccionables con cobertura parcial.
+  Durante la consulta inicial del estado ya no aparece el falso bloqueo «Las menciones necesitan
+  preparación»; los casos realmente sin corpus, legacy y de sólo lectura conservan su acción. QA
+  real posterior al despliegue, a las 13:13 UTC, comprobó ambos estados y la selección de 67
+  menciones intacta.
 
 ## Evidencia y comprobación
 
@@ -136,18 +147,19 @@ acknowledgement perdido, integridad de fragmentos, revocación, correcciones hum
 parcial. La corrección de Menciones pasó **23/23 pruebas Studio**, dos unitarias DB, typecheck DB y
 Studio, ESLint focal, `git diff --check` y revisión independiente sin P0/P1/P2. La integración PG
 local no se repitió sin su entorno; la lectura real contra UAT verificó el contrato y la UI remota
-confirmó el resultado. Estas pruebas respaldan los contratos afectados; no certifican el producto
-completo.
+confirmó el resultado. La corrección de catálogo parcial pasó **32/32 pruebas focales**, typecheck,
+ESLint, `git diff --check` y otra revisión independiente sin P0/P1/P2. Estas pruebas respaldan los
+contratos afectados; no certifican el producto completo.
 
 ## Deudas y siguiente aceptación
 
 | Pendiente | Aceptación necesaria |
 | --- | --- |
-| Latencia de Menciones | Llevar la lectura completa de ~16 s a un SLO de producción medido con índices/materialización adecuados, manteniendo filtros, derechos, cursor, snapshot y foco. |
+| Latencia de Menciones | Añadir `mentions.text_clean_sha256` byte-exacto, trigger, backfill por lotes y validación forward-only; después cambiar el lector y medir el SLO manteniendo filtros, derechos, cursor, snapshot, foco e integridad withheld. |
 | Segunda carga incremental real | Cargar datos legítimamente nuevos por UI; verificar deduplicación, admisión, actualización y continuidad de la selección sin repetir el primer corpus. |
 | Calidad y locale | Revisar relevancia, límites de marca/competencia/categoría, idioma y nombres de tópicos con evidencia. No equiparar agrupación numérica con validación semántica. |
 | Recuperación del checkpoint | Reducir la reexportación de chunks y la descarga/validación completa de modelos cuando sólo falta interpretación; conservar identidad, hashes y checkpoints. Hoy los dos modelos de este caso suman aproximadamente 3.60 GB. |
-| `repair_invalid` | Resolver la recuperación editorial cuando el único repair permitido tampoco valida; conservar respuesta, gasto y reserva históricos, sin reintentos pagados ilimitados. |
+| `repair_invalid` | Resolver la recuperación editorial cuando el único repair permitido tampoco valida; conservar respuesta, gasto y reserva históricos, sin reintentos pagados ilimitados. El [diagnóstico y contrato propuesto](PLAN_INTERPRETATION_REPAIR_EXCEPTIONS_2026-09-12.md) documentan la ausencia de citas superiores y una continuación explícita con excepciones; todavía no está implementada. |
 | Reserva terminal | Resolver los USD 1.192104 mediante evidencia y protocolo monetario; no declararlos settled ni liberados mientras sigan pendientes. |
 | Reportes y MCP | Completar y validar la entrega reutilizable de reportes y herramientas sobre resultados gobernados. Este experimento no prueba esos recorridos. |
 
