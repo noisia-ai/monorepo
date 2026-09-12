@@ -173,7 +173,9 @@ export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null
 }
 export function workspaceAnalysisCanRetry(status: WorkspaceAnalysisStatus | null, run: WorkspaceAnalysisRun | null) {
   return Boolean(status?.can_execute && !status.active_run && !workspaceAnalysisUnknown(status)
-    && !(status?.admission?.requires_authorization && status.admission.execution_id === run?.execution_id) && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown
+    && (!(status?.admission?.requires_authorization && status.admission.execution_id === run?.execution_id)
+      || run?.interpretation_exception_recovery_eligible === true)
+    && run?.status === "failed" && run.retryable && run.is_current && !run.outcome_unknown
     && run.error_code !== "workspace_engine_interpretation_transport_retry_exhausted"
     && run.error_code !== "workspace_engine_interpretation_daily_authority_expired"
     && (run.error_code !== "workspace_engine_interpretation_transport_terminal_confirmed" || run.transport_recovery_eligible));

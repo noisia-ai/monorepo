@@ -47,6 +47,7 @@ import { SignalMetricHelp } from "@/components/signal-v2/SignalMetricHelp";
 import { SignalSourceIcon } from "@/components/signal-v2/SignalSourceIcon";
 import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
 import { fetchSignalJsonWithRetry } from "@/lib/data-os/signal-client-fetch";
+import { SignalTopicsKpi as TnKpi, SignalTopicsRankingList } from "./SignalTopicsPrimitives";
 
 const BLUE = "#1689f5";
 const BLUE_SOFT = "#8fcef9";
@@ -376,7 +377,6 @@ function LegacySignalV2TopicsNarratives({
   const coveragePercent = section.coverage.coverage == null
     ? null
     : Math.round(section.coverage.coverage * 100);
-  const maxCount = Math.max(1, ...section.terms.map((term) => term.mention_count));
   const insightBudget = new Intl.NumberFormat(locale, {
     style: "currency",
     currency: "USD",
@@ -800,31 +800,12 @@ function LegacySignalV2TopicsNarratives({
               </div>
             ) : (
               <>
-            <div className="signal-v2-tn__rank-head">
-              <span>{t("ranking.term")}</span>
-              <span>{t("ranking.volume")}</span>
-              <span>{t("ranking.share")}</span>
-              <span>{t("ranking.change")}</span>
-            </div>
-            <div className="signal-v2-tn__rank-list">
-              {section.terms.map((term) => (
-                <button
-                  aria-pressed={term.term_key === selectedTermKey}
-                  key={term.term_key}
-                  onClick={() => selectTerm(term.term_key)}
-                  type="button"
-                >
-                  <span className="signal-v2-tn__term">
-                    <strong>{displayTermLabel(term.label, locale)}</strong>
-                    <i><b style={{ width: `${Math.max(3, term.mention_count / maxCount * 100)}%` }} /></i>
-                  </span>
-                  <b>{formatNumber(term.mention_count, locale)}</b>
-                  <span>{formatShare(term.share_of_included, locale)}</span>
-                  <ShareDelta value={term.share_delta} locale={locale} />
-                  <CaretRight size={14} />
-                </button>
-              ))}
-            </div>
+            <SignalTopicsRankingList labels={{ term: t("ranking.term"), count: t("ranking.volume"),
+              share: t("ranking.share"), change: t("ranking.change") }}
+              selectedKey={selectedTermKey} onSelect={selectTerm}
+              entries={section.terms.map(term => ({ key: term.term_key, label: displayTermLabel(term.label, locale),
+                count: term.mention_count, formattedCount: formatNumber(term.mention_count, locale),
+                share: formatShare(term.share_of_included, locale), change: <ShareDelta value={term.share_delta} locale={locale} /> }))} />
               </>
             )}
           </section>
@@ -1126,28 +1107,6 @@ function LegacySignalV2TopicsNarratives({
         />
       ) : null}
     </>
-  );
-}
-
-function TnKpi({
-  help,
-  label,
-  secondary,
-  tone,
-  value
-}: {
-  help: { title: string; body: string; reading: string };
-  label: string;
-  secondary: string;
-  tone?: "positive" | "warning";
-  value: number | string;
-}) {
-  return (
-    <article className={tone ? `signal-v2-tn__kpi signal-v2-tn__kpi--${tone}` : "signal-v2-tn__kpi"}>
-      <SignalMetricHelp content={help} label={label} />
-      <strong>{value}</strong>
-      <small>{secondary}</small>
-    </article>
   );
 }
 

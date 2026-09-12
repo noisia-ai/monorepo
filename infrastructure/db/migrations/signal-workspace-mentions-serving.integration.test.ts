@@ -83,13 +83,11 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
     const readStart = performance.now();
     const first = await read({ ...f.access, database: observed, limit: 1 });
     t.diagnostic(JSON.stringify({ first_read_ms: Math.round(performance.now() - readStart), corpus_plan_costs: corpusPlanCosts, entered_jit: "on" }));
-    const setting = statements.indexOf("SET LOCAL enable_nestloop=off");
+    const setting = statements.findIndex(sql => sql.includes("SET LOCAL enable_nestloop=off") && sql.includes("SET LOCAL jit=off"));
     const corpusQueries = statements.map((sql, index) => sql.includes("mention_roots AS MATERIALIZED") ? index : -1).filter(index => index >= 0);
-    assert.equal(statements.filter(sql => sql === "SET LOCAL enable_nestloop=off").length, 1);
-    const jitSetting = statements.indexOf("SET LOCAL jit=off");
-    assert.equal(statements.filter(sql => sql === "SET LOCAL jit=off").length, 1);
+    assert.equal(statements.filter(sql => sql.includes("SET LOCAL enable_nestloop=off") && sql.includes("SET LOCAL jit=off")).length, 1);
     assert.equal(corpusQueries.length, 1, "summary and page share one materialized full-corpus evaluation");
-    assert.ok(setting > 3 && jitSetting > setting && corpusQueries.every(index => index > jitSetting));
+    assert.ok(setting >= 0 && corpusQueries.every(index => index > setting));
     assert.equal(statements.at(-1), "COMMIT");
     assert.equal(first.generation_id, overview.generation_id); assert.equal(first.metric_denominator, overview.denominator);
     assert.equal(first.total_count, f.roots.length); assert.equal(first.evidence_visible_total, f.roots.length);

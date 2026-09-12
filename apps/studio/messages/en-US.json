@@ -616,6 +616,41 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "rankingEyebrow": "Presence in mentions",
+      "rankingView": "Topics view",
+      "chart": "Chart",
+      "list": "List",
+      "chartHelp": "Each bar represents mention volume. The chart does not measure sentiment or relationships between Topics.",
+      "detailTitle": "Topic detail",
+      "definitionVersion": "Definition version",
+      "traceability": "Read the original mentions supporting this membership. Each record retains its date, platform and source link when available.",
+      "unavailableDimensionsTitle": "Editorial reading pending",
+      "unavailableDimensionsBody": "This result does not include sentiment, relationships between Topics or verified narratives. Computed membership does not establish those dimensions.",
+      "noiseAbstention": "There are {count, number} mentions without a stable cluster. This numerical abstention is not an editorial Noise decision.",
+      "sections": {
+        "label": "Explore classification",
+        "topics": "Topics",
+        "narratives": "Narratives",
+        "noise": "Noise",
+        "unresolved": "Unresolved"
+      },
+      "metricHelp": {
+        "denominator": "Unique mentions available for this period and your permissions. This is not a count of conversations or comments.",
+        "assigned": "Unique mentions belonging to at least one selected Topic. A mention can belong to several Topics.",
+        "abstained": "Mentions left without a stable cluster by classification. This does not imply irrelevance or an editorial Noise disposition.",
+        "pending": "Mentions with part of their classification pending. These can overlap with mentions already in a Topic; they are not an exclusive category."
+      },
+      "metricCaption": {
+        "denominator": "Counted once per mention",
+        "assigned": "At least one selected Topic",
+        "abstained": "Numerical abstention",
+        "pending": "Can overlap with Topics"
+      },
+      "dispositions": {
+        "narratives": { "title": "Narratives are not yet available", "body": "No editorial reading of recurring claims or frames has been published. Topic names are not presented as narratives." },
+        "noise": { "title": "Noise has not been assessed", "body": "This result contains no editorial Noise decisions. No mentions have been discarded from this view." },
+        "unresolved": { "title": "Mentions with pending classification", "body": "This count describes the result being viewed. It does not mean Noise and does not hide original mentions." }
+      },
       "openMention": "Open mention",
       "refreshError": "The result could not be refreshed. The last read is preserved; use Refresh to check it again.",
       "summaryTitle": "Overview",
@@ -623,7 +658,7 @@
       "interpretationPartial": "Partial interpretation: {done, number} of {total, number} groups. This result includes only groups already interpreted.",
       "interpretationComplete": "Interpretation is complete for this result: {done, number} of {total, number} groups.",
       "interpretationUnknown": "Interpretation progress for this result is unavailable.",
-      "pendingCoverage": "{count, number} mentions have conversations still unresolved. Some also appear in selected Topics; these counts can overlap.",
+      "pendingCoverage": "{count, number} mentions have part of their classification pending. Some also appear in selected Topics; these counts can overlap.",
       "processing": "Classification is updating. The previous result remains available while the next one arrives.",
       "updating": "Updating",
       "partialCurrent": "Current · partial interpretation",

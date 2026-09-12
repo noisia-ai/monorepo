@@ -76,6 +76,18 @@ async function transaction<T>(database: Database, work: (client: PoolClient) => 
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
   finally { client.release(); }
 }
+async function mentionsTransaction<T>(database: Database, work: (client: PoolClient) => Promise<T>): Promise<T> {
+  const client = await database.connect();
+  try {
+    // One simple-query roundtrip installs the same transaction-local fences.
+    // The statements remain server-ordered and any failure aborts this read.
+    await client.query(`BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+      SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp;
+      SET LOCAL enable_nestloop=off; SET LOCAL jit=off`);
+    const value = await work(client); await client.query("COMMIT"); return value;
+  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
+  finally { client.release(); }
+}
 async function context(client: PoolClient, args: Args): Promise<Context> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
   if (!capabilities.can_view || args.include_unselected && !capabilities.can_edit_topics) return fail("workspace_topics_forbidden", 403);
@@ -144,6 +156,49 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
   }
   return { generation, topics, selection, is_current: isCurrent, is_processing: workspace.is_processing, filters,
     native: workspace.native || topics.some(topic => topic.origin === "workspace_discovery") };
+}
+
+/** Mentions are a generation-wide corpus view and do not consume Topic labels,
+ * working drafts, compiled guides or live Brand Context. Its currentness fence
+ * is the sealed projection plus the corpus revision and policy already used by
+ * the population query. Keeping this path separate avoids rebuilding unrelated
+ * editorial input on every page while retaining workspace authorization. */
+async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Context,
+  "generation" | "is_current" | "is_processing" | "filters" | "native">> {
+  const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
+  if (!capabilities.can_view) return fail("workspace_topics_forbidden", 403);
+  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to) };
+  if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
+  const row = (await client.query<Generation & { native: boolean; is_processing: boolean }>(`SELECT
+    EXISTS(SELECT 1 FROM signal_topic_catalog_executions run WHERE run.workspace_id=workspace.id
+      AND run.input_contract IN('workspace-topic-engine-v1','workspace-topic-classification-v1')) native,
+    EXISTS(SELECT 1 FROM signal_topic_catalog_executions run WHERE run.workspace_id=workspace.id
+      AND run.input_contract='workspace-topic-classification-v1' AND run.input_snapshot->'source_projection' IS NOT NULL
+      AND run.status IN('queued','running')) is_processing,
+    generation.id,generation.taxonomy_profile_id,generation.preparation_run_id,
+    generation.input_revision::text,state.input_revision::text current_revision,generation.finalized_digest,
+    (generation.policy_valid_until IS NULL OR generation.policy_valid_until>now()) policy_live,
+    generation.input_snapshot->'source_projection'->>'engine_execution_id' source_engine_execution_id,
+    generation.input_snapshot->'source_projection'->'interpretation_coverage' interpretation_coverage,
+    generation.input_snapshot->'identity' identity,generation.input_snapshot->>'correction_digest' correction_digest,
+    signal_workspace_projection_source_current_v1(generation) source_valid
+    FROM signal_workspaces workspace
+    LEFT JOIN LATERAL (
+      SELECT candidate.* FROM signal_classification_generations candidate
+      JOIN signal_topic_catalog_executions execution ON execution.generation_id=candidate.id AND execution.status='ready'
+      WHERE candidate.workspace_id=workspace.id AND candidate.input_contract='workspace-topic-classification-v1'
+        AND candidate.status='ready'
+        AND candidate.input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
+        AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item
+          WHERE item.generation_id=candidate.id AND item.resolution_state='error')
+      ORDER BY candidate.generation_version DESC LIMIT 1
+    ) generation ON true
+    LEFT JOIN signal_corpus_preparation_input_state state ON state.workspace_id=workspace.id
+    WHERE workspace.id=$1::uuid`, [args.workspace_id])).rows[0];
+  const generation = row?.id ? row : null;
+  return { generation, is_processing: row?.is_processing ?? false, native: row?.native ?? false, filters,
+    is_current: Boolean(generation?.source_valid && generation.policy_live
+      && generation.input_revision === generation.current_revision) };
 }
 
 /** Current rights use one complete provenance path, including import precedence.
@@ -397,16 +452,13 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
   const request = mentionsRequest(args);
   const access = { database: args.database, workspace_id: args.workspace_id.toLowerCase(), actor_user_id: args.actor_user_id.toLowerCase(),
     date_from: request.filters.date_from, date_to: request.filters.date_to };
-  return transaction(args.database, async client => {
-    const ctx = await context(client, access);
+  return mentionsTransaction(args.database, async client => {
+    const ctx = await mentionsContext(client, access);
     if (!ctx.native) return null;
     if (!ctx.generation) return fail("workspace_mentions_generation_unavailable", 404);
     if (!ctx.is_current) return fail("workspace_mentions_stale");
-    // The full-corpus CTEs otherwise choose quadratic nested loops when workspace
-    // cardinality is underestimated. Disable JIT too: discouraged join costs can
-    // cross its compilation threshold. Both settings end with this read-only transaction.
-    await client.query("SET LOCAL enable_nestloop=off");
-    await client.query("SET LOCAL jit=off");
+    // The transaction wrapper disables nested loops and JIT before this query:
+    // skewed workspace estimates otherwise choose a quadratic plan and compile it.
     // Empty visible_terms intentionally avoids every membership/selection join.
     const params = [access.workspace_id, ctx.generation.id, ctx.filters.date_from, ctx.filters.date_to, "[]",
       request.filters.search_query, request.filters.platforms];

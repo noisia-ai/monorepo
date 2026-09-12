@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
-import { SignalV2WorkspaceTopics } from "../../components/signal-v2/SignalV2WorkspaceTopics";
+import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
+import { SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
 Object.assign(globalThis, { React });
 const data: SignalWorkspaceTopicsOverviewV1 = {
   contract_version: "signal-workspace-topics-serving-v1", source: "workspace_computed", workspace_id: "workspace", corpus_id: null,
@@ -38,7 +39,8 @@ test("empty completed catalogue is actionable without creating synthetic Topics 
 test("stale generation preserves counts while disabling stale evidence access", async () => {
   const html = await render("en-US", { ...data, is_current: false });
   assert.match(html, /Previous result/); assert.match(html, /last complete result is retained/);
-  assert.match(html, /disabled=""[^>]*>View evidence/);
+  const evidenceButton = html.match(/<button\b[^>]*>(?:(?!<\/button>)[\s\S])*View evidence<\/button>/)?.[0];
+  assert.ok(evidenceButton); assert.match(evidenceButton, /disabled=""/);
 });
 
 for (const locale of ["es-MX", "en-US"]) {
@@ -76,4 +78,51 @@ test("failed refresh remains visible in native summary while preserving counts a
     assert.match(html, /<strong>10<\/strong>/); assert.match(html, /Delivery/);
     assert.ok(html.includes(locale === "es-MX" ? ">Actualizar</button>" : ">Refresh</button>"));
   }
+});
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: native Topics reuse ranking and detail with unavailable editorial dimensions instead of invented zeroes`, async () => {
+    const html = await render(locale);
+    assert.equal((html.match(/role="tab"/g) ?? []).length, 4);
+    assert.equal((html.match(/role="tabpanel"/g) ?? []).length, 1);
+    assert.equal((html.match(/aria-selected="true"/g) ?? []).length, 1);
+    assert.match(html, /Noise<span>—<\/span>/);
+    assert.match(html, /Narrati(?:vas|ves)<span>—<\/span>/);
+    assert.match(html, /signal-v2-tn__ranking-metrics--native/);
+    assert.match(html, /signal-v2-tn__definition/);
+    assert.ok(html.includes(locale === "es-MX" ? "Lectura editorial pendiente" : "Editorial reading pending"));
+    assert.ok(html.includes(locale === "es-MX" ? "Versión de la definición" : "Definition version"));
+    assert.doesNotMatch(html, /claude|voyage|sha256:|input_tokens|workspace_computed|Investigar insights|Research insights/i);
+  });
+  for (const section of ["narratives", "noise", "unresolved"] as const) {
+    test(`${locale}: ${section} explains only the dimension the native contract proves`, async () => {
+      const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+      const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+        { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+        createElement(SignalWorkspaceTopicDisposition, { section, data })));
+      assert.match(html, new RegExp(`data-availability="${section === "unresolved" ? "available" : "not_available"}"`));
+      assert.doesNotMatch(html, /Delivery|Support|<button|<strong>0<\/strong>/);
+      if (section === "noise") assert.ok(html.includes(locale === "es-MX" ? "no equivale" : "is not an editorial"));
+      if (section === "unresolved") { assert.match(html, /<strong>1<\/strong>/); assert.ok(html.includes(locale === "es-MX" ? "superponerse" : "overlap")); }
+    });
+  }
+}
+
+test("the shared ranking retains governed comparison and renders true zero volumes without synthetic minimum bars", () => {
+  const html = renderToStaticMarkup(createElement(SignalTopicsRankingList, {
+    entries: [{ key: "zero", label: "No evidence", count: 0, formattedCount: "0", share: "0%", change: createElement("span", { className: "signal-v2-tn__delta" }, "—") }],
+    labels: { term: "Topic", count: "Mentions", share: "Share", change: "Change" }, selectedKey: "zero", onSelect: () => undefined
+  }));
+  assert.match(html, /width:0%/); assert.match(html, /<span>Change<\/span>/); assert.match(html, /signal-v2-tn__delta/);
+  assert.match(html, /aria-pressed="true"/); assert.doesNotMatch(html, /ranking-metrics--native/);
+});
+
+test("native volume chart preserves exact keys and counts, with no fabricated sentiment or proximity", () => {
+  const terms = [{ ...data.terms[0]!, mention_count: 0 }, { ...data.terms[1]!, label: "Same name", mention_count: 12 }];
+  const option = nativeTopicsVolumeChartV1(terms, "topic1", "Mentions");
+  assert.deepEqual(option.series[0]!.data.map(item => [item.name, item.value]), [["topic0", 0], ["topic1", 12]]);
+  assert.equal(option.yAxis.axisLabel.formatter("topic1"), "Same name");
+  assert.equal(option.series[0]!.data[1]!.itemStyle.color, "#1689f5");
+  assert.equal(option.animation, false); assert.equal(option.tooltip.renderMode, "richText");
+  assert.doesNotMatch(JSON.stringify(option), /sentiment|positive|negative|scatter/);
 });

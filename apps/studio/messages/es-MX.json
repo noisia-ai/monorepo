@@ -614,6 +614,41 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "rankingEyebrow": "Presencia en las menciones",
+      "rankingView": "Vista de Topics",
+      "chart": "Gráfico",
+      "list": "Lista",
+      "chartHelp": "El tamaño de cada barra representa menciones. El gráfico no mide sentimiento ni relaciones entre Topics.",
+      "detailTitle": "Detalle del Topic",
+      "definitionVersion": "Versión de la definición",
+      "traceability": "Consulta las menciones originales que sustentan esta pertenencia. Cada registro conserva su fecha, plataforma y enlace de origen cuando está disponible.",
+      "unavailableDimensionsTitle": "Lectura editorial pendiente",
+      "unavailableDimensionsBody": "Este resultado no incluye sentimiento, relaciones entre Topics ni narrativas verificadas. La pertenencia calculada no demuestra esas dimensiones.",
+      "noiseAbstention": "Hay {count, number} menciones sin grupo estable. Esa abstención numérica no equivale a una decisión editorial de Noise.",
+      "sections": {
+        "label": "Explorar clasificación",
+        "topics": "Topics",
+        "narratives": "Narrativas",
+        "noise": "Noise",
+        "unresolved": "Sin resolver"
+      },
+      "metricHelp": {
+        "denominator": "Menciones únicas disponibles para el periodo y tus permisos. No es un conteo de conversaciones o comentarios.",
+        "assigned": "Menciones únicas con pertenencia a al menos un Topic seleccionado. Una mención puede estar en varios Topics.",
+        "abstained": "Menciones que la clasificación dejó sin grupo estable. No implica irrelevancia ni una disposición editorial de Noise.",
+        "pending": "Menciones con parte de su clasificación pendiente. Pueden coincidir con menciones ya presentes en un Topic; no son una categoría excluyente."
+      },
+      "metricCaption": {
+        "denominator": "Una vez por mención",
+        "assigned": "Al menos un Topic seleccionado",
+        "abstained": "Abstención numérica",
+        "pending": "Puede superponerse con Topics"
+      },
+      "dispositions": {
+        "narratives": { "title": "Narrativas aún no disponibles", "body": "Todavía no hay una lectura editorial publicada de afirmaciones o marcos recurrentes. Los nombres de los Topics no se presentan como narrativas." },
+        "noise": { "title": "Noise aún no evaluado", "body": "Este resultado no contiene decisiones editoriales de Noise. No se han descartado menciones desde esta vista." },
+        "unresolved": { "title": "Menciones con clasificación pendiente", "body": "Este conteo describe el resultado consultado. No equivale a Noise y no oculta las menciones originales." }
+      },
       "openMention": "Abrir mención",
       "refreshError": "No se pudo actualizar el resultado. Se conserva la última lectura; usa Actualizar para volver a consultarla.",
       "summaryTitle": "Resumen",
@@ -621,7 +656,7 @@
       "interpretationPartial": "Interpretación parcial: {done, number} de {total, number} grupos. Este resultado sólo incorpora los grupos ya interpretados.",
       "interpretationComplete": "Interpretación completa para este resultado: {done, number} de {total, number} grupos.",
       "interpretationUnknown": "El avance de interpretación de este resultado no está disponible.",
-      "pendingCoverage": "{count, number} menciones tienen conversaciones por resolver. Algunas también aparecen en Topics seleccionados; estos conteos pueden superponerse.",
+      "pendingCoverage": "{count, number} menciones tienen parte de su clasificación pendiente. Algunas también aparecen en Topics seleccionados; estos conteos pueden superponerse.",
       "processing": "La clasificación se está actualizando. Se conserva el resultado anterior mientras llega el nuevo.",
       "updating": "Actualizando",
       "partialCurrent": "Vigente · interpretación parcial",

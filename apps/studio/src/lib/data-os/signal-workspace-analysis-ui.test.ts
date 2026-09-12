@@ -112,6 +112,17 @@ test("known editorial failures cannot become a replacement run; eligible recover
   assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_output_invalid"), "editorialInvalid");
   assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_repair_invalid"), "editorialRepairExhausted");
 });
+test("quarantining an exhausted paid repair remains retryable after provider admission is revoked", () => {
+  const failed: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed",
+    error_code: "workspace_engine_interpretation_repair_invalid", retryable: true,
+    interpretation_exception_recovery_eligible: true };
+  const revoked = { ...status, latest_run: failed, admission: {
+    execution_id: id, requires_authorization: true,
+  } as WorkspaceAnalysisStatus["admission"] };
+  assert.equal(workspaceAnalysisCanRetry(revoked, failed), true,
+    "the retry records a durable exception before the worker reaches any provider admission check");
+  assert.equal(workspaceAnalysisCanRetry(revoked, { ...failed, interpretation_exception_recovery_eligible: false }), false);
+});
 test("confirmed transport interruption permits only server-eligible resume and keeps its billing reservation", () => {
   const failed: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed", retryable: true,
     error_code: "workspace_engine_interpretation_transport_terminal_confirmed", transport_recovery_eligible: true,

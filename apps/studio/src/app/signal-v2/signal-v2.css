@@ -3671,9 +3671,44 @@
 }
 
 /* Native computed Topics reuse the layout with a compact definition and evidence. */
+.signal-v2-tn__ranking-metrics {
+  display: contents;
+}
+
 .signal-v2-tn--workspace .signal-v2-tn__ranking,
 .signal-v2-tn--workspace .signal-v2-tn__detail {
   block-size: auto;
+}
+
+.signal-v2-tn__ranking-metrics--native .signal-v2-tn__rank-head,
+.signal-v2-tn__ranking-metrics--native .signal-v2-tn__rank-list > button {
+  grid-template-columns: minmax(0, 1fr) 62px 64px 14px;
+}
+
+.signal-v2-tn--workspace .signal-v2-tn__rank-list {
+  max-block-size: 480px;
+}
+
+.signal-v2-tn--workspace .signal-v2-tn__detail .signal-v2-tn__insight-status {
+  margin: 12px;
+}
+
+.signal-v2-tn__switch--native {
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .signal-v2-tn--workspace .signal-v2-tn__switch--native {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .signal-v2-tn__ranking-metrics--native .signal-v2-tn__rank-list > button {
+    grid-template-columns: minmax(0, 1fr) 40px 52px 14px;
+    column-gap: 6px;
+  }
 }
 
 .signal-v2-tn__detail .signal-v2-card__heading {
