@@ -1416,6 +1416,9 @@ export async function processSignalSemanticContextProposalRunV1(args: {
     await insertRunEvent(finish, current, "completed", "completed",
       { proposal_count: proposals.length, ready_count: appended.ready,
         exception_count: appended.exceptions, result_digest: resultDigest });
+    // Run the deferred graph checks only after the operation, paid run,
+    // reservation, and outbox all expose their final transaction state.
+    await finish.query("SET CONSTRAINTS ALL IMMEDIATE");
     await finish.query("COMMIT");
     return { status: "completed" as const, run_key: current.run_key,
       proposal_count: proposals.length, ready_count: appended.ready,

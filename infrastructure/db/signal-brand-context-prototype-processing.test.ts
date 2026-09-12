@@ -137,6 +137,8 @@ test("large automatic cohorts get one collision preflight and a bounded publicat
   const process=body(semantic,"processSignalSemanticContextProposalRunV1");
   const append=body(semantic,"appendSignalSemanticContextProposalsInternalV1");
   assert.match(process,/BEGIN ISOLATION LEVEL SERIALIZABLE[\s\S]*SET LOCAL statement_timeout='10min'/u);
+  assert.match(process,/SET CONSTRAINTS ALL IMMEDIATE[\s\S]*COMMIT/u,
+    "the final run graph is visible before deferred cohort validation executes");
   assert.match(append,/element\.element_key=ANY\(\$2::text\[\]\)/u);
   assert.match(append,/const orderedProposals = \[\.\.\.args\.proposals\]/u);
   assert.doesNotMatch(append,/element\.element_key=\$2/u);
