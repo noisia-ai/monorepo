@@ -48,6 +48,7 @@ const databaseFailure = new Map([
   ["23503", "foreign_key"],
   ["23505", "conflict"],
   ["22001", "value_too_long"],
+  ["42703", "undefined_column"],
 ]);
 function stageFailure(stage: string, error: unknown): Error {
   const message = error instanceof Error ? error.message : "";

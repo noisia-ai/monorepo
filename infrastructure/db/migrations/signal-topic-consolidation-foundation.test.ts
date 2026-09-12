@@ -119,6 +119,13 @@ test("0174 keeps vectors in artifacts and enforces census, disposition, lineage 
   assert.doesNotMatch(sql, /engine_cost_events|Voyage|Claude/i);
 });
 
+test("0177 keeps the shared numeric trigger from reading sibling-table columns", () => {
+  const sql = readFileSync(new URL("./0177_signal_topic_consolidation_numeric_guard.sql", import.meta.url), "utf8");
+  assert.match(sql, /IF TG_TABLE_NAME='signal_topic_atomic_groups' THEN\s+IF NEW\.centroid_artifact_id IS NOT NULL/u);
+  assert.doesNotMatch(sql, /TG_TABLE_NAME='signal_topic_atomic_groups' AND NEW\.centroid_artifact_id/u);
+  assert.match(sql, /REVOKE ALL ON FUNCTION signal_topic_consolidation_numeric_content_guard_v1\(\) FROM PUBLIC/u);
+});
+
 test("exact kNN rejects an unbounded group census before opening PostgreSQL", async () => {
   let connected = false;
   await assert.rejects(computeSignalTopicConsolidationCentroidsV1({
