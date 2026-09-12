@@ -4,6 +4,17 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Entrada semántica de marca nueva entregada UAT — 2026-09-12 01:55 UTC.** Producto
+> `5ab45c5`; Worker `a4fbe6ed-bc7a-46ae-8a31-2d44c86f0c75` y Studio
+> `e8959109-5d5c-4c44-a6a3-bd6a21420f96` activos. SQL0161 SHA `e4519724…24bf9` aplicado una
+> sola vez a las 01:42:19Z; no reaplicar. Alta cliente, slug server-owned, grant sólo de marca,
+> política inicial acotada, preparación gratis desacoplada y refresco explícito de guías con caché
+> quedan conectados antes de importar. QA real ES/EN: National conserva 7,396/16, 6,826 preparadas,
+> 32 Topics de357 y142 asociaciones Signal; revisión P0/P1/P2=0. Recibo posterior01:52:32Z:
+> grants públicos0, políticas/admisiones/trabajos/incertidumbre/recibos0; proveedores/gasto0. Leer
+> `DELIVERY_NEW_BRAND_SEMANTIC_ENTRY_UAT_2026-09-11.md`. Siguiente: marca real hasta que la UI pida
+> menciones reales; luego cómputo full e incremental acotado. No repetir SQL0153–0161 ni gates.
+
 > **Entrada semántica de marca nueva cerrada LOCAL — 2026-09-12 01:25 UTC.** Checkout
 > `noisia-brand-context-e2e-2026-09-10`, base UAT/docs `82f0e0f`; SQL0161 todavía no UAT. Alta
 > cliente deriva slug y grant admin de marca, la preparación gratuita no depende de proveedor/cola,

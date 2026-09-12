@@ -2,7 +2,7 @@
 
 Fecha de cierre: 11 septiembre 2026 México / 12 septiembre UTC
 
-Estado: **cerrado localmente; pendiente SQL0161 y entrega focal UAT**.
+Estado: **cerrado localmente y entregado en UAT mediante `5ab45c5`**.
 
 ## Resultado de producto
 
@@ -58,6 +58,12 @@ históricas que importan el pool de forma estática. Con una URL local sintétic
 la suite completa quedó verde. No se cambió producto para ocultar ese requisito del entorno de test.
 
 ## Entrega UAT
+
+SQL0161 se aplicó una sola vez y los runtimes Worker/Studio del commit `5ab45c5` quedaron activos y
+comprobados. La QA autenticada ES/EN y el recibo posterior cerraron con P0/P1/P2 en cero, cero trabajo
+activo y cero proveedores. Ver `DELIVERY_NEW_BRAND_SEMANTIC_ENTRY_UAT_2026-09-11.md`.
+
+Orden ejecutado:
 
 Orden obligatorio: preflight read-only → aplicar SQL0161 una sola vez → Worker → Studio → QA real
 ES/EN y responsive → recibo posterior sin actividad inesperada. No reaplicar SQL0153–0160, no
