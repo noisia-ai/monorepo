@@ -5,6 +5,7 @@ import {
   drainSignalTopicConsolidationOutboxV1,
   SIGNAL_TOPIC_CONSOLIDATION_NUMERIC_JOB_V1,
   signalTopicConsolidationNumericJobV1,
+  startSignalTopicConsolidationOutboxDrainerV1,
   type SignalTopicConsolidationQueueStoresV1,
 } from "./signal-topic-consolidation-queue";
 
@@ -40,6 +41,41 @@ test("drainer dispatches one durable numeric job after recovery and acknowledges
   const result = await drainSignalTopicConsolidationOutboxV1({ database: {} as never,queue,stores: store,worker_id: "worker-a" });
   assert.deepEqual(calls,["recover","claim","add","ack"]);
   assert.deepEqual(result,{ claimed:1,dispatched:1,recovered:0,failed:0 });
+});
+
+test("long numeric work uses its own pool and never overlaps heartbeats blocked behind its owner lock", async () => {
+  const controlDatabase = {} as never, numericDatabase = {} as never;
+  let heartbeats = 0, activeHeartbeats = 0, highestHeartbeats = 0, completed = 0;
+  let releaseHeartbeat: (() => void) | undefined;
+  const blocked = new Promise<void>(resolve => { releaseHeartbeat = resolve; });
+  const store = stores({ claimExecution: async args => { assert.equal(args.database,controlDatabase); return lease; },
+    heartbeatExecution: async args => {
+      assert.equal(args.database,controlDatabase); heartbeats++; activeHeartbeats++;
+      highestHeartbeats = Math.max(highestHeartbeats,activeHeartbeats);
+      await blocked; activeHeartbeats--; return true;
+    }, completeExecution: async args => {
+      assert.equal(args.database,controlDatabase); assert.equal(activeHeartbeats,0); completed++; return true;
+    } });
+  await signalTopicConsolidationNumericJobV1({ id:dispatch.worker_job_id,data:{ execution_id:dispatch.execution_id },updateProgress:async()=>{} },
+    { database:controlDatabase,numeric_database:numericDatabase,stores:store,heartbeat_ms:5,
+      run:(async (_job:unknown,options:{database:unknown}) => {
+        assert.equal(options.database,numericDatabase);
+        await new Promise(resolve=>setTimeout(resolve,35));
+        assert.equal(heartbeats,1,'a row-lock wait must not accumulate pool clients on every timer tick');
+        releaseHeartbeat!(); return {consolidation_run_id:id(8)};
+      }) as never });
+  assert.equal(highestHeartbeats,1); assert.equal(completed,1);
+});
+
+test("transient control timeout is contained and a subsequent drainer tick can claim again", async () => {
+  let ticks = 0, added = 0;
+  const store = stores({ recoverExecutions:async()=>{
+    if (++ticks===1) throw new Error('timeout exceeded when trying to connect'); return 0;
+  } });
+  const drainer = startSignalTopicConsolidationOutboxDrainerV1({ database:{} as never,stores:store,
+    queue:{getJob:async()=>null,add:async()=>{added++;}},run_immediately:false,interval_ms:60_000 });
+  try { await drainer.drainNow(); await drainer.drainNow(); assert.equal(ticks,2); assert.equal(added,1); }
+  finally { await drainer.close(); }
 });
 
 test("lost dispatch ACK redelivers the retained job ID instead of adding a second job", async () => {

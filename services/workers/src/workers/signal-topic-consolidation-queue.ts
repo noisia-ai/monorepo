@@ -60,6 +60,7 @@ type DrainerOptions = {
 
 type JobOptions = {
   database?: Database;
+  numeric_database?: Database;
   stores?: SignalTopicConsolidationQueueStoresV1;
   lease_seconds?: number;
   heartbeat_ms?: number;
@@ -146,18 +147,27 @@ export async function signalTopicConsolidationNumericJobV1(
     lease_seconds: leaseSeconds });
   if (!lease) throw new Error("signal_topic_consolidation_execution_unavailable");
   if ("completed" in lease) return { ...lease, replayed: true };
+  const numericDatabase = options.numeric_database ?? options.database ?? (await import("../db/client")).numericPool;
   let heartbeatFailed = false;
-  const heartbeat = async () => {
-    if (!await stores.heartbeatExecution({ database, lease })) heartbeatFailed = true;
+  let heartbeatInFlight: Promise<void> | null = null;
+  const heartbeat = () => {
+    // The numeric transaction holds an owner SHARE lock. A renewal can wait on
+    // that lock, so never acquire another client until this renewal completes.
+    if (heartbeatInFlight) return;
+    heartbeatInFlight = Promise.resolve().then(async () => {
+      if (!await stores.heartbeatExecution({ database, lease })) heartbeatFailed = true;
+    }).catch(() => { heartbeatFailed = true; }).finally(() => { heartbeatInFlight = null; });
   };
-  const timer = setInterval(() => { void heartbeat().catch(() => { heartbeatFailed = true; }); },
+  const timer = setInterval(heartbeat,
     boundedInteger(options.heartbeat_ms, 5, 60_000, Math.min(30_000, Math.floor(leaseSeconds * 500))));
   timer.unref?.();
   try {
     const result = await (options.run ?? signalTopicConsolidationJobV1)({ id: String(job.id),
       data: { source_execution_id: lease.source_execution_id }, updateProgress: job.updateProgress.bind(job) },
-    { database: database as never, control_execution: { execution_id: lease.execution_id,
+    { database: numericDatabase as never, control_execution: { execution_id: lease.execution_id,
       execution_token: lease.execution_token, workspace_id: lease.workspace_id, actor_user_id: lease.actor_user_id } });
+    clearInterval(timer);
+    await heartbeatInFlight;
     if (heartbeatFailed) throw new Error("signal_topic_consolidation_lease_lost");
     if (!await stores.completeExecution({ database, lease, consolidation_run_id: result.consolidation_run_id }))
       throw new Error("signal_topic_consolidation_completion_rejected");
@@ -167,6 +177,7 @@ export async function signalTopicConsolidationNumericJobV1(
     throw new Error(safeErrorCode(error));
   } finally {
     clearInterval(timer);
+    await heartbeatInFlight;
   }
 }
 

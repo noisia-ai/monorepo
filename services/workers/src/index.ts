@@ -1,7 +1,7 @@
 import "./env/load";
 
 import { isDataOsWorkerEnabled, isEngineRuntimeEnabled } from "@noisia/query-engine";
-import { pool } from "./db/client";
+import { closeWorkerDatabasePoolsV1, pool } from "./db/client";
 import {
   closeQueryEngineProducer,
   redisConnection,
@@ -148,7 +148,7 @@ async function shutdown() {
   await closeSignalRefreshScheduler();
   await closeQueryEngineProducer();
   await redisConnection.quit();
-  await pool.end();
+  await closeWorkerDatabasePoolsV1();
   process.exit(0);
 }
 
