@@ -3,6 +3,7 @@ import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 const migration=readFile(new URL('./migrations/0153_signal_brand_context_preparation.sql',import.meta.url),'utf8');
 const checkpoint=readFile(new URL('./migrations/0163_signal_semantic_context_cohort_validation_checkpoint.sql',import.meta.url),'utf8');
+const digestBinding=readFile(new URL('./migrations/0164_signal_semantic_context_digest_extension_binding.sql',import.meta.url),'utf8');
 // SQL contract checks, not a simulation of executing PostgreSQL. The composed
 // synthetic PG journey owns the positive automatic/empty and save-only queries.
 test('automatic empty authority requires a paid run from the exact admitted preparation, not a completed save',async()=>{
@@ -51,4 +52,11 @@ test('automatic cohort checkpoint validates once and is invalidated before every
  assert.match(sql,/SECURITY DEFINER\s+SET search_path=pg_catalog,public/gu);
  assert.doesNotMatch(sql,/event_index\s*=|event_index<>|current_setting\(|set_config\(/u,
    'no caller-spoofable or missing-final-row shortcut may suppress cohort validation');
+});
+test('security-definer cohort validation uses an explicitly bound pgcrypto digest',async()=>{
+ const sql=await digestBinding;
+ const implementation=sql.split('CREATE OR REPLACE FUNCTION public.signal_semantic_context_digest_v1')[1]!;
+ assert.match(sql,/extensions\.digest\(pg_catalog\.convert_to\(canonical_text,'UTF8'\),'sha256'\)/u);
+ assert.match(sql,/SET search_path=pg_catalog/u);
+ assert.doesNotMatch(implementation,/SELECT\s+(?:'sha256:'\|\|)?(?:pg_catalog\.)?encode\(\s*digest\(/u);
 });
