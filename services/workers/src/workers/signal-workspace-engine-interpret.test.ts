@@ -42,6 +42,8 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   let reserveFailure: string | null = null;
   let sendRejection: Error | null = null;
   let totalSettled = 0;
+  let executionClusters: SignalWorkspaceInterpretationClusterV1[] = [cluster];
+  let contextData: Record<string, unknown> = { interests: [] };
   const checkpointCallIds: string[] = [];
   const seenBatches: Array<Parameters<typeof sendWorkspaceInterpretationV1>[0]["batch"]> = [];
   const seenAuthorizations: Array<string | undefined> = [];
@@ -62,9 +64,10 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       interpretation_config: { call_configuration: configuration, daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" } } };
   const stores = {
     context: async () => ({ actor_user_id: uuid(5), context: { workspace_id: lease.workspace_id,
-      execution_id: lease.execution_id, context_digest: hash("context"), data: { interests: [] } } }),
+      execution_id: lease.execution_id, context_digest: hash("context"), data: contextData } }),
     fit: async () => { fitCount++; states.push("fit"); return {}; },
     checkpoints: async () => ({ items: [], next_artifact_id: null, done: true }),
+    recoverable: async () => [...new Set([...calls.values()].map(row=>row.request_digest))].sort(),
     reserve: async (args: Parameters<NonNullable<Args["stores"]>["reserve"]>[0]) => {
       assert.equal(args.workspace_id, lease.workspace_id); assert.equal(args.execution_id, lease.execution_id);
       assert.equal(args.execution_token, lease.execution_token); assert.equal(args.actor_user_id, uuid(5));
@@ -176,7 +179,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
     return run({ database: {} as Args["database"], lease, stores, directory: attempt,
       fit: { model_artifact_id: uuid(11), output_artifact_id: uuid(12), coverage: { roots: 3, chunks: 3, guides: 0 },
         model_configuration: {}, runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null,
-        result_kind: "computational_grouping" }, clusters: [cluster], heartbeat: async () => undefined,
+        result_kind: "computational_grouping" }, clusters: executionClusters, heartbeat: async () => undefined,
       api_key: "test_key_not_a_real_credential", provider_enabled: providerEnabled, authorization_expires_at,
       storage: {
         put: async args => { const bytes = await readFile(args.file); assert.equal(hash(bytes), args.sha256);
@@ -203,19 +206,19 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
     admission: (receipt: SignalWorkspaceEngineLeaseV1["interpretation_admission"]) => { lease.interpretation_admission = receipt; },
     callAdmission: (receipt: SignalWorkspaceEngineInterpretationCallV1["admission"]) => { callAdmission = receipt; },
     providerEnabled: (value: boolean) => { providerEnabled = value; },
-    seedHistoricalReceipt: async () => {
-      assert.equal(configuration.model, "claude-opus-5"); assert.equal(calls.size, 0);
+    seedHistoricalReceipt: async (target:SignalWorkspaceInterpretationClusterV1=cluster,receiptMode:'valid'|'invalid'='valid') => {
+      assert.equal(calls.size, 0);
       const context = await stores.context({ database: {} as Args["database"], lease });
-      const historical = buildSignalWorkspaceInterpretationBatchV1(context.context, [cluster], configuration);
+      const historical = buildSignalWorkspaceInterpretationBatchV1(context.context, [target], configuration);
       call = await stores.reserve({ database: {} as Args["database"], workspace_id: lease.workspace_id, execution_id: lease.execution_id,
         actor_user_id: context.actor_user_id, execution_token: lease.execution_token, idempotency_key: historical.batch_key,
         request_digest: historical.request_digest, configuration, reserved_micro_usd: historical.reserved_micro_usd,
         daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" });
       const bytes = Buffer.from(JSON.stringify({ model: configuration.model, type: "message", role: "assistant", stop_reason: "end_turn",
         usage: { input_tokens: 100, output_tokens: 10 }, content: [{ type: "text", text: JSON.stringify({ interpretations: [{
-          cluster_id: cluster.cluster_id, cluster_digest: cluster.cluster_digest, status: "coherent", name: "Cobros de la reserva",
+          cluster_id: target.cluster_id, cluster_digest: target.cluster_digest, status: "coherent", name: "Cobros de la reserva",
           definition: "Diferencias entre el importe reservado y el cobrado.", inclusion: [], exclusion: [],
-          citations: [cluster.representatives[0]!.ref_id] }] }) }] }));
+          citations: [receiptMode==='invalid'?hash('invalid historical citation'):target.representatives[0]!.ref_id] }] }) }] }));
       const key = `historical/${call.call_id}`; files.set(key, bytes);
       const persisted = calls.get(call.call_id)!;
       persisted.state = "settled"; persisted.settled_micro_usd = 750;
@@ -244,6 +247,8 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
     loseSettlementAcknowledgment: () => { failSettlementAck = true; },
     crashAfterCheckpoint: () => { failAfterCheckpoint = true; }, crashAfterCatalog: () => { failAfterCatalog = true; },
     mode: (mode: typeof responseMode) => { responseMode = mode; },
+    clusters: (values: SignalWorkspaceInterpretationClusterV1[]) => { executionClusters = values; },
+    contextData: (value: Record<string, unknown>) => { contextData = value; },
     repairMode: (mode: typeof responseMode) => { repairMode = mode; } };
 }
 
@@ -271,6 +276,54 @@ test("standalone batch preserves an unknown outcome and refuses another send",as
   await assert.rejects(s.executeBatchOnly(),/outcome_unknown/u);
   assert.equal(s.get().sends,1);assert.equal(s.get().calls.length,1);assert.equal(s.get().fitCount,0);assert.equal(s.get().completed,0);
  }finally{await s.cleanup();}
+});
+test("a late oversized group fails complete-plan validation before any reservation or provider send", async () => {
+  const s = await scenario(); try {
+    s.contextData({ brand_os: { excerpt: `${'\\"'.repeat(4_000)}` }, interests: [] });
+    s.clusters([cluster, { cluster_id: "open:zzzz_oversized", cluster_digest: hash("oversized"), lane: "open",
+      root_count: 1, chunk_count: 1, terms: Array.from({ length: 100 }, (_, index) => `${index}:${'\\"'.repeat(120)}`), representatives: [] }]);
+    await assert.rejects(s.execute(), /workspace_engine_interpretation_batch_capacity_exceeded/u);
+    const result = s.get(); assert.equal(result.fitCount, 1); assert.equal(result.reservations.length, 0);
+    assert.equal(result.sends, 0); assert.equal(result.calls.length, 0); assert.equal(result.completed, 0);
+  } finally { await s.cleanup(); }
+});
+test("a paid historical receipt is checkpointed before a later oversized legacy group stops the run", async () => {
+  const s = await scenario(legacyConfig); try {
+    s.contextData({ brand_os: { excerpt: `${'\\"'.repeat(4_000)}` }, interests: [] });
+    await s.seedHistoricalReceipt();
+    s.clusters([cluster, { cluster_id: "open:zzzz_oversized", cluster_digest: hash("oversized"), lane: "open",
+      root_count: 1, chunk_count: 1, terms: Array.from({ length: 100 }, (_, index) => `${index}:${'\\"'.repeat(120)}`), representatives: [] }]);
+    await assert.rejects(s.execute(), /workspace_engine_interpretation_batch_capacity_exceeded/u);
+    const result=s.get();assert.equal(result.sends,0);assert.equal(result.checkpointCount,1);
+    assert.deepEqual(result.checkpointCallIds,[result.call!.call_id]);assert.equal(result.totalSettled,750);
+    assert.equal(result.completed,0);
+  } finally { await s.cleanup(); }
+});
+test("recovery crosses an oversized legacy group to checkpoint a later paid receipt", async () => {
+  const s = await scenario(legacyConfig); try {
+    const paid={...structuredClone(cluster),cluster_id:'open:zzzz_paid',cluster_digest:hash('later paid')};
+    const oversized={ cluster_id: "open:aaaa_oversized", cluster_digest: hash("oversized first"), lane: "open" as const,
+      root_count: 1, chunk_count: 1, terms: Array.from({ length: 100 }, (_, index) => `${index}:${'\\"'.repeat(120)}`), representatives: [] };
+    s.contextData({ brand_os: { excerpt: `${'\\"'.repeat(4_000)}` }, interests: [] });
+    await s.seedHistoricalReceipt(paid);s.clusters([oversized,paid]);
+    await assert.rejects(s.execute(), /workspace_engine_interpretation_batch_capacity_exceeded/u);
+    const result=s.get();assert.equal(result.sends,0);assert.equal(result.checkpointCount,1);
+    assert.deepEqual(result.checkpointCallIds,[result.call!.call_id]);assert.equal(result.totalSettled,750);
+    assert.equal(result.completed,0);
+  } finally { await s.cleanup(); }
+});
+test("one protocol repair may finish an invalid paid receipt before a later legacy capacity failure", async () => {
+  const s = await scenario(); try {
+    s.contextData({ brand_os: { excerpt: `${'\\"'.repeat(4_000)}` }, interests: [] });
+    await s.seedHistoricalReceipt(cluster,'invalid');
+    s.clusters([cluster, { cluster_id: "open:zzzz_oversized", cluster_digest: hash("oversized after repair"), lane: "open",
+      root_count: 1, chunk_count: 1, terms: Array.from({ length: 100 }, (_, index) => `${index}:${'\\"'.repeat(120)}`), representatives: [] }]);
+    await assert.rejects(s.execute(), /workspace_engine_interpretation_batch_capacity_exceeded/u);
+    const result=s.get();assert.equal(result.sends,1);assert.equal(result.calls.length,2);
+    assert.equal(result.calls.filter(row=>row.editorial_repair!==null).length,1);
+    assert.equal(result.checkpointCount,1);assert.equal(result.completed,0);
+    assert.ok(result.totalSettled>750);
+  } finally { await s.cleanup(); }
 });
 
 test("a historical Opus lease consumes its sealed receipt at historical cost with no provider admission", async () => {
@@ -633,6 +686,7 @@ async function rolloverScenario() {
   // This fixture supplies local ledger rows and private storage. Real Worker
   // batching, provider decoding, artifact verification and materializer input run.
   const context = { workspace_id: uuid(2), execution_id: uuid(1), context_digest: hash("context"), data: { interests: [] } };
+  const currentContext = { ...context, data: { contract_version: "workspace-engine-brand-context-v2", interests: [] } };
   const groups = Array.from({ length: 6 }, (_, i) => ({ ...structuredClone(cluster), cluster_id: `open:unit_${i + 1}`,
     cluster_digest: hash(`membership ${i + 1}`) }));
   const oldBatch = buildSignalWorkspaceInterpretationBatchV1(context, groups.slice(0, 4), legacyConfig);
@@ -646,7 +700,7 @@ async function rolloverScenario() {
   const files = new Map<string, Buffer>([["historical-4-units", originalBytes]]);
   const checkpoints: SignalWorkspaceEngineInterpretationCheckpointV1[] = [{ artifact_id: uuid(80), artifact_key: `interpretation-${uuid(6)}.json`,
     storage_key: "historical-4-units", sha256: hash(originalBytes), size_bytes: originalBytes.length, media_type: "application/json",
-    unit_keys: oldBatch.clusters.map(item => item.cluster_id), call_id: uuid(6), call_configuration: legacyConfig,
+    unit_keys: oldBatch.clusters.map(item => item.cluster_id), call_id: uuid(6), request_digest: oldBatch.request_digest, call_configuration: legacyConfig,
     interpretation_revision_digest: null }];
   const revision = hash("authorized rollover");
   const lease: SignalWorkspaceEngineLeaseV1 = { execution_id: context.execution_id, workspace_id: context.workspace_id,
@@ -661,7 +715,7 @@ async function rolloverScenario() {
   const pages: Array<string | null> = [], proposalBodies: string[] = [], sentUnits: string[][] = [];
   let call: SignalWorkspaceEngineInterpretationCallV1 | null = null;
   const stores = {
-    context: async () => ({ actor_user_id: uuid(5), context }),
+    context: async () => ({ actor_user_id: uuid(5), context: currentContext }),
     fit: async () => ({}),
     checkpoints: async (args: { after_artifact_id?: string | null }) => {
       if (readError) throw new Error(readError);
@@ -669,6 +723,7 @@ async function rolloverScenario() {
       const rows = checkpoints.filter(item => !args.after_artifact_id || item.artifact_id > args.after_artifact_id);
       return { items: rows.slice(0, 1), next_artifact_id: rows[0]?.artifact_id ?? null, done: rows.length <= 1 };
     },
+    recoverable: async () => [],
     reserve: async (args: Parameters<NonNullable<Args["stores"]>["reserve"]>[0]) => {
       reserved++; assert.deepEqual(args.configuration, config); assert.equal(args.interpretation_revision_digest, revision);
       assert.equal(args.execution_id, lease.execution_id); assert.equal(args.execution_token, lease.execution_token);
@@ -684,7 +739,7 @@ async function rolloverScenario() {
     settle: async () => { newCost += 450; call!.settled_micro_usd = 450; call!.state = "settled"; return { ...call! }; },
     fail: async () => { throw new Error("unexpected rollover failure"); },
     checkpoint: async (args: Parameters<NonNullable<Args["stores"]>["checkpoint"]>[0]) => {
-      checkpoints.push({ ...args.artifact, artifact_id: uuid(100), call_id: call!.call_id, call_configuration: config,
+      checkpoints.push({ ...args.artifact, artifact_id: uuid(100), call_id: call!.call_id, request_digest: call!.request_digest, call_configuration: config,
         unit_keys: args.unit_keys, interpretation_revision_digest: revision });
       if (crash) { crash = false; throw new Error("lost checkpoint acknowledgment"); }
       return { artifact_id: uuid(100) };
@@ -728,6 +783,7 @@ async function rolloverScenario() {
       if (kind === "units") { row.unit_keys = [groups[5]!.cluster_id]; return; }
       if (kind === "profile") { row.call_configuration = config; return; }
       if (kind === "revision") { row.interpretation_revision_digest = hash("unauthorized"); return; }
+      if (kind === "request") { row.request_digest = hash("unauthorized request"); return; }
       if (kind === "duplicate") { checkpoints.push({ ...row, artifact_id: uuid(81) }); return; }
       oldPacket = structuredClone(oldPacket);
       if (kind === "context") oldPacket.context.context_digest = hash("another context");
@@ -753,7 +809,7 @@ test("rollover resumes after a lost checkpoint acknowledgment without resending 
     assert.equal(s.get().complete, 1); assert.deepEqual(s.get().pages, [null, null, uuid(80)]);
   } finally { await s.cleanup(); }
 });
-for (const kind of ["hash", "size", "context", "cluster", "citation", "alias", "units", "duplicate", "profile", "revision"]) {
+for (const kind of ["hash", "size", "context", "cluster", "citation", "alias", "units", "duplicate", "profile", "revision", "request"]) {
   test(`rollover rejects ${kind} checkpoint corruption before any reservation or provider admission`, async () => {
     const s = await rolloverScenario(); try {
       s.tamper(kind); await assert.rejects(s.execute(), /workspace_engine_interpretation_checkpoint_invalid/u);

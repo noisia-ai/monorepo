@@ -6,7 +6,7 @@ import {
   reserveSignalWorkspaceEngineInterpretationV1, markSignalWorkspaceEngineInterpretationSentV1,
   persistSignalWorkspaceEngineInterpretationResponseV1, settleSignalWorkspaceEngineInterpretationV1,
   failSignalWorkspaceEngineInterpretationV1, checkpointSignalWorkspaceEngineInterpretationV1,
-  readSignalWorkspaceEngineInterpretationCheckpointsV1,
+  readSignalWorkspaceEngineInterpretationCheckpointsV1, readSignalWorkspaceEngineInterpretationRecoveryRequestDigestsV1,
   materializeSignalWorkspaceEngineTopicsV1, persistSignalWorkspaceEngineArtifactV1, completeSignalWorkspaceEngineAnalysisV1,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
@@ -14,6 +14,7 @@ import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniv
   signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceInterpretationRepairBatchV1, buildSignalWorkspaceInterpretationBatchV1,
   parseSignalWorkspaceInterpretationConfigurationV1,
   validateSignalWorkspaceInterpretationResultV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
+  SignalWorkspaceInterpretationErrorV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
 import { executeWorkspaceInterpretationBatchV1 } from "./signal-workspace-interpretation-batch";
@@ -25,11 +26,38 @@ const stores = {
   response: persistSignalWorkspaceEngineInterpretationResponseV1, settle: settleSignalWorkspaceEngineInterpretationV1,
   fail: failSignalWorkspaceEngineInterpretationV1, checkpoint: checkpointSignalWorkspaceEngineInterpretationV1,
   checkpoints: readSignalWorkspaceEngineInterpretationCheckpointsV1,
+  recoverable: readSignalWorkspaceEngineInterpretationRecoveryRequestDigestsV1,
   materialize: materializeSignalWorkspaceEngineTopicsV1, persist: persistSignalWorkspaceEngineArtifactV1,
   complete: completeSignalWorkspaceEngineAnalysisV1,
 };
 const sha = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const fail = (code: string): never => { throw new Error(code); };
+function* recoverableSignalWorkspaceInterpretationBatchesV1(
+  context:Parameters<typeof batchSignalWorkspaceInterpretationV1>[0],values:Iterable<SignalWorkspaceInterpretationClusterV1>,
+  configuration:Parameters<typeof batchSignalWorkspaceInterpretationV1>[2],
+):Generator<SignalWorkspaceInterpretationBatchV1>{
+  let pending:SignalWorkspaceInterpretationClusterV1[]=[];
+  for(const value of values){
+    if(pending.length){
+      try{buildSignalWorkspaceInterpretationBatchV1(context,[...pending,value],configuration);}
+      catch(error){
+        if(!(error instanceof SignalWorkspaceInterpretationErrorV1)
+          ||!['workspace_engine_interpretation_batch_capacity_exceeded','workspace_engine_interpretation_batch_invalid'].includes(error.code))throw error;
+        yield buildSignalWorkspaceInterpretationBatchV1(context,pending,configuration);pending=[];
+      }
+    }
+    if(!pending.length){
+      try{buildSignalWorkspaceInterpretationBatchV1(context,[value],configuration);}
+      catch(error){
+        if(error instanceof SignalWorkspaceInterpretationErrorV1
+          &&error.code==='workspace_engine_interpretation_batch_capacity_exceeded')continue;
+        throw error;
+      }
+    }
+    pending.push(value);
+  }
+  if(pending.length)yield buildSignalWorkspaceInterpretationBatchV1(context,pending,configuration);
+}
 
 /** Continue the same leased execution. Durable responses are consumed again on
  * recovery. A successor requires the store's unsent or verified-terminal authority. */
@@ -55,12 +83,50 @@ export async function interpretWorkspaceEngineV1(args: {
   });
   const proposals: Array<{ artifact_id: string; file: string }> = [];
   const completedUnits = await restoreCheckpoints();
+  const recoveryRequests=new Set(await store.recoverable({database,lease}));
+  // Finish already-started logical requests before validating any unrelated
+  // future send. This tolerant planner can cross an individually oversized
+  // legacy group. It only enters batches whose digest is in the DB ledger;
+  // their single protocol-bound editorial repair may be created here because
+  // an invalid paid receipt cannot become a checkpoint or release the legacy
+  // contract without it. The repair still requires the existing DB authority,
+  // cap and source receipt. New corpus batches wait for the complete preflight.
+  // The historical context contract stays fixed for this invocation; after
+  // these receipts become checkpoints, a later retry may safely promote to
+  // the bounded context without losing the original request digest.
+  for(const batch of recoverableSignalWorkspaceInterpretationBatchesV1(context.context,
+    args.clusters.filter(cluster=>!completedUnits.has(cluster.cluster_id)),configuration)){
+    if(!recoveryRequests.has(batch.request_digest))continue;
+    const recovered=await processBatch(batch);
+    for(const key of recovered)completedUnits.add(key);
+  }
   const remaining = args.clusters.filter(cluster => !completedUnits.has(cluster.cluster_id));
+  // Validate the complete pending plan before reserving or sending its first
+  // batch. A late oversized group must never leave an avoidable partially paid
+  // execution merely because the generator had not reached it yet.
+  let plannedBatches=0;
+  for(const _batch of batchSignalWorkspaceInterpretationV1(context.context,remaining,configuration)){
+    plannedBatches++;if(plannedBatches%32===0)await args.heartbeat("interpreting");
+  }
   for (const originalBatch of batchSignalWorkspaceInterpretationV1(context.context, remaining, configuration)) {
+    await processBatch(originalBatch);
+  }
+  await args.heartbeat("materializing");
+  const materialized = await store.materialize({ database, lease, proposals: (async function* () {
+    for (const item of proposals) yield { artifact_id: item.artifact_id, body: await readFile(item.file, "utf8") };
+  })() });
+  // replayed is transport state, excluded from immutable artifact bytes.
+  const { replayed: _replayed, mapping, ...metadata } = materialized;
+  const stored = await put("materialization.json", JSON.stringify({ ...metadata, mapping }));
+  const artifact = await store.persist({ database, lease, artifact: { ...stored, artifact_key: "materialization.json",
+    artifact_type: "engine_proposals", title: "Editable topic catalog", metadata } });
+  await args.heartbeat("materializing");
+  return store.complete({ database, lease, materialization_artifact_id: artifact.artifact_id });
+
+  async function processBatch(originalBatch:SignalWorkspaceInterpretationBatchV1){
     await args.heartbeat("interpreting");
-    if (signalWorkspaceEmbeddingDigestV1(originalBatch.configuration) !== signalWorkspaceEmbeddingDigestV1(config.call_configuration)) {
+    if (signalWorkspaceEmbeddingDigestV1(originalBatch.configuration) !== signalWorkspaceEmbeddingDigestV1(config.call_configuration))
       return fail("workspace_engine_interpretation_config_mismatch");
-    }
     let batch = originalBatch;
     let { call, response } = await executeBatch(batch);
     if (!response.interpretations || response.outcome !== "validated") {
@@ -89,18 +155,8 @@ export async function interpretWorkspaceEngineV1(args: {
       unit_keys: batch.clusters.map(item => item.cluster_id), artifact: { ...stored, artifact_key: filename,
         artifact_type: "engine_proposals", title: "Topic interpretations", metadata: {} } });
     proposals.push({ artifact_id: checkpoint.artifact_id, file: join(args.directory, filename) });
+    return batch.clusters.map(item=>item.cluster_id);
   }
-  await args.heartbeat("materializing");
-  const materialized = await store.materialize({ database, lease, proposals: (async function* () {
-    for (const item of proposals) yield { artifact_id: item.artifact_id, body: await readFile(item.file, "utf8") };
-  })() });
-  // replayed is transport state, excluded from immutable artifact bytes.
-  const { replayed: _replayed, mapping, ...metadata } = materialized;
-  const stored = await put("materialization.json", JSON.stringify({ ...metadata, mapping }));
-  const artifact = await store.persist({ database, lease, artifact: { ...stored, artifact_key: "materialization.json",
-    artifact_type: "engine_proposals", title: "Editable topic catalog", metadata } });
-  await args.heartbeat("materializing");
-  return store.complete({ database, lease, materialization_artifact_id: artifact.artifact_id });
 
   async function restoreCheckpoints() {
     const completed = new Set<string>(), known = new Map(args.clusters.map(cluster => [cluster.cluster_id, cluster]));
@@ -125,7 +181,10 @@ export async function interpretWorkspaceEngineV1(args: {
           if (!packet || typeof packet !== "object" || Array.isArray(packet)
             || Object.keys(packet).some(key => !["contract_version", "execution_id", "context", "clusters", "interpretations", "editorial_repair"].includes(key))
             || packet.contract_version !== "workspace-engine-interpretation-result-v1" || packet.execution_id !== lease.execution_id
-            || signalWorkspaceEmbeddingDigestV1(packet.context) !== signalWorkspaceEmbeddingDigestV1(context.context)) throw new Error();
+            || !packet.context || typeof packet.context !== "object" || Array.isArray(packet.context)
+            || packet.context.workspace_id !== context.context.workspace_id
+            || packet.context.execution_id !== context.context.execution_id
+            || packet.context.context_digest !== context.context.context_digest) throw new Error();
           const historicalConfiguration = parseSignalWorkspaceInterpretationConfigurationV1(item.call_configuration);
           const authorizedConfiguration = item.interpretation_revision_digest === null
             ? lease.snapshot.interpretation_config?.call_configuration
@@ -139,6 +198,10 @@ export async function interpretWorkspaceEngineV1(args: {
             if (signalWorkspaceEmbeddingDigestV1(rebuilt.editorial_repair) !== signalWorkspaceEmbeddingDigestV1(repair)) throw new Error();
             batch = rebuilt;
           }
+          // Historical packets keep their original context projection. Its
+          // request digest remains sealed by the settled provider call while
+          // the authority digest above must still match the current workspace.
+          if (batch.request_digest !== item.request_digest) throw new Error();
           const unitKeys = batch.clusters.map(cluster => cluster.cluster_id);
           if (JSON.stringify(unitKeys) !== JSON.stringify(item.unit_keys)) throw new Error();
           for (const cluster of batch.clusters) {

@@ -239,6 +239,7 @@ export function workspaceAnalysisErrorKey(code: string) {
   if (code === "workspace_engine_interpretation_admission_changed" || code === "workspace_engine_interpretation_admission_cap_or_deadline_invalid") return "admissionChanged";
   if (code === "workspace_engine_interpretation_admission_unavailable") return "admissionUnavailable";
   if (code === "workspace_engine_interpretation_daily_authority_expired") return "authorizationExpired";
+  if (code === "workspace_engine_interpretation_batch_capacity_exceeded") return "batchCapacity";
   if (code === "workspace_engine_interpretation_transport_terminal_confirmed") return "transportTerminal";
   if (code === "workspace_engine_interpretation_transport_retry_exhausted") return "transportExhausted";
   if (code === "workspace_engine_interpretation_output_invalid") return "editorialInvalid";

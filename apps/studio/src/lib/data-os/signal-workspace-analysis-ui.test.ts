@@ -38,6 +38,7 @@ test("explicit expired authorization blocks retry, replay and a replacement run 
     expected_interpretation_units: 357, interpreted_units: 32, error_code: "workspace_engine_interpretation_daily_authority_expired" };
   const current = { ...status, latest_run: expired };
   assert.equal(workspaceAnalysisErrorKey(expired.error_code!), "authorizationExpired");
+  assert.equal(workspaceAnalysisErrorKey("workspace_engine_interpretation_batch_capacity_exceeded"), "batchCapacity");
   assert.equal(workspaceAnalysisCanStart(current, "0.002001"), false);
   assert.equal(workspaceAnalysisCanRetry(current, expired), false);
   assert.equal(workspaceAnalysisCanRetry(current, { ...expired, retryable: true }), false,

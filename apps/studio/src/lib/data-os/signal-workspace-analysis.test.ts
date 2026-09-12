@@ -136,6 +136,10 @@ test("UI recovery matches storage transport failures but never authorizes retry 
     assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code, is_current: false })?.retryable, false);
     assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code, status: "running" })?.retryable, false);
   }
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code: "workspace_engine_interpretation_batch_capacity_exceeded",
+    interpretation_capacity_recovery_eligible: true })?.retryable, true);
+  assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code: "workspace_engine_interpretation_batch_capacity_exceeded",
+    interpretation_capacity_recovery_eligible: false })?.retryable, false);
   for (const error_code of ["workspace_engine_storage_digest_invalid", "workspace_engine_storage_part_invalid",
     "workspace_engine_storage_reference_invalid", "workspace_engine_storage_bucket_not_private", "workspace_engine_forbidden"])
     assert.equal(workspaceAnalysisRunViewV1({ ...run, error_code })?.retryable, false);

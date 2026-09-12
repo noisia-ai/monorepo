@@ -4,7 +4,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import pg from 'pg';
 import type {Pool,PoolClient} from 'pg';
-import {signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,buildSignalWorkspaceInterpretationRepairBatchV1,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
+import {signalWorkspaceEmbeddingDigestV1,signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,buildSignalWorkspaceInterpretationRepairBatchV1,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
  type SignalTopicDefinitionV1,type SignalWorkspaceInterpretationClusterV1} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
 import * as money from '../signal-workspace-engine-interpretation';
@@ -66,7 +66,10 @@ for(const withRepair of [false,true]) test(`one analysis keeps fit and metered i
   assert.deepEqual(await engine.checkpointSignalWorkspaceEngineFitV1({...fitArgs,interpretation_manifest:manifest}),fit);
   const governed=await engine.readSignalWorkspaceEngineInterpretationContextV1({database:f.database,lease});
   assert.equal(governed.actor_user_id,f.actor_user_id);assert.equal(governed.context.context_digest,preflight.expected_context_digest);
-  assert.deepEqual(governed.context.data.interests,[]);assert.ok(governed.context.data.brand_os);
+  assert.deepEqual(governed.context.data.interests,{contract_version:'workspace-engine-interest-synopsis-v1',catalog_digest:signalWorkspaceEmbeddingDigestV1([]),
+    total_count:0,included_count:0,omitted_count:0,summaries:[]});assert.equal((governed.context.data.brand_os as {contract_version?:string}).contract_version,'workspace-engine-brand-context-v2');
+  assert.equal(governed.context.data.brand_os.context_digest,preflight.expected_context_digest);
+  assert.ok(Buffer.byteLength(JSON.stringify(governed.context))<98_304,'governed interpretation context stays within one request envelope');
   // A parseable body from an incomplete HTTP transport is durable evidence, never settled usage.
   await f.query('BEGIN');try{
    const partial=await reserve(randomUUID()),token={database:f.database,call_id:partial.call_id,attempt_token:partial.attempt_token};
@@ -106,6 +109,9 @@ for(const withRepair of [false,true]) test(`one analysis keeps fit and metered i
   }finally{await f.query('ROLLBACK');}
   assert.equal((await money.failSignalWorkspaceEngineInterpretationV1({...callToken,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_receipt_persistence_unknown'})).state,'response_persisted','lost persistence ACK preserves a complete durable receipt');
   assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1('workspace_engine_interpretation_receipt_recovery_required'),true);
+  assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1('workspace_engine_interpretation_batch_capacity_exceeded'),false);
+  assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1('workspace_engine_interpretation_batch_capacity_exceeded',
+    {interpretation_capacity_recovery_eligible:true}),true);
   await money.settleSignalWorkspaceEngineInterpretationV1({...callToken,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
   await assert.rejects(engine.checkpointSignalWorkspaceEngineInterpretationV1({database:f.database,lease,call_id:call.call_id,artifact:artifact('interpretation-1.json','engine_proposals'),unit_keys:[keys[0]!]}),/lease_conflict/u);
   lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-recovered-analysis'});assert.ok(lease);
