@@ -14,7 +14,6 @@ import { BrandContextPreparationNotice, brandContextPreparationIntent, parseBran
 import { SemanticContextReviewWorkbench, ElementReviewDetail } from "../components/brands/SemanticContextReviewWorkbench";
 import { useTranslations } from "next-intl";
 import { WorkspaceSelect } from "../components/admin/WorkspaceSelect";
-import { POST as disabledBrandIntakeSuggestions } from "../app/api/brands/intake-suggestions/route";
 import { browserWorkspaceTimezone, isIanaTimezone, workspaceTimezoneOptions } from "./timezone-catalog";
 import { brandCreationRequestDigestV1, storedBrandCreationRequestDigestV1 } from "./data-os/brand-creation-idempotency";
 import { BrandContextDomainMutationError, requireBrandContextDomainMutationKeyV1 } from "./data-os/brand-context-domain-mutation";
@@ -144,26 +143,22 @@ test("competitor writes recover automatic knowledge through reconciliation witho
   assert.ok(post >= 0 && refresh > post && reconcile > refresh);
 });
 
-test("pre-save intake suggestions fail closed without reaching a provider", async () => {
-  const originalFetch = globalThis.fetch;
-  const originalApiKey = process.env.ANTHROPIC_API_KEY;
-  let providerCalls = 0;
-  process.env.ANTHROPIC_API_KEY = "test-only-must-not-be-used";
-  globalThis.fetch = (async () => {
-    providerCalls += 1;
-    throw new Error("provider must not be called");
-  }) as typeof fetch;
-  try {
-    const response = await disabledBrandIntakeSuggestions();
-    assert.equal(response.status, 410);
-    assert.equal(response.headers.get("cache-control"), "no-store");
-    assert.equal((await response.json()).error, "brand_intake_suggestions_disabled");
-    assert.equal(providerCalls, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = originalApiKey;
-  }
+test("pre-save Claude assistance remains available, reviewable, and bounded to Sonnet", async () => {
+  const [route, form] = await Promise.all([
+    readFile(new URL("../app/api/brands/intake-suggestions/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../components/brands/BrandOsForm.tsx", import.meta.url), "utf8")
+  ]);
+  assert.doesNotMatch(route, /brand_intake_suggestions_disabled/u);
+  assert.match(route, /BRAND_INTAKE_SUGGESTION_MODEL = "claude-sonnet-4-6"/u);
+  assert.match(route, /BRAND_INTAKE_SUGGESTION_MAX_OUTPUT_TOKENS = 4096/u);
+  assert.match(route, /BRAND_INTAKE_SUGGESTION_MAX_WEB_SEARCHES = 2/u);
+  assert.match(route, /clientBrandCreationDecisionV1/u);
+  assert.match(route, /"Cache-Control": "no-store"/u);
+  assert.match(form, /fetch\("\/api\/brands\/intake-suggestions"/u);
+  assert.match(form, /t\("aiStart"\)/u);
+  assert.match(form, /t\("aiRegenerate"\)/u);
+  assert.match(form, /onAcceptSuggestion/u);
+  assert.match(form, /onDiscardSuggestion/u);
 });
 
 test("brand creation replay seals competitors and knowledge that create durable child rows", () => {
@@ -259,7 +254,11 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(created.includes(messages.BrandOs.form.competitorsPlaceholder));
     assert.ok(created.includes(messages.BrandOs.form.expandField));
     assert.ok(created.includes(messages.BrandOs.form.openCatalog.replace("{label}", messages.BrandOs.form.industry)));
-    assert.doesNotMatch(created, /brand-ai-start|brand-ai-refine|field-ai-suggestion/u);
+    assert.match(created, /brand-ai-start/u);
+    assert.match(created, /brand-ai-refine/u);
+    assert.ok(created.includes(messages.BrandOs.form.aiStart));
+    assert.ok(created.includes(messages.BrandOs.form.aiBudgetHint));
+    assert.doesNotMatch(created, /field-ai-suggestion/u, "suggestions appear only after Claude returns a draft");
     assert.match(created, /maxLength="100000" name="knowledge_notes"/u);
     for (const key of ["brand", "aliases", "competitors", "description", "notes"] as const) {
       assert.ok(created.includes(messages.BrandOs.form[key]));
@@ -280,6 +279,7 @@ for (const locale of ["es-MX", "en-US"]) {
     const created = render(<BrandOsForm clientContext={{ organizationId: "org-one", organizationName: "Client organization" }} />);
     assert.ok(created.includes("Client organization"));
     assert.ok(created.includes(messages.BrandOs.form.createClient));
+    assert.ok(created.includes(messages.BrandOs.form.aiStart));
     assert.doesNotMatch(created, /name="organization_name"|name="slug"|brand-context-preparation-notice|\/studio/u);
     const edited = render(<BrandEditForm brand={{ id: "brand-one", organizationId: "org-one", slug: "brand-one", name: "Client brand", displayName: null,
       industry: "Retail", industrySub: null, countries: ["MX"], description: "Context", brandSeedHandles: [], status: "active", timezone: "UTC" }}
