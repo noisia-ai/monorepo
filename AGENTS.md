@@ -4,6 +4,19 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Renovación semántica vencida entregada UAT — 2026-09-12 00:40 UTC.** Producto `ce5f0c1`,
+> marcador Studio `7ad767e`; Worker `c4086604-2dac-4160-b2fc-bef373c3a580` y Studio
+> `b7a7885b-889b-4162-9e25-ca2b9184e728` activos, anteriores retirados y autodeploy restaurado.
+> SQL0160 SHA `4e7596e3…73592` aplicado una sola vez a las 00:29:22Z; no reaplicar. Stage1 vencido y
+> definitivamente no enviado se renueva explícitamente sobre ejecución/recibo/admisión/reserva
+> originales, con replay, fuente/política/cap/ledger y límite combinado cerrados. PG11 grupos,
+> interfaz33, Studio985/7, DBfocal28, Worker/TC/lint/build y revisión 0P0/P1/P2 cerrados; no repetir.
+> Recibo posterior: RLS activo, grants públicos0 y cero renovaciones, políticas, acciones,
+> admisiones, trabajos, incertidumbre u outbox. QA real conserva Brand OS/32 Topics de357 y Signal
+> 6,826/142; cero imports o proveedores. Leer
+> `DELIVERY_BRAND_CONTEXT_EXPIRED_RETRY_RENEWAL_UAT_2026-09-11.md`. Siguiente: marca nueva hasta
+> preparación semántica y detenerse para menciones reales del operador. Loop ACTIVE en este chat.
+
 > **Source fencing Brand Context entregado UAT — 2026-09-11 23:48 UTC.** Corte de producto
 > `f77a316`; Worker `de80d999-58d0-4a45-b902-9ea464c6070d` y Studio
 > `bf40d8a3-0345-4cae-8a23-17dac3c0e67d` activos; marcador Studio `4f4b62c`. SQL0159 reconcilia cambios de Brand OS,
