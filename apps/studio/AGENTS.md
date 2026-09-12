@@ -1,5 +1,11 @@
 # AGENTS.md — apps/studio
 
+> **Expired semantic preparation renewal UAT rollout marker — 2026-09-11.** SQL0160 was
+> applied exactly once at `2026-09-12T00:29:22.397Z`; do not reapply it. Worker deployment
+> `c4086604-2dac-4160-b2fc-bef373c3a580` is active on commit `ce5f0c1` before this Studio-only
+> rollout. Brand OS can explicitly renew an expired, definitely-unsent semantic preparation on
+> its original receipt and follows the same operation durably without creating authority or spend.
+
 > **Source fencing Brand Context UAT rollout marker — 2026-09-11.** SQL0159 se aplicó una sola
 > vez después de un preflight sin actividad; SHA
 > `0be97f5bc9dfe4c0b20e7347a828807bd6fb95a96582f7e97e5b158007bfc8e7`. Worker `f77a316`
