@@ -4,6 +4,20 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **PARADA SEGURA ALEXA PLUS E2E — 2026-09-12 14:14 UTC.** El loop
+> `noisia-topics-to-signal-uat-loop` quedó `PAUSED` y verificado en este chat. Studio y Worker UAT
+> ejecutan `1dd6882337ce15f9ec72894df566316f954c0b3b`; SQL0167–0169 se aplicó una sola vez y no se
+> repite. Alexa+ quedó comprobada desde alta UI hasta Signal: 9 CSV, 57,334 filas recibidas,
+> 47,285 únicas, 43,159 elegibles, 1,652 grupos BERTopic, 36 Topics parciales, clasificación
+> 43,159/43,159 y «Acceso anticipado a Alexa+» seleccionado con 67 menciones. Menciones visible en
+> 5.9 s tras el digest exacto de 217,526 filas; snapshots de negocio intactos. Claude Sonnet 4.6:
+> USD1.192527 settled y USD1.192104 terminal pendiente; no nuevas llamadas. Leer
+> `docs/product/PROMPT_LOOPING/SAFE_PAUSE_ALEXA_PLUS_E2E_2026-09-12.md` y
+> `DELIVERY_ALEXA_PLUS_E2E_2026-09-12.md`. Siguen pendientes segunda carga incremental real,
+> calidad/locale, cuarentena durable de `repair_invalid`, reserva terminal, SLO, reportes y MCP.
+> No declarar producción completa, no reanudar loop/proveedores sin instrucción nueva, no repetir
+> SQL0167–0169/imports/Voyage/BERTopic ni tocar producción/main.
+
 > **VENTANA ALEXA PLUS E2E ACTIVA — 2026-09-12 07:00–15:00 UTC.** El operador autorizó
 > ocho horas para crear **Alexa Plus** desde la interfaz UAT y llevarla por alta → ayuda Claude
 > para contexto → Brand OS/contexto semántico → Topics/intereses → importación UI de los CSV en

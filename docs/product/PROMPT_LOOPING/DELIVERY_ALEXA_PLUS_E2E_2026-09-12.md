@@ -15,7 +15,7 @@ grupos. Este recibo no declara el producto completo ni listo para producción.
 | Workspace ID | `979b8f96-3366-463d-8ee8-8c0cce460a71` |
 | Slug | `alexa-plus-e2e-2026-09-12` |
 | Ejecución de análisis | `46c735c7-dcb0-4fa4-aa42-2ef0b0b7a93d` |
-| Commit UAT | `a11021614006bee08f1396be2bff61e2705b70b1` |
+| Commit UAT | `1dd6882337ce15f9ec72894df566316f954c0b3b` |
 
 La marca se creó desde la interfaz, con Brand OS, Knowledge Base y competidores editables.
 Brand Context v2 quedó preparado como autoridad semántica para el recorrido. Las llamadas de
@@ -106,12 +106,21 @@ reemplaza con otra llamada por perder el estado del navegador.
   aceptado para producción. Un `EXPLAIN ANALYZE` de sólo lectura atribuyó aproximadamente 12.8 s
   a recalcular `sha256(text_clean)` sobre 43,159 raíces y 134 MB de texto; raíces, preparación y
   membresías terminaron por debajo de 0.8 s. No es Redis ni la búsqueda vectorial. El corte seguro
-  siguiente es persistir un digest byte-exacto mantenido por trigger, hacer backfill y validar la
-  restricción antes de cambiar el lector. Una simulación sin mutar UAT redujo el statement a 1.5 s
-  y el loader a 4.0 s. `mentions.text_hash` no es sustituto porque usa otra normalización.
+  siguiente quedó entregado en `1dd6882`: `mentions.text_clean_sha256` persiste el digest
+  byte-exacto, el trigger lo mantiene en inserts y cambios reales de texto, y el lector lo reutiliza
+  sin alterar la semántica de `mentions.text_hash`. SQL0167–0169 hizo backfill de 217,526 filas en
+  44 lotes con trabajo y un lote terminal, validó cero nulos y cero divergencias, volvió la columna
+  `NOT NULL` y retiró el helper/estado transitorios. Los snapshots de negocio antes y después son
+  idénticos (`sha256:94de43e3f80f799a21caae5298e6cf4017dffd52d225d41c3037e837dd050b7a`).
+  La medición DB posterior, de sólo lectura y con conexión remota, bajó el loader de 16.3 s a
+  **8.4 s** y la consulta principal de aproximadamente 13.7 s a **5.8 s**; conserva 43,159 totales,
+  50 filas, cursor y foco exacto. Con Studio y Worker activos en `1dd6882`, una navegación limpia
+  mostró la página, el foco y la evidencia en **5.9 s**, con «1–50 de 43,159» y «Abrir original».
+  Es una medición UAT, no un SLO de producción.
 - **Capacidad transitoria:** el Worker se amplió temporalmente a dos réplicas durante la
   clasificación y volvió a una réplica después de comprobar cero jobs reclamables. Studio y
-  Worker quedaron activos en `7ac8644`; el ajuste no reinició el análisis ni alteró su generación.
+  Worker quedaron activos primero en `7ac8644` y finalmente en `1dd6882`; el ajuste no reinició el
+  análisis ni alteró su generación.
 - **Catálogo parcial:** `a110216` mantiene visibles los Topics materializados cuando la reparación
   editorial termina inválida y explica que siguen editables y seleccionables con cobertura parcial.
   Durante la consulta inicial del estado ya no aparece el falso bloqueo «Las menciones necesitan
@@ -151,11 +160,17 @@ confirmó el resultado. La corrección de catálogo parcial pasó **32/32 prueba
 ESLint, `git diff --check` y otra revisión independiente sin P0/P1/P2. Estas pruebas respaldan los
 contratos afectados; no certifican el producto completo.
 
+El corte del digest pasó typecheck DB, **7/7 pruebas focales**, una integración PostgreSQL real bajo
+rollback, `git diff --check` y revisión independiente sin P0/P1/P2. La migración UAT tardó
+1,501,940 ms entre preparación, backfill y validación. El recibo privado
+`uat-0167-0169-migration-receipt.json` registra hashes de cada SQL, runner y journal; SQL0167–0169
+ya se aplicó una sola vez y no debe repetirse.
+
 ## Deudas y siguiente aceptación
 
 | Pendiente | Aceptación necesaria |
 | --- | --- |
-| Latencia de Menciones | Añadir `mentions.text_clean_sha256` byte-exacto, trigger, backfill por lotes y validación forward-only; después cambiar el lector y medir el SLO manteniendo filtros, derechos, cursor, snapshot, foco e integridad withheld. |
+| Latencia de Menciones | El digest exacto, su backfill y la validación UI de 5.9 s ya están en UAT. Continuar el perfilado de los ~5.8 s de consulta restantes y definir un SLO, manteniendo filtros, derechos, cursor, snapshot, foco e integridad withheld. |
 | Segunda carga incremental real | Cargar datos legítimamente nuevos por UI; verificar deduplicación, admisión, actualización y continuidad de la selección sin repetir el primer corpus. |
 | Calidad y locale | Revisar relevancia, límites de marca/competencia/categoría, idioma y nombres de tópicos con evidencia. No equiparar agrupación numérica con validación semántica. |
 | Recuperación del checkpoint | Reducir la reexportación de chunks y la descarga/validación completa de modelos cuando sólo falta interpretación; conservar identidad, hashes y checkpoints. Hoy los dos modelos de este caso suman aproximadamente 3.60 GB. |
