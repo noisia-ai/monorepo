@@ -109,6 +109,7 @@ test("paid Voyage recovery is exact-receipt only and cannot reserve or send agai
 test("Stage1 retry is one original receipt-bound unspent run under live capacity",()=>{
   const retry=body(adapter,"retrySignalBrandContextComposedSemanticRunV1");
   for(const marker of ["signal_brand_context_processing_receipts","signal_processing_admissions",
+    "signal_brand_context_semantic_renewals",
     "run.processing_admission_id=admission.id","run.brand_context_preparation_operation_id IS NULL",
     "signal_processing_capacity_v1","provider_call_state!==\"not_started\"","provider_call_count!==0",
     "provider_response_private!==null","lease_token!==null","brand_context_semantic_authorization_expired"])

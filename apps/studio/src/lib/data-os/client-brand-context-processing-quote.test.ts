@@ -12,9 +12,12 @@ import {
   clientBrandContextReconciliationAwaitingSettlementV1,
   clientBrandContextReconciliationCycleV1,
   clientBrandContextReconciliationRetryDelayV1,
+  clientBrandContextProcessingCanRetrySemanticV1,
   clientBrandContextProcessingCanConfirmV1,
   clientBrandContextProcessingConfirmationV1,
+  clientBrandContextProcessingNeedsExplicitRenewalV1,
   clientBrandContextProcessingPollDelayV1,
+  clientBrandContextProcessingPollingCheckpointV1,
   clientBrandContextProcessingQuoteForWorkspaceV1,
   clientBrandContextProcessingRequestV1,
   clientBrandContextProcessingViewForWorkspaceV1,
@@ -22,6 +25,7 @@ import {
   latestClientBrandContextProcessingViewV1,
   toClientBrandContextProcessingQuoteViewV1,
   validClientBrandContextProcessingConfirmationV1,
+  validClientBrandContextProcessingPollingCheckpointV1,
   validClientBrandContextProcessingQuoteViewV1,
   validClientBrandContextProcessingViewV1,
   type ClientBrandContextProcessingOperationStateV1,
@@ -65,12 +69,22 @@ const availableView: ClientBrandContextProcessingViewV1 = {
 
 const prototypeAuthorizationView: ClientBrandContextProcessingViewV1 = {
   ...availableView,
-  operation: { state: "awaiting_authorization", phase: null, request_observed: true }
+  operation: { state: "awaiting_authorization", phase: null, request_observed: true, next_action: null }
+};
+
+const renewalView: ClientBrandContextProcessingViewV1 = {
+  ...availableView,
+  operation: { state: "failed", phase: null, request_observed: true, next_action: "renew_semantic" }
+};
+
+const retryView: ClientBrandContextProcessingViewV1 = {
+  ...availableView,
+  operation: { state: "failed", phase: null, request_observed: true, next_action: "retry_semantic" }
 };
 
 function operationView(state: ClientBrandContextProcessingOperationStateV1,
   phase: ClientBrandContextProcessingPhaseV1 | null): ClientBrandContextProcessingViewV1 {
-  return { ...availableView, can_start: false, operation: { state, phase, request_observed: true } };
+  return { ...availableView, can_start: false, operation: { state, phase, request_observed: true, next_action: null } };
 }
 
 test("public Brand Context quote is an exact allowlist and remains non-executable", () => {
@@ -112,6 +126,12 @@ test("aggregate Brand Context view accepts only the public state machine", () =>
     operationView("awaiting_authorization", "preparing_interests"),
     operationView("awaiting_authorization", null),
     { ...operationView("running", "preparing_context"), can_start: true },
+    { ...operationView("running", "preparing_context"), operation: {
+      ...operationView("running", "preparing_context").operation!, next_action: "retry_semantic" } },
+    { ...operationView("failed", null), operation: {
+      ...operationView("failed", null).operation!, next_action: "renew_semantic" } },
+    { ...renewalView, operation: { ...renewalView.operation!, next_action: null } },
+    { ...renewalView, operation: { ...renewalView.operation!, next_action: "hidden_action" } },
     { ...availableView, status: "quote_available", quote: null },
     { ...availableView, workspace_id: "not-a-workspace" }
   ]) assert.equal(validClientBrandContextProcessingViewV1(invalid), false);
@@ -122,6 +142,8 @@ test("aggregate Brand Context view accepts only the public state machine", () =>
     ["completed", null], ["stale", null], ["failed", null]
   ] as const) assert.equal(validClientBrandContextProcessingViewV1(operationView(state, phase)), true, state);
   assert.equal(validClientBrandContextProcessingViewV1(prototypeAuthorizationView), true);
+  assert.equal(validClientBrandContextProcessingViewV1(retryView), true);
+  assert.equal(validClientBrandContextProcessingViewV1(renewalView), true);
 });
 
 test("confirmation helpers preserve one request key and the displayed quote", () => {
@@ -129,6 +151,11 @@ test("confirmation helpers preserve one request key and the displayed quote", ()
   assert.equal(clientBrandContextProcessingCanConfirmV1(availableView, true), false);
   assert.equal(clientBrandContextProcessingCanConfirmV1(operationView("running", "preparing_context")), false);
   assert.equal(clientBrandContextProcessingCanConfirmV1(prototypeAuthorizationView), true);
+  assert.equal(clientBrandContextProcessingCanConfirmV1(renewalView), true);
+  assert.equal(clientBrandContextProcessingCanConfirmV1(retryView), true);
+  assert.equal(clientBrandContextProcessingCanConfirmV1(operationView("failed", null)), false);
+  assert.throws(() => clientBrandContextProcessingRequestV1(null, operationView("failed", null),
+    () => "must-not-run"), /brand_context_semantic_renewal_required/u);
   assert.equal(clientBrandContextProcessingCanConfirmV1({ ...availableView,
     quote: { ...availableView.quote!, expires_at: "2020-01-01T00:00:00.000Z" } }), false);
 
@@ -158,6 +185,29 @@ test("confirmation helpers preserve one request key and the displayed quote", ()
   assert.equal(validClientBrandContextProcessingConfirmationV1(prototypeConfirmation), true);
   assert.equal(clientBrandContextProcessingRequestV1(prototypeRequest, prototypeAuthorizationView,
     () => "must-not-run"), prototypeRequest);
+  const renewalRequest = clientBrandContextProcessingRequestV1(prototypeRequest, renewalView,
+    () => "request-renewal");
+  assert.equal(renewalRequest.key, "request-renewal");
+  const renewalConfirmation = clientBrandContextProcessingConfirmationV1(renewalRequest);
+  assert.deepEqual(renewalConfirmation, {
+    contract_version: "client-brand-context-processing-request-v1",
+    confirmation: "renew_brand_context_semantic_within_shown_cap",
+    expected_quote: { observed_at: renewalView.observed_at, reference, maximum_micro_usd: "700000",
+      available_today_micro_usd: "4999400", expires_at: "2999-09-11T12:05:00.000Z" }
+  });
+  assert.equal(validClientBrandContextProcessingConfirmationV1(renewalConfirmation), true);
+  assert.equal(clientBrandContextProcessingNeedsExplicitRenewalV1(renewalView), true);
+  assert.equal(clientBrandContextProcessingCanRetrySemanticV1(retryView), true);
+  assert.equal(clientBrandContextProcessingNeedsExplicitRenewalV1(retryView), false);
+  assert.equal(clientBrandContextProcessingNeedsExplicitRenewalV1(prototypeAuthorizationView), false);
+  const expiredRenewal = { ...renewalView,
+    quote: { ...renewalView.quote!, expires_at: "2020-01-01T00:00:00.000Z" } };
+  assert.equal(clientBrandContextProcessingNeedsExplicitRenewalV1(expiredRenewal), false);
+  assert.equal(clientBrandContextProcessingCanConfirmV1(expiredRenewal), false);
+  const retryRequest = clientBrandContextProcessingRequestV1(renewalRequest, retryView, () => "request-retry");
+  assert.equal(retryRequest.key, "request-retry");
+  assert.equal(clientBrandContextProcessingConfirmationV1(retryRequest).confirmation,
+    "prepare_brand_context_within_shown_cap");
   for (const invalid of [{ ...confirmation, provider: "anthropic" },
     { ...confirmation, confirmation: "approve_everything" },
     { ...confirmation, expected_quote: { ...confirmation.expected_quote, maximum_micro_usd: "0.10" } },
@@ -244,7 +294,10 @@ test("lost Stage 2 HTTP acknowledgement replays only the same parent, actor and 
   const dependencies={
     loadOperation:async()=>({observed_at:"2026-09-11T12:00:00.000Z",receipt_id:receipt,
       authorization_not_after:"2026-09-11T12:05:00.000Z",semantic_cap_micro_usd:"600000",
-      prototype_cap_micro_usd:"100000",available_today_micro_usd:"4999400",authorization_current:false,
+      prototype_cap_micro_usd:"100000",semantic_retry_maximum_micro_usd:"600000",
+      semantic_renewal_idempotency_key:null,semantic_renewal_quote_expires_at:null,
+      semantic_renewal_available_today_micro_usd:null,
+      available_today_micro_usd:"4999400",authorization_current:false,
       source_current:true,generation_status:"published",semantic_status:"completed",
       child_receipt_id:created?"00000000-0000-4000-8000-000000000006":null,
       child_idempotency_key:created?"stage2-request-key":null,prototype_status:created?"queued":null}),
@@ -290,7 +343,10 @@ test("a new Stage 2 decision can replace only a server-quoted DNC leaf",async()=
     database:{} as never,runtime:{prototype:{available:true}} as SignalBrandContextPreparationRuntimeV1},{
     loadOperation:async()=>({observed_at:"2026-09-11T12:00:00.000Z",receipt_id:receipt,
       authorization_not_after:"2026-09-11T12:05:00.000Z",semantic_cap_micro_usd:"600000",
-      prototype_cap_micro_usd:"100000",available_today_micro_usd:"4999400",authorization_current:false,
+      prototype_cap_micro_usd:"100000",semantic_retry_maximum_micro_usd:"600000",
+      semantic_renewal_idempotency_key:null,semantic_renewal_quote_expires_at:null,
+      semantic_renewal_available_today_micro_usd:null,
+      available_today_micro_usd:"4999400",authorization_current:false,
       source_current:true,generation_status:"published",semantic_status:"completed",child_receipt_id:failedReceipt,
       child_idempotency_key:"stage2-old-key",prototype_status:"failed"}),
     loadQuote:async()=>({contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:receipt,
@@ -312,7 +368,8 @@ test("active operations poll while workspace scope and newest observation win", 
     operationView("recovering", "finalizing")]) assert.equal(clientBrandContextProcessingPollDelayV1(view), 4_000);
   assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 1), 8_000);
   assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 4), 60_000);
-  assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 5), null);
+  assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 5), 60_000);
+  assert.equal(clientBrandContextProcessingPollDelayV1(operationView("running", "preparing_context"), 20), 60_000);
   for (const view of [null, operationView("completed", null), operationView("stale", null),
     operationView("failed", null), prototypeAuthorizationView])
     assert.equal(clientBrandContextProcessingPollDelayV1(view), null);
@@ -324,6 +381,48 @@ test("active operations poll while workspace scope and newest observation win", 
   assert.equal(latestClientBrandContextProcessingViewV1(availableView,
     { ...availableView, workspace_id: "00000000-0000-4000-8000-000000000099" }, workspaceId), availableView);
   assert.equal(latestClientBrandContextProcessingViewV1(null, availableView, workspaceId), availableView);
+});
+
+test("durable polling checkpoints contain no authority and expire closed", () => {
+  const active = operationView("running", "preparing_context");
+  const checkpoint = clientBrandContextProcessingPollingCheckpointV1(active);
+  assert.deepEqual(checkpoint, {
+    contract_version: "client-brand-context-polling-checkpoint-v1",
+    workspace_id: workspaceId,
+    observed_at: active.observed_at
+  });
+  assert.deepEqual(Object.keys(checkpoint!).sort(), ["contract_version", "observed_at", "workspace_id"]);
+  assert.doesNotMatch(JSON.stringify(checkpoint), /quote|reference|maximum|available|provider|confirmation/u);
+  for (const state of ["completed", "stale", "failed"] as const)
+    assert.equal(clientBrandContextProcessingPollingCheckpointV1(operationView(state, null)), null);
+  assert.equal(clientBrandContextProcessingPollingCheckpointV1(prototypeAuthorizationView), null);
+  assert.equal(clientBrandContextProcessingPollingCheckpointV1(null), null);
+
+  const now = Date.parse(active.observed_at) + 60_000;
+  assert.equal(validClientBrandContextProcessingPollingCheckpointV1(checkpoint, workspaceId, now), true);
+  assert.equal(validClientBrandContextProcessingPollingCheckpointV1(checkpoint,
+    "00000000-0000-4000-8000-000000000099", now), false);
+  assert.equal(validClientBrandContextProcessingPollingCheckpointV1({ ...checkpoint, authority: "hidden" },
+    workspaceId, now), false);
+  assert.equal(validClientBrandContextProcessingPollingCheckpointV1({ ...checkpoint, observed_at: "now" },
+    workspaceId, now), false);
+  assert.equal(validClientBrandContextProcessingPollingCheckpointV1(checkpoint, workspaceId,
+    Date.parse(active.observed_at) + 86_400_001), false);
+  assert.equal(validClientBrandContextProcessingPollingCheckpointV1(checkpoint, workspaceId,
+    Date.parse(active.observed_at) - 300_001), false);
+});
+
+test("reload and tab return resume long polling with GET only", () => {
+  const start = clientComponent.indexOf("const resumePolling");
+  const end = clientComponent.indexOf("useEffect(() => {\n    if (!current?.quote", start);
+  assert.ok(start >= 0 && end > start);
+  const branch = clientComponent.slice(start, end);
+  for (const marker of ["visibilitychange", "sessionStorage.getItem", "pollingAttempts.current = 0", "void read()"])
+    assert.ok(branch.includes(marker), marker);
+  assert.doesNotMatch(branch, /method:\s*"POST"|confirm\(|reconciliationEndpoint|submitAuthorization/u);
+  assert.match(clientComponent, /sessionStorage\.setItem\(pollingCheckpointKey\(workspaceId\)/u);
+  assert.match(clientComponent, /sessionStorage\.removeItem\(pollingCheckpointKey\(previousWorkspaceId\)/u);
+  assert.match(clientComponent, /if \(\[401, 403, 404\]\.includes\(response\.status\)\)[\s\S]{0,180}sessionStorage\.removeItem/u);
 });
 
 test("stale source reconciliation keeps transport identity and uses bounded timer backoff", t => {
@@ -524,6 +623,39 @@ for (const locale of ["es-MX", "en-US"] as const) {
     assert.match(enabled, /aria-describedby="client-brand-context-confirmation-help"/u);
     assert.match(enabled, /data-processing-state="awaiting_authorization"/u);
     assert.doesNotMatch(render("compact", prototypeAuthorizationView, authorizer), /admin-button--primary/u);
+  });
+
+  test(`${locale}: failed Stage 1 exposes only the server-selected retry or renewal`, () => {
+    const authorizer = async () => operationView("queued", "waiting");
+    const unavailable = render("full", operationView("failed", null), authorizer);
+    assert.ok(unavailable.includes(copy.failureNoAction));
+    assert.doesNotMatch(unavailable, /admin-button--primary/u);
+    assert.doesNotMatch(unavailable, new RegExp(copy.maximum, "u"));
+    assert.doesNotMatch(unavailable, /qv1_|quote_reference/u);
+
+    const expired = render("full", { ...renewalView,
+      quote: { ...renewalView.quote!, expires_at: "2020-01-01T00:00:00.000Z" } }, authorizer);
+    assert.ok(expired.includes(copy.failureNoAction));
+    assert.doesNotMatch(expired, /admin-button--primary|qv1_|quote_reference/u);
+
+    const enabled = render("full", renewalView, authorizer);
+    assert.equal(enabled.match(/admin-button--primary/gu)?.length, 1);
+    assert.ok(enabled.includes(copy.renewal.available));
+    assert.ok(enabled.includes(copy.authorizationRenewal.split("{maximum}")[0]));
+    assert.ok(enabled.includes(copy.renew));
+    assert.match(enabled, /aria-describedby="client-brand-context-confirmation-help"/u);
+    assert.doesNotMatch(enabled, /qv1_|quote_reference/u);
+    const compact = render("compact", renewalView, authorizer);
+    assert.match(compact, /data-quote-can-start="true"/u);
+    assert.doesNotMatch(compact, /admin-button--primary/u);
+
+    const retry = render("full", retryView, authorizer);
+    assert.equal(retry.match(/admin-button--primary/gu)?.length, 1);
+    assert.ok(retry.includes(copy.semanticRetry.available));
+    assert.ok(retry.includes(copy.authorizationRetry.split("{maximum}")[0]));
+    assert.ok(retry.includes(copy.retry));
+    assert.doesNotMatch(retry, new RegExp(copy.renew, "u"));
+    assert.doesNotMatch(retry, /qv1_|quote_reference/u);
   });
 
   test(`${locale}: confirmation renders once only with server availability and an authorizer`, () => {

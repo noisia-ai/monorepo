@@ -392,9 +392,10 @@ export async function retrySignalBrandContextComposedSemanticRunV1(args:{databas
         WHERE workspace_id=$1::uuid AND idempotency_key=$2 FOR UPDATE`,[row.workspace_id,hashed])).rows[0];
     }
     if(!operation||operation.status!=="in_progress")return fail("operation_state_invalid");
-    const retries=(await client.query<{count:string}>(`SELECT count(*)::text FROM signal_governance_control_operations
+    const retries=(await client.query<{count:string}>(`SELECT ((SELECT count(*) FROM signal_governance_control_operations
       WHERE workspace_id=$1::uuid AND action='retry-semantic-context-proposal-run' AND status='completed'
-       AND (result->>'run_id'=$2 OR result->>'run_key'=$3)`,[row.workspace_id,row.run_id,row.run_key])).rows[0]?.count??"0";
+       AND (result->>'run_id'=$2 OR result->>'run_key'=$3))+(SELECT count(*) FROM signal_brand_context_semantic_renewals
+      WHERE workspace_id=$1::uuid AND run_id=$2::uuid))::text count`,[row.workspace_id,row.run_id,row.run_key])).rows[0]?.count??"0";
     if(operation.status!=="in_progress"||Number(retries)>=8||row.status!=="failed"||row.provider_call_state!=="not_started"
       ||row.provider_call_count!==0||row.provider_response_private!==null||row.lease_token!==null)
       return fail("semantic_context_proposal_run_not_retryable");

@@ -3989,8 +3989,14 @@
     "informational": "Esta lectura es informativa. Todavía no inicia procesamiento, no reserva saldo y no envía información a modelos.",
     "authorization": "Autorizas un máximo de {maximum}. Disponible hoy: {available}.",
     "authorizationPrototypes": "El contexto ya está listo. Autorizas hasta {maximum} para preparar los intereses de esta versión. Disponible hoy: {available}.",
+    "authorizationRenewal": "Renuevas explícitamente el permiso para reintentar la misma preparación hasta {maximum}. Disponible hoy: {available}.",
+    "authorizationRetry": "Reintentas la misma preparación con el permiso vigente y el tope de {maximum}. Disponible hoy: {available}.",
     "confirm": "Confirmar y preparar",
     "confirming": "Confirmando…",
+    "renew": "Renovar y reintentar",
+    "renewing": "Renovando…",
+    "retry": "Reintentar preparación",
+    "retrying": "Reintentando…",
     "states": {
       "quote_available": "Costo máximo calculado",
       "access_required": "Acceso requerido",
@@ -4038,6 +4044,13 @@
       "retrying": "La actualización gratuita aún no responde. Volveremos a comprobarla de forma acotada sin duplicar la solicitud.",
       "exhausted": "La solicitud anterior aún puede estar cerrándose. Pulsa Actualizar para volver a comprobarla; tus cambios y el resultado previo se conservan."
     },
+    "renewal": {
+      "available": "La solicitud anterior no se envió y quedó en costo cero. El servidor ofrece una renovación explícita; revisa el nuevo tope antes de reintentar."
+    },
+    "semanticRetry": {
+      "available": "La solicitud anterior no se envió y el permiso sigue vigente. Revisa el tope actual antes de reintentar."
+    },
+    "failureNoAction": "La preparación se interrumpió. Actualizar sólo consulta el estado guardado y no envía otra solicitud.",
     "phases": {
       "waiting": "Esperando capacidad de procesamiento.",
       "preparing_context": "Construyendo la base semántica de la marca.",

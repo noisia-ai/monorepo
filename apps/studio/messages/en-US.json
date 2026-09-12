@@ -3989,8 +3989,14 @@
     "informational": "This reading is informational. It does not start processing, reserve budget, or send information to models.",
     "authorization": "You authorize up to {maximum}. Available today: {available}.",
     "authorizationPrototypes": "The context is ready. You authorize up to {maximum} to prepare the interests for this version. Available today: {available}.",
+    "authorizationRenewal": "You explicitly renew permission to retry the same preparation up to {maximum}. Available today: {available}.",
+    "authorizationRetry": "You retry the same preparation under the current permission and cap of {maximum}. Available today: {available}.",
     "confirm": "Confirm and prepare",
     "confirming": "Confirming…",
+    "renew": "Renew and retry",
+    "renewing": "Renewing…",
+    "retry": "Retry preparation",
+    "retrying": "Retrying…",
     "states": {
       "quote_available": "Maximum cost calculated",
       "access_required": "Access required",
@@ -4038,6 +4044,13 @@
       "retrying": "The free update has not responded yet. We will retry a limited number of times without duplicating the request.",
       "exhausted": "The previous request may still be finishing. Select Refresh to check again; your changes and previous result remain available."
     },
+    "renewal": {
+      "available": "The previous request was not sent and settled at zero cost. The server offers an explicit renewal; review the new cap before retrying."
+    },
+    "semanticRetry": {
+      "available": "The previous request was not sent and permission is still current. Review the current cap before retrying."
+    },
+    "failureNoAction": "Preparation was interrupted. Refresh only reads saved status and does not send another request.",
     "phases": {
       "waiting": "Waiting for processing capacity.",
       "preparing_context": "Building the brand semantic foundation.",

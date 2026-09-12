@@ -44,6 +44,7 @@ export type ClientBrandContextProcessingPhaseV1 =
   | "preparing_context"
   | "preparing_interests"
   | "finalizing";
+export type ClientBrandContextProcessingNextActionV1 = "retry_semantic" | "renew_semantic";
 export type ClientBrandContextProcessingViewV1 = {
   contract_version: "client-brand-context-processing-view-v1";
   workspace_id: string;
@@ -61,6 +62,8 @@ export type ClientBrandContextProcessingViewV1 = {
     state: ClientBrandContextProcessingOperationStateV1;
     phase: ClientBrandContextProcessingPhaseV1 | null;
     request_observed: boolean;
+    /** Server-owned recovery path; null never grants retry authority. */
+    next_action: ClientBrandContextProcessingNextActionV1 | null;
   };
 };
 
@@ -81,9 +84,16 @@ export type ClientBrandContextReconciliationCycleV1 = {
   attempts: number;
 };
 
+export type ClientBrandContextPollingCheckpointV1 = {
+  contract_version: "client-brand-context-polling-checkpoint-v1";
+  workspace_id: string;
+  observed_at: string;
+};
+
 export type ClientBrandContextProcessingConfirmationKindV1 =
   | "prepare_brand_context_within_shown_cap"
-  | "prepare_brand_context_prototypes_within_shown_cap";
+  | "prepare_brand_context_prototypes_within_shown_cap"
+  | "renew_brand_context_semantic_within_shown_cap";
 
 export type ClientBrandContextProcessingConfirmationV1 = {
   contract_version: "client-brand-context-processing-request-v1";
@@ -116,11 +126,13 @@ const operationStates = new Set<ClientBrandContextProcessingOperationStateV1>([
   "queued", "running", "recovering", "awaiting_authorization", "completed", "stale", "failed"
 ]);
 const confirmationKinds = new Set<ClientBrandContextProcessingConfirmationKindV1>([
-  "prepare_brand_context_within_shown_cap", "prepare_brand_context_prototypes_within_shown_cap"
+  "prepare_brand_context_within_shown_cap", "prepare_brand_context_prototypes_within_shown_cap",
+  "renew_brand_context_semantic_within_shown_cap"
 ]);
 const phases = new Set<ClientBrandContextProcessingPhaseV1>([
   "waiting", "preparing_context", "preparing_interests", "finalizing"
 ]);
+const nextActions = new Set<ClientBrandContextProcessingNextActionV1>(["retry_semantic", "renew_semantic"]);
 const viewKeys = ["can_start", "contract_version", "observed_at", "operation", "quote", "status", "workspace_id"];
 
 export function validClientBrandContextProcessingQuoteViewV1(
@@ -148,10 +160,13 @@ export function clientBrandContextProcessingQuoteForWorkspaceV1(
 }
 
 function validOperation(value: unknown): value is NonNullable<ClientBrandContextProcessingViewV1["operation"]> {
-  if (!object(value) || Object.keys(value).sort().join(",") !== "phase,request_observed,state"
+  if (!object(value) || Object.keys(value).sort().join(",") !== "next_action,phase,request_observed,state"
     || typeof value.state !== "string" || !operationStates.has(value.state as ClientBrandContextProcessingOperationStateV1)
     || typeof value.request_observed !== "boolean"
+    || !(value.next_action === null || typeof value.next_action === "string"
+      && nextActions.has(value.next_action as ClientBrandContextProcessingNextActionV1))
     || !(value.phase === null || typeof value.phase === "string" && phases.has(value.phase as ClientBrandContextProcessingPhaseV1))) return false;
+  if (value.state !== "failed" && value.next_action !== null) return false;
   if (value.state === "queued") return value.phase === "waiting";
   if (value.state === "running") return value.phase !== null && value.phase !== "waiting";
   if (value.state === "recovering") return value.phase !== null;
@@ -173,6 +188,7 @@ export function validClientBrandContextProcessingViewV1(value: unknown): value i
     || !(value.quote.reference === null || quoteReference(value.quote.reference)))) return false;
   if (value.status === "quote_available" && value.quote === null) return false;
   if (operation?.state === "awaiting_authorization" && value.can_start !== true) return false;
+  if (operation?.state === "failed" && Boolean(operation.next_action) !== value.can_start) return false;
   if (value.can_start && (value.status !== "quote_available" || value.quote === null
     || value.quote.reference === null
     || operation && !["awaiting_authorization", "stale", "failed"].includes(operation.state))) return false;
@@ -219,7 +235,38 @@ const processingPollDelays = [4_000, 8_000, 16_000, 30_000, 60_000] as const;
 export function clientBrandContextProcessingPollDelayV1(view: ClientBrandContextProcessingViewV1 | null,
   attempts = 0) {
   return view?.operation && ["queued", "running", "recovering"].includes(view.operation.state)
-    && Number.isInteger(attempts) && attempts >= 0 ? processingPollDelays[attempts] ?? null : null;
+    && Number.isInteger(attempts) && attempts >= 0
+    ? processingPollDelays[Math.min(attempts, processingPollDelays.length - 1)]
+    : null;
+}
+
+export function clientBrandContextProcessingPollingCheckpointV1(view: ClientBrandContextProcessingViewV1 | null) {
+  return view?.operation && ["queued", "running", "recovering"].includes(view.operation.state) ? {
+    contract_version: "client-brand-context-polling-checkpoint-v1" as const,
+    workspace_id: view.workspace_id,
+    observed_at: view.observed_at
+  } : null;
+}
+
+export function validClientBrandContextProcessingPollingCheckpointV1(value: unknown, workspaceId: string,
+  now = Date.now()) {
+  if (!object(value) || Object.keys(value).sort().join(",") !== "contract_version,observed_at,workspace_id"
+    || value.contract_version !== "client-brand-context-polling-checkpoint-v1"
+    || value.workspace_id !== workspaceId || !timestamp(value.observed_at)) return false;
+  const age = now - Date.parse(value.observed_at as string);
+  return age >= -300_000 && age <= 86_400_000;
+}
+
+export function clientBrandContextProcessingNeedsExplicitRenewalV1(view: ClientBrandContextProcessingViewV1 | null) {
+  return Boolean(view?.operation?.state === "failed" && view.operation.next_action === "renew_semantic" && view.can_start
+    && view.status === "quote_available" && view.quote?.reference
+    && Date.parse(view.quote.expires_at) > Date.now());
+}
+
+export function clientBrandContextProcessingCanRetrySemanticV1(view: ClientBrandContextProcessingViewV1 | null) {
+  return Boolean(view?.operation?.state === "failed" && view.operation.next_action === "retry_semantic" && view.can_start
+    && view.status === "quote_available" && view.quote?.reference
+    && Date.parse(view.quote.expires_at) > Date.now());
 }
 
 const reconciliationRetryDelays = [0, 2_000, 8_000] as const;
@@ -252,12 +299,20 @@ export function clientBrandContextProcessingCanConfirmV1(view: ClientBrandContex
   submitting = false) {
   return Boolean(view?.can_start && view.status === "quote_available" && view.quote
     && Date.parse(view.quote.expires_at) > Date.now() && !submitting
-    && (!view.operation || ["awaiting_authorization", "stale", "failed"].includes(view.operation.state)));
+    && (!view.operation || ["awaiting_authorization", "stale"].includes(view.operation.state)
+      || clientBrandContextProcessingNeedsExplicitRenewalV1(view)
+      || clientBrandContextProcessingCanRetrySemanticV1(view)));
 }
 
 export function clientBrandContextProcessingConfirmationKindV1(
   view: ClientBrandContextProcessingViewV1
 ): ClientBrandContextProcessingConfirmationKindV1 {
+  if (view.operation?.state === "failed") {
+    if (clientBrandContextProcessingCanRetrySemanticV1(view)) return "prepare_brand_context_within_shown_cap";
+    if (!clientBrandContextProcessingNeedsExplicitRenewalV1(view))
+      throw new Error("brand_context_semantic_renewal_required");
+    return "renew_brand_context_semantic_within_shown_cap";
+  }
   return view.operation?.state === "awaiting_authorization"
     ? "prepare_brand_context_prototypes_within_shown_cap"
     : "prepare_brand_context_within_shown_cap";

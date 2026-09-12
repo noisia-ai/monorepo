@@ -9,14 +9,18 @@ import {
   clientBrandContextReconciliationAwaitingSettlementV1,
   clientBrandContextReconciliationCycleV1,
   clientBrandContextReconciliationRetryDelayV1,
+  clientBrandContextProcessingCanRetrySemanticV1,
   clientBrandContextProcessingCanConfirmV1,
   clientBrandContextProcessingConfirmationV1,
+  clientBrandContextProcessingNeedsExplicitRenewalV1,
   clientBrandContextProcessingPollDelayV1,
+  clientBrandContextProcessingPollingCheckpointV1,
   clientBrandContextProcessingRequestV1,
   clientBrandContextProcessingViewForWorkspaceV1,
   clientBrandContextProcessingViewFromQuoteV1,
   latestClientBrandContextProcessingViewV1,
   validClientBrandContextProcessingQuoteViewV1,
+  validClientBrandContextProcessingPollingCheckpointV1,
   validClientBrandContextProcessingViewV1,
   type ClientBrandContextProcessingConfirmationV1,
   type ClientBrandContextProcessingPendingRequestV1,
@@ -29,6 +33,7 @@ import { formatClientProcessingMicroUsdV1 } from "@/lib/data-os/signal-processin
 type ErrorState = "load" | "request" | "forbidden" | null;
 type ReconciliationState = "idle" | "checking" | "waiting" | "retrying" | "exhausted";
 type Authorization = (request: { idempotencyKey: string; body: ClientBrandContextProcessingConfirmationV1 }) => Promise<unknown>;
+const pollingCheckpointKey = (workspaceId: string) => `noisia:brand-context-polling:v1:${workspaceId}`;
 
 function initialProcessingView(value: ClientBrandContextProcessingViewV1 | ClientBrandContextProcessingQuoteViewV1 | null,
   workspaceId: string) {
@@ -89,6 +94,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
       const response = await fetch(endpoint, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || currentScope !== scope.current) return;
       if ([401, 403, 404].includes(response.status)) {
+        try { sessionStorage.removeItem(pollingCheckpointKey(workspaceId)); } catch { /* Storage is optional. */ }
         setView(null); setExpired(false); setError("forbidden"); denied.current?.(); return;
       }
       const body: unknown = await response.json();
@@ -108,10 +114,15 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   }, [endpoint, workspaceId]);
 
   useEffect(() => {
-    const workspaceChanged = previousWorkspace.current !== workspaceId;
+    const previousWorkspaceId = previousWorkspace.current;
+    const workspaceChanged = previousWorkspaceId !== workspaceId;
     previousWorkspace.current = workspaceId;
     scope.current += 1; request.current?.abort();
     if (workspaceChanged) {
+      if (previousWorkspaceId) {
+        try { sessionStorage.removeItem(pollingCheckpointKey(previousWorkspaceId)); }
+        catch { /* Storage is optional. */ }
+      }
       setView(initialProcessingView(initial, workspaceId));
       setExpired(false); setError(null); setSubmitting(false); submission.current = false; requestKey.current = null;
       reconciliation.current = null; pollingAttempts.current = 0; setReconciliationState("idle");
@@ -185,6 +196,35 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
     };
   }, [current, read]);
   useEffect(() => {
+    if (!current) return;
+    const checkpoint = clientBrandContextProcessingPollingCheckpointV1(current);
+    try {
+      if (checkpoint) sessionStorage.setItem(pollingCheckpointKey(workspaceId), JSON.stringify(checkpoint));
+      else sessionStorage.removeItem(pollingCheckpointKey(workspaceId));
+    } catch { /* Polling remains available in memory when storage is unavailable. */ }
+  }, [current, workspaceId]);
+  useEffect(() => {
+    const resumePolling = () => {
+      if (document.visibilityState !== "visible") {
+        if (pollingTimer.current) clearTimeout(pollingTimer.current);
+        pollingTimer.current = null;
+        return;
+      }
+      let durable = false;
+      try {
+        const raw = sessionStorage.getItem(pollingCheckpointKey(workspaceId));
+        durable = raw !== null
+          && validClientBrandContextProcessingPollingCheckpointV1(JSON.parse(raw), workspaceId);
+      } catch { /* The current in-memory view can still resume polling. */ }
+      if (!clientBrandContextProcessingPollingCheckpointV1(current) && !durable) return;
+      if (pollingTimer.current) clearTimeout(pollingTimer.current);
+      pollingTimer.current = null; pollingAttempts.current = 0;
+      void read();
+    };
+    document.addEventListener("visibilitychange", resumePolling);
+    return () => document.removeEventListener("visibilitychange", resumePolling);
+  }, [current, read, workspaceId]);
+  useEffect(() => {
     if (!current?.quote || current.operation
       && !["awaiting_authorization", "stale", "failed"].includes(current.operation.state)) return;
     const remaining = Date.parse(current.quote.expires_at) - Date.now();
@@ -220,9 +260,13 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   }
 
   const displayState = expired ? "temporarily_unavailable" : current?.operation?.state ?? current?.status;
+  const needsExplicitRenewal = clientBrandContextProcessingNeedsExplicitRenewalV1(current);
+  const canRetrySemantic = clientBrandContextProcessingCanRetrySemanticV1(current);
+  const failedWithoutAction = current?.operation?.state === "failed" && !needsExplicitRenewal && !canRetrySemantic;
   const statusState = displayState === "completed" ? "good"
     : displayState === "temporarily_unavailable" || displayState === "failed" ? "not_available" : "warning";
-  const showAmounts = Boolean(current?.quote && (!expired || current.operation));
+  const showAmounts = Boolean(current?.quote && (!expired || current.operation)
+    && !failedWithoutAction);
   const showConfirmation = variant === "full" && Boolean(submitAuthorization
     && clientBrandContextProcessingCanConfirmV1(current));
   const canConfirm = Boolean(submitAuthorization && clientBrandContextProcessingCanConfirmV1(current, submitting));
@@ -239,6 +283,9 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
       {needsSourceReconciliation && reconciliationState !== "idle" ? <p className="admin-drawer-form__hint" role="status">
         {t(`reconciliation.${reconciliationState}`)}
       </p> : null}
+      {variant === "full" && current.operation?.state === "failed" ? <p className="admin-drawer-form__hint" role="status">
+        {t(needsExplicitRenewal ? "renewal.available" : canRetrySemantic ? "semanticRetry.available" : "failureNoAction")}
+      </p> : null}
       {current.operation?.phase ? <p className="client-brand-context-quote__phase">{t(`phases.${current.operation.phase}`)}</p> : null}
       {showAmounts && current.quote ?
         <dl className="client-brand-context-quote__amounts">
@@ -249,13 +296,16 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
         <p className="admin-drawer-form__hint">{t("expires", { time: expiry })}</p> : null}
       {!current.operation && !showConfirmation ? <p className="admin-drawer-form__hint">{t("informational")}</p> : null}
       {showConfirmation ? <div className="client-brand-context-quote__confirmation">
-        {current.quote ? <p id="client-brand-context-confirmation-help">{t(current.operation?.state
-          === "awaiting_authorization" ? "authorizationPrototypes" : "authorization", {
+        {current.quote ? <p id="client-brand-context-confirmation-help">{t(needsExplicitRenewal
+          ? "authorizationRenewal" : canRetrySemantic ? "authorizationRetry"
+            : current.operation?.state === "awaiting_authorization"
+            ? "authorizationPrototypes" : "authorization", {
           maximum: money(current.quote.maximum_micro_usd), available: money(current.quote.available_today_micro_usd)
         })}</p> : null}
         <button className="admin-button admin-button--primary" disabled={!canConfirm} onClick={() => void confirm()} type="button"
           aria-describedby="client-brand-context-confirmation-help">
-          {t(submitting ? "confirming" : "confirm")}
+          {t(submitting ? needsExplicitRenewal ? "renewing" : canRetrySemantic ? "retrying" : "confirming"
+            : needsExplicitRenewal ? "renew" : canRetrySemantic ? "retry" : "confirm")}
         </button>
       </div> : null}
     </> : null}

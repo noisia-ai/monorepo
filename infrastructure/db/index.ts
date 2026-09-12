@@ -76,3 +76,5 @@ export * from "./signal-processing-policy";
 export * from "./signal-brand-context-processing-quote";
 
 export * from "./signal-brand-context-source-reconciliation";
+
+export * from "./signal-brand-context-semantic-renewal";

@@ -1,6 +1,8 @@
 import {
   loadSignalBrandContextProcessingQuoteV1,
   loadSignalBrandContextPrototypeQuoteV1,
+  quoteSignalBrandContextSemanticRenewalV1,
+  renewSignalBrandContextSemanticAdmissionV1,
   retrySignalBrandContextComposedSemanticRunV1,
   startSignalBrandContextComposedSemanticRunV1,
   startSignalBrandContextPrototypeProcessingV1,
@@ -72,6 +74,10 @@ type ProcessingRowV1 = {
   prototype_cap_micro_usd: string;
   available_today_micro_usd: string;
   quote_digest?: string;
+  semantic_retry_maximum_micro_usd: string;
+  semantic_renewal_idempotency_key: string | null;
+  semantic_renewal_quote_expires_at: string | null;
+  semantic_renewal_available_today_micro_usd: string | null;
   authorization_current: boolean;
   source_current: boolean;
   generation_status: string;
@@ -112,9 +118,14 @@ function operationState(row: ProcessingRowV1, prototypeAvailable: boolean,
 
 async function loadLatestProcessingRowV1(database: Database, workspaceId: string, actorUserId: string) {
   const result = await database.query<ProcessingRowV1>(`SELECT clock_timestamp()::text observed_at,
-    receipt.id::text receipt_id,receipt.authorization_not_after::text,
-    receipt.quote_digest,
-    receipt.authorization_not_after>clock_timestamp() authorization_current,
+    receipt.id::text receipt_id,COALESCE(renewal.admission_not_after,receipt.authorization_not_after)::text authorization_not_after,
+    COALESCE(renewal.quote_digest,receipt.quote_digest) quote_digest,
+    COALESCE(renewal.quote_snapshot->>'reservation_micro_usd',
+      (receipt.semantic_cap_micro_usd+receipt.prototype_cap_micro_usd)::text) semantic_retry_maximum_micro_usd,
+    COALESCE(renewal.admission_not_after,receipt.authorization_not_after)>clock_timestamp() authorization_current,
+    renewal.idempotency_key semantic_renewal_idempotency_key,
+    renewal.quote_snapshot->>'quote_expires_at' semantic_renewal_quote_expires_at,
+    renewal.quote_snapshot->>'available_today_micro_usd' semantic_renewal_available_today_micro_usd,
     receipt.semantic_cap_micro_usd::text,receipt.prototype_cap_micro_usd::text,
     greatest(policy.daily_cap_micro_usd-(signal_processing_org_exposure_v1(receipt.organization_id,
       (clock_timestamp() AT TIME ZONE policy.budget_timezone)::date,policy.budget_timezone)).total_micro_usd,0)::text
@@ -128,7 +139,12 @@ async function loadLatestProcessingRowV1(database: Database, workspaceId: string
    FROM signal_brand_context_processing_receipts receipt
    JOIN signal_semantic_context_generations generation ON generation.id=receipt.generation_id
    JOIN signal_semantic_context_proposal_runs semantic ON semantic.id=receipt.semantic_run_id
-   JOIN signal_processing_policy_versions policy ON policy.id=receipt.policy_version_id
+   LEFT JOIN LATERAL(SELECT candidate.* FROM signal_brand_context_semantic_renewals candidate
+     WHERE candidate.parent_receipt_id=receipt.id
+       AND NOT EXISTS(SELECT 1 FROM signal_brand_context_semantic_renewals successor
+         WHERE successor.supersedes_renewal_id=candidate.id)
+     ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1) renewal ON true
+   JOIN signal_processing_policy_versions policy ON policy.id=COALESCE(renewal.policy_version_id,receipt.policy_version_id)
    LEFT JOIN LATERAL(SELECT candidate.* FROM signal_brand_context_prototype_receipts candidate
      WHERE candidate.parent_receipt_id=receipt.id
        AND NOT EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts successor
@@ -158,6 +174,14 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
       parent_receipt_id: operation.receipt_id, actor_user_id: args.actorUserId }); }
     catch { /* The Worker may still be finalizing publication/catalog. Polling remains read-only here. */ }
   }
+  let renewalQuote: Awaited<ReturnType<typeof quoteSignalBrandContextSemanticRenewalV1>> | null = null;
+  if (operation?.semantic_retry_safe && operation.source_current && !operation.authorization_current) {
+    try { renewalQuote = await quoteSignalBrandContextSemanticRenewalV1({ database,
+      parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,configuration:runtime.semantic,
+      runtime:{queue_configured:runtime.queue_configured,worker_alive:runtime.worker_alive,
+        recovery_alive:runtime.recovery_alive} }); }
+    catch { /* A missing compatible renewal remains a read-only failed state with no CTA. */ }
+  }
   const current = operation ? operationState(operation, runtime.prototype.available, prototypeQuote) : null;
   const canStartStage2 = current?.state === "awaiting_authorization" && Boolean(prototypeQuote)
     && runtime.prototype.available && Date.parse(prototypeQuote!.quote_expires_at) > Date.now();
@@ -166,9 +190,11 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
     && retryReference!==null
     && operation.source_current && operation.authorization_current
     && runtime.queue_configured && runtime.worker_alive && runtime.recovery_alive && runtime.semantic.available;
+  const canRenewStage1 = current?.state === "failed" && operation?.semantic_retry_safe === true
+    && operation.source_current && !operation.authorization_current && renewalQuote !== null;
   const canStartStage1 = quote.status === "quote_available" && Boolean(quote.quote_expires_at)
-    && (!current || ["stale", "failed"].includes(current.state));
-  const canStart = canRetryStage1 || canStartStage1 || canStartStage2;
+    && (!current || current.state === "stale");
+  const canStart = canRetryStage1 || canRenewStage1 || canStartStage1 || canStartStage2;
   const immutableQuote = operation ? {
     reference: null,
     maximum_micro_usd: (BigInt(operation.semantic_cap_micro_usd)
@@ -181,9 +207,14 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
     maximum_micro_usd: prototypeQuote.maximum_micro_usd,
     available_today_micro_usd: prototypeQuote.available_today_micro_usd,
     expires_at: prototypeQuote.quote_expires_at
+  } : canRenewStage1 ? {
+    reference: clientBrandContextProcessingQuoteReferenceV1(renewalQuote!.quote_digest),
+    maximum_micro_usd: renewalQuote!.maximum_micro_usd,
+    available_today_micro_usd: renewalQuote!.available_today_micro_usd,
+    expires_at: renewalQuote!.quote_expires_at
   } : canRetryStage1 ? {
     reference: retryReference!,
-    maximum_micro_usd: immutableQuote!.maximum_micro_usd,
+    maximum_micro_usd: operation!.semantic_retry_maximum_micro_usd,
     available_today_micro_usd: immutableQuote!.available_today_micro_usd,
     expires_at: immutableQuote!.expires_at
   } : canStartStage1 && quote.maximum_micro_usd && quote.available_today_micro_usd
@@ -199,9 +230,11 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
     observed_at: prototypeQuote?.requires_confirmation ? prototypeQuote.quoted_at
       : operation ? new Date(operation.observed_at).toISOString() : quote.observed_at,
     can_start: canStart,
-    status: canStartStage2 || canRetryStage1 ? "quote_available" : quote.status,
+    status: canStartStage2 || canRetryStage1 || canRenewStage1 ? "quote_available"
+      : current?.state === "failed" ? "temporarily_unavailable" : quote.status,
     quote: activeQuote,
-    operation: operation && current ? { ...current, request_observed: true } : null
+    operation: operation && current ? { ...current, request_observed: true,
+      next_action:canRenewStage1 ? "renew_semantic" : canRetryStage1 ? "retry_semantic" : null } : null
   };
 }
 
@@ -263,6 +296,8 @@ export async function startClientBrandContextProcessingForActorV1(args: {
   runtimeLoader?: () => Promise<SignalBrandContextPreparationRuntimeV1>;
 },dependencies:{loadOperation?:typeof loadLatestProcessingRowV1;
   retry?:typeof retrySignalBrandContextComposedSemanticRunV1;
+  quoteRenewal?:typeof quoteSignalBrandContextSemanticRenewalV1;
+  renew?:typeof renewSignalBrandContextSemanticAdmissionV1;
   loadQuote?:typeof loadSignalBrandContextProcessingQuoteV1;
   start?:typeof startSignalBrandContextComposedSemanticRunV1;
   loadView?:typeof loadClientBrandContextProcessingViewForActorV1}={}) {
@@ -273,9 +308,49 @@ export async function startClientBrandContextProcessingForActorV1(args: {
       actorUserId:args.actorUserId,idempotencyKey:args.idempotencyKey,body:args.body,database,runtime});
   }
   const operation=await (dependencies.loadOperation??loadLatestProcessingRowV1)(database,args.workspace.id,args.actorUserId);
+  if(args.body.confirmation==="renew_brand_context_semantic_within_shown_cap"
+    && operation?.semantic_renewal_idempotency_key===args.idempotencyKey){
+    const renewalDigest=operation.quote_digest??null;
+    const renewalQuoteExpiresAt=operation.semantic_renewal_quote_expires_at
+      ?new Date(operation.semantic_renewal_quote_expires_at).toISOString():null;
+    if(!renewalDigest
+      ||args.body.expected_quote.reference!==clientBrandContextProcessingQuoteReferenceV1(renewalDigest)
+      ||args.body.expected_quote.maximum_micro_usd!==operation.semantic_retry_maximum_micro_usd
+      ||args.body.expected_quote.available_today_micro_usd!==operation.semantic_renewal_available_today_micro_usd
+      ||args.body.expected_quote.expires_at!==renewalQuoteExpiresAt)
+      throw new SignalSemanticContextProposalExecutionError("brand_context_semantic_renewal_quote_changed",409);
+    await (dependencies.renew??renewSignalBrandContextSemanticAdmissionV1)({database,
+      parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,
+      expected_quote_digest:renewalDigest,confirmation:args.body.confirmation,configuration:runtime.semantic,
+      runtime:{queue_configured:runtime.queue_configured,worker_alive:runtime.worker_alive,
+        recovery_alive:runtime.recovery_alive}});
+    return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspace.id,
+      actorUserId:args.actorUserId,database,runtimeLoader:async()=>runtime});
+  }
   if(operation?.semantic_retry_safe){
+    if(!operation.authorization_current){
+      if(args.body.confirmation!=="renew_brand_context_semantic_within_shown_cap")
+        throw new SignalSemanticContextProposalExecutionError("brand_context_semantic_renewal_required",409);
+      const renewalQuote=await (dependencies.quoteRenewal??quoteSignalBrandContextSemanticRenewalV1)({database,
+        parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,configuration:runtime.semantic,
+        runtime:{queue_configured:runtime.queue_configured,worker_alive:runtime.worker_alive,
+          recovery_alive:runtime.recovery_alive}});
+      if(!operation.source_current||!expectedQuoteMatchesV1(args.body,{observed_at:new Date(operation.observed_at).toISOString(),
+        maximum_micro_usd:renewalQuote.maximum_micro_usd,available_today_micro_usd:renewalQuote.available_today_micro_usd,
+        quote_expires_at:renewalQuote.quote_expires_at,quote_digest:renewalQuote.quote_digest}))
+        throw new SignalSemanticContextProposalExecutionError("brand_context_semantic_renewal_quote_changed",409);
+      await (dependencies.renew??renewSignalBrandContextSemanticAdmissionV1)({database,
+        parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,
+        expected_quote_digest:renewalQuote.quote_digest,confirmation:args.body.confirmation,
+        configuration:runtime.semantic,runtime:{queue_configured:runtime.queue_configured,
+          worker_alive:runtime.worker_alive,recovery_alive:runtime.recovery_alive}});
+      return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspace.id,
+        actorUserId:args.actorUserId,database,runtimeLoader:async()=>runtime});
+    }
+    if(args.body.confirmation!=="prepare_brand_context_within_shown_cap")
+      throw new SignalSemanticContextProposalExecutionError("brand_context_quote_changed",409);
     const retryQuote={observed_at:new Date(operation.observed_at).toISOString(),
-      maximum_micro_usd:(BigInt(operation.semantic_cap_micro_usd)+BigInt(operation.prototype_cap_micro_usd)).toString(),
+      maximum_micro_usd:operation.semantic_retry_maximum_micro_usd,
       available_today_micro_usd:operation.available_today_micro_usd,
       quote_expires_at:new Date(operation.authorization_not_after).toISOString(),quote_digest:operation.quote_digest??null};
     if(!operation.source_current||!operation.authorization_current||!expectedQuoteMatchesV1(args.body,retryQuote))
@@ -287,6 +362,10 @@ export async function startClientBrandContextProcessingForActorV1(args: {
     return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspace.id,
       actorUserId:args.actorUserId,database,runtimeLoader:async()=>runtime});
   }
+  if(operation?.source_current)
+    throw new SignalSemanticContextProposalExecutionError("brand_context_quote_changed",409);
+  if(args.body.confirmation==="renew_brand_context_semantic_within_shown_cap")
+    throw new SignalSemanticContextProposalExecutionError("brand_context_semantic_renewal_quote_changed",409);
   const internal = await (dependencies.loadQuote??loadSignalBrandContextProcessingQuoteV1)({ database,
     workspace_id: args.workspace.id, actor_user_id: args.actorUserId,
     action_availability: signalBrandContextProcessingActionAvailabilityV1(runtime) });
