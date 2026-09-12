@@ -11,6 +11,15 @@ CREATE TABLE IF NOT EXISTS signal_semantic_context_automatic_cohort_validations 
 );
 
 REVOKE ALL ON signal_semantic_context_automatic_cohort_validations FROM PUBLIC;
+DO $$
+BEGIN
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+    EXECUTE 'REVOKE ALL ON signal_semantic_context_automatic_cohort_validations FROM anon';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+    EXECUTE 'REVOKE ALL ON signal_semantic_context_automatic_cohort_validations FROM authenticated';
+  END IF;
+END $$;
 
 CREATE OR REPLACE FUNCTION invalidate_signal_semantic_context_automatic_cohort_validation_v1()
 RETURNS trigger
@@ -28,6 +37,15 @@ BEGIN
 END; $$;
 
 REVOKE ALL ON FUNCTION invalidate_signal_semantic_context_automatic_cohort_validation_v1() FROM PUBLIC;
+DO $$
+BEGIN
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION invalidate_signal_semantic_context_automatic_cohort_validation_v1() FROM anon';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION invalidate_signal_semantic_context_automatic_cohort_validation_v1() FROM authenticated';
+  END IF;
+END $$;
 
 DROP TRIGGER IF EXISTS trg_invalidate_signal_semantic_context_automatic_element_validation
   ON signal_semantic_context_element_versions;
@@ -132,6 +150,15 @@ BEGIN
 END; $$;
 
 REVOKE ALL ON FUNCTION validate_signal_semantic_context_automatic_policy_cohort_v1() FROM PUBLIC;
+DO $$
+BEGIN
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION validate_signal_semantic_context_automatic_policy_cohort_v1() FROM anon';
+  END IF;
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION validate_signal_semantic_context_automatic_policy_cohort_v1() FROM authenticated';
+  END IF;
+END $$;
 
 COMMENT ON TABLE signal_semantic_context_automatic_cohort_validations IS
   'Server-only checkpoint: one complete automatic Brand Context cohort census per transaction; any later row mutation invalidates it before deferred revalidation.';
