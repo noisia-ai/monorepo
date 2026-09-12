@@ -81,3 +81,5 @@ export * from "./signal-brand-context-source-reconciliation";
 export * from "./signal-brand-context-semantic-renewal";
 export * from "./signal-brand-context-policy-provisioning";
 export * from "./signal-topic-consolidation-control";
+
+export * from "./signal-topic-consolidation-editorial";
