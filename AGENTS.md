@@ -4,6 +4,19 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **PARADA SEGURA EXPRESA — 2026-09-12 05:11 UTC / 11 septiembre México.** El operador
+> pidió detener el desarrollo y el loop `noisia-topics-to-signal-uat-loop` quedó confirmado
+> `PAUSED` en este chat. No reanudar automatización, desarrollo, SQL, imports, fit ni proveedores
+> hasta una nueva instrucción explícita. UAT sigue sano sobre producto `5ab45c5`; Worker
+> `a4fbe6ed-bc7a-46ae-8a31-2d44c86f0c75`, Studio `e8959109-5d5c-4c44-a6a3-bd6a21420f96` y
+> SQL0161 aplicado una sola vez. El worktree focal está limpio en `bdf98b8` antes de este recibo.
+> El tramo reutilizable marca nueva → Brand OS/KB → preparación semántica → Topics/import está
+> entregado; el siguiente input legítimo es una marca/prospecto y menciones reales cargadas por el
+> operador. Después faltan full-corpus, calidad, Signal y segunda carga incremental. Cero llamadas
+> o gasto nuevos; National permanece sólo como regresión. Leer
+> `SAFE_PAUSE_NEW_BRAND_SEMANTIC_ENTRY_2026-09-11.md`. No repetir SQL0153–0161, imports, Voyage,
+> BERTopic fit ni gates cerrados; no producción/main ni drafts del checkout raíz.
+
 > **Entrada semántica de marca nueva entregada UAT — 2026-09-12 01:55 UTC.** Producto
 > `5ab45c5`; Worker `a4fbe6ed-bc7a-46ae-8a31-2d44c86f0c75` y Studio
 > `e8959109-5d5c-4c44-a6a3-bd6a21420f96` activos. SQL0161 SHA `e4519724…24bf9` aplicado una
