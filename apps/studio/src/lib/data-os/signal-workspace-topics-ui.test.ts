@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
 import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
-import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
+import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
 import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
 import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "../../components/signal-v2/SignalTopicChartOptions";
 Object.assign(globalThis, { React });
@@ -15,9 +15,9 @@ const data: SignalWorkspaceTopicsOverviewV1 = {
   scope: "all_conversations", generation_id: "generation", source_engine_execution_id: "engine", is_current: true, is_processing: false, selection_revision: 3,
   filters: { date_from: null, date_to: null }, available_dates: { date_from: "2026-09-01", date_to: "2026-09-08" },
   scope_digest: "sha256:scope", observed_at: "2026-09-08T00:00:00.000000Z", denominator: 10,
-  coverage: { processed: 10, assigned_unique: 8, abstained: 1, unresolved: 1, withheld: 2 }, interpretation_coverage: { interpreted_unit_count: 32, expected_unit_count: 357, complete: false }, quality: "not_calibrated",
+  coverage: { processed: 10, assigned_unique: 8, abstained: 1, noise: null, unresolved: 1, withheld: 2 }, interpretation_coverage: { interpreted_unit_count: 32, expected_unit_count: 357, complete: false }, quality: "not_calibrated",
   terms: ["Delivery", "Support"].map((label, index) => ({ term_key: `topic${index}`, label, definition: `${label} experiences`,
-    definition_revision: 1, definition_digest: "sha256:def", selected: true, mention_count: 7, share_of_corpus: 0.7, basis: "computed_cluster" })),
+    kind: "topic" as const, definition_revision: 1, definition_digest: "sha256:def", selected: true, mention_count: 7, share_of_corpus: 0.7, basis: "computed_cluster" })),
   series: [], limitations: ["computed_memberships_not_semantic_precision"]
 };
 async function render(locale: string, payload = data, surface: "summary" | "topics" = "topics", refreshFailed = false) {
@@ -41,6 +41,24 @@ test("empty completed catalogue is actionable without creating synthetic Topics 
   const html = await render("en-US", { ...data, terms: [] });
   assert.match(html, /No Topics selected/); assert.match(html, /Manage Topics/);
   assert.match(html, /Narratives and insights are not yet available/); assert.doesNotMatch(html, /topic0|topic1/);
+});
+test("consolidated Signal separates Topics and narratives and exposes real editorial dispositions", async () => {
+  const consolidated = { ...data,
+    coverage: { ...data.coverage, abstained: 3, noise: 3, unresolved: 2 },
+    terms: [...data.terms, { ...data.terms[0]!, term_key: "narrative0", kind: "narrative" as const,
+      label: "Alexa+ changes daily routines", definition: "People describe Alexa+ as changing recurring household routines.", mention_count: 4, share_of_corpus: 0.4 }]
+  };
+  const html = await render("en-US", consolidated);
+  assert.match(html, /Topics<span>2<\/span>/); assert.match(html, /Narratives<span>1<\/span>/);
+  assert.match(html, /Noise<span>3<\/span>/); assert.match(html, /Unresolved<span>2<\/span>/);
+  assert.doesNotMatch(html, /Narratives and insights are not yet available/);
+  assert.deepEqual(workspaceTermsForSectionV1(consolidated, "topics").map(term => term.term_key), ["topic0", "topic1"]);
+  assert.deepEqual(workspaceTermsForSectionV1(consolidated, "narratives").map(term => term.term_key), ["narrative0"]);
+  const narrativeDisposition = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale: "en-US", messages: JSON.parse(await readFile(new URL("../../../messages/en-US.json", import.meta.url), "utf8")), timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+    createElement(SignalWorkspaceTopicDisposition, { section: "noise", data: consolidated })));
+  assert.match(narrativeDisposition, /data-availability="available"/); assert.match(narrativeDisposition, /<strong>3<\/strong>/);
+  assert.match(narrativeDisposition, /classified as Noise/);
 });
 test("stale generation preserves counts while disabling stale evidence access", async () => {
   const html = await render("en-US", { ...data, is_current: false });
@@ -96,7 +114,7 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(html.includes(locale === "es-MX" ? "Narrativas<span>No disponible</span>" : "Narratives<span>Unavailable</span>"));
     assert.match(html, /signal-v2-tn__ranking-metrics--native/);
     assert.match(html, /signal-v2-tn__definition/);
-    assert.ok(html.includes(locale === "es-MX" ? "Presencia de este Topic" : "This Topic over time"));
+    assert.ok(html.includes(locale === "es-MX" ? "Presencia de este concepto" : "This concept over time"));
     assert.ok(html.includes(locale === "es-MX" ? "Versión de la definición" : "Definition version"));
     assert.doesNotMatch(html, /claude|voyage|sha256:|input_tokens|workspace_computed|Investigar insights|Research insights/i);
   });

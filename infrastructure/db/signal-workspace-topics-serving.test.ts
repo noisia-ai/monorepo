@@ -36,6 +36,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
       if (/^(BEGIN|COMMIT|ROLLBACK|SET LOCAL)/u.test(sql)) return { rows: [] };
+      if (sql.includes("signal_topic_consolidation_binding_v1")) return { rows: [] };
       if (sql.includes("brand_access_level")) return { rows: [{ workspace_status: "active", brand_status: "active",
         organization_status: "active", brand_same_organization: true,
         actor_status: access ? "active" : "suspended", user_type: "client", primary_role: "client_admin", same_organization: true,
@@ -89,7 +90,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
           series: [{ date: "2026-09-01", mention_count: 10 }], related: [{ term_key: "not_selected", shared_mentions: 3 }] }] };
       }
       if (sql.includes("WITH source_generation AS MATERIALIZED")) return { rows: [{
-        denominator: 12, processed: 12, assigned_unique: 12, abstained: 0, unresolved: 0, withheld: 0,
+        denominator: 12, processed: 12, assigned_unique: 12, abstained: 0, noise: 0, unresolved: 0, unresolved_exclusive: 0, withheld: 0,
         rights_digest: sha("7"), date_from: "2026-09-01", date_to: "2026-09-11",
         counts: [{ term_key: "service", mention_count: 12 }], series: [],
         observed_at: "2026-09-11T12:00:00.000001Z"
@@ -115,6 +116,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.equal(overview?.is_current, true);
   assert.deepEqual(overview?.terms.map(term => [term.label, term.definition_revision, term.mention_count]),
     [["Servicio al cliente", 1, 12]]);
+  assert.equal(overview?.terms[0]?.kind, "topic"); assert.equal(overview?.coverage.noise, null);
   const args = { database: { async connect() { return client as never; } }, workspace_id: workspaceId,
     actor_user_id: actorId, term_key: "service", expected_scope_digest: overview!.scope_digest };
   const detail = await loadSignalWorkspaceTopicDetailV1(args);

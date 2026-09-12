@@ -1251,3 +1251,5 @@ export * from "./signal-topic-consolidation-editorial-runner-v1";
 export * from "./signal-topic-consolidation-editorial-repair-v1";
 
 export * from "./signal-topic-consolidation-bridge-v1";
+
+export * from "./signal-topic-consolidation-activation-v1";

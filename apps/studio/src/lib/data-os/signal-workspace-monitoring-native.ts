@@ -34,7 +34,8 @@ export function buildNativeSignalMonitoringV1(
     sample_size: point.mention_count,
     state: metricState
   }));
-  const selectedTopics = native.terms.filter((term) => term.selected);
+  const selectedTopics = native.terms.filter((term) => term.selected && term.kind !== "narrative");
+  const selectedNarratives = native.terms.filter((term) => term.selected && term.kind === "narrative");
   const topicBuckets = selectedTopics.map((term) => ({
     key: term.term_key,
     label: term.label,
@@ -43,6 +44,15 @@ export function buildNativeSignalMonitoringV1(
     sample_size: term.mention_count,
     state: metricState
   }));
+  const narrativeBuckets = selectedNarratives.map((term) => ({
+    key: term.term_key,
+    label: term.label,
+    value: term.mention_count,
+    denominator: native.denominator,
+    sample_size: term.mention_count,
+    state: metricState
+  }));
+  const hasEditorialConsolidation = native.coverage.noise !== null;
 
   return {
     ...base,
@@ -99,9 +109,9 @@ export function buildNativeSignalMonitoringV1(
       buckets: topicBuckets
     },
     narratives: {
-      state: "not_available",
-      reason: "workspace_narrative_consolidation_pending",
-      buckets: []
+      state: hasEditorialConsolidation ? native.is_current ? "fresh" : "stale" : "not_available",
+      reason: hasEditorialConsolidation ? native.is_current ? null : partialReason : "workspace_narrative_consolidation_pending",
+      buckets: narrativeBuckets
     },
     partial_states: [
       { state: "partial", reason: partialReason },

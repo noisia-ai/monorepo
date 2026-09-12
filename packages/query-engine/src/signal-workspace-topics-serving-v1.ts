@@ -20,6 +20,9 @@ export type SignalWorkspaceTopicsOverviewV1 = {
     processed: number;
     assigned_unique: number;
     abstained: number;
+    /** Editorial Noise at the canonical-mention level. Null means the legacy
+     * classifier did not produce a governed Noise disposition. */
+    noise: number | null;
     unresolved: number;
     withheld: number;
   };
@@ -27,6 +30,7 @@ export type SignalWorkspaceTopicsOverviewV1 = {
   quality: "not_calibrated";
   terms: Array<{
     term_key: string;
+    kind: "topic" | "narrative";
     label: string;
     definition: string;
     definition_revision: number;

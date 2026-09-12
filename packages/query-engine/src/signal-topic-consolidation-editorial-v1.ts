@@ -167,8 +167,8 @@ export const SIGNAL_TOPIC_EDITORIAL_SCREENING_SCHEMA_V1=Object.freeze({type:"obj
       required:["group_key","disposition","candidate","confidence","rationale","cited_ref_ids"],properties:{
         group_key:jsonString,disposition:{type:"string",enum:["topic","narrative","noise","unresolved"]},
         candidate:{type:["object","null"],additionalProperties:false,required:["candidate_key","label","definition","locale"],
-          properties:{candidate_key:{type:"string",maxLength:256},label:{type:"string",maxLength:90},definition:{type:"string",maxLength:240},locale:jsonString}},
-        confidence:{type:["number","null"]},rationale:{type:["string","null"],maxLength:160},cited_ref_ids:{type:"array",maxItems:10,items:jsonString},
+          properties:{candidate_key:jsonString,label:jsonString,definition:jsonString,locale:jsonString}},
+        confidence:{type:["number","null"]},rationale:nullableStringNode,cited_ref_ids:{type:"array",items:jsonString},
       }},
     },
   }} as const);
@@ -331,11 +331,11 @@ Produce un catálogo realmente manejable: intenta 24 a 80 conceptos y nunca exce
 export const SIGNAL_TOPIC_EDITORIAL_GLOBAL_SCHEMA_V1=Object.freeze({type:"object",additionalProperties:false,
   required:["contract_version","concepts","noise_group_keys","unresolved_group_keys"],properties:{
     contract_version:{type:"string",enum:["signal-topic-editorial-global-result-v1"]},
-    concepts:{type:"array",maxItems:120,items:{type:"object",additionalProperties:false,
+    concepts:{type:"array",items:{type:"object",additionalProperties:false,
       required:["concept_key","kind","label","definition","locale","priority_rank","priority_rationale","member_group_keys"],properties:{
-        concept_key:{type:"string",maxLength:256},kind:{type:"string",enum:["topic","narrative"]},label:{type:"string",maxLength:120},
-        definition:{type:"string",maxLength:500},locale:jsonString,priority_rank:{type:"integer",minimum:1,maximum:120},
-        priority_rationale:{type:"string",maxLength:280},member_group_keys:{type:"array",minItems:1,maxItems:5000,items:jsonString},
+        concept_key:jsonString,kind:{type:"string",enum:["topic","narrative"]},label:jsonString,
+        definition:jsonString,locale:jsonString,priority_rank:{type:"integer"},
+        priority_rationale:jsonString,member_group_keys:{type:"array",items:jsonString},
       }}},noise_group_keys:{type:"array",items:jsonString},unresolved_group_keys:{type:"array",items:jsonString},
   }} as const);
 export const SIGNAL_TOPIC_EDITORIAL_GLOBAL_CONFIGURATION_V1=Object.freeze({

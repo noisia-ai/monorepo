@@ -36,10 +36,10 @@ const native: SignalWorkspaceTopicsOverviewV1 = {
   scope_digest: "sha256:scope",
   observed_at: "2026-09-12T00:00:00.000000Z",
   denominator: 43_159,
-  coverage: { processed: 43_159, assigned_unique: 67, abstained: 12_603, unresolved: 30_377, withheld: 0 },
+  coverage: { processed: 43_159, assigned_unique: 67, abstained: 12_603, noise: null, unresolved: 30_377, withheld: 0 },
   interpretation_coverage: { interpreted_unit_count: 36, expected_unit_count: 1_652, complete: false },
   quality: "not_calibrated",
-  terms: [{ term_key: "early-access", label: "Acceso anticipado a Alexa+", definition: "Experiencias de acceso anticipado.",
+  terms: [{ term_key: "early-access", kind: "topic", label: "Acceso anticipado a Alexa+", definition: "Experiencias de acceso anticipado.",
     definition_revision: 1, definition_digest: "sha256:def", selected: true, mention_count: 67, share_of_corpus: 67 / 43_159,
     basis: "computed_cluster" }],
   series: [{ date: "2026-08-31", mention_count: 100, assigned_unique: 12 },
@@ -60,6 +60,15 @@ test("native workspace data enters the shared Signal dashboard without inventing
   assert.equal(result.platforms.state, "not_available");
   assert.equal(result.narratives.reason, "workspace_narrative_consolidation_pending");
   assert.equal(result.comparison.mode, "none");
+});
+
+test("consolidated native monitoring publishes narrative buckets separately from Topics", () => {
+  const result = buildNativeSignalMonitoringV1(base, { ...native, coverage: { ...native.coverage, noise: 2, unresolved: 3 },
+    terms: [...native.terms, { ...native.terms[0]!, term_key: "routine-change", kind: "narrative",
+      label: "Alexa+ changes routines", mention_count: 41, share_of_corpus: 41 / 43_159 }] });
+  assert.deepEqual(result.topics.buckets.map(bucket => bucket.key), ["early-access"]);
+  assert.equal(result.narratives.state, "fresh");
+  assert.deepEqual(result.narratives.buckets.map(bucket => [bucket.label, bucket.value]), [["Alexa+ changes routines", 41]]);
 });
 
 test("native monitoring accepts only the exact workspace overview contract", () => {

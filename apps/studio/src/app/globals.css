@@ -21087,6 +21087,32 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__candidate-grid p { margin: 0; color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
 .topics-manager__candidate-grid small { color: var(--signal-dark); font-size: 11px; font-weight: 700; }
 .topics-manager__candidate-grid .admin-button { align-self: flex-start; }
+.topics-manager__activation { overflow: hidden; }
+.topics-manager__activation-head { align-items: flex-start; gap: 18px; }
+.topics-manager__activation-head > div { min-width: 0; }
+.topics-manager__activation-body { display: grid; gap: 14px; }
+.topics-manager__activation-version { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; color: var(--neutral-09); font-size: 12px; }
+.topics-manager__activation-version > span { color: var(--neutral-11); font-weight: 700; }
+.topics-manager__activation-version small { flex-basis: 100%; line-height: 1.45; }
+.topics-manager__activation-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.topics-manager__activation-select-all { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; padding-block: 2px; }
+.topics-manager__activation-select-all label,
+.topics-manager__activation-list label { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.topics-manager__activation-select-all label { color: var(--neutral-11); font-size: 13px; font-weight: 700; }
+.topics-manager__activation-select-all small { color: var(--neutral-09); font-size: 11px; line-height: 1.45; }
+.topics-manager__activation-select-all input,
+.topics-manager__activation-list input { width: 16px; height: 16px; flex: 0 0 auto; margin: 2px 0 0; accent-color: var(--signal); }
+.topics-manager__activation-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; max-height: 356px; margin: 0; padding: 2px; overflow: auto; list-style: none; }
+.topics-manager__activation-list li { min-width: 0; }
+.topics-manager__activation-list label { height: 100%; padding: 11px 12px; border: 1px solid var(--neutral-04); border-radius: 10px; background: rgba(255,255,255,.72); }
+.topics-manager__activation-list label:has(input:checked) { border-color: rgba(0,138,138,.25); background: rgba(0,138,138,.055); }
+.topics-manager__activation-list label:focus-within { outline: 2px solid rgba(0,138,138,.2); outline-offset: 1px; }
+.topics-manager__activation-list label > span { display: grid; gap: 3px; min-width: 0; }
+.topics-manager__activation-list strong { overflow: hidden; color: var(--neutral-11); font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.topics-manager__activation-list small { color: var(--neutral-08); font-size: 10px; font-weight: 650; }
+.topics-manager__activation-message { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
+.topics-manager__activation-message--success { color: var(--signal-dark); }
+.topics-manager__activation-actions { margin-top: 0; }
 @media (max-width: 980px) {
   .topics-manager__layout { grid-template-columns: 1fr; }
   .topics-manager__list { max-height: 390px; overflow: auto; }
@@ -21100,12 +21126,15 @@ body:has(.signal-report)::before { display: none; }
   .topics-manager__results > header, .topics-manager__result-list article { grid-template-columns: 1fr; }
   .topics-manager__results > header { flex-direction: column; }
   .topics-manager__result-list article > div:last-child { flex-wrap: wrap; }
+  .topics-manager__activation-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 440px) {
   .topics-manager__tabs button { flex: 0 0 auto; }
   .topics-manager__progress { grid-template-columns: 1fr auto; }
   .topics-manager__progress progress { grid-column: 1 / -1; grid-row: 2; }
   .topics-manager__list, .topics-manager__detail, .topics-manager__discovered { padding: 14px; }
+  .topics-manager__activation-summary { grid-template-columns: 1fr; }
+  .topics-manager__activation-actions .admin-button { width: 100%; justify-content: center; }
 }
 
 /* Brand monitoring continuity: navigation, never inferred completion. */

@@ -126,6 +126,20 @@ test("known invalid structured output keeps exact usage and cost and is never re
   assert.equal(sends, 1); assert.equal(ledger.receipts.length, 1); assert.equal(ledger.completions.size, 1);
 });
 
+test("complete Anthropic request rejection is durably settled at zero and never retried", async () => {
+  const { request } = requestFor(), ledger = new Ledger(); let sends = 0;
+  const provider = createAnthropicSignalTopicEditorialRunnerProviderV1({ api_key: "unit_test_key_123456789", provider_enabled: true, ledger,
+    fetch_impl: async () => { sends++; return Response.json({ type: "error", error: { type: "invalid_request_error",
+      message: "output_config.format.schema contains an unsupported keyword" } }, { status: 400, headers: { "request-id": "req_rejected" } }); } });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await assert.rejects(provider.complete(request), error => error instanceof SignalTopicEditorialAnthropicErrorV1
+      && error.outcome === "known_response_invalid" && error.settlement?.error_code === "response_invalid"
+      && error.settlement.usage === null && error.settlement.cost_micro_usd === null);
+  }
+  assert.equal(sends, 1); assert.equal(ledger.receipts.length, 1); assert.equal(ledger.receipts[0]?.http_status, 400);
+  assert.equal(ledger.receipts[0]?.complete, true); assert.equal(ledger.completions.size, 1);
+});
+
 test("network ambiguity is not retried and a later ledger refusal prevents another send", async () => {
   const { request } = requestFor(), ledger = new Ledger(); ledger.authorizations.push("authorized", "outcome_unknown"); let sends = 0;
   const provider = createAnthropicSignalTopicEditorialRunnerProviderV1({ api_key: "unit_test_key_123456789", provider_enabled: true, ledger,

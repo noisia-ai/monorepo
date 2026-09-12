@@ -4,6 +4,7 @@ import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabil
 import {loadSignalWorkspaceTopicProjectionStatusWithQueryableV1,type SignalWorkspaceProjectionQueryableV1} from './signal-workspace-topic-projection';
 import type {SignalWorkspaceClassificationDatabaseV1} from './signal-workspace-classification';
 import {loadSignalTopicWorkingProfileWithQueryableV1} from './signal-topic-catalog';
+import {readSignalTopicConsolidationServingBindingV1} from './signal-topic-consolidation-activation';
 export class SignalWorkspaceTopicSelectionError extends Error {
  constructor(readonly code:string,readonly status=409){super(code);this.name='SignalWorkspaceTopicSelectionError';}
 }
@@ -26,10 +27,14 @@ async function authorize(queryable:SignalWorkspaceProjectionQueryableV1,workspac
 export async function loadSignalWorkspaceTopicSelectionWithQueryableV1(args:{queryable:SignalWorkspaceProjectionQueryableV1;workspace_id:string;actor_user_id:string;idempotency_key?:string}):Promise<SignalWorkspaceTopicSelectionStatusV1>{
  await authorize(args.queryable,args.workspace_id,args.actor_user_id,false);
  const row=(await args.queryable.query<{observed_at:string;state:{revision:number;items:Record<string,SignalWorkspaceTopicSelectionV1>};request_receipt:SignalWorkspaceTopicSelectionReceiptV1|null}>(`
-  SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at,workspace.topic_signal_selection state,
+  SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at,COALESCE((SELECT jsonb_build_object('revision',b.selection_revision,'items',b.selection)
+    FROM signal_topic_consolidation_bindings b WHERE b.workspace_id=workspace.id AND b.snapshot_id IS NOT NULL),workspace.topic_signal_selection) state,
+   COALESCE((SELECT jsonb_build_object('operation_id',o.id,'term_key',o.command->>'term_key','revision',o.result_binding->'selection_revision',
+    'selection',o.result_binding->'selection'->(o.command->>'term_key')) FROM signal_topic_consolidation_activation_operations o
+    WHERE o.workspace_id=workspace.id AND o.actor_user_id=$2::uuid AND o.idempotency_key=$3 AND o.action='select'),
    (SELECT operation.selection_result||jsonb_build_object('operation_id',operation.id,'term_key',operation.result_term_key)
     FROM signal_topic_catalog_operations operation WHERE operation.workspace_id=workspace.id AND operation.action='select_signal'
-     AND operation.actor_user_id=$2::uuid AND operation.idempotency_key=$3) request_receipt
+     AND operation.actor_user_id=$2::uuid AND operation.idempotency_key=$3)) request_receipt
   FROM signal_workspaces workspace WHERE workspace.id=$1::uuid`,[args.workspace_id,args.actor_user_id,args.idempotency_key??null])).rows[0];
  if(!row)return fail('workspace_topic_selection_workspace_not_found',404);
  return{contract_version:'signal-workspace-topic-selection-v1',workspace_id:args.workspace_id,observed_at:row.observed_at,
@@ -50,10 +55,30 @@ export async function selectSignalWorkspaceTopicV1(args:{database:SignalWorkspac
   await authorize(client,args.workspace_id,args.actor_user_id,true);
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`signal-taxonomy:${args.workspace_id}:topic`]);
   await authorize(client,args.workspace_id,args.actor_user_id,true);
+  const consolidatedReplay=(await client.query<{id:string;actor_user_id:string;command:{source_request_digest:string;term_key:string};result_binding:{selection_revision:number;selection:Record<string,SignalWorkspaceTopicSelectionV1>}}>(
+   'SELECT id,actor_user_id,command,result_binding FROM signal_topic_consolidation_activation_operations WHERE workspace_id=$1::uuid AND idempotency_key=$2',
+   [args.workspace_id,args.idempotency_key])).rows[0];
+  if(consolidatedReplay){
+   if(consolidatedReplay.actor_user_id!==args.actor_user_id||consolidatedReplay.command.source_request_digest!==request_digest)return fail('workspace_topic_selection_idempotency_conflict');
+   return{revision:consolidatedReplay.result_binding.selection_revision,selection:consolidatedReplay.result_binding.selection[args.term_key]!,operation_id:consolidatedReplay.id,replayed:true};
+  }
   const prior=(await client.query<{id:string;actor_user_id:string;request_digest:string;action:string;selection_result:{revision:number;selection:SignalWorkspaceTopicSelectionV1}}>(`
    SELECT id,actor_user_id,request_digest,action,selection_result FROM signal_topic_catalog_operations WHERE workspace_id=$1::uuid AND idempotency_key=$2`,[args.workspace_id,args.idempotency_key])).rows[0];
   if(prior){if(prior.action!=='select_signal'||prior.actor_user_id!==args.actor_user_id||prior.request_digest!==request_digest)return fail('workspace_topic_selection_idempotency_conflict');
    return{...prior.selection_result,operation_id:prior.id,replayed:true};}
+  const consolidated=await readSignalTopicConsolidationServingBindingV1(client,args.workspace_id);
+  if(consolidated?.snapshot){
+   const topic=consolidated.snapshot.catalog.find(item=>item.term_key===args.term_key);
+   if(!topic||args.generation_id!==consolidated.snapshot.id||args.expected_definition_revision!==topic.definition_revision
+     ||args.expected_definition_digest!==topic.definition_digest)return fail('workspace_topic_selection_definition_changed');
+   const command={action:'select',term_key:args.term_key,selected:args.selected,definition_digest:args.expected_definition_digest,
+    expected_binding_revision:consolidated.binding.binding_revision,expected_selection_revision:args.expected_selection_revision,
+    expected_snapshot_id:args.generation_id,expected_legacy_generation_id:null,source_request_digest:request_digest};
+   const result=(await client.query<{value:{operation_id:string;binding:{selection_revision:number;selection:Record<string,SignalWorkspaceTopicSelectionV1>};replayed:boolean}}>(
+    'SELECT mutate_signal_topic_consolidation_binding_v1($1::uuid,$2::uuid,$3,$4::jsonb) value',
+    [args.workspace_id,args.actor_user_id,args.idempotency_key,JSON.stringify(command)])).rows[0]!.value;
+   return{revision:result.binding.selection_revision,selection:result.binding.selection[args.term_key]!,operation_id:result.operation_id,replayed:result.replayed};
+  }
   const state=(await client.query<{topic_signal_selection:{revision:number;items:Record<string,SignalWorkspaceTopicSelectionV1>}}>(
    'SELECT topic_signal_selection FROM signal_workspaces WHERE id=$1::uuid FOR UPDATE',[args.workspace_id])).rows[0]?.topic_signal_selection;
   if(!state)return fail('workspace_topic_selection_workspace_not_found',404);

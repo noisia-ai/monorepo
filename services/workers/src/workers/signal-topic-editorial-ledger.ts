@@ -36,8 +36,9 @@ export function createSignalTopicEditorialLedgerV1(args: Scope & {
   const getActive = (key: string) => active.get(key) ?? (() => { throw failure("topic_editorial_attempt_missing"); })();
   async function settle(call: { call_id: string; attempt_token: string }, completion: SignalTopicEditorialAnthropicCompletionV1) {
     const result = await args.stores.settle({ database: args.database, call_id: call.call_id, attempt_token: call.attempt_token });
-    if (result.status !== "settled" || completion.settlement.cost_micro_usd === null
-      || result.settled_micro_usd !== String(completion.settlement.cost_micro_usd)) throw failure("topic_editorial_settlement_unresolved");
+    const expectedCost=completion.settlement.cost_micro_usd??0;
+    if (result.status !== "settled" || result.settled_micro_usd !== String(expectedCost))
+      throw failure("topic_editorial_settlement_unresolved");
   }
   const ledger: SignalTopicEditorialAnthropicLedgerV1 = {
     async load(request) {
@@ -52,15 +53,15 @@ export function createSignalTopicEditorialLedgerV1(args: Scope & {
         if (["reserved", "definitely_not_sent"].includes(call.status)) return null;
         throw failure("topic_editorial_recovery_required");
       }
-      if (!["response_persisted", "settled"].includes(call.status)) throw failure("topic_editorial_recovery_required");
+      if (!["response_persisted", "settled", "outcome_unknown"].includes(call.status)) throw failure("topic_editorial_recovery_required");
       const receipt: SignalTopicEditorialAnthropicRawReceiptV1 = {
         request_digest: request.request_digest, idempotency_key: request.idempotency_key,
         bytes: new TextEncoder().encode(call.response.body), sha256: call.response.sha256,
         http_status: call.response.http_status, complete: call.response.complete, provider_request_id: call.response.provider_request_id,
       };
       const completion = decodeSignalTopicEditorialAnthropicReceiptV1(request, receipt);
-      if (call.status === "response_persisted") await settle(call, completion);
-      else if (call.settled_micro_usd !== String(completion.settlement.cost_micro_usd)) throw failure("topic_editorial_settlement_unresolved");
+      if (call.status !== "settled") await settle(call, completion);
+      else if (call.settled_micro_usd !== String(completion.settlement.cost_micro_usd??0)) throw failure("topic_editorial_settlement_unresolved");
       return completion;
     },
     async authorize_send(request) {

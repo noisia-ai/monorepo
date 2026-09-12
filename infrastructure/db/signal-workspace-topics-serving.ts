@@ -10,6 +10,7 @@ import {
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { loadSignalWorkspaceClassificationInputV1, SignalWorkspaceClassificationError } from "./signal-workspace-classification";
 import { loadSignalTopicWorkingProfileWithQueryableV1 } from "./signal-topic-catalog";
+import { readSignalTopicConsolidationServingBindingV1, type SignalTopicConsolidationServingSnapshotV1 } from "./signal-topic-consolidation-activation";
 
 type Database = Pick<Pool, "connect">;
 type Filters = { date_from?: string | null; date_to?: string | null };
@@ -37,13 +38,15 @@ export type SignalWorkspaceMentionsPageV1 = {
   page_offset: number; next_cursor: string | null;
 };
 type Selection = { revision: number; items: Record<string, { selected: boolean; definition_digest: string;
-  definition_revision: number; generation_id: string }> };
-type Generation = { id: string; taxonomy_profile_id: string; preparation_run_id: string;
+  definition_revision: number; generation_id: string | null }> };
+type Generation = { id: string; taxonomy_profile_id: string | null; preparation_run_id: string;
   input_revision: string; current_revision: string; finalized_digest: string; policy_live: boolean;
-  source_engine_execution_id: string; interpretation_coverage: unknown; identity: SignalWorkspaceClassificationIdentityV1;
+  source_engine_execution_id: string; interpretation_coverage: unknown; identity: SignalWorkspaceClassificationIdentityV1 | null;
   correction_digest: string; source_valid: boolean };
-type Context = { generation: Generation | null; topics: SignalTopicDefinitionV1[]; selection: Selection;
-  is_current: boolean; is_processing: boolean; filters: { date_from: string | null; date_to: string | null }; native: boolean };
+type CatalogTerm = SignalTopicDefinitionV1 & { kind: "topic" | "narrative" };
+type Context = { generation: Generation | null; topics: CatalogTerm[]; selection: Selection;
+  is_current: boolean; is_processing: boolean; filters: { date_from: string | null; date_to: string | null };
+  native: boolean; consolidated: boolean };
 
 export class SignalWorkspaceTopicsServingError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceTopicsServingError"; }
@@ -89,11 +92,29 @@ async function mentionsTransaction<T>(database: Database, work: (client: PoolCli
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
   finally { client.release(); }
 }
+function consolidatedContext(snapshot: SignalTopicConsolidationServingSnapshotV1, filters: Context["filters"]): Context {
+  const topics = snapshot.catalog.map(item => ({ ...signalTopicDefinitionSchemaV1.parse({ term_key: item.term_key,
+    label: item.label, definition: item.definition, scope: "all_conversations", inclusion: [], exclusion: [],
+    positive_examples: [], negative_examples: [], lifecycle: "draft", origin: "workspace_discovery", discovery_guidance: false,
+    source: { run_key: `consolidation:${snapshot.revision_id}`, candidate_key: item.concept_id, candidate_digest: item.semantic_identity_digest },
+    definition_revision: item.definition_revision, definition_digest: item.definition_digest, created_at: item.created_at, updated_at: item.updated_at }),
+    kind: item.kind }));
+  return { generation: { id: snapshot.id, taxonomy_profile_id: null, preparation_run_id: snapshot.preparation_run_id,
+    input_revision: snapshot.input_revision, current_revision: snapshot.current_revision, finalized_digest: snapshot.snapshot_digest,
+    policy_live: snapshot.source_valid, source_engine_execution_id: snapshot.source_engine_execution_id,
+    interpretation_coverage: { interpreted_unit_count: snapshot.expected_group_count, expected_unit_count: snapshot.expected_group_count, complete: true },
+    identity: null, correction_digest: snapshot.revision_digest, source_valid: snapshot.source_valid }, topics,
+    selection: { revision: snapshot.binding.selection_revision, items: snapshot.binding.selection },
+    is_current: snapshot.source_valid && snapshot.input_revision === snapshot.current_revision,
+    is_processing: false, filters, native: true, consolidated: true };
+}
 async function context(client: PoolClient, args: Args): Promise<Context> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
   if (!capabilities.can_view || args.include_unselected && !capabilities.can_edit_topics) return fail("workspace_topics_forbidden", 403);
   const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to) };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
+  const binding = await readSignalTopicConsolidationServingBindingV1(client, args.workspace_id);
+  if (binding?.snapshot) return consolidatedContext(binding.snapshot, filters);
   const workspace = (await client.query<{ selection: Selection | null; native: boolean; is_processing: boolean }>(`SELECT topic_signal_selection selection,
     EXISTS(SELECT 1 FROM signal_topic_catalog_executions run WHERE run.workspace_id=workspace.id
       AND run.input_contract='workspace-topic-classification-v1' AND run.input_snapshot->'source_projection' IS NOT NULL
@@ -114,7 +135,8 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     WHERE generation.workspace_id=$1::uuid AND generation.input_contract='workspace-topic-classification-v1'
       AND generation.status='ready' AND generation.input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
       AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item WHERE item.generation_id=generation.id AND item.resolution_state='error')
-    ORDER BY generation.generation_version DESC LIMIT 1`, [args.workspace_id])).rows[0] ?? null;
+      AND (NOT $3::boolean OR generation.id=$2::uuid)
+    ORDER BY generation.generation_version DESC LIMIT 1`, [args.workspace_id, binding?.binding.legacy_generation_id ?? null, binding !== null])).rows[0] ?? null;
   const topicRows = (await client.query<{ definition: unknown }>(`SELECT term.metadata->'topic' definition
     FROM (SELECT taxonomy_id FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic'
       AND metadata->>'contract_version'='signal-topic-catalog-v1'
@@ -138,12 +160,12 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
   // revision/digest as the membership identity.
   const topics = topicRows.map(row => signalTopicDefinitionSchemaV1.parse(row.definition)).map(topic => {
     const working = workingTopics.get(topic.term_key);
-    return working && working.definition_digest === topic.definition_digest && working.lifecycle === topic.lifecycle
+    return { ...(working && working.definition_digest === topic.definition_digest && working.lifecycle === topic.lifecycle
       ? { ...topic, label: working.label, updated_at: working.updated_at }
-      : topic;
+      : topic), kind: "topic" as const };
   }).filter(topic => topic.lifecycle !== "archived");
   let isCurrent = false;
-  if (generation) {
+  if (generation?.taxonomy_profile_id && generation.identity) {
     const input = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
       taxonomy_profile_id: generation.taxonomy_profile_id }).catch(error => {
       if (error instanceof SignalWorkspaceClassificationError && error.code === "workspace_classification_catalog_unavailable") return null;
@@ -156,7 +178,7 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
       && generation.identity.context_digest === input.context_digest && generation.identity.embedding_config_digest === input.embedding_config_digest;
   }
   return { generation, topics, selection, is_current: isCurrent, is_processing: workspace.is_processing, filters,
-    native: workspace.native || topics.some(topic => topic.origin === "workspace_discovery") };
+    native: workspace.native || topics.some(topic => topic.origin === "workspace_discovery"), consolidated: false };
 }
 
 /** Mentions are a generation-wide corpus view and do not consume Topic labels,
@@ -170,6 +192,8 @@ async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Con
   if (!capabilities.can_view) return fail("workspace_topics_forbidden", 403);
   const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to) };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
+  const binding = await readSignalTopicConsolidationServingBindingV1(client, args.workspace_id);
+  if (binding?.snapshot) return consolidatedContext(binding.snapshot, filters);
   const row = (await client.query<Generation & { native: boolean; is_processing: boolean }>(`SELECT
     EXISTS(SELECT 1 FROM signal_topic_catalog_executions run WHERE run.workspace_id=workspace.id
       AND run.input_contract IN('workspace-topic-engine-v1','workspace-topic-classification-v1')) native,
@@ -192,10 +216,11 @@ async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Con
         AND candidate.input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')
         AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item
           WHERE item.generation_id=candidate.id AND item.resolution_state='error')
+        AND (NOT $3::boolean OR candidate.id=$2::uuid)
       ORDER BY candidate.generation_version DESC LIMIT 1
     ) generation ON true
     LEFT JOIN signal_corpus_preparation_input_state state ON state.workspace_id=workspace.id
-    WHERE workspace.id=$1::uuid`, [args.workspace_id])).rows[0];
+    WHERE workspace.id=$1::uuid`, [args.workspace_id, binding?.binding.legacy_generation_id ?? null, binding !== null])).rows[0];
   const generation = row?.id ? row : null;
   return { generation, is_processing: row?.is_processing ?? false, native: row?.native ?? false, filters,
     is_current: Boolean(generation?.source_valid && generation.policy_live
@@ -205,8 +230,13 @@ async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Con
 /** Current rights use one complete provenance path, including import precedence.
  * Authorization to compute never substitutes for rights to display metrics/text. */
 const populationSql = `WITH source_generation AS MATERIALIZED (
-  SELECT generation.* FROM signal_classification_generations generation WHERE generation.id=$2::uuid
+  SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
+    FROM signal_classification_generations generation WHERE generation.id=$2::uuid
     AND generation.workspace_id=$1::uuid AND signal_workspace_projection_source_current_v1(generation)
+  UNION ALL
+  SELECT snapshot.id,snapshot.workspace_id,snapshot.preparation_run_id,'{}'::jsonb
+    FROM signal_topic_consolidation_snapshots snapshot WHERE snapshot.id=$2::uuid AND snapshot.workspace_id=$1::uuid
+    AND signal_topic_consolidation_snapshot_current_v1(snapshot.id)
 ), authorized_imports AS MATERIALIZED (
   SELECT batch.id,batch.data_source_id,
     EXISTS(SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$1::uuid
@@ -243,18 +273,27 @@ const populationSql = `WITH source_generation AS MATERIALIZED (
   FROM signal_classification_generation_items item JOIN mentions mention ON mention.id=item.canonical_root_id AND mention.workspace_id=$1::uuid
   LEFT JOIN root_rights rights ON rights.root_id=mention.id
   WHERE item.workspace_id=$1::uuid AND item.generation_id=$2::uuid
+  UNION ALL
+  SELECT item.root_id,item.resolution_state,mention.published_at,item.has_unresolved_topics,
+    COALESCE(rights.metrics,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id,
+    COALESCE(rights.evidence,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id
+  FROM signal_topic_consolidation_snapshot_roots_v1 item
+  JOIN mentions mention ON mention.id=item.root_id AND mention.workspace_id=$1::uuid
+  LEFT JOIN root_rights rights ON rights.root_id=item.root_id
+  WHERE item.workspace_id=$1::uuid AND item.snapshot_id=$2::uuid
 ), period_roots AS MATERIALIZED (
   SELECT * FROM all_roots WHERE ($3::date IS NULL OR published_at>=$3::date)
     AND ($4::date IS NULL OR published_at<$4::date+interval '1 day')
 ), visible_terms AS MATERIALIZED (
   SELECT * FROM jsonb_to_recordset($5::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean)
-), all_memberships AS MATERIALIZED (
+), legacy_memberships AS MATERIALIZED (
   SELECT DISTINCT ON(assignment.canonical_root_id,term.term_key) assignment.canonical_root_id root_id,term.term_key,visible.visible,
     CASE WHEN assignment.membership_basis='computed_cluster' THEN assignment.membership_metadata->'evidence_fragment' ELSE NULL END evidence_fragment
   FROM signal_classification_assignments assignment JOIN taxonomy_terms term ON term.id=assignment.taxonomy_term_id
   JOIN visible_terms visible ON visible.term_key=term.term_key AND visible.definition_digest=assignment.definition_digest
     AND visible.definition_revision=assignment.definition_revision
-  JOIN source_generation generation ON generation.id=assignment.generation_id
+  JOIN signal_classification_generations generation ON generation.id=assignment.generation_id
+  JOIN source_generation serving_source ON serving_source.id=generation.id
   LEFT JOIN tagging_model_versions model ON model.id=assignment.model_version_id
   JOIN period_roots root ON root.root_id=assignment.canonical_root_id AND root.metrics
   WHERE assignment.workspace_id=$1::uuid AND assignment.generation_id=$2::uuid
@@ -269,6 +308,15 @@ const populationSql = `WITH source_generation AS MATERIALIZED (
       AND correction.resolution_method='human' AND correction.disposition='rejected'
       AND signal_workspace_classification_assignment_current_v1(correction,generation))
   ORDER BY assignment.canonical_root_id,term.term_key,(assignment.resolution_method='human') DESC,assignment.created_at DESC,assignment.id DESC
+), all_memberships AS MATERIALIZED (
+  SELECT * FROM legacy_memberships
+  UNION ALL
+  SELECT member.root_id,member.term_key,visible.visible,NULL::jsonb evidence_fragment
+  FROM signal_topic_consolidation_snapshot_memberships_v1 member
+  JOIN visible_terms visible ON visible.term_key=member.term_key AND visible.definition_digest=member.definition_digest
+  JOIN source_generation generation ON generation.id=member.snapshot_id
+  JOIN period_roots root ON root.root_id=member.root_id AND root.metrics
+  WHERE member.snapshot_id=$2::uuid AND member.workspace_id=$1::uuid
 ), memberships AS MATERIALIZED (SELECT root_id,term_key,evidence_fragment FROM all_memberships WHERE visible),
 root_membership AS MATERIALIZED (SELECT root_id,bool_or(visible) visible FROM all_memberships GROUP BY root_id),
 population AS MATERIALIZED (
@@ -288,7 +336,8 @@ function populationParams(args: Args, ctx: Context) {
     JSON.stringify(ctx.topics.map(topic => ({ term_key: topic.term_key, visible: visible.has(topic.term_key),
       definition_digest: topic.definition_digest, definition_revision: topic.definition_revision })))];
 }
-type Aggregate = { denominator: number; processed: number; assigned_unique: number; abstained: number; unresolved: number;
+type Aggregate = { denominator: number; processed: number; assigned_unique: number; abstained: number; noise: number; unresolved: number;
+  unresolved_exclusive: number;
   withheld: number; rights_digest: string; date_from: string | null; date_to: string | null;
   counts: Array<{ term_key: string; mention_count: number }>; series: SignalWorkspaceTopicsOverviewV1["series"]; observed_at: string };
 async function overview(client: PoolClient, args: Args, ctx: Context): Promise<SignalWorkspaceTopicsOverviewV1> {
@@ -296,7 +345,9 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     SELECT count(*) FILTER(WHERE root.metrics)::int denominator,count(*) FILTER(WHERE root.metrics)::int processed,
       count(*) FILTER(WHERE root.metrics AND root.visible)::int assigned_unique,
       count(*) FILTER(WHERE root.metrics AND root.resolution_state='abstained')::int abstained,
+      count(*) FILTER(WHERE root.metrics AND root.resolution_state='noise')::int noise,
       count(*) FILTER(WHERE root.metrics AND root.has_unresolved_topics)::int unresolved,
+      count(*) FILTER(WHERE root.metrics AND root.resolution_state='unresolved')::int unresolved_exclusive,
       count(*) FILTER(WHERE NOT root.metrics)::int withheld,
       'sha256:'||encode(sha256(convert_to(COALESCE((SELECT string_agg(jsonb_build_array(id,data_source_id,metrics,evidence)::text,
         '' ORDER BY id) FROM authorized_imports),''),'UTF8')),'hex') rights_digest,
@@ -309,7 +360,7 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
       to_char(statement_timestamp(),'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at
     FROM population root`, populationParams(args, ctx))).rows[0]!;
   const counts = new Map(summary.counts.map(row => [row.term_key, row.mention_count]));
-  const terms = displayedTopics(ctx, args.include_unselected).map(topic => ({ term_key: topic.term_key, label: topic.label,
+  const terms = displayedTopics(ctx, args.include_unselected).map(topic => ({ term_key: topic.term_key, kind: topic.kind, label: topic.label,
     definition: topic.definition, definition_digest: topic.definition_digest, definition_revision: topic.definition_revision,
     selected: displayedTopics(ctx).some(selected => selected.term_key === topic.term_key),
     mention_count: counts.get(topic.term_key) ?? 0,
@@ -324,7 +375,8 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
       input_revision: ctx.generation?.current_revision, current: ctx.is_current, selection: ctx.selection,
       terms, filters: ctx.filters, rights: summary.rights_digest }), observed_at: summary.observed_at,
     denominator: summary.denominator, coverage: { processed: summary.processed, assigned_unique: summary.assigned_unique,
-      abstained: summary.abstained, unresolved: summary.unresolved, withheld: summary.withheld },
+      abstained: summary.abstained, noise: ctx.consolidated ? summary.noise : null,
+      unresolved: ctx.consolidated ? summary.unresolved_exclusive : summary.unresolved, withheld: summary.withheld },
     interpretation_coverage: workspaceTopicsInterpretationCoverageV1(ctx.generation?.interpretation_coverage),
     quality: "not_calibrated", terms, series: summary.series,
     limitations: ["computed_memberships_not_semantic_precision", "multilabel_counts_are_not_additive",
@@ -430,7 +482,7 @@ export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "inclu
         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url
       FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$6
       JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-      JOIN signal_classification_generations generation ON generation.id=$2::uuid
+      JOIN source_generation generation ON generation.id=$2::uuid
       JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
         AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id
       WHERE root.evidence AND ($7::uuid IS NULL OR root.root_id>$7::uuid)

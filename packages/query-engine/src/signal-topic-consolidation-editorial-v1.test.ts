@@ -25,6 +25,17 @@ const context={brand_name:"Alexa+",default_locale:"es-MX",summary:"Asistente de 
 const planFor=(groups:ReturnType<typeof group>[],batch_size?:number)=>buildSignalTopicEditorialScreeningPlanV1({
   expected_group_count:groups.length,source_context_digest:sha("source-context"),editorial_context_digest:sha(context),context,groups,batch_size});
 
+function assertAnthropicStructuralSchema(schema:unknown){
+  const forbidden=new Set(["maxItems","minItems","maxLength","minLength","minimum","maximum"]);
+  const visit=(value:unknown):void=>{
+    if(Array.isArray(value)){value.forEach(visit);return;}
+    if(value===null||typeof value!=="object")return;
+    for(const [key,item] of Object.entries(value)){
+      assert.equal(forbidden.has(key),false,`unsupported provider schema keyword: ${key}`);visit(item);
+    }
+  };visit(schema);
+}
+
 test("plans every one of 1,652 groups exactly once in bounded Sonnet batches",()=>{
   const groups=Array.from({length:1_652},(_,index)=>group(index));
   const plan=planFor(groups);
@@ -37,6 +48,7 @@ test("plans every one of 1,652 groups exactly once in bounded Sonnet batches",()
   const providerBody=JSON.parse(plan.batches[0]!.request_body) as {max_tokens:number;output_config:{format:{schema:unknown}}};
   assert.equal(providerBody.max_tokens,8_192);
   assert.deepEqual(providerBody.output_config.format.schema,SIGNAL_TOPIC_EDITORIAL_SCREENING_SCHEMA_V1);
+  assertAnthropicStructuralSchema(providerBody.output_config.format.schema);
   assert.equal(plan.source_context_digest,sha("source-context"));assert.equal(plan.editorial_context_digest,sha(context));
   assert.equal(capacity.group_count,1_652);assert.equal(capacity.screening_request_count,42);
   assert.ok(capacity.estimated_screening_input_tokens.every(tokens=>tokens<=900_000));
@@ -104,6 +116,7 @@ test("global review merges eligible groups while preserving fixed Noise and exac
   const providerBody=JSON.parse(review.request_body) as {output_config:{format:{schema:unknown}};messages:Array<{content:string}>};
   const editorialPayload=JSON.parse(providerBody.messages[0]!.content) as {context:typeof context;eligible_fields:string[];eligible:unknown[][]};
   assert.deepEqual(providerBody.output_config.format.schema,SIGNAL_TOPIC_EDITORIAL_GLOBAL_SCHEMA_V1);
+  assertAnthropicStructuralSchema(providerBody.output_config.format.schema);
   assert.equal(editorialPayload.context.brand_name,"Alexa+");
   assert.equal(editorialPayload.eligible_fields.length,10);
   assert.equal(editorialPayload.eligible[0]!.length,10);
