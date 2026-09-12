@@ -172,6 +172,11 @@ test("worker seals centroid artifact before materializing census and communities
       storage_root: scratch,stores: stores as never,control_execution: control });
     assert.deepEqual(calls,["put","persist-centroids","materialize-census","materialize-communities"]);
     assert.equal(result.community_status,"ready"); assert.ok(progress.length >= 2);
+    await assert.rejects(signalTopicConsolidationJobV1({ id: "job-constraint",
+      data: { source_execution_id: sourceFixture.source.source_execution_id },updateProgress: async () => undefined },
+    { database: {} as never,storage: storage as never,storage_root: scratch,control_execution: control,
+      stores: { ...stores,async materialize() { throw Object.assign(new Error("opaque database rejection"),{ code: "23514" }); } } as never }),
+    /signal_topic_consolidation_census_materialize_constraint/);
   } finally { await rm(sourceFixture.directory,{ recursive: true,force: true }); await rm(scratch,{ recursive: true,force: true }); }
 });
 

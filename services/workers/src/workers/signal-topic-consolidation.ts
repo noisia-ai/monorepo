@@ -41,6 +41,25 @@ const text = (value: unknown, max: number): string =>
     ? value : fail("artifact_invalid");
 const digest = (bytes: Uint8Array | string): string => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const compare = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+const consolidationCode = /(?:^|\b)(signal_topic_consolidation_[a-z_]{1,100})(?:\b|$)/u;
+const databaseFailure = new Map([
+  ["57014", "timeout"],
+  ["23514", "constraint"],
+  ["23503", "foreign_key"],
+  ["23505", "conflict"],
+  ["22001", "value_too_long"],
+]);
+function stageFailure(stage: string, error: unknown): Error {
+  const message = error instanceof Error ? error.message : "";
+  const known = message.match(consolidationCode)?.[1];
+  if (known) return new Error(known);
+  const sqlState = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string"
+    ? error.code : null;
+  return new Error(`signal_topic_consolidation_${stage}_${databaseFailure.get(sqlState ?? "") ?? "failed"}`);
+}
+async function atStage<T>(stage: string, work: () => Promise<T>): Promise<T> {
+  try { return await work(); } catch (error) { throw stageFailure(stage, error); }
+}
 
 type Population = { ordinal: number; root_id: string; root_fingerprint: string; expected_chunks: number;
   chunk_index: number; start: number; end: number; chunk_sha256: string };
@@ -404,7 +423,7 @@ export async function signalTopicConsolidationJobV1(
   if (!job.id || !UUID.test(job.data?.source_execution_id ?? "")) fail("job_invalid");
   const database = options.database ?? (await import("../db/client")).pool;
   const stores = options.stores ?? defaultStores;
-  const source = await stores.source(database, job.data.source_execution_id, options.control_execution);
+  const source = await atStage("source", () => stores.source(database, job.data.source_execution_id, options.control_execution));
   if (source.expected_group_count > 5_000) fail("exact_knn_capacity_exceeded");
   const storage = options.storage ?? createWorkspaceEngineStorageV1();
   const root = resolve(options.storage_root ?? process.env.NOISIA_WORKSPACE_ENGINE_SCRATCH_ROOT ?? join(tmpdir(), "noisia-workspace-engine"));
@@ -412,27 +431,27 @@ export async function signalTopicConsolidationJobV1(
   const directory = await mkdtemp(join(root, `topic-consolidation-${source.source_execution_id}-`));
   try {
     const manifest = source.bundle.find(item => item.name === "manifest.json") ?? fail("bundle_incomplete");
-    await storage.get({ workspace_id: source.workspace_id, execution_id: source.source_execution_id, stored: manifest,
-      destination: join(directory, manifest.name) });
+    await atStage("manifest_download", () => storage.get({ workspace_id: source.workspace_id,
+      execution_id: source.source_execution_id, stored: manifest, destination: join(directory, manifest.name) }));
     await verifyFile(join(directory, manifest.name), manifest);
     const parsed = parseManifest(JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")), source);
     const names = new Set(["population.jsonl", "roots.jsonl", ...parsed.lanes.flatMap(lane => [lane.assignments_file, lane.clusters_file])]);
     let completed = 0;
     for (const name of [...names].sort(compare)) {
       const artifact = source.bundle.find(item => item.name === name) ?? fail("bundle_incomplete");
-      await storage.get({ workspace_id: source.workspace_id, execution_id: source.source_execution_id, stored: artifact,
-        destination: join(directory, artifact.name) });
+      await atStage("bundle_download", () => storage.get({ workspace_id: source.workspace_id,
+        execution_id: source.source_execution_id, stored: artifact, destination: join(directory, artifact.name) }));
       await verifyFile(join(directory, artifact.name), artifact);
       completed++;
       await job.updateProgress({ phase: "reading_sealed_bundle", completed, total: names.size }).catch(() => undefined);
     }
-    const built = await buildSignalTopicAtomicCensusFromBundleV1({ directory, source,
+    const built = await atStage("census_build", () => buildSignalTopicAtomicCensusFromBundleV1({ directory, source,
       metadata: roots => stores.metadata(database, source.workspace_id, roots),
       centroids: async (memberships,configuration) => {
-        const centroids = await stores.centroids({ database, workspace_id: source.workspace_id,
+        const centroids = await atStage("centroids", () => stores.centroids({ database, workspace_id: source.workspace_id,
           actor_user_id: source.actor_user_id, source_execution_id: source.source_execution_id,
           embedding_run_id: source.embedding_run_id, embedding_config_digest: source.embedding_config_digest,
-          memberships, neighbor_k: configuration.neighbor_k, control_execution: options.control_execution });
+          memberships, neighbor_k: configuration.neighbor_k, control_execution: options.control_execution }));
         const centroidSetDigest = signalTopicConsolidationDigestV1(centroids.map(item => ({ group_key: item.group_key,
           centroid_digest: item.centroid_digest })));
         const filename = `centroids.consolidation.${centroidSetDigest.slice(7,23)}.json`;
@@ -444,21 +463,22 @@ export async function signalTopicConsolidationJobV1(
           dimensions: 1024, aggregation: "normalized-mean-document-embeddings-v1", centroids: artifactCentroids });
         const file = join(directory,filename); await writeFile(file,body,{ flag: "wx", mode: 0o600 });
         const artifactSha = digest(body);
-        const stored = await storage.put({ workspace_id: source.workspace_id, execution_id: source.source_execution_id,
-          file, sha256: artifactSha, size_bytes: Buffer.byteLength(body), media_type: "application/json" });
-        const persisted = await stores.persistCentroids({ database, workspace_id: source.workspace_id,
+        const stored = await atStage("centroid_upload", () => storage.put({ workspace_id: source.workspace_id,
+          execution_id: source.source_execution_id, file, sha256: artifactSha,
+          size_bytes: Buffer.byteLength(body), media_type: "application/json" }));
+        const persisted = await atStage("centroid_persist", () => stores.persistCentroids({ database, workspace_id: source.workspace_id,
           actor_user_id: source.actor_user_id, source_execution_id: source.source_execution_id,
           source_checkpoint_digest: source.source_checkpoint_digest, artifact: { name: filename,...stored },
           centroid_count: centroids.length, centroid_set_digest: centroidSetDigest,
-          control_execution: options.control_execution });
+          control_execution: options.control_execution }));
         return { artifact_id: persisted.artifact_id, artifact_sha256: artifactSha, centroids };
-      } });
-    const materialized = await stores.materialize({ database, actor_user_id: source.actor_user_id,
-      census: built.census, control_execution: options.control_execution });
-    const communities = built.community_plan ? await stores.communities({ database, workspace_id: source.workspace_id,
+      } }));
+    const materialized = await atStage("census_materialize", () => stores.materialize({ database,
+      actor_user_id: source.actor_user_id, census: built.census, control_execution: options.control_execution }));
+    const communities = built.community_plan ? await atStage("community_materialize", () => stores.communities({ database, workspace_id: source.workspace_id,
       actor_user_id: source.actor_user_id, source_execution_id: source.source_execution_id,
       consolidation_run_id: materialized.consolidation_run_id, plan: built.community_plan,
-      control_execution: options.control_execution }) : null;
+      control_execution: options.control_execution })) : null;
     await job.updateProgress({ phase: "census_ready", groups: built.census.groups.length,
       expected_groups: source.expected_group_count }).catch(() => undefined);
     return { source_execution_id: source.source_execution_id, ...materialized, communities,
