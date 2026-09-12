@@ -357,8 +357,13 @@ export async function loadSignalBrandContextPreparationV1(args:Scope&{database:D
        AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor WHERE successor.supersedes_element_id=element.id)) exceptions,
       COALESCE($2::timestamptz>clock_timestamp(),false) admission_current
       FROM signal_semantic_context_generations gen LEFT JOIN signal_semantic_context_proposal_runs run ON run.generation_id=gen.id
-      LEFT JOIN LATERAL(SELECT e.id,e.status,e.error_code FROM signal_workspace_embedding_runs e JOIN signal_governance_control_operations origin
-        ON origin.id=e.brand_context_preparation_operation_id WHERE origin.brand_context_preparation->>'generation_id'=gen.id::text
+      LEFT JOIN LATERAL(SELECT e.id,e.status,e.error_code FROM signal_workspace_embedding_runs e
+        LEFT JOIN signal_governance_control_operations origin ON origin.id=e.brand_context_preparation_operation_id
+        LEFT JOIN signal_brand_context_prototype_receipts receipt ON receipt.run_id=e.id AND receipt.workspace_id=e.workspace_id
+          AND receipt.generation_id=gen.id AND NOT EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts successor
+            WHERE successor.supersedes_receipt_id=receipt.id)
+        WHERE e.workspace_id=gen.workspace_id
+        AND (origin.brand_context_preparation->>'generation_id'=gen.id::text OR receipt.id IS NOT NULL)
         AND NOT (e.status='canceled' AND signal_brand_context_prototype_unspent_v1(e.id))
         ORDER BY e.created_at DESC,e.id DESC LIMIT 1) embed ON true WHERE gen.id=$1::uuid`,
       [current.generation_id,op.brand_context_preparation.admission?.admission_not_after??null])).rows[0];

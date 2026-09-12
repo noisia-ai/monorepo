@@ -100,6 +100,37 @@ test('readonly status reports current success without a historical failure and p
  assert.ok(sql[0]?.includes('READ ONLY'));assert.ok(sql.every(query=>!/^\s*(INSERT|UPDATE|DELETE)/iu.test(query)));
 });
 
+test('readonly status recognizes a completed composed prototype receipt instead of reviving legacy authorization',async()=>{
+ const { loadSignalBrandContextPreparationV1 }=await import('./signal-brand-context-preparation');
+ const live=await resolveSignalBrandContextAuthorityV1({queryable:fakeAuthority(['MX']),workspace:ws});
+ const accepted={contract_version:'brand-context-preparation-v1',operation_id:actor,workspace_id:ws.id,generation_id:actor,
+  generation_key:'semantic-context-v2',state:'awaiting_authorization',semantic_run_id:null,prototype_run_id:null,
+  active_elements:0,exceptions:0,error_code:null,replayed:false};
+ const op={id:actor,result:accepted,brand_context_progress:null,
+  brand_context_preparation:{generation_id:actor,source_authority_digest:live.sourceAuthorityDigest,admission:null}};
+ const sql:string[]=[];const authority=fakeAuthority(['MX']);
+ const client={async query<T extends Record<string,unknown>>(query:string,values?:unknown[]){sql.push(query);
+   let rows:unknown[]|null=null;
+   if(query.includes('actor.status actor_status'))rows=[{workspace_status:'active',brand_status:'active',actor_status:'active',user_type:'noisia_internal',primary_role:'noisia_admin'}];
+   else if(query.includes('u.user_type='))rows=[{organization_id:ws.organizationId,brand_id:ws.subject.id,timezone:ws.timezone,internal:true}];
+   else if(query.includes('SELECT * FROM signal_governance_control_operations'))rows=[op];
+   else if(query.includes('SELECT gen.status generation_status')){
+    const composedReceipt=query.includes('signal_brand_context_prototype_receipts receipt')
+      &&query.includes('receipt.run_id=e.id')&&query.includes('successor.supersedes_receipt_id=receipt.id')
+      &&query.includes('e.workspace_id=gen.workspace_id');
+    rows=[{generation_status:'published',has_successor:false,semantic_run_id:actor,semantic_status:'completed',error_code:null,
+      prototype_run_id:composedReceipt?actor:null,prototype_status:composedReceipt?'completed':null,prototype_error:null,
+      active_elements:94,exceptions:27,admission_current:false}];
+   }
+   return rows?{rows:rows as T[],rowCount:rows.length}:authority.query<T>(query,values);
+  },release(){}};
+ const database={query:client.query,async connect(){return client;}};
+ const view=await loadSignalBrandContextPreparationV1({database:database as never,workspace_id:ws.id,actor_user_id:actor});
+ assert.equal(view.current?.state,'ready');assert.equal(view.current?.prototype_run_id,actor);
+ assert.equal(view.current?.active_elements,94);assert.equal(view.current?.exceptions,27);
+ assert.ok(sql.every(query=>!/^\s*(INSERT|UPDATE|DELETE)/iu.test(query)));
+});
+
 test('complete knowledge sources preserve their tail, whitespace and Unicode across bounded fragments',async()=>{
  const { fragmentSignalSemanticContextSourceBlocksV1 }=await import('./signal-semantic-context-proposal');
  const { signalSemanticContextProposalInputSchemaV1 }=await import('@noisia/query-engine');

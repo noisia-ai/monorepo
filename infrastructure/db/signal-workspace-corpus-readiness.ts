@@ -52,16 +52,13 @@ export async function loadSignalWorkspaceCorpusReadinessStoreV1(args: {
       FROM signal_mention_import_memberships membership
       JOIN accepted batch ON batch.id=membership.import_batch_id
         AND batch.data_source_id=membership.data_source_id
-      -- The PK lookup is a planning boundary: stale workspace statistics must not
-      -- turn one lookup into a scan of the entire workspace for every mention.
-      LEFT JOIN LATERAL (
-        SELECT id,workspace_id,canonical_mention_id FROM mentions
-        WHERE id=membership.mention_id OFFSET 0
-      ) origin ON origin.workspace_id=$1::uuid
+      -- Import membership integrity already requires mention_id to reference a canonical
+      -- root. Keep the PK planning boundary so stale workspace statistics cannot choose
+      -- a workspace scan per root, without resolving the canonical mention twice.
       LEFT JOIN LATERAL (
         SELECT id,workspace_id,canonical_mention_id,inclusion_status,
           NULLIF(btrim(text_clean),'') IS NOT NULL has_text
-        FROM mentions WHERE id=origin.canonical_mention_id OFFSET 0
+        FROM mentions WHERE id=membership.mention_id OFFSET 0
       ) root ON root.workspace_id=$1::uuid AND root.canonical_mention_id=root.id
       WHERE membership.workspace_id=$1::uuid
     ), roots AS MATERIALIZED (

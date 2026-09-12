@@ -118,11 +118,10 @@ export const ADMIN_WORKSPACE_CORPUS_SUMMARIES_SQL = `
     FROM accepted batch
     JOIN signal_mention_import_memberships membership ON membership.workspace_id=batch.workspace_id
       AND membership.import_batch_id=batch.id AND membership.data_source_id=batch.data_source_id
-    -- Reuse corpus-readiness's PK planning boundaries. Never scan a newly loaded
-    -- workspace once per root when PostgreSQL still has old table statistics.
-    LEFT JOIN LATERAL (SELECT id,workspace_id,canonical_mention_id FROM mentions WHERE id=membership.mention_id OFFSET 0)
-      origin ON origin.workspace_id=batch.workspace_id
-    LEFT JOIN LATERAL (SELECT id,workspace_id,canonical_mention_id,inclusion_status,published_at FROM mentions WHERE id=origin.canonical_mention_id OFFSET 0)
+    -- Import membership integrity already requires mention_id to reference a canonical
+    -- root. Keep the PK planning boundary so stale statistics cannot choose a workspace
+    -- scan once per root, without resolving the same canonical mention twice.
+    LEFT JOIN LATERAL (SELECT id,workspace_id,canonical_mention_id,inclusion_status,published_at FROM mentions WHERE id=membership.mention_id OFFSET 0)
       root ON root.workspace_id=batch.workspace_id AND root.canonical_mention_id=root.id
   ), roots AS MATERIALIZED (
     SELECT DISTINCT workspace_id,root_id,inclusion_status,published_at FROM links WHERE root_id IS NOT NULL

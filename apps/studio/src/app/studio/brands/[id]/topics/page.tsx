@@ -7,7 +7,7 @@ import { notFound } from "next/navigation";
 import { AdminWorkspaceHeader } from "@/components/admin/AdminWorkspacePrimitives";
 import { TopicsManager } from "@/components/brands/TopicsManager";
 import { requireStudioUser } from "@/lib/auth/guards";
-import { getAdminBrandWorkspace } from "@/lib/data/admin-workspace";
+import { getAdminBrandWorkspaceIdentity } from "@/lib/data/admin-workspace";
 import { resolveSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
 import { loadSignalTopicsManagementProductV1 } from "@/lib/data-os/signal-topics-management";
 
@@ -19,10 +19,10 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
     getTranslations("AdminWorkspace.topics"),
     requireStudioUser(`/studio/brands/${id}/topics`)
   ]);
-  const admin = await getAdminBrandWorkspace(session.appUser, id);
-  if (!admin?.summary.workspaceId) notFound();
+  const identity = await getAdminBrandWorkspaceIdentity(session.appUser, id);
+  if (!identity?.workspaceId) notFound();
   const workspace = await resolveSignalWorkspaceForUser(session.appUser,
-    { workspaceId: admin.summary.workspaceId });
+    { workspaceId: identity.workspaceId });
   if (!workspace) notFound();
   const initial = await loadSignalTopicsManagementProductV1({ workspace, actor: session.appUser });
   return (
@@ -31,7 +31,7 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
         actions={<Link className="admin-button" href={`/studio/brands/${id}/data`} prefetch={false}>
           {t("back")}<ArrowRight aria-hidden size={14} />
         </Link>}
-        eyebrow={`${admin.summary.brandName} · ${t("eyebrow")}`}
+        eyebrow={`${identity.brandName} · ${t("eyebrow")}`}
         icon={<Pulse aria-hidden size={21} weight="fill" />}
         subtitle={t("subtitle")}
         title={t("title")}

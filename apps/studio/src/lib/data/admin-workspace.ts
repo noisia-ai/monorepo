@@ -180,12 +180,43 @@ export async function getAdminDashboard(user: AdminUser) {
   };
 }
 
-export async function getAdminBrandWorkspace(user: AdminUser, brandLookup: string) {
+export type AdminBrandWorkspaceIdentity = {
+  brandName: string;
+  workspaceId: string | null;
+};
+
+export async function getAdminBrandWorkspaceIdentity(
+  user: AdminUser, brandLookup: string
+): Promise<AdminBrandWorkspaceIdentity | null> {
+  if (user.userType !== "noisia_internal") return null;
+  const result = await pool.query<{ brand_name: string; workspace_id: string | null }>(`
+    SELECT COALESCE(brand.display_name, brand.name) AS brand_name, workspace.id::text AS workspace_id
+    FROM brands brand
+    JOIN organizations organization ON organization.id = brand.organization_id
+    JOIN users actor ON actor.id = $2::uuid
+      AND actor.user_type = 'noisia_internal' AND actor.status = 'active'
+    LEFT JOIN signal_workspaces workspace ON workspace.brand_id = brand.id
+      AND workspace.organization_id = brand.organization_id AND workspace.status <> 'archived'
+    WHERE brand.id::text = $1::text OR brand.slug = $1::text
+    ORDER BY lower(COALESCE(brand.display_name, brand.name)), brand.id
+    LIMIT 1
+  `, [brandLookup, user.id]);
+  const row = result.rows[0];
+  return row ? { brandName: row.brand_name, workspaceId: row.workspace_id } : null;
+}
+
+export async function getAdminBrandWorkspaceSummary(
+  user: AdminUser, brandLookup: string
+): Promise<AdminBrandWorkspaceRow | null> {
   if (user.userType !== "noisia_internal") return null;
   const brands = await loadAdminBrandWorkspaceRows(user, brandLookup);
-  const summary = brands.find((brand) => (
+  return brands.find((brand) => (
     brand.brandId === brandLookup || brand.brandSlug === brandLookup
-  ));
+  )) ?? null;
+}
+
+export async function getAdminBrandWorkspace(user: AdminUser, brandLookup: string) {
+  const summary = await getAdminBrandWorkspaceSummary(user, brandLookup);
   if (!summary) return null;
   if (!summary.workspaceId) {
     return {

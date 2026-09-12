@@ -17,7 +17,7 @@ import { WorkspaceCorpusReadinessPanel } from "@/components/admin/WorkspaceCorpu
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { GovernancePreparationManager } from "@/components/admin/GovernancePreparationManager";
 import { requireStudioUser } from "@/lib/auth/guards";
-import { getAdminBrandWorkspace } from "@/lib/data/admin-workspace";
+import { getAdminBrandWorkspaceSummary } from "@/lib/data/admin-workspace";
 import { loadSignalGovernancePreparationV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { resolveSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
 import { loadWorkspaceCorpusReadinessForActorV1 } from "@/lib/data-os/workspace-corpus-readiness";
@@ -31,9 +31,8 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
     getTranslations("AdminWorkspace"),
     requireStudioUser(`/studio/brands/${id}/data`)
   ]);
-  const workspace = await getAdminBrandWorkspace(session.appUser, id);
-  if (!workspace) notFound();
-  const { summary } = workspace;
+  const summary = await getAdminBrandWorkspaceSummary(session.appUser, id);
+  if (!summary) notFound();
   const resolvedWorkspace = summary.workspaceId && session.appUser.userType === "noisia_internal"
     ? await resolveSignalWorkspaceForUser(session.appUser, { workspaceId: summary.workspaceId })
     : null;

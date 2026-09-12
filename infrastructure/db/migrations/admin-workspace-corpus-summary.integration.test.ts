@@ -46,15 +46,23 @@ test('admin batch corpus matches accepted workspace receipts, dedup, observed pe
       assert.equal(compact.received_unique_roots, original.projection.linked_roots);
       assert.equal(compact.records_read, original.records_read); assert.equal(compact.accepted_files, original.accepted_files);
     }
+    const canonicalMemberships = await c.query<{ invalid: number }>(`SELECT count(*)::int invalid
+      FROM signal_mention_import_memberships membership
+      LEFT JOIN mentions root ON root.id=membership.mention_id
+      WHERE membership.workspace_id=ANY($1::uuid[])
+        AND (root.id IS NULL OR root.workspace_id<>membership.workspace_id OR root.canonical_mention_id<>root.id)`,
+      [[workspace,second,small]]);
+    assert.equal(canonicalMemberships.rows[0]!.invalid,0,
+      'import membership integrity makes mention_id the canonical root identity');
     const plan = (await c.query(`EXPLAIN (ANALYZE,FORMAT JSON) ${ADMIN_WORKSPACE_CORPUS_SUMMARIES_SQL}`,[[workspace,second,small]])).rows[0]!['QUERY PLAN'][0];
     const nodes: Record<string, unknown>[] = [];
     const walk = (node: Record<string, unknown>) => { nodes.push(node); for (const child of (node.Plans ?? []) as Record<string, unknown>[]) walk(child); };
     walk(plan.Plan);
     const mentions = nodes.filter(node => node['Relation Name']==='mentions');
-    assert.equal(mentions.length, 2);
+    assert.equal(mentions.length, 1, 'each import membership needs one canonical-root PK lookup');
     assert.ok(mentions.every(node => node['Index Name']==='mentions_pkey'), 'root lookups must not become repeated workspace scans');
     const visits = mentions.reduce((sum,node) => sum+(Number(node['Actual Rows'])+Number(node['Rows Removed by Filter']??0))*Number(node['Actual Loops']),0);
-    assert.ok(visits<100_000, 'bounded PK work across both full fixtures, no quadratic scan');
+    assert.ok(visits<50_000, 'one bounded PK lookup per membership across both full fixtures');
     console.log(JSON.stringify({ phase: 'batch-read', workspaces: batch.size, distinct_roots: 17398, statements, elapsed_ms: elapsed,
       explain_ms: plan['Execution Time'], mention_rows_visited: visits, remote: false }));
     await c.query('ROLLBACK');
