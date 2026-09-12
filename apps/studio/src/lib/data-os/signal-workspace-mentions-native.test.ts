@@ -52,6 +52,17 @@ test("paging and focus pass only the server-authorized caller with the exact nat
   assert.equal(result?.filters_hash, digest);
 });
 
+test("one authorized page can carry an out-of-page focus without changing list pagination", async () => {
+  const focusedId = "10000000-0000-0000-0000-000000000004";
+  const source = page();
+  source.focused_item = { ...source.items[0]!, mention_id: focusedId, text_snippet: "Focused evidence" };
+  const result = nativeMentionsViewDataV1(source, 1, focusedId);
+  assert.deepEqual(result.records.map(item => item.subject_id), [mention]);
+  assert.equal(result.record?.subject_id, focusedId);
+  assert.equal(result.record?.text_snippet, "Focused evidence");
+  assert.equal(result.page.next_cursor, "next");
+});
+
 test("all-time evidence retains undated and unassigned roots without fabricating legacy attribution", () => {
   const result = nativeMentionsViewDataV1(page(), 50);
   assert.equal(result.native.filters.date_from, null);

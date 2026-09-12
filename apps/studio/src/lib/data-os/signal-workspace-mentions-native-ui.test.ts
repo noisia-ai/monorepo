@@ -74,3 +74,13 @@ test("direct and client focus reject ambiguous, empty and cursor-combined intent
   assert.equal(result.focus, a); assert.equal(result.list.has("mention"), false);
   assert.equal(result.list.get("q"), "literal"); assert.equal(result.list.get("platform"), "Web");
 });
+test("workspace entry and client navigation request list plus focus in one native read", async () => {
+  const [entry, navigation] = await Promise.all([
+    readFile(new URL("../../components/signal-v2/SignalV2WorkspacePage.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url), "utf8")
+  ]);
+  assert.doesNotMatch(entry, /splitNativeMentionsFocusQuery|focusQuery/u);
+  assert.match(entry, /native = await loadNativeSignalMentionsV1\(scope, params\);\s+focused = native\?\.record/u);
+  assert.match(navigation, /const requestQuery = new URLSearchParams\(query\);[\s\S]*fetch\(`\$\{endpoint\}\?\$\{requestQuery\}`/u);
+  assert.doesNotMatch(navigation, /focusedResponse|focusQuery/u);
+});

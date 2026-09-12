@@ -33,7 +33,8 @@ export type SignalWorkspaceMentionsPageV1 = {
   available_platforms: string[];
   metric_denominator: number; evidence_visible_total: number; total_count: number;
   withheld_evidence_count: number; integrity_withheld_count: number;
-  items: SignalWorkspaceMentionV1[]; page_offset: number; next_cursor: string | null;
+  items: SignalWorkspaceMentionV1[]; focused_item?: SignalWorkspaceMentionV1 | null;
+  page_offset: number; next_cursor: string | null;
 };
 type Selection = { revision: number; items: Record<string, { selected: boolean; definition_digest: string;
   definition_revision: number; generation_id: string }> };
@@ -407,7 +408,8 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
       request.filters.search_query, request.filters.platforms];
     const direction = request.direction === "asc" ? "ASC" : "DESC", operator = request.direction === "asc" ? ">" : "<";
     const before = request.direction === "asc" ? "<" : ">";
-    const summary = (await client.query<MentionsSummary>(`${mentionsPopulationSql}
+    const result = await client.query<MentionsSummary & { item: SignalWorkspaceMentionV1 | null; focus_only: boolean | null }>(`${mentionsPopulationSql},
+      summary AS MATERIALIZED (
       SELECT count(*) FILTER(WHERE root.metrics)::int metric_denominator,
         count(*) FILTER(WHERE root.metrics AND root.evidence AND root.text_valid)::int evidence_visible_total,
         (SELECT count(*)::int FROM filtered_mentions) total_count,
@@ -427,30 +429,45 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
           (($9::timestamptz IS NULL AND (prior.published_at IS NOT NULL OR prior.root_id<=$8::uuid))
            OR ($9::timestamptz IS NOT NULL AND (prior.published_at ${before} $9::timestamptz
              OR (prior.published_at=$9::timestamptz AND prior.root_id<=$8::uuid))))) cursor_offset
-      FROM mention_roots root`, [...params, request.cursor?.root_id ?? null, request.cursor?.occurred_at ?? null])).rows[0]!;
+      FROM mention_roots root
+    ), page AS MATERIALIZED (
+      SELECT root.* FROM filtered_mentions root
+      WHERE ($8::uuid IS NULL OR ($9::timestamptz IS NULL AND root.published_at IS NULL AND root.root_id>$8::uuid)
+        OR ($9::timestamptz IS NOT NULL AND (root.published_at IS NULL OR root.published_at ${operator} $9::timestamptz
+          OR (root.published_at=$9::timestamptz AND root.root_id>$8::uuid))))
+      ORDER BY root.published_at ${direction} NULLS LAST,root.root_id ASC LIMIT $11
+    ), selected AS MATERIALIZED (
+      SELECT root.*,false focus_only FROM page root
+      UNION ALL
+      SELECT root.*,true focus_only FROM filtered_mentions root
+      WHERE $10::uuid IS NOT NULL AND root.root_id=$10::uuid
+        AND NOT EXISTS(SELECT 1 FROM page listed WHERE listed.root_id=root.root_id)
+    ) SELECT summary.*,
+      CASE WHEN root.root_id IS NULL THEN NULL ELSE jsonb_build_object(
+        'mention_id',root.root_id,'occurred_at',to_char(root.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+        'text_snippet',left(mention.text_clean,2000),'text_truncated',char_length(mention.text_clean)>2000,
+        'title',mention.title,'url',mention.url,'platform',root.platform,'language',mention.language,'country',mention.country,
+        'content_type',mention.content_type,'engagement',CASE WHEN jsonb_typeof(mention.engagement)='object' THEN mention.engagement ELSE '{}'::jsonb END,
+        'thread_key',COALESCE(NULLIF(mention.raw_metadata->'row'->>'thread id',''),mention.id::text),
+        'resolution_state',root.resolution_state,'has_unresolved_topics',root.has_unresolved_topics) END item,
+      root.focus_only
+      FROM summary LEFT JOIN selected root ON true
+      LEFT JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+      ORDER BY root.focus_only NULLS LAST,root.published_at ${direction} NULLS LAST,root.root_id ASC`,
+      [...params, request.cursor?.root_id ?? null, request.cursor?.occurred_at ?? null, request.focus, request.limit + 1]);
+    const summary = result.rows[0]!;
     const scope = hash({ contract_version: "signal-workspace-mentions-v1", workspace: access.workspace_id, actor: access.actor_user_id,
       generation: ctx.generation.id, finalized_digest: ctx.generation.finalized_digest, input_revision: ctx.generation.current_revision,
       rights: summary.rights_digest, population: summary.population_digest, filters: request.filters, direction: request.direction });
     if (args.expected_scope_digest && args.expected_scope_digest !== scope || request.cursor && request.cursor.scope !== scope
       || !summary.cursor_exists || request.cursor && request.cursor.offset !== summary.cursor_offset) return fail("workspace_mentions_scope_changed");
-    const rows = (await client.query<SignalWorkspaceMentionV1>(`${mentionsPopulationSql}, page AS MATERIALIZED (
-      SELECT root.* FROM filtered_mentions root
-      WHERE ($8::uuid IS NULL OR ($9::timestamptz IS NULL AND root.published_at IS NULL AND root.root_id>$8::uuid)
-        OR ($9::timestamptz IS NOT NULL AND (root.published_at IS NULL OR root.published_at ${operator} $9::timestamptz
-          OR (root.published_at=$9::timestamptz AND root.root_id>$8::uuid))))
-        AND ($10::uuid IS NULL OR root.root_id=$10::uuid)
-      ORDER BY root.published_at ${direction} NULLS LAST,root.root_id ASC LIMIT $11
-    ) SELECT root.root_id mention_id,to_char(root.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,
-      left(mention.text_clean,2000) text_snippet,char_length(mention.text_clean)>2000 text_truncated,
-      mention.title,mention.url,root.platform,mention.language,mention.country,mention.content_type,
-      CASE WHEN jsonb_typeof(mention.engagement)='object' THEN mention.engagement ELSE '{}'::jsonb END engagement,
-      COALESCE(NULLIF(mention.raw_metadata->'row'->>'thread id',''),mention.id::text) thread_key,
-      root.resolution_state,root.has_unresolved_topics
-      FROM page root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-      ORDER BY root.published_at ${direction} NULLS LAST,root.root_id ASC`, [...params, request.cursor?.root_id ?? null,
-      request.cursor?.occurred_at ?? null, request.focus, request.focus ? 1 : request.limit + 1])).rows;
-    if (request.focus && rows.length !== 1) return fail("workspace_mentions_mention_unavailable", 404);
-    const items = rows.slice(0, request.limit), offset = request.cursor?.offset ?? 0, last = items.at(-1);
+    const rows = result.rows.flatMap(row => row.item ? [{ ...row.item, focus_only: Boolean(row.focus_only) }] : []);
+    const listed = rows.filter(row => !row.focus_only);
+    const focused = request.focus ? rows.find(row => row.mention_id.toLowerCase() === request.focus) : undefined;
+    if (request.focus && !focused) return fail("workspace_mentions_mention_unavailable", 404);
+    const clean = ({ focus_only: _focusOnly, ...row }: SignalWorkspaceMentionV1 & { focus_only: boolean }) => row;
+    const items = listed.slice(0, request.limit).map(clean), focusedItem = focused ? clean(focused) : null;
+    const offset = request.cursor?.offset ?? 0, last = items.at(-1);
     return { contract_version: "signal-workspace-mentions-v1", workspace_id: access.workspace_id, generation_id: ctx.generation.id,
       source_engine_execution_id: ctx.generation.source_engine_execution_id, is_current: true, is_processing: ctx.is_processing,
       scope_digest: scope, filters: request.filters, sort: { field: "published", direction: request.direction },
@@ -458,7 +475,8 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
       metric_denominator: summary.metric_denominator,
       evidence_visible_total: summary.evidence_visible_total, total_count: summary.total_count,
       withheld_evidence_count: summary.withheld_evidence_count, integrity_withheld_count: summary.integrity_withheld_count,
-      items, page_offset: offset, next_cursor: rows.length > request.limit && last
+      items, ...(request.focus ? { focused_item: focusedItem } : {}), page_offset: offset,
+      next_cursor: listed.length > request.limit && last
         ? Buffer.from(JSON.stringify({ version: 1, root_id: last.mention_id, occurred_at: last.occurred_at,
           scope, offset: offset + items.length } satisfies MentionsCursor)).toString("base64url") : null };
   });

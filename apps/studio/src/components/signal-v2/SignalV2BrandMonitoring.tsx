@@ -62,7 +62,6 @@ import { MonthlyInsightCarousel } from "@/components/signal-v2/MonthlyInsightCar
 import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
 import { SignalV2Settings } from "@/components/signal-v2/SignalV2Settings";
 import { SignalV2ModuleSkeleton } from "@/components/signal-v2/SignalV2RouteSkeleton";
-import { splitNativeMentionsFocusQuery } from "./native-mentions-navigation";
 import {
   WorkspaceGlobalSidebar,
   WorkspaceAccount,
@@ -573,8 +572,8 @@ export function SignalV2BrandMonitoring({
         : target === "topics" || nativeTarget
           ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
           : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
-      const { list: requestQuery, focus } = nativeTarget && target === "mentions"
-        ? splitNativeMentionsFocusQuery(query) : { list: new URLSearchParams(query), focus: null };
+      const requestQuery = new URLSearchParams(query);
+      const focus = nativeTarget && target === "mentions" ? requestQuery.get("mention") : null;
       const response = await fetch(`${endpoint}?${requestQuery}`, {
         cache: "no-store",
         signal: controller.signal
@@ -593,23 +592,10 @@ export function SignalV2BrandMonitoring({
         if (!mentions.native || mentions.native.workspace_id !== data.workspace.id) {
           invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
         }
-        mentions.record = null;
         if (focus) {
-          const focusQuery = new URLSearchParams(requestQuery); focusQuery.delete("cursor");
-          focusQuery.set("mention", focus); focusQuery.set("scope_digest", mentions.native.scope_digest);
-          const focusedResponse = await fetch(`${endpoint}?${focusQuery}`, { cache: "no-store", signal: controller.signal });
-          if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
-          if (!focusedResponse.ok) {
-            if ([401, 403, 404, 409].includes(focusedResponse.status)) invalidateNativeTopicEvidence();
-            throw new Error(t("errors.load"));
-          }
-          const focused = await focusedResponse.json() as SignalMentionsViewData;
-          if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
-          if (focused.native?.scope_digest !== mentions.native.scope_digest || focused.native.workspace_id !== data.workspace.id
-            || focused.record?.subject_id.toLowerCase() !== focus.toLowerCase()) {
+          if (mentions.record?.subject_id.toLowerCase() !== focus.toLowerCase()) {
             invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
           }
-          mentions.record = focused.record;
         }
       }
       moduleCacheRef.current.set(moduleCacheKey(target, query), payload);

@@ -46,7 +46,6 @@ import {
 import { SignalV2BrandMonitoring } from "@/components/signal-v2/SignalV2BrandMonitoring";
 import { loadNativeSignalTopicsV1 } from "@/lib/data-os/signal-workspace-topics-native";
 import { loadNativeSignalMentionsV1 } from "@/lib/data-os/signal-workspace-mentions-native";
-import { splitNativeMentionsFocusQuery } from "./native-mentions-navigation";
 
 export async function SignalV2WorkspacePage({
   activeModule = "monitoring",
@@ -86,18 +85,8 @@ export async function SignalV2WorkspacePage({
     const scope = { workspace_id: workspace.id, actor_user_id: session.appUser.id };
     let native = null, focused = null, unavailable = false;
     try {
-      let split = null;
-      try { split = splitNativeMentionsFocusQuery(params); } catch {
-        // The adapter first establishes native ownership. A legacy workspace retains its existing query contract.
-        native = await loadNativeSignalMentionsV1(scope, params);
-      }
-      if (split) native = await loadNativeSignalMentionsV1(scope, split.list);
-      if (native && split?.focus) {
-        const focusQuery = new URLSearchParams(split.list);
-        const mention = split.focus;
-        focusQuery.set("mention", mention); focusQuery.set("scope_digest", native.native.scope_digest);
-        focused = (await loadNativeSignalMentionsV1(scope, focusQuery))?.record ?? null;
-      }
+      native = await loadNativeSignalMentionsV1(scope, params);
+      focused = native?.record ?? null;
     } catch (error) {
       if (!(error instanceof Error) || !("code" in error) || typeof error.code !== "string"
         || !/^(workspace_mentions_|workspace_topics_)/.test(error.code)

@@ -83,7 +83,7 @@ function originalMentionUrl(value: string | null) {
 
 export function nativeMentionsViewDataV1(page: SignalWorkspaceMentionsPageV1, limit: number,
   focusedMentionId?: string, validatedPageCursor?: string | null): NativeSignalMentionsViewData {
-  const records: SignalMentionRecordV1[] = page.items.map(item => ({
+  const record = (item: SignalWorkspaceMentionsPageV1["items"][number]): SignalMentionRecordV1 => ({
     subject_id: item.mention_id,
     // Empty means undated in the shared table; never synthesize a publication date.
     occurred_at: item.occurred_at ?? "", text_snippet: item.text_snippet,
@@ -98,8 +98,14 @@ export function nativeMentionsViewDataV1(page: SignalWorkspaceMentionsPageV1, li
     thread_key: item.thread_key,
     // No legacy attribution or enrichment is joined into this generation.
     tags: [], entities: [], features: [], attribution: [], tb_classification: null
-  }));
-  const focused = focusedMentionId ? records.find(item => item.subject_id === focusedMentionId) : undefined;
+  });
+  const records = page.items.map(record);
+  const focusedSource = focusedMentionId
+    ? page.focused_item?.mention_id.toLowerCase() === focusedMentionId.toLowerCase()
+      ? page.focused_item
+      : page.items.find(item => item.mention_id.toLowerCase() === focusedMentionId.toLowerCase())
+    : undefined;
+  const focused = focusedSource ? record(focusedSource) : undefined;
   if (focusedMentionId && !focused) throw Object.assign(new Error("Mention is unavailable in this view."), {
     code: "workspace_mentions_not_found", status: 404
   });

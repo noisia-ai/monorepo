@@ -66,7 +66,8 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
     assert.equal(statements.filter(sql => sql === "SET LOCAL enable_nestloop=off").length, 1);
     const jitSetting = statements.indexOf("SET LOCAL jit=off");
     assert.equal(statements.filter(sql => sql === "SET LOCAL jit=off").length, 1);
-    assert.equal(corpusQueries.length, 2); assert.ok(setting > 3 && jitSetting > setting && corpusQueries.every(index => index > jitSetting));
+    assert.equal(corpusQueries.length, 1, "summary and page share one materialized full-corpus evaluation");
+    assert.ok(setting > 3 && jitSetting > setting && corpusQueries.every(index => index > jitSetting));
     assert.equal(statements.at(-1), "COMMIT");
     assert.equal(first.generation_id, overview.generation_id); assert.equal(first.metric_denominator, overview.denominator);
     assert.equal(first.total_count, f.roots.length); assert.equal(first.evidence_visible_total, f.roots.length);
@@ -84,7 +85,9 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
       assert.equal(item.text_snippet, canonical.find(row => row.mention_id === item.mention_id)!.text_snippet);
       assert.ok(Array.from(item.text_snippet).length <= 2000);
       const focus = await read({ ...f.access, focus_mention_id: item.mention_id.toUpperCase(), expected_scope_digest: first.scope_digest });
-      assert.deepEqual(focus.items, [item]); assert.equal(focus.next_cursor, null);
+      assert.deepEqual(focus.focused_item, item);
+      assert.deepEqual(focus.items.map(row => row.mention_id), all.map(row => row.mention_id));
+      assert.equal(focus.next_cursor, null);
     }
     const asc = await read({ ...f.access, sort_direction: "asc" });
     const ascOracle = (await f.query("SELECT id FROM mentions WHERE id=ANY($1::uuid[]) ORDER BY published_at ASC NULLS LAST,id", [f.roots.map(root => root.root_id)])).rows;
