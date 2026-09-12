@@ -7534,17 +7534,19 @@ export const signalProcessingPolicyActions = pgTable("signal_processing_policy_a
 }, table => [
   foreignKey({ name: "fk_processing_action_policy", columns: [table.policyVersionId], foreignColumns: [signalProcessingPolicyVersions.id] }).onDelete("restrict"),
 primaryKey({ name: "pk_processing_policy_actions", columns: [table.policyVersionId, table.action] }),
-  check("signal_processing_action_name", sql`${table.action} IN ('brand_context_proposal','topic_prototype_embeddings','corpus_preparation','corpus_embeddings','topic_fit','topic_interpretation','topic_fit_incremental','topic_interpretation_incremental')`),
+  check("signal_processing_action_name", sql`${table.action} IN ('brand_context_proposal','topic_prototype_embeddings','corpus_preparation','corpus_embeddings','topic_fit','topic_interpretation','topic_fit_incremental','topic_interpretation_incremental','topic_consolidation','topic_consolidation_numeric')`),
   check("signal_processing_action_kind", sql`${table.kind} IN ('free','provider')`),
   check("signal_processing_action_configuration", sql`jsonb_typeof(${table.configuration})='object' AND pg_column_size(${table.configuration})<=32768`),
   check("signal_processing_action_digest", sql`${table.configurationDigest}~'^sha256:[0-9a-f]{64}$'`),
   check("signal_processing_action_cap", sql`${table.maxExecutionMicroUsd}>=0`),
-  check("signal_processing_action_provider", sql`(${table.kind}='free' AND ${table.action} IN ('corpus_preparation','topic_fit','topic_fit_incremental')
+  check("signal_processing_action_provider", sql`(${table.kind}='free' AND ${table.action} IN ('corpus_preparation','topic_fit','topic_fit_incremental','topic_consolidation_numeric')
     AND ${table.provider} IS NULL AND ${table.model} IS NULL AND ${table.maxExecutionMicroUsd}=0)
    OR (${table.kind}='provider' AND ${table.provider} IS NOT NULL AND ${table.model} IS NOT NULL
-    AND ((${table.action} IN ('brand_context_proposal','topic_interpretation','topic_interpretation_incremental')
+    AND ((${table.action} IN ('brand_context_proposal','topic_interpretation','topic_interpretation_incremental','topic_consolidation')
        AND ${table.provider}='anthropic' AND ${table.model}='claude-sonnet-4-6')
-      OR (${table.action} IN ('topic_prototype_embeddings','corpus_embeddings') AND ${table.provider}='voyage' AND ${table.model}='voyage-4-large')))`)
+      OR (${table.action} IN ('topic_prototype_embeddings','corpus_embeddings') AND ${table.provider}='voyage' AND ${table.model}='voyage-4-large')))`),
+  check("signal_processing_consolidation_action", sql`${table.action}<>'topic_consolidation' OR (${table.automaticAllowed}=false AND ${table.maxExecutionMicroUsd} BETWEEN 1 AND 20000000)`),
+  check("signal_processing_consolidation_numeric_action", sql`${table.action}<>'topic_consolidation_numeric' OR (${table.kind}='free' AND ${table.automaticAllowed}=false AND ${table.maxExecutionMicroUsd}=0 AND ${table.configuration}=signal_topic_consolidation_numeric_configuration_v1())`)
 ]);
 export const signalProcessingAdmissions = pgTable("signal_processing_admissions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -7577,3 +7579,7 @@ export const signalProcessingAdmissions = pgTable("signal_processing_admissions"
   check("signal_processing_admission_key", sql`${table.idempotencyKey}~'^[A-Za-z0-9._:-]{8,200}$'`),
   check("signal_processing_admission_request_digest", sql`${table.requestDigest}~'^sha256:[0-9a-f]{64}$'`)
 ]);
+
+// SQL0174–0175 consolidation owners, immutable numerical relations and dispatch
+// tables use handwritten stores, like signal_topic_catalog_executions. Their
+// composite FKs, RLS and constraint triggers remain authoritative in migrations.

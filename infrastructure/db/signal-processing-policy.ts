@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 
 export const SIGNAL_PROCESSING_ACTIONS_V1 = ["brand_context_proposal", "topic_prototype_embeddings", "corpus_preparation",
-  "corpus_embeddings", "topic_fit", "topic_interpretation", "topic_fit_incremental", "topic_interpretation_incremental"] as const;
+  "corpus_embeddings", "topic_fit", "topic_interpretation", "topic_fit_incremental", "topic_interpretation_incremental", "topic_consolidation", "topic_consolidation_numeric"] as const;
 export type SignalProcessingActionV1 = typeof SIGNAL_PROCESSING_ACTIONS_V1[number];
 export type SignalProcessingExposureV1 = { confirmed_micro_usd: string; reserved_micro_usd: string;
   ambiguous_micro_usd: string; total_micro_usd: string };

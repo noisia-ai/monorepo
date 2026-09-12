@@ -94,13 +94,14 @@ test("binds exact normalized centroids and produces a total kNN community partit
         const second = Array.from({ length: 1024 }, (_, index) => index === 0 ? 0.8 : index === 1 ? 0.6 : 0);
         return { artifact_id: uuid(910_001), artifact_sha256: sha("centroid-artifact"), centroids: [
           { group_key: keys[0]!, vector: first, centroid_digest: signalTopicConsolidationDigestV1(first),
-            neighbors: [{ group_key: keys[1]!, similarity: 0.8 }] },
+            neighbors: [{ group_key: keys[1]!, similarity: 0.8 }],brand_affinity:{positive:[{guide_key:"scope:brand",score:0.9}],negative:[],abstention:[]} },
           { group_key: keys[1]!, vector: second, centroid_digest: signalTopicConsolidationDigestV1(second),
-            neighbors: [{ group_key: keys[0]!, similarity: 0.8 }] },
+            neighbors: [{ group_key: keys[0]!, similarity: 0.8 }],brand_affinity:{positive:[],negative:[],abstention:[]} },
         ] };
       } });
     assert.equal(result.community_status,"ready");
     assert.equal(result.census.groups.filter(group => group.centroid !== null).length,2);
+    assert.deepEqual(result.census.groups[0]?.dossier.brand_affinity.positive,[{guide_key:"scope:brand",score:0.9}]);
     assert.equal(result.community_plan?.communities.length,1);
     assert.equal(result.community_plan?.communities[0]?.members.length,2);
   } finally { await rm(directory,{ recursive: true, force: true }); }
@@ -117,7 +118,7 @@ test("canonicalizes dossier neighbors by similarity before sealing their digest"
         return { artifact_id: uuid(910_001), artifact_sha256: sha("centroid-artifact"), centroids: keys.map((group_key,index) => {
           const vector = Array.from({ length: 1024 }, (_, dimension) => dimension === index ? 1 : 0);
           const others = keys.filter(key => key !== group_key);
-          return { group_key, vector, centroid_digest: signalTopicConsolidationDigestV1(vector), neighbors: index === 0
+          return { group_key, vector, centroid_digest: signalTopicConsolidationDigestV1(vector), brand_affinity:{positive:[],negative:[],abstention:[]},neighbors: index === 0
             ? [{ group_key: others[0]!, similarity: 0.8 }, { group_key: others[1]!, similarity: 0.95 }]
             : others.map(key => ({ group_key: key, similarity: 0.8 })) };
         }) };
@@ -135,6 +136,8 @@ test("worker seals centroid artifact before materializing census and communities
   const sourceFixture = await fixture(2), scratch = await mkdtemp(join(tmpdir(),"signal-topic-consolidation-worker-"));
   try {
     const progress: unknown[] = [], calls: string[] = [];
+    const control = { execution_id: uuid(920_001),execution_token: uuid(920_002),
+      workspace_id: sourceFixture.source.workspace_id,actor_user_id: sourceFixture.source.actor_user_id };
     const vector = Array.from({ length: 1024 },(_,index) => index === 0 ? 1 : 0);
     const keys = [uuid(3),uuid(4)].map(id => `open:${id}`).sort();
     const storage = {
@@ -146,20 +149,24 @@ test("worker seals centroid artifact before materializing census and communities
       },
     };
     const stores = {
-      async source() { return sourceFixture.source; },
+      async source(_database: unknown,_execution: string,received: unknown) { assert.deepEqual(received,control); return sourceFixture.source; },
       async metadata(_database: unknown,_workspace: string,roots: readonly string[]) { return roots.map(root_id => ({ root_id,
         scope: "brand" as const,locale: "es",platform: "x",occurred_at: "2026-09-01T00:00:00.000Z" })); },
-      async centroids() { return keys.map((group_key,index) => ({ group_key,vector,centroid_digest: signalTopicConsolidationDigestV1(vector),
-        neighbors: [{ group_key: keys[1-index]!,similarity: 0.9 }] })); },
-      async persistCentroids() { calls.push("persist-centroids"); return { artifact_id: uuid(910_001),replayed: false }; },
-      async materialize() { calls.push("materialize-census"); return { consolidation_run_id: uuid(910_002),group_count: 2,
+      async centroids(args: {control_execution?:unknown}) { assert.deepEqual(args.control_execution,control);
+        return keys.map((group_key,index) => ({ group_key,vector,centroid_digest: signalTopicConsolidationDigestV1(vector),
+        neighbors: [{ group_key: keys[1-index]!,similarity: 0.9 }],brand_affinity:{positive:[],negative:[],abstention:[]} })); },
+      async persistCentroids(args: {control_execution?:unknown}) { assert.deepEqual(args.control_execution,control);
+        calls.push("persist-centroids"); return { artifact_id: uuid(910_001),replayed: false }; },
+      async materialize(args: {control_execution?:unknown}) { assert.deepEqual(args.control_execution,control);
+        calls.push("materialize-census"); return { consolidation_run_id: uuid(910_002),group_count: 2,
         root_count: 2,evidence_count: 2,replayed: false }; },
-      async communities() { calls.push("materialize-communities"); return { consolidation_run_id: uuid(910_002),community_count: 1,
+      async communities(args: {control_execution?:unknown}) { assert.deepEqual(args.control_execution,control);
+        calls.push("materialize-communities"); return { consolidation_run_id: uuid(910_002),community_count: 1,
         member_count: 2,replayed: false }; },
     };
     const result = await signalTopicConsolidationJobV1({ id: "job-1",data: { source_execution_id: sourceFixture.source.source_execution_id },
       updateProgress: async value => { progress.push(value); } }, { database: {} as never,storage: storage as never,
-      storage_root: scratch,stores: stores as never });
+      storage_root: scratch,stores: stores as never,control_execution: control });
     assert.deepEqual(calls,["put","persist-centroids","materialize-census","materialize-communities"]);
     assert.equal(result.community_status,"ready"); assert.ok(progress.length >= 2);
   } finally { await rm(sourceFixture.directory,{ recursive: true,force: true }); await rm(scratch,{ recursive: true,force: true }); }

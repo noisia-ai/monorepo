@@ -140,3 +140,40 @@ lenguaje visual.
 - Segunda carga futura puede asignarse contra conceptos existentes y crear candidatos emergentes sin
   volver a procesar el corpus histórico completo.
 
+## Avance comprobado del corte
+
+Estado al 12 de septiembre, después del inicio de este plan:
+
+- `repair_invalid` ya tiene recuperación durable y fue ejercitado una vez en UAT. El lote inválido
+  quedó aislado y la ejecución se detuvo ante la admisión editorial revocada, sin repetir una llamada
+  de proveedor.
+- La reserva terminal de USD 1.192104 quedó conciliada contra el recibo real de USD 0.118404. La vista
+  canónica de presupuesto conserva USD 1.310931 confirmado y cero reservado, ambiguo o terminal.
+- Menciones redujo la primera página de 25 a cinco viajes SQL. La medición UAT del lector fue 2.421 s
+  fría y 2.270 s caliente; cumple el SLO inicial del plan.
+- Alexa Plus ya usa el shell común de Signal. La comparación live con Laika confirma que la brecha
+  restante no es otro layout base: faltan catálogo editorial completo y dimensiones reales para
+  alimentar presencia temporal, sentimiento, evidencia inline y relaciones.
+- SQL0174 y el Worker C2 preparan el censo exacto, centroides y comunidades sin proveedor. El contrato
+  editorial revisa los 1,652 grupos en 42 lotes de Sonnet 4.6 y después ejecuta una revisión global
+  que fusiona candidatos en un máximo de 500 Topics/Narratives, conservando Noise y sin resolver.
+- SQL0175 añade una única acción cliente gratuita para preparar ese censo. La política, admisión,
+  outbox, lease, recuperación y ACL se probaron sobre PostgreSQL 17 con pgvector. El ensayo descubrió
+  y cerró antes de UAT un decimal que el digest canónico no podía sellar: el umbral ahora se expresa
+  como entero en partes por millón. El source binding reutiliza el digest sellado del input completo.
+- Los dossiers calculan afinidad positiva, negativa y de abstención contra las guías publicadas de
+  Brand OS usando sus embeddings existentes; no vuelven a llamar a Voyage. La ejecución de prueba de
+  1,652 grupos, la cola durable, typechecks, build de Studio y suites focales están cerrados localmente.
+- La auditoría de legacy confirmó que el corpus grande se recorría en lotes de 30 menciones con
+  concurrencia cuatro y que una jerarquización posterior nombraba grupos. También encontró pérdidas
+  silenciosas que no se trasladan: el resumen retenía sólo top 60 y una mención tomaba el primer
+  cluster coincidente. La taxonomía visual madura de Laika era otro flujo: proponía 5–20 conceptos por
+  tipo desde Brand OS y sólo 100 menciones deterministas. Su UI es reutilizable; su muestra no acredita
+  cobertura semántica completa.
+- La ficha oficial vigente de Sonnet 4.6 confirma USD 3/MTok de entrada, USD 15/MTok de salida, 1M de
+  contexto y 128K de salida máxima. El producto mantendrá un límite menor por request y el tope global
+  de USD 20 definido arriba.
+
+Pendiente inmediato: terminar la autoridad numérica gratuita y su cola, aplicar SQL0174–0175 una sola
+vez en UAT, correr el censo real de Alexa Plus y usar su distribución de comunidades para sellar la
+admisión editorial pagada. Ninguna generación actual se sustituye antes de validar el sucesor.

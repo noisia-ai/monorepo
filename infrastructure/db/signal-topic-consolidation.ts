@@ -10,7 +10,7 @@ export type SignalTopicConsolidationConfigurationV1 = {
   contract_version: "signal-topic-consolidation-config-v1";
   dossier_version: "signal-topic-group-dossier-v1";
   representative_limit: 10; neighbor_limit: number;
-  community_algorithm: "centroid-knn-v1"; neighbor_k: number; min_similarity: number;
+  community_algorithm: "centroid-knn-v1"; neighbor_k: number; min_similarity_ppm: number;
   assignment_policy: "partition-all-groups-v1";
 };
 
@@ -77,6 +77,9 @@ export class SignalTopicConsolidationContractError extends Error {
 }
 export type SignalTopicConsolidationDatabaseV1 = Pick<Pool, "connect">;
 export type SignalTopicConsolidationQueryableV1 = Pick<Pool, "query">;
+export type SignalTopicConsolidationControlLeaseRefV1 = {
+  execution_id: string; execution_token: string; workspace_id: string; actor_user_id: string;
+};
 const fail = (code: string): never => { throw new SignalTopicConsolidationContractError(code); };
 const digestPattern = /^sha256:[0-9a-f]{64}$/u;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -194,7 +197,7 @@ export function parseSignalTopicAtomicCensusV1(value: unknown): SignalTopicAtomi
   exact(row, ["contract_version", "workspace_id", "source_execution_id", "source_checkpoint_digest", "output_artifact_id", "output_artifact_sha256", "model_artifact_id", "model_artifact_sha256", "centroid_artifact_id", "centroid_artifact_sha256", "context_digest", "configuration", "configuration_digest", "expected_group_count", "groups"], "topic_consolidation_census_invalid");
   if (row.contract_version !== SIGNAL_TOPIC_CONSOLIDATION_CONTRACT_V1) fail("topic_consolidation_census_invalid");
   const configurationRow = object(row.configuration, "topic_consolidation_configuration_invalid");
-  exact(configurationRow, ["contract_version", "dossier_version", "representative_limit", "neighbor_limit", "community_algorithm", "neighbor_k", "min_similarity", "assignment_policy"], "topic_consolidation_configuration_invalid");
+  exact(configurationRow, ["contract_version", "dossier_version", "representative_limit", "neighbor_limit", "community_algorithm", "neighbor_k", "min_similarity_ppm", "assignment_policy"], "topic_consolidation_configuration_invalid");
   if (configurationRow.contract_version !== "signal-topic-consolidation-config-v1"
     || configurationRow.dossier_version !== "signal-topic-group-dossier-v1" || configurationRow.representative_limit !== 10
     || configurationRow.community_algorithm !== "centroid-knn-v1" || configurationRow.assignment_policy !== "partition-all-groups-v1") fail("topic_consolidation_configuration_invalid");
@@ -202,8 +205,9 @@ export function parseSignalTopicAtomicCensusV1(value: unknown): SignalTopicAtomi
     dossier_version: "signal-topic-group-dossier-v1", representative_limit: 10,
     neighbor_limit: natural(configurationRow.neighbor_limit, "topic_consolidation_configuration_invalid", 32),
     community_algorithm: "centroid-knn-v1", neighbor_k: natural(configurationRow.neighbor_k, "topic_consolidation_configuration_invalid", 64),
-    min_similarity: unit(configurationRow.min_similarity, "topic_consolidation_configuration_invalid"), assignment_policy: "partition-all-groups-v1" };
-  if (configuration.neighbor_limit < 1 || configuration.neighbor_k < 1) fail("topic_consolidation_configuration_invalid");
+    min_similarity_ppm: natural(configurationRow.min_similarity_ppm, "topic_consolidation_configuration_invalid", 1_000_000), assignment_policy: "partition-all-groups-v1" };
+  if (configuration.neighbor_limit < 1 || configuration.neighbor_k < 1 || configuration.min_similarity_ppm < 1)
+    fail("topic_consolidation_configuration_invalid");
   const configurationDigest = digest(row.configuration_digest, "topic_consolidation_census_invalid");
   if (signalTopicConsolidationDigestV1(configuration) !== configurationDigest) fail("topic_consolidation_configuration_digest_invalid");
   const groups = array(row.groups, "topic_consolidation_census_invalid", 100_000).map(parseGroup); lexical(groups, group => group.group_key);
@@ -314,8 +318,15 @@ function parseStoredArtifact(value: unknown): SignalTopicConsolidationStoredArti
  * BERTopic output; no provider admission or cost authority is consulted. */
 export async function loadSignalTopicConsolidationSourceV1(args: {
   queryable: SignalTopicConsolidationQueryableV1; source_execution_id: string;
+  control_execution?: SignalTopicConsolidationControlLeaseRefV1;
 }): Promise<SignalTopicConsolidationSourceV1> {
   const executionId = uuid(args.source_execution_id, "topic_consolidation_execution_invalid");
+  const control = args.control_execution ? {
+    execution_id: uuid(args.control_execution.execution_id,"topic_consolidation_control_invalid"),
+    execution_token: uuid(args.control_execution.execution_token,"topic_consolidation_control_invalid"),
+    workspace_id: uuid(args.control_execution.workspace_id,"topic_consolidation_control_invalid"),
+    actor_user_id: uuid(args.control_execution.actor_user_id,"topic_consolidation_control_invalid"),
+  } : null;
   const row = (await args.queryable.query<{
     workspace_id: string; actor_user_id: string; embedding_run_id: string; embedding_config_digest: string;
     input_snapshot: Record<string, unknown>;
@@ -337,7 +348,9 @@ export async function loadSignalTopicConsolidationSourceV1(args: {
       AND model.artifact_type='engine_model' AND model.artifact_key='model-manifest.json'
     WHERE execution.id=$1::uuid AND execution.input_contract='workspace-topic-engine-v1'`, [executionId])).rows[0];
   const source = row ?? fail("topic_consolidation_source_unavailable");
-  await requireConsolidationAuthority(args.queryable, source.workspace_id, source.actor_user_id);
+  if (control && control.workspace_id !== source.workspace_id) fail("topic_consolidation_control_invalid");
+  const authorityActor = control?.actor_user_id ?? source.actor_user_id;
+  await requireConsolidationAuthority(args.queryable,source.workspace_id,authorityActor,executionId,control ?? undefined);
   const summary = object(source.result_summary, "topic_consolidation_source_invalid");
   const checkpoint = object(summary.fit_checkpoint, "topic_consolidation_source_invalid");
   const manifest = object(checkpoint.interpretation_manifest, "topic_consolidation_source_invalid");
@@ -359,7 +372,7 @@ export async function loadSignalTopicConsolidationSourceV1(args: {
     || model.size_bytes !== modelRef.size_bytes || model.media_type !== modelRef.media_type)
     fail("topic_consolidation_artifact_receipt_mismatch");
   return { workspace_id: uuid(source.workspace_id, "topic_consolidation_source_invalid"), source_execution_id: executionId,
-    actor_user_id: uuid(source.actor_user_id, "topic_consolidation_source_invalid"),
+    actor_user_id: uuid(authorityActor, "topic_consolidation_source_invalid"),
     embedding_run_id: uuid(source.embedding_run_id, "topic_consolidation_source_invalid"),
     embedding_config_digest: digest(source.embedding_config_digest, "topic_consolidation_source_invalid"),
     source_checkpoint_digest: digest(checkpoint.checkpoint_digest, "topic_consolidation_source_invalid"),
@@ -413,6 +426,7 @@ export type SignalTopicConsolidationCentroidMembershipV1 = {
 export type SignalTopicConsolidationCentroidV1 = {
   group_key: string; vector: number[]; centroid_digest: string;
   neighbors: Array<{ group_key: string; similarity: number }>;
+  brand_affinity: SignalTopicConsolidationDossierV1["brand_affinity"];
 };
 
 const parseVectorText = (value: string): number[] => {
@@ -432,6 +446,7 @@ export async function computeSignalTopicConsolidationCentroidsV1(args: {
   database: SignalTopicConsolidationDatabaseV1; workspace_id: string; actor_user_id: string;
   source_execution_id: string; embedding_run_id: string; embedding_config_digest: string;
   memberships: readonly SignalTopicConsolidationCentroidMembershipV1[]; neighbor_k: number;
+  control_execution?: SignalTopicConsolidationControlLeaseRefV1;
 }): Promise<SignalTopicConsolidationCentroidV1[]> {
   const workspace = uuid(args.workspace_id, "topic_consolidation_workspace_invalid");
   const actor = uuid(args.actor_user_id, "topic_consolidation_actor_invalid");
@@ -452,15 +467,16 @@ export async function computeSignalTopicConsolidationCentroidsV1(args: {
   if (new Set(memberships.map(item => item.group_key)).size > 5_000)
     fail("topic_consolidation_exact_knn_capacity_exceeded");
   return transaction(args.database, async client => {
-    await requireConsolidationAuthority(client, workspace, actor);
+    await requireConsolidationAuthority(client, workspace, actor, execution, args.control_execution);
     await client.query("SET LOCAL statement_timeout='120s'");
     const valid = (await client.query<{ valid: boolean }>(`SELECT EXISTS(
       SELECT 1 FROM signal_topic_catalog_executions execution
       JOIN signal_workspace_embedding_runs embedding ON embedding.id=$4::uuid AND embedding.workspace_id=execution.workspace_id
         AND embedding.config_digest=$5 AND embedding.status='completed'
-      WHERE execution.id=$2::uuid AND execution.workspace_id=$1::uuid AND execution.actor_user_id=$3::uuid
+      WHERE execution.id=$2::uuid AND execution.workspace_id=$1::uuid
+        AND ($6::boolean OR execution.actor_user_id=$3::uuid)
         AND execution.embedding_run_id=embedding.id AND execution.embedding_config_digest=embedding.config_digest
-        AND execution.result_summary ? 'fit_checkpoint') valid`, [workspace,execution,actor,embeddingRun,config])).rows[0]?.valid;
+        AND execution.result_summary ? 'fit_checkpoint') valid`, [workspace,execution,actor,embeddingRun,config,Boolean(args.control_execution)])).rows[0]?.valid;
     if (valid !== true) fail("topic_consolidation_embedding_source_invalid");
     await client.query(`CREATE TEMP TABLE signal_topic_centroid_memberships_tmp(
       group_key text NOT NULL,ordinal integer NOT NULL,chunk_sha256 text NOT NULL,PRIMARY KEY(group_key,ordinal)) ON COMMIT DROP`);
@@ -483,13 +499,41 @@ export async function computeSignalTopicConsolidationCentroidsV1(args: {
       FROM signal_topic_centroids_tmp source CROSS JOIN LATERAL (
         SELECT candidate.group_key,candidate.centroid FROM signal_topic_centroids_tmp candidate
         WHERE candidate.group_key<>source.group_key ORDER BY candidate.centroid <=> source.centroid,candidate.group_key COLLATE "C"
-        LIMIT $1) target ORDER BY source.group_key COLLATE "C",similarity DESC,target.group_key COLLATE "C"`, [neighborK])).rows;
+      LIMIT $1) target ORDER BY source.group_key COLLATE "C",similarity DESC,target.group_key COLLATE "C"`, [neighborK])).rows;
+    const guides = (await client.query<{ group_key: string; guide_key: string; role: string; similarity: number }>(`
+      WITH guide_vectors AS MATERIALIZED (
+        SELECT guide.guide_key,guide.role,cache.embedding
+        FROM signal_topic_catalog_executions execution
+        CROSS JOIN LATERAL jsonb_to_recordset(execution.input_snapshot->'guides')
+          guide(guide_key text,role text,input_digest text,text_sha256 text)
+        JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=execution.workspace_id
+          AND cache.config_digest=execution.embedding_config_digest AND cache.chunk_sha256=guide.text_sha256
+        WHERE execution.id=$1::uuid AND guide.role IN('topic_positive','topic_negative','scope_positive','scope_negative')
+      )
+      SELECT source.group_key,guide.guide_key,guide.role,
+        GREATEST(0,LEAST(1,1-(guide.embedding <=> source.centroid)))::double precision similarity
+      FROM signal_topic_centroids_tmp source CROSS JOIN guide_vectors guide
+      ORDER BY source.group_key COLLATE "C",guide.guide_key COLLATE "C",guide.role COLLATE "C"`,[execution])).rows;
     const byGroup = new Map<string, Array<{ group_key: string; similarity: number }>>();
     for (const row of neighbors) { const list = byGroup.get(row.group_key) ?? [];
       list.push({ group_key: row.neighbor_key, similarity: Number(row.similarity) }); byGroup.set(row.group_key,list); }
+    type AffinityLane = keyof SignalTopicConsolidationDossierV1["brand_affinity"];
+    const affinityByGroup = new Map<string,Record<AffinityLane,Map<string,number>>>();
+    const lane = (role: string): AffinityLane => role === "scope_negative" ? "abstention"
+      : role === "topic_negative" ? "negative" : "positive";
+    for (const row of guides) {
+      const buckets = affinityByGroup.get(row.group_key) ?? { positive:new Map(),negative:new Map(),abstention:new Map() };
+      const bucket = buckets[lane(row.role)], score = unit(Number(row.similarity),"topic_consolidation_affinity_invalid");
+      bucket.set(row.guide_key,Math.max(bucket.get(row.guide_key) ?? 0,score));
+      affinityByGroup.set(row.group_key,buckets);
+    }
+    const ranked = (values: Map<string,number> | undefined) => [...(values ?? new Map())]
+      .map(([guide_key,score])=>({guide_key,score})).sort((a,b)=>b.score-a.score||asciiCompare(a.guide_key,b.guide_key)).slice(0,8);
     return centroids.map(row => { const vector = parseVectorText(row.centroid);
+      const affinity=affinityByGroup.get(row.group_key);
       return { group_key: row.group_key, vector, centroid_digest: signalTopicConsolidationDigestV1(vector),
-        neighbors: byGroup.get(row.group_key) ?? [] }; });
+        neighbors: byGroup.get(row.group_key) ?? [],brand_affinity:{positive:ranked(affinity?.positive),
+          negative:ranked(affinity?.negative),abstention:ranked(affinity?.abstention)} }; });
   });
 }
 
@@ -497,6 +541,7 @@ export async function persistSignalTopicConsolidationCentroidArtifactV1(args: {
   database: SignalTopicConsolidationDatabaseV1; workspace_id: string; actor_user_id: string; source_execution_id: string;
   source_checkpoint_digest: string; artifact: SignalTopicConsolidationStoredArtifactV1;
   centroid_count: number; centroid_set_digest: string;
+  control_execution?: SignalTopicConsolidationControlLeaseRefV1;
 }): Promise<{ artifact_id: string; replayed: boolean }> {
   const workspace = uuid(args.workspace_id, "topic_consolidation_workspace_invalid"), actor = uuid(args.actor_user_id, "topic_consolidation_actor_invalid"),
     execution = uuid(args.source_execution_id, "topic_consolidation_execution_invalid"), checkpoint = digest(args.source_checkpoint_digest, "topic_consolidation_source_invalid"),
@@ -505,7 +550,7 @@ export async function persistSignalTopicConsolidationCentroidArtifactV1(args: {
   if (artifact.name !== `centroids.consolidation.${setDigest.slice(7,23)}.json` || artifact.media_type !== "application/json")
     fail("topic_consolidation_centroid_artifact_invalid");
   return transaction(args.database, async client => {
-    await requireConsolidationAuthority(client,workspace,actor);
+    await requireConsolidationAuthority(client,workspace,actor,execution,args.control_execution);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
       [`topic-consolidation-artifact:${workspace}:${execution}:${artifact.name}`]);
     const metadata = { contract_version: "signal-topic-centroid-artifact-v1", source_checkpoint_digest: checkpoint,
@@ -539,9 +584,23 @@ const transaction = async <T>(database: SignalTopicConsolidationDatabaseV1, work
 const chunks = <T>(items: readonly T[], size: number): T[][] => {
   const pages: T[][] = []; for (let offset = 0; offset < items.length; offset += size) pages.push(items.slice(offset, offset + size)); return pages;
 };
-async function requireConsolidationAuthority(client: Pick<PoolClient, "query">, workspace_id: string, actor_user_id: string) {
-  const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, workspace_id, actor_user_id });
-  if (!capabilities.can_execute_topics) fail("topic_consolidation_forbidden");
+async function requireConsolidationAuthority(client: SignalTopicConsolidationQueryableV1, workspace_id: string, actor_user_id: string,
+  source_execution_id?: string, control_execution?: SignalTopicConsolidationControlLeaseRefV1) {
+  if (!control_execution) {
+    const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, workspace_id, actor_user_id });
+    if (!capabilities.can_execute_topics) fail("topic_consolidation_forbidden");
+    return;
+  }
+  const control = { execution_id: uuid(control_execution.execution_id,"topic_consolidation_control_invalid"),
+    execution_token: uuid(control_execution.execution_token,"topic_consolidation_control_invalid"),
+    workspace_id: uuid(control_execution.workspace_id,"topic_consolidation_control_invalid"),
+    actor_user_id: uuid(control_execution.actor_user_id,"topic_consolidation_control_invalid") };
+  const sourceExecution = source_execution_id ? uuid(source_execution_id,"topic_consolidation_control_invalid") : null;
+  if (!sourceExecution || control.workspace_id !== workspace_id || control.actor_user_id !== actor_user_id
+  ) fail("topic_consolidation_control_invalid");
+  await client.query(`SELECT assert_signal_topic_consolidation_worker_scope_v1(
+    $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid
+  )`,[control.execution_id,control.execution_token,workspace_id,actor_user_id,sourceExecution]);
 }
 
 /**
@@ -551,11 +610,12 @@ async function requireConsolidationAuthority(client: Pick<PoolClient, "query">, 
  */
 export async function materializeSignalTopicAtomicCensusV1(args: {
   database: SignalTopicConsolidationDatabaseV1; actor_user_id: string; census: unknown;
+  control_execution?: SignalTopicConsolidationControlLeaseRefV1;
 }): Promise<{ consolidation_run_id: string; group_count: number; root_count: number; evidence_count: number; replayed: boolean }> {
   const census = parseSignalTopicAtomicCensusV1(args.census), actor = uuid(args.actor_user_id, "topic_consolidation_actor_invalid");
   const censusDigest = signalTopicConsolidationDigestV1(census);
   return transaction(args.database, async client => {
-    await requireConsolidationAuthority(client, census.workspace_id, actor);
+    await requireConsolidationAuthority(client,census.workspace_id,actor,census.source_execution_id,args.control_execution);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`topic-consolidation:${census.workspace_id}:${census.source_execution_id}`]);
     const inserted = (await client.query<{ id: string }>(`INSERT INTO signal_topic_consolidation_runs(
       workspace_id,source_engine_execution_id,actor_user_id,source_checkpoint_digest,output_artifact_id,output_artifact_sha256,
@@ -622,17 +682,22 @@ export async function materializeSignalTopicAtomicCensusV1(args: {
 /** Persists a total centroid partition and advances the run to editorial review. */
 export async function materializeSignalTopicCommunityPlanV1(args: {
   database: SignalTopicConsolidationDatabaseV1; workspace_id: string; actor_user_id: string;
-  consolidation_run_id: string; plan: unknown;
+  consolidation_run_id: string; plan: unknown; source_execution_id?: string;
+  control_execution?: SignalTopicConsolidationControlLeaseRefV1;
 }): Promise<{ consolidation_run_id: string; community_count: number; member_count: number; replayed: boolean }> {
   const workspace = uuid(args.workspace_id, "topic_consolidation_workspace_invalid"), actor = uuid(args.actor_user_id, "topic_consolidation_actor_invalid"),
-    runId = uuid(args.consolidation_run_id, "topic_consolidation_run_invalid");
+    runId = uuid(args.consolidation_run_id, "topic_consolidation_run_invalid"),
+    sourceExecution = args.source_execution_id ? uuid(args.source_execution_id,"topic_consolidation_control_invalid") : undefined;
   return transaction(args.database, async client => {
-    await requireConsolidationAuthority(client, workspace, actor);
+    await requireConsolidationAuthority(client,workspace,actor,sourceExecution,args.control_execution);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`topic-consolidation:${workspace}:${runId}`]);
-    const run = (await client.query<{ status: string; configuration_digest: string; community_plan_digest: string | null }>(`
-      SELECT status,configuration_digest,community_plan_digest FROM signal_topic_consolidation_runs
+    const run = (await client.query<{ status: string; source_engine_execution_id: string;
+      configuration_digest: string; community_plan_digest: string | null }>(`
+      SELECT status,source_engine_execution_id,configuration_digest,community_plan_digest FROM signal_topic_consolidation_runs
       WHERE id=$1::uuid AND workspace_id=$2::uuid FOR UPDATE`,[runId,workspace])).rows[0];
     if (!run) throw new SignalTopicConsolidationContractError("topic_consolidation_run_unavailable");
+    if (sourceExecution && run.source_engine_execution_id !== sourceExecution)
+      fail("topic_consolidation_control_invalid");
     const groupRows = (await client.query<{ id: string; group_key: string }>(`SELECT id,group_key FROM signal_topic_atomic_groups
       WHERE consolidation_run_id=$1::uuid AND workspace_id=$2::uuid ORDER BY group_key COLLATE "C"`,[runId,workspace])).rows;
     const plan = parseSignalTopicCommunityPlanV1(args.plan, groupRows.map(row => row.group_key));

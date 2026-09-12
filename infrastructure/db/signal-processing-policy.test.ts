@@ -174,7 +174,8 @@ test("the free corpus exception is fenced independently and never opens provider
 test("every new modeled check and foreign key has the same explicit SQL identity below PostgreSQL's name limit", async () => {
   const { getTableConfig } = await import("drizzle-orm/pg-core");
   const schema = await import("./schema/index");
-  const sql = readFileSync(new URL("./migrations/0155_signal_processing_policy.sql", import.meta.url), "utf8");
+  const sql = ["0155_signal_processing_policy.sql", "0175_signal_topic_consolidation_control.sql"]
+    .map(file => readFileSync(new URL(`./migrations/${file}`, import.meta.url), "utf8")).join("\n");
   for (const table of [schema.signalProcessingPolicyVersions, schema.signalProcessingPolicyActions, schema.signalProcessingAdmissions]) {
     const config = getTableConfig(table);
     const names = [...config.checks.map(check => check.name), ...config.foreignKeys.map(fk => fk.getName()),

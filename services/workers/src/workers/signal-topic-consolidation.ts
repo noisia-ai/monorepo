@@ -309,7 +309,7 @@ export async function buildSignalTopicAtomicCensusFromBundleV1(args: {
   }
   const configuration = args.configuration ?? { contract_version: "signal-topic-consolidation-config-v1",
     dossier_version: "signal-topic-group-dossier-v1", representative_limit: 10, neighbor_limit: 10,
-    community_algorithm: "centroid-knn-v1", neighbor_k: 10, min_similarity: 0.72,
+    community_algorithm: "centroid-knn-v1", neighbor_k: 10, min_similarity_ppm: 720_000,
     assignment_policy: "partition-all-groups-v1" };
   const configurationDigest = signalTopicConsolidationDigestV1(configuration);
   const centroidMemberships = groups.flatMap(group => [...group.roots.values()].flatMap(root => root.assignments.map(item => ({
@@ -319,6 +319,9 @@ export async function buildSignalTopicAtomicCensusFromBundleV1(args: {
     || new Set(resolved.centroids.map(item => item.group_key)).size !== resolved.centroids.length
     || resolved.centroids.some(item => item.vector.length !== 1024 || item.vector.some(value => !Number.isFinite(value))
       || signalTopicConsolidationDigestV1(item.vector) !== item.centroid_digest
+      || !item.brand_affinity || Object.values(item.brand_affinity).some(values => !Array.isArray(values)
+        || values.length > 8 || new Set(values.map(value => value.guide_key)).size !== values.length
+        || values.some(value => !value.guide_key || !Number.isFinite(value.score) || value.score < 0 || value.score > 1))
       || new Set(item.neighbors.map(neighbor => neighbor.group_key)).size !== item.neighbors.length
       || item.neighbors.some(neighbor => neighbor.group_key === item.group_key || !Number.isFinite(neighbor.similarity)
         || neighbor.similarity < 0 || neighbor.similarity > 1)))) fail("centroid_contract_invalid");
@@ -345,7 +348,8 @@ export async function buildSignalTopicAtomicCensusFromBundleV1(args: {
     const dossier = { contract_version: "signal-topic-group-dossier-v1" as const, scope_counts,
       locale_counts: count(rootMetadata.map(item => item.locale)), platform_counts: count(rootMetadata.map(item => item.platform)),
       month_counts: count(rootMetadata.map(item => item.occurred_at?.slice(0, 7) ?? null)),
-      brand_affinity: { positive: [], negative: [], abstention: [] },
+      brand_affinity: centroidByGroup.get(`${group.cluster.lane}:${group.cluster.stable_cluster_id}`)?.brand_affinity
+        ?? { positive: [], negative: [], abstention: [] },
       neighbors: (centroidByGroup.get(`${group.cluster.lane}:${group.cluster.stable_cluster_id}`)?.neighbors ?? [])
         .slice(0,configuration.neighbor_limit).sort((a,b) => b.similarity-a.similarity || compare(a.group_key,b.group_key)),
       // Neighbor similarity is an inter-group affinity. It must not be
@@ -369,13 +373,16 @@ export async function buildSignalTopicAtomicCensusFromBundleV1(args: {
     context_digest: source.context_digest,
     configuration, configuration_digest: configurationDigest,
     expected_group_count: source.expected_group_count, groups: parsedGroups });
-  const communityPlan = resolved ? buildCommunities(resolved.centroids,configurationDigest,configuration.min_similarity) : null;
+  const communityPlan = resolved ? buildCommunities(resolved.centroids,configurationDigest,configuration.min_similarity_ppm / 1_000_000) : null;
   return { census, community_status: resolved ? "ready" : "blocked_missing_group_centroids", community_plan: communityPlan };
 }
 
 type Database = Parameters<typeof materializeSignalTopicAtomicCensusV1>[0]["database"] & Parameters<typeof loadSignalTopicConsolidationSourceV1>[0]["queryable"];
 const defaultStores = {
-  source: async (database: Database, executionId: string) => loadSignalTopicConsolidationSourceV1({ queryable: database, source_execution_id: executionId }),
+  source: async (database: Database, executionId: string, control?: {
+    execution_id: string; execution_token: string; workspace_id: string; actor_user_id: string;
+  }) => loadSignalTopicConsolidationSourceV1({ queryable: database, source_execution_id: executionId,
+    control_execution: control }),
   metadata: async (database: Database, workspaceId: string, roots: readonly string[]) =>
     loadSignalTopicConsolidationRootMetadataV1({ queryable: database, workspace_id: workspaceId, root_ids: roots }),
   materialize: materializeSignalTopicAtomicCensusV1,
@@ -391,11 +398,13 @@ type Stores = typeof defaultStores;
  * materializing the census and communities. */
 export async function signalTopicConsolidationJobV1(
   job: Pick<Job<{ source_execution_id: string }>, "id" | "data" | "updateProgress">,
-  options: { database?: Database; stores?: Stores; storage?: WorkspaceEngineStorageV1; storage_root?: string } = {},
+  options: { database?: Database; stores?: Stores; storage?: WorkspaceEngineStorageV1; storage_root?: string;
+    control_execution?: { execution_id: string; execution_token: string; workspace_id: string; actor_user_id: string } } = {},
 ) {
   if (!job.id || !UUID.test(job.data?.source_execution_id ?? "")) fail("job_invalid");
   const database = options.database ?? (await import("../db/client")).pool;
-  const stores = options.stores ?? defaultStores, source = await stores.source(database, job.data.source_execution_id);
+  const stores = options.stores ?? defaultStores;
+  const source = await stores.source(database, job.data.source_execution_id, options.control_execution);
   if (source.expected_group_count > 5_000) fail("exact_knn_capacity_exceeded");
   const storage = options.storage ?? createWorkspaceEngineStorageV1();
   const root = resolve(options.storage_root ?? process.env.NOISIA_WORKSPACE_ENGINE_SCRATCH_ROOT ?? join(tmpdir(), "noisia-workspace-engine"));
@@ -423,7 +432,7 @@ export async function signalTopicConsolidationJobV1(
         const centroids = await stores.centroids({ database, workspace_id: source.workspace_id,
           actor_user_id: source.actor_user_id, source_execution_id: source.source_execution_id,
           embedding_run_id: source.embedding_run_id, embedding_config_digest: source.embedding_config_digest,
-          memberships, neighbor_k: configuration.neighbor_k });
+          memberships, neighbor_k: configuration.neighbor_k, control_execution: options.control_execution });
         const centroidSetDigest = signalTopicConsolidationDigestV1(centroids.map(item => ({ group_key: item.group_key,
           centroid_digest: item.centroid_digest })));
         const filename = `centroids.consolidation.${centroidSetDigest.slice(7,23)}.json`;
@@ -440,12 +449,16 @@ export async function signalTopicConsolidationJobV1(
         const persisted = await stores.persistCentroids({ database, workspace_id: source.workspace_id,
           actor_user_id: source.actor_user_id, source_execution_id: source.source_execution_id,
           source_checkpoint_digest: source.source_checkpoint_digest, artifact: { name: filename,...stored },
-          centroid_count: centroids.length, centroid_set_digest: centroidSetDigest });
+          centroid_count: centroids.length, centroid_set_digest: centroidSetDigest,
+          control_execution: options.control_execution });
         return { artifact_id: persisted.artifact_id, artifact_sha256: artifactSha, centroids };
       } });
-    const materialized = await stores.materialize({ database, actor_user_id: source.actor_user_id, census: built.census });
+    const materialized = await stores.materialize({ database, actor_user_id: source.actor_user_id,
+      census: built.census, control_execution: options.control_execution });
     const communities = built.community_plan ? await stores.communities({ database, workspace_id: source.workspace_id,
-      actor_user_id: source.actor_user_id, consolidation_run_id: materialized.consolidation_run_id, plan: built.community_plan }) : null;
+      actor_user_id: source.actor_user_id, source_execution_id: source.source_execution_id,
+      consolidation_run_id: materialized.consolidation_run_id, plan: built.community_plan,
+      control_execution: options.control_execution }) : null;
     await job.updateProgress({ phase: "census_ready", groups: built.census.groups.length,
       expected_groups: source.expected_group_count }).catch(() => undefined);
     return { source_execution_id: source.source_execution_id, ...materialized, communities,

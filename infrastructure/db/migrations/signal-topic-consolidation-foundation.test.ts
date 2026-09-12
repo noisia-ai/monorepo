@@ -36,7 +36,7 @@ function census() {
   const first = group(1, "open", "guided:cluster-2"), second = group(2, "guided", "open:cluster-1");
   const configuration = { contract_version: "signal-topic-consolidation-config-v1", dossier_version: "signal-topic-group-dossier-v1",
     representative_limit: 10, neighbor_limit: 16, community_algorithm: "centroid-knn-v1", neighbor_k: 12,
-    min_similarity: 0.7, assignment_policy: "partition-all-groups-v1" };
+    min_similarity_ppm: 700_000, assignment_policy: "partition-all-groups-v1" };
   return { contract_version: "signal-topic-consolidation-v1", workspace_id: id(1), source_execution_id: id(2),
     source_checkpoint_digest: sha("checkpoint"), output_artifact_id: id(10), output_artifact_sha256: sha("output"),
     model_artifact_id: id(20), model_artifact_sha256: sha("model"), context_digest: sha("context"),
