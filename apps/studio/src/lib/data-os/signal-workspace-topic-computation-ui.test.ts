@@ -130,6 +130,11 @@ for (const locale of ["es-MX", "en-US"]) {
     const html = render(null);
     const search = (html.match(/<button\b[^]*?<\/button>/gu) ?? []).find((button) => button.includes(messages.AdminWorkspace.topics.actions.search));
     assert.ok(search); assert.match(search, /^<button[^>]*disabled/u);
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.readiness.needs_preparation.title),
+      "loading the computation contract must not present stale catalog readiness as current");
+    const legacy = render({ ...status, mode: "legacy" });
+    assert.ok(legacy.includes(messages.AdminWorkspace.topics.readiness.needs_preparation.title));
+    assert.ok(legacy.includes(messages.AdminWorkspace.topics.actions.viewReceived));
   });
   test(`${locale}: completed computation updates a stale SSR draft badge without requiring a catalog reload`, () => {
     const html = render({ ...status, latest_ready: ready, latest_run: ready, is_current: true },

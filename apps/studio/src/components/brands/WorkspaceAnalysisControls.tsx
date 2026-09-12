@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
-import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, workspaceAnalysisUsesIncremental, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
+import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisHasRecoverablePartialCatalog, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, workspaceAnalysisUsesIncremental, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { workspaceAnalysisAssociationReceipt, workspaceAnalysisUpdateState, workspaceNumericReadinessMessage } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { isWorkspaceAdmissionAction } from "@/lib/data-os/signal-workspace-interpretation-admission-ui";
 import { WorkspaceInterpretationAdmissionControls } from "./WorkspaceInterpretationAdmissionControls";
@@ -54,6 +54,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const onCatalog = useRef(onCatalogAvailable); onCatalog.current = onCatalogAvailable;
   const currentRun = status?.active_run ?? status?.latest_run;
   const materialization = currentRun?.status === "ready" ? null : currentRun?.materialization_progress;
+  const recoverablePartialCatalog = workspaceAnalysisHasRecoverablePartialCatalog(currentRun);
   const currentComplete = currentRun?.status === "ready" && currentRun.execution_id === complete?.execution_id;
   const catalogCount = currentComplete && (currentRun.materialization_pending || currentRun.materialization_error_code) ? null
     : currentComplete && currentRun.materialization_progress?.interpretation_complete
@@ -143,7 +144,8 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
       {materialization ? <div role="status">
         <strong>{t("partialCatalog", { count: materialization.topic_count })}</strong>
         <p>{t("materializedProgress", { done: materialization.interpreted_unit_count, total: materialization.expected_interpretation_unit_count })}</p>
-        <p className="admin-drawer-form__hint">{!materialization.interpretation_complete ? t("partialCoverage") : t("classificationCoverage")}
+        <p className="admin-drawer-form__hint">{recoverablePartialCatalog ? t("failedPartialCatalog")
+          : !materialization.interpretation_complete ? t("partialCoverage") : t("classificationCoverage")}
           {disabled ? <> {t("catalogRefreshDeferred")}</> : null}</p>
       </div> : status?.latest_run?.materialization_pending ? <p role="status">{t("catalogUpdating")}</p> : null}
       {currentRun?.materialization_error_code ? <p role="alert" className="team-msg team-msg--error">{t("catalogSaveFailed")}</p> : null}

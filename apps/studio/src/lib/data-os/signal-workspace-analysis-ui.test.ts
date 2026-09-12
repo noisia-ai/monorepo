@@ -8,7 +8,7 @@ import { BrandMonitoringJourney } from "../../components/brands/BrandMonitoringJ
 import { WorkspaceAnalysisControls } from "../../components/brands/WorkspaceAnalysisControls";
 import { workspaceAnalysisCatalogReceiptKey, latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanRetryDelivery, workspaceAnalysisDeliveryRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
-  workspaceAnalysisErrorKey, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
+  workspaceAnalysisErrorKey, workspaceAnalysisHasRecoverablePartialCatalog, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, type PendingWorkspaceAnalysis, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 
 import { validWorkspaceAnalysisUpdate, workspaceAnalysisUpdateState, workspaceAnalysisAssociationReceipt, validWorkspaceNumericReadiness, workspaceNumericAdmissionPoll, workspaceNumericReadinessMessage, type WorkspaceNumericReadiness, type WorkspaceAnalysisUpdate } from "./signal-workspace-analysis-update-ui";
 
@@ -510,6 +510,24 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(!exhausted.includes(t.retry)); assert.ok(!exhausted.includes(t.changeCap));
     assert.ok(!exhausted.includes(t.startWithCap.split("{amount}")[0]));
     assert.ok(!exhausted.includes(t.unknown));
+  });
+  test(`${locale}: exhausted repair keeps its materialized topics usable without claiming full coverage`, () => {
+    const repaired: WorkspaceAnalysisRun = { ...progressiveRun, interpreted_units: 36,
+      error_code: "workspace_engine_interpretation_repair_invalid", retryable: false,
+      materialization_progress: { ...progressiveRun.materialization_progress!, interpreted_unit_count: 36,
+        topic_count: 36, discovered_topic_count: 36 } };
+    const current = { ...status, latest_run: repaired };
+    assert.equal(validWorkspaceAnalysisStatus(current), true);
+    assert.equal(workspaceAnalysisHasRecoverablePartialCatalog(repaired), true);
+    const html = render(current);
+    assert.match(html, /36[^]*357/u);
+    assert.ok(html.includes(t.failedPartialCatalog));
+    assert.ok(html.includes(t.errors.editorialRepairExhausted));
+    assert.ok(!html.includes(t.completedBody));
+    assert.ok(!html.includes(`>${t.retry}</button>`));
+    assert.equal(workspaceAnalysisHasRecoverablePartialCatalog({ ...repaired, materialization_progress: null }), false);
+    assert.equal(workspaceAnalysisHasRecoverablePartialCatalog({ ...repaired, is_current: false }), false);
+    assert.equal(workspaceAnalysisHasRecoverablePartialCatalog({ ...repaired, status: "ready", phase: "complete" }), false);
   });
   test(`${locale}: provider-confirmed interruption retains billing exposure and explains the additional reservation for resume`, () => {
     const failed: WorkspaceAnalysisRun = { ...ready, status: "failed", phase: "failed", retryable: true,

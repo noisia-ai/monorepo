@@ -301,7 +301,8 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
       allowInterestPreparation={data.capabilities.can_request_processing}
       preparationDisabled={editorDirty || busy !== null}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`} /> : null}
-    {!workspaceSearch && data.readiness.state !== "ready" ? <section className="topics-manager__preparation">
+    {data.readiness.state !== "ready" && (!processingVisible || legacySearch || data.readiness.state === "awaiting_import")
+      ? <section className="topics-manager__preparation">
       <div><strong>{t(`readiness.${data.readiness.state}.title`)}</strong><p>{t(`readiness.${data.readiness.state}.body`)}</p></div>
       {data.readiness.next_action === "prepare_mentions"
         ? <Link className="admin-button" href={`${dataHref}#corpus-readiness`} prefetch={false}>{t("actions.viewReceived")}</Link>

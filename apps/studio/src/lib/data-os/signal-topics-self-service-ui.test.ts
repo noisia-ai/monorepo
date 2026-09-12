@@ -103,13 +103,12 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.match(html, /<fieldset[^>]*disabled/u);
     assert.match(html, new RegExp(messages.AdminWorkspace.topics.permissions.readOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "u"));
   });
-  test(`${locale}: received data awaiting preparation links to its receipt while preserving interests and blocking search`, () => {
+  test(`${locale}: unresolved processing mode stays neutral while preserving interests and blocking search`, () => {
     const html = render({ ...base, topics: [savedTopic], capabilities: { ...base.capabilities, can_execute: true },
       readiness: { ...base.readiness, state: "needs_preparation", next_action: "prepare_mentions", reason_code: "topic_mentions_not_prepared" }
     });
-    assert.match(html, /href="\/studio\/brands\/new-brand-id\/data#corpus-readiness"/u);
-    assert.ok(html.includes(messages.AdminWorkspace.topics.actions.viewReceived));
-    assert.doesNotMatch(html, /href="\/studio\/brands\/new-brand-id\/data"/u);
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.readiness.needs_preparation.title));
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.actions.viewReceived));
     assert.match(html, /Difficulty completing a purchase/u);
     assert.doesNotMatch(html, /<fieldset[^>]*disabled/u);
     const buttons = html.match(/<button\b[^]*?<\/button>/gu) ?? [];

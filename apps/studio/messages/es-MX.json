@@ -2763,6 +2763,7 @@
         "partialCatalog": "{count, plural, =0 {Avance guardado sin tópicos activos.} one {Catálogo disponible: # tópico activo.} other {Catálogo disponible: # tópicos activos.}}",
         "materializedProgress": "Interpretación: {done, number} de {total, number} grupos.",
         "partialCoverage": "Puedes editar los tópicos disponibles. La cobertura aún es parcial; revisa las menciones de cada tópico antes de mostrarlo en Signal.",
+        "failedPartialCatalog": "Los tópicos guardados siguen disponibles para editar o seleccionar en Signal. Esta ejecución no cubrió todos los grupos; revisa la evidencia de cada tópico antes de mostrarlo.",
         "classificationCoverage": "La interpretación está guardada. La clasificación de menciones y la selección de Signal se comprueban en cada tópico.",
         "catalogRefreshDeferred": "El catálogo se actualizará al terminar la edición actual. Tu borrador se conserva.",
         "catalogUpdating": "Se están guardando los grupos ya interpretados. El catálogo se actualizará aquí sin iniciar otro análisis.",

@@ -93,6 +93,11 @@ export function workspaceAnalysisInterpretedComplete(run: WorkspaceAnalysisRun |
   return Boolean(run?.status === "ready" && run.phase === "complete" && run.fit_completed
     && run.interpreted_units === run.expected_interpretation_units);
 }
+/** A failed editorial run may still have a persisted, current catalog that remains usable. */
+export function workspaceAnalysisHasRecoverablePartialCatalog(run: WorkspaceAnalysisRun | null | undefined) {
+  return Boolean(run?.status === "failed" && run.is_current && run.materialization_progress
+    && run.materialization_progress.topic_count > 0 && !run.materialization_progress.interpretation_complete);
+}
 export function validWorkspaceAnalysisStatus(value: unknown): value is WorkspaceAnalysisStatus {
   if (!object(value) || value.contract_version !== "signal-workspace-analysis-v1" || typeof value.workspace_id !== "string"
     || typeof value.request_scope !== "string" || !value.request_scope || typeof value.can_execute !== "boolean"
