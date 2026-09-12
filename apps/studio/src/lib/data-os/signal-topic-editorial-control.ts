@@ -12,6 +12,7 @@ import { editorialQuoteRuntimeAvailableV1, editorialRecoveryRuntimeAvailableV1,
 type Access = { database?: Pick<Pool, "connect">; workspaceId: string; actorUserId: string; numericExecutionId: string };
 type DbAccess = { database: Pick<Pool, "connect">; workspace_id: string; actor_user_id: string; numeric_execution_id: string };
 type Inspection = { numeric_run_id: string | null; execution_id: string | null; can_request: boolean; retry_available: boolean; source_current: boolean;
+  replacement_available?: boolean;
   completion: null | { available: boolean; completed: boolean };
   replay: null | { plan: SignalTopicEditorialScreeningPlanV1; quote_reference: string; maximum_micro_usd: string } };
 function fail(code: string, status = 409): never { throw new SignalTopicEditorialStoreError(code, status); }
@@ -24,25 +25,33 @@ async function inspect(args: DbAccess, requestKey?: string): Promise<Inspection>
     const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, workspace_id: args.workspace_id, actor_user_id: args.actor_user_id });
     if (!caps.can_view) fail("processing_forbidden", 403);
     const row = (await client.query<{ numeric_run_id: string; execution_id: string | null; source_current: boolean; retry_available: boolean;
+      replacement_available: boolean;
       completion_owner: boolean; completion_available: boolean; completed: boolean;
       replay_plan: SignalTopicEditorialScreeningPlanV1 | null; quote_reference: string; maximum_micro_usd: string }>(`
-      SELECT n.consolidation_run_id AS numeric_run_id,e.id AS execution_id,
+      SELECT n.consolidation_run_id AS numeric_run_id,COALESCE(replay_e.id,e.id) AS execution_id,
         CASE WHEN e.id IS NULL THEN signal_topic_editorial_source_v1(n.consolidation_run_id) IS NOT NULL
           ELSE signal_topic_editorial_source_v1(n.consolidation_run_id) IS NOT DISTINCT FROM e.source_binding END AS source_current,
         COALESCE(e.actor_user_id=$2 AND e.status='failed' AND e.dispatch_generation<20
+          AND signal_topic_editorial_plan_valid_v1(e.numeric_run_id,e.plan)
           AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_calls c WHERE c.execution_id=e.id AND c.status IN('in_flight','outcome_unknown')),false) AS retry_available,
-        CASE WHEN k.execution_id IS NOT NULL THEN e.plan END AS replay_plan,
-        e.quote_reference,e.hard_cap_micro_usd::text AS maximum_micro_usd,
+        COALESCE(signal_topic_editorial_execution_replaceable_v1(e.id),false) AS replacement_available,
+        replay_e.plan AS replay_plan,
+        COALESCE(replay_e.quote_reference,e.quote_reference) quote_reference,
+        COALESCE(replay_e.hard_cap_micro_usd,e.hard_cap_micro_usd)::text AS maximum_micro_usd,
         e.actor_user_id=$2 AND e.status IN('review_ready','completed') AS completion_owner,e.status='completed' AS completed,
         e.status='review_ready' AND clock_timestamp()>=COALESCE((SELECT max(c.settled_at) FROM signal_topic_editorial_calls c WHERE c.execution_id=e.id),e.created_at)+interval '60 seconds' AS completion_available
       FROM signal_topic_consolidation_executions n
-      LEFT JOIN signal_topic_editorial_executions e ON e.numeric_run_id=n.consolidation_run_id AND e.workspace_id=n.workspace_id
-      LEFT JOIN signal_topic_editorial_request_keys k ON k.workspace_id=e.workspace_id AND k.execution_id=e.id AND k.actor_user_id=$2 AND k.idempotency_key=$4
+      LEFT JOIN LATERAL(SELECT candidate.* FROM signal_topic_editorial_executions candidate
+        WHERE candidate.numeric_run_id=n.consolidation_run_id AND candidate.workspace_id=n.workspace_id
+        ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1) e ON true
+      LEFT JOIN signal_topic_editorial_request_keys k ON k.workspace_id=n.workspace_id AND k.actor_user_id=$2 AND k.idempotency_key=$4
+      LEFT JOIN signal_topic_editorial_executions replay_e ON replay_e.id=k.execution_id AND replay_e.workspace_id=n.workspace_id
       WHERE n.workspace_id=$1 AND n.id=$3 AND n.status='ready'`,
     [args.workspace_id, args.actor_user_id, args.numeric_execution_id, requestKey ?? null])).rows[0];
     await client.query("COMMIT");
     return { numeric_run_id: row?.numeric_run_id ?? null, execution_id: row?.execution_id ?? null, can_request: caps.can_request_processing,
       retry_available: row?.retry_available === true, source_current: row?.source_current === true,
+      replacement_available: row?.replacement_available === true,
       completion: row?.completion_owner ? { available: row.completion_available === true, completed: row.completed === true } : null,
       replay: row?.replay_plan ? { plan: row.replay_plan, quote_reference: row.quote_reference, maximum_micro_usd: row.maximum_micro_usd } : null };
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
@@ -72,7 +81,7 @@ export async function loadWorkspaceTopicEditorialForActorV1(args: Access & { wit
   if (!scope.numeric_run_id) return clean(view);
   const status = await dependencies.status({ ...access, numeric_run_id: scope.numeric_run_id });
   if (status.workspace_id !== args.workspaceId) fail("topic_editorial_status_unavailable", 503);
-  if (status.execution_id) {
+  if (status.execution_id && !scope.replacement_available) {
     view.status = status.status as WorkspaceTopicEditorialViewV1["status"];
     view.execution = { execution_id: status.execution_id, status: status.status as NonNullable<WorkspaceTopicEditorialViewV1["execution"]>["status"],
       completed_screening_count: status.completed_screening_count, expected_screening_count: status.expected_screening_count,
@@ -140,7 +149,7 @@ export async function requestWorkspaceTopicEditorialForActorV1(args: Omit<Access
         fail("processing_idempotency_conflict");
       plan = scope.replay.plan;
     } else {
-      if (scope.execution_id) fail("topic_editorial_existing_execution");
+      if (scope.execution_id && !scope.replacement_available) fail("topic_editorial_existing_execution");
       if (!scope.source_current) fail("topic_editorial_source_stale");
       if (!dependencies.available()) fail("topic_editorial_runtime_unavailable");
       const deadline = Number(command.quote_reference.split(".")[1]);

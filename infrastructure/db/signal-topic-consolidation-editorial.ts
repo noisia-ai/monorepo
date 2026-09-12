@@ -111,13 +111,16 @@ export async function requestSignalTopicConsolidationEditorialV1(args: {
   database: SignalTopicEditorialDatabaseV1; workspace_id: string; actor_user_id: string; numeric_run_id: string;
   plan: SignalTopicEditorialScreeningPlanV1; idempotency_key: string; quote_reference: string;
 }): Promise<SignalTopicEditorialRequestResultV1> {
-  scope(args.workspace_id, args.actor_user_id); validateSignalTopicEditorialPlanV1(args.plan);
+  scope(args.workspace_id, args.actor_user_id);
   return tx(args.database, async client => {
     // SQL does exact replay before expiry/source validation. A post-commit retry
     // can recover its receipt after drift, without creating another admission.
     const replay = (await client.query(`SELECT 1 FROM signal_topic_editorial_request_keys
       WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3`, [args.workspace_id, args.actor_user_id, args.idempotency_key])).rowCount;
-    if (!replay) await currentContext(client, args.workspace_id, args.plan.source_context_digest);
+    if (!replay) {
+      validateSignalTopicEditorialPlanV1(args.plan);
+      await currentContext(client, args.workspace_id, args.plan.source_context_digest);
+    }
     return value(client, 'SELECT request_signal_topic_editorial_v1($1,$2,$3,$4::jsonb,$5,$6) value',
       [args.workspace_id, args.actor_user_id, args.numeric_run_id, JSON.stringify(args.plan), args.idempotency_key, args.quote_reference]);
   });
@@ -135,7 +138,8 @@ export async function loadSignalTopicConsolidationEditorialStatusV1(args: {
       COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0))) FILTER(WHERE c.status IN('reserved','in_flight','response_persisted')),0)::text reserved,
       COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0))) FILTER(WHERE c.status='outcome_unknown'),0)::text ambiguous
       FROM signal_topic_editorial_executions e LEFT JOIN signal_topic_editorial_calls c ON c.execution_id=e.id
-      WHERE e.workspace_id=$1 AND e.numeric_run_id=$2 GROUP BY e.id`, [args.workspace_id, args.numeric_run_id])).rows[0];
+      WHERE e.workspace_id=$1 AND e.numeric_run_id=$2 GROUP BY e.id
+      ORDER BY e.created_at DESC,e.id DESC LIMIT 1`, [args.workspace_id, args.numeric_run_id])).rows[0];
     return { contract_version: 'signal-topic-editorial-status-v1', workspace_id: args.workspace_id,
       execution_id: row?.id ?? null, status: row?.status ?? 'not_requested', completed_screening_count: row?.completed ?? 0,
       expected_screening_count: row?.expected ?? 0, maximum_micro_usd: row?.hard_cap_micro_usd ?? null,

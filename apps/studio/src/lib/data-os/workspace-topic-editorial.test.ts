@@ -15,6 +15,7 @@ import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialFo
 Object.assign(globalThis, { React });
 const workspace = "00000000-0000-4000-8000-000000000001", actor = "00000000-0000-4000-8000-000000000002";
 const numeric = "00000000-0000-4000-8000-000000000003", run = "00000000-0000-4000-8000-000000000004", execution = "00000000-0000-4000-8000-000000000005";
+const successor = "00000000-0000-4000-8000-000000000006";
 const reference = `v1.1789236000.${"a".repeat(64)}`, expires = new Date(1789236000 * 1000).toISOString(), now = Date.parse(expires) - 60_000;
 const plan = { plan_digest: "server-plan", private_evidence: "private corpus text" } as unknown as SignalTopicEditorialScreeningPlanV1;
 const quote = { reference, expires_at: expires, maximum_micro_usd: "30000000", group_count: 1652, screening_count: 42, global_count: 1 as const };
@@ -194,6 +195,22 @@ test("settled paid work can retry after source/policy/provider drift without gra
   const receipt = await requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "recovery-key",
     body: { action: "retry_editorial", numeric_execution_id: numeric, execution_id: execution } }, f.deps);
   assert.equal(receipt.execution_id, execution); assert.equal(f.calls.includes("retry"), true);
+});
+test("a zero-checkpoint obsolete failed plan offers and authorizes a fresh review for the same numeric run", async () => {
+  const f = fixture();
+  f.deps.inspect = async () => ({ numeric_run_id: run, execution_id: execution, can_request: true, source_current: true,
+    retry_available: false, replacement_available: true, completion: null, replay: null });
+  f.deps.status = async () => ({ contract_version: "signal-topic-editorial-status-v1", workspace_id: workspace, status: "failed", execution_id: execution,
+    completed_screening_count: 0, expected_screening_count: 42, maximum_micro_usd: "30000000", confirmed_micro_usd: "0",
+    reserved_micro_usd: "0", ambiguous_micro_usd: "0", provider_execution_enabled: false, error_code: "topic_editorial_plan_invalid" });
+  f.deps.request = async args => { f.calls.push("request"); assert.equal(args.plan, plan);
+    return { execution_id: successor, worker_job_id: "private-successor", replayed: false }; };
+  const idle = await loadWorkspaceTopicEditorialForActorV1({ ...access, numericExecutionId: numeric }, f.deps);
+  assert.equal(idle.status, "not_requested"); assert.equal(idle.execution, null); assert.equal(idle.can_quote, true);
+  const quoted = await loadWorkspaceTopicEditorialForActorV1({ ...access, numericExecutionId: numeric, withQuote: true }, f.deps);
+  assert.equal(quoted.status, "ready_to_authorize"); assert.equal(quoted.quote?.reference, reference);
+  const receipt = await requestWorkspaceTopicEditorialForActorV1({ ...access, idempotencyKey: "successor-key", body: command }, f.deps);
+  assert.equal(receipt.execution_id, successor); assert.ok(f.calls.includes("request")); assert.equal(f.calls.includes("retry"), false);
 });
 test("view validator rejects cross scope, injected secrets, inflated cap and contradictory authorization", () => {
   assert.equal(validWorkspaceTopicEditorialViewV1(ready, workspace, numeric), true);

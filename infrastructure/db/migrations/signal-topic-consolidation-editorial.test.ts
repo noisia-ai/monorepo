@@ -3,16 +3,16 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import type { Pool, PoolClient } from 'pg';
 import { reserveSignalTopicEditorialCallV1, markSentSignalTopicEditorialCallV1, persistSignalTopicEditorialResponseV1,
-  settleSignalTopicEditorialCallV1, SIGNAL_TOPIC_EDITORIAL_EXECUTION_CONFIGURATION_V1, type SignalTopicEditorialLeaseV1 } from '../signal-topic-consolidation-editorial';
+  requestSignalTopicConsolidationEditorialV1, settleSignalTopicEditorialCallV1, type SignalTopicEditorialLeaseV1 } from '../signal-topic-consolidation-editorial';
 const sql=readFileSync(new URL('./0176_signal_topic_consolidation_editorial.sql',import.meta.url),'utf8');
 const roleHardening=readFileSync(new URL('./0180_signal_topic_editorial_role_hardening.sql',import.meta.url),'utf8');
 const lease: SignalTopicEditorialLeaseV1={execution_id:'00000000-0000-4000-8000-000000000001',execution_token:'00000000-0000-4000-8000-000000000002',
   workspace_id:'00000000-0000-4000-8000-000000000003',actor_user_id:'00000000-0000-4000-8000-000000000004',numeric_run_id:'00000000-0000-4000-8000-000000000005',
   source_execution_id:'00000000-0000-4000-8000-000000000006',worker_job_id:'private-fixture'};
-test('forward-only 0178 uses the exact current Query Engine Sonnet request configuration',()=>{
+test('forward-only 0178 retains its original sealed Sonnet request configuration',()=>{
  const current=readFileSync(new URL('./0178_signal_topic_editorial_catalog_contract.sql',import.meta.url),'utf8');
  const literal=current.match(/SELECT '(\{"contract_version":"signal-topic-editorial-execution-config-v1".*?\})'::jsonb/u)?.[1];
- assert.ok(literal);assert.deepEqual(JSON.parse(literal),SIGNAL_TOPIC_EDITORIAL_EXECUTION_CONFIGURATION_V1);
+ assert.ok(literal);assert.equal(JSON.parse(literal).screening.schema_digest,'sha256:c411a17c3d93c2fa73f7d81cdd755a97de45a379f9513ca0f17075681cdd3503');
  assert.match(current,/topic_editorial_contract_upgrade_requires_empty_ledger/u);
  assert.match(current,/hard_cap_micro_usd BETWEEN 1 AND 30000000/u);
  assert.match(current,/max_execution_micro_usd BETWEEN 1 AND 30000000/u);
@@ -24,6 +24,15 @@ test('provider disabled is the default and rejects before even connecting or res
  await assert.rejects(reserveSignalTopicEditorialCallV1({database,lease,request_digest:'sha256:'+'a'.repeat(64)}),/topic_editorial_provider_disabled/u);
  await assert.rejects(markSentSignalTopicEditorialCallV1({database,lease,call_id:lease.execution_id,attempt_token:lease.execution_token}),/topic_editorial_provider_disabled/u);
  assert.equal(connections,0);
+});
+test('an exact durable request replay does not revalidate its historical sealed plan',async()=>{
+ const queries:string[]=[];const database={connect:async()=>({query:async(sql:string)=>{queries.push(sql);
+  if(sql.includes('FROM signal_topic_editorial_request_keys'))return {rowCount:1,rows:[{'?column?':1}]};
+  if(sql.includes('request_signal_topic_editorial_v1'))return {rowCount:1,rows:[{value:{execution_id:lease.execution_id,worker_job_id:'historic',replayed:true}}]};
+  return {rowCount:0,rows:[]};},release:()=>{}})} as unknown as Pool;
+ const result=await requestSignalTopicConsolidationEditorialV1({database,workspace_id:lease.workspace_id,actor_user_id:lease.actor_user_id,
+  numeric_run_id:lease.numeric_run_id,plan:{} as never,idempotency_key:'historic-request',quote_reference:`v1.1789236000.${'a'.repeat(64)}`});
+ assert.equal(result.replayed,true);assert.equal(queries.some(query=>query.includes('signal_semantic_context_generations')),false);
 });
 test('paid persistence and settlement have distinct short transactions and release before caller transport can continue',async()=>{
  const trace:string[]=[];let open=0;
