@@ -693,6 +693,13 @@ for (const locale of ["es-MX", "en-US"] as const) {
     assert.ok(enabled.includes(copy.confirm));
     assert.ok(enabled.includes(copy.authorization.split("{maximum}")[0]));
     assert.match(enabled, /aria-describedby="client-brand-context-confirmation-help"/u);
+
+    const embedded = render("compact", availableView, authorizer, { allowCompactAuthorization: true });
+    assert.equal(embedded.match(/admin-button--primary/gu)?.length, 1);
+    assert.ok(embedded.includes(copy.confirm));
+    assert.ok(embedded.includes(copy.authorization.split("{maximum}")[0]));
+    assert.match(embedded, /aria-describedby="client-brand-context-confirmation-help"/u);
+    assert.doesNotMatch(embedded, /<section/u);
   });
 }
 

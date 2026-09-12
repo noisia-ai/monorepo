@@ -581,7 +581,8 @@ export type SignalSemanticContextStartRunArgsV1 = {
 export type SignalBrandContextComposedSemanticStartArgsV1 = {
   pool: Pick<Pool, "connect">;
   workspace: SignalSemanticContextProposalWorkspaceV1;
-  actor: { id: string; user_type: "client" };
+  /** SQL resolves the live actor type and role; callers cannot assert it. */
+  actor: { id: string };
   idempotency_key: string;
   quote_digest: string;
   confirmation: "prepare_brand_context_within_shown_cap";

@@ -44,7 +44,8 @@ function initialProcessingView(value: ClientBrandContextProcessingViewV1 | Clien
 }
 
 export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full", refreshSignal,
-  initial = null, authorize, authorizeFromEndpoint = false, prototypeOnly = false, disabled = false, onAccessDenied }: {
+  initial = null, authorize, authorizeFromEndpoint = false, prototypeOnly = false, disabled = false,
+  allowCompactAuthorization = false, onAuthorizationAccepted, onAccessDenied }: {
   workspaceId: string;
   variant?: "full" | "compact";
   refreshSignal?: string;
@@ -54,7 +55,10 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   authorizeFromEndpoint?: boolean;
   /** Topics can prepare their current guides without starting a Claude stage. */
   prototypeOnly?: boolean;
+  /** Brand OS embeds the initial bounded authorization without duplicating a full page section. */
+  allowCompactAuthorization?: boolean;
   disabled?: boolean;
+  onAuthorizationAccepted?: () => void;
   onAccessDenied?: () => void;
 }) {
   const t = useTranslations("ClientBrandContextProcessing");
@@ -248,6 +252,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
       if (!validClientBrandContextProcessingViewV1(result) || result.workspace_id !== workspaceId) throw new Error();
       setView(previous => latestClientBrandContextProcessingViewV1(previous, result, workspaceId));
       if (result.operation?.request_observed) requestKey.current = null;
+      onAuthorizationAccepted?.();
     } catch { if (currentScope === scope.current) setError("request"); }
     finally { submission.current = false; if (currentScope === scope.current) setSubmitting(false); }
   }
@@ -270,7 +275,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
     : displayState === "temporarily_unavailable" || displayState === "failed" ? "not_available" : "warning";
   const showAmounts = Boolean(current?.quote && (!expired || current.operation)
     && !failedWithoutAction);
-  const showConfirmation = variant === "full" && Boolean(submitAuthorization
+  const showConfirmation = (variant === "full" || allowCompactAuthorization) && Boolean(submitAuthorization
     && clientBrandContextProcessingCanConfirmV1(current)
     && (!prototypeOnly || current?.operation && ["guides_pending", "awaiting_authorization"].includes(current.operation.state)));
   const canConfirm = Boolean(!disabled && submitAuthorization && clientBrandContextProcessingCanConfirmV1(current, submitting));

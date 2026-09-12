@@ -77,6 +77,19 @@ test("a committed brand mutation does not ask the user to submit it again when p
   }
 });
 
+test("Admin Brand OS owns the single governed processing authorization while Admin Topics stays editorial", async () => {
+  const [page, semantic, topics] = await Promise.all([
+    readFile(new URL("../app/studio/brands/[id]/brand-os/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/brands/SemanticContextPackManager.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/brands/TopicsManager.tsx", import.meta.url), "utf8")
+  ]);
+  assert.match(page, /allowProcessingAuthorization=\{\["noisia_admin", "founder", "admin"\]\.includes/u);
+  assert.match(semantic, /preparation\?\.state === "awaiting_authorization" && allowProcessingAuthorization/u);
+  assert.match(semantic, /<ClientBrandContextProcessingQuote[\s\S]{0,240}allowCompactAuthorization[\s\S]{0,120}authorizeFromEndpoint/u);
+  assert.doesNotMatch(semantic, /variant="compact" prototypeOnly/u);
+  assert.match(topics, /navigation \? <ClientProcessingJourney/u);
+});
+
 test("domain and preparation idempotency identities cannot diverge on compound writes", async () => {
   const routes = await Promise.all([
     "../app/api/brands/[id]/knowledge/route.ts",

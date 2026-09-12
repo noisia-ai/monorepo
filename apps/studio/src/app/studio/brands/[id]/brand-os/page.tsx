@@ -60,7 +60,8 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} />
       {workspace.summary.workspaceId ? (
         <>
-          <SemanticContextPackManager workspaceId={workspace.summary.workspaceId} />
+          <SemanticContextPackManager workspaceId={workspace.summary.workspaceId}
+            allowProcessingAuthorization={["noisia_admin", "founder", "admin"].includes(session.appUser.primaryRole)} />
           <AdminResourceSection
             actions={<Link className="admin-button admin-button--primary" href={`/studio/brands/${brand.id}/topics`} prefetch={false}>
               {t("brandOs.topics.action")}<ArrowRight aria-hidden size={14} />

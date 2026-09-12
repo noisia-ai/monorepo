@@ -417,7 +417,7 @@ export async function startClientBrandContextProcessingForActorV1(args: {
   }
   await (dependencies.start??startSignalBrandContextComposedSemanticRunV1)({ pool: database,
     workspace: { id: args.workspace.id, organization_id: args.workspace.organizationId,
-      brand_id: args.workspace.brandId }, actor: { id: args.actorUserId, user_type: "client" },
+      brand_id: args.workspace.brandId }, actor: { id: args.actorUserId },
     idempotency_key: args.idempotencyKey, quote_digest: internal.quote_digest,
     confirmation: args.body.confirmation, configuration: runtime.semantic,
     runtime: { queue_configured: runtime.queue_configured, worker_alive: runtime.worker_alive,

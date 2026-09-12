@@ -297,10 +297,10 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
 
   if (!data.capabilities.can_view) return <p className="team-msg team-msg--error" role="alert">{t("requestErrors.forbidden")}</p>;
   return <div className="topics-manager">
-    <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
+    {navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
       allowInterestPreparation={data.capabilities.can_request_processing}
       preparationDisabled={editorDirty || busy !== null}
-      catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`} />
+      catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`} /> : null}
     {!workspaceSearch && data.readiness.state !== "ready" ? <section className="topics-manager__preparation">
       <div><strong>{t(`readiness.${data.readiness.state}.title`)}</strong><p>{t(`readiness.${data.readiness.state}.body`)}</p></div>
       {data.readiness.next_action === "prepare_mentions"

@@ -50,4 +50,34 @@ test("SentiOne typed mapper projects the exact 47-column contract without canoni
   assert.equal("rawMetadata" in observation,false);
   assert.equal(mapper.mapSignalSentioneProviderObservationV1(
     [...SENTIONE_CSV_47_HEADERS_V1].reverse(),SENTIONE_CSV_47_HEADERS_V1.map(()=>"")),null);
+
+  const redditValues=new Map(values);
+  redditValues.set("Domain group","Reddit");
+  redditValues.set("Content of posts","People compare this product with X and TikTok.");
+  const reddit=mapper.mapSignalSentioneProviderObservationV1(
+    [...SENTIONE_CSV_47_HEADERS_V1],SENTIONE_CSV_47_HEADERS_V1.map((header)=>redditValues.get(header)??""),
+    {sourceTimezone:"UTC"});
+  assert.equal(reddit?.platform,"reddit","mention text cannot override the provider's explicit platform");
+
+  const videoValues=new Map(values);
+  videoValues.set("Domain group","Video");
+  videoValues.set("Link to the source","https://www.youtube.com/watch?v=-x-");
+  const video=mapper.mapSignalSentioneProviderObservationV1(
+    [...SENTIONE_CSV_47_HEADERS_V1],SENTIONE_CSV_47_HEADERS_V1.map((header)=>videoValues.get(header)??""),
+    {sourceTimezone:"UTC"});
+  assert.equal(video?.platform,"youtube","URL fallback uses the hostname, not its path or query");
+
+  const unknownValues=new Map(values);
+  unknownValues.set("Domain group","Video");
+  unknownValues.set("Link to the source","https://example.test/?ref=twitter.com");
+  const unknown=mapper.mapSignalSentioneProviderObservationV1(
+    [...SENTIONE_CSV_47_HEADERS_V1],SENTIONE_CSV_47_HEADERS_V1.map((header)=>unknownValues.get(header)??""),
+    {sourceTimezone:"UTC"});
+  assert.equal(unknown?.platform,"unknown","foreign domains in URL parameters cannot name the platform");
+
+  redditValues.set("Link to the source","https://www.youtube.com/watch?v=other");
+  const explicitReddit=mapper.mapSignalSentioneProviderObservationV1(
+    [...SENTIONE_CSV_47_HEADERS_V1],SENTIONE_CSV_47_HEADERS_V1.map((header)=>redditValues.get(header)??""),
+    {sourceTimezone:"UTC"});
+  assert.equal(explicitReddit?.platform,"reddit","explicit provider platform wins over the linked domain");
 });

@@ -68,7 +68,7 @@ for (const locale of ["es-MX", "en-US"]) {
   test(`${locale}: an empty authorized brand can define interests without implying mentions or execution`, () => {
     const html = render();
     assert.match(html, /href="\/studio\/brands\/new-brand-id\/data"/u);
-    assert.match(html, /data-client-processing-policy/u);
+    assert.doesNotMatch(html, /data-client-processing-policy/u);
     assert.match(html, new RegExp(messages.AdminWorkspace.topics.readiness.awaiting_import.title, "u"));
     assert.doesNotMatch(html, /<progress|topics-manager__results/u);
     const create = html.match(/<button[^>]*>[^]*?Create topic<\/button>/u);

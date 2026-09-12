@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const sql = readFileSync(new URL("./migrations/0156_signal_brand_context_composed_admission.sql", import.meta.url), "utf8");
+const internalOperatorSql = readFileSync(new URL("./migrations/0162_signal_brand_context_internal_operator_admission.sql", import.meta.url), "utf8");
 const policySql = readFileSync(new URL("./migrations/0155_signal_processing_policy.sql", import.meta.url), "utf8");
 const proposalSql = readFileSync(new URL("./migrations/0092_signal_semantic_context_proposal_execution.sql", import.meta.url), "utf8");
 const functionBody = (name: string, next: string) => sql.split(`CREATE FUNCTION ${name}`)[1]?.split(next)[0] ?? "";
@@ -35,6 +36,23 @@ test("the client fence exactly inherits can_request_processing and generic admis
   assert.match(guard, /NEW\.brand_context_processing_receipt_id IS NULL[\s\S]*brand_context_composed_receipt_required/u);
   assert.match(guard, /signal_brand_context_processing_lock_actor_v1/u);
   assert.match(guard, /ELSE[\s\S]*signal_processing_lock_actor_v1/u);
+});
+
+test("the current actor fence adds only financial internal operators and preserves the exact client grant", () => {
+  const actor = internalOperatorSql.split("CREATE OR REPLACE FUNCTION signal_brand_context_processing_actor_v1")[1]
+    ?.split("CREATE OR REPLACE FUNCTION signal_brand_context_processing_lock_actor_v1")[0] ?? "";
+  assert.match(actor, /u\.user_type='noisia_internal' AND u\.primary_role IN\('noisia_admin','founder','admin'\)/u);
+  assert.doesNotMatch(actor, /analyst|kam|insights_manager|ux_data_specialist/u);
+  assert.match(actor, /u\.user_type='client' AND u\.primary_role='client_admin' AND u\.organization_id=o\.id/u);
+  assert.match(actor, /a\.revoked_at IS NULL AND a\.access_level='admin'/u);
+  for (const fence of ["w.status='active'", "b.status='active'", "o.status='active'", "u.status='active'",
+    "b.id=w.brand_id", "b.organization_id=w.organization_id"]) assert.ok(actor.includes(fence), fence);
+  const lock = internalOperatorSql.split("CREATE OR REPLACE FUNCTION signal_brand_context_processing_lock_actor_v1")[1] ?? "";
+  assert.match(lock, /FOR SHARE OF u,w,b,o/u); assert.match(lock, /ORDER BY a\.id FOR SHARE OF a/u);
+  assert.match(lock, /signal_brand_context_processing_actor_v1\(target_workspace,target_actor\)/u);
+  assert.match(internalOperatorSql, /REVOKE ALL ON FUNCTION signal_brand_context_processing_actor_v1\(uuid,uuid\) FROM PUBLIC/u);
+  assert.match(internalOperatorSql, /ARRAY\['anon','authenticated'\]/u);
+  assert.doesNotMatch(internalOperatorSql, /GRANT .* ON FUNCTION/u);
 });
 
 test("Claude configuration is action-specific, key-closed and only narrows token ceilings", () => {

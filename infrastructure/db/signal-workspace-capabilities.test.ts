@@ -58,6 +58,16 @@ test("internal operator privilege needs a compatible internal role and active id
   for (const primary_role of ["noisia_admin", "analyst"]) assert.equal(
     resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role, user_type: "noisia_internal",
       same_organization: false, brand_access_level: null }).can_execute_topics, true);
+  for (const primary_role of ["noisia_admin", "founder", "admin"]) assert.equal(
+    resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role, user_type: "noisia_internal",
+      same_organization: false, brand_access_level: null }).can_request_processing, true);
+  for (const primary_role of ["analyst", "kam", "insights_manager", "ux_data_specialist"]) assert.equal(
+    resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role, user_type: "noisia_internal",
+      same_organization: false, brand_access_level: null }).can_request_processing, false);
+  for (const override of [{ organization_status: "inactive" }, { brand_same_organization: false },
+    { actor_status: "suspended" }]) assert.equal(resolveSignalWorkspaceCapabilitiesV1({ ...client,
+      ...override, primary_role: "noisia_admin", user_type: "noisia_internal",
+      same_organization: false, brand_access_level: null }).can_request_processing, false);
   assert.equal(resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role: "noisia_admin" })
     .can_execute_topics, false);
 });
@@ -130,7 +140,7 @@ test("a scoped entry lookup passes the canonical slug into the bulk query", asyn
 });
 
 
-test("processing requests require exact client admin and administrative live grant without internal execution", () => {
+test("processing requests require exact client admin grant or a financial internal operator", () => {
   const admitted = { ...client, brand_access_level: "admin" };
   assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_request_processing, true);
   assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_execute_topics, false);
@@ -138,7 +148,9 @@ test("processing requests require exact client admin and administrative live gra
   for (const override of [{ brand_access_level: "comment" }, { brand_access_level: null },
     { primary_role: "brand_manager" }, { primary_role: "client_owner" }, { primary_role: "client_viewer" },
     { organization_status: "suspended" }, { brand_same_organization: false }, { same_organization: false },
-    { actor_status: "suspended" }, { user_type: "noisia_internal", primary_role: "noisia_admin" }]) {
+    { actor_status: "suspended" }, { user_type: "noisia_internal", primary_role: "analyst" }]) {
     assert.equal(resolveSignalWorkspaceCapabilitiesV1({ ...admitted, ...override }).can_request_processing, false);
   }
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1({ ...admitted, user_type: "noisia_internal",
+    primary_role: "noisia_admin" }).can_request_processing, true);
 });

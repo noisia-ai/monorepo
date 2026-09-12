@@ -1387,22 +1387,40 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
   }
 
   function normalizePlatform(row: CsvRow, url: string | null) {
-    const haystack = [
-      url ?? "",
-      ...platformKeys.map((key) => pick(row, [key])),
-      ...Object.values(row)
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-
-    const known = detectKnownPlatform(haystack);
-    if (known) return known;
-
     const candidate = pick(row, platformKeys);
+    const explicit = detectKnownPlatform(candidate);
+    if (explicit) return explicit;
     const normalized = normalizeToken(candidate);
-    if (!normalized || isContentTypeToken(normalized)) return "unknown";
-    return normalized;
+    if (normalized && !isContentTypeToken(normalized)) return normalized;
+
+    const linked = detectKnownPlatformHostname(url ?? "");
+    return linked ?? "unknown";
+  }
+
+  function detectKnownPlatformHostname(value: string) {
+    if (!value) return null;
+    let hostname = "";
+    try { hostname = new URL(value).hostname.toLowerCase().replace(/^www\./u, ""); }
+    catch {
+      try { hostname = new URL(`https://${value}`).hostname.toLowerCase().replace(/^www\./u, ""); }
+      catch { return null; }
+    }
+    const belongsTo = (domain: string) => hostname === domain || hostname.endsWith(`.${domain}`);
+    const rules: Array<[string[], string]> = [
+      [["tiktok.com", "douyin.com"], "tiktok"],
+      [["twitter.com", "x.com"], "x"],
+      [["instagram.com"], "instagram"],
+      [["facebook.com", "fb.com"], "facebook"],
+      [["youtube.com", "youtu.be"], "youtube"],
+      [["reddit.com"], "reddit"],
+      [["linkedin.com"], "linkedin"],
+      [["threads.net"], "threads"],
+      [["t.me"], "telegram"],
+      [["wa.me"], "whatsapp"],
+      [["trustpilot.com"], "trustpilot"],
+      [["medium.com", "blogspot.com", "wordpress.com"], "blog"]
+    ];
+    return rules.find(([domains]) => domains.some(belongsTo))?.[1] ?? null;
   }
 
   function detectKnownPlatform(value: string) {

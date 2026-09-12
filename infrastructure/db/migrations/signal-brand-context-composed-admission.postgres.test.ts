@@ -35,7 +35,7 @@ type Scope = { organizationId: string; semanticWorkspaceId: string; voyageWorksp
   semanticRunId: string; voyageRunId: string; actorId: string };
 
 export type ComposedFixture = { organizationId: string; brandId: string; workspaceId: string;
-  clientActorId: string; generationId: string; generationKey: string };
+  internalActorId: string; clientActorId: string; generationId: string; generationKey: string };
 
 export async function seedComposedFixture(pool: pg.Pool, label: string, options: {
   prototypeConfiguration?: Record<string, unknown>;
@@ -163,7 +163,7 @@ export async function seedComposedFixture(pool: pg.Pool, label: string, options:
     [policyId, action, provider, model, JSON.stringify(configuration), cap, automaticAllowed]);
   }
   await pool.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1::uuid", [policyId]);
-  return { organizationId, brandId, workspaceId, clientActorId, generationId, generationKey };
+  return { organizationId, brandId, workspaceId, internalActorId, clientActorId, generationId, generationKey };
 }
 
 async function seedScope(client: pg.PoolClient, label: string): Promise<Scope> {
@@ -351,12 +351,18 @@ export async function quoteComposedFixture(pool: pg.Pool, fixture: ComposedFixtu
     action_availability: { brand_context_proposal: true, topic_prototype_embeddings: true } });
 }
 
+async function quoteComposedFixtureForActor(pool: pg.Pool, fixture: ComposedFixture, actorId: string) {
+  return loadSignalBrandContextProcessingQuoteV1({ database: pool, workspace_id: fixture.workspaceId,
+    actor_user_id: actorId,
+    action_availability: { brand_context_proposal: true, topic_prototype_embeddings: true } });
+}
+
 export async function startComposedFixture(pool: pg.Pool, fixture: ComposedFixture, quoteDigest: string,
   idempotencyKey: string, configuration = semanticConfiguration,
   runtime = composedRuntime) {
   return startSignalBrandContextComposedSemanticRunV1({ pool,
     workspace: { id: fixture.workspaceId, organization_id: fixture.organizationId, brand_id: fixture.brandId },
-    actor: { id: fixture.clientActorId, user_type: "client" }, idempotency_key: idempotencyKey,
+    actor: { id: fixture.clientActorId }, idempotency_key: idempotencyKey,
     quote_digest: quoteDigest, confirmation: "prepare_brand_context_within_shown_cap",
     configuration, runtime });
 }
@@ -367,6 +373,46 @@ async function authorizeComposedFixture(pool: pg.Pool, fixture: ComposedFixture,
     [fixture.workspaceId, actorId, idempotencyKey, quoteDigest,
       "prepare_brand_context_within_shown_cap"]);
 }
+
+test("0162 admits active financial internal operators and rejects other internal identities atomically",
+  { skip: !enabled, timeout: 60_000 }, async () => {
+    assert.ok(databaseUrl, "NOISIA_BRAND_CONTEXT_COMPOSED_ADMISSION_DATABASE_URL is required");
+    const parsed = new URL(databaseUrl);
+    assert.ok(["localhost", "127.0.0.1", "::1"].includes(parsed.hostname),
+      "focal runner only accepts disposable local PostgreSQL");
+    const pool = new pg.Pool({ connectionString: databaseUrl, ssl: false, max: 5 });
+    try {
+      const allowed = await seedComposedFixture(pool, "internal-financial");
+      const allowedQuote = await quoteComposedFixtureForActor(pool, allowed, allowed.internalActorId);
+      assert.equal(allowedQuote.quote_status, "quoted");
+      assert.ok(allowedQuote.quote_digest);
+      const started = await startSignalBrandContextComposedSemanticRunV1({ pool,
+        workspace: { id: allowed.workspaceId, organization_id: allowed.organizationId,
+          brand_id: allowed.brandId }, actor: { id: allowed.internalActorId },
+        idempotency_key: "internal-financial-request", quote_digest: allowedQuote.quote_digest,
+        confirmation: "prepare_brand_context_within_shown_cap", configuration: semanticConfiguration,
+        runtime: composedRuntime });
+      assert.equal(started.replayed, false);
+      assert.deepEqual(await composedBundleCounts(pool, allowed.workspaceId), {
+        admissions: 1, receipts: 1, runs: 1, reservations: 1, outboxes: 1, operations: 1
+      });
+
+      for (const [label, mutation] of [
+        ["analyst", "UPDATE users SET primary_role='analyst' WHERE id=$1::uuid"],
+        ["inactive", "UPDATE users SET status='suspended' WHERE id=$1::uuid"],
+        ["inactive-org", "UPDATE organizations SET status='suspended' WHERE id=$1::uuid"]
+      ] as const) {
+        const denied = await seedComposedFixture(pool, `internal-${label}`);
+        await pool.query(mutation, [label === "inactive-org" ? denied.organizationId : denied.internalActorId]);
+        await assert.rejects(authorizeComposedFixture(pool, denied, denied.internalActorId,
+          digest(`${label}:unusable-quote`), `internal-${label}-request`),
+        (error: unknown) => (error as { message?: string }).message === "processing_forbidden");
+        assert.deepEqual(await composedBundleCounts(pool, denied.workspaceId), {
+          admissions: 0, receipts: 0, runs: 0, reservations: 0, outboxes: 0, operations: 0
+        });
+      }
+    } finally { await pool.end(); }
+  });
 
 test("0156 denies cross-tenant and insufficient client authority without leaving a partial bundle",
   { skip: !enabled, timeout: 60_000 }, async () => {

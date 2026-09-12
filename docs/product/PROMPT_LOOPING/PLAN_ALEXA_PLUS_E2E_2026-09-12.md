@@ -15,22 +15,44 @@ ventana.
 
 Directorio de entrada: `/Users/brandhon_o/Downloads/Noisia - Alexa Plus CSVs`.
 
-| Alcance | Archivo | Filas aproximadas |
-| --- | --- | ---: |
-| Marca | `Primary - Alexa (MX, ene-ago).csv` | 20,722 |
-| Marca | `Primary - Alexa Plus (MX, jul-ago).csv` | 38,253 |
-| Competencia | `Competencia - Apple HomePod (US).csv` | 195,904 |
-| Competencia | `Competencia - JBL (US).csv` | 35,224 |
-| Competencia | `Competencia - Google Nest (US).csv` | 117,692 |
-| Competencia | `Competencia - Sonos (US).csv` | 208,418 |
-| Competencia | `Competencia - Bose (US).csv` | 210,063 |
-| Categoría | `Categoria - Alexa vs ChatGPT+Google+Siri (MX).csv` | 74,328 |
-| Categoría | `Categoria - Smart Speakers (US).csv` | 432,558 |
+| Alcance | Archivo | Filas CSV | MiB |
+| --- | --- | ---: | ---: |
+| Marca | `Primary - Alexa (MX, ene-ago).csv` | 4,499 | 5.71 |
+| Marca | `Primary - Alexa Plus (MX, jul-ago).csv` | 1,903 | 9.43 |
+| Competencia | `Competencia - JBL (US).csv` | 825 | 10.92 |
+| Competencia | `Competencia - Google Nest (US).csv` | 3,147 | 17.45 |
+| Competencia | `Competencia - Bose (US).csv` | 2,060 | 25.44 |
+| Competencia | `Competencia - Sonos (US).csv` | 4,500 | 33.88 |
+| Competencia | `Competencia - Apple HomePod (US).csv` | 15,483 | 44.68 |
+| Categoría | `Categoria - Alexa vs ChatGPT+Google+Siri (MX).csv` | 3,070 | 29.72 |
+| Categoría | `Categoria - Smart Speakers (US).csv` | 21,847 | 88.49 |
+
+El parser canónico confirmó 57,334 filas y 253.40 MiB. Antes de PostgreSQL estima 47,285 raíces
+únicas, 43,159 elegibles, 4,126 excluidas por texto corto y 10,049 duplicaciones internas o entre
+archivos. Esos valores son preflight, no resultados de importación; los recibos remotos son la
+fuente final.
 
 `_rename_map.csv` documenta el origen de los nombres. No se importa. Los dos CSV dentro de
 `_descartar` se excluyen porque son un duplicado y una muestra sustituida por el corpus amplio.
 El inventario exacto, encabezados, codificación, fechas y duplicados se registran antes del primer
 upload.
+
+## Primer checkpoint comprobado — 07:31 UTC
+
+- Alexa Plus fue creada desde UAT por la pantalla real con ID
+  `5894a799-7609-4395-9e01-89770051b75f` y slug aislado
+  `alexa-plus-e2e-2026-09-12`.
+- La ayuda de Claude Sonnet 4.6 completó el intake inicial; el operador interno revisó el resultado
+  antes de guardar. Quedaron una knowledge base automática y doce competidores editables.
+- La preparación automática de Brand Context llegó a `awaiting_authorization`. El corte actual
+  mueve esa autorización acotada a Brand OS, conserva Topics como catálogo editorial y permite que
+  sólo `noisia_admin`, `founder` o `admin` internos activos inicien el mismo contrato compuesto y
+  auditable que el cliente administrador.
+- La clasificación de plataforma SentiOne ahora respeta el campo explícito; cuando éste sólo dice
+  el tipo de contenido, infiere la red desde el hostname y nunca desde texto, path o query.
+- SQL0162 pasó replay completo de 156 migraciones y cinco pruebas PostgreSQL del contrato compuesto
+  en una base desechable. DB 616/0 fallos, Studio 1009/0 fallos, build y typechecks pasan; revisión
+  independiente P0/P1/P2 = 0. SQL0162 todavía no se ha aplicado a UAT en este checkpoint.
 
 ## Recorrido y gates
 

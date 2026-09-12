@@ -23,6 +23,7 @@ import {
   formatAdminNumber
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { WorkspaceConfirmDialog, WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
+import { ClientBrandContextProcessingQuote } from "@/components/brands/ClientBrandContextProcessingQuote";
 import { SemanticContextReviewWorkbench } from "@/components/brands/SemanticContextReviewWorkbench";
 import {
   canPrepareSignalSemanticContextTerminalSuccessorV1,
@@ -209,7 +210,9 @@ export function isRecoverableBrandContextAuthorityErrorV1(value: unknown) {
   );
 }
 
-export function SemanticContextPackManager({ workspaceId }: { workspaceId: string }) {
+export function SemanticContextPackManager({ workspaceId, allowProcessingAuthorization = false }: {
+  workspaceId: string; allowProcessingAuthorization?: boolean;
+}) {
   const t = useTranslations("AdminWorkspace.brandOs.semanticContext");
   const locale = useLocale();
   const base = `/api/data-os/signal/${workspaceId}/semantic-context`;
@@ -442,9 +445,13 @@ export function SemanticContextPackManager({ workspaceId }: { workspaceId: strin
           <div><strong>{t(`automatic.preparation.${preparation.state}`)}</strong>
             <p>{t(preparation.state === "ready" ? "automatic.readyBody" : preparation.state === "awaiting_authorization" ? "automatic.awaitingBody" : preparation.state === "failed" ? "automatic.failedBody" : "automatic.preparationBody")}</p></div>
         </div> : null}
-        {!preparationPending && (preparation?.state === "awaiting_authorization" || !generation) ? <>
-          {generation ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("automatic.continue")}</button> : null}
-        </> : !preparationPending ? <details className="semantic-context-pack__regenerate"><summary>{t("automatic.regenerate")}</summary>
+        {!preparationPending && preparation?.state === "awaiting_authorization" && allowProcessingAuthorization ?
+          <ClientBrandContextProcessingQuote workspaceId={workspaceId} variant="compact" allowCompactAuthorization
+            authorizeFromEndpoint disabled={Boolean(busy)}
+            onAuthorizationAccepted={() => { void loadPreparation(); void load(); }}/>
+          : !preparationPending && !preparation ? <>
+            {generation ? <button className="admin-button admin-button--primary" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("automatic.continue")}</button> : null}
+          </> : !preparationPending ? <details className="semantic-context-pack__regenerate"><summary>{t("automatic.regenerate")}</summary>
           <button className="admin-button" disabled={Boolean(busy)} onClick={() => void reconcileContext()} type="button"><ArrowClockwise aria-hidden size={14}/>{t("automatic.regenerate")}</button>
         </details> : null}
       </div> : null}

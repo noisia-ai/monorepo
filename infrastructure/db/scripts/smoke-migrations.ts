@@ -284,6 +284,15 @@ async function main() {
     await client.query(`set statement_timeout = '5min'`);
     await assertPgVectorAvailable(client);
     await assertEmptySchema(client);
+    // Match Supabase/Railway installations where restricted functions call the
+    // schema-qualified pgcrypto API. The disposable smoke reset removes this
+    // schema, so rebuild it before replaying the numbered migrations.
+    await client.query(`create schema if not exists extensions`);
+    await client.query(`create extension if not exists pgcrypto with schema extensions`);
+    await client.query(`set search_path = public, extensions, pg_temp`);
+    const databaseName = decodeURIComponent(new URL(databaseUrl).pathname.replace(/^\//u, ""));
+    if (!databaseName) throw new Error("Migration smoke requires an explicit disposable database name.");
+    await client.query(`alter database ${pg.escapeIdentifier(databaseName)} set search_path = public, extensions, pg_temp`);
 
     for (const file of migrationFiles) {
       await applyMigration(client, join(migrationsDir, file));

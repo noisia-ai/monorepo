@@ -34,7 +34,9 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   const internal = authority.user_type === "noisia_internal"
     && internalRoles.includes(authority.primary_role);
   if (internal) return { can_view: true, can_edit_topics: true, can_import_mentions: true,
-    can_execute_topics: true, can_adopt_topics: true, can_select_signal: true, can_request_processing: false };
+    can_execute_topics: true, can_adopt_topics: true, can_select_signal: true,
+    can_request_processing: ["noisia_admin", "founder", "admin"].includes(authority.primary_role)
+      && authority.organization_status === "active" && authority.brand_same_organization === true };
   if (authority.user_type !== "client" || !authority.same_organization) return denied;
   const administrator = ["client_admin", "brand_manager", "client_owner"].includes(authority.primary_role);
   const viewer = ["client_viewer", "agency_insights"].includes(authority.primary_role);
