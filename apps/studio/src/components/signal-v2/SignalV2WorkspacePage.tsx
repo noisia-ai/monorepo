@@ -1,3 +1,4 @@
+import { loadInitialSignalMonitoringV1 } from "@/lib/signal-v2/initial-monitoring";
 import { loadClientBrandWorkspaceEntryV1 } from "@/lib/data-os/workspace-management-entry";
 import { notFound } from "next/navigation";
 import {
@@ -367,15 +368,25 @@ export async function SignalV2WorkspacePage({
     releases,
     requestedTriggersBarriers
   ] = await Promise.all([
-    loadSignalBrandMonitoringV1({
-      workspace,
-      readScope,
-      ...(brandMonitoringServingDescriptor
-        ? { evidenceReadScope: monitoringEvidence?.readScope ?? null }
-        : {}),
-      filter,
-      comparison,
-      isInternalUser
+    loadInitialSignalMonitoringV1({
+      activeModule,
+      buildShellData: () => ({ ...buildEmptySignalBrandMonitoringV1(workspace),
+        read_scope: readScope.descriptor,
+        corpus: home.corpus ? { id: home.corpus.id, name: home.corpus.name } : null,
+        coverage: home.coverage, filter, comparison,
+        comparison_filter: comparison.date_range ? { ...filter, date_range: comparison.date_range } : null,
+        freshness: { state: home.freshness.overall_state, data: home.freshness.data, interpretation: home.freshness.interpretation }
+      }),
+      loadMonitoring: () => loadSignalBrandMonitoringV1({
+        workspace,
+        readScope,
+        ...(brandMonitoringServingDescriptor
+          ? { evidenceReadScope: monitoringEvidence?.readScope ?? null }
+          : {}),
+        filter,
+        comparison,
+        isInternalUser
+      })
     }),
     activeModule === "mentions"
       ? loadSignalMentionsV1({

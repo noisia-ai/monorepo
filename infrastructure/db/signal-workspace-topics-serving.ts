@@ -69,9 +69,10 @@ export function workspaceTopicsInterpretationCoverageV1(value: unknown): SignalW
 async function transaction<T>(database: Database, work: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await database.connect();
   try {
-    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    await client.query("SET LOCAL TIME ZONE 'UTC'");
-    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    // Preserve ordered transaction-local fences while avoiding two network trips.
+    // A failure aborts setup before any authorized read and is rolled back below.
+    await client.query(`BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+      SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp`);
     const value = await work(client); await client.query("COMMIT"); return value;
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
   finally { client.release(); }

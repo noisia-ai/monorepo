@@ -27,12 +27,14 @@ const topicA = {
 const workingTopicA = { ...topicA, label: "Servicio al cliente", definition_revision: 2,
   updated_at: "2026-09-11T11:00:00.000Z" };
 test("Signal keeps served semantics while applying a safe working label", async () => {
+  const statements: string[] = [];
   const detailQueries: Array<{ sql: string; params: unknown[] }> = [];
   let access = true;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   const client = {
     async query(sql: string, params: unknown[] = []) {
+      statements.push(sql);
       if (/^(BEGIN|COMMIT|ROLLBACK|SET LOCAL)/u.test(sql)) return { rows: [] };
       if (sql.includes("brand_access_level")) return { rows: [{ workspace_status: "active", brand_status: "active",
         organization_status: "active", brand_same_organization: true,
@@ -98,10 +100,14 @@ test("Signal keeps served semantics while applying a safe working label", async 
   };
   identity = await loadSignalWorkspaceClassificationInputV1({ queryable: client as never, workspace_id: workspaceId,
     actor_user_id: actorId, taxonomy_profile_id: profileA });
+  statements.length = 0;
   const overview = await loadSignalWorkspaceTopicsOverviewV1({
     database: { async connect() { return client as never; } }, workspace_id: workspaceId,
     actor_user_id: actorId
   });
+  assert.match(statements[0]!, /^BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\s+SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp$/);
+  assert.equal(statements.some(statement => statement.startsWith("SET LOCAL")), false);
+  assert.match(statements[1]!, /brand_access_level/);
   assert.equal(topicQueries.length, 2);
   assert.equal(topicQueries[0]!.params[1], profileA);
   assert.match(topicQueries[0]!.sql, /id=\$2::uuid/u);
@@ -129,4 +135,13 @@ test("Signal keeps served semantics while applying a safe working label", async 
   await assert.rejects(loadSignalWorkspaceTopicDetailV1(args), /workspace_topics_forbidden/);
   assert.equal(detailQueries.length, 1, "scope rejection must precede aggregate query");
 
+});
+
+test("batched read-only setup failure rolls back and releases before reading capabilities or data", async () => {
+  const statements: string[] = []; let released = 0;
+  const client = { async query(sql: string) { statements.push(sql); if (sql.startsWith("BEGIN")) throw new Error("setup_failure"); return { rows: [] }; },
+    release() { released++; } };
+  await assert.rejects(loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
+    workspace_id: workspaceId, actor_user_id: actorId }), /setup_failure/);
+  assert.equal(statements.length, 2); assert.equal(statements[1], "ROLLBACK"); assert.equal(released, 1);
 });
