@@ -133,16 +133,16 @@ export function BrandOsForm({ clientContext }: {
         </div>
 
         <div className="new-study-grid">
-          <label className="new-study-field">
+          <label className={`new-study-field${clientContext ? " new-study-field--wide" : ""}`}>
             <span>{t("organization")}</span>
             {clientContext
               ? <span className="filter-input new-study-input" aria-readonly="true">{clientContext.organizationName}</span>
               : <input className="filter-input new-study-input" name="organization_name" required minLength={2} maxLength={180} value={organizationValue} onChange={(event) => setOrganizationValue(event.target.value)} />}
           </label>
-          <label className="new-study-field">
-            <span>{t("slug")}</span>
-            <input className="filter-input new-study-input" name="slug" placeholder={t("slugPlaceholder")} />
-          </label>
+          {!clientContext ? <label className="new-study-field">
+              <span>{t("slug")}</span>
+              <input className="filter-input new-study-input" name="slug" placeholder={t("slugPlaceholder")} />
+            </label> : null}
         </div>
 
         <div className="new-study-grid">
@@ -203,7 +203,7 @@ export function BrandOsForm({ clientContext }: {
           <TokenInputField
             label={t("competitors")}
             name="competitors"
-            placeholder="Ulta Beauty, Liverpool, Palacio de Hierro..."
+            placeholder={t("competitorsPlaceholder")}
             values={competitorValues}
             onChange={setCompetitorValues}
           />
@@ -244,7 +244,7 @@ export function BrandOsForm({ clientContext }: {
             </>
           ) : (
             <>
-              <Icon name="save" size={14} /> {t("create")}
+              <Icon name="save" size={14} /> {t(clientContext ? "createClient" : "create")}
             </>
           )}
         </button>
@@ -268,6 +268,7 @@ function SmartTextareaField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const t = useTranslations("BrandOs.form");
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -275,7 +276,7 @@ function SmartTextareaField({
       <span>{label}</span>
       <div className={`smart-textarea-wrap${expanded ? " smart-textarea-wrap--expanded" : ""}`}>
         <button
-          aria-label={expanded ? "Collapse field" : "Expand field"}
+          aria-label={t(expanded ? "collapseField" : "expandField")}
           className="textarea-expand-toggle"
           type="button"
           onClick={() => setExpanded((value) => !value)}
@@ -310,6 +311,7 @@ export function ExpandableTextareaField({
   placeholder?: string;
   surface?: BrandFormSurface;
 }) {
+  const t = useTranslations("BrandOs.form");
   const [expanded, setExpanded] = useState(false);
 
   if (surface === "workspace") {
@@ -332,7 +334,7 @@ export function ExpandableTextareaField({
       <span>{label}</span>
       <div className={`smart-textarea-wrap${expanded ? " smart-textarea-wrap--expanded" : ""}`}>
         <button
-          aria-label={expanded ? "Collapse field" : "Expand field"}
+          aria-label={t(expanded ? "collapseField" : "expandField")}
           className="textarea-expand-toggle"
           type="button"
           onClick={() => setExpanded((value) => !value)}
@@ -374,6 +376,7 @@ export function CatalogCombobox({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const t = useTranslations("BrandOs.form");
   const [isOpen, setIsOpen] = useState(false);
   const [browseAll, setBrowseAll] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -459,7 +462,7 @@ export function CatalogCombobox({
           onKeyDown={onKeyDown}
         />
         <button
-          aria-label={`Open ${label} catalog`}
+          aria-label={t("openCatalog", { label })}
           className="catalog-combo-trigger"
           disabled={disabled}
           type="button"
@@ -509,11 +512,11 @@ export function CatalogCombobox({
                 setIsOpen(false);
               }}
             >
-              Use custom: {value.trim()}
+              {t("useCustom", { value: value.trim() })}
             </button>
           )}
           {visibleOptions.length === 0 && !showCustom && (
-            <span className="catalog-combo-empty">No catalog matches.</span>
+            <span className="catalog-combo-empty">{t("noCatalogMatches")}</span>
           )}
         </div>
       )}
@@ -544,6 +547,7 @@ export function TokenCatalogField({
   values: string[];
   onChange: (values: string[]) => void;
 }) {
+  const t = useTranslations("BrandOs.form");
   const [draft, setDraft] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -640,7 +644,7 @@ export function TokenCatalogField({
           onKeyDown={onKeyDown}
         />
         <button
-          aria-label={`Open ${label} catalog`}
+          aria-label={t("openCatalog", { label })}
           className="token-input-trigger"
           disabled={disabled}
           type="button"
@@ -687,7 +691,7 @@ export function TokenCatalogField({
                 setIsOpen(false);
               }}
             >
-              Use custom: {draft.trim()}
+              {t("useCustom", { value: draft.trim() })}
             </button>
           )}
         </div>
@@ -777,11 +781,12 @@ function Token({
   onRemove: () => void;
   surface?: BrandFormSurface;
 }) {
+  const t = useTranslations("BrandOs.form");
   return (
     <span className={surface === "workspace" ? "workspace-chip" : "token-chip"}>
       {label}
       <button
-        aria-label={`Remove ${label}`}
+        aria-label={t("removeToken", { label })}
         type="button"
         onClick={(event) => {
           event.stopPropagation();

@@ -31,7 +31,8 @@ export default async function ClientBrandDataPage({ params }: { params: Promise<
       aside={<Link className="admin-button" href={`${entry.navigation.signalHref}/mentions`} prefetch={false}>
         {t("data.actions.openMentions")}<ArrowRight aria-hidden size={14} /></Link>} />
     <BrandMonitoringJourney brandId={entry.brandId} current="data" destinations={{
-      topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref, brandOs: null }} />
+      topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref,
+      brandOs: entry.canManageBrandContext ? entry.navigation.brandOsHref : null }} />
     <ClientBrandWorkspaceData key={entry.requestScope} entry={entry} initialReadiness={readiness} corpus={corpus} />
   </div>;
 }

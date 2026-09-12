@@ -134,13 +134,21 @@
       "aliases": "Aliases / handles",
       "aliasesPlaceholder": "@brand, unaccented brand name, app...",
       "competitors": "Competitors",
+      "competitorsPlaceholder": "Ulta Beauty, Liverpool, Palacio de Hierro...",
       "competitorsHint": "Competitor names only, one per line. Do not paste rankings, links, tables, or ChatGPT bullets here; that belongs in Knowledge Base notes.",
       "notes": "Knowledge Base notes",
       "notesPlaceholder": "What it sells, what it promises, known friction, important channels, recent campaigns, legal or operational constraints...",
       "creating": "Creating...",
       "create": "Create brand and continue",
+      "createClient": "Create and complete Brand OS",
       "fallbackCreateError": "Could not create brand.",
       "contextPending": "The brand was created, but its semantic context still needs to finish. Save again to recover the same creation.",
+      "expandField": "Expand field",
+      "collapseField": "Collapse field",
+      "openCatalog": "Open {label} catalog",
+      "useCustom": "Use custom value: {value}",
+      "noCatalogMatches": "No catalog options match.",
+      "removeToken": "Remove {label}",
       "fieldFallback": "field",
       "invalidFallback": "invalid"
     }
@@ -3974,6 +3982,7 @@
     }
   },
   "ClientBrandContextProcessing": {
+    "authorizationRefresh": "Prepare current interests with a maximum of {maximum}. Available today: {available}. Saved vectors will be reused.",
     "title": "Brand semantic preparation",
     "body": "Turn Brand OS context and knowledge sources into a reusable semantic foundation for Topics.",
     "compactBody": "Check that brand context and interests are ready before creating corpus vectors.",
@@ -3998,6 +4007,7 @@
     "retry": "Retry preparation",
     "retrying": "Retrying…",
     "states": {
+      "guides_pending": "Interests need preparation",
       "quote_available": "Maximum cost calculated",
       "access_required": "Access required",
       "configuration_required": "Processing not configured",
@@ -4018,6 +4028,7 @@
       "failed": "Preparation interrupted"
     },
     "help": {
+      "guides_pending": "Brand context is ready. Interests changed; prepare their guides for upcoming analyses. Mentions are uploaded separately.",
       "quote_available": "The system calculated the maximum cap. Activation from your account is still pending.",
       "access_required": "You can keep and view existing context, but your current access cannot request processing.",
       "configuration_required": "The complete processing policy for this preparation has not been configured.",

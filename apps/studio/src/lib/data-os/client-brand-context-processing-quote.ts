@@ -36,6 +36,7 @@ export type ClientBrandContextProcessingOperationStateV1 =
   | "running"
   | "recovering"
   | "awaiting_authorization"
+  | "guides_pending"
   | "completed"
   | "stale"
   | "failed";
@@ -123,7 +124,7 @@ const quoteReference = (value: unknown) => typeof value === "string" && /^qv1_[0
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value
   && typeof value === "object" && !Array.isArray(value));
 const operationStates = new Set<ClientBrandContextProcessingOperationStateV1>([
-  "queued", "running", "recovering", "awaiting_authorization", "completed", "stale", "failed"
+  "queued", "running", "recovering", "awaiting_authorization", "guides_pending", "completed", "stale", "failed"
 ]);
 const confirmationKinds = new Set<ClientBrandContextProcessingConfirmationKindV1>([
   "prepare_brand_context_within_shown_cap", "prepare_brand_context_prototypes_within_shown_cap",
@@ -191,7 +192,7 @@ export function validClientBrandContextProcessingViewV1(value: unknown): value i
   if (operation?.state === "failed" && Boolean(operation.next_action) !== value.can_start) return false;
   if (value.can_start && (value.status !== "quote_available" || value.quote === null
     || value.quote.reference === null
-    || operation && !["awaiting_authorization", "stale", "failed"].includes(operation.state))) return false;
+    || operation && !["awaiting_authorization", "guides_pending", "stale", "failed"].includes(operation.state))) return false;
   return !operation || !["queued", "running", "recovering", "completed"].includes(operation.state)
     || value.can_start === false;
 }
@@ -299,7 +300,7 @@ export function clientBrandContextProcessingCanConfirmV1(view: ClientBrandContex
   submitting = false) {
   return Boolean(view?.can_start && view.status === "quote_available" && view.quote
     && Date.parse(view.quote.expires_at) > Date.now() && !submitting
-    && (!view.operation || ["awaiting_authorization", "stale"].includes(view.operation.state)
+    && (!view.operation || ["awaiting_authorization", "guides_pending", "stale"].includes(view.operation.state)
       || clientBrandContextProcessingNeedsExplicitRenewalV1(view)
       || clientBrandContextProcessingCanRetrySemanticV1(view)));
 }
@@ -313,7 +314,7 @@ export function clientBrandContextProcessingConfirmationKindV1(
       throw new Error("brand_context_semantic_renewal_required");
     return "renew_brand_context_semantic_within_shown_cap";
   }
-  return view.operation?.state === "awaiting_authorization"
+  return view.operation?.state === "awaiting_authorization" || view.operation?.state === "guides_pending"
     ? "prepare_brand_context_prototypes_within_shown_cap"
     : "prepare_brand_context_within_shown_cap";
 }

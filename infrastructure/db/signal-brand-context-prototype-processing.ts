@@ -16,6 +16,7 @@ type Receipt={id:string;parent_receipt_id:string;workspace_id:string;generation_
   admission_id:string;run_id:string;pack_digest:string;plan:Record<string,unknown>;quote_digest:string;confirmation:string|null};
 type Authorization={replayed:boolean;run_id:string;receipt:Receipt};
 type Quote={quote_digest:string;quote_snapshot:{requires_provider:boolean;requires_confirmation:boolean;
+  refreshes_completed_plan?:boolean;
   authorization_state:string;pack_digest:string;supersedes_receipt_id:string|null;execution_cap_micro_usd:number|string;quote_expires_at:string;
   exposure:{confirmed_micro_usd:number|string;reserved_micro_usd:number|string;
     ambiguous_micro_usd:number|string;total_micro_usd:number|string}}};
@@ -23,6 +24,7 @@ type Quote={quote_digest:string;quote_snapshot:{requires_provider:boolean;requir
 export type SignalBrandContextPrototypeQuoteV1={contract_version:"brand-context-prototype-quote-v1";
   parent_receipt_id:string;workspace_id:string;supersedes_receipt_id:string|null;quote_digest:string;quoted_at:string;quote_expires_at:string;
   maximum_micro_usd:string;available_today_micro_usd:string;requires_provider:boolean;requires_confirmation:boolean;
+  refreshes_completed_plan?:boolean;
   authorization_state:"automatic_ready"|"awaiting_authorization"};
 
 function mapError(error:unknown):never{
@@ -92,6 +94,7 @@ function prototypeQuoteView(parent:{parent_receipt_id:string;workspace_id:string
     quote_expires_at:new Date(snapshot.quote_expires_at).toISOString(),maximum_micro_usd:String(snapshot.execution_cap_micro_usd),
     available_today_micro_usd:(dailyCap>exposure?dailyCap-exposure:0n).toString(),
     requires_provider:snapshot.requires_provider,requires_confirmation:snapshot.requires_confirmation,
+    refreshes_completed_plan:snapshot.refreshes_completed_plan===true,
     authorization_state:snapshot.authorization_state as "automatic_ready"|"awaiting_authorization"};
 }
 
@@ -154,6 +157,29 @@ export async function loadSignalBrandContextPrototypeQuoteV1(args:{database:Data
       actor_user_id:parent.actor_user_id});
     const quoted=await quotePreparedPrototypePlanV1(client,parent,plan);
     await client.query("COMMIT");return quoted.public;
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);mapError(error);}finally{client.release();}
+}
+
+/** Readiness is independent of a current spending quote. An expired policy must
+ * not turn changed guides back into a claim that they are prepared. */
+export async function loadSignalBrandContextPrototypePlanStateV1(args:{database:Database;parent_receipt_id:string;
+  actor_user_id:string},dependencies:{load_plan?:typeof loadSignalWorkspaceTopicPrototypePlanV1}={}){
+  if(!uuid.test(args.parent_receipt_id)||!uuid.test(args.actor_user_id))return fail("brand_context_prototype_request_invalid",422);
+  const client=await args.database.connect();
+  try{
+    await client.query("BEGIN READ ONLY");
+    const prior=(await client.query<{workspace_id:string;plan_digest:string;status:string}>(`SELECT parent.workspace_id::text,
+      child.plan_digest,run.status FROM signal_brand_context_processing_receipts parent
+      JOIN signal_brand_context_prototype_receipts child ON child.parent_receipt_id=parent.id
+      JOIN signal_workspace_embedding_runs run ON run.id=child.run_id AND run.processing_admission_id=child.admission_id
+      WHERE parent.id=$1::uuid AND parent.actor_user_id=$2::uuid
+       AND NOT EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts successor WHERE successor.supersedes_receipt_id=child.id)`,
+      [args.parent_receipt_id,args.actor_user_id])).rows[0];
+    if(!prior)return fail("brand_context_prototype_receipt_invalid");
+    const plan=await (dependencies.load_plan??loadSignalWorkspaceTopicPrototypePlanV1)({queryable:client,
+      workspace_id:prior.workspace_id,actor_user_id:args.actor_user_id});
+    await client.query("COMMIT");
+    return{guides_pending:prior.status==="completed"&&prior.plan_digest!==plan.plan_digest};
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);mapError(error);}finally{client.release();}
 }
 
@@ -274,6 +300,7 @@ export async function startSignalBrandContextPrototypeProcessingV1(args:{databas
           AND cache.config_digest=$1::jsonb->'embedding_profile'->>'config_digest' AND cache.chunk_sha256=input.text_sha256)) required`,
         [JSON.stringify(prior.plan),parent.workspace_id])).rows[0]?.required??true;
     }else{
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${parent.workspace_id}:topic`]);
       const published=await (dependencies.publish??publishSignalBrandContextComposedGenerationWithQueryableV1)({queryable:client,
         parent_receipt_id:args.parent_receipt_id,actor_user_id:args.actor_user_id});
       await (dependencies.ensure_catalog??ensureSignalBrandContextPrototypeCatalogStoreV1)({client,workspace_id:parent.workspace_id,
@@ -291,6 +318,8 @@ export async function startSignalBrandContextPrototypeProcessingV1(args:{databas
       if(quoted.quote_snapshot.supersedes_receipt_id!==null&&args.expected_quote_digest===undefined
         ||args.expected_quote_digest!==undefined&&args.expected_quote_digest!==quoted.quote_digest)
         return fail("brand_context_prototype_quote_changed");
+      if(quoted.quote_snapshot.refreshes_completed_plan===true&&args.confirmation!==confirmation)
+        return fail("brand_context_prototype_awaiting_authorization");
       requiresProvider=quoted.quote_snapshot.requires_provider===true;
       if(requiresProvider&&!args.provider_available)return fail("brand_context_prototype_runtime_unavailable",503);
       result=await authorize(client,{parent_receipt_id:args.parent_receipt_id,actor_user_id:args.actor_user_id,

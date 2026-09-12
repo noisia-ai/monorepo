@@ -13,10 +13,14 @@ import { clientProcessingPolicyForWorkspaceV1, clientProcessingRouteMaximumMicro
 
 const paidStages: ClientProcessingStageV1[] = ["vectors", "analyze"];
 
-export function ClientProcessingJourney({ workspaceId, initial = null, initialPreparation = null, onAccessDenied }: {
+export function ClientProcessingJourney({ workspaceId, initial = null, initialPreparation = null,
+  allowInterestPreparation = false, preparationDisabled = false, catalogVersion, onAccessDenied }: {
   workspaceId: string;
   initial?: ClientProcessingPolicyViewV1 | null;
   initialPreparation?: ClientCorpusPreparationViewV1 | null;
+  allowInterestPreparation?: boolean;
+  preparationDisabled?: boolean;
+  catalogVersion?: string;
   onAccessDenied?: () => void;
 }) {
   const t = useTranslations("ClientProcessing");
@@ -94,8 +98,9 @@ export function ClientProcessingJourney({ workspaceId, initial = null, initialPr
         </>}
         {canRequest ? <p className="admin-drawer-form__hint">{t("quoteNotice")}</p> : null}
       </> : null}
-      <ClientBrandContextProcessingQuote workspaceId={workspaceId} variant="compact"
-        refreshSignal={String(quoteRefreshSignal)} onAccessDenied={onAccessDenied}/>
+      <ClientBrandContextProcessingQuote workspaceId={workspaceId} variant={allowInterestPreparation ? "full" : "compact"}
+        prototypeOnly authorizeFromEndpoint={allowInterestPreparation} disabled={preparationDisabled}
+        refreshSignal={`${catalogVersion ?? ""}:${quoteRefreshSignal}`} onAccessDenied={onAccessDenied}/>
       <ol className="client-processing-journey__steps">
         <ClientCorpusPreparationStep workspaceId={workspaceId} index={0} initial={initialPreparation}
           onAccessDenied={onAccessDenied}/>

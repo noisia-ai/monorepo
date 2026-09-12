@@ -4,6 +4,16 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **Entrada semántica de marca nueva cerrada LOCAL — 2026-09-12 01:25 UTC.** Checkout
+> `noisia-brand-context-e2e-2026-09-10`, base UAT/docs `82f0e0f`; SQL0161 todavía no UAT. Alta
+> cliente deriva slug y grant admin de marca, la preparación gratuita no depende de proveedor/cola,
+> el servidor provisiona una política inicial sólo con creador financiero interno configurado y el
+> refresco explícito de guías reutiliza caché sin repetir Claude. PG compuesto SQL0141–0161:10PASS,
+> incluye `outcome_unknown`, rollback/base temporal/269 censos exactos y0transportes. Studio1001/7,
+> Worker564/42, DB suite, TC/lint/build y revisión0P0/P1/P2 cerrados. Leer
+> `DELIVERY_NEW_BRAND_SEMANTIC_ENTRY_LOCAL_2026-09-11.md`. Siguiente: preflight UAT, aplicar0161 una
+> vez, Worker→Studio→QA interfaz. No repetir SQL0153–0160/imports/Voyage/fit; no Opus ni producción.
+
 > **Renovación semántica vencida entregada UAT — 2026-09-12 00:40 UTC.** Producto `ce5f0c1`,
 > marcador Studio `7ad767e`; Worker `c4086604-2dac-4160-b2fc-bef373c3a580` y Studio
 > `b7a7885b-889b-4162-9e25-ca2b9184e728` activos, anteriores retirados y autodeploy restaurado.

@@ -186,6 +186,11 @@ test("brand creation API requires the same UUID for the durable write and its pr
   assert.match(source, /id:\s*mutationId/u);
 });
 
+test("client brand creation derives its hidden URL slug from the brand name", async () => {
+  const source = await readFile(new URL("../components/brands/BrandOsForm.tsx", import.meta.url), "utf8");
+  assert.match(source, /const slug = slugify\(String\(form\.get\("slug"\)[\s\S]{0,40}\|\| name\)/u);
+});
+
 test("automatic and editable knowledge share an explicit source limit without tail truncation", () => {
   const aliases = Array.from({ length: 100 }, (_, index) => `alias-${index}-${"a".repeat(220)}`);
   const competitors = Array.from({ length: 100 }, (_, index) => `competitor-${index}-${"b".repeat(215)}`);
@@ -249,6 +254,11 @@ for (const locale of ["es-MX", "en-US"]) {
   test(`${locale}: creation has deterministic UTC SSR while edit preserves saved timezone`, () => {
     const created = render(<BrandOsForm />);
     assert.match(created, /name="timezone" type="hidden" value="UTC"/u);
+    assert.match(created, /name="slug"/u);
+    assert.ok(created.includes(messages.BrandOs.form.create));
+    assert.ok(created.includes(messages.BrandOs.form.competitorsPlaceholder));
+    assert.ok(created.includes(messages.BrandOs.form.expandField));
+    assert.ok(created.includes(messages.BrandOs.form.openCatalog.replace("{label}", messages.BrandOs.form.industry)));
     assert.doesNotMatch(created, /brand-ai-start|brand-ai-refine|field-ai-suggestion/u);
     assert.match(created, /maxLength="100000" name="knowledge_notes"/u);
     for (const key of ["brand", "aliases", "competitors", "description", "notes"] as const) {
@@ -269,7 +279,8 @@ for (const locale of ["es-MX", "en-US"]) {
   test(`${locale}: client admin Brand OS is organization-scoped and never renders paid preparation`, () => {
     const created = render(<BrandOsForm clientContext={{ organizationId: "org-one", organizationName: "Client organization" }} />);
     assert.ok(created.includes("Client organization"));
-    assert.doesNotMatch(created, /name="organization_name"|brand-context-preparation-notice|\/studio/u);
+    assert.ok(created.includes(messages.BrandOs.form.createClient));
+    assert.doesNotMatch(created, /name="organization_name"|name="slug"|brand-context-preparation-notice|\/studio/u);
     const edited = render(<BrandEditForm brand={{ id: "brand-one", organizationId: "org-one", slug: "brand-one", name: "Client brand", displayName: null,
       industry: "Retail", industrySub: null, countries: ["MX"], description: "Context", brandSeedHandles: [], status: "active", timezone: "UTC" }}
       organizations={[]} clientContext={{ workspaceSlug: "brand-one", organizationName: "Client organization" }} />);

@@ -32,6 +32,7 @@ import { buildAutomaticBrandContextText } from "@/lib/data-os/brand-automatic-kn
 import { brandCreationRequestDigestV1, storedBrandCreationRequestDigestV1 } from "@/lib/data-os/brand-creation-idempotency";
 import { signalBrandOsCanonicalSnapshotHashV1 } from "@/lib/data-os/signal-governance-control-plane";
 import { ensureBrandContextAfterCommittedMutationV1 } from "@/lib/data-os/signal-brand-context-preparation";
+import { provisionBrandContextPolicyAfterCreationV1 } from "@/lib/data-os/brand-context-policy-provisioning";
 import { createBrandSchema } from "@/lib/validation/brand";
 
 type BrandIntakeTx = Pick<typeof db, "execute" | "insert" | "select" | "update">;
@@ -360,6 +361,12 @@ export async function POST(request: Request) {
       return { brand: createdBrand, signalWorkspace, replayed: false };
     });
 
+    const processingPolicy = await provisionBrandContextPolicyAfterCreationV1({
+      brandId: created.brand.id,
+      workspaceId: created.signalWorkspace.id,
+      actor: session.appUser,
+      enabled: created.brand.status === "active"
+    });
     const preparation = await ensureBrandContextAfterCommittedMutationV1({
       brandId: created.brand.id,
       actor: session.appUser,
@@ -375,6 +382,7 @@ export async function POST(request: Request) {
         slug: created.signalWorkspace.slug
       },
       brand_context_preparation: preparation,
+      brand_context_policy: processingPolicy,
       replayed: created.replayed
     }, { status: 201 });
   } catch (err) {
@@ -386,7 +394,9 @@ export async function POST(request: Request) {
       return Response.json(
         {
           error: "duplicate_brand",
-          message: "Ya existe una marca con ese slug. Cambia el slug o abre la marca existente."
+          message: clientCreation.allowed
+            ? "Ya existe una marca con ese identificador. Vuelve a intentar o abre la marca existente."
+            : "Ya existe una marca con ese slug. Cambia el slug o abre la marca existente."
         },
         { status: 409 }
       );

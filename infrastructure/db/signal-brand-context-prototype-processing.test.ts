@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
 import {readFileSync} from "node:fs";
 import test from "node:test";
-import {advanceSignalBrandContextComposedProcessingV1,startSignalBrandContextPrototypeProcessingV1} from "./signal-brand-context-prototype-processing";
+import {loadSignalBrandContextPrototypePlanStateV1,advanceSignalBrandContextComposedProcessingV1,startSignalBrandContextPrototypeProcessingV1} from "./signal-brand-context-prototype-processing";
 import type {Pool} from "pg";
 
 const adapter=readFileSync(new URL("./signal-brand-context-prototype-processing.ts",import.meta.url),"utf8");
@@ -238,7 +238,7 @@ function recoveryAdapterFixture(){
   const receipts=new Map<string,Row>();const states=new Map<string,string>();
   const counters={quotes:0,authorizations:0,creates:0,publish:0,catalog:0,plan:0,rollbacks:0};
   let sqlDenial:string|null=null,actorAllowed=true,ackLost=false,uncached=true;
-  let latestChild:string|null=predecessor;
+  let latestChild:string|null=predecessor;let refreshCompleted=false;
   let snapshot:{receipts:Array<[string,Row]>;states:Array<[string,string]>;creates:number}|null=null;
   const query=async(sql:string,values:unknown[]=[])=>{
     if(sql.startsWith("BEGIN")){snapshot={receipts:structuredClone([...receipts]),states:[...states],creates:counters.creates};return{rows:[]};}
@@ -254,7 +254,7 @@ function recoveryAdapterFixture(){
       counters.quotes++;assert.deepEqual(values.slice(0,2),[parent,actor]);
       if(sqlDenial)throw new Error(sqlDenial);
       return{rows:[{value:{quote_digest:quoteDigest,quote_snapshot:{pack_digest:pack,
-        supersedes_receipt_id:latestChild,requires_provider:uncached,requires_confirmation:uncached&&latestChild!==null}}}]};}
+        supersedes_receipt_id:latestChild,refreshes_completed_plan:refreshCompleted,requires_provider:uncached,requires_confirmation:refreshCompleted||uncached&&latestChild!==null}}}]};}
     if(sql.includes("authorize_signal_brand_context_prototypes_v1")){
       counters.authorizations++;assert.equal(values[0],parent);assert.equal(values[1],actor);
       if(!actorAllowed)throw new Error("processing_forbidden");
@@ -284,7 +284,7 @@ function recoveryAdapterFixture(){
     expected_quote_digest:quoteDigest,provider_available:true};
   return{args,dependencies,counters,receipts,states,quoteDigest,predecessor,
     deny:(code:string)=>{sqlDenial=code;},revoke:()=>{actorAllowed=false;},loseAck:()=>{ackLost=true;},cache:()=>{uncached=false;},
-    initial:()=>{latestChild=null;}};
+    refresh:()=>{refreshCompleted=true;},initial:()=>{latestChild=null;}};
 }
 
 test("DNC successor uses the current server quote and one new decision key",async()=>{
@@ -364,4 +364,49 @@ test("initial automatic Stage2 is unchanged, but a paid DNC successor still need
   const retry=recoveryAdapterFixture();await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1(
     {...retry.args,confirmation:undefined},retry.dependencies),{message:"brand_context_prototype_awaiting_authorization"});
   assert.equal(retry.receipts.size,0);assert.equal(retry.counters.creates,0);
+});
+
+
+test("completed-plan refresh requires explicit confirmation even with full cache and provider off", async () => {
+  const f=recoveryAdapterFixture();f.refresh();f.cache();
+  await assert.rejects(()=>startSignalBrandContextPrototypeProcessingV1({...f.args,
+    confirmation:undefined,provider_available:false},f.dependencies),{message:"brand_context_prototype_awaiting_authorization"});
+  assert.equal(f.counters.creates,0);assert.equal(f.counters.authorizations,0);
+  const first=await startSignalBrandContextPrototypeProcessingV1({...f.args,provider_available:false},f.dependencies);
+  assert.equal(first.requires_provider,false);assert.equal(first.state,"queued");
+  const replay=await startSignalBrandContextPrototypeProcessingV1({...f.args,provider_available:false},f.dependencies);
+  assert.equal(replay.receipt_id,first.receipt_id);assert.equal(replay.replayed,true);assert.equal(f.counters.creates,1);
+});
+
+test("guide readiness compares the current server plan without asking for policy or provider", async () => {
+  const parent=randomUUID(),actor=randomUUID(),workspace=randomUUID(),queries:string[]=[];
+  let current="new-plan";
+  const database={connect:async()=>({release:()=>{},query:async(sql:string,params:unknown[]=[])=>{
+    queries.push(sql);
+    if(sql.includes("SELECT parent.workspace_id")){
+      assert.deepEqual(params,[parent,actor]);return{rows:[{workspace_id:workspace,plan_digest:"old-plan",status:"completed"}]};}
+    return{rows:[]};
+  }})} as unknown as Pool;
+  const dependencies={load_plan:async(args:{workspace_id:string;actor_user_id:string})=>{
+    assert.equal(args.workspace_id,workspace);assert.equal(args.actor_user_id,actor);return{plan_digest:current} as never;}};
+  assert.deepEqual(await loadSignalBrandContextPrototypePlanStateV1({database,parent_receipt_id:parent,actor_user_id:actor},dependencies),{guides_pending:true});
+  current="old-plan";
+  assert.deepEqual(await loadSignalBrandContextPrototypePlanStateV1({database,parent_receipt_id:parent,actor_user_id:actor},dependencies),{guides_pending:false});
+  assert.doesNotMatch(queries.join("\n"),/UPDATE|INSERT|authorize_|quote_signal|processing_policy/u);
+});
+
+
+test("a cached DNC continuation of an explicit refresh still waits for the user", async()=>{
+  const parent=randomUUID(),predecessor=randomUUID();let starts=0;
+  const result=await advanceSignalBrandContextComposedProcessingV1({database:{} as never,
+    semantic_run_id:randomUUID(),provider_available:false,
+    load_parent:async()=>({parent_receipt_id:parent,workspace_id:randomUUID(),actor_user_id:randomUUID(),
+      child_receipt_id:predecessor,child_run_id:randomUUID(),child_status:"failed",child_idempotency_key:"refresh-failed-key"}),
+    prepare_quote:async()=>({contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:parent,
+      workspace_id:randomUUID(),supersedes_receipt_id:predecessor,quote_digest:`sha256:${"a".repeat(64)}`,
+      quoted_at:new Date().toISOString(),quote_expires_at:"2999-01-01T00:00:00.000Z",maximum_micro_usd:"0",
+      available_today_micro_usd:"0",requires_provider:false,requires_confirmation:true,refreshes_completed_plan:true,
+      authorization_state:"awaiting_authorization"}),
+    start_processing:async()=>{starts++;throw new Error("refresh_must_not_start_automatically");}});
+  assert.equal(result.state,"awaiting_authorization");assert.equal(starts,0);
 });

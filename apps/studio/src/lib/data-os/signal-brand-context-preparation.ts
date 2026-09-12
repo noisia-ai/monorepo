@@ -5,6 +5,7 @@ import {
   quoteSignalBrandContextPreparationV1,
   reconcileSignalBrandContextSourceV1,
   signalBrandContextPreparationRuntimeFromEnvV1,
+  signalSemanticContextProposalRuntimeConfigurationFromEnvV1,
   type SignalBrandContextPreparationAdmissionV1,
   type SignalBrandContextPreparationRuntimeV1,
   type SignalBrandContextPreparationV1
@@ -239,14 +240,16 @@ export async function reconcileClientBrandContextForWorkspaceV1(args: {
       ORDER BY generation_version DESC
       LIMIT 1
     `, [args.workspaceId]);
-    const runtime = await loadBrandContextPreparationRuntimeV1();
+    // This free reconciliation seals source lineage, not permission to send. It
+    // needs valid server configuration but neither provider credentials nor queue health.
+    const configuration = signalSemanticContextProposalRuntimeConfigurationFromEnvV1();
     const reconciliation = await reconcileSignalBrandContextSourceV1({
       database: pool,
       workspace_id: args.workspaceId,
       actor_user_id: args.actor.id,
       idempotency_key: args.idempotencyKey,
       expected_generation_id: head.rows[0]?.generation_id ?? null,
-      configuration: runtime.semantic
+      configuration
     });
     const loaded = await loadSignalBrandContextPreparationV1({
       database: pool,

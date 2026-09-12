@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  resolveSignalWorkspaceCapabilitiesV1,
+  signalBrandContextPreparationRuntimeFromEnvV1,
+  signalSemanticContextProposalRuntimeConfigurationFromEnvV1
+} from "@noisia/db";
 
 import {
   clientBrandContextAccessDecisionV1,
@@ -21,7 +26,7 @@ test("only an active client admin with a DB organization can start self-service 
   assert.deepEqual(clientBrandCreationDecisionV1(clientAdmin), {
     allowed: true,
     organizationId: clientAdmin.organizationId,
-    accessLevel: "comment"
+    accessLevel: "admin"
   });
   for (const actor of [
     { ...clientAdmin, userType: "noisia_internal" },
@@ -31,6 +36,35 @@ test("only an active client admin with a DB organization can start self-service 
     { ...clientAdmin, organizationId: null },
     { ...clientAdmin, status: "suspended" }
   ]) assert.deepEqual(clientBrandCreationDecisionV1(actor), { allowed: false });
+});
+
+test("the new brand creator can request a policy-bound quote without receiving execution or adoption rights", () => {
+  const creation = clientBrandCreationDecisionV1(clientAdmin);
+  assert.equal(creation.allowed, true);
+  if (!creation.allowed) throw new Error("expected creation authority");
+  const authority = {
+    workspace_status: "active", brand_status: "active", actor_status: clientAdmin.status,
+    user_type: clientAdmin.userType, primary_role: clientAdmin.primaryRole,
+    same_organization: true, brand_access_level: creation.accessLevel,
+    organization_status: "active", brand_same_organization: true
+  };
+  const capability = resolveSignalWorkspaceCapabilitiesV1(authority);
+  assert.equal(capability.can_request_processing, true);
+  assert.equal(capability.can_execute_topics, false);
+  assert.equal(capability.can_adopt_topics, false);
+  for (const changed of [
+    { ...authority, brand_access_level: null }, // revoked grant is absent from the live reader
+    { ...authority, brand_access_level: "comment" }, // existing grants are not upgraded
+    { ...authority, primary_role: "client_viewer" },
+    { ...authority, primary_role: "brand_manager" },
+    { ...authority, primary_role: "client_owner" },
+    { ...authority, actor_status: "suspended" },
+    { ...authority, organization_status: "suspended" },
+    { ...authority, workspace_status: "archived" },
+    { ...authority, brand_status: "archived" },
+    { ...authority, same_organization: false },
+    { ...authority, brand_same_organization: false }
+  ]) assert.equal(resolveSignalWorkspaceCapabilitiesV1(changed).can_request_processing, false);
 });
 
 test("Brand OS editing requires an unrevoked writable grant in the actor's current organization", () => {
@@ -83,9 +117,17 @@ test("client create derives ownership and strips provider admission or privilege
   assert.equal(result.ok, true);
   if (!result.ok) throw new Error("expected canonical input");
   assert.equal(result.value.organization_id, clientAdmin.organizationId);
+  assert.equal(result.value.slug, "new-brand-10000000");
   assert.equal(result.value.primary_brand_manager_user_id, clientAdmin.id);
   assert.deepEqual(result.value.preparation, { idempotency_key: key });
   assert.equal("organization_name" in result.value, false);
+
+  const sameNameDifferentRequest = canonicalClientBrandCreateRequestV1({
+    actor: clientAdmin, authority: decision, mutationId: "20000000-0000-4000-8000-000000000001",
+    input: { ...result.value, slug: "ignored-client-value", name: "New brand" }
+  });
+  assert.equal(sameNameDifferentRequest.ok, true);
+  if (sameNameDifferentRequest.ok) assert.equal(sameNameDifferentRequest.value.slug, "new-brand-20000000");
 
   assert.equal(canonicalClientBrandCreateRequestV1({ actor: clientAdmin, authority: decision, mutationId: key,
     input: { ...result.value, organization_id: "00000000-0000-4000-8000-000000000099" } }).ok, false);
@@ -139,6 +181,15 @@ test("brand creation grant and workspace are committed by the same transaction a
   assert.match(route, /\.returning\(\{ id: userBrandAccess\.id \}\)[\s\S]{0,120}if \(!granted\) throw/u);
   assert.match(route, /existingWorkspace\.status !== "active"[\s\S]{0,150}existingWorkspace\.organizationId !== expectedOrganizationId/u);
   assert.match(route, /existingWorkspace\.status !== "active"[\s\S]{0,150}existingWorkspace\.organizationId !== organizationId/u);
+  const replay = route.slice(route.indexOf("async function verifyClientBrandCreationReplayV1"),
+    route.indexOf("function clientBrandScopeForbidden"));
+  assert.match(replay, /metadata\.created_by_user_id !== args\.actorUserId/u);
+  assert.match(replay, /eq\(userBrandAccess\.userId, args\.actorUserId\)/u);
+  assert.match(replay, /eq\(userBrandAccess\.brandId, args\.brandId\)/u);
+  assert.match(replay, /userBrandAccess\.revokedAt\} IS NULL/u);
+  assert.match(replay, /userBrandAccess\.accessLevel\} IN \('comment','admin'\)/u);
+  assert.doesNotMatch(replay, /\.(?:insert|update|delete)\(/u);
+  assert.equal((route.match(/\.insert\(userBrandAccess\)/gu) ?? []).length, 1);
 });
 
 test("client Brand OS routes recheck exact writable authority and expose no global Studio entrance", async () => {
@@ -186,6 +237,8 @@ test("committed client Brand OS mutations reconcile source authority without adm
   assert.match(source, /reconciliation\.state === "awaiting_settlement"/u);
   const clientBranch = source.slice(source.indexOf("async function reconcileClientBrandContextAfterCommittedMutationV1"));
   assert.doesNotMatch(clientBranch, /advanceSignalBrandContextPreparationsV1|quote_digest|processing_admission/u);
+  assert.doesNotMatch(clientBranch, /loadBrandContextPreparationRuntimeV1|loadSemanticContextProposalRuntimeReadiness/u);
+  assert.match(clientBranch, /configuration\s*=\s*signalSemanticContextProposalRuntimeConfigurationFromEnvV1\(\)/u);
   const postRoute=route.slice(route.indexOf("export async function POST"));
   assert.match(postRoute, /loadSignalWorkspaceContextForTopics\(workspaceId\)/u);
   assert.doesNotMatch(postRoute.slice(0,postRoute.indexOf("const idempotencyKey")),
@@ -193,4 +246,29 @@ test("committed client Brand OS mutations reconcile source authority without adm
   assert.match(route, /appUser\.userType === "client"[\s\S]{0,260}reconcileClientBrandContextForWorkspaceV1/u);
   assert.ok(route.indexOf("reconcileClientBrandContextForWorkspaceV1({")
     < route.indexOf("refreshAutomaticBrandContextKnowledgeV1("));
+});
+
+test("valid source configuration needs no provider credentials or queue health; paid runtime remains unavailable", () => {
+  const env = {
+    NOISIA_SEMANTIC_CONTEXT_MODEL: "claude-sonnet-4-6",
+    NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION: "claude-sonnet-4-6",
+    NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION: "synthetic-source-only-v1",
+    NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS: "20000",
+    NOISIA_SEMANTIC_CONTEXT_MAX_OUTPUT_TOKENS: "64000",
+    NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS: "3",
+    NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS: "15",
+    NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD: "1000000"
+  };
+  const configuration = signalSemanticContextProposalRuntimeConfigurationFromEnvV1(env);
+  assert.equal(configuration.available, true);
+  for (const key of ["NOISIA_SEMANTIC_CONTEXT_MODEL", "NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS",
+    "NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION", "NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD"] as const) {
+    assert.equal(signalSemanticContextProposalRuntimeConfigurationFromEnvV1({ ...env, [key]: "" }).available, false);
+  }
+  const runtime = signalBrandContextPreparationRuntimeFromEnvV1(env, {
+    queue_configured: false, worker_alive: false, recovery_alive: false
+  });
+  assert.equal(runtime.semantic.available, false);
+  assert.equal(runtime.prototype.available, false);
+  assert.deepEqual({ ...runtime.semantic, available: true }, configuration);
 });

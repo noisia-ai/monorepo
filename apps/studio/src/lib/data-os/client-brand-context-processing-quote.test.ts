@@ -276,7 +276,7 @@ test("server authorizes Stage 2 only from its explicit confirmation and a fresh 
     "export async function startClientBrandContextPrototypeProcessingForActorV1"),
   serverAdapter.indexOf("export async function startClientBrandContextProcessingForActorV1"));
   for (const marker of ["loadLatestProcessingRowV1", "semantic_status!==\"completed\"",
-    "generation_status!==\"published\"", "operation.child_receipt_id", "operation.child_idempotency_key",
+    "generation_status!==\"published\"", "loadPrototypeRequestReceiptV1", "prior.parent_receipt_id", "prior.quote_digest",
     "args.runtime.prototype.available", "loadSignalBrandContextPrototypeQuoteV1", "expectedQuoteMatchesV1",
     "prototypeQuote.requires_confirmation", "startSignalBrandContextPrototypeProcessingV1",
     'confirmation:"prepare_brand_context_prototypes_within_shown_cap"'])
@@ -292,6 +292,10 @@ test("lost Stage 2 HTTP acknowledgement replays only the same parent, actor and 
   const runtime={queue_configured:true,worker_alive:true,recovery_alive:true,
     semantic:{available:true},prototype:{available:true}} as SignalBrandContextPreparationRuntimeV1;
   const dependencies={
+    loadReceipt:async(_db:unknown,_workspace:string,_actor:string,key:string)=>created&&key==="stage2-request-key"?{
+      parent_receipt_id:receipt,quote_digest:digest,confirmation:request.confirmation,
+      maximum_micro_usd:request.expected_quote.maximum_micro_usd,available_today_micro_usd:request.expected_quote.available_today_micro_usd,
+      expires_at:request.expected_quote.expires_at}:null,
     loadOperation:async()=>({observed_at:"2026-09-11T12:00:00.000Z",receipt_id:receipt,
       authorization_not_after:"2026-09-11T12:05:00.000Z",semantic_cap_micro_usd:"600000",
       prototype_cap_micro_usd:"100000",semantic_retry_maximum_micro_usd:"600000",
@@ -340,7 +344,8 @@ test("a new Stage 2 decision can replace only a server-quoted DNC leaf",async()=
   const starts:unknown[]=[];
   const result=await startClientBrandContextPrototypeProcessingForActorV1({workspaceId,
     actorUserId:"00000000-0000-4000-8000-000000000004",idempotencyKey:"stage2-successor-key",body,
-    database:{} as never,runtime:{prototype:{available:true}} as SignalBrandContextPreparationRuntimeV1},{
+    database:{} as never,runtime:{queue_configured:true,worker_alive:true,prototype:{available:true}} as SignalBrandContextPreparationRuntimeV1},{
+    loadReceipt:async()=>null,
     loadOperation:async()=>({observed_at:"2026-09-11T12:00:00.000Z",receipt_id:receipt,
       authorization_not_after:"2026-09-11T12:05:00.000Z",semantic_cap_micro_usd:"600000",
       prototype_cap_micro_usd:"100000",semantic_retry_maximum_micro_usd:"600000",
@@ -578,11 +583,11 @@ for (const locale of ["es-MX", "en-US"] as const) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const copy = messages.ClientBrandContextProcessing;
   const render = (variant: "full" | "compact", initial: ClientBrandContextProcessingViewV1
-    | ReturnType<typeof toClientBrandContextProcessingQuoteViewV1> = publicQuote, authorize?: () => Promise<unknown>) =>
+    | ReturnType<typeof toClientBrandContextProcessingQuoteViewV1> = publicQuote, authorize?: () => Promise<unknown>, extra: Partial<ComponentProps<typeof ClientBrandContextProcessingQuote>> = {}) =>
     renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(ClientBrandContextProcessingQuote, {
-      workspaceId, variant, initial, authorize
+      workspaceId, variant, initial, authorize, ...extra
     })));
 
   test(`${locale}: the Brand Context quote is read-only, sanitized and distinct from corpus vectors`, () => {
@@ -623,6 +628,21 @@ for (const locale of ["es-MX", "en-US"] as const) {
     assert.match(enabled, /aria-describedby="client-brand-context-confirmation-help"/u);
     assert.match(enabled, /data-processing-state="awaiting_authorization"/u);
     assert.doesNotMatch(render("compact", prototypeAuthorizationView, authorizer), /admin-button--primary/u);
+  });
+
+  test(`${locale}: changed guides show context ready and one explicit cached refresh`, () => {
+    const pending={...prototypeAuthorizationView,operation:{state:"guides_pending" as const,phase:null,
+      request_observed:true,next_action:null},quote:{...prototypeAuthorizationView.quote!,maximum_micro_usd:"0"}};
+    const html=render("full",pending,async()=>operationView("queued","waiting"));
+    assert.ok(html.includes(copy.states.guides_pending));assert.ok(html.includes(copy.help.guides_pending));
+    assert.ok(html.includes(copy.authorizationRefresh.split("{maximum}")[0]));
+    assert.equal(html.match(/admin-button--primary/gu)?.length,1);
+    const blocked=render("full",{...pending,can_start:false,status:"processing_paused",quote:null},async()=>{throw new Error("no_authorization");});
+    assert.ok(blocked.includes(copy.help.guides_pending));assert.doesNotMatch(blocked,/admin-button--primary/u);
+    const unsaved=render("full",pending,async()=>operationView("queued","waiting"),{prototypeOnly:true,disabled:true});
+    assert.match(unsaved,/class="admin-button admin-button--primary" disabled=""/u);
+    assert.doesNotMatch(render("full",availableView,async()=>operationView("queued","waiting"),{prototypeOnly:true}),/admin-button--primary/u);
+
   });
 
   test(`${locale}: failed Stage 1 exposes only the server-selected retry or renewal`, () => {
@@ -681,4 +701,20 @@ test("Brand Context progress and its single confirmation remain usable on narrow
   assert.match(css, /@media \(max-width: 600px\)[\s\S]*?\.client-brand-context-quote__head \{ flex-direction: column; \}/u);
   assert.match(css, /\.client-brand-context-quote__amounts \{ display: grid; grid-template-columns: 1fr; \}/u);
   assert.match(css, /\.client-brand-context-quote__confirmation, \.client-brand-context-quote__confirmation \.admin-button \{ width: 100%; \}/u);
+});
+
+
+test("changed interests are a separate explicit preparation, including a cached zero cap", async () => {
+  const pending = { ...prototypeAuthorizationView, operation: {
+    state: "guides_pending", phase: null, request_observed: true, next_action: null
+  }, quote: { ...prototypeAuthorizationView.quote!, maximum_micro_usd: "0" } } as ClientBrandContextProcessingViewV1;
+  assert.equal(validClientBrandContextProcessingViewV1(pending), true);
+  assert.equal(clientBrandContextProcessingCanConfirmV1(pending), true);
+  assert.equal(clientBrandContextProcessingPollDelayV1(pending), null);
+  const request = clientBrandContextProcessingRequestV1(null, pending, () => "refresh-guides-key");
+  assert.equal(clientBrandContextProcessingConfirmationV1(request).confirmation,
+    "prepare_brand_context_prototypes_within_shown_cap");
+  assert.equal(validClientBrandContextProcessingViewV1({ ...pending, can_start: false,
+    status: "processing_paused", quote: null }), true);
+  assert.equal(clientBrandContextProcessingCanConfirmV1({ ...pending, can_start: false }), false);
 });

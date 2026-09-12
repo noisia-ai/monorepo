@@ -132,13 +132,21 @@
       "aliases": "Aliases / handles",
       "aliasesPlaceholder": "@marca, marca sin acento, app...",
       "competitors": "Competidores",
+      "competitorsPlaceholder": "Ulta Beauty, Liverpool, Palacio de Hierro...",
       "competitorsHint": "Sólo nombres de competidores, uno por línea. No pegues rankings, links, tablas o bullets de ChatGPT aquí; eso va en Notas de Knowledge Base.",
       "notes": "Notas de Knowledge Base",
       "notesPlaceholder": "Qué vende, qué promete, fricciones conocidas, canales importantes, campañas recientes, restricciones legales u operativas...",
       "creating": "Creando...",
       "create": "Crear marca y continuar",
+      "createClient": "Crear y completar Brand OS",
       "fallbackCreateError": "No se pudo crear la marca.",
       "contextPending": "La marca quedó creada, pero falta completar su contexto semántico. Vuelve a guardar para recuperar la misma creación.",
+      "expandField": "Ampliar campo",
+      "collapseField": "Contraer campo",
+      "openCatalog": "Abrir catálogo de {label}",
+      "useCustom": "Usar valor personalizado: {value}",
+      "noCatalogMatches": "No hay opciones que coincidan.",
+      "removeToken": "Quitar {label}",
       "fieldFallback": "campo",
       "invalidFallback": "inválido"
     }
@@ -3974,6 +3982,7 @@
     }
   },
   "ClientBrandContextProcessing": {
+    "authorizationRefresh": "Preparar los intereses actuales con un máximo de {maximum}. Disponible hoy: {available}. Se reutilizarán los vectores guardados.",
     "title": "Preparación semántica de la marca",
     "body": "Convierte el contexto de Brand OS y tus fuentes de conocimiento en una base semántica reutilizable para Topics.",
     "compactBody": "Comprueba que el contexto de marca y los intereses estén listos antes de crear los vectores del corpus.",
@@ -3998,6 +4007,7 @@
     "retry": "Reintentar preparación",
     "retrying": "Reintentando…",
     "states": {
+      "guides_pending": "Intereses pendientes de preparar",
       "quote_available": "Costo máximo calculado",
       "access_required": "Acceso requerido",
       "configuration_required": "Procesamiento sin configurar",
@@ -4018,6 +4028,7 @@
       "failed": "Preparación interrumpida"
     },
     "help": {
+      "guides_pending": "El contexto de marca está listo. Los intereses cambiaron; prepara sus guías para los próximos análisis. Las menciones se cargan por separado.",
       "quote_available": "El sistema calculó el tope máximo. La activación desde tu cuenta todavía está pendiente.",
       "access_required": "Puedes conservar y consultar el contexto existente, pero tu acceso actual no permite solicitar procesamiento.",
       "configuration_required": "Falta configurar la política completa para esta preparación.",

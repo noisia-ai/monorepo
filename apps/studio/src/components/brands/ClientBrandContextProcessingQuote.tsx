@@ -44,7 +44,7 @@ function initialProcessingView(value: ClientBrandContextProcessingViewV1 | Clien
 }
 
 export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full", refreshSignal,
-  initial = null, authorize, authorizeFromEndpoint = false, onAccessDenied }: {
+  initial = null, authorize, authorizeFromEndpoint = false, prototypeOnly = false, disabled = false, onAccessDenied }: {
   workspaceId: string;
   variant?: "full" | "compact";
   refreshSignal?: string;
@@ -52,6 +52,9 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   /** Dependency injection remains available for isolated UI tests. */
   authorize?: Authorization;
   authorizeFromEndpoint?: boolean;
+  /** Topics can prepare their current guides without starting a Claude stage. */
+  prototypeOnly?: boolean;
+  disabled?: boolean;
   onAccessDenied?: () => void;
 }) {
   const t = useTranslations("ClientBrandContextProcessing");
@@ -226,7 +229,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   }, [current, read, workspaceId]);
   useEffect(() => {
     if (!current?.quote || current.operation
-      && !["awaiting_authorization", "stale", "failed"].includes(current.operation.state)) return;
+      && !["awaiting_authorization", "guides_pending", "stale", "failed"].includes(current.operation.state)) return;
     const remaining = Date.parse(current.quote.expires_at) - Date.now();
     if (remaining <= 0) { setExpired(true); return; }
     const timer = setTimeout(() => setExpired(true), remaining + 25);
@@ -234,7 +237,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   }, [current]);
 
   async function confirm() {
-    if (!submitAuthorization || submission.current || !current || !clientBrandContextProcessingCanConfirmV1(current)) return;
+    if (disabled || !submitAuthorization || submission.current || !current || !clientBrandContextProcessingCanConfirmV1(current)) return;
     const pending = clientBrandContextProcessingRequestV1(requestKey.current, current, () => crypto.randomUUID());
     requestKey.current = pending; submission.current = true; setSubmitting(true); setError(null);
     const currentScope = scope.current;
@@ -268,8 +271,9 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   const showAmounts = Boolean(current?.quote && (!expired || current.operation)
     && !failedWithoutAction);
   const showConfirmation = variant === "full" && Boolean(submitAuthorization
-    && clientBrandContextProcessingCanConfirmV1(current));
-  const canConfirm = Boolean(submitAuthorization && clientBrandContextProcessingCanConfirmV1(current, submitting));
+    && clientBrandContextProcessingCanConfirmV1(current)
+    && (!prototypeOnly || current?.operation && ["guides_pending", "awaiting_authorization"].includes(current.operation.state)));
+  const canConfirm = Boolean(!disabled && submitAuthorization && clientBrandContextProcessingCanConfirmV1(current, submitting));
   const money = (value: string) => formatClientProcessingMicroUsdV1(value, locale);
   const expiry = current?.quote?.expires_at ? new Intl.DateTimeFormat(locale, {
     dateStyle: "medium", timeStyle: "short"
@@ -298,6 +302,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
       {showConfirmation ? <div className="client-brand-context-quote__confirmation">
         {current.quote ? <p id="client-brand-context-confirmation-help">{t(needsExplicitRenewal
           ? "authorizationRenewal" : canRetrySemantic ? "authorizationRetry"
+            : current.operation?.state === "guides_pending" ? "authorizationRefresh"
             : current.operation?.state === "awaiting_authorization"
             ? "authorizationPrototypes" : "authorization", {
           maximum: money(current.quote.maximum_micro_usd), available: money(current.quote.available_today_micro_usd)

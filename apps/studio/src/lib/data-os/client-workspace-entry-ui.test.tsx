@@ -97,3 +97,8 @@ test("client Data keeps legacy processing and acquisition controls outside the p
   assert.match(source, /SelfServiceImportManager[\s\S]{0,220}canProcess=\{false\}/u);
   assert.match(source, /<ClientProcessingJourney workspaceId=\{entry\.workspaceId\}/u);
 });
+
+test("client Data preserves the Brand OS destination in its monitoring journey", async () => {
+  const source = await readFile(new URL("../../app/signal/[outputId]/manage/data/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /brandOs:\s*entry\.canManageBrandContext\s*\?\s*entry\.navigation\.brandOsHref\s*:\s*null/u);
+});

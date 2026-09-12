@@ -1,6 +1,7 @@
 import {
   loadSignalBrandContextProcessingQuoteV1,
   loadSignalBrandContextPrototypeQuoteV1,
+  loadSignalBrandContextPrototypePlanStateV1,
   quoteSignalBrandContextSemanticRenewalV1,
   renewSignalBrandContextSemanticAdmissionV1,
   retrySignalBrandContextComposedSemanticRunV1,
@@ -89,13 +90,14 @@ type ProcessingRowV1 = {
 };
 
 function operationState(row: ProcessingRowV1, prototypeAvailable: boolean,
-  prototypeQuote: Awaited<ReturnType<typeof loadSignalBrandContextPrototypeQuoteV1>> | null): {
+  prototypeQuote: Awaited<ReturnType<typeof loadSignalBrandContextPrototypeQuoteV1>> | null, guidesPending = false): {
   state: ClientBrandContextProcessingOperationStateV1;
   phase: ClientBrandContextProcessingPhaseV1 | null;
 } {
   if (!row.source_current || row.semantic_status === "stale" || row.prototype_status === "stale") {
     return { state: "stale", phase: null };
   }
+  if (guidesPending) return { state: "guides_pending", phase: null };
   if (row.semantic_status === "completed" && prototypeQuote?.requires_confirmation && prototypeAvailable) return {
     state: "awaiting_authorization", phase: null
   };
@@ -161,16 +163,21 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
   actorUserId: string;
   database?: Database;
   runtimeLoader?: () => Promise<SignalBrandContextPreparationRuntimeV1>;
-}): Promise<ClientBrandContextProcessingViewV1> {
+}, dependencies: {
+  loadQuote?: typeof loadClientBrandContextProcessingQuoteForActorV1;
+  loadOperation?: typeof loadLatestProcessingRowV1;
+  loadPrototypeQuote?: typeof loadSignalBrandContextPrototypeQuoteV1;
+  loadPlanState?: typeof loadSignalBrandContextPrototypePlanStateV1;
+} = {}): Promise<ClientBrandContextProcessingViewV1> {
   const database = args.database ?? (await import("@/lib/db")).pool;
   const runtime = await (args.runtimeLoader ?? loadSignalBrandContextProcessingRuntimeV1)();
   const [quote, operation] = await Promise.all([
-    loadClientBrandContextProcessingQuoteForActorV1({ ...args, runtimeLoader: async () => runtime }),
-    loadLatestProcessingRowV1(database, args.workspaceId, args.actorUserId)
+    (dependencies.loadQuote ?? loadClientBrandContextProcessingQuoteForActorV1)({ ...args, runtimeLoader: async () => runtime }),
+    (dependencies.loadOperation ?? loadLatestProcessingRowV1)(database, args.workspaceId, args.actorUserId)
   ]);
   let prototypeQuote: Awaited<ReturnType<typeof loadSignalBrandContextPrototypeQuoteV1>> | null = null;
   if (operation?.semantic_status === "completed" && operation.generation_status === "published") {
-    try { prototypeQuote = await loadSignalBrandContextPrototypeQuoteV1({ database,
+    try { prototypeQuote = await (dependencies.loadPrototypeQuote ?? loadSignalBrandContextPrototypeQuoteV1)({ database,
       parent_receipt_id: operation.receipt_id, actor_user_id: args.actorUserId }); }
     catch { /* The Worker may still be finalizing publication/catalog. Polling remains read-only here. */ }
   }
@@ -182,9 +189,17 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
         recovery_alive:runtime.recovery_alive} }); }
     catch { /* A missing compatible renewal remains a read-only failed state with no CTA. */ }
   }
-  const current = operation ? operationState(operation, runtime.prototype.available, prototypeQuote) : null;
-  const canStartStage2 = current?.state === "awaiting_authorization" && Boolean(prototypeQuote)
-    && runtime.prototype.available && Date.parse(prototypeQuote!.quote_expires_at) > Date.now();
+  let guidesPending = false;
+  if (operation?.semantic_status === "completed" && operation.prototype_status === "completed" && operation.source_current) {
+    try { guidesPending = (await (dependencies.loadPlanState ?? loadSignalBrandContextPrototypePlanStateV1)({ database,
+      parent_receipt_id: operation.receipt_id, actor_user_id: args.actorUserId })).guides_pending; }
+    catch { guidesPending = true; /* Unknown readiness cannot claim that current interests are prepared. */ }
+  }
+  const current = operation ? operationState(operation, runtime.prototype.available, prototypeQuote, guidesPending || prototypeQuote?.refreshes_completed_plan === true) : null;
+  const canStartStage2 = Boolean(current && ["awaiting_authorization", "guides_pending"].includes(current.state)
+    && prototypeQuote?.requires_confirmation && runtime.queue_configured && runtime.worker_alive
+    && (!prototypeQuote.requires_provider || runtime.prototype.available)
+    && Date.parse(prototypeQuote.quote_expires_at) > Date.now());
   const retryReference=clientBrandContextProcessingQuoteReferenceV1(operation?.quote_digest);
   const canRetryStage1 = current?.state === "failed" && operation?.semantic_retry_safe === true
     && retryReference!==null
@@ -223,7 +238,7 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
       maximum_micro_usd: quote.maximum_micro_usd,
       available_today_micro_usd: quote.available_today_micro_usd,
       expires_at: quote.quote_expires_at
-    } : immutableQuote;
+    } : guidesPending ? null : immutableQuote;
   return {
     contract_version: "client-brand-context-processing-view-v1",
     workspace_id: quote.workspace_id,
@@ -231,7 +246,7 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
       : operation ? new Date(operation.observed_at).toISOString() : quote.observed_at,
     can_start: canStart,
     status: canStartStage2 || canRetryStage1 || canRenewStage1 ? "quote_available"
-      : current?.state === "failed" ? "temporarily_unavailable" : quote.status,
+      : current?.state === "failed" || guidesPending && quote.status === "quote_available" ? "temporarily_unavailable" : quote.status,
     quote: activeQuote,
     operation: operation && current ? { ...current, request_observed: true,
       next_action:canRenewStage1 ? "renew_semantic" : canRetryStage1 ? "retry_semantic" : null } : null
@@ -251,29 +266,50 @@ function expectedQuoteMatchesV1(body: ClientBrandContextProcessingConfirmationV1
     && observed >= Date.parse(quote.observed_at) - 300_000;
 }
 
+type PrototypeRequestReceiptV1 = { parent_receipt_id: string; quote_digest: string; confirmation: string | null;
+  maximum_micro_usd: string; available_today_micro_usd: string; expires_at: string };
+async function loadPrototypeRequestReceiptV1(database: Database, workspaceId: string, actorId: string, requestKey: string) {
+  return (await database.query<PrototypeRequestReceiptV1>(`SELECT child.parent_receipt_id::text,child.quote_digest,child.confirmation,
+    child.execution_cap_micro_usd::text maximum_micro_usd,
+    greatest(policy.daily_cap_micro_usd-(child.quote_snapshot#>>'{exposure,total_micro_usd}')::bigint,0)::text available_today_micro_usd,
+    child.quote_snapshot->>'quote_expires_at' expires_at
+    FROM signal_brand_context_prototype_receipts child
+    JOIN signal_processing_policy_versions policy ON policy.id=child.policy_version_id
+    WHERE child.workspace_id=$1::uuid AND child.actor_user_id=$2::uuid AND child.idempotency_key=$3`,
+    [workspaceId,actorId,requestKey])).rows[0] ?? null;
+}
+
 type Stage2StartArgsV1={workspaceId:string;actorUserId:string;idempotencyKey:string;
   body:ClientBrandContextProcessingConfirmationV1;database:Database;runtime:SignalBrandContextPreparationRuntimeV1};
 export async function startClientBrandContextPrototypeProcessingForActorV1(args:Stage2StartArgsV1,
   dependencies:{loadOperation?:typeof loadLatestProcessingRowV1;
+    loadReceipt?:typeof loadPrototypeRequestReceiptV1;
     loadQuote?:typeof loadSignalBrandContextPrototypeQuoteV1;
     start?:typeof startSignalBrandContextPrototypeProcessingV1;
     loadView?:typeof loadClientBrandContextProcessingViewForActorV1}={}){
+  const prior=await (dependencies.loadReceipt??loadPrototypeRequestReceiptV1)(args.database,args.workspaceId,args.actorUserId,args.idempotencyKey);
+  if(prior){
+    if(args.body.confirmation!==prior.confirmation
+      ||args.body.expected_quote.reference!==clientBrandContextProcessingQuoteReferenceV1(prior.quote_digest)
+      ||args.body.expected_quote.maximum_micro_usd!==prior.maximum_micro_usd
+      ||args.body.expected_quote.available_today_micro_usd!==prior.available_today_micro_usd
+      ||args.body.expected_quote.expires_at!==new Date(prior.expires_at).toISOString())
+      throw new SignalSemanticContextProposalExecutionError("processing_idempotency_conflict",409);
+    await (dependencies.start??startSignalBrandContextPrototypeProcessingV1)({database:args.database,
+      parent_receipt_id:prior.parent_receipt_id,actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,
+      confirmation:"prepare_brand_context_prototypes_within_shown_cap",provider_available:args.runtime.prototype.available,
+      expected_quote_digest:prior.quote_digest});
+    return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspaceId,
+      actorUserId:args.actorUserId,database:args.database,runtimeLoader:async()=>args.runtime});
+  }
   const operation=await (dependencies.loadOperation??loadLatestProcessingRowV1)(args.database,args.workspaceId,args.actorUserId);
   if(!operation||operation.semantic_status!=="completed"||operation.generation_status!=="published")
     throw new SignalSemanticContextProposalExecutionError("brand_context_prototype_quote_changed",409);
-  if(operation.child_receipt_id){
-    if(operation.child_idempotency_key===args.idempotencyKey){
-      await (dependencies.start??startSignalBrandContextPrototypeProcessingV1)({database:args.database,
-        parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId,idempotency_key:args.idempotencyKey,
-        confirmation:"prepare_brand_context_prototypes_within_shown_cap",provider_available:args.runtime.prototype.available});
-      return (dependencies.loadView??loadClientBrandContextProcessingViewForActorV1)({workspaceId:args.workspaceId,
-        actorUserId:args.actorUserId,database:args.database,runtimeLoader:async()=>args.runtime});
-    }
-  }
-  if(!args.runtime.prototype.available)
-    throw new SignalSemanticContextProposalExecutionError("brand_context_prototype_runtime_unavailable",503);
   const prototypeQuote=await (dependencies.loadQuote??loadSignalBrandContextPrototypeQuoteV1)({database:args.database,
     parent_receipt_id:operation.receipt_id,actor_user_id:args.actorUserId});
+  if(!args.runtime.queue_configured||!args.runtime.worker_alive
+    ||prototypeQuote.requires_provider&&!args.runtime.prototype.available)
+    throw new SignalSemanticContextProposalExecutionError("brand_context_prototype_runtime_unavailable",503);
   if(!prototypeQuote.requires_confirmation||!expectedQuoteMatchesV1(args.body,{
     observed_at:prototypeQuote.quoted_at,maximum_micro_usd:prototypeQuote.maximum_micro_usd,
     available_today_micro_usd:prototypeQuote.available_today_micro_usd,

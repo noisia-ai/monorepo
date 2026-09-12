@@ -219,6 +219,7 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     readFile(resolve(process.cwd(),"messages/en-US.json"),"utf8")
   ]);
   assert.ok(page.indexOf("<SemanticContextPackManager")>page.indexOf("<KnowledgeBaseManager"));
+  assert.doesNotMatch(page,/ClientBrandContextProcessingQuote/u);
   assert.match(manager,/WorkspaceDrawer/u);
   assert.match(manager,/WorkspaceConfirmDialog/u);
   assert.match(manager,/GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS/u);
