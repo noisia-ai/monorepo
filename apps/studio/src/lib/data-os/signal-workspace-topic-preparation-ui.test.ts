@@ -117,7 +117,7 @@ for (const locale of ["es-MX", "en-US"]) {
   });
   test(`${locale}: before-import inline controls quote the cost and do not claim Topics/Signal output`, () => {
     const html = render(); assert.ok(html.includes(text.body));
-    const prepare = (html.match(/<button\b[^]*?<\/button>/gu) ?? []).find(button => button.includes(locale === "es-MX" ? "Preparar contexto e intereses" : "Prepare context and interests"));
+    const prepare = (html.match(/<button\b[^]*?<\/button>/gu) ?? []).find(button => button.includes(locale === "es-MX" ? "Preparar guía de marca" : "Prepare brand guide"));
     assert.ok(prepare); assert.doesNotMatch(prepare, /^<button[^>]*disabled/u); assert.match(prepare, /0[.,]00/u);
     const unavailable = render({ ...status, availability: "no_topics", current_plan_digest: null }, null);
     assert.ok(unavailable.includes(text.noInputs)); assert.ok(unavailable.includes(text.refresh));
@@ -128,7 +128,7 @@ for (const locale of ["es-MX", "en-US"]) {
     const contextQuote = { ...quote, total_topics: 0 };
     assert.equal(topicPreparationCanExecute(status, contextQuote, "0"), true);
     const html = render(status, contextQuote); assert.ok(html.includes(text.body));
-    assert.match(html, locale === "es-MX" ? /Preparar contexto e intereses/u : /Prepare context and interests/u);
+    assert.match(html, locale === "es-MX" ? /Preparar guía de marca/u : /Prepare brand guide/u);
     const completed = { ...run, status: "completed" as const, counts: { ...run.counts,
       total_topics: 0, completed_topics: 0, partial_topics: 0, pending_topics: 0,
       processed_input_references: 20, processed_unique_inputs: 10, cache_hits: 10 } };
@@ -145,7 +145,7 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.doesNotMatch(html, /Costo pendiente estimado|Estimated remaining cost|0 de 10 textos|0 of 10 texts/u);
     assert.match(html, /0[.,]0008/u);
     assert.ok(html.includes(text.refresh));
-    assert.doesNotMatch(html, /Preparar contexto e intereses ·|Prepare context and interests ·/u);
+    assert.doesNotMatch(html, /Preparar guía de marca ·|Prepare brand guide ·/u);
     const changed = render({ ...status, current_plan_digest: `sha256:${"c".repeat(64)}`, latest_completed: completed },
       { ...originalQuote, plan_digest: `sha256:${"c".repeat(64)}` });
     assert.match(changed, /Costo pendiente estimado|Estimated remaining cost/u);

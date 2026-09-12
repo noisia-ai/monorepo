@@ -2815,7 +2815,7 @@
         "needs_preparation": "The files have been received. Prepare their complete texts in Data before analysis.",
         "missing_embeddings": "Prepare conversations for analysis in Data. You can review costs and recover the request there.",
         "missing_context": "Prepare the saved Brand OS context and any interests you have defined.",
-        "prepareContext": "Prepare context and interests",
+        "prepareContext": "Prepare brand guide",
         "openData": "View data and preparation",
         "phases": { "materializing": "Saving editable topics", "queued": "Queued", "exporting": "Preparing conversations", "fitting": "Discovering topics", "persisting": "Saving results", "interpreting": "Interpreting topics", "classifying": "Classifying conversations", "complete": "Process finished", "failed": "Process interrupted" },
         "errors": { "deliveryUnavailable": "Delivery cannot be retried in this state. Refresh to check its progress; available results are preserved.", "admissionChanged": "The authorization, allowance or expiry changed. Refresh the state and review the values before confirming another request.", "admissionUnavailable": "This continuation cannot be authorized in the current state. The run and its receipts are preserved.", "authorizationExpired": "Spending authorization to continue interpretation has expired. Progress and receipts are preserved. Current spending authorization is required to resume.", "transportExhausted": "The recovery attempt for this interruption has been exhausted. Another request will not be sent for these same inputs; receipts and amounts awaiting billing reconciliation are retained.", "transportTerminal": "The provider confirmed that the request ended with an interruption. No usable interpretation was received.", "editorialInvalid": "The interpretation response did not meet the evidence requirements. Its content was not accepted; the recorded cost is retained.", "editorialRepairExhausted": "The interpretation repair did not meet the requirements either. This batch has used its repair attempt. These calls will not be repeated automatically; receipts and costs are retained.", "load": "Analysis status could not be loaded. Try refreshing it again.", "request": "The request could not be confirmed. Check its status before submitting it again.", "storage": "The request could not be saved in this browser. Analysis has not started.", "forbidden": "This analysis is no longer available with your current access.", "changed": "Data or context changed. Refresh status before starting another request.", "failed": "Analysis could not finish. Previously recorded work is preserved.", "blocked": "Resolve the indicated condition before continuing the analysis.",
@@ -2908,7 +2908,7 @@
         "cap": "Cap in USD · maximum allowed {amount}",
         "quote": "Calculate preparation",
         "quoting": "Calculating…",
-        "prepare": "Prepare context and interests · up to {amount}",
+        "prepare": "Prepare brand guide · up to {amount}",
         "recover": "Resume request · {amount} cap",
         "submitting": "Confirming request…",
         "refresh": "Check preparation",
@@ -3191,7 +3191,7 @@
     },
     "data": {
       "corpusPreparation": {
-        "title": "Text preparation",
+        "title": "Corpus text",
         "loading": "Loading preparation status…",
         "states": {
           "awaiting_import": "No files received",
@@ -3253,7 +3253,7 @@
         "inclusionPending": "{count} with pending inclusion."
       },
       "corpusEmbeddings": {
-        "title": "Prepare for analysis",
+        "title": "Corpus vectors",
         "body": "This preparation makes conversation content comparable. Discovery, interpretation and classification are available in Topics.",
         "loading": "Checking analysis preparation…",
         "lastKnown": "Last received status",
@@ -3283,7 +3283,7 @@
         "unknown": "The provider may have processed part of the request. The reserve and unconfirmed outcome are preserved. This screen will not send it again.",
         "requestUnknown": "We could not confirm whether the request was accepted. Check status or confirm the same request; its limit and quote will be preserved.",
         "states": { "queued": "Queued", "running": "Preparing for analysis", "completed": "Embeddings complete", "failed": "Preparation interrupted", "stale": "Pending data", "outcome_unknown": "Outcome unconfirmed", "canceled": "Preparation stopped" },
-        "actions": { "quote": "Calculate cost", "quoting": "Calculating cost…", "prepare": "Prepare for analysis · maximum {amount}", "resume": "Resume preparation · original limit {amount}", "reuse": "Use existing calculations · no cost", "requesting": "Sending request…", "refresh": "Refresh status", "confirm": "Confirm the same request" },
+        "actions": { "quote": "Calculate cost", "quoting": "Calculating cost…", "prepare": "Create vectors · maximum {amount}", "resume": "Resume vectors · original limit {amount}", "reuse": "Use existing vectors · no cost", "requesting": "Sending request…", "refresh": "Refresh status", "confirm": "Confirm the same request" },
         "errors": { "load": "We could not check analysis preparation.", "refresh": "We could not refresh status. The last available result is preserved.", "quote": "We could not calculate cost. Check the estimate again.", "forbidden": "Your access no longer allows viewing this preparation.", "storage": "We could not retain the request in this browser. Enable session storage before starting a run.", "cap": "The limit must cover the estimate without exceeding the allowed maximum. Use up to six decimal places.", "stale": "The data or configuration changed. Calculate a fresh estimate before starting.", "failed": "Preparation was interrupted. Confirmed progress is preserved; check status before continuing.", "rejected": "The request was not accepted. Refresh status and calculate another estimate.", "permissions": "Usage or access permission changed. Review this brand's permissions before continuing.", "provider": "Provider execution is disabled. This request did not start another run." }
       },
       "corpusReadiness": {

@@ -2815,7 +2815,7 @@
         "needs_preparation": "Los archivos ya se recibieron. Prepara sus textos completos desde Datos para analizarlos.",
         "missing_embeddings": "Prepara las conversaciones para el análisis desde Datos. Allí puedes consultar el costo y recuperar la solicitud.",
         "missing_context": "Prepara el contexto guardado de Brand OS y los intereses que hayas definido.",
-        "prepareContext": "Preparar contexto e intereses",
+        "prepareContext": "Preparar guía de marca",
         "openData": "Ver datos y preparación",
         "phases": { "materializing": "Guardando tópicos editables", "queued": "En cola", "exporting": "Preparando conversaciones", "fitting": "Descubriendo temas", "persisting": "Guardando resultados", "interpreting": "Interpretando temas", "classifying": "Clasificando conversaciones", "complete": "Proceso terminado", "failed": "Proceso interrumpido" },
         "errors": { "deliveryUnavailable": "La entrega ya no se puede reintentar en este estado. Actualiza para consultar su avance; los resultados disponibles se conservan.", "admissionChanged": "El permiso, el margen o el vencimiento cambiaron. Actualiza el estado y revisa los valores antes de confirmar otra solicitud.", "admissionUnavailable": "No se puede autorizar esta continuación con el estado actual. Se conservan la ejecución y los recibos.", "authorizationExpired": "El permiso de gasto para continuar la interpretación venció. Se conservan el progreso y los recibos. Hace falta un permiso de gasto vigente para reanudar.", "transportExhausted": "Se agotó el intento de recuperación de esta interrupción. No se enviará otra solicitud con estos mismos datos; los recibos y los importes pendientes de conciliación se conservan.", "transportTerminal": "El proveedor confirmó que la solicitud terminó por una interrupción. No se recibió una interpretación utilizable.", "editorialInvalid": "La respuesta de interpretación no cumplió los requisitos de evidencia. No se aceptó su contenido; el costo registrado se conserva.", "editorialRepairExhausted": "La reparación de la interpretación tampoco cumplió los requisitos. Se agotó la reparación de este lote. No se repetirán estas llamadas automáticamente; los recibos y costos se conservan.", "load": "No se pudo consultar el análisis. Vuelve a actualizar el estado.", "request": "No se pudo confirmar la solicitud. Consulta su estado antes de volver a enviarla.", "storage": "No se pudo conservar la solicitud en este navegador. No se ha iniciado el análisis.", "forbidden": "El análisis ya no está disponible con tu acceso actual.", "changed": "Los datos o el contexto cambiaron. Actualiza el estado antes de iniciar otra solicitud.", "failed": "El análisis no pudo terminar. Se conserva el trabajo ya registrado.", "blocked": "El análisis requiere resolver la condición indicada antes de continuar.",
@@ -2908,7 +2908,7 @@
         "cap": "Tope en USD · máximo permitido {amount}",
         "quote": "Calcular preparación",
         "quoting": "Calculando…",
-        "prepare": "Preparar contexto e intereses · hasta {amount}",
+        "prepare": "Preparar guía de marca · hasta {amount}",
         "recover": "Reanudar solicitud · tope {amount}",
         "submitting": "Confirmando solicitud…",
         "refresh": "Comprobar preparación",
@@ -3191,7 +3191,7 @@
     },
     "data": {
       "corpusPreparation": {
-        "title": "Preparación del texto",
+        "title": "Texto del corpus",
         "loading": "Consultando preparación…",
         "states": {
           "awaiting_import": "Sin archivos recibidos",
@@ -3253,7 +3253,7 @@
         "inclusionPending": "{count} con inclusión pendiente."
       },
       "corpusEmbeddings": {
-        "title": "Preparar para analizar",
+        "title": "Vectores del corpus",
         "body": "Esta preparación permite comparar el contenido de las conversaciones. El descubrimiento, la interpretación y la clasificación se consultan en Topics.",
         "loading": "Consultando la preparación para analizar…",
         "lastKnown": "Último estado recibido",
@@ -3283,7 +3283,7 @@
         "unknown": "El proveedor pudo haber procesado una parte. Conservamos la reserva y el resultado pendiente de confirmación. No se enviará de nuevo desde esta pantalla.",
         "requestUnknown": "No pudimos confirmar si se aceptó la solicitud. Consulta el estado o comprueba la misma solicitud; se conservarán su límite y cotización.",
         "states": { "queued": "En cola", "running": "Preparando para analizar", "completed": "Embeddings completos", "failed": "Preparación interrumpida", "stale": "Datos pendientes", "outcome_unknown": "Resultado por confirmar", "canceled": "Preparación detenida" },
-        "actions": { "quote": "Calcular costo", "quoting": "Calculando costo…", "prepare": "Preparar para analizar · máximo {amount}", "resume": "Reanudar preparación · límite original {amount}", "reuse": "Usar lo ya calculado · sin costo", "requesting": "Enviando solicitud…", "refresh": "Actualizar estado", "confirm": "Comprobar la misma solicitud" },
+        "actions": { "quote": "Calcular costo", "quoting": "Calculando costo…", "prepare": "Crear vectores · máximo {amount}", "resume": "Reanudar vectores · límite original {amount}", "reuse": "Usar vectores existentes · sin costo", "requesting": "Enviando solicitud…", "refresh": "Actualizar estado", "confirm": "Comprobar la misma solicitud" },
         "errors": { "load": "No pudimos consultar la preparación para analizar.", "refresh": "No pudimos actualizar el estado. Conservamos el último resultado disponible.", "quote": "No pudimos calcular el costo. Vuelve a consultar la estimación.", "forbidden": "Tu acceso ya no permite consultar esta preparación.", "storage": "No pudimos conservar la solicitud en este navegador. Habilita el almacenamiento de la sesión antes de iniciar una ejecución.", "cap": "El límite debe cubrir la estimación sin superar el máximo permitido. Usa hasta seis decimales.", "stale": "Cambiaron los datos o la configuración. Calcula una nueva estimación antes de iniciar.", "failed": "La preparación se interrumpió. El avance confirmado se conserva; consulta el estado antes de continuar.", "rejected": "La solicitud no se aceptó. Actualiza el estado y calcula otra estimación.", "permissions": "Cambió el permiso de uso o acceso. Revisa los permisos de esta marca antes de continuar.", "provider": "La ejecución con el proveedor está deshabilitada. Esta solicitud no inició otra ejecución." }
       },
       "corpusReadiness": {
