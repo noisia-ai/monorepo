@@ -47,5 +47,6 @@ Remaining performance work after UAT: measure the Worker colocated with PostgreS
 - PostgreSQL owner negative cases: PASS (plan, state digest, owner, source, cap, future field, terminal state and deletion).
 - Prior focused state guard suite: 6 PASS (paid proof, HTTP completeness, repair lineage, growing state, retention and global proof).
 - Final composed rehearsal: PASS with the current SQL0178–0179, USD 30 action cap, cold Redis recovery, retryable provider-free materialization and all-noise support.
+- UAT post-apply verification found four direct Supabase API-role grants on new helper signatures. SQL0180 revokes every editorial signature by OID from `PUBLIC`, `anon` and `authenticated`; provider activation remains blocked until its remote receipt passes.
 
 No production runtime instrumentation was added. All SQL/phase timings live in the private rehearsal script and receipts.

@@ -5,6 +5,7 @@ import type { Pool, PoolClient } from 'pg';
 import { reserveSignalTopicEditorialCallV1, markSentSignalTopicEditorialCallV1, persistSignalTopicEditorialResponseV1,
   settleSignalTopicEditorialCallV1, SIGNAL_TOPIC_EDITORIAL_EXECUTION_CONFIGURATION_V1, type SignalTopicEditorialLeaseV1 } from '../signal-topic-consolidation-editorial';
 const sql=readFileSync(new URL('./0176_signal_topic_consolidation_editorial.sql',import.meta.url),'utf8');
+const roleHardening=readFileSync(new URL('./0180_signal_topic_editorial_role_hardening.sql',import.meta.url),'utf8');
 const lease: SignalTopicEditorialLeaseV1={execution_id:'00000000-0000-4000-8000-000000000001',execution_token:'00000000-0000-4000-8000-000000000002',
   workspace_id:'00000000-0000-4000-8000-000000000003',actor_user_id:'00000000-0000-4000-8000-000000000004',numeric_run_id:'00000000-0000-4000-8000-000000000005',
   source_execution_id:'00000000-0000-4000-8000-000000000006',worker_job_id:'private-fixture'};
@@ -55,4 +56,13 @@ test('new ledger owner does not mix historic cost events or mutate serving/catal
  assert.match(sql,/topic_editorial_admission_complete AFTER INSERT ON signal_processing_admissions\s+DEFERRABLE INITIALLY DEFERRED/u);
  assert.match(sql,/UNIQUE\(numeric_run_id\)|numeric_run_id uuid NOT NULL UNIQUE/u);
  assert.match(sql,/status<>'definitely_not_sent'/u);assert.match(sql,/processing_org_exposure_pre0176_v1/u);
+});
+test('0180 revokes every current editorial signature from Supabase API roles',()=>{
+ assert.match(roleHardening,/p\.oid::regprocedure AS signature/u);
+ assert.match(roleHardening,/p\.proname LIKE 'signal_topic_editorial%'/u);
+ assert.match(roleHardening,/materialize_signal_topic_editorial_successor_v1/u);
+ assert.match(roleHardening,/REVOKE ALL ON FUNCTION %s FROM PUBLIC/u);
+ assert.match(roleHardening,/ARRAY\['anon','authenticated'\]/u);
+ assert.match(roleHardening,/REVOKE ALL ON FUNCTION %s FROM %I/u);
+ assert.doesNotMatch(roleHardening,/(?:INSERT|UPDATE|DELETE|TRUNCATE|DROP)\s/u);
 });
