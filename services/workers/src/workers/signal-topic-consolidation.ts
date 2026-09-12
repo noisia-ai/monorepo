@@ -41,7 +41,7 @@ const text = (value: unknown, max: number): string =>
     ? value : fail("artifact_invalid");
 const digest = (bytes: Uint8Array | string): string => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const compare = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
-const consolidationCode = /(?:^|\b)(signal_topic_consolidation_[a-z_]{1,100})(?:\b|$)/u;
+const consolidationCode = /(?:^|\b)((?:signal_)?topic_consolidation_[a-z_]{1,100})(?:\b|$)/u;
 const databaseFailure = new Map([
   ["57014", "timeout"],
   ["23514", "constraint"],
