@@ -43,7 +43,13 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  options:WorkspaceProjectionFixtureOptionsV1={}){
  const {database,query,scoped,workspace_id,actor_user_id,embedding_run_id,cleanup}=seed;
  try{
- for(const name of options.migrations??[]) {assert.match(name,/^014[1-7]_[a-z_]+\.sql$/u);await query(await readFile(new URL(name,import.meta.url),'utf8'));}
+ for(const name of options.migrations??[]) {
+  assert.match(name,/^(?:014[1-7]|016[7-9])_[a-z_]+\.sql$/u);await query(await readFile(new URL(name,import.meta.url),'utf8'));
+  if(name==='0167_signal_mentions_text_digest.sql')for(;;){
+   const changed=Number((await query('SELECT backfill_signal_mention_text_clean_sha256_v1(1) changed')).rows[0]!.changed);
+   if(changed===0)break;
+  }
+ }
  const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
  const catalog=async(terms:SignalTopicDefinitionV1[]=[],metadata:Record<string,unknown>={})=>insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('projection-catalog'),
   terms:terms.map(topic=>({term_key:topic.term_key,label:topic.label,definition:topic.definition,status:topic.lifecycle==='archived'?'archived':'candidate',metadata:{topic}})),rules:{topics:terms},rule_set_metadata:{},provider:'operator',model_version:'local',

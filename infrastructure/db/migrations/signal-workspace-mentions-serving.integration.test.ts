@@ -14,7 +14,9 @@ import { signalWorkspaceTopicProjectionJobV1 } from "../../../services/workers/s
 const enabled = process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED === "true";
 const migrations = ["0141_signal_workspace_editorial_repair.sql", "0142_signal_workspace_terminal_transport.sql",
   "0143_signal_workspace_editorial_revision.sql", "0144_signal_workspace_engine_progress.sql",
-  "0145_signal_workspace_incremental_numeric.sql", "0146_signal_workspace_incremental_projection.sql", "0147_signal_workspace_interpretation_admission.sql"];
+  "0145_signal_workspace_incremental_numeric.sql", "0146_signal_workspace_incremental_projection.sql", "0147_signal_workspace_interpretation_admission.sql",
+  "0167_signal_mentions_text_digest.sql", "0168_signal_mentions_text_digest_finalize.sql",
+  "0169_signal_mentions_text_digest_validate.sql"];
 const stores = { claim: projection.claimSignalWorkspaceTopicProjectionV1, heartbeat: projection.heartbeatSignalWorkspaceTopicProjectionV1,
   readTopics: projection.readSignalWorkspaceTopicProjectionTopicsV1, readProposals: projection.readSignalWorkspaceTopicProjectionProposalsV1,
   readPage: classification.readSignalWorkspaceClassificationPageV1, readChunksPage: classification.readSignalWorkspaceClassificationChunksPageV1,
@@ -32,6 +34,26 @@ async function read(args: SignalWorkspaceMentionsArgsV1) { const result = await 
 test("native mentions reads the complete real generation, pages/focus/filter in scope and withholds revoked or changed text", { skip: !enabled, timeout: 90_000 }, async t => {
   const f = await workspaceProjectionFixtureV1({ migrations });
   try {
+    await f.query("SAVEPOINT mentions_digest_trigger");
+    try {
+      const insertedId = randomUUID(), insertedText = "Byte Exact Mixed-Case insert fixture";
+      const inserted = (await f.query(`INSERT INTO mentions(id,workspace_id,study_corpus_id,
+        data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,text_hash,text_clean,text_length,
+        published_at,platform,inclusion_status)
+        SELECT $1::uuid,workspace_id,study_corpus_id,data_source_id,$1::uuid,$2,$2||'-external',source_system,
+          encode(sha256(convert_to(lower($3),'UTF8')),'hex'),$3,char_length($3),published_at,platform,'included'
+        FROM mentions WHERE id=$4::uuid RETURNING text_clean_sha256,
+          'sha256:'||encode(sha256(convert_to(text_clean,'UTF8')),'hex') expected`,
+      [insertedId, `digest-${insertedId}`, insertedText, f.roots[0]!.root_id])).rows[0] as { text_clean_sha256: string; expected: string };
+      assert.equal(inserted.text_clean_sha256, inserted.expected, "insert computes the byte-exact digest");
+      assert.notEqual(inserted.text_clean_sha256.slice(7), fixtureSha(insertedText.toLowerCase()).slice(7),
+        "the exact digest is distinct from the case-insensitive deduplication hash");
+      const rootId = f.roots[0]!.root_id;
+      const before = (await f.query("SELECT text_clean_sha256 FROM mentions WHERE id=$1::uuid", [rootId])).rows[0] as { text_clean_sha256: string };
+      const after = (await f.query(`UPDATE mentions SET text_clean_sha256=$2
+        WHERE id=$1::uuid RETURNING text_clean_sha256`, [rootId, `sha256:${"0".repeat(64)}`])).rows[0] as { text_clean_sha256: string };
+      assert.equal(after.text_clean_sha256, before.text_clean_sha256, "direct digest adulteration is recomputed from text_clean");
+    } finally { await f.query("ROLLBACK TO SAVEPOINT mentions_digest_trigger"); await f.query("RELEASE SAVEPOINT mentions_digest_trigger"); }
     await assert.rejects(read(f.access), /workspace_mentions_generation_unavailable/u);
     const request = await projection.requestSignalWorkspaceTopicProjectionV1({ ...f.access, engine_execution_id: f.engine_execution_id, idempotency_key: `workspace-projection:${f.engine_execution_id}` });
     await project(f, request);
@@ -166,15 +188,24 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
       await assert.rejects(read({ ...f.access, cursor: first.next_cursor }), /workspace_mentions_stale/u);
       await assert.rejects(read({ ...f.access, focus_mention_id: all[0]!.mention_id }), /workspace_mentions_stale/u);
     } finally { await f.query("ROLLBACK TO SAVEPOINT mentions_display_rights"); await f.query("RELEASE SAVEPOINT mentions_display_rights"); }
+    await f.query("SAVEPOINT mentions_digest_withheld");
+    try {
+      // Model a privileged/broken invalidation path while leaving the digest
+      // maintenance and exact CHECK active. Serving must still withhold the root.
+      await f.query("ALTER TABLE mentions DISABLE TRIGGER trg_corpus_input_mentions_update");
+      await f.query("UPDATE mentions SET text_clean=text_clean||' changed without source revision' WHERE id=$1::uuid", [all[0]!.mention_id]);
+      await f.query("ALTER TABLE mentions ENABLE TRIGGER trg_corpus_input_mentions_update");
+      const changed = await read(f.access);
+      assert.equal(changed.integrity_withheld_count, 1);
+      assert.equal(changed.total_count, first.total_count - 1);
+      assert.equal(changed.items.some(row => row.mention_id === all[0]!.mention_id), false);
+      await assert.rejects(read({ ...f.access, expected_scope_digest: first.scope_digest }), /scope_changed/u);
+    } finally { await f.query("ROLLBACK TO SAVEPOINT mentions_digest_withheld"); await f.query("RELEASE SAVEPOINT mentions_digest_withheld"); }
     await f.query("SAVEPOINT mentions_changed_text");
     try {
       await f.query("UPDATE mentions SET text_clean=text_clean||' changed after preparation' WHERE id=$1::uuid", [all[0]!.mention_id]);
-      // A normal source revision may reject the whole generation before SHA;
-      // otherwise the SHA check must remove both the row and the visible count.
-      try {
-        const changed = await read(f.access); assert.equal(changed.integrity_withheld_count, 1);
-        assert.equal(changed.total_count, first.total_count - 1); assert.equal(changed.items.some(row => row.mention_id === all[0]!.mention_id), false);
-      } catch (error) { assert.match(String(error), /workspace_mentions_stale/u); }
+      await assert.rejects(read(f.access), /workspace_mentions_stale/u,
+        "ordinary text changes invalidate the generation before serving it");
       await assert.rejects(read({ ...f.access, expected_scope_digest: first.scope_digest, focus_mention_id: all[0]!.mention_id }), /stale|scope_changed/u);
     } finally { await f.query("ROLLBACK TO SAVEPOINT mentions_changed_text"); await f.query("RELEASE SAVEPOINT mentions_changed_text"); }
     await f.query("SAVEPOINT mentions_source_stale");

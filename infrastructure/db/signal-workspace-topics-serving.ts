@@ -315,7 +315,7 @@ export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "inclu
       JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
         AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id
       WHERE root.evidence AND ($7::uuid IS NULL OR root.root_id>$7::uuid)
-        AND prepared.asset_sha256='sha256:'||encode(sha256(convert_to(mention.text_clean,'UTF8')),'hex')
+        AND prepared.asset_sha256=mention.text_clean_sha256
       ORDER BY root.root_id LIMIT $8`, [...populationParams(args, ctx), args.term_key, after, limit + 1])).rows;
     const items = rows.slice(0, limit);
     return { contract_version: "signal-workspace-topic-evidence-v1", workspace_id: args.workspace_id,
@@ -368,8 +368,7 @@ function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
  * Only root metadata is materialized; complete document bodies stay in Postgres. */
 const mentionsPopulationSql = `${populationSql}, mention_roots AS MATERIALIZED (
   SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,
-    CASE WHEN root.evidence THEN COALESCE(prepared.asset_sha256=
-      'sha256:'||encode(sha256(convert_to(mention.text_clean,'UTF8')),'hex'),false) ELSE false END text_valid
+    CASE WHEN root.evidence THEN COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false) ELSE false END text_valid
   FROM period_roots root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
   JOIN source_generation generation ON true
   LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid

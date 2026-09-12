@@ -1567,6 +1567,7 @@ export const mentions = pgTable(
     sourceSystem: text("source_system").notNull(),
     sourceFileId: uuid("source_file_id").references(() => importBatches.id),
     textHash: text("text_hash").notNull(),
+    textCleanSha256: text("text_clean_sha256").notNull(),
     textRaw: text("text_raw"),
     textClean: text("text_clean").notNull(),
     textSnippet: text("text_snippet"),
@@ -1619,7 +1620,8 @@ export const mentions = pgTable(
       .on(table.studyCorpusId, table.resolvedPlatform, table.publishedAt, table.id)
       .where(sql`${table.inclusionStatus} = 'included'`),
     index("idx_mentions_published").on(table.publishedAt),
-    index("idx_mentions_text_hash").on(table.textHash)
+    index("idx_mentions_text_hash").on(table.textHash),
+    check("mentions_text_clean_sha256_exact", sql`${table.textCleanSha256} IS NULL OR ${table.textCleanSha256} = 'sha256:' || encode(sha256(convert_to(${table.textClean}, 'UTF8')), 'hex')`)
   ]
 );
 

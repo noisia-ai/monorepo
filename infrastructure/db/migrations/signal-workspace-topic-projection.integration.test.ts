@@ -10,7 +10,8 @@ import {signalWorkspaceTopicProjectionJobV1} from '../../../services/workers/src
 import {drainSignalTopicClassificationOutboxV1} from '../../../services/workers/src/workers/signal-topic-classification-outbox';
 const enabled=process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED==='true';
 const pageMigrations=['0141_signal_workspace_editorial_repair.sql','0142_signal_workspace_terminal_transport.sql',
- '0143_signal_workspace_editorial_revision.sql','0144_signal_workspace_engine_progress.sql'];
+ '0143_signal_workspace_editorial_revision.sql','0144_signal_workspace_engine_progress.sql',
+ '0167_signal_mentions_text_digest.sql','0168_signal_mentions_text_digest_finalize.sql','0169_signal_mentions_text_digest_validate.sql'];
 test('native projection retains all chunks, pending multilabel membership, durable dispatch/replay and explicit CAS selection', {skip:!enabled,timeout:90_000},async()=>{
  const f=await workspaceProjectionFixtureV1({migrations:pageMigrations});try{
   const start={...f.access,engine_execution_id:f.engine_execution_id,idempotency_key:`workspace-projection:${f.engine_execution_id}`};
