@@ -367,12 +367,16 @@ function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
  * and prepared SHA are checked before searching or returning canonical content.
  * Only root metadata is materialized; complete document bodies stay in Postgres. */
 const mentionsPopulationSql = `${populationSql}, mention_roots AS MATERIALIZED (
-  SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,
-    CASE WHEN root.evidence THEN COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false) ELSE false END text_valid
-  FROM period_roots root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-  JOIN source_generation generation ON true
-  LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
-    AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id
+  SELECT checked.*,hashtextextended(ROW(checked.root_id,checked.metrics,checked.evidence,
+    checked.text_valid,extract(epoch FROM checked.published_at),checked.platform)::text,0::bigint) population_hash
+  FROM (
+    SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,
+      CASE WHEN root.evidence THEN COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false) ELSE false END text_valid
+    FROM period_roots root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+    JOIN source_generation generation ON true
+    LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
+      AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id
+  ) checked
 ), visible_mentions AS MATERIALIZED (
   SELECT root.* FROM mention_roots root WHERE root.metrics AND root.evidence AND root.text_valid
 ), filtered_mentions AS MATERIALIZED (
@@ -382,7 +386,8 @@ const mentionsPopulationSql = `${populationSql}, mention_roots AS MATERIALIZED (
 )`;
 type MentionsSummary = {
   metric_denominator: number; evidence_visible_total: number; total_count: number;
-  withheld_evidence_count: number; integrity_withheld_count: number; rights_digest: string; population_digest: string;
+  withheld_evidence_count: number; integrity_withheld_count: number; rights_digest: string;
+  population_fingerprint_xor: string; population_fingerprint_sum: string;
   date_from: string | null; date_to: string | null; available_platforms: string[]; cursor_exists: boolean; cursor_offset: number;
 };
 
@@ -416,8 +421,8 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
         count(*) FILTER(WHERE root.metrics AND root.evidence AND NOT root.text_valid)::int integrity_withheld_count,
         'sha256:'||encode(sha256(convert_to(COALESCE((SELECT string_agg(jsonb_build_array(id,data_source_id,metrics,evidence)::text,
           '' ORDER BY id) FROM authorized_imports),''),'UTF8')),'hex') rights_digest,
-        'sha256:'||encode(sha256(convert_to(COALESCE(string_agg(jsonb_build_array(root.root_id,root.metrics,root.evidence,
-          root.text_valid,root.published_at,root.platform)::text,'' ORDER BY root.root_id),''),'UTF8')),'hex') population_digest,
+        COALESCE(bit_xor(root.population_hash),0)::text population_fingerprint_xor,
+        COALESCE(sum(root.population_hash::numeric),0)::text population_fingerprint_sum,
         (SELECT to_char(min(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_from,
         (SELECT to_char(max(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_to,
         ARRAY(SELECT DISTINCT lower(btrim(platform)) FROM visible_mentions
@@ -457,7 +462,11 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
     const summary = result.rows[0]!;
     const scope = hash({ contract_version: "signal-workspace-mentions-v1", workspace: access.workspace_id, actor: access.actor_user_id,
       generation: ctx.generation.id, finalized_digest: ctx.generation.finalized_digest, input_revision: ctx.generation.current_revision,
-      rights: summary.rights_digest, population: summary.population_digest, filters: request.filters, direction: request.direction });
+      rights: summary.rights_digest, population: {
+        fingerprint: { xor: summary.population_fingerprint_xor, sum: summary.population_fingerprint_sum },
+        metric_denominator: summary.metric_denominator, evidence_visible_total: summary.evidence_visible_total,
+        withheld_evidence_count: summary.withheld_evidence_count, integrity_withheld_count: summary.integrity_withheld_count
+      }, filters: request.filters, direction: request.direction });
     if (args.expected_scope_digest && args.expected_scope_digest !== scope || request.cursor && request.cursor.scope !== scope
       || !summary.cursor_exists || request.cursor && request.cursor.offset !== summary.cursor_offset) return fail("workspace_mentions_scope_changed");
     const rows = result.rows.flatMap(row => row.item ? [{ ...row.item, focus_only: Boolean(row.focus_only) }] : []);

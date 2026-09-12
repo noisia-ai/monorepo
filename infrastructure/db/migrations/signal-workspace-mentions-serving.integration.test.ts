@@ -192,6 +192,8 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
     try {
       // Model a privileged/broken invalidation path while leaving the digest
       // maintenance and exact CHECK active. Serving must still withhold the root.
+      const original = (await f.query("SELECT id,text_clean FROM mentions WHERE id=ANY($1::uuid[])",
+        [[all[0]!.mention_id, all[1]!.mention_id]])).rows as Array<{ id: string; text_clean: string }>;
       await f.query("ALTER TABLE mentions DISABLE TRIGGER trg_corpus_input_mentions_update");
       await f.query("UPDATE mentions SET text_clean=text_clean||' changed without source revision' WHERE id=$1::uuid", [all[0]!.mention_id]);
       await f.query("ALTER TABLE mentions ENABLE TRIGGER trg_corpus_input_mentions_update");
@@ -200,6 +202,17 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
       assert.equal(changed.total_count, first.total_count - 1);
       assert.equal(changed.items.some(row => row.mention_id === all[0]!.mention_id), false);
       await assert.rejects(read({ ...f.access, expected_scope_digest: first.scope_digest }), /scope_changed/u);
+      await f.query("ALTER TABLE mentions DISABLE TRIGGER trg_corpus_input_mentions_update");
+      await f.query("UPDATE mentions SET text_clean=$2 WHERE id=$1::uuid",
+        [all[0]!.mention_id, original.find(row => row.id === all[0]!.mention_id)!.text_clean]);
+      await f.query("UPDATE mentions SET text_clean=text_clean||' changed without source revision' WHERE id=$1::uuid", [all[1]!.mention_id]);
+      await f.query("ALTER TABLE mentions ENABLE TRIGGER trg_corpus_input_mentions_update");
+      const swapped = await read(f.access);
+      assert.equal(swapped.integrity_withheld_count, changed.integrity_withheld_count);
+      assert.equal(swapped.total_count, changed.total_count);
+      assert.notEqual(swapped.scope_digest, changed.scope_digest,
+        "equal counts still invalidate when a different root fails integrity");
+      await assert.rejects(read({ ...f.access, expected_scope_digest: changed.scope_digest }), /scope_changed/u);
     } finally { await f.query("ROLLBACK TO SAVEPOINT mentions_digest_withheld"); await f.query("RELEASE SAVEPOINT mentions_digest_withheld"); }
     await f.query("SAVEPOINT mentions_changed_text");
     try {

@@ -7,7 +7,9 @@ import {
   persistSignalWorkspaceEngineInterpretationResponseV1, settleSignalWorkspaceEngineInterpretationV1,
   failSignalWorkspaceEngineInterpretationV1, checkpointSignalWorkspaceEngineInterpretationV1,
   readSignalWorkspaceEngineInterpretationCheckpointsV1, readSignalWorkspaceEngineInterpretationRecoveryRequestDigestsV1,
+  readSignalWorkspaceEngineInterpretationExceptionsV1, quarantineSignalWorkspaceEngineInterpretationBatchV1,
   materializeSignalWorkspaceEngineTopicsV1, persistSignalWorkspaceEngineArtifactV1, completeSignalWorkspaceEngineAnalysisV1,
+  completeSignalWorkspaceEngineAnalysisWithExceptionsV1,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
 import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniverseDigestV1,
@@ -27,8 +29,10 @@ const stores = {
   fail: failSignalWorkspaceEngineInterpretationV1, checkpoint: checkpointSignalWorkspaceEngineInterpretationV1,
   checkpoints: readSignalWorkspaceEngineInterpretationCheckpointsV1,
   recoverable: readSignalWorkspaceEngineInterpretationRecoveryRequestDigestsV1,
+  exceptions: readSignalWorkspaceEngineInterpretationExceptionsV1,
+  quarantine: quarantineSignalWorkspaceEngineInterpretationBatchV1,
   materialize: materializeSignalWorkspaceEngineTopicsV1, persist: persistSignalWorkspaceEngineArtifactV1,
-  complete: completeSignalWorkspaceEngineAnalysisV1,
+  complete: completeSignalWorkspaceEngineAnalysisV1, completePartial: completeSignalWorkspaceEngineAnalysisWithExceptionsV1,
 };
 const sha = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const fail = (code: string): never => { throw new Error(code); };
@@ -83,6 +87,11 @@ export async function interpretWorkspaceEngineV1(args: {
   });
   const proposals: Array<{ artifact_id: string; file: string }> = [];
   const completedUnits = await restoreCheckpoints();
+  const isolatedUnits = new Set<string>();
+  for(const exception of await store.exceptions({database,lease}))for(const key of exception.unit_keys){
+    if(completedUnits.has(key)||isolatedUnits.has(key))return fail("workspace_engine_interpretation_exception_invalid");
+    isolatedUnits.add(key);completedUnits.add(key);
+  }
   const recoveryRequests=new Set(await store.recoverable({database,lease}));
   // Finish already-started logical requests before validating any unrelated
   // future send. This tolerant planner can cross an individually oversized
@@ -111,6 +120,7 @@ export async function interpretWorkspaceEngineV1(args: {
   for (const originalBatch of batchSignalWorkspaceInterpretationV1(context.context, remaining, configuration)) {
     await processBatch(originalBatch);
   }
+  if(isolatedUnits.size){await args.heartbeat("materializing");return store.completePartial({database,lease});}
   await args.heartbeat("materializing");
   const materialized = await store.materialize({ database, lease, proposals: (async function* () {
     for (const item of proposals) yield { artifact_id: item.artifact_id, body: await readFile(item.file, "utf8") };
@@ -129,6 +139,7 @@ export async function interpretWorkspaceEngineV1(args: {
       return fail("workspace_engine_interpretation_config_mismatch");
     let batch = originalBatch;
     let { call, response } = await executeBatch(batch);
+    const originalCall=call,originalResponse=response;
     if (!response.interpretations || response.outcome !== "validated") {
       // One new editorial request may correct a complete, metered but invalid
       // result. It never replaces the original receipt, restarts numerical fit,
@@ -142,8 +153,20 @@ export async function interpretWorkspaceEngineV1(args: {
         source_response_sha256: call.response.sha256, diagnostic: "output_invalid" });
       await args.heartbeat("interpreting");
       ({ call, response } = await executeBatch(batch));
-      if (!response.interpretations || response.outcome !== "validated")
-        return fail("workspace_engine_interpretation_repair_invalid");
+      if (!response.interpretations || response.outcome !== "validated") {
+        if(response.outcome!=="known_response_invalid"||response.error_code!=="workspace_engine_interpretation_output_invalid"
+          ||originalCall.state!=="settled"||call.state!=="settled"||!originalCall.response?.complete||!call.response?.complete
+          ||originalCall.response.sha256!==originalResponse.receipt_sha256||call.response.sha256!==response.receipt_sha256)
+          return fail("workspace_engine_interpretation_repair_invalid");
+        const unitKeys=originalBatch.clusters.map(item=>item.cluster_id);
+        await store.quarantine({database,lease,original_call_id:originalCall.call_id,repair_call_id:call.call_id,
+          original_request_digest:originalCall.request_digest,repair_request_digest:call.request_digest,
+          original_response_sha256:originalCall.response.sha256,repair_response_sha256:call.response.sha256,
+          batch_digest:signalWorkspaceEmbeddingDigestV1(originalBatch),unit_keys:unitKeys,
+          validator_version:"workspace-interpretation-validator-v1"});
+        for(const key of unitKeys)isolatedUnits.add(key);
+        return unitKeys;
+      }
     }
     await args.heartbeat("interpreting");
     const filename = `interpretation-${call.call_id}.json`;

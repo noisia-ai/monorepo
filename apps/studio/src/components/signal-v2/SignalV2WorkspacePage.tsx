@@ -45,6 +45,7 @@ import {
 } from "@/lib/signal-v2/workspace-navigation";
 import { SignalV2BrandMonitoring } from "@/components/signal-v2/SignalV2BrandMonitoring";
 import { loadNativeSignalTopicsV1 } from "@/lib/data-os/signal-workspace-topics-native";
+import { buildNativeSignalMonitoringV1 } from "@/lib/data-os/signal-workspace-monitoring-native";
 import { loadNativeSignalMentionsV1 } from "@/lib/data-os/signal-workspace-mentions-native";
 
 export async function SignalV2WorkspacePage({
@@ -126,9 +127,10 @@ export async function SignalV2WorkspacePage({
       const dateFrom = native.filters.date_from ?? native.available_dates.date_from;
       const dateTo = native.filters.date_to ?? native.available_dates.date_to;
       const filter = dateFrom && dateTo ? { ...empty.filter, timezone: "UTC", date_range: { start: dateFrom, end: dateTo } } : empty.filter;
+      const nativeMonitoring = buildNativeSignalMonitoringV1({ ...empty, filter,
+        comparison: resolveSignalComparisonV1({ filter, mode: "none" }) }, native);
       return <SignalV2BrandMonitoring activeModule={activeModule} activeStudy={null} brandName={workspace.name}
-        canRefreshInsights={false} initialData={{ ...empty, filter, comparison: resolveSignalComparisonV1({ filter, mode: "none" }),
-          coverage: { date_from: native.available_dates.date_from, date_through: native.available_dates.date_to, mentions: native.denominator } }}
+        canRefreshInsights={false} initialData={nativeMonitoring}
         initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialTriggersBarriers={null}
         legacyOutputId={null} manageTopicsHref={manageTopicsHref}
         strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}

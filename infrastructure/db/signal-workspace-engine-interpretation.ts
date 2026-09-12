@@ -29,7 +29,8 @@ export type SignalWorkspaceEngineInterpretationConfigurationV1={
 export type SignalWorkspaceEngineInterpretationUsageV1={
  input_tokens:number;output_tokens:number;cache_read_input_tokens:number;cache_creation_input_tokens:number;
 };
-/** Terminal reservations remain a subset of reserved, never settled or invoiced. */
+/** A terminal reservation remains reserved until an internal verifier settles the
+ * already audited provider usage against the sealed price configuration. */
 export type SignalWorkspaceEngineInterpretationBudgetV1={
  confirmed_micro_usd:number;reserved_micro_usd:number;unknown_reserved_micro_usd:number;terminal_reserved_micro_usd:number;
  observed_exception_micro_usd:number;hard_cap_micro_usd:number;
@@ -110,7 +111,9 @@ async function assertEditorialAdmission(c:PoolClient,revision:SignalWorkspaceEng
  if(row?.expired===true)return fail('workspace_engine_interpretation_daily_authority_expired');
  if(row?.expired!==false)return fail('workspace_engine_interpretation_config_mismatch');
 }
-const exposureSQL=`CASE WHEN call_state='settled' THEN settled_micro_usd WHEN call_state='definitely_not_sent' THEN 0 ELSE reserved_micro_usd END`;
+const exposureSQL=`CASE WHEN call_state='settled' OR call_state='terminal_confirmed'
+ AND metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1'
+ THEN settled_micro_usd WHEN call_state='definitely_not_sent' THEN 0 ELSE reserved_micro_usd END`;
 export async function reserveSignalWorkspaceEngineInterpretationV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;
  workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string;request_digest:string;
  configuration:SignalWorkspaceEngineInterpretationConfigurationV1;reserved_micro_usd:number;budget_timezone:string;daily_cap_micro_usd:number;
@@ -265,11 +268,15 @@ export async function loadSignalWorkspaceEngineInterpretationBudgetV1(args:{data
  return tx(args.database,async c=>{await authorize(c,args.workspace_id,args.actor_user_id,false);
   const result=(await c.query<{hard_cap_micro_usd:string;confirmed_micro_usd:string;reserved_micro_usd:string;unknown_reserved_micro_usd:string;terminal_reserved_micro_usd:string;observed_exception_micro_usd:string}>(`
    SELECT execution.input_snapshot->>'claude_cap_micro_usd' hard_cap_micro_usd,
-    COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.call_state='settled'),0)::text confirmed_micro_usd,
-    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state IN('reserved','in_flight','response_persisted','outcome_unknown','terminal_confirmed')),0)::text reserved_micro_usd,
+    COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.call_state='settled' OR call.call_state='terminal_confirmed'
+      AND call.metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1'),0)::text confirmed_micro_usd,
+    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state IN('reserved','in_flight','response_persisted','outcome_unknown')
+      OR call.call_state='terminal_confirmed' AND NOT (call.metadata ? 'provider_terminal_billing_reconciliation')),0)::text reserved_micro_usd,
     COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state='outcome_unknown'),0)::text unknown_reserved_micro_usd,
-    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state='terminal_confirmed'),0)::text terminal_reserved_micro_usd,
-    COALESCE(sum(GREATEST(call.settled_micro_usd-call.reserved_micro_usd,0)) FILTER(WHERE call.call_state='settled'),0)::text observed_exception_micro_usd
+    COALESCE(sum(call.reserved_micro_usd) FILTER(WHERE call.call_state='terminal_confirmed'
+      AND NOT (call.metadata ? 'provider_terminal_billing_reconciliation')),0)::text terminal_reserved_micro_usd,
+    COALESCE(sum(GREATEST(call.settled_micro_usd-call.reserved_micro_usd,0)) FILTER(WHERE call.call_state='settled'
+      OR call.call_state='terminal_confirmed' AND call.metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1'),0)::text observed_exception_micro_usd
    FROM signal_topic_catalog_executions execution LEFT JOIN engine_cost_events call ON call.catalog_execution_id=execution.id AND call.workspace_id=execution.workspace_id
     AND call.workspace_contract='workspace-engine-interpretation-v1'
    WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract IN('workspace-topic-engine-v1','workspace-incremental-editorial-v1')
@@ -284,6 +291,11 @@ export type SignalWorkspaceEngineTerminalEvidenceV1={
  started_at:string;ended_at:string;http_status:499;reason:'client_disconnected';
  usage:SignalWorkspaceEngineInterpretationUsageV1;
  evidence:{storage_key:string;sha256:string;size_bytes:number};
+};
+export type SignalWorkspaceEngineTerminalBillingV1={
+ contract_version:'workspace-provider-terminal-billing-v1';method:'audited_usage_pricing';
+ provider_request_id:string;terminal_receipt_digest:string;actual_micro_usd:number;
+ usage:SignalWorkspaceEngineInterpretationUsageV1;verified_by_user_id:string;
 };
 /** Operational server entry point. Our DB checks the verifier's internal admin
  * role. Console evidence is a human-audited correlation, not an API response or
@@ -328,5 +340,49 @@ export async function reconcileSignalWorkspaceEngineTerminalV1(args:{database:Si
    result_summary=result_summary||'{"interpretation_evidence_checkpoint_required":true}'::jsonb,updated_at=clock_timestamp()
    WHERE id=$1::uuid AND status='failed'`,[row.catalog_execution_id]);
   return view({...row,call_state:'terminal_confirmed'});
+ });
+}
+
+/** Releases a terminal reservation using the exact usage already sealed by
+ * reconcileSignalWorkspaceEngineTerminalV1. This is a billing transition only:
+ * it cannot fabricate a provider response or make the failed batch usable. */
+export async function settleSignalWorkspaceEngineTerminalBillingV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;
+ workspace_id:string;execution_id:string;call_id:string;attempt_token:string;expected_provider_request_id:string;
+ verifier_user_id:string}):Promise<SignalWorkspaceEngineInterpretationCallV1>{
+ if(!/^req_[A-Za-z0-9_-]{1,220}$/u.test(args.expected_provider_request_id))return fail('workspace_engine_interpretation_terminal_billing_invalid',422);
+ return tx(args.database,async c=>{
+  await authorize(c,args.workspace_id,args.verifier_user_id);
+  if(!(await c.query("SELECT 1 FROM users WHERE id=$1::uuid AND status='active' AND user_type='noisia_internal' AND primary_role IN('noisia_admin','admin','founder')",[args.verifier_user_id])).rows.length)
+   return fail('workspace_engine_interpretation_terminal_billing_forbidden',403);
+  const row=await lockedCall(c,args.call_id,args.attempt_token);
+  if(row.workspace_id!==args.workspace_id||row.catalog_execution_id!==args.execution_id)return fail('workspace_engine_interpretation_terminal_billing_conflict');
+  const stored=(await c.query<{receipt:Record<string,unknown>|null;billing:SignalWorkspaceEngineTerminalBillingV1|null}>(
+   "SELECT metadata->'provider_terminal_receipt' receipt,metadata->'provider_terminal_billing_reconciliation' billing FROM engine_cost_events WHERE id=$1::uuid",[row.id])).rows[0]!;
+  const receipt=stored.receipt as null|SignalWorkspaceEngineTerminalEvidenceV1&{contract_version:string;call_id:string;attempt_token:string;workspace_id:string;execution_id:string;
+   request_digest:string;configuration_digest:string;billing_status:string;usage_cost_micro_usd:number;verified_by_user_id:string;verified_at:string};
+  if(row.call_state==='terminal_confirmed'&&stored.billing){
+   if(stored.billing.provider_request_id!==args.expected_provider_request_id||stored.billing.verified_by_user_id!==args.verifier_user_id
+    ||stored.billing.actual_micro_usd!==natural(row.settled_micro_usd))return fail('workspace_engine_interpretation_terminal_billing_conflict');
+   return view(row);
+  }
+  if(row.call_state!=='terminal_confirmed'||row.response_storage_key||!receipt||receipt.contract_version!=='workspace-provider-terminal-evidence-v1'
+   ||receipt.billing_status!=='unreconciled'||receipt.provider_request_id!==args.expected_provider_request_id||receipt.call_id!==row.id
+   ||receipt.attempt_token!==row.attempt_token||receipt.workspace_id!==row.workspace_id||receipt.execution_id!==row.catalog_execution_id
+   ||receipt.request_digest!==row.request_digest||receipt.provider_model!==row.call_configuration.model)return fail('workspace_engine_interpretation_terminal_billing_unavailable');
+  if((await c.query("SELECT 1 FROM engine_cost_events WHERE retry_of_call_id=$1::uuid LIMIT 1",[row.id])).rows.length)
+   return fail('workspace_engine_interpretation_terminal_billing_retry_exists');
+  const usage=receipt.usage;
+  if(!usage||Object.keys(usage).sort().join(',')!=='cache_creation_input_tokens,cache_read_input_tokens,input_tokens,output_tokens'
+   ||!Object.values(usage).every(n=>Number.isSafeInteger(n)&&n>=0&&n<=2147483647))return fail('workspace_engine_interpretation_terminal_billing_invalid');
+  const actual=natural(receipt.usage_cost_micro_usd),input=usage.input_tokens+usage.cache_read_input_tokens+usage.cache_creation_input_tokens,total=input+usage.output_tokens;
+  if(input>2147483647||total>2147483647)return fail('workspace_engine_interpretation_usage_invalid',422);
+  const receiptDigest=signalWorkspaceEmbeddingDigestV1(receipt);
+  const billing:SignalWorkspaceEngineTerminalBillingV1={contract_version:'workspace-provider-terminal-billing-v1',method:'audited_usage_pricing',
+   provider_request_id:receipt.provider_request_id,terminal_receipt_digest:receiptDigest,actual_micro_usd:actual,usage,verified_by_user_id:args.verifier_user_id};
+  await c.query(`UPDATE engine_cost_events SET settled_micro_usd=$2::bigint,input_tokens=$3,output_tokens=$4,total_tokens=$5,
+   estimated_cost_usd=($2::bigint)::numeric/1000000,metadata=metadata||jsonb_build_object('usage',$6::jsonb,'provider_terminal_billing_reconciliation',
+    $7::jsonb||jsonb_build_object('reconciled_at',clock_timestamp())),settled_at=clock_timestamp()
+   WHERE id=$1::uuid`,[row.id,actual,input,usage.output_tokens,total,JSON.stringify(usage),JSON.stringify(billing)]);
+  return view({...row,settled_micro_usd:String(actual)});
  });
 }

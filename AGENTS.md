@@ -4,6 +4,8 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **REANUDADO — 2026-09-12, Topics consolidados y Signal común.** La pausa anterior queda como historia: el operador pidió revisar Laika, recuperar su calidad visual para todas las marcas y continuar Alexa Plus. Leer `docs/product/PROMPT_LOOPING/PLAN_TOPIC_CONSOLIDATION_SIGNAL_PARITY_2026-09-12.md`. Decisión: los 1,652 grupos BERTopic son linaje técnico; el producto debe consolidarlos en Topics/Narratives/Noise manejables con Sonnet4.6 y centroides existentes, sin repetir imports, Voyage ni fit. Primeros cortes: conciliación append-only del terminal USD1.192104→costo observado USD0.118404, excepción durable `repair_invalid`, después dossiers/consolidación y portada Signal con los componentes de Laika. Presupuesto comunicado: USD32 disponibles; corte de consolidación tendrá cap≤USD20. UAT sigue `1dd6882`/SQL0167–0169 aplicados una vez. No producción/main, Opus, SQL repetido, datos borrados ni clasificador Claude por mención.
+
 > **PARADA SEGURA ALEXA PLUS E2E — 2026-09-12 14:14 UTC.** El loop
 > `noisia-topics-to-signal-uat-loop` quedó `PAUSED` y verificado en este chat. Studio y Worker UAT
 > ejecutan `1dd6882337ce15f9ec72894df566316f954c0b3b`; SQL0167–0169 se aplicó una sola vez y no se

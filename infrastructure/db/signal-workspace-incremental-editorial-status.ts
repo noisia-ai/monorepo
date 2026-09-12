@@ -26,6 +26,7 @@ type Run={id:string;actor_user_id:string;status:string;error_code:string|null;cu
  context_digest:string;catalog_digest:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1;
  request:SignalWorkspaceIncrementalEditorialRetryReceiptV1|null;now:string};
 const fail=(suffix:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_incremental_editorial_${suffix}`,status);};
+const billedTerminal=`COALESCE(call_state='terminal_confirmed' AND metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1',false)`;
 function validId(value:string){if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value))return fail('request_invalid',422);return value.toLowerCase();}
 function key(value:string){if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(value))return fail('request_invalid',422);return digest({contract:'workspace-incremental-editorial-retry-key-v1',key:value});}
 async function admin(c:Queryable,args:Scope){if(!(await c.query<{valid:boolean}>(
@@ -55,9 +56,9 @@ async function status(c:Queryable,args:Scope,idempotency_key?:string):Promise<Si
   workspace_incremental_editorial_output_complete_v1($1::uuid) checkpoint_complete,
   (SELECT count(DISTINCT unit.key)::int FROM analysis_artifacts artifact CROSS JOIN LATERAL jsonb_array_elements_text(artifact.metadata->'unit_keys') unit(key)
    WHERE artifact.engine_execution_id=$1::uuid AND artifact.metadata->>'contract_version'='workspace-incremental-editorial-checkpoint-v1') interpreted,
-  COALESCE(sum(settled_micro_usd) FILTER(WHERE call_state='settled'),0)::text confirmed,
-  COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state NOT IN('settled','definitely_not_sent')),0)::text reserved,
-  COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state='terminal_confirmed'),0)::text terminal
+  COALESCE(sum(settled_micro_usd) FILTER(WHERE call_state='settled' OR ${billedTerminal}),0)::text confirmed,
+  COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state NOT IN('settled','definitely_not_sent') AND NOT (${billedTerminal})),0)::text reserved,
+  COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state='terminal_confirmed' AND NOT (${billedTerminal})),0)::text terminal
   FROM engine_cost_events WHERE catalog_execution_id=$1::uuid`,[run.id])).rows[0]!;
  const recovery=await readSignalWorkspaceIncrementalEditorialRetryWithQueryableV1(c,run.id);
  const isAdmin=capabilities.can_execute_topics&&(await c.query<{valid:boolean}>(

@@ -32,7 +32,8 @@ import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabil
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_engine_interpretation_${code}`,status);};
 const keyValid=(key:string)=>/^[A-Za-z0-9._:-]{8,200}$/u.test(key);
 const operationKey=(key:string)=>digest({contract:'workspace-interpretation-admission-key-v1',key});
-const exposure=`CASE WHEN call_state='settled' THEN settled_micro_usd WHEN call_state='definitely_not_sent' THEN 0 ELSE reserved_micro_usd END`;
+const billedTerminal=`COALESCE(call_state='terminal_confirmed' AND metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1',false)`;
+const exposure=`CASE WHEN call_state='settled' OR ${billedTerminal} THEN settled_micro_usd WHEN call_state='definitely_not_sent' THEN 0 ELSE reserved_micro_usd END`;
 const releasable=`call_state='reserved' AND sent_at IS NULL AND response_storage_key IS NULL AND (
  budget_date<>(clock_timestamp() AT TIME ZONE budget_timezone)::date
  OR EXISTS(SELECT 1 FROM signal_classification_operations grant_receipt WHERE grant_receipt.id=(metadata->'interpretation_admission'->>'operation_id')::uuid
@@ -67,9 +68,9 @@ async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string
  const clock=(await c.query<{date:string;maximum:string}>(`SELECT (clock_timestamp() AT TIME ZONE $1)::date::text date,
   to_char((((clock_timestamp() AT TIME ZONE $1)::date+1)::timestamp AT TIME ZONE $1) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') maximum`,[timezone])).rows[0]!;
  const money=(await c.query<{confirmed:string;reserved:string;terminal:string;run_spent:string;day_spent:string;releasable_run:string;releasable_day:string}>(`SELECT
-  COALESCE(sum(settled_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND call_state='settled'),0)::text confirmed,
-  COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND call_state NOT IN('settled','definitely_not_sent')),0)::text reserved,
-  COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND call_state='terminal_confirmed'),0)::text terminal,
+  COALESCE(sum(settled_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND (call_state='settled' OR ${billedTerminal})),0)::text confirmed,
+  COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND call_state NOT IN('settled','definitely_not_sent') AND NOT (${billedTerminal})),0)::text reserved,
+  COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND call_state='terminal_confirmed' AND NOT (${billedTerminal})),0)::text terminal,
   COALESCE(sum(${exposure}) FILTER(WHERE catalog_execution_id=$1::uuid),0)::text run_spent,
   COALESCE(sum(${exposure}) FILTER(WHERE budget_date=$3::date),0)::text day_spent,
   COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=$1::uuid AND ${releasable}),0)::text releasable_run,

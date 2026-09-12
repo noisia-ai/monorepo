@@ -46,6 +46,7 @@ import type { SignalMentionRecordV1 } from "@/lib/data-os/signal-workspace-servi
 import type { SignalStrategicStudyNavigationItem } from "@/lib/signal-v2/workspace-navigation";
 import type { SignalTriggersBarriersOverviewV2 } from "@/lib/data-os/signal-triggers-barriers-serving";
 import type { SignalClientSettingsV1 } from "@/lib/data-os/signal-client-settings";
+import { buildNativeSignalMonitoringV1, isNativeSignalTopicsOverviewV1 } from "@/lib/data-os/signal-workspace-monitoring-native";
 import {
   SignalAnalyticsFilter,
   type SignalAnalyticsFilterSelection
@@ -313,9 +314,10 @@ export function SignalV2BrandMonitoring({
       setMentionsData(current => current?.native && current.native.generation_id !== payload.generation_id
         ? { ...current, records: [], record: null, native: { ...current.native, is_current: false } } : current);
       setTopicsNarrativesData(payload);
+      if (target === "monitoring") setData(current => buildNativeSignalMonitoringV1(current, payload));
       const start = payload.filters.date_from ?? payload.available_dates.date_from;
       const end = payload.filters.date_to ?? payload.available_dates.date_to;
-      if (start && end) setData(current => ({ ...current, filter: { ...current.filter,
+      if (target !== "monitoring" && start && end) setData(current => ({ ...current, filter: { ...current.filter,
         date_range: { start, end }, timezone: "UTC", granularity: "day", dimensions: {}, search_query: undefined },
         comparison: { ...current.comparison, mode: "none", date_range: null },
         coverage: { date_from: payload.available_dates.date_from, date_through: payload.available_dates.date_to, mentions: payload.denominator } }));
@@ -552,8 +554,9 @@ export function SignalV2BrandMonitoring({
         for (const key of ["q", "platform", "sort", "direction", "cursor", "limit", "mention", "scope_digest", "offset"]) query.delete(key);
       }
     }
-    // Native mention text is never restored from the navigation cache before authorization revalidation.
-    const cachedPayload = nativeTarget && target === "mentions" ? undefined : moduleCacheRef.current.get(moduleCacheKey(target, query));
+    // Native data is never restored from the navigation cache before the
+    // workspace contract and current authorization are revalidated.
+    const cachedPayload = nativeTarget ? undefined : moduleCacheRef.current.get(moduleCacheKey(target, query));
     setPendingModule(target);
     setSidebarOpen(false);
     setError(null);
@@ -596,6 +599,11 @@ export function SignalV2BrandMonitoring({
           if (mentions.record?.subject_id.toLowerCase() !== focus.toLowerCase()) {
             invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
           }
+        }
+      }
+      if (nativeTarget && target !== "mentions") {
+        if (!isNativeSignalTopicsOverviewV1(payload, data.workspace.id)) {
+          invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
         }
       }
       moduleCacheRef.current.set(moduleCacheKey(target, query), payload);
@@ -858,11 +866,13 @@ export function SignalV2BrandMonitoring({
 
   const comparisonFilter = data.comparison_filter;
   const hasComparison = comparisonFilter != null;
+  const nativeVolumeOnly = data.freshness.data.unit === "canonical_mention";
+  const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly ? "mentions" : conversationMetric;
   const currentStructure = data.conversation_structure.summary;
   const previousStructure = data.conversation_structure.previous_summary;
-  const currentConversationValue = currentStructure[conversationMetric];
-  const previousConversationValue = previousStructure?.[conversationMetric] ?? null;
-  const conversationTrend = previousConversationValue == null
+  const currentConversationValue = nativeVolumeOnly ? data.volume.current_value : currentStructure[effectiveConversationMetric];
+  const previousConversationValue = nativeVolumeOnly ? data.volume.previous_value : previousStructure?.[effectiveConversationMetric] ?? null;
+  const conversationTrend = currentConversationValue == null || previousConversationValue == null
     ? null
     : comparisonDelta(currentConversationValue, previousConversationValue);
 
@@ -885,7 +895,8 @@ export function SignalV2BrandMonitoring({
     xAxis: {
       type: "category",
       boundaryGap: false,
-      data: data.conversation_structure.points.map((point) => shortDate(point.period_start)),
+      data: (nativeVolumeOnly ? data.volume.points : data.conversation_structure.points)
+        .map((point) => shortDate(point.period_start)),
       axisLine: { show: false },
       axisTick: { show: false },
       axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11, hideOverlap: true }
@@ -906,7 +917,9 @@ export function SignalV2BrandMonitoring({
         showSymbol: false,
         lineStyle: { width: 2, color: CHART_BLUE },
         emphasis: { disabled: true },
-        data: data.conversation_structure.points.map((point) => point[conversationMetric])
+        data: nativeVolumeOnly
+          ? data.volume.points.map((point) => point.value)
+          : data.conversation_structure.points.map((point) => point[effectiveConversationMetric])
       },
       ...(hasComparison ? [{
         name: t("charts.previous"),
@@ -918,15 +931,17 @@ export function SignalV2BrandMonitoring({
         data: alignStructuredPrevious(
           data.conversation_structure.previous_points,
           data.conversation_structure.points.length,
-          conversationMetric
+          effectiveConversationMetric
         )
       }] : [])
     ]
   }), [
-    conversationMetric,
+    effectiveConversationMetric,
+    data.volume.points,
     data.conversation_structure.points,
     data.conversation_structure.previous_points,
     hasComparison,
+    nativeVolumeOnly,
     t
   ]);
 
@@ -1271,9 +1286,9 @@ export function SignalV2BrandMonitoring({
         <div className={`signal-v2-module-content${contentArriving ? " signal-v2-module-content--arriving" : ""}`}>
         {currentModule === "settings" && initialSettings ? (
           <SignalV2Settings data={initialSettings} />
-        ) : (currentModule === "monitoring" || currentModule === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
+        ) : currentModule === "topics" && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
           <SignalV2WorkspaceTopics data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
-            surface={currentModule === "monitoring" ? "summary" : "topics"} refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
+            surface="topics" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
             onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenTopics={() => void navigateToModule("topics")}
             onOpenMention={mentionId => {
               const params = new URLSearchParams({ view: "all_conversations", mention: mentionId });
@@ -1429,16 +1444,20 @@ export function SignalV2BrandMonitoring({
           <ConversationKpis
             current={data.conversation_structure.summary}
             hasComparison={hasComparison}
+            nativeVolume={nativeVolumeOnly ? {
+              current: data.volume.current_value ?? 0,
+              previous: data.volume.previous_value
+            } : null}
             previous={data.conversation_structure.previous_summary}
           />
 
           <section className="signal-v2-grid" aria-label={t("sections.metrics")}>
           <MetricCard
             className="signal-v2-card--wide"
-            dataState={data.conversation_structure.state}
+            dataState={nativeVolumeOnly ? data.volume.state : data.conversation_structure.state}
             eyebrow={t("cards.volume.eyebrow")}
             headingAction={(
-              <ConversationMetricSwitch
+              nativeVolumeOnly ? null : <ConversationMetricSwitch
                 onChange={setConversationMetric}
                 value={conversationMetric}
               />
@@ -1446,11 +1465,11 @@ export function SignalV2BrandMonitoring({
             help={translatedHelp(t, "cards.volume.help")}
             metric={currentConversationValue}
             title={t("cards.volume.titleByUnit", {
-              unit: t(`cards.volume.units.${conversationMetric}`)
+              unit: t(`cards.volume.units.${effectiveConversationMetric}`)
             })}
             trend={conversationTrend}
           >
-            {data.conversation_structure.points.length > 0 ? (
+            {(nativeVolumeOnly ? data.volume.points : data.conversation_structure.points).length > 0 ? (
               <SignalEChart
                 ariaLabel={hasComparison
                   ? t("cards.volume.aria")
@@ -1459,7 +1478,7 @@ export function SignalV2BrandMonitoring({
                 option={volumeOption}
               />
             ) : (
-              <EmptyMetric message={metricEmptyMessage(data.volume.state, t)} />
+              <EmptyMetric message={metricEmptyMessage(nativeVolumeOnly ? data.volume.state : data.conversation_structure.state, t)} />
             )}
           </MetricCard>
 
@@ -2057,10 +2076,12 @@ function NavLink({
 function ConversationKpis({
   current,
   hasComparison,
+  nativeVolume,
   previous
 }: {
   current: SignalBrandMonitoringV1["conversation_structure"]["summary"];
   hasComparison: boolean;
+  nativeVolume: { current: number; previous: number | null } | null;
   previous: SignalBrandMonitoringV1["conversation_structure"]["previous_summary"];
 }) {
   const t = useTranslations("SignalV2");
@@ -2068,7 +2089,9 @@ function ConversationKpis({
     key: ConversationMetric;
     value: number;
     previousValue: number | null;
-  }> = [
+  }> = nativeVolume ? [
+    { key: "mentions", value: nativeVolume.current, previousValue: nativeVolume.previous }
+  ] : [
     { key: "mentions", value: current.mentions, previousValue: previous?.mentions ?? null },
     { key: "conversations", value: current.conversations, previousValue: previous?.conversations ?? null },
     { key: "root_posts", value: current.root_posts, previousValue: previous?.root_posts ?? null },

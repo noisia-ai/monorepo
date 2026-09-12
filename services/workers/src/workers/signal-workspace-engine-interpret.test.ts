@@ -42,6 +42,8 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   let reserveFailure: string | null = null;
   let sendRejection: Error | null = null;
   let totalSettled = 0;
+  let partialCompleted = 0;
+  const exceptions: Array<{ unit_keys: string[] }> = [];
   let executionClusters: SignalWorkspaceInterpretationClusterV1[] = [cluster];
   let contextData: Record<string, unknown> = { interests: [] };
   const checkpointCallIds: string[] = [];
@@ -67,6 +69,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       execution_id: lease.execution_id, context_digest: hash("context"), data: contextData } }),
     fit: async () => { fitCount++; states.push("fit"); return {}; },
     checkpoints: async () => ({ items: [], next_artifact_id: null, done: true }),
+    exceptions: async () => structuredClone(exceptions),
     recoverable: async () => [...new Set([...calls.values()].map(row=>row.request_digest))].sort(),
     reserve: async (args: Parameters<NonNullable<Args["stores"]>["reserve"]>[0]) => {
       assert.equal(args.workspace_id, lease.workspace_id); assert.equal(args.execution_id, lease.execution_id);
@@ -145,6 +148,13 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       states.push("checkpoint");
       if (failAfterCheckpoint) { failAfterCheckpoint = false; throw new Error("workspace_engine_worker_failed"); }
       return { artifact_id: uuid(8) }; },
+    quarantine: async (args: { original_call_id: string; repair_call_id: string; unit_keys: string[] }) => {
+      assert.equal(calls.get(args.original_call_id)?.state, "settled");
+      assert.equal(calls.get(args.repair_call_id)?.state, "settled");
+      const existing = exceptions.find(item => item.unit_keys.join("\0") === args.unit_keys.join("\0"));
+      if (!existing) exceptions.push({ unit_keys: [...args.unit_keys] });
+      return { replayed: Boolean(existing) };
+    },
     materialize: async (args: { proposals: AsyncIterable<{ artifact_id: string; body: string }> }) => {
       let count = 0; for await (const item of args.proposals) {
         assert.equal(item.artifact_id, uuid(8)); const body = JSON.parse(item.body);
@@ -163,6 +173,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       firstMaterializationArtifact ??= structuredClone(args.artifact);
       return { artifact_id: uuid(10) }; },
     complete: async () => { completed++; states.push("complete"); return { execution_id: lease.execution_id }; },
+    completePartial: async () => { partialCompleted++; states.push("complete_partial"); return { execution_id: lease.execution_id }; },
   } as unknown as NonNullable<Args["stores"]>;
   const execute = async (authorization_expires_at?: string, batchOnly=false) => {
     const run=batchOnly ? async (args:Args)=>{
@@ -227,7 +238,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       responseSaved = true; totalSettled = 750;
       return { request_digest: historical.request_digest, body: historical.request_body };
     },
-    get: () => ({ sends, fitCount, completed, checkpointCount, materializationWrites, storedObjects: files.size, call, states,
+    get: () => ({ sends, fitCount, completed, partialCompleted, exceptions: structuredClone(exceptions), checkpointCount, materializationWrites, storedObjects: files.size, call, states,
       calls: [...calls.values()], totalSettled, checkpointCallIds, seenBatches, seenAuthorizations, terminalReceipts, reservations,
       retainedExposure: [...calls.values()].reduce((sum, row) => sum + (row.state === "settled" ? row.settled_micro_usd!
         : row.state === "definitely_not_sent" ? 0 : row.reserved_micro_usd), 0) }),
@@ -450,11 +461,13 @@ test("uncertain sent request never sends again or materializes", async () => {
     assert.equal(s.get().completed, 0); assert.equal(s.get().checkpointCount, 0);
   } finally { await s.cleanup(); }
 });
-test("a second invalid editorial response settles both calls and stops without another repair or fabricated results", async () => {
-  const s = await scenario(); try { s.mode("invalid"); await assert.rejects(s.execute(), /repair_invalid/u);
+test("a second invalid editorial response is durably isolated without another repair or fabricated result", async () => {
+  const s = await scenario(); try { s.mode("invalid"); await s.execute();
     assert.equal(s.get().call?.state, "settled"); assert.equal(s.get().call?.settled_micro_usd, 450);
     assert.equal(s.get().totalSettled, 900); assert.equal(s.get().calls.length, 2);
-    assert.equal(s.get().completed, 0); await assert.rejects(s.execute(), /repair_invalid/u); assert.equal(s.get().sends, 2);
+    assert.equal(s.get().completed, 0); assert.equal(s.get().partialCompleted, 1);
+    assert.deepEqual(s.get().exceptions, [{ unit_keys: [cluster.cluster_id] }]);
+    await s.execute(); assert.equal(s.get().sends, 2); assert.equal(s.get().partialCompleted, 2);
     assert.equal(s.get().calls.length, 2); assert.equal(s.get().checkpointCount, 0);
   } finally { await s.cleanup(); }
 });
@@ -629,17 +642,19 @@ for (const stage of ["reservation", "response"] as const) test(`a terminal succe
   } finally { await s.cleanup(); }
 });
 
-test("an invalid terminal successor exhausts the same editorial repair instead of creating another logical repair", async () => {
+test("an invalid terminal successor is isolated after exhausting the same editorial repair", async () => {
   const s = await scenario(); try {
     s.mode("invalid"); s.repairUnknown(); await assert.rejects(s.execute(), /outcome_unknown/u); s.confirmTerminal();
     const terminal = structuredClone(s.get().calls[1]); s.repairUnknown(false);
-    await assert.rejects(s.execute(), /workspace_engine_interpretation_repair_invalid/u);
-    await assert.rejects(s.execute(), /workspace_engine_interpretation_repair_invalid/u);
+    await s.execute();
+    await s.execute();
     assert.equal(s.get().sends, 3); assert.equal(s.get().calls.length, 3); assert.equal(s.get().checkpointCount, 0);
     assert.equal(s.get().calls[2]!.state, "settled"); assert.equal(s.get().totalSettled, 900);
     assert.equal(s.get().retainedExposure, 900 + terminal!.reserved_micro_usd);
     assert.deepEqual(s.get().calls[2]!.editorial_repair, terminal!.editorial_repair);
     assert.deepEqual(s.get().calls[1], terminal);
+    assert.deepEqual(s.get().exceptions, [{ unit_keys: [cluster.cluster_id] }]);
+    assert.equal(s.get().partialCompleted, 2); assert.equal(s.get().completed, 0);
   } finally { await s.cleanup(); }
 });
 
@@ -723,6 +738,7 @@ async function rolloverScenario() {
       const rows = checkpoints.filter(item => !args.after_artifact_id || item.artifact_id > args.after_artifact_id);
       return { items: rows.slice(0, 1), next_artifact_id: rows[0]?.artifact_id ?? null, done: rows.length <= 1 };
     },
+    exceptions: async () => [],
     recoverable: async () => [],
     reserve: async (args: Parameters<NonNullable<Args["stores"]>["reserve"]>[0]) => {
       reserved++; assert.deepEqual(args.configuration, config); assert.equal(args.interpretation_revision_digest, revision);
@@ -757,6 +773,8 @@ async function rolloverScenario() {
         mapping_digest: hash("mapping"), mapping: [], replayed: false };
     },
     persist: async () => ({ artifact_id: uuid(101) }), complete: async () => { complete++; return { execution_id: lease.execution_id }; },
+    quarantine: async () => { throw new Error("unexpected rollover quarantine"); },
+    completePartial: async () => { throw new Error("unexpected rollover partial completion"); },
   } as unknown as NonNullable<Args["stores"]>;
   const execute = async () => interpretWorkspaceEngineV1({ database: {} as Args["database"], lease, stores,
     directory: await mkdtemp(join(directory, "attempt-")), clusters: groups, heartbeat: async () => undefined,

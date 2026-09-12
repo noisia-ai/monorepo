@@ -4,7 +4,8 @@ import { buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorksp
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
-  signalTopicDefinitionSchemaV1, signalTopicGuidesDiscoveryV1, type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
+  signalTopicDefinitionSchemaV1, signalTopicGuidesDiscoveryV1, signalWorkspaceInterpretationUniverseDigestV1,
+  type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { ensureSignalTopicCatalogStoreV1, loadSignalTopicInheritedContextStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
 import { loadSignalWorkspaceTopicPrototypePlanV1, loadSignalWorkspaceAutonomousContextInputsV1 } from "./signal-workspace-topic-prototype-inputs";
@@ -19,12 +20,13 @@ export const SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 = [
 ] as const;
 export const isSignalWorkspaceEngineRetryableErrorV1 = (code: string | null,
   evidence?: { storage_recovery_eligible?: boolean; interpretation_evidence_recovery_eligible?: boolean; editorial_repair_recovery_eligible?: boolean;
-    interpretation_capacity_recovery_eligible?:boolean; transport_recovery_eligible?: boolean }) =>
+    interpretation_exception_recovery_eligible?:boolean; interpretation_capacity_recovery_eligible?:boolean; transport_recovery_eligible?: boolean }) =>
   (SIGNAL_WORKSPACE_ENGINE_RETRYABLE_ERRORS_V1 as readonly string[]).includes(code ?? "")
   || code === "workspace_engine_interpretation_batch_capacity_exceeded" && evidence?.interpretation_capacity_recovery_eligible === true
   || code === "workspace_engine_storage_verification_failed" && evidence?.storage_recovery_eligible === true
   || code === "workspace_engine_interpretation_cluster_invalid" && evidence?.interpretation_evidence_recovery_eligible === true
   || code === "workspace_engine_interpretation_output_invalid" && evidence?.editorial_repair_recovery_eligible === true
+  || code === "workspace_engine_interpretation_repair_invalid" && evidence?.interpretation_exception_recovery_eligible === true
   || code === "workspace_engine_interpretation_transport_terminal_confirmed" && evidence?.transport_recovery_eligible === true;
 export type SignalWorkspaceEngineDatabaseV1 = Pick<Pool, "query" | "connect">;
 export class SignalWorkspaceEngineError extends Error {
@@ -61,6 +63,13 @@ export type SignalWorkspaceEngineInterpretationRevisionV1 = {
 export type SignalWorkspaceEngineInterpretationCheckpointV1 = {
   artifact_id: string; artifact_key: string; storage_key: string; sha256: string; size_bytes: number; media_type: string;
   unit_keys: string[]; call_id: string; request_digest: string; call_configuration: SignalWorkspaceEngineInterpretationConfigurationV1; interpretation_revision_digest: string | null;
+};
+export type SignalWorkspaceEngineInterpretationExceptionV1 = {
+  exception_id: string; original_call_id: string; repair_call_id: string;
+  original_request_digest: string; repair_request_digest: string;
+  original_response_sha256: string; repair_response_sha256: string;
+  batch_digest: string; unit_keys: string[]; unit_digest: string;
+  diagnostic_code: "workspace_engine_interpretation_repair_invalid"; created_at: string;
 };
 export type SignalWorkspaceEngineLeaseV1 = {
   execution_id: string; workspace_id: string; execution_token: string; input_digest: string;
@@ -100,7 +109,7 @@ export type SignalWorkspaceEngineStatusV1 = {
     storage_recovery_eligible?: boolean;
     interpretation_capacity_recovery_eligible?:boolean;
     interpretation_evidence_recovery_eligible?: boolean;
-    editorial_repair_recovery_eligible?: boolean; transport_recovery_eligible?: boolean;
+    editorial_repair_recovery_eligible?: boolean; interpretation_exception_recovery_eligible?:boolean; transport_recovery_eligible?: boolean;
   }; latest_complete_execution_id: string | null; latest_complete: SignalWorkspaceEngineStatusV1["latest_run"];
 };
 const fail = (code: string, status = 409): never => { throw new SignalWorkspaceEngineError(code, status); };
@@ -167,6 +176,24 @@ const editorialRepairRecoveryPredicate = `execution.status='failed'
    AND COALESCE((source.metadata->>'response_complete')::boolean,true) AND NOT (source.metadata ? 'editorial_repair')
    AND source.call_configuration=workspace_engine_interpretation_configuration_v1(execution.id,source.metadata->>'interpretation_revision_digest')
    AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id AND artifact.metadata->>'call_id'=source.id::text))
+ AND (${outputBundlePredicate})`;
+const interpretationExceptionRecoveryPredicate = `execution.status='failed'
+ AND execution.error_code='workspace_engine_interpretation_repair_invalid'
+ AND execution.input_snapshot ? 'interpretation_config' AND execution.result_summary ? 'fit_checkpoint'
+ AND NOT (execution.result_summary ? 'analysis_checkpoint')
+ AND NOT EXISTS(SELECT 1 FROM engine_cost_events uncertain WHERE uncertain.catalog_execution_id=execution.id
+   AND uncertain.call_state IN('reserved','in_flight','response_persisted','outcome_unknown'))
+ AND EXISTS(SELECT 1 FROM engine_cost_events repair JOIN engine_cost_events source
+   ON source.id::text=lower(repair.metadata->'editorial_repair'->>'source_call_id')
+   WHERE repair.catalog_execution_id=execution.id AND repair.workspace_id=execution.workspace_id
+    AND repair.actor_user_id=execution.actor_user_id AND repair.call_state='settled' AND repair.response_storage_key IS NOT NULL
+    AND repair.response_http_status=200 AND COALESCE((repair.metadata->>'response_complete')::boolean,true)
+    AND source.call_state='settled' AND source.response_storage_key IS NOT NULL AND source.response_http_status=200
+    AND COALESCE((source.metadata->>'response_complete')::boolean,true)
+    AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id
+      AND artifact.metadata->>'call_id' IN(source.id::text,repair.id::text))
+    AND NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exceptions exception
+      WHERE exception.execution_id=execution.id AND exception.repair_call_id=repair.id))
  AND (${outputBundlePredicate})`;
 const transportRecoveryPredicate = `execution.status='failed'
  AND execution.error_code='workspace_engine_interpretation_transport_terminal_confirmed'
@@ -311,6 +338,10 @@ export async function readSignalWorkspaceEngineInterpretationContextV1(args:{dat
       const hasUncheckpointedHistoricalCall=(await client.query<{present:boolean}>(`SELECT EXISTS(
         SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=$1::uuid
           AND call.workspace_contract='workspace-engine-interpretation-v1'
+          AND NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exceptions exception
+            WHERE exception.execution_id=call.catalog_execution_id
+              AND (exception.original_request_digest=call.request_digest
+                OR exception.repair_request_digest=call.request_digest))
           AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact
             JOIN engine_cost_events final_call ON final_call.id=(artifact.metadata->>'call_id')::uuid
             LEFT JOIN engine_cost_events source_call ON source_call.id::text=lower(final_call.metadata->'editorial_repair'->>'source_call_id')
@@ -661,6 +692,10 @@ export async function readSignalWorkspaceEngineInterpretationRecoveryRequestDige
     const rows=(await client.query<{request_digest:string}>(`SELECT DISTINCT call.request_digest FROM engine_cost_events call
       WHERE call.catalog_execution_id=$1::uuid AND call.workspace_id=$2::uuid
         AND call.workspace_contract='workspace-engine-interpretation-v1'
+        AND NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exceptions exception
+          WHERE exception.execution_id=call.catalog_execution_id
+            AND (exception.original_request_digest=call.request_digest
+              OR exception.repair_request_digest=call.request_digest))
         AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact
           JOIN engine_cost_events final_call ON final_call.id=(artifact.metadata->>'call_id')::uuid
           LEFT JOIN engine_cost_events source_call ON source_call.id::text=lower(final_call.metadata->'editorial_repair'->>'source_call_id')
@@ -673,6 +708,80 @@ export async function readSignalWorkspaceEngineInterpretationRecoveryRequestDige
     if(rows.some(row=>!digestPattern.test(row.request_digest)))return fail('workspace_engine_interpretation_request_invalid',503);
     return rows.map(row=>row.request_digest);
   });
+}
+export async function readSignalWorkspaceEngineInterpretationExceptionsV1(args:{database:SignalWorkspaceEngineDatabaseV1;
+ lease:SignalWorkspaceEngineLeaseV1}):Promise<SignalWorkspaceEngineInterpretationExceptionV1[]>{
+ return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
+  const fit=run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined;
+  if(!fit)return fail('workspace_engine_fit_checkpoint_required');
+  const rows=(await client.query<{exception_id:string;original_call_id:string;repair_call_id:string;original_request_digest:string;repair_request_digest:string;
+   original_response_sha256:string;repair_response_sha256:string;batch_digest:string;unit_keys:string[];unit_digest:string;diagnostic_code:string;created_at:string}>(`
+   SELECT id exception_id,original_call_id,repair_call_id,original_request_digest,repair_request_digest,original_response_sha256,
+    repair_response_sha256,batch_digest,unit_manifest unit_keys,unit_digest,diagnostic_code,
+    to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at
+   FROM signal_workspace_interpretation_exceptions WHERE workspace_id=$1::uuid AND execution_id=$2::uuid ORDER BY id`,[run.workspace_id,run.id])).rows;
+  const seen=new Set<string>();
+  return rows.map(row=>{if(row.diagnostic_code!=='workspace_engine_interpretation_repair_invalid'||!digestPattern.test(row.batch_digest)
+    ||!digestPattern.test(row.unit_digest)||!Array.isArray(row.unit_keys)||!row.unit_keys.length||row.unit_keys.length>128
+    ||signalWorkspaceInterpretationUniverseDigestV1([...row.unit_keys].sort())!==row.unit_digest
+    ||row.unit_keys.some(key=>seen.has(key)))return fail('workspace_engine_interpretation_exception_invalid');
+   for(const key of row.unit_keys)seen.add(key);
+   return{...row,diagnostic_code:'workspace_engine_interpretation_repair_invalid' as const};});
+ });
+}
+export async function quarantineSignalWorkspaceEngineInterpretationBatchV1(args:{database:SignalWorkspaceEngineDatabaseV1;
+ lease:SignalWorkspaceEngineLeaseV1;original_call_id:string;repair_call_id:string;original_request_digest:string;repair_request_digest:string;
+ original_response_sha256:string;repair_response_sha256:string;batch_digest:string;unit_keys:string[];validator_version:string
+}):Promise<SignalWorkspaceEngineInterpretationExceptionV1&{replayed:boolean}>{
+ const unitKeys=[...args.unit_keys].sort();
+ if(!digestPattern.test(args.original_request_digest)||!digestPattern.test(args.repair_request_digest)
+  ||!digestPattern.test(args.original_response_sha256)||!digestPattern.test(args.repair_response_sha256)||!digestPattern.test(args.batch_digest)
+  ||!unitKeys.length||unitKeys.length>128||new Set(unitKeys).size!==unitKeys.length||unitKeys.some(key=>!/^[A-Za-z0-9:._-]{1,200}$/u.test(key))
+  ||!args.validator_version||args.validator_version.length>120)return fail('workspace_engine_interpretation_exception_invalid',422);
+ const unitDigest=signalWorkspaceInterpretationUniverseDigestV1(unitKeys);
+ return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
+  const fit=run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined;
+  if(!fit)return fail('workspace_engine_fit_checkpoint_required');
+  const prior=(await client.query<SignalWorkspaceEngineInterpretationExceptionV1>(`SELECT id exception_id,original_call_id,repair_call_id,
+   original_request_digest,repair_request_digest,original_response_sha256,repair_response_sha256,batch_digest,unit_manifest unit_keys,
+   unit_digest,diagnostic_code,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at
+   FROM signal_workspace_interpretation_exceptions WHERE execution_id=$1::uuid AND repair_call_id=$2::uuid FOR UPDATE`,[run.id,args.repair_call_id])).rows[0];
+  if(prior){if(prior.original_call_id!==args.original_call_id||prior.original_request_digest!==args.original_request_digest
+    ||prior.repair_request_digest!==args.repair_request_digest||prior.original_response_sha256!==args.original_response_sha256
+    ||prior.repair_response_sha256!==args.repair_response_sha256||prior.batch_digest!==args.batch_digest||prior.unit_digest!==unitDigest
+    ||JSON.stringify(prior.unit_keys)!==JSON.stringify(unitKeys))return fail('workspace_engine_interpretation_exception_conflict');
+   return{...prior,replayed:true};}
+  const calls=(await client.query<{id:string;request_digest:string;response_sha256:string;call_state:string;response_storage_key:string|null;
+   response_complete:boolean;call_configuration:unknown;editorial_repair:{source_call_id:string;source_request_digest:string;source_response_sha256:string}|null}>(`
+   SELECT id,request_digest,response_sha256,call_state,response_storage_key,COALESCE((metadata->>'response_complete')::boolean,true) response_complete,
+    call_configuration,metadata->'editorial_repair' editorial_repair FROM engine_cost_events
+   WHERE workspace_id=$1::uuid AND catalog_execution_id=$2::uuid AND id=ANY($3::uuid[]) FOR UPDATE`,[run.workspace_id,run.id,[args.original_call_id,args.repair_call_id]])).rows;
+  const original=calls.find(call=>call.id===args.original_call_id),repair=calls.find(call=>call.id===args.repair_call_id);
+  if(!original||!repair||original.call_state!=='settled'||repair.call_state!=='settled'||!original.response_storage_key||!repair.response_storage_key
+   ||!original.response_complete||!repair.response_complete||original.editorial_repair!==null
+   ||repair.editorial_repair?.source_call_id!==original.id||repair.editorial_repair.source_request_digest!==original.request_digest
+   ||repair.editorial_repair.source_response_sha256!==original.response_sha256||original.request_digest!==args.original_request_digest
+   ||repair.request_digest!==args.repair_request_digest||original.response_sha256!==args.original_response_sha256
+   ||repair.response_sha256!==args.repair_response_sha256
+   ||signalWorkspaceEmbeddingDigestV1(original.call_configuration)!==signalWorkspaceEmbeddingDigestV1(repair.call_configuration))
+   return fail('workspace_engine_interpretation_exception_receipt_invalid');
+  const configurationDigest=signalWorkspaceEmbeddingDigestV1(repair.call_configuration),id=randomUUID();
+  const saved=(await client.query<{exception_id:string;created_at:string}>(`INSERT INTO signal_workspace_interpretation_exceptions(
+   id,workspace_id,execution_id,original_call_id,repair_call_id,original_request_digest,repair_request_digest,original_response_sha256,
+   repair_response_sha256,input_digest,fit_checkpoint_digest,configuration_digest,batch_digest,unit_digest,unit_manifest,validator_version,
+   diagnostic_code,created_by_user_id) VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,
+   'workspace_engine_interpretation_repair_invalid',$17::uuid)
+   RETURNING id exception_id,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at`,
+   [id,run.workspace_id,run.id,original.id,repair.id,original.request_digest,repair.request_digest,original.response_sha256,repair.response_sha256,
+    run.input_digest,fit.checkpoint_digest,configurationDigest,args.batch_digest,unitDigest,JSON.stringify(unitKeys),args.validator_version,run.actor_user_id])).rows[0]!;
+  await client.query(`UPDATE signal_topic_catalog_executions SET result_summary=result_summary||jsonb_build_object(
+   'interpretation_exceptions',(SELECT count(*)::int FROM signal_workspace_interpretation_exceptions WHERE execution_id=$1::uuid),
+   'interpretation_exception_units',(SELECT COALESCE(sum(jsonb_array_length(unit_manifest)),0)::int FROM signal_workspace_interpretation_exceptions WHERE execution_id=$1::uuid)),
+   updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id]);
+  return{...saved,original_call_id:original.id,repair_call_id:repair.id,original_request_digest:original.request_digest,
+   repair_request_digest:repair.request_digest,original_response_sha256:original.response_sha256,repair_response_sha256:repair.response_sha256,
+   batch_digest:args.batch_digest,unit_keys:unitKeys,unit_digest:unitDigest,diagnostic_code:'workspace_engine_interpretation_repair_invalid',replayed:false};
+ });
 }
 async function interpretationCoverage(client:PoolClient,run:Run):Promise<SignalWorkspaceEngineUnitManifestV1>{
   const row=(await client.query<{unit_count:string;unique_count:string;unit_digest:string}>(`SELECT count(*)::text unit_count,count(DISTINCT unit.key)::text unique_count,
@@ -747,6 +856,34 @@ export async function completeSignalWorkspaceEngineAnalysisV1(args:{database:Sig
     return{execution_id:run.id,model_version_id:fit.model_version_id,output_catalog_profile_id:String(materialization.output_catalog_profile_id),topic_count:natural(profile.topic_count)};
   });
 }
+export async function completeSignalWorkspaceEngineAnalysisWithExceptionsV1(args:{database:SignalWorkspaceEngineDatabaseV1;
+ lease:SignalWorkspaceEngineLeaseV1}):Promise<{execution_id:string;interpreted_units:number;exception_units:number}>{
+ return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
+  const fit=run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined;
+  if(!fit)return fail('workspace_engine_fit_checkpoint_required');
+  const rows=(await client.query<{key:string;source:string}>(`SELECT unit.key,'checkpoint' source FROM analysis_artifacts artifact
+    CROSS JOIN LATERAL jsonb_array_elements_text(artifact.metadata->'unit_keys') unit(key)
+    WHERE artifact.workspace_id=$1::uuid AND artifact.engine_execution_id=$2::uuid
+      AND artifact.artifact_type='engine_proposals' AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
+   UNION ALL SELECT unit.key,'exception' source FROM signal_workspace_interpretation_exceptions exception
+    CROSS JOIN LATERAL jsonb_array_elements_text(exception.unit_manifest) unit(key)
+    WHERE exception.workspace_id=$1::uuid AND exception.execution_id=$2::uuid`,[run.workspace_id,run.id])).rows;
+  const keys=rows.map(row=>row.key).sort(),unique=[...new Set(keys)],exceptionUnits=rows.filter(row=>row.source==='exception').length;
+  if(!exceptionUnits||unique.length!==keys.length||unique.length!==fit.interpretation_manifest.unit_count
+    ||signalWorkspaceInterpretationUniverseDigestV1(unique)!==fit.interpretation_manifest.unit_digest)
+   return fail('workspace_engine_interpretation_exception_coverage_invalid');
+  if((await client.query(`SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND workspace_id=$2::uuid
+    AND workspace_contract='workspace-engine-interpretation-v1' AND call_state IN('reserved','in_flight','response_persisted','outcome_unknown') LIMIT 1`,
+    [run.id,run.workspace_id])).rows.length)return fail('workspace_engine_interpretation_receipt_unresolved');
+  const interpreted=unique.length-exceptionUnits;
+  await client.query(`UPDATE signal_topic_catalog_executions SET status='failed',error_code='workspace_engine_interpretation_exceptions_remaining',
+   progress=99,result_summary=result_summary||$2::jsonb,execution_token=NULL,execution_expires_at=NULL,completed_at=clock_timestamp(),updated_at=clock_timestamp()
+   WHERE id=$1::uuid`,[run.id,JSON.stringify({phase:'failed',semantic_approval:'partial',interpreted_units:interpreted,
+    interpretation_exception_units:exceptionUnits,interpretation_accounted_units:unique.length})]);
+  await completeDispatch(client,run.id);
+  return{execution_id:run.id,interpreted_units:interpreted,exception_units:exceptionUnits};
+ });
+}
 export async function failSignalWorkspaceEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1;error_code:string}):Promise<void>{
   const code=/^workspace_engine_[a-z_]{1,90}$/u.test(args.error_code)?args.error_code:'workspace_engine_worker_failed';
   return transaction(args.database,async client=>{const run=await lockedRun(client,args.lease.execution_id);
@@ -786,6 +923,9 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const editorialRecovery=run.error_code==='workspace_engine_interpretation_output_invalid'
       && (await client.query<{eligible:boolean}>(`SELECT (${editorialRepairRecoveryPredicate}) eligible
         FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
+    const exceptionRecovery=run.error_code==='workspace_engine_interpretation_repair_invalid'
+      && (await client.query<{eligible:boolean}>(`SELECT (${interpretationExceptionRecoveryPredicate}) eligible
+        FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
     const transportRecovery=run.error_code==='workspace_engine_interpretation_transport_terminal_confirmed'
       && (await client.query<{eligible:boolean}>(`SELECT (${transportRecoveryPredicate}) eligible
         FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
@@ -794,11 +934,12 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
         ||run.result_summary.interpretation_context_contract==='legacy-full-v1');
     if(run.status!=='failed'||!(args.numeric_only?numericRecovery?.retry_available:isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery,
       interpretation_evidence_recovery_eligible:evidenceRecovery,editorial_repair_recovery_eligible:editorialRecovery,
+      interpretation_exception_recovery_eligible:exceptionRecovery,
       interpretation_capacity_recovery_eligible:capacityRecovery,transport_recovery_eligible:transportRecovery})))return fail('workspace_engine_retry_unavailable');
     const generation=(await client.query<{dispatch_generation:number}>(`UPDATE signal_topic_catalog_executions SET status='queued',error_code=NULL,completed_at=NULL,
       execution_token=NULL,execution_expires_at=NULL,dispatch_generation=dispatch_generation+1,
       result_summary=result_summary||'{"phase":"queued"}'::jsonb||$2::jsonb,updated_at=clock_timestamp() WHERE id=$1::uuid RETURNING dispatch_generation`,
-      [run.id,JSON.stringify(evidenceRecovery||editorialRecovery||transportRecovery?{interpretation_evidence_checkpoint_required:true}:{})])).rows[0]!.dispatch_generation;
+      [run.id,JSON.stringify(evidenceRecovery||editorialRecovery||exceptionRecovery||transportRecovery?{interpretation_evidence_checkpoint_required:true}:{})])).rows[0]!.dispatch_generation;
     await client.query(`UPDATE signal_topic_classification_outbox SET status='pending',worker_job_id=$2,attempt_count=0,available_at=clock_timestamp(),
       completed_at=NULL,lease_token=NULL,lease_expires_at=NULL,error_code=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,
       [run.id,`workspace-engine-${run.id}-${generation}`]);
@@ -813,7 +954,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
     const callerCanExecute=(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id})).can_execute_topics;
     const rows=(await client.query<{id:string;status:'queued'|'running'|'ready'|'failed';progress:number;denominator:number;expected_chunks:string;
       processed_roots:number;processed_chunks:string;error_code:string|null;result_summary:Record<string,unknown>;input_snapshot:Run['input_snapshot'];progress_dispatch:{status:string;worker_job_id:string;attempt_count:number;error_code:string|null}|null;progress_coverage:SignalWorkspaceEngineUnitManifestV1;latest_catalog_profile_id:string|null;latest_materialization_progress:import('./signal-workspace-engine-progress').SignalWorkspaceEngineProgressCheckpointV1|null;
-      progress_owner:boolean;revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean;interpretation_evidence_recovery_eligible:boolean;editorial_repair_recovery_eligible:boolean;interpretation_capacity_recovery_eligible:boolean;transport_recovery_eligible:boolean}>(`
+      progress_owner:boolean;revision_live:boolean;policy_live:boolean;artifact_count:string;is_latest:boolean;is_request:boolean;actor_user_id:string;storage_recovery_eligible:boolean;interpretation_evidence_recovery_eligible:boolean;editorial_repair_recovery_eligible:boolean;interpretation_exception_recovery_eligible:boolean;interpretation_capacity_recovery_eligible:boolean;transport_recovery_eligible:boolean}>(`
       WITH selected AS MATERIALIZED (
        (SELECT id,true is_latest,false is_request FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' AND NOT input_snapshot ? 'numeric_descriptor' ORDER BY created_at DESC,id DESC LIMIT 1)
        UNION ALL (SELECT id,false,true FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' AND NOT input_snapshot ? 'numeric_descriptor'
@@ -842,6 +983,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         (${storageRecoveryPredicate}) storage_recovery_eligible,
         (${interpretationEvidenceRecoveryPredicate}) interpretation_evidence_recovery_eligible,
         (${editorialRepairRecoveryPredicate}) editorial_repair_recovery_eligible,
+        (${interpretationExceptionRecoveryPredicate}) interpretation_exception_recovery_eligible,
         (execution.error_code='workspace_engine_interpretation_batch_capacity_exceeded'
           AND (NOT execution.result_summary ? 'interpretation_context_contract'
             OR execution.result_summary->>'interpretation_context_contract'='legacy-full-v1'))
@@ -873,6 +1015,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         storage_recovery_eligible:row.storage_recovery_eligible,
         interpretation_evidence_recovery_eligible:row.interpretation_evidence_recovery_eligible,
         editorial_repair_recovery_eligible:row.editorial_repair_recovery_eligible,
+        interpretation_exception_recovery_eligible:row.interpretation_exception_recovery_eligible,
         interpretation_capacity_recovery_eligible:row.interpretation_capacity_recovery_eligible,
         transport_recovery_eligible:row.transport_recovery_eligible,
         materialization_progress:progressCheckpoint,

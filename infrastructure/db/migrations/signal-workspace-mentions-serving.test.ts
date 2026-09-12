@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { loadSignalWorkspaceMentionsV1, type SignalWorkspaceMentionsArgsV1 } from "../signal-workspace-topics-serving";
 
 const database: SignalWorkspaceMentionsArgsV1["database"] = { connect: async () => { throw new Error("unexpected_database_access"); } };
@@ -8,6 +9,18 @@ const access = { database, workspace_id: randomUUID(), actor_user_id: randomUUID
 const scope = `sha256:${"a".repeat(64)}`;
 const cursor = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
 const valid = { version: 1, root_id: randomUUID(), occurred_at: "2026-09-09T01:02:03.123456Z", scope, offset: 1 };
+const servingSource = readFileSync(new URL("../signal-workspace-topics-serving.ts", import.meta.url), "utf8");
+
+test("mentions scope uses a constant-state population fingerprint without concatenating every root", () => {
+  assert.doesNotMatch(servingSource, /string_agg\(jsonb_build_array\(root\.root_id,root\.metrics,root\.evidence/u);
+  assert.match(servingSource, /hashtextextended\(ROW\(checked\.root_id,checked\.metrics,checked\.evidence,/u);
+  assert.match(servingSource, /bit_xor\(root\.population_hash\)/u);
+  assert.match(servingSource, /sum\(root\.population_hash::numeric\)/u);
+  assert.match(servingSource, /fingerprint: \{ xor: summary\.population_fingerprint_xor, sum: summary\.population_fingerprint_sum \}/u);
+  assert.match(servingSource, /generation: ctx\.generation\.id, finalized_digest: ctx\.generation\.finalized_digest, input_revision: ctx\.generation\.current_revision/u);
+  assert.match(servingSource, /rights: summary\.rights_digest, population:/u);
+  assert.match(servingSource, /filters: request\.filters, direction: request\.direction/u);
+});
 
 test("mentions rejects unsupported filters, unsafe bounds and malformed dates before reading content", async () => {
   for (const change of [

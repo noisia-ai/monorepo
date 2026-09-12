@@ -769,6 +769,15 @@ test('external provider terminal evidence retains cost reserves and permits one 
   await money.reconcileSignalWorkspaceEngineTerminalV1(reconcile);await f.query('RELEASE SAVEPOINT terminal_transition');
 
   assert.equal((await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started})).terminal_reserved_micro_usd,400);
+  const billed=await money.settleSignalWorkspaceEngineTerminalBillingV1({database:f.database,workspace_id:f.workspace_id,
+   execution_id:started.execution_id,call_id:original.call_id,attempt_token:original.attempt_token,
+   expected_provider_request_id:terminal.provider_request_id,verifier_user_id:f.actor_user_id});
+  assert.equal(billed.state,'terminal_confirmed');assert.equal(billed.response,null);assert.equal(billed.settled_micro_usd,73);
+  assert.deepEqual(await money.settleSignalWorkspaceEngineTerminalBillingV1({database:f.database,workspace_id:f.workspace_id,
+   execution_id:started.execution_id,call_id:original.call_id,attempt_token:original.attempt_token,
+   expected_provider_request_id:terminal.provider_request_id,verifier_user_id:f.actor_user_id}),billed);
+  assert.deepEqual(await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started}),
+   {confirmed_micro_usd:223,reserved_micro_usd:0,unknown_reserved_micro_usd:0,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0,hard_cap_micro_usd:10_000});
   const status=(await engine.loadSignalWorkspaceEngineStatusV1(f.access)).latest_run!;
   assert.equal(status.transport_recovery_eligible,true);assert.equal(status.error_code,'workspace_engine_interpretation_transport_terminal_confirmed');
   assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1(status.error_code),false);
@@ -778,7 +787,7 @@ test('external provider terminal evidence retains cost reserves and permits one 
   const successorRequest={...request,idempotency_key:randomUUID(),retry_of_call_id:original.call_id,execution_token:recovered.execution_token};
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,execution_token:randomUUID()}),/lease_conflict/u);
   await f.query('SAVEPOINT terminal_cap');
-  const extra=await money.reserveSignalWorkspaceEngineInterpretationV1({...reserveBase,execution_token:recovered.execution_token,idempotency_key:randomUUID(),request_digest:sha('other safe reservation'),reserved_micro_usd:100});
+  const extra=await money.reserveSignalWorkspaceEngineInterpretationV1({...reserveBase,execution_token:recovered.execution_token,idempotency_key:randomUUID(),request_digest:sha('other safe reservation'),reserved_micro_usd:400});
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(successorRequest),/daily_cap_exceeded/u);
   await f.query('ROLLBACK TO SAVEPOINT terminal_cap');await f.query('RELEASE SAVEPOINT terminal_cap');
   assert.ok(extra.call_id);
@@ -794,7 +803,7 @@ test('external provider terminal evidence retains cost reserves and permits one 
   assert.deepEqual(successor.editorial_repair,editorial_repair);assert.equal(successor.request_digest,original.request_digest);
   assert.equal((await money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,idempotency_key:randomUUID()})).call_id,successor.call_id);
   let budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
-  assert.deepEqual(budget,{confirmed_micro_usd:150,reserved_micro_usd:800,unknown_reserved_micro_usd:0,terminal_reserved_micro_usd:400,observed_exception_micro_usd:0,hard_cap_micro_usd:10_000});
+  assert.deepEqual(budget,{confirmed_micro_usd:223,reserved_micro_usd:400,unknown_reserved_micro_usd:0,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0,hard_cap_micro_usd:10_000});
   const successorToken={database:f.database,call_id:successor.call_id,attempt_token:successor.attempt_token,execution_token:recovered.execution_token};
   await money.failSignalWorkspaceEngineInterpretationV1({...successorToken,outcome:'definitely_not_sent',error_code:'workspace_engine_interpretation_provider_disabled'});
   const transport=await money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,idempotency_key:randomUUID(),retry_of_call_id:successor.call_id});
@@ -804,7 +813,7 @@ test('external provider terminal evidence retains cost reserves and permits one 
   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...transportToken,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/successor-response.parts.json`,sha256:sha('valid successor response'),size_bytes:20,http_status:200,provider_request_id:'req_success',complete:true}});
   await money.settleSignalWorkspaceEngineInterpretationV1({...transportToken,usage:{input_tokens:100,output_tokens:100,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
   const successfulBudget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
-  assert.equal(successfulBudget.confirmed_micro_usd,350);assert.equal(successfulBudget.reserved_micro_usd,400);assert.equal(successfulBudget.terminal_reserved_micro_usd,400);
+  assert.equal(successfulBudget.confirmed_micro_usd,423);assert.equal(successfulBudget.reserved_micro_usd,0);assert.equal(successfulBudget.terminal_reserved_micro_usd,0);
   assert.deepEqual((await engine.readSignalWorkspaceEngineCheckpointV1({database:f.database,lease:recovered}))?.metadata.bundle,bundle);
   await f.query('ROLLBACK TO SAVEPOINT successful_transport');await f.query('RELEASE SAVEPOINT successful_transport');
   await money.failSignalWorkspaceEngineInterpretationV1({...transportToken,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_timeout_outcome_unknown'});
@@ -827,7 +836,7 @@ test('external provider terminal evidence retains cost reserves and permits one 
   await assert.rejects(engine.retrySignalWorkspaceEngineV1({...f.access,...started,idempotency_key:randomUUID()}),/retry_unavailable/u);
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...successorRequest,idempotency_key:randomUUID(),retry_of_call_id:transport.call_id}),/transport_retry_exhausted/u);
   await assert.rejects(money.settleSignalWorkspaceEngineInterpretationV1({...token,usage:terminal.usage}),/response_required/u);
-  budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.reserved_micro_usd,820);assert.equal(budget.terminal_reserved_micro_usd,820);assert.equal(budget.confirmed_micro_usd,150);
+  budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.reserved_micro_usd,420);assert.equal(budget.terminal_reserved_micro_usd,420);assert.equal(budget.confirmed_micro_usd,223);
   assert.deepEqual((await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[source.call_id])).rows[0],sourceBefore);
   assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND metadata ? 'editorial_repair' AND retry_of_call_id IS NULL",[started.execution_id])).rows[0].n,1);
  }finally{await f.cleanup();}

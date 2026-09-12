@@ -36,6 +36,7 @@ const key=(value:string)=>{if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(value))return fa
 const uuid=(value:string)=>{if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(value))return fail('request_invalid',422);return value.toLowerCase();};
 const canonicalDate=(value:string)=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
 const hash=/^sha256:[0-9a-f]{64}$/u;
+const billedTerminal=`COALESCE(call_state='terminal_confirmed' AND metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1',false)`;
 async function admin(client:Queryable,scope:{workspace_id:string;actor_user_id:string}){if(!(await client.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[scope.workspace_id,scope.actor_user_id])).rows[0]?.valid)return fail('forbidden',403);}
 async function request(client:Queryable,scope:{workspace_id:string;actor_user_id:string},idempotency_key?:string){
  if(idempotency_key===undefined)return null;
@@ -75,9 +76,9 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  const clock=(await client.query<{now:string;date:string;maximum:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') now,
   (clock_timestamp() AT TIME ZONE $1)::date::text date,to_char((((clock_timestamp() AT TIME ZONE $1)::date+1)::timestamp AT TIME ZONE $1) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') maximum`,[policy?.budget_timezone??'UTC'])).rows[0]!;
  const money=(await client.query<{confirmed:string;reserved:string;terminal:string}>(`SELECT
- COALESCE(sum(settled_micro_usd) FILTER(WHERE call_state='settled'),0)::text confirmed,
- COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state NOT IN('settled','definitely_not_sent')),0)::text reserved,
- COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state='terminal_confirmed'),0)::text terminal
+ COALESCE(sum(settled_micro_usd) FILTER(WHERE call_state='settled' OR ${billedTerminal}),0)::text confirmed,
+ COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state NOT IN('settled','definitely_not_sent') AND NOT (${billedTerminal})),0)::text reserved,
+ COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state='terminal_confirmed' AND NOT (${billedTerminal})),0)::text terminal
  FROM engine_cost_events WHERE actor_user_id=$1::uuid AND workspace_contract='workspace-engine-interpretation-v1' AND budget_date=$2::date`,[row.actor_user_id,clock.date])).rows[0]!;
  const maximum=Math.max(0,Number(policy?.daily_cap_micro_usd??0)-Number(money.confirmed)-Number(money.reserved));
  const plan=(await client.query<{id:string;metadata:{descriptor:Omit<SignalWorkspaceIncrementalEditorialEvidenceV1,'units'>};valid:boolean}>(`SELECT id,metadata,workspace_incremental_editorial_plan_valid_v1(id) valid FROM analysis_artifacts
