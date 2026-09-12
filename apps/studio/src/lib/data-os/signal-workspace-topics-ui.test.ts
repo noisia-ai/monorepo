@@ -90,7 +90,7 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(html.includes(locale === "es-MX" ? "Narrativas<span>No disponible</span>" : "Narratives<span>Unavailable</span>"));
     assert.match(html, /signal-v2-tn__ranking-metrics--native/);
     assert.match(html, /signal-v2-tn__definition/);
-    assert.ok(html.includes(locale === "es-MX" ? "Lectura editorial pendiente" : "Editorial reading pending"));
+    assert.ok(html.includes(locale === "es-MX" ? "Presencia de este Topic" : "This Topic over time"));
     assert.ok(html.includes(locale === "es-MX" ? "Versión de la definición" : "Definition version"));
     assert.doesNotMatch(html, /claude|voyage|sha256:|input_tokens|workspace_computed|Investigar insights|Research insights/i);
   });

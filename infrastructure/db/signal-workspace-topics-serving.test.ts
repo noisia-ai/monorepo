@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { signalTopicDefinitionDigestV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceClassificationInputV1 } from "./signal-workspace-classification";
-import { loadSignalWorkspaceTopicsOverviewV1 } from "./signal-workspace-topics-serving";
+import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicsOverviewV1 } from "./signal-workspace-topics-serving";
 
 const id = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
 const sha = (value: string) => `sha256:${value.repeat(64).slice(0, 64)}`;
@@ -27,6 +27,8 @@ const topicA = {
 const workingTopicA = { ...topicA, label: "Servicio al cliente", definition_revision: 2,
   updated_at: "2026-09-11T11:00:00.000Z" };
 test("Signal keeps served semantics while applying a safe working label", async () => {
+  const detailQueries: Array<{ sql: string; params: unknown[] }> = [];
+  let access = true;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   const client = {
@@ -34,7 +36,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
       if (/^(BEGIN|COMMIT|ROLLBACK|SET LOCAL)/u.test(sql)) return { rows: [] };
       if (sql.includes("brand_access_level")) return { rows: [{ workspace_status: "active", brand_status: "active",
         organization_status: "active", brand_same_organization: true,
-        actor_status: "active", user_type: "client", primary_role: "client_admin", same_organization: true,
+        actor_status: access ? "active" : "suspended", user_type: "client", primary_role: "client_admin", same_organization: true,
         brand_access_level: "admin" }] };
       if (sql.includes("SELECT id,taxonomy_id FROM signal_taxonomy_profiles")) return { rows: [{ id: profileA, taxonomy_id: id("7") }] };
       if (sql.includes("COALESCE(brand.display_name, brand.name) AS brand_name")) return { rows: [{
@@ -77,7 +79,12 @@ test("Signal keeps served semantics while applying a safe working label", async 
       ] };
       if (sql.includes("term.metadata->'topic' definition")) {
         topicQueries.push({ sql, params });
-        return { rows: [{ definition: topicQueries.length === 1 ? topicA : workingTopicA }] };
+        return { rows: [{ definition: params[1] === profileA ? topicA : workingTopicA }] };
+      }
+      if (sql.includes("topic_roots AS MATERIALIZED")) {
+        detailQueries.push({ sql, params });
+        return { rows: [{ mention_count: 12, undated_mentions: 2, positive: 3, neutral: 2, negative: 3, unclassified: 4,
+          series: [{ date: "2026-09-01", mention_count: 10 }], related: [{ term_key: "not_selected", shared_mentions: 3 }] }] };
       }
       if (sql.includes("WITH source_generation AS MATERIALIZED")) return { rows: [{
         denominator: 12, processed: 12, assigned_unique: 12, abstained: 0, unresolved: 0, withheld: 0,
@@ -102,4 +109,24 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.equal(overview?.is_current, true);
   assert.deepEqual(overview?.terms.map(term => [term.label, term.definition_revision, term.mention_count]),
     [["Servicio al cliente", 1, 12]]);
+  const args = { database: { async connect() { return client as never; } }, workspace_id: workspaceId,
+    actor_user_id: actorId, term_key: "service", expected_scope_digest: overview!.scope_digest };
+  const detail = await loadSignalWorkspaceTopicDetailV1(args);
+  assert.equal(detail.mention_count, 12);
+  assert.equal(detail.undated_mentions, 2);
+  assert.deepEqual(detail.sentiment, { positive: 3, neutral: 2, negative: 3, unclassified: 4,
+    meaning: "evidence_sentiment_not_topic_polarity" });
+  assert.deepEqual(detail.series, [{ date: "2026-09-01", mention_count: 10 }]);
+  assert.deepEqual(detail.related_topics, []);
+  assert.equal(detailQueries.length, 1);
+  assert.equal(detailQueries[0]!.params[5], "service");
+  assert.match(detailQueries[0]!.sql, /count\(DISTINCT root.root_id\)/);
+  assert.match(detailQueries[0]!.sql, /mention.workspace_id=\$1::uuid/);
+  assert.match(detailQueries[0]!.sql, /WHERE root.metrics/);
+  await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, expected_scope_digest: "stale" }), /workspace_topics_scope_changed/);
+  await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, term_key: "unselected" }), /workspace_topics_topic_unavailable/);
+  access = false;
+  await assert.rejects(loadSignalWorkspaceTopicDetailV1(args), /workspace_topics_forbidden/);
+  assert.equal(detailQueries.length, 1, "scope rejection must precede aggregate query");
+
 });

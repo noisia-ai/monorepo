@@ -8,6 +8,8 @@ import type { SignalFilterV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceTo
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./SignalAnalyticsFilter";
 import { SignalEChart } from "./SignalEChart";
+import { SignalWorkspaceTopicDetail } from "./SignalWorkspaceTopicDetail";
+import { SignalSourceIcon } from "./SignalSourceIcon";
 import { SignalEvidenceDrawer } from "./SignalEvidenceDrawer";
 import { SignalTopicsKpi, SignalTopicsRankingList } from "./SignalTopicsPrimitives";
 
@@ -77,6 +79,9 @@ export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApp
     sequence.current++; request.current?.abort(); setPage(null); setError(null); setReading(false);
     return () => { fence.current++; request.current?.abort(); };
   }, [data.scope_digest, data.workspace_id, data.generation_id, data.is_current, term?.term_key]);
+  useEffect(() => {
+    if ((section === "topics" || surface === "summary") && data.is_current && term) void read();
+  }, [read, section, surface, data.is_current, term]);
   useEffect(() => {
     if (!data.is_processing || loading || refreshFailed || !onRefresh) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -166,9 +171,15 @@ export function SignalV2WorkspaceTopics({ data, loading, manageTopicsHref, onApp
         </div>
         <div className="signal-v2-tn__evidence-intro"><p>{t("membership", { count: term?.mention_count ?? 0 })}</p><p>{t("traceability")}</p></div>
         <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={!term || !data.is_current}
-          onClick={() => { setDrawer(true); void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
-        <div className="signal-v2-tn__insight-status"><Quotes size={17} aria-hidden /><div>
-          <strong>{t("unavailableDimensionsTitle")}</strong><p>{t("unavailableDimensionsBody")}</p></div></div>
+          onClick={() => { setDrawer(true); if (!evidence) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
+        {term ? <SignalWorkspaceTopicDetail data={data} termKey={term.term_key} onSelect={select} /> : null}
+        <div className="signal-v2-tn__preview"><strong>{t("detailMetrics.evidence")}</strong>
+          {evidence?.items.slice(0, 5).map(item => <button key={item.mention_id} type="button" onClick={() => setDrawer(true)}>
+            <span><SignalSourceIcon label={item.platform} platform={item.platform} size={15} />{item.platform}</span><p>{item.text}</p>
+          </button>)}
+          {!evidence?.items.length ? <p>{t(reading ? "loading" : "noEvidence")}</p> : null}
+          {error ? <p role="alert">{t(error === "evidenceStale" ? "evidenceStale" : "evidenceError")}</p> : null}
+        </div>
       </section>
     </div>}
     </div>

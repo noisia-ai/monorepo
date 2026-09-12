@@ -616,6 +616,26 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "detailMetrics": {
+        "presence": "This Topic over time",
+        "mentions": "Mentions",
+        "sentiment": "Mention sentiment",
+        "positive": "Positive",
+        "neutral": "Neutral",
+        "negative": "Negative",
+        "sentimentMeaning": "Describes mentions with available sentiment, not the stance of the Topic.",
+        "unclassified": "Sentiment unavailable: {count}.",
+        "undated": "Date unavailable: {count}.",
+        "relationships": "Topics appearing together",
+        "relationshipMeaning": "Shared mentions with other selected Topics. Cooccurrence does not imply causality.",
+        "shared": "{count} shared mentions",
+        "noRelationships": "No shared mentions with other selected Topics in this period.",
+        "unavailable": "Not available for this result.",
+        "loading": "Loading detail…",
+        "error": "The Topic detail could not be refreshed.",
+        "retry": "Retry",
+        "evidence": "Conversations behind this Topic"
+      },
       "rankingEyebrow": "Presence in mentions",
       "rankingView": "Topics view",
       "chart": "Chart",

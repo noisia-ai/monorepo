@@ -1,3 +1,5 @@
+import { loadSignalWorkspaceContextForTopics, topicError, topicResponse } from "../../../topics/_lib";
+import { loadNativeSignalTopicDetailV1 } from "@/lib/data-os/signal-workspace-topics-native";
 import { loadSignalWorkspaceModuleContext } from "@/app/api/data-os/_lib/load";
 import { signalModuleServingEtagSeedV1 } from "@/lib/data-os/signal-module-serving-scope";
 import {
@@ -26,6 +28,15 @@ export async function GET(
 ) {
   const routeStarted = performance.now();
   const { workspaceId, kind, termKey } = await context.params;
+  const params = new URL(request.url).searchParams;
+  if (params.get("view") === "all_conversations") {
+    if (kind !== "topic") return topicResponse({ error: "workspace_topic_not_found" }, 404);
+    const scoped = await loadSignalWorkspaceContextForTopics(workspaceId);
+    if ("response" in scoped) return scoped.response;
+    try { return topicResponse(await loadNativeSignalTopicDetailV1({ workspace_id: workspaceId,
+      actor_user_id: scoped.session.appUser.id }, termKey, params)); }
+    catch (error) { return topicError(error, "workspace_topic_detail_unavailable"); }
+  }
   const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "topics-narratives", request);
   if ("response" in loaded) return loaded.response;
   try {

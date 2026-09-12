@@ -337,6 +337,69 @@ export async function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<S
   });
 }
 
+export type SignalWorkspaceTopicDetailV1 = {
+  contract_version: "signal-workspace-topic-detail-v1";
+  workspace_id: string; generation_id: string; scope_digest: string; term_key: string;
+  mention_count: number; undated_mentions: number;
+  series: Array<{ date: string; mention_count: number }>;
+  sentiment: { positive: number; neutral: number; negative: number; unclassified: number;
+    meaning: "evidence_sentiment_not_topic_polarity" };
+  related_topics: Array<{ term_key: string; label: string; shared_mentions: number }>;
+  relationship_meaning: "cooccurrence_not_causality";
+};
+
+/** Uses the same selected, current, rights-filtered canonical roots as overview.
+ * Counts are aggregate metrics, never extrapolated from the evidence page. */
+export async function loadSignalWorkspaceTopicDetailV1(args: Omit<Args, "include_unselected"> & {
+  term_key: string; expected_scope_digest: string;
+}): Promise<SignalWorkspaceTopicDetailV1> {
+  if (!args.term_key || args.term_key.length > 160 || !args.expected_scope_digest)
+    return fail("workspace_topics_detail_request_invalid", 422);
+  return transaction(args.database, async client => {
+    const ctx = await context(client, args);
+    if (!ctx.generation || !ctx.native || !displayedTopics(ctx).some(topic => topic.term_key === args.term_key))
+      return fail("workspace_topics_topic_unavailable", 404);
+    if (!ctx.is_current) return fail("workspace_topics_evidence_stale");
+    const view = await overview(client, args, ctx);
+    if (args.expected_scope_digest !== view.scope_digest) return fail("workspace_topics_scope_changed");
+    const summary = (await client.query<{ mention_count: number; undated_mentions: number;
+      positive: number; neutral: number; negative: number; unclassified: number;
+      series: SignalWorkspaceTopicDetailV1["series"];
+      related: Array<{ term_key: string; shared_mentions: number }> }>(`${populationSql},
+      topic_roots AS MATERIALIZED (
+        SELECT DISTINCT root.root_id,root.published_at,mention.sentiment_score
+        FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$6
+        JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+        WHERE root.metrics
+      )
+      SELECT count(*)::int mention_count,count(*) FILTER(WHERE published_at IS NULL)::int undated_mentions,
+        count(*) FILTER(WHERE sentiment_score > 0.2)::int positive,
+        count(*) FILTER(WHERE sentiment_score BETWEEN -0.2 AND 0.2)::int neutral,
+        count(*) FILTER(WHERE sentiment_score < -0.2)::int negative,
+        count(*) FILTER(WHERE sentiment_score IS NULL)::int unclassified,
+        COALESCE((SELECT jsonb_agg(point ORDER BY date) FROM (
+          SELECT to_char(published_at,'YYYY-MM-DD') date,count(*)::int mention_count
+          FROM topic_roots WHERE published_at IS NOT NULL GROUP BY to_char(published_at,'YYYY-MM-DD')
+        ) point),'[]') series,
+        COALESCE((SELECT jsonb_agg(relation ORDER BY shared_mentions DESC,term_key) FROM (
+          SELECT member.term_key,count(DISTINCT root.root_id)::int shared_mentions
+          FROM topic_roots root JOIN memberships member ON member.root_id=root.root_id
+          WHERE member.term_key<>$6 GROUP BY member.term_key
+          ORDER BY shared_mentions DESC,member.term_key LIMIT 20
+        ) relation),'[]') related
+      FROM topic_roots`, [...populationParams(args, ctx), args.term_key])).rows[0]!;
+    const labels = new Map(view.terms.map(term => [term.term_key, term.label]));
+    return { contract_version: "signal-workspace-topic-detail-v1", workspace_id: args.workspace_id,
+      generation_id: ctx.generation.id, scope_digest: view.scope_digest, term_key: args.term_key,
+      mention_count: summary.mention_count, undated_mentions: summary.undated_mentions, series: summary.series,
+      sentiment: { positive: summary.positive, neutral: summary.neutral, negative: summary.negative,
+        unclassified: summary.unclassified, meaning: "evidence_sentiment_not_topic_polarity" },
+      related_topics: summary.related.flatMap(item => labels.has(item.term_key)
+        ? [{ ...item, label: labels.get(item.term_key)! }] : []),
+      relationship_meaning: "cooccurrence_not_causality" };
+  });
+}
+
 /** Stable root UUID keyset. The cursor is only a locator, never authorization. */
 export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "include_unselected"> & {
   term_key: string; cursor?: string | null; expected_scope_digest?: string | null; limit?: number;

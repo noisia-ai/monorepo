@@ -614,6 +614,26 @@
   },
   "SignalV2": {
     "workspaceTopics": {
+      "detailMetrics": {
+        "presence": "Presencia de este Topic",
+        "mentions": "Menciones",
+        "sentiment": "Sentimiento de las menciones",
+        "positive": "Positivo",
+        "neutral": "Neutral",
+        "negative": "Negativo",
+        "sentimentMeaning": "Describe las menciones con sentimiento disponible; no la postura del Topic.",
+        "unclassified": "Sin sentimiento disponible: {count}.",
+        "undated": "Sin fecha disponible: {count}.",
+        "relationships": "Topics que aparecen juntos",
+        "relationshipMeaning": "Menciones compartidas con otros Topics seleccionados. La coocurrencia no implica causalidad.",
+        "shared": "{count} menciones compartidas",
+        "noRelationships": "No hay menciones compartidas con otros Topics seleccionados en este periodo.",
+        "unavailable": "No disponible para este resultado.",
+        "loading": "Cargando detalle…",
+        "error": "No se pudo actualizar el detalle del Topic.",
+        "retry": "Reintentar",
+        "evidence": "Conversaciones que componen este Topic"
+      },
       "rankingEyebrow": "Presencia en las menciones",
       "rankingView": "Vista de Topics",
       "chart": "Gráfico",

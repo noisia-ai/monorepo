@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
+import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
   loadSignalWorkspaceTopicSelectionV1, selectSignalWorkspaceTopicV1,
   loadSignalWorkspaceCapabilitiesStoreV1, type SignalWorkspaceTopicSelectionStatusV1,
   type SignalWorkspaceCapabilitiesV1 } from "@noisia/db";
@@ -37,6 +37,11 @@ export async function loadNativeSignalTopicsV1(scope: ActorScope, params = new U
   const native = await loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, ...filter });
   if (native && invalid) throw invalid;
   return native;
+}
+export async function loadNativeSignalTopicDetailV1(scope: ActorScope, term_key: string, params: URLSearchParams) {
+  const { pool } = await import("@/lib/db");
+  return loadSignalWorkspaceTopicDetailV1({ database: pool, ...scope, ...nativeTopicsQueryV1(params), term_key,
+    expected_scope_digest: params.get("scope_digest") ?? "" });
 }
 export async function loadNativeSignalTopicEvidenceV1(scope: ActorScope, term_key: string, params: URLSearchParams) {
   const limit = params.has("limit") ? Number(params.get("limit")) : 25;
