@@ -4,6 +4,20 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **VENTANA ALEXA PLUS E2E ACTIVA — 2026-09-12 07:00–15:00 UTC.** El operador autorizó
+> ocho horas para crear **Alexa Plus** desde la interfaz UAT y llevarla por alta → ayuda Claude
+> para contexto → Brand OS/contexto semántico → Topics/intereses → importación UI de los CSV en
+> `/Users/brandhon_o/Downloads/Noisia - Alexa Plus CSVs` → procesamiento completo → interpretación
+> Sonnet 4.6 → Topics editables → selección/publicación → Signal. Loop
+> `noisia-topics-to-signal-uat-loop` ACTIVE sobre este chat hasta el corte seguro. Los agentes de
+> interfaz/QA/insight sólo observan y reportan; Root decide y hace cualquier cambio. Auditar y
+> corregir deuda reusable: consistencia con el Admin tipo Shopify, controles obsoletos, fallos y
+> rendimiento. Excluir `_descartar`; `_rename_map.csv` es contexto. Gasto Voyage/Claude autorizado
+> para esta ejecución con topes y recibos; **Sonnet 4.6, nunca Opus**. No producción/main, secretos,
+> limpieza destructiva, Laika/National/Alexa histórica ni repetición de SQL0153–0161, imports,
+> fits o gates cerrados. Leer `PLAN_ALEXA_PLUS_E2E_2026-09-12.md`. Si no termina antes de las
+> 15:00 UTC, conservar el trabajo recuperable, documentar el punto exacto y pausar el loop.
+
 > **CORRECCIÓN FOCAL UAT — 2026-09-12 06:56 UTC.** El operador detectó que la ayuda
 > «Investigar marca» había desaparecido del alta de marca. La regresión provenía de `44eeab5`,
 > que confundió el borrador previo al guardado con la preparación semántica gobernada posterior.
