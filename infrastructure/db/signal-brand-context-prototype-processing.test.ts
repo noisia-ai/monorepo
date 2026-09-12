@@ -41,6 +41,20 @@ test("Stage2 accepts only identity, intent, confirmation and server runtime heal
   assert.match(start,/brand_context_prototype_runtime_unavailable/u);
 });
 
+test("Stage2 replaces only an exact unspent direct-request orphan before receipt admission",()=>{
+  const start=body(adapter,"startSignalBrandContextPrototypeProcessingV1");
+  assert.match(start,/cancelUnclaimableDirectPrototypeV1/u);
+  const cancel=body(adapter,"cancelUnclaimableDirectPrototypeV1");
+  for(const marker of ["workspace-embedding-request:","run.actor_user_id=$2::uuid",
+    "run.input_contract='topic_prototypes'","run.topic_input_digest=$3","run.config_digest=$4",
+    "run.status='queued'","run.processing_admission_id IS NULL","run.brand_context_preparation_operation_id IS NULL",
+    "run.execution_token IS NULL","run.dispatch_status='pending'","run.dispatch_token IS NULL",
+    "run.reserved_micro_usd=0","run.settled_micro_usd=0","run.unknown_reserved_micro_usd=0",
+    "run.observed_exception_micro_usd=0","signal_workspace_embedding_calls","signal_brand_context_prototype_receipts"])
+    assert.ok(cancel.includes(marker),marker);
+  assert.ok(start.indexOf("cancelUnclaimableDirectPrototypeV1")<start.indexOf("quote_signal_brand_context_prototypes_v1"));
+});
+
 test("a new brand gets only a receipt-bound canonical empty catalog before Stage2 planning",()=>{
   const ensure=body(catalog,"ensureSignalBrandContextPrototypeCatalogStoreV1");
   for(const marker of ["signal_brand_context_processing_receipts","receipt.id=$1::uuid",
@@ -242,6 +256,7 @@ function recoveryAdapterFixture(){
   const parent=randomUUID(),workspace=randomUUID(),generation=randomUUID(),actor=randomUUID();
   const predecessor=randomUUID(),profile=randomUUID(),pack=`sha256:${"a".repeat(64)}`,quoteDigest=`sha256:${"b".repeat(64)}`;
   const plan={contract_version:"signal-workspace-topic-prototype-plan-v1",taxonomy_profile_id:profile,
+    plan_digest:`sha256:${"e".repeat(64)}`,
     texts:{},embedding_profile:{config_digest:`sha256:${"c".repeat(64)}`}};
   const confirmation="prepare_brand_context_prototypes_within_shown_cap" as const;
   type Row={id:string;parent_receipt_id:string;workspace_id:string;generation_id:string;actor_user_id:string;
@@ -257,6 +272,7 @@ function recoveryAdapterFixture(){
     if(sql==="ROLLBACK"){counters.rollbacks++;if(snapshot){receipts.clear();states.clear();snapshot.receipts.forEach(([k,v])=>receipts.set(k,v));
       snapshot.states.forEach(([k,v])=>states.set(k,v));counters.creates=snapshot.creates;snapshot=null;}return{rows:[]};}
     if(sql.includes("SELECT pg_advisory_xact_lock"))return{rows:[]};
+    if(sql.includes("UPDATE signal_workspace_embedding_runs run SET status='canceled'"))return{rows:[],rowCount:0};
     if(sql.includes("FROM signal_brand_context_processing_receipts WHERE")){
       assert.deepEqual(values,[parent,actor]);return{rows:[{workspace_id:workspace,generation_id:generation}]};}
     if(sql.includes("SELECT receipt.* FROM signal_brand_context_prototype_receipts")){

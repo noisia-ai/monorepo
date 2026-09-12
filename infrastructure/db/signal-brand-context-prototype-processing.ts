@@ -43,6 +43,29 @@ async function authorize(client:PoolClient,args:{parent_receipt_id:string;actor_
     args.pack_digest,JSON.stringify(args.plan),args.quote_digest,args.confirmation])).rows[0]?.result;
 }
 
+/**
+ * Close only a direct-request run that can never be claimed after composed
+ * processing became authoritative. This is intentionally narrower than a
+ * generic cancellation path: the current actor must be submitting the exact
+ * same plan through the receipt-bound flow, and the old run must have no lease,
+ * provider attempt, monetary exposure, admission, or preparation owner.
+ */
+async function cancelUnclaimableDirectPrototypeV1(client:PoolClient,args:{workspace_id:string;actor_user_id:string;
+  plan_digest:string;config_digest:string}){
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`workspace-embedding-request:${args.workspace_id}`]);
+  await client.query(`UPDATE signal_workspace_embedding_runs run SET status='canceled',
+    error_code='processing_admission_required',completed_at=clock_timestamp(),updated_at=clock_timestamp()
+    WHERE run.workspace_id=$1::uuid AND run.actor_user_id=$2::uuid AND run.input_contract='topic_prototypes'
+     AND run.topic_input_digest=$3 AND run.config_digest=$4 AND run.status='queued'
+     AND run.processing_admission_id IS NULL AND run.brand_context_preparation_operation_id IS NULL
+     AND run.execution_token IS NULL AND run.dispatch_status='pending' AND run.dispatch_token IS NULL
+     AND run.reserved_micro_usd=0 AND run.settled_micro_usd=0
+     AND run.unknown_reserved_micro_usd=0 AND run.observed_exception_micro_usd=0
+     AND NOT EXISTS(SELECT 1 FROM signal_workspace_embedding_calls call WHERE call.run_id=run.id)
+     AND NOT EXISTS(SELECT 1 FROM signal_brand_context_prototype_receipts receipt WHERE receipt.run_id=run.id)`,
+    [args.workspace_id,args.actor_user_id,args.plan_digest,args.config_digest]);
+}
+
 const prototypeStates=["queued","running","completed","failed","canceled","stale","outcome_unknown"] as const;
 export type SignalBrandContextPrototypeProcessingV1={contract_version:"brand-context-prototype-processing-v1";
   workspace_id:string;generation_id:string;run_id:string;receipt_id:string;state:typeof prototypeStates[number];
@@ -308,6 +331,11 @@ export async function startSignalBrandContextPrototypeProcessingV1(args:{databas
         generation_id:published.generation_id,pack_digest:published.pack_digest});
       const plan=await (dependencies.load_plan??loadSignalWorkspaceTopicPrototypePlanV1)({queryable:client,workspace_id:parent.workspace_id,
         actor_user_id:args.actor_user_id});
+      const planDigest=String(plan.plan_digest??"");
+      const configDigest=String((plan.embedding_profile as {config_digest?:unknown}|undefined)?.config_digest??"");
+      if(!digest.test(planDigest)||!digest.test(configDigest))return fail("brand_context_prototype_plan_invalid");
+      await cancelUnclaimableDirectPrototypeV1(client,{workspace_id:parent.workspace_id,actor_user_id:args.actor_user_id,
+        plan_digest:planDigest,config_digest:configDigest});
       const quoted=(await client.query<{value:Quote}>("SELECT quote_signal_brand_context_prototypes_v1($1::uuid,$2::uuid,$3::jsonb) value",
         [args.parent_receipt_id,args.actor_user_id,JSON.stringify(plan)])).rows[0]?.value;
       if(!quoted||!digest.test(quoted.quote_digest)||quoted.quote_snapshot.pack_digest!==published.pack_digest

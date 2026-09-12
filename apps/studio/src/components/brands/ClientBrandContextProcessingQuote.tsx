@@ -45,7 +45,7 @@ function initialProcessingView(value: ClientBrandContextProcessingViewV1 | Clien
 
 export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full", refreshSignal,
   initial = null, authorize, authorizeFromEndpoint = false, prototypeOnly = false, disabled = false,
-  allowCompactAuthorization = false, onAuthorizationAccepted, onAccessDenied }: {
+  allowCompactAuthorization = false, onAuthorizationAccepted, onProcessingCompleted, onAccessDenied }: {
   workspaceId: string;
   variant?: "full" | "compact";
   refreshSignal?: string;
@@ -59,6 +59,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   allowCompactAuthorization?: boolean;
   disabled?: boolean;
   onAuthorizationAccepted?: () => void;
+  onProcessingCompleted?: () => void;
   onAccessDenied?: () => void;
 }) {
   const t = useTranslations("ClientBrandContextProcessing");
@@ -78,6 +79,8 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   const reconciliation = useRef<ClientBrandContextReconciliationCycleV1 | null>(null);
   const pollingAttempts = useRef(0);
   const pollingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const completed = useRef(false);
+  const completedCallback = useRef(onProcessingCompleted); completedCallback.current = onProcessingCompleted;
   const denied = useRef(onAccessDenied); denied.current = onAccessDenied;
   const previousWorkspace = useRef<string | null>(null);
   const endpoint = `/api/data-os/signal/${encodeURIComponent(workspaceId)}/brand-context/processing-quote`;
@@ -139,6 +142,11 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
   }, [initial, read, refreshSignal, workspaceId]);
 
   const current = clientBrandContextProcessingViewForWorkspaceV1(view, workspaceId);
+  useEffect(() => {
+    const ready = current?.operation?.state === "completed";
+    if (ready && !completed.current) { completed.current = true; completedCallback.current?.(); }
+    else if (!ready) completed.current = false;
+  }, [current?.operation?.state]);
   const sourceStale = current?.operation?.state === "stale" || current?.status === "brand_context_outdated";
   const needsSourceReconciliation = sourceStale && current?.can_start !== true;
   useEffect(() => {

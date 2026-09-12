@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalWorkspaceTopicPrototypesV1,
-  quoteSignalWorkspaceTopicPrototypesV1, requestSignalWorkspaceTopicPrototypesV1, initializeSignalWorkspaceTopicPrototypeCatalogV1 } from "@noisia/db";
+  quoteSignalWorkspaceTopicPrototypesV1, initializeSignalWorkspaceTopicPrototypeCatalogV1 } from "@noisia/db";
 import { WorkspaceCorpusEmbeddingsError, workspaceEmbeddingRuntimeSettingsV1 } from "./workspace-corpus-embeddings";
 
 type Access = { database?: Pick<Pool, "query" | "connect">; workspaceId: string; actorUserId: string };
@@ -24,14 +24,14 @@ export async function quoteWorkspaceTopicPrototypesForActorV1(args: Access) {
     workspace_id: args.workspaceId, actor_user_id: args.actorUserId }), ...access.flags };
 }
 export async function requestWorkspaceTopicPrototypesForActorV1(args: Access & { idempotencyKey: string; body: WorkspaceTopicPrototypeRequestV1 }) {
-  const access = await authorize(args, true);
+  await authorize(args, true);
   if (!validateWorkspaceTopicPrototypeRequestV1(args.body)) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_request_invalid", 422);
-  // Availability and limits are checked with the current quote inside the request transaction.
-  // A cache-only run or recovery from a persisted receipt has no external transport to enable.
-  await requestSignalWorkspaceTopicPrototypesV1({ database: access.database, workspace_id: args.workspaceId,
-    actor_user_id: args.actorUserId, idempotency_key: args.idempotencyKey, ...args.body,
-    provider_available: access.flags.provider_available, max_run_cost_micro_usd: access.flags.max_run_cost_micro_usd });
-  return loadWorkspaceTopicPrototypesForActorV1({ ...args, database: access.database });
+  // Topic-prototype provider work is authorized only by the composed Brand OS
+  // processing receipt. The former direct request produced runs that the Worker
+  // correctly could not claim because they had neither that receipt nor a
+  // processing admission. Keep the read/quote contract for old receipts, but
+  // reject new direct writes before creating another unreachable run.
+  throw new WorkspaceCorpusEmbeddingsError("processing_admission_required", 409);
 }
 export function validateWorkspaceTopicPrototypeRequestV1(value: unknown): value is WorkspaceTopicPrototypeRequestV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

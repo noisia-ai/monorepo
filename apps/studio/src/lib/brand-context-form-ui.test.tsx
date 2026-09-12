@@ -78,16 +78,30 @@ test("a committed brand mutation does not ask the user to submit it again when p
 });
 
 test("Admin Brand OS owns the single governed processing authorization while Admin Topics stays editorial", async () => {
-  const [page, semantic, topics] = await Promise.all([
+  const [page, semantic, topics, analysis] = await Promise.all([
     readFile(new URL("../app/studio/brands/[id]/brand-os/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../components/brands/SemanticContextPackManager.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../components/brands/TopicsManager.tsx", import.meta.url), "utf8")
+    readFile(new URL("../components/brands/TopicsManager.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../components/brands/WorkspaceAnalysisControls.tsx", import.meta.url), "utf8")
   ]);
   assert.match(page, /allowProcessingAuthorization=\{\["noisia_admin", "founder", "admin"\]\.includes/u);
   assert.match(semantic, /preparation\?\.state === "awaiting_authorization" && allowProcessingAuthorization/u);
   assert.match(semantic, /<ClientBrandContextProcessingQuote[\s\S]{0,240}allowCompactAuthorization[\s\S]{0,120}authorizeFromEndpoint/u);
   assert.doesNotMatch(semantic, /variant="compact" prototypeOnly/u);
   assert.match(topics, /navigation \? <ClientProcessingJourney/u);
+  assert.doesNotMatch(analysis, /TopicPreparationControls|\/topics\/preparation/u);
+  assert.match(analysis, /preflight\?\.state === "missing_context"[\s\S]{0,260}<ClientBrandContextProcessingQuote/u);
+  assert.match(analysis, /prototypeOnly authorizeFromEndpoint/u);
+  assert.match(analysis, /onProcessingCompleted=\{\(\) => void analysis\.read\(\)\}/u);
+});
+
+test("the deprecated direct prototype write fails before creating an unclaimable run", async()=>{
+  const source=await readFile(new URL("./data-os/workspace-topic-prototypes.ts",import.meta.url),"utf8");
+  const start=source.indexOf("export async function requestWorkspaceTopicPrototypesForActorV1");
+  const end=source.indexOf("export function validateWorkspaceTopicPrototypeRequestV1",start);
+  const request=source.slice(start,end);
+  assert.match(request,/processing_admission_required/u);
+  assert.doesNotMatch(request,/requestSignalWorkspaceTopicPrototypesV1\(/u);
 });
 
 test("domain and preparation idempotency identities cannot diverge on compound writes", async () => {

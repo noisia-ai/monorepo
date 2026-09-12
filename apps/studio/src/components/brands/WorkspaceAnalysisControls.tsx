@@ -7,17 +7,17 @@ import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, workspaceAnalysisUsesIncremental, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { workspaceAnalysisAssociationReceipt, workspaceAnalysisUpdateState, workspaceNumericReadinessMessage } from "@/lib/data-os/signal-workspace-analysis-update-ui";
-import { TopicPreparationControls } from "./TopicPreparationControls";
 import { isWorkspaceAdmissionAction } from "@/lib/data-os/signal-workspace-interpretation-admission-ui";
 import { WorkspaceInterpretationAdmissionControls } from "./WorkspaceInterpretationAdmissionControls";
 import { isWorkspaceIncrementalEditorialAction, workspaceIncrementalEditorialHasReceipt } from "@/lib/data-os/signal-workspace-incremental-editorial-ui";
 import { WorkspaceIncrementalEditorialControls } from "./WorkspaceIncrementalEditorialControls";
+import { ClientBrandContextProcessingQuote } from "./ClientBrandContextProcessingQuote";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
-export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, initial = null, onCompleted, onCatalogAvailable, onContextPrepared, onAssociationsAvailable, signalHref }: {
+export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, initial = null, onCompleted, onCatalogAvailable, onAssociationsAvailable, signalHref }: {
   brandId: string; workspaceId: string; catalogVersion: string; disabled?: boolean;
   onAssociationsAvailable?: (receipt: string) => unknown; signalHref?: string;
-  initial?: WorkspaceAnalysisStatus | null; onCompleted?: () => unknown; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>; onContextPrepared?: () => unknown;
+  initial?: WorkspaceAnalysisStatus | null; onCompleted?: () => unknown; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
 }) {
   const t = useTranslations("AdminWorkspace.topics.analysis"), locale = useLocale();
   const analysis = useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled, initial });
@@ -201,11 +201,10 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
       {status?.admission ? <WorkspaceInterpretationAdmissionControls status={status} canAuthorize={analysis.canAuthorizeAdmission}
         canRevoke={analysis.canRevokeAdmission} submitting={analysis.submitting} receiptsAlreadyVisible={admissionReceiptAlreadyVisible}
         pendingRequest={analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? analysis.pending.body : null} onSubmit={analysis.submitAdmission} /> : null}
-      {status ? <details open={!update && preflight?.state === "missing_context"}>
-        <summary>{t("prepareContext")}</summary>
-        <TopicPreparationControls workspaceId={workspaceId} catalogVersion={catalogVersion}
-          disabled={disabled} onCompleted={() => { void analysis.read(); void onContextPrepared?.(); }} />
-      </details> : null}
+      {status && preflight?.state === "missing_context" ? <ClientBrandContextProcessingQuote workspaceId={workspaceId}
+        variant="full" prototypeOnly authorizeFromEndpoint disabled={disabled || analysis.submitting}
+        refreshSignal={catalogVersion} onAuthorizationAccepted={() => void analysis.read()}
+        onProcessingCompleted={() => void analysis.read()} /> : null}
     </div>
   </div>;
 }

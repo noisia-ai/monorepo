@@ -336,7 +336,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
 
     {processingVisible ? <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
-      disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog} onContextPrepared={computation.read}
+      disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog}
       onAssociationsAvailable={setAssociationReceipt} signalHref={signalHref} /> : null}
 
     {processingVisible && running ? <div className="topics-manager__progress" role="status">
