@@ -85,6 +85,16 @@ test("screening validates evidence citations, dispositions and exact batch cover
     expected_locale:"en-US"})},output),/request_invalid/);
 });
 
+test("screening keeps private rationale useful and bounded",()=>{
+  const groups=[group(0)],plan=planFor(groups,10),batch=plan.batches[0]!;
+  const decision={group_key:groups[0]!.group_key,disposition:"noise" as const,candidate:null,confidence:0.9,
+    rationale:"x".repeat(340),cited_ref_ids:[]};
+  assert.equal(validateSignalTopicEditorialScreeningOutputV1(batch,{contract_version:"signal-topic-editorial-screening-output-v1",
+    batch_index:0,decisions:[decision]}).decisions[0]!.rationale?.length,340);
+  assert.throws(()=>validateSignalTopicEditorialScreeningOutputV1(batch,{contract_version:"signal-topic-editorial-screening-output-v1",
+    batch_index:0,decisions:[{...decision,rationale:"x".repeat(513)}]}),/output_invalid/u);
+});
+
 test("fails closed before planning duplicate, incomplete or over-capacity group sets",()=>{
   const one=group(0);
   const base={source_context_digest:sha("source-context"),editorial_context_digest:sha(context),context};

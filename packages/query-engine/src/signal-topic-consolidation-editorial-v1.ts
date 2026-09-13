@@ -278,7 +278,10 @@ export function validateSignalTopicEditorialScreeningOutputV1(batch:SignalTopicE
     if(!receipt||citations.some(ref=>!digestPattern.test(ref)||!allowed.has(ref))||publishable&&citations.length<1)
       return fail("topic_editorial_output_citation_invalid");
     if(candidate&&candidate.locale!==receipt.expected_locale)return fail("topic_editorial_output_locale_invalid");
-    return {...decision,candidate,rationale:decision.rationale===null?null:bounded(decision.rationale,"topic_editorial_output_invalid",160),
+    // Screening rationale is private review evidence, not final Signal copy.
+    // Keep one compact explanatory paragraph bounded without rejecting valid
+    // coverage and citations solely because UTF-8 prose exceeds 160 bytes.
+    return {...decision,candidate,rationale:decision.rationale===null?null:bounded(decision.rationale,"topic_editorial_output_invalid",512),
       cited_ref_ids:citations};
   }).sort((a,b)=>ascii(a.group_key,b.group_key));
   return {...parsed.data,decisions};
