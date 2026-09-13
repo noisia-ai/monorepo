@@ -267,8 +267,11 @@ export function validateSignalTopicEditorialScreeningOutputV1(batch:SignalTopicE
     const publishable=decision.disposition==="topic"||decision.disposition==="narrative";
     if(publishable!==Boolean(decision.candidate))return fail("topic_editorial_output_target_invalid");
     const candidate=decision.candidate===null?null:{candidate_key:bounded(decision.candidate.candidate_key,"topic_editorial_output_target_invalid",256),
-      label:bounded(decision.candidate.label,"topic_editorial_output_target_invalid",90),
-      definition:bounded(decision.candidate.definition,"topic_editorial_output_target_invalid",240),
+      // Screening copy is an intermediate input to the global editor. Keep its
+      // bounds aligned with the final concept contract so a valid candidate is
+      // never rejected more aggressively before consolidation.
+      label:bounded(decision.candidate.label,"topic_editorial_output_target_invalid",120),
+      definition:bounded(decision.candidate.definition,"topic_editorial_output_target_invalid",500),
       locale:canonicalLocale(decision.candidate.locale,"topic_editorial_output_target_invalid")};
     const candidatePrefix=`b${String(batch.batch_index).padStart(4,"0")}-`;
     if(candidate&&(!keyPattern.test(candidate.candidate_key)||!candidate.candidate_key.startsWith(candidatePrefix)))
@@ -418,7 +421,7 @@ export function measureSignalTopicEditorialCapacityV1(args:{plan:SignalTopicEdit
       if(receipt.evidence_ref_ids.length===0)return {group_key,disposition:"unresolved",candidate:null,confidence:null,
         rationale:"x".repeat(160),cited_ref_ids:[]};
       return {group_key,disposition:"topic",candidate:{candidate_key:`b${String(batch.batch_index).padStart(4,"0")}-g-${index}`,
-        label:"x".repeat(90),definition:"x".repeat(240),locale:args.plan.default_locale},confidence:1,
+        label:"x".repeat(120),definition:"x".repeat(500),locale:args.plan.default_locale},confidence:1,
         rationale:"x".repeat(160),cited_ref_ids:receipt.evidence_ref_ids};})}));
   const screening=validateSignalTopicEditorialScreeningCoverageV1(args.plan,screening_outputs),
     global=buildSignalTopicEditorialGlobalReviewV1({plan:args.plan,screening,groups:args.groups}),

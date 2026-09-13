@@ -95,6 +95,16 @@ test("screening keeps private rationale useful and bounded",()=>{
     batch_index:0,decisions:[{...decision,rationale:"x".repeat(513)}]}),/output_invalid/u);
 });
 
+test("screening candidate bounds match the final concept contract",()=>{
+  const groups=[group(0)],plan=planFor(groups,10),batch=plan.batches[0]!,evidence=groups[0]!.evidence[0]!.ref_id;
+  const candidate={candidate_key:"b0000-candidate",label:"x".repeat(120),definition:"x".repeat(500),locale:"es-MX"};
+  const decision={group_key:groups[0]!.group_key,disposition:"topic" as const,candidate,confidence:0.9,rationale:null,cited_ref_ids:[evidence]};
+  assert.doesNotThrow(()=>validateSignalTopicEditorialScreeningOutputV1(batch,{contract_version:"signal-topic-editorial-screening-output-v1",
+    batch_index:0,decisions:[decision]}));
+  assert.throws(()=>validateSignalTopicEditorialScreeningOutputV1(batch,{contract_version:"signal-topic-editorial-screening-output-v1",
+    batch_index:0,decisions:[{...decision,candidate:{...candidate,definition:"x".repeat(501)}}]}),/target_invalid/u);
+});
+
 test("fails closed before planning duplicate, incomplete or over-capacity group sets",()=>{
   const one=group(0);
   const base={source_context_digest:sha("source-context"),editorial_context_digest:sha(context),context};
