@@ -27,7 +27,7 @@ En la slide de equipo: **datos primero, estratega al final** (Analista de datos 
 - Estructura: **Primer mes / arranque** (incluye workshop, dashboard, definición de temas/KPIs, diagnóstico inicial) **+ mensualidad FIJA** el resto de la campaña.
 - La **frecuencia de reporte sube por calendario**, pero el fee mensual **no cambia**: mensual (hasta 6 meses antes) → quincenal (3 meses) → semanal (2 meses) → **diario (último mes)**. Muéstralo como rampa.
 - **Mensualidad por adelantado** (mitiga el riesgo real: si pierden, no pagan la última).
-- **Incluye IVA (16%)** explícito. Referencias reales de anclaje: Manzanillo ~$30k/mes; caso 12 meses ≈ primer mes $100k + $80k/mes fijo.
+- **Incluye IVA (16%)** explícito. Las referencias de anclaje reales, por plaza y por duración de campaña, viven en la KB comercial en Drive. No se escriben aquí: el repo es público.
 - ⚠️ Poner montos **rompe la regla "sin cifras" del kit a propósito** — válido solo en decks locales de `examples/_local/` cuando el cliente pide presupuesto. No subas cifras de cliente al repo.
 
 ## Cobertura y fuentes
