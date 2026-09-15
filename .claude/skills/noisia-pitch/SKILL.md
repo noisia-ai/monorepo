@@ -10,6 +10,11 @@ You produce on-brand Noisia pitch decks and, crucially, **leave the kit better t
 Everything lives in `packages/pitch-kit/`. Read `packages/pitch-kit/AGENTS.md` for the full rules.
 
 ## 1. Know what you have (read these first)
+- `packages/pitch-kit/CANON.md` — **the contract.** Which of the five families you are building
+  (reporte, estudio, muestra, propuesta, producto), which doc owns which rule, what the cross-cutting
+  hard rules are, and the definition of done. Read it before deciding anything else. For a study,
+  `packages/pitch-kit/DATA.md` is the execution manual for the corpus; for a proposal,
+  `packages/pitch-kit/PROPOSALS.md`.
 - `packages/pitch-kit/slides/recipes.json` — **deck blueprints for common asks** (explain a methodology, propose/quote a study). Each recipe tells you what to ASK, what KB to LOAD, and which slides to use. Check here first — most requests match a recipe.
 - `packages/pitch-kit/slides/catalog.json` — **the index of every available slide**. How you know what's possible. Read it before proposing a structure.
 - `packages/kb/` — the Knowledge Base (methodologies, services, pricing, process, cases). **The content of a Noisia pitch comes from here — don't invent it.** Always load `00-overview/principles.md` **and `02-services/product-model.md`** (the offer is Reportes / Estudios / Data — the Foundation/Intelligence/Strategy tiers are internal calibration, not the sales structure); then the files the recipe lists.
@@ -25,18 +30,18 @@ Everything lives in `packages/pitch-kit/`. Read `packages/pitch-kit/AGENTS.md` f
    - Both: the **growth-ladder slide is obligatory** — it now reads Workshop → Reporte → Estudio → Estudios recurrentes. If you see Foundation/Intelligence/Strategy on a deck, it's stale. And **never put currency amounts on a slide** (pricing-logic rule — show the logic and the modality, not numbers).
 2. Pull the product's deliverables, timeline and **"qué NO incluye"** from the catalog in `packages/kb/02-services/product-model.md` + `pricing-logic.md` + `delivery-format.md` — keep them consistent across the study-scope, deliverables and timeline slides. Stating what's excluded is what prevents the scope fight in month two; don't drop it to look generous. Then order the slides from the recipe (or `catalog.json` for a custom deck).
 3. Make a working folder **outside the repo** (or `packages/pitch-kit/examples/_local/`, which is gitignored) and assemble:
-   - `cp packages/pitch-kit/engine/{noisia-tokens.css,deck.css,deck-stage.js} <work>/`
+   - `cp packages/pitch-kit/engine/{noisia-tokens.css,deck.css,deck-components.css,deck-stage.js} <work>/` and link all three stylesheets in that order. Your deck's own `<style>` covers only what is specific to it: never redefine a component class (`CANON.md` §5.1).
    - `cp packages/pitch-kit/assets/logo_norm.svg <work>/`
    - Copy `engine/deck-template.html` to `<work>/index.html`, and paste the chosen slide fragments (from `slides/<id>/<id>.html`) where `<!-- SLIDES -->` is. Fill every `{{PLACEHOLDER}}` and fix each footer's `NN / TOTAL`.
 4. Render:
    - **PDF:** `node packages/pitch-kit/builders/build-pdf.mjs <work>/index.html <work>/deck.pdf`
    - **PPTX (editable):** write a `deck.json` (shape in `builders/build-pptx.py` header) then `python3 packages/pitch-kit/builders/build-pptx.py <work>/deck.json <work>/deck.pptx`
    - **Portable single file (no-clone / for a non-technical teammate):** `node packages/pitch-kit/builders/build-portable.mjs <work>/index.html <work>/deck.portable.html` — inlines the whole engine (CSS + JS as base64 + logo as data URI) into ONE `.html`. The teammate opens it in Chrome → Print → Save as PDF, with no repo, no Node, no server. Same 1920×1080 output.
-5. Verify: open the PDF; every slide is 1920×1080, no overflow, footers numbered, no `{{PLACEHOLDER}}` left.
+5. Verify: render each slide at 1920×1080 and **look at it**, then open the PDF page by page. No overflow, footers numbered, no `{{PLACEHOLDER}}` left, and `grep -c '—' index.html` returns `0`. The full list is `CANON.md` §8.
 
 ## 2.5 Humanize + client-ready sanitize (mandatory — before you render)
 **Run every word through `packages/pitch-kit/COPY_RULES.md`.** Non-negotiable:
-- **Client-ready:** strip anything internal — slide purpose/navigation text (the header is always `noisia.ai`, never "cómo crecemos juntos"), `{{placeholders}}`, comments, process notes, emojis. The client sees only their message.
+- **Client-ready:** strip anything internal — slide purpose/navigation text (the header-right is `noisia.ai` or a short section label, never "cómo crecemos juntos"; the footer-left is always `noisia · social intelligence architects`), `{{placeholders}}`, comments, process notes, emojis. The client sees only their message.
 - **Humanize:** kill AI tells (additionally/crucial/leverage/"se posiciona como"/inflated significance/rule-of-three/em-dash & bold spam). Simple over sophisticated — Noisia is complex, the press isn't.
 - **Spanish decks:** don't translate standard tech anglicisms — it's **Dashboard**, not "Panel de control"; keep insight, brief, performance, corpus, trigger. Use the client's own category terms.
 

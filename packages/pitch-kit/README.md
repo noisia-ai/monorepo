@@ -4,8 +4,10 @@ Make on-brand Noisia pitch decks — **PDF and editable PPTX** — from a shared
 growing library of reusable slides, with a bridge to live Signal insights. Built for the
 commercial team using Codex / Claude Code.
 
-**Start here:** invoke the skill `.claude/skills/noisia-pitch/SKILL.md` (or just ask your
-agent to "armar un pitch para <cliente>"). Editing the kit itself? Read `AGENTS.md`.
+**Start here:** read `CANON.md` — the contract for the whole system (families, source hierarchy,
+hard rules, where everything lives). Then invoke the skill `.claude/skills/noisia-pitch/SKILL.md`
+(or just ask your agent to "armar un pitch para <cliente>"). Editing the kit itself? Read
+`AGENTS.md`. Starting a run from a blank chat? Copy the prompt in `PROMPTS.md`.
 
 ## Layout
 ```
@@ -14,6 +16,7 @@ slides/      reusable slide templates + catalog.json (the index of what's availa
 builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print)
 signal/      fetch-insights.mjs (pull metrics/quotes from the Signal public API)
 assets/      brand logos / backgrounds
+templates/   PROVENANCE_AND_CHANGELOG.md + GUION_POR_SLIDE.md, copied into each working folder
 examples/    sanitized demo decks only (examples/_local/ is gitignored for real work)
 ```
 
@@ -32,10 +35,19 @@ node builders/build-pdf.mjs examples/_local/mydeck/index.html examples/_local/my
 python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/mydeck/deck.pptx
 ```
 
-## The four rulebooks
-Every deck passes through `LAYOUTS.md` (structure), `COPY_RULES.md` (words), `ICONS.md` (glyphs).
-A **study** also passes through `METHODOLOGY.md` — how it sources data (LQL), runs the ETL, tags
-Triggers & Barriers, and keeps a provenance + changelog record so the kit compounds.
+## The rulebooks
+`CANON.md` is the contract and the index; the rest are the layers it points to.
+
+| File | Owns |
+|---|---|
+| `CANON.md` | Families, source hierarchy, cross-cutting rules, definition of done |
+| `LAYOUTS.md` | Slide sequences, the cover, the framework slide, the method slide |
+| `COPY_RULES.md` | Every word that shows on a slide |
+| `ICONS.md` | Icons, platform marks, asset names |
+| `METHODOLOGY.md` | What you may claim and how strongly |
+| `DATA.md` | How the corpus is processed: ETL, quality gates, output contracts |
+| `PROPOSALS.md` | Proposals and the product block |
+| `PROMPTS.md` | The parameterized prompt that starts a run |
 
 ## Two principles
 - **The repo is public → no client data here.** Templates only. Real decks — and each study's

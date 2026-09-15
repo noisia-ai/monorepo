@@ -28,6 +28,10 @@ html, body { margin: 0; padding: 0; background: #061218; }
 .atmos::before { width: 1100px; height: 1100px; background: var(--blob-cyan); top: -300px; right: -200px; }
 .atmos::after { width: 900px; height: 900px; background: var(--blob-charcoal); bottom: -250px; left: -200px; opacity: 0.18; }
 .atmos.warm::before { background: var(--blob-red); opacity: 0.18; }
+/* `plain` kills the cyan blob. Use it on any slide carrying a full-bleed illustration
+   (the cover): the blob and the art stack into a heavy wash otherwise. Every shipped deck
+   redefined this inline before it landed here. */
+.atmos.plain::before { display: none; }
 .atmos.dark::before { background: var(--blob-dark); opacity: 0.4; }
 .atmos.dark::after { background: var(--blob-cyan); opacity: 0.35; }
 

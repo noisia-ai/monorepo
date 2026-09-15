@@ -1,8 +1,8 @@
 {
   "$schema": "./catalog.schema.json",
-  "version": 1,
-  "updated": "2026-08-20",
-  "note": "Machine-readable index of reusable Noisia slide templates. Agents read this to know what slides exist. When you add a slide, ADD ITS ENTRY HERE (see ../AGENTS.md → contribution loop).",
+  "version": 2,
+  "updated": "2026-09-14",
+  "note": "Machine-readable index of reusable Noisia slide templates. Agents read this to know what slides exist. When you add a slide, ADD ITS ENTRY HERE (see ../AGENTS.md → contribution loop). El contrato del sistema es ../CANON.md; las secuencias, ../LAYOUTS.md.",
   "engine": {
     "canvas": "1920x1080",
     "files": [
@@ -30,6 +30,29 @@
         "SUBTITLE",
         "META_FOR",
         "META_DATE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
+    },
+    {
+      "id": "cover-study",
+      "name": "Portada de estudio, con ilustración",
+      "file": "slides/cover-study/cover-study.html",
+      "category": "opening",
+      "when": "Portada de un estudio, reporte o muestra. La pregunta de investigación ES el título, con una palabra en acento; la ilustración sangra a la derecha y va detrás del copy. Usa 'cover' solo para un deck comercial con bloque de meta. Necesita assets/cover-illustration.png.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "HEADER_RIGHT",
+        "EYEBROW",
+        "QUESTION_LINE_1",
+        "QUESTION_LINE_2",
+        "ACCENT_WORD",
+        "SUBHEAD",
+        "SUBJECT",
+        "MARKET",
+        "PERIOD",
         "FOOTER_NN",
         "FOOTER_TOTAL"
       ]
@@ -387,6 +410,73 @@
         "EYEBROW",
         "TITLE",
         "CTA_LINE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
+    },
+    {
+      "id": "tb-layers",
+      "name": "Las cuatro capas, con el mapa detrás",
+      "file": "slides/tb-layers/tb-layers.html",
+      "category": "methodology",
+      "when": "Slide 3 de un estudio T&B: explica el método en lenguaje humano, sin nombrarlo. El mapa va detrás (z-index:-1) y las cuatro cards de permiso tienen que coincidir con el kanban de 'dónde actuar'. Necesita assets/tb-map.png. En español, conserva el overlay .psy y renderiza la slide para verificar que cae sobre la palabra. Para otro marco que no sea T&B, usa 'framework-layers'.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "HEADER_RIGHT",
+        "EYEBROW",
+        "TITLE",
+        "PULL_DESC",
+        "BARRIER_DESC",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
+    },
+    {
+      "id": "channels",
+      "name": "Dónde vive la conversación",
+      "file": "slides/channels/channels.html",
+      "category": "evidence",
+      "when": "Canales y el rol de cada plataforma, después de la hipótesis. Repite el bloque .role por canal, de mayor a menor. El rol se demuestra con verbatims de ese canal, nunca por estereotipo. Se enmarca como dónde habla la gente y para qué sirve cada plataforma, nunca como share of voice de la categoría.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "HEADER_RIGHT",
+        "EYEBROW",
+        "TITLE",
+        "CH1_COLOR",
+        "CH1_NAME",
+        "CH1_SHARE",
+        "CH1_BAR",
+        "CH1_ROLE",
+        "CH1_DETAIL",
+        "CH2_*",
+        "CH3_*",
+        "NOTE",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
+      ]
+    },
+    {
+      "id": "method",
+      "name": "Cómo se leyó: alcance, límites y trazabilidad",
+      "file": "slides/method/method.html",
+      "category": "methodology",
+      "when": "Cerca del final de un estudio o una muestra. Hace defendible el deck completo: qué se escuchó, qué se dejó fuera, cómo se leyó y qué evidencia lo respalda, más el límite honesto en el .note. Client-safe obligatorio: sin nombres de herramienta, sin sintaxis de query, sin archivos ni la palabra ETL. El detalle técnico vive en PROVENANCE_AND_CHANGELOG.md.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "HEADER_RIGHT",
+        "EYEBROW",
+        "TITLE",
+        "SCOPE",
+        "EXCLUSIONS",
+        "READING",
+        "EVIDENCE",
+        "LIMIT",
         "FOOTER_NN",
         "FOOTER_TOTAL"
       ]

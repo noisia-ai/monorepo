@@ -1,0 +1,42 @@
+<!-- slide: method · Cómo se leyó: alcance, límites y trazabilidad · variants: light
+     Near the end of a study or sample. Makes the whole deck defensible in one slide.
+     CLIENT-SAFE, this is the rule that gets broken most: no tool names, no query syntax, no file
+     names, no scripts, and never the word ETL. Say it in business language. The technical detail
+     belongs in PROVENANCE_AND_CHANGELOG.md (templates/).
+     The .note carries the honest limit: which claims are exact and which are directional
+     (METHODOLOGY.md + DATA.md §20). Whether volume shows as counts or share: CANON.md §5.3. -->
+<section class="slide" data-label="Método">
+  <div class="frame">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>{{HEADER_RIGHT}}</span></div>
+    </div>
+    <div class="mid">
+      <span class="eb"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths, see ICONS.md --></svg>{{EYEBROW}}</span>
+      <h2 class="hl">{{TITLE}}</h2>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px 44px; margin-top:22px;">
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">qué se escuchó</div><div class="id">{{SCOPE}}</div></div>
+        </div>
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">qué se dejó fuera</div><div class="id">{{EXCLUSIONS}}</div></div>
+        </div>
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">cómo se leyó</div><div class="id">{{READING}}</div></div>
+        </div>
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">evidencia</div><div class="id">{{EVIDENCE}}</div></div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:24px;">
+        <div class="icobox"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+        <p>{{LIMIT}}</p>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>

@@ -1,0 +1,37 @@
+<!-- slide: tb-layers · Las cuatro capas, con el mapa detrás · variants: light
+     The slide clients remember. assets/tb-map.png sits behind the copy (z-index:-1); the four
+     permission cards have to agree with the "where to act" kanban later in the deck.
+     Heads up: assets/tb-map.png bakes the innermost ring label as "Psychological", in English and
+     capitalised, while the other three rings read the same in ES and EN. Nothing is overlaid on the
+     asset here. The fix is to regenerate the asset, not to patch it at runtime (CANON.md §9).
+     Never name the methodology here. The slide explains it in plain language. -->
+<section class="slide" data-label="Las cuatro capas">
+  <div class="frame">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>{{HEADER_RIGHT}}</span></div>
+    </div>
+    <div class="mid" style="justify-content:flex-start;">
+      <span class="eb"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths, see ICONS.md --></svg>{{EYEBROW}}</span>
+      <h2 class="hl" style="margin-bottom:0;">{{TITLE}}</h2>
+      <div class="tbmap">
+        <img src="assets/tb-map.png" alt="">
+        <div class="tl pull">
+          <h4>Empuja (trigger)</h4>
+          <p>{{PULL_DESC}}</p>
+        </div>
+        <div class="tl shadow">
+          <h4>Frena (barrier)</h4>
+          <p>{{BARRIER_DESC}}</p>
+        </div>
+      </div>
+      <div class="lperm">
+        <div><b>Psicológico</b><span>una marca lo mueve</span></div>
+        <div><b>Personal</b><span>una marca lo mueve</span></div>
+        <div class="partial"><b>Social</b><span>influencia parcial</span></div>
+        <div class="align"><b>Cultural</b><span>solo alinear</span></div>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>

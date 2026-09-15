@@ -157,3 +157,52 @@
 .bmk { width:22px; height:22px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex:none; } .bmk svg { width:13px; height:13px; }
 
 .lg { display:flex; align-items:center; gap:11px; font-size:20px; } .dot { width:13px; height:13px; border-radius:50%; flex:none; }
+
+/* ============================================================================
+   Promoted from shipped decks (see CANON.md §9). Each of these was rebuilt
+   inline in three or more decks before it landed here. Don't redefine them in a
+   deck's own <style>.
+   ========================================================================== */
+
+/* --- generic surface card -------------------------------------------------- */
+.card { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:26px 28px; }
+.card.soft{background:#fafafa;} .card.teal{background:var(--teal-soft);border-color:#cceaea;} .card.coral{background:var(--coral-soft);border-color:#f2cfc7;}
+
+/* --- cover with illustration bleeding right (LAYOUTS.md → the cover) -------- */
+.cover-art { position:absolute; right:-110px; top:50%; transform:translateY(-50%); height:113%; width:auto; z-index:0; pointer-events:none; opacity:.88; }
+/* The cover slide must carry `atmos plain` (deck.css): the cyan blob over the art reads as a wash. */
+.cover-copy { position:relative; z-index:2; max-width:1120px; display:flex; flex-direction:column; justify-content:flex-end; }
+.cover-copy .sub { font-size:26px; margin-top:8px; max-width:820px; }
+.cover-meta-line { font-size:19px; color:var(--fg-secondary); margin-top:6px; }
+
+/* --- channel roles: where the conversation lives, and what each channel does */
+.roles { display:flex; flex-direction:column; gap:14px; }
+.roles.cols { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+.role { display:grid; grid-template-columns:250px 1fr; gap:20px; align-items:center; }
+.role .rl { display:flex; align-items:center; gap:12px; }
+.role .rn { font-size:20px; font-weight:700; color:var(--ink); }
+.role .rp { font-size:15px; color:var(--fg-secondary); }
+.role .rd { font-size:18px; color:var(--fg-secondary); line-height:1.4; margin-top:6px; } .role .rd b { color:var(--fg-primary); }
+.rbar { height:12px; min-width:28px; border-radius:99px; background:linear-gradient(90deg,#0d8a8a,#37b0ad); display:inline-block; vertical-align:middle; }
+
+/* --- framework cards: explain the frame BEFORE any slide uses it ----------- */
+.fwg { display:grid; grid-template-columns:1fr 1fr; gap:26px; }
+.fwc { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:28px 30px; display:grid; grid-template-columns:52px 1fr; gap:18px; align-items:start; }
+.fwc .tag { font-size:14px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--teal); padding:0; background:none; }
+.fwc h4 { font-size:24px; margin:2px 0 0; color:var(--ink); }
+.fwc p { font-size:17px; color:var(--fg-secondary); line-height:1.5; margin:10px 0 0; }
+
+/* --- T&B map slide: the diagram sits BEHIND the copy ----------------------- */
+.tbmap { position:relative; height:560px; margin:-24px 0 6px; }
+.tbmap img { position:absolute; left:50%; top:-30px; transform:translateX(-50%); width:1320px; max-width:none; height:auto; z-index:-1; }
+.tbmap .tl { position:absolute; top:250px; width:340px; z-index:1; }
+.tbmap .tl.pull { left:0; } .tbmap .tl.shadow { right:0; text-align:right; }
+.tbmap .tl h4 { font-size:26px; font-weight:700; margin:0 0 8px; } .tbmap .tl.pull h4 { color:var(--teal); } .tbmap .tl.shadow h4 { color:var(--coral); }
+.tbmap .tl p { font-size:19px; color:var(--fg-secondary); line-height:1.45; margin:0; }
+
+/* --- permission to act, under the map (feeds the kanban on "where to act") - */
+.lperm { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
+.lperm > div { background:#fafafa; border:1px solid var(--border-subtle); border-radius:14px; padding:16px 20px; }
+.lperm b { display:block; font-size:18px; color:var(--ink); }
+.lperm span { display:block; margin-top:6px; font-size:15px; font-weight:700; color:var(--positive); }
+.lperm > div.partial span { color:var(--teal); } .lperm > div.align span { color:var(--fg-secondary); }

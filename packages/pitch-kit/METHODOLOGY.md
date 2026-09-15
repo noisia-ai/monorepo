@@ -1,9 +1,13 @@
 # Methodology — how a study earns its truth
 
-> The third rulebook. `LAYOUTS.md`, `COPY_RULES.md` and `ICONS.md` govern how a deck **looks
-> and reads**. This one governs how it **gets its content**: sourcing, ETL, tagging, and the
-> provenance record that lets the kit evolve. A study that skips this is a nice-looking deck
-> with numbers nobody can defend.
+> The criteria rulebook. `LAYOUTS.md`, `COPY_RULES.md` and `ICONS.md` govern how a deck **looks
+> and reads**. This one governs how it **gets its content**: sourcing, what the data has to survive
+> before you trust it, how T&B is tagged, and the provenance record that lets the kit evolve.
+> A study that skips this is a nice-looking deck with numbers nobody can defend.
+>
+> **Boundary:** this file says *what you may claim and how strongly*. `DATA.md` says *how the
+> processing is executed* — inventory, streaming ETL, quality gates, output contracts. When you
+> are at the keyboard with the export open, you want `DATA.md`. `CANON.md` orders both.
 >
 > Client-safe by design: everything here is generic. Real inputs, numbers and verbatims live
 > in `examples/_local/<study>/` (gitignored), never in a tracked file.
@@ -46,9 +50,10 @@ Run these every time. Most "insights" die here, and that's the point.
   Cross-check row counts against the platform's own totals (the tool's mention count + channel
   breakdown screenshot). The screenshot totals are the real numbers; the CSV may be a slice.
 - **Streaming ETL, never a blender.** Files run to hundreds of MB with newlines inside content.
-  Iterate `csv.DictReader` (semicolon-delimited, UTF-8 BOM); never materialize the list. You are an
-  LLM, not BERTopic: induce the theme taxonomy by *reading* a well-chosen sample, then let regex
-  proxies bucket + count. Counts are directional; the curated verbatims are the deliverable.
+  Iterate row by row; never materialize the list. You are an LLM, not BERTopic: induce the theme
+  taxonomy by *reading* a well-chosen sample, then let proxies bucket + count. Counts are
+  directional unless they were validated; the curated verbatims are the deliverable. Mechanics,
+  encodings and the reproducible-sample rules: `DATA.md` §4 and §13.
 - **Noise contamination.** A hot news cycle can hijack a category term and inflate volume and
   sentiment (a political/PR wave riding a category keyword is the classic). Classify consumer vs
   off-topic, report the split, and cut the off-topic loudly. Silent truncation reads as "we covered
@@ -75,9 +80,16 @@ research channel, the complaint channel, and the foreign-planner channel. See th
 - **Verbatims are real, linked, and sourced** (platform mark + date + link to the post). Never
   invent one. Imperfections stay — they're information.
 
+## 4.5 Before any count goes on a slide
+
+Run the quality gates in `DATA.md` §21. A study does not move to deck while a gate that affects
+its main conclusion is failing, and a count without formal validation is called **directional**,
+using that word. The evidence hierarchy (`DATA.md` §20) decides the verb: *shows* vs *suggests*.
+
 ## 5. Provenance + changelog — how the system evolves
 
 Every study keeps a `PROVENANCE_AND_CHANGELOG.md` in its local folder (`examples/_local/<study>/`).
+Start from `templates/PROVENANCE_AND_CHANGELOG.md` and fill it as you work, not at the end.
 It's the memory that makes the next study better and lets anyone reconstruct a number months later.
 Minimum contents:
 

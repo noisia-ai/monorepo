@@ -52,15 +52,21 @@ Fill white on the brand color. Keep the same mark for a platform across the whol
 | Instagram | `instagram` | `#E4405F` |
 | Web / prensa | Iconoir globe | `#6b7280` (children `stroke="#fff"`, see rule 3) |
 
-## Map-label overlay (the `tb-map.png` fix)
+## Asset names (one file, one name)
 
-`assets/tb-map.png` bakes the innermost ring label as **"Psychological" (English)**. On a Spanish
-deck, overlay a white-bg span inside the same wrapper as the image, centered, reading `psicológico`:
+Three filenames for the same map (`tb-map.png`, `map-tb.png`, `map-t&b.png`) and three for the
+same cover illustration were found across shipped decks, all byte-identical. Copy them from
+`assets/` under their canonical names and do not rename them per deck:
+`tb-map.png`, `cover-illustration.png`, `logo_norm.svg`. An ampersand in a filename also has to be
+URL-encoded in the `src`, which is one more thing to get wrong.
 
-```html
-<div style="position:absolute; left:50%; top:405px; transform:translateX(-50%); z-index:1;
-     background:#fff; padding:5px 16px; font-size:25px; font-weight:700; color:var(--ink);">psicológico</div>
-```
+## The T&B map ships in English, and nothing goes on top of it
 
-Nudge `top` by re-rendering that slide until it sits exactly over the baked word. The ring interior
-is white, so the block blends. Better long-term: regenerate the asset with neutral labels.
+`assets/tb-map.png` labels its rings `cultural` / `social` / `personal` and, innermost,
+**`Psychological`** in English. That is how the asset ships and how it gets used, **in every deck,
+whatever language the deck is in.** Do not overlay a translated label, do not patch it at runtime,
+do not rename the file per deck.
+
+Earlier decks covered that ring with a white `psicológico` box. That was a workaround, it reads as
+a sticker over the artwork, and it is retired. The `.lperm` cards under the map already name the
+four layers in the deck's language, which is where a Spanish reader gets the word.
