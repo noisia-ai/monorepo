@@ -29,6 +29,19 @@ Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no e
 
 > El contrato que ordena todo el sistema es **`CANON.md`**. Íconos y layouts también son reglas: **`ICONS.md`** (Iconoir para semánticos + Simple Icons para marcas, nada dibujado a mano) y **`LAYOUTS.md`** (las dos formas canónicas: Reporte y Estudio T&B).
 
+## 0.5 Posicionamiento, no solo estilo
+
+Tres reglas que vienen de feedback de cliente y que cambian el sentido de la slide, no su forma:
+
+- **No somos social listening.** El foco es la **voz del público**, o del consumidor, o del
+  electorado según el caso. El monitoreo de redes es el medio, no lo que se vende.
+- **Nunca "jugadas".** No se dice así en México. Usa estrategias, decisiones o movimientos.
+- **Las slides de proceso explican cómo trabajamos con el cliente**, no el método interno. Y
+  "lectura" como sustantivo no se entiende: di reporte o diagnóstico.
+
+El vocabulario por terreno, incluida la tabla de terminología política MX y su nota de protección
+legal, vive en `LEARNINGS.md`. Léelo antes de escribir para un terreno nuevo.
+
 ## 1. Español mexicano — NO traduzcas tecnicismos ni modismos
 
 Si la press va en español, **mantén los anglicismos que en México se dicen en inglés.** Traducirlos suena a manual ajeno.

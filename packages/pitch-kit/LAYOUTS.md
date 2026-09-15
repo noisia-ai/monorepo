@@ -196,4 +196,10 @@ and it makes the later counts credible.
 - **Icons everywhere**, and real (see `ICONS.md`).
 - **`data-label` is navigation metadata**, never rendered copy.
 - **Footer left is `noisia · social intelligence architects`**, footer right is `NN / TOTAL`.
-- **Render every slide at 1920×1080 and look at it** before calling it done.
+- **Render every slide at 1920×1080 and look at it** before calling it done, and **check the PDF
+  itself**, not only the screen capture. Two bugs only show up there:
+  - Chrome's print rasterizes `box-shadow` and `backdrop-filter` as solid grey boxes. `deck.css`
+    already flattens `.glass` under `@media print`; any custom card you build outside `.glass`
+    needs the same treatment, a solid fill and a border, or a full-colour block.
+  - An image with `flex:1` pushes the caption or the footer off the canvas. Add `min-height:0` to
+    the flex container.

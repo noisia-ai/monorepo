@@ -122,6 +122,13 @@ condiciones exactamente como fueron entregados.
 
 **Cómo empezamos.** La escalera vigente es workshop, reporte, estudio y estudios recurrentes.
 
+En un acompañamiento de campaña la forma probada es distinta y conviene respetarla: **una sola
+oferta**, sin planes alternativos ni modalidades sueltas, con un primer mes de arranque que incluye
+el workshop y la definición de temas, y una **mensualidad fija** el resto. La frecuencia de entrega
+sube conforme se acerca la fecha, de mensual a quincenal, semanal y diaria, **pero el fee no
+cambia**, y se muestra como rampa. Se cobra por adelantado. Los montos y las referencias de
+anclaje viven en la KB comercial, nunca aquí. Ver `LEARNINGS.md`.
+
 **Legal y cierre.** Confidencialidad, propiedad de la evidencia, dependencias del cliente, límites
 de fuente y vigencia. El cierre pide un siguiente paso concreto.
 

@@ -16,6 +16,7 @@ con su copia parcial de las mismas reglas. Todos quedan absorbidos aquí:
 | Handoff de procesamiento de menciones | carpeta de un estudio | El pipeline de datos completo, gates y contratos de salida | `DATA.md` |
 | Handoff maestro de propuestas | carpeta de propuestas | La familia propuesta, que no existía en el kit | `PROPOSALS.md` |
 | Spec de producto Study to Deck | repo de website | La versión productizada del mismo pipeline | Sigue en su repo. Este canon es su contrato de contenido |
+| `LEARNINGS.md` | otra rama del kit, sin mergear | Reglas de campo de decks reales: posicionamiento, terminología política MX, forma del pricing, bugs de render | Se trajo al kit. Sigue vivo como registro, y lo que endureció en regla ya está en el rulebook que le toca |
 
 Regla de higiene: **un handoff nuevo no se escribe.** Si aprendiste algo reutilizable, entra al
 rulebook que le toca y se cita desde aquí. Un documento suelto más es deuda, no memoria.
@@ -108,6 +109,7 @@ Lee solo lo que tu entregable necesita:
 | Ejecución de datos | `DATA.md` | Inventario, ETL, gates de calidad, contratos de salida |
 | Comercial | `PROPOSALS.md` | Propuestas, alcance, entregables, lo que no incluye |
 | Arranque | `PROMPTS.md` | El prompt con el que empieza cualquier corrida |
+| Campo | `LEARNINGS.md` | Lo que enseñó un deck real antes de volverse regla |
 | Registro | `templates/` | Procedencia, changelog y guion por slide |
 | Contenido y catálogo | `packages/kb/` | Qué es Noisia, las metodologías, el catálogo de productos, pricing sin montos |
 | Venta y fichas completas | KB comercial, en Drive | Qué recibe el cliente, qué no incluye, montos, guion. Fuera del repo a propósito |
