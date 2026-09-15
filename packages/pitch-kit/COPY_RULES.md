@@ -16,6 +16,8 @@ El cliente ve **solo su mensaje**. Nunca dejes en la slide:
 
 - **Nada que revele intención comercial de análisis.** No nombres el *framing* del entregable: "subcategoría", "categoría", "monitoreo de categoría", "share of voice de la categoría" delatan que vendemos análisis de categorías. Escribe sobre el sujeto (la marca, la conversación, el mercado), no sobre el método de venta. Ej. ❌ "The category got louder" → ✅ "The conversation got louder this month".
 
+- **Calibra el vocabulario por audiencia (matiz al "vende la pregunta, no el método").** El default sigue siendo la pregunta, no el método: para un C-level o cliente final, cero jerga de framework. **Pero si el público es una agencia, un partner o un equipo interno que ya habla el marco**, los términos T&B en inglés son válidos y hasta esperados en eyebrows y headers: `trigger`, `barrier`, `top trigger`, `top barrier`, `CX`, `pros y cons`, `conclusiones de t&b`, `Empuja (trigger)`. No los metas en el título ni en el cuerpo (ahí la idea se dice en humano); van en la etiqueta de sección. Decide el registro por quién recibe el deck, no por costumbre.
+
 Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no es para él, fuera.
 
 > Íconos y layouts también son reglas: **`ICONS.md`** (Iconoir para semánticos + Simple Icons para marcas, nada dibujado a mano) y **`LAYOUTS.md`** (las dos formas canónicas: Reporte y Estudio T&B).

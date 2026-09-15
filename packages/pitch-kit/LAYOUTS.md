@@ -39,6 +39,18 @@
 | 12 | The answer | `.slide.dark` — answers the question + `.note` "the bet" |
 | 13–14 | Glossary ×2–3 | T&B terms + methods + channel `.chip`s |
 
+### Study addendum (optional slides)
+
+- **Where the conversation lives (channels).** A study can add a "dónde vive la conversación" slide
+  right after the hypothesis: a `.roles` list (channel logo + share + one-line role for each), then
+  a `.note` for the odd-one-out audience. Clients ask for the channel split and it earns its place —
+  but frame it as *where people talk / what each platform is for*, never as "share of voice de la
+  categoría" (that reveals the sell; see `COPY_RULES.md`). This pushes a study to ~15 slides, fine.
+- **Map asset gotcha.** `assets/tb-map.png` ships with the innermost ring labelled **"Psychological"
+  in English**; the other three rings read the same in ES/EN. On a Spanish deck, cover it with a
+  small white-bg overlay reading `psicológico` (see `ICONS.md` → map-label overlay), or regenerate
+  the asset. Always render the four-layers slide and check that ring.
+
 ## Non-negotiables (both shapes)
 
 - **Everything vs. the prior period.** No number stands alone.

@@ -8,6 +8,7 @@ operative rulebook for anyone (human or agent) editing the kit itself.
 ## What's here
 - `engine/` — `noisia-tokens.css` (brand palette/type), `deck.css` (slide layout), `deck-components.css` (reusable layout components: bars, split bars, tables, T&B matrix, kanban, mirror, verbatim cards…), `deck-stage.js` (16:9 viewer + print→PDF + PPTX capture), `deck-template.html` (shell). **Single source of truth** — decks copy these, they don't fork them.
 - `COPY_RULES.md` · `ICONS.md` · `LAYOUTS.md` — the word / icon / layout rulebooks every deck passes through.
+- `METHODOLOGY.md` — the fourth rulebook: how a study gets its content (sourcing/LQL, streaming ETL, data reality checks, T&B tagging, and the per-study provenance + changelog record). Design rulebooks say how a deck *looks*; this one says how it *earns its truth*.
 - `slides/` — reusable slide templates + `catalog.json` (the machine-readable index agents read).
 - `builders/` — `build-pdf.mjs` (headless Chrome → PDF, no npm dep), `build-pptx.py` (python-pptx → editable PPTX).
 - `signal/` — `fetch-insights.mjs` (pulls metrics/quotes from the Signal public reporting API).

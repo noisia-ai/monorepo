@@ -32,6 +32,12 @@ node builders/build-pdf.mjs examples/_local/mydeck/index.html examples/_local/my
 python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/mydeck/deck.pptx
 ```
 
+## The four rulebooks
+Every deck passes through `LAYOUTS.md` (structure), `COPY_RULES.md` (words), `ICONS.md` (glyphs).
+A **study** also passes through `METHODOLOGY.md` — how it sources data (LQL), runs the ETL, tags
+Triggers & Barriers, and keeps a provenance + changelog record so the kit compounds.
+
 ## Two principles
-- **The repo is public → no client data here.** Templates only. Real decks stay local.
+- **The repo is public → no client data here.** Templates only. Real decks — and each study's
+  provenance record — stay in `examples/_local/` (gitignored).
 - **The kit learns.** Build a new reusable slide → sanitize it → add to `slides/` + `catalog.json` → PR. Next teammate inherits it. See `AGENTS.md` → contribution loop.

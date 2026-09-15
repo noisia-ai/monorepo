@@ -37,3 +37,30 @@ Two libraries, two jobs:
 ## Bulk replace (porting a deck)
 
 Match each icon by a distinctive substring of its path, keep the original `<svg …>` opening (it owns size/color), swap only the inner. Leave charts and already-real brand logos untouched. A tested per-inner replace script lives in the deck build notes; the point is: **preserve the wrapper, replace the glyph, verify slide-by-slide.**
+
+## Brand chips used in decks (Simple Icons slug · chip color)
+
+Fill white on the brand color. Keep the same mark for a platform across the whole deck.
+
+| Platform | slug | chip bg |
+|---|---|---|
+| X | `x` | `#000` |
+| YouTube | `youtube` | `#FF0000` |
+| Reddit | `reddit` | `#FF4500` |
+| Facebook | `facebook` | `#1877F2` |
+| TikTok | `tiktok` | `#000` |
+| Instagram | `instagram` | `#E4405F` |
+| Web / prensa | Iconoir globe | `#6b7280` (children `stroke="#fff"`, see rule 3) |
+
+## Map-label overlay (the `tb-map.png` fix)
+
+`assets/tb-map.png` bakes the innermost ring label as **"Psychological" (English)**. On a Spanish
+deck, overlay a white-bg span inside the same wrapper as the image, centered, reading `psicológico`:
+
+```html
+<div style="position:absolute; left:50%; top:405px; transform:translateX(-50%); z-index:1;
+     background:#fff; padding:5px 16px; font-size:25px; font-weight:700; color:var(--ink);">psicológico</div>
+```
+
+Nudge `top` by re-rendering that slide until it sits exactly over the baked word. The ring interior
+is white, so the block blends. Better long-term: regenerate the asset with neutral labels.
