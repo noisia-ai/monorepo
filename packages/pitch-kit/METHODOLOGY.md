@@ -39,6 +39,9 @@ Hard rules, learned the hard way:
   with noise. Add a `NOT (...)` list of the known collisions preemptively.
 - **A shared NOISE list.** For the category anchor, exclude the obvious off-domain senses up front
   (e.g. the housing/tax/objects senses of a rental word) and say what you cut.
+- **Accents are not documented, so cover both spellings.** The LQL reference says nothing about how
+  accented characters are matched. Assume they are not folded: every accented term goes in twice,
+  with and without the accent, or half a Spanish-language corpus never shows up.
 - **Wildcards are prefix only, ≥4 chars.** `rent*` catches rent/renta/rental/rented; pair it with a
   subject anchor so it doesn't catch unrelated words.
 

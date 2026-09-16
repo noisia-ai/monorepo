@@ -35,7 +35,7 @@ En la slide de equipo: **datos primero, estratega al final** (Analista de datos 
 - La slide de cobertura puede ser **grid de fuentes con iconos** o el **mapa mental** (data sources → noisia → use cases). Ambos válidos; el mapa va transparente sobre blanco.
 
 ## Iconografía y visual
-- **Iconos en todo.** Vendoriza **Feather** (`npm i feather-icons`; monocromo, recolorea `stroke` a `--signal-dark` #008a8a) + **iconos de marca** (`npm i simple-icons`; inyecta `fill` con el hex de marca). Guarda SVG ya coloreados en `assets/icons/` y úsalos con `<img>`.
+- **Iconos en todo.** La librería semántica es **Iconoir**, no Feather: `ICONS.md` es el rulebook y manda. Esta línea decía Feather porque se escribió antes de esa decisión y queda aquí solo como registro. Marcas y plataformas con **Simple Icons**. Los glifos ya extraídos viven en `assets/icons.json`, así que no hace falta instalar nada ni volver a sacar paths a mano.
 - **Badges de archivo**: rounded rects con texto — PDF (#e4462b), XLSX (#1d6f42).
 - **Ilustraciones Noisia**: siluetas con aberración cromática cian/rojo. Usa **PNG con fondo transparente** (evita bordes); si el PNG trae fondo blanco, monta con `mix-blend-mode: multiply`.
 - **Bug flexbox recurrente**: una imagen `flex:1` empuja caption/footer fuera del canvas → añade **`min-height:0`** al contenedor flex.

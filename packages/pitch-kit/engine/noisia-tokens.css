@@ -29,6 +29,13 @@
   --signal:        #00eeee;
   --signal-dark:   #008a8a;
 
+  /* Deck surface controls. Every deck in the San Pablo case overrode these by hand.
+     --atmos-strength scales the engine's background blobs (1 = the old default, .2 = very faint).
+     The edge type is the header-right and the footer: smaller and quieter than the body. */
+  --atmos-strength: 0.35;
+  --edge-size: 15.5px;
+  --edge-opacity: 0.62;
+  --edge-opacity-dark: 0.78;
   /* Tension — red = contradiction */
   --tension:       #ee0b00;
   --tension-soft:  #fff0ef;

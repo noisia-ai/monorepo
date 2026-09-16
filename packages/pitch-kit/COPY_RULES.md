@@ -72,10 +72,56 @@ Regla: usa el término como lo usa **el cliente y su categoría**. Ante la duda,
   tiene que dar `0`, incluido el `<title>`. Es la huella de IA que el lector detecta primero.
 - **Gerundios de relleno.** ❌ "destacando, reflejando, mostrando…" → afirma el hecho.
 - **Conclusiones genéricas optimistas.** Cierra con un hecho o un siguiente paso concreto, no con "el futuro es prometedor".
+- **Filetes y adornos de acento.** Un borde vertical de color a la izquierda de un título lo
+  detecta un cliente como marca típica de IA. Igual que cualquier decoración que no aporte dato.
 - **Títulos con colon-reveal.** Nadie habla así. ❌ "The screen, mapped: every pull casts a shadow" / "X: subtítulo dramático" → ✅ frase natural declarativa: "Every pull the screen creates has a matching barrier".
 - **Frase repetida en la misma slide.** El eyebrow, el header derecho y el título **no** dicen lo mismo. ❌ "how a decision reads" en los tres → cada uno distinto y natural.
 
 **Lo que sí queremos:** frases de largo variado, una opinión/postura clara, lenguaje concreto y específico, y la voz directa de Noisia (sin vender de más). Citas literales sin maquillar (la imperfección es información — regla de `kb/03-process/delivery-format.md`).
+
+## 2.4 El título dice el hallazgo, nunca describe la slide
+
+Es la regla que más cambia un deck y la que más tarde llegó al kit. Salió de ocho títulos que un
+cliente rechazó uno por uno.
+
+Un título que describe la slide le informa al cliente de algo que ya está viendo. Si abajo hay una
+tabla de temas, ya sabe que va a leer temas: decírselo en 76 píxeles de altura es gastar el lugar
+más caro del deck en una etiqueta.
+
+> ¿Pagarías por un reporte cuyo título describe de qué es la slide?
+
+**Prueba operativa.** Tapa el cuerpo y lee solo el título. Si con eso ya sabes algo nuevo del
+negocio, sirve. Si solo sabes qué vas a ver, es una etiqueta.
+
+Los cinco modos de falla, todos de decks reales:
+
+| Falla | Antes | Después |
+|---|---|---|
+| Nombra el contenido | Once meses de conversación, y el canal donde de verdad vive | El mes más ruidoso no fue el más crítico, y el canal más grande tampoco |
+| Enumera las columnas | Lo que se mueve con operación, lo que necesita a un tercero y lo que solo se comunica | La posventa va primero porque cambia el recuerdo de todo lo anterior |
+| Le habla al equipo | Lo que la gente escribió, sin corregir | El reclamo llega con sucursal, hora y número de pedido |
+| Filtra la conversación interna | Los cuatro temas del tablero, y los dos que el año agregó | Servicio en mostrador es el tema más grande y el más crítico a la vez |
+| Colon-reveal | Mostrador y consultorio: donde la espera se vuelve trato | En mostrador y consultorio la espera se convierte en trato |
+
+Dos generalizaciones que valen por sí solas:
+
+- **Si el título presume del rigor del entregable, está mal dirigido.** Sin corregir, verificado,
+  real, exhaustivo. El rigor se demuestra en la slide de método y en el registro de procedencia, no
+  en un titular. Que las citas sean textuales es una regla del kit, no un logro que se anuncia.
+- **Ninguna palabra del deck debe requerir haber estado en la conversación previa.** Brief, tablero,
+  alcance acordado, lo que pediste, la conversación que tuvimos. Todo eso es vocabulario interno.
+
+**Tres excepciones declaradas**, donde el título descriptivo es el correcto: la portada de un
+estudio, donde el título es la pregunta de investigación; la slide de brief; y las páginas de
+referencia, glosario y método, que se nombran por lo que son.
+
+### La pregunta de investigación es el título más caro del deck
+
+Va en la portada, se repite en el cierre, y es lo primero que el cliente lee en voz alta. Se
+escribe en el español de su mercado y **se lee en voz alta con alguien de ese mercado antes de
+cerrarla**. Un caso real: "¿Dónde se rompe la visita?" se rechazó porque "se rompe" no se dice así
+en México. Quedó "¿En qué momento de la visita perdemos al cliente?", que además habla el idioma de
+quien recibe el deck.
 
 ## 2.5 Números ante el cliente
 
@@ -96,6 +142,10 @@ traslapan nunca se suman. El criterio completo está en `CANON.md`, sección 5.3
 - [ ] Header derecho = `noisia.ai`. Sin emojis.
 - [ ] Anglicismos técnicos intactos (Dashboard, insight, brief…), nada sobre-traducido.
 - [ ] Sin muletillas de IA ni significancia inflada; frases de largo variado.
+- [ ] Por cada título: tapé el cuerpo y el título solo ya dice algo del negocio.
+- [ ] Ningún título tiene dos puntos a media frase. Es el patrón que más se escapa.
+- [ ] Ningún título repite los encabezados de las columnas ni presume del método.
+- [ ] Ninguna palabra necesita haber estado en la conversación interna para entenderse.
 - [ ] `grep -c '—' index.html` da `0`.
 - [ ] Footer izquierdo `noisia · social intelligence architects`, footer derecho `NN / TOTAL`.
 - [ ] Una sola convención de header derecho en todo el deck.

@@ -13,9 +13,9 @@ hard rules, where everything lives). Then invoke the skill `.claude/skills/noisi
 ```
 engine/      brand engine: noisia-tokens.css, deck.css, deck-stage.js, deck-template.html
 slides/      reusable slide templates + catalog.json (the index of what's available)
-builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print)
+builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print) · qa-render.py (→ renders every slide, flags overflow, builds contact sheets)
 signal/      fetch-insights.mjs (pull metrics/quotes from the Signal public API)
-assets/      brand logos / backgrounds
+assets/      brand logos / backgrounds / icons.json (95 Iconoir glyphs + 6 Simple Icons, already extracted)
 templates/   PROVENANCE_AND_CHANGELOG.md + GUION_POR_SLIDE.md, copied into each working folder
 examples/    sanitized demo decks only (examples/_local/ is gitignored for real work)
 ```
@@ -43,7 +43,8 @@ python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/
 | `CANON.md` | Families, source hierarchy, cross-cutting rules, definition of done |
 | `LAYOUTS.md` | Slide sequences, the cover, the framework slide, the method slide |
 | `COPY_RULES.md` | Every word that shows on a slide |
-| `ICONS.md` | Icons, platform marks, asset names |
+| `ICONS.md` | Icons, platform marks, asset names, textures |
+| `CHARTS.md` | Bars, lines, axes, platform colour, and the no-gradient rule |
 | `METHODOLOGY.md` | What you may claim and how strongly |
 | `DATA.md` | How the corpus is processed: ETL, quality gates, output contracts |
 | `PROPOSALS.md` | Proposals and the product block |

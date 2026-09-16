@@ -23,17 +23,17 @@ html, body { margin: 0; padding: 0; background: #061218; }
 .atmos { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 0; }
 .atmos::before, .atmos::after {
   content: ""; position: absolute; border-radius: 50%;
-  filter: blur(140px); opacity: 0.55; mix-blend-mode: multiply;
+  filter: blur(140px); mix-blend-mode: multiply;
 }
-.atmos::before { width: 1100px; height: 1100px; background: var(--blob-cyan); top: -300px; right: -200px; }
-.atmos::after { width: 900px; height: 900px; background: var(--blob-charcoal); bottom: -250px; left: -200px; opacity: 0.18; }
-.atmos.warm::before { background: var(--blob-red); opacity: 0.18; }
+.atmos::before { width: 1100px; height: 1100px; background: var(--blob-cyan); top: -300px; right: -200px; opacity: calc(0.55 * var(--atmos-strength, 1)); }
+.atmos::after { width: 900px; height: 900px; background: var(--blob-charcoal); bottom: -250px; left: -200px; opacity: calc(0.18 * var(--atmos-strength, 1)); }
+.atmos.warm::before { background: var(--blob-red); opacity: calc(0.18 * var(--atmos-strength, 1)); }
 /* `plain` kills the cyan blob. Use it on any slide carrying a full-bleed illustration
    (the cover): the blob and the art stack into a heavy wash otherwise. Every shipped deck
    redefined this inline before it landed here. */
 .atmos.plain::before { display: none; }
-.atmos.dark::before { background: var(--blob-dark); opacity: 0.4; }
-.atmos.dark::after { background: var(--blob-cyan); opacity: 0.35; }
+.atmos.dark::before { background: var(--blob-dark); opacity: calc(0.4 * var(--atmos-strength, 1)); }
+.atmos.dark::after { background: var(--blob-cyan); opacity: calc(0.35 * var(--atmos-strength, 1)); }
 
 .slide > .frame {
   position: relative; z-index: 1;
@@ -46,9 +46,13 @@ html, body { margin: 0; padding: 0; background: #061218; }
 .slide-header {
   display: flex; justify-content: space-between; align-items: center;
   margin-bottom: var(--gap-title);
-  font-size: var(--type-eyebrow); font-weight: 500;
+  font-size: var(--edge-size); font-weight: 500;
   color: var(--fg-secondary);
 }
+/* The edge type is quieter than the body, but the LOGO never fades: the opacity goes on the
+   right-hand span and on the footer, never on the header container. */
+.slide-header .right { opacity: var(--edge-opacity); }
+.slide.dark .slide-header .right { opacity: var(--edge-opacity-dark); }
 .slide-header .left, .slide-header .right { display: flex; align-items: center; gap: 18px; white-space: nowrap; flex-shrink: 0; }
 .slide-header .right { gap: 10px; }
 .slide-header img.logo { height: 26px; display: block; }
@@ -102,8 +106,10 @@ html, body { margin: 0; padding: 0; background: #061218; }
 .slide-footer {
   margin-top: auto; padding-top: 40px;
   display: flex; justify-content: space-between; align-items: center;
-  font-size: var(--type-small); color: var(--fg-secondary);
+  font-size: var(--edge-size); color: var(--fg-secondary);
+  opacity: var(--edge-opacity);
 }
+.slide.dark .slide-footer { opacity: var(--edge-opacity-dark); }
 
 .cover-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 80px; flex: 1; align-items: end; }
 .cover-meta { display: flex; flex-direction: column; gap: 28px; padding-bottom: 20px; }

@@ -95,6 +95,10 @@ Nunca se compara un día o un mes incompleto contra periodos cerrados. Se define
 `period_start`, `closed_before`, `exported_at` y la zona horaria, y la regla de inclusión es
 `period_start <= created_at < closed_before`.
 
+**La ventana entregada puede no ser la pedida.** Las interfaces suelen exportar su ventana rodante
+y no la que se escribió en el formulario, con los dos extremos partidos. El inventario registra las
+dos, la pedida y la entregada, y **el periodo comparable se deriva de la entregada**.
+
 Si la exportación incluye el día en curso, esas filas se conservan en el inventario, se excluyen
 del análisis comparable y se reporta cuántas fueron.
 
@@ -125,12 +129,28 @@ toda diferencia material.
 No se elige el número que se ve mejor. Se usa el número cuya definición coincide con la
 afirmación que se va a hacer.
 
+**La exportación recortada es un caso esperado, no una anomalía.** Un proveedor puede entregar una
+fracción de lo que su propio tablero reporta, y no avisa: en un caso medido, 87,843 filas contra
+234,930 del tablero, un 37%. Consecuencia operativa: **ningún volumen crudo de archivo se presenta
+como el total de la conversación.** Si no hay totales de tablero con qué comparar, el gate B queda
+abierto y se declara en la slide de método.
+
 ## 8. Pertinencia y contaminación
 
 Antes de clasificar temas se comprueba que el query recuperó lo que debía. Se construyen reglas
 de ancla para sujeto, geografía, tema de alta confianza, variantes ortográficas y alias, y reglas
 separadas de ruido para homónimos, otras geografías, sentidos comunes de una palabra de marca,
 noticias ajenas que secuestran el término y temas parecidos que no responden la pregunta.
+
+Tres clases más que conviene buscar desde el principio. Las tres pasan el filtro de marca
+perfectamente y ninguna habla de la experiencia:
+
+- **Contenido comercial de terceros.** Respuestas de community manager de *otras* marcas que listan
+  dónde comprar y de paso nombran al sujeto.
+- **La marca usada como referencia de dirección.** Negocios ajenos que se ubican con ella. Puestos,
+  bases de transporte, anuncios de venta.
+- **Cluster de entretenimiento.** Un personaje o activo de marca que se vuelve fenómeno cultural
+  arrastra festival, conciertos y televisión. En un caso fue el 14% del corpus de un competidor.
 
 Si un archivo falla pertinencia: se conserva la versión anterior como evidencia de control, se
 corrige el query, se exporta de nuevo, se comparan volumen y anclas, se mide cuánto del archivo
@@ -204,9 +224,14 @@ los falsos positivos, se iteran nombres y límites, y se congela una versión.
 
 La taxonomía es un artefacto versionado, no una lista informal de palabras.
 
-## 15. Codificación de triggers y barriers
+## 15. Doble codificación
 
-El criterio y el permiso para actuar viven en `METHODOLOGY.md`. La ejecución:
+El patrón es agnóstico a la metodología: **cada expresión se clasifica en dos ejes independientes,
+los ejes no se suman entre sí, y se etiqueta después de ingerir, nunca dentro del query.** En
+Triggers y Barriers los ejes son dirección y capa. En Journey Friction Mapping son el momento del
+recorrido y el tipo de fricción. Cambian los nombres, no las reglas.
+
+El criterio y el permiso para actuar viven en `METHODOLOGY.md`. La ejecución, con T&B de ejemplo:
 
 - **Dirección.** Trigger, barrier, mixta o sin señal. Sin señal no significa neutralidad real,
   significa que la regla no encontró evidencia suficiente.
@@ -223,6 +248,17 @@ Muestra fija por etiqueta, con positivos, negativos y casos sin señal. Se revis
 negación, cita y lenguaje figurado. Se miden falsos positivos y negativos, se ajustan las reglas y
 se congela versión y fecha. Se registra la versión de taxonomía y de clasificador, el tamaño de la
 muestra, la precisión por etiqueta, los modos de falla conocidos y quién revisó.
+
+Se registra también la **cobertura**, que es distinta de la precisión y cambia cómo se lee todo lo
+demás: cuántas menciones recibieron etiqueta. En un caso real, de 1,187 menciones 795 ubicaron un
+momento y solo 202 articularon además un tipo de fricción. Un porcentaje sobre 202 no se presenta
+como si fuera sobre 1,187.
+
+**Guard contra el sesgo de una sola etiqueta.** Antes de congelar la taxonomía se compara la
+amplitud de las reglas entre etiquetas. Si una tiene el doble de patrones que otra, la distribución
+está hablando de tus reglas y no del corpus. Caso real: una versión daba 81% en una sola etiqueta,
+justo el modo de falla que el playbook advertía. Las reglas estaban en 18 patrones contra 9.
+Emparejadas, quedó 47% y 46%.
 
 Sin validación formal, los conteos se llaman direccionales. Así, con esa palabra.
 
@@ -300,7 +336,11 @@ Un entregable no pasa a deck mientras falle un gate que afecte su conclusión pr
 - **B. Reconciliación.** El total del tablero tiene definición, la diferencia contra el archivo
   está explicada, las fuentes omitidas están identificadas.
 - **C. Pertinencia.** Anclas de sujeto y de mercado suficientes, ruido conocido cuantificado,
-  versiones defectuosas retiradas del análisis.
+  versiones defectuosas retiradas del análisis. Y el corte que más cambia un resultado: **el sujeto
+  tiene que aparecer en el texto propio**, no en el contexto heredado. Las filas que solo lo tienen
+  en el contexto se cuentan y se reportan aparte, nunca se mezclan. En un caso real este gate movió
+  el corpus de 23,701 a 1,187 y le cambió el signo al titular: sin él, agosto contra julio era una
+  caída de 59%; con él, una subida de 4%.
 - **D. Relaciones.** Solapamiento medido, cortes temáticos no sumados, contexto y percepción
   separados.
 - **E. Codificación.** Texto propio y contexto separados, reglas versionadas, traslape declarado,

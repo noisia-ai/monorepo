@@ -17,6 +17,7 @@ con su copia parcial de las mismas reglas. Todos quedan absorbidos aquí:
 | Handoff maestro de propuestas | carpeta de propuestas | La familia propuesta, que no existía en el kit | `PROPOSALS.md` |
 | Spec de producto Study to Deck | repo de website | La versión productizada del mismo pipeline | Sigue en su repo. Este canon es su contrato de contenido |
 | `LEARNINGS.md` | otra rama del kit, sin mergear | Reglas de campo de decks reales: posicionamiento, terminología política MX, forma del pricing, bugs de render | Se trajo al kit. Sigue vivo como registro, y lo que endureció en regla ya está en el rulebook que le toca |
+| Feedback de un caso de reporte y estudio bilingüe | carpeta local del caso | La regla de títulos, el estilo definitivo de charts, el gate de texto propio, siete huecos de datos y cuatro de engine | Repartido entre `COPY_RULES.md`, `CHARTS.md`, `DATA.md`, `LAYOUTS.md` y el engine |
 
 Regla de higiene: **un handoff nuevo no se escribe.** Si aprendiste algo reutilizable, entra al
 rulebook que le toca y se cita desde aquí. Un documento suelto más es deuda, no memoria.
@@ -104,7 +105,8 @@ Lee solo lo que tu entregable necesita:
 | Contrato del sistema | `CANON.md` | Familias, jerarquía, dónde vive cada cosa, definition of done |
 | Estructura | `LAYOUTS.md` | Secuencia de slides, qué componente usa cada una, portada y slide de método |
 | Palabras | `COPY_RULES.md` | Cada palabra que se ve en una slide |
-| Glifos | `ICONS.md` | Iconos, logos de plataforma, assets del mapa |
+| Glifos | `ICONS.md` | Iconos, logos de plataforma, assets y texturas |
+| Gráficas | `CHARTS.md` | Barras, líneas, ejes, color por plataforma y la regla de sin gradientes |
 | Criterio | `METHODOLOGY.md` | Qué se puede afirmar y con qué fuerza |
 | Ejecución de datos | `DATA.md` | Inventario, ETL, gates de calidad, contratos de salida |
 | Comercial | `PROPOSALS.md` | Propuestas, alcance, entregables, lo que no incluye |
@@ -187,7 +189,18 @@ Advisor antes que constructor. Se cierra el alcance, se corre el ETL una vez sob
 hasta entonces se abre el HTML. **No se construyen slides antes de que el corpus pase sus gates.**
 
 El render slide por slide no es opcional. Un deck revisado solo en código llega con overflow,
-iconos rotos y texto cortado.
+iconos rotos y texto cortado. Hay herramienta para eso, no hace falta hacerlo a mano:
+`builders/qa-render.py` renderiza todas las slides, marca las que tienen tinta pegada al borde y
+arma hojas de contacto de cuatro para revisarlas en bloque.
+
+**Las cifras no se teclean.** Todo número que aparece en una slide se calcula de la tabla codificada
+al momento de construir el deck. Un número escrito a mano sobrevive al corpus que lo contradice, y
+en un deck bilingüe además se desincroniza entre idiomas. Si el corpus cambia, el deck tiene que
+cambiar solo.
+
+**Los assets se entregan al tamaño del canvas**, 1920 × 1080, salvo que haya razón para más. Un
+fondo al doble de resolución no se ve mejor en el PDF y sí lo engorda: en un caso llevó el
+entregable de 8.5 MB a 19 MB sin ganancia visible.
 
 ```bash
 # una slide, para revisarla a tamaño real
@@ -279,5 +292,7 @@ Lo que sigue pendiente:
 
 | Pendiente | Por qué importa | Prioridad |
 |---|---|---|
+| El mapa de recorrido con sentimiento neto, como fragmento | Sirve para cualquier estudio con fases y una métrica por fase, no solo para Journey Friction Mapping. Hoy vive en el generador de un caso | Media |
+| Declarar en un solo lugar la jerarquía de fases de un journey | Tres documentos dan tres respuestas: emergen del corpus, set canónico de siete, o default de cinco. Dos de ellos viven en el repo de website | Media |
 | Migrar los decks entregados al engine enlazado | Siguen cargando su bloque inline. No urge, pero el siguiente que se toque debería migrarse | Baja |
 | Fragmentos para hipótesis, mapa, espejo y kanban | Los componentes ya están en el engine, falta el fragmento con placeholders | Baja |

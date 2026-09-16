@@ -36,7 +36,7 @@
 .up{color:var(--positive);} .dn{color:var(--coral);}
 
 /* --- KPI tiles ------------------------------------------------------------- */
-.kpi { border:1px solid var(--border-subtle); border-radius:16px; padding:22px 24px; display:flex; flex-direction:column; gap:5px; }
+.kpi { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:22px 24px; display:flex; flex-direction:column; gap:5px; }
 .kpi .kl { font-size:17px; font-weight:600; color:var(--fg-secondary); }
 .kpi .kn { font-size:46px; font-weight:700; line-height:1; color:var(--ink); }
 .kpi .km { font-size:15px; color:var(--fg-secondary); }
@@ -46,15 +46,15 @@
 .bar { display:grid; grid-template-columns:220px 1fr 58px; align-items:center; gap:15px; }
 .bar .bl { display:flex; align-items:center; gap:10px; font-size:19px; font-weight:600; color:var(--fg-primary); }
 .bar .track { display:block; height:12px; background:var(--surface-02); border-radius:99px; overflow:hidden; }
-.bar .fill { display:block; height:12px; border-radius:99px; background:linear-gradient(90deg,#0d8a8a,#37b0ad); }
+.bar .fill { display:block; height:12px; border-radius:99px; background:#0d8a8a; }
 .bar .bv { font-size:19px; font-weight:700; text-align:right; color:var(--teal); }
 .bar.mut .fill{background:var(--neutral-05);} .bar.mut .bv{color:var(--fg-secondary);}
 /* labelled bar variant with trailing channel chips (study "lo que empuja/frena") */
 .barh { display:flex; align-items:center; gap:14px; }
 .barh .bl{font-size:20px;font-weight:600;color:var(--fg-primary);width:340px;display:flex;align-items:center;gap:11px;}
 .barh .track{flex:1;height:12px;background:var(--surface-02);border-radius:99px;overflow:hidden;}
-.barh .fill{display:block;height:12px;border-radius:99px;background:linear-gradient(90deg,#0d8a8a,#37b0ad);}
-.barh .fill.c{background:linear-gradient(90deg,#d6492f,#e8735c);}
+.barh .fill{display:block;height:12px;border-radius:99px;background:#0d8a8a;}
+.barh .fill.c{background:#d6492f;}
 .barh .bv{font-size:19px;font-weight:700;color:var(--teal);width:56px;text-align:right;} .barh .bv.c{color:var(--coral);}
 .chns{display:flex;gap:6px;justify-content:flex-end;}
 .cc{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;flex:none;} .cc svg{width:15px;height:15px;}
@@ -64,8 +64,8 @@
 .sbrow .bl { display:flex; align-items:center; gap:10px; font-size:20px; font-weight:600; color:var(--fg-primary); }
 .split { display:flex; height:15px; border-radius:99px; overflow:hidden; background:var(--surface-02); }
 .split i { display:block; height:15px; }
-.split .neg { background:linear-gradient(90deg,#d6492f,#e8735c); }
-.split .pos { background:linear-gradient(90deg,#0d8a8a,#37b0ad); }
+.split .neg { background:#d6492f; }
+.split .pos { background:#0d8a8a; }
 .sbrow .bv { font-size:20px; font-weight:700; text-align:right; color:var(--coral); }
 
 /* --- topics / data table --------------------------------------------------- */
@@ -77,7 +77,7 @@
 .tag.neg{background:var(--coral-soft);color:var(--coral);} .tag.pos{background:var(--positive-soft);color:var(--positive);} .tag.neu{background:#f0f0f0;color:var(--fg-secondary);}
 .chn { display:inline-flex; align-items:center; gap:9px; font-size:19px; font-weight:600; color:var(--fg-primary); }
 .mini { display:inline-block; width:120px; height:9px; border-radius:99px; background:var(--surface-02); overflow:hidden; vertical-align:middle; }
-.mini i { display:block; height:9px; border-radius:99px; background:linear-gradient(90deg,#0d8a8a,#37b0ad); }
+.mini i { display:block; height:9px; border-radius:99px; background:#0d8a8a; }
 
 /* --- verbatim card (real quote + source chip + link) ----------------------- */
 .vq { border:1px solid var(--border-subtle); border-radius:14px; padding:18px 22px; display:flex; flex-direction:column; gap:10px; background:var(--canvas); }
@@ -92,6 +92,13 @@
 .irow .il { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--teal); margin-bottom:3px; }
 .irow .id { font-size:19px; color:var(--fg-secondary); line-height:1.4; }
 .irow.coral .il { color:var(--coral); } .irow.green .il { color:var(--positive); }
+
+/* --- footnote: a methodological aside, NOT an insight ---------------------- */
+/* The teal `.note` is reserved for insights. Putting a caveat in it gives a footnote the visual
+   weight of a finding. Use `.foot` for scope notes, axis explanations and honest limits. */
+.foot { display:flex; align-items:flex-start; gap:10px; font-size:15px; font-style:italic;
+        line-height:1.45; color:var(--fg-secondary); }
+.foot .ic { width:17px; height:17px; flex:none; margin-top:2px; opacity:.7; }
 
 /* --- soft note (NEVER a black card) ---------------------------------------- */
 .note { display:grid; grid-template-columns:44px 1fr; gap:14px; align-items:center; background:var(--teal-soft); border-radius:14px; padding:18px 22px; }
@@ -183,7 +190,7 @@
 .role .rn { font-size:20px; font-weight:700; color:var(--ink); }
 .role .rp { font-size:15px; color:var(--fg-secondary); }
 .role .rd { font-size:18px; color:var(--fg-secondary); line-height:1.4; margin-top:6px; } .role .rd b { color:var(--fg-primary); }
-.rbar { height:12px; min-width:28px; border-radius:99px; background:linear-gradient(90deg,#0d8a8a,#37b0ad); display:inline-block; vertical-align:middle; }
+.rbar { height:12px; min-width:28px; border-radius:99px; background:#0d8a8a; display:inline-block; vertical-align:middle; }
 
 /* --- framework cards: explain the frame BEFORE any slide uses it ----------- */
 .fwg { display:grid; grid-template-columns:1fr 1fr; gap:26px; }

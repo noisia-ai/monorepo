@@ -1,7 +1,7 @@
 {
   "$schema": "./catalog.schema.json",
-  "version": 2,
-  "updated": "2026-09-14",
+  "version": 3,
+  "updated": "2026-09-15",
   "note": "Machine-readable index of reusable Noisia slide templates. Agents read this to know what slides exist. When you add a slide, ADD ITS ENTRY HERE (see ../AGENTS.md → contribution loop). El contrato del sistema es ../CANON.md; las secuencias, ../LAYOUTS.md.",
   "engine": {
     "canvas": "1920x1080",
@@ -154,7 +154,7 @@
       "name": "Capas/estructura de una metodología (con ejemplos)",
       "file": "slides/framework-layers/framework-layers.html",
       "category": "methodology",
-      "when": "Enseñar cómo funciona una metodología por dentro con ejemplos. Para T&B: 4 capas (psicológico/personal/social/cultural) con trigger+barrier cada una.",
+      "when": "Explica un marco que no es T&B, antes de que cualquier slide lo use. Una card por capa o dimensión, con su etiqueta, su titular en humano y dos líneas de qué significa aquí. Los dos campos por card son libres: para T&B son el trigger y el barrier, para otro marco son lo que corresponda.",
       "variants": [
         "light"
       ],
@@ -419,7 +419,7 @@
       "name": "Las cuatro capas, con el mapa detrás",
       "file": "slides/tb-layers/tb-layers.html",
       "category": "methodology",
-      "when": "Slide 3 de un estudio T&B: explica el método en lenguaje humano, sin nombrarlo. El mapa va detrás (z-index:-1) y las cuatro cards de permiso tienen que coincidir con el kanban de 'dónde actuar'. Necesita assets/tb-map.png. En español, conserva el overlay .psy y renderiza la slide para verificar que cae sobre la palabra. Para otro marco que no sea T&B, usa 'framework-layers'.",
+      "when": "Slide 3 de un estudio T&B: explica el método en lenguaje humano, sin nombrarlo. El mapa va detrás (z-index:-1) y las cuatro cards de permiso tienen que coincidir con el kanban de 'dónde actuar'. Necesita assets/tb-map.png. El mapa se usa tal cual, con su anillo interior en inglés, en cualquier idioma de deck, y no se le pone nada encima. Para otro marco que no sea T&B, usa 'framework-layers'.",
       "variants": [
         "light"
       ],
@@ -464,7 +464,7 @@
       "name": "Cómo se leyó: alcance, límites y trazabilidad",
       "file": "slides/method/method.html",
       "category": "methodology",
-      "when": "Cerca del final de un estudio o una muestra. Hace defendible el deck completo: qué se escuchó, qué se dejó fuera, cómo se leyó y qué evidencia lo respalda, más el límite honesto en el .note. Client-safe obligatorio: sin nombres de herramienta, sin sintaxis de query, sin archivos ni la palabra ETL. El detalle técnico vive en PROVENANCE_AND_CHANGELOG.md.",
+      "when": "Cerca del final de un estudio o una muestra. Abre con una tira de datos duros (periodo, mercado, corpus original, corpus depurado y la cobertura de la codificación), sigue con los cuatro bloques, y cierra con las fuentes y su conteo más la acotación en .foot. Hace defendible el deck completo: qué se escuchó, qué se dejó fuera, cómo se leyó y qué evidencia lo respalda, más el límite honesto en el .note. Client-safe obligatorio: sin nombres de herramienta, sin sintaxis de query, sin archivos ni la palabra ETL. El detalle técnico vive en PROVENANCE_AND_CHANGELOG.md.",
       "variants": [
         "light"
       ],
@@ -472,10 +472,12 @@
         "HEADER_RIGHT",
         "EYEBROW",
         "TITLE",
+        "FACT_1..6",
         "SCOPE",
         "EXCLUSIONS",
         "READING",
         "EVIDENCE",
+        "SOURCE_1..N",
         "LIMIT",
         "FOOTER_NN",
         "FOOTER_TOTAL"

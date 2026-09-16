@@ -11,14 +11,14 @@ pricing and visual rules distilled from real client decks (política incluida).
 ## What's here
 - `engine/` — `noisia-tokens.css` (brand palette/type), `deck.css` (slide layout), `deck-components.css` (reusable layout components: bars, split bars, tables, T&B matrix, kanban, mirror, verbatim cards…), `deck-stage.js` (16:9 viewer + print→PDF + PPTX capture), `deck-template.html` (shell). **Single source of truth** — decks copy these, they don't fork them.
 - `CANON.md` — the contract for the whole system: the five deliverable families, the source hierarchy when two docs disagree, the cross-cutting hard rules, and the kit's own backlog. Start here, and keep it current: **a new handoff document is never the answer.** If you learned something reusable it belongs in the rulebook that owns that layer, referenced from the canon.
-- `COPY_RULES.md` · `ICONS.md` · `LAYOUTS.md` — the word / icon / layout rulebooks every deck passes through.
+- `COPY_RULES.md` · `ICONS.md` · `LAYOUTS.md` · `CHARTS.md` — the word / icon / layout / chart rulebooks every deck passes through.
 - `LEARNINGS.md` — the field record: what real client feedback taught us about copy, MX political terminology, pricing shape, icons and render gotchas. It is a log, not a rulebook: when a learning hardens into a rule it moves into the rulebook that owns it and stays here as the note of where it came from.
 - `DATA.md` — the execution manual for a corpus: inventory, streaming ETL, quality gates, output contracts. `PROPOSALS.md` — the commercial family. `PROMPTS.md` — the entry-point prompt. `templates/` — provenance and script, copied into each working folder.
 - `METHODOLOGY.md` — the fourth rulebook: how a study gets its content (sourcing/LQL, streaming ETL, data reality checks, T&B tagging, and the per-study provenance + changelog record). Design rulebooks say how a deck *looks*; this one says how it *earns its truth*.
 - `slides/` — reusable slide templates + `catalog.json` (the machine-readable index agents read).
-- `builders/` — `build-pdf.mjs` (headless Chrome → PDF, no npm dep), `build-pptx.py` (python-pptx → editable PPTX).
+- `builders/` — `build-pdf.mjs` (headless Chrome → PDF, no npm dep), `build-pptx.py` (python-pptx → editable PPTX), `qa-render.py` (renders every slide, flags edge overflow, builds contact sheets).
 - `signal/` — `fetch-insights.mjs` (pulls metrics/quotes from the Signal public reporting API).
-- `assets/` — brand logos/backgrounds. `examples/` — sanitized demo decks only.
+- `assets/` — brand logos/backgrounds, and `icons.json` with the Iconoir and Simple Icons glyphs already extracted, so no deck installs npm packages to draw an icon. `examples/` — sanitized demo decks only.
 
 ## Rules
 1. **The repo is PUBLIC. No client data here — ever.** No client names, real numbers, findings, or third-party logos. Real decks live in a local working folder (or `examples/_local/`, gitignored). Templates are generic with `{{PLACEHOLDER}}`s.

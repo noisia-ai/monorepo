@@ -2,7 +2,8 @@
 
 > Proven slide sequences and components, extracted from the shipped decks. Build new work from
 > these instead of inventing structure. The contract that governs all of them is `CANON.md`;
-> components live in `engine/deck-components.css`; icons in `ICONS.md`; words in `COPY_RULES.md`.
+> components live in `engine/deck-components.css`; icons in `ICONS.md`; words in `COPY_RULES.md`;
+> charts in `CHARTS.md`.
 
 ## Wiring (before anything else)
 
@@ -58,12 +59,27 @@ right, copy anchored bottom-left:
 Use the `.cover-art` / `.cover-copy` classes from `deck-components.css` rather than repeating the
 inline positioning, and start from the `slides/cover-study` fragment.
 
+### Variant: full-bleed background instead of the illustration
+
+A cover can carry a full-canvas image instead of the illustration bleeding right. It is a different
+composition and it comes with four rules:
+
+1. **The illustration comes out.** Two full-bleed elements fight each other. Pick one.
+2. **The slide still carries `atmos plain`**, for the same reason as the illustrated cover: the
+   engine's cyan blob over artwork reads as a wash.
+3. **A dark image makes it a dark cover.** Switch the section to `slide dark` and invert the type.
+4. **Copy over colour needs a scrim, and the scrim gets measured.** Sample the luminance behind each
+   line of text and set the scrim from that, not by eye. If a footer sits over a blob, lift that one
+   footer rather than the whole deck's edge opacity.
+
+Grain belongs to the asset, not to the browser. See `ICONS.md`.
+
 ## Reporte — canonical sequence (~10 slides)
 
 | # | Slide | Components |
 |---|---|---|
 | 1 | Cover | `slides/cover-study` — cover spec above (eyebrow = subject, not "subcategory") |
-| 2 | The month at a glance | `.kpi` ×4 + `.irow` reads (continuity vs. prior) |
+| 2 | The month at a glance | `.kpi` ×4 + `.irow` reads (continuity vs. prior). **The big figure is the period's absolute value; the delta rides beside it as a chip.** A delta on its own says nothing and invites the reader to mistake the study's corpus for the month's volume |
 | 3 | Share of voice + channels | two equal-height `.vcard`s: `.bars` (SoV by brand) ‖ `.bars` (channels) |
 | 4 | Sentiment by brand | `.sbrow`/`.split` (neg/pos among those with an opinion) + `.irow` "what's behind it" |
 | 5 | What it argues about | `.tbl` topics (theme · lean `.tag` · loudest-for · `.mini` share · trend) |
@@ -77,7 +93,7 @@ inline positioning, and start from the `slides/cover-study` fragment.
 | # | Slide | Components |
 |---|---|---|
 | 1 | Cover | `slides/cover-study` — cover spec above; research question as the subject |
-| 2 | Brief | the question **is** the title + `.idx` index cards (no "a study starts from a question" meta) |
+| 2 | Brief | `.idx` index cards. The cover already asked the question, so **this slide says what the study delivers**, not what it asks. Repeating the research question two slides running burns the second-most expensive title in the deck |
 | 3 | The four layers | `slides/tb-layers` — the framework slide, see spec below |
 | 4 | Hypothesis | the claim + a chart that *is* the proof (e.g. triggers & barriers rising together) |
 | 5 | Where the conversation lives | `slides/channels` — `.roles` (channel mark + share + one-line role each) + `.note` for the odd-one-out |
@@ -128,11 +144,15 @@ any slide uses it. Never introduce a frame and use it in the same breath.
 
 One slide, near the end, that makes the whole deck defensible. What goes on it:
 
-- The size of the read, stated plainly (`2.4 millones de menciones, leídas por capas`).
-- The period and the market.
-- What was excluded as noise, and roughly how much.
-- What the counts mean and what they do not (`.irow` rows work well here).
-- A `.note` with the honest limit: which claims are exact and which are directional.
+- **A strip of hard facts across the top**, one cell each: period, market, original corpus,
+  de-noised corpus, and the coverage of the coding (how many mentions actually got a label). The
+  original and the de-noised figure side by side are what give the discard its dimension.
+- Four `.irow` blocks: what was listened to, what was left out and roughly how much, how it was
+  read, and what the evidence is.
+- **A sources row**: each platform's mark with its own count. It is the line that lets someone
+  check the mix without opening the annex.
+- **A `.foot`, not a `.note`**, with the honest limit: which claims are exact and which are
+  directional, and what this base cannot see at all.
 
 What never goes on it: tool names, query syntax, file names, scripts, or the word ETL. The detail
 lives in `PROVENANCE_AND_CHANGELOG.md`. See `COPY_RULES.md` §0 and `CANON.md` §5.3 for whether
@@ -157,14 +177,24 @@ between a passing spike and real change), **Periodo y corte** (the window, alway
 the prior period), **Priorización** (which conversations matter and why, because repetition alone
 is not enough) and **Alcance**.
 
-**Estudio adds two.** *Los términos del estudio:* **Trigger** (what pulls: desire, fit with your
-life, validation, a code in favour), **Barrier** (what stops: anxiety, cost, fear of judgement, a
-category taboo), **las cuatro capas** and **doble codificación** (each expression classified twice,
-push or block and which layer, because without it the actionable patterns disappear). Then *Cómo se
-leyó, y hasta dónde llega:* **Corpus** stated with its real size, market, window and channels,
-**Priorización**, **Permiso para actuar**, and **Hasta dónde llega**, which says out loud that the
-read is directional and motivational, not a sales or market projection, that it portrays the moment
-it was taken, and that the system of motives moves, so it gets re-read.
+**Estudio adds two**, and the first one is **per methodology**, not per deck. Its structure is
+fixed even though its terms are not:
+
+| Slot | What goes in it | T&B | Journey Friction Mapping |
+|---|---|---|---|
+| The unit | what one coded expression is | trigger / barrier | friction |
+| The axes | the two independent codings | direction and layer | moment and friction type |
+| Where it lives | the map the study uses | the four layers | the phases of the journey |
+| What can move | the permission to act | brand moves psych + personal fully | mobility per friction |
+| The double coding | why one pass is not enough | same sentence, both axes | same, and the axes never sum |
+
+Six methodologies are in the catalogue, so writing this block from scratch each time is five more
+repetitions of the same work. Fill the slots; do not invent the shape.
+
+Then *Cómo se leyó, y hasta dónde llega:* **Corpus** stated with its real size, market, window and
+channels, **Priorización**, what can be acted on, and **Hasta dónde llega**, which says out loud
+that the read is directional, not a sales or market projection, that it portrays the moment it was
+taken, and that the system moves, so it gets re-read.
 
 That last term is the study's honesty clause and it is not optional. A study that cannot say how
 far it goes is selling a projection it did not make.
@@ -178,11 +208,17 @@ watch into a single teaser block plus a closing slide with a concrete next step.
 
 A sample that gives away the full action plan is not a sample.
 
-### The noise filter slide (optional, earns its place fast)
+### The noise filter slide — study and sample only, never a report
 
-When the corpus needed a hard de-noising pass, say so early: `.kpi` with what was heard vs. what
-was reported, and a `.note` with the criterion used. It builds more trust than any volume number,
-and it makes the later counts credible.
+When the corpus needed a hard de-noising pass, show it early: `.kpi` with what was heard vs. what
+was reported, and a `.note` with the criterion. It builds more trust than any volume number.
+
+**It does not belong in a monthly report.** A recurring client already got July's edition and will
+get September's. Telling them in the August one that the underlying corpus spans twelve months
+breaks the fiction of the deliverable and opens questions the edition cannot answer: why twelve
+months, what was there before, why didn't I see it. In a report the de-noising is communicated as a
+`.foot` on the slide where it matters, at the scale of the month. The full funnel lives in
+`PROVENANCE_AND_CHANGELOG.md`, which is its place.
 
 ## Non-negotiables (every family)
 
@@ -192,6 +228,9 @@ and it makes the later counts credible.
   (platform logo + date). Never invented.
 - **No black cards.** Interpretation lives in a light `.note` (teal-soft) or a `.slide.dark`
   full-bleed statement, not a black callout box.
+- **The teal `.note` is for insights only.** A methodological aside in that container gives a
+  footnote the visual weight of a finding. Scope notes, axis explanations and honest limits go in
+  `.foot`: grey, small, italic, no fill.
 - **Soft bar gradients** (`#0d8a8a→#37b0ad`, coral `#d6492f→#e8735c`), never harsh cyan.
 - **Icons everywhere**, and real (see `ICONS.md`).
 - **`data-label` is navigation metadata**, never rendered copy.
