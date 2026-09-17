@@ -16,7 +16,7 @@ pricing and visual rules distilled from real client decks (política incluida).
 - `DATA.md` — the execution manual for a corpus: inventory, streaming ETL, quality gates, output contracts. `PROPOSALS.md` — the commercial family. `PROMPTS.md` — the entry-point prompt. `templates/` — provenance and script, copied into each working folder.
 - `METHODOLOGY.md` — the fourth rulebook: how a study gets its content (sourcing/LQL, streaming ETL, data reality checks, T&B tagging, and the per-study provenance + changelog record). Design rulebooks say how a deck *looks*; this one says how it *earns its truth*.
 - `slides/` — reusable slide templates + `catalog.json` (the machine-readable index agents read).
-- `builders/` — `build-pdf.mjs` (headless Chrome → PDF, no npm dep), `build-pptx.py` (python-pptx → editable PPTX), `qa-render.py` (renders every slide, flags edge overflow, builds contact sheets).
+- `builders/` — `build-pdf.mjs` (headless Chrome → PDF, no npm dep), `build-pptx.py` (python-pptx → editable PPTX), `qa-render.py` (renders every slide, flags edge overflow, builds contact sheets), `gen-backgrounds.py` (per-slide background blobs and the baked grain tile).
 - `signal/` — `fetch-insights.mjs` (pulls metrics/quotes from the Signal public reporting API).
 - `assets/` — brand logos/backgrounds, and `icons.json` with the Iconoir and Simple Icons glyphs already extracted, so no deck installs npm packages to draw an icon. `examples/` — sanitized demo decks only.
 

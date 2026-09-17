@@ -13,7 +13,7 @@ hard rules, where everything lives). Then invoke the skill `.claude/skills/noisi
 ```
 engine/      brand engine: noisia-tokens.css, deck.css, deck-stage.js, deck-template.html
 slides/      reusable slide templates + catalog.json (the index of what's available)
-builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print) · qa-render.py (→ renders every slide, flags overflow, builds contact sheets)
+builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print) · qa-render.py (→ renders every slide, flags overflow, builds contact sheets) · gen-backgrounds.py (→ a background blob per slide, plus the grain tile)
 signal/      fetch-insights.mjs (pull metrics/quotes from the Signal public API)
 assets/      brand logos / backgrounds / icons.json (95 Iconoir glyphs + 6 Simple Icons, already extracted)
 templates/   PROVENANCE_AND_CHANGELOG.md + GUION_POR_SLIDE.md, copied into each working folder

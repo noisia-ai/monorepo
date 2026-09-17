@@ -62,6 +62,32 @@ at the top *and* the bottom at once: the eyebrow lands on the logo while the foo
 footer. `builders/qa-render.py` checks both bands for exactly this reason. Seeing only one of the
 two and fixing the bottom leaves the top broken.
 
+## Backgrounds: one composition per slide
+
+The engine paints the same cyan blob in the same corner on every slide. Over fourteen slides that
+reads as a template. `builders/gen-backgrounds.py` writes one composition per slide, each in a
+different corner, at alphas low enough that the background accompanies the content instead of
+competing with it.
+
+```bash
+python3 builders/gen-backgrounds.py <deck-dir> --slides 14 --dark 12
+```
+
+The slide then carries `atmos plain`, to switch the engine's own blob off, and its background
+behind the frame:
+
+```html
+<section class="slide"><div class="atmos plain"></div>
+  <img class="bg" src="assets/bg-04.png" alt=""><div class="frame">…</div></section>
+```
+
+Two slides earn an exception and get a quieter background written by hand: the ones where the
+content is the protagonist, a journey map or a friction matrix. There the background drops to a
+single blob at very low alpha, or disappears.
+
+Grain, if the deck uses it, is **baked into the asset**. Never computed in the browser: the print
+renderer rasterises an SVG filter and it comes out as cloud, not grain, and it doubled one PDF.
+
 ## The cover (all families)
 
 Every shipped deck converged on the same cover, so it is canon now. Full-bleed illustration on the
