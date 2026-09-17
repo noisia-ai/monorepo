@@ -37,7 +37,7 @@ pricing and visual rules distilled from real client decks (política incluida).
 When you create a reusable slide / rule / builder improvement:
 1. **Sanitize** — strip all client specifics down to a generic template.
 2. **Add** the fragment at `slides/<id>/<id>.html`.
-3. **Register** it in `slides/catalog.json` (id, name, file, category, `when`, variants, placeholders). A missing or stale catalog entry is the only real bug here — the catalog is how the next agent discovers your slide.
+3. **Register** it in `slides/catalog.json` (id, name, file, category, `when`, variants, placeholders, plus `height` and `fits_with`: what the slide occupies and what else fits with it. Measure them once so the next person does not discover them by rendering). A missing or stale catalog entry is the only real bug here — the catalog is how the next agent discovers your slide.
 4. **PR it** (branch → PR, CI green). Additions under `slides/**` are exempt from Code-Owner review (see root `.github/CODEOWNERS`) so they land fast.
 
 ## Building a deck

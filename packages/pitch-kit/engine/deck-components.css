@@ -75,6 +75,9 @@
 .tbl td .nm { font-weight:600; color:var(--ink); }
 .tag { font-size:14px; font-weight:600; padding:3px 11px; border-radius:99px; }
 .tag.neg{background:var(--coral-soft);color:var(--coral);} .tag.pos{background:var(--positive-soft);color:var(--positive);} .tag.neu{background:#f0f0f0;color:var(--fg-secondary);}
+/* `.neg/.pos/.neu` carry sentiment load. `.met` is a plain metric and carries none: use it for
+   interactions, reach or any neutral number. A count in a coral chip reads as bad news. */
+.tag.met{background:var(--surface-02);color:var(--fg-secondary);font-weight:700;}
 .chn { display:inline-flex; align-items:center; gap:9px; font-size:19px; font-weight:600; color:var(--fg-primary); }
 .mini { display:inline-block; width:120px; height:9px; border-radius:99px; background:var(--surface-02); overflow:hidden; vertical-align:middle; }
 .mini i { display:block; height:9px; border-radius:99px; background:#0d8a8a; }
@@ -86,6 +89,19 @@
 .sq .ic { width:14px; height:14px; }
 .src { display:inline-flex; align-items:center; gap:9px; font-size:14px; color:var(--fg-secondary); font-weight:600; }
 .src a { color:var(--teal); text-decoration:none; }
+
+/* --- flank verbatim card (tb-layers-evidence) ------------------------------ */
+/* Flat on purpose: white, 1px border, radius 13, NO shadow. Chrome prints a shadow here as a grey
+   rectangle over the asset. Width and slot pitch are measured; see the fragment's header. */
+.vqe { position:absolute; width:376px; background:#fff; border:1px solid var(--border-subtle);
+       border-radius:13px; padding:13px 15px; z-index:2; }
+.vqe .qt { font-size:14px; font-style:italic; line-height:1.4; color:var(--fg-primary); }
+.vqe .rd { font-size:12.5px; line-height:1.35; color:var(--fg-secondary); margin-top:6px; }
+.vqe .mt { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600;
+           color:var(--fg-secondary); margin-top:9px; }
+.vqe .mt .cc { width:20px; height:20px; border-radius:6px; } .vqe .mt .cc svg { width:11px; height:11px; }
+.vqe .mt a { color:var(--teal); text-decoration:none; }
+.vqe .mt .tag { margin-left:auto; }
 
 /* --- read rows (icon + label + description) -------------------------------- */
 .irow { display:grid; grid-template-columns:46px 1fr; gap:15px; align-items:start; }
@@ -100,6 +116,14 @@
         line-height:1.45; color:var(--fg-secondary); }
 .foot .ic { width:17px; height:17px; flex:none; margin-top:2px; opacity:.7; }
 
+/* --- insight marker -------------------------------------------------------- */
+/* The word `insight`, always that word, in Times italic lowercase next to its icon. It marks a
+   type of content, not a title, so it never changes from slide to slide. Clients could not tell an
+   insight card from any other card while each one carried its own heading. */
+.insig { display:inline-flex; align-items:center; gap:8px; font-family:"Times New Roman", Times, serif;
+         font-style:italic; font-size:19px; color:var(--teal); margin-bottom:8px; }
+.insig .ic { width:18px; height:18px; }
+
 /* --- soft note (NEVER a black card) ---------------------------------------- */
 .note { display:grid; grid-template-columns:44px 1fr; gap:14px; align-items:center; background:var(--teal-soft); border-radius:14px; padding:18px 22px; }
 .note .icobox { width:44px; height:44px; background:#fff; color:var(--teal); }
@@ -109,6 +133,10 @@
 /* --- consolidated cards (chart + bars at equal height) --------------------- */
 .vcard { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:18px; padding:26px 30px; display:flex; flex-direction:column; }
 .vbody { height:230px; display:flex; flex-direction:column; justify-content:center; margin:18px 0 16px; }
+/* Full-width card: a fixed body height scales a wide viewBox down to the height and leaves dead
+   air on both sides. On `.vcard.wide` the body grows to its content and the chart fills the track. */
+.vcard.wide .vbody { height:auto; }
+.vcard.wide .vbody > svg { width:100%; height:auto; display:block; }
 .vfoot { font-size:18px; line-height:1.45; color:var(--fg-secondary); border-top:1px solid var(--border-subtle); padding-top:16px; }
 .vfoot b { color:var(--fg-primary); }
 
@@ -116,6 +144,11 @@
 .hh { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:18px; padding:24px 28px; display:flex; flex-direction:column; gap:12px; }
 .hh .he { display:inline-flex; align-items:center; gap:10px; font-size:15px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--teal); }
 .hh .hc { font-size:22px; line-height:1.32; color:var(--ink); font-weight:500; } .hh .hc b { color:var(--teal); font-weight:700; }
+.hh .hf { display:flex; align-items:baseline; gap:10px; }
+.hh .hf b { font-size:38px; font-weight:700; line-height:1; color:var(--ink); }
+/* The denominator. A competitor at zero without its base reads as a brand that does not exist,
+   when the truth is often that it has conversation and none of it is about what is being compared. */
+.hh .hd { font-size:14px; color:var(--fg-secondary); line-height:1.35; }
 .hh .hq { font-size:16px; font-style:italic; color:var(--fg-secondary); line-height:1.4; border-top:1px solid var(--border-subtle); padding-top:12px; margin-top:auto; }
 
 /* --- Triggers & Barriers matrix (4 layers x push/pull) --------------------- */

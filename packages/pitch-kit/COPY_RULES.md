@@ -115,6 +115,56 @@ Dos generalizaciones que valen por sí solas:
 estudio, donde el título es la pregunta de investigación; la slide de brief; y las páginas de
 referencia, glosario y método, que se nombran por lo que son.
 
+### El título no puede afirmar más que el dato, ni menos
+
+Antes de cerrar un título se revisa contra la cifra que lo sostiene. Si la cifra sostiene una
+afirmación más grande, se usa la más grande; si sostiene una más chica, se baja el título. Dos
+casos reales, uno de cada lado: una portada decía "lo hecho a mano" cuando el corpus sostenía
+"textil mexicano", y una slide decía que la conversación ocurre sin la marca cuando la cifra decía
+algo más grande e incómodo, que ocurre **sin ninguna marca**, 1,911 de 1,934.
+
+### La cifra no se pega al nombre del motivo
+
+Un trigger es un motivo y un motivo agrupa muchas menciones. **"187 triggers psicológicos" está
+prohibido**, porque afirma que existen 187 motivos distintos. Se escribe "187 menciones con señal
+de trigger psicológico", que cabe igual en la slide y es lo que el pipeline realmente contó. Vale
+para las seis metodologías: lo que se cuenta son menciones que llevan la señal, no motivos.
+
+### La contraportada se titula por lo que es
+
+La regla de títulos aplica al cuerpo del deck. Las páginas de referencia llevan título literal:
+Glosario. Método y alcance. Alcance y límites. Una frase donde va un nombre se lee como relleno.
+
+## 2.6 Vocabulario del método, una sola vez y completo
+
+El deck no alterna entre empuje, freno, trigger y barrier según la slide: para el cliente eso son
+cuatro palabras para dos conceptos. **La slide del marco enseña el término técnico con su
+traducción una sola vez**, en la etiqueta del mapa, y de ahí en adelante el deck usa el término
+técnico y nada más.
+
+Donde las dos cifras aparezcan juntas, el trigger va en teal y el barrier en coral, siempre, con su
+etiqueta escrita. Un "187 / 0" en un solo color no dice cuál es cuál.
+
+**Las acotaciones tampoco llevan jerga de quien armó el corpus.** "Misma regla y mismo periodo" lo
+entiende quien construyó el corpus. Se escribe "las dos columnas se midieron con el mismo criterio
+y el mismo periodo".
+
+## 2.7 Las citas
+
+**La cubeta sirve para buscar la cita, nunca para elegirla.** Un par de etiquetas como
+`trigger|cultural` contiene lenguaje normativo y lenguaje de orgullo a la vez, así que tomar las
+dos primeras de la cubeta mete citas críticas debajo de un título sobre el orgullo. La cubeta
+estaba bien clasificada y la selección mal. **Se elige a mano y se revisa contra el título de la
+slide**, no contra la etiqueta.
+
+**Las ligas pegadas dentro del texto se limpian.** Una cita de redes suele traer una URL adentro;
+mostrarla hace ver el verbatim como un volcado de base de datos. Se limpia del texto que se muestra
+y la liga de la publicación va donde le toca, en la ficha, con plataforma y fecha.
+
+**Deck en inglés con citas en español.** La cita se muestra en su idioma original, porque es la
+evidencia y no se toca. Debajo va una lectura en inglés, más chica y en gris, y la ficha queda
+igual. Traducir la cita y poner el original abajo invierte cuál es el dato y cuál es el apoyo.
+
 ### La pregunta de investigación es el título más caro del deck
 
 Va en la portada, se repite en el cierre, y es lo primero que el cliente lee en voz alta. Se
@@ -143,6 +193,10 @@ traslapan nunca se suman. El criterio completo está en `CANON.md`, sección 5.3
 - [ ] Anglicismos técnicos intactos (Dashboard, insight, brief…), nada sobre-traducido.
 - [ ] Sin muletillas de IA ni significancia inflada; frases de largo variado.
 - [ ] Por cada título: tapé el cuerpo y el título solo ya dice algo del negocio.
+- [ ] Cada título se contrastó contra la cifra que lo sostiene, ni más grande ni más chica.
+- [ ] Ninguna cifra está pegada al nombre de un motivo: son menciones con señal, no motivos.
+- [ ] Un solo par de términos del método en todo el deck, con su color por lado.
+- [ ] Ninguna cita se eligió por cubeta, y ninguna trae una liga dentro del texto.
 - [ ] Ningún título tiene dos puntos a media frase. Es el patrón que más se escapa.
 - [ ] Ningún título repite los encabezados de las columnas ni presume del método.
 - [ ] Ninguna palabra necesita haber estado en la conversación interna para entenderse.

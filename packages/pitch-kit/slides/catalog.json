@@ -1,8 +1,8 @@
 {
   "$schema": "./catalog.schema.json",
-  "version": 3,
-  "updated": "2026-09-15",
-  "note": "Machine-readable index of reusable Noisia slide templates. Agents read this to know what slides exist. When you add a slide, ADD ITS ENTRY HERE (see ../AGENTS.md → contribution loop). El contrato del sistema es ../CANON.md; las secuencias, ../LAYOUTS.md.",
+  "version": 4,
+  "updated": "2026-09-16",
+  "note": "Machine-readable index of reusable Noisia slide templates. Agents read this to know what slides exist. When you add a slide, ADD ITS ENTRY HERE (see ../AGENTS.md → contribution loop). El contrato del sistema es ../CANON.md; las secuencias, ../LAYOUTS.md. Cada entrada declara su capacidad: 'height' es lo que ocupa y 'fits_with' es qué más cabe en la slide con ella, para no descubrirlo renderizando.",
   "engine": {
     "canvas": "1920x1080",
     "files": [
@@ -55,7 +55,9 @@
         "PERIOD",
         "FOOTER_NN",
         "FOOTER_TOTAL"
-      ]
+      ],
+      "height": "Ocupa la slide completa.",
+      "fits_with": "Nada más. Es una portada."
     },
     {
       "id": "statement",
@@ -168,7 +170,9 @@
         "L{1..4}_BARRIER",
         "FOOTER_NN",
         "FOOTER_TOTAL"
-      ]
+      ],
+      "height": "Unos 200px por fila de cards, dos filas para cuatro dimensiones.",
+      "fits_with": "Eyebrow, título y subtítulo. Cuatro dimensiones cómodas, seis apretadas."
     },
     {
       "id": "study-scope",
@@ -431,6 +435,31 @@
         "BARRIER_DESC",
         "FOOTER_NN",
         "FOOTER_TOTAL"
+      ],
+      "height": "El mapa ocupa 560px y las cards de permiso 96px más.",
+      "fits_with": "Eyebrow y título de una línea. No cabe subtítulo ni acotación: con cualquiera de los dos el bloque se come el footer. Si necesitas subtítulo, usa tb-layers-evidence, que colapsa las cards de permiso en una línea."
+    },
+    {
+      "id": "tb-layers-evidence",
+      "name": "Las cuatro capas, demostradas con verbatims",
+      "file": "slides/tb-layers-evidence/tb-layers-evidence.html",
+      "category": "methodology",
+      "when": "Variante de evidencia de tb-layers, y la mejor versión de esa slide cuando hay verbatims que la sostengan. El asset va grande y los costados llevan citas reales: triggers sobre el blob teal a la izquierda, barriers sobre el coral a la derecha. Las cuatro cards de permiso se colapsan en una línea bajo el título. La slide deja de explicar el marco y pasa a demostrarlo. Las medidas del fragmento están tomadas, no estimadas: respétalas o vuelve a medir.",
+      "height": "Bloque de 620px desde y ≈ 326. Medido, no estimado.",
+      "fits_with": "Eyebrow, título de UNA línea y la leyenda de permiso. Un título de dos líneas empuja el bloque sobre el footer. De cinco a nueve verbatims en los costados.",
+      "variants": [
+        "light"
+      ],
+      "placeholders": [
+        "HEADER_RIGHT",
+        "EYEBROW",
+        "TITLE",
+        "PERMISSION_LEGEND",
+        "LEFT_LABEL",
+        "RIGHT_LABEL",
+        "Q1..Q7",
+        "FOOTER_NN",
+        "FOOTER_TOTAL"
       ]
     },
     {
@@ -457,7 +486,9 @@
         "NOTE",
         "FOOTER_NN",
         "FOOTER_TOTAL"
-      ]
+      ],
+      "height": "Unos 92px por canal, más la nota.",
+      "fits_with": "Hasta cuatro canales con nota, o seis sin ella."
     },
     {
       "id": "method",
@@ -481,7 +512,9 @@
         "LIMIT",
         "FOOTER_NN",
         "FOOTER_TOTAL"
-      ]
+      ],
+      "height": "La tira de datos son 92px, los cuatro bloques unos 260px, fuentes 56px y la acotación 24px.",
+      "fits_with": "Título de una línea. Va lleno: no le agregues nada más."
     }
   ]
 }

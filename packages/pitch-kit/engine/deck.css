@@ -202,6 +202,15 @@ deck-stage section { background: transparent; }
    backdrop-filter as solid grey boxes behind every card. Flatten the glass
    surface to a bordered solid fill for print only — screen keeps the glass. */
 @media print {
+  /* Chrome's --print-to-pdf rasterizes mask-image, filter, backdrop-filter and box-shadow as solid
+     grey rectangles. Neutralise them on every printed surface. If an edge needs softening, do it in
+     the asset, not in CSS (CANON.md §5.6). */
+  .card, .kpi, .vcard, .hh, .idxc, .vq, .fwc, .mcell, .kcard, .chip, .note, .tbmap img {
+    box-shadow: none !important;
+    -webkit-mask-image: none !important;
+    mask-image: none !important;
+    filter: none !important;
+  }
   .glass {
     box-shadow: none !important;
     -webkit-backdrop-filter: none !important;

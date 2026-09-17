@@ -47,6 +47,22 @@ Si una respuesta cambia el universo, no se asume. Se documenta.
 9. Qué idiomas y canales se conservan.
 10. Qué exclusiones, homónimos y ruido se esperan.
 
+## 2.5 Si el corpus no alcanza
+
+Cuando el volumen queda debajo del piso del método, hay **tres salidas**, no dos, y la tercera es
+la que suele salvar el trabajo:
+
+1. **Bajar el alcance del método.** Menos ejes, menos capas, y se declara.
+2. **Ampliar la ventana.** Solo si el periodo más largo sigue respondiendo la pregunta.
+3. **Subir el sujeto a categoría.** El estudio deja de ser sobre la marca y pasa a ser sobre su
+   categoría. **La marca no se saca: se lee dentro del corpus de categoría**, y su silencio deja de
+   ser un hueco para volverse un hallazgo medible.
+
+La tercera funciona porque cambia la pregunta sin abandonarla. En un caso real el corpus de marca
+daba 260 menciones contra un piso de 800; al subir a categoría, el hallazgo central resultó ser
+justamente el silencio, 1,911 de 1,934 menciones de categoría no nombraban a ninguna marca. Eso no
+se podía afirmar desde el corpus de marca, porque ahí no había con qué comparar.
+
 ## 3. Contrato de entrada
 
 ### Por archivo se registra
@@ -76,6 +92,16 @@ liga, dominio, grupo de fuente, sentimiento del proveedor, interacciones, idioma
 
 La ausencia masiva de autor, país o geolocalización no se corrige inventando datos. Se convierte
 en una limitación explícita del entregable.
+
+### Las queries se entregan armadas
+
+El entregable de queries es **una query final por línea, lista para pegar**, con su nombre corto
+arriba y la configuración de interfaz al lado, idioma, país, ventana y fuentes, porque eso no cabe
+dentro de la query. Nunca "combina el bloque A con el B": ese ensamblado manual es donde se cuelan
+los paréntesis mal cerrados.
+
+El razonamiento de por qué cada query quedó así se documenta aparte. Las dos cosas valen, pero la
+que se usa es la lista para pegar.
 
 ## 4. Lectura segura del archivo
 
@@ -115,6 +141,16 @@ Cada archivo produce un perfil con cuatro bloques:
   repetidas.
 
 El perfilado es un diagnóstico del corpus. Todavía no es un hallazgo sobre la audiencia.
+
+**Y declara lo que la base no trae, con esa palabra.** No solo los campos presentes: los ausentes.
+Es lo que protege al analista cuando alguien en la sala pide una lectura que la base no sostiene.
+
+Caso típico: el cliente pide leer los canales como generaciones, que una red son los de más de 40 y
+otra los que vienen. La lectura puede ser razonable y hasta usarse, pero **el corpus no trae edad**.
+Lo que sí se mide es en qué canal aparece la marca y en cuál no. Se escribe así, con el dato
+ausente nombrado: *el corpus no trae edad; leer los canales como generaciones es una
+interpretación, no una medición.* Esa línea va en la slide de alcance y en la acotación de
+cualquier slide que dé ese salto.
 
 ## 7. Reconciliación contra el tablero
 

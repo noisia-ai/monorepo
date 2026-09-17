@@ -173,7 +173,19 @@ canónicos son:
 El mapa se usa tal como viene, con su anillo interior en inglés, en cualquier idioma de deck. No
 se le pone nada encima. Ver `ICONS.md`.
 
-### 5.5 Verbatims
+### 5.5 Lo que el motor no imprime
+
+El render a PDF es Chrome headless, y hay propiedades que **rasteriza como rectángulos grises** en
+lugar de resolverlas. En pantalla se ven bien y en el entregable rompen la slide.
+
+No se usan en nada que tenga que imprimirse: `mask-image`, `filter`, `backdrop-filter` ni
+`box-shadow`. El engine ya las neutraliza en `@media print` para sus componentes, pero una clase
+propia del deck queda fuera de esa red. **Si hace falta suavizar un borde o difuminar un recorte,
+se resuelve en el asset**, igual que el grano. Es la misma lección, ahora con nombre de propiedad.
+
+Y se comprueba en el PDF, no en el screenshot: el artefacto solo aparece al imprimir.
+
+### 5.6 Verbatims
 
 Reales, con liga al post, plataforma y fecha visibles. Sin corregir ortografía ni tono. Si no se
 puede verificar en su fuente, no entra. Sin excepción y en cualquier familia.

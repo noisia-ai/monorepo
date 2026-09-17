@@ -79,7 +79,18 @@ research channel, the complaint channel, and the foreign-planner channel. See th
 - Each expression is coded **twice**: push/pull, and which of the four layers it lives in
   (psychological / personal / social / cultural). Tag *post-ingest*, never in the query.
 - **Permission to act:** a brand moves psychological + personal fully, social partially, and only
-  *aligns* with cultural. The "where to act" kanban falls straight out of this.
+  *aligns* with cultural.
+- **The cultural layer is defined by normative language, not by category vocabulary.** In a craft
+  textile category, `artesan*`, `telar`, `bordado` and `tradición` are the *subject*, not a cultural
+  motive: the whole corpus talks that way. What makes an expression cultural is the language of
+  norms, appropriation, plagiarism, fair pay, authorship, royalties, heritage, who has the right to
+  use what. Applying that distinction took one study's cultural layer from 1,607 mentions to 259,
+  and only then did it mean anything.
+- **If one category of the scheme takes more than half the corpus, the dictionary is wrong, not the
+  corpus.** Check the rules before reporting. It has now happened twice, in two different
+  methodologies: a cultural layer at 62% and an effort category at 81%, both caused by rules that
+  were broader than their neighbours. This is the same check as the single-label guard in
+  `DATA.md` §15, arriving from the other direction. The "where to act" kanban falls straight out of this.
 - **Verbatims are real, linked, and sourced** (platform mark + date + link to the post). Never
   invent one. Imperfections stay — they're information.
 

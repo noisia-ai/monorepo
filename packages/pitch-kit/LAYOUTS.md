@@ -40,6 +40,28 @@ and **Muestra**; `PROPOSALS.md` owns **Propuesta** and the **Producto** block.
 
 Never blur a reporte and an estudio.
 
+## The height budget
+
+Slide capacity is not a mystery to be discovered by rendering. These are the numbers, so a title
+that will not fit on one line gets caught while writing rather than after export.
+
+| | |
+|---|---|
+| Canvas | 1920 × 1080 |
+| `.frame` usable width | 1700px, x=110 to x=1810 |
+| `.mid` usable height | about 745px, y ≈ 180 to y ≈ 925 |
+| Eyebrow | 34px |
+| `.hl` at 54px, one line | 58px, plus 22 margin |
+| Each extra title line | 58px |
+| `.note`, two lines | about 90px |
+| `.foot`, one line | 24px |
+| `.mtx` row | about 50px |
+
+**`.mid` centres vertically, so overflow is symmetric.** When content exceeds it, the slide breaks
+at the top *and* the bottom at once: the eyebrow lands on the logo while the footnote lands on the
+footer. `builders/qa-render.py` checks both bands for exactly this reason. Seeing only one of the
+two and fixing the bottom leaves the top broken.
+
 ## The cover (all families)
 
 Every shipped deck converged on the same cover, so it is canon now. Full-bleed illustration on the
@@ -83,7 +105,7 @@ Grain belongs to the asset, not to the browser. See `ICONS.md`.
 | 3 | Share of voice + channels | two equal-height `.vcard`s: `.bars` (SoV by brand) ‖ `.bars` (channels) |
 | 4 | Sentiment by brand | `.sbrow`/`.split` (neg/pos among those with an opinion) + `.irow` "what's behind it" |
 | 5 | What it argues about | `.tbl` topics (theme · lean `.tag` · loudest-for · `.mini` share · trend) |
-| 6 | Head-to-head | `.hh` cards ×4 (match-up + claim + one verbatim). **R2 only**: a single-brand report (R1) drops this slide and lands at 9 |
+| 6 | Head-to-head | `.hh` cards ×4 (match-up + claim + one verbatim). **Every brand shows its denominator**: the comparable metric on top and the universe it comes from underneath, with `.hd`. A competitor at zero without its base reads as a brand that does not exist, when the truth may be that it has conversation and none of it is about the thing being compared. **R2 only**: a single-brand report (R1) drops this slide and lands at 9 |
 | 7 | Evidence | `.vq` verbatims, real + link + source chip, split friction / pull |
 | 8 | The read | `.slide.dark` statement + `.note` "and then what → study" |
 | 9–10 | Glossary ×2 | `.gloss`/`.gterm` + channel `.chip`s |
@@ -94,7 +116,7 @@ Grain belongs to the asset, not to the browser. See `ICONS.md`.
 |---|---|---|
 | 1 | Cover | `slides/cover-study` — cover spec above; research question as the subject |
 | 2 | Brief | `.idx` index cards. The cover already asked the question, so **this slide says what the study delivers**, not what it asks. Repeating the research question two slides running burns the second-most expensive title in the deck |
-| 3 | The four layers | `slides/tb-layers` — the framework slide, see spec below |
+| 3 | The four layers | `slides/tb-layers`, or `slides/tb-layers-evidence` when there are quotes to carry it. See spec below |
 | 4 | Hypothesis | the claim + a chart that *is* the proof (e.g. triggers & barriers rising together) |
 | 5 | Where the conversation lives | `slides/channels` — `.roles` (channel mark + share + one-line role each) + `.note` for the odd-one-out |
 | 6 | The map | `.mtx` 4×2 matrix (each pull with its shadow), counts + channel + sentiment dot |
@@ -133,6 +155,13 @@ method without naming it commercially:
 - The asset ships with its innermost ring reading `Psychological`, in English, and it stays that
   way in every deck regardless of language. Nothing is overlaid on the artwork (`ICONS.md`). The
   reader gets the word in their language from the `.lperm` cards right below.
+
+**The evidence variant.** When the corpus has quotes worth showing, `tb-layers-evidence` is the
+better version of this slide: the asset runs large, the flanks carry five to nine real verbatims,
+triggers over the teal blob and barriers over the coral, and the four permission cards collapse
+into a one-line legend under the title. It stops explaining the framework and starts demonstrating
+it. Its measurements are taken, not estimated, and they are in the fragment's header: respect them
+or measure again. The asset itself does not change, only its size and what surrounds it.
 
 **When the study uses a different frame** (a fast-moving public-affairs topic, a risk read, a
 maturity model), keep the same slide *function* and swap the diagram for a 2×2 grid of framework
@@ -182,7 +211,8 @@ fixed even though its terms are not:
 
 | Slot | What goes in it | T&B | Journey Friction Mapping |
 |---|---|---|---|
-| The unit | what one coded expression is | trigger / barrier | friction |
+| The motive | the unit of analysis: what gets named, ranked and acted on | a trigger, a barrier | a friction |
+| The counted unit | what actually adds up in each cell of the map | mentions carrying that signal | mentions carrying that friction |
 | The axes | the two independent codings | direction and layer | moment and friction type |
 | Where it lives | the map the study uses | the four layers | the phases of the journey |
 | What can move | the permission to act | brand moves psych + personal fully | mobility per friction |
@@ -235,6 +265,9 @@ months, what was there before, why didn't I see it. In a report the de-noising i
 - **Icons everywhere**, and real (see `ICONS.md`).
 - **`data-label` is navigation metadata**, never rendered copy.
 - **Footer left is `noisia · social intelligence architects`**, footer right is `NN / TOTAL`.
+- **The closing pages are titled literally.** Glosario. Método y alcance. Alcance y límites. The
+  body of the deck carries titles that state a finding; a sentence-shaped title on a reference page
+  reads as filler. See `COPY_RULES.md`.
 - **Render every slide at 1920×1080 and look at it** before calling it done, and **check the PDF
   itself**, not only the screen capture. Two bugs only show up there:
   - Chrome's print rasterizes `box-shadow` and `backdrop-filter` as solid grey boxes. `deck.css`

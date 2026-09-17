@@ -52,7 +52,8 @@ ANTES DE ARRANCAR, pregúntame y cierra conmigo:
 
 FLUJO:
 advisor para cerrar el alcance
-  → queries y exportaciones
+  → queries listas para pegar, una por línea, con su configuración de interfaz al lado
+  → exportaciones
   → ETL en streaming, nunca licuadora
   → gates de calidad de DATA.md antes de cualquier conclusión
   → mapa de hallazgos con conteos y verbatims reales ligados
@@ -76,6 +77,8 @@ NO NEGOCIABLES:
 - No se suman queries solapados, no se confunden menciones con personas ni reach con apoyo.
 - Un conteo sin validación se llama direccional, con esa palabra.
 - Ningún dato de cliente entra al repo. El deck vive en una carpeta local.
+- Las queries se entregan armadas y listas para copiar y pegar, nunca en bloques para que yo los
+  combine. El razonamiento de cada una va aparte.
 
 Avísame en cuanto una decisión cambie el universo o la interpretación. Al final dime qué puede
 afirmarse, qué solo es direccional y qué no permite concluir esta base.
