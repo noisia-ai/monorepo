@@ -85,6 +85,16 @@
 /* --- verbatim card (real quote + source chip + link) ----------------------- */
 .vq { border:1px solid var(--border-subtle); border-radius:14px; padding:18px 22px; display:flex; flex-direction:column; gap:10px; background:var(--canvas); }
 .vq .qt { font-size:19px; font-style:italic; line-height:1.4; color:var(--fg-primary); }
+/* Translated reading, for a deck in one language quoting another. The quote stays in its original
+   language because it is the evidence; this line sits under it, smaller and quieter. Translating
+   the quote and putting the original below inverts which one is the data (COPY_RULES.md). */
+.vq .qtr { font-size:14.5px; line-height:1.36; color:var(--fg-secondary); }
+/* Structured meta row: platform mark, date and link on the left, a chip pushed to the right.
+   Two cases built this as a local `.vqx`; it belongs here. */
+.vq .mt { display:flex; align-items:center; gap:10px; font-size:13px; font-weight:600; color:var(--fg-secondary); }
+.vq .mt .cc { width:22px; height:22px; border-radius:6px; } .vq .mt .cc svg { width:12px; height:12px; }
+.vq .mt a { color:var(--teal); text-decoration:none; }
+.vq .mt .tag { margin-left:auto; }
 .sq { width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; flex:none; }
 .sq .ic { width:14px; height:14px; }
 .src { display:inline-flex; align-items:center; gap:9px; font-size:14px; color:var(--fg-secondary); font-weight:600; }
@@ -246,3 +256,78 @@
 .lperm b { display:block; font-size:18px; color:var(--ink); }
 .lperm span { display:block; margin-top:6px; font-size:15px; font-weight:700; color:var(--positive); }
 .lperm > div.partial span { color:var(--teal); } .lperm > div.align span { color:var(--fg-secondary); }
+
+
+/* ============================================================================
+   Promoted from two independent cases (a report and a study each, in two
+   languages). Eleven of these were byte-identical across both before promotion,
+   which is the kit's own signal: build it twice, it belongs here.
+   ========================================================================== */
+
+/* --- per-slide background image (gen-backgrounds.py) ----------------------- */
+/* Goes behind the frame, with the slide carrying `atmos plain` so the engine's own blob is off. */
+.slide > .bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; pointer-events:none; }
+/* A cover over a dark full-bleed image: the footer lifts so it does not vanish into the artwork.
+   Only that footer, never the deck's edge opacity. */
+.cover-white .slide-footer { opacity:.82; }
+.cover-white .slide-footer span:first-child { color:#fff; font-weight:500; }
+
+/* --- big figure with its unit ---------------------------------------------- */
+.kfig { display:flex; align-items:baseline; gap:10px; }
+.kfig b { font-size:54px; font-weight:700; line-height:1; color:var(--ink); }
+.kfig span { font-size:19px; font-weight:600; color:var(--fg-secondary); }
+
+/* --- de-noising funnel (study and sample only, see LAYOUTS.md) ------------- */
+.fnl { display:flex; flex-direction:column; gap:7px; }
+.fnl .fr { display:grid; grid-template-columns:1fr 130px; align-items:center; gap:16px; padding:11px 20px; border-radius:11px; background:var(--surface-01); border:1px solid var(--border-subtle); }
+.fnl .fr.keep { background:var(--teal-soft); border-color:#bfe6e6; }
+.fnl .fr .lb { font-size:19px; color:var(--fg-primary); }
+.fnl .fr .vl { font-size:22px; font-weight:700; text-align:right; color:var(--fg-secondary); }
+.fnl .fr.keep .lb, .fnl .fr.keep .vl { color:var(--teal); font-weight:700; }
+
+/* --- brand comparison grid -------------------------------------------------- */
+/* `.bl` is the denominator and it is not optional: a brand at zero without its base reads as a
+   brand that does not exist. `.me` marks the subject of the study. */
+.hgrid { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; }
+.hcell { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:20px 22px; }
+.hcell .bn { display:flex; align-items:center; gap:10px; font-size:20px; font-weight:700; color:var(--ink); margin-bottom:12px; }
+.hcell .bv { font-size:40px; font-weight:700; line-height:1; }
+.hcell .bl { font-size:14px; color:var(--fg-secondary); margin-top:5px; line-height:1.35; }
+.hcell.me { background:#fff; border-color:var(--coral); }
+
+/* --- heat matrix (theme x something) --------------------------------------- */
+/* Holds six rows comfortably. At eight, use `.tmx.compact`, which is the measured tightening. */
+.tmx { display:grid; gap:9px; }
+.tmx .th { font-size:13px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-secondary); text-align:center; padding-bottom:3px; }
+.tmx .rh { font-size:18px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:9px; }
+.tmx .cl { border-radius:10px; text-align:center; font-size:20px; font-weight:700; padding:13px 0; color:var(--fg-secondary); background:var(--surface-02); }
+.tmx .cl.h1 { background:#fdece8; color:#c0442c; }
+.tmx .cl.h2 { background:#f9cfc4; color:#9c2f1a; }
+.tmx .cl.h3 { background:#e2543c; color:#fff; }
+.tmx .cl.z { color:var(--neutral-09); }
+.tmx.compact { gap:6px; }
+.tmx.compact .cl { padding:7px 0; font-size:18px; }
+.tmx.compact .rh { font-size:16.5px; } .tmx.compact .rh .ic { width:18px; height:18px; }
+.tmx.compact .th { font-size:12px; }
+
+/* --- mobility cards (what can be moved, and how much) ---------------------- */
+.mob { display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; }
+.mob .mc { border-radius:16px; padding:22px 24px; border:1px solid var(--border-subtle); background:var(--surface-01); display:flex; flex-direction:column; gap:10px; }
+.mob .mc .hd { display:flex; align-items:center; gap:10px; }
+.mob .mc h4 { font-size:21px; margin:0; color:var(--ink); }
+.mob .mc p { font-size:16px; margin:0; color:var(--fg-secondary); line-height:1.4; }
+
+/* --- journey / phase map with a metric per phase --------------------------- */
+/* The chart is hand-drawn SVG (CHARTS.md); this is the frame around it. `.jmlab` takes a
+   grid-template-columns matching the chart's left padding plus one column per phase, so every
+   label sits under its point. */
+.jm { position:relative; }
+.jm svg { display:block; width:100%; height:auto; }
+.jmlab { display:grid; margin-top:10px; }
+.jmcell { padding:0 10px; text-align:center; border-left:1px solid var(--border-subtle); }
+.jmcell:first-child { border-left:none; }
+.jmcell .ph { font-size:19px; font-weight:700; color:var(--ink); margin-bottom:3px; }
+.jmcell .sc { font-size:27px; font-weight:700; line-height:1; margin-bottom:5px; }
+.jmcell .dt { font-size:14px; color:var(--fg-secondary); line-height:1.3; }
+.jmnote { display:flex; gap:9px; align-items:center; font-size:15px; font-weight:600; color:var(--fg-secondary); }
+.jmnote .sw { width:26px; height:9px; border-radius:99px; display:inline-block; }
