@@ -6,82 +6,93 @@
 
 ## Cómo se usa
 
-1. Elige la familia en `CANON.md`, sección 3.
-2. Copia el prompt maestro y rellena los campos.
-3. Pega el bloque de la familia que corresponda.
+1. Copia el prompt maestro. No hace falta rellenar nada: el prompt pregunta.
+2. Si ya sabes la familia y quieres ahorrarte la ronda, pega debajo el bloque que corresponda y
+   las respuestas que ya tengas.
 4. Si hay un caso anterior del mismo terreno, pasa su `PROVENANCE_AND_CHANGELOG.md` **solo como
    registro**, para heredar decisiones de alcance y caveats. Nunca para reusar su contenido.
 
 ## Prompt maestro
 
+Agnóstico al método y a la familia: el prompt pregunta lo que necesita saber antes de decidir
+nada. Copia el bloque completo, no le quites las preguntas.
+
 ```text
-Eres mi partner para construir un << reporte | estudio | muestra | propuesta >> de Noisia sobre
-<< sujeto, marca, categoría o tema >>, en << idioma y mercado, default español MX >>.
-Entregable: deck HTML 1920×1080 y su PDF.
+Vamos a construir un entregable de Noisia. Antes de proponer nada, lee el kit y pregúntame.
+
+EL KIT ESTÁ EN: /Users/brandhon_o/Downloads/noisia-product/packages/pitch-kit/
+Rama: pitch-kit/canon-2026-09
 
 LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni método:
-- packages/pitch-kit/CANON.md          el contrato del sistema y la familia que aplica
-- packages/pitch-kit/LAYOUTS.md        la secuencia de slides y qué componente usa cada una
-- packages/pitch-kit/COPY_RULES.md     cómo se escribe cada palabra
-- packages/pitch-kit/ICONS.md          iconos, logos de plataforma y assets
-- packages/pitch-kit/METHODOLOGY.md    qué se puede afirmar y con qué fuerza
-- packages/pitch-kit/DATA.md           el pipeline de datos, sus gates y sus salidas
-- packages/pitch-kit/engine/           el motor, se copia tal cual, no se forkea
-- packages/pitch-kit/slides/catalog.json  qué slides ya existen, no rehagas ninguna
-- packages/pitch-kit/slides/recipes.json  el esqueleto por escenario comercial
-- packages/pitch-kit/templates/        procedencia, changelog y guion por slide
+- CANON.md        el contrato: las tres autoridades, las familias, las reglas transversales
+- LAYOUTS.md      secuencias, portada, presupuesto de altura, glosarios como contrato de alcance
+- COPY_RULES.md   cada palabra, y la regla de títulos
+- CHARTS.md       barras, líneas, ejes, color por plataforma
+- ICONS.md        iconos y assets. Los glifos ya están en assets/icons.json
+- METHODOLOGY.md  qué se puede afirmar y con qué fuerza
+- DATA.md         el pipeline, sus gates y sus contratos de salida
+- LEARNINGS.md    reglas de campo, incluida la terminología por terreno
+- slides/catalog.json   qué slides existen y qué cabe en cada una
+Y si el entregable toca lo comercial, la KB manda sobre el contenido:
+packages/kb/00-overview/positioning.md y packages/kb/02-services/product-model.md
 
-Y si el entregable toca lo comercial, la KB manda sobre el contenido, no este kit:
-- packages/kb/00-overview/positioning.md   qué es Noisia y cómo se posiciona
-- packages/kb/02-services/product-model.md el catálogo vigente, R1 a R3 y E1 a E5
-- packages/kb/02-services/pricing-logic.md la lógica de cobro, nunca montos inventados
+PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna:
+1. ¿Reporte, estudio, o los dos?
+2. ¿En qué idiomas? Si son dos, se construyen juntos desde una sola fuente de contenido.
+3. ¿Qué método uso, y el cliente espera verlo nombrado en una slide o no?
+4. La pregunta de investigación en una frase, si es estudio. Un reporte no lleva.
+5. Sujeto, mercado y periodo, y qué fecha está completamente cerrada.
+6. Contra qué se compara: competidores, categoría, o nada.
+7. Quién recibe el deck, para calibrar vocabulario.
+8. ¿Ya hay exportaciones, o arrancamos por las queries?
 
-MONTAJE:
-- Carpeta de trabajo fuera del repo, o en packages/pitch-kit/examples/_local/ que está gitignored.
-- Copia engine/deck-template.html como index.html y los cuatro archivos del engine junto a él:
-  noisia-tokens.css, deck.css, deck-components.css, deck-stage.js, más logo_norm.svg y los assets.
-- Arma las slides con los fragmentos de slides/, no desde cero. Para un estudio ya existen
-  cover-study, tb-layers, channels y method. Rellena cada {{PLACEHOLDER}} y el NN / TOTAL del footer.
-
-ANTES DE ARRANCAR, pregúntame y cierra conmigo:
-1. La pregunta de investigación en una frase.
-2. Sujeto, geografía y periodo, y qué fecha está completamente cerrada.
-3. Contra qué se compara, y si es agnóstico, de marca o comparativo.
-4. Las rutas de las exportaciones y sus totales de tablero.
-5. Idioma, mercado y quién recibe el deck.
+SI ARRANCAMOS POR LAS QUERIES:
+Entrégamelas listas para copiar y pegar, una por bloque, con su nombre corto arriba y la
+configuración de interfaz al lado: idioma, país, ventana y fuentes. Nunca en piezas para que yo
+las combine. El razonamiento de cada query va en un archivo aparte. Recuerda que los acentos no
+están documentados en LQL, así que cada término acentuado va también sin acento.
 
 FLUJO:
 advisor para cerrar el alcance
-  → queries listas para pegar, una por línea, con su configuración de interfaz al lado
-  → exportaciones
+  → queries listas para pegar
   → ETL en streaming, nunca licuadora
-  → gates de calidad de DATA.md antes de cualquier conclusión
-  → mapa de hallazgos con conteos y verbatims reales ligados
-  → slides sobre el engine y las clases de deck-components.css
-  → render slide por slide y revisarlas a tamaño real
-  → PDF
-  → PROVENANCE_AND_CHANGELOG.md y GUION_POR_SLIDE.md
+  → los gates de DATA.md antes de cualquier conclusión, y me dices cuáles fallan
+  → codificación en dos ejes, con su cobertura y su guard de sesgo
+  → mapa de hallazgos con verbatims reales ligados
+  → slides sobre el engine, con los fragmentos de slides/
+  → render slide por slide con builders/qa-render.py, y los miras
+  → PDF, y lo revisas página por página
+  → PROVENANCE_AND_CHANGELOG.md y GUION_POR_SLIDE.md desde templates/
+
+EL MÉTODO, sea cual sea:
+El patrón es el mismo en las seis metodologías. Cada expresión se clasifica en DOS EJES
+independientes, los ejes no se suman entre sí, y se etiqueta después de ingerir, nunca dentro del
+query. Lo que se cuenta son menciones que llevan la señal, no motivos: "187 triggers" está
+prohibido, "187 menciones con señal de trigger" es lo correcto. El marco se explica en su propia
+slide, en humano, antes de que cualquier otra lo use. Y el glosario del estudio tiene ranuras
+fijas que tu método llena: el motivo, la unidad contada, los dos ejes, dónde vive y qué se puede
+mover.
 
 NO NEGOCIABLES:
 - Cero em dash en todo el HTML, incluido el title. Se verifica con grep antes de entregar.
 - Footer izquierdo: noisia · social intelligence architects
-- Se enlaza deck-components.css y se usan sus clases. El style del deck es solo para lo específico.
-  Si una clase tuya ya existe en el engine, bórrala y usa la del engine.
-- La portada y cualquier slide con ilustración a sangre llevan class="atmos plain", si no el blob
-  cyan del engine se encima sobre la ilustración.
-- assets/tb-map.png se usa tal cual, con su anillo interior en inglés, en cualquier idioma de deck.
-  No se le pone nada encima.
-- Iconos reales de Iconoir y Simple Icons. Nada dibujado a mano.
-- Verbatims reales, con liga, plataforma y fecha. Ninguno inventado.
-- Nunca se buscan triggers o barriers dentro del query. Se etiqueta después de ingerir.
-- No se suman queries solapados, no se confunden menciones con personas ni reach con apoyo.
+- Se enlazan los cuatro archivos del engine y se usan sus clases. Si una clase tuya ya existe en
+  el engine, bórrala. El style del deck es solo para lo específico de ese deck.
+- La portada y cualquier slide con fondo o ilustración a sangre llevan class="atmos plain".
+- Sin gradientes en nada que codifique un valor. Las líneas van curvadas, nunca en segmentos.
+- El título dice el hallazgo, nunca describe la slide, y no afirma ni más ni menos que su cifra.
+- Ninguna cifra se teclea: se calcula de la tabla codificada al construir.
+- La marca tiene que aparecer en el texto propio, no en el contexto heredado.
 - Un conteo sin validación se llama direccional, con esa palabra.
+- assets/tb-map.png se usa tal cual, con su anillo interior en inglés, en cualquier idioma.
+- Nada de mask-image, filter ni box-shadow en lo que se imprime. Se resuelve en el asset.
+- Los assets se entregan al tamaño del canvas, 1920 x 1080.
+- Verbatims reales, con liga, plataforma y fecha, y sin la liga pegada dentro del texto.
 - Ningún dato de cliente entra al repo. El deck vive en una carpeta local.
-- Las queries se entregan armadas y listas para copiar y pegar, nunca en bloques para que yo los
-  combine. El razonamiento de cada una va aparte.
 
-Avísame en cuanto una decisión cambie el universo o la interpretación. Al final dime qué puede
-afirmarse, qué solo es direccional y qué no permite concluir esta base.
+Avísame en cuanto una decisión cambie el universo o la interpretación, y si los datos no dan para
+lo que pedí, dímelo antes de construir, no después. Al final dime qué puede afirmarse, qué solo es
+direccional y qué no permite concluir esta base.
 ```
 
 ## Bloque · Estudio de Triggers y Barriers
