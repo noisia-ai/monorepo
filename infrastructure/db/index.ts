@@ -84,6 +84,7 @@ export * from "./signal-topic-consolidation-control";
 
 export * from "./signal-topic-consolidation-editorial";
 export * from "./signal-topic-consolidation-editorial-input";
+export * from "./signal-topic-interest-review-preparation";
 export * from "./signal-topic-editorial-runtime";
 export * from "./signal-topic-editorial-materialization";
 
