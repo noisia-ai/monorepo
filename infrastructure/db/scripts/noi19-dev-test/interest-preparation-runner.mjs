@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import {lookup} from 'node:dns/promises';
 import http from 'node:http';
 import https from 'node:https';
-import {guardInterestPreparationEnvironment,sealedTableCount,guardDns,guardDatabase} from './target-guard.mjs';
+import {guardInterestPreparationEnvironment,guardInterestPreparationPositiveMode,sealedTableCount,guardDns,guardDatabase} from './target-guard.mjs';
 
 import {identitySql,publicTables,verifyEmpty,schemaFingerprint} from './database-checks.mjs';
 import {savepointQueryable} from './signal-imported-transaction.mjs';
@@ -16,6 +16,8 @@ const report={contract_version:'interest-preparation-sql-preflight-receipt-v1',a
 let pool,client,outer=false,closed=false,heartbeat,cleanup;
 const fixedError=(error)=>/^noi19_dev_test_[a-z_]+$/u.test(error?.message??'')?error.message:'noi19_dev_test_execution_failed';
 try{
+ const positive=guardInterestPreparationPositiveMode(process.argv.slice(2),process.env);
+ if(positive)report.acceptance_scope='positive_preparation_with_savepoint_replay_and_physical_rollback';
  validateInterestPreparationMigration(manifest,migration);
  const connection=guardInterestPreparationEnvironment(process.env,seal);
  const tableCount=sealedTableCount(seal,{requireExplicit:true});
@@ -66,11 +68,21 @@ try{
  const {register}=await import('tsx/esm/api');register();
  const {assertSignalTopicInterestReviewPreparationV1,INTEREST_PREPARATION_ASSERTION_NAMES}=await import('../../migrations/signal-topic-interest-review.assertions.ts');
  report.fixture_mutations_started=true;
- await assertSignalTopicInterestReviewPreparationV1({test:async(name,fn)=>{await fn();report.assertions.push({name,status:'passed'});}},
-  {database,scoped,query,cleanup});
+ const test={test:async(name,fn)=>{await fn();report.assertions.push({name,status:'passed'});}};
+ // Run the unchanged preflight inside its own savepoint. Its identities must not
+ // leak into the positive fixture's empty-target precondition.
+ if(positive)await query('BEGIN');
+ try{await assertSignalTopicInterestReviewPreparationV1(test,{database,scoped,query,cleanup});}
+ finally{if(positive)await query('ROLLBACK');}
+ let expectedNames=[...INTEREST_PREPARATION_ASSERTION_NAMES];
+ if(positive){
+  const {assertSignalTopicInterestReviewPositiveV1,INTEREST_PREPARATION_POSITIVE_ASSERTION_NAMES}=await import('../../migrations/signal-topic-interest-review.positive.assertions.ts');
+  await assertSignalTopicInterestReviewPositiveV1(test,{database,scoped,query,cleanup});
+  expectedNames.push(...INTEREST_PREPARATION_POSITIVE_ASSERTION_NAMES);
+ }
  if(nested.depth)throw Error('noi19_dev_test_unbalanced_transaction');
- if(report.assertions.length!==INTEREST_PREPARATION_ASSERTION_NAMES.length
-  ||report.assertions.some((item,index)=>item.name!==INTEREST_PREPARATION_ASSERTION_NAMES[index]))throw Error('noi19_dev_test_assertions_incomplete');
+ if(report.assertions.length!==expectedNames.length
+  ||report.assertions.some((item,index)=>item.name!==expectedNames[index]))throw Error('noi19_dev_test_assertions_incomplete');
  if(report.provider_transports!==0)throw Error('noi19_dev_test_transport_forbidden');
  await cleanup();
  if(!report.physical_rollback||!report.post_rollback_empty)throw Error('noi19_dev_test_rollback_verification_failed');

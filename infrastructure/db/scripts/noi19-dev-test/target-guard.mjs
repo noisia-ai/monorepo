@@ -65,3 +65,13 @@ export function guardInterestPreparationEnvironment(env,seal){
   if(sealedTableCount(seal,{requireExplicit:true})!==299)fail('schema_mismatch');
   return guardEnvironment(env,seal,'NOISIA_INTEREST_PREPARATION_PRIVATE_TEST_APPROVED');
 }
+
+/** Positive fixture includes simulated receipts in the real ledgers, and is a
+ * distinct action from the earlier identity-only preflight. Both approvals are
+ * required; neither enables provider transports or a physical commit. */
+export function guardInterestPreparationPositiveMode(argv,env){
+  if(argv.length===0)return false;
+  if(argv.length!==1||argv[0]!=='--positive-preparation')fail('arguments_invalid');
+  if(env.NOISIA_INTEREST_PREPARATION_POSITIVE_APPROVED!=='true')fail('positive_approval_required');
+  return true;
+}

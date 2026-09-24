@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
-import {guardInterestPreparationEnvironment} from './target-guard.mjs';
+import {guardInterestPreparationEnvironment,guardInterestPreparationPositiveMode} from './target-guard.mjs';
 import {validateInterestPreparationMigration,assertInterestPreparationBase} from './interest-preparation-plan.mjs';
 
 const base=JSON.parse(await readFile(new URL('./target-seal.json',import.meta.url),'utf8'));
@@ -28,6 +28,23 @@ test('preflight inherits strict private target and credential isolation',()=>{
   {DATABASE_URL:env.DATABASE_URL.replace('railway.internal','proxy.example.test')},{PGHOST:'elsewhere'},
   {ANTHROPIC_API_KEY:'must-not-appear'},{NODE_OPTIONS:'--require ./unsafe.js'}])
   assert.throws(()=>guardInterestPreparationEnvironment({...env,...changed},seal),error=>/^noi19_dev_test_/.test(error.message)&&!error.message.includes('must-not-appear'));
+});
+test('positive fixture requires explicit mode plus additional approval without inheriting it from preflight',()=>{
+ assert.equal(guardInterestPreparationPositiveMode([],env),false);
+ assert.throws(()=>guardInterestPreparationPositiveMode(['--positive-preparation'],env),/positive_approval_required/);
+ assert.equal(guardInterestPreparationPositiveMode(['--positive-preparation'],{...env,NOISIA_INTEREST_PREPARATION_POSITIVE_APPROVED:'true'}),true);
+ for(const argv of [['--positive'],['--positive-preparation','extra']])
+  assert.throws(()=>guardInterestPreparationPositiveMode(argv,{...env,NOISIA_INTEREST_PREPARATION_POSITIVE_APPROVED:'true'}),/arguments_invalid/);
+});
+test('positive entrypoint cannot reach DNS or SQL with an unsealed target and never claims full acceptance',()=>{
+ const result=spawnSync(process.execPath,[new URL('./interest-preparation-runner.mjs',import.meta.url).pathname,'--positive-preparation'],
+  {env:{...env,NOISIA_INTEREST_PREPARATION_POSITIVE_APPROVED:'true'},encoding:'utf8',timeout:5000});
+ assert.equal(result.status,1);const report=JSON.parse(result.stdout);
+ assert.equal(report.acceptance_scope,'positive_preparation_with_savepoint_replay_and_physical_rollback');
+ assert.equal(report.full_preparation_acceptance,false);assert.equal(report.remote_connected,false);
+ assert.equal(report.fixture_mutations_started,false);assert.equal(report.provider_transports,0);
+ assert.match(report.error_code,/^noi19_dev_test_(target_unsealed|schema_mismatch|environment_mismatch)$/);
+ assert.doesNotMatch(result.stdout+result.stderr,/synthetic-password/);
 });
 test('migration bytes and manifest cannot silently include an extra or changed migration',()=>{
  validateInterestPreparationMigration(manifest,migration);

@@ -268,6 +268,36 @@ Local guard tests never connect:
 pnpm --filter @noisia/db db:test:interest-preparation-guards
 ```
 
+### September24 follow-up: positive preparation fixture written, PG execution pending
+
+The optional `--positive-preparation` mode now composes a synthetic Brand OS/KB
+input with real semantic publication, prototype receipts, the existing three-root
+workspace fixture, numeric control0175 and guarded census/community materializers.
+Two numerical groups are explicitly invented; neither BERTopic nor a provider is
+run. Intake input rows are a fixture, not acceptance of Studio's creation routes.
+The fixture supplies explicit synthetic runtime/bindings without reading provider
+environment variables. HTTP remains blocked before imports.
+
+The mode requires **both** `NOISIA_INTEREST_PREPARATION_PRIVATE_TEST_APPROVED=true`
+and `NOISIA_INTEREST_PREPARATION_POSITIVE_APPROVED=true`, the exact command flag,
+and all previous private-target, empty299-table and reviewed-schema guards.
+Neither approval nor the flag is enabled by this documentation. No remote command
+has been executed; the authentication blocker and missing seals remain unchanged.
+
+It first runs the eight earlier preflight cases inside a savepoint and rolls back
+their identities. Then it runs eight positive scenarios: prepare/load, replay,
+resealed incomplete/duplicate/reordered/foreign matrices, immutable history,
+catalog drift/new identity, tenant isolation/revocation, knowledge drift and
+unchanged paid history/assignments. The seed creates **simulated** receipts through
+real functions; unchanged-history checks compare complete rows **after the seed**.
+
+Receipts use `acceptance_scope=positive_preparation_with_savepoint_replay_and_physical_rollback`
+and still `full_preparation_acceptance=false`. A successful future receipt would
+prove these rollback-only scenarios, not committed replay, crash recovery,
+concurrency, maximum capacity, provider quality, UI creation, actual BERTopic or
+classification. Physical rollback and a fresh empty/schema verification remain
+mandatory before any PASS. The imported-Signal six-case gate is still separate.
+
 After a preflight failure, inspect its bounded receipt and preserve the source.
 Do not retry automatically, substitute a populated target, copy real customer
 rows, disable triggers or turn mocks into an acceptance claim.
