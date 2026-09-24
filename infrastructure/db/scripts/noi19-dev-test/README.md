@@ -6,10 +6,16 @@ On September 24, the operator inspected the existing PostgreSQL service
 original service values, not changes to PostgreSQL. The earlier runner contract
 incorrectly assumed user `postgres` and database `railway`. The seal and strict
 allowlist now use the two observed values; the private host, port and service
-identities remain the same. This UI observation does not attest a server system
-identifier, schema fingerprint or table count: those remain unsealed until a
-successful read-only bootstrap receipt is reviewed. No SQL was run for this
-correction, and the bootstrap remains the next remote step.
+identities remain the same. Subsequent private read-only receipts sealed system
+identifier `7683766906362679330`. The first restored database contained only
+pre-data objects; the available complete schema was actually at SQL0140, not
+SQL0152. SQL0141–0152 passed on an empty local PostgreSQL database, and its
+schema-only dump was restored into a new private dev-test database. Both prior
+incomplete databases remain retained under separate names. The current
+read-only receipt confirms 269 empty tables and SHA
+`1767ba283151f2859f85e03871ad906ba8ab078fbb562bfe5030369592e7c228`.
+No business data was copied. SQL0153–0182 also passed locally on that empty
+schema; remote transactional acceptance remains pending.
 
 ## Explicit empty dev-test schema upgrade: 0152 → 0182
 
@@ -33,7 +39,7 @@ The command verifies all 30 checked-in SQL byte hashes against
 `upgrade-0152-0182-manifest.json` before connecting. It runs one mutation
 transaction, takes the same advisory lock as the synthetic gates, locks every
 old public table in ACCESS EXCLUSIVE mode, and checks identity, count, emptiness,
-fingerprint and absent 0153/0182 markers before the first migration. Controlled
+fingerprint, required 0152 markers and absent 0153/0182 markers before the first migration. Controlled
 `extensions.digest(bytea,text)` must exist; enabled DDL event triggers are refused.
 The restored dev-test schema has pgcrypto owned in `public` and an immutable
 `extensions.digest(bytea,text)` SQL bridge to its extension-owned function.
@@ -191,8 +197,9 @@ must contain the reviewed `system_identifier`, `schema_sha256`, and an explicit
 positive integer `table_count` from the current read-only bootstrap. Missing
 `table_count` remains equivalent to 269 for historical helper callers, but is
 rejected by this new gate. Never copy runtime observations straight into the
-mutating expectation or supply a count through environment/CLI. The seal has
-not been filled by this implementation.
+mutating expectation or supply a count through environment/CLI. This separate
+gate requires a fresh post-upgrade 299-table seal; the current 0152 seal
+cannot authorize it.
 
 This gate requires `NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED=true` instead
 of the historical NOI-19 approval flag. All environment/service/host/role/IP,
