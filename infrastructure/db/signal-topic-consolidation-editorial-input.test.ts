@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import type { PoolClient } from 'pg';
-import { signalTopicEditorialDigestV1 as digest, type SignalTopicEditorialEvidenceLoadV1 } from '@noisia/query-engine';
-import { loadSignalTopicConsolidationEditorialInputV1 } from './signal-topic-consolidation-editorial-input';
+import { signalTopicEditorialDigestV1 as digest, signalTopicDefinitionDigestV1, type SignalTopicDefinitionV1, type SignalTopicEditorialEvidenceLoadV1 } from '@noisia/query-engine';
+import { loadSignalTopicConsolidationEditorialInputV1, loadSignalTopicInterestReviewInputV1 } from './signal-topic-consolidation-editorial-input';
 import type { SignalTopicAtomicCensusV1, SignalTopicConsolidationCommunityPlanV1 } from './signal-topic-consolidation';
 import type { SignalTopicInheritedContextStoreV1 } from './signal-topic-catalog';
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -39,10 +39,17 @@ function fixture(count = 2) {
   const inherited: SignalTopicInheritedContextStoreV1 = { context_digest: census.context_digest, editorial_context: structuredClone(context),
     embedding_text: '', negative_embedding_text: '', embedding_contexts: {} as SignalTopicInheritedContextStoreV1['embedding_contexts'], context_refs: [],
     locale: { primary_locale: 'es-MX', languages: ['es-MX'], markets: ['MX'], timezone: 'America/Mexico_City' } };
+  const interests: Array<{ term_key: string; metadata: { topic: SignalTopicDefinitionV1 } }> = [];
   let alter = (rows: Array<SignalTopicEditorialEvidenceLoadV1 & { asset_sha256: string }>) => rows;
   const client = { query: async (sql: string, params?: unknown[]) => {
     trace.push(sql);
     assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE)\b/u);
+    if (sql.includes('SELECT term.term_key,term.metadata')) {
+      assert.deepEqual(params, [id(9100), scope.workspace_id]);
+      assert.match(sql, /profile.workspace_id=\$2::uuid/u);
+      assert.match(sql, /profile.taxonomy_id=term.taxonomy_id/u);
+      return { rows: interests };
+    }
     if (!sql.includes('WITH requested AS')) return { rows: [] };
     assert.deepEqual(params?.slice(0, 3), [scope.workspace_id, scope.numeric_run_id, census.source_execution_id]);
     assert.match(sql, /execution\.preparation_run_id/u); assert.match(sql, /atomic\.consolidation_run_id=\$2/u);
@@ -57,7 +64,7 @@ function fixture(count = 2) {
       assert.equal(args.complete_context, true); assert.equal(args.require_current_semantic_authority, true);
       assert.equal(args.include_editorial_context, true); return inherited; },
   };
-  return { source, inherited, trace, batches, dependencies, alter: (fn: typeof alter) => { alter = fn; },
+  return { source, inherited, trace, batches, dependencies, interests, client, alter: (fn: typeof alter) => { alter = fn; },
     args: { ...scope, database: { connect: async () => client } } };
 }
 test('loads all groups through bounded snapshot evidence reads and emits only verified UTF-16 fragments', async () => {
@@ -96,4 +103,54 @@ test('rejects missing, duplicate, foreign and changed evidence without partial r
     await assert.rejects(loadSignalTopicConsolidationEditorialInputV1(f.args, f.dependencies), /evidence_unavailable|evidence_duplicate|range_invalid|asset_changed|hash_invalid/u);
     assert.deepEqual(f.trace.slice(-2), ['ROLLBACK', 'release']);
   }
+});
+
+function interest(): SignalTopicDefinitionV1 {
+  const value: SignalTopicDefinitionV1 = { term_key: 'voice_routines', label: 'Rutinas por voz',
+    definition: 'Automatización doméstica con comandos de voz.', scope: 'primary_brand',
+    inclusion: ['Rutinas domésticas'], exclusion: ['Rutinas de gimnasio'], positive_examples: [], negative_examples: [],
+    origin: 'manual', lifecycle: 'draft', discovery_guidance: false, source: null, definition_revision: 3,
+    definition_digest: sha('placeholder'), created_at: '2026-09-24T00:00:00.000Z', updated_at: '2026-09-24T00:00:00.000Z' };
+  return { ...value, definition_digest: signalTopicDefinitionDigestV1(value) };
+}
+function interestDependencies(f: ReturnType<typeof fixture>) {
+  return { ...f.dependencies, profile: async (args: { queryable: unknown; workspace_id: string }) => {
+    assert.equal(args.queryable, f.client); assert.equal(args.workspace_id, scope.workspace_id);
+    f.trace.push('interest-profile');
+    return { id: id(9100), taxonomy_id: id(9101), version: 3, status: 'draft' as const,
+      context_hash: digest('catalog'), created_at: '', updated_at: '' };
+  } };
+}
+test('opt-in interest entry shares authorized evidence snapshot and preserves the historical screening plan', async () => {
+  const previous = fixture();
+  const historical = await loadSignalTopicConsolidationEditorialInputV1(previous.args, previous.dependencies);
+  assert.ok(!previous.trace.some(sql => sql.includes('taxonomy_terms')));
+  const f = fixture(), definition = interest();
+  f.interests.push({ term_key: definition.term_key, metadata: { topic: definition } });
+  const result = await loadSignalTopicInterestReviewInputV1(f.args, interestDependencies(f));
+  assert.ok(JSON.stringify(result).includes(definition.definition_digest));
+  assert.ok(JSON.stringify(result).includes('Rutinas de gimnasio'));
+  assert.ok(JSON.stringify(result).includes(historical.plan.plan_digest));
+  assert.deepEqual(f.trace.slice(-2), ['COMMIT', 'release']);
+  assert.equal(f.trace.filter(sql => sql.startsWith('BEGIN')).length, 1);
+  assert.ok(f.trace.indexOf('source') < f.trace.indexOf('interest-profile'));
+});
+test('interest preparation rolls back for missing catalog, mismatched identity and invalid definition digest', async () => {
+  for (const mode of ['missing', 'identity', 'digest']) {
+    const f = fixture(), definition = interest();
+    f.interests.push({ term_key: mode === 'identity' ? 'wrong_term' : definition.term_key,
+      metadata: { topic: mode === 'digest' ? { ...definition, definition_digest: sha('wrong') } : definition } });
+    const deps = interestDependencies(f);
+    await assert.rejects(loadSignalTopicInterestReviewInputV1(f.args, mode === 'missing'
+      ? { ...deps, profile: async () => null } : deps));
+    assert.deepEqual(f.trace.slice(-2), ['ROLLBACK', 'release']);
+  }
+});
+test('interest preparation respects source authorization before reading the catalog', async () => {
+  const f = fixture(), deps = interestDependencies(f);
+  deps.source = async () => { throw Error('processing_forbidden'); };
+  await assert.rejects(loadSignalTopicInterestReviewInputV1(f.args, deps), /processing_forbidden/u);
+  assert.ok(!f.trace.includes('interest-profile'));
+  assert.ok(!f.trace.some(sql => sql.includes('taxonomy_terms')));
+  assert.deepEqual(f.trace.slice(-2), ['ROLLBACK', 'release']);
 });

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { prepareSignalTopicEditorialInputV1, signalTopicEditorialDigestV1,
+  buildSignalTopicInterestReviewV1, signalTopicDefinitionSchemaV1, type SignalTopicInterestReviewV1,
   type SignalTopicEditorialEvidenceLoadV1, type SignalTopicEditorialPreparedInputV1 } from '@noisia/query-engine';
-import { loadSignalTopicInheritedContextStoreV1 } from './signal-topic-catalog';
+import { loadSignalTopicInheritedContextStoreV1, loadSignalTopicWorkingProfileWithQueryableV1 } from './signal-topic-catalog';
 import { readSignalTopicConsolidationEditorialSourceWithQueryableV1,
   SignalTopicEditorialStoreError, type SignalTopicEditorialDatabaseV1 } from './signal-topic-consolidation-editorial';
 
@@ -15,6 +16,35 @@ const readers = { source: readSignalTopicConsolidationEditorialSourceWithQueryab
 /** Private server projection, never a browser-supplied context or evidence locator. */
 export async function loadSignalTopicConsolidationEditorialInputV1(args: Scope & { database: SignalTopicEditorialDatabaseV1 },
   dependencies: typeof readers = readers): Promise<SignalTopicEditorialPreparedInputV1> {
+  return withPreparedInput(args, dependencies, async (_client, input) => input);
+}
+
+const interestReaders = { ...readers, profile: loadSignalTopicWorkingProfileWithQueryableV1 };
+
+/** Opt-in preparation only. No existing paid screening request, job or ledger is
+ * changed. The catalog and evidence are read inside the same authorized snapshot. */
+export async function loadSignalTopicInterestReviewInputV1(args: Scope & { database: SignalTopicEditorialDatabaseV1 },
+  dependencies: typeof interestReaders = interestReaders): Promise<SignalTopicInterestReviewV1> {
+  return withPreparedInput(args, dependencies, async (client, input) => {
+    const profile = await dependencies.profile({ queryable: client, workspace_id: args.workspace_id });
+    if (!profile) return fail('topic_interest_catalog_required');
+    const rows = (await client.query<{ term_key: string; metadata: { topic?: unknown } }>(`
+      SELECT term.term_key,term.metadata FROM taxonomy_terms term
+      JOIN signal_taxonomy_profiles profile ON profile.taxonomy_id=term.taxonomy_id
+      WHERE profile.id=$1::uuid AND profile.workspace_id=$2::uuid AND profile.kind='topic'
+      ORDER BY term.term_key COLLATE "C"`, [profile.id, args.workspace_id])).rows;
+    const definitions = rows.map(row => {
+      const definition = signalTopicDefinitionSchemaV1.parse(row.metadata?.topic);
+      if (definition.term_key !== row.term_key) return fail('topic_interest_catalog_identity_invalid');
+      return definition;
+    });
+    return buildSignalTopicInterestReviewV1({ workspace_id: args.workspace_id, taxonomy_profile_id: profile.id,
+      definitions, screening_plan: input.plan });
+  });
+}
+
+async function withPreparedInput<T>(args: Scope & { database: SignalTopicEditorialDatabaseV1 },
+  dependencies: typeof readers, project: (client: PoolClient, input: SignalTopicEditorialPreparedInputV1) => Promise<T>): Promise<T> {
   const client = await args.database.connect();
   try {
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -35,8 +65,9 @@ export async function loadSignalTopicConsolidationEditorialInputV1(args: Scope &
       load_evidence: request => readEvidence(client, args, source.census.source_execution_id,
         censusSnapshotDigest, request),
     });
+    const projected = await project(client, result);
     await client.query('COMMIT');
-    return result;
+    return projected;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw error;
