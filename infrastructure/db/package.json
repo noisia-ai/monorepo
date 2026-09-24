@@ -100,7 +100,9 @@
     "db:test:noi19-private-bootstrap": "node scripts/noi19-dev-test/bootstrap-readonly.mjs",
     "db:test:noi19-private": "node scripts/noi19-dev-test/runner.mjs",
     "db:test:signal-imported-private": "node scripts/noi19-dev-test/signal-imported-runner.mjs",
-    "db:test:noi19-private-guards": "node --test scripts/noi19-dev-test/guards.test.mjs"
+    "db:test:noi19-private-guards": "node --test scripts/noi19-dev-test/guards.test.mjs",
+    "db:upgrade:dev-test-0152-0182": "node scripts/noi19-dev-test/upgrade-0152-0182.mjs",
+    "db:test:dev-test-upgrade-guards": "node --test scripts/noi19-dev-test/upgrade-0152-0182.test.mjs"
   },
   "dependencies": {
     "@noisia/query-engine": "workspace:*",

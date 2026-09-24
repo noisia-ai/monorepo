@@ -1,5 +1,80 @@
 # NOI-19: synthetic private-network PostgreSQL gate
 
+On September 24, the operator inspected the existing PostgreSQL service
+`8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0` in `dev-test` through the Railway UI:
+`POSTGRES_USER=noisia_dev` and `POSTGRES_DB=noisia_dev_test`. These were the
+original service values, not changes to PostgreSQL. The earlier runner contract
+incorrectly assumed user `postgres` and database `railway`. The seal and strict
+allowlist now use the two observed values; the private host, port and service
+identities remain the same. This UI observation does not attest a server system
+identifier, schema fingerprint or table count: those remain unsealed until a
+successful read-only bootstrap receipt is reviewed. No SQL was run for this
+correction, and the bootstrap remains the next remote step.
+
+## Explicit empty dev-test schema upgrade: 0152 → 0182
+
+`upgrade-0152-0182.mjs` is a separate maintenance command. Neither test runner,
+the Docker default, nor the read-only bootstrap invokes it. It is not an UAT
+migration command. It accepts only the private dev-test identity already pinned
+in `target-seal.json`, with a newly observed/reviewed `system_identifier`, the
+**old** schema SHA and explicit `table_count: 269`. Never copy runtime observations
+into the seal automatically. A source that is populated, partially migrated,
+already upgraded, or differs from the sealed fingerprint is rejected.
+
+After reviewing the read-only bootstrap receipt and sealing that exact old
+target, the operator must set `NOISIA_DEV_TEST_SCHEMA_UPGRADE_APPROVED=true` in
+the private runner environment and invoke this command explicitly:
+
+```
+pnpm --filter @noisia/db db:upgrade:dev-test-0152-0182 --commit-empty-0152-to-0182
+```
+
+The command verifies all 30 checked-in SQL byte hashes against
+`upgrade-0152-0182-manifest.json` before connecting. It runs one mutation
+transaction, takes the same advisory lock as the synthetic gates, locks every
+old public table in ACCESS EXCLUSIVE mode, and checks identity, count, emptiness,
+fingerprint and absent 0153/0182 markers before the first migration. Controlled
+`extensions.digest(bytea,text)` must exist; enabled DDL event triggers are refused.
+There is no extension relocation, automatic schema repair, down migration,
+provider execution, data copy, fixture insertion or cleanup of existing rows.
+
+Static viability review: the SQL package only installs schema/functions/ACLs,
+apart from the technical singleton inserted by 0167. On an empty `mentions`
+table the original backfill function must return zero; 0168 still checks that
+completion and 0169 validates both constraints and removes only the scratch
+table/function created by 0167 in this same transaction. The separately committed
+batch requirement for a populated production table does not apply to this
+empty target. The 0178 empty-editorial-ledger guard remains intact. Installing
+provider admission functions/triggers does not invoke them or create permissions.
+
+The exact expected result is **299 empty public tables**: 30 permanent additions,
+including the `IF NOT EXISTS` cohort checkpoint in 0163, plus the temporary
+0167 scratch table removed by 0169. Before COMMIT, the command checks the exact
+table-name delta, completed 0182 markers, validated text digest invariant, zero
+rows and a changed schema SHA. After COMMIT acknowledgment it opens a fresh
+read-only transaction to verify identity, count, empty state and the new SHA.
+The secret-free receipt includes all 30 source/applied hashes and before/after
+counts and fingerprints. Only `status=committed`, `commit_acknowledged=true` and
+`post_commit_verified=true` confirm the complete result.
+
+An error before COMMIT rolls back; a lost acknowledgment is reported as
+`commit_outcome_unverified`, never retried or represented as rollback. A failed
+post-commit check is `committed_verification_failed`: inspect read-only and do
+not rerun the upgrade. After a successful receipt, separately review/reseal the
+new SHA and `table_count: 299` before running the imported Signal gate. The old
+NOI-19 runner remains tied to its historical schema and is not the gate for this
+upgraded target. Disable the one-shot upgrade approval after maintenance.
+
+Local validation (no PostgreSQL, DNS or providers):
+
+```
+pnpm --filter @noisia/db db:test:dev-test-upgrade-guards
+```
+
+The local fake-client tests verify ordering and rejection paths; they do not
+claim a PostgreSQL execution or remote schema upgrade. A live reviewed bootstrap
+receipt and the explicit maintenance invocation remain required.
+
 This is a finite test program, not a Worker service. It is not enabled by GET,
 application polling, a scheduler or a product flag. It never opens a public proxy,
 starts Redis, calls a provider, imports customer data or applies a migration.

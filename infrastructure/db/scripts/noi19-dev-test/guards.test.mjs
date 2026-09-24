@@ -8,8 +8,8 @@ const shipped=JSON.parse(await readFile(new URL('./target-seal.json',import.meta
 const seal={...shipped,runner_service_id:'00000000-0000-4000-8000-000000000001',system_identifier:'1234567890123456789',schema_sha256:'a'.repeat(64)};
 const env={RAILWAY_ENVIRONMENT_ID:seal.environment_id,RAILWAY_ENVIRONMENT_NAME:'dev-test',RAILWAY_SERVICE_ID:seal.runner_service_id,
  NOISIA_DEV_TEST_DATABASE_SERVICE_ID:seal.database_service_id,NOISIA_NOI19_PRIVATE_TEST_APPROVED:'true',
- DATABASE_URL:'postgresql://postgres:synthetic-password@pgvector.railway.internal:5432/railway'};
-const row={database:'railway',user:'postgres',address:'fd12:3456::1',port:5432,version:'170005',system_identifier:seal.system_identifier};
+ DATABASE_URL:'postgresql://noisia_dev:synthetic-password@pgvector.railway.internal:5432/noisia_dev_test'};
+const row={database:'noisia_dev_test',user:'noisia_dev',address:'fd12:3456::1',port:5432,version:'170005',system_identifier:seal.system_identifier};
 test('the mutating runner refuses an unsealed database even when environment/host match',()=>{
  assert.throws(()=>guardEnvironment(env,{...seal,system_identifier:null}),/target_unsealed/u);
  assert.throws(()=>guardEnvironment(env,{...seal,schema_sha256:null}),/target_unsealed/u);
@@ -17,11 +17,14 @@ test('the mutating runner refuses an unsealed database even when environment/hos
  assert.equal(guardBootstrapEnvironment(env,{...seal,system_identifier:null,schema_sha256:null}).host,seal.host);
 });
 test('private environment, runner, database service, URL database and role must all match',()=>{
- assert.equal(guardEnvironment(env,seal).database,'railway');
+ assert.equal(guardEnvironment(env,seal).database,'noisia_dev_test');
+ assert.equal(guardEnvironment(env,seal).user,'noisia_dev');
+ assert.throws(()=>guardEnvironment(env,{...seal,database:'railway'}),/seal_invalid/u);
+ assert.throws(()=>guardEnvironment(env,{...seal,user:'postgres'}),/seal_invalid/u);
  for(const key of ['RAILWAY_ENVIRONMENT_ID','RAILWAY_ENVIRONMENT_NAME','RAILWAY_SERVICE_ID','NOISIA_DEV_TEST_DATABASE_SERVICE_ID','NOISIA_NOI19_PRIVATE_TEST_APPROVED'])
   assert.throws(()=>guardEnvironment({...env,[key]:'wrong'},seal),/environment_mismatch/u);
  for(const url of [env.DATABASE_URL.replace('railway.internal','proxy.rlwy.net'),env.DATABASE_URL+'?host=evil.example.test',env.DATABASE_URL+'#secret',
-  env.DATABASE_URL.replace('/railway','/production'),env.DATABASE_URL.replace('postgres:','wrong:'),env.DATABASE_URL.replace(':5432',':6543'),
+  env.DATABASE_URL.replace('/noisia_dev_test','/production'),env.DATABASE_URL.replace('noisia_dev:','wrong:'),env.DATABASE_URL.replace(':5432',':6543'),
   env.DATABASE_URL.replace('postgresql:','https:'),'not-a-url'])
   assert.throws(()=>guardEnvironment({...env,DATABASE_URL:url},seal),/noi19_dev_test_/u);
 });
@@ -61,7 +64,7 @@ test('new imported gate requires its own approval and an explicit reviewed count
   assert.throws(()=>guardSignalImportedEnvironment({...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:count}),/target_unsealed/u);
  assert.throws(()=>guardSignalImportedEnvironment(env,{...seal,table_count:300}),/environment_mismatch/u);
  assert.equal(guardSignalImportedEnvironment({...env,NOISIA_NOI19_PRIVATE_TEST_APPROVED:undefined,
-  NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:300}).database,'railway');
+  NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:300}).database,'noisia_dev_test');
  assert.throws(()=>guardSignalImportedEnvironment({...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},
   {...seal,table_count:300,schema_sha256:null}),/target_unsealed/u);
 });

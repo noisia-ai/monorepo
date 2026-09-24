@@ -1,0 +1,161 @@
+{
+  "contract_version": "dev-test-empty-0152-to-0182-manifest-v1",
+  "from_migration": "0152",
+  "to_migration": "0182",
+  "before_table_count": 269,
+  "after_table_count": 299,
+  "added_tables": [
+    "signal_brand_context_processing_receipts",
+    "signal_brand_context_prototype_receipts",
+    "signal_brand_context_semantic_renewals",
+    "signal_brand_context_source_reconciliations",
+    "signal_processing_admissions",
+    "signal_processing_policy_actions",
+    "signal_processing_policy_versions",
+    "signal_semantic_context_automatic_cohort_validations",
+    "signal_topic_atomic_group_evidence",
+    "signal_topic_atomic_group_roots",
+    "signal_topic_atomic_groups",
+    "signal_topic_consolidation_activation_operations",
+    "signal_topic_consolidation_artifacts",
+    "signal_topic_consolidation_bindings",
+    "signal_topic_consolidation_communities",
+    "signal_topic_consolidation_community_members",
+    "signal_topic_consolidation_decisions",
+    "signal_topic_consolidation_executions",
+    "signal_topic_consolidation_outbox",
+    "signal_topic_consolidation_request_keys",
+    "signal_topic_consolidation_revisions",
+    "signal_topic_consolidation_runs",
+    "signal_topic_consolidation_snapshots",
+    "signal_topic_editorial_calls",
+    "signal_topic_editorial_concepts",
+    "signal_topic_editorial_executions",
+    "signal_topic_editorial_outbox",
+    "signal_topic_editorial_request_keys",
+    "signal_topic_editorial_requests",
+    "signal_workspace_interpretation_exceptions"
+  ],
+  "migrations": [
+    {
+      "file": "0153_signal_brand_context_preparation.sql",
+      "sha256": "12313855826e27e81b6d7916d5f44c91582ec1612a30abdb0a05b47a6ce033f5"
+    },
+    {
+      "file": "0154_signal_workspace_operational_profiles.sql",
+      "sha256": "2880164263fac8bc361c93ffd38a4da5a3e360e97354e432498dc493225a2a0f"
+    },
+    {
+      "file": "0155_signal_processing_policy.sql",
+      "sha256": "4e4014f114e862c70059284d9e1bbf2618b67308edd7560fd5baed8879c20ee9"
+    },
+    {
+      "file": "0156_signal_brand_context_composed_admission.sql",
+      "sha256": "56e8810a0f619149de773c1902ec20b80befae1eeb0926d133bd5abf64acada2"
+    },
+    {
+      "file": "0157_signal_brand_context_prototype_admission.sql",
+      "sha256": "86dde9eb1b8ff0ef37434b268f9e653ef6506c3cea34651ca8f681a139246903"
+    },
+    {
+      "file": "0158_signal_brand_context_trigger_acl.sql",
+      "sha256": "bf63dfe094f19119796db686e172f5c475fabe0efa1093e0fc98230d1c09e17d"
+    },
+    {
+      "file": "0159_signal_brand_context_source_reconciliation.sql",
+      "sha256": "0be97f5bc9dfe4c0b20e7347a828807bd6fb95a96582f7e97e5b158007bfc8e7"
+    },
+    {
+      "file": "0160_signal_brand_context_semantic_admission_renewal.sql",
+      "sha256": "4e7596e3fd3a62eeecf81b8637bcb9d5ba072d6e34f78b46a23d8ce452073592"
+    },
+    {
+      "file": "0161_signal_brand_context_prototype_refresh.sql",
+      "sha256": "e4519724cd7271fff3a85b65ebadfb41b4cbe021e5f646cfcada66ccbfd24bf9"
+    },
+    {
+      "file": "0162_signal_brand_context_internal_operator_admission.sql",
+      "sha256": "63b7e8a113d07eee87495e88249406b36ccdf9deca95792827a29ac87a438fe4"
+    },
+    {
+      "file": "0163_signal_semantic_context_cohort_validation_checkpoint.sql",
+      "sha256": "fca428b422ae0e3fc2441a6e828edfe4e166fd5292c38a131bc27fac14a201db"
+    },
+    {
+      "file": "0164_signal_semantic_context_digest_extension_binding.sql",
+      "sha256": "af6c61588bd0232a0070f0a2973819d65223f2fbc966536d861c0d747c8020c6"
+    },
+    {
+      "file": "0165_signal_brand_context_prototype_context_refresh.sql",
+      "sha256": "c89e21c9f4187e1fa3ea08314eea58ca78f7b6bddb58191b76086ed97a1445bd"
+    },
+    {
+      "file": "0166_signal_brand_context_source_authority_digest.sql",
+      "sha256": "4e43bf12db51a653bc9e5bb7d957919ac41db4bbf927a4de84bd138e26037549"
+    },
+    {
+      "file": "0167_signal_mentions_text_digest.sql",
+      "sha256": "2968cd26c3abd6041c38f1d170c45dfe8454d14f66a311817f90669ece0aeaa2"
+    },
+    {
+      "file": "0168_signal_mentions_text_digest_finalize.sql",
+      "sha256": "42aa89bea1126dd71ba5bb576004e0818864261cad0d646447292596d9e4e0ca"
+    },
+    {
+      "file": "0169_signal_mentions_text_digest_validate.sql",
+      "sha256": "922490968dfaa3afef7606e9701b26757ea887d7f95c6d0d123dfb18b5fdc1d1"
+    },
+    {
+      "file": "0170_signal_workspace_terminal_billing_reconciliation.sql",
+      "sha256": "ca8d58303842f3a25fd737a251a09192c579009b058686a3024a10484d9774f8"
+    },
+    {
+      "file": "0171_signal_workspace_interpretation_exceptions.sql",
+      "sha256": "0c1bddd221690c92f9c7d31281bcf06e53e7ce54b76a465a6f00c84e2cdf76e0"
+    },
+    {
+      "file": "0172_signal_workspace_terminal_late_billing_reconciliation.sql",
+      "sha256": "94385704d1077b8587af0b0c0cd1893f143a43398b2da1fba70e6eb1f72157ff"
+    },
+    {
+      "file": "0173_signal_workspace_terminal_billing_scale.sql",
+      "sha256": "2ce536e4424316fcc167f1b1d0bd24556870507eb57b550b3237cf4ed6ccfd61"
+    },
+    {
+      "file": "0174_signal_topic_consolidation_foundation.sql",
+      "sha256": "e7e3b3c5802463eb86a95b40a3d72dc905ee9fed8cd90590802e990564a3725d"
+    },
+    {
+      "file": "0175_signal_topic_consolidation_control.sql",
+      "sha256": "639d4ac3120928369ea016ebeaaf9dc74a31d107e136a45f7579220044f1d92e"
+    },
+    {
+      "file": "0176_signal_topic_consolidation_editorial.sql",
+      "sha256": "cdd8b6eeeb084f3de9956f7f03c09951ea81d303ee874121dd704f6653ee9b3c"
+    },
+    {
+      "file": "0177_signal_topic_consolidation_numeric_guard.sql",
+      "sha256": "07b77f06bcb55d5f99cad7056f75d4413c300dae70abba1be949fe448f0a4309"
+    },
+    {
+      "file": "0178_signal_topic_editorial_catalog_contract.sql",
+      "sha256": "6a2f58ea9b4cde35c2d38cddfdf3e97195c4dc8f68e5a92635d543779b5ac1a3"
+    },
+    {
+      "file": "0179_signal_topic_editorial_materialization.sql",
+      "sha256": "6a2f2e2743dc48a346287e73becfbcfa320e17d2ddb7451187791b662c911a54"
+    },
+    {
+      "file": "0180_signal_topic_editorial_role_hardening.sql",
+      "sha256": "c67d0762a39c79aa098aa874836fac1daab8157cef6b579b49cb975437765120"
+    },
+    {
+      "file": "0181_signal_topic_consolidation_activation.sql",
+      "sha256": "0a586b332a4585d04557b17ab193494c7aaa6e1e9b059c4de7f10419a594d09a"
+    },
+    {
+      "file": "0182_signal_topic_editorial_plan_successor.sql",
+      "sha256": "63c760779d6de2382cad5b2f71ec1ae2eac90f7e3a72b5c839bea8d06dbd8f0f"
+    }
+  ]
+}
