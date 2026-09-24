@@ -1,0 +1,7 @@
+{
+  "contract_version": "interest-preparation-rehearsal-manifest-v1",
+  "base_table_count": 299,
+  "installed_table_count": 300,
+  "migration_file": "0183_signal_topic_interest_review.sql",
+  "migration_sha256": "6ac6e1bb9f4ba99e049fec380329dc24c3cc384370ee8ea94ad59463c8340a2d"
+}

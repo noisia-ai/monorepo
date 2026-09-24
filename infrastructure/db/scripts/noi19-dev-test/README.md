@@ -217,3 +217,57 @@ Offline validation uses `node --test scripts/noi19-dev-test/guards.test.mjs`.
 The added gate has not been run against PostgreSQL by this local implementation.
 Current remote service status must be observed separately; historical README
 status and a completed container alone are not evidence of a passing SQL gate.
+
+
+## Interest preparation0183 — SQL preflight only, not full acceptance
+
+`interest-preparation-runner.mjs` rehearses installation of the exact0183 bytes
+pinned in `interest-preparation-manifest.json` inside an outer transaction that
+always rolls back. It does not extend or invoke the0152–0182 upgrade, modify the
+runner's default command, seal observed identities automatically, or enable any
+provider. The checked-in target remains unsealed: do not attempt this command
+until the already-reported private authentication failure is corrected and a
+fresh read-only receipt is reviewed.
+
+This command requires its own `NOISIA_INTEREST_PREPARATION_PRIVATE_TEST_APPROVED=true`,
+the reviewed private target seal, exactly299 empty public tables at0182, no0183
+markers, and no enabled DDL event triggers. Approval for the imported Signal,
+NOI-19 or schema-upgrade runner does not authorize this one. It uses the same
+private identity/DNS, credential exclusion, schema fingerprint, single-runner
+lock and post-rollback verification helpers. No new remote service is needed.
+
+When those conditions are satisfied, the explicit command is:
+
+```
+pnpm --filter @noisia/db db:test:interest-preparation-private
+```
+
+**Do not execute it now.** No approved target identity or corrected connection
+has been received in the current session. The command exists for future use;
+this file is not authorization to connect.
+
+Its receipt explicitly declares
+`acceptance_scope=ddl_contracts_negative_paths_only` and
+`full_preparation_acceptance=false`. The cases cover the real0183 installation,
+fixed configuration and canonical digest, Unicode/definition normalization and
+limits, private ACL/RLS, absent authority/source rejection, and unchanged paid
+pipeline rows. Tiny invented actor/workspace records are rolled back. HTTP
+transports are disabled in the process before fixture imports. SQL errors are
+reported only as bounded codes and SQLSTATE, never rows, credentials or payloads.
+
+It does **not** prove successful prepare/load, replay after commit, source/catalog
+drift on a valid preparation, complete group/interest coverage against persisted
+numeric evidence, or concurrency. Those require the missing full synthetic
+source fixture and a separate acceptance stage. A passed preflight is insufficient
+for UAT, paid admission or classification. The existing imported-Signal six-case
+gate remains independent and mandatory.
+
+Local guard tests never connect:
+
+```
+pnpm --filter @noisia/db db:test:interest-preparation-guards
+```
+
+After a preflight failure, inspect its bounded receipt and preserve the source.
+Do not retry automatically, substitute a populated target, copy real customer
+rows, disable triggers or turn mocks into an acceptance claim.
