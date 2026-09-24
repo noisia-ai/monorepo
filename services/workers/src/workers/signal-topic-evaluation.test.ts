@@ -12,7 +12,8 @@ import { classifySignalTopicEvaluationProviderBoundaryV1,
 import { createAnthropicTopicEvaluationProviderV1, generateAnthropicBoundedTextV1,
   sanitizeSignalTopicEvaluationJobErrorV1 } from
   "../providers/anthropic-bounded-text";
-import { drainSignalTopicEvaluationOutboxV1 } from "./signal-topic-evaluation-outbox";
+import { drainSignalTopicEvaluationOutboxV1,
+  startSignalTopicEvaluationOutboxDrainerV1 } from "./signal-topic-evaluation-outbox";
 
 test("topic evaluation uses one bounded structured-output transport call",async()=>{
   let calls=0;let closed=false;
@@ -187,4 +188,21 @@ test("disabled-by-default outbox never connects or dispatches",async()=>{
   assert.deepEqual(await drainSignalTopicEvaluationOutboxV1({database:database as never,queue,
     enabled:false}),{claimed:0,dispatched:0,dead_lettered:0});
   assert.equal(connects,0);assert.equal(queueCalls,0);
+});
+
+test("a transient database connection failure does not kill the scheduled drainer",async()=>{
+  let connects=0;
+  const database={connect:async()=>{
+    connects+=1;
+    if(connects===1)throw new Error("synthetic private connection failure");
+    return{query:async()=>({rows:[],rowCount:0}),release:()=>undefined};
+  }};
+  const drainer=startSignalTopicEvaluationOutboxDrainerV1({database:database as never,
+    queue:{add:async()=>{throw new Error("must_not_dispatch");}},
+    enabled:true,interval_ms:60_000});
+  await new Promise<void>((resolve)=>setImmediate(resolve));
+  assert.equal(connects,1);
+  assert.deepEqual(await drainer.drainNow(),{claimed:0,dispatched:0,dead_lettered:0});
+  assert.equal(connects,2);
+  await drainer.close();
 });
