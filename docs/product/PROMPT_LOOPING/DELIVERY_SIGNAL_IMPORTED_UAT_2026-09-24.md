@@ -16,6 +16,12 @@ Este recibo amplía el Compass y la historia previa. No certifica Topics, clasif
 - La importación terminó: 57 filas, 51 incluidas, 3 excluidas, 3 duplicadas, 54 menciones únicas recibidas. Signal abrió sin ejecutar Topics: Resumen muestra `CONVERSACIONES IMPORTADAS`, clasificación pendiente y 51 menciones en el periodo; Menciones muestra 51 conversaciones y 51 textos accesibles. [Signal QA](https://studio-uat-uat.up.railway.app/signal/national-qa-importado-2026-09-24) y [Menciones QA](https://studio-uat-uat.up.railway.app/signal/national-qa-importado-2026-09-24/mentions).
 - El corpus de ese archivo incluye contenidos ajenos a Alamo. Signal refleja lo recibido y aprobado; no se infiere relevancia semántica ni precisión de clasificación. La generación de queries y la evaluación de pertinencia siguen pendientes.
 
+### Segunda carga real, alcance de ingesta
+
+En la misma marca QA se agregó `Budget` como relación competitiva mediante Brand OS. La UI exigió crear y activar la versión 2 del plan de ámbitos; quedó registrado el motivo de QA y permanecieron los archivos de Alamo. Se importó `Budget.csv` del material del operador en el slot Budget, sin afirmar que el playbook de queries sea evidencia de la query realmente ejecutada. El archivo cubre enero–agosto de 2026 y se registró expresamente que la query ejecutada no estaba disponible.
+
+El segundo archivo terminó con 55/55 registros incluidos, cero excluidos o duplicados. Datos muestra dos archivos, 112 filas leídas y 109 menciones únicas con texto, frente a 54 antes de la segunda carga. [Menciones QA](https://studio-uat-uat.up.railway.app/signal/national-qa-importado-2026-09-24/mentions) pasó de 51 a 106 conversaciones con texto; el Worker nuevo registró la finalización del job `signal-import-39940b53-a87b-43c6-85b4-90be3d0ab06d` a las 13:00:10 CST. Esta es una prueba de ingesta incremental y refresco temprano de Signal. No acredita reutilización de embeddings/clusters ni reclasificación incremental, porque esta marca QA aún no tiene análisis numérico ni Topics. La lista también contiene conversaciones ajenas a la renta de autos, lo que hace visible la deuda de queries/pertinencia.
+
 ## Fallo operativo observado y recuperación
 
 El intento quedó inicialmente `queued` con outbox `pending`, disponible y `attempt_count=0`. Redis no tenía trabajos activos. El Worker UAT antiguo seguía marcado ACTIVE por Railway; sus logs históricos muestran un rechazo no capturado del drainer de evaluación de Topics al agotarse la conexión PostgreSQL, seguido de salida y reinicio automático. No está demostrado que esa salida histórica sea la causa única del atasco de hoy. Se reinició sólo ese Worker, sin repetir el upload: startup en modo recovery encontró una fila reclamable y la importación terminó.
@@ -25,6 +31,6 @@ Se corrigió el drainer para capturar fallos de conexión de la pasada programad
 ## Siguiente corte
 
 1. Conectar la revisión versionada de intereses a admisión/recuperación durable, decisión con citas, membresías persistentes y proyección del mismo interés a Signal. SQL0183 aún no está en UAT.
-2. Completar 42 lotes de consolidación/ranking de Alexa+ sólo con autoridad vigente de proveedor y ledger; última comprobación 2/42. Después probar una segunda carga real y luego queries por ámbito, reportes agente, MCP y escala.
+2. Completar 42 lotes de consolidación/ranking de Alexa+ sólo con autoridad vigente de proveedor y ledger; última comprobación 2/42. Después probar una segunda carga con clasificación existente para verificar reutilización, clusters emergentes y Signal, no sólo ingesta. Queries por ámbito, reportes agente, MCP y escala quedan después.
 
 No hubo llamadas de Claude/Voyage en esta entrega. El loop programado permanece pausado por petición del operador. Linear sigue pendiente de reconexión; no se afirma una actualización externa.
