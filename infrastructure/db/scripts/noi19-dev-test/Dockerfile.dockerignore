@@ -12,6 +12,7 @@
 !infrastructure/db/seeds/
 !infrastructure/db/seeds/connection.ts
 !infrastructure/db/migrations/
+!infrastructure/db/migrations/signal-workspace-imported-serving.assertions.ts
 !infrastructure/db/migrations/signal-client-workspace-entry.assertions.ts
 !infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts
 !infrastructure/db/migrations/signal-workspace-topic-projection.fixture.ts

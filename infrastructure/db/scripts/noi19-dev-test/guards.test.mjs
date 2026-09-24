@@ -44,11 +44,76 @@ test('an empty population is required for every public table, never just an empt
  assert.throws(()=>guardEmptyTables(rows.map((row,index)=>index===268?{...row,nonempty:true}:row)),/database_not_empty/u);
  assert.throws(()=>guardEmptyTables(rows.map((row,index)=>index===0?{...row,nonempty:null}:row)),/database_not_empty/u);
 });
-test('checked-in entrypoints fail before DNS/PG with the incomplete source seal; stdout is secret-free',()=>{
- assert.equal(shipped.system_identifier,null);assert.match(shipped.runner_service_id,/^[0-9a-f-]{36}$/u);
+test('checked-in entrypoints reject invented runtime identity before DNS/PG; stdout is secret-free',()=>{
+ assert.notEqual(env.RAILWAY_SERVICE_ID,shipped.runner_service_id);assert.match(shipped.runner_service_id,/^[0-9a-f-]{36}$/u);
  for(const name of ['runner.mjs','bootstrap-readonly.mjs']){
   const result=spawnSync(process.execPath,[new URL(name,import.meta.url).pathname],{env:{...env,DATABASE_URL:'never-print-this-secret'},encoding:'utf8',timeout:5000});
   assert.equal(result.status,1);assert.doesNotMatch(result.stdout+result.stderr,/never-print-this-secret|synthetic-password/u);
-  if(name==='runner.mjs'){const receipt=JSON.parse(result.stdout);assert.equal(receipt.remote_executed,false);assert.equal(receipt.error_code,'noi19_dev_test_target_unsealed');}
+  if(name==='runner.mjs'){const receipt=JSON.parse(result.stdout);assert.equal(receipt.remote_executed,false);assert.match(receipt.error_code,/^noi19_dev_test_(target_unsealed|environment_mismatch)$/u);}
  }
+});
+
+test('new imported gate requires its own approval and an explicit reviewed count; old count defaults to 269',async()=>{
+ const {sealedTableCount,guardSignalImportedEnvironment}=await import('./target-guard.mjs');
+ assert.equal(sealedTableCount(seal),269);
+ assert.equal(sealedTableCount({...seal,table_count:300}),300);
+ for(const count of [undefined,null,0,-1,1.5,'300',Number.MAX_SAFE_INTEGER+1])
+  assert.throws(()=>guardSignalImportedEnvironment({...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:count}),/target_unsealed/u);
+ assert.throws(()=>guardSignalImportedEnvironment(env,{...seal,table_count:300}),/environment_mismatch/u);
+ assert.equal(guardSignalImportedEnvironment({...env,NOISIA_NOI19_PRIVATE_TEST_APPROVED:undefined,
+  NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:300}).database,'railway');
+ assert.throws(()=>guardSignalImportedEnvironment({...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},
+  {...seal,table_count:300,schema_sha256:null}),/target_unsealed/u);
+});
+
+test('read-only table inventory accepts newer schemas but mutation uses the exact sealed count',async()=>{
+ const {publicTables,tableEmptiness,verifyEmpty}=await import('./database-checks.mjs');
+ let nonempty=false;
+ const client={query:async(sql)=>({rows:sql.includes('pg_class')
+  ?Array.from({length:300},(_,i)=>({name:`synthetic_${i}`})):[{nonempty}]})};
+ const inventory=await publicTables(client,null);assert.equal(inventory.length,300);
+ await assert.rejects(publicTables(client),/schema_mismatch/u);
+ await assert.rejects(publicTables(client,299),/schema_mismatch/u);
+ const tables=await publicTables(client,300);await verifyEmpty(client,tables,300);
+ await assert.rejects(verifyEmpty(client,tables),/database_not_empty/u);
+ nonempty=true;
+ assert.equal((await tableEmptiness(client,tables)).every(row=>row.nonempty),true);
+ await assert.rejects(verifyEmpty(client,tables,300),/database_not_empty/u);
+});
+
+test('imported entrypoint rejects unsealed target before DNS and prints no input secrets',()=>{
+ const result=spawnSync(process.execPath,[new URL('signal-imported-runner.mjs',import.meta.url).pathname],
+  {env:{...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true',DATABASE_URL:'do-not-print-imported-secret'},encoding:'utf8',timeout:5000});
+ assert.equal(result.status,1);assert.doesNotMatch(result.stdout+result.stderr,/do-not-print-imported-secret|synthetic-password/u);
+ const report=JSON.parse(result.stdout);assert.match(report.error_code,/^noi19_dev_test_(target_unsealed|environment_mismatch)$/u);
+ assert.equal(report.remote_connected,false);assert.equal(report.fixture_mutations_started,false);
+ assert.equal(report.physical_rollback,false);assert.equal(report.post_rollback_empty,false);
+});
+
+test('savepoint adapter preserves ordered reader settings and never commits the physical transaction',async()=>{
+ const {savepointQueryable}=await import('./signal-imported-transaction.mjs');
+ const statements=[];const nested=savepointQueryable({query:async(sql)=>{statements.push(sql);return{rows:[]};}});
+ await nested.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL enable_nestloop=off; SET LOCAL jit=off");
+ assert.equal(nested.depth,1);
+ await nested.query('BEGIN');await nested.query('ROLLBACK');await nested.query('COMMIT');assert.equal(nested.depth,0);
+ assert.deepEqual(statements,["SAVEPOINT signal_imported_1","SET LOCAL TIME ZONE 'UTC'","SET LOCAL search_path=public,extensions,pg_temp",
+  'SET LOCAL enable_nestloop=off','SET LOCAL jit=off','SAVEPOINT signal_imported_2','ROLLBACK TO SAVEPOINT signal_imported_2',
+  'RELEASE SAVEPOINT signal_imported_2','RELEASE SAVEPOINT signal_imported_1']);
+ await assert.rejects(nested.query('COMMIT'),/unbalanced_transaction/u);
+ await assert.rejects(nested.query('BEGIN; DELETE FROM mentions'),/transaction_setup_invalid/u);
+});
+
+test('savepoint setup failure can roll back the nested transaction',async()=>{
+ const {savepointQueryable}=await import('./signal-imported-transaction.mjs');const statements=[];
+ const nested=savepointQueryable({query:async(sql)=>{statements.push(sql);if(sql==='SET LOCAL jit=off')throw Error('synthetic setup failure');return{rows:[]};}});
+ await assert.rejects(nested.query('BEGIN; SET LOCAL jit=off'),/synthetic setup failure/u);
+ assert.equal(nested.depth,1);await nested.query('ROLLBACK');assert.equal(nested.depth,0);
+ assert.deepEqual(statements.slice(-2),['ROLLBACK TO SAVEPOINT signal_imported_1','RELEASE SAVEPOINT signal_imported_1']);
+});
+
+test('imported schema gate requires all current signatures and the validated exact-text invariant',async()=>{
+ const {assertImportedServingSchema}=await import('./signal-imported-transaction.mjs');
+ const valid={binding:true,snapshot:true,successor:true,projection:true,digest_validated:true,digest_required:true,digest_maintained:true};
+ await assertImportedServingSchema({query:async()=>({rows:[valid]})});
+ for(const key of Object.keys(valid))await assert.rejects(assertImportedServingSchema({query:async()=>({rows:[{...valid,[key]:false}]})}),/schema_mismatch/u);
 });

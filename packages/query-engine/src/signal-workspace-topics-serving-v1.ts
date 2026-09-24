@@ -60,3 +60,20 @@ export type SignalWorkspaceTopicEvidencePageV1 = {
   }>;
   next_cursor: string | null;
 };
+
+/** An accepted, rights-filtered corpus before classification. Null classification
+ * counts mean not analyzed; they are not zero-valued model results. */
+export type SignalWorkspaceImportedIdentityV1 = {
+  source: "workspace_imported";
+  classification_state: "pending";
+  generation_id: null;
+  source_engine_execution_id: null;
+};
+export type SignalWorkspaceImportedOverviewV1 = Omit<SignalWorkspaceTopicsOverviewV1,
+  "source" | "generation_id" | "source_engine_execution_id" | "coverage" | "quality" | "series"> & SignalWorkspaceImportedIdentityV1 & {
+  quality: "not_analyzed";
+  evidence_visible_total: number;
+  series: Array<{ date: string; mention_count: number; assigned_unique: null }>;
+  coverage: { processed: null; assigned_unique: null; abstained: null; noise: null; unresolved: null; withheld: null };
+};
+export type SignalWorkspaceOverviewV1 = SignalWorkspaceTopicsOverviewV1 | SignalWorkspaceImportedOverviewV1;

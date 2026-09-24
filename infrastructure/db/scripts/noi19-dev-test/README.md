@@ -28,10 +28,10 @@ command-line bypass for those checks.
    CLI arguments, a local file or test receipt.
 4. Run `pnpm --filter @noisia/db db:test:noi19-private-bootstrap` inside that
    service's private network. It validates the environment, runner and database
-   service IDs, exact hostname/port/database/role, every DNS answer, PG17, all
-   269 empty public tables, and uses `default_transaction_read_only=on`.
-   It emits only the nonsecret database system identifier, schema SHA, counts
-   and verification status. The connection is pinned to a resolved private IP;
+   service IDs, exact hostname/port/database/role, every DNS answer, PG17 and all public tables, and uses `default_transaction_read_only=on`.
+   It emits only the nonsecret database system identifier, schema SHA, table count,
+   nonempty-table count and `status=observed`. A newer schema or nonempty database
+   is reported read-only; this observation never authorizes fixture mutation. The connection is pinned to a resolved private IP;
    `inet_server_addr()` must agree with it. No application modules are imported.
    A rejection prints only a fixed `noi19_dev_test_*` stage code, never the
    connection URL, environment, query, row or underlying error text.
@@ -91,8 +91,54 @@ pnpm --filter @noisia/db typecheck
 ```
 
 The guard tests use invented credentials only and do not connect to PostgreSQL.
-The database-backed synthetic bootstrap has not yet been executed on Railway.
-The existing local PG result is retained; it was not repeated for this runner.
+The original September 10 documentation did not record a completed remote
+bootstrap. Determine current runtime status from its receipts; this historical
+statement is not a fresh observation. The existing local PG result is retained.
 No remote readiness or delivery claim is valid until phase two returns
 `status=passed`, `physical_rollback=true`, `post_rollback_empty=true` and zero
 provider transports against the newly sealed private target.
+
+## Signal from import: separate focal gate (SQL0182 schema)
+
+The historical `db:test:noi19-private` runner and its 269-table/SQL0152 gate
+remain unchanged. The new command is separate:
+
+```
+pnpm --filter @noisia/db db:test:signal-imported-private
+```
+
+Before that command may mutate a fixture, the checked-in `target-seal.json`
+must contain the reviewed `system_identifier`, `schema_sha256`, and an explicit
+positive integer `table_count` from the current read-only bootstrap. Missing
+`table_count` remains equivalent to 269 for historical helper callers, but is
+rejected by this new gate. Never copy runtime observations straight into the
+mutating expectation or supply a count through environment/CLI. The seal has
+not been filled by this implementation.
+
+This gate requires `NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED=true` instead
+of the historical NOI-19 approval flag. All environment/service/host/role/IP,
+private-DNS, no-provider-credentials, all-table emptiness, schema fingerprint,
+advisory and table-lock guards remain. The bootstrap still uses the original
+bootstrap approval flag and remains the image/default Railway command; adding
+this entrypoint does not schedule or automatically run it.
+
+The runner verifies current consolidation binding/snapshot functions, the
+SQL0182 successor signature, and the validated, maintained, non-null exact-text
+digest invariant before importing the fixture. It invokes only
+`assertSignalWorkspaceImportedServingV1`: three invented accepted roots and six
+SQL acceptance scenarios, with no preparation, embedding, Engine or provider
+execution. It does not apply or repair migrations. A schema mismatch blocks the
+gate and requires a separately reviewed infrastructure action.
+
+Nested store reads use savepoints and preserve their UTC/search-path/query
+planner settings. The outer physical transaction always rolls back, followed
+by a fresh read-only all-table emptiness and schema-fingerprint verification.
+HTTP/fetch remain blocked. A 180-second connected-work watchdog closes the
+physical connection on timeout; no verified rollback is claimed on timeout.
+A passing receipt requires all six assertions, zero transports,
+`physical_rollback=true`, and `post_rollback_empty=true`.
+
+Offline validation uses `node --test scripts/noi19-dev-test/guards.test.mjs`.
+The added gate has not been run against PostgreSQL by this local implementation.
+Current remote service status must be observed separately; historical README
+status and a completed container alone are not evidence of a passing SQL gate.
