@@ -41,8 +41,8 @@ test('manifest covers exactly 30 unchanged SQL files in order and 30 permanent a
  assert.deepEqual(created.filter(name=>!dropped.includes(name)).sort(),plan.added_tables);
 });
 
-test('source gate rejects existing 0153/0182 markers, absent controlled pgcrypto or enabled DDL event triggers',async()=>{
- const valid={absent_0153:true,absent_0182:true,digest_ready:true,no_event_triggers:true};
+test('source gate requires 0152 and rejects existing 0153/0182 markers, absent controlled pgcrypto or enabled DDL event triggers',async()=>{
+ const valid={source_0152:true,absent_0153:true,absent_0182:true,digest_ready:true,no_event_triggers:true};
  await assertUpgradeSource({query:async()=>({rows:[valid]})});
  for(const key of Object.keys(valid))await assert.rejects(assertUpgradeSource({query:async()=>({rows:[{...valid,[key]:false}]})}),/upgrade_source_invalid/u);
 });
@@ -61,7 +61,7 @@ function fakeDatabase(options={}){
   if(sql.includes('pg_try_advisory_xact_lock'))return{rows:[{locked:options.busy!==true}]};
   if(sql.includes('SELECT c.relname name'))return{rows:applied===30?old.concat(plan.added_tables.map(name=>({name}))):old};
   if(sql.includes('nonempty'))return{rows:[{nonempty:options.nonempty===true||(options.postNonempty===true&&applied===30)}]};
-  if(sql.includes('absent_0153'))return{rows:[{absent_0153:!options.reapplied,absent_0182:true,digest_ready:true,no_event_triggers:true}]};
+  if(sql.includes('absent_0153'))return{rows:[{source_0152:true,absent_0153:!options.reapplied,absent_0182:true,digest_ready:true,no_event_triggers:true}]};
   if(sql.includes('public.backfill_signal_mention_text_clean_sha256_v1(1)'))return{rows:[{empty:true,updated:options.backfill??0}]};
   if(sql.includes('digest_validated'))return{rows:[{binding:true,snapshot:true,successor:true,projection:true,digest_validated:true,digest_required:true,digest_maintained:true}]};
   if(sql.includes('column_0182'))return{rows:[{column_0182:true,trigger_0182:true}]};

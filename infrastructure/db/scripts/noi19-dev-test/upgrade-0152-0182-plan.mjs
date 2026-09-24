@@ -36,6 +36,12 @@ export async function assertUpgradeSource(client){
  // extensions.digest bridge required by 0164. Accept only a pgcrypto-owned
  // digest or that immutable, invoker-rights bridge to pgcrypto's public member.
  const row=(await client.query(`SELECT
+  EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('public.signal_topic_classification_outbox')
+    AND attname='dispatch_kind' AND NOT attisdropped)
+   AND EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('public.signal_topic_catalog_executions')
+    AND attname='interpretation_revision' AND NOT attisdropped)
+   AND to_regprocedure('public.workspace_incremental_editorial_renewal_releasable_v1(engine_cost_events)') IS NOT NULL
+   AS source_0152,
   NOT EXISTS(SELECT 1 FROM pg_attribute WHERE NOT attisdropped AND
     ((attrelid=to_regclass('public.signal_governance_control_operations') AND attname IN('brand_context_preparation','brand_context_progress'))
      OR (attrelid IN(to_regclass('public.signal_semantic_context_proposal_runs'),to_regclass('public.signal_workspace_embedding_runs')) AND attname='brand_context_preparation_operation_id')
@@ -57,7 +63,7 @@ export async function assertUpgradeSource(client){
         AND lang.lanname='sql' AND bridge.provolatile='i' AND NOT bridge.prosecdef
         AND bridge.prosrc='SELECT public.digest($1,$2)')) digest_ready,
   NOT EXISTS(SELECT 1 FROM pg_event_trigger WHERE evtenabled<>'D') no_event_triggers`)).rows[0];
- if(!row||['absent_0153','absent_0182','digest_ready','no_event_triggers'].some(key=>row[key]!==true))fail('upgrade_source_invalid');
+ if(!row||['source_0152','absent_0153','absent_0182','digest_ready','no_event_triggers'].some(key=>row[key]!==true))fail('upgrade_source_invalid');
 }
 
 /** Called only by the explicit upgrade entrypoint after connected identity is
