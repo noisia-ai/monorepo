@@ -11,11 +11,16 @@ identifier `7683766906362679330`. The first restored database contained only
 pre-data objects; the available complete schema was actually at SQL0140, not
 SQL0152. SQL0141–0152 passed on an empty local PostgreSQL database, and its
 schema-only dump was restored into a new private dev-test database. Both prior
-incomplete databases remain retained under separate names. The current
-read-only receipt confirms 269 empty tables and SHA
+incomplete databases remain retained under separate names. The pre-upgrade
+read-only receipt confirmed 269 empty tables and SHA
 `1767ba283151f2859f85e03871ad906ba8ab078fbb562bfe5030369592e7c228`.
-No business data was copied. SQL0153–0182 also passed locally on that empty
-schema; remote transactional acceptance remains pending.
+No business data was copied. SQL0153–0182 passed locally and then committed
+once on private dev-test: all 30 checked-in migrations, 299 empty tables,
+zero provider transports, acknowledged COMMIT and fresh read-only verification.
+The post-upgrade SHA is
+`ff26cd9ba6c0cbe2c8b6e7178b85463a3fa67ecea0f0f91ef672213b0cc3f94b`.
+The target seal now pins that 299-table result; the 0152 maintenance command
+cannot run against it again.
 
 ## Explicit empty dev-test schema upgrade: 0152 → 0182
 
@@ -197,9 +202,9 @@ must contain the reviewed `system_identifier`, `schema_sha256`, and an explicit
 positive integer `table_count` from the current read-only bootstrap. Missing
 `table_count` remains equivalent to 269 for historical helper callers, but is
 rejected by this new gate. Never copy runtime observations straight into the
-mutating expectation or supply a count through environment/CLI. This separate
-gate requires a fresh post-upgrade 299-table seal; the current 0152 seal
-cannot authorize it.
+mutating expectation or supply a count through environment/CLI. The separate
+gate now has the reviewed post-upgrade 299-table seal. It still requires its
+own explicit approval and a six-scenario rollback receipt.
 
 This gate requires `NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED=true` instead
 of the historical NOI-19 approval flag. All environment/service/host/role/IP,

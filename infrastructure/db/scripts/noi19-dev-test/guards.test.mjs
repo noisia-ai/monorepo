@@ -69,7 +69,8 @@ test('checked-in entrypoints reject invented runtime identity before DNS/PG; std
 
 test('new imported gate requires its own approval and an explicit reviewed count; old count defaults to 269',async()=>{
  const {sealedTableCount,guardSignalImportedEnvironment}=await import('./target-guard.mjs');
- assert.equal(sealedTableCount(seal),269);
+ assert.equal(sealedTableCount({...seal,table_count:undefined}),269);
+ assert.equal(sealedTableCount(seal),299);
  assert.equal(sealedTableCount({...seal,table_count:300}),300);
  for(const count of [undefined,null,0,-1,1.5,'300',Number.MAX_SAFE_INTEGER+1])
   assert.throws(()=>guardSignalImportedEnvironment({...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:count}),/target_unsealed/u);
