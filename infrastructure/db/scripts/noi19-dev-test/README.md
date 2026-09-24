@@ -35,6 +35,10 @@ transaction, takes the same advisory lock as the synthetic gates, locks every
 old public table in ACCESS EXCLUSIVE mode, and checks identity, count, emptiness,
 fingerprint and absent 0153/0182 markers before the first migration. Controlled
 `extensions.digest(bytea,text)` must exist; enabled DDL event triggers are refused.
+The restored dev-test schema has pgcrypto owned in `public` and an immutable
+`extensions.digest(bytea,text)` SQL bridge to its extension-owned function.
+The source guard accepts this exact bridge or a digest directly owned by
+pgcrypto; it does not relocate the extension or accept an arbitrary function.
 There is no extension relocation, automatic schema repair, down migration,
 provider execution, data copy, fixture insertion or cleanup of existing rows.
 

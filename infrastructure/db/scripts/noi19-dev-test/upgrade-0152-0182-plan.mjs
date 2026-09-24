@@ -32,6 +32,9 @@ export async function loadUpgradePlan(manifest,read=readFile){
 }
 
 export async function assertUpgradeSource(client){
+ // A dev-test restore can keep pgcrypto in public while exposing the exact
+ // extensions.digest bridge required by 0164. Accept only a pgcrypto-owned
+ // digest or that immutable, invoker-rights bridge to pgcrypto's public member.
  const row=(await client.query(`SELECT
   NOT EXISTS(SELECT 1 FROM pg_attribute WHERE NOT attisdropped AND
     ((attrelid=to_regclass('public.signal_governance_control_operations') AND attname IN('brand_context_preparation','brand_context_progress'))
@@ -40,9 +43,19 @@ export async function assertUpgradeSource(client){
   to_regprocedure('public.signal_topic_editorial_execution_replaceable_v1(uuid)') IS NULL
     AND NOT EXISTS(SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('public.signal_topic_editorial_executions')
       AND attname='supersedes_execution_id' AND NOT attisdropped) absent_0182,
-  EXISTS(SELECT 1 FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace
-    WHERE e.extname='pgcrypto' AND n.nspname='extensions')
-    AND to_regprocedure('extensions.digest(bytea,text)') IS NOT NULL digest_ready,
+  (EXISTS(SELECT 1 FROM pg_depend d JOIN pg_extension e ON e.oid=d.refobjid
+    WHERE d.classid='pg_proc'::regclass AND d.refclassid='pg_extension'::regclass
+      AND d.objid=to_regprocedure('extensions.digest(bytea,text)')
+      AND d.deptype='e' AND e.extname='pgcrypto')
+   OR EXISTS(SELECT 1 FROM pg_proc bridge JOIN pg_language lang ON lang.oid=bridge.prolang
+      JOIN pg_proc original ON original.oid=to_regprocedure('public.digest(bytea,text)')
+      JOIN pg_depend d ON d.classid='pg_proc'::regclass AND d.objid=original.oid
+       AND d.refclassid='pg_extension'::regclass AND d.deptype='e'
+      JOIN pg_extension e ON e.oid=d.refobjid
+      WHERE bridge.oid=to_regprocedure('extensions.digest(bytea,text)')
+        AND e.extname='pgcrypto' AND e.extnamespace='public'::regnamespace
+        AND lang.lanname='sql' AND bridge.provolatile='i' AND NOT bridge.prosecdef
+        AND bridge.prosrc='SELECT public.digest($1,$2)')) digest_ready,
   NOT EXISTS(SELECT 1 FROM pg_event_trigger WHERE evtenabled<>'D') no_event_triggers`)).rows[0];
  if(!row||['absent_0153','absent_0182','digest_ready','no_event_triggers'].some(key=>row[key]!==true))fail('upgrade_source_invalid');
 }
