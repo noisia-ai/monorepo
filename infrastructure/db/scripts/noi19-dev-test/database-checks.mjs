@@ -2,16 +2,20 @@ import {createHash} from 'node:crypto';
 import {guardEmptyTables} from './target-guard.mjs';
 export const identitySql=`SELECT current_database() database,current_user "user",inet_server_addr()::text address,
  inet_server_port() port,current_setting('server_version_num') version,system_identifier::text FROM pg_control_system()`;
-export async function publicTables(client){
+export async function publicTables(client,expectedCount=269){
  const rows=(await client.query(`SELECT c.relname name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
   WHERE n.nspname='public' AND c.relkind IN('r','p') ORDER BY c.relname`)).rows;
- if(rows.length!==269)throw Error('noi19_dev_test_schema_mismatch');
+ // null is reserved for read-only inventory; mutating callers pass a source seal.
+ if(expectedCount!==null&&(!Number.isSafeInteger(expectedCount)||expectedCount<1||rows.length!==expectedCount))throw Error('noi19_dev_test_schema_mismatch');
  return rows.map(({name})=>({name,quoted:'public."'+name.replaceAll('"','""')+'"'}));
 }
-export async function verifyEmpty(client,tables){
+export async function tableEmptiness(client,tables){
  const rows=[];for(const table of tables)rows.push({name:table.name,
   nonempty:(await client.query(`SELECT EXISTS(SELECT 1 FROM ${table.quoted} LIMIT 1) nonempty`)).rows[0].nonempty});
- guardEmptyTables(rows);
+ return rows;
+}
+export async function verifyEmpty(client,tables,expectedCount=269){
+ guardEmptyTables(await tableEmptiness(client,tables),expectedCount);
 }
 export async function schemaFingerprint(client){
  return createHash('sha256').update(JSON.stringify((await client.query(`SELECT

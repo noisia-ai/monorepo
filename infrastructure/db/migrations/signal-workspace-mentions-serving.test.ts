@@ -35,6 +35,7 @@ test("mentions uses the workspace corpus fence without rebuilding unrelated edit
     if (sql.includes("brand_access_level")) return { rows: [{ workspace_status: "active", brand_status: "active",
       organization_status: "active", brand_same_organization: true, actor_status: "active",
       user_type: "noisia_internal", primary_role: "noisia_admin", same_organization: false, brand_access_level: null }] };
+    if (sql.includes("signal_topic_consolidation_binding_v1")) return { rows: [] };
     if (sql.includes("candidate.input_contract='workspace-topic-classification-v1'")) return { rows: [{
       native: true, is_processing: false, id: generation, taxonomy_profile_id: randomUUID(), preparation_run_id: preparation,
       input_revision: "7", current_revision: "7", finalized_digest: sha("f"), policy_live: true,
@@ -51,7 +52,7 @@ test("mentions uses the workspace corpus fence without rebuilding unrelated edit
   const page = await loadSignalWorkspaceMentionsV1({ database: { async connect() { return client as never; } },
     workspace_id: workspace, actor_user_id: actor });
   assert.ok(page); assert.equal(page.total_count, 0); assert.equal(page.generation_id, generation);
-  assert.equal(statements.length, 5, "setup, authority, workspace fence, corpus and commit are the only roundtrips");
+  assert.equal(statements.length, 6, "setup, authority, serving binding, workspace fence, corpus and commit are the only roundtrips");
   const corpus = statements.findIndex(sql => sql.includes("mention_roots AS MATERIALIZED"));
   assert.equal(statements.slice(0, corpus).some(sql => sql.includes("brand_objective") || sql.includes("taxonomy_terms")), false);
 });

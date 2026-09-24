@@ -7,7 +7,8 @@ export function privateAddress(address){
 }
 /** Seal is reviewed source, never command-line/body/environment input. Credentials
  * exist only in DATABASE_URL in memory. Every error is a fixed, secret-free code. */
-export function guardBootstrapEnvironment(env,seal){
+export function guardBootstrapEnvironment(env,seal,approvalKey='NOISIA_NOI19_PRIVATE_TEST_APPROVED'){
+  if(!['NOISIA_NOI19_PRIVATE_TEST_APPROVED','NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED'].includes(approvalKey))fail('environment_mismatch');
   if(seal.environment_id!=='5bad359d-cfa4-4e8f-aa41-98e6f075375a'
     ||seal.database_service_id!=='8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0'
     ||seal.host!=='pgvector.railway.internal'||seal.port!==5432
@@ -15,7 +16,7 @@ export function guardBootstrapEnvironment(env,seal){
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(seal.runner_service_id??''))fail('target_unsealed');
   if(env.RAILWAY_ENVIRONMENT_ID!==seal.environment_id||env.RAILWAY_ENVIRONMENT_NAME!==seal.environment_name
     ||env.RAILWAY_SERVICE_ID!==seal.runner_service_id||env.NOISIA_DEV_TEST_DATABASE_SERVICE_ID!==seal.database_service_id
-    ||env.NOISIA_NOI19_PRIVATE_TEST_APPROVED!=='true')fail('environment_mismatch');
+    ||env[approvalKey]!=='true')fail('environment_mismatch');
   for(const [key,value] of Object.entries(env)){
     if(!value)continue;
     if(/^PG[A-Z_]*$/u.test(key)
@@ -28,9 +29,9 @@ export function guardBootstrapEnvironment(env,seal){
     ||url.username!==seal.user||!url.password||url.search||url.hash)fail('target_mismatch');
   return {host:seal.host,port:seal.port,database:seal.database,user:seal.user,password:decodeURIComponent(url.password)};
 }
-export function guardEnvironment(env,seal){
+export function guardEnvironment(env,seal,approvalKey='NOISIA_NOI19_PRIVATE_TEST_APPROVED'){
   if(!/^[a-f0-9]{64}$/u.test(seal.schema_sha256??'')||!/^[0-9]{15,25}$/u.test(seal.system_identifier??''))fail('target_unsealed');
-  return guardBootstrapEnvironment(env,seal);
+  return guardBootstrapEnvironment(env,seal,approvalKey);
 }
 export function guardBootstrapDatabase(row,seal,addresses){
   if(row.database!==seal.database||row.user!==seal.user||row.port!==seal.port||!addresses.includes(row.address)||!privateAddress(row.address)
@@ -44,6 +45,17 @@ export function guardDatabase(row,seal,addresses){
     ||row.port!==seal.port||!addresses.includes(row.address)||!privateAddress(row.address)
     ||!Number.isInteger(Number(row.version))||Number(row.version)<170000||Number(row.version)>=180000)fail('database_identity_mismatch');
 }
-export function guardEmptyTables(rows){
-  if(rows.length!==269||rows.some(row=>row.nonempty!==false))fail('database_not_empty');
+/** Historical callers remain sealed to 269; the new gate requires an explicit
+ * reviewed count. Runtime inventory may never become the mutating expectation. */
+export function sealedTableCount(seal,{requireExplicit=false}={}){
+  const count=seal.table_count===undefined&&!requireExplicit?269:seal.table_count;
+  if(!Number.isSafeInteger(count)||count<1)fail('target_unsealed');
+  return count;
+}
+export function guardSignalImportedEnvironment(env,seal){
+  sealedTableCount(seal,{requireExplicit:true});
+  return guardEnvironment(env,seal,'NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED');
+}
+export function guardEmptyTables(rows,expectedCount=269){
+  if(!Number.isSafeInteger(expectedCount)||expectedCount<1||rows.length!==expectedCount||rows.some(row=>row.nonempty!==false))fail('database_not_empty');
 }

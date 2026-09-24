@@ -19,16 +19,14 @@ export const NOI19_SYNTHETIC_TEXTS=Object.freeze([
 ]);
 export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:WorkspaceProjectionCheckpointFixtureV1['query'];cleanup:()=>Promise<void>};
 
-/** No connection, credentials, files, import exports or provider are read here.
- * The dedicated runner owns target/empty-schema guards and the physical rollback.
- * These invented rights and usage receipts are TEST DATA, never product grants. */
-export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
- projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
-}={}){
- const {database,query,scoped,cleanup}=tx;
- const org=options.identity?.organization_id??randomUUID(),brand=options.identity?.brand_id??randomUUID(),actor_user_id=options.identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
- if(!options.identity){
+/** Accepted import only: no preparation, embeddings, execution or provider receipt.
+ * The caller must own an approved synthetic-only transaction and its rollback. */
+export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string}){
+ const {database,query}=tx;
+ const roots:string[]=[];
+ const org=identity?.organization_id??randomUUID(),brand=identity?.brand_id??randomUUID(),actor_user_id=identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
+ if(!identity){
  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic NOI-19 test organization','active')",[org,`noi19-${org}`]);
  await query("INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status) VALUES($1,$2,'Synthetic fixture operator','noisia_internal','noisia_admin',$3,'active')",[actor_user_id,`${actor_user_id}@example.test`,org]);
  await query("INSERT INTO brands(id,organization_id,slug,name,description,status) VALUES($1,$2,$3,'Synthetic bicycle brand','Invented test context; no customer data','active')",[brand,org,`noi19-${brand}`]);
@@ -41,7 +39,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  record_count,included_count,excluded_count,duplicate_count,imported_by_user_id)
  VALUES($1,$2,$3,'synthetic','invented-three-roots.txt',$4,'completed',3,3,0,0,$5)`,[batch,workspace_id,source,fixtureSha(NOI19_SYNTHETIC_TEXTS.join('\n')),actor_user_id]);
  for(const [index,text] of NOI19_SYNTHETIC_TEXTS.entries()){
-  const root=randomUUID();
+  const root=randomUUID();roots.push(root);
   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status)
    VALUES($1,$2,$3,$1,$4,$4,'synthetic',$5,$6,$7,$7,$8,'2026-09-01T12:00:00Z','synthetic','synthetic','en','included')`,
@@ -72,6 +70,19 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  await query(`INSERT INTO signal_provenance_policy_bindings(workspace_id,data_source_id,binding_version,status,quality_policy_id,
  retention_policy_id,licensing_policy_id,definition_hash,created_by_user_id,activated_by_user_id,activated_at,creation_idempotency_key)
  VALUES($1,$2,1,'active',$3,$4,$5,$6,$7,$7,now(),$8)`,[workspace_id,source,quality,retention,license,signalProvenancePolicyBindingDefinitionHashV1(b),actor_user_id,fixtureSha('synthetic binding')]);
+ return {database,query,workspace_id,actor_user_id,organization_id:org,brand_id:brand,source_id:source,
+  batch_id:batch,quality_id:quality,retention_id:retention,license_id:license,roots,access:{database,workspace_id,actor_user_id}};
+}
+
+/** No connection, credentials, files, import exports or provider are read here.
+ * The dedicated runner owns target/empty-schema guards and the physical rollback.
+ * These invented rights and usage receipts are TEST DATA, never product grants. */
+export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
+ projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
+}={}){
+ const {database,query,scoped}=tx;
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity);
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;

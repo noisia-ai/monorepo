@@ -4,6 +4,8 @@ import {
   signalTopicDefinitionSchemaV1,
   type SignalTopicDefinitionV1,
   type SignalWorkspaceTopicsOverviewV1,
+  type SignalWorkspaceOverviewV1,
+  type SignalWorkspaceImportedIdentityV1,
   type SignalWorkspaceTopicEvidencePageV1,
   type SignalWorkspaceClassificationIdentityV1
 } from "@noisia/query-engine";
@@ -14,7 +16,7 @@ import { readSignalTopicConsolidationServingBindingV1, type SignalTopicConsolida
 
 type Database = Pick<Pool, "connect">;
 type Filters = { date_from?: string | null; date_to?: string | null };
-type Args = Filters & { database: Database; workspace_id: string; actor_user_id: string; include_unselected?: boolean };
+type Args = Filters & { database: Database; workspace_id: string; actor_user_id: string; include_unselected?: boolean; imported_fallback?: boolean };
 export type SignalWorkspaceMentionsArgsV1 = Omit<Args, "include_unselected"> & {
   search_query?: string | null; platforms?: string[]; sort_direction?: "asc" | "desc";
   cursor?: string | null; expected_scope_digest?: string | null; focus_mention_id?: string | null; limit?: number;
@@ -37,6 +39,16 @@ export type SignalWorkspaceMentionsPageV1 = {
   items: SignalWorkspaceMentionV1[]; focused_item?: SignalWorkspaceMentionV1 | null;
   page_offset: number; next_cursor: string | null;
 };
+/** Opt-in imported results leave the existing generation contract unchanged. */
+export type SignalWorkspaceImportedMentionsPageV1 = Omit<SignalWorkspaceMentionsPageV1,
+  "generation_id" | "source_engine_execution_id" | "items" | "focused_item"> & SignalWorkspaceImportedIdentityV1 & {
+  items: SignalWorkspaceImportedMentionV1[]; focused_item?: SignalWorkspaceImportedMentionV1 | null;
+};
+export type SignalWorkspaceImportedMentionV1 = Omit<SignalWorkspaceMentionV1, "resolution_state" | "has_unresolved_topics"> & {
+  resolution_state: null; has_unresolved_topics: null;
+};
+export type SignalWorkspaceMentionsResultV1 = SignalWorkspaceMentionsPageV1 | SignalWorkspaceImportedMentionsPageV1;
+type ImportedPopulation = { receipt_digest: string; input_revision: string | null };
 type Selection = { revision: number; items: Record<string, { selected: boolean; definition_digest: string;
   definition_revision: number; generation_id: string | null }> };
 type Generation = { id: string; taxonomy_profile_id: string | null; preparation_run_id: string;
@@ -46,7 +58,7 @@ type Generation = { id: string; taxonomy_profile_id: string | null; preparation_
 type CatalogTerm = SignalTopicDefinitionV1 & { kind: "topic" | "narrative" };
 type Context = { generation: Generation | null; topics: CatalogTerm[]; selection: Selection;
   is_current: boolean; is_processing: boolean; filters: { date_from: string | null; date_to: string | null };
-  native: boolean; consolidated: boolean };
+  native: boolean; consolidated: boolean; imported?: ImportedPopulation };
 
 export class SignalWorkspaceTopicsServingError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceTopicsServingError"; }
@@ -107,6 +119,23 @@ function consolidatedContext(snapshot: SignalTopicConsolidationServingSnapshotV1
     selection: { revision: snapshot.binding.selection_revision, items: snapshot.binding.selection },
     is_current: snapshot.source_valid && snapshot.input_revision === snapshot.current_revision,
     is_processing: false, filters, native: true, consolidated: true };
+}
+/** Only absence of publication permits an imported fallback. A stale or otherwise
+ * unavailable prior publication must keep its original failure semantics. The
+ * caller resolves legacy serving before opting in; this is not a legacy resolver. */
+async function importedPopulation(client: PoolClient, args: Args): Promise<ImportedPopulation | undefined> {
+  if (!args.imported_fallback) return undefined;
+  const row = (await client.query<ImportedPopulation>(`SELECT
+    'sha256:'||encode(sha256(convert_to(string_agg(batch.id::text||':'||batch.data_source_id::text||':'||source.status,
+      ',' ORDER BY batch.id),'UTF8')),'hex') receipt_digest,
+    (SELECT input_revision::text FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid) input_revision
+    FROM import_batches batch JOIN data_sources source ON source.id=batch.data_source_id
+      AND source.workspace_id=$1::uuid
+    WHERE batch.workspace_id=$1::uuid AND batch.status='completed'
+      AND NOT EXISTS(SELECT 1 FROM signal_classification_generations prior WHERE prior.workspace_id=$1::uuid AND prior.status='ready')
+      AND NOT EXISTS(SELECT 1 FROM signal_topic_consolidation_bindings prior WHERE prior.workspace_id=$1::uuid)
+    HAVING count(*)>0`, [args.workspace_id])).rows[0];
+  return row ?? undefined;
 }
 async function context(client: PoolClient, args: Args): Promise<Context> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
@@ -177,8 +206,10 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
       && generation.identity.catalog_digest === input.catalog_digest && generation.identity.compiler_digest === input.compiler_digest
       && generation.identity.context_digest === input.context_digest && generation.identity.embedding_config_digest === input.embedding_config_digest;
   }
-  return { generation, topics, selection, is_current: isCurrent, is_processing: workspace.is_processing, filters,
-    native: workspace.native || topics.some(topic => topic.origin === "workspace_discovery"), consolidated: false };
+  const imported = !generation && !binding ? await importedPopulation(client, args) : undefined;
+  return { generation, topics: imported ? [] : topics, selection: imported ? { revision: 0, items: {} } : selection,
+    is_current: imported ? true : isCurrent, is_processing: workspace.is_processing, filters, imported,
+    native: Boolean(imported) || workspace.native || topics.some(topic => topic.origin === "workspace_discovery"), consolidated: false };
 }
 
 /** Mentions are a generation-wide corpus view and do not consume Topic labels,
@@ -187,7 +218,7 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
  * the population query. Keeping this path separate avoids rebuilding unrelated
  * editorial input on every page while retaining workspace authorization. */
 async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Context,
-  "generation" | "is_current" | "is_processing" | "filters" | "native">> {
+  "generation" | "is_current" | "is_processing" | "filters" | "native" | "imported">> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
   if (!capabilities.can_view) return fail("workspace_topics_forbidden", 403);
   const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to) };
@@ -222,14 +253,15 @@ async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Con
     LEFT JOIN signal_corpus_preparation_input_state state ON state.workspace_id=workspace.id
     WHERE workspace.id=$1::uuid`, [args.workspace_id, binding?.binding.legacy_generation_id ?? null, binding !== null])).rows[0];
   const generation = row?.id ? row : null;
-  return { generation, is_processing: row?.is_processing ?? false, native: row?.native ?? false, filters,
-    is_current: Boolean(generation?.source_valid && generation.policy_live
+  const imported = !generation && !binding ? await importedPopulation(client, args) : undefined;
+  return { generation, imported, is_processing: row?.is_processing ?? false, native: Boolean(imported) || (row?.native ?? false), filters,
+    is_current: Boolean(imported) || Boolean(generation?.source_valid && generation.policy_live
       && generation.input_revision === generation.current_revision) };
 }
 
 /** Current rights use one complete provenance path, including import precedence.
  * Authorization to compute never substitutes for rights to display metrics/text. */
-const populationSql = `WITH source_generation AS MATERIALIZED (
+const populationSql = (imported = false) => `WITH source_generation AS MATERIALIZED (
   SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
     FROM signal_classification_generations generation WHERE generation.id=$2::uuid
     AND generation.workspace_id=$1::uuid AND signal_workspace_projection_source_current_v1(generation)
@@ -237,6 +269,10 @@ const populationSql = `WITH source_generation AS MATERIALIZED (
   SELECT snapshot.id,snapshot.workspace_id,snapshot.preparation_run_id,'{}'::jsonb
     FROM signal_topic_consolidation_snapshots snapshot WHERE snapshot.id=$2::uuid AND snapshot.workspace_id=$1::uuid
     AND signal_topic_consolidation_snapshot_current_v1(snapshot.id)
+), received_imports AS MATERIALIZED (
+  SELECT batch.id,batch.data_source_id FROM import_batches batch
+  JOIN data_sources source ON source.id=batch.data_source_id AND source.workspace_id=$1::uuid AND source.status='active'
+  WHERE batch.workspace_id=$1::uuid AND batch.status='completed'
 ), authorized_imports AS MATERIALIZED (
   SELECT batch.id,batch.data_source_id,
     EXISTS(SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$1::uuid
@@ -245,8 +281,7 @@ const populationSql = `WITH source_generation AS MATERIALIZED (
       AND usage.licensing_policy_id=license.id AND usage.usage_purpose='client-mention-list' AND usage.decision='allowed')
      AND EXISTS(SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$1::uuid
       AND usage.licensing_policy_id=license.id AND usage.usage_purpose='client-text-or-excerpt' AND usage.decision='allowed')) evidence
-  FROM import_batches batch JOIN data_sources source ON source.id=batch.data_source_id
-    AND source.workspace_id=$1::uuid AND source.status='active'
+  FROM received_imports batch
   JOIN LATERAL (SELECT candidate.* FROM signal_provenance_policy_bindings candidate
     WHERE candidate.workspace_id=$1::uuid AND candidate.data_source_id=batch.data_source_id
       AND candidate.status='active' AND candidate.effective_from<=now() AND (candidate.effective_to IS NULL OR candidate.effective_to>now())
@@ -258,15 +293,23 @@ const populationSql = `WITH source_generation AS MATERIALIZED (
     AND retention.status='active' AND retention.retention_state='allowed' AND retention.effective_from<=now()
     AND (retention.effective_to IS NULL OR retention.effective_to>now())
     AND (retention.retention_mode='indefinite' OR retention.retention_mode='until' AND retention.retain_until>now())
-  WHERE batch.workspace_id=$1::uuid AND batch.status='completed'
 ), root_rights AS MATERIALIZED (
   SELECT origin.canonical_mention_id root_id,bool_or(rights.metrics) metrics,bool_or(rights.metrics AND rights.evidence) evidence
   FROM authorized_imports rights JOIN signal_mention_import_memberships path ON path.import_batch_id=rights.id
     AND path.data_source_id=rights.data_source_id AND path.workspace_id=$1::uuid
   JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
   GROUP BY origin.canonical_mention_id
+), received_roots AS MATERIALIZED (
+  SELECT DISTINCT origin.canonical_mention_id root_id
+  FROM received_imports batch JOIN signal_mention_import_memberships path ON path.import_batch_id=batch.id
+    AND path.data_source_id=batch.data_source_id AND path.workspace_id=$1::uuid
+  JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
 ), all_roots AS MATERIALIZED (
-  SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
+  ${imported ? `SELECT mention.id root_id,NULL::text resolution_state,mention.published_at,NULL::boolean has_unresolved_topics,
+    COALESCE(rights.metrics,false) metrics,COALESCE(rights.evidence,false) evidence
+  FROM received_roots received JOIN mentions mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
+    AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
+  LEFT JOIN root_rights rights ON rights.root_id=mention.id` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
     COALESCE(rights.metrics,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id metrics,
     COALESCE(rights.evidence,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id evidence
@@ -280,7 +323,7 @@ const populationSql = `WITH source_generation AS MATERIALIZED (
   FROM signal_topic_consolidation_snapshot_roots_v1 item
   JOIN mentions mention ON mention.id=item.root_id AND mention.workspace_id=$1::uuid
   LEFT JOIN root_rights rights ON rights.root_id=item.root_id
-  WHERE item.workspace_id=$1::uuid AND item.snapshot_id=$2::uuid
+  WHERE item.workspace_id=$1::uuid AND item.snapshot_id=$2::uuid`}
 ), period_roots AS MATERIALIZED (
   SELECT * FROM all_roots WHERE ($3::date IS NULL OR published_at>=$3::date)
     AND ($4::date IS NULL OR published_at<$4::date+interval '1 day')
@@ -338,11 +381,12 @@ function populationParams(args: Args, ctx: Context) {
 }
 type Aggregate = { denominator: number; processed: number; assigned_unique: number; abstained: number; noise: number; unresolved: number;
   unresolved_exclusive: number;
-  withheld: number; rights_digest: string; date_from: string | null; date_to: string | null;
+  evidence_visible_total: number; withheld: number; rights_digest: string; date_from: string | null; date_to: string | null;
   counts: Array<{ term_key: string; mention_count: number }>; series: SignalWorkspaceTopicsOverviewV1["series"]; observed_at: string };
-async function overview(client: PoolClient, args: Args, ctx: Context): Promise<SignalWorkspaceTopicsOverviewV1> {
-  const summary = (await client.query<Aggregate>(`${populationSql}
-    SELECT count(*) FILTER(WHERE root.metrics)::int denominator,count(*) FILTER(WHERE root.metrics)::int processed,
+async function overview(client: PoolClient, args: Args, ctx: Context): Promise<SignalWorkspaceOverviewV1> {
+  const summary = (await client.query<Aggregate>(`${populationSql(Boolean(ctx.imported))}
+    SELECT count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total,
+      count(*) FILTER(WHERE root.metrics)::int denominator,count(*) FILTER(WHERE root.metrics)::int processed,
       count(*) FILTER(WHERE root.metrics AND root.visible)::int assigned_unique,
       count(*) FILTER(WHERE root.metrics AND root.resolution_state='abstained')::int abstained,
       count(*) FILTER(WHERE root.metrics AND root.resolution_state='noise')::int noise,
@@ -366,13 +410,14 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     mention_count: counts.get(topic.term_key) ?? 0,
     share_of_corpus: summary.denominator ? (counts.get(topic.term_key) ?? 0) / summary.denominator : null,
     basis: "computed_cluster" as const }));
-  return { contract_version: "signal-workspace-topics-serving-v1", source: "workspace_computed", workspace_id: args.workspace_id,
+  const computed: SignalWorkspaceTopicsOverviewV1 = { contract_version: "signal-workspace-topics-serving-v1", source: "workspace_computed", workspace_id: args.workspace_id,
     corpus_id: null, scope: "all_conversations", generation_id: ctx.generation?.id ?? null,
     source_engine_execution_id: ctx.generation?.source_engine_execution_id ?? null, is_current: ctx.is_current, is_processing: ctx.is_processing,
     selection_revision: ctx.selection.revision, filters: ctx.filters,
     available_dates: { date_from: summary.date_from, date_to: summary.date_to },
     scope_digest: hash({ workspace: args.workspace_id, actor: args.actor_user_id, generation: ctx.generation?.finalized_digest,
       input_revision: ctx.generation?.current_revision, current: ctx.is_current, selection: ctx.selection,
+      ...(ctx.imported ? { imported: ctx.imported } : {}),
       terms, filters: ctx.filters, rights: summary.rights_digest }), observed_at: summary.observed_at,
     denominator: summary.denominator, coverage: { processed: summary.processed, assigned_unique: summary.assigned_unique,
       abstained: summary.abstained, noise: ctx.consolidated ? summary.noise : null,
@@ -382,9 +427,18 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     limitations: ["computed_memberships_not_semantic_precision", "multilabel_counts_are_not_additive",
       ...(!ctx.generation ? ["classification_required"] : !ctx.is_current ? ["last_complete_generation_stale"] : []),
       ...(summary.withheld ? ["current_rights_withhold_mentions"] : [])] };
+  if (!ctx.imported) return computed;
+  return { ...computed, source: "workspace_imported", classification_state: "pending", generation_id: null,
+    source_engine_execution_id: null, quality: "not_analyzed", evidence_visible_total: summary.evidence_visible_total,
+    series: computed.series.map(point => ({ ...point, assigned_unique: null })),
+    coverage: { processed: null, assigned_unique: null, abstained: null, noise: null, unresolved: null, withheld: null },
+    limitations: ["classification_required", "current_display_rights_only"] };
 }
 
-export async function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<SignalWorkspaceTopicsOverviewV1 | null> {
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback: true }): Promise<SignalWorkspaceOverviewV1 | null>;
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args & { imported_fallback?: false }): Promise<SignalWorkspaceTopicsOverviewV1 | null>;
+export function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<SignalWorkspaceOverviewV1 | null>;
+export async function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<SignalWorkspaceOverviewV1 | null> {
   return transaction(args.database, async client => {
     const ctx = await context(client, args); return ctx.native ? overview(client, args, ctx) : null;
   });
@@ -418,7 +472,7 @@ export async function loadSignalWorkspaceTopicDetailV1(args: Omit<Args, "include
     const summary = (await client.query<{ mention_count: number; undated_mentions: number;
       positive: number; neutral: number; negative: number; unclassified: number;
       series: SignalWorkspaceTopicDetailV1["series"];
-      related: Array<{ term_key: string; shared_mentions: number }> }>(`${populationSql},
+      related: Array<{ term_key: string; shared_mentions: number }> }>(`${populationSql(Boolean(ctx.imported))},
       topic_roots AS MATERIALIZED (
         SELECT DISTINCT root.root_id,root.published_at,mention.sentiment_score
         FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$6
@@ -475,7 +529,7 @@ export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "inclu
         after = decoded.root_id;
       } catch (error) { if (error instanceof SignalWorkspaceTopicsServingError) throw error; return fail("workspace_topics_cursor_invalid", 422); }
     }
-    const rows = (await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql}
+    const rows = (await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql(Boolean(ctx.imported))}
       SELECT root.root_id mention_id,CASE WHEN member.evidence_fragment IS NOT NULL THEN signal_topic_utf16_fragment_v1(mention.text_clean,
         (member.evidence_fragment->>'start')::int,(member.evidence_fragment->>'end')::int) ELSE left(mention.text_clean,2000) END text,
         member.evidence_fragment,mention.platform,
@@ -534,19 +588,21 @@ function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
   return { limit, direction, filters, cursor, focus: args.focus_mention_id?.toLowerCase() ?? null };
 }
 
-/** A global generation population, independent of selected Topics. Text rights
- * and prepared SHA are checked before searching or returning canonical content.
+/** A global population, independent of selected Topics. Computed text requires
+ * its prepared SHA. Imported text uses current canonical bytes protected by the
+ * exact digest constraint installed in SQL0167–0169; no prepared artifact exists.
+ * Text rights are checked before searching or returning canonical content.
  * Only root metadata is materialized; complete document bodies stay in Postgres. */
-const mentionsPopulationSql = `${populationSql}, mention_roots AS MATERIALIZED (
+const mentionsPopulationSql = (imported = false) => `${populationSql(imported)}, mention_roots AS MATERIALIZED (
   SELECT checked.*,hashtextextended(ROW(checked.root_id,checked.metrics,checked.evidence,
-    checked.text_valid,extract(epoch FROM checked.published_at),checked.platform)::text,0::bigint) population_hash
+    checked.text_valid,checked.text_digest,extract(epoch FROM checked.published_at),checked.platform)::text,0::bigint) population_hash
   FROM (
-    SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,
-      CASE WHEN root.evidence THEN COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false) ELSE false END text_valid
+    SELECT root.*,COALESCE(mention.resolved_platform,mention.platform) platform,mention.text_clean_sha256 text_digest,
+      CASE WHEN root.evidence THEN ${imported ? "mention.text_clean_sha256 IS NOT NULL" : "COALESCE(prepared.asset_sha256=mention.text_clean_sha256,false)"} ELSE false END text_valid
     FROM period_roots root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-    JOIN source_generation generation ON true
+    ${imported ? "" : `JOIN source_generation generation ON true
     LEFT JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
-      AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id
+      AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id`}
   ) checked
 ), visible_mentions AS MATERIALIZED (
   SELECT root.* FROM mention_roots root WHERE root.metrics AND root.evidence AND root.text_valid
@@ -564,23 +620,26 @@ type MentionsSummary = {
 
 /** List or focus only roots in the same current native generation as Signal.
  * Cursor data locates a page; every request repeats scope and rights checks. */
-export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV1): Promise<SignalWorkspaceMentionsPageV1 | null> {
+export function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV1 & { imported_fallback: true }): Promise<SignalWorkspaceMentionsResultV1 | null>;
+export function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV1 & { imported_fallback?: false }): Promise<SignalWorkspaceMentionsPageV1 | null>;
+export function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV1): Promise<SignalWorkspaceMentionsResultV1 | null>;
+export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV1): Promise<SignalWorkspaceMentionsResultV1 | null> {
   const request = mentionsRequest(args);
   const access = { database: args.database, workspace_id: args.workspace_id.toLowerCase(), actor_user_id: args.actor_user_id.toLowerCase(),
-    date_from: request.filters.date_from, date_to: request.filters.date_to };
+    date_from: request.filters.date_from, date_to: request.filters.date_to, imported_fallback: args.imported_fallback };
   return mentionsTransaction(args.database, async client => {
     const ctx = await mentionsContext(client, access);
     if (!ctx.native) return null;
-    if (!ctx.generation) return fail("workspace_mentions_generation_unavailable", 404);
+    if (!ctx.generation && !ctx.imported) return fail("workspace_mentions_generation_unavailable", 404);
     if (!ctx.is_current) return fail("workspace_mentions_stale");
     // The transaction wrapper disables nested loops and JIT before this query:
     // skewed workspace estimates otherwise choose a quadratic plan and compile it.
     // Empty visible_terms intentionally avoids every membership/selection join.
-    const params = [access.workspace_id, ctx.generation.id, ctx.filters.date_from, ctx.filters.date_to, "[]",
+    const params = [access.workspace_id, ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, "[]",
       request.filters.search_query, request.filters.platforms];
     const direction = request.direction === "asc" ? "ASC" : "DESC", operator = request.direction === "asc" ? ">" : "<";
     const before = request.direction === "asc" ? "<" : ">";
-    const result = await client.query<MentionsSummary & { item: SignalWorkspaceMentionV1 | null; focus_only: boolean | null }>(`${mentionsPopulationSql},
+    const result = await client.query<MentionsSummary & { item: SignalWorkspaceMentionV1 | null; focus_only: boolean | null }>(`${mentionsPopulationSql(Boolean(ctx.imported))},
       summary AS MATERIALIZED (
       SELECT count(*) FILTER(WHERE root.metrics)::int metric_denominator,
         count(*) FILTER(WHERE root.metrics AND root.evidence AND root.text_valid)::int evidence_visible_total,
@@ -629,7 +688,8 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
       [...params, request.cursor?.root_id ?? null, request.cursor?.occurred_at ?? null, request.focus, request.limit + 1]);
     const summary = result.rows[0]!;
     const scope = hash({ contract_version: "signal-workspace-mentions-v1", workspace: access.workspace_id, actor: access.actor_user_id,
-      generation: ctx.generation.id, finalized_digest: ctx.generation.finalized_digest, input_revision: ctx.generation.current_revision,
+      ...(ctx.generation ? { generation: ctx.generation.id, finalized_digest: ctx.generation.finalized_digest, input_revision: ctx.generation.current_revision }
+        : { source: "workspace_imported", imported: ctx.imported }),
       rights: summary.rights_digest, population: {
         fingerprint: { xor: summary.population_fingerprint_xor, sum: summary.population_fingerprint_sum },
         metric_denominator: summary.metric_denominator, evidence_visible_total: summary.evidence_visible_total,
@@ -644,16 +704,23 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
     const clean = ({ focus_only: _focusOnly, ...row }: SignalWorkspaceMentionV1 & { focus_only: boolean }) => row;
     const items = listed.slice(0, request.limit).map(clean), focusedItem = focused ? clean(focused) : null;
     const offset = request.cursor?.offset ?? 0, last = items.at(-1);
-    return { contract_version: "signal-workspace-mentions-v1", workspace_id: access.workspace_id, generation_id: ctx.generation.id,
-      source_engine_execution_id: ctx.generation.source_engine_execution_id, is_current: true, is_processing: ctx.is_processing,
-      scope_digest: scope, filters: request.filters, sort: { field: "published", direction: request.direction },
+    const common = { contract_version: "signal-workspace-mentions-v1" as const, workspace_id: access.workspace_id,
+      generation_id: ctx.generation?.id ?? null, source_engine_execution_id: ctx.generation?.source_engine_execution_id ?? null, is_current: true as const, is_processing: ctx.is_processing,
+      scope_digest: scope, filters: request.filters, sort: { field: "published" as const, direction: request.direction },
       available_dates: { date_from: summary.date_from, date_to: summary.date_to }, available_platforms: summary.available_platforms,
       metric_denominator: summary.metric_denominator,
       evidence_visible_total: summary.evidence_visible_total, total_count: summary.total_count,
       withheld_evidence_count: summary.withheld_evidence_count, integrity_withheld_count: summary.integrity_withheld_count,
-      items, ...(request.focus ? { focused_item: focusedItem } : {}), page_offset: offset,
+      page_offset: offset,
       next_cursor: listed.length > request.limit && last
         ? Buffer.from(JSON.stringify({ version: 1, root_id: last.mention_id, occurred_at: last.occurred_at,
           scope, offset: offset + items.length } satisfies MentionsCursor)).toString("base64url") : null };
+    if (ctx.imported) {
+      const pending = (item: SignalWorkspaceMentionV1): SignalWorkspaceImportedMentionV1 => ({ ...item, resolution_state: null, has_unresolved_topics: null });
+      return { ...common, source: "workspace_imported", classification_state: "pending", generation_id: null,
+        source_engine_execution_id: null, items: items.map(pending), ...(request.focus ? { focused_item: focusedItem ? pending(focusedItem) : null } : {}) };
+    }
+    return { ...common, items, ...(request.focus ? { focused_item: focusedItem } : {}),
+      generation_id: ctx.generation!.id, source_engine_execution_id: ctx.generation!.source_engine_execution_id };
   });
 }
