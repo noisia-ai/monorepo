@@ -1502,7 +1502,7 @@ export function SignalV2BrandMonitoring({
                   previousBuckets={data.sentiment.previous_buckets}
                 />
               ) : (
-                <EmptyMetric message={nativeSentimentPending ? t("imported.sentimentPending") : metricEmptyMessage(data.sentiment.state, t)} />
+                <EmptyMetric message={nativeSentimentPending ? t("metricsPending.sentiment") : metricEmptyMessage(data.sentiment.state, t)} />
               )}
               {!nativeSentimentPending ? <p className="signal-v2-card__coverage-note">
                 {t("cards.sentiment.coverage", {
@@ -1574,7 +1574,7 @@ export function SignalV2BrandMonitoring({
               help={translatedHelp(t, "cards.attention.help")}
               title={t("cards.attention.title")}
             />
-            {nativeAttentionPending ? <EmptyMetric message={t("imported.attentionPending")} /> : <>
+            {nativeAttentionPending ? <EmptyMetric message={t("metricsPending.attention")} /> : <>
             <div className="signal-v2-attention-metrics">
               <div>
                 <small>{t("cards.attention.totalInteractions")}</small>
@@ -1690,7 +1690,7 @@ export function SignalV2BrandMonitoring({
               help={translatedHelp(t, "cards.conversations.help")}
               title={t("cards.conversations.title")}
             />
-            {nativeHighlightsPending ? <EmptyMetric message={t("imported.highlightsPending")} /> : <div className="signal-v2-conversation-columns">
+            {nativeHighlightsPending ? <EmptyMetric message={t("metricsPending.highlights")} /> : <div className="signal-v2-conversation-columns">
               <ConversationColumn
                 empty={t("cards.conversations.emptyPositive")}
                 items={data.highlights.positive}

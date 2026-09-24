@@ -617,13 +617,15 @@
   "SignalV2": {
     "imported": {
       "mentionsSubtitle": "Imported conversations for your brand",
-      "sentimentPending": "Sentiment has not been classified yet.",
-      "attentionPending": "Interaction metrics are not yet available for these conversations.",
-      "highlightsPending": "Prioritized evidence will be available after interpreting the conversations. You can explore all mentions in the meantime.",
       "status": "Imported conversations",
       "classificationPending": "Topic classification is still pending. You can explore mentions now.",
       "topicsTitle": "Your conversations are available",
       "topicsBody": "There are {count, number} mentions available for metrics. Topics will appear after analysis and selection for Signal."
+    },
+    "metricsPending": {
+      "sentiment": "Sentiment is not yet available.",
+      "attention": "Interaction metrics are not yet available for these conversations.",
+      "highlights": "There are no highlighted conversations for this period yet. You can explore the mentions."
     },
     "workspaceTopics": {
       "detailMetrics": {
