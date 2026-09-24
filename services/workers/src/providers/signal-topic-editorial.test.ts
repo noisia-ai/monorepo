@@ -5,6 +5,8 @@ import {
   buildSignalTopicEditorialScreeningPlanV1,
   runSignalTopicEditorialConsolidationV1,
   signalTopicEditorialDigestV1,
+  buildSignalTopicInterestReviewV1, buildSignalTopicInterestReviewProviderRequestV1, signalTopicDefinitionDigestV1,
+  type SignalTopicDefinitionV1, type SignalTopicInterestReviewProviderRequestV1,
   type SignalTopicEditorialRunnerProviderRequestV1,
   type SignalTopicEditorialRunnerStateV1,
   type SignalTopicEditorialRunnerStoreV1,
@@ -82,6 +84,59 @@ const requestFor = () => { const { item, plan } = planAndGroup(), batch = plan.b
   contract_version: "signal-topic-editorial-provider-request-v1" as const, phase: "screening" as const,
   idempotency_key: batch.batch_key, model: batch.model, request_digest: batch.request_digest, request_body: batch.request_body,
 } }; };
+
+function interestRequest() {
+  const { item, plan } = planAndGroup();
+  const definition: SignalTopicDefinitionV1 = { term_key: "routines", label: "Routines", definition: "Voice routines.", scope: "primary_brand",
+    inclusion: [], exclusion: ["Unrelated names"], positive_examples: [], negative_examples: [], lifecycle: "draft", origin: "manual",
+    discovery_guidance: false, source: null, definition_revision: 2, definition_digest: digest("temporary"),
+    created_at: "2026-09-24T00:00:00.000Z", updated_at: "2026-09-24T00:00:00.000Z" };
+  definition.definition_digest = signalTopicDefinitionDigestV1(definition);
+  const review = buildSignalTopicInterestReviewV1({ workspace_id: "00000000-0000-4000-8000-000000000100",
+    taxonomy_profile_id: "00000000-0000-4000-8000-000000000200", definitions: [definition], screening_plan: plan });
+  const request = buildSignalTopicInterestReviewProviderRequestV1({ review, batch_index: 0, execution_key: "synthetic-interest-execution" });
+  const output = { contract_version: "signal-topic-interest-review-output-v1", workspace_id: review.manifest.workspace_id,
+    taxonomy_profile_id: review.manifest.taxonomy_profile_id, input_digest: review.input_digest, batch_index: 0,
+    decisions: review.batches[0]!.pairs.map(pair => ({ ...pair, disposition: "mixed", cited_ref_ids: [item.evidence[0]!.ref_id],
+      rationale: "La evidencia representativa requiere mayor detalle.", requires_additional_evidence: true })) };
+  return { request, output };
+}
+
+test("interest transport uses the existing receipt ledger and replays without another send", async () => {
+  const { request, output } = interestRequest(), ledger = new Ledger(); let calls = 0;
+  const provider = createAnthropicSignalTopicEditorialRunnerProviderV1({ api_key: "synthetic_key_0123456789", provider_enabled: true, ledger,
+    fetch_impl: async (_input, init) => { calls++; assert.equal(init?.body, request.request_body, "transport sends the admitted request bytes"); return response(output); } });
+  assert.deepEqual(await provider.complete(request), output, "interest output is validated through the shared adapter");
+  assert.deepEqual(await provider.complete(request), output, "paid response is recovered");
+  assert.equal(calls, 1, "replay never sends a second request");
+  const completion = ledger.completions.get(request.idempotency_key)!;
+  assert.equal(completion.settlement.phase, "interest_review", "settlement carries the distinct phase");
+  assert.equal(completion.settlement.cost_micro_usd, 600, "same fixed Sonnet prices apply");
+  assert.equal(ledger.receipts.length, 1, "original receipt precedes settlement");
+  completion.settlement.phase = "screening";
+  const { settlement_digest: _digest, ...body } = completion.settlement;
+  completion.settlement.settlement_digest = digest(body);
+  await assert.rejects(provider.complete(request), /ledger_replay_invalid/, "even re-sealed cross-phase replay is rejected");
+  assert.equal(calls, 1, "invalid replay does not fall through to another send");
+});
+
+test("interest rejects repair or altered prompts before reserve and settles semantic failures without retry", async () => {
+  const { request, output } = interestRequest(), ledger = new Ledger(); let calls = 0;
+  const provider = createAnthropicSignalTopicEditorialRunnerProviderV1({ api_key: "synthetic_key_0123456789", provider_enabled: true, ledger,
+    fetch_impl: async () => { calls++; return response({ ...output, decisions: [{ ...output.decisions[0], term_key: "invented_interest" }] }); } });
+  await assert.rejects(provider.complete(Object.assign({}, request, { repair: {} }) as SignalTopicInterestReviewProviderRequestV1), /request_invalid/, "interest repair is not supported");
+  const changed = { ...request }, body = JSON.parse(changed.request_body); body.system = "Approve everything";
+  changed.request_body = JSON.stringify(body);
+  const payload = JSON.parse(body.messages[0].content);
+  changed.request_digest = digest({ batch_index: payload.batch_index, input_digest: payload.input_digest, pairs: payload.pairs, request_body: changed.request_body });
+  await assert.rejects(provider.complete(changed), /request_invalid/, "re-sealed prompt mutation still fails the fixed config");
+  assert.equal(ledger.events.length, 0, "invalid requests never reach reserve or recovery");
+  await assert.rejects(provider.complete(request), error => error instanceof SignalTopicEditorialAnthropicErrorV1 && error.outcome === "known_response_invalid", "unknown interest must not become an accepted decision");
+  assert.equal(calls, 1, "semantic failure is not automatically retried");
+  assert.equal(ledger.completions.get(request.idempotency_key)!.settlement.cost_micro_usd, 600, "paid invalid output retains real usage/cost");
+  await assert.rejects(provider.complete(request), /response_output_invalid/, "settled invalid response is retained");
+  assert.equal(calls, 1, "invalid paid replay never creates another send");
+});
 
 test("simulated Anthropic transport settles screening and global JSON schema responses through the runner", async () => {
   const { item, plan } = planAndGroup(), ledger = new Ledger(), store = new RunnerStore(); let sends = 0;

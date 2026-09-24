@@ -8,8 +8,16 @@ import {
   signalTopicEditorialScreeningOutputSchemaV1,
   validateSignalTopicEditorialRepairRequestV1,
   type SignalTopicEditorialRunnerProviderRequestV1,
-  type SignalTopicEditorialRunnerProviderV1,
+  SIGNAL_TOPIC_INTEREST_REVIEW_CONFIGURATION_V1,
+  validateSignalTopicInterestReviewProviderRequestV1,
+  validateSignalTopicInterestReviewProviderOutputV1,
+  type SignalTopicInterestReviewProviderRequestV1,
 } from "@noisia/query-engine";
+
+export type SignalTopicEditorialTransportRequestV1 = SignalTopicEditorialRunnerProviderRequestV1 | SignalTopicInterestReviewProviderRequestV1;
+export interface SignalTopicEditorialTransportProviderV1 {
+  complete(request: SignalTopicEditorialTransportRequestV1): Promise<unknown>;
+}
 
 const RESPONSE_BYTES_LIMIT = 8 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -40,7 +48,7 @@ export type SignalTopicEditorialAnthropicRawReceiptV1 = {
 
 export type SignalTopicEditorialAnthropicSettlementV1 = {
   contract_version: "signal-topic-editorial-anthropic-settlement-v1";
-  phase: "screening" | "global";
+  phase: "screening" | "global" | "interest_review";
   idempotency_key: string;
   request_digest: string;
   request_body_sha256: string;
@@ -64,10 +72,11 @@ export type SignalTopicEditorialAnthropicCompletionV1 = {
 export type SignalTopicEditorialAnthropicSendAuthorizationV1 =
   | "authorized" | "definitely_not_sent" | "outcome_unknown";
 
-/** SQL0176 can implement these hooks later; this transport does not own a database. */
+/** Shared hooks; SQL stores currently admit only screening/global. Interest review
+ * requires separately validated stores and is not wired to the runtime dispatcher. */
 export interface SignalTopicEditorialAnthropicLedgerV1 {
-  load(request: SignalTopicEditorialRunnerProviderRequestV1): Promise<SignalTopicEditorialAnthropicCompletionV1 | null>;
-  authorize_send(request: SignalTopicEditorialRunnerProviderRequestV1): Promise<SignalTopicEditorialAnthropicSendAuthorizationV1>;
+  load(request: SignalTopicEditorialTransportRequestV1): Promise<SignalTopicEditorialAnthropicCompletionV1 | null>;
+  authorize_send(request: SignalTopicEditorialTransportRequestV1): Promise<SignalTopicEditorialAnthropicSendAuthorizationV1>;
   persist_receipt(receipt: SignalTopicEditorialAnthropicRawReceiptV1): Promise<void>;
   record_completion(completion: SignalTopicEditorialAnthropicCompletionV1): Promise<void>;
 }
@@ -82,23 +91,29 @@ const transportError = (code: string, outcome: "definitely_not_sent" | "known_re
   settlement: SignalTopicEditorialAnthropicSettlementV1 | null = null) =>
   new SignalTopicEditorialAnthropicErrorV1(`signal_topic_editorial_anthropic_${code}`, outcome, settlement);
 
-function configurationFor(request: SignalTopicEditorialRunnerProviderRequestV1) {
+function configurationFor(request: SignalTopicEditorialTransportRequestV1) {
+  if (request.phase === "interest_review") return SIGNAL_TOPIC_INTEREST_REVIEW_CONFIGURATION_V1;
   return request.phase === "screening"
     ? SIGNAL_TOPIC_EDITORIAL_SCREENING_CONFIGURATION_V1
     : SIGNAL_TOPIC_EDITORIAL_GLOBAL_CONFIGURATION_V1;
 }
 
-function validateRequest(request: SignalTopicEditorialRunnerProviderRequestV1) {
-  if (!exactKeys(request as unknown as Record<string, unknown>,
-    ["contract_version", "phase", "idempotency_key", "model", "request_digest", "request_body", ...(request.repair === undefined ? [] : ["repair"])])
-    || request.contract_version !== "signal-topic-editorial-provider-request-v1"
-    || (request.phase !== "screening" && request.phase !== "global")
-    || request.model !== SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1
-    || !/^[A-Za-z0-9_.:-]{1,240}$/u.test(request.idempotency_key)
-    || !digestPattern.test(request.request_digest)) throw transportError("request_invalid", "definitely_not_sent");
-  if (request.repair !== undefined) {
-    try { validateSignalTopicEditorialRepairRequestV1(request); }
+function validateRequest(request: SignalTopicEditorialTransportRequestV1) {
+  if (request.phase === "interest_review") {
+    try { validateSignalTopicInterestReviewProviderRequestV1(request); }
     catch { throw transportError("request_invalid", "definitely_not_sent"); }
+  } else {
+    if (!exactKeys(request as unknown as Record<string, unknown>,
+      ["contract_version", "phase", "idempotency_key", "model", "request_digest", "request_body", ...(request.repair === undefined ? [] : ["repair"])])
+      || request.contract_version !== "signal-topic-editorial-provider-request-v1"
+      || (request.phase !== "screening" && request.phase !== "global")
+      || request.model !== SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1
+      || !/^[A-Za-z0-9_.:-]{1,240}$/u.test(request.idempotency_key)
+      || !digestPattern.test(request.request_digest)) throw transportError("request_invalid", "definitely_not_sent");
+    if (request.repair !== undefined) {
+      try { validateSignalTopicEditorialRepairRequestV1(request); }
+      catch { throw transportError("request_invalid", "definitely_not_sent"); }
+    }
   }
   let body: Record<string, unknown> | null;
   try { body = object(JSON.parse(request.request_body)); } catch { body = null; }
@@ -127,12 +142,12 @@ function usageOf(value: unknown): SignalTopicEditorialAnthropicUsageV1 | null {
 }
 
 export function signalTopicEditorialAnthropicCostV1(usage: SignalTopicEditorialAnthropicUsageV1,
-  phase: "screening" | "global") {
+  phase: "screening" | "global" | "interest_review") {
   const row = object(usage), parsed = usageOf(usage);
   if (!row || !exactKeys(row, ["input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"])
-    || !parsed || (phase !== "screening" && phase !== "global"))
+    || !parsed || (phase !== "screening" && phase !== "global" && phase !== "interest_review"))
     throw new Error("signal_topic_editorial_anthropic_cost_invalid");
-  const configuration = phase === "screening"
+  const configuration = phase === "interest_review" ? SIGNAL_TOPIC_INTEREST_REVIEW_CONFIGURATION_V1 : phase === "screening"
     ? SIGNAL_TOPIC_EDITORIAL_SCREENING_CONFIGURATION_V1 : SIGNAL_TOPIC_EDITORIAL_GLOBAL_CONFIGURATION_V1;
   if (parsed.cache_read_input_tokens !== 0 || parsed.cache_creation_input_tokens !== 0)
     throw new Error("signal_topic_editorial_anthropic_cache_pricing_unsupported");
@@ -143,11 +158,20 @@ export function signalTopicEditorialAnthropicCostV1(usage: SignalTopicEditorialA
   return Number(total);
 }
 
+function parseOutput(request: SignalTopicEditorialTransportRequestV1, output: unknown): { success: true; data: unknown } | { success: false } {
+  if (request.phase === "interest_review") {
+    try { return { success: true, data: validateSignalTopicInterestReviewProviderOutputV1(request, output) }; }
+    catch { return { success: false }; }
+  }
+  return request.phase === "screening" ? signalTopicEditorialScreeningOutputSchemaV1.safeParse(output)
+    : signalTopicEditorialGlobalOutputSchemaV1.safeParse(output);
+}
+
 function sealSettlement(body: Omit<SignalTopicEditorialAnthropicSettlementV1, "settlement_digest">) {
   return { ...body, settlement_digest: signalTopicEditorialDigestV1(body) };
 }
 
-function decodeReceipt(request: SignalTopicEditorialRunnerProviderRequestV1,
+function decodeReceipt(request: SignalTopicEditorialTransportRequestV1,
   receipt: SignalTopicEditorialAnthropicRawReceiptV1): SignalTopicEditorialAnthropicCompletionV1 {
   const configuration = configurationFor(request), base = { contract_version: "signal-topic-editorial-anthropic-settlement-v1" as const,
     phase: request.phase, idempotency_key: request.idempotency_key, request_digest: request.request_digest,
@@ -176,9 +200,7 @@ function decodeReceipt(request: SignalTopicEditorialRunnerProviderRequestV1,
     return invalid("response_output_invalid");
   let output: unknown;
   try { output = JSON.parse(blocks[0].text as string); } catch { return invalid("response_output_invalid"); }
-  const parsed = request.phase === "screening"
-    ? signalTopicEditorialScreeningOutputSchemaV1.safeParse(output)
-    : signalTopicEditorialGlobalOutputSchemaV1.safeParse(output);
+  const parsed = parseOutput(request, output);
   if (!parsed.success) return invalid("response_output_invalid");
   const normalized = parsed.data, output_digest = signalTopicEditorialDigestV1(normalized);
   return { output: normalized, settlement: sealSettlement({ ...base, outcome: "validated", usage,
@@ -186,7 +208,7 @@ function decodeReceipt(request: SignalTopicEditorialRunnerProviderRequestV1,
 }
 
 /** Decode durable bytes during recovery; this never reads credentials or sends. */
-export function decodeSignalTopicEditorialAnthropicReceiptV1(request: SignalTopicEditorialRunnerProviderRequestV1,
+export function decodeSignalTopicEditorialAnthropicReceiptV1(request: SignalTopicEditorialTransportRequestV1,
   receipt: SignalTopicEditorialAnthropicRawReceiptV1): SignalTopicEditorialAnthropicCompletionV1 {
   validateRequest(request);
   if (receipt.request_digest !== request.request_digest || receipt.idempotency_key !== request.idempotency_key
@@ -198,7 +220,7 @@ export function decodeSignalTopicEditorialAnthropicReceiptV1(request: SignalTopi
   return decodeReceipt(request, receipt);
 }
 
-function validateReplay(request: SignalTopicEditorialRunnerProviderRequestV1,
+function validateReplay(request: SignalTopicEditorialTransportRequestV1,
   completion: SignalTopicEditorialAnthropicCompletionV1): SignalTopicEditorialAnthropicCompletionV1 {
   const completionRow = object(completion), settlementRow = object(completionRow?.settlement);
   if (!completionRow || !exactKeys(completionRow, ["settlement", "output"]) || !settlementRow
@@ -231,9 +253,7 @@ function validateReplay(request: SignalTopicEditorialRunnerProviderRequestV1,
     if (expected !== settlement.cost_micro_usd) throw transportError("ledger_replay_invalid", "outcome_unknown");
   } else if (settlement.cost_micro_usd !== null) throw transportError("ledger_replay_invalid", "outcome_unknown");
   if (settlement.outcome === "validated") {
-    const parsed = request.phase === "screening"
-      ? signalTopicEditorialScreeningOutputSchemaV1.safeParse(completion.output)
-      : signalTopicEditorialGlobalOutputSchemaV1.safeParse(completion.output);
+    const parsed = parseOutput(request, completion.output);
     if (!parsed.success || signalTopicEditorialDigestV1(parsed.data) !== settlement.output_digest)
       throw transportError("ledger_replay_invalid", "outcome_unknown");
     return { settlement, output: parsed.data };
@@ -243,7 +263,7 @@ function validateReplay(request: SignalTopicEditorialRunnerProviderRequestV1,
   return completion;
 }
 
-async function readReceipt(request: SignalTopicEditorialRunnerProviderRequestV1, response: Response) {
+async function readReceipt(request: SignalTopicEditorialTransportRequestV1, response: Response) {
   const rawId = response.headers.get("request-id"), provider_request_id = rawId && requestIdPattern.test(rawId) ? rawId : null;
   const chunks: Uint8Array[] = []; let size = 0, complete = false;
   if (response.body) {
@@ -276,7 +296,7 @@ export function createAnthropicSignalTopicEditorialRunnerProviderV1(args: {
   fetch_impl?: typeof fetch;
   timeout_ms?: number;
   schedule_timeout?: (onTimeout: () => void, milliseconds: number) => (() => void);
-}): SignalTopicEditorialRunnerProviderV1 {
+}): SignalTopicEditorialTransportProviderV1 {
   return { complete: async request => {
     validateRequest(request);
     let replay: SignalTopicEditorialAnthropicCompletionV1 | null;

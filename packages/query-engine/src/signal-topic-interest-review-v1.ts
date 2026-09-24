@@ -2,7 +2,7 @@ import { z } from "zod";
 import { signalTopicDefinitionSchemaV1, signalTopicDefinitionDigestV1, signalTopicGuidesDiscoveryV1,
   type SignalTopicDefinitionV1 } from "./signal-topic-catalog-v1";
 import { buildSignalTopicEditorialScreeningPlanV1, signalTopicEditorialDigestV1,
-  SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1, type SignalTopicEditorialScreeningPlanV1,
+  SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1, SIGNAL_TOPIC_EDITORIAL_SCREENING_CONFIGURATION_V1, type SignalTopicEditorialScreeningPlanV1,
   type SignalTopicEditorialScreeningGroupV1, type SignalTopicEditorialBrandContextV1 } from "./signal-topic-consolidation-editorial-v1";
 
 /** Transport/memory bounds, never similarity thresholds or a top-k selection.
@@ -60,6 +60,16 @@ export const SIGNAL_TOPIC_INTEREST_REVIEW_OUTPUT_SCHEMA_V1 = Object.freeze({ typ
     }
   }
 } as const);
+
+export const SIGNAL_TOPIC_INTEREST_REVIEW_CONFIGURATION_V1 = Object.freeze({
+  ...SIGNAL_TOPIC_EDITORIAL_SCREENING_CONFIGURATION_V1, phase: "interest_review" as const,
+  prompt_digest: digest(INSTRUCTIONS), schema_digest: digest(SIGNAL_TOPIC_INTEREST_REVIEW_OUTPUT_SCHEMA_V1),
+  max_output_tokens: SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1.max_output_tokens,
+});
+export type SignalTopicInterestReviewProviderRequestV1 = Readonly<{
+  contract_version: "signal-topic-interest-review-provider-request-v1"; phase: "interest_review";
+  idempotency_key: string; model: "claude-sonnet-4-6"; request_digest: string; request_body: string;
+}>;
 
 function checkedPlan(plan: SignalTopicEditorialScreeningPlanV1) {
   try {
@@ -145,10 +155,11 @@ export function buildSignalTopicInterestReviewV1(args: {
 
 const decisionSchema = pairSchema.extend({ disposition: z.enum(["supports", "mixed", "unrelated", "insufficient"]),
   cited_ref_ids: z.array(hash).max(10), rationale: z.string().trim().min(1).max(600), requires_additional_evidence: z.boolean() }).strict();
-const outputSchema = z.object({ contract_version: z.literal("signal-topic-interest-review-output-v1"),
+export const signalTopicInterestReviewOutputSchemaV1 = z.object({ contract_version: z.literal("signal-topic-interest-review-output-v1"),
   workspace_id: z.string().uuid(), taxonomy_profile_id: z.string().uuid(), input_digest: hash,
   batch_index: z.number().int().nonnegative(), decisions: z.array(decisionSchema).max(SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1.pairs_per_batch) }).strict();
 export type SignalTopicInterestReviewDecisionV1 = z.infer<typeof decisionSchema>;
+export type SignalTopicInterestReviewBatchOutputV1 = z.infer<typeof signalTopicInterestReviewOutputSchemaV1>;
 export type SignalTopicInterestReviewResultV1 = {
   contract_version: "signal-topic-interest-review-result-v1"; workspace_id: string; taxonomy_profile_id: string;
   input_digest: string; review_digest: string; screening_plan_digest: string;
@@ -156,35 +167,32 @@ export type SignalTopicInterestReviewResultV1 = {
   approval_policy: "none"; membership_effect: "none"; evidence_scope: "representative_group_evidence";
 };
 
-export function parseSignalTopicInterestReviewResultV1(args: { review: SignalTopicInterestReviewV1; outputs: unknown[] }): SignalTopicInterestReviewResultV1 {
-  const { screening_plan, manifest, input_digest, batches, review_digest } = args.review;
+export function validateSignalTopicInterestReviewV1(review: SignalTopicInterestReviewV1): SignalTopicInterestReviewV1 {
+  if (Buffer.byteLength(JSON.stringify(review), "utf8") > SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1.max_review_bytes) return fail("capacity_exceeded");
+  const { screening_plan, manifest, input_digest, batches, review_digest } = review;
   if (digest(manifest) !== input_digest || digest({ screening_plan, manifest, input_digest, batches }) !== review_digest) return fail("review_changed");
   const rebuilt = buildSignalTopicInterestReviewV1({ workspace_id: manifest.workspace_id,
     taxonomy_profile_id: manifest.taxonomy_profile_id, definitions: manifest.interests, screening_plan });
   // Digests are consistency checks, not authentication: the caller supplies the
   // trusted review snapshot. Rebuilding also rejects re-sealed altered bodies.
-  if (digest(rebuilt) !== digest(args.review)) return fail("review_changed");
-  const pairs = pairsFor(manifest);
-  if (pairs.length !== manifest.expected_pair_count || new Set(pairs.map(pairKey)).size !== pairs.length
-    || batches.length !== Math.ceil(pairs.length / SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1.pairs_per_batch)
-    || args.outputs.length !== batches.length) return fail("coverage_invalid");
-  const byIndex = new Map<number, z.infer<typeof outputSchema>>();
-  for (const raw of args.outputs) {
-    const parsed = outputSchema.safeParse(raw);
-    if (!parsed.success || byIndex.has(parsed.data.batch_index)) return fail("output_invalid");
-    byIndex.set(parsed.data.batch_index, parsed.data);
-  }
-  const refs = new Map(manifest.groups.map(group => [group.group_key, new Set(group.evidence_ref_ids)]));
-  const decisions: SignalTopicInterestReviewDecisionV1[] = [];
-  for (const [index, batch] of batches.entries()) {
-    const expected = pairs.slice(index * SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1.pairs_per_batch, (index + 1) * SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1.pairs_per_batch);
-    const { request_digest, ...body } = batch;
-    if (batch.batch_index !== index || batch.input_digest !== input_digest || digest(body) !== request_digest || digest(batch.pairs) !== digest(expected)) return fail("review_changed");
-    const output = byIndex.get(index);
-    if (!output || output.input_digest !== input_digest || output.workspace_id !== manifest.workspace_id
-      || output.taxonomy_profile_id !== manifest.taxonomy_profile_id || output.decisions.length !== expected.length) return fail("coverage_invalid");
-    const expectedByKey = new Map(expected.map(pair => [pairKey(pair), pair])), seen = new Set<string>();
-    for (const decision of output.decisions) {
+  if (digest(rebuilt) !== digest(review)) return fail("review_changed");
+  return rebuilt;
+}
+
+type BatchBinding = Pick<SignalTopicInterestReviewManifestV1, "workspace_id" | "taxonomy_profile_id"> & {
+  input_digest: string; batch_index: number; pairs: SignalTopicInterestReviewPairV1[];
+  groups: Array<{ group_key: string; evidence_ref_ids: string[] }>;
+};
+function parseBoundOutput(binding: BatchBinding, raw: unknown): SignalTopicInterestReviewBatchOutputV1 {
+  const parsed = signalTopicInterestReviewOutputSchemaV1.safeParse(raw);
+  if (!parsed.success) return fail("output_invalid");
+  const output = parsed.data;
+  if (output.input_digest !== binding.input_digest || output.workspace_id !== binding.workspace_id
+    || output.taxonomy_profile_id !== binding.taxonomy_profile_id || output.batch_index !== binding.batch_index
+    || output.decisions.length !== binding.pairs.length) return fail("coverage_invalid");
+  const expectedByKey = new Map(binding.pairs.map(pair => [pairKey(pair), pair])), seen = new Set<string>();
+  const refs = new Map(binding.groups.map(group => [group.group_key, new Set(group.evidence_ref_ids)]));
+  for (const decision of output.decisions) {
       const { disposition, cited_ref_ids, rationale: _rationale, requires_additional_evidence, ...identity } = decision;
       const key = pairKey(identity);
       if (!expectedByKey.has(key) || seen.has(key) || digest(identity) !== digest(expectedByKey.get(key))) return fail("identity_invalid");
@@ -192,12 +200,97 @@ export function parseSignalTopicInterestReviewResultV1(args: { review: SignalTop
       if (new Set(cited_ref_ids).size !== cited_ref_ids.length || cited_ref_ids.some(ref => !refs.get(identity.group_key)?.has(ref))
         || disposition !== "insufficient" && cited_ref_ids.length === 0) return fail("evidence_invalid");
       if (requires_additional_evidence !== (disposition === "mixed" || disposition === "insufficient")) return fail("resolution_invalid");
-      decisions.push(decision);
-    }
   }
-  decisions.sort((a, b) => ascii(a.group_key, b.group_key) || ascii(a.term_key, b.term_key));
-  return { contract_version: "signal-topic-interest-review-result-v1", workspace_id: manifest.workspace_id,
-    taxonomy_profile_id: manifest.taxonomy_profile_id, input_digest, review_digest, screening_plan_digest: manifest.screening_plan_digest,
-    coverage: "complete_group_interest_matrix", expected_pair_count: pairs.length, decisions,
-    approval_policy: "none", membership_effect: "none", evidence_scope: "representative_group_evidence" };
+  output.decisions.sort((a, b) => ascii(a.group_key, b.group_key) || ascii(a.term_key, b.term_key));
+  return output;
+}
+
+/** Snapshot/rebuild once per coordinator, not once for each potentially large batch. */
+export function createSignalTopicInterestReviewOutputValidatorV1(review: SignalTopicInterestReviewV1) {
+  const snapshot = validateSignalTopicInterestReviewV1(review);
+  const { manifest, input_digest, batches, review_digest } = snapshot;
+  const groupsByKey = new Map(manifest.groups.map(group => [group.group_key, group]));
+  const batchAt = (index: number) => {
+    if (!Number.isSafeInteger(index) || index < 0 || !batches[index]) return fail("batch_invalid");
+    return batches[index]!;
+  };
+  const parseBatch = (batch_index: number, output: unknown) => {
+    const pairs = batchAt(batch_index).pairs;
+    return parseBoundOutput({ workspace_id: manifest.workspace_id, taxonomy_profile_id: manifest.taxonomy_profile_id, input_digest,
+      batch_index, pairs, groups: [...new Set(pairs.map(pair => pair.group_key))].map(key => groupsByKey.get(key)!) }, output);
+  };
+  return {
+    parseBatch,
+    parseAll(outputs: unknown[]): SignalTopicInterestReviewResultV1 {
+      if (outputs.length !== batches.length) return fail("coverage_invalid");
+      const seen = new Set<number>(), decisions: SignalTopicInterestReviewDecisionV1[] = [];
+      for (const raw of outputs) {
+        const parsed = signalTopicInterestReviewOutputSchemaV1.safeParse(raw);
+        if (!parsed.success || seen.has(parsed.data.batch_index)) return fail("output_invalid");
+        seen.add(parsed.data.batch_index);
+        decisions.push(...parseBatch(parsed.data.batch_index, parsed.data).decisions);
+      }
+      decisions.sort((a, b) => ascii(a.group_key, b.group_key) || ascii(a.term_key, b.term_key));
+      return { contract_version: "signal-topic-interest-review-result-v1", workspace_id: manifest.workspace_id,
+        taxonomy_profile_id: manifest.taxonomy_profile_id, input_digest, review_digest, screening_plan_digest: manifest.screening_plan_digest,
+        coverage: "complete_group_interest_matrix", expected_pair_count: manifest.expected_pair_count, decisions,
+        approval_policy: "none", membership_effect: "none", evidence_scope: "representative_group_evidence" };
+    },
+    buildRequest(args: { batch_index: number; execution_key: string }): SignalTopicInterestReviewProviderRequestV1 {
+      if (!/^[A-Za-z0-9_.:-]{1,200}$/u.test(args.execution_key)) return fail("execution_key_invalid");
+      const batch = batchAt(args.batch_index);
+      return { contract_version: "signal-topic-interest-review-provider-request-v1", phase: "interest_review",
+        // Full digest includes execution ownership, unlike a truncated batch key.
+        idempotency_key: `topic-interest-review-v1:${digest({ execution_key: args.execution_key, review_digest, batch_index: args.batch_index }).slice(7)}`,
+        model: SIGNAL_TOPIC_EDITORIAL_SCREENING_MODEL_V1, request_digest: batch.request_digest, request_body: batch.request_body };
+    },
+  };
+}
+export function parseSignalTopicInterestReviewResultV1(args: { review: SignalTopicInterestReviewV1; outputs: unknown[] }) {
+  return createSignalTopicInterestReviewOutputValidatorV1(args.review).parseAll(args.outputs);
+}
+export function buildSignalTopicInterestReviewProviderRequestV1(args: { review: SignalTopicInterestReviewV1; batch_index: number; execution_key: string }) {
+  return createSignalTopicInterestReviewOutputValidatorV1(args.review).buildRequest(args);
+}
+export function validateSignalTopicInterestReviewBatchOutputV1(args: { review: SignalTopicInterestReviewV1; batch_index: number; output: unknown }) {
+  return createSignalTopicInterestReviewOutputValidatorV1(args.review).parseBatch(args.batch_index, args.output);
+}
+
+/** Transport binding only. The coordinator additionally validates against its
+ * trusted complete review; a self-consistent request is not source authority. */
+export function validateSignalTopicInterestReviewProviderRequestV1(request: SignalTopicInterestReviewProviderRequestV1): BatchBinding {
+  try {
+    const envelope = z.object({ contract_version: z.literal("signal-topic-interest-review-provider-request-v1"),
+      phase: z.literal("interest_review"), idempotency_key: z.string().regex(/^topic-interest-review-v1:[a-f0-9]{64}$/u),
+      model: z.literal("claude-sonnet-4-6"), request_digest: hash, request_body: z.string() }).strict().parse(request);
+    if (Buffer.byteLength(envelope.request_body, "utf8") > SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1.max_request_bytes) return fail("capacity_exceeded");
+    const body = JSON.parse(envelope.request_body);
+    const payload = z.object({ contract_version: z.literal("signal-topic-interest-review-request-v1"),
+      workspace_id: z.string().uuid(), taxonomy_profile_id: z.string().uuid(), input_digest: hash, batch_index: z.number().int().nonnegative(),
+      screening_plan_digest: hash, coverage: z.literal("complete_group_interest_matrix"), approval_policy: z.literal("none"),
+      membership_effect: z.literal("none"), evidence_scope: z.literal("representative_group_evidence"), context: z.unknown(),
+      interests: z.array(signalTopicDefinitionSchemaV1).min(1).max(20),
+      groups: z.array(z.object({ group_key: z.string(), group_digest: hash, dossier_digest: hash,
+        evidence: z.array(z.object({ ref_id: hash }).passthrough()).max(10) }).passthrough()).min(1).max(20),
+      pairs: z.array(pairSchema).min(1).max(20) }).strict().parse(JSON.parse(body.messages[0].content));
+    const { batch_index, input_digest, pairs } = payload;
+    if (digest({ batch_index, input_digest, pairs, request_body: envelope.request_body }) !== request.request_digest) return fail("request_invalid");
+    const interests = new Map(payload.interests.map(interest => [interest.term_key, interest]));
+    const groups = new Map(payload.groups.map(group => [group.group_key, group]));
+    if (interests.size !== payload.interests.length || groups.size !== payload.groups.length || new Set(pairs.map(pairKey)).size !== pairs.length
+      || new Set(pairs.map(pair => pair.term_key)).size !== interests.size || new Set(pairs.map(pair => pair.group_key)).size !== groups.size) return fail("request_invalid");
+    for (const pair of pairs) {
+      const interest = interests.get(pair.term_key), group = groups.get(pair.group_key);
+      if (!interest || !group || interest.lifecycle === "archived" || interest.origin === "workspace_discovery" && !signalTopicGuidesDiscoveryV1(interest)
+        || interest.definition_digest !== signalTopicDefinitionDigestV1(interest)
+        || interest.definition_digest !== pair.definition_digest || interest.definition_revision !== pair.definition_revision
+        || group.group_digest !== pair.group_digest || group.dossier_digest !== pair.dossier_digest
+        || new Set(group.evidence.map(ref => ref.ref_id)).size !== group.evidence.length) return fail("request_invalid");
+    }
+    return { workspace_id: payload.workspace_id, taxonomy_profile_id: payload.taxonomy_profile_id, input_digest, batch_index, pairs,
+      groups: payload.groups.map(group => ({ group_key: group.group_key, evidence_ref_ids: group.evidence.map(ref => ref.ref_id) })) };
+  } catch { return fail("request_invalid"); }
+}
+export function validateSignalTopicInterestReviewProviderOutputV1(request: SignalTopicInterestReviewProviderRequestV1, output: unknown) {
+  return parseBoundOutput(validateSignalTopicInterestReviewProviderRequestV1(request), output);
 }

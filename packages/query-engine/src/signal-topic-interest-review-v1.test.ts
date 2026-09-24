@@ -4,6 +4,9 @@ import test from "node:test";
 import { signalTopicDefinitionDigestV1, type SignalTopicDefinitionV1 } from "./signal-topic-catalog-v1";
 import { buildSignalTopicEditorialScreeningPlanV1, signalTopicEditorialDigestV1 as digest } from "./signal-topic-consolidation-editorial-v1";
 import { buildSignalTopicInterestReviewV1, parseSignalTopicInterestReviewResultV1,
+  buildSignalTopicInterestReviewProviderRequestV1, validateSignalTopicInterestReviewBatchOutputV1,
+  createSignalTopicInterestReviewOutputValidatorV1, validateSignalTopicInterestReviewProviderRequestV1,
+  validateSignalTopicInterestReviewProviderOutputV1,
   SIGNAL_TOPIC_INTEREST_REVIEW_CAPACITY_V1, type SignalTopicInterestReviewV1,
   type SignalTopicInterestReviewDecisionV1 } from "./signal-topic-interest-review-v1";
 
@@ -181,4 +184,35 @@ test("total review capacity includes repeated request payloads and fails without
     inclusion: Array.from({ length: 16 }, (_, i) => `${i} ${"Boundary ".repeat(25)}`),
     exclusion: Array.from({ length: 16 }, (_, i) => `${i} ${"Exclude ".repeat(25)}`) }));
   assert.throws(() => build(interests, plan(100)), /capacity_exceeded/, "aggregate memory/transport capacity is bounded even when individual requests fit");
+});
+
+test("provider request binds execution and batch without altering historic request bytes", () => {
+  const review = build(Array.from({ length: 11 }, (_, n) => definition(n)), plan(3));
+  const request = buildSignalTopicInterestReviewProviderRequestV1({ review, batch_index: 0, execution_key: "execution-1" });
+  assert.equal(request.phase, "interest_review", "interest review is never disguised as screening");
+  assert.equal(request.request_body, review.batches[0]!.request_body, "request body is exactly the admitted batch");
+  assert.equal(request.request_digest, review.batches[0]!.request_digest, "request digest remains the admitted digest");
+  assert.notEqual(request.idempotency_key, buildSignalTopicInterestReviewProviderRequestV1({ review, batch_index: 0, execution_key: "execution-2" }).idempotency_key, "execution ownership changes idempotency");
+  assert.notEqual(request.idempotency_key, buildSignalTopicInterestReviewProviderRequestV1({ review, batch_index: 1, execution_key: "execution-1" }).idempotency_key, "batch identity changes idempotency");
+  assert.doesNotThrow(() => validateSignalTopicInterestReviewProviderRequestV1(request), "canonical provider request validates");
+  assert.throws(() => validateSignalTopicInterestReviewProviderRequestV1({ ...request, request_body: request.request_body + " " }), /request_invalid/, "mutated request does not retain its digest");
+  assert.throws(() => validateSignalTopicInterestReviewProviderRequestV1(Object.assign({}, request, { repair: {} })), /request_invalid/, "interest phase has no repair branch");
+  assert.throws(() => buildSignalTopicInterestReviewProviderRequestV1({ review, batch_index: 2, execution_key: "execution-1" }), /batch_invalid/, "out-of-range batch is rejected");
+  assert.throws(() => buildSignalTopicInterestReviewProviderRequestV1({ review, batch_index: 0, execution_key: "unsafe key" }), /execution_key_invalid/, "execution key cannot contain arbitrary text");
+});
+
+test("batch validators normalize outputs, reject crossed evidence and isolate a single validated snapshot", () => {
+  const review = build([definition(), definition(1)]), validOutputs = outputs(review);
+  const validator = createSignalTopicInterestReviewOutputValidatorV1(review), request = validator.buildRequest({ batch_index: 0, execution_key: "execution-1" });
+  const unordered = structuredClone(validOutputs[0]!); unordered.decisions.reverse(); unordered.decisions[0]!.rationale = "  Representative example.  ";
+  const normalized = validateSignalTopicInterestReviewBatchOutputV1({ review, batch_index: 0, output: unordered });
+  assert.equal(normalized.decisions[0]!.term_key, "interest_0", "output order is canonical");
+  assert.equal(normalized.decisions[3]!.rationale, "Representative example.", "rationale is normalized");
+  assert.deepEqual(validateSignalTopicInterestReviewProviderOutputV1(request, unordered), normalized, "transport and trusted-review validation agree");
+  const crossed = structuredClone(validOutputs[0]!); crossed.decisions[0]!.cited_ref_ids = [review.manifest.groups[1]!.evidence_ref_ids[0]!];
+  assert.throws(() => validateSignalTopicInterestReviewProviderOutputV1(request, crossed), /evidence_invalid/, "transport rejects refs belonging to another group");
+  review.batches[0]!.request_body = "changed externally"; review.manifest.interests[0]!.definition = "changed externally";
+  assert.equal(validator.buildRequest({ batch_index: 0, execution_key: "execution-1" }).request_body, request.request_body, "factory owns a stable snapshot");
+  assert.equal(validator.parseAll(validOutputs).decisions.length, 4, "factory still validates admitted snapshot after external mutation");
+  assert.throws(() => validateSignalTopicInterestReviewBatchOutputV1({ review, batch_index: 0, output: validOutputs[0] }), /review_changed/, "standalone helper revalidates external snapshots");
 });

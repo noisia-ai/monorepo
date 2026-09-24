@@ -1,9 +1,8 @@
 import { createHash } from "node:crypto";
 import type { SignalTopicEditorialDatabaseV1, SignalTopicEditorialLeaseV1 } from "@noisia/db";
-import type { SignalTopicEditorialRunnerProviderRequestV1 } from "@noisia/query-engine";
 import { decodeSignalTopicEditorialAnthropicReceiptV1, SignalTopicEditorialAnthropicErrorV1,
   type SignalTopicEditorialAnthropicCompletionV1, type SignalTopicEditorialAnthropicLedgerV1,
-  type SignalTopicEditorialAnthropicRawReceiptV1 } from "../providers/signal-topic-editorial";
+  type SignalTopicEditorialAnthropicRawReceiptV1, type SignalTopicEditorialTransportRequestV1 } from "../providers/signal-topic-editorial";
 
 export type SignalTopicEditorialRecoveredCallV1 = {
   call_id: string; attempt_token: string; request_digest: string; request_body: string;
@@ -31,7 +30,7 @@ export function createSignalTopicEditorialLedgerV1(args: Scope & {
   assertLease: () => void;
   storeRawReceipt: (input: { call_id: string; receipt: SignalTopicEditorialAnthropicRawReceiptV1 }) => Promise<string>;
 }) {
-  const active = new Map<string, { request: SignalTopicEditorialRunnerProviderRequestV1; call_id: string; attempt_token: string }>();
+  const active = new Map<string, { request: SignalTopicEditorialTransportRequestV1; call_id: string; attempt_token: string }>();
   const scope = { database: args.database, lease: args.lease };
   const getActive = (key: string) => active.get(key) ?? (() => { throw failure("topic_editorial_attempt_missing"); })();
   async function settle(call: { call_id: string; attempt_token: string }, completion: SignalTopicEditorialAnthropicCompletionV1) {
@@ -48,7 +47,7 @@ export function createSignalTopicEditorialLedgerV1(args: Scope & {
       if (call.request_digest !== request.request_digest || call.request_body !== request.request_body)
         throw failure("topic_editorial_recovery_request_mismatch");
       if (!call.response) {
-        if (request.repair !== undefined && call.status === "definitely_not_sent")
+        if ("repair" in request && request.repair !== undefined && call.status === "definitely_not_sent")
           throw failure("topic_editorial_repair_attempt_exhausted", "definitely_not_sent");
         if (["reserved", "definitely_not_sent"].includes(call.status)) return null;
         throw failure("topic_editorial_recovery_required");
@@ -92,6 +91,7 @@ export function createSignalTopicEditorialLedgerV1(args: Scope & {
     async record_completion(completion) {
       const call = getActive(completion.settlement.request_digest);
       if (completion.settlement.idempotency_key !== call.request.idempotency_key
+        || completion.settlement.phase !== call.request.phase
         || completion.settlement.request_body_sha256 !== sha(call.request.request_body)) throw failure("topic_editorial_response_binding_invalid");
       await settle(call, completion);
     },
