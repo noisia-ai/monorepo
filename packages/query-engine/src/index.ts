@@ -1255,3 +1255,4 @@ export * from "./signal-topic-consolidation-bridge-v1";
 export * from "./signal-topic-consolidation-activation-v1";
 
 export * from "./signal-topic-interest-review-v1";
+export * from "./signal-topic-interest-evidence-candidates-v1";
