@@ -175,13 +175,16 @@ with verbatims from that channel, not assigned by platform stereotype (`DATA.md`
 
 ### The framework slide (#3) — the one clients remember
 
-The concentric-rings diagram sits **behind** the content and carries the whole explanation of the
-method without naming it commercially:
+The slide is **titled with the method's name, in English**, in every language: `Triggers &
+Barriers`. The concentric-rings diagram sits **behind** the content and carries the explanation:
 
 - The whole geometry is the `.tbmap` component: `assets/tb-map.png` absolutely positioned,
   `width:1320px`, centered, `z-index:-1`, inside a `position:relative; height:560px` wrapper.
-- Left label **Empuja (trigger)** in `--teal` (`.tl.pull`), right label **Frena (barrier)** in
-  `--coral` (`.tl.shadow`), both at `top:250px`, 340px wide, the right one right-aligned.
+- Left label in `--teal` (`.tl.pull`), right label in `--coral` (`.tl.shadow`), both at
+  `top:250px`, 340px wide, the right one right-aligned. In English they read `Trigger` and
+  `Barrier`. In Spanish they carry the verb pair chosen for this study, with the English term in
+  parentheses: `Motiva (trigger)` / `Desmotiva (barrier)`, or `Empuja (trigger)` / `Detiene
+  (barrier)` when the question is why people buy or don't. See `COPY_RULES.md` §2.6.
 - Under the map, four permission cards in a 4-column grid (`.lperm`): psychological and personal say a brand
   moves them, social says partial influence, cultural says align only. This is what makes slide 12
   land, so the wording of the four cards and of the kanban (slide 13) has to agree.

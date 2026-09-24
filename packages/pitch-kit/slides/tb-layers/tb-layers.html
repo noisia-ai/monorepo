@@ -4,7 +4,12 @@
      Heads up: assets/tb-map.png bakes the innermost ring label as "Psychological", in English and
      capitalised, while the other three rings read the same in ES and EN. Nothing is overlaid on the
      asset here. The fix is to regenerate the asset, not to patch it at runtime (CANON.md §9).
-     Never name the methodology here. The slide explains it in plain language. -->
+     The TITLE is the method's name, in English, in any language: "Triggers & Barriers".
+     The side labels: in English just "Trigger" / "Barrier". In Spanish, the verb pair chosen for
+     this study with the English term in parentheses, e.g. "Motiva (trigger)" / "Desmotiva
+     (barrier)", or "Empuja (trigger)" / "Detiene (barrier)" when the question is why people buy.
+     There is no fixed translation: pick the verb that says what the motive does in THIS question
+     (COPY_RULES.md §2.6), and hold the same pair for the rest of the deck. -->
 <section class="slide" data-label="Las cuatro capas">
   <div class="frame">
     <div class="slide-header">
@@ -17,11 +22,11 @@
       <div class="tbmap">
         <img src="assets/tb-map.png" alt="">
         <div class="tl pull">
-          <h4>Empuja (trigger)</h4>
+          <h4>{{TRIGGER_LABEL}}</h4>
           <p>{{PULL_DESC}}</p>
         </div>
         <div class="tl shadow">
-          <h4>Frena (barrier)</h4>
+          <h4>{{BARRIER_LABEL}}</h4>
           <p>{{BARRIER_DESC}}</p>
         </div>
       </div>

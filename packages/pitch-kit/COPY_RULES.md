@@ -25,12 +25,15 @@ El cliente ve **solo su mensaje**. Nunca dejes en la slide:
 
 - **Calibra el vocabulario por audiencia (matiz al "vende la pregunta, no el método").** El default sigue siendo la pregunta, no el método: para un C-level o cliente final, cero jerga de framework. **Pero si el público es una agencia, un partner o un equipo interno que ya habla el marco**, los términos T&B en inglés son válidos y hasta esperados en eyebrows y headers: `trigger`, `barrier`, `top trigger`, `top barrier`, `CX`, `pros y cons`, `conclusiones de t&b`, `Empuja (trigger)`. No los metas en el título ni en el cuerpo (ahí la idea se dice en humano); van en la etiqueta de sección. Decide el registro por quién recibe el deck, no por costumbre.
 
-  **Nombrar el método en una slide es una decisión por deck, no un precedente.** El default sigue
-  siendo no nombrarlo. Un caso lo tituló con su nombre porque ahí la narrativa lo pedía, y se
-  decidió como excepción de ese caso. El siguiente lo leyó en el registro del anterior y lo
-  convirtió en regla, que es exactamente lo que no debe pasar: una excepción registrada en el
-  `PROVENANCE_AND_CHANGELOG.md` de un caso no es canon. Se pregunta cada vez, que es lo que hace
-  la pregunta 3 del prompt de arranque.
+  **En el estudio entregado, el método se nombra, y en inglés.** La slide del marco se titula con
+  el nombre de la metodología en su idioma original, en decks de cualquier idioma: Triggers &
+  Barriers, Journey Friction Mapping. Es lo que la vuelve reconocible de un estudio a otro. Esto
+  aplica al entregable; en una propuesta o un deck de venta sigue mandando vender la pregunta y no
+  el método (`AGENTS.md`, regla 8).
+
+  **Una excepción anotada en el registro de un caso no es canon.** Esta regla llegó al kit por una
+  decisión explícita, no porque un caso la usara. Un agente que lee el `PROVENANCE_AND_CHANGELOG.md`
+  de un caso anterior hereda sus decisiones de alcance, no sus excepciones.
 
 Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no es para él, fuera.
 
@@ -145,9 +148,22 @@ Glosario. Método y alcance. Alcance y límites. Una frase donde va un nombre se
 ## 2.6 Vocabulario del método, una sola vez y completo
 
 El deck no alterna entre empuje, freno, trigger y barrier según la slide: para el cliente eso son
-cuatro palabras para dos conceptos. **La slide del marco enseña el término técnico con su
-traducción una sola vez**, en la etiqueta del mapa, y de ahí en adelante el deck usa el término
-técnico y nada más.
+cuatro palabras para dos conceptos. Se elige un par y se sostiene.
+
+**Los términos del método van en inglés, y en español se acompañan de un verbo que se elige por
+estudio.** En inglés no hace falta nada: trigger significa trigger. En español nadie usa "trigger"
+para describir algo, así que el término técnico va entre paréntesis detrás de un verbo que dice lo
+que hace **en la pregunta de este estudio**. No hay traducción fija porque no hay equivalente
+semántico, hay un verbo que se personaliza:
+
+| Lo que pregunta el estudio | Par en español |
+|---|---|
+| Qué motiva y qué desmotiva, en general | Motiva (trigger) · Desmotiva (barrier) |
+| Por qué compran o por qué no compran | Empuja (trigger) · Detiene (barrier) |
+
+Si ninguno de los dos pares encaja con la pregunta, se elige otro verbo con el mismo criterio: que
+el cliente entienda qué hace el motivo sin conocer el marco. El par se decide al cerrar el
+alcance, se enseña en la etiqueta del mapa, y de ahí en adelante el deck usa ese par y nada más.
 
 Donde las dos cifras aparezcan juntas, el trigger va en teal y el barrier en coral, siempre, con su
 etiqueta escrita. Un "187 / 0" en un solo color no dice cuál es cuál.

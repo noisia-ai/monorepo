@@ -39,7 +39,9 @@ packages/kb/00-overview/positioning.md y packages/kb/02-services/product-model.m
 PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna:
 1. ¿Reporte, estudio, o los dos?
 2. ¿En qué idiomas? Si son dos, se construyen juntos desde una sola fuente de contenido.
-3. ¿Qué método uso, y el cliente espera verlo nombrado en una slide o no?
+3. ¿Qué método uso? Se nombra en inglés en la slide del marco. Si el deck va en español, ¿qué
+   par de verbos acompaña a los términos? Por ejemplo Motiva / Desmotiva, o Empuja / Detiene si
+   la pregunta es por qué compran o no.
 4. La pregunta de investigación en una frase, si es estudio. Un reporte no lleva.
 5. Sujeto, mercado y periodo, y qué fecha está completamente cerrada.
 6. Contra qué se compara: competidores, categoría, o nada.
@@ -100,7 +102,7 @@ direccional y qué no permite concluir esta base.
 ```text
 FAMILIA: estudio T&B, 14 a 17 slides, secuencia en LAYOUTS.md.
 
-El método, que no se nombra en las slides:
+El método, que se nombra en inglés en la slide del marco:
 - Triggers, lo que empuja hacia el sujeto. Barriers, lo que frena.
 - Cuatro capas donde vive cada motivo: psicológica, personal, social y cultural.
 - Doble codificación: cada expresión se clasifica por dirección y por capa.
