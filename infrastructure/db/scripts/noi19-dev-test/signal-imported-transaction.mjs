@@ -6,7 +6,10 @@ export function savepointQueryable(client){
  const query=async(sql,params)=>{
   if(/^BEGIN(?:\s|;|$)/u.test(sql)){
    const [begin,...settings]=sql.split(';').map(value=>value.trim()).filter(Boolean);
-   if(params?.length||!/^BEGIN(?: ISOLATION LEVEL (?:READ COMMITTED|REPEATABLE READ)(?: READ ONLY)?)?$/u.test(begin)
+   // Nested SERIALIZABLE requests are represented by savepoints inside the
+   // runner's rollback-only READ COMMITTED transaction. This rehearses the
+   // sequential path; it does not certify isolation or concurrent writers.
+   if(params?.length||!/^BEGIN(?: ISOLATION LEVEL (?:READ COMMITTED|REPEATABLE READ|SERIALIZABLE)(?: READ ONLY)?)?$/u.test(begin)
     ||settings.some(value=>!/^SET LOCAL (?:TIME ZONE 'UTC'|search_path=public,extensions,pg_temp|enable_nestloop=off|jit=off)$/u.test(value)))
     throw Error('noi19_dev_test_transaction_setup_invalid');
    const key=`signal_imported_${++serial}`;

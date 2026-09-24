@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import type { SignalTopicDefinitionV1 } from "@noisia/query-engine";
+import { validateSignalTopicInterestReviewV1, type SignalTopicDefinitionV1 } from "@noisia/query-engine";
 import {
   advanceSignalBrandContextPreparationsV1, ensureSignalBrandContextPreparationV1,
   quoteSignalBrandContextPreparationV1, type SignalBrandContextPreparationRuntimeV1,
 } from "../signal-brand-context-preparation";
 import { prepareSignalSemanticContextProposalInputV1, processSignalSemanticContextProposalRunV1,
-  signalSemanticContextProposalRuntimeConfigurationFromEnvV1 } from "../signal-semantic-context-proposal";
+  signalSemanticContextProposalRuntimeConfigurationFromEnvV1,
+  startSignalBrandContextComposedSemanticRunV1 } from "../signal-semantic-context-proposal";
+import { loadSignalBrandContextProcessingQuoteV1 } from "../signal-brand-context-processing-quote";
 import { provisionSignalBrandContextPolicyV1 } from "../signal-brand-context-policy-provisioning";
 import { readSignalBrandOsCanonicalSnapshotV1, signalBrandOsCanonicalSnapshotHashV1 } from "../signal-brand-os-snapshot";
 import { loadSignalWorkspaceTopicPrototypesV1 } from "../signal-workspace-topic-prototypes-management";
@@ -18,7 +20,8 @@ import {
   type SignalTopicAtomicGroupV1, type SignalTopicConsolidationConfigurationV1,
 } from "../signal-topic-consolidation";
 import {
-  claimSignalTopicConsolidationExecutionV1, completeSignalTopicConsolidationExecutionV1,
+  claimSignalTopicConsolidationDispatchV1, claimSignalTopicConsolidationExecutionV1,
+  completeSignalTopicConsolidationExecutionV1,
   loadSignalTopicConsolidationStatusV1, requestSignalTopicConsolidationV1,
 } from "../signal-topic-consolidation-control";
 import { loadSignalTopicConsolidationEditorialSourceV1 } from "../signal-topic-consolidation-editorial";
@@ -180,14 +183,27 @@ export async function seedSignalTopicInterestReviewPreparationV1(args: SignalTop
   const prepared = await ensureSignalBrandContextPreparationV1({ ...access, runtime, idempotency_key: randomUUID(),
     primary_locale: "es-MX", admission: { quote_digest: quote.quote_digest, confirmation: "prepare_brand_context_within_shown_cap" } });
   const advance = () => advanceSignalBrandContextPreparationsV1({ ...access, runtime, limit: 10 });
-  await advance();
+  const composedQuote = await loadSignalBrandContextProcessingQuoteV1({ ...access,
+    action_availability: { brand_context_proposal: true, topic_prototype_embeddings: true } });
+  assert.equal(composedQuote.quote_status, "quoted", "synthetic Brand OS must have a current composed policy quote");
+  assert.ok(composedQuote.quote_digest);
+  const started = await startSignalBrandContextComposedSemanticRunV1({ pool: database,
+    workspace: { id: created.workspace_id, organization_id, brand_id: created.brand_id },
+    actor: { id: actor_user_id }, idempotency_key: `interest-review-${randomUUID()}`,
+    quote_digest: composedQuote.quote_digest, confirmation: "prepare_brand_context_within_shown_cap",
+    configuration: runtime.semantic, runtime: { queue_configured: runtime.queue_configured,
+      worker_alive: runtime.worker_alive, recovery_alive: runtime.recovery_alive,
+      prototype_available: runtime.prototype.available } });
+  // The rollback-only harness maps nested COMMIT to a savepoint release. Force
+  // the composed admission's deferred bundle check at this equivalent boundary
+  // before the simulated provider is allowed to change the queued run.
+  await query("SET CONSTRAINTS ALL IMMEDIATE");
+  await query("SET CONSTRAINTS ALL DEFERRED");
   const semanticInput = await prepareSignalSemanticContextProposalInputV1({ queryable: database,
     workspace: { id: created.workspace_id, organization_id, brand_id: created.brand_id }, generation_key: prepared.generation_key });
   const semantic = createBrandContextSyntheticSemanticProviderV1({ input: semanticInput.input,
     prompt: semanticInput.prompt, model: runtime.semantic.model, revision: "initial" });
-  const semanticRun = (await query("SELECT id FROM signal_semantic_context_proposal_runs WHERE generation_id=$1::uuid", [prepared.generation_id])).rows[0];
-  assert.ok(semanticRun, "real Brand Context preparation must request the synthetic semantic run");
-  assert.equal((await processSignalSemanticContextProposalRunV1({ pool: database, run_id: String(semanticRun.id), provider: semantic.provider })).status,
+  assert.equal((await processSignalSemanticContextProposalRunV1({ pool: database, run_id: started.run_id, provider: semantic.provider })).status,
     "completed", "synthetic provider response must pass real semantic processing");
   await advance();
   const prototypes = await loadSignalWorkspaceTopicPrototypesV1(access);
@@ -230,8 +246,17 @@ export async function seedSignalTopicInterestReviewPreparationV1(args: SignalTop
   const status = await loadSignalTopicConsolidationStatusV1({ ...access, source_execution_id });
   assert.equal(status.status, "ready_to_prepare", "real source and free policy must permit numeric admission");
   assert.ok(status.quote_reference, "numeric request requires the actual quote reference");
+  await query("SET CONSTRAINTS topic_consolidation_admission_complete DEFERRED");
   const requested = await requestSignalTopicConsolidationV1({ ...access, source_execution_id,
     quote_reference: status.quote_reference, idempotency_key: randomUUID() });
+  // The real request commits its deferred admission graph before the worker
+  // claims and advances its outbox. The savepoint harness needs that boundary.
+  await query("SET CONSTRAINTS ALL IMMEDIATE");
+  await query("SET CONSTRAINTS ALL DEFERRED");
+  const dispatches = await claimSignalTopicConsolidationDispatchV1({ database,
+    worker_id: "synthetic-interest-review-worker", limit: 1 });
+  assert.equal(dispatches.length, 1, "the real numeric outbox must dispatch the single synthetic job");
+  assert.equal(dispatches[0]!.execution_id, requested.execution_id);
   const lease = await claimSignalTopicConsolidationExecutionV1({ database, ...requested, lease_seconds: 300 });
   assert.ok(lease && !("completed" in lease), "real numeric owner must yield a current execution lease");
   const configuration = (await query("SELECT signal_topic_consolidation_numeric_configuration_v1() value")).rows[0]?.value as SignalTopicConsolidationConfigurationV1;
@@ -293,6 +318,7 @@ export async function seedSignalTopicInterestReviewPreparationV1(args: SignalTop
   const scope = { ...access, numeric_run_id: numeric.consolidation_run_id };
   const source = await loadSignalTopicConsolidationEditorialSourceV1(scope);
   const review = await loadSignalTopicInterestReviewInputV1(scope);
+  validateSignalTopicInterestReviewV1(review);
   assert.equal(review.manifest.interests.length, 1, "only the explicit manual interest enters review, not discovered output topics");
   const definition: SignalTopicDefinitionV1 = review.manifest.interests[0]!;
   assert.equal(definition.origin, "manual"); assert.equal(definition.discovery_guidance, false,

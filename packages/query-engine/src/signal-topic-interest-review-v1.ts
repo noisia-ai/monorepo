@@ -174,9 +174,31 @@ export function validateSignalTopicInterestReviewV1(review: SignalTopicInterestR
   const rebuilt = buildSignalTopicInterestReviewV1({ workspace_id: manifest.workspace_id,
     taxonomy_profile_id: manifest.taxonomy_profile_id, definitions: manifest.interests, screening_plan });
   // Digests are consistency checks, not authentication: the caller supplies the
-  // trusted review snapshot. Rebuilding also rejects re-sealed altered bodies.
-  if (digest(rebuilt) !== digest(review)) return fail("review_changed");
-  return rebuilt;
+  // trusted review snapshot. PostgreSQL jsonb changes object key order while
+  // preserving request_body strings. Rebuilding from that snapshot can therefore
+  // produce different request bytes. Compare their parsed meaning, but retain
+  // and separately verify the original sealed bytes that will be sent.
+  const comparable = (candidate: SignalTopicInterestReviewV1) => ({
+    screening_plan: candidate.screening_plan, manifest: candidate.manifest,
+    input_digest: candidate.input_digest,
+    batches: candidate.batches.map(batch => {
+      const { request_digest, request_body, ...identity } = batch;
+      if (request_digest !== digest({ ...identity, request_body })) return fail("review_changed");
+      let body: Record<string, unknown>;
+      try {
+        body = JSON.parse(request_body) as Record<string, unknown>;
+        if (JSON.stringify(body) !== request_body || !Array.isArray(body.messages)) return fail("review_changed");
+        body.messages = body.messages.map((message: { content: string }) => {
+          const content = JSON.parse(message.content) as unknown;
+          if (JSON.stringify(content) !== message.content) return fail("review_changed");
+          return { ...message, content };
+        });
+      } catch { return fail("review_changed"); }
+      return { ...identity, body };
+    })
+  });
+  if (digest(comparable(rebuilt)) !== digest(comparable(review))) return fail("review_changed");
+  return structuredClone(review);
 }
 
 type BatchBinding = Pick<SignalTopicInterestReviewManifestV1, "workspace_id" | "taxonomy_profile_id"> & {

@@ -4,6 +4,7 @@ import test from "node:test";
 import { signalTopicDefinitionDigestV1, type SignalTopicDefinitionV1 } from "./signal-topic-catalog-v1";
 import { buildSignalTopicEditorialScreeningPlanV1, signalTopicEditorialDigestV1 as digest } from "./signal-topic-consolidation-editorial-v1";
 import { buildSignalTopicInterestReviewV1, parseSignalTopicInterestReviewResultV1,
+  validateSignalTopicInterestReviewV1,
   buildSignalTopicInterestReviewProviderRequestV1, validateSignalTopicInterestReviewBatchOutputV1,
   createSignalTopicInterestReviewOutputValidatorV1, validateSignalTopicInterestReviewProviderRequestV1,
   validateSignalTopicInterestReviewProviderOutputV1,
@@ -42,6 +43,9 @@ function definition(n = 0, overrides: Partial<SignalTopicDefinitionV1> = {}): Si
 }
 const build = (definitions = [definition()], screening_plan = plan()) => buildSignalTopicInterestReviewV1({
   workspace_id: id(100), taxonomy_profile_id: id(200), definitions, screening_plan });
+const jsonbOrder = (value: unknown): unknown => Array.isArray(value) ? value.map(jsonbOrder)
+  : value && typeof value === "object" ? Object.fromEntries(Object.entries(value)
+    .sort(([left], [right]) => right.localeCompare(left)).map(([key, child]) => [key, jsonbOrder(child)])) : value;
 function outputs(review: SignalTopicInterestReviewV1, disposition: SignalTopicInterestReviewDecisionV1["disposition"] = "supports") {
   return review.batches.map(batch => ({ contract_version: "signal-topic-interest-review-output-v1", workspace_id: review.manifest.workspace_id,
     taxonomy_profile_id: review.manifest.taxonomy_profile_id, input_digest: review.input_digest, batch_index: batch.batch_index,
@@ -102,6 +106,23 @@ test("validates historical plan digest, request bodies, group receipts and evide
     (value: ReturnType<typeof plan>) => { value.batches[0]!.group_receipts[0]!.evidence_ref_ids = [digest("extra")]; },
     (value: ReturnType<typeof plan>) => { value.batches[0]!.source_groups_body = "[]"; }];
   for (const mutate of mutations) { const value = plan(); mutate(value); assert.throws(() => build([definition()], value), /screening_plan_invalid/, "altered screening must not become trusted review input"); }
+});
+
+test("loads a JSONB-reordered review without changing the sealed provider request bytes", () => {
+  const original = build(), stored = jsonbOrder(original) as SignalTopicInterestReviewV1;
+  assert.notEqual(JSON.stringify(stored), JSON.stringify(original), "PostgreSQL reorders object keys");
+  assert.deepEqual(validateSignalTopicInterestReviewV1(stored), stored);
+  assert.equal(stored.batches[0]!.request_body, original.batches[0]!.request_body,
+    "the request sent after recovery must retain the stored bytes and digest");
+  const altered = structuredClone(stored);
+  const body = JSON.parse(altered.batches[0]!.request_body) as { messages: Array<{ content: string }> };
+  const payload = JSON.parse(body.messages[0]!.content) as { approval_policy: string };
+  payload.approval_policy = "manual";
+  body.messages[0]!.content = JSON.stringify(payload);
+  altered.batches[0]!.request_body = JSON.stringify(body);
+  reseal(altered);
+  assert.throws(() => validateSignalTopicInterestReviewV1(altered), /review_changed/,
+    "resealing an altered request cannot bypass the rebuilt semantic contract");
 });
 
 test("complete matrix spans explicit batches without top-k or omitted interests", () => {
