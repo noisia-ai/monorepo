@@ -48,8 +48,11 @@ export function startSignalTopicEvaluationOutboxDrainerV1(options:Options={}){
   let closed=false;let inFlight:Promise<unknown>|null=null;
   const drainNow=()=>{if(closed)return Promise.resolve();if(inFlight)return inFlight;
     inFlight=drainSignalTopicEvaluationOutboxV1(options).finally(()=>{inFlight=null;});return inFlight;};
-  const timer=setInterval(()=>{void drainNow();},options.interval_ms??5_000);timer.unref?.();
-  if(options.run_immediately!==false)void drainNow();
-  return{drainNow,close:async()=>{closed=true;clearInterval(timer);await inFlight;}};
+  const observeDrain=()=>{void drainNow().catch((error)=>{
+    console.warn(`[topic-evaluation-outbox] claim failed: ${safeError(error)}`);
+  });};
+  const timer=setInterval(observeDrain,options.interval_ms??5_000);timer.unref?.();
+  if(options.run_immediately!==false)observeDrain();
+  return{drainNow,close:async()=>{closed=true;clearInterval(timer);await inFlight?.catch(()=>undefined);}};
 }
 function safeError(error:unknown){return(error instanceof Error?error.name:"unknown_error").slice(0,120);}
