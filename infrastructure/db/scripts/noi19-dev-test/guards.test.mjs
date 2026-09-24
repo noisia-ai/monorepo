@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
-import {guardEnvironment,guardBootstrapEnvironment,guardDns,guardDatabase,guardEmptyTables} from './target-guard.mjs';
+import {guardEnvironment,guardBootstrapEnvironment,guardBootstrapDatabase,guardDns,guardDatabase,guardEmptyTables} from './target-guard.mjs';
+import {identitySql} from './database-checks.mjs';
 const shipped=JSON.parse(await readFile(new URL('./target-seal.json',import.meta.url),'utf8'));
 // Invented IDs/fingerprint only for pure guard tests, never connection arguments.
 const seal={...shipped,runner_service_id:'00000000-0000-4000-8000-000000000001',system_identifier:'1234567890123456789',schema_sha256:'a'.repeat(64)};
@@ -40,6 +41,16 @@ test('all DNS answers must be private; connected server must match pinned DNS an
  assert.throws(()=>guardDns([]),/dns_not_private/u);
  for(const [key,value] of Object.entries({database:'other',user:'other',address:'fd12:3456::2',port:6543,version:'160000',system_identifier:'9999999999999999999'}))
   assert.throws(()=>guardDatabase({...row,[key]:value},seal,[row.address]),/database_identity_mismatch/u);
+});
+test('identity query emits a host address for exact DNS matching without relaxing private target guards',()=>{
+ assert.match(identitySql,/host\(inet_server_addr\(\)\) address/u);
+ for(const address of ['fd12:3456::1','10.12.34.56']){
+  guardBootstrapDatabase({...row,address},seal,[address]);
+  guardDatabase({...row,address},seal,[address]);
+  const cidr=address+(address.includes(':')?'/128':'/32');
+  assert.throws(()=>guardBootstrapDatabase({...row,address:cidr},seal,[address]),/database_identity_mismatch/u);
+  assert.throws(()=>guardDatabase({...row,address:cidr},seal,[address]),/database_identity_mismatch/u);
+ }
 });
 test('an empty population is required for every public table, never just an empty chosen workspace',()=>{
  const rows=Array.from({length:269},(_,index)=>({name:`synthetic_${index}`,nonempty:false}));guardEmptyTables(rows);

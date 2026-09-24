@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {guardEmptyTables} from './target-guard.mjs';
-export const identitySql=`SELECT current_database() database,current_user "user",inet_server_addr()::text address,
+export const identitySql=`SELECT current_database() database,current_user "user",host(inet_server_addr()) address,
  inet_server_port() port,current_setting('server_version_num') version,system_identifier::text FROM pg_control_system()`;
 export async function publicTables(client,expectedCount=269){
  const rows=(await client.query(`SELECT c.relname name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
