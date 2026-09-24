@@ -1,11 +1,11 @@
-import type { SignalMetricValueStateV1, SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
+import type { SignalMetricValueStateV1, SignalWorkspaceOverviewV1 } from "@noisia/query-engine";
 
 import type { SignalBrandMonitoringV1 } from "@/lib/signal-v2/brand-monitoring";
 
 export function isNativeSignalTopicsOverviewV1(
   value: unknown,
   workspaceId: string
-): value is SignalWorkspaceTopicsOverviewV1 {
+): value is SignalWorkspaceOverviewV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   return candidate.contract_version === "signal-workspace-topics-serving-v1"
@@ -17,7 +17,7 @@ export function isNativeSignalTopicsOverviewV1(
  * governed source remain explicitly unavailable. */
 export function buildNativeSignalMonitoringV1(
   base: SignalBrandMonitoringV1,
-  native: SignalWorkspaceTopicsOverviewV1
+  native: SignalWorkspaceOverviewV1
 ): SignalBrandMonitoringV1 {
   const start = native.filters.date_from ?? native.available_dates.date_from;
   const end = native.filters.date_to ?? native.available_dates.date_to;
@@ -52,6 +52,7 @@ export function buildNativeSignalMonitoringV1(
     sample_size: term.mention_count,
     state: metricState
   }));
+  const imported = native.source === "workspace_imported";
   const hasEditorialConsolidation = native.coverage.noise !== null;
 
   return {
@@ -104,8 +105,8 @@ export function buildNativeSignalMonitoringV1(
       previous_summary: null
     },
     topics: {
-      state: native.is_current ? "fresh" : "stale",
-      reason: native.is_current ? null : partialReason,
+      state: imported ? "not_available" : native.is_current ? "fresh" : "stale",
+      reason: imported ? "workspace_imported_classification_pending" : native.is_current ? null : partialReason,
       buckets: topicBuckets
     },
     narratives: {

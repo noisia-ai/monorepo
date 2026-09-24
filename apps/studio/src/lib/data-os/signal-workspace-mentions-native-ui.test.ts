@@ -84,3 +84,17 @@ test("workspace entry and client navigation request list plus focus in one nativ
   assert.match(navigation, /const requestQuery = new URLSearchParams\(query\);[\s\S]*fetch\(`\$\{endpoint\}\?\$\{requestQuery\}`/u);
   assert.doesNotMatch(navigation, /focusedResponse|focusQuery/u);
 });
+
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: imported mention text is usable while classification remains explicitly pending`, async () => {
+    const html = await render(locale, { ...data, native: { ...data.native!, source: "workspace_imported",
+      classification_state: "pending", generation_id: null } });
+    assert.match(html, /Evidence outside selected Topics/);
+    assert.ok(html.includes(locale === "es-MX" ? "Conversaciones importadas de tu marca" : "Imported conversations for your brand"));
+    assert.doesNotMatch(html, /Conversaciones del análisis de tu marca|Conversations from your brand analysis/);
+    assert.ok(html.includes(locale === "es-MX" ? "clasificación de Topics todavía está pendiente" : "Topic classification is still pending"));
+    assert.ok(html.includes(locale === "es-MX" ? "7 con texto disponible" : "7 with text available"));
+    assert.doesNotMatch(html, /Noise|1970|signal-v2-mentions-table__sentiment/);
+  });
+}

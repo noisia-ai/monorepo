@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
+import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceImportedOverviewV1 } from "@noisia/query-engine";
 
 import type { SignalBrandMonitoringV1 } from "../signal-v2/brand-monitoring";
 import { buildNativeSignalMonitoringV1, isNativeSignalTopicsOverviewV1 } from "./signal-workspace-monitoring-native";
@@ -83,4 +83,22 @@ test("stale native generations remain visibly stale in the shared dashboard", ()
   assert.equal(result.freshness.state, "stale");
   assert.equal(result.volume.state, "stale");
   assert.equal(result.topics.state, "stale");
+});
+
+
+test("accepted import supplies shared volume before Engine without invented classification or sentiment", () => {
+  const imported: SignalWorkspaceImportedOverviewV1 = { ...native, source: "workspace_imported",
+    classification_state: "pending", generation_id: null, source_engine_execution_id: null,
+    quality: "not_analyzed", interpretation_coverage: null, terms: [], evidence_visible_total: 20,
+    series: native.series.map(point => ({ ...point, assigned_unique: null })),
+    coverage: { processed: null, assigned_unique: null, abstained: null, noise: null, unresolved: null, withheld: null } };
+  const result = buildNativeSignalMonitoringV1(base, imported);
+  assert.equal(result.volume.current_value, imported.denominator);
+  assert.deepEqual(result.volume.points.map(point => point.value), [100, 120]);
+  assert.equal(result.freshness.data.generation_id, null);
+  assert.equal(result.freshness.interpretation.quality, "not_analyzed");
+  assert.equal(result.topics.state, "not_available");
+  assert.equal(result.sentiment.state, "not_available");
+  assert.equal(result.narratives.state, "not_available");
+  assert.deepEqual(result.topics.buckets, []);
 });

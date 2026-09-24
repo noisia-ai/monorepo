@@ -613,6 +613,13 @@
     }
   },
   "SignalV2": {
+    "imported": {
+      "mentionsSubtitle": "Conversaciones importadas de tu marca",
+      "status": "Conversaciones importadas",
+      "classificationPending": "La clasificación de Topics todavía está pendiente. Puedes explorar las menciones desde ahora.",
+      "topicsTitle": "Tus conversaciones ya están disponibles",
+      "topicsBody": "Hay {count, number} menciones disponibles para las métricas. Los Topics aparecerán después del análisis y su selección para Signal."
+    },
     "metricsPending": {
       "sentiment": "El sentimiento todavía no está disponible.",
       "attention": "Las métricas de interacción todavía no están disponibles para estas conversaciones.",

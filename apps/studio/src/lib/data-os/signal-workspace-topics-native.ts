@@ -29,7 +29,7 @@ export function nativeTopicsQueryV1(params: URLSearchParams) {
   return { ...(date_from ? { date_from } : {}), ...(date_to ? { date_to } : {}) };
 }
 export const nativeTopicsViewV1 = (params: URLSearchParams) => !params.has("view") || params.get("view") === "all_conversations";
-export async function loadNativeSignalTopicsV1(scope: ActorScope, params = new URLSearchParams()) {
+export async function loadNativeSignalTopicsV1(scope: ActorScope & { imported_fallback?: boolean }, params = new URLSearchParams()) {
   if (!nativeTopicsViewV1(params)) return null;
   let filter: ReturnType<typeof nativeTopicsQueryV1> = {}, invalid: unknown = null;
   const { pool } = await import("@/lib/db");

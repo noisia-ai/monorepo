@@ -8,7 +8,7 @@ import { nativeTopicsQueryV1, nativeTopicsViewV1, nativeTopicSelectionViewV1 } f
 test("native dates are inclusive UTC inputs and unsupported filters cannot silently widen a query", () => {
   assert.deepEqual(nativeTopicsQueryV1(new URLSearchParams()), {});
   assert.deepEqual(nativeTopicsQueryV1(new URLSearchParams("start=2026-09-01&end=2026-09-08&timezone=UTC&compare=none&granularity=day")), { date_from: "2026-09-01", date_to: "2026-09-08" });
-  for (const query of ["start=2026-09-01&start=2026-09-02", "q=delivery", "dimension.platform=web", "timezone=America/Mexico_City", "compare=previous_period", "date_from=2026-02-30", "start=", "start=2026-09-10&end=2026-09-01", "start=2026-09-01&date_from=2026-09-02"])
+  for (const query of ["start=2026-09-01&start=2026-09-02", "q=delivery", "imported_fallback=true", "dimension.platform=web", "timezone=America/Mexico_City", "compare=previous_period", "date_from=2026-02-30", "start=", "start=2026-09-10&end=2026-09-01", "start=2026-09-01&date_from=2026-09-02"])
     assert.throws(() => nativeTopicsQueryV1(new URLSearchParams(query)), error => Boolean(error && typeof error === "object" && "status" in error && error.status === 422));
   assert.equal(nativeTopicsViewV1(new URLSearchParams("view=all_conversations")), true);
   assert.equal(nativeTopicsViewV1(new URLSearchParams("view=all-governed")), false);

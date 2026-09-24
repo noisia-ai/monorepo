@@ -1,21 +1,21 @@
 import {
   loadSignalWorkspaceMentionsV1,
   type SignalWorkspaceMentionsArgsV1,
-  type SignalWorkspaceMentionsPageV1
+  type SignalWorkspaceMentionsResultV1
 } from "@noisia/db";
 import { SIGNAL_BACKEND_CONTRACT_VERSION } from "@noisia/query-engine";
 import type { SignalMentionRecordV1 } from "./signal-workspace-serving";
 import type { SignalMentionsViewData, SignalNativeMentionsMetadata } from "@/components/signal-v2/SignalV2Mentions";
 import { nativeTopicsViewV1 } from "./signal-workspace-topics-native";
 
-type ActorScope = { workspace_id: string; actor_user_id: string };
+type ActorScope = { workspace_id: string; actor_user_id: string; imported_fallback?: boolean };
 type ReadArgs = Omit<SignalWorkspaceMentionsArgsV1, "database">;
 type Query = Omit<ReadArgs, keyof ActorScope>;
 export type NativeSignalMentionsViewData = SignalMentionsViewData & {
   native: SignalNativeMentionsMetadata;
   record?: SignalMentionRecordV1;
 };
-type Dependencies = { read?: (args: ReadArgs) => Promise<SignalWorkspaceMentionsPageV1 | null> };
+type Dependencies = { read?: (args: ReadArgs) => Promise<SignalWorkspaceMentionsResultV1 | null> };
 
 function invalid(code = "workspace_mentions_filter_invalid"): never {
   throw Object.assign(new Error("Check the mention filters and try again."), { code, status: 422 });
@@ -81,9 +81,9 @@ function originalMentionUrl(value: string | null) {
   } catch { return null; }
 }
 
-export function nativeMentionsViewDataV1(page: SignalWorkspaceMentionsPageV1, limit: number,
+export function nativeMentionsViewDataV1(page: SignalWorkspaceMentionsResultV1, limit: number,
   focusedMentionId?: string, validatedPageCursor?: string | null): NativeSignalMentionsViewData {
-  const record = (item: SignalWorkspaceMentionsPageV1["items"][number]): SignalMentionRecordV1 => ({
+  const record = (item: SignalWorkspaceMentionsResultV1["items"][number]): SignalMentionRecordV1 => ({
     subject_id: item.mention_id,
     // Empty means undated in the shared table; never synthesize a publication date.
     occurred_at: item.occurred_at ?? "", text_snippet: item.text_snippet,
@@ -121,7 +121,7 @@ export function nativeMentionsViewDataV1(page: SignalWorkspaceMentionsPageV1, li
       timezone: "UTC", granularity: "day", dimensions: page.filters.platforms.length ? { platform: page.filters.platforms } : {},
       ...(page.filters.search_query ? { search_query: page.filters.search_query } : {}) },
     comparison: { mode: "none", date_range: null },
-    native: { workspace_id: page.workspace_id, generation_id: page.generation_id, scope_digest: page.scope_digest,
+    native: { ...("source" in page && page.source === "workspace_imported" ? { source: page.source, classification_state: page.classification_state } : {}), workspace_id: page.workspace_id, generation_id: page.generation_id, scope_digest: page.scope_digest,
       is_current: page.is_current, is_processing: page.is_processing, available_dates: page.available_dates,
       available_platforms: page.available_platforms,
       page_cursor: validatedPageCursor ?? null,

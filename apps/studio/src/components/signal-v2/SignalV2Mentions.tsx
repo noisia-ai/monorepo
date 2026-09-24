@@ -59,6 +59,8 @@ import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 
 export type SignalNativeMentionsMetadata = {
+  source?: "workspace_imported";
+  classification_state?: "pending";
   workspace_id: string;
   generation_id: string | null;
   scope_digest: string;
@@ -422,13 +424,13 @@ export function SignalV2Mentions({
         </>}
         icon={<ChatTeardropText size={20} weight="fill" />}
         status={native ? t(native.is_processing ? "workspaceTopics.updating" : "mentions.native.status") : t("mentions.status")}
-        subtitle={native ? t("mentions.native.subtitle") : t("mentions.subtitle", { brand: brandName })}
+        subtitle={native ? t(native.source === "workspace_imported" ? "imported.mentionsSubtitle" : "mentions.native.subtitle") : t("mentions.subtitle", { brand: brandName })}
         title={t("mentions.title")}
       />
 
       {native ? <div className="signal-v2-mentions-native-summary" role="status">
         <p>{t("mentions.native.counts", { metrics: native.metric_denominator, visible: native.evidence_visible_total })}</p>
-        <p>{t("mentions.native.unassigned")}</p>
+        <p>{t(native.classification_state === "pending" ? "imported.classificationPending" : "mentions.native.unassigned")}</p>
         {native.withheld_evidence_count > 0 ? <p>{t("mentions.native.withheld", { count: native.withheld_evidence_count })}</p> : null}
         {native.integrity_withheld_count > 0 ? <p>{t("mentions.native.integrity", { count: native.integrity_withheld_count })}</p> : null}
         {native.is_processing ? <p>{t("mentions.native.processing")}</p> : null}
