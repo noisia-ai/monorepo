@@ -11,7 +11,7 @@
    ============================================================================ */
 
 :root { --coral:#e2543c; --coral-soft:#fdece8; --teal:#008a8a; --teal-soft:#e6f7f7; }
-.slide .slide-header .right span { color:var(--fg-secondary); font-weight:500; font-size:24px; }
+.slide .slide-header .right span { color:var(--fg-secondary); font-weight:500; font-size:var(--edge-size); }
 .slide.dark .slide-header .right span { color:rgba(255,255,255,0.5); }
 
 /* --- eyebrow + section title ------------------------------------------------ */
@@ -24,6 +24,10 @@
 .accent { color:var(--teal); } .slide.dark .accent { color:var(--signal); }
 .sub { font-size:23px; line-height:1.45; color:var(--fg-secondary); max-width:1200px; }
 .ph { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-secondary); margin-bottom:16px; }
+
+/* The eyebrow takes the sign of the slide: coral on a slide whose finding is negative, green on a
+   positive one, teal when it is neutral or structural. An all-teal deck flattens that cue. */
+.eb.neg { color:var(--coral); } .eb.pos { color:var(--positive); }
 
 /* --- icon chip (tinted square holding an Iconoir glyph) --------------------- */
 .icobox { width:46px; height:46px; border-radius:13px; display:flex; align-items:center; justify-content:center; flex:none; }
@@ -96,7 +100,9 @@
 .vq .mt a { color:var(--teal); text-decoration:none; }
 .vq .mt .tag { margin-left:auto; }
 .sq { width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; flex:none; }
-.sq .ic { width:14px; height:14px; }
+.sq .ic, .sq > svg { width:14px; height:14px; }
+/* A Simple Icons glyph carries no .ic class, so `.sq .ic` alone left it unsized and it spilled
+   out of the chip. Brand marks still read best in `.cc` or `.bmk` (ICONS.md). */
 .src { display:inline-flex; align-items:center; gap:9px; font-size:14px; color:var(--fg-secondary); font-weight:600; }
 .src a { color:var(--teal); text-decoration:none; }
 
@@ -125,6 +131,7 @@
 .foot { display:flex; align-items:flex-start; gap:10px; font-size:15px; font-style:italic;
         line-height:1.45; color:var(--fg-secondary); }
 .foot .ic { width:17px; height:17px; flex:none; margin-top:2px; opacity:.7; }
+.foot p { margin:0; max-width:none; }
 
 /* --- insight marker -------------------------------------------------------- */
 /* The word `insight`, always that word, in Times italic lowercase next to its icon. It marks a

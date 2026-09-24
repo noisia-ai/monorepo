@@ -25,6 +25,13 @@ El cliente ve **solo su mensaje**. Nunca dejes en la slide:
 
 - **Calibra el vocabulario por audiencia (matiz al "vende la pregunta, no el método").** El default sigue siendo la pregunta, no el método: para un C-level o cliente final, cero jerga de framework. **Pero si el público es una agencia, un partner o un equipo interno que ya habla el marco**, los términos T&B en inglés son válidos y hasta esperados en eyebrows y headers: `trigger`, `barrier`, `top trigger`, `top barrier`, `CX`, `pros y cons`, `conclusiones de t&b`, `Empuja (trigger)`. No los metas en el título ni en el cuerpo (ahí la idea se dice en humano); van en la etiqueta de sección. Decide el registro por quién recibe el deck, no por costumbre.
 
+  **Nombrar el método en una slide es una decisión por deck, no un precedente.** El default sigue
+  siendo no nombrarlo. Un caso lo tituló con su nombre porque ahí la narrativa lo pedía, y se
+  decidió como excepción de ese caso. El siguiente lo leyó en el registro del anterior y lo
+  convirtió en regla, que es exactamente lo que no debe pasar: una excepción registrada en el
+  `PROVENANCE_AND_CHANGELOG.md` de un caso no es canon. Se pregunta cada vez, que es lo que hace
+  la pregunta 3 del prompt de arranque.
+
 Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no es para él, fuera.
 
 > El contrato que ordena todo el sistema es **`CANON.md`**. Íconos y layouts también son reglas: **`ICONS.md`** (Iconoir para semánticos + Simple Icons para marcas, nada dibujado a mano) y **`LAYOUTS.md`** (las dos formas canónicas: Reporte y Estudio T&B).
@@ -161,9 +168,31 @@ slide**, no contra la etiqueta.
 mostrarla hace ver el verbatim como un volcado de base de datos. Se limpia del texto que se muestra
 y la liga de la publicación va donde le toca, en la ficha, con plataforma y fecha.
 
+**La limpieza quita ligas y handles, nunca palabras.** Una regla que borraba la primera palabra si
+venía en mayúscula convirtió "No le da vergüenza" en "le da vergüenza": invirtió la cita. Si una
+regla de limpieza toca palabras, se revisa contra las negaciones antes de correrla, y la cita
+final se compara contra el original.
+
 **Deck en inglés con citas en español.** La cita se muestra en su idioma original, porque es la
 evidencia y no se toca. Debajo va una lectura en inglés, más chica y en gris, y la ficha queda
 igual. Traducir la cita y poner el original abajo invierte cuál es el dato y cuál es el apoyo.
+
+### Sin dramatizar
+
+El título dice el hallazgo con su cifra, no lo narra. "En enero la ciudad se volteó contra quien
+la gobierna" suena a respuesta a una pregunta que nadie hizo; "La queja subió 31 puntos en enero
+y no ha bajado desde entonces" dice lo mismo y se puede discutir.
+
+**Opina la gente, no el lugar.** "La ciudad" o "la capital" como sujeto de una opinión es una
+metonimia que no se entiende en una slide: se escribe "los ciudadanos", "los usuarios", "quienes
+comentan".
+
+**El entregable se nombra por su familia.** Este estudio, este reporte. No "esta lectura", no "este
+diagnóstico": son las palabras que más se corrigieron a mano en la revisión final.
+
+**El eyebrow lleva el signo de la slide.** Coral en una slide cuyo hallazgo es negativo, verde en
+una positiva, teal cuando es neutra o estructural (`.eb.neg`, `.eb.pos`). Un deck con todos los
+eyebrows en teal le quita al lector la pista de hacia dónde va cada lámina.
 
 ### La pregunta de investigación es el título más caro del deck
 

@@ -102,6 +102,15 @@ desplazar. Es la aberración cromática de su marca y se reconoce al instante.
 - Etiquetas del eje: 11 a 14px, `#8a8a8a` a `#aaa`, peso 600 o 700.
 - La unidad se dice una vez, arriba a la izquierda del eje, en minúsculas y chiquita.
 
+**Las fechas del eje se leen, no se decodifican.** "sep 25, oct, nov", con el año solo donde
+cambia. Nunca `09.25` ni códigos de periodo. Y si arriba es malo, se dice con una flecha y una
+palabra, "más quejas", dentro del área del chart: una etiqueta que se sale del viewBox pierde la
+primera letra.
+
+**Si una barra es carga y no volumen, se dice.** Una barra de "porcentaje de queja dentro del tema"
+se lee como si cada fila fuera una queja entera. Una línea en `.foot` lo aclara, y el título no
+puede tratar la carga como volumen.
+
 **Si la métrica no es obvia, el eje se explica.** Esta es regla dura y salió de una corrección de
 cliente. Un eje de sentimiento neto, de índice o de cualquier cosa compuesta lleva una línea en
 `.foot` que diga qué es bueno y qué es malo:
@@ -127,6 +136,10 @@ En una slide donde el chart es el protagonista, el título grande estorba. La co
 es: eyebrow arriba a la izquierda, leyenda debajo, la explicación del eje en `.foot`, el chart
 ocupando el ancho, y **el insight en una card blanca flotando arriba a la derecha**. El lector ve
 la forma antes de leer la conclusión, que es el orden correcto.
+
+**La card nunca va encima del dato.** Si flotando tapa el tramo que importa, el pico o el peor
+mes, baja a una fila debajo del chart. En un caso tapaba justo los tres meses que sostenían el
+título.
 
 Si el chart es una prueba de apoyo y no el sujeto, entonces sí lleva título, y el título dice el
 hallazgo como cualquier otro (`COPY_RULES.md`).

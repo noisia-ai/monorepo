@@ -165,6 +165,11 @@ toda diferencia material.
 No se elige el número que se ve mejor. Se usa el número cuya definición coincide con la
 afirmación que se va a hacer.
 
+**Cada participación declara su denominador, y el de canales es el corpus depurado.** En un caso
+real, el reparto por canal se calculó sobre el subconjunto codificado en lugar del corpus
+depurado y el titular de la slide salió invertido: 42% contra 68%. La cobertura del clasificador
+es una base válida para lo que se codificó, nunca para describir dónde vive la conversación.
+
 **La exportación recortada es un caso esperado, no una anomalía.** Un proveedor puede entregar una
 fracción de lo que su propio tablero reporta, y no avisa: en un caso medido, 87,843 filas contra
 234,930 del tablero, un 37%. Consecuencia operativa: **ningún volumen crudo de archivo se presenta
@@ -241,6 +246,13 @@ hilo y atribuir la reacción.
 Un comentario no se clasifica como positivo o negativo porque la publicación original contenga
 esas palabras.
 
+**La voz institucional se separa de la ciudadana antes de codificar dirección.** Es el gate C
+aplicado al emisor, no al sujeto. Cualquier corpus con una cuenta oficial activa, de gobierno, de
+marca o de institución, trae boletines escritos en vocabulario de logro que un clasificador lee
+como aprobación. En un caso real, codificar todas las menciones hacía que los comunicados del
+ayuntamiento contaran como opinión ciudadana a favor. La dirección se codificó solo sobre
+comentarios, y la voz institucional se reportó aparte como narrativa emitida.
+
 ## 13. Muestreo antes de etiquetar
 
 Antes de escribir una sola regla se lee una muestra que preserve variedad: publicaciones con más
@@ -261,6 +273,12 @@ los falsos positivos, se iteran nombres y límites, y se congela una versión.
 La taxonomía es un artefacto versionado, no una lista informal de palabras.
 
 ## 15. Doble codificación
+
+**La dirección necesita blanco.** Empujar y frenar presuponen un sujeto hacia el que se empuja o
+del que se aleja. En un corpus de terreno, donde conviven varios actores, una queja puede ser
+contra otro, y contarla como barrier del sujeto mide otra cosa. Se exige que el blanco esté
+nombrado en el texto propio para asignar dirección; si no lo está, la mención queda sin dirección,
+no se reparte por defecto. Vale para las seis metodologías.
 
 El patrón es agnóstico a la metodología: **cada expresión se clasifica en dos ejes independientes,
 los ejes no se suman entre sí, y se etiqueta después de ingerir, nunca dentro del query.** En
@@ -370,7 +388,11 @@ Un entregable no pasa a deck mientras falle un gate que afecte su conclusión pr
 - **A. Integridad.** Los archivos crudos intactos, el parser leyó todas las filas, no hay fechas
   inválidas sin explicar, el periodo cerrado está documentado.
 - **B. Reconciliación.** El total del tablero tiene definición, la diferencia contra el archivo
-  está explicada, las fuentes omitidas están identificadas.
+  está explicada, las fuentes omitidas están identificadas. **Escala con el corpus:** es control
+  obligatorio en corridas del orden de millones, donde el recorte de la exportación cambia el
+  tamaño de la conversación. En corridas de cientos de miles o menos puede no correrse, por
+  decisión explícita, y entonces se declara en la slide de método como no corrido. Lo que nunca se
+  hace, se corra o no: presentar el volumen del archivo como el total de la conversación.
 - **C. Pertinencia.** Anclas de sujeto y de mercado suficientes, ruido conocido cuantificado,
   versiones defectuosas retiradas del análisis. Y el corte que más cambia un resultado: **el sujeto
   tiene que aparecer en el texto propio**, no en el contexto heredado. Las filas que solo lo tienen

@@ -80,6 +80,10 @@ research channel, the complaint channel, and the foreign-planner channel. See th
   (psychological / personal / social / cultural). Tag *post-ingest*, never in the query.
 - **Permission to act:** a brand moves psychological + personal fully, social partially, and only
   *aligns* with cultural.
+- **Read the cultural dictionary against the corpus domain, not only against the subject.** A
+  second failure mode showed up in a public-safety-heavy corpus: `patrimonio` was a criminal
+  category and `identidad` came from prosecutors' records. Both words look cultural and neither
+  was. Before a term goes into the cultural layer, sample where it actually appears.
 - **The cultural layer is defined by normative language, not by category vocabulary.** In a craft
   textile category, `artesan*`, `telar`, `bordado` and `tradición` are the *subject*, not a cultural
   motive: the whole corpus talks that way. What makes an expression cultural is the language of

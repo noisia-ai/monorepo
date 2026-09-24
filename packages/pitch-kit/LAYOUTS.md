@@ -161,6 +161,13 @@ Slides 5 and 15 used to be optional. The four most recent studies all shipped wi
 are part of the sequence now. A study that drops one should say why in its provenance record.
 Slide 12 stays optional and depends on the brief: a category-agnostic study has no rival to name.
 
+**The sequence is a ceiling, not a floor.** A study can land at twelve slides and be better for it.
+The narrative order that survived review: the finding that opens the story goes **right after the
+frame**, not as a late support slide; the plumbing (the de-noising funnel, the corpus composition)
+goes to the annex, and if two annex slides repeat each other's numbers, they merge. A slide that
+arrives confusing after two clear ones is cut and its finding folded into a neighbour. When the
+funnel does appear, it is drawn as a real funnel, decreasing width and centred, not as a list.
+
 **Channels slide framing.** Clients ask for the channel split and it earns its place, but frame it
 as *where people talk and what each platform is for*, never as "share of voice de la categoría".
 That phrasing reveals the sell (`COPY_RULES.md` §0). Each channel's role has to be demonstrable
@@ -188,6 +195,11 @@ triggers over the teal blob and barriers over the coral, and the four permission
 into a one-line legend under the title. It stops explaining the framework and starts demonstrating
 it. Its measurements are taken, not estimated, and they are in the fragment's header: respect them
 or measure again. The asset itself does not change, only its size and what surrounds it.
+
+**A context frame is read through the case, not defined.** When a study leans on a context
+framework (VUCA and the like), one slide with its four pressures **as they show up in this
+subject**, each with its own figure, beats three slides explaining what the framework is. The
+reader learns the frame by seeing it hold numbers.
 
 **When the study uses a different frame** (a fast-moving public-affairs topic, a risk read, a
 maturity model), keep the same slide *function* and swap the diagram for a 2×2 grid of framework

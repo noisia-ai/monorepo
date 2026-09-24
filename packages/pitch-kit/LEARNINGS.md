@@ -8,7 +8,7 @@ Complementan `COPY_RULES.md` y `AGENTS.md`. **Léelo antes de armar un deck.**
 - **Nunca nombres herramientas** en slides de cliente (SentiOne, scrapers, vendors). Al cliente no le interesa el stack.
 - **No somos "social listening".** El foco es **Voice of the Consumer / la voz del público** (o del electorado). El monitoreo de redes es el medio, no el pitch.
 - **Slides de proceso = cómo trabajamos CON el cliente**, no el método interno. Secuencia probada para política: **Paso 0 Workshop → Diagnóstico → Presentación → Reporteo continuo → Día de la elección (D-Day, acompañamiento en vivo)**.
-- **Títulos en español claro** — nada que un mexicano no entienda o que no sea de la industria. Evita "lectura" como sustantivo → di **reporte / diagnóstico**.
+- **Títulos en español claro** — nada que un mexicano no entienda o que no sea de la industria. Evita "lectura" como sustantivo → nombra el entregable por su familia: **este estudio, este reporte**. "Diagnóstico" también se corrigió a mano en revisión, así que tampoco.
 
 ## Terminología política (MX)
 | ❌ | ✅ |
