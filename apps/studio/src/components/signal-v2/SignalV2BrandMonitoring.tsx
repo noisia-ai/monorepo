@@ -867,6 +867,9 @@ export function SignalV2BrandMonitoring({
   const comparisonFilter = data.comparison_filter;
   const hasComparison = comparisonFilter != null;
   const nativeVolumeOnly = data.freshness.data.unit === "canonical_mention";
+  const nativeSentimentPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.sentiment.state);
+  const nativeAttentionPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.attention.state);
+  const nativeHighlightsPending = nativeVolumeOnly && !data.highlights.positive.length && !data.highlights.negative.length;
   const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly ? "mentions" : conversationMetric;
   const currentStructure = data.conversation_structure.summary;
   const previousStructure = data.conversation_structure.previous_summary;
@@ -1497,14 +1500,14 @@ export function SignalV2BrandMonitoring({
                   previousBuckets={data.sentiment.previous_buckets}
                 />
               ) : (
-                <EmptyMetric message={metricEmptyMessage(data.sentiment.state, t)} />
+                <EmptyMetric message={nativeSentimentPending ? t("metricsPending.sentiment") : metricEmptyMessage(data.sentiment.state, t)} />
               )}
-              <p className="signal-v2-card__coverage-note">
+              {!nativeSentimentPending ? <p className="signal-v2-card__coverage-note">
                 {t("cards.sentiment.coverage", {
                   classified: formatNumber(data.conversation_structure.summary.classified_sentiment),
                   total: formatNumber(data.conversation_structure.summary.mentions)
                 })}
-              </p>
+              </p> : null}
             </MetricCard>
 
           <MetricCard
@@ -1569,6 +1572,7 @@ export function SignalV2BrandMonitoring({
               help={translatedHelp(t, "cards.attention.help")}
               title={t("cards.attention.title")}
             />
+            {nativeAttentionPending ? <EmptyMetric message={t("metricsPending.attention")} /> : <>
             <div className="signal-v2-attention-metrics">
               <div>
                 <small>{t("cards.attention.totalInteractions")}</small>
@@ -1629,6 +1633,7 @@ export function SignalV2BrandMonitoring({
               </div>
             </div>
             <p>{t("cards.attention.note", { count: formatNumber(data.attention.root_posts) })}</p>
+            </>}
             <button onClick={goToCorpus} type="button">{t("actions.openMentions")}<ArrowRight size={14} /></button>
           </article>
 
@@ -1678,12 +1683,12 @@ export function SignalV2BrandMonitoring({
 
           <article className="signal-v2-card signal-v2-card--full signal-v2-conversations">
             <CardHeading
-              dataState="fresh"
+              dataState={nativeHighlightsPending ? "not_available" : "fresh"}
               eyebrow={t("cards.conversations.eyebrow")}
               help={translatedHelp(t, "cards.conversations.help")}
               title={t("cards.conversations.title")}
             />
-            <div className="signal-v2-conversation-columns">
+            {nativeHighlightsPending ? <EmptyMetric message={t("metricsPending.highlights")} /> : <div className="signal-v2-conversation-columns">
               <ConversationColumn
                 empty={t("cards.conversations.emptyPositive")}
                 items={data.highlights.positive}
@@ -1696,7 +1701,7 @@ export function SignalV2BrandMonitoring({
                 label={t("cards.conversations.negative")}
                 tone="negative"
               />
-            </div>
+            </div>}
           </article>
           </section>
 

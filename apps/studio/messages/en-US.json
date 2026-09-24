@@ -615,6 +615,11 @@
     }
   },
   "SignalV2": {
+    "metricsPending": {
+      "sentiment": "Sentiment is not yet available.",
+      "attention": "Interaction metrics are not yet available for these conversations.",
+      "highlights": "There are no highlighted conversations for this period yet. You can explore the mentions."
+    },
     "workspaceTopics": {
       "detailMetrics": {
         "presence": "This concept over time",
@@ -2027,7 +2032,7 @@
       "pending": "The metric is being materialized for this filter.",
       "stale": "The metric exists but needs to be refreshed.",
       "partial": "Data is present with a declared coverage limitation.",
-      "notAvailable": "Data OS does not yet have this metric for the period."
+      "notAvailable": "This metric is not yet available for the selected period."
     },
     "stateShort": {
       "fresh": "Live",
