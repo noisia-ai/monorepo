@@ -36,7 +36,7 @@ export async function assertSignalWorkspaceImportedServingV1(t: Pick<TestContext
     [mention, f.workspace_id, f.source_id, canonical ?? mention, mention, batch, fixtureSha(text), text, text.length]);
     await tx.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id,ingestion_disposition)
       VALUES($1,$2,$3,$4,$5) ON CONFLICT(mention_id,import_batch_id) DO NOTHING`,
-    [f.workspace_id, mention, batch, f.source_id, canonical ? "duplicate" : "included"]);
+    [f.workspace_id, canonical ?? mention, batch, f.source_id, canonical ? "duplicate" : "included"]);
     return mention;
   };
   const restrictBatch = async (metrics: boolean, text: boolean) => {
