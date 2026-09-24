@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import test from "node:test";
@@ -436,6 +437,10 @@ function summaryQueryable(args: { brief: boolean; generationCount: number; unkno
           primary_locale: "en-US", timezone: "UTC" } }] : [], rowCount: args.brief ? 1 : 0 };
       }
       if (sql.includes("FROM signal_governance_control_operations")) return { rows: [], rowCount: 0 };
+      // The authority query returns one digest even when this fixture has no KB sources.
+      if (sql.includes("knowledge_digest")) return { rows: [{
+        knowledge_digest: `sha256:${createHash("sha256").update('{"chunks":[],"sources":[]}').digest("hex")}`
+      }], rowCount: 1 };
       if (sql.includes("FROM knowledge_chunks")) return { rows: [], rowCount: 0 };
       if (sql.includes("FROM brand_knowledge_sources source")) return { rows: [], rowCount: 0 };
       throw new Error(`Unexpected summary query: ${sql.slice(0, 80)}`);

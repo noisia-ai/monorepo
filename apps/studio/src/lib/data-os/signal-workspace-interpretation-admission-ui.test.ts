@@ -156,8 +156,8 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(!html.includes(copy.admissionGrant.receipts.split("{")[0]));
     assert.ok(html.includes(copy.terminalAmount.split("{")[0]));
     assert.match(html, /32[^<]*357/u);
-    assert.ok(html.includes(copy.partialCoverage));
-    assert.ok(html.indexOf(copy.partialCoverage) < html.indexOf(copy.admissionGrant.title));
+    assert.ok(html.includes(copy.failedPartialCatalog), "a failed run keeps its saved partial catalog visible beside its receipts");
+    assert.ok(html.indexOf(copy.failedPartialCatalog) < html.indexOf(copy.admissionGrant.title), "partial catalog recovery appears before renewed spending authority");
     assert.ok(html.includes(copy.errors.failed));
     assert.ok(html.includes(copy.admissionGrant.authorize));
     assert.ok(html.includes(copy.refresh));

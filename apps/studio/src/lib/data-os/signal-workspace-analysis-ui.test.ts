@@ -443,7 +443,7 @@ for (const locale of ["es-MX", "en-US"]) {
   test(`${locale}: saved partial topics remain readable through failure and never imply complete classification or automatic Signal selection`, () => {
     const html = render({ ...status, latest_run: progressiveRun });
     assert.match(html, /32[^]*357/u);
-    assert.ok(html.includes(t.partialCoverage));
+    assert.ok(html.includes(t.failedPartialCatalog), "a failed run keeps its saved partial catalog usable without claiming complete coverage");
     assert.ok(!html.includes(t.completedBody));
     assert.ok(html.includes(t.errors.authorizationExpired));
     const noReceipt = render({ ...status, latest_run: { ...progressiveRun, materialization_progress: null, materialization_pending: true } });
@@ -465,7 +465,8 @@ for (const locale of ["es-MX", "en-US"]) {
     const run = { ...progressiveRun, materialization_error_code: "workspace_engine_progress_storage_failed", materialization_retry_available: true };
     const html = render({ ...status, latest_run: run });
     assert.ok(html.includes(t.catalogSaveFailed)); assert.ok(html.includes(t.retryCatalogSave));
-    assert.ok(html.includes(t.errors.authorizationExpired)); assert.ok(html.includes(t.partialCoverage));
+    assert.ok(html.includes(t.errors.authorizationExpired));
+    assert.ok(html.includes(t.failedPartialCatalog), "a storage failure retains the recoverable partial catalog notice");
     assert.ok(!html.includes(`>${t.retry}</button>`));
     assert.ok(!render({ ...status, latest_run: run }, true).includes(t.retryCatalogSave), "editing must remain protected");
     const automatic = render({ ...status, latest_run: { ...run, materialization_error_code: null,
