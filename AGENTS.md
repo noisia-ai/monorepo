@@ -1,3 +1,5 @@
+> **CONEXIÓN DEV-TEST RECUPERADA — 24sept17:03UTC.** Operador completó contraseña; runner readonly063e677/d3a55ca6 verificó identidad y269tablas vacías. Fallo adicional inet::text/CIDR corregido,13testsPASS. Leer `DEV_TEST_CONNECTION_RECOVERY_2026-09-24.md` en docs/product/PROMPT_LOOPING: recibo real,28P01resuelto. Sellos por revisar/rellenar; upgrade vacío/seis casosSignal/ensayo0183 todavía pendientes, no ejecutados. Loop y desarrollo general siguen PAUSED; no reanudar por esta reparación focal. UAT/Laika/proveedores intactos. Historia inferior conservada.
+
 # AGENTS.md — Noisia monorepo
 
 > Read this first. It is the entry point for any AI coding agent (Claude Code, Codex,
