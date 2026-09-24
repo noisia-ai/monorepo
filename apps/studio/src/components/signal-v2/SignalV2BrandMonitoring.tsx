@@ -32,7 +32,7 @@ import type {
   SignalComparisonV1,
   SignalFilterV1,
   SignalTopicsNarrativesOverviewV1,
-  SignalWorkspaceTopicsOverviewV1
+  SignalWorkspaceOverviewV1
 } from "@noisia/query-engine";
 
 import type {
@@ -114,7 +114,7 @@ type SignalWorkspaceModulePayload = (
   SignalBrandMonitoringV1
   | SignalMentionsViewData
   | SignalTopicsNarrativesOverviewV1
-  | SignalWorkspaceTopicsOverviewV1
+  | SignalWorkspaceOverviewV1
   | SignalTriggersBarriersOverviewV2
 );
 const CHART_TOOLTIP_STYLE = {
@@ -172,7 +172,7 @@ export function SignalV2BrandMonitoring({
   initialMentions: SignalMentionsViewData | null;
   initialNativeMentionsUnavailable?: boolean;
   initialSettings: SignalClientSettingsV1 | null;
-  initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1 | null;
+  initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1 | null;
   initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
   legacyOutputId: string | null;
   manageTopicsHref: string | null;
@@ -324,7 +324,7 @@ export function SignalV2BrandMonitoring({
       return;
     }
     if (target === "topics") {
-      setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1);
+      setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1);
       return;
     }
     setData(payload as SignalBrandMonitoringV1);
@@ -375,7 +375,7 @@ export function SignalV2BrandMonitoring({
         if ([401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
         throw new Error(t("errors.load"));
       }
-      const payload = await response.json() as SignalWorkspaceTopicsOverviewV1;
+      const payload = await response.json() as SignalWorkspaceOverviewV1;
       if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
       if (payload.contract_version !== "signal-workspace-topics-serving-v1" || payload.workspace_id !== data.workspace.id) {
         invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
@@ -447,7 +447,7 @@ export function SignalV2BrandMonitoring({
         invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
       }
       const payload = await response.json() as (
-        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1
       ) & { message?: string };
       if (filterSequenceRef.current !== sequence) return false;
       if (!response.ok) {
@@ -456,7 +456,7 @@ export function SignalV2BrandMonitoring({
       }
       applyModulePayload(currentModule, payload);
       if (currentModule === "topics") {
-        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1);
+        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1);
         const parsed = localSignalAnalyticsSelection({
           comparisonMode: selection.comparisonMode,
           comparisonStart: selection.comparisonStart,
@@ -587,7 +587,7 @@ export function SignalV2BrandMonitoring({
         throw new Error(t("errors.load"));
       }
       const payload = await response.json() as (
-        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1
       );
       if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
       if (nativeTarget && target === "mentions") {
@@ -867,6 +867,9 @@ export function SignalV2BrandMonitoring({
   const comparisonFilter = data.comparison_filter;
   const hasComparison = comparisonFilter != null;
   const nativeVolumeOnly = data.freshness.data.unit === "canonical_mention";
+  const nativeSentimentPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.sentiment.state);
+  const nativeAttentionPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.attention.state);
+  const nativeHighlightsPending = nativeVolumeOnly && !data.highlights.positive.length && !data.highlights.negative.length;
   const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly ? "mentions" : conversationMetric;
   const currentStructure = data.conversation_structure.summary;
   const previousStructure = data.conversation_structure.previous_summary;
@@ -1339,7 +1342,7 @@ export function SignalV2BrandMonitoring({
             onOpenControls={() => setControlsOpen(true)}
             workspaceId={data.workspace.id}
           />
-        ) : currentModule === "topics" && topicsNarrativesData ? (
+        ) : currentModule === "topics" && topicsNarrativesData?.contract_version !== "signal-workspace-topics-serving-v1" && topicsNarrativesData ? (
           <SignalV2TopicsNarratives
             brandName={brandName}
             canRefreshInsights={canRefreshInsights}
@@ -1362,6 +1365,8 @@ export function SignalV2BrandMonitoring({
           </button>}
           controls={<>
           <SignalAnalyticsFilter
+            showComparison={!nativeVolumeOnly}
+            boundedToCoverage={nativeVolumeOnly}
             comparison={data.comparison}
             coverage={data.coverage}
             filter={data.filter}
@@ -1376,7 +1381,7 @@ export function SignalV2BrandMonitoring({
             mentionCount={data.coverage.mentions}
             onOpenMentions={goToCorpus}
           />
-          <button
+          {!nativeVolumeOnly ? <button
             aria-expanded={controlsOpen}
             className={`signal-v2-filter${controlsOpen ? " signal-v2-filter--active" : ""}`}
             onClick={() => setControlsOpen((open) => !open)}
@@ -1387,7 +1392,7 @@ export function SignalV2BrandMonitoring({
             {activeGlobalFilterCount > 0 ? (
               <span className="signal-v2-filter__count">{activeGlobalFilterCount}</span>
             ) : null}
-          </button>
+          </button> : null}
           {canRefreshInsights ? (
             <button
               className="signal-v2-filter signal-v2-filter--insights"
@@ -1414,8 +1419,8 @@ export function SignalV2BrandMonitoring({
           </span>
           </>}
           icon={<Megaphone size={20} weight="fill" />}
-          status={t("status.beta")}
-          subtitle={t("subtitle")}
+          status={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && topicsNarrativesData.source === "workspace_imported" ? "imported.status" : "status.beta")}
+          subtitle={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && topicsNarrativesData.source === "workspace_imported" ? "imported.classificationPending" : "subtitle")}
           title={t("title")}
         />
 
@@ -1497,14 +1502,14 @@ export function SignalV2BrandMonitoring({
                   previousBuckets={data.sentiment.previous_buckets}
                 />
               ) : (
-                <EmptyMetric message={metricEmptyMessage(data.sentiment.state, t)} />
+                <EmptyMetric message={nativeSentimentPending ? t("imported.sentimentPending") : metricEmptyMessage(data.sentiment.state, t)} />
               )}
-              <p className="signal-v2-card__coverage-note">
+              {!nativeSentimentPending ? <p className="signal-v2-card__coverage-note">
                 {t("cards.sentiment.coverage", {
                   classified: formatNumber(data.conversation_structure.summary.classified_sentiment),
                   total: formatNumber(data.conversation_structure.summary.mentions)
                 })}
-              </p>
+              </p> : null}
             </MetricCard>
 
           <MetricCard
@@ -1569,6 +1574,7 @@ export function SignalV2BrandMonitoring({
               help={translatedHelp(t, "cards.attention.help")}
               title={t("cards.attention.title")}
             />
+            {nativeAttentionPending ? <EmptyMetric message={t("imported.attentionPending")} /> : <>
             <div className="signal-v2-attention-metrics">
               <div>
                 <small>{t("cards.attention.totalInteractions")}</small>
@@ -1629,6 +1635,7 @@ export function SignalV2BrandMonitoring({
               </div>
             </div>
             <p>{t("cards.attention.note", { count: formatNumber(data.attention.root_posts) })}</p>
+            </>}
             <button onClick={goToCorpus} type="button">{t("actions.openMentions")}<ArrowRight size={14} /></button>
           </article>
 
@@ -1678,12 +1685,12 @@ export function SignalV2BrandMonitoring({
 
           <article className="signal-v2-card signal-v2-card--full signal-v2-conversations">
             <CardHeading
-              dataState="fresh"
+              dataState={nativeHighlightsPending ? "not_available" : "fresh"}
               eyebrow={t("cards.conversations.eyebrow")}
               help={translatedHelp(t, "cards.conversations.help")}
               title={t("cards.conversations.title")}
             />
-            <div className="signal-v2-conversation-columns">
+            {nativeHighlightsPending ? <EmptyMetric message={t("imported.highlightsPending")} /> : <div className="signal-v2-conversation-columns">
               <ConversationColumn
                 empty={t("cards.conversations.emptyPositive")}
                 items={data.highlights.positive}
@@ -1696,7 +1703,7 @@ export function SignalV2BrandMonitoring({
                 label={t("cards.conversations.negative")}
                 tone="negative"
               />
-            </div>
+            </div>}
           </article>
           </section>
 
@@ -1978,7 +1985,7 @@ function currentModulePayload(
   module: SignalWorkspaceModule,
   monitoring: SignalBrandMonitoringV1,
   mentions: SignalMentionsViewData | null,
-  topics: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceTopicsOverviewV1 | null,
+  topics: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1 | null,
   triggersBarriers: SignalTriggersBarriersOverviewV2 | null
 ): SignalWorkspaceModulePayload | null {
   if (module === "mentions") return mentions;

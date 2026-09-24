@@ -1,3 +1,4 @@
+import { allowImportedSignalFallbackV1 } from "@/lib/data-os/signal-imported-serving";
 import { loadInitialSignalMonitoringV1 } from "@/lib/signal-v2/initial-monitoring";
 import { loadClientBrandWorkspaceEntryV1 } from "@/lib/data-os/workspace-management-entry";
 import { notFound } from "next/navigation";
@@ -84,7 +85,7 @@ export async function SignalV2WorkspacePage({
     for (const [key, value] of Object.entries(query)) {
       for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
     }
-    const scope = { workspace_id: workspace.id, actor_user_id: session.appUser.id };
+    const scope = { workspace_id: workspace.id, actor_user_id: session.appUser.id, imported_fallback: allowImportedSignalFallbackV1(workspace) };
     let native = null, focused = null, unavailable = false;
     try {
       native = await loadNativeSignalMentionsV1(scope, params);
@@ -118,7 +119,7 @@ export async function SignalV2WorkspacePage({
     for (const [key, value] of Object.entries(query)) {
       for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
     }
-    const native = await loadNativeSignalTopicsV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id }, params);
+    const native = await loadNativeSignalTopicsV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id, imported_fallback: allowImportedSignalFallbackV1(workspace) }, params);
     if (native) {
       const [workspaceOptions, releases] = await Promise.all([
         listSignalWorkspaceOptionsForUser(session.appUser),

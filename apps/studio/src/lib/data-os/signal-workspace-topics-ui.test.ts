@@ -4,7 +4,7 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
-import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
+import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1 } from "@noisia/query-engine";
 import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
 import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
 import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
@@ -20,7 +20,7 @@ const data: SignalWorkspaceTopicsOverviewV1 = {
     kind: "topic" as const, definition_revision: 1, definition_digest: "sha256:def", selected: true, mention_count: 7, share_of_corpus: 0.7, basis: "computed_cluster" })),
   series: [], limitations: ["computed_memberships_not_semantic_precision"]
 };
-async function render(locale: string, payload = data, surface: "summary" | "topics" = "topics", refreshFailed = false) {
+async function render(locale: string, payload: SignalWorkspaceOverviewV1 = data, surface: "summary" | "topics" = "topics", refreshFailed = false) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   return renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
@@ -207,5 +207,21 @@ for (const locale of ["es-MX", "en-US"]) {
       })));
     assert.match(html, /<time>—<\/time>/);
     assert.doesNotMatch(html, /1970|Jan 1|1 ene|1 de ene/i);
+  });
+}
+
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: first import has a pending Topics state without Noise or fictitious classification counts`, async () => {
+    const imported: SignalWorkspaceImportedOverviewV1 = { ...data, source: "workspace_imported", classification_state: "pending",
+      generation_id: null, source_engine_execution_id: null, quality: "not_analyzed", evidence_visible_total: 7,
+      terms: [], series: [], interpretation_coverage: null,
+      coverage: { processed: null, assigned_unique: null, abstained: null, noise: null, unresolved: null, withheld: null } };
+    const html = await render(locale, imported);
+    assert.ok(html.includes(locale === "es-MX" ? "Tus conversaciones ya están disponibles" : "Your conversations are available"));
+    assert.ok(html.includes(locale === "es-MX" ? "10 menciones" : "10 mentions"));
+    assert.ok(html.includes(locale === "es-MX" ? "pendiente" : "pending"));
+    assert.doesNotMatch(html, /Noise|Pertenencia calculada|Computed membership|<span>0<\/span>|topic0|topic1/);
+    assert.match(html, /signal-v2-module-header|signal-v2-page-head/);
   });
 }

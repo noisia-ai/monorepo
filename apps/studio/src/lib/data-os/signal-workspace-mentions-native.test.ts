@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SignalWorkspaceMentionsPageV1 } from "@noisia/db";
+import type { SignalWorkspaceMentionsPageV1, SignalWorkspaceImportedMentionsPageV1 } from "@noisia/db";
 import { loadNativeSignalMentionsV1, nativeMentionsErrorResponseV1,
   nativeMentionsQueryV1, nativeMentionsViewDataV1 } from "./signal-workspace-mentions-native";
 
@@ -34,7 +34,7 @@ test("unsupported dimensions, ambiguous aliases, malformed limits and fabricated
     "start=2026-09-01&end=2026-01-01", "start=2026-01-01&date_from=2026-01-02", "q=a&q=b",
     "limit=101", "limit=0", "limit=", "limit=1.2", "limit=1e1", "limit=%20", "platform=",
     "direction=DESC", "scope_digest=other", "cursor=", "mention=private", `cursor=opaque&mention=${mention}`,
-    "actor_user_id=other", "generation_id=other", "q=%00"]) {
+    "actor_user_id=other", "generation_id=other", "imported_fallback=true", "q=%00"]) {
     assert.throws(() => nativeMentionsQueryV1(new URLSearchParams(query)), error =>
       Boolean(error && typeof error === "object" && "status" in error && error.status === 422), query);
   }
@@ -158,4 +158,23 @@ test("unexpected storage errors become an unavailable response without internal 
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: "workspace_mentions_unavailable",
     message: "Mentions could not be loaded. Refresh and try again." });
+});
+
+
+test("import-only evidence keeps pending classification and explicit server opt-in through paging", async () => {
+  const imported: SignalWorkspaceImportedMentionsPageV1 = { ...page(), source: "workspace_imported",
+    classification_state: "pending", generation_id: null, source_engine_execution_id: null,
+    focused_item: null, items: page().items.map(item => ({ ...item, resolution_state: null, has_unresolved_topics: null })) };
+  const result = await loadNativeSignalMentionsV1({ ...scope, imported_fallback: true }, new URLSearchParams(), {
+    read: async args => { assert.equal(args.imported_fallback, true); return imported; }
+  });
+  assert.equal(result?.native.source, "workspace_imported");
+  assert.equal(result?.native.classification_state, "pending");
+  assert.equal(result?.native.generation_id, null);
+  assert.equal(result?.records[0]?.sentiment, null);
+  assert.equal(result?.page.next_cursor, "next");
+  const revoked = Object.assign(new Error("Access revoked"), { code: "workspace_mentions_forbidden", status: 403 });
+  await assert.rejects(loadNativeSignalMentionsV1({ ...scope, imported_fallback: true }, new URLSearchParams(), {
+    read: async () => { throw revoked; }
+  }), revoked);
 });

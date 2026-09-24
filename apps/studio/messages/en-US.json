@@ -615,6 +615,16 @@
     }
   },
   "SignalV2": {
+    "imported": {
+      "mentionsSubtitle": "Imported conversations for your brand",
+      "sentimentPending": "Sentiment has not been classified yet.",
+      "attentionPending": "Interaction metrics are not yet available for these conversations.",
+      "highlightsPending": "Prioritized evidence will be available after interpreting the conversations. You can explore all mentions in the meantime.",
+      "status": "Imported conversations",
+      "classificationPending": "Topic classification is still pending. You can explore mentions now.",
+      "topicsTitle": "Your conversations are available",
+      "topicsBody": "There are {count, number} mentions available for metrics. Topics will appear after analysis and selection for Signal."
+    },
     "workspaceTopics": {
       "detailMetrics": {
         "presence": "This concept over time",
@@ -2027,7 +2037,7 @@
       "pending": "The metric is being materialized for this filter.",
       "stale": "The metric exists but needs to be refreshed.",
       "partial": "Data is present with a declared coverage limitation.",
-      "notAvailable": "Data OS does not yet have this metric for the period."
+      "notAvailable": "This metric is not yet available for the selected period."
     },
     "stateShort": {
       "fresh": "Live",

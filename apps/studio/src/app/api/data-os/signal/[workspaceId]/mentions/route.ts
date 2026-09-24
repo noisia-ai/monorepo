@@ -1,3 +1,4 @@
+import { allowImportedSignalFallbackV1 } from "@/lib/data-os/signal-imported-serving";
 import {
   parseSignalAnalyticsQueryParamsV1,
   signalServingScopeIdentityHashV1,
@@ -32,7 +33,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     }
     try {
       const native = await loadNativeSignalMentionsV1({ workspace_id: scoped.workspace.id,
-        actor_user_id: scoped.session.appUser.id }, params);
+        actor_user_id: scoped.session.appUser.id, imported_fallback: allowImportedSignalFallbackV1(scoped.workspace) }, params);
       if (native) {
         const response = topicResponse(native);
         response.headers.set("Server-Timing", `signal-visible;dur=${Math.round(performance.now() - routeStarted)}`);

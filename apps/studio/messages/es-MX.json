@@ -613,6 +613,16 @@
     }
   },
   "SignalV2": {
+    "imported": {
+      "mentionsSubtitle": "Conversaciones importadas de tu marca",
+      "sentimentPending": "El sentimiento todavía no está clasificado.",
+      "attentionPending": "Las métricas de interacción todavía no están disponibles para estas conversaciones.",
+      "highlightsPending": "La evidencia priorizada estará disponible después de interpretar las conversaciones. Mientras tanto, puedes explorar todas las menciones.",
+      "status": "Conversaciones importadas",
+      "classificationPending": "La clasificación de Topics todavía está pendiente. Puedes explorar las menciones desde ahora.",
+      "topicsTitle": "Tus conversaciones ya están disponibles",
+      "topicsBody": "Hay {count, number} menciones disponibles para las métricas. Los Topics aparecerán después del análisis y su selección para Signal."
+    },
     "workspaceTopics": {
       "detailMetrics": {
         "presence": "Presencia de este concepto",
@@ -2025,7 +2035,7 @@
       "pending": "La métrica se está materializando para este filtro.",
       "stale": "La métrica existe, pero necesita actualizarse.",
       "partial": "Hay datos, con una limitación de cobertura declarada.",
-      "notAvailable": "Data OS todavía no tiene esta métrica para el periodo."
+      "notAvailable": "Esta métrica todavía no está disponible para el periodo seleccionado."
     },
     "stateShort": {
       "fresh": "Live",

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowClockwise, Gauge, Quotes } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
-import type { SignalFilterV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
+import type { SignalFilterV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./SignalAnalyticsFilter";
 import { SignalDataScopeFilter } from "./SignalDataScopeFilter";
@@ -25,7 +25,7 @@ export function workspaceTermsForSectionV1(data: SignalWorkspaceTopicsOverviewV1
   return data.terms.filter(item => (item.kind === "narrative" ? "narrative" : "topic") === kind);
 }
 
-export function SignalV2WorkspaceTopics({ brandName, data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, onOpenMentions, refreshFailed = false, workspaceTimezone }: {
+type WorkspaceTopicsProps = {
   brandName: string;
   data: SignalWorkspaceTopicsOverviewV1; loading: boolean; manageTopicsHref: string | null;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
@@ -33,7 +33,32 @@ export function SignalV2WorkspaceTopics({ brandName, data, loading, manageTopics
   onOpenMention?: (mentionId: string) => void;
   onOpenMentions: () => void;
   workspaceTimezone: string;
-}) {
+};
+
+export function SignalV2WorkspaceTopics(props: Omit<WorkspaceTopicsProps, "data"> & { data: SignalWorkspaceOverviewV1 }) {
+  return props.data.source === "workspace_imported"
+    ? <SignalImportedTopics {...props} data={props.data} />
+    : <SignalComputedWorkspaceTopics {...props} data={props.data} />;
+}
+
+function SignalImportedTopics({ data, loading, manageTopicsHref, onOpenMentions, onRefresh, refreshFailed }: Omit<WorkspaceTopicsProps, "data"> & { data: SignalWorkspaceImportedOverviewV1 }) {
+  const t = useTranslations("SignalV2");
+  return <div className="signal-v2-tn signal-v2-tn--workspace">
+    <SignalV2ModuleHeader icon={<Quotes size={20} weight="fill" />} title={t("workspaceTopics.title")}
+      subtitle={t("imported.classificationPending")} status={t("imported.status")}
+      aside={manageTopicsHref ? <Link className="signal-v2-filter" href={manageTopicsHref} prefetch={false}>{t("workspaceTopics.manage")}</Link> : null}
+      controls={<button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void onRefresh?.()}>
+        <ArrowClockwise size={16} />{t("workspaceTopics.refresh")}</button>} />
+    {refreshFailed ? <div className="signal-v2-error" role="alert">{t("workspaceTopics.refreshError")}</div> : null}
+    <section className="signal-v2-tn__empty" aria-busy={loading} role="status">
+      <Quotes size={24} aria-hidden /><strong>{t("imported.topicsTitle")}</strong>
+      <p>{t("imported.topicsBody", { count: data.denominator })}</p>
+      <button className="signal-v2-filter" type="button" onClick={onOpenMentions}>{t("coverage.open")}</button>
+    </section>
+  </div>;
+}
+
+function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, onOpenMentions, refreshFailed = false, workspaceTimezone }: WorkspaceTopicsProps) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
   const [selectedKey, setSelectedKey] = useState<string | null>(data.terms[0]?.term_key ?? null);
   const [termLimit, setTermLimit] = useState(50);

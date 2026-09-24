@@ -1,3 +1,4 @@
+import { allowImportedSignalFallbackV1 } from "@/lib/data-os/signal-imported-serving";
 import { loadSignalWorkspaceModuleContext } from "@/app/api/data-os/_lib/load";
 import { loadSignalWorkspaceContextForTopics, topicError, topicResponse } from "../topics/_lib";
 import { loadNativeSignalTopicsV1, nativeTopicsViewV1 } from "@/lib/data-os/signal-workspace-topics-native";
@@ -31,7 +32,7 @@ export async function GET(
     const scoped = await loadSignalWorkspaceContextForTopics(workspaceId);
     if ("response" in scoped) return scoped.response;
     try {
-      const native = await loadNativeSignalTopicsV1({ workspace_id: workspaceId, actor_user_id: scoped.session.appUser.id }, params);
+      const native = await loadNativeSignalTopicsV1({ workspace_id: workspaceId, actor_user_id: scoped.session.appUser.id, imported_fallback: allowImportedSignalFallbackV1(scoped.workspace) }, params);
       if (native) return topicResponse(native);
     } catch (error) { return topicError(error, "workspace_topics_unavailable"); }
   }
