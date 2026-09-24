@@ -61,7 +61,8 @@ advisor para cerrar el alcance
   → los gates de DATA.md antes de cualquier conclusión, y me dices cuáles fallan
   → codificación en dos ejes, con su cobertura y su guard de sesgo
   → mapa de hallazgos con verbatims reales ligados
-  → slides sobre el engine, con los fragmentos de slides/
+  → slides sobre el engine, con los fragmentos de slides/ y un fondo propio por slide
+    con builders/gen-backgrounds.py
   → render slide por slide con builders/qa-render.py, y los miras
   → PDF, y lo revisas página por página
   → PROVENANCE_AND_CHANGELOG.md y GUION_POR_SLIDE.md desde templates/
