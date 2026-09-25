@@ -247,8 +247,12 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       await tx.query('SELECT fail_signal_topic_editorial_execution_v1($1,$2,$3)',
         [executionId, lease.execution_token, 'topic_editorial_synthetic_timeout']);
       console.log('renewal_owner_failed_for_recovery');
-      await tx.query('SELECT pg_sleep(greatest(0,extract(epoch FROM ((SELECT valid_until FROM signal_processing_policy_versions WHERE id=$1)-clock_timestamp()))+0.2))',
-        [initialPolicy]);
+      const remaining = Number((await tx.query(`SELECT extract(epoch FROM (
+        (SELECT valid_until FROM signal_processing_policy_versions WHERE id=$1)-clock_timestamp())) seconds`,
+      [initialPolicy])).rows[0]?.seconds);
+      assert.ok(Number.isFinite(remaining) && remaining >= 0 && remaining <= 40,
+        'the synthetic policy must really expire within forty seconds');
+      await new Promise(resolve => setTimeout(resolve, Math.ceil((remaining + 0.3) * 1000)));
       console.log('renewal_policy_deadline_elapsed');
       await policy(120);
       const blocked = async () => (await tx.query('SELECT signal_topic_editorial_renewal_quote_v1($1,$2,$3,NULL) value',
