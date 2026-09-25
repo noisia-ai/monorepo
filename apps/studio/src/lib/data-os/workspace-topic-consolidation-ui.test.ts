@@ -140,6 +140,9 @@ for (const locale of ["es-MX", "en-US"] as const) {
     assert.ok(html.includes(locale === "es-MX" ? "Publicar 24 en Signal" : "Publish 24 to Signal"));
     assert.match(html, /<dt>Topics<\/dt><dd>12<\/dd>/u);
     assert.match(html, new RegExp(`<dt>${locale === "es-MX" ? "Narrativas" : "Narratives"}</dt><dd>12</dd>`));
+    assert.match(html, /1\. (?:Topic|Narrativa|Narrative)/u);
+    assert.match(html, /Definition 1/u);
+    assert.match(html, /Definition 24/u);
     assert.doesNotMatch(html, /textarea|taxonomy_terms|Aprobar|Approve/u);
   });
   test(`${locale}: unprepared, active, stale and replay states expose only their valid next action`, async () => {

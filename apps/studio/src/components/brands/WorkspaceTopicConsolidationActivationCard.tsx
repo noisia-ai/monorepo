@@ -81,11 +81,15 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
               <small>{t("selectionHint")}</small>
             </div>
             <ul className="topics-manager__activation-list">
-              {catalog.map(concept => <li key={concept.concept_key}>
+              {catalog.map((concept, index) => <li key={concept.concept_key}>
                 <label>
                   <input type="checkbox" checked={selected.has(concept.concept_key)} disabled={!canMutate || busy || pending}
                     onChange={() => onToggle?.(concept.concept_key)} />
-                  <span><strong>{concept.label}</strong><small>{t(`kinds.${concept.kind}`)}</small></span>
+                  <span className="topics-manager__activation-concept">
+                    <small>{index + 1}. {t(`kinds.${concept.kind}`)}</small>
+                    <strong>{concept.label}</strong>
+                    <span>{concept.definition}</span>
+                  </span>
                 </label>
               </li>)}
             </ul>

@@ -21120,8 +21120,9 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__activation-list label:has(input:checked) { border-color: rgba(0,138,138,.25); background: rgba(0,138,138,.055); }
 .topics-manager__activation-list label:focus-within { outline: 2px solid rgba(0,138,138,.2); outline-offset: 1px; }
 .topics-manager__activation-list label > span { display: grid; gap: 3px; min-width: 0; }
-.topics-manager__activation-list strong { overflow: hidden; color: var(--neutral-11); font-size: 13px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.topics-manager__activation-list strong { color: var(--neutral-11); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; }
 .topics-manager__activation-list small { color: var(--neutral-08); font-size: 10px; font-weight: 650; }
+.topics-manager__activation-concept > span { color: var(--neutral-09); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 .topics-manager__activation-message { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
 .topics-manager__activation-message--success { color: var(--signal-dark); }
 .topics-manager__activation-actions { margin-top: 0; }
