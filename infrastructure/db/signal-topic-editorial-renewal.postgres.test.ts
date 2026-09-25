@@ -283,7 +283,8 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       const replay = (await tx.query('SELECT renew_signal_topic_editorial_execution_v1($1,$2,$3,$4,$5,$6) value',
         [workspace_id, actor_user_id, executionId, key, fresh.quote_reference, fresh.grant_cap_micro_usd])).rows[0]?.value;
       assert.equal(replay?.renewal_id, grant.renewal_id); assert.equal(replay?.replayed, true);
-      assert.equal((await blocked()).status, 'renewal_already_used_today');
+      assert.equal((await blocked()).status, 'admission_not_expired',
+        'the newly granted admission remains valid and cannot be renewed again');
       const retry = (await tx.query('SELECT retry_signal_topic_editorial_execution_v1($1,$2,$3,$4) value',
         [workspace_id, actor_user_id, executionId, randomUUID()])).rows[0]?.value;
       assert.equal(retry?.execution_id, executionId);
