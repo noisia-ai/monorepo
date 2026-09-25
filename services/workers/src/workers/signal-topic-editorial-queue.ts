@@ -159,6 +159,15 @@ export async function signalTopicEditorialJobV1(job: Pick<Job<{ execution_id: st
     if (!await stores.finish({ database, lease })) throw new Error("topic_editorial_completion_rejected");
 
   } catch (error) {
+    // Keep diagnostics structural: provider bodies, SQL values and credentials
+    // must never enter worker logs.
+    const detail = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; stack?: unknown } : null;
+    console.error("signal_topic_editorial_worker_error", JSON.stringify({
+      name: typeof detail?.name === "string" ? detail.name : null,
+      code: typeof detail?.code === "string" ? detail.code : null,
+      frame: typeof detail?.stack === "string" ? detail.stack.split("\n").slice(1, 3) : [],
+      safe_code: safeCode(error),
+    }));
     await bridge.failActive(error).catch(() => undefined);
     await stores.failExecution({ database, lease, error_code: safeCode(error) }).catch(() => undefined);
     throw new Error(safeCode(error));
