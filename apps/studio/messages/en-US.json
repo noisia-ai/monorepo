@@ -3168,7 +3168,7 @@
           "renewal": {
             "title": "Continue the same review",
             "body": "If authorization expired, renew spending authority for this execution. Earlier batches and costs remain saved.",
-            "available": "You can authorize up to {maximum} within this review's original cap. Then resume the execution.",
+            "available": "Additional amount available: {remaining}. The total authorized cap for this day, including earlier spend, will be {maximum}. Then resume the execution.",
             "confirmation": "I authorize this new spending period for the same review.",
             "authorize": "Renew authorization",
             "error": "The renewal was not confirmed. Retry the same request or refresh the status; no results were removed.",
@@ -3176,6 +3176,7 @@
               "active": "Authorization is current. You can resume the same review.",
               "budget": "This review's or today's cap is exhausted. No new batches will be sent.",
               "policy": "A current policy is required to continue this review.",
+              "already": "This period has already been renewed once today. Resume the review or wait for the next authorization period.",
               "unavailable": "Renewal is not available yet. Refresh the status to check again."
             }
           },

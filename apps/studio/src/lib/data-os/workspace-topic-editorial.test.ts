@@ -282,6 +282,18 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: explicit unch
     assert.doesNotMatch(hidden, /30\.00|type="checkbox"/u); assert.match(hidden, /data-serving-activation="not-activated"/u);
   }
 });
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: an expired partial review cannot offer a futile retry before renewal`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const stopped: WorkspaceTopicEditorialViewV1 = { ...ready, status: "failed", can_quote: false, can_retry: true,
+    quote: null, execution: { execution_id: execution, status: "failed", completed_screening_count: 2,
+      expected_screening_count: 42, maximum_micro_usd: "30000000", confirmed_micro_usd: "1585632",
+      reserved_micro_usd: "0", ambiguous_micro_usd: "0" } };
+  const render = (retryReady: boolean) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceTopicEditorialCard, { value: stopped, now, confirmed: false, retryReady, onRetry: () => {} })));
+  assert.doesNotMatch(render(false), /<(?:button)[^>]*>[^<]*(?:Reanudar|Resume)/u);
+  assert.match(render(true), /<(?:button)[^>]*>[^<]*(?:Reanudar|Resume)/u);
+});
 test("route authenticates first, forbids injected query data, and controls fence after JSON awaits", async () => {
   const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/consolidation/editorial/route.ts", import.meta.url), "utf8");
   assert.ok(route.indexOf("loadSignalWorkspaceContextForTopics(workspaceId)") < route.indexOf("request.json()"));

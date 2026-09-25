@@ -5,8 +5,9 @@ import { validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1, su
   WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialIntentV1, type WorkspaceTopicEditorialViewV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 
 export function WorkspaceTopicEditorialCard({ value, now, confirmed, busy = false, stale = false, pending = false,
-  onConfirm, onQuote, onAuthorize, onRetry, onComplete, onReplay, onRefresh }: {
+  retryReady = true, onConfirm, onQuote, onAuthorize, onRetry, onComplete, onReplay, onRefresh }: {
   value: WorkspaceTopicEditorialViewV1; now: number; confirmed: boolean; busy?: boolean; stale?: boolean; pending?: boolean;
+  retryReady?: boolean;
   onConfirm?: (value: boolean) => void; onQuote?: () => void; onAuthorize?: () => void; onRetry?: () => void; onComplete?: () => void; onReplay?: () => void; onRefresh?: () => void;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation.editorial"), locale = useLocale();
@@ -35,13 +36,13 @@ export function WorkspaceTopicEditorialCard({ value, now, confirmed, busy = fals
           onChange={event => onConfirm?.(event.target.checked)} />{t("confirmation", { maximum: money(quote.maximum_micro_usd) })}</label>
       </> : null}
       <p className="admin-drawer-form__hint">{t("preserves")}</p>
-      {value.status === "failed" && !value.can_retry ? <p>{t("retryBlocked")}</p> : null}
+      {value.status === "failed" && !value.can_retry && retryReady ? <p>{t("retryBlocked")}</p> : null}
       <div className="admin-form-actions">
         {pending ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onReplay} onClick={onReplay}>{t("replay")}</button>
           : quote ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !confirmed || !onAuthorize} onClick={onAuthorize}>{t("authorize")}</button>
           : value.can_quote && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onQuote} onClick={onQuote}>{t("calculate")}</button>
           : value.can_complete && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onComplete} onClick={onComplete}>{t("complete")}</button>
-          : value.can_retry && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onRetry} onClick={onRetry}>{t("retry")}</button> : null}
+          : value.can_retry && retryReady && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onRetry} onClick={onRetry}>{t("retry")}</button> : null}
         <button type="button" className="admin-button" disabled={busy || !onRefresh} onClick={onRefresh}>{t("refresh")}</button>
       </div>
     </div>
@@ -52,10 +53,15 @@ export function WorkspaceTopicEditorialCard({ value, now, confirmed, busy = fals
 export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionId, disabled = false, onCatalogAvailable }: {
   workspaceId: string; numericExecutionId: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
 }) {
-  const t = useTranslations("AdminWorkspace.topics.consolidation.editorial");
+  const t = useTranslations("AdminWorkspace.topics.consolidation.editorial"), locale = useLocale();
   const [value, setValue] = useState<WorkspaceTopicEditorialViewV1 | null>(null), [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false), [loadError, setLoadError] = useState(false), [requestError, setRequestError] = useState(false);
   const [pending, setPending] = useState(false), [now, setNow] = useState(Date.now);
+  const [renewal, setRenewal] = useState<{ status: string; quote_reference?: string; quote_expires_at?: string;
+    grant_cap_micro_usd?: string; remaining_micro_usd?: string } | null>(null);
+  const [renewalConfirmed, setRenewalConfirmed] = useState(false), [renewalBusy, setRenewalBusy] = useState(false);
+  const [renewalError, setRenewalError] = useState(false);
+  const renewalIntent = useRef<{ key: string; quote: string; cap: string } | null>(null);
   const readController = useRef<AbortController | null>(null), submitController = useRef<AbortController | null>(null);
   const intent = useRef<WorkspaceTopicEditorialIntentV1 | null>(null);
   const delivered = useRef<string | null>(null);
@@ -79,6 +85,46 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
     setValue(null); setConfirmed(false); setBusy(false); setPending(false); setRequestError(false); setLoadError(false); intent.current = null; void read();
     return () => { readController.current?.abort(); submitController.current?.abort(); };
   }, [read]);
+  const renewalExecution = value?.status === "failed" ? value.execution?.execution_id : null;
+  const readRenewal = useCallback(async () => {
+    if (!renewalExecution) return;
+    setRenewalError(false);
+    try {
+      const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation/editorial/renewal?execution_id=${encodeURIComponent(renewalExecution)}`,
+        { cache: "no-store" });
+      const body: unknown = await response.json();
+      if (!response.ok || !body || typeof body !== "object" || Array.isArray(body) || typeof (body as { status?: unknown }).status !== "string")
+        throw new Error("renewal_quote_unavailable");
+      if (current.current !== scope) return;
+      setRenewal(body as typeof renewal); setRenewalConfirmed(false);
+    } catch { if (current.current === scope) { setRenewal(null); setRenewalError(true); } }
+  }, [renewalExecution, workspaceId, scope]);
+  useEffect(() => {
+    setRenewal(null); setRenewalConfirmed(false); renewalIntent.current = null;
+    if (renewalExecution) void readRenewal();
+  }, [renewalExecution, readRenewal]);
+  const submitRenewal = async () => {
+    if (!renewalExecution || renewalBusy || !renewalConfirmed || renewal?.status !== "ready_to_authorize"
+      || !renewal.quote_reference || !renewal.grant_cap_micro_usd || !renewal.quote_expires_at
+      || Date.parse(renewal.quote_expires_at) <= Date.now()) return;
+    const previous = renewalIntent.current;
+    const next = previous?.quote === renewal.quote_reference && previous.cap === renewal.grant_cap_micro_usd
+      ? previous : { key: crypto.randomUUID(), quote: renewal.quote_reference, cap: renewal.grant_cap_micro_usd };
+    renewalIntent.current = next; setRenewalBusy(true); setRenewalError(false);
+    try {
+      const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation/editorial/renewal`, {
+        method: "POST", cache: "no-store", headers: { "Content-Type": "application/json", "Idempotency-Key": next.key },
+        body: JSON.stringify({ execution_id: renewalExecution, quote_reference: next.quote, confirmed_cap_micro_usd: next.cap })
+      });
+      const receipt: unknown = await response.json();
+      if (!response.ok || !receipt || typeof receipt !== "object" || Array.isArray(receipt)
+        || (receipt as { execution_id?: unknown }).execution_id !== renewalExecution) throw new Error("renewal_unconfirmed");
+      if (current.current !== scope) return;
+      renewalIntent.current = null; setRenewalConfirmed(false);
+      await Promise.all([read(), readRenewal()]);
+    } catch { if (current.current === scope) setRenewalError(true); }
+    finally { if (current.current === scope) setRenewalBusy(false); }
+  };
   useEffect(() => {
     if (!value?.execution || !["queued", "running", "review_ready"].includes(value.status)) return;
     const timer = window.setInterval(() => { if (!readController.current && !submitController.current) void read(); }, 5000);
@@ -126,8 +172,29 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
     return loadError ? <p role="alert" className="team-msg team-msg--error">{t("loadError")} <button type="button" className="admin-button" onClick={() => void read()}>{t("refresh")}</button></p> : null;
   return <>
     <WorkspaceTopicEditorialCard value={value} now={now} busy={disabled || busy} stale={loadError} confirmed={confirmed} pending={pending}
+      retryReady={value.status !== "failed" || renewal?.status === "admission_not_expired"
+        || !!value.execution && value.execution.completed_screening_count === value.execution.expected_screening_count}
       onConfirm={setConfirmed} onQuote={() => void read(true)} onAuthorize={() => void submit()} onRetry={() => void submit()}
       onComplete={() => void submit()} onReplay={() => void submit(true)} onRefresh={() => void read()} />
+    {renewalExecution ? <section className="admin-section" aria-label={t("renewal.title")}>
+      <div className="admin-section__head"><div><h3>{t("renewal.title")}</h3><p>{t("renewal.body")}</p></div></div>
+      <div className="admin-section__body admin-drawer-form">
+        {renewal?.status === "ready_to_authorize" && renewal.grant_cap_micro_usd && renewal.remaining_micro_usd && renewal.quote_expires_at ? <>
+          <p role="status">{t("renewal.available", {
+            maximum: new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(Number(renewal.grant_cap_micro_usd) / 1_000_000),
+            remaining: new Intl.NumberFormat(locale, { style: "currency", currency: "USD" }).format(Number(renewal.remaining_micro_usd) / 1_000_000)
+          })}</p>
+          <label className="admin-checkbox"><input type="checkbox" checked={renewalConfirmed} disabled={renewalBusy || disabled}
+            onChange={event => setRenewalConfirmed(event.target.checked)} />{t("renewal.confirmation")}</label>
+          <button type="button" className="admin-button admin-button--primary" disabled={!renewalConfirmed || renewalBusy || disabled
+            || Date.parse(renewal.quote_expires_at) <= now} onClick={() => void submitRenewal()}>{t("renewal.authorize")}</button>
+        </> : <p role="status">{t(`renewal.states.${renewal?.status === "admission_not_expired" ? "active" :
+          renewal?.status === "budget_unavailable" ? "budget" : renewal?.status === "renewal_already_used_today" ? "already" :
+          renewal?.status === "policy_required" || renewal?.status === "policy_action_required" ? "policy" : "unavailable"}`)}</p>}
+        {renewalError ? <p role="alert" className="team-msg team-msg--error">{t("renewal.error")}</p> : null}
+        <button type="button" className="admin-button" disabled={renewalBusy || disabled} onClick={() => void readRenewal()}>{t("refresh")}</button>
+      </div>
+    </section> : null}
     {loadError ? <p className="team-msg team-msg--error" role="alert">{t("loadError")}</p> : null}
     {requestError ? <p className="team-msg team-msg--error" role="alert">{t("requestError")}</p> : null}
   </>;

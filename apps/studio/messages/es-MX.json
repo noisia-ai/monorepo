@@ -3168,7 +3168,7 @@
           "renewal": {
             "title": "Continuar la misma revisión",
             "body": "Si venció la autorización, renueva el permiso de gasto de esta ejecución. Los lotes y costos anteriores permanecen guardados.",
-            "available": "Puedes autorizar hasta {maximum} dentro del tope original de esta revisión. Después, reanuda la ejecución.",
+            "available": "Saldo adicional disponible: {remaining}. El techo total autorizado para este día, incluido el gasto previo, será {maximum}. Después, reanuda la ejecución.",
             "confirmation": "Autorizo este nuevo periodo de gasto para la misma revisión.",
             "authorize": "Renovar autorización",
             "error": "No se confirmó la renovación. Reintenta con la misma solicitud o actualiza el estado; no se borraron resultados.",
@@ -3176,6 +3176,7 @@
               "active": "La autorización está vigente. Puedes reanudar la misma revisión.",
               "budget": "El tope de esta revisión o del día está agotado. No se enviarán nuevos lotes.",
               "policy": "Hace falta una política vigente para continuar esta revisión.",
+              "already": "Este periodo ya se renovó una vez hoy. Reanuda la revisión o espera al siguiente periodo de autorización.",
               "unavailable": "La renovación aún no está disponible. Actualiza el estado para comprobarla."
             }
           },
