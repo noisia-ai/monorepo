@@ -176,7 +176,7 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
         await tx.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [policyId]);
         return policyId;
       };
-      const initialPolicy = await policy(35);
+      const initialPolicy = await policy(12);
       const plan = source.plan;
       const quoted = (await tx.query(`SELECT signal_topic_editorial_quote_v1($1,$2,$3,$4::jsonb,NULL) value`,
         [workspace_id, actor_user_id, fixture.scope.numeric_run_id, JSON.stringify(plan)])).rows[0]?.value;
@@ -250,8 +250,8 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       const remaining = Number((await tx.query(`SELECT extract(epoch FROM (
         (SELECT valid_until FROM signal_processing_policy_versions WHERE id=$1)-clock_timestamp())) seconds`,
       [initialPolicy])).rows[0]?.seconds);
-      assert.ok(Number.isFinite(remaining) && remaining >= 0 && remaining <= 40,
-        'the synthetic policy must really expire within forty seconds');
+      assert.ok(Number.isFinite(remaining) && remaining >= 0 && remaining <= 15,
+        'the synthetic policy must really expire within fifteen seconds');
       await new Promise(resolve => setTimeout(resolve, Math.ceil((remaining + 0.3) * 1000)));
       console.log('renewal_policy_deadline_elapsed');
       await policy(120);
