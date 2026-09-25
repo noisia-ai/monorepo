@@ -6,7 +6,7 @@ type Database = Pick<Pool, 'connect'>;
 type Scope = { database: Database; workspace_id: string; actor_user_id: string; execution_id: string };
 type Quote = { status: string; quote_reference?: string; quote_expires_at?: string; grant_cap_micro_usd?: string;
   budget_date?: string; budget_timezone?: string };
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/iu;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const key = /^[A-Za-z0-9._:-]{8,200}$/u;
 const reference = /^v1\.[0-9]{10}\.[a-f0-9]{64}$/u;
 const money = /^[1-9][0-9]*$/u;
