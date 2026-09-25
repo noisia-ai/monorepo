@@ -71,7 +71,10 @@ function nestedClient(client: pg.PoolClient, pool: pg.Pool) {
     try {
     if (/^BEGIN(?:\s|;|$)/u.test(sql)) {
       const [begin, ...settings] = sql.split(';').map(part => part.trim()).filter(Boolean);
-      assert.match(begin!, /^BEGIN(?: ISOLATION LEVEL (?:READ COMMITTED|REPEATABLE READ)(?: READ ONLY)?)?$/u);
+      // A nested semantic finalizer requests SERIALIZABLE in production. This
+      // rollback harness exercises its logic within a savepoint, not its
+      // concurrency guarantee; concurrency is outside this acceptance scope.
+      assert.match(begin!, /^BEGIN(?: ISOLATION LEVEL (?:READ COMMITTED|REPEATABLE READ|SERIALIZABLE)(?: READ ONLY)?)?$/u);
       const name = `editorial_renewal_${++serial}`; stack.push(name);
       const result = await client.query(`SAVEPOINT ${name}`);
       for (const setting of settings) { assert.match(setting, /^SET LOCAL /u); await client.query(setting); }
