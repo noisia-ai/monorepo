@@ -341,6 +341,29 @@ export async function bindSignalTopicEditorialGlobalRequestV1(args: { database: 
   });
 }
 
+/** Project only complete decisions from a settled max_tokens receipt. SQL binds
+ * the result to the original immutable HTTP body and sealed group receipts. */
+export async function readSignalTopicEditorialTruncatedOutputV1(args: {
+  database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1;
+  request: SignalTopicEditorialRunnerProviderRequestV1;
+}): Promise<unknown | null> {
+  if (args.request.phase !== 'screening' || args.request.repair !== undefined) return null;
+  return tx(args.database, async client => {
+    const row = (await client.query<{ output: unknown }>(`SELECT signal_topic_editorial_truncated_output_v1(
+        c.response_body_private,r.receipts,r.batch_index,(r.configuration->>'max_output_tokens')::integer) AS output
+      FROM signal_topic_editorial_executions e
+      JOIN signal_topic_editorial_requests r ON r.execution_id=e.id AND r.workspace_id=e.workspace_id
+      JOIN signal_topic_editorial_calls c ON c.request_id=r.id AND c.execution_id=e.id AND c.workspace_id=e.workspace_id
+      WHERE e.id=$1 AND e.workspace_id=$2 AND e.status='running' AND e.execution_token=$3
+        AND e.execution_expires_at>clock_timestamp() AND r.phase='screening' AND r.parent_request_id IS NULL
+        AND r.request_digest=$4 AND r.request_body=$5 AND c.status='settled'
+        AND c.response_http_status=200 AND c.response_complete=true AND c.response_output IS NULL`,
+      [args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token,
+        args.request.request_digest,args.request.request_body])).rows[0];
+    return row?.output ?? null;
+  }, true);
+}
+
 /** Bind exactly one semantic repair to a paid parent. No provider/send authority is granted here. */
 export async function bindSignalTopicEditorialRepairRequestV1(args: {
   database: SignalTopicEditorialDatabaseV1; lease: SignalTopicEditorialLeaseV1; request: SignalTopicEditorialRunnerProviderRequestV1;

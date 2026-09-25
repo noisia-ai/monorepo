@@ -4,6 +4,7 @@ import {
   failSignalTopicEditorialDispatchV1, failSignalTopicEditorialExecutionV1, finishSignalTopicEditorialExecutionV1,
   heartbeatSignalTopicEditorialExecutionV1, recoverSignalTopicEditorialExecutionsV1, materializeSignalTopicEditorialWorkerExecutionV1,
   bindSignalTopicEditorialGlobalRequestV1, createSignalTopicEditorialRunnerStoreV1,
+  readSignalTopicEditorialTruncatedOutputV1,
   type SignalTopicEditorialDatabaseV1, type SignalTopicEditorialLeaseV1, type SignalTopicEditorialMaterializationResultV1,
 } from "@noisia/db";
 import { runSignalTopicEditorialConsolidationV1, type SignalTopicEditorialScreeningPlanV1,
@@ -35,6 +36,7 @@ export type SignalTopicEditorialRuntimeStoresV1 = {
   runnerStore(args: { database: Database; lease: Lease }): SignalTopicEditorialRunnerStoreV1;
   bindGlobal: typeof bindSignalTopicEditorialGlobalRequestV1;
   bindRepair(args: { database: Database; lease: Lease; request: SignalTopicEditorialRunnerProviderRequestV1 }): Promise<SignalTopicEditorialRunnerProviderRequestV1>;
+  recoverTruncated?: typeof readSignalTopicEditorialTruncatedOutputV1;
   ledger: SignalTopicEditorialLedgerStoresV1;
   storeRawReceipt(args: { lease: Lease; call_id: string; receipt: SignalTopicEditorialAnthropicRawReceiptV1 }): Promise<string>;
 };
@@ -151,7 +153,7 @@ export async function signalTopicEditorialJobV1(job: Pick<Job<{ execution_id: st
             throw new Error("topic_editorial_global_binding_invalid");
         }
         return transport.complete(request);
-      } } });
+      }, recoverTruncated: request => runtime.recoverTruncated?.({ database, lease, request }) ?? Promise.resolve(null) } });
     clearInterval(timer); await pendingHeartbeat; assertLease();
     if (result.status !== "completed") throw new Error("topic_editorial_screening_incomplete");
     if (!await stores.finish({ database, lease })) throw new Error("topic_editorial_completion_rejected");

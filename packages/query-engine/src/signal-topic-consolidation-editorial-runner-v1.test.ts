@@ -121,6 +121,27 @@ test("checkpoints after a bounded number of batches and continues without replay
   assert.deepEqual(provider.calls.map(item => item.phase), ["screening", "screening", "screening", "global"]);
 });
 
+test("a settled max_tokens screening receipt retains verified decisions and abstains for missing groups", async () => {
+  const groups=Array.from({length:41},(_,index)=>group(index)),plan=planFor(groups),store=new MemoryStore();
+  const fixture=new FixtureProvider();let sends=0,recoveries=0;
+  const provider:SignalTopicEditorialRunnerProviderV1={
+    complete:async request=>{sends++;if(request.phase==="screening")throw Error("signal_topic_editorial_anthropic_response_invalid");
+      return fixture.complete(request);},
+    recoverTruncated:async request=>{recoveries++;const output=await fixture.complete(request) as {
+      contract_version:"signal-topic-editorial-screening-output-v1";batch_index:number;
+      decisions:Array<{group_key:string;disposition:string;candidate:unknown;confidence:number|null;rationale:string|null;cited_ref_ids:string[]}>};
+      for(const item of output.decisions.slice(31))Object.assign(item,{disposition:"unresolved",candidate:null,
+        confidence:null,rationale:"Respuesta truncada del proveedor; falta revisión editorial completa.",cited_ref_ids:[]});
+      return output;},
+  };
+  const result=await runSignalTopicEditorialConsolidationV1({execution_key:"max-tokens",plan,groups,store,provider,
+    configuration:{max_screening_batches_per_run:1}});
+  assert.equal(result.status,"screening_pending");if(result.status!=="screening_pending")return;
+  assert.equal(result.state.screening_outputs[0]?.decisions.length,40);
+  assert.equal(result.state.screening_outputs[0]?.decisions.filter(item=>item.disposition==="unresolved").length,9);
+  assert.equal(sends,1);assert.equal(recoveries,1);
+});
+
 test("a settled invalid repair quarantines its unsupported citation without sending a second repair", async () => {
   const groups=Array.from({length:11},(_,index)=>group(index)),plan=planFor(groups,10),store=new MemoryStore();
   const fixture=new FixtureProvider(),requests:SignalTopicEditorialRunnerProviderRequestV1[]=[];

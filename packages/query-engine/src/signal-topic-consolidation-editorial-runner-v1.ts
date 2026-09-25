@@ -45,6 +45,8 @@ export type SignalTopicEditorialRunnerProviderRequestV1 = Readonly<{
 /** The caller owns transport and credentials. This contract intentionally exposes neither. */
 export interface SignalTopicEditorialRunnerProviderV1 {
   complete(request: SignalTopicEditorialRunnerProviderRequestV1): Promise<unknown>;
+  /** Read a deterministic projection of an already-settled max_tokens receipt. Never sends. */
+  recoverTruncated?(request: SignalTopicEditorialRunnerProviderRequestV1): Promise<unknown | null>;
 }
 
 export type SignalTopicEditorialRunnerStateV1 = {
@@ -194,7 +196,21 @@ async function completeValidated<T>(provider: SignalTopicEditorialRunnerProvider
   quarantine?: (value: unknown) => T): Promise<T> {
   // The provider ledger replays settled originals/children; this method never
   // retries a transport or asks for a second repair of the same logical call.
-  const raw = await provider.complete(original);
+  let raw: unknown;
+  try { raw = await provider.complete(original); }
+  catch (error) {
+    if (original.phase !== "screening" || original.repair !== undefined
+      || !(error instanceof Error) || error.message !== "signal_topic_editorial_anthropic_response_invalid"
+      || !provider.recoverTruncated) throw error;
+    const recovered = await provider.recoverTruncated(original);
+    if (recovered === null) throw error;
+    try { return validate(recovered); }
+    catch (validationError) {
+      if (validationError instanceof Error && validationError.message === "topic_editorial_output_citation_invalid" && quarantine)
+        return quarantine(recovered);
+      throw validationError;
+    }
+  }
   try { return validate(raw); } catch (error) {
     const code = signalTopicEditorialSemanticRepairErrorV1(original.phase, raw, error);
     if (!code) throw error;

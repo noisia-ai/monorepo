@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   loadSignalTopicEditorialOwnerInputV1, createSignalTopicEditorialRunnerStoreV1,
   bindSignalTopicEditorialGlobalRequestV1, bindSignalTopicEditorialRepairRequestV1,
+  readSignalTopicEditorialTruncatedOutputV1,
   readSignalTopicEditorialRecoveryV1, reserveSignalTopicEditorialCallV1, markSentSignalTopicEditorialCallV1,
   persistSignalTopicEditorialReceiptV1, settleSignalTopicEditorialCallV1, failSignalTopicEditorialCallV1,
 } from "@noisia/db";
@@ -25,6 +26,7 @@ export type SignalTopicEditorialRuntimeDatabaseStoresV1 = Omit<SignalTopicEditor
 const defaults: SignalTopicEditorialRuntimeDatabaseStoresV1 = {
   loadInput: loadSignalTopicEditorialOwnerInputV1, runnerStore: createSignalTopicEditorialRunnerStoreV1,
   bindGlobal: bindSignalTopicEditorialGlobalRequestV1, bindRepair: bindSignalTopicEditorialRepairRequestV1,
+  recoverTruncated: readSignalTopicEditorialTruncatedOutputV1,
   ledger: { readRecovery: readSignalTopicEditorialRecoveryV1, reserve: reserveSignalTopicEditorialCallV1,
     markSent: markSentSignalTopicEditorialCallV1, persistReceipt: persistSignalTopicEditorialReceiptV1,
     settle: settleSignalTopicEditorialCallV1, failCall: failSignalTopicEditorialCallV1 },
