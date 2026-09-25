@@ -204,6 +204,12 @@ async function completeValidated<T>(provider: SignalTopicEditorialRunnerProvider
       if (repairError instanceof Error && repairError.message === "topic_editorial_output_citation_invalid" && quarantine) {
         try { return quarantine(repaired); } catch { /* Keep the failed repair terminal. */ }
       }
+      // A malformed paid repair cannot erase otherwise valid decisions from
+      // the settled original. Only citation-invalid originals can be safely
+      // projected: quarantine itself revalidates the complete output.
+      if (code === "topic_editorial_output_citation_invalid" && quarantine) {
+        try { return quarantine(raw); } catch { /* Keep the failed repair terminal. */ }
+      }
       throw new Error("topic_editorial_repair_invalid");
     }
   }
