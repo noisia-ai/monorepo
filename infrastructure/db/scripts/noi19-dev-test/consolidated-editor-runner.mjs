@@ -66,8 +66,22 @@ try {
   report.table_count = 299; report.schema_sha256 = beforeSchema; report.status = 'passed';
 } catch (error) {
   report.error_code = fixedError(error);
+  if (/^semantic_context_[a-z_]{1,100}$/u.test(error?.code ?? '')) report.domain_code = error.code;
   report.failure_origin = failureOrigin(error);
   report.error_class = ['AssertionError', 'SignalTopicConsolidationContractError', 'Error'].includes(error?.name) ? error.name : 'other';
+  if (report.stage === 'synthetic_source' && client && outer) {
+    try {
+      const failed = (await client.query(`SELECT error_code,error_summary FROM signal_semantic_context_proposal_runs
+        WHERE status='failed' ORDER BY failed_at DESC LIMIT 1`)).rows[0];
+      if (/^semantic_context_[a-z_]{1,100}$/u.test(failed?.error_code ?? '')) {
+        const diagnostic = JSON.parse(failed.error_summary ?? '{}');
+        report.semantic_failure = { code: failed.error_code,
+          issue_count: Number.isSafeInteger(diagnostic.issue_count) ? diagnostic.issue_count : null,
+          issue_codes: Array.isArray(diagnostic.issues) ? diagnostic.issues.map(issue => issue.code)
+            .filter(code => /^[a-z_]{1,100}$/u.test(code)).slice(0, 8) : [] };
+      }
+    } catch { /* A failed SQL transaction may not expose a diagnostic; rollback still wins. */ }
+  }
   if (/^[A-Z0-9]{5}$/u.test(error?.code ?? '')) report.sqlstate = error.code;
   report.status = report.fixture_mutations_started ? 'failed' : 'blocked'; process.exitCode = 1;
 } finally {
