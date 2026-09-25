@@ -66,7 +66,9 @@ async function privateEmptyPool() {
 
 function nestedClient(client: pg.PoolClient, pool: pg.Pool) {
   const stack: string[] = []; let serial = 0;
+  let firstFailure: { code: string; message: string; statement: string } | null = null;
   const query = async (sql: string, params?: unknown[]) => {
+    try {
     if (/^BEGIN(?:\s|;|$)/u.test(sql)) {
       const [begin, ...settings] = sql.split(';').map(part => part.trim()).filter(Boolean);
       assert.match(begin!, /^BEGIN(?: ISOLATION LEVEL (?:READ COMMITTED|REPEATABLE READ)(?: READ ONLY)?)?$/u);
@@ -80,11 +82,18 @@ function nestedClient(client: pg.PoolClient, pool: pg.Pool) {
       if (sql === 'ROLLBACK') await client.query(`ROLLBACK TO SAVEPOINT ${name}`);
       return client.query(`RELEASE SAVEPOINT ${name}`);
     }
-    return client.query(sql, params);
+    return await client.query(sql, params);
+    } catch (error) {
+      const failure = error as { code?: string; message?: string };
+      firstFailure ??= { code: failure.code ?? 'unknown',
+        message: String(failure.message ?? 'unknown').slice(0, 180),
+        statement: sql.replace(/\s+/gu, ' ').slice(0, 80) };
+      throw error;
+    }
   };
   const scoped = Object.assign(Object.create(client) as pg.PoolClient, { query, release: () => undefined });
   const database = Object.assign(Object.create(pool) as pg.Pool, { query, connect: async () => scoped });
-  return { query, scoped, database, get depth() { return stack.length; } };
+  return { query, scoped, database, get depth() { return stack.length; }, get firstFailure() { return firstFailure; } };
 }
 
 test('0184 installs and exercises its denial paths on an empty private PostgreSQL fixture with physical rollback',
@@ -134,7 +143,11 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       assert.ok((await client.query("SELECT to_regprocedure('public.retry_signal_topic_editorial_execution_v1(uuid,uuid,uuid,text)') value")).rows[0]?.value);
       await installWithinRollback(client);
       const tx = nestedClient(client, pool);
-      const fixture = await seedSignalTopicEditorialRenewalSourceV1({ ...tx, cleanup: async () => undefined });
+      let fixture: Awaited<ReturnType<typeof seedSignalTopicEditorialRenewalSourceV1>>;
+      try { fixture = await seedSignalTopicEditorialRenewalSourceV1({ ...tx, cleanup: async () => undefined }); }
+      catch (error) {
+        throw new Error(`synthetic_source_${(error as Error).message}_${JSON.stringify(tx.firstFailure)}`);
+      }
       const { organization_id, actor_user_id, workspace_id } = fixture.identity;
       const untilMidnight = Number((await tx.query(`SELECT extract(epoch FROM (
         (((clock_timestamp() AT TIME ZONE 'America/Mexico_City')::date+1)::timestamp
