@@ -4,6 +4,7 @@ import { useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { useLocale, useTranslations } from "next-intl";
 import type { AtomicCensusPageV1 } from "@/lib/data-os/workspace-topic-atomic-census";
+import { WorkspaceTopicAtomicMembers } from "./WorkspaceTopicAtomicMembers";
 
 function validPage(value: unknown, workspaceId: string, numericExecutionId: string): value is AtomicCensusPageV1 {
   if (!value || typeof value !== "object") return false;
@@ -70,6 +71,8 @@ export function WorkspaceTopicAtomicCensus({ workspaceId, numericExecutionId, me
                 <Link href={`${mentionsHref}?mention=${encodeURIComponent(item.root_id)}`} prefetch={false}>{t("openMention")}</Link>
               </footer>
             </blockquote>)}
+            <WorkspaceTopicAtomicMembers workspaceId={workspaceId} numericExecutionId={numericExecutionId}
+              groupKey={group.group_key} mentionsHref={mentionsHref} />
           </div>
         </article>)}
       </div> : null}

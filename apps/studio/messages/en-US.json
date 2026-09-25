@@ -3090,6 +3090,13 @@
           "undecided": "Editorial decision pending",
           "fragmentUnavailable": "Fragment unavailable; open the original mention.",
           "openMention": "View mention",
+          "showMembers": "View all group mentions",
+          "hideMembers": "Hide group mentions",
+          "membersLoading": "Loading group mentions…",
+          "membersError": "Group mentions could not be loaded. Try again.",
+          "membersEmpty": "There are no mentions on this page.",
+          "membersPage": "Page {page} · {total, number} mentions in the group",
+          "memberChunks": "{count, plural, one {# fragment} other {# fragments}}",
           "previous": "Previous",
           "next": "Next",
           "page": "Page {page} of {pages}"
@@ -3158,6 +3165,20 @@
           "refresh": "Refresh status",
           "loadError": "Status could not be refreshed. Amounts and actions stay hidden until the connection recovers.",
           "requestError": "The request outcome was not confirmed. Check the previous request to recover its receipt without duplicating it.",
+          "renewal": {
+            "title": "Continue the same review",
+            "body": "If authorization expired, renew spending authority for this execution. Earlier batches and costs remain saved.",
+            "available": "You can authorize up to {maximum} within this review's original cap. Then resume the execution.",
+            "confirmation": "I authorize this new spending period for the same review.",
+            "authorize": "Renew authorization",
+            "error": "The renewal was not confirmed. Retry the same request or refresh the status; no results were removed.",
+            "states": {
+              "active": "Authorization is current. You can resume the same review.",
+              "budget": "This review's or today's cap is exhausted. No new batches will be sent.",
+              "policy": "A current policy is required to continue this review.",
+              "unavailable": "Renewal is not available yet. Refresh the status to check again."
+            }
+          },
           "states": {
             "not_requested": "The groups are prepared. Calculate the cap before authorizing the review.",
             "runtime_unavailable": "Editorial review is not available yet. Preparation and saved results are preserved.",

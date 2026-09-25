@@ -3090,6 +3090,13 @@
           "undecided": "Pendiente de decisión editorial",
           "fragmentUnavailable": "Fragmento no disponible; abre la mención original.",
           "openMention": "Ver mención",
+          "showMembers": "Ver todas las menciones del grupo",
+          "hideMembers": "Ocultar menciones del grupo",
+          "membersLoading": "Cargando menciones del grupo…",
+          "membersError": "No se pudieron cargar las menciones. Vuelve a intentarlo.",
+          "membersEmpty": "No hay menciones en esta página.",
+          "membersPage": "Página {page} · {total, number} menciones en el grupo",
+          "memberChunks": "{count, plural, one {# fragmento} other {# fragmentos}}",
           "previous": "Anterior",
           "next": "Siguiente",
           "page": "Página {page} de {pages}"
@@ -3158,6 +3165,20 @@
           "refresh": "Actualizar estado",
           "loadError": "No se pudo actualizar el estado. Los importes y las acciones quedan ocultos hasta recuperar la conexión.",
           "requestError": "No se confirmó el resultado de la solicitud. Comprueba la solicitud anterior para recuperar su recibo sin duplicarla.",
+          "renewal": {
+            "title": "Continuar la misma revisión",
+            "body": "Si venció la autorización, renueva el permiso de gasto de esta ejecución. Los lotes y costos anteriores permanecen guardados.",
+            "available": "Puedes autorizar hasta {maximum} dentro del tope original de esta revisión. Después, reanuda la ejecución.",
+            "confirmation": "Autorizo este nuevo periodo de gasto para la misma revisión.",
+            "authorize": "Renovar autorización",
+            "error": "No se confirmó la renovación. Reintenta con la misma solicitud o actualiza el estado; no se borraron resultados.",
+            "states": {
+              "active": "La autorización está vigente. Puedes reanudar la misma revisión.",
+              "budget": "El tope de esta revisión o del día está agotado. No se enviarán nuevos lotes.",
+              "policy": "Hace falta una política vigente para continuar esta revisión.",
+              "unavailable": "La renovación aún no está disponible. Actualiza el estado para comprobarla."
+            }
+          },
           "states": {
             "not_requested": "Los grupos están preparados. Calcula el tope antes de autorizar la revisión.",
             "runtime_unavailable": "La revisión editorial todavía no está disponible. La preparación y los resultados guardados se conservan.",
