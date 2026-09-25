@@ -104,8 +104,9 @@ export function WorkspaceTopicConsolidationCard({ value, disabled = false, onAct
   </section>;
 }
 
-export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref, disabled = false, onCatalogAvailable }: {
+export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref, disabled = false, onCatalogAvailable, onGroupCount }: {
   workspaceId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
+  onGroupCount?: (count: number) => void;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation");
   const [value, setValue] = useState<WorkspaceTopicConsolidationView | null>(null);
@@ -118,6 +119,8 @@ export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref,
   const intent = useRef<WorkspaceTopicConsolidationIntentV1 | null>(null);
   const currentWorkspace = useRef(workspaceId);
   currentWorkspace.current = workspaceId;
+  const groupCountObserver = useRef(onGroupCount);
+  groupCountObserver.current = onGroupCount;
   const mounted = useRef(true);
   const read = useCallback(async () => {
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
@@ -128,6 +131,7 @@ export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref,
       if (!response.ok || !validWorkspaceTopicConsolidationView(body, workspaceId)) throw new Error("load");
       if (mounted.current && !controller.signal.aborted && currentWorkspace.current === workspaceId) {
         setValue(body); setLoadError(false);
+        groupCountObserver.current?.(body.group_count);
         const pending = intent.current;
         if (pending?.workspace_id === workspaceId && body.execution && ["queued", "running", "ready"].includes(body.status)
           && (pending.body.action === "retry_numeric" ? body.execution.execution_id === pending.body.execution_id

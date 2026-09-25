@@ -2776,6 +2776,8 @@
     "monitoringJourney": {"label": "Recorrido de monitorización", "title": "Monitorización de tu marca", "body": "Gestiona el contexto y los tópicos; revisa los datos recibidos y su preparación.", "steps": {"brand-os": "Contexto de marca", "topics": "Topics e intereses", "data": "Importar menciones", "signal": "Signal"}},
     "topics": {
       "analysis": {
+        "legacyTitle": "Análisis anterior",
+        "legacyBody": "Consulta los resultados y costos guardados de la interpretación parcial. Para convertir todos los grupos en Topics útiles, continúa con la revisión editorial de arriba.",
         "receiptLabels": {"cap": "Tope de interpretación", "confirmed": "Claude confirmado", "reserved": "Claude reservado"},
         "admissionGrant": {
           "title": "Continuar la interpretación · permiso de gasto",

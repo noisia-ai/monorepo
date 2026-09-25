@@ -7,9 +7,9 @@ import { formatWorkspaceAdmissionExpiry, workspaceAdmissionCanSubmit,
   type WorkspaceInterpretationAdmissionRequest } from "@/lib/data-os/signal-workspace-interpretation-admission-ui";
 import type { WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 
-export function WorkspaceInterpretationAdmissionControls({ status, canAuthorize, canRevoke, submitting, pendingRequest = null, receiptsAlreadyVisible = false, onSubmit }: {
+export function WorkspaceInterpretationAdmissionControls({ status, canAuthorize, canRevoke, submitting, pendingRequest = null, receiptsAlreadyVisible = false, showAuthorization = true, onSubmit }: {
   status: WorkspaceAnalysisStatus; canAuthorize: boolean; canRevoke: boolean; submitting: boolean;
-  pendingRequest?: WorkspaceInterpretationAdmissionRequest | null; receiptsAlreadyVisible?: boolean;
+  pendingRequest?: WorkspaceInterpretationAdmissionRequest | null; receiptsAlreadyVisible?: boolean; showAuthorization?: boolean;
   onSubmit: (body: WorkspaceInterpretationAdmissionRequest) => Promise<unknown>;
 }) {
   const t = useTranslations("AdminWorkspace.topics.analysis.admissionGrant"), locale = useLocale();
@@ -41,7 +41,7 @@ export function WorkspaceInterpretationAdmissionControls({ status, canAuthorize,
         pendingRequest.run_id.toLowerCase() === admission.execution_id.toLowerCase() ? admission.budget_timezone : "UTC", locale),
       zone: pendingRequest.run_id.toLowerCase() === admission.execution_id.toLowerCase() ? admission.budget_timezone : "UTC"
     })}</p> : pendingRequest?.action === "revoke_interpretation" ? <p role="status">{t("pendingStop")}</p> : null}
-    {admission.can_authorize && !pendingRequest ? <>
+    {showAuthorization && admission.can_authorize && !pendingRequest ? <>
       <p className="admin-drawer-form__hint">{t("sameRun")}</p>
       <label className="admin-field" style={{ maxWidth: 360 }}><span>{t("cap", { amount: money(admission.maximum_grant_micro_usd) })}</span>
         <input inputMode="decimal" value={cap} disabled={!canAuthorize || submitting} onChange={event => setEdited({ identity, value: event.target.value })} /></label>
@@ -51,7 +51,7 @@ export function WorkspaceInterpretationAdmissionControls({ status, canAuthorize,
       {numeric === null || numeric <= 0 || numeric > admission.maximum_grant_micro_usd ? <p className="workspace-form__error" role="alert">{t("invalidCap")}</p> : null}
       <div className="admin-form-actions"><button type="button" className="admin-button admin-button--primary" disabled={!enabled || submitting}
         onClick={() => { if (body && enabled) void onSubmit(body); }}>{t("authorize")}</button></div>
-    </> : admission.requires_authorization && !pendingRequest ? <p className="admin-drawer-form__hint" role="status">{t(blocked)}</p> : null}
+    </> : showAuthorization && admission.requires_authorization && !pendingRequest ? <p className="admin-drawer-form__hint" role="status">{t(blocked)}</p> : null}
     {admission.can_revoke && admission.current?.action === "authorize_interpretation" ? <>
       <p className="admin-drawer-form__hint">{t("stopEffect")}</p>
       <button type="button" className="admin-button" disabled={!canRevoke || submitting} onClick={() => { if (admission.current && canRevoke) void onSubmit({

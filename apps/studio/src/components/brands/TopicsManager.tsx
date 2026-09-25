@@ -56,6 +56,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const [consolidatedServing, setConsolidatedServing] = useState(false);
+  const [consolidationGroupCount, setConsolidationGroupCount] = useState<number | null>(null);
   const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
   const selectedIsDiscovery = selected?.origin === "workspace_discovery";
   const processingVisible = !navigation || data.capabilities.can_execute;
@@ -314,7 +315,8 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
     </section> : null}
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
     <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId}
-      mentionsHref={`/signal/${encodeURIComponent(data.workspace.slug)}/mentions`} onCatalogAvailable={refreshAvailableCatalog} />
+      mentionsHref={`/signal/${encodeURIComponent(data.workspace.slug)}/mentions`} onCatalogAvailable={refreshAvailableCatalog}
+      onGroupCount={setConsolidationGroupCount} />
     <WorkspaceTopicConsolidationActivationControls disabled={editorDirty || busy !== null}
       signalHref={signalHref} workspaceId={workspaceId} onServingChange={setConsolidatedServing} />
     {consolidatedServing ? <p className="topics-manager__previous-catalog-notice" role="status">
@@ -346,6 +348,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
 
     {processingVisible ? <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
+      suppressLegacyActions={consolidationGroupCount === null || consolidationGroupCount > 0}
       disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog}
       onAssociationsAvailable={setAssociationReceipt} signalHref={signalHref} /> : null}
 
