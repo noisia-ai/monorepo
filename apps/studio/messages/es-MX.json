@@ -3198,9 +3198,21 @@
             "completed": "La nueva revisión está guardada para edición y control de calidad. Signal conserva su versión publicada."
           }
         },
+        "previousCatalogNotice": "Signal usa una revisión consolidada; una propuesta más reciente puede seguir pendiente de publicación. La lista siguiente conserva intereses definidos y resultados parciales anteriores para consulta, no el catálogo consolidado vigente.",
+        "previousCatalogTitle": "Intereses y resultados anteriores",
+        "previousCatalogBody": "Los Topics parciales previos se conservan aquí; revisa arriba cuál versión consolidada está publicada.",
         "activation": {
           "title": "Publicar propuesta en Signal",
           "body": "Revisa la propuesta completa de Claude y elige qué conceptos formarán el siguiente Signal.",
+          "activeTitle": "Topics consolidados en Signal",
+          "activeDescription": "Estos conceptos reúnen los grupos originales. Puedes ajustar su selección o crear una nueva revisión de nombre y definición.",
+          "edit": "Editar",
+          "name": "Nombre",
+          "definition": "Definición",
+          "editHint": "La edición crea una nueva revisión sin cambiar el Signal publicado. Después podrás revisar y publicar la nueva versión.",
+          "saveEdit": "Guardar nueva revisión",
+          "cancelEdit": "Cancelar",
+          "editError": "No se pudo confirmar la edición. Actualiza el estado antes de volver a guardarla.",
           "loading": "Cargando la propuesta validada…",
           "waiting": "La propuesta aparecerá aquí cuando termine la revisión editorial.",
           "access": "Tu acceso actual no permite consultar o publicar esta propuesta.",

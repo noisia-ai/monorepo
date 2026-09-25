@@ -43,6 +43,25 @@ test("the C2 adapter fails closed on cross-workspace, incomplete, inflated or co
 });
 
 for (const locale of ["es-MX", "en-US"] as const) {
+  test(`${locale}: consolidated concepts can be edited without changing the published selection`, async () => {
+    const activeSelection = Object.fromEntries(catalog.map(item => [item.term_key, { selected: true,
+      definition_digest: item.definition_digest, definition_revision: 1, generation_id: uuid(4),
+      semantic_identity_digest: item.semantic_identity_digest }]));
+    const active = { ...activation, binding: { ...activation.binding, snapshot_id: uuid(4),
+      legacy_generation_id: null, binding_revision: 1, selection_revision: 8, operation_id: uuid(5),
+      selection: activeSelection }, active_revision: 2 };
+    const html = await renderActivation(locale, active, catalog.map(item => item.concept_key), {
+      onBeginEdit: () => undefined, onEditChange: () => undefined, onCancelEdit: () => undefined,
+      onSaveEdit: () => undefined, editing: { conceptKey: catalog[0]!.concept_key,
+        label: "Nombre corregido", definition: "Definición corregida" }
+    });
+    assert.ok(html.includes(locale === "es-MX" ? "Topics consolidados en Signal" : "Consolidated Topics in Signal"));
+    assert.match(html, /value="Nombre corregido"/u);
+    assert.match(html, /Definición corregida/u);
+    assert.ok(html.includes(locale === "es-MX" ? "Guardar nueva revisión" : "Save new revision"));
+    assert.equal((html.match(/type="checkbox"/g) ?? []).length, 24);
+    assert.equal((html.match(/checked=""/g) ?? []).length, 24);
+  });
   test(`${locale}: the full census is clear without presenting 1,652 rows, cost or invented dispositions`, async () => {
     const html = await render(locale);
     assert.ok(html.includes("1,652") || html.includes("1652"));

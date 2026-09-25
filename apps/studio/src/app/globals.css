@@ -21100,6 +21100,7 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__candidate-grid small { color: var(--signal-dark); font-size: 11px; font-weight: 700; }
 .topics-manager__candidate-grid .admin-button { align-self: flex-start; }
 .topics-manager__activation { overflow: hidden; }
+.topics-manager__previous-catalog-notice { margin: 0; padding: 12px 14px; border: 1px solid var(--neutral-04); border-radius: 10px; background: var(--neutral-01); color: var(--neutral-09); font-size: 13px; line-height: 1.5; }
 .topics-manager__activation-head { align-items: flex-start; gap: 18px; }
 .topics-manager__activation-head > div { min-width: 0; }
 .topics-manager__activation-body { display: grid; gap: 14px; }
@@ -21116,6 +21117,12 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__activation-list input { width: 16px; height: 16px; flex: 0 0 auto; margin: 2px 0 0; accent-color: var(--signal); }
 .topics-manager__activation-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; max-height: 356px; margin: 0; padding: 2px; overflow: auto; list-style: none; }
 .topics-manager__activation-list li { min-width: 0; }
+.topics-manager__activation-edit { display: block; margin: 5px 3px 0 auto; padding: 3px 7px; border: 0; background: transparent; color: var(--signal-dark); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.topics-manager__activation-edit:disabled { opacity: .45; cursor: not-allowed; }
+.topics-manager__activation-editor { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--neutral-04); border-radius: 10px; background: var(--neutral-01); }
+.topics-manager__activation-editor > p { margin: 0; color: var(--neutral-09); font-size: 12px; line-height: 1.45; }
+.topics-manager__activation-editor > label { display: grid; height: auto; gap: 5px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--neutral-11); font-size: 12px; font-weight: 650; }
+.topics-manager__activation-editor input,.topics-manager__activation-editor textarea { width: 100%; min-width: 0; padding: 8px 10px; border: 1px solid var(--neutral-05); border-radius: 8px; background: white; color: var(--neutral-11); font: inherit; font-weight: 400; }
 .topics-manager__activation-list label { height: 100%; padding: 11px 12px; border: 1px solid var(--neutral-04); border-radius: 10px; background: rgba(255,255,255,.72); }
 .topics-manager__activation-list label:has(input:checked) { border-color: rgba(0,138,138,.25); background: rgba(0,138,138,.055); }
 .topics-manager__activation-list label:focus-within { outline: 2px solid rgba(0,138,138,.2); outline-offset: 1px; }

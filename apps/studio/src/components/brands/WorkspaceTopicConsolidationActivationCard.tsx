@@ -18,7 +18,9 @@ import {
 
 export function WorkspaceTopicConsolidationActivationCard({ value, selectedConceptKeys, signalHref,
   loading = false, busy = false, pending = false, loadError = false, requestError = false,
-  accessDenied = false, onToggle, onSelectPublished, onToggleAll, onPrepare, onActivate, onReplay, onRefresh }: {
+  accessDenied = false, editing = null, editionError = false,
+  onToggle, onSelectPublished, onToggleAll, onPrepare, onActivate, onReplay, onRefresh,
+  onBeginEdit, onEditChange, onCancelEdit, onSaveEdit }: {
   value: WorkspaceTopicConsolidationActivationStatusV1 | null;
   selectedConceptKeys: string[];
   signalHref: string;
@@ -28,6 +30,8 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
   loadError?: boolean;
   requestError?: boolean;
   accessDenied?: boolean;
+  editing?: { conceptKey: string; label: string; definition: string } | null;
+  editionError?: boolean;
   onToggle?: (conceptKey: string) => void;
   onSelectPublished?: (conceptKey: string, selected: boolean) => void;
   onToggleAll?: (selected: boolean) => void;
@@ -35,6 +39,10 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
   onActivate?: () => void;
   onReplay?: () => void;
   onRefresh?: () => void;
+  onBeginEdit?: (conceptKey: string, label: string, definition: string) => void;
+  onEditChange?: (value: { conceptKey: string; label: string; definition: string }) => void;
+  onCancelEdit?: () => void;
+  onSaveEdit?: () => void;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation.activation");
   const locale = useLocale();
@@ -53,7 +61,7 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
 
   return <section className="admin-section topics-manager__activation" data-topic-activation-state={state}>
     <div className="admin-section__head topics-manager__activation-head">
-      <div><h3>{t("title")}</h3><p>{t("body")}</p></div>
+      <div><h3>{t(active ? "activeTitle" : "title")}</h3><p>{t(active ? "activeDescription" : "body")}</p></div>
       <AdminStatus state={tone}>{t(`states.${state}`)}</AdminStatus>
     </div>
     <div className="admin-section__body topics-manager__activation-body">
@@ -86,7 +94,7 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
           <ul className="topics-manager__activation-list">
             {catalog.map((concept, index) => <li key={concept.concept_key}>
                 <label>
-                  <input type="checkbox" checked={selected.has(concept.concept_key)} disabled={!canMutate || busy || pending}
+                  <input type="checkbox" checked={selected.has(concept.concept_key)} disabled={!canMutate || busy || pending || Boolean(editing)}
                     onChange={() => active ? onSelectPublished?.(concept.concept_key, !selected.has(concept.concept_key))
                       : onToggle?.(concept.concept_key)} />
                   <span className="topics-manager__activation-concept">
@@ -95,6 +103,23 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
                     <span>{concept.definition}</span>
                   </span>
                 </label>
+                {canMutate && onBeginEdit ? <button className="topics-manager__activation-edit" type="button"
+                  disabled={busy || pending || Boolean(editing)}
+                  onClick={() => onBeginEdit(concept.concept_key, concept.label, concept.definition)}>{t("edit")}</button> : null}
+                {editing?.conceptKey === concept.concept_key ? <div className="topics-manager__activation-editor">
+                  <p>{t("editHint")}</p>
+                  <label>{t("name")}<input type="text" maxLength={120} value={editing.label}
+                    onChange={event => onEditChange?.({ ...editing, label: event.target.value })} /></label>
+                  <label>{t("definition")}<textarea maxLength={500} rows={4} value={editing.definition}
+                    onChange={event => onEditChange?.({ ...editing, definition: event.target.value })} /></label>
+                  {editionError ? <p role="alert" className="team-msg team-msg--error">{t("editError")}</p> : null}
+                  <div className="admin-form-actions"><button className="admin-button" type="button" disabled={busy}
+                    onClick={onCancelEdit}>{t("cancelEdit")}</button>
+                    <button className="admin-button admin-button--primary" type="button" disabled={busy || editionError
+                      || !editing.label.trim() || !editing.definition.trim()
+                      || (editing.label.trim() === concept.label && editing.definition.trim() === concept.definition)}
+                    onClick={onSaveEdit}>{t("saveEdit")}</button></div>
+                </div> : null}
             </li>)}
           </ul>
           {active ? <p className="topics-manager__activation-message">{t("activeSelectionHint")}</p> : null}
@@ -116,17 +141,18 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
               {busy ? <CircleNotch aria-hidden className="workspace-shell__nav-pending" size={15} /> : <RocketLaunch aria-hidden size={15} />}
               {t("publish", { count: selected.size })}</button> : null}
         {active ? <Link className="admin-button admin-button--primary" href={signalHref} prefetch={false}>{t("openSignal")}</Link> : null}
-        {(loadError || sourceStale || requestError) && !pending ? <button className="admin-button" disabled={busy || !onRefresh}
+        {(loadError || sourceStale || requestError || editionError) && !pending ? <button className="admin-button" disabled={busy || !onRefresh}
           onClick={onRefresh} type="button">{t("refresh")}</button> : null}
       </div>
     </div>
   </section>;
 }
 
-export function WorkspaceTopicConsolidationActivationControls({ workspaceId, signalHref, disabled = false }: {
+export function WorkspaceTopicConsolidationActivationControls({ workspaceId, signalHref, disabled = false, onServingChange }: {
   workspaceId: string;
   signalHref: string;
   disabled?: boolean;
+  onServingChange?: (serving: boolean) => void;
 }) {
   const [value, setValue] = useState<WorkspaceTopicConsolidationActivationStatusV1 | null>(null);
   const [selectedConceptKeys, setSelectedConceptKeys] = useState<string[]>([]);
@@ -136,6 +162,8 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
   const [loadError, setLoadError] = useState(false);
   const [requestError, setRequestError] = useState(false);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [editing, setEditing] = useState<{ conceptKey: string; label: string; definition: string } | null>(null);
+  const [editionError, setEditionError] = useState(false);
   const readController = useRef<AbortController | null>(null);
   const submitController = useRef<AbortController | null>(null);
   const intent = useRef<WorkspaceTopicConsolidationActivationIntentV1 | null>(null);
@@ -153,11 +181,13 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
       const body: unknown = await response.json().catch(() => null);
       if (controller.signal.aborted || !mounted.current || scope.current !== workspaceId) return;
       if ([401, 403, 404].includes(response.status)) {
-        setValue(null); setSelectedConceptKeys([]); setAccessDenied(true); setLoadError(false); return;
+        setValue(null); setSelectedConceptKeys([]); setAccessDenied(true); setLoadError(false); setEditing(null);
+        onServingChange?.(false); return null;
       }
       const parsed = response.ok ? parseWorkspaceTopicConsolidationActivationStatusV1(body, workspaceId) : null;
       if (!parsed) throw new Error("topic_consolidation_activation_status_invalid");
       setValue(parsed); setAccessDenied(false); setLoadError(false);
+      onServingChange?.(parsed.binding.snapshot_id !== null);
       const latest = parsed.revisions[0] ?? null;
       const snapshotKey = latest?.snapshot_id ?? null;
       if (latest && snapshotKey && (selectionSnapshot.current !== snapshotKey || snapshotKey === parsed.binding.snapshot_id)) {
@@ -172,23 +202,26 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
       }
       else if (pendingIntent?.body.action === "activate") observed = parsed.binding.snapshot_id === pendingIntent.body.snapshot_id;
       if (observed) { intent.current = null; setPending(false); setRequestError(false); }
+      return parsed;
     } catch {
       if (!controller.signal.aborted && mounted.current && scope.current === workspaceId) setLoadError(true);
+      return null;
     } finally {
       if (readController.current === controller) readController.current = null;
       if (!controller.signal.aborted && mounted.current && scope.current === workspaceId) setLoading(false);
     }
-  }, [workspaceId]);
+  }, [workspaceId, onServingChange]);
 
   useEffect(() => {
     mounted.current = true; intent.current = null; selectionSnapshot.current = null;
     setValue(null); setSelectedConceptKeys([]); setLoading(true); setBusy(false); setPending(false);
-    setLoadError(false); setRequestError(false); setAccessDenied(false); void read();
+    setLoadError(false); setRequestError(false); setAccessDenied(false); setEditing(null); setEditionError(false); void read();
+    onServingChange?.(false);
     return () => { mounted.current = false; readController.current?.abort(); submitController.current?.abort(); };
-  }, [read]);
+  }, [read, onServingChange]);
 
   const submit = async (replay = false, selection?: { conceptKey: string; selected: boolean }) => {
-    if (disabled || busy || submitController.current || !value || accessDenied) return;
+    if (disabled || busy || editing || submitController.current || !value || accessDenied) return;
     const latest = value.revisions[0];
     if (!latest) return;
     let next = intent.current;
@@ -235,15 +268,56 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
     }
   };
 
+  const saveEdition = async () => {
+    const latest = value?.revisions[0];
+    if (disabled || busy || pending || editionError || submitController.current || !latest?.snapshot_id || !editing
+      || !editing.label.trim() || !editing.definition.trim() || latest.source_valid !== true) return;
+    const original = latest.catalog?.find(concept => concept.concept_key === editing.conceptKey);
+    if (!original || (editing.label.trim() === original.label && editing.definition.trim() === original.definition)) return;
+    const draft = { ...editing };
+    const controller = new AbortController(); submitController.current = controller;
+    setBusy(true); setEditionError(false);
+    try {
+      const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation/edition`, {
+        method: "POST", cache: "no-store", signal: controller.signal,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_revision_id: latest.revision_id,
+          expected_revision_digest: latest.revision_digest, concept_key: draft.conceptKey,
+          label: draft.label.trim(), definition: draft.definition.trim() })
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok || !body || typeof body !== "object" || !("revision_id" in body)) throw new Error("edition_rejected");
+      if (controller.signal.aborted || !mounted.current || scope.current !== workspaceId) return;
+      setEditing(null); await read();
+    } catch {
+      if (!controller.signal.aborted && mounted.current && scope.current === workspaceId) {
+        // A lost response is reconciled from the durable successor before the user can retry.
+        const current = await read();
+        const successor = current?.revisions[0];
+        const match = successor && successor.revision > latest.revision && successor.catalog?.some(concept =>
+          concept.concept_key === draft.conceptKey && concept.label === draft.label.trim()
+          && concept.definition === draft.definition.trim());
+        if (match) setEditing(null);
+        else setEditionError(true);
+      }
+    } finally {
+      if (submitController.current === controller) submitController.current = null;
+      if (!controller.signal.aborted && mounted.current && scope.current === workspaceId) setBusy(false);
+    }
+  };
+
   const allKeys = useMemo(() => value?.revisions[0]?.catalog?.map(item => item.concept_key) ?? [], [value]);
   return <WorkspaceTopicConsolidationActivationCard value={value} selectedConceptKeys={selectedConceptKeys}
     signalHref={signalHref} loading={loading} busy={disabled || busy} pending={pending} loadError={loadError}
-    requestError={requestError} accessDenied={accessDenied}
+    requestError={requestError} accessDenied={accessDenied} editing={editing} editionError={editionError}
     onToggle={conceptKey => setSelectedConceptKeys(current => current.includes(conceptKey)
       ? current.filter(key => key !== conceptKey) : allKeys.filter(key => current.includes(key) || key === conceptKey))}
     onSelectPublished={(conceptKey, selected) => void submit(false, { conceptKey, selected })}
+    onBeginEdit={(conceptKey, label, definition) => { setEditing({ conceptKey, label, definition }); setEditionError(false); }}
+    onEditChange={setEditing} onCancelEdit={() => { setEditing(null); setEditionError(false); }}
+    onSaveEdit={() => void saveEdition()}
     onToggleAll={checked => setSelectedConceptKeys(checked ? allKeys : [])}
     onPrepare={() => void submit()} onActivate={() => void submit()} onReplay={() => void submit(true)} onRefresh={() => {
-      intent.current = null; setPending(false); setRequestError(false); void read();
+      intent.current = null; setPending(false); setRequestError(false); setEditing(null); setEditionError(false); void read();
     }} />;
 }

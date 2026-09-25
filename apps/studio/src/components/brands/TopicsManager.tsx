@@ -55,6 +55,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
   const [resultState, setResultState] = useState<"relevant" | "doubt" | "excluded">("relevant");
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [consolidatedServing, setConsolidatedServing] = useState(false);
   const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
   const selectedIsDiscovery = selected?.origin === "workspace_discovery";
   const processingVisible = !navigation || data.capabilities.can_execute;
@@ -315,7 +316,9 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
     <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId}
       mentionsHref={`/signal/${encodeURIComponent(data.workspace.slug)}/mentions`} onCatalogAvailable={refreshAvailableCatalog} />
     <WorkspaceTopicConsolidationActivationControls disabled={editorDirty || busy !== null}
-      signalHref={signalHref} workspaceId={workspaceId} />
+      signalHref={signalHref} workspaceId={workspaceId} onServingChange={setConsolidatedServing} />
+    {consolidatedServing ? <p className="topics-manager__previous-catalog-notice" role="status">
+      {t("consolidation.previousCatalogNotice")}</p> : null}
     <section className="admin-section topics-manager__toolbar">
       <div className="topics-manager__tabs" role="tablist" aria-label={t("tabs.label")}>
         {(["topics", "discovered", "archived"] as const).map((item) => <button
@@ -400,8 +403,10 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
       {!workspaceDiscoveries.length && !visibleCandidates.length ? <div className="admin-empty"><strong>{t("discovered.empty")}</strong><p>{t("discovered.emptyBody")}</p></div> : null}
     </section> : <div className="topics-manager__layout">
       <aside className="admin-section topics-manager__list">
-        <header><div><h2>{tab === "archived" ? t("archived.title") : t("list.title")}</h2>
-          <p>{t("list.body")}</p></div><span>{visibleTopics.length}</span></header>
+        <header><div><h2>{tab === "archived" ? t("archived.title")
+          : consolidatedServing ? t("consolidation.previousCatalogTitle") : t("list.title")}</h2>
+          <p>{consolidatedServing && tab !== "archived" ? t("consolidation.previousCatalogBody") : t("list.body")}</p>
+          </div><span>{visibleTopics.length}</span></header>
         {visibleTopics.length ? visibleTopics.map((topic) => <button className={selectedKey === topic.term_key ? "is-active" : ""}
           key={topic.term_key} disabled={busy !== null} onClick={() => { if (topic.term_key !== selectedKey && canLeaveEditor()) editTopic(topic); }} type="button">
           <span><strong>{topic.label}</strong><small>{topic.definition}</small>

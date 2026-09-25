@@ -3198,9 +3198,21 @@
             "completed": "The new review is saved for editing and quality checks. Signal retains its published version."
           }
         },
+        "previousCatalogNotice": "Signal uses a consolidated revision; a newer proposal may still be awaiting publication. The list below keeps defined interests and earlier partial results for reference, not the current consolidated catalog.",
+        "previousCatalogTitle": "Interests and earlier results",
+        "previousCatalogBody": "Earlier partial Topics remain here; check above to see which consolidated version is published.",
         "activation": {
           "title": "Publish proposal to Signal",
           "body": "Review Claude's complete proposal and choose which concepts will shape the next Signal.",
+          "activeTitle": "Consolidated Topics in Signal",
+          "activeDescription": "These concepts bring the original groups together. You can change their selection or create a new version of their name and definition.",
+          "edit": "Edit",
+          "name": "Name",
+          "definition": "Definition",
+          "editHint": "An edit creates a new revision without changing the published Signal. You can review and publish the new version afterward.",
+          "saveEdit": "Save new revision",
+          "cancelEdit": "Cancel",
+          "editError": "The edit could not be confirmed. Refresh the status before saving it again.",
           "loading": "Loading the validated proposal…",
           "waiting": "The proposal will appear here when the editorial review is complete.",
           "access": "Your current access cannot view or publish this proposal.",
