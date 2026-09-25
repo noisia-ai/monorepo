@@ -47,7 +47,9 @@ try {
     to_regclass('public.signal_topic_consolidation_decisions') IS NOT NULL decisions,
     to_regprocedure('public.prepare_signal_topic_consolidation_snapshot_v1(uuid,uuid,uuid,text)') IS NOT NULL prepare`)).rows[0];
   if (Object.values(signatures).some(value => value !== true)) throw Error('noi19_dev_test_schema_mismatch');
-  const nested = savepointQueryable(client), query = nested.query;
+  // The published Brand OS fixture uses a serializable semantic finalizer.
+  // The outer physical transaction remains rollback-only READ COMMITTED.
+  const nested = savepointQueryable(client, { allowSemanticFinalizer: true }), query = nested.query;
   const scoped = Object.create(client); scoped.query = query; scoped.release = () => {};
   const database = Object.assign(Object.create(pool), { query, connect: async () => scoped });
   const { register } = await import('tsx/esm/api'); register();

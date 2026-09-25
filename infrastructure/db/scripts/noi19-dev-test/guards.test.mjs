@@ -142,6 +142,18 @@ test('savepoint setup failure can roll back the nested transaction',async()=>{
  assert.deepEqual(statements.slice(-2),['ROLLBACK TO SAVEPOINT signal_imported_1','RELEASE SAVEPOINT signal_imported_1']);
 });
 
+test('only the editor fixture may represent the semantic serializable finalizer as a rollback-only savepoint',async()=>{
+ const {savepointQueryable}=await import('./signal-imported-transaction.mjs');
+ const statements=[];const client={query:async(sql)=>{statements.push(sql);return{rows:[]};}};
+ const ordinary=savepointQueryable(client);
+ await assert.rejects(ordinary.query("BEGIN ISOLATION LEVEL SERIALIZABLE; SET LOCAL statement_timeout='10min'"),/transaction_setup_invalid/u);
+ const editor=savepointQueryable(client,{allowSemanticFinalizer:true});
+ await editor.query("BEGIN ISOLATION LEVEL SERIALIZABLE; SET LOCAL statement_timeout='10min'");
+ await editor.query('COMMIT');
+ assert.equal(editor.depth,0);
+ assert.deepEqual(statements,['SAVEPOINT signal_imported_1',"SET LOCAL statement_timeout='10min'",'RELEASE SAVEPOINT signal_imported_1']);
+});
+
 test('imported schema gate requires all current signatures and the validated exact-text invariant',async()=>{
  const {assertImportedServingSchema}=await import('./signal-imported-transaction.mjs');
  const valid={binding:true,snapshot:true,successor:true,projection:true,digest_validated:true,digest_required:true,digest_maintained:true};

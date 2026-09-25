@@ -1,13 +1,15 @@
 /** Synthetic test transactions share one physical connection and use savepoints.
  * Preserve the production reader's SET LOCAL fences instead of discarding the
  * statements after BEGIN. Never commit the runner's outer physical transaction. */
-export function savepointQueryable(client){
+export function savepointQueryable(client,{allowSemanticFinalizer=false}={}){
  const stack=[];let serial=0;
  const query=async(sql,params)=>{
   if(/^BEGIN(?:\s|;|$)/u.test(sql)){
    const [begin,...settings]=sql.split(';').map(value=>value.trim()).filter(Boolean);
    if(params?.length||!/^BEGIN(?: ISOLATION LEVEL (?:READ COMMITTED|REPEATABLE READ)(?: READ ONLY)?)?$/u.test(begin)
-    ||settings.some(value=>!/^SET LOCAL (?:TIME ZONE 'UTC'|search_path=public,extensions,pg_temp|enable_nestloop=off|jit=off)$/u.test(value)))
+    && !(allowSemanticFinalizer&&begin==='BEGIN ISOLATION LEVEL SERIALIZABLE')
+    ||settings.some(value=>!/^SET LOCAL (?:TIME ZONE 'UTC'|search_path=public,extensions,pg_temp|enable_nestloop=off|jit=off)$/u.test(value)
+      && !(allowSemanticFinalizer&&value==="SET LOCAL statement_timeout='10min'")))
     throw Error('noi19_dev_test_transaction_setup_invalid');
    const key=`signal_imported_${++serial}`;
    const result=await client.query(`SAVEPOINT ${key}`);stack.push(key);
