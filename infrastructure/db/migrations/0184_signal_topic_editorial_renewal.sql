@@ -68,7 +68,7 @@ BEGIN
  maximum:=least(e.hard_cap_micro_usd-run_used,p.daily_cap_micro_usd-day_used,action_row.max_execution_micro_usd);
  IF maximum<=0 THEN RETURN '{"status":"budget_unavailable"}'::jsonb;END IF;
  expiry:=COALESCE(deadline,floor(extract(epoch FROM least(clock_timestamp()+interval '5 minutes',p.valid_until,
-  ((day+1)::timestamp AT TIME ZONE p.budget_timezone)))::bigint);
+  ((day+1)::timestamp AT TIME ZONE p.budget_timezone))))::bigint);
  IF to_timestamp(expiry)<=clock_timestamp() OR to_timestamp(expiry)>least(clock_timestamp()+interval '5 minutes',p.valid_until,
   ((day+1)::timestamp AT TIME ZONE p.budget_timezone)) THEN RETURN '{"status":"quote_expired"}'::jsonb;END IF;
  body:=jsonb_build_object('workspace_id',target_workspace,'actor_user_id',target_actor,'execution_id',e.id,
