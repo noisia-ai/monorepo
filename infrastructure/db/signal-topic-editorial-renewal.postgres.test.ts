@@ -15,6 +15,14 @@ const approved = Boolean(file || process.env.DATABASE_URL);
 const sql = readFileSync(new URL('./migrations/0184_signal_topic_editorial_renewal.sql', import.meta.url), 'utf8');
 const id = '10000000-0000-4000-8000-000000000001';
 
+async function installWithinRollback(client: pg.PoolClient) {
+  try { await client.query(sql); }
+  catch (error) {
+    const pgError = error as { code?: string; position?: string; internalPosition?: string; routine?: string };
+    throw new Error(`sql0184_install_${pgError.code ?? 'unknown'}_at_${pgError.position ?? pgError.internalPosition ?? 'unknown'}_${pgError.routine ?? 'unknown'}`);
+  }
+}
+
 async function assertEmptyPrivateSchema(client: pg.PoolClient) {
   const { schemaFingerprint } = await import('./scripts/noi19-dev-test/database-checks.mjs');
   assert.equal(await schemaFingerprint(client), 'ff26cd9ba6c0cbe2c8b6e7178b85463a3fa67ecea0f0f91ef672213b0cc3f94b',
@@ -92,7 +100,7 @@ test('0184 installs and exercises its denial paths on an empty private PostgreSQ
       assert.equal(before?.owners, '0', 'private fixture must have no editorial owner');
       assert.equal(before?.renewals, null, '0184 already installed; never apply it twice');
       assert.ok(before?.prior, '0182 prerequisite missing');
-      await client.query(sql);
+      await installWithinRollback(client);
       const shape = (await client.query<{ rls: boolean; public_table: boolean; public_function: boolean }>(`
         SELECT (SELECT relrowsecurity FROM pg_class WHERE oid='public.signal_topic_editorial_renewals'::regclass) rls,
           has_table_privilege('public','public.signal_topic_editorial_renewals','SELECT') public_table,
@@ -124,7 +132,7 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       assert.equal((await client.query('SELECT count(*)::int count FROM organizations')).rows[0]?.count, 0);
       assert.equal((await client.query("SELECT to_regclass('public.signal_topic_editorial_renewals') value")).rows[0]?.value, null);
       assert.ok((await client.query("SELECT to_regprocedure('public.retry_signal_topic_editorial_execution_v1(uuid,uuid,uuid,text)') value")).rows[0]?.value);
-      await client.query(sql);
+      await installWithinRollback(client);
       const tx = nestedClient(client, pool);
       const fixture = await seedSignalTopicEditorialRenewalSourceV1({ ...tx, cleanup: async () => undefined });
       const { organization_id, actor_user_id, workspace_id } = fixture.identity;
