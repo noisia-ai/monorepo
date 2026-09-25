@@ -217,18 +217,22 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       assert.equal(settled?.status, 'settled');
       console.log('renewal_screening_receipt_settled');
       validateSignalTopicEditorialScreeningCoverageV1(plan, [output]);
+      console.log('renewal_screening_coverage_valid');
       const state = { contract_version: 'signal-topic-editorial-runner-v1', execution_key: executionId,
         plan_digest: plan.plan_digest, phase: 'global', screening_outputs: [output], global: null };
       const stateText = JSON.stringify(state);
       await tx.query('UPDATE signal_topic_editorial_executions SET state_body=$2,state_digest=signal_semantic_context_digest_v1($2) WHERE id=$1',
         [executionId, stateText]);
+      console.log('renewal_checkpoint_saved');
       const review = buildSignalTopicEditorialGlobalReviewV1({ plan, screening: validateSignalTopicEditorialScreeningCoverageV1(plan, [output]),
         groups: source.groups });
+      console.log('renewal_global_review_built');
       await tx.query(`INSERT INTO signal_topic_editorial_requests(workspace_id,execution_id,phase,batch_index,request_digest,
         request_body,configuration,receipts,reserved_micro_usd)
         VALUES($1,$2,'global',0,$3,$4,$5::jsonb,$6::jsonb,$7)`, [workspace_id, executionId, review.request_digest,
         review.request_body, JSON.stringify(review.configuration), JSON.stringify(review.eligible_group_receipts),
         Buffer.byteLength(review.request_body, 'utf8') * 3 + review.configuration.max_output_tokens * 15]);
+      console.log('renewal_global_request_saved');
       const retained = (await tx.query('SELECT to_jsonb(c) value FROM signal_topic_editorial_calls c WHERE id=$1', [reserved.call_id])).rows[0]?.value;
       const oldAdmission = (await tx.query('SELECT to_jsonb(a) value FROM signal_processing_admissions a WHERE target_id=$1', [executionId])).rows[0]?.value;
 
@@ -236,10 +240,13 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       await tx.query('SAVEPOINT ambiguous');
       const pending = (await tx.query('SELECT reserve_signal_topic_editorial_call_v1($1,$2,$3,true) value',
         [executionId, lease.execution_token, review.request_digest])).rows[0]?.value;
+      console.log('renewal_pending_call_reserved');
       await tx.query('SELECT mark_sent_signal_topic_editorial_call_v1($1,$2,$3,true)',
         [pending.call_id, pending.attempt_token, lease.execution_token]);
+      console.log('renewal_pending_call_sent');
       await tx.query('SELECT fail_signal_topic_editorial_execution_v1($1,$2,$3)',
         [executionId, lease.execution_token, 'topic_editorial_synthetic_timeout']);
+      console.log('renewal_owner_failed_for_recovery');
       await tx.query('SELECT pg_sleep(greatest(0,extract(epoch FROM ((SELECT valid_until FROM signal_processing_policy_versions WHERE id=$1)-clock_timestamp()))+0.2))',
         [initialPolicy]);
       console.log('renewal_policy_deadline_elapsed');
