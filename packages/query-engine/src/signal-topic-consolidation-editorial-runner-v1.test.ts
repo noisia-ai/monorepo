@@ -181,6 +181,30 @@ test("a malformed paid repair falls back to citation quarantine of the settled o
   assert.equal(result.state.screening_outputs[0]!.decisions[1]!.disposition,"topic");
 });
 
+test("a paid repair omitting one group reuses a sealed unresolved derivation without another send", async () => {
+  const groups=Array.from({length:11},(_,index)=>group(index)),plan=planFor(groups,10),store=new MemoryStore();
+  const fixture=new FixtureProvider();let sends=0,recoveries=0;
+  const provider:SignalTopicEditorialRunnerProviderV1={complete:async request=>{
+    sends++;const output=await fixture.complete(request);
+    if(request.phase!=="screening")return output;
+    const value=structuredClone(output) as {decisions:Array<{group_key:string}>};
+    value.decisions.pop();return value;
+  },recoverTruncated:async()=>{
+    recoveries++;
+    const batch=plan.batches[0]!;
+    const original=await fixture.complete({contract_version:"signal-topic-editorial-provider-request-v1",phase:"screening",
+      model:batch.model,idempotency_key:"recovery-test",request_digest:batch.request_digest,request_body:batch.request_body});
+    const output=structuredClone(original) as {decisions:Array<Record<string,unknown>>};
+    output.decisions[output.decisions.length-1]={group_key:batch.group_keys.at(-1),disposition:"unresolved",candidate:null,
+      confidence:null,rationale:"Respuesta pagada omitió este grupo; requiere nueva evidencia.",cited_ref_ids:[]};
+    return output;
+  }};
+  const result=await runSignalTopicEditorialConsolidationV1({execution_key:"paid-missing",plan,groups,store,provider,
+    configuration:{max_screening_batches_per_run:1}});
+  assert.equal(result.status,"screening_pending");assert.equal(sends,2);assert.equal(recoveries,1);
+  assert.equal(result.state.screening_outputs[0]!.decisions.at(-1)!.disposition,"unresolved");
+});
+
 test("schema-valid invalid screening is repaired once under a distinct deterministic identity", async () => {
   const groups = [group(0), group(1)], plan = planFor(groups, 10), store = new MemoryStore();
   const valid = new FixtureProvider(), invalid = new FixtureProvider("duplicate-screening");

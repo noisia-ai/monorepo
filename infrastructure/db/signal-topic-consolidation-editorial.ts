@@ -349,15 +349,23 @@ export async function readSignalTopicEditorialTruncatedOutputV1(args: {
 }): Promise<unknown | null> {
   if (args.request.phase !== 'screening' || args.request.repair !== undefined) return null;
   return tx(args.database, async client => {
-    const row = (await client.query<{ output: unknown }>(`SELECT signal_topic_editorial_truncated_output_v1(
-        c.response_body_private,r.receipts,r.batch_index,(r.configuration->>'max_output_tokens')::integer) AS output
+    const row = (await client.query<{ output: unknown }>(`SELECT COALESCE(signal_topic_editorial_truncated_output_v1(
+        c.response_body_private,r.receipts,r.batch_index,(r.configuration->>'max_output_tokens')::integer),
+        (SELECT signal_topic_editorial_paid_missing_output_v1(repaired.response_output,r.receipts,r.batch_index)
+         FROM signal_topic_editorial_requests child
+         JOIN signal_topic_editorial_calls repaired ON repaired.request_id=child.id
+          AND repaired.execution_id=e.id AND repaired.workspace_id=e.workspace_id
+         WHERE child.parent_request_id=r.id AND child.execution_id=e.id AND child.workspace_id=e.workspace_id
+          AND child.phase='screening' AND repaired.status='settled'
+          AND repaired.response_http_status=200 AND repaired.response_complete=true
+         LIMIT 1)) AS output
       FROM signal_topic_editorial_executions e
       JOIN signal_topic_editorial_requests r ON r.execution_id=e.id AND r.workspace_id=e.workspace_id
       JOIN signal_topic_editorial_calls c ON c.request_id=r.id AND c.execution_id=e.id AND c.workspace_id=e.workspace_id
       WHERE e.id=$1 AND e.workspace_id=$2 AND e.status='running' AND e.execution_token=$3
         AND e.execution_expires_at>clock_timestamp() AND r.phase='screening' AND r.parent_request_id IS NULL
         AND r.request_digest=$4 AND r.request_body=$5 AND c.status='settled'
-        AND c.response_http_status=200 AND c.response_complete=true AND c.response_output IS NULL`,
+        AND c.response_http_status=200 AND c.response_complete=true`,
       [args.lease.execution_id,args.lease.workspace_id,args.lease.execution_token,
         args.request.request_digest,args.request.request_body])).rows[0];
     return row?.output ?? null;

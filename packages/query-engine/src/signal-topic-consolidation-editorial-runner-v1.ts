@@ -226,6 +226,15 @@ async function completeValidated<T>(provider: SignalTopicEditorialRunnerProvider
       if (code === "topic_editorial_output_citation_invalid" && quarantine) {
         try { return quarantine(raw); } catch { /* Keep the failed repair terminal. */ }
       }
+      // A settled repair can omit one group despite returning valid JSON. The
+      // DB may derive an explicit unresolved decision from its immutable paid
+      // receipt; validation still checks the complete, sealed batch.
+      if (original.phase === "screening" && provider.recoverTruncated) {
+        const recovered = await provider.recoverTruncated(original);
+        if (recovered !== null) {
+          try { return validate(recovered); } catch { /* Keep the failed repair terminal. */ }
+        }
+      }
       throw new Error("topic_editorial_repair_invalid");
     }
   }
