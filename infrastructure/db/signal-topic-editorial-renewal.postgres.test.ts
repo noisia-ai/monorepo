@@ -208,8 +208,9 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       });
       const raw = JSON.stringify({ model: 'claude-sonnet-4-6', usage: { input_tokens: 100, output_tokens: 50,
         cache_creation_input_tokens: 0, cache_read_input_tokens: 0 }, content: [{ type: 'text', text: JSON.stringify(output) }] });
-      await tx.query('SELECT persist_signal_topic_editorial_response_v1($1,$2,$3,$4)',
-        [reserved.call_id, reserved.attempt_token, raw, `synthetic/editorial/${reserved.call_id}`]);
+      await tx.query('SELECT persist_signal_topic_editorial_receipt_v1($1,$2,$3,$4,$5,$6,$7,$8)',
+        [reserved.call_id, reserved.attempt_token, first.request_digest, raw,
+          `synthetic/editorial/${reserved.call_id}`, 200, true, `synthetic:${reserved.call_id}`]);
       const settled = (await tx.query('SELECT settle_signal_topic_editorial_call_v1($1,$2) value',
         [reserved.call_id, reserved.attempt_token])).rows[0]?.value;
       assert.equal(settled?.status, 'settled');
