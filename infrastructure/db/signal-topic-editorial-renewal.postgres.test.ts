@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import test from 'node:test';
 import pg from 'pg';
 import { validateSignalTopicEditorialScreeningOutputV1,
@@ -9,23 +11,42 @@ import { loadSignalTopicConsolidationEditorialInputV1 } from './signal-topic-con
 import { seedSignalTopicEditorialRenewalSourceV1 } from './migrations/signal-topic-editorial-renewal.synthetic.fixture';
 
 const file = process.env.NOISIA_EDITORIAL_RENEWAL_PG_URL_FILE;
-const approved = process.env.NOISIA_EDITORIAL_RENEWAL_PG_APPROVE === 'empty-dev-test-rollback-0184';
+const approved = Boolean(file || process.env.DATABASE_URL);
 const sql = readFileSync(new URL('./migrations/0184_signal_topic_editorial_renewal.sql', import.meta.url), 'utf8');
 const id = '10000000-0000-4000-8000-000000000001';
 
+async function assertEmptyPrivateSchema(client: pg.PoolClient) {
+  const tables = (await client.query<{ name: string }>(`SELECT c.relname name FROM pg_class c
+    JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN('r','p')`)).rows;
+  assert.equal(tables.length, 299, 'SQL0182 private schema expected');
+  for (const table of tables) {
+    const quoted = `public."${table.name.replaceAll('"', '""')}"`;
+    assert.equal((await client.query(`SELECT EXISTS(SELECT 1 FROM ${quoted} LIMIT 1) nonempty`)).rows[0]?.nonempty, false,
+      'synthetic acceptance requires every table empty');
+  }
+}
+
 async function privateEmptyPool() {
-  const parsed = new URL(readFileSync(file!, 'utf8').trim());
+  assert.equal(process.env.RAILWAY_ENVIRONMENT_ID, '5bad359d-cfa4-4e8f-aa41-98e6f075375a');
+  assert.equal(process.env.RAILWAY_SERVICE_ID, 'fb2b5925-d7aa-4d5d-9353-6e54dfe38c0e');
+  assert.equal(process.env.NOISIA_DEV_TEST_DATABASE_SERVICE_ID, '8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0');
+  const parsed = new URL(file ? readFileSync(file, 'utf8').trim() : process.env.DATABASE_URL!);
   const expectedSystemId = process.env.NOISIA_EDITORIAL_RENEWAL_PG_SYSTEM_ID;
   assert.equal(parsed.hostname, 'pgvector.railway.internal', 'only the private dev-test target is allowed');
   assert.equal(parsed.port || '5432', '5432'); assert.equal(parsed.pathname, '/noisia_dev_test');
   assert.equal(parsed.username, 'noisia_dev');
-  assert.match(expectedSystemId ?? '', /^[0-9]{10,30}$/u, 'the reviewed readonly system identifier is required');
+  assert.equal(expectedSystemId, '7683766906362679330', 'the reviewed readonly system identifier is required');
+  const addresses = await lookup(parsed.hostname, { all: true });
+  assert.ok(addresses.length > 0 && addresses.every(row => isIP(row.address) === 6
+    ? /^(?:fc|fd)[0-9a-f]{2}:/iu.test(row.address)
+    : isIP(row.address) === 4 && /^(?:10\.|192\.168\.|172\.(?:1[6-9]|2[0-9]|3[01])\.)/u.test(row.address)));
   const pool = new pg.Pool({ connectionString: parsed.href, max: 1, ssl: false });
   const client = await pool.connect();
   try {
     const systemId = (await client.query<{ system_identifier: string }>(
       'SELECT system_identifier::text FROM pg_control_system()')).rows[0]?.system_identifier;
     assert.equal(systemId, expectedSystemId, 'private PostgreSQL identity changed');
+    await assertEmptyPrivateSchema(client);
     assert.equal((await client.query('SELECT count(*)::int count FROM organizations')).rows[0]?.count, 0,
       'synthetic acceptance requires an empty target');
   } catch (error) { client.release(); await pool.end(); throw error; }
@@ -56,7 +77,7 @@ function nestedClient(client: pg.PoolClient, pool: pg.Pool) {
 }
 
 test('0184 installs and exercises its denial paths on an empty private PostgreSQL fixture with physical rollback',
-  { skip: !file || !approved, timeout: 90000 }, async () => {
+  { skip: !approved || process.env.NOISIA_EDITORIAL_RENEWAL_PG_APPROVE !== 'empty-dev-test-rollback-0184', timeout: 90000 }, async () => {
     const { pool, client } = await privateEmptyPool();
     try {
       await client.query('BEGIN');
@@ -83,14 +104,15 @@ test('0184 installs and exercises its denial paths on an empty private PostgreSQ
         'SELECT renew_signal_topic_editorial_execution_v1($1,$2,$3,$4,$5,$6)',
         [id,id,id,'bad','bad',0]), /topic_editorial_renewal_invalid/u);
     } finally {
-      await client.query('ROLLBACK').catch(() => undefined);
-      client.release();
-      await pool.end();
+      try {
+        await client.query('ROLLBACK');
+        await assertEmptyPrivateSchema(client);
+      } finally { client.release(); await pool.end(); }
     }
   });
 
 test('0184 renews a synthetic paid owner after a real short deadline and preserves its settled screening receipt',
-  { skip: !file || process.env.NOISIA_EDITORIAL_RENEWAL_PG_APPROVE !== 'synthetic-rollback-0184', timeout: 180000 }, async () => {
+  { skip: !approved || process.env.NOISIA_EDITORIAL_RENEWAL_PG_APPROVE !== 'synthetic-rollback-0184', timeout: 180000 }, async () => {
     const { pool, client } = await privateEmptyPool();
     let outer = false;
     try {
@@ -238,7 +260,9 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
         [executionId])).rows[0]?.count, 1);
       assert.equal(tx.depth, 0, 'all nested service transactions are balanced');
     } finally {
-      if (outer) await client.query('ROLLBACK').catch(() => undefined);
-      client.release(); await pool.end();
+      try {
+        if (outer) await client.query('ROLLBACK');
+        await assertEmptyPrivateSchema(client);
+      } finally { client.release(); await pool.end(); }
     }
   });
