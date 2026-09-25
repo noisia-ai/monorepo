@@ -11,9 +11,13 @@ const seal = JSON.parse(await readFile(new URL('./target-seal.json', import.meta
 const report = { contract_version: 'consolidated-editor-private-receipt-v1', status: 'blocked', stage: 'preflight',
   remote_connected: false, fixture_mutations_started: false, provider_transports: 0,
   assertions: [], physical_rollback: false, post_rollback_empty: false };
-let pool, client, outer = false, deadline;
+let pool, client, outer = false, deadline, beforeSchema, tables;
 const fixedError = error => /^noi19_dev_test_[a-z_]+$/u.test(error?.message ?? '')
   ? error.message : 'noi19_dev_test_editor_execution_failed';
+// Only source path and line numbers; never SQL, parameters, fixture text or secrets.
+const failureOrigin = error => (String(error?.stack ?? '').split('\n').slice(1)
+  .map(line => line.match(/(?:file:\/\/)?\/app\/(infrastructure\/db\/[a-zA-Z0-9_./-]+|services\/workers\/src\/[a-zA-Z0-9_./-]+):(\d+):(\d+)/u))
+  .find(Boolean)?.slice(1).join(':')) ?? null;
 try {
   if (process.argv.length !== 2) throw Error('noi19_dev_test_arguments_invalid');
   if (sealedTableCount(seal, { requireExplicit: true }) !== 299) throw Error('noi19_dev_test_schema_mismatch');
@@ -32,11 +36,11 @@ try {
   await client.query("SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL jit=off; SET LOCAL lock_timeout='5s'");
   if (!(await client.query("SELECT pg_try_advisory_xact_lock(hashtextextended('noi19-private-dev-test-single-runner-v1',0)) locked")).rows[0].locked)
     throw Error('noi19_dev_test_runner_busy');
-  const tables = await publicTables(client, 299);
+  tables = await publicTables(client, 299);
   await client.query(`LOCK TABLE ${tables.map(row => row.quoted).join(',')} IN SHARE MODE`);
   const empty = () => verifyEmpty(client, tables, 299);
   await empty();
-  const beforeSchema = await schemaFingerprint(client);
+  beforeSchema = await schemaFingerprint(client);
   if (beforeSchema !== seal.schema_sha256) throw Error('noi19_dev_test_schema_mismatch');
   const signatures = (await client.query(`SELECT
     to_regclass('public.signal_topic_consolidation_revisions') IS NOT NULL revisions,
@@ -62,12 +66,25 @@ try {
   report.table_count = 299; report.schema_sha256 = beforeSchema; report.status = 'passed';
 } catch (error) {
   report.error_code = fixedError(error);
+  report.failure_origin = failureOrigin(error);
+  report.error_class = ['AssertionError', 'SignalTopicConsolidationContractError', 'Error'].includes(error?.name) ? error.name : 'other';
   if (/^[A-Z0-9]{5}$/u.test(error?.code ?? '')) report.sqlstate = error.code;
   report.status = report.fixture_mutations_started ? 'failed' : 'blocked'; process.exitCode = 1;
 } finally {
   clearTimeout(deadline);
   if (client) {
     if (outer) await client.query('ROLLBACK').then(() => { report.physical_rollback = true; }).catch(() => {});
+    if (process.exitCode && report.physical_rollback && tables && beforeSchema) {
+      try {
+        await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        await verifyEmpty(client, tables, 299);
+        if (await schemaFingerprint(client) !== beforeSchema) throw Error('noi19_dev_test_schema_changed');
+        await client.query('ROLLBACK'); report.post_rollback_empty = true;
+      } catch {
+        await client.query('ROLLBACK').catch(() => {});
+        report.error_code = 'noi19_dev_test_rollback_verification_failed';
+      }
+    }
     client.release();
   }
   if (pool) await pool.end().catch(() => {});
