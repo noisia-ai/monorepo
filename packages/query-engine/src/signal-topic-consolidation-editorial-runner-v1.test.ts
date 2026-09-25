@@ -121,6 +121,26 @@ test("checkpoints after a bounded number of batches and continues without replay
   assert.deepEqual(provider.calls.map(item => item.phase), ["screening", "screening", "screening", "global"]);
 });
 
+test("a settled invalid repair quarantines its unsupported citation without sending a second repair", async () => {
+  const groups=Array.from({length:11},(_,index)=>group(index)),plan=planFor(groups,10),store=new MemoryStore();
+  const fixture=new FixtureProvider(),requests:SignalTopicEditorialRunnerProviderRequestV1[]=[];
+  const provider:SignalTopicEditorialRunnerProviderV1={complete:async request=>{
+    requests.push(request);
+    const output=await fixture.complete(request);
+    if(request.phase!=="screening")return output;
+    const value=structuredClone(output) as {decisions:Array<{cited_ref_ids:string[]}>};
+    value.decisions[0]!.cited_ref_ids.push(digest("foreign-ref"));
+    return value;
+  }};
+  const result=await runSignalTopicEditorialConsolidationV1({execution_key:"foreign-citation",plan,groups,store,provider,
+    configuration:{max_screening_batches_per_run:1}});
+  assert.equal(result.status,"screening_pending");
+  assert.equal(requests.length,2);
+  assert.equal(requests[1]!.repair?.repair_index,1);
+  assert.equal(result.state.screening_outputs[0]!.decisions[0]!.disposition,"unresolved");
+  assert.equal(result.state.screening_outputs[0]!.decisions[1]!.disposition,"topic");
+});
+
 test("schema-valid invalid screening is repaired once under a distinct deterministic identity", async () => {
   const groups = [group(0), group(1)], plan = planFor(groups, 10), store = new MemoryStore();
   const valid = new FixtureProvider(), invalid = new FixtureProvider("duplicate-screening");

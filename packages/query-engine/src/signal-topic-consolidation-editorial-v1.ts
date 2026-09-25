@@ -246,6 +246,32 @@ export const signalTopicEditorialScreeningOutputSchemaV1=z.object({
 }).strict();
 export type SignalTopicEditorialScreeningOutputV1=z.infer<typeof signalTopicEditorialScreeningOutputSchemaV1>;
 
+/** Preserve a settled screening response while withholding only decisions whose
+ * citations cannot be proved against their own sealed group receipt. This is
+ * used after the single paid repair has also failed citation validation. */
+export function quarantineSignalTopicEditorialUnsupportedCitationsV1(
+  batch:SignalTopicEditorialScreeningBatchV1,value:unknown):SignalTopicEditorialScreeningOutputV1{
+  const parsed=signalTopicEditorialScreeningOutputSchemaV1.safeParse(value);
+  if(!parsed.success)return fail("topic_editorial_output_invalid");
+  const receipts=new Map(batch.group_receipts.map(item=>[item.group_key,new Set(item.evidence_ref_ids)]));
+  if(parsed.data.decisions.length!==batch.group_keys.length
+    ||new Set(parsed.data.decisions.map(item=>item.group_key)).size!==batch.group_keys.length
+    ||parsed.data.decisions.some(item=>!receipts.has(item.group_key)))
+    return fail("topic_editorial_output_coverage_invalid");
+  let quarantined=0;
+  const decisions=parsed.data.decisions.map(item=>{
+    const allowed=receipts.get(item.group_key)!;
+    const unsupported=item.cited_ref_ids.some(ref=>!allowed.has(ref))
+      ||(item.disposition==="topic"||item.disposition==="narrative")&&item.cited_ref_ids.length===0;
+    if(!unsupported)return item;
+    quarantined++;
+    return {...item,disposition:"unresolved" as const,candidate:null,confidence:null,
+      rationale:"Evidencia citada no verificable; requiere revisión posterior.",cited_ref_ids:[]};
+  });
+  if(quarantined===0)return fail("topic_editorial_output_citation_invalid");
+  return validateSignalTopicEditorialScreeningOutputV1(batch,{...parsed.data,decisions});
+}
+
 export function validateSignalTopicEditorialScreeningOutputV1(batch:SignalTopicEditorialScreeningBatchV1,value:unknown):SignalTopicEditorialScreeningOutputV1{
   const parsed=signalTopicEditorialScreeningOutputSchemaV1.safeParse(value);
   if(!parsed.success||parsed.data.batch_index!==batch.batch_index||parsed.data.decisions.length!==batch.group_keys.length)

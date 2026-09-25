@@ -4,6 +4,7 @@ import test from "node:test";
 import {buildSignalTopicEditorialScreeningPlanV1,signalTopicEditorialDigestV1,
   buildSignalTopicEditorialGlobalReviewV1,validateSignalTopicEditorialGlobalResultV1,
   validateSignalTopicEditorialScreeningCoverageV1,validateSignalTopicEditorialScreeningOutputV1,
+  quarantineSignalTopicEditorialUnsupportedCitationsV1,
   preflightSignalTopicEditorialCapacityV1,
   SIGNAL_TOPIC_EDITORIAL_GLOBAL_SCHEMA_V1,SIGNAL_TOPIC_EDITORIAL_SCREENING_SCHEMA_V1} from "./signal-topic-consolidation-editorial-v1";
 
@@ -83,6 +84,25 @@ test("screening validates evidence citations, dispositions and exact batch cover
     configuration:{...batch.configuration,max_output_tokens:batch.configuration.max_output_tokens+1} as never},output),/request_invalid/);
   assert.throws(()=>validateSignalTopicEditorialScreeningOutputV1({...batch,group_receipts:batch.group_receipts.map((item,index)=>index?item:{...item,
     expected_locale:"en-US"})},output),/request_invalid/);
+});
+
+test("a repaired screening response quarantines only groups citing foreign evidence",()=>{
+  const groups=[group(0),group(1)],batch=planFor(groups,10).batches[0]!;
+  const output={contract_version:"signal-topic-editorial-screening-output-v1",batch_index:0,decisions:[
+    {group_key:groups[0]!.group_key,disposition:"narrative",candidate:{candidate_key:"b0000-first",label:"Primera",definition:"Primera narrativa.",locale:"es-MX"},confidence:0.8,rationale:null,
+      cited_ref_ids:[groups[0]!.evidence[0]!.ref_id,sha("foreign")]},
+    {group_key:groups[1]!.group_key,disposition:"topic",candidate:{candidate_key:"b0000-second",label:"Segunda",definition:"Segundo tema.",locale:"es-MX"},confidence:0.8,rationale:null,
+      cited_ref_ids:[groups[1]!.evidence[0]!.ref_id]},
+  ]};
+  assert.throws(()=>validateSignalTopicEditorialScreeningOutputV1(batch,output),/citation_invalid/u);
+  const safe=quarantineSignalTopicEditorialUnsupportedCitationsV1(batch,output);
+  assert.equal(safe.decisions[0]!.disposition,"unresolved");
+  assert.equal(safe.decisions[0]!.candidate,null);
+  assert.deepEqual(safe.decisions[0]!.cited_ref_ids,[]);
+  assert.equal(safe.decisions[1]!.disposition,"topic");
+  assert.deepEqual(safe.decisions[1]!.cited_ref_ids,[groups[1]!.evidence[0]!.ref_id]);
+  assert.throws(()=>quarantineSignalTopicEditorialUnsupportedCitationsV1(batch,{...output,
+    decisions:[output.decisions[0],output.decisions[0]]}),/coverage_invalid/u);
 });
 
 test("screening keeps private rationale useful and bounded",()=>{

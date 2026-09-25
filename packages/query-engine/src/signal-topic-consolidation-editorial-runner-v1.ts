@@ -9,6 +9,7 @@ import {
   signalTopicEditorialDigestV1,
   signalTopicEditorialGlobalOutputSchemaV1,
   signalTopicEditorialScreeningOutputSchemaV1,
+  quarantineSignalTopicEditorialUnsupportedCitationsV1,
   validateSignalTopicEditorialGlobalResultV1,
   validateSignalTopicEditorialScreeningCoverageV1,
   validateSignalTopicEditorialScreeningOutputV1,
@@ -189,7 +190,8 @@ async function persist(store: SignalTopicEditorialRunnerStoreV1, previous: Signa
 }
 
 async function completeValidated<T>(provider: SignalTopicEditorialRunnerProviderV1,
-  original: SignalTopicEditorialRunnerProviderRequestV1, validate: (value: unknown) => T): Promise<T> {
+  original: SignalTopicEditorialRunnerProviderRequestV1, validate: (value: unknown) => T,
+  quarantine?: (value: unknown) => T): Promise<T> {
   // The provider ledger replays settled originals/children; this method never
   // retries a transport or asks for a second repair of the same logical call.
   const raw = await provider.complete(original);
@@ -198,7 +200,12 @@ async function completeValidated<T>(provider: SignalTopicEditorialRunnerProvider
     if (!code) throw error;
     const repair = buildSignalTopicEditorialRepairRequestV1({ original, response: raw, error_code: code });
     const repaired = await provider.complete(repair);
-    try { return validate(repaired); } catch { throw new Error("topic_editorial_repair_invalid"); }
+    try { return validate(repaired); } catch (repairError) {
+      if (repairError instanceof Error && repairError.message === "topic_editorial_output_citation_invalid" && quarantine) {
+        try { return quarantine(repaired); } catch { /* Keep the failed repair terminal. */ }
+      }
+      throw new Error("topic_editorial_repair_invalid");
+    }
   }
 }
 
@@ -231,7 +238,8 @@ export async function runSignalTopicEditorialConsolidationV1(args: {
     if (executed >= limit) break;
     const output = await completeValidated(args.provider, { contract_version: "signal-topic-editorial-provider-request-v1", phase: "screening",
       idempotency_key: batch.batch_key, model, request_digest: batch.request_digest, request_body: batch.request_body },
-    raw => validateSignalTopicEditorialScreeningOutputV1(batch, raw));
+    raw => validateSignalTopicEditorialScreeningOutputV1(batch, raw),
+    raw => quarantineSignalTopicEditorialUnsupportedCitationsV1(batch, raw));
     const screening_outputs = [...state.screening_outputs, output].sort((a, b) => a.batch_index - b.batch_index);
     state = await persist(args.store, state, { contract_version: SIGNAL_TOPIC_EDITORIAL_RUNNER_CONTRACT_V1,
       execution_key: args.execution_key, plan_digest: args.plan.plan_digest,
