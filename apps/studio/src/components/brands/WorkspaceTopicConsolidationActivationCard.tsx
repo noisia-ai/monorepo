@@ -18,7 +18,7 @@ import {
 
 export function WorkspaceTopicConsolidationActivationCard({ value, selectedConceptKeys, signalHref,
   loading = false, busy = false, pending = false, loadError = false, requestError = false,
-  accessDenied = false, onToggle, onToggleAll, onPrepare, onActivate, onReplay, onRefresh }: {
+  accessDenied = false, onToggle, onSelectPublished, onToggleAll, onPrepare, onActivate, onReplay, onRefresh }: {
   value: WorkspaceTopicConsolidationActivationStatusV1 | null;
   selectedConceptKeys: string[];
   signalHref: string;
@@ -29,6 +29,7 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
   requestError?: boolean;
   accessDenied?: boolean;
   onToggle?: (conceptKey: string) => void;
+  onSelectPublished?: (conceptKey: string, selected: boolean) => void;
   onToggleAll?: (selected: boolean) => void;
   onPrepare?: () => void;
   onActivate?: () => void;
@@ -80,21 +81,23 @@ export function WorkspaceTopicConsolidationActivationCard({ value, selectedConce
                 <span>{t("selectAll")}</span></label>
               <small>{t("selectionHint")}</small>
             </div>
-            <ul className="topics-manager__activation-list">
-              {catalog.map((concept, index) => <li key={concept.concept_key}>
+          </> : <p className="topics-manager__activation-message topics-manager__activation-message--success">
+            <CheckCircle aria-hidden size={18} />{t("activeBody", { count: selected.size, revision: latest.revision })}</p>}
+          <ul className="topics-manager__activation-list">
+            {catalog.map((concept, index) => <li key={concept.concept_key}>
                 <label>
                   <input type="checkbox" checked={selected.has(concept.concept_key)} disabled={!canMutate || busy || pending}
-                    onChange={() => onToggle?.(concept.concept_key)} />
+                    onChange={() => active ? onSelectPublished?.(concept.concept_key, !selected.has(concept.concept_key))
+                      : onToggle?.(concept.concept_key)} />
                   <span className="topics-manager__activation-concept">
                     <small>{index + 1}. {t(`kinds.${concept.kind}`)}</small>
                     <strong>{concept.label}</strong>
                     <span>{concept.definition}</span>
                   </span>
                 </label>
-              </li>)}
-            </ul>
-          </> : <p className="topics-manager__activation-message topics-manager__activation-message--success">
-            <CheckCircle aria-hidden size={18} />{t("activeBody", { count: selected.size, revision: latest.revision })}</p>}
+            </li>)}
+          </ul>
+          {active ? <p className="topics-manager__activation-message">{t("activeSelectionHint")}</p> : null}
         </> : null}
         {sourceStale ? <p role="alert" className="team-msg team-msg--error">{t("stale")}</p> : null}
         {!value?.can_activate && !active && !sourceStale ? <p role="status" className="topics-manager__activation-message">{t("readOnly")}</p> : null}
@@ -184,13 +187,22 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
     return () => { mounted.current = false; readController.current?.abort(); submitController.current?.abort(); };
   }, [read]);
 
-  const submit = async (replay = false) => {
+  const submit = async (replay = false, selection?: { conceptKey: string; selected: boolean }) => {
     if (disabled || busy || submitController.current || !value || accessDenied) return;
     const latest = value.revisions[0];
     if (!latest) return;
     let next = intent.current;
     if (!replay) {
-      const body = !latest.snapshot_id ? { action: "prepare" as const, revision_id: latest.revision_id,
+      const selectedConcept = selection && latest.snapshot_id === value.binding.snapshot_id
+        ? latest.catalog?.find(concept => concept.concept_key === selection.conceptKey) : null;
+      const body = selection ? selectedConcept && latest.source_valid ? {
+        action: "select" as const, term_key: selectedConcept.term_key,
+        definition_digest: selectedConcept.definition_digest, selected: selection.selected,
+        expected_binding_revision: value.binding.binding_revision,
+        expected_selection_revision: value.binding.selection_revision,
+        expected_snapshot_id: value.binding.snapshot_id,
+        expected_legacy_generation_id: value.binding.legacy_generation_id
+      } : null : !latest.snapshot_id ? { action: "prepare" as const, revision_id: latest.revision_id,
         revision_digest: latest.revision_digest }
         : latest.source_valid && selectedConceptKeys.length > 0 ? { action: "activate" as const,
           snapshot_id: latest.snapshot_id, snapshot_digest: latest.snapshot_digest!, revision_digest: latest.revision_digest,
@@ -229,6 +241,7 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
     requestError={requestError} accessDenied={accessDenied}
     onToggle={conceptKey => setSelectedConceptKeys(current => current.includes(conceptKey)
       ? current.filter(key => key !== conceptKey) : allKeys.filter(key => current.includes(key) || key === conceptKey))}
+    onSelectPublished={(conceptKey, selected) => void submit(false, { conceptKey, selected })}
     onToggleAll={checked => setSelectedConceptKeys(checked ? allKeys : [])}
     onPrepare={() => void submit()} onActivate={() => void submit()} onReplay={() => void submit(true)} onRefresh={() => {
       intent.current = null; setPending(false); setRequestError(false); void read();

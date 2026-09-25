@@ -6,7 +6,7 @@ import {
   type SignalTopicConsolidationActivationStatusV1
 } from "@noisia/query-engine/signal-topic-consolidation-activation-v1";
 
-type ActivationCommand = Extract<SignalTopicConsolidationActivationCommandV1, { action: "activate" }>;
+type ActivationCommand = Extract<SignalTopicConsolidationActivationCommandV1, { action: "activate" | "select" }>;
 export type WorkspaceTopicConsolidationActivationBodyV1 = ActivationCommand | {
   action: "prepare";
   revision_id: string;

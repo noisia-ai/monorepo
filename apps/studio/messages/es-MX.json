@@ -3217,6 +3217,7 @@
           "publish": "Publicar {count, number} en Signal",
           "openSignal": "Abrir Signal",
           "activeBody": "La revisión {revision, number} está activa con {count, number} conceptos seleccionados.",
+          "activeSelectionHint": "Activa o desactiva un concepto aquí para actualizar Signal al instante.",
           "stale": "Las menciones o el análisis cambiaron. Esta propuesta ya no se puede publicar; actualiza el análisis para generar una revisión vigente.",
           "loadError": "No se pudo comprobar el estado de publicación. Las acciones permanecen bloqueadas hasta actualizar.",
           "requestError": "No se pudo confirmar la solicitud. Comprueba la misma solicitud antes de intentar otra.",

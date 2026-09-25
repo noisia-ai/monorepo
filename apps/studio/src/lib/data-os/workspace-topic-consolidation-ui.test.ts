@@ -108,7 +108,8 @@ async function renderActivation(locale: "es-MX" | "en-US", current = activation,
   return renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(WorkspaceTopicConsolidationActivationCard, { value: current, selectedConceptKeys: selected,
-      signalHref: "/signal/alexa-plus/topics-narratives", onToggle: () => undefined, onToggleAll: () => undefined,
+      signalHref: "/signal/alexa-plus/topics-narratives", onToggle: () => undefined,
+      onSelectPublished: () => undefined, onToggleAll: () => undefined,
       onActivate: () => undefined, onPrepare: () => undefined, onReplay: () => undefined, onRefresh: () => undefined, ...overrides })));
 }
 
@@ -155,7 +156,9 @@ for (const locale of ["es-MX", "en-US"] as const) {
     const active = await renderActivation(locale, { ...activation, binding: { ...activation.binding, snapshot_id: uuid(4),
       legacy_generation_id: null, binding_revision: 1, selection_revision: 8, operation_id: uuid(5), selection: activeSelection }, active_revision: 2 });
     assert.match(active, /data-topic-activation-state="active"/u); assert.match(active, /href="\/signal\/alexa-plus\/topics-narratives"/u);
-    assert.doesNotMatch(active, /type="checkbox"|Publish 24|Publicar 24/u);
+    assert.equal((active.match(/type="checkbox"/g) ?? []).length, 24);
+    assert.ok(active.includes(locale === "es-MX" ? "actualizar Signal al instante" : "update Signal immediately"));
+    assert.doesNotMatch(active, /Publish 24|Publicar 24/u);
     const stale = await renderActivation(locale, { ...activation, revisions: [{ ...activationRevision, source_valid: false }] });
     assert.match(stale, /data-topic-activation-state="stale"/u); assert.doesNotMatch(stale, /Publish 24|Publicar 24/u);
     const replay = await renderActivation(locale, activation, catalog.map(item => item.concept_key), { pending: true });
@@ -195,6 +198,23 @@ test("free snapshot preparation sends only the validated revision identity", asy
   assert.deepEqual(await submitWorkspaceTopicConsolidationActivationIntentV1(intent, async (_url, init) => {
     assert.deepEqual(JSON.parse(String(init?.body)), body);
     assert.equal(new Headers(init?.headers).get("Idempotency-Key"), "prepare-activation-key");
+    return Response.json(receipt);
+  }), receipt);
+});
+
+test("published concept selection uses the existing exact binding and definition fences", async () => {
+  const concept = catalog[0]!;
+  const body = { action: "select" as const, term_key: concept.term_key, definition_digest: concept.definition_digest,
+    selected: false, expected_binding_revision: 1, expected_selection_revision: 8,
+    expected_snapshot_id: uuid(4), expected_legacy_generation_id: null };
+  const intent = workspaceTopicConsolidationActivationIntentV1({ workspace_id: workspaceId, body, previous: null,
+    createKey: () => "select-concept-key" });
+  const binding = { ...activation.binding, snapshot_id: uuid(4), legacy_generation_id: null,
+    binding_revision: 2, selection_revision: 9, operation_id: uuid(6) };
+  const receipt = { operation_id: uuid(6), binding, replayed: false };
+  assert.deepEqual(await submitWorkspaceTopicConsolidationActivationIntentV1(intent, async (_url, init) => {
+    assert.equal(new Headers(init?.headers).get("Idempotency-Key"), "select-concept-key");
+    assert.deepEqual(JSON.parse(String(init?.body)), body);
     return Response.json(receipt);
   }), receipt);
 });

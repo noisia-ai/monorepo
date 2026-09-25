@@ -3217,6 +3217,7 @@
           "publish": "Publish {count, number} to Signal",
           "openSignal": "Open Signal",
           "activeBody": "Revision {revision, number} is active with {count, number} selected concepts.",
+          "activeSelectionHint": "Turn a concept on or off here to update Signal immediately.",
           "stale": "The mentions or analysis changed. This proposal can no longer be published; update the analysis to create a current revision.",
           "loadError": "Publication status could not be checked. Actions remain blocked until it is refreshed.",
           "requestError": "The request could not be confirmed. Check the same request before trying another.",
