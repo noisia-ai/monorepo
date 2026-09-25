@@ -6,6 +6,7 @@ import type { SignalTopicConsolidationStatusV1 } from "@noisia/db";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { WorkspaceTopicEditorialControls } from "./WorkspaceTopicEditorialCard";
+import { WorkspaceTopicAtomicCensus } from "./WorkspaceTopicAtomicCensus";
 
 import { AdminStatus } from "@/components/admin/AdminWorkspacePrimitives";
 import { submitWorkspaceTopicConsolidationIntentV1, workspaceTopicConsolidationIntentV1,
@@ -103,8 +104,8 @@ export function WorkspaceTopicConsolidationCard({ value, disabled = false, onAct
   </section>;
 }
 
-export function WorkspaceTopicConsolidationControls({ workspaceId, disabled = false, onCatalogAvailable }: {
-  workspaceId: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
+export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref, disabled = false, onCatalogAvailable }: {
+  workspaceId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation");
   const [value, setValue] = useState<WorkspaceTopicConsolidationView | null>(null);
@@ -185,6 +186,9 @@ export function WorkspaceTopicConsolidationControls({ workspaceId, disabled = fa
     <WorkspaceTopicConsolidationCard disabled={disabled || submitting} onAction={() => void prepare()} value={value} />
     {value.status === "ready" && value.execution ? <WorkspaceTopicEditorialControls
       key={`${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId} numericExecutionId={value.execution.execution_id} disabled={disabled} onCatalogAvailable={onCatalogAvailable} /> : null}
+    {value.status === "ready" && value.execution ? <WorkspaceTopicAtomicCensus
+      key={`census:${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId}
+      numericExecutionId={value.execution.execution_id} mentionsHref={mentionsHref} /> : null}
     {error ? <p className="team-msg team-msg--error" role="alert">{t("requestError")}</p> : null}
     {loadError && !error ? <p className="team-msg team-msg--error" role="alert">{t("loadError")}</p> : null}
   </>;

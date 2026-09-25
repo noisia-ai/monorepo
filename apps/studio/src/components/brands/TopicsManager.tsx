@@ -312,7 +312,8 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
           ? <Link className="admin-button" href={dataHref} prefetch={false}>{t("actions.import")}</Link> : null}
     </section> : null}
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
-    <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId} onCatalogAvailable={refreshAvailableCatalog} />
+    <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId}
+      mentionsHref={`/signal/${encodeURIComponent(data.workspace.slug)}/mentions`} onCatalogAvailable={refreshAvailableCatalog} />
     <WorkspaceTopicConsolidationActivationControls disabled={editorDirty || busy !== null}
       signalHref={signalHref} workspaceId={workspaceId} />
     <section className="admin-section topics-manager__toolbar">
