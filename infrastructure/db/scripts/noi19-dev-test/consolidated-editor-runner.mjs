@@ -47,6 +47,10 @@ try {
     to_regclass('public.signal_topic_consolidation_decisions') IS NOT NULL decisions,
     to_regprocedure('public.prepare_signal_topic_consolidation_snapshot_v1(uuid,uuid,uuid,text)') IS NOT NULL prepare`)).rows[0];
   if (Object.values(signatures).some(value => value !== true)) throw Error('noi19_dev_test_schema_mismatch');
+  // Rehearse the additive publication fix in this transaction only. The
+  // schema fingerprint must return to its sealed value after physical rollback.
+  const publicationFix = await readFile(new URL('../../migrations/0185_signal_topic_consolidation_snapshot_binding.sql', import.meta.url), 'utf8');
+  await client.query(publicationFix); report.publication_fix_rehearsed = true;
   // The published Brand OS fixture uses a serializable semantic finalizer.
   // The outer physical transaction remains rollback-only READ COMMITTED.
   const nested = savepointQueryable(client, { allowSemanticFinalizer: true }), query = nested.query;

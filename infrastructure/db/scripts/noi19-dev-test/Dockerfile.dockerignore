@@ -19,6 +19,7 @@
 !infrastructure/db/migrations/signal-brand-context.synthetic.fixture.ts
 !infrastructure/db/migrations/signal-topic-editorial-renewal.synthetic.fixture.ts
 !infrastructure/db/migrations/signal-topic-consolidation-edition.assertions.ts
+!infrastructure/db/migrations/0185_signal_topic_consolidation_snapshot_binding.sql
 !infrastructure/db/scripts/
 !infrastructure/db/scripts/noi19-dev-test/
 !infrastructure/db/scripts/noi19-dev-test/**
