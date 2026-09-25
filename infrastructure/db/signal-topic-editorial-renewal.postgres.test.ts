@@ -140,7 +140,7 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
     let outer = false;
     try {
       await client.query('BEGIN ISOLATION LEVEL READ COMMITTED'); outer = true;
-      await client.query("SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL statement_timeout='120s'");
+      await client.query("SET LOCAL search_path=public,extensions,pg_temp; SET LOCAL statement_timeout='60s'");
       assert.equal((await client.query('SELECT count(*)::int count FROM organizations')).rows[0]?.count, 0);
       assert.equal((await client.query("SELECT to_regclass('public.signal_topic_editorial_renewals') value")).rows[0]?.value, null);
       assert.ok((await client.query("SELECT to_regprocedure('public.retry_signal_topic_editorial_execution_v1(uuid,uuid,uuid,text)') value")).rows[0]?.value);
@@ -151,6 +151,7 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       catch (error) {
         throw new Error(`synthetic_source_${(error as Error).message}_${JSON.stringify(tx.firstFailure)}`);
       }
+      console.log('renewal_fixture_ready');
       const { organization_id, actor_user_id, workspace_id } = fixture.identity;
       const untilMidnight = Number((await tx.query(`SELECT extract(epoch FROM (
         (((clock_timestamp() AT TIME ZONE 'America/Mexico_City')::date+1)::timestamp
@@ -214,6 +215,7 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       const settled = (await tx.query('SELECT settle_signal_topic_editorial_call_v1($1,$2) value',
         [reserved.call_id, reserved.attempt_token])).rows[0]?.value;
       assert.equal(settled?.status, 'settled');
+      console.log('renewal_screening_receipt_settled');
       validateSignalTopicEditorialScreeningCoverageV1(plan, [output]);
       const state = { contract_version: 'signal-topic-editorial-runner-v1', execution_key: executionId,
         plan_digest: plan.plan_digest, phase: 'global', screening_outputs: [output], global: null };
@@ -240,6 +242,7 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
         [executionId, lease.execution_token, 'topic_editorial_synthetic_timeout']);
       await tx.query('SELECT pg_sleep(greatest(0,extract(epoch FROM ((SELECT valid_until FROM signal_processing_policy_versions WHERE id=$1)-clock_timestamp()))+0.2))',
         [initialPolicy]);
+      console.log('renewal_policy_deadline_elapsed');
       await policy(120);
       const blocked = async () => (await tx.query('SELECT signal_topic_editorial_renewal_quote_v1($1,$2,$3,NULL) value',
         [workspace_id, actor_user_id, executionId])).rows[0]?.value;
@@ -260,10 +263,12 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       const fresh = await blocked(); assert.equal(fresh.status, 'ready_to_authorize');
       assert.equal(fresh.grant_cap_micro_usd, '30000000', 'same-day grant includes prior confirmed spend; it does not reset the owner cap');
       assert.equal(fresh.remaining_micro_usd, String(30_000_000 - Number(settled.settled_micro_usd)));
+      console.log('renewal_quote_ready');
       const key = randomUUID();
       const grant = (await tx.query('SELECT renew_signal_topic_editorial_execution_v1($1,$2,$3,$4,$5,$6) value',
         [workspace_id, actor_user_id, executionId, key, fresh.quote_reference, fresh.grant_cap_micro_usd])).rows[0]?.value;
       assert.equal(grant?.replayed, false);
+      console.log('renewal_grant_recorded');
       const replay = (await tx.query('SELECT renew_signal_topic_editorial_execution_v1($1,$2,$3,$4,$5,$6) value',
         [workspace_id, actor_user_id, executionId, key, fresh.quote_reference, fresh.grant_cap_micro_usd])).rows[0]?.value;
       assert.equal(replay?.renewal_id, grant.renewal_id); assert.equal(replay?.replayed, true);
@@ -273,6 +278,7 @@ test('0184 renews a synthetic paid owner after a real short deadline and preserv
       assert.equal(retry?.execution_id, executionId);
       const resumed = (await tx.query('SELECT claim_signal_topic_editorial_execution_v1($1,$2,300) value',
         [executionId, retry.worker_job_id])).rows[0]?.value;
+      console.log('renewal_same_owner_resumed');
       const third = (await tx.query('SELECT reserve_signal_topic_editorial_call_v1($1,$2,$3,true) value',
         [executionId, resumed.execution_token, review.request_digest])).rows[0]?.value;
       assert.equal(third?.status, 'reserved');
