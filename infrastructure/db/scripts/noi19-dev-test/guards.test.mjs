@@ -2,14 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
-import {guardEnvironment,guardBootstrapEnvironment,guardDns,guardDatabase,guardEmptyTables} from './target-guard.mjs';
+import {guardEnvironment,guardBootstrapEnvironment,guardBootstrapDatabase,guardDns,guardDatabase,guardEmptyTables} from './target-guard.mjs';
+import {identitySql} from './database-checks.mjs';
 const shipped=JSON.parse(await readFile(new URL('./target-seal.json',import.meta.url),'utf8'));
 // Invented IDs/fingerprint only for pure guard tests, never connection arguments.
 const seal={...shipped,runner_service_id:'00000000-0000-4000-8000-000000000001',system_identifier:'1234567890123456789',schema_sha256:'a'.repeat(64)};
 const env={RAILWAY_ENVIRONMENT_ID:seal.environment_id,RAILWAY_ENVIRONMENT_NAME:'dev-test',RAILWAY_SERVICE_ID:seal.runner_service_id,
  NOISIA_DEV_TEST_DATABASE_SERVICE_ID:seal.database_service_id,NOISIA_NOI19_PRIVATE_TEST_APPROVED:'true',
- DATABASE_URL:'postgresql://postgres:synthetic-password@pgvector.railway.internal:5432/railway'};
-const row={database:'railway',user:'postgres',address:'fd12:3456::1',port:5432,version:'170005',system_identifier:seal.system_identifier};
+ DATABASE_URL:'postgresql://noisia_dev:synthetic-password@pgvector.railway.internal:5432/noisia_dev_test'};
+const row={database:'noisia_dev_test',user:'noisia_dev',address:'fd12:3456::1',port:5432,version:'170005',system_identifier:seal.system_identifier};
 test('the mutating runner refuses an unsealed database even when environment/host match',()=>{
  assert.throws(()=>guardEnvironment(env,{...seal,system_identifier:null}),/target_unsealed/u);
  assert.throws(()=>guardEnvironment(env,{...seal,schema_sha256:null}),/target_unsealed/u);
@@ -17,11 +18,14 @@ test('the mutating runner refuses an unsealed database even when environment/hos
  assert.equal(guardBootstrapEnvironment(env,{...seal,system_identifier:null,schema_sha256:null}).host,seal.host);
 });
 test('private environment, runner, database service, URL database and role must all match',()=>{
- assert.equal(guardEnvironment(env,seal).database,'railway');
+ assert.equal(guardEnvironment(env,seal).database,'noisia_dev_test');
+ assert.equal(guardEnvironment(env,seal).user,'noisia_dev');
+ assert.throws(()=>guardEnvironment(env,{...seal,database:'railway'}),/seal_invalid/u);
+ assert.throws(()=>guardEnvironment(env,{...seal,user:'postgres'}),/seal_invalid/u);
  for(const key of ['RAILWAY_ENVIRONMENT_ID','RAILWAY_ENVIRONMENT_NAME','RAILWAY_SERVICE_ID','NOISIA_DEV_TEST_DATABASE_SERVICE_ID','NOISIA_NOI19_PRIVATE_TEST_APPROVED'])
   assert.throws(()=>guardEnvironment({...env,[key]:'wrong'},seal),/environment_mismatch/u);
  for(const url of [env.DATABASE_URL.replace('railway.internal','proxy.rlwy.net'),env.DATABASE_URL+'?host=evil.example.test',env.DATABASE_URL+'#secret',
-  env.DATABASE_URL.replace('/railway','/production'),env.DATABASE_URL.replace('postgres:','wrong:'),env.DATABASE_URL.replace(':5432',':6543'),
+  env.DATABASE_URL.replace('/noisia_dev_test','/production'),env.DATABASE_URL.replace('noisia_dev:','wrong:'),env.DATABASE_URL.replace(':5432',':6543'),
   env.DATABASE_URL.replace('postgresql:','https:'),'not-a-url'])
   assert.throws(()=>guardEnvironment({...env,DATABASE_URL:url},seal),/noi19_dev_test_/u);
 });
@@ -37,6 +41,16 @@ test('all DNS answers must be private; connected server must match pinned DNS an
  assert.throws(()=>guardDns([]),/dns_not_private/u);
  for(const [key,value] of Object.entries({database:'other',user:'other',address:'fd12:3456::2',port:6543,version:'160000',system_identifier:'9999999999999999999'}))
   assert.throws(()=>guardDatabase({...row,[key]:value},seal,[row.address]),/database_identity_mismatch/u);
+});
+test('identity query emits a host address for exact DNS matching without relaxing private target guards',()=>{
+ assert.match(identitySql,/host\(inet_server_addr\(\)\) address/u);
+ for(const address of ['fd12:3456::1','10.12.34.56']){
+  guardBootstrapDatabase({...row,address},seal,[address]);
+  guardDatabase({...row,address},seal,[address]);
+  const cidr=address+(address.includes(':')?'/128':'/32');
+  assert.throws(()=>guardBootstrapDatabase({...row,address:cidr},seal,[address]),/database_identity_mismatch/u);
+  assert.throws(()=>guardDatabase({...row,address:cidr},seal,[address]),/database_identity_mismatch/u);
+ }
 });
 test('an empty population is required for every public table, never just an empty chosen workspace',()=>{
  const rows=Array.from({length:269},(_,index)=>({name:`synthetic_${index}`,nonempty:false}));guardEmptyTables(rows);
@@ -55,15 +69,32 @@ test('checked-in entrypoints reject invented runtime identity before DNS/PG; std
 
 test('new imported gate requires its own approval and an explicit reviewed count; old count defaults to 269',async()=>{
  const {sealedTableCount,guardSignalImportedEnvironment}=await import('./target-guard.mjs');
- assert.equal(sealedTableCount(seal),269);
+ assert.equal(sealedTableCount({...seal,table_count:undefined}),269);
+ assert.equal(sealedTableCount(seal),299);
  assert.equal(sealedTableCount({...seal,table_count:300}),300);
  for(const count of [undefined,null,0,-1,1.5,'300',Number.MAX_SAFE_INTEGER+1])
   assert.throws(()=>guardSignalImportedEnvironment({...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:count}),/target_unsealed/u);
  assert.throws(()=>guardSignalImportedEnvironment(env,{...seal,table_count:300}),/environment_mismatch/u);
  assert.equal(guardSignalImportedEnvironment({...env,NOISIA_NOI19_PRIVATE_TEST_APPROVED:undefined,
-  NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:300}).database,'railway');
+  NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},{...seal,table_count:300}).database,'noisia_dev_test');
  assert.throws(()=>guardSignalImportedEnvironment({...env,NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED:'true'},
   {...seal,table_count:300,schema_sha256:null}),/target_unsealed/u);
+});
+
+test('consolidated editor rehearsal needs its own approval, sealed target, and no provider credentials',()=>{
+ const editorEnv={...env,NOISIA_NOI19_PRIVATE_TEST_APPROVED:undefined,
+  NOISIA_CONSOLIDATED_EDITOR_PRIVATE_TEST_APPROVED:'true'};
+ assert.equal(guardEnvironment(editorEnv,seal,'NOISIA_CONSOLIDATED_EDITOR_PRIVATE_TEST_APPROVED').database,'noisia_dev_test');
+ assert.throws(()=>guardEnvironment(env,seal,'NOISIA_CONSOLIDATED_EDITOR_PRIVATE_TEST_APPROVED'),/environment_mismatch/u);
+ assert.throws(()=>guardEnvironment({...editorEnv,ANTHROPIC_API_KEY:'synthetic'},seal,
+  'NOISIA_CONSOLIDATED_EDITOR_PRIVATE_TEST_APPROVED'),/connection_override|external_credentials_present/u);
+ const result=spawnSync(process.execPath,[new URL('consolidated-editor-runner.mjs',import.meta.url).pathname],
+  {env:{...editorEnv,DATABASE_URL:'do-not-print-editor-secret'},encoding:'utf8',timeout:5000});
+ assert.equal(result.status,1);
+ assert.doesNotMatch(result.stdout+result.stderr,/do-not-print-editor-secret|synthetic-password/u);
+ const report=JSON.parse(result.stdout);
+ assert.equal(report.remote_connected,false);
+ assert.equal(report.fixture_mutations_started,false);
 });
 
 test('read-only table inventory accepts newer schemas but mutation uses the exact sealed count',async()=>{

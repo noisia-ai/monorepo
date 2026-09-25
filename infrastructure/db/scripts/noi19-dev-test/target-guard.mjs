@@ -8,11 +8,11 @@ export function privateAddress(address){
 /** Seal is reviewed source, never command-line/body/environment input. Credentials
  * exist only in DATABASE_URL in memory. Every error is a fixed, secret-free code. */
 export function guardBootstrapEnvironment(env,seal,approvalKey='NOISIA_NOI19_PRIVATE_TEST_APPROVED'){
-  if(!['NOISIA_NOI19_PRIVATE_TEST_APPROVED','NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED'].includes(approvalKey))fail('environment_mismatch');
+  if(!['NOISIA_NOI19_PRIVATE_TEST_APPROVED','NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED','NOISIA_DEV_TEST_SCHEMA_UPGRADE_APPROVED','NOISIA_INTEREST_PREPARATION_PRIVATE_TEST_APPROVED','NOISIA_CONSOLIDATED_EDITOR_PRIVATE_TEST_APPROVED'].includes(approvalKey))fail('environment_mismatch');
   if(seal.environment_id!=='5bad359d-cfa4-4e8f-aa41-98e6f075375a'
     ||seal.database_service_id!=='8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0'
     ||seal.host!=='pgvector.railway.internal'||seal.port!==5432
-    ||seal.database!=='railway'||seal.user!=='postgres')fail('seal_invalid');
+    ||seal.database!=='noisia_dev_test'||seal.user!=='noisia_dev')fail('seal_invalid');
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(seal.runner_service_id??''))fail('target_unsealed');
   if(env.RAILWAY_ENVIRONMENT_ID!==seal.environment_id||env.RAILWAY_ENVIRONMENT_NAME!==seal.environment_name
     ||env.RAILWAY_SERVICE_ID!==seal.runner_service_id||env.NOISIA_DEV_TEST_DATABASE_SERVICE_ID!==seal.database_service_id
@@ -58,4 +58,20 @@ export function guardSignalImportedEnvironment(env,seal){
 }
 export function guardEmptyTables(rows,expectedCount=269){
   if(!Number.isSafeInteger(expectedCount)||expectedCount<1||rows.length!==expectedCount||rows.some(row=>row.nonempty!==false))fail('database_not_empty');
+}
+
+/** The 0183 rehearsal cannot reuse approval from another synthetic gate. */
+export function guardInterestPreparationEnvironment(env,seal){
+  if(sealedTableCount(seal,{requireExplicit:true})!==299)fail('schema_mismatch');
+  return guardEnvironment(env,seal,'NOISIA_INTEREST_PREPARATION_PRIVATE_TEST_APPROVED');
+}
+
+/** Positive fixture includes simulated receipts in the real ledgers, and is a
+ * distinct action from the earlier identity-only preflight. Both approvals are
+ * required; neither enables provider transports or a physical commit. */
+export function guardInterestPreparationPositiveMode(argv,env){
+  if(argv.length===0)return false;
+  if(argv.length!==1||argv[0]!=='--positive-preparation')fail('arguments_invalid');
+  if(env.NOISIA_INTEREST_PREPARATION_POSITIVE_APPROVED!=='true')fail('positive_approval_required');
+  return true;
 }

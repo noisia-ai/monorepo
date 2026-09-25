@@ -16,6 +16,9 @@
 !infrastructure/db/migrations/signal-client-workspace-entry.assertions.ts
 !infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts
 !infrastructure/db/migrations/signal-workspace-topic-projection.fixture.ts
+!infrastructure/db/migrations/signal-brand-context.synthetic.fixture.ts
+!infrastructure/db/migrations/signal-topic-editorial-renewal.synthetic.fixture.ts
+!infrastructure/db/migrations/signal-topic-consolidation-edition.assertions.ts
 !infrastructure/db/scripts/
 !infrastructure/db/scripts/noi19-dev-test/
 !infrastructure/db/scripts/noi19-dev-test/**
