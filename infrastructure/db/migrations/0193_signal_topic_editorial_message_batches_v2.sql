@@ -158,7 +158,10 @@ BEGIN
   seen:=array_append(seen,g.group_key);
  END LOOP;
  RETURN cardinality(seen)=r.expected_group_count;
-EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value OR numeric_value_out_of_range THEN RETURN false;
+-- Diagnostic-only during the private rollback rehearsal: preserve the SQLSTATE
+-- in a safe domain code instead of masking the source as a generic false.
+EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value OR numeric_value_out_of_range THEN
+ RAISE EXCEPTION 'topic_editorial_v2_plan_guard_exception_%',SQLSTATE;
 END $$;
 
 CREATE FUNCTION persist_signal_topic_editorial_batch_item_v2(target_batch uuid,target_token uuid,target_custom text,body text,body_sha text,storage_key text)
