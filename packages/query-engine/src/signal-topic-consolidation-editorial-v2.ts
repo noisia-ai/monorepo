@@ -5,6 +5,7 @@ import {
   type SignalTopicEditorialBrandContextV1,
   type SignalTopicEditorialScreeningGroupV1,
 } from "./signal-topic-consolidation-editorial-v1";
+import type { SignalTopicEditorialPreparedInputV1 } from "./signal-topic-consolidation-bridge-v1";
 
 export const SIGNAL_TOPIC_EDITORIAL_MODEL_V2 = "claude-sonnet-4-6" as const;
 // Model capability, not an editorial-length or experimental-budget restriction.
@@ -183,6 +184,40 @@ export function buildSignalTopicEditorialScreeningPlanV2(args:{
   const core={contract_version:"signal-topic-editorial-screening-plan-v2" as const,identity,
     expected_group_count:groups.length,requests};
   return {...core,plan_digest:sha(core)};
+}
+
+/** Promote the server-prepared corpus snapshot into the Batch contract without
+ * reloading evidence, fitting BERTopic, or trusting the browser. The V1 plan is
+ * checked as a lineage seal only; its Messages payload and identities are not
+ * reused for provider work. */
+export function buildSignalTopicEditorialBatchPlanFromPreparedInputV2(args:{
+  input:SignalTopicEditorialPreparedInputV1;run_id:string;
+}):SignalTopicEditorialScreeningPlanV2 {
+  const input=args.input;
+  if(!input||input.contract_version!=="signal-topic-editorial-prepared-input-v1"
+    ||!Array.isArray(input.groups)||!Array.isArray(input.root_lineage)
+    ||!input.plan||input.plan.contract_version!=="signal-topic-editorial-screening-plan-v1")
+    return fail("topic_editorial_v2_prepared_input_invalid");
+  const {input_digest,...header}=input;
+  if(!digestPattern.test(input_digest)||sha(header)!==input_digest
+    ||input.expected_group_count!==input.groups.length
+    ||input.plan.expected_group_count!==input.expected_group_count
+    ||input.plan.source_context_digest!==input.source_context_digest
+    ||input.plan.editorial_context_digest!==input.editorial_context_digest
+    ||input.plan.default_locale!==input.context.default_locale)
+    return fail("topic_editorial_v2_prepared_input_invalid");
+  const rebuiltV1=buildSignalTopicEditorialScreeningPlanV1({
+    expected_group_count:input.expected_group_count,
+    source_context_digest:input.source_context_digest,
+    editorial_context_digest:input.editorial_context_digest,
+    context:input.context,
+    groups:input.groups,
+    batch_size:input.plan.batch_size,
+  });
+  if(sha(rebuiltV1)!==sha(input.plan))return fail("topic_editorial_v2_prepared_input_invalid");
+  return buildSignalTopicEditorialScreeningPlanV2({workspace_id:input.workspace_id,run_id:args.run_id,
+    expected_group_count:input.expected_group_count,source_context_digest:input.source_context_digest,
+    editorial_context_digest:input.editorial_context_digest,context:input.context,groups:input.groups});
 }
 
 export function validateSignalTopicEditorialGroupRequestV2(request:SignalTopicEditorialGroupRequestV2):void {

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import test from "node:test";
-import {signalTopicEditorialDigestV1 as sha,type SignalTopicEditorialScreeningGroupV1} from "./signal-topic-consolidation-editorial-v1";
+import {buildSignalTopicEditorialScreeningPlanV1,signalTopicEditorialDigestV1 as sha,type SignalTopicEditorialScreeningGroupV1} from "./signal-topic-consolidation-editorial-v1";
 import {
   SIGNAL_TOPIC_EDITORIAL_MAX_RESULT_BYTES_V2,
+  buildSignalTopicEditorialBatchPlanFromPreparedInputV2,
   buildSignalTopicEditorialScreeningPlanV2,
   classifySignalTopicEditorialMessageResultV2,
   validateSignalTopicEditorialGroupOutputV2,
@@ -32,6 +33,17 @@ function group(index=0,text=`Con Alexa+ uso rutinas en casa 👩🏽‍💻 ${in
 }
 const planFor=(groups=[group()])=>buildSignalTopicEditorialScreeningPlanV2({workspace_id:id(70001),run_id:id(70002),
   expected_group_count:groups.length,source_context_digest:sha("source-context"),editorial_context_digest:sha(context),context,groups});
+function preparedInput(groups=[group(0),group(1)]) {
+  const source_context_digest=sha("source-context"),editorial_context_digest=sha(context);
+  const plan=buildSignalTopicEditorialScreeningPlanV1({expected_group_count:groups.length,source_context_digest,
+    editorial_context_digest,context,groups});
+  const header={contract_version:"signal-topic-editorial-prepared-input-v1" as const,workspace_id:id(70001),
+    source_execution_id:id(70002),census_digest:sha("census"),source_census_digest:sha("source-census"),
+    community_plan_digest:sha("communities"),source_context_digest,editorial_context_digest,context,
+    expected_group_count:groups.length,groups,root_lineage:groups.map(item=>({group_key:item.group_key,
+      group_digest:item.group_digest,roots:[{root_id:id(1),chunk_count:1,strength:null,assignment_digest:sha("assignment")}]})),plan};
+  return {...header,input_digest:sha(header)};
+}
 const outputFor=(request:SignalTopicEditorialGroupRequestV2):SignalTopicEditorialGroupOutputV2=>({
   contract_version:"signal-topic-editorial-group-output-v2",group_id:request.receipt.group_id,disposition:"topic",
   candidate:{label:"Rutinas con Alexa+",definition:"Uso del asistente para automatizar tareas en el hogar.",locale:"es-MX"},
@@ -58,6 +70,24 @@ test("V2 seals independent group requests for Message Batches and leaves V1 iden
   assert.deepEqual(schema.properties.candidate.properties.locale.enum,["es-MX"]);
   assert.deepEqual(schema.properties.cited_evidence_ids.items,{type:"string",enum:[request.receipt.evidence[0]!.evidence_id]});
   assert.equal(JSON.stringify(schema).includes("maxLength"),false);
+});
+
+test("prepared corpus input promotes every original group into the Batch plan without rebuilding source data",()=>{
+  const input=preparedInput(),plan=buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input,run_id:id(70002)});
+  validateSignalTopicEditorialScreeningPlanV2(plan);
+  assert.equal(plan.identity.workspace_id,input.workspace_id);
+  assert.equal(plan.identity.run_id,input.source_execution_id);
+  assert.equal(plan.expected_group_count,input.expected_group_count);
+  assert.deepEqual(plan.requests.map(item=>item.source_group.group_key),input.groups.map(item=>item.group_key).sort());
+  assert.deepEqual(plan.requests.map(item=>item.source_group.evidence[0]!.text),input.groups.map(item=>item.evidence[0]!.text).sort());
+  assert.notEqual(plan.plan_digest,input.plan.plan_digest);
+});
+
+test("prepared input promotion rejects changed corpus, context, or legacy request seals",()=>{
+  const input=preparedInput();
+  assert.throws(()=>buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input:{...input,groups:[group(8),...input.groups.slice(1)]},run_id:id(70002)}),/prepared_input_invalid/u);
+  assert.throws(()=>buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input:{...input,context:{...input.context,summary:"cambiado"}},run_id:id(70002)}),/prepared_input_invalid/u);
+  assert.throws(()=>buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input:{...input,plan:{...input.plan,plan_digest:sha("altered")}},run_id:id(70002)}),/prepared_input_invalid/u);
 });
 
 test("V2 preserves long paid editorial text and Unicode verbatim with original citation lineage",()=>{
