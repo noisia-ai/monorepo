@@ -84,7 +84,11 @@ try {
   report.table_count = 299; report.schema_sha256 = beforeSchema; report.status = 'passed';
 } catch (error) {
   report.error_code = fixedError(error);
-  if (/^(?:semantic_context|topic_editorial)_[a-z0-9_]{1,120}$/u.test(error?.code ?? error?.message ?? '')) report.domain_code = error.code ?? error.message;
+  // PostgreSQL supplies SQLSTATE in `code` and the safe, machine-readable
+  // domain failure in `message`; do not let SQLSTATE mask the latter.
+  const domainCode = [error?.message, error?.code].find(value =>
+    /^(?:semantic_context|topic_editorial|processing|signal_processing)_[a-z0-9_]{1,120}$/u.test(value ?? ''));
+  if (domainCode) report.domain_code = domainCode;
   report.failure_origin = failureOrigin(error);
   report.error_class = ['AssertionError', 'SignalTopicConsolidationContractError', 'Error'].includes(error?.name) ? error.name : 'other';
   if (report.stage === 'synthetic_source' && client && outer) {
