@@ -53,7 +53,9 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
  async function policy(version:1|2){
   const id=randomUUID();
   await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-   SELECT $1,$2,COALESCE(max(version),0)+1,clock_timestamp()-interval '1 second',clock_timestamp()+interval '1 hour','UTC',10000000000,$3
+   SELECT $1,$2,COALESCE(max(version),0)+1,clock_timestamp()-interval '1 second',clock_timestamp()+interval '1 hour',
+    COALESCE((SELECT budget_timezone FROM signal_processing_policy_versions WHERE organization_id=$2 AND status<>'draft' ORDER BY version DESC LIMIT 1),'America/Mexico_City'),
+    10000000000,$3
    FROM signal_processing_policy_versions WHERE organization_id=$2`,[id,organization_id,actor_user_id]);
   await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
    SELECT $1,'topic_consolidation','provider','anthropic','claude-sonnet-4-6',configuration,signal_semantic_context_digest_json_v2(configuration),$2,false
