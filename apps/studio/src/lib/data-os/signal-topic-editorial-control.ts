@@ -43,9 +43,11 @@ async function inspect(args: DbAccess, requestKey?: string): Promise<Inspection>
       FROM signal_topic_consolidation_executions n
       LEFT JOIN LATERAL(SELECT candidate.* FROM signal_topic_editorial_executions candidate
         WHERE candidate.numeric_run_id=n.consolidation_run_id AND candidate.workspace_id=n.workspace_id
+          AND candidate.plan->>'contract_version'='signal-topic-editorial-screening-plan-v1'
         ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1) e ON true
       LEFT JOIN signal_topic_editorial_request_keys k ON k.workspace_id=n.workspace_id AND k.actor_user_id=$2 AND k.idempotency_key=$4
       LEFT JOIN signal_topic_editorial_executions replay_e ON replay_e.id=k.execution_id AND replay_e.workspace_id=n.workspace_id
+        AND replay_e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v1'
       WHERE n.workspace_id=$1 AND n.id=$3 AND n.status='ready'`,
     [args.workspace_id, args.actor_user_id, args.numeric_execution_id, requestKey ?? null])).rows[0];
     await client.query("COMMIT");

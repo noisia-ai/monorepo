@@ -90,3 +90,4 @@ export * from "./signal-topic-editorial-materialization";
 
 export * from "./signal-topic-consolidation-activation";
 export * from "./signal-topic-consolidation-edition";
+export * from "./signal-topic-editorial-batch-v2";

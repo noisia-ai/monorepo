@@ -97,6 +97,22 @@ test('consolidated editor rehearsal needs its own approval, sealed target, and n
  assert.equal(report.fixture_mutations_started,false);
 });
 
+test('editorial Batch rehearsal needs separate approval and cannot inherit an earlier gate',()=>{
+ const batchEnv={...env,NOISIA_NOI19_PRIVATE_TEST_APPROVED:undefined,
+  NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED:'true'};
+ assert.equal(guardEnvironment(batchEnv,seal,'NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED').database,'noisia_dev_test');
+ assert.throws(()=>guardEnvironment(env,seal,'NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED'),/environment_mismatch/u);
+ assert.throws(()=>guardEnvironment({...batchEnv,ANTHROPIC_API_KEY:'synthetic'},seal,
+  'NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED'),/external_credentials_present/u);
+ const result=spawnSync(process.execPath,[new URL('editorial-batch-runner.mjs',import.meta.url).pathname],
+  {env:{...batchEnv,DATABASE_URL:'do-not-print-batch-secret'},encoding:'utf8',timeout:5000});
+ assert.equal(result.status,1);
+ assert.doesNotMatch(result.stdout+result.stderr,/do-not-print-batch-secret|synthetic-password/u);
+ const receipt=JSON.parse(result.stdout);
+ assert.equal(receipt.remote_connected,false);
+ assert.equal(receipt.fixture_mutations_started,false);
+});
+
 test('read-only table inventory accepts newer schemas but mutation uses the exact sealed count',async()=>{
  const {publicTables,tableEmptiness,verifyEmpty}=await import('./database-checks.mjs');
  let nonempty=false;

@@ -10,8 +10,7 @@ import {
   signalSemanticResolutionCustomIdV1
 } from "./signal-semantic-resolution-contract";
 
-const ANTHROPIC_API_ROOT = "https://api.anthropic.com/v1";
-const ANTHROPIC_VERSION = "2023-06-01";
+import { createAnthropicMessageBatchesClient } from "../providers/anthropic-message-batches";
 
 export type AnthropicBatchCountsV1 = {
   processing: number;
@@ -61,10 +60,7 @@ export async function createSignalSemanticResolutionMessageBatchV1(args: {
   if (args.mentions.length === 0) throw new Error("semantic_resolution_empty_provider_batch");
   const system = buildSignalSemanticResolutionSystemPromptV1(args.governedContext);
   const schema = buildSignalSemanticResolutionJsonSchemaV1(args.governedContext);
-  return anthropicRequest<AnthropicMessageBatchV1>("/messages/batches", {
-    method: "POST",
-    body: JSON.stringify({
-      requests: args.mentions.map((mention) => ({
+  return batchClient().create(args.mentions.map((mention) => ({
         custom_id: signalSemanticResolutionCustomIdV1(mention.mention_id),
         params: {
           model: args.model,
@@ -86,35 +82,26 @@ export async function createSignalSemanticResolutionMessageBatchV1(args: {
             }
           }
         }
-      }))
-    })
-  });
+      })));
 }
 
 export function getSignalSemanticResolutionMessageBatchV1(batchId: string) {
-  return anthropicRequest<AnthropicMessageBatchV1>(`/messages/batches/${encodeURIComponent(batchId)}`);
+  return batchClient().get(batchId);
 }
 
 export function cancelSignalSemanticResolutionMessageBatchV1(batchId:string){
-  return anthropicRequest<AnthropicMessageBatchV1>(
-    `/messages/batches/${encodeURIComponent(batchId)}/cancel`,{method:"POST"}
-  );
+  return batchClient().cancel(batchId);
 }
 
 export async function loadSignalSemanticResolutionMessageBatchResultsV1(
   batch: AnthropicMessageBatchV1
 ) {
   if (batch.processing_status !== "ended") throw new Error("semantic_resolution_provider_batch_not_ended");
-  const response = await fetch(
-    batch.results_url ?? `${ANTHROPIC_API_ROOT}/messages/batches/${encodeURIComponent(batch.id)}/results`,
-    { headers: anthropicHeaders() }
-  );
-  if (!response.ok) throw await anthropicHttpError(response);
-  const payload = await response.text();
-  return payload
-    .split(/\r?\n/u)
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as AnthropicBatchResultV1);
+  const results: AnthropicBatchResultV1[] = [];
+  for await (const { item } of batchClient().results(batch)) {
+    results.push(item as AnthropicBatchResultV1);
+  }
+  return results;
 }
 
 export function parseSignalSemanticResolutionBatchMessageTextV1(
@@ -185,29 +172,8 @@ export function signalSemanticResolutionBatchErrorCodeV1(
   return `semantic_resolution_provider_${normalized}`.slice(0, 120);
 }
 
-async function anthropicRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${ANTHROPIC_API_ROOT}${path}`, {
-    ...init,
-    headers: { ...anthropicHeaders(), ...(init?.headers ?? {}) }
-  });
-  if (!response.ok) throw await anthropicHttpError(response);
-  return await response.json() as T;
-}
-
-function anthropicHeaders() {
-  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY is required for semantic resolution.");
-  return {
-    "anthropic-version": ANTHROPIC_VERSION,
-    "anthropic-beta": "extended-cache-ttl-2025-04-11",
-    "content-type": "application/json",
-    "x-api-key": apiKey
-  };
-}
-
-async function anthropicHttpError(response: Response) {
-  const body = (await response.text()).slice(0, 800);
-  return new Error(`semantic_resolution_provider_http_${response.status}:${body}`);
+function batchClient() {
+  return createAnthropicMessageBatchesClient({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
 }
 
 function nonnegativeInteger(value: unknown) {

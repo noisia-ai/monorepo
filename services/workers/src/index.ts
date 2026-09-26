@@ -35,6 +35,7 @@ import { startSignalWorkspaceCorpusPreparationDrainerV1 } from "./workers/signal
 import { startSignalWorkspaceEmbeddingsDrainerV1 } from "./workers/signal-workspace-embeddings-outbox";
 import { startSignalTopicConsolidationOutboxDrainerV1 } from "./workers/signal-topic-consolidation-queue";
 import { startSignalTopicEditorialOutboxDrainerV1 } from "./workers/signal-topic-editorial-queue";
+import { startSignalTopicEditorialBatchDrainerV2 } from "./workers/signal-topic-editorial-batch-queue-v2";
 
 const startupEvidence = await assertUatWorkerStartup({
   database: pool,
@@ -61,6 +62,7 @@ const topicConsolidationDrainer = dataOsWorker ? startSignalTopicConsolidationOu
 // Opt-in by NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED; provider sends additionally
 // require their own flag and key. All flags default off.
 const topicEditorialDrainer = dataOsWorker ? startSignalTopicEditorialOutboxDrainerV1() : null;
+const topicEditorialBatchDrainer = dataOsWorker ? startSignalTopicEditorialBatchDrainerV2() : null;
 const semanticResolutionWorker = isDataOsWorkerEnabled()
   ? startSignalSemanticResolutionWorker()
   : null;
@@ -137,6 +139,7 @@ async function shutdown() {
   await workspaceEmbeddingsDrainer?.close();
   await topicConsolidationDrainer?.close();
   await topicEditorialDrainer?.close();
+  await topicEditorialBatchDrainer?.close();
   await workspaceImportOutboxDrainer.close();
   await semanticReviewProjectionOutboxDrainer?.close();
   await semanticResolutionChildOutboxDrainer?.close();

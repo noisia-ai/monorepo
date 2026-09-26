@@ -47,6 +47,7 @@ import { SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME, signalWorkspaceIncreme
 import { SIGNAL_TOPIC_CONSOLIDATION_NUMERIC_JOB_V1,
   signalTopicConsolidationNumericJobV1 } from "../workers/signal-topic-consolidation-queue";
 import { SIGNAL_TOPIC_EDITORIAL_JOB_V1, signalTopicEditorialJobV1 } from "../workers/signal-topic-editorial-queue";
+import { SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2, signalTopicEditorialBatchJobV2 } from "../workers/signal-topic-editorial-batch-queue-v2";
 
 export { redisConnection };
 
@@ -75,6 +76,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME) return signalWorkspaceIncrementalEditorialJobV1(job);
       if (job.name === SIGNAL_TOPIC_CONSOLIDATION_NUMERIC_JOB_V1) return signalTopicConsolidationNumericJobV1(job);
       if (job.name === SIGNAL_TOPIC_EDITORIAL_JOB_V1) return signalTopicEditorialJobV1(job);
+      if (job.name === SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2) return signalTopicEditorialBatchJobV2(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }

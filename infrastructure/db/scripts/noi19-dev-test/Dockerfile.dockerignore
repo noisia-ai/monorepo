@@ -20,6 +20,17 @@
 !infrastructure/db/migrations/signal-topic-editorial-renewal.synthetic.fixture.ts
 !infrastructure/db/migrations/signal-topic-consolidation-edition.assertions.ts
 !infrastructure/db/migrations/0185_signal_topic_consolidation_snapshot_binding.sql
+!infrastructure/db/migrations/signal-topic-editorial-batch-v2.synthetic.fixture.ts
+!infrastructure/db/migrations/0184_signal_topic_editorial_renewal.sql
+!infrastructure/db/migrations/0185_signal_topic_consolidation_snapshot_binding.sql
+!infrastructure/db/migrations/0186_signal_topic_editorial_unsupported_citation_quarantine.sql
+!infrastructure/db/migrations/0187_signal_topic_editorial_original_citation_fallback.sql
+!infrastructure/db/migrations/0188_signal_topic_editorial_truncated_screening.sql
+!infrastructure/db/migrations/0189_signal_topic_editorial_truncated_target_quarantine.sql
+!infrastructure/db/migrations/0190_signal_topic_editorial_truncated_state_guard_columns.sql
+!infrastructure/db/migrations/0191_signal_topic_editorial_paid_missing_group_recovery.sql
+!infrastructure/db/migrations/0192_signal_topic_editorial_truncated_duplicate_quarantine.sql
+!infrastructure/db/migrations/0193_signal_topic_editorial_message_batches_v2.sql
 !infrastructure/db/scripts/
 !infrastructure/db/scripts/noi19-dev-test/
 !infrastructure/db/scripts/noi19-dev-test/**

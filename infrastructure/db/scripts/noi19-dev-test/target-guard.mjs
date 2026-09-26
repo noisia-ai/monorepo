@@ -8,7 +8,7 @@ export function privateAddress(address){
 /** Seal is reviewed source, never command-line/body/environment input. Credentials
  * exist only in DATABASE_URL in memory. Every error is a fixed, secret-free code. */
 export function guardBootstrapEnvironment(env,seal,approvalKey='NOISIA_NOI19_PRIVATE_TEST_APPROVED'){
-  if(!['NOISIA_NOI19_PRIVATE_TEST_APPROVED','NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED','NOISIA_DEV_TEST_SCHEMA_UPGRADE_APPROVED','NOISIA_INTEREST_PREPARATION_PRIVATE_TEST_APPROVED','NOISIA_CONSOLIDATED_EDITOR_PRIVATE_TEST_APPROVED'].includes(approvalKey))fail('environment_mismatch');
+  if(!['NOISIA_NOI19_PRIVATE_TEST_APPROVED','NOISIA_SIGNAL_IMPORTED_PRIVATE_TEST_APPROVED','NOISIA_DEV_TEST_SCHEMA_UPGRADE_APPROVED','NOISIA_INTEREST_PREPARATION_PRIVATE_TEST_APPROVED','NOISIA_CONSOLIDATED_EDITOR_PRIVATE_TEST_APPROVED','NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED'].includes(approvalKey))fail('environment_mismatch');
   if(seal.environment_id!=='5bad359d-cfa4-4e8f-aa41-98e6f075375a'
     ||seal.database_service_id!=='8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0'
     ||seal.host!=='pgvector.railway.internal'||seal.port!==5432
