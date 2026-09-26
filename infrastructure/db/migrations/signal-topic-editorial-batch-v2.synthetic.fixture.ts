@@ -56,9 +56,14 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
   const badBase=Object.entries(base??{run_exists:false}).find(([,ok])=>ok!==true);
   if(badBase){
    if(badBase[0]==='plan_digest'){
-    const pg=(await query('SELECT signal_semantic_context_digest_v1($1::text) value',[planBody])).rows[0]?.value;
+    const digestRow=(await query(`SELECT signal_semantic_context_digest_v1($1::text) pg,
+     $2::jsonb->>'plan_digest' received,($2::jsonb->>'plan_digest')=signal_semantic_context_digest_v1($1::text) equal`,
+     [planBody,JSON.stringify(plan)])).rows[0];
+    const pg=digestRow?.pg,received=digestRow?.received;
     throw Object.assign(Error('topic_editorial_v2_fixture_plan_digest_invalid'),{
-     synthetic_digest_check:{js:plan.plan_digest,pg:String(pg),bytes:Buffer.byteLength(planBody)}
+     synthetic_digest_check:{js:plan.plan_digest,pg:String(pg),received:String(received),
+      locally_serialized:JSON.parse(JSON.stringify(plan)).plan_digest,
+      equal:digestRow?.equal,bytes:Buffer.byteLength(planBody)}
     });
    }
    throw Error(`topic_editorial_v2_fixture_${badBase[0]}_invalid`);

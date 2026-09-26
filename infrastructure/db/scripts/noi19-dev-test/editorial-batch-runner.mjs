@@ -93,6 +93,9 @@ try {
   const digestCheck=error?.synthetic_digest_check;
   if (digestCheck && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.js)
     && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.pg)
+    && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.received)
+    && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.locally_serialized)
+    && typeof digestCheck.equal==='boolean'
     && Number.isSafeInteger(digestCheck.bytes) && digestCheck.bytes>=0)
     report.synthetic_digest_check=digestCheck;
   report.failure_origin = failureOrigin(error);
