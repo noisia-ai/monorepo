@@ -86,6 +86,30 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
     [seed.scope.numeric_run_id,JSON.stringify(request),JSON.stringify(plan)])).rows[0] as Record<string,boolean>|undefined;
    const bad=Object.entries(check??{group_exists:false}).find(([,ok])=>ok!==true);
    if(bad)throw Error(`topic_editorial_v2_fixture_${bad[0]}_invalid`);
+   const detail=(await query(`WITH input AS (SELECT $2::jsonb request,$3::jsonb plan)
+    SELECT
+     (input.request->>'contract_version')='signal-topic-editorial-group-request-record-v2' AS contract_version,
+     (input.request->'identity')=(input.plan->'identity') AS identity,
+     (input.request->'configuration')=signal_topic_editorial_configuration_v2() AS configuration,
+     (input.request->'source_group'->>'group_key')=g.group_key AS group_key,
+     (input.request->'source_group'->>'group_digest')=g.group_digest AS projected_group_digest,
+     (input.request->'source_group'->>'source_dossier_digest')=g.dossier_digest AS projected_dossier_digest,
+     (input.request->'source_group'->>'dossier_digest')=(input.request->'receipt'->>'dossier_digest') AS dossier_digest,
+     (input.request->'source_group'->>'lane')=g.lane AS lane,
+     (input.request->'source_group'->>'root_count')=g.root_count::text AS root_count,
+     (input.request->'source_group'->>'chunk_count')=g.chunk_count::text AS chunk_count,
+     (input.request->'source_group'->'terms')=to_jsonb(g.terms) AS terms,
+     EXISTS(SELECT 1 FROM signal_topic_consolidation_community_members m
+       JOIN signal_topic_consolidation_communities c ON c.id=m.community_id
+       WHERE m.atomic_group_id=g.id AND c.community_key=input.request->'source_group'->>'community_key') AS community,
+     jsonb_array_length(input.request->'source_group'->'evidence')=jsonb_array_length(input.request->'receipt'->'evidence') AS evidence_count,
+     (input.request->'provider_request'->'params'->>'model')='claude-sonnet-4-6' AS model,
+     (input.request->'provider_request'->'params'->>'max_tokens')='128000' AS max_tokens
+    FROM signal_topic_atomic_groups g CROSS JOIN input
+    WHERE g.consolidation_run_id=$1 AND g.group_key=input.request->'receipt'->>'group_key'`,
+    [seed.scope.numeric_run_id,JSON.stringify(request),JSON.stringify(plan)])).rows[0] as Record<string,boolean>|undefined;
+   const badDetail=Object.entries(detail??{group_exists:false}).find(([,ok])=>ok!==true);
+   if(badDetail)throw Error(`topic_editorial_v2_fixture_${badDetail[0]}_invalid`);
   }
   throw Error('topic_editorial_v2_fixture_plan_invalid');
  }
