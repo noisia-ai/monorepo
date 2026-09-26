@@ -39,6 +39,7 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
  assert.equal(plan.requests.length,2);
  const {plan_digest:_,...unsignedPlan}=plan;
  const planBody=store.signalTopicEditorialCanonicalBodyV2(unsignedPlan);
+ assert.equal(hash(planBody),plan.plan_digest,'topic_editorial_v2_fixture_js_plan_digest_invalid');
  if((await query('SELECT signal_topic_editorial_plan_valid_v2($1,$2::jsonb,$3) value',
   [seed.scope.numeric_run_id,JSON.stringify(plan),planBody])).rows[0]?.value!==true){
   // Report only named invariant failures. Never emit Brand OS, mentions or
@@ -53,7 +54,13 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
    FROM signal_topic_consolidation_runs r WHERE r.id=$1`,
    [seed.scope.numeric_run_id,JSON.stringify(plan),planBody])).rows[0] as Record<string,boolean>|undefined;
   const badBase=Object.entries(base??{run_exists:false}).find(([,ok])=>ok!==true);
-  if(badBase)throw Error(`topic_editorial_v2_fixture_${badBase[0]}_invalid`);
+  if(badBase){
+   if(badBase[0]==='plan_digest'){
+    const pg=(await query('SELECT signal_semantic_context_digest_v1($1::text) value',[planBody])).rows[0]?.value;
+    throw Error(`topic_editorial_v2_fixture_plan_digest_invalid js=${plan.plan_digest} pg=${String(pg)} bytes=${Buffer.byteLength(planBody)}`);
+   }
+   throw Error(`topic_editorial_v2_fixture_${badBase[0]}_invalid`);
+  }
   for(const request of plan.requests){
    const check=(await query(`SELECT
     g.id IS NOT NULL AS group_exists,
