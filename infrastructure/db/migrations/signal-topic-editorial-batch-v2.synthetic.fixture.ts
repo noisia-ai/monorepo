@@ -128,7 +128,32 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
     [seed.scope.numeric_run_id,JSON.stringify(request)])).rows[0] as Record<string,boolean>|undefined;
    const badEvidence=Object.entries(evidence??{evidence_missing:false}).find(([,ok])=>ok!==true);
    if(badEvidence)throw Error(`topic_editorial_v2_fixture_${badEvidence[0]}_invalid`);
+   const provider=(await query(`WITH input AS (SELECT $1::jsonb request),
+    p AS (SELECT request->'provider_request'->'params' params,request->'receipt' receipt,request FROM input)
+    SELECT
+     jsonb_typeof(params->'messages')='array' AND jsonb_array_length(params->'messages')=1 AS message_count,
+     params->'messages'->0->>'role'='user' AS message_role,
+     jsonb_typeof(params->'messages'->0->'content')='string' AS message_content,
+     (SELECT count(DISTINCT value->>'ref_id') FROM jsonb_array_elements(receipt->'evidence'))=
+      jsonb_array_length(receipt->'evidence') AS distinct_refs,
+     (SELECT count(DISTINCT value->>'evidence_id') FROM jsonb_array_elements(receipt->'evidence'))=
+      jsonb_array_length(receipt->'evidence') AS distinct_evidence_ids,
+     request->'provider_request'->>'custom_id'='e2_'||substr(request->>'request_digest',8,60) AS custom_id,
+     params-ARRAY['model','max_tokens','thinking','system','output_config','messages']='{}'::jsonb AS params_keys,
+     params->'thinking'='{"type":"disabled"}'::jsonb AS thinking,
+     params->'output_config'=jsonb_build_object('effort','high','format',
+      jsonb_build_object('type','json_schema','schema',signal_topic_editorial_output_schema_v2(receipt))) AS output_config,
+     request->>'schema_digest'=signal_topic_editorial_digest_json_v1(signal_topic_editorial_output_schema_v2(receipt)) AS output_schema_digest,
+     params->>'model'='claude-sonnet-4-6' AS provider_model,
+     params->>'max_tokens'='128000' AS provider_max_tokens,
+     signal_semantic_context_digest_v1(to_json(params->>'system')::text)=
+      signal_topic_editorial_configuration_v2()->>'prompt_digest' AS system_digest
+    FROM p`,[JSON.stringify(request)])).rows[0] as Record<string,boolean>|undefined;
+   const badProvider=Object.entries(provider??{provider_missing:false}).find(([,ok])=>ok!==true);
+   if(badProvider)throw Error(`topic_editorial_v2_fixture_${badProvider[0]}_invalid`);
   }
+  assert.equal(new Set(plan.requests.map(request=>JSON.stringify(request.source_context))).size,1,
+   'topic_editorial_v2_fixture_context_consistency_invalid');
   throw Error('topic_editorial_v2_fixture_plan_invalid');
  }
  assert.deepEqual((await query('SELECT signal_topic_editorial_configuration_v2() value')).rows[0]!.value,SIGNAL_TOPIC_EDITORIAL_CONFIGURATION_V2);
