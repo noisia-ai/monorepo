@@ -64,3 +64,13 @@ test('0193 preserves historical functions, isolates trigger transport and revoke
  assert.match(migration,/source_call\.transport_version<>1/u);
  assert.doesNotMatch(migration,/CREATE TABLE.*(?:balance|cost|ledger)/u);
 });
+test('0193 resolves the import stage from a local variable, not a phantom table alias',()=>{
+ const start=migration.indexOf('CREATE FUNCTION finish_signal_topic_editorial_batch_import_v2(');
+ const end=migration.indexOf('\nEND $$;',start);
+ assert.ok(start>=0&&end>start);
+ const body=migration.slice(start,end);
+ assert.match(body,/\bv_stage\s+text;/u);
+ assert.match(body,/SET stage=v_stage WHERE execution_id=b\.execution_id/u);
+ assert.match(body,/\x27stage\x27,v_stage/u);
+ assert.doesNotMatch(body,/finish_signal_topic_editorial_batch_import_v2\.stage/u);
+});

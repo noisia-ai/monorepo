@@ -288,7 +288,7 @@ END $$;
 
 CREATE FUNCTION finish_signal_topic_editorial_batch_import_v2(target_batch uuid,target_token uuid) RETURNS jsonb LANGUAGE plpgsql
  SET search_path=public,extensions,pg_temp AS $$
-DECLARE b signal_topic_editorial_provider_batches_v2%ROWTYPE;accepted integer;failed integer;complete_count integer;expected_count integer;stage text;
+DECLARE b signal_topic_editorial_provider_batches_v2%ROWTYPE;accepted integer;failed integer;complete_count integer;expected_count integer;v_stage text;
 BEGIN
  SELECT * INTO b FROM signal_topic_editorial_provider_batches_v2 WHERE id=target_batch FOR UPDATE;
  PERFORM signal_topic_editorial_batch_lease_v2(b.id,target_token);
@@ -303,10 +303,10 @@ BEGIN
   UNION SELECT request_id FROM signal_topic_editorial_reused_decisions_v2 WHERE execution_id=b.execution_id
  ) complete;
  SELECT count(*) INTO expected_count FROM signal_topic_editorial_requests WHERE execution_id=b.execution_id;
- stage:=CASE WHEN complete_count=expected_count THEN 'review_pending' ELSE 'screening' END;
- UPDATE signal_topic_editorial_batch_owners_v2 SET stage=finish_signal_topic_editorial_batch_import_v2.stage WHERE execution_id=b.execution_id;
+ v_stage:=CASE WHEN complete_count=expected_count THEN 'review_pending' ELSE 'screening' END;
+ UPDATE signal_topic_editorial_batch_owners_v2 SET stage=v_stage WHERE execution_id=b.execution_id;
  UPDATE signal_topic_editorial_provider_batches_v2 SET state='applied',lease_token=NULL,lease_expires_at=NULL WHERE id=b.id;
- RETURN jsonb_build_object('state','applied','accepted',accepted,'failed',failed,'stage',stage);
+ RETURN jsonb_build_object('state','applied','accepted',accepted,'failed',failed,'stage',v_stage);
 END $$;
 
 CREATE FUNCTION signal_topic_editorial_batch_cost_v2(envelope jsonb) RETURNS bigint LANGUAGE plpgsql IMMUTABLE
