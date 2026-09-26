@@ -97,11 +97,10 @@ CREATE FUNCTION signal_topic_editorial_output_schema_v2(receipt jsonb) RETURNS j
 CREATE FUNCTION signal_topic_editorial_plan_valid_v2(target_run uuid,plan jsonb,canonical_body text) RETURNS boolean
  LANGUAGE plpgsql STABLE SET search_path=public,extensions,pg_temp AS $$
 DECLARE source jsonb;r signal_topic_consolidation_runs%ROWTYPE;item jsonb;g signal_topic_atomic_groups%ROWTYPE;
- projected jsonb;receipt jsonb;context jsonb;seen text[]:='{}';evidence jsonb;original jsonb;guard_stage text:='source';
+ projected jsonb;receipt jsonb;context jsonb;seen text[]:='{}';evidence jsonb;original jsonb;
 BEGIN
  SELECT * INTO r FROM signal_topic_consolidation_runs WHERE id=target_run;
  source:=signal_topic_editorial_source_v1(target_run);
- guard_stage:='plan_header';
  IF r.id IS NULL OR source IS NULL OR plan->>'contract_version' IS DISTINCT FROM 'signal-topic-editorial-screening-plan-v2'
   OR plan->'identity'->>'workspace_id' IS DISTINCT FROM r.workspace_id::text OR plan->'identity'->>'run_id' IS DISTINCT FROM target_run::text
   OR plan->'identity'->>'source_context_digest' IS DISTINCT FROM r.context_digest
@@ -111,10 +110,8 @@ BEGIN
   OR jsonb_array_length(plan->'requests')<>r.expected_group_count
   OR plan->>'expected_group_count' IS DISTINCT FROM r.expected_group_count::text THEN RETURN false;END IF;
  FOR item IN SELECT value FROM jsonb_array_elements(plan->'requests') LOOP
-  guard_stage:='group_lookup';
   receipt:=item->'receipt';projected:=item->'source_group';
   SELECT * INTO g FROM signal_topic_atomic_groups WHERE consolidation_run_id=target_run AND workspace_id=r.workspace_id AND group_key=receipt->>'group_key';
-  guard_stage:='group_invariants';
   IF g.id IS NULL OR g.group_key=ANY(seen) OR item->>'contract_version' IS DISTINCT FROM 'signal-topic-editorial-group-request-record-v2'
    OR item->'identity' IS DISTINCT FROM plan->'identity' OR item->'configuration' IS DISTINCT FROM signal_topic_editorial_configuration_v2()
    OR receipt->>'group_digest' IS DISTINCT FROM g.group_digest OR receipt->>'source_dossier_digest' IS DISTINCT FROM g.dossier_digest
@@ -128,14 +125,10 @@ BEGIN
     WHERE m.atomic_group_id=g.id AND c.community_key=projected->>'community_key')
    OR jsonb_typeof(projected->'evidence') IS DISTINCT FROM 'array' OR jsonb_typeof(receipt->'evidence') IS DISTINCT FROM 'array'
    OR jsonb_array_length(projected->'evidence')<>jsonb_array_length(receipt->'evidence') THEN RETURN false;END IF;
-  guard_stage:='context_consistency';
   IF context IS NULL THEN context:=item->'source_context';ELSIF item->'source_context' IS DISTINCT FROM context THEN RETURN false;END IF;
-  guard_stage:='context_digest';
   IF receipt->>'expected_locale' IS DISTINCT FROM context->>'default_locale'
    OR plan->'identity'->>'editorial_context_digest' IS DISTINCT FROM signal_topic_editorial_digest_json_v1(context) THEN RETURN false;END IF;
-  guard_stage:='evidence_array';
   FOR evidence IN SELECT value FROM jsonb_array_elements(projected->'evidence') LOOP
-   guard_stage:='evidence_provenance';
    IF NOT EXISTS(SELECT 1 FROM signal_topic_atomic_group_evidence e WHERE e.atomic_group_id=g.id AND e.ref_id=evidence->>'ref_id')
     OR NOT(g.dossier->'evidence' @> jsonb_build_array(evidence-'text'))
     OR signal_semantic_context_digest_v1(evidence->>'text') IS DISTINCT FROM evidence->>'chunk_sha256'
@@ -146,48 +139,29 @@ BEGIN
   -- the TypeScript contract before any IO. Re-parsing its nested JSON here adds
   -- a second, incompatible serializer without strengthening source provenance.
   -- Keep provider shape/configuration guards; the worker validates exact content.
-  guard_stage:='provider_messages_type';
   IF jsonb_typeof(item->'provider_request'->'params'->'messages') IS DISTINCT FROM 'array' THEN RETURN false;END IF;
-  guard_stage:='provider_messages_count';
   IF jsonb_array_length(item->'provider_request'->'params'->'messages')<>1 THEN RETURN false;END IF;
-  guard_stage:='provider_message_role';
   IF item->'provider_request'->'params'->'messages'->0->>'role' IS DISTINCT FROM 'user' THEN RETURN false;END IF;
-  guard_stage:='provider_message_content_type';
   IF jsonb_typeof(item->'provider_request'->'params'->'messages'->0->'content') IS DISTINCT FROM 'string' THEN RETURN false;END IF;
-  guard_stage:='provider_receipt_evidence_type';
   IF jsonb_typeof(receipt->'evidence') IS DISTINCT FROM 'array' THEN RETURN false;END IF;
-  guard_stage:='provider_evidence_ref_uniqueness';
   IF (SELECT count(DISTINCT value->>'ref_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence') THEN RETURN false;END IF;
-  guard_stage:='provider_evidence_id_uniqueness';
   IF (SELECT count(DISTINCT value->>'evidence_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence') THEN RETURN false;END IF;
-  guard_stage:='provider_custom_id';
   IF item->'provider_request'->>'custom_id' IS DISTINCT FROM 'e2_'||substr(item->>'request_digest',8,60) THEN RETURN false;END IF;
-  guard_stage:='provider_params_type';
   IF jsonb_typeof(item->'provider_request'->'params') IS DISTINCT FROM 'object' THEN RETURN false;END IF;
-  guard_stage:='provider_params_keys';
   IF EXISTS(SELECT 1 FROM jsonb_object_keys(item->'provider_request'->'params') key
     WHERE key NOT IN('model','max_tokens','thinking','system','output_config','messages'))
    OR (SELECT count(*) FROM jsonb_object_keys(item->'provider_request'->'params'))<>6 THEN RETURN false;END IF;
-  guard_stage:='provider_thinking';
   IF item->'provider_request'->'params'->'thinking' IS DISTINCT FROM '{"type":"disabled"}'::jsonb THEN RETURN false;END IF;
-  guard_stage:='provider_schema';
   IF item->'provider_request'->'params'->'output_config' IS DISTINCT FROM jsonb_build_object('effort','high','format',
     jsonb_build_object('type','json_schema','schema',signal_topic_editorial_output_schema_v2(receipt))) THEN RETURN false;END IF;
-  guard_stage:='provider_schema_digest';
   IF item->>'schema_digest' IS DISTINCT FROM signal_topic_editorial_digest_json_v1(signal_topic_editorial_output_schema_v2(receipt)) THEN RETURN false;END IF;
-  guard_stage:='provider_model';
   IF item->'provider_request'->'params'->>'model' IS DISTINCT FROM 'claude-sonnet-4-6'
    OR item->'provider_request'->'params'->>'max_tokens' IS DISTINCT FROM '128000' THEN RETURN false;END IF;
-  guard_stage:='provider_system_digest';
   IF signal_semantic_context_digest_v1(to_json(item->'provider_request'->'params'->>'system')::text) IS DISTINCT FROM
       signal_topic_editorial_configuration_v2()->>'prompt_digest' THEN RETURN false;END IF;
   seen:=array_append(seen,g.group_key);
  END LOOP;
  RETURN cardinality(seen)=r.expected_group_count;
--- Diagnostic-only during the private rollback rehearsal: preserve the SQLSTATE
--- in a safe domain code instead of masking the source as a generic false.
-EXCEPTION WHEN invalid_text_representation OR invalid_parameter_value OR numeric_value_out_of_range THEN
- RAISE EXCEPTION 'topic_editorial_v2_plan_guard_exception_%_%',guard_stage,lower(SQLSTATE);
 END $$;
 
 CREATE FUNCTION persist_signal_topic_editorial_batch_item_v2(target_batch uuid,target_token uuid,target_custom text,body text,body_sha text,storage_key text)

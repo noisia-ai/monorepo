@@ -117,6 +117,18 @@ try {
     } catch { /* A failed SQL transaction may not expose a diagnostic; rollback still wins. */ }
   }
   if (/^[A-Z0-9]{5}$/u.test(error?.code ?? '')) report.sqlstate = error.code;
+  // PostgreSQL object identifiers are useful for diagnosing a disposable
+  // synthetic fixture and cannot contain customer payloads. Keep this allowlist
+  // narrow: never emit the server message, SQL, parameters, or stack text.
+  for (const field of ['schema', 'table', 'routine']) {
+    if (/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/u.test(error?.[field] ?? '')) {
+      report[`pg_${field}`] = error[field];
+    }
+  }
+  if (!report.pg_table && report.sqlstate === '42P01') {
+    const missing = String(error?.message ?? '').match(/relation "([a-zA-Z_][a-zA-Z0-9_]{0,62})" does not exist/u);
+    if (missing) report.pg_table = missing[1];
+  }
   // A constraint identifier is safe to log and pinpoints invalid synthetic data.
   if (/^[a-zA-Z0-9_]{1,128}$/u.test(error?.constraint ?? '')) report.sql_constraint = error.constraint;
   report.status = report.fixture_mutations_started ? 'failed' : 'blocked'; process.exitCode = 1;
