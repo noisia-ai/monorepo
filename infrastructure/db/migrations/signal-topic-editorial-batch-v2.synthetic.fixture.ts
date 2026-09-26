@@ -40,8 +40,39 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
  const {plan_digest:_,...unsignedPlan}=plan;
  const planBody=store.signalTopicEditorialCanonicalBodyV2(unsignedPlan);
  if((await query('SELECT signal_topic_editorial_plan_valid_v2($1,$2::jsonb,$3) value',
-  [seed.scope.numeric_run_id,JSON.stringify(plan),planBody])).rows[0]?.value!==true)
+  [seed.scope.numeric_run_id,JSON.stringify(plan),planBody])).rows[0]?.value!==true){
+  // Report only named invariant failures. Never emit Brand OS, mentions or
+  // provider payloads from the private rollback runner.
+  const base=(await query(`SELECT
+   r.id IS NOT NULL AS run_exists,
+   signal_topic_editorial_source_v1($1) IS NOT NULL AS source_exists,
+   ($2::jsonb->'identity'->>'source_context_digest')=r.context_digest AS source_context,
+   ($2::jsonb-'plan_digest')=$3::jsonb AS canonical_body,
+   ($2::jsonb->>'plan_digest')=signal_semantic_context_digest_v1($3) AS plan_digest,
+   jsonb_array_length($2::jsonb->'requests')=r.expected_group_count AS group_count
+   FROM signal_topic_consolidation_runs r WHERE r.id=$1`,
+   [seed.scope.numeric_run_id,JSON.stringify(plan),planBody])).rows[0] as Record<string,boolean>|undefined;
+  const badBase=Object.entries(base??{run_exists:false}).find(([,ok])=>ok!==true);
+  if(badBase)throw Error(`topic_editorial_v2_fixture_${badBase[0]}_invalid`);
+  for(const request of plan.requests){
+   const check=(await query(`SELECT
+    g.id IS NOT NULL AS group_exists,
+    ($2::jsonb->'receipt'->>'group_digest')=g.group_digest AS group_digest,
+    ($2::jsonb->'receipt'->>'source_dossier_digest')=g.dossier_digest AS dossier_digest,
+    ($2::jsonb->'source_group'-ARRAY['group_key','lane','group_digest','source_dossier_digest','dossier_digest','community_key','root_count','chunk_count','terms','evidence'])
+     =(g.dossier-ARRAY['contract_version','evidence']) AS dossier_fields,
+    ($2::jsonb->'receipt'->>'expected_locale')=($2::jsonb->'source_context'->>'default_locale') AS locale,
+    ($3::jsonb->'identity'->>'editorial_context_digest')=signal_topic_editorial_digest_json_v1($2::jsonb->'source_context') AS context_digest,
+    ($2::jsonb->>'schema_digest')=signal_topic_editorial_digest_json_v1(signal_topic_editorial_output_schema_v2($2::jsonb->'receipt')) AS schema_digest,
+    signal_semantic_context_digest_v1(to_json($2::jsonb->'provider_request'->'params'->>'system')::text)
+     =signal_topic_editorial_configuration_v2()->>'prompt_digest' AS prompt_digest
+    FROM signal_topic_atomic_groups g WHERE g.consolidation_run_id=$1 AND g.group_key=$2::jsonb->'receipt'->>'group_key'`,
+    [seed.scope.numeric_run_id,JSON.stringify(request),JSON.stringify(plan)])).rows[0] as Record<string,boolean>|undefined;
+   const bad=Object.entries(check??{group_exists:false}).find(([,ok])=>ok!==true);
+   if(bad)throw Error(`topic_editorial_v2_fixture_${bad[0]}_invalid`);
+  }
   throw Error('topic_editorial_v2_fixture_plan_invalid');
+ }
  assert.deepEqual((await query('SELECT signal_topic_editorial_configuration_v2() value')).rows[0]!.value,SIGNAL_TOPIC_EDITORIAL_CONFIGURATION_V2);
  const {organization_id,actor_user_id,workspace_id}=seed.identity;
  const checked:string[]=[];
