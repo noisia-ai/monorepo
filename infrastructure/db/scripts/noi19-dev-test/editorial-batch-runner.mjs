@@ -96,6 +96,9 @@ try {
     && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.received)
     && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.locally_serialized)
     && typeof digestCheck.equal==='boolean'
+    && Object.keys(digestCheck.base_checks??{}).every(key=>
+      ['run_exists','source_exists','source_context','canonical_body','plan_digest','group_count'].includes(key)
+      && [true,false,null].includes(digestCheck.base_checks[key]))
     && Number.isSafeInteger(digestCheck.bytes) && digestCheck.bytes>=0)
     report.synthetic_digest_check=digestCheck;
   report.failure_origin = failureOrigin(error);

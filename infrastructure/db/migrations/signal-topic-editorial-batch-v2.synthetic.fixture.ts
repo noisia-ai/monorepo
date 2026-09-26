@@ -63,7 +63,7 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
     throw Object.assign(Error('topic_editorial_v2_fixture_plan_digest_invalid'),{
      synthetic_digest_check:{js:plan.plan_digest,pg:String(pg),received:String(received),
       locally_serialized:JSON.parse(JSON.stringify(plan)).plan_digest,
-      equal:digestRow?.equal,bytes:Buffer.byteLength(planBody)}
+      equal:digestRow?.equal,base_checks:base,bytes:Buffer.byteLength(planBody)}
     });
    }
    throw Error(`topic_editorial_v2_fixture_${badBase[0]}_invalid`);
