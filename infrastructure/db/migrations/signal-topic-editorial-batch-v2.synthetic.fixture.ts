@@ -37,6 +37,11 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
  const source=await loadSignalTopicConsolidationEditorialInputV1(seed.scope);
  const plan=buildSignalTopicEditorialScreeningPlanV2({...source,run_id:seed.scope.numeric_run_id});
  assert.equal(plan.requests.length,2);
+ const {plan_digest:_,...unsignedPlan}=plan;
+ const planBody=store.signalTopicEditorialCanonicalBodyV2(unsignedPlan);
+ if((await query('SELECT signal_topic_editorial_plan_valid_v2($1,$2::jsonb,$3) value',
+  [seed.scope.numeric_run_id,JSON.stringify(plan),planBody])).rows[0]?.value!==true)
+  throw Error('topic_editorial_v2_fixture_plan_invalid');
  assert.deepEqual((await query('SELECT signal_topic_editorial_configuration_v2() value')).rows[0]!.value,SIGNAL_TOPIC_EDITORIAL_CONFIGURATION_V2);
  const {organization_id,actor_user_id,workspace_id}=seed.identity;
  const checked:string[]=[];
