@@ -7,6 +7,7 @@ import https from 'node:https';
 import { guardEnvironment, guardDns, guardDatabase, sealedTableCount } from './target-guard.mjs';
 import { identitySql, publicTables, verifyEmpty, schemaFingerprint } from './database-checks.mjs';
 import { savepointQueryable } from './signal-imported-transaction.mjs';
+import { safePgDiagnostics } from './safe-pg-diagnostics.mjs';
 
 const seal = JSON.parse(await readFile(new URL('./target-seal.json', import.meta.url), 'utf8'));
 const report = { contract_version: 'editorial-message-batches-private-receipt-v2', status: 'blocked', stage: 'preflight',
@@ -116,21 +117,7 @@ try {
       }
     } catch { /* A failed SQL transaction may not expose a diagnostic; rollback still wins. */ }
   }
-  if (/^[A-Z0-9]{5}$/u.test(error?.code ?? '')) report.sqlstate = error.code;
-  // PostgreSQL object identifiers are useful for diagnosing a disposable
-  // synthetic fixture and cannot contain customer payloads. Keep this allowlist
-  // narrow: never emit the server message, SQL, parameters, or stack text.
-  for (const field of ['schema', 'table', 'routine']) {
-    if (/^[a-zA-Z_][a-zA-Z0-9_]{0,62}$/u.test(error?.[field] ?? '')) {
-      report[`pg_${field}`] = error[field];
-    }
-  }
-  if (!report.pg_table && report.sqlstate === '42P01') {
-    const missing = String(error?.message ?? '').match(/relation "([a-zA-Z_][a-zA-Z0-9_]{0,62})" does not exist/u);
-    if (missing) report.pg_table = missing[1];
-  }
-  // A constraint identifier is safe to log and pinpoints invalid synthetic data.
-  if (/^[a-zA-Z0-9_]{1,128}$/u.test(error?.constraint ?? '')) report.sql_constraint = error.constraint;
+  Object.assign(report, safePgDiagnostics(error));
   report.status = report.fixture_mutations_started ? 'failed' : 'blocked'; process.exitCode = 1;
 } finally {
   clearTimeout(deadline);

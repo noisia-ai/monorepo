@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
 import {guardEnvironment,guardBootstrapEnvironment,guardBootstrapDatabase,guardDns,guardDatabase,guardEmptyTables} from './target-guard.mjs';
 import {identitySql} from './database-checks.mjs';
+import {safePgDiagnostics} from './safe-pg-diagnostics.mjs';
 const shipped=JSON.parse(await readFile(new URL('./target-seal.json',import.meta.url),'utf8'));
 // Invented IDs/fingerprint only for pure guard tests, never connection arguments.
 const seal={...shipped,runner_service_id:'00000000-0000-4000-8000-000000000001',system_identifier:'1234567890123456789',schema_sha256:'a'.repeat(64)};
@@ -65,6 +66,22 @@ test('checked-in entrypoints reject invented runtime identity before DNS/PG; std
   assert.equal(result.status,1);assert.doesNotMatch(result.stdout+result.stderr,/never-print-this-secret|synthetic-password/u);
   if(name==='runner.mjs'){const receipt=JSON.parse(result.stdout);assert.equal(receipt.remote_executed,false);assert.match(receipt.error_code,/^noi19_dev_test_(target_unsealed|environment_mismatch)$/u);}
  }
+});
+
+test('private runner PostgreSQL diagnostics keep only allowlisted context and never echo SQL or payload',()=>{
+ const error={code:'42P01',message:'missing FROM-clause entry for table "topic"; query SELECT secret_payload',
+  where:'PL/pgSQL function admit_signal_topic_editorial_batch_v2(uuid,text) line 37 at SQL statement\nSQL statement "SELECT secret"',
+  position:'128',internalPosition:'bad',routine:'errorMissingRTE',constraint:'safe_constraint'};
+ const diagnostics=safePgDiagnostics(error);
+ assert.deepEqual(diagnostics,{sqlstate:'42P01',pg_routine:'errorMissingRTE',pg_position:128,pg_table:'topic',
+  pg_context:{function:'admit_signal_topic_editorial_batch_v2',line:37,operation:'SQL statement'},sql_constraint:'safe_constraint'});
+ assert.doesNotMatch(JSON.stringify(diagnostics),/secret_payload|SELECT|uuid|secret/u);
+});
+
+test('private runner ignores unsafe PostgreSQL names and malformed context',()=>{
+ const diagnostics=safePgDiagnostics({code:'bad',schema:'public; SELECT secret',table:'mentions',routine:'',position:'0',
+  where:'PL/pgSQL function private_fn(text) line nope at SQL statement'});
+ assert.deepEqual(diagnostics,{pg_table:'mentions'});
 });
 
 test('new imported gate requires its own approval and an explicit reviewed count; old count defaults to 269',async()=>{
