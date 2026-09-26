@@ -69,18 +69,20 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
    throw Error(`topic_editorial_v2_fixture_${badBase[0]}_invalid`);
   }
   for(const request of plan.requests){
-   const check=(await query(`SELECT
+   const check=(await query(`WITH input AS (SELECT $2::jsonb AS request,$3::jsonb AS plan)
+    SELECT
     g.id IS NOT NULL AS group_exists,
-    ($2::jsonb->'receipt'->>'group_digest')=g.group_digest AS group_digest,
-    ($2::jsonb->'receipt'->>'source_dossier_digest')=g.dossier_digest AS dossier_digest,
-    ($2::jsonb->'source_group'-ARRAY['group_key','lane','group_digest','source_dossier_digest','dossier_digest','community_key','root_count','chunk_count','terms','evidence'])
+    (input.request->'receipt'->>'group_digest')=g.group_digest AS group_digest,
+    (input.request->'receipt'->>'source_dossier_digest')=g.dossier_digest AS dossier_digest,
+    ((input.request->'source_group')-ARRAY['group_key','lane','group_digest','source_dossier_digest','dossier_digest','community_key','root_count','chunk_count','terms','evidence'])
      =(g.dossier-ARRAY['contract_version','evidence']) AS dossier_fields,
-    ($2::jsonb->'receipt'->>'expected_locale')=($2::jsonb->'source_context'->>'default_locale') AS locale,
-    ($3::jsonb->'identity'->>'editorial_context_digest')=signal_topic_editorial_digest_json_v1($2::jsonb->'source_context') AS context_digest,
-    ($2::jsonb->>'schema_digest')=signal_topic_editorial_digest_json_v1(signal_topic_editorial_output_schema_v2($2::jsonb->'receipt')) AS schema_digest,
-    signal_semantic_context_digest_v1(to_json($2::jsonb->'provider_request'->'params'->>'system')::text)
+    (input.request->'receipt'->>'expected_locale')=(input.request->'source_context'->>'default_locale') AS locale,
+    (input.plan->'identity'->>'editorial_context_digest')=signal_topic_editorial_digest_json_v1(input.request->'source_context') AS context_digest,
+    (input.request->>'schema_digest')=signal_topic_editorial_digest_json_v1(signal_topic_editorial_output_schema_v2(input.request->'receipt')) AS schema_digest,
+    signal_semantic_context_digest_v1(to_json(input.request->'provider_request'->'params'->>'system')::text)
      =signal_topic_editorial_configuration_v2()->>'prompt_digest' AS prompt_digest
-    FROM signal_topic_atomic_groups g WHERE g.consolidation_run_id=$1 AND g.group_key=($2::jsonb->'receipt'->>'group_key')`,
+    FROM signal_topic_atomic_groups g CROSS JOIN input
+    WHERE g.consolidation_run_id=$1 AND g.group_key=(input.request->'receipt'->>'group_key')`,
     [seed.scope.numeric_run_id,JSON.stringify(request),JSON.stringify(plan)])).rows[0] as Record<string,boolean>|undefined;
    const bad=Object.entries(check??{group_exists:false}).find(([,ok])=>ok!==true);
    if(bad)throw Error(`topic_editorial_v2_fixture_${bad[0]}_invalid`);
