@@ -146,17 +146,30 @@ BEGIN
   -- the TypeScript contract before any IO. Re-parsing its nested JSON here adds
   -- a second, incompatible serializer without strengthening source provenance.
   -- Keep provider shape/configuration guards; the worker validates exact content.
-  guard_stage:='provider_message_shape';
-  IF jsonb_typeof(item->'provider_request'->'params'->'messages') IS DISTINCT FROM 'array'
-   OR jsonb_array_length(item->'provider_request'->'params'->'messages')<>1
-   OR item->'provider_request'->'params'->'messages'->0->>'role' IS DISTINCT FROM 'user'
-   OR jsonb_typeof(item->'provider_request'->'params'->'messages'->0->'content') IS DISTINCT FROM 'string'
-   OR (SELECT count(DISTINCT value->>'ref_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence')
-   OR (SELECT count(DISTINCT value->>'evidence_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence')
-   OR item->'provider_request'->>'custom_id' IS DISTINCT FROM 'e2_'||substr(item->>'request_digest',8,60)
-   OR (item->'provider_request'->'params'-ARRAY['model','max_tokens','thinking','system','output_config','messages'])<>'{}'::jsonb
-   OR item->'provider_request'->'params'->'thinking' IS DISTINCT FROM '{"type":"disabled"}'::jsonb
-   THEN RETURN false;END IF;
+  guard_stage:='provider_messages_type';
+  IF jsonb_typeof(item->'provider_request'->'params'->'messages') IS DISTINCT FROM 'array' THEN RETURN false;END IF;
+  guard_stage:='provider_messages_count';
+  IF jsonb_array_length(item->'provider_request'->'params'->'messages')<>1 THEN RETURN false;END IF;
+  guard_stage:='provider_message_role';
+  IF item->'provider_request'->'params'->'messages'->0->>'role' IS DISTINCT FROM 'user' THEN RETURN false;END IF;
+  guard_stage:='provider_message_content_type';
+  IF jsonb_typeof(item->'provider_request'->'params'->'messages'->0->'content') IS DISTINCT FROM 'string' THEN RETURN false;END IF;
+  guard_stage:='provider_receipt_evidence_type';
+  IF jsonb_typeof(receipt->'evidence') IS DISTINCT FROM 'array' THEN RETURN false;END IF;
+  guard_stage:='provider_evidence_ref_uniqueness';
+  IF (SELECT count(DISTINCT value->>'ref_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence') THEN RETURN false;END IF;
+  guard_stage:='provider_evidence_id_uniqueness';
+  IF (SELECT count(DISTINCT value->>'evidence_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence') THEN RETURN false;END IF;
+  guard_stage:='provider_custom_id';
+  IF item->'provider_request'->>'custom_id' IS DISTINCT FROM 'e2_'||substr(item->>'request_digest',8,60) THEN RETURN false;END IF;
+  guard_stage:='provider_params_type';
+  IF jsonb_typeof(item->'provider_request'->'params') IS DISTINCT FROM 'object' THEN RETURN false;END IF;
+  guard_stage:='provider_params_keys';
+  IF EXISTS(SELECT 1 FROM jsonb_object_keys(item->'provider_request'->'params') key
+    WHERE key NOT IN('model','max_tokens','thinking','system','output_config','messages'))
+   OR (SELECT count(*) FROM jsonb_object_keys(item->'provider_request'->'params'))<>6 THEN RETURN false;END IF;
+  guard_stage:='provider_thinking';
+  IF item->'provider_request'->'params'->'thinking' IS DISTINCT FROM '{"type":"disabled"}'::jsonb THEN RETURN false;END IF;
   guard_stage:='provider_schema';
   IF item->'provider_request'->'params'->'output_config' IS DISTINCT FROM jsonb_build_object('effort','high','format',
     jsonb_build_object('type','json_schema','schema',signal_topic_editorial_output_schema_v2(receipt))) THEN RETURN false;END IF;
