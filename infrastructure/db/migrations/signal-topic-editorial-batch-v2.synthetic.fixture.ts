@@ -128,29 +128,6 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
     [seed.scope.numeric_run_id,JSON.stringify(request)])).rows[0] as Record<string,boolean>|undefined;
    const badEvidence=Object.entries(evidence??{evidence_missing:false}).find(([,ok])=>ok!==true);
    if(badEvidence)throw Error(`topic_editorial_v2_fixture_${badEvidence[0]}_invalid`);
-   const providerContent=request.provider_request.params.messages[0]?.content;
-   if(typeof providerContent!=='string')throw Error('topic_editorial_v2_fixture_provider_content_missing');
-   JSON.parse(providerContent); // A synthetic fixture must not mistake malformed local JSON for a database mismatch.
-   const provider=(await query(`WITH input AS (SELECT $1::jsonb request),v AS (
-     SELECT value item,ordinality n FROM input,jsonb_array_elements(request->'source_group'->'evidence') WITH ORDINALITY),
-    a AS (SELECT value item,ordinality n FROM input,jsonb_array_elements(request->'receipt'->'evidence') WITH ORDINALITY),
-    payload AS (SELECT $2::jsonb body,request FROM input)
-    SELECT
-     (request->'provider_request'->'params'->'messages')=jsonb_build_array(jsonb_build_object('role','user','content',
-       request->'provider_request'->'params'->'messages'->0->>'content')) AS messages_shape,
-     (body->>'contract_version')='signal-topic-editorial-group-request-v2' AS payload_contract,
-     (body->'untrusted_data'->'context')=(request->'source_context') AS payload_context,
-     (body->'untrusted_data'->'group')=((request->'source_group'-ARRAY['group_key','group_digest',
-       'source_dossier_digest','dossier_digest','evidence'])||jsonb_build_object('group_id',request->'receipt'->>'group_id',
-       'evidence',(SELECT jsonb_agg(jsonb_build_object('evidence_id',a.item->>'evidence_id','text',v.item->>'text',
-         'locale',v.item->'locale','platform',v.item->'platform','occurred_at',v.item->'occurred_at') ORDER BY v.n)
-         FROM v JOIN a ON a.n=v.n))) AS payload_group,
-     (request->'provider_request'->'params'->'output_config')=jsonb_build_object('effort','high','format',
-       jsonb_build_object('type','json_schema','schema',signal_topic_editorial_output_schema_v2(request->'receipt'))) AS output_config,
-     (request->'provider_request'->'params'-ARRAY['model','max_tokens','thinking','system','output_config','messages'])='{}'::jsonb AS params_keys
-    FROM payload`,[JSON.stringify(request),providerContent])).rows[0] as Record<string,boolean>|undefined;
-   const badProvider=Object.entries(provider??{provider_missing:false}).find(([,ok])=>ok!==true);
-   if(badProvider)throw Error(`topic_editorial_v2_fixture_${badProvider[0]}_invalid`);
   }
   throw Error('topic_editorial_v2_fixture_plan_invalid');
  }

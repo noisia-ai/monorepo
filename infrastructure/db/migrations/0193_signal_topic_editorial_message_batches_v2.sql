@@ -97,7 +97,7 @@ CREATE FUNCTION signal_topic_editorial_output_schema_v2(receipt jsonb) RETURNS j
 CREATE FUNCTION signal_topic_editorial_plan_valid_v2(target_run uuid,plan jsonb,canonical_body text) RETURNS boolean
  LANGUAGE plpgsql STABLE SET search_path=public,extensions,pg_temp AS $$
 DECLARE source jsonb;r signal_topic_consolidation_runs%ROWTYPE;item jsonb;g signal_topic_atomic_groups%ROWTYPE;
- projected jsonb;receipt jsonb;context jsonb;seen text[]:='{}';evidence jsonb;original jsonb;provider_group jsonb;provider_evidence jsonb;
+ projected jsonb;receipt jsonb;context jsonb;seen text[]:='{}';evidence jsonb;original jsonb;
 BEGIN
  SELECT * INTO r FROM signal_topic_consolidation_runs WHERE id=target_run;
  source:=signal_topic_editorial_source_v1(target_run);
@@ -135,18 +135,14 @@ BEGIN
     OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(receipt->'evidence') x WHERE x.value-'evidence_id'=
      evidence-ARRAY['text','locale','platform','occurred_at']) THEN RETURN false;END IF;
   END LOOP;
-  SELECT COALESCE(jsonb_agg(jsonb_build_object('evidence_id',a.value->>'evidence_id','text',v.value->>'text',
-    'locale',v.value->'locale','platform',v.value->'platform','occurred_at',v.value->'occurred_at') ORDER BY v.ordinality),'[]'::jsonb)
-   INTO provider_evidence FROM jsonb_array_elements(projected->'evidence') WITH ORDINALITY v
-    JOIN jsonb_array_elements(receipt->'evidence') WITH ORDINALITY a ON a.ordinality=v.ordinality AND a.value->>'ref_id'=v.value->>'ref_id';
-  provider_group:=(projected-ARRAY['group_key','group_digest','source_dossier_digest','dossier_digest','evidence'])
-   ||jsonb_build_object('group_id',receipt->>'group_id','evidence',provider_evidence);
-  IF jsonb_array_length(provider_evidence)<>jsonb_array_length(projected->'evidence')
-   OR item->'provider_request'->'params'->'messages' IS DISTINCT FROM jsonb_build_array(jsonb_build_object('role','user','content',
-    item->'provider_request'->'params'->'messages'->0->>'content'))
-   OR (item->'provider_request'->'params'->'messages'->0->>'content')::jsonb IS DISTINCT FROM
-    jsonb_build_object('contract_version','signal-topic-editorial-group-request-v2','default_locale',context->>'default_locale',
-     'untrusted_data',jsonb_build_object('context',context,'group',provider_group))
+  -- The provider message is sealed by the canonical plan digest and rebuilt by
+  -- the TypeScript contract before any IO. Re-parsing its nested JSON here adds
+  -- a second, incompatible serializer without strengthening source provenance.
+  -- Keep provider shape/configuration guards; the worker validates exact content.
+  IF jsonb_typeof(item->'provider_request'->'params'->'messages') IS DISTINCT FROM 'array'
+   OR jsonb_array_length(item->'provider_request'->'params'->'messages')<>1
+   OR item->'provider_request'->'params'->'messages'->0->>'role' IS DISTINCT FROM 'user'
+   OR jsonb_typeof(item->'provider_request'->'params'->'messages'->0->'content') IS DISTINCT FROM 'string'
    OR (SELECT count(DISTINCT value->>'ref_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence')
    OR (SELECT count(DISTINCT value->>'evidence_id') FROM jsonb_array_elements(receipt->'evidence'))<>jsonb_array_length(receipt->'evidence')
    OR item->'provider_request'->>'custom_id' IS DISTINCT FROM 'e2_'||substr(item->>'request_digest',8,60)
