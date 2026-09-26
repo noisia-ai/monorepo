@@ -80,7 +80,7 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
     ($2::jsonb->>'schema_digest')=signal_topic_editorial_digest_json_v1(signal_topic_editorial_output_schema_v2($2::jsonb->'receipt')) AS schema_digest,
     signal_semantic_context_digest_v1(to_json($2::jsonb->'provider_request'->'params'->>'system')::text)
      =signal_topic_editorial_configuration_v2()->>'prompt_digest' AS prompt_digest
-    FROM signal_topic_atomic_groups g WHERE g.consolidation_run_id=$1 AND g.group_key=$2::jsonb->'receipt'->>'group_key'`,
+    FROM signal_topic_atomic_groups g WHERE g.consolidation_run_id=$1 AND g.group_key=($2::jsonb->'receipt'->>'group_key')`,
     [seed.scope.numeric_run_id,JSON.stringify(request),JSON.stringify(plan)])).rows[0] as Record<string,boolean>|undefined;
    const bad=Object.entries(check??{group_exists:false}).find(([,ok])=>ok!==true);
    if(bad)throw Error(`topic_editorial_v2_fixture_${bad[0]}_invalid`);
