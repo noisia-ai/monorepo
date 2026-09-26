@@ -48,7 +48,7 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
    r.id IS NOT NULL AS run_exists,
    signal_topic_editorial_source_v1($1::uuid) IS NOT NULL AS source_exists,
    ($2::jsonb->'identity'->>'source_context_digest')=r.context_digest AS source_context,
-   ($2::jsonb-'plan_digest')=$3::jsonb AS canonical_body,
+   ($2::jsonb-'plan_digest')=($3::text)::jsonb AS canonical_body,
    ($2::jsonb->>'plan_digest')=signal_semantic_context_digest_v1($3::text) AS plan_digest,
    jsonb_array_length($2::jsonb->'requests')=r.expected_group_count AS group_count
    FROM signal_topic_consolidation_runs r WHERE r.id=$1`,
