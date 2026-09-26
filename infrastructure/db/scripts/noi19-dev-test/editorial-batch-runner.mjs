@@ -101,6 +101,8 @@ try {
     } catch { /* A failed SQL transaction may not expose a diagnostic; rollback still wins. */ }
   }
   if (/^[A-Z0-9]{5}$/u.test(error?.code ?? '')) report.sqlstate = error.code;
+  // A constraint identifier is safe to log and pinpoints invalid synthetic data.
+  if (/^[a-zA-Z0-9_]{1,128}$/u.test(error?.constraint ?? '')) report.sql_constraint = error.constraint;
   report.status = report.fixture_mutations_started ? 'failed' : 'blocked'; process.exitCode = 1;
 } finally {
   clearTimeout(deadline);
