@@ -57,7 +57,9 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
   if(badBase){
    if(badBase[0]==='plan_digest'){
     const pg=(await query('SELECT signal_semantic_context_digest_v1($1::text) value',[planBody])).rows[0]?.value;
-    throw Error(`topic_editorial_v2_fixture_plan_digest_invalid js=${plan.plan_digest} pg=${String(pg)} bytes=${Buffer.byteLength(planBody)}`);
+    throw Object.assign(Error('topic_editorial_v2_fixture_plan_digest_invalid'),{
+     synthetic_digest_check:{js:plan.plan_digest,pg:String(pg),bytes:Buffer.byteLength(planBody)}
+    });
    }
    throw Error(`topic_editorial_v2_fixture_${badBase[0]}_invalid`);
   }

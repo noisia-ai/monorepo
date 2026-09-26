@@ -89,6 +89,12 @@ try {
   const domainCode = [error?.message, error?.code].find(value =>
     /^(?:semantic_context|topic_editorial|processing|signal_processing)_[a-z0-9_]{1,120}$/u.test(value ?? ''));
   if (domainCode) report.domain_code = domainCode;
+  // Only opaque hashes of this disposable synthetic plan, never its content.
+  const digestCheck=error?.synthetic_digest_check;
+  if (digestCheck && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.js)
+    && /^sha256:[a-f0-9]{64}$/u.test(digestCheck.pg)
+    && Number.isSafeInteger(digestCheck.bytes) && digestCheck.bytes>=0)
+    report.synthetic_digest_check=digestCheck;
   report.failure_origin = failureOrigin(error);
   report.error_class = ['AssertionError', 'SignalTopicConsolidationContractError', 'Error'].includes(error?.name) ? error.name : 'other';
   if (report.stage === 'synthetic_source' && client && outer) {
