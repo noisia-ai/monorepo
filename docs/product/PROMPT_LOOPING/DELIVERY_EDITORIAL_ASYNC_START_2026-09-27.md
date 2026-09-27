@@ -15,6 +15,12 @@ En UAT, POST `start_editorial` para Alexa+ se quedaba en `quote_policy` y el pro
 
 SQL0198 `0198_signal_topic_editorial_async_start_v2.sql` se ensayó primero en una transacción con rollback sobre UAT. Se aplicó **una sola vez** a UAT el `2026-09-27T21:15:01.483Z`, SHA-256 `62c242da7454d5b80bacd8eb653d8bc9cebfbb506a78bae70b3fe8a19083d123`. Pre/post: seis admisiones, dos ejecuciones editoriales, 32 llamadas y 15 claves; cantidades idénticas. Verificados tabla de intenciones, función de cotización rápida y nueva capacidad de plan. SQL0197 ya estaba presente en UAT y **no se reaplicó**. La cotización rápida real con una entrada sin gasto devolvió `policy_required` en 959 ms.
 
-## Estado pendiente al redactar
+## Entrega y comprobación UAT
 
-El código está en checkout focal `codex/uat-editorial-polling-2026-09-27`; falta integrarlo y desplegar Worker→Studio en UAT, comprobar desde la interfaz, y decidir una nueva política de Alexa+ si se quiere enviar trabajo pagado. La política actual marcaba `valid_until=2026-09-27T05:59:00Z` y máximo diario/ejecución USD 30; no se renovó ni se hizo llamada a Claude en este corte. No declarar la consolidación de 1,652 grupos terminada por esta reparación.
+El corte de producto `b3d8241` se integró con la rama UAT en `a477ff0` y se envió a `codex/noisia-topic-results-uat-2026-09-06`. Worker `781c13b3-929f-40c1-a14d-ac7c131c63dd` y Studio `9a38e7fe-9922-48e8-82b3-fe9fe70ea1cb` quedaron ACTIVE; Worker arrancó su cola Data OS y Studio respondió a `/api/health`. Tras la integración, typecheck/lint 11/11 y pruebas focales Worker/DB 26/26 PASS; las 45 pruebas Studio habían pasado antes del merge sin conflictos.
+
+La prueba real desde Topics de Alexa+ en una pestaña nueva de UAT guardó la solicitud de inmediato, mostró «Se está validando todo el corpus y preparando la revisión» y después «Se necesita una política de gasto vigente». La intención pasó por el Worker en **3.620 s** (`attempt_count=1`, `error_code=policy_required`), en lugar del 502 a los 300 s. La verificación posterior de sólo lectura mantuvo **6 admisiones, 2 ejecuciones editoriales, 32 llamadas y 15 claves**: ningún cargo ni envío nuevo. Los 1,652 grupos originales y los resultados previos permanecen consultables. El loop continúa pausado.
+
+## Límite de esta comprobación y siguiente acción
+
+La política UAT de Alexa+ expiró en `2026-09-27T05:59:00Z`; tenía máximo diario y por ejecución de USD 30. Esta prueba **no** certifica la admisión del plan de 80.9 MB ni el envío de Message Batches: la cotización rápida detuvo el flujo antes de ambos. Para probarlos se necesita una política nueva y vigente con tope explícito, conservando el ledger y el modelo Sonnet 4.6. Después se debe reanudar la misma revisión desde Topics, comprobar admisión, envío, importación, cobertura de 1,652 grupos, consolidación y Signal. No declarar la consolidación completa por haber reparado el arranque.
