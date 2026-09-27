@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import type { Pool } from "pg";
 import { AtomicCensusReadError, loadWorkspaceTopicAtomicCensusPageV1 } from "./workspace-topic-atomic-census";
 
@@ -8,7 +9,10 @@ export const editorialOutcomePageLimitV2 = censusPageSize;
 
 export type EditorialOutcomeCategoryV2 = "topic" | "narrative" | "noise" | "insufficient" | "technical" | "pending";
 type Scope = { database?: Pick<Pool, "connect">; workspaceId: string; actorUserId: string; numericExecutionId: string;
-  editorialExecutionId?: string; offset: number; limit: number };
+  editorialExecutionId?: string; offset: number; limit: number;
+  onPhaseTiming?: (phase: EditorialOutcomeReadPhaseV2, durationMs: number) => void };
+export type EditorialOutcomeReadPhaseV2 = "db_connect" | "snapshot_start" | "census_access" | "owner_read"
+  | "outcomes_read" | "citations_read" | "citation_mapping" | "snapshot_commit" | "response_assembly";
 type OutcomeRow = { group_key: string; editorial_execution_id: string | null; category: EditorialOutcomeCategoryV2; phase: "consolidated" | "screening" | "pending";
   label: string | null; definition: string | null; locale: string | null; rationale: string | null; confidence: number | null;
   source: string | null; decision_digest: string | null; evidence_refs: string[]; error_code: string | null;
@@ -31,18 +35,29 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
     throw new EditorialOutcomeReadError("topic_editorial_outcomes_request_invalid", 422);
 
   const database = args.database ?? (await import("@/lib/db")).pool;
-  const client = await database.connect();
+  const measure = async <T,>(phase: EditorialOutcomeReadPhaseV2, operation: () => Promise<T>): Promise<T> => {
+    const startedAt = performance.now();
+    try { return await operation(); }
+    finally {
+      try { args.onPhaseTiming?.(phase, Math.max(0, Math.round(performance.now() - startedAt))); }
+      catch { /* Timing instrumentation must never change the read result. */ }
+    }
+  };
+  const client = await measure("db_connect", () => database.connect());
   try {
-    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    await measure("snapshot_start", async () => {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    });
     // Load the page census and its decisions from one repeatable-read snapshot,
     // so the revision banner cannot race a just-validated catalog.
     const pageNumber = Math.floor(args.offset / censusPageSize) + 1;
     const withinPageOffset = args.offset % censusPageSize;
-    const census = await loadWorkspaceTopicAtomicCensusPageV1({ queryable: client, workspaceId: args.workspaceId,
-      actorUserId: args.actorUserId, numericExecutionId: args.numericExecutionId, page: pageNumber, query: "" });
+    const census = await measure("census_access", () => loadWorkspaceTopicAtomicCensusPageV1({ queryable: client,
+      workspaceId: args.workspaceId, actorUserId: args.actorUserId, numericExecutionId: args.numericExecutionId,
+      page: pageNumber, query: "" }));
     const groups = census.items.slice(withinPageOffset, withinPageOffset + args.limit);
-    const ownerId = (await client.query<{ execution_id: string | null }>(`
+    const ownerId = (await measure("owner_read", () => client.query<{ execution_id: string | null }>(`
       SELECT editorial.id::text execution_id
       FROM signal_topic_consolidation_executions numeric
       LEFT JOIN LATERAL (
@@ -52,11 +67,11 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
         ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1
       ) editorial ON true
       WHERE numeric.workspace_id=$1::uuid AND numeric.id=$2::uuid AND numeric.status='ready'`,
-    [args.workspaceId, args.numericExecutionId])).rows[0]?.execution_id ?? null;
+    [args.workspaceId, args.numericExecutionId]))).rows[0]?.execution_id ?? null;
     if (args.editorialExecutionId !== undefined && ownerId !== args.editorialExecutionId)
       throw new EditorialOutcomeReadError("topic_editorial_outcomes_execution_stale", 409);
     const keys = groups.map(group => group.group_key);
-    const rows = (await client.query<OutcomeRow>(`
+    const rows = (await measure("outcomes_read", () => client.query<OutcomeRow>(`
       WITH numeric AS (
         SELECT execution.consolidation_run_id run_id
         FROM signal_topic_consolidation_executions execution
@@ -145,11 +160,11 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
       LEFT JOIN signal_topic_editorial_concepts concept ON concept.id=decision.concept_id
         AND concept.revision_id=decision.revision_id AND concept.workspace_id=$1::uuid
       LEFT JOIN screened ON screened.group_key=scope.group_key
-      ORDER BY scope.group_key COLLATE "C"`, [args.workspaceId, args.numericExecutionId, keys])).rows;
+      ORDER BY scope.group_key COLLATE "C"`, [args.workspaceId, args.numericExecutionId, keys]))).rows;
     const citationRequests = rows.flatMap(row => row.phase === "screening"
       ? [{ group_key: row.group_key, ref_ids: row.evidence_refs.slice(0, 2) }] : [])
       .filter(row => row.ref_ids.length > 0);
-    const citations = citationRequests.length ? (await client.query<CitationRow>(`
+    const citations = citationRequests.length ? (await measure("citations_read", () => client.query<CitationRow>(`
       WITH numeric AS (
         SELECT execution.consolidation_run_id run_id FROM signal_topic_consolidation_executions execution
         WHERE execution.workspace_id=$1::uuid AND execution.id=$2::uuid AND execution.status='ready'
@@ -179,44 +194,48 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
         AND (asset.chunks->'chunks'->evidence.chunk_index->>'end')::integer=evidence.end_offset
         AND asset.chunks->'chunks'->evidence.chunk_index->>'sha256'=evidence.chunk_sha256
       ORDER BY requested.group_key COLLATE "C",evidence.ref_id COLLATE "C"`,
-    [args.workspaceId, args.numericExecutionId, JSON.stringify(citationRequests)])).rows : [];
+    [args.workspaceId, args.numericExecutionId, JSON.stringify(citationRequests)]))).rows : [];
     const citationsByGroup = new Map<string, Array<{ id: string; root_id: string; text: string | null;
       source: string | null; kind: "cited" }>>();
-    for (const citation of citations) {
-      const text = citation.fragment && `sha256:${createHash("sha256").update(citation.fragment, "utf8").digest("hex")}` === citation.chunk_sha256
-        ? citation.fragment.slice(0, 360) : null;
-      const list = citationsByGroup.get(citation.group_key) ?? [];
-      if (list.length < 2) list.push({ id: citation.ref_id, root_id: citation.root_id, text, source: citation.platform, kind: "cited" });
-      citationsByGroup.set(citation.group_key, list);
-    }
-    await client.query("COMMIT");
-    const byKey = new Map(rows.map(row => [row.group_key, row]));
-    return {
-      contract_version: "workspace-topic-editorial-outcomes-page-v2" as const,
-      workspace_id: args.workspaceId, numeric_execution_id: args.numericExecutionId,
-      execution_id: ownerId,
-      total: census.total, offset: args.offset, limit: args.limit,
-      revision_status: census.revision_status,
-      items: groups.map(group => {
-        const result = byKey.get(group.group_key);
-        const category = result?.category ?? (group.disposition === "topic" ? "topic"
-          : group.disposition === "narrative" ? "narrative" : group.disposition === "noise" ? "noise"
-          : group.disposition === "unresolved" ? "insufficient" : "pending");
-        const consolidated = result?.phase === "consolidated" || census.revision_status === "validated" && group.disposition !== null;
-        const phase = consolidated ? "consolidated" : result?.phase ?? "pending";
-        const evidence = citationsByGroup.get(group.group_key)
-          ?? (phase === "consolidated" ? group.evidence.map(item => ({ id: item.root_id, root_id: item.root_id,
-            text: item.text, source: item.platform, kind: "representative" as const })) : []);
-        return { group_key: group.group_key, outcome: category, phase,
-          decision: category === "pending" || category === "technical" ? null : {
-            disposition: category === "insufficient" ? "unresolved" : category,
-            label: result?.label ?? group.concept_label, definition: result?.definition ?? null, locale: result?.locale ?? null,
-            rationale: result?.rationale ?? null, confidence: result?.confidence ?? null, source: result?.source ?? null,
-            digest: result?.decision_digest ?? null, cited_evidence_refs: result?.evidence_refs.slice(0, 2) ?? [] },
-          technical_error_code: category === "technical" ? result?.error_code ?? null : null,
-          transport_state: result?.transport_state ?? null, evidence };
-      }),
-    };
+    await measure("citation_mapping", async () => {
+      for (const citation of citations) {
+        const text = citation.fragment && `sha256:${createHash("sha256").update(citation.fragment, "utf8").digest("hex")}` === citation.chunk_sha256
+          ? citation.fragment.slice(0, 360) : null;
+        const list = citationsByGroup.get(citation.group_key) ?? [];
+        if (list.length < 2) list.push({ id: citation.ref_id, root_id: citation.root_id, text, source: citation.platform, kind: "cited" });
+        citationsByGroup.set(citation.group_key, list);
+      }
+    });
+    await measure("snapshot_commit", () => client.query("COMMIT").then(() => undefined));
+    return await measure("response_assembly", async () => {
+      const byKey = new Map(rows.map(row => [row.group_key, row]));
+      return {
+        contract_version: "workspace-topic-editorial-outcomes-page-v2" as const,
+        workspace_id: args.workspaceId, numeric_execution_id: args.numericExecutionId,
+        execution_id: ownerId,
+        total: census.total, offset: args.offset, limit: args.limit,
+        revision_status: census.revision_status,
+        items: groups.map(group => {
+          const result = byKey.get(group.group_key);
+          const category = result?.category ?? (group.disposition === "topic" ? "topic"
+            : group.disposition === "narrative" ? "narrative" : group.disposition === "noise" ? "noise"
+            : group.disposition === "unresolved" ? "insufficient" : "pending");
+          const consolidated = result?.phase === "consolidated" || census.revision_status === "validated" && group.disposition !== null;
+          const phase = consolidated ? "consolidated" : result?.phase ?? "pending";
+          const evidence = citationsByGroup.get(group.group_key)
+            ?? (phase === "consolidated" ? group.evidence.map(item => ({ id: item.root_id, root_id: item.root_id,
+              text: item.text, source: item.platform, kind: "representative" as const })) : []);
+          return { group_key: group.group_key, outcome: category, phase,
+            decision: category === "pending" || category === "technical" ? null : {
+              disposition: category === "insufficient" ? "unresolved" : category,
+              label: result?.label ?? group.concept_label, definition: result?.definition ?? null, locale: result?.locale ?? null,
+              rationale: result?.rationale ?? null, confidence: result?.confidence ?? null, source: result?.source ?? null,
+              digest: result?.decision_digest ?? null, cited_evidence_refs: result?.evidence_refs.slice(0, 2) ?? [] },
+            technical_error_code: category === "technical" ? result?.error_code ?? null : null,
+            transport_state: result?.transport_state ?? null, evidence };
+        }),
+      };
+    });
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
