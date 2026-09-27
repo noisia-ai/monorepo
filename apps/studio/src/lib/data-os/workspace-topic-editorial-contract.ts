@@ -38,7 +38,7 @@ export type WorkspaceTopicEditorialViewV1 = {
     completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string;
     confirmed_micro_usd: string; reserved_micro_usd: string; ambiguous_micro_usd: string };
   batch_progress?: { topics:number;narratives:number;noise:number;insufficient_evidence:number;technical_errors:number;pending:number;
-    batch_states:Record<string,number>;error_codes:string[] };
+    reused_results:number;batch_states:Record<string,number>;error_codes:string[] };
 };
 const natural = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
 const viewKeys = ["contract_version", "workspace_id", "numeric_execution_id", "status", "can_quote", "can_retry", "can_complete", "activation", "quote", "execution"];
@@ -70,8 +70,8 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
   } else if (["queued", "running", "failed", "review_ready", "completed"].includes(String(v.status))) return false;
   if ("batch_progress" in v) {
     const p=v.batch_progress;
-    if (!object(p) || !keys(p,["topics","narratives","noise","insufficient_evidence","technical_errors","pending","batch_states","error_codes"])
-      || ![p.topics,p.narratives,p.noise,p.insufficient_evidence,p.technical_errors,p.pending].every(natural)
+    if (!object(p) || !keys(p,["topics","narratives","noise","insufficient_evidence","technical_errors","pending","reused_results","batch_states","error_codes"])
+      || ![p.topics,p.narratives,p.noise,p.insufficient_evidence,p.technical_errors,p.pending,p.reused_results].every(natural)
       || !object(p.batch_states) || !Array.isArray(p.error_codes) || p.error_codes.length>100
       || p.error_codes.some(code=>typeof code!=="string"||code.length>120||!/^[a-z][a-z0-9_]+$/u.test(code))
       || Object.entries(p.batch_states).some(([state,count])=>!batchStates.includes(state)||!natural(count))) return false;

@@ -134,7 +134,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
     await client.query("SET LOCAL search_path=public,extensions,pg_temp");
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
     if(!caps.can_view)fail("processing_forbidden",403);
-    const row=(await client.query<{execution_id:string;status:string;owner_stage:string;expected:number;done:number;maximum:string;confirmed:string;reserved:string;ambiguous:string;materialized:boolean;
+    const row=(await client.query<{execution_id:string;status:string;owner_stage:string;expected:number;done:number;reused_results:number;maximum:string;confirmed:string;reserved:string;ambiguous:string;materialized:boolean;
       topic:number;narrative:number;noise:number;insufficient:number;technical:number;pending:number;batch_states:Record<string,number>;error_codes:string[]}>(`
       WITH numeric AS (
         SELECT consolidation_run_id FROM signal_topic_consolidation_executions
@@ -169,6 +169,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
         (SELECT count(*)::integer FROM unit_outcomes u WHERE u.reused OR u.validation->>'status'='accepted'
           OR u.validation->>'status'='invalid_message' OR u.outcome IN('errored','canceled','expired','submission_rejected')
           OR u.call_status='settled' AND u.validation IS NULL) done,
+        (SELECT count(*)::integer FROM unit_outcomes u WHERE u.reused) reused_results,
         (SELECT count(*)::integer FROM unit_outcomes u WHERE (u.reused OR u.validation->>'status'='accepted')
           AND COALESCE(u.reused_disposition,u.validation->'decision'->>'disposition')='topic') topic,
         (SELECT count(*)::integer FROM unit_outcomes u WHERE (u.reused OR u.validation->>'status'='accepted')
@@ -215,7 +216,8 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
         completed_screening_count:row.done,expected_screening_count:row.expected,maximum_micro_usd:row.maximum,
         confirmed_micro_usd:row.confirmed,reserved_micro_usd:row.reserved,ambiguous_micro_usd:row.ambiguous},
       batch_progress:{topics:row.topic,narratives:row.narrative,noise:row.noise,insufficient_evidence:row.insufficient,
-        technical_errors:row.technical,pending:row.pending,batch_states:row.batch_states,error_codes:row.error_codes}};
+        technical_errors:row.technical,pending:row.pending,reused_results:row.reused_results,
+        batch_states:row.batch_states,error_codes:row.error_codes}};
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
   finally{client.release();}
 }

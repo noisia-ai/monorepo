@@ -45,6 +45,13 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
             {value.batch_progress.error_codes.length ? <p>{t("outcomes.errorCodes", { codes: value.batch_progress.error_codes.join(", ") })}</p> : null}
           </div> : null}
           {preparationFailed ? <p role="alert" className="team-msg team-msg--error">{t("preparationFailed")}</p> : null}
+          {preparationFailed && value.batch_progress.reused_results > 0 ? <p role="status">{t("reusedPreparationResults", {
+            count: value.batch_progress.reused_results
+          })}</p> : null}
+          {preparationFailed && Object.values(value.batch_progress.batch_states).some(count => count > 0) ? <p role="status">{t("savedPreparationManifests", {
+            count: Object.values(value.batch_progress.batch_states).reduce((total, count) => total + count, 0)
+          })}</p> : null}
+          {preparationFailed ? <p role="note">{t("preparationRetryBehavior")}</p> : null}
           {value.batch_progress.pending > 0 && !preparationFailed
             ? <p role="status">{t(preparing ? "outcomes.preparing" : "outcomes.resume")}</p> : null}
         </> : null}

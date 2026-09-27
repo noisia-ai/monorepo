@@ -459,11 +459,16 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: a durable V2 
       expected_screening_count: 1652, maximum_micro_usd: "500000000", confirmed_micro_usd: "0",
       reserved_micro_usd: "0", ambiguous_micro_usd: "0" },
     batch_progress: { topics: 0, narratives: 0, noise: 0, insufficient_evidence: 0, technical_errors: 0, pending: 1652,
-      batch_states: {}, error_codes: ["topic_editorial_batch_preparation_failed"] } };
+      reused_results: 3, batch_states: { prepared: 2 }, error_codes: ["topic_editorial_batch_preparation_failed"] } };
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(WorkspaceTopicEditorialCard, { value: failedPreparation, onRetry: () => {} })));
   assert.match(html, locale === "es-MX" ? /La preparación automática se detuvo/u : /Automatic preparation stopped/u);
+  assert.match(html, locale === "es-MX" ? /no registra con precisión qué paso local se detuvo/u : /does not record exactly which local step stopped/u);
+  assert.match(html, locale === "es-MX" ? /3 decisiones compatibles reutilizadas/u : /3 compatible decisions reused/u);
+  assert.match(html, locale === "es-MX" ? /2 manifiestos de lote guardados/u : /2 saved batch manifests/u);
+  assert.match(html, locale === "es-MX" ? /nueva clave de solicitud/u : /new request key/u);
+  assert.match(html, locale === "es-MX" ? /No crea otra admisión ni hace una llamada al proveedor/u : /does not create another admission or call the provider/u);
   assert.match(html, locale === "es-MX" ? /Reintentar preparación/u : /Retry preparation/u);
   assert.doesNotMatch(html, /renovación del permiso|renew spending authority/iu);
   assert.doesNotMatch(html, /continúa desde los manifiestos|continues from saved manifests/iu);
@@ -518,7 +523,7 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progres
       expected_screening_count: 5, maximum_micro_usd: "1000000000", confirmed_micro_usd: "1000",
       reserved_micro_usd: "250", ambiguous_micro_usd: "0" },
     batch_progress: { topics: 1, narratives: 1, noise: 1, insufficient_evidence: 0, technical_errors: 1,
-      pending: 1, batch_states: { running: 1, prepared: 1 }, error_codes: ["topic_editorial_v2_output_invalid"] } };
+      pending: 1, reused_results: 0, batch_states: { running: 1, prepared: 1 }, error_codes: ["topic_editorial_v2_output_invalid"] } };
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(WorkspaceTopicEditorialCard, { value: running, workspaceId: workspace, numericExecutionId: numeric,
@@ -538,7 +543,7 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: empty V2 mani
     execution: { execution_id: execution, status: "queued", completed_screening_count: 0, expected_screening_count: 2,
       maximum_micro_usd: "1000000", confirmed_micro_usd: "0", reserved_micro_usd: "0", ambiguous_micro_usd: "0" },
     batch_progress: { topics: 0, narratives: 0, noise: 0, insufficient_evidence: 0, technical_errors: 0, pending: 2,
-      batch_states: {}, error_codes: [] } };
+      reused_results: 0, batch_states: {}, error_codes: [] } };
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(WorkspaceTopicEditorialCard, { value: preparing, onRefresh: () => {} })));
