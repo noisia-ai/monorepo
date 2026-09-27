@@ -37,7 +37,7 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
         title={t("title")}
       />
       <BrandMonitoringJourney brandId={id} current="topics" />
-      <TopicsManager brandId={id} initial={initial} workspaceId={workspace.id} />
+      <TopicsManager brandId={id} initial={initial} workspaceId={workspace.id} actorId={session.appUser.id} />
     </div>
   );
 }

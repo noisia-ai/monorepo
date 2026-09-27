@@ -50,13 +50,13 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.equal((html.match(/aria-current="step"/gu) ?? []).length, 1);
   });
   test(`${locale}: Topics keeps draft authoring but hides processing for server-incapable client`, () => {
-    const html = render(<TopicsManager brandId={entry.brandId} workspaceId={entry.workspaceId} initial={catalog}
+    const html = render(<TopicsManager brandId={entry.brandId} workspaceId={entry.workspaceId} actorId="00000000-0000-4000-8000-000000000001" initial={catalog}
       requestScope={entry.requestScope} navigation={entry.navigation} />);
     assert.ok(html.includes(`href="${entry.navigation.dataHref}"`));
     assert.ok(html.includes(messages.AdminWorkspace.topics.actions.create));
     assert.doesNotMatch(html, /data-analysis-receipt|data-incremental-editorial|\/studio|admin-topic-analysis/u);
     assert.ok(!html.includes(messages.AdminWorkspace.topics.actions.search));
-    const denied = render(<TopicsManager brandId={entry.brandId} workspaceId={entry.workspaceId} initial={{ ...catalog,
+    const denied = render(<TopicsManager brandId={entry.brandId} workspaceId={entry.workspaceId} actorId="00000000-0000-4000-8000-000000000001" initial={{ ...catalog,
       capabilities: { can_view: false, can_edit: false, can_execute: false, can_adopt: false,
         can_request_processing: false } }} requestScope={entry.requestScope} navigation={entry.navigation} />);
     assert.match(denied, /role="alert"/u); assert.doesNotMatch(denied, /<input|<button/u);

@@ -104,8 +104,8 @@ export function WorkspaceTopicConsolidationCard({ value, disabled = false, onAct
   </section>;
 }
 
-export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref, disabled = false, onCatalogAvailable, onGroupCount }: {
-  workspaceId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
+export function WorkspaceTopicConsolidationControls({ workspaceId, actorId, mentionsHref, disabled = false, onCatalogAvailable, onGroupCount }: {
+  workspaceId: string; actorId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
   onGroupCount?: (count: number) => void;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation");
@@ -189,7 +189,7 @@ export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref,
   return <>
     <WorkspaceTopicConsolidationCard disabled={disabled || submitting} onAction={() => void prepare()} value={value} />
     {value.status === "ready" && value.execution ? <WorkspaceTopicEditorialControls
-      key={`${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId} numericExecutionId={value.execution.execution_id}
+      key={`${actorId}:${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId} actorId={actorId} numericExecutionId={value.execution.execution_id}
       mentionsHref={mentionsHref} disabled={disabled} onCatalogAvailable={onCatalogAvailable} /> : null}
     {value.status === "ready" && value.execution ? <WorkspaceTopicAtomicCensus
       key={`census:${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId}

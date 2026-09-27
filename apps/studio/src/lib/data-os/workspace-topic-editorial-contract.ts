@@ -86,6 +86,20 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
 export type WorkspaceTopicEditorialIntentV1 = { workspace_id: string; key: string; body: WorkspaceTopicEditorialCommandV1 };
 export type WorkspaceTopicEditorialReceiptV1 = { contract_version: "workspace-topic-editorial-receipt-v1"; workspace_id: string;
   action: WorkspaceTopicEditorialCommandV1["action"]; numeric_execution_id: string; execution_id: string; idempotency_key: string; replayed: boolean; activation: "not_activated" };
+export function workspaceTopicEditorialIntentStorageKeyV1(workspace: string, numeric: string, actor: string) {
+  return `noisia:topic-editorial-intent:v1:${actor}:${workspace}:${numeric}`;
+}
+/** Restores only the opaque idempotency key and its small public command; never evidence or a provider plan. */
+export function restoreWorkspaceTopicEditorialIntentV1(raw: string | null, workspace: string, numeric: string): WorkspaceTopicEditorialIntentV1 | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!object(value) || !keys(value, ["workspace_id", "key", "body"]) || value.workspace_id !== workspace || !editorialKey(value.key)) return null;
+    const body = parseWorkspaceTopicEditorialCommandV1(value.body);
+    if (!body || body.numeric_execution_id !== numeric) return null;
+    return { workspace_id: workspace, key: value.key, body };
+  } catch { return null; }
+}
 export function workspaceTopicEditorialIntentV1(workspace: string, body: WorkspaceTopicEditorialCommandV1, previous: WorkspaceTopicEditorialIntentV1 | null, createKey: () => string) {
   if (previous?.workspace_id === workspace && previous.body.action === body.action && previous.body.numeric_execution_id === body.numeric_execution_id
     && (body.action === "start_editorial" ? true

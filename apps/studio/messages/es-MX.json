@@ -3168,10 +3168,10 @@
           "start": "Iniciar revisión editorial",
           "authorize": "Autorizar revisión editorial",
           "retry": "Reanudar la misma revisión",
-          "replay": "Comprobar solicitud anterior",
+          "replay": "Recuperar recibo con la misma solicitud",
           "refresh": "Actualizar estado",
           "loadError": "No se pudo actualizar el estado. Los importes y las acciones quedan ocultos hasta recuperar la conexión.",
-          "requestError": "No se confirmó el resultado de la solicitud. Comprueba la solicitud anterior para recuperar su recibo sin duplicarla.",
+          "requestError": "No se confirmó el resultado. Actualiza el estado o recupera el recibo con la misma clave; no se iniciará otra revisión.",
           "renewal": {
             "title": "Continuar la misma revisión",
             "body": "Si venció la autorización, renueva el permiso de gasto de esta ejecución. Los lotes y costos anteriores permanecen guardados.",

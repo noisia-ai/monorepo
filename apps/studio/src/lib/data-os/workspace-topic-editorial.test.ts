@@ -11,6 +11,7 @@ import { WorkspaceTopicEditorialCard } from "../../components/brands/WorkspaceTo
 import { WorkspaceTopicEditorialOutcomes, parseWorkspaceTopicEditorialOutcomesPageV2 } from "../../components/brands/WorkspaceTopicEditorialOutcomes";
 import { RedisEditorialQuoteCache, getEditorialQuoteCacheV1, editorialQuoteRuntimeAvailableV1, editorialRecoveryRuntimeAvailableV1, type EditorialQuoteSnapshot } from "./workspace-topic-editorial-cache";
 import { parseWorkspaceTopicEditorialCommandV1, validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1,
+  restoreWorkspaceTopicEditorialIntentV1, workspaceTopicEditorialIntentStorageKeyV1,
   submitWorkspaceTopicEditorialIntentV1, WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialViewV1 } from "./workspace-topic-editorial-contract";
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1, type WorkspaceTopicEditorialDependenciesV1 } from "./signal-topic-editorial-control";
 Object.assign(globalThis, { React });
@@ -65,6 +66,18 @@ test("V2 start keeps the policy quote internal and admits from one server-built 
   assert.match(route, /command\?\.action==="start_editorial"[\s\S]*startWorkspaceTopicEditorialBatchV2ForActor/u);
   assert.match(start, /startWorkspaceTopicEditorialBatchV2ForActor[\s\S]*signal_topic_editorial_request_keys[\s\S]*replaySignalTopicEditorialBatchV2/u);
   assert.match(start, /quoteSignalTopicEditorialBatchV2[\s\S]*requestSignalTopicEditorialBatchV2/u);
+});
+test("uncertain V2 starts restore the exact scoped idempotency key without accepting injected fields", () => {
+  const body = { action: "start_editorial" as const, numeric_execution_id: numeric };
+  const intent = workspaceTopicEditorialIntentV1(workspace, body, null, () => "same-request-key-0001");
+  const key = workspaceTopicEditorialIntentStorageKeyV1(workspace, numeric, actor);
+  assert.match(key, new RegExp(`${actor}:${workspace}:${numeric}$`, "u"));
+  assert.notEqual(workspaceTopicEditorialIntentStorageKeyV1(workspace, numeric, "00000000-0000-4000-8000-000000000008"), key);
+  assert.deepEqual(restoreWorkspaceTopicEditorialIntentV1(JSON.stringify(intent), workspace, numeric), intent);
+  assert.equal(restoreWorkspaceTopicEditorialIntentV1(JSON.stringify(intent), actor, numeric), null);
+  assert.equal(restoreWorkspaceTopicEditorialIntentV1(JSON.stringify(intent), workspace, actor), null);
+  assert.equal(restoreWorkspaceTopicEditorialIntentV1(JSON.stringify({ ...intent, plan }), workspace, numeric), null);
+  assert.equal(restoreWorkspaceTopicEditorialIntentV1("not-json", workspace, numeric), null);
 });
 test("V2 policy quote accepts a policy-owned cap above the experiment budget with one item per group", () => {
   const largeQuote = { ...ready, status: "ready_to_authorize" as const, can_quote: true,
@@ -391,7 +404,13 @@ test("route authenticates first, forbids injected query data, and controls fence
   assert.match(batchControl, /e\.status='failed'[\s\S]*e\.execution_token IS NULL[\s\S]*c\.status NOT IN\('settled','definitely_not_sent'\)[\s\S]*o\.status IN\('queued','dispatching'\)/u);
   const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
   assert.match(ui, /await response\.json\(\);\s*if \(controller\.signal\.aborted \|\| current\.current !== scope\) return/u);
-  assert.match(ui, /submitController\.current\?\.abort\(\)/u); assert.doesNotMatch(ui, /activateSignal|materializeSignal|ANTHROPIC_API_KEY/u);
+  assert.match(ui, /submitController\.current\?\.abort\(\)/u);
+  assert.match(ui, /editorialRequestWaitMs\s*=\s*90_000/u);
+  assert.match(ui, /intentStorageKey[\s\S]*?sessionStorage\.setItem/u);
+  assert.match(ui, /restoreWorkspaceTopicEditorialIntentV1[\s\S]*?void read\(\)/u);
+  assert.match(ui, /An unresolved request owns its key/u);
+  assert.match(ui, /setBusy\(false\)/u);
+  assert.doesNotMatch(ui, /activateSignal|materializeSignal|ANTHROPIC_API_KEY/u);
 });
 
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: a quiescent failed V1 review is clearly offered as a V2 successor`, async () => {

@@ -3168,10 +3168,10 @@
           "start": "Start editorial review",
           "authorize": "Authorize editorial review",
           "retry": "Resume the same review",
-          "replay": "Check previous request",
+          "replay": "Recover receipt with the same request",
           "refresh": "Refresh status",
           "loadError": "Status could not be refreshed. Amounts and actions stay hidden until the connection recovers.",
-          "requestError": "The request outcome was not confirmed. Check the previous request to recover its receipt without duplicating it.",
+          "requestError": "The outcome is unconfirmed. Refresh status or recover the receipt with the same key; this will not start another review.",
           "renewal": {
             "title": "Continue the same review",
             "body": "If authorization expired, renew spending authority for this execution. Earlier batches and costs remain saved.",

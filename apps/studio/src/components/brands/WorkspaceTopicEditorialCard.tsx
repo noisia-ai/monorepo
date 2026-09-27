@@ -2,9 +2,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1, submitWorkspaceTopicEditorialIntentV1,
+  restoreWorkspaceTopicEditorialIntentV1, workspaceTopicEditorialIntentStorageKeyV1,
   WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialIntentV1, type WorkspaceTopicEditorialViewV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 import { WorkspaceTopicEditorialOutcomes } from "./WorkspaceTopicEditorialOutcomes";
 import { WorkspaceTopicLegacyEditorialOutcomes } from "./WorkspaceTopicLegacyEditorialOutcomes";
+
+const editorialRequestWaitMs = 90_000;
+const editorialStatusWaitMs = 25_000;
 
 export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecutionId, mentionsHref, busy = false, stale = false, pending = false,
   retryReady = true, onStart, onRetry, onComplete, onReplay, onRefresh }: {
@@ -64,8 +68,8 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
 }
 
 /** Parent keys this component by workspace and immutable numeric control ID. */
-export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionId, mentionsHref, disabled = false, onCatalogAvailable }: {
-  workspaceId: string; numericExecutionId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
+export function WorkspaceTopicEditorialControls({ workspaceId, actorId, numericExecutionId, mentionsHref, disabled = false, onCatalogAvailable }: {
+  workspaceId: string; actorId: string; numericExecutionId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation.editorial"), locale = useLocale();
   const [value, setValue] = useState<WorkspaceTopicEditorialViewV1 | null>(null);
@@ -81,8 +85,17 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
   const delivered = useRef<string | null>(null);
   const current = useRef(`${workspaceId}:${numericExecutionId}`); current.current = `${workspaceId}:${numericExecutionId}`;
   const scope = `${workspaceId}:${numericExecutionId}`;
+  const intentStorageKey = workspaceTopicEditorialIntentStorageKeyV1(workspaceId, numericExecutionId, actorId);
+  const persistIntent = (value: WorkspaceTopicEditorialIntentV1) => {
+    try { window.sessionStorage.setItem(intentStorageKey, JSON.stringify(value)); } catch { /* In-memory same-key recovery remains available. */ }
+  };
+  const clearPersistedIntent = () => {
+    try { window.sessionStorage.removeItem(intentStorageKey); } catch { /* A stale opaque key is harmless and remains server-scoped. */ }
+  };
   const read = useCallback(async () => {
     readController.current?.abort(); const controller = new AbortController(); readController.current = controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, editorialStatusWaitMs);
     try {
       const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation/editorial?numeric_execution_id=${encodeURIComponent(numericExecutionId)}`,
         { cache: "no-store", signal: controller.signal });
@@ -91,13 +104,19 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
       if ([401, 403, 404].includes(response.status)) setValue(null);
       if (!response.ok || !validWorkspaceTopicEditorialViewV1(body, workspaceId, numericExecutionId)) throw new Error("status");
       setValue(body); setLoadError(false); setNow(Date.now());
-    } catch { if (!controller.signal.aborted && current.current === scope) setLoadError(true); }
-    finally { if (readController.current === controller && !controller.signal.aborted && current.current === scope) readController.current = null; }
+    } catch { if ((!controller.signal.aborted || timedOut) && current.current === scope) setLoadError(true); }
+    finally {
+      clearTimeout(timeout);
+      if (readController.current === controller && current.current === scope) readController.current = null;
+    }
   }, [workspaceId, numericExecutionId, scope]);
   useEffect(() => {
-    setValue(null); setBusy(false); setPending(false); setRequestError(false); setLoadError(false); intent.current = null; void read();
+    let restored: WorkspaceTopicEditorialIntentV1 | null = null;
+    try { restored = restoreWorkspaceTopicEditorialIntentV1(window.sessionStorage.getItem(intentStorageKey), workspaceId, numericExecutionId); } catch { /* Storage may be unavailable in restricted browsers. */ }
+    intent.current = restored;
+    setValue(null); setBusy(false); setPending(!!restored); setRequestError(!!restored); setLoadError(false); void read();
     return () => { readController.current?.abort(); submitController.current?.abort(); };
-  }, [read]);
+  }, [read, intentStorageKey, workspaceId, numericExecutionId]);
   const renewalExecution = value?.status === "failed" ? value.execution?.execution_id : null;
   const readRenewal = useCallback(async () => {
     if (!renewalExecution) return;
@@ -156,6 +175,8 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
   }, [value, disabled, onCatalogAvailable]);
   const submit = async (replay = false) => {
     if (disabled || submitController.current || busy || !value || current.current !== scope) return;
+    // An unresolved request owns its key until the server returns a validated receipt or a terminal quote rejection.
+    if (!replay && intent.current) { setPending(true); setRequestError(true); void read(); return; }
     let next = intent.current;
     if (!replay) {
       const body = value.can_complete && value.execution ? { action: "complete_catalog" as const, numeric_execution_id: numericExecutionId, execution_id: value.execution.execution_id }
@@ -165,20 +186,25 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
       next = workspaceTopicEditorialIntentV1(workspaceId, body, intent.current, () => crypto.randomUUID());
     }
     if (!next || next.workspace_id !== workspaceId || next.body.numeric_execution_id !== numericExecutionId) return;
-    intent.current = next; setPending(true); setBusy(true); setRequestError(false);
+    intent.current = next; persistIntent(next); setPending(true); setBusy(true); setRequestError(false);
     readController.current?.abort();
     const controller = new AbortController(); submitController.current = controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, editorialRequestWaitMs);
     try {
       await submitWorkspaceTopicEditorialIntentV1(next, fetch, controller.signal);
       if (controller.signal.aborted || current.current !== scope) return;
-      intent.current = null; setPending(false); await read();
+      intent.current = null; clearPersistedIntent(); setPending(false); void read();
     } catch (error) {
-      if (!controller.signal.aborted && current.current === scope) {
-        if (error instanceof WorkspaceTopicEditorialRequestError && error.quoteRejected) { intent.current = null; setPending(false); }
-        setRequestError(true); await read();
+      if (current.current === scope && (!controller.signal.aborted || timedOut)) {
+        if (error instanceof WorkspaceTopicEditorialRequestError && error.quoteRejected) {
+          intent.current = null; clearPersistedIntent(); setPending(false);
+        }
+        setRequestError(true); void read();
       }
     } finally { if (submitController.current === controller) submitController.current = null;
-      if (!controller.signal.aborted && current.current === scope) setBusy(false); }
+      clearTimeout(timeout);
+      if (current.current === scope) setBusy(false); }
   };
   if (!value || value.workspace_id !== workspaceId || value.numeric_execution_id !== numericExecutionId)
     return loadError ? <p role="alert" className="team-msg team-msg--error">{t("loadError")} <button type="button" className="admin-button" onClick={() => void read()}>{t("refresh")}</button></p> : null;
