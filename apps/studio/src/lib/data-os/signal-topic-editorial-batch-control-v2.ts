@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalTopicConsolidationEditorialInputV1, quoteSignalTopicEditorialBatchV2,
-  requestSignalTopicEditorialBatchV2, replaySignalTopicEditorialBatchV2, prepareAllSignalTopicEditorialBatchV2,
-  materializeSignalTopicEditorialBatchV2, reuseCompatibleSignalTopicEditorialPaidResultsV2, SignalTopicEditorialStoreError } from "@noisia/db";
+  requestSignalTopicEditorialBatchV2, replaySignalTopicEditorialBatchV2,
+  requestQuotedSignalTopicEditorialBatchPlanV2, materializeSignalTopicEditorialBatchV2,
+  retrySignalTopicEditorialBatchPreparationV2, SignalTopicEditorialStoreError } from "@noisia/db";
 import { editorialCap, editorialKey, editorialUuid } from "./workspace-topic-editorial-contract";
 import { withTopicEditorialStartPhase } from "./signal-topic-editorial-start-observability";
 
@@ -91,11 +92,6 @@ export async function startWorkspaceTopicEditorialBatchV2ForActor(args:Args&{ide
       numeric_execution_id:args.numericExecutionId,idempotency_key:args.idempotencyKey,quote_reference:prior.quote_reference,
       confirmed_cap_micro_usd:prior.hard_cap_micro_usd}),{request_fingerprint:requestFingerprint});
     if(!replay.replayed||!replay.execution_id)fail("topic_editorial_v2_replay_unavailable");
-    const replayExecutionId=replay.execution_id;
-    const reuse=await withTopicEditorialStartPhase("reuse_compatible_results",()=>reuseCompatibleSignalTopicEditorialPaidResultsV2({database,
-      execution_id:replayExecutionId}),{request_fingerprint:requestFingerprint});
-    await withTopicEditorialStartPhase("prepare_provider_manifest",()=>prepareAllSignalTopicEditorialBatchV2({database,
-      execution_id:replayExecutionId}),{request_fingerprint:requestFingerprint,reused_items:reuse.reused_items});
     return {contract_version:"workspace-topic-editorial-receipt-v1" as const,workspace_id:args.workspaceId,
       numeric_execution_id:args.numericExecutionId,action:"start_editorial" as const,execution_id:replay.execution_id,
       idempotency_key:args.idempotencyKey,replayed:true,activation:"not_activated" as const};
@@ -120,13 +116,12 @@ export async function startWorkspaceTopicEditorialBatchV2ForActor(args:Args&{ide
       {request_fingerprint:requestFingerprint});
     previous=row?.id??null;
   }finally{latest.release();}
-  const result=await withTopicEditorialStartPhase("durable_admission",()=>requestSignalTopicEditorialBatchV2({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
-    run_id:source.run_id,input,idempotency_key:args.idempotencyKey,quote_reference:quote.quote_reference!,
+  const result=await withTopicEditorialStartPhase("durable_admission",()=>requestQuotedSignalTopicEditorialBatchPlanV2({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
+    run_id:source.run_id,plan,idempotency_key:args.idempotencyKey,quote_reference:quote.quote_reference!,
       previous_execution_id:previous??undefined}),{request_fingerprint:requestFingerprint,group_count:plan.expected_group_count,request_count:plan.requests.length});
-  const reuse=await withTopicEditorialStartPhase("reuse_compatible_results",()=>reuseCompatibleSignalTopicEditorialPaidResultsV2({database,
-    execution_id:result.execution_id}),{request_fingerprint:requestFingerprint});
-  await withTopicEditorialStartPhase("prepare_provider_manifest",()=>prepareAllSignalTopicEditorialBatchV2({database,
-    execution_id:result.execution_id}),{request_fingerprint:requestFingerprint,reused_items:reuse.reused_items});
+  // Admission already owns the immutable request plan. Reuse and provider-manifest
+  // preparation run through the replay-safe Worker drainer so this HTTP request
+  // returns a durable receipt instead of doing the full corpus synchronously.
   return {contract_version:"workspace-topic-editorial-receipt-v1" as const,workspace_id:args.workspaceId,
     numeric_execution_id:args.numericExecutionId,action:"start_editorial" as const,execution_id:result.execution_id,
     idempotency_key:args.idempotencyKey,replayed:result.replayed,activation:"not_activated" as const};
@@ -139,7 +134,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
     await client.query("SET LOCAL search_path=public,extensions,pg_temp");
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
     if(!caps.can_view)fail("processing_forbidden",403);
-    const row=(await client.query<{execution_id:string;status:string;expected:number;done:number;maximum:string;confirmed:string;reserved:string;ambiguous:string;materialized:boolean;
+    const row=(await client.query<{execution_id:string;status:string;owner_stage:string;expected:number;done:number;maximum:string;confirmed:string;reserved:string;ambiguous:string;materialized:boolean;
       topic:number;narrative:number;noise:number;insufficient:number;technical:number;pending:number;batch_states:Record<string,number>;error_codes:string[]}>(`
       WITH numeric AS (
         SELECT consolidation_run_id FROM signal_topic_consolidation_executions
@@ -168,7 +163,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
         SELECT state,count(*)::integer n FROM signal_topic_editorial_provider_batches_v2 b,latest e
         WHERE b.execution_id=e.id GROUP BY state
       )
-      SELECT e.id::text execution_id,e.status,jsonb_array_length(e.plan->'requests') expected,
+      SELECT e.id::text execution_id,e.status,o.stage owner_stage,jsonb_array_length(e.plan->'requests') expected,
         EXISTS(SELECT 1 FROM signal_topic_consolidation_revisions r WHERE r.consolidation_run_id=e.numeric_run_id
           AND r.workspace_id=e.workspace_id AND r.status='validated' AND r.created_by_user_id=e.actor_user_id AND r.created_at>=e.created_at) materialized,
         (SELECT count(*)::integer FROM unit_outcomes u WHERE u.reused OR u.validation->>'status'='accepted'
@@ -190,28 +185,32 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
             OR u.outcome IN('errored','canceled','expired','submission_rejected')
             OR u.call_status='settled' AND u.validation IS NULL)) pending,
         COALESCE((SELECT jsonb_object_agg(state,n) FROM batches),'{}'::jsonb) batch_states,
-        COALESCE((SELECT array_agg(DISTINCT code ORDER BY code) FROM (
+        array_remove(ARRAY(SELECT DISTINCT code FROM (
           SELECT item_error code FROM unit_outcomes WHERE item_error IS NOT NULL
           UNION SELECT batch_error FROM unit_outcomes WHERE batch_error IS NOT NULL
-        ) errors),'{}'::text[]) error_codes,
+          UNION SELECT 'topic_editorial_batch_preparation_failed' WHERE o.stage='preparation_failed'
+        ) errors ORDER BY code),'') error_codes,
         e.hard_cap_micro_usd::text maximum,
         COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled'),0)::text confirmed,
         COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0))) FILTER(WHERE c.status IN('reserved','in_flight','response_persisted')),0)::text reserved,
         COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0))) FILTER(WHERE c.status='outcome_unknown'),0)::text ambiguous
-      FROM latest e LEFT JOIN signal_topic_editorial_provider_batches_v2 b ON b.execution_id=e.id
+      FROM latest e JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
+      LEFT JOIN signal_topic_editorial_provider_batches_v2 b ON b.execution_id=e.id
       LEFT JOIN signal_topic_editorial_batch_items_v2 i ON i.batch_id=b.id
       LEFT JOIN signal_topic_editorial_calls c ON c.id=i.call_id
       -- latest is a CTE, so PostgreSQL cannot use the base table's primary-key
       -- functional dependency for correlated fields referenced by EXISTS.
       GROUP BY e.id,e.workspace_id,e.numeric_run_id,e.actor_user_id,e.created_at,
-        e.status,e.plan,e.hard_cap_micro_usd`,[args.workspaceId,args.numericExecutionId])).rows[0];
+        e.status,e.plan,e.hard_cap_micro_usd,o.stage`,[args.workspaceId,args.numericExecutionId])).rows[0];
     await client.query("COMMIT");
     if(!row)return null;
-    const status=row.materialized?"completed":row.technical>0||BigInt(row.ambiguous)>0n?"failed":row.pending>0
+    const preparationFailed=row.owner_stage==="preparation_failed";
+    const status=row.materialized?"completed":preparationFailed||row.technical>0||BigInt(row.ambiguous)>0n?"failed":row.pending>0
       ? Object.keys(row.batch_states).length===0||(row.batch_states.prepared??0)>0&&Object.keys(row.batch_states).length===1?"queued":"running":"review_ready";
     return {contract_version:"workspace-topic-editorial-view-v1" as const,workspace_id:args.workspaceId,
       numeric_execution_id:args.numericExecutionId,status,
-      can_quote:false,can_retry:false,can_complete:caps.can_request_processing&&status==="review_ready",activation:"not_activated" as const,quote:null,
+      can_quote:false,can_retry:caps.can_request_processing&&preparationFailed&&BigInt(row.ambiguous)===0n,
+      can_complete:caps.can_request_processing&&status==="review_ready",activation:"not_activated" as const,quote:null,
       execution:{execution_id:row.execution_id,status,
         completed_screening_count:row.done,expected_screening_count:row.expected,maximum_micro_usd:row.maximum,
         confirmed_micro_usd:row.confirmed,reserved_micro_usd:row.reserved,ambiguous_micro_usd:row.ambiguous},
@@ -219,6 +218,34 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
         technical_errors:row.technical,pending:row.pending,batch_states:row.batch_states,error_codes:row.error_codes}};
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
   finally{client.release();}
+}
+
+/** Retries only a durable local-preparation failure on the same V2 execution.
+ * The RPC repeats actor, source, owner-stage and idempotency fences atomically. */
+export async function retryWorkspaceTopicEditorialPreparationV2ForActor(args:Args&{executionId:string;idempotencyKey:string}){
+  if(![args.workspaceId,args.actorUserId,args.numericExecutionId,args.executionId].every(editorialUuid)
+    ||!editorialKey(args.idempotencyKey))fail("topic_editorial_request_invalid",422);
+  const database=args.database??(await import("@/lib/db")).pool,client=await database.connect();
+  try{
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
+    if(!caps.can_view)fail("processing_forbidden",403);
+    const row=(await client.query<{stage:string}>(`SELECT o.stage FROM signal_topic_editorial_executions e
+      JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
+      JOIN signal_topic_consolidation_executions n ON n.workspace_id=e.workspace_id AND n.consolidation_run_id=e.numeric_run_id
+      WHERE e.workspace_id=$1::uuid AND e.id=$2::uuid AND n.id=$3::uuid
+        AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,
+    [args.workspaceId,args.executionId,args.numericExecutionId])).rows[0];
+    await client.query("COMMIT");
+    if(row?.stage!=="preparation_failed")return null;
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
+  finally{client.release();}
+  const result=await retrySignalTopicEditorialBatchPreparationV2({database,workspace_id:args.workspaceId,
+    actor_user_id:args.actorUserId,execution_id:args.executionId,idempotency_key:args.idempotencyKey});
+  return {contract_version:"workspace-topic-editorial-receipt-v1" as const,workspace_id:args.workspaceId,
+    numeric_execution_id:args.numericExecutionId,action:"retry_editorial" as const,execution_id:result.execution_id,
+    idempotency_key:args.idempotencyKey,replayed:result.replayed,activation:"not_activated" as const};
 }
 /** Allows a failed legacy owner to move forward only when its durable work is
  * quiescent. The V2 admission SQL repeats this fence under lock; this read is
@@ -260,8 +287,6 @@ export async function authorizeWorkspaceTopicEditorialBatchV2ForActor(args:Args&
     numeric_execution_id:args.numericExecutionId,idempotency_key:args.idempotencyKey,quote_reference:args.quoteReference,
     confirmed_cap_micro_usd:args.confirmedMaximumMicroUsd});
   if(replay.replayed){
-    await reuseCompatibleSignalTopicEditorialPaidResultsV2({database,execution_id:replay.execution_id!});
-    await prepareAllSignalTopicEditorialBatchV2({database,execution_id:replay.execution_id!});
     return {contract_version:"workspace-topic-editorial-receipt-v1" as const,workspace_id:args.workspaceId,
       numeric_execution_id:args.numericExecutionId,action:"authorize_editorial" as const,execution_id:replay.execution_id!,
       idempotency_key:args.idempotencyKey,replayed:true,activation:"not_activated" as const};
@@ -285,11 +310,8 @@ export async function authorizeWorkspaceTopicEditorialBatchV2ForActor(args:Args&
   const result=await requestSignalTopicEditorialBatchV2({database:source.database,workspace_id:args.workspaceId,
     actor_user_id:args.actorUserId,run_id:source.run_id,input,idempotency_key:args.idempotencyKey,quote_reference:args.quoteReference,
     previous_execution_id:previous});
-  // The durable V2 plan includes every source group. Compatible prior paid
-  // decisions are copied first; only still-unresolved group requests enter the
-  // provider manifest, so a replay never recharges a compatible receipt.
-  await reuseCompatibleSignalTopicEditorialPaidResultsV2({database:source.database,execution_id:result.execution_id});
-  await prepareAllSignalTopicEditorialBatchV2({database:source.database,execution_id:result.execution_id});
+  // Compatible-result reuse and manifest preparation are handled by the same
+  // asynchronous Worker path as the current self-service start command.
   return {contract_version:"workspace-topic-editorial-receipt-v1" as const,workspace_id:args.workspaceId,
     numeric_execution_id:args.numericExecutionId,action:"authorize_editorial" as const,execution_id:result.execution_id,
     idempotency_key:args.idempotencyKey,replayed:result.replayed,activation:"not_activated" as const};

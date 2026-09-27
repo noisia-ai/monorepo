@@ -10,6 +10,10 @@ type Scope = { workspace_id: string; actor_user_id: string; numeric_run_id: stri
 type EvidenceRequest = Parameters<Parameters<typeof prepareSignalTopicEditorialInputV1>[0]['load_evidence']>[0];
 const fail = (code: string): never => { throw new SignalTopicEditorialStoreError(code); };
 const textHash = (value: string) => `sha256:${createHash('sha256').update(value, 'utf8').digest('hex')}`;
+// Keep the JSON recordset bounded while avoiding dozens of round trips for a
+// full 1,652-group review (up to ~3,304 cited fragments): 512 refs/query cuts
+// that path from 26 evidence reads to 7 without changing its validation scope.
+const EVIDENCE_READ_BATCH_SIZE = 512;
 const readers = { source: readSignalTopicConsolidationEditorialSourceWithQueryableV1, context: loadSignalTopicInheritedContextStoreV1 };
 
 /** Private server projection, never a browser-supplied context or evidence locator. */
@@ -48,9 +52,9 @@ async function readEvidence(client: PoolClient, scope: Scope, sourceExecution: s
   if (request.workspace_id !== scope.workspace_id || request.source_execution_id !== sourceExecution
     || request.census_digest !== censusDigest) fail('topic_editorial_evidence_scope_invalid');
   const loaded: SignalTopicEditorialEvidenceLoadV1[] = [];
-  // Bound DB parameters and payloads while retaining every requested reference.
-  for (let offset = 0; offset < request.refs.length; offset += 128) {
-    const refs = request.refs.slice(offset, offset + 128);
+  // Bound each DB payload while retaining every requested reference.
+  for (let offset = 0; offset < request.refs.length; offset += EVIDENCE_READ_BATCH_SIZE) {
+    const refs = request.refs.slice(offset, offset + EVIDENCE_READ_BATCH_SIZE);
     const rows = (await client.query<SignalTopicEditorialEvidenceLoadV1 & { asset_sha256: string }>(`
       WITH requested AS (
         SELECT * FROM jsonb_to_recordset($4::jsonb) AS ref(ref_id text,root_id uuid,chunk_index integer,

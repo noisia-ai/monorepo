@@ -65,7 +65,9 @@ test("V2 start keeps the policy quote internal and admits from one server-built 
   assert.match(ui, /action: "start_editorial" as const/u); assert.doesNotMatch(ui, /quote=1|onQuote|onAuthorize/u);
   assert.match(route, /command\?\.action==="start_editorial"[\s\S]*startWorkspaceTopicEditorialBatchV2ForActor/u);
   assert.match(start, /startWorkspaceTopicEditorialBatchV2ForActor[\s\S]*signal_topic_editorial_request_keys[\s\S]*replaySignalTopicEditorialBatchV2/u);
-  assert.match(start, /quoteSignalTopicEditorialBatchV2[\s\S]*requestSignalTopicEditorialBatchV2/u);
+  assert.match(start, /quoteSignalTopicEditorialBatchV2[\s\S]*requestQuotedSignalTopicEditorialBatchPlanV2/u);
+  assert.doesNotMatch(start, /reuseCompatibleSignalTopicEditorialPaidResultsV2|prepareAllSignalTopicEditorialBatchV2/u,
+    "after admission, replay-safe reuse and manifest preparation are owned by the asynchronous Worker");
 });
 test("uncertain V2 starts restore the exact scoped idempotency key without accepting injected fields", () => {
   const body = { action: "start_editorial" as const, numeric_execution_id: numeric };
@@ -392,6 +394,22 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: an expired pa
   assert.doesNotMatch(render(false), /<(?:button)[^>]*>[^<]*(?:Reanudar|Resume)/u);
   assert.match(render(true), /<(?:button)[^>]*>[^<]*(?:Reanudar|Resume)/u);
 });
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: a durable V2 preparation failure is distinct from provider renewal and offers same-execution retry`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const failedPreparation: WorkspaceTopicEditorialViewV1 = { ...ready, status: "failed", can_quote: false, can_retry: true,
+    quote: null, execution: { execution_id: execution, status: "failed", completed_screening_count: 0,
+      expected_screening_count: 1652, maximum_micro_usd: "500000000", confirmed_micro_usd: "0",
+      reserved_micro_usd: "0", ambiguous_micro_usd: "0" },
+    batch_progress: { topics: 0, narratives: 0, noise: 0, insufficient_evidence: 0, technical_errors: 0, pending: 1652,
+      batch_states: {}, error_codes: ["topic_editorial_batch_preparation_failed"] } };
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceTopicEditorialCard, { value: failedPreparation, onRetry: () => {} })));
+  assert.match(html, locale === "es-MX" ? /La preparación automática se detuvo/u : /Automatic preparation stopped/u);
+  assert.match(html, locale === "es-MX" ? /Reintentar preparación/u : /Retry preparation/u);
+  assert.doesNotMatch(html, /renovación del permiso|renew spending authority/iu);
+  assert.doesNotMatch(html, /continúa desde los manifiestos|continues from saved manifests/iu);
+});
 test("route authenticates first, forbids injected query data, and controls fence after JSON awaits", async () => {
   const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/consolidation/editorial/route.ts", import.meta.url), "utf8");
   const batchControl = await readFile(new URL("./signal-topic-editorial-batch-control-v2.ts", import.meta.url), "utf8");
@@ -401,6 +419,10 @@ test("route authenticates first, forbids injected query data, and controls fence
     /authorizeWorkspaceTopicEditorialBatchV2ForActor[\s\S]*?if\(replay\.replayed\)[\s\S]*?if\(args\.runtimeEnabled===false\)/u);
   assert.match(route, /view\.execution&&!predecessorEligible\)return topicResponse\(view\)/u);
   assert.match(batchControl, /canSupersedeFailedLegacyEditorialWithBatchV2ForActor/u);
+  assert.match(route, /retryWorkspaceTopicEditorialPreparationV2ForActor[\s\S]*?if\(v2\)return topicResponse\(v2,202\)[\s\S]*?requestWorkspaceTopicEditorialForActorV1/u,
+    "a failed V2 preparation retries its admitted owner before legacy V1 retry handling");
+  assert.match(batchControl, /retrySignalTopicEditorialBatchPreparationV2[\s\S]*?stage!=="preparation_failed"\)return null/u,
+    "V2 retry is limited to a durable preparation-failed owner");
   assert.match(batchControl, /e\.status='failed'[\s\S]*e\.execution_token IS NULL[\s\S]*c\.status NOT IN\('settled','definitely_not_sent'\)[\s\S]*o\.status IN\('queued','dispatching'\)/u);
   const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
   assert.match(ui, /await response\.json\(\);\s*if \(controller\.signal\.aborted \|\| current\.current !== scope\) return/u);

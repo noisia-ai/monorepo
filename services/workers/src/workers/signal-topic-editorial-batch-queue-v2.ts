@@ -1,6 +1,6 @@
 import type { Job } from "bullmq";
 import { prepareAllSignalTopicEditorialBatchV2, reuseCompatibleSignalTopicEditorialPaidResultsV2,
-  type SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
+  markSignalTopicEditorialBatchPreparationFailedV2, type SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
 import { createAnthropicMessageBatchesClient } from "../providers/anthropic-message-batches";
 import { runSignalTopicEditorialBatchTickV2 } from "./signal-topic-editorial-batch-v2";
 import { createSignalTopicEditorialBatchRuntimeStoresV2 } from "./signal-topic-editorial-batch-runtime-v2";
@@ -75,7 +75,9 @@ export async function drainSignalTopicEditorialBatchesV2(options: Options = {}) 
     try {
       const result = await preparationClient.query<{ id: string }>(`SELECT e.id::text id
         FROM signal_topic_editorial_executions e
+        JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
         WHERE e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+          AND o.stage<>'preparation_failed'
           AND e.status IN('queued','running')
           AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_provider_batches_v2 b WHERE b.execution_id=e.id)
           AND EXISTS(SELECT 1 FROM signal_topic_editorial_requests r
@@ -171,12 +173,13 @@ export async function signalTopicEditorialBatchJobV2(job: Pick<Job<{ batch_id: s
  * admission. It intentionally has no provider client or API-key access: only
  * the separate batch job may submit once its provider flag is enabled. */
 export async function signalTopicEditorialBatchPreparationJobV2(
-  job: Pick<Job<{ execution_id: string }>, "id" | "data">,
+  job: Pick<Job<{ execution_id: string }>, "id" | "data"> & Partial<Pick<Job<{ execution_id: string }>, "attemptsMade" | "opts">>,
   options: {
     env?: Environment;
     database?: SignalTopicEditorialBatchDatabaseV2;
     reuse?: typeof reuseCompatibleSignalTopicEditorialPaidResultsV2;
     prepare?: typeof prepareAllSignalTopicEditorialBatchV2;
+    markFailed?: typeof markSignalTopicEditorialBatchPreparationFailedV2;
   } = {},
 ) {
   const flags = signalTopicEditorialBatchConfigurationV2(options.env);
@@ -189,9 +192,18 @@ export async function signalTopicEditorialBatchPreparationJobV2(
   const database = options.database ?? (await import("../db/client")).pool;
   const reuse = options.reuse ?? reuseCompatibleSignalTopicEditorialPaidResultsV2;
   const prepare = options.prepare ?? prepareAllSignalTopicEditorialBatchV2;
-  const reused = await reuse({ database, execution_id: executionId });
-  const manifest = await prepare({ database, execution_id: executionId });
-  return { disabled: false, execution_id: executionId,
-    reused_items: reused.reused_items, needs_review_items: reused.needs_review_items,
-    provider_items: manifest.provider_items, batch_id: manifest.batch_id };
+  try {
+    const reused = await reuse({ database, execution_id: executionId });
+    const manifest = await prepare({ database, execution_id: executionId });
+    return { disabled: false, execution_id: executionId,
+      reused_items: reused.reused_items, needs_review_items: reused.needs_review_items,
+      provider_items: manifest.provider_items, batch_id: manifest.batch_id };
+  } catch (error) {
+    const attempts = Number(job.opts?.attempts ?? 1), attemptsMade = Number(job.attemptsMade ?? 0);
+    if (Number.isSafeInteger(attempts) && attempts > 0 && Number.isSafeInteger(attemptsMade) && attemptsMade + 1 >= attempts) {
+      const markFailed = options.markFailed ?? markSignalTopicEditorialBatchPreparationFailedV2;
+      await markFailed({ database, execution_id: executionId });
+    }
+    throw error;
+  }
 }

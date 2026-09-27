@@ -20,6 +20,7 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
   const money = (v: string) => new Intl.NumberFormat(locale, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(Number(v) / 1_000_000);
   const state = value.status;
   const execution = value.execution;
+  const preparationFailed = value.batch_progress?.error_codes.includes("topic_editorial_batch_preparation_failed") === true;
   return <section className="admin-section topics-manager__editorial" data-topic-editorial-state={state} data-serving-activation="not-activated">
     <div className="admin-section__head"><div><h3>{t("title")}</h3><p>{t("body")}</p></div></div>
     <div className="admin-section__body admin-drawer-form">
@@ -40,7 +41,8 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
             <p>{t("outcomes.errorPreserved")}</p>
             {value.batch_progress.error_codes.length ? <p>{t("outcomes.errorCodes", { codes: value.batch_progress.error_codes.join(", ") })}</p> : null}
           </div> : null}
-          {value.batch_progress.pending > 0 ? <p role="status">{t("outcomes.resume")}</p> : null}
+          {preparationFailed ? <p role="alert" className="team-msg team-msg--error">{t("preparationFailed")}</p> : null}
+          {value.batch_progress.pending > 0 && !preparationFailed ? <p role="status">{t("outcomes.resume")}</p> : null}
         </> : null}
         {value.batch_progress && execution && workspaceId && numericExecutionId && mentionsHref
           ? <WorkspaceTopicEditorialOutcomes workspaceId={workspaceId} numericExecutionId={numericExecutionId}
@@ -60,7 +62,7 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
         {pending ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onReplay} onClick={onReplay}>{t("replay")}</button>
           : value.can_quote && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onStart} onClick={onStart}>{t("start")}</button>
           : value.can_complete && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onComplete} onClick={onComplete}>{t("complete")}</button>
-          : value.can_retry && retryReady && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onRetry} onClick={onRetry}>{t("retry")}</button> : null}
+          : value.can_retry && retryReady && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onRetry} onClick={onRetry}>{t(preparationFailed ? "retryPreparation" : "retry")}</button> : null}
         <button type="button" className="admin-button" disabled={busy || !onRefresh} onClick={onRefresh}>{t("refresh")}</button>
       </div>
     </div>
@@ -117,7 +119,8 @@ export function WorkspaceTopicEditorialControls({ workspaceId, actorId, numericE
     setValue(null); setBusy(false); setPending(!!restored); setRequestError(!!restored); setLoadError(false); void read();
     return () => { readController.current?.abort(); submitController.current?.abort(); };
   }, [read, intentStorageKey, workspaceId, numericExecutionId]);
-  const renewalExecution = value?.status === "failed" ? value.execution?.execution_id : null;
+  const preparationFailed = value?.batch_progress?.error_codes.includes("topic_editorial_batch_preparation_failed") === true;
+  const renewalExecution = value?.status === "failed" && !preparationFailed ? value.execution?.execution_id : null;
   const readRenewal = useCallback(async () => {
     if (!renewalExecution) return;
     setRenewalError(false);
@@ -211,7 +214,7 @@ export function WorkspaceTopicEditorialControls({ workspaceId, actorId, numericE
   return <>
     <WorkspaceTopicEditorialCard value={value} workspaceId={workspaceId} numericExecutionId={numericExecutionId} mentionsHref={mentionsHref}
       busy={disabled || busy} stale={loadError} pending={pending}
-      retryReady={value.status !== "failed" || renewal?.status === "admission_not_expired"
+      retryReady={preparationFailed || value.status !== "failed" || renewal?.status === "admission_not_expired"
         || !!value.execution && value.execution.completed_screening_count === value.execution.expected_screening_count}
       onStart={() => void submit()} onRetry={() => void submit()}
       onComplete={() => void submit()} onReplay={() => void submit(true)} onRefresh={() => void read()} />

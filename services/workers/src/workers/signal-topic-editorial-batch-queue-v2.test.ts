@@ -111,11 +111,37 @@ test("preparation scan excludes V1, completed/failed, manifest-ready and all-reu
   await drainSignalTopicEditorialBatchesV2({ database,
     queue: { getJob: async () => null, add: async () => assert.fail("no candidates should enqueue") },
     env: { NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED: "true", NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED: "false" } });
-  assert.match(sql, /signal-topic-editorial-screening-plan-v2/u, "V1 plans are excluded");
+    assert.match(sql, /signal-topic-editorial-screening-plan-v2/u, "V1 plans are excluded");
   assert.match(sql, /e\.status IN\('queued','running'\)/u, "completed/failed execution states are excluded");
   assert.match(sql, /NOT EXISTS\(SELECT 1 FROM signal_topic_editorial_provider_batches_v2/u, "existing manifests are excluded");
-  assert.match(sql, /EXISTS\(SELECT 1 FROM signal_topic_editorial_requests r[\s\S]*?NOT EXISTS\(SELECT 1 FROM signal_topic_editorial_reused_decisions_v2/u,
+    assert.match(sql, /EXISTS\(SELECT 1 FROM signal_topic_editorial_requests r[\s\S]*?NOT EXISTS\(SELECT 1 FROM signal_topic_editorial_reused_decisions_v2/u,
     "fully reused executions are excluded");
+  assert.match(sql, /JOIN signal_topic_editorial_batch_owners_v2 o[\s\S]*o\.stage<>'preparation_failed'/u,
+    "a durable terminal preparation failure is not re-enqueued forever");
+});
+
+test("terminal preparation failure is recorded only on the last queue attempt", async () => {
+  const executionId = "00000000-0000-4000-8000-000000000006";
+  const env = { NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED: "true",
+    NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED: "false" };
+  const job = { id: `topic-editorial-batch-v2-prepare-${executionId}`, data: { execution_id: executionId },
+    attemptsMade: 2, opts: { attempts: 3 } };
+  const marks: string[] = [];
+  await assert.rejects(signalTopicEditorialBatchPreparationJobV2(job, { env,
+    database: {} as SignalTopicEditorialBatchDatabaseV2,
+    reuse: async () => { throw new Error("private storage details"); },
+    prepare: async () => assert.fail("preparation cannot follow failed reuse"),
+    markFailed: async args => { marks.push(args.execution_id); return { execution_id: args.execution_id, stage: "preparation_failed", replayed: false }; },
+  }), /private storage details/u);
+  assert.deepEqual(marks, [executionId]);
+
+  marks.length = 0;
+  await assert.rejects(signalTopicEditorialBatchPreparationJobV2({ ...job, attemptsMade: 1 }, { env,
+    database: {} as SignalTopicEditorialBatchDatabaseV2,
+    reuse: async () => { throw new Error("retryable storage details"); },
+    markFailed: async args => { marks.push(args.execution_id); return { execution_id: args.execution_id, stage: "preparation_failed", replayed: false }; },
+  }), /retryable storage details/u);
+  assert.deepEqual(marks, []);
 });
 
 test("worker rejects foreign job identity before DB or provider construction", async () => {
