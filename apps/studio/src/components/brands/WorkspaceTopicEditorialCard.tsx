@@ -3,10 +3,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1, submitWorkspaceTopicEditorialIntentV1,
   WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialIntentV1, type WorkspaceTopicEditorialViewV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
+import { WorkspaceTopicEditorialOutcomes } from "./WorkspaceTopicEditorialOutcomes";
 
-export function WorkspaceTopicEditorialCard({ value, busy = false, stale = false, pending = false,
+export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecutionId, busy = false, stale = false, pending = false,
   retryReady = true, onStart, onRetry, onComplete, onReplay, onRefresh }: {
-  value: WorkspaceTopicEditorialViewV1; busy?: boolean; stale?: boolean; pending?: boolean;
+  value: WorkspaceTopicEditorialViewV1; workspaceId?: string; numericExecutionId?: string; busy?: boolean; stale?: boolean; pending?: boolean;
   retryReady?: boolean;
   onStart?: () => void; onRetry?: () => void; onComplete?: () => void; onReplay?: () => void; onRefresh?: () => void;
 }) {
@@ -36,6 +37,8 @@ export function WorkspaceTopicEditorialCard({ value, busy = false, stale = false
           </div> : null}
           {value.batch_progress.pending > 0 ? <p role="status">{t("outcomes.resume")}</p> : null}
         </> : null}
+        {value.batch_progress && execution && workspaceId && numericExecutionId
+          ? <WorkspaceTopicEditorialOutcomes workspaceId={workspaceId} numericExecutionId={numericExecutionId} executionId={execution.execution_id} /> : null}
         {!stale ? <dl className="admin-summary-strip admin-summary-strip--compact" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}>
           <div><dt>{t("maximum")}</dt><dd>{money(execution.maximum_micro_usd)}</dd></div>
           <div><dt>{t("confirmed")}</dt><dd>{money(execution.confirmed_micro_usd)}</dd></div>
@@ -176,7 +179,7 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
   if (!value || value.workspace_id !== workspaceId || value.numeric_execution_id !== numericExecutionId)
     return loadError ? <p role="alert" className="team-msg team-msg--error">{t("loadError")} <button type="button" className="admin-button" onClick={() => void read()}>{t("refresh")}</button></p> : null;
   return <>
-    <WorkspaceTopicEditorialCard value={value} busy={disabled || busy} stale={loadError} pending={pending}
+    <WorkspaceTopicEditorialCard value={value} workspaceId={workspaceId} numericExecutionId={numericExecutionId} busy={disabled || busy} stale={loadError} pending={pending}
       retryReady={value.status !== "failed" || renewal?.status === "admission_not_expired"
         || !!value.execution && value.execution.completed_screening_count === value.execution.expected_screening_count}
       onStart={() => void submit()} onRetry={() => void submit()}
