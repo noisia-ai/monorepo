@@ -470,6 +470,20 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progres
     "current V2 batch progress must not hide the read-only V1 history browser");
 });
 
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: empty V2 manifest state explains preparation before Claude submission`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const preparing: WorkspaceTopicEditorialViewV1 = { ...ready, status: "queued", can_quote: false,
+    execution: { execution_id: execution, status: "queued", completed_screening_count: 0, expected_screening_count: 2,
+      maximum_micro_usd: "1000000", confirmed_micro_usd: "0", reserved_micro_usd: "0", ambiguous_micro_usd: "0" },
+    batch_progress: { topics: 0, narratives: 0, noise: 0, insufficient_evidence: 0, technical_errors: 0, pending: 2,
+      batch_states: {}, error_codes: [] } };
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceTopicEditorialCard, { value: preparing, onRefresh: () => {} })));
+  assert.match(html, locale === "es-MX" ? /Todavía no ha enviado solicitudes a Claude/u : /has not sent any requests to Claude yet/u);
+  assert.doesNotMatch(html, locale === "es-MX" ? /continúa desde los manifiestos/u : /continues from saved manifests/u);
+});
+
 test("free completion derives immutable state/census and replays with provider/cache disabled", async () => {
   const f = fixture(); f.deps.available = () => false; f.deps.cache = () => { throw new Error("no cache"); };
   f.deps.inspect = async () => ({ numeric_run_id: run, execution_id: execution, can_request: true, source_current: false,

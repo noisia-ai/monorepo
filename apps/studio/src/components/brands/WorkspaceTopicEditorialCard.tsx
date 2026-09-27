@@ -21,6 +21,8 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
   const state = value.status;
   const execution = value.execution;
   const preparationFailed = value.batch_progress?.error_codes.includes("topic_editorial_batch_preparation_failed") === true;
+  const preparing = !!value.batch_progress && value.batch_progress.pending > 0
+    && Object.keys(value.batch_progress.batch_states).length === 0 && !preparationFailed;
   return <section className="admin-section topics-manager__editorial" data-topic-editorial-state={state} data-serving-activation="not-activated">
     <div className="admin-section__head"><div><h3>{t("title")}</h3><p>{t("body")}</p></div></div>
     <div className="admin-section__body admin-drawer-form">
@@ -42,7 +44,8 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
             {value.batch_progress.error_codes.length ? <p>{t("outcomes.errorCodes", { codes: value.batch_progress.error_codes.join(", ") })}</p> : null}
           </div> : null}
           {preparationFailed ? <p role="alert" className="team-msg team-msg--error">{t("preparationFailed")}</p> : null}
-          {value.batch_progress.pending > 0 && !preparationFailed ? <p role="status">{t("outcomes.resume")}</p> : null}
+          {value.batch_progress.pending > 0 && !preparationFailed
+            ? <p role="status">{t(preparing ? "outcomes.preparing" : "outcomes.resume")}</p> : null}
         </> : null}
         {value.batch_progress && execution && workspaceId && numericExecutionId && mentionsHref
           ? <WorkspaceTopicEditorialOutcomes workspaceId={workspaceId} numericExecutionId={numericExecutionId}

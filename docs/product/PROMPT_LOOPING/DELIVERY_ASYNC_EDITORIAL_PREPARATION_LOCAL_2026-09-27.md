@@ -8,6 +8,8 @@ La admisión conserva el plan V2 exacto que el servidor ya cotizó. El helper de
 
 Un fallo permanente antes del primer lote o llamada ahora queda guardado en la etapa del dueño `preparation_failed`. Topics lo muestra como error técnico explícito y ofrece reintentar esa misma ejecución. El retry requiere una clave idempotente nueva, verifica actor, workspace, admisión y fuente, y conserva el plan, el tope y los recibos originales. No crea otra admisión ni autoriza gasto. La migración `0197_signal_topic_editorial_preparation_retry.sql` es local y **no se ha ejecutado**.
 
+Mientras no exista ningún manifiesto, la interfaz distingue «preparando» de «lotes listos/en curso» y deja claro que Claude aún no ha recibido solicitudes.
+
 El drainer deja de reenviar preparaciones que ya están marcadas como fallidas. Los fallos intermedios siguen usando los tres intentos de BullMQ; sólo el último registra el estado terminal.
 
 ## Rendimiento de la carga previa
