@@ -13,7 +13,13 @@ test("dispatch diagnostics preserve phase and safe codes without leaking private
   assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(new Error("topic_editorial_batch_storage_receipt_invalid"), "queue_enqueue"),
     "topic_editorial_batch_dispatch_queue_enqueue_topic_editorial_batch_storage_receipt_invalid");
   assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(new Error("postgres://user:secret@db/private"), "anything/unexpected"),
-    "topic_editorial_batch_dispatch_unknown_failed");
+    "topic_editorial_batch_dispatch_unknown_error");
+  const wrapped = new Error("private wrapper", { cause: Object.assign(new Error("socket details"), { code: "ENOTFOUND" }) });
+  assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(wrapped, "database_read"),
+    "topic_editorial_batch_dispatch_database_read_error_cause_error_enotfound");
+  const unsafeCode = Object.assign(new Error("private SQL details"), { code: "password=private" });
+  assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(unsafeCode, "database_read"),
+    "topic_editorial_batch_dispatch_database_read_error");
 });
 
 test("disabled Batch lane does not open DB, queue, key, timer or provider", async () => {

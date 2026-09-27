@@ -12,16 +12,30 @@ type Queue = {
 };
 type Options = { env?: Environment; database?: SignalTopicEditorialBatchDatabaseV2; queue?: Queue };
 const dispatchPhases = new Set(["database_read", "queue_lookup", "queue_state", "queue_retry", "queue_enqueue"]);
+const safeErrorNames = new Set(["Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "AggregateError"]);
+function safeErrorCauseTag(error: unknown, depth = 0, seen = new Set<object>()): string {
+  if (!error || typeof error !== "object" || depth > 2 || seen.has(error)) return "unknown";
+  seen.add(error);
+  const value = error as { name?: unknown; code?: unknown; errno?: unknown; cause?: unknown };
+  const name = typeof value.name === "string" && safeErrorNames.has(value.name) ? value.name.toLowerCase() : "error";
+  const codeValue = typeof value.code === "string" ? value.code : typeof value.errno === "string" ? value.errno : "";
+  const code = /^[0-9A-Z]{5}$/iu.test(codeValue) || /^(?:E[A-Z0-9]{2,30}|ERR_[A-Z0-9_]{2,60})$/u.test(codeValue)
+    ? codeValue.toLowerCase() : "";
+  const cause = value.cause;
+  const nested = cause && typeof cause === "object" ? safeErrorCauseTag(cause, depth + 1, seen) : "";
+  return [name, code, nested ? `cause_${nested}` : ""].filter(Boolean).join("_").slice(0, 180);
+}
 export function safeSignalTopicEditorialBatchDispatchErrorV2(error: unknown, phase: string) {
   const stage = dispatchPhases.has(phase) ? phase : "unknown";
   const value = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : null;
   const code = typeof value?.code === "string" ? value.code : "";
   const message = typeof value?.message === "string" ? value.message : "";
-  const knownCode = /^(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENETUNREACH|EHOSTUNREACH|08000|08003|08006|57P01|57P02|57P03)$/u.test(code)
+  const knownCode = /^(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENETUNREACH|EHOSTUNREACH|ENOTFOUND|08000|08003|08006|57P01|57P02|57P03)$/u.test(code)
     ? `transport_${code.toLowerCase()}`
     : /^[0-9A-Z]{5}$/iu.test(code) ? `postgres_${code.toLowerCase()}` : null;
   const safeMessage = /^topic_editorial_batch_[a-z0-9_]{1,100}$/u.test(message) ? message : null;
-  return `topic_editorial_batch_dispatch_${stage}_${knownCode ?? safeMessage ?? "failed"}`;
+  const causeTag = safeErrorCauseTag(error);
+  return `topic_editorial_batch_dispatch_${stage}_${knownCode ?? safeMessage ?? causeTag ?? "failed"}`;
 }
 export function signalTopicEditorialBatchConfigurationV2(env: Environment = process.env) {
   const enabled = env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED === "true";
