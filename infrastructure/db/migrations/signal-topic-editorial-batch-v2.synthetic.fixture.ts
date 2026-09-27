@@ -13,11 +13,12 @@ import * as store from '../signal-topic-editorial-batch-v2';
 const hash=(body:string)=>`sha256:${createHash('sha256').update(body).digest('hex')}`;
 const providerReceipt=(id:string,count:number,status:'in_progress'|'ended')=>JSON.stringify({id,type:'message_batch',processing_status:status,
  request_counts:{processing:status==='ended'?0:count,succeeded:status==='ended'?count:0,errored:0,canceled:0,expired:0}});
-function message(request:SignalTopicEditorialGroupRequestV2,invalidUsage=false){
+function message(request:SignalTopicEditorialGroupRequestV2,invalidUsage=false,disposition:'Topic'|'Narrative'|'Noise'|'Unresolved'='Topic'){
  const output={contract_version:'signal-topic-editorial-group-output-v2',group_id:request.receipt.group_id.toUpperCase(),
-  disposition:'Topic',candidate:{label:'Reparación de bicicletas sintéticas',definition:'Una definición íntegra. '.repeat(70),locale:request.receipt.expected_locale.toLowerCase()},
+  disposition,candidate:disposition==='Topic'||disposition==='Narrative'
+   ?{label:'Reparación de bicicletas sintéticas',definition:'Una definición íntegra. '.repeat(70),locale:request.receipt.expected_locale.toLowerCase()}:null,
   confidence:0.8,rationale:'Evidencia ficticia para probar el almacenamiento sin truncar. '.repeat(70),
-  cited_evidence_ids:[request.receipt.evidence[0]!.evidence_id.toUpperCase()]};
+  cited_evidence_ids:disposition==='Unresolved'?[]:[request.receipt.evidence[0]!.evidence_id.toUpperCase()]};
  return {id:'synthetic-message',type:'message',role:'assistant',model:'claude-sonnet-4-6',stop_reason:'end_turn',stop_sequence:null,
   content:[{type:'text',text:JSON.stringify(output)}],usage:{input_tokens:invalidUsage?'unavailable':101,output_tokens:51,
    cache_creation_input_tokens:0,cache_read_input_tokens:0}};
@@ -232,12 +233,13 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
   const admitted=await store.requestSignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,run_id:seed.scope.numeric_run_id,
    input:source,idempotency_key,quote_reference:quote.quote_reference!});
   assert.equal(admitted.replayed,false);assert.equal(admitted.expected_items,2);
-  assert.ok(admitted.batch_id);assert.ok(admitted.manifest_digest);
+  const prepared=await store.prepareAllSignalTopicEditorialBatchV2({database,execution_id:admitted.execution_id});
+  assert.ok(prepared.batch_id);assert.ok(prepared.manifest_digest);assert.equal(prepared.provider_items,2);
   const replay=await store.replaySignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,
    numeric_execution_id:seed.numeric_execution_id,idempotency_key,quote_reference:quote.quote_reference!,
    confirmed_cap_micro_usd:'1000000000'});
-  assert.equal(replay.replayed,true);assert.equal(replay.execution_id,admitted.execution_id);assert.equal(replay.batch_id,admitted.batch_id);
-  assert.equal(replay.manifest_digest,admitted.manifest_digest);
+  assert.equal(replay.replayed,true);assert.equal(replay.execution_id,admitted.execution_id);assert.equal(replay.batch_id,prepared.batch_id);
+  assert.equal(replay.manifest_digest,prepared.manifest_digest);
   await denied(()=>store.replaySignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,
    numeric_execution_id:seed.numeric_execution_id,idempotency_key,quote_reference:quote.quote_reference!,
    confirmed_cap_micro_usd:'30000000'}),/idempotency_conflict/u);
@@ -279,6 +281,29 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
   assert.deepEqual(finished,{state:'applied',accepted:1,failed:1,stage:'screening'});
   assert.equal((await query('SELECT sum(settled_micro_usd)::text total FROM signal_topic_editorial_calls WHERE execution_id=$1',[admitted.execution_id])).rows[0]!.total,'1068');
   assert.equal((await query('SELECT result_revision_id FROM signal_topic_editorial_executions WHERE id=$1',[admitted.execution_id])).rows[0]!.result_revision_id,null);
+ });
+ await scenario('complete_batch_materializes_every_group_with_original_evidence_lineage',async()=>{
+  const admitted=await admission();const lease=await prepare(admitted.execution_id);await sendEnd(lease);
+  await persist(lease,0);await persist(lease,1);
+  assert.equal((await store.finishSignalTopicEditorialBatchImportV2({database,lease})).stage,'review_pending');
+  const materialized=await store.materializeSignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,
+   numeric_execution_id:seed.scope.numeric_run_id,execution_id:admitted.execution_id});
+  assert.equal(materialized.replayed,false);assert.equal(materialized.technical_error_count,0);
+  assert.deepEqual(materialized.outcome_counts,{topic:2,narrative:0,noise:0,insufficient_evidence:0,technical_error:0});
+  const rows=(await query(`SELECT count(DISTINCT d.atomic_group_id)::int decisions,count(DISTINCT g.id)::int groups,
+    count(DISTINCT lineage.canonical_root_id)::int original_roots,
+    bool_and(c.label='Reparación de bicicletas sintéticas') names_preserved,
+    max(length(d.rationale)) longest_rationale
+   FROM signal_topic_consolidation_decisions d
+   JOIN signal_topic_atomic_groups g ON g.id=d.atomic_group_id
+   JOIN signal_topic_editorial_concepts c ON c.id=d.concept_id AND c.revision_id=d.revision_id
+   JOIN signal_topic_atomic_group_roots lineage ON lineage.atomic_group_id=g.id
+   WHERE d.revision_id=(SELECT id FROM signal_topic_consolidation_revisions WHERE consolidation_run_id=$1 AND status='validated')`,
+   [seed.scope.numeric_run_id])).rows[0]!;
+  assert.equal(rows.decisions,2);assert.equal(rows.groups,2);assert.ok(Number(rows.original_roots)>=2);
+  assert.equal(rows.names_preserved,true);assert.ok(Number(rows.longest_rationale)>4000);
+  assert.equal((await query('SELECT count(*)::int count FROM signal_topic_consolidation_revisions WHERE consolidation_run_id=$1 AND status=\'validated\'',
+   [seed.scope.numeric_run_id])).rows[0]!.count,1);
  });
  await scenario('lost_submission_ack_late_receipt_and_collect_after_revocation',async()=>{
   const admitted=await admission();let lease=await prepare(admitted.execution_id);await store.markSubmittingSignalTopicEditorialBatchV2({database,lease});
@@ -351,5 +376,5 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
    'signal_topic_editorial_request_guard_v1','signal_processing_admission_guard_v1') ORDER BY 1`)).rows;
  assert.deepEqual(afterDefinitions,beforeDefinitions);
  return {contract_version:'signal-topic-editorial-batch-v2-synthetic-acceptance',scenarios:checked,
-  actual_provider_calls:0,fixture_root_count:3,fixture_group_count:2,materialization_tested:false,concurrency_tested:false,physical_rollback_owned_by_runner:true};
+  actual_provider_calls:0,fixture_root_count:3,fixture_group_count:2,materialization_tested:true,concurrency_tested:false,physical_rollback_owned_by_runner:true};
 }

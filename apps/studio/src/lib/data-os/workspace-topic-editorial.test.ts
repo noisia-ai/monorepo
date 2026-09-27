@@ -320,6 +320,24 @@ test("route authenticates first, forbids injected query data, and controls fence
   assert.match(ui, /submitController\.current\?\.abort\(\)/u); assert.doesNotMatch(ui, /activateSignal|materializeSignal|ANTHROPIC_API_KEY/u);
 });
 
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progress keeps semantic outcomes and technical errors separate and explains resume`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const running: WorkspaceTopicEditorialViewV1 = { ...ready, status: "running", can_quote: false, can_retry: false,
+    quote: null, execution: { execution_id: execution, status: "running", completed_screening_count: 4,
+      expected_screening_count: 5, maximum_micro_usd: "1000000000", confirmed_micro_usd: "1000",
+      reserved_micro_usd: "250", ambiguous_micro_usd: "0" },
+    batch_progress: { topics: 1, narratives: 1, noise: 1, insufficient_evidence: 0, technical_errors: 1,
+      pending: 1, batch_states: { running: 1, prepared: 1 }, error_codes: ["topic_editorial_v2_output_invalid"] } };
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceTopicEditorialCard, { value: running, now, confirmed: false, onRefresh: () => {} })));
+  assert.match(html, /topic_editorial_v2_output_invalid/u);
+  assert.match(html, locale === "es-MX" ? /Narrativas/u : /Narratives/u);
+  assert.match(html, locale === "es-MX" ? /Evidencia insuficiente/u : /Insufficient evidence/u);
+  assert.match(html, locale === "es-MX" ? /Errores técnicos/u : /Technical errors/u);
+  assert.match(html, locale === "es-MX" ? /manifiestos y resultados guardados/u : /saved manifests and results/u);
+});
+
 test("free completion derives immutable state/census and replays with provider/cache disabled", async () => {
   const f = fixture(); f.deps.available = () => false; f.deps.cache = () => { throw new Error("no cache"); };
   f.deps.inspect = async () => ({ numeric_run_id: run, execution_id: execution, can_request: true, source_current: false,

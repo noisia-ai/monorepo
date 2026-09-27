@@ -91,6 +91,9 @@ const exact = (value: Record<string, unknown>, keys: readonly string[], code: st
 const string = (value: unknown, code: string, max = 512) =>
   typeof value === "string" && value.trim() === value && value.length > 0 && Buffer.byteLength(value, "utf8") <= max ? value : fail(code);
 const nullableString = (value: unknown, code: string, max = 512) => value === null ? null : string(value, code, max);
+const editorialText = (value: unknown, code: string, max = 8 * 1024 * 1024) =>
+  typeof value === "string" && value.trim().length > 0 && !value.includes("\u0000") && Buffer.byteLength(value, "utf8") <= max ? value : fail(code);
+const nullableEditorialText = (value: unknown, code: string, max = 8 * 1024 * 1024) => value === null ? null : editorialText(value, code, max);
 const uuid = (value: unknown, code: string) => { const parsed = string(value, code, 36); return uuidPattern.test(parsed) ? parsed.toLowerCase() : fail(code); };
 const digest = (value: unknown, code: string) => { const parsed = string(value, code, 71); return digestPattern.test(parsed) ? parsed : fail(code); };
 const natural = (value: unknown, code: string, max = Number.MAX_SAFE_INTEGER) =>
@@ -260,7 +263,7 @@ export function parseSignalTopicConsolidationRevisionV1(value: unknown, groupKey
   const concepts = array(row.concepts, "topic_consolidation_concepts_invalid", 100_000).map(item => { const concept = object(item, "topic_consolidation_concepts_invalid"); exact(concept, ["concept_key", "kind", "label", "definition", "locale", "source"], "topic_consolidation_concepts_invalid");
     if (concept.kind !== "topic" && concept.kind !== "narrative" || !["numeric", "model", "human"].includes(String(concept.source))) fail("topic_consolidation_concepts_invalid");
     return { concept_key: string(concept.concept_key, "topic_consolidation_concepts_invalid", 256), kind: concept.kind as SignalTopicEditorialConceptV1["kind"],
-      label: string(concept.label, "topic_consolidation_concepts_invalid", 500), definition: string(concept.definition, "topic_consolidation_concepts_invalid", 4000),
+      label: editorialText(concept.label, "topic_consolidation_concepts_invalid"), definition: editorialText(concept.definition, "topic_consolidation_concepts_invalid"),
       locale: string(concept.locale, "topic_consolidation_concepts_invalid", 35), source: concept.source as SignalTopicEditorialConceptV1["source"] }; });
   unique(concepts.map(concept => concept.concept_key), "topic_consolidation_concepts_invalid"); lexical(concepts, concept => concept.concept_key);
   const conceptMap = new Map(concepts.map(concept => [concept.concept_key, concept])), known = new Set(groupKeys);
@@ -272,7 +275,7 @@ export function parseSignalTopicConsolidationRevisionV1(value: unknown, groupKey
     if ((disposition === "topic" || disposition === "narrative") ? concept?.kind !== disposition : conceptKey !== null) fail("topic_consolidation_decision_target_invalid");
     return { group_key: string(decision.group_key, "topic_consolidation_decisions_invalid", 256), disposition, concept_key: conceptKey,
       source: decision.source as SignalTopicConsolidationDecisionV1["source"], confidence: optionalUnit(decision.confidence, "topic_consolidation_decisions_invalid"),
-      rationale: nullableString(decision.rationale, "topic_consolidation_decisions_invalid", 4000) }; });
+      rationale: nullableEditorialText(decision.rationale, "topic_consolidation_decisions_invalid") }; });
   unique(decisions.map(decision => decision.group_key), "topic_consolidation_decisions_duplicate"); lexical(decisions, decision => decision.group_key);
   if (decisions.length !== known.size || decisions.some(decision => !known.has(decision.group_key))) fail("topic_consolidation_decisions_incomplete");
   const revision = natural(row.revision, "topic_consolidation_revision_invalid"); if (revision < 1) fail("topic_consolidation_revision_invalid");

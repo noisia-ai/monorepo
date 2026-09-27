@@ -2,12 +2,16 @@ import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {
   validateSignalTopicEditorialScreeningPlanV2, buildSignalTopicEditorialBatchPlanFromPreparedInputV2, classifySignalTopicEditorialMessageResultV2,
+  validateSignalTopicEditorialGroupRequestV2,
   type SignalTopicEditorialScreeningPlanV2,type SignalTopicEditorialGroupRequestV2,
-  type SignalTopicEditorialMessageResultV2,
+  type SignalTopicEditorialMessageResultV2,type SignalTopicEditorialGroupDecisionV2,
 } from '../../packages/query-engine/src/signal-topic-consolidation-editorial-v2';
 import type {SignalTopicEditorialPreparedInputV1} from '../../packages/query-engine/src/signal-topic-consolidation-bridge-v1';
-import type {SignalTopicEditorialPaidReuseResultV2} from '../../packages/query-engine/src/signal-topic-editorial-paid-reuse-v2';
+import {reuseSignalTopicEditorialPaidGroupV2,type SignalTopicEditorialPaidReuseResultV2,type SignalTopicEditorialPaidSourceCallV2} from '../../packages/query-engine/src/signal-topic-editorial-paid-reuse-v2';
+import type {SignalTopicEditorialScreeningPlanV1} from '../../packages/query-engine/src/signal-topic-consolidation-editorial-v1';
 import type {SignalTopicEditorialDatabaseV1} from './signal-topic-consolidation-editorial';
+import {materializeSignalTopicConsolidationRevisionV1,parseSignalTopicConsolidationRevisionV1,signalTopicConsolidationDigestV1,
+  type SignalTopicConsolidationRevisionV1} from './signal-topic-consolidation';
 
 export type SignalTopicEditorialBatchDatabaseV2=SignalTopicEditorialDatabaseV1;
 export type SignalTopicEditorialBatchQuoteV2={status:string;quote_reference:string|null;quote_expires_at:string|null;
@@ -67,8 +71,8 @@ export async function requestSignalTopicEditorialBatchV2(args:Db&{workspace_id:s
     const coreBody=signalTopicEditorialCanonicalBodyV2({...record,params:provider_request.params});
     if(sha(coreBody)!==request_digest)throw new Error('topic_editorial_v2_request_digest_invalid');
     return {params_body:JSON.stringify(provider_request.params),core_body:coreBody};});
-  return invoke<{execution_id:string;expected_items:number;stage:'screening';replayed:boolean;batch_id:string;manifest_digest:string}>(args.database,
-    'SELECT request_signal_topic_editorial_batch_v2($1,$2,$3::jsonb,$4,$5::jsonb,$6,$7,$8::uuid) value',
+  return invoke<{execution_id:string;expected_items:number;stage:'screening';replayed:boolean}>(args.database,
+    'SELECT request_signal_topic_editorial_batch_v2_unprepared($1,$2,$3::jsonb,$4,$5::jsonb,$6,$7,$8::uuid) value',
     [args.workspace_id,args.actor_user_id,JSON.stringify(plan),planBody,JSON.stringify(requestBodies),args.idempotency_key,
       args.quote_reference,args.previous_execution_id??null]);
 }
@@ -77,8 +81,8 @@ export async function replaySignalTopicEditorialBatchV2(args:Db&{workspace_id:st
   numeric_execution_id:string;idempotency_key:string;quote_reference:string;confirmed_cap_micro_usd:string}){
   if(!/^v2\.[0-9]{10}\.[a-f0-9]{64}$/u.test(args.quote_reference)||!/^\d{1,19}$/u.test(args.confirmed_cap_micro_usd))
     throw new Error('topic_editorial_v2_request_invalid');
-  return invoke<{replayed:boolean;execution_id?:string;expected_items?:number;stage?:'screening';batch_id?:string;manifest_digest?:string}>(args.database,
-    'SELECT replay_signal_topic_editorial_batch_v2($1,$2,$3::uuid,$4,$5,$6::bigint) value',
+  return invoke<{replayed:boolean;execution_id?:string;expected_items?:number;stage?:'screening';batch_id?:string|null;manifest_digest?:string|null}>(args.database,
+    'SELECT replay_signal_topic_editorial_batch_v2_unprepared($1,$2,$3::uuid,$4,$5,$6::bigint) value',
     [args.workspace_id,args.actor_user_id,args.numeric_execution_id,args.idempotency_key,args.quote_reference,args.confirmed_cap_micro_usd]);
 }
 async function tx<T>(database:SignalTopicEditorialBatchDatabaseV2,work:(client:PoolClient)=>Promise<T>):Promise<T>{
@@ -111,6 +115,86 @@ export async function admitSignalTopicEditorialBatchV2(args:Db&{workspace_id:str
 export function prepareSignalTopicEditorialBatchV2(args:Db&{execution_id:string;request_digests:string[];submission_key:string}){
   return invoke<{batch_id:string;manifest_digest:string;replayed:boolean}>(args.database,
     'SELECT prepare_signal_topic_editorial_batch_v2($1,$2::text[],$3) value',[args.execution_id,args.request_digests,args.submission_key]);
+}
+/** Ensures the admitted execution has one durable provider manifest covering
+ * every still-unreused logical group. Safe after a lost HTTP response: the key
+ * and manifest digest are derived from the immutable execution snapshot. */
+export async function prepareAllSignalTopicEditorialBatchV2(args:Db&{execution_id:string}){
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(args.execution_id))
+    throw new Error('topic_editorial_v2_execution_invalid');
+  const client=await args.database.connect();
+  let digests:string[];
+  try{
+    const result=await client.query<{request_digest:string}>(`SELECT r.request_digest FROM signal_topic_editorial_requests r
+      JOIN signal_topic_editorial_executions e ON e.id=r.execution_id
+      WHERE r.execution_id=$1::uuid AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_reused_decisions_v2 reused WHERE reused.request_id=r.id)
+      ORDER BY r.batch_index,r.request_digest`,[args.execution_id]);
+    digests=result.rows.map(row=>row.request_digest);
+  }finally{client.release();}
+  if(digests.length===0){
+    const db=await args.database.connect();
+    try{const row=(await db.query<{expected:number;reused:number}>(`SELECT jsonb_array_length(e.plan->'requests') expected,
+      (SELECT count(*)::integer FROM signal_topic_editorial_reused_decisions_v2 r WHERE r.execution_id=e.id) reused
+      FROM signal_topic_editorial_executions e WHERE e.id=$1::uuid AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,[args.execution_id])).rows[0];
+      if(!row||row.expected===0||row.expected!==row.reused)throw new Error('topic_editorial_v2_manifest_empty');
+      return {batch_id:null,manifest_digest:null,replayed:true,provider_items:0,reused_items:row.reused};
+    }finally{db.release();}
+  }
+  const submission_key=`v2-full-${args.execution_id.replaceAll('-','')}`;
+  const prepared=await prepareSignalTopicEditorialBatchV2({database:args.database,execution_id:args.execution_id,
+    request_digests:digests,submission_key});
+  return {...prepared,provider_items:digests.length};
+}
+
+/** Copies only prior, fully settled V1 decisions whose raw provider receipt,
+ * exact request, source group, context and cited evidence all match V2. The DB
+ * trigger independently verifies the same lineage before persisting each copy. */
+export async function reuseCompatibleSignalTopicEditorialPaidResultsV2(args:Db&{execution_id:string}){
+  const client=await args.database.connect();
+  let target:{plan:SignalTopicEditorialScreeningPlanV2;previous_execution_id:string|null}|null=null;
+  let prior: {plan:SignalTopicEditorialScreeningPlanV1;calls:Array<{request_digest:string;response_body_private:string;
+    response_sha256:string;response_output:unknown;response_http_status:number;response_complete:boolean;
+    call_id:string;execution_id:string;workspace_id:string;run_id:string}>}|null=null;
+  try{
+    const targetResult=await client.query<{plan:SignalTopicEditorialScreeningPlanV2;previous_execution_id:string|null}>(`
+      SELECT e.plan,o.previous_execution_id::text FROM signal_topic_editorial_executions e
+      JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
+      WHERE e.id=$1::uuid AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,[args.execution_id]);
+    target=targetResult.rows[0]??null;
+    if(!target)return {reused_items:0,needs_review_items:0};
+    if(!target.previous_execution_id)return {reused_items:0,needs_review_items:0};
+    const result=await client.query<{plan:SignalTopicEditorialScreeningPlanV1;calls:typeof prior extends infer _ ? Array<{
+      request_digest:string;response_body_private:string;response_sha256:string;response_output:unknown;response_http_status:number;
+      response_complete:boolean;call_id:string;execution_id:string;workspace_id:string;run_id:string}>:never}>(`
+      SELECT e.plan,COALESCE((SELECT jsonb_agg(jsonb_build_object('request_digest',r.request_digest,'response_body_private',c.response_body_private,
+        'response_sha256',c.response_sha256,'response_output',c.response_output,'response_http_status',c.response_http_status,
+        'response_complete',c.response_complete,'call_id',c.id,'execution_id',c.execution_id,'workspace_id',c.workspace_id,
+        'run_id',e.numeric_run_id) ORDER BY c.settled_at DESC,c.id) FROM signal_topic_editorial_requests r
+        JOIN signal_topic_editorial_calls c ON c.request_id=r.id AND c.execution_id=e.id
+        WHERE r.execution_id=e.id AND r.phase='screening' AND r.parent_request_id IS NULL AND c.transport_version=1
+          AND c.status='settled' AND c.response_http_status=200 AND c.response_complete=true),'[]'::jsonb) calls
+      FROM signal_topic_editorial_executions e WHERE e.id=$1::uuid AND e.workspace_id=$2::uuid
+        AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v1'`,
+      [target.previous_execution_id,target.plan.identity.workspace_id]);
+    prior=result.rows[0]??null;
+  }finally{client.release();}
+  if(!prior)return {reused_items:0,needs_review_items:target!.plan.requests.length};
+  let reused_items=0,needs_review_items=0;
+  for(const request of target!.plan.requests){
+    const source_batch=prior.plan.batches.find(batch=>batch.group_keys.includes(request.receipt.group_key));
+    const call=source_batch&&prior.calls.find(item=>item.request_digest===source_batch.request_digest);
+    if(!source_batch||!call){needs_review_items++;continue;}
+    const source_call:SignalTopicEditorialPaidSourceCallV2={...call,status:'settled',request:{contract_version:'signal-topic-editorial-provider-request-v1',
+      phase:'screening',idempotency_key:source_batch.batch_key,model:source_batch.model,request_digest:source_batch.request_digest,
+      request_body:source_batch.request_body}};
+    const reuse=reuseSignalTopicEditorialPaidGroupV2({request,source_batch,source_call,source:{kind:'raw_response'}});
+    if(reuse.status!=='reusable'){needs_review_items++;continue;}
+    await recordReusedSignalTopicEditorialDecisionV2({database:args.database,execution_id:args.execution_id,
+      request_digest:request.request_digest,reuse});
+    reused_items++;
+  }
+  return {reused_items,needs_review_items};
 }
 export function claimDueSignalTopicEditorialBatchV2(args:Db&{batch_id?:string;lease_seconds?:number}){
   return invoke<SignalTopicEditorialBatchLeaseV2|null>(args.database,
@@ -162,6 +246,127 @@ export function classifySignalTopicEditorialBatchItemV2(request:SignalTopicEdito
   if(!item||item.custom_id!==request.provider_request.custom_id)throw new Error('topic_editorial_v2_custom_id_invalid');
   if(item.result?.type!=='succeeded')return {status:'invalid_message',code:`topic_editorial_v2_provider_${['errored','canceled','expired'].includes(String(item.result?.type))?item.result!.type:'invalid'}`};
   return classifySignalTopicEditorialMessageResultV2(request,item.result.message);
+}
+
+export type SignalTopicEditorialBatchCatalogOutcomeV2={request:SignalTopicEditorialGroupRequestV2;
+  decision:SignalTopicEditorialGroupDecisionV2|null;technical_error_code:string|null};
+export type SignalTopicEditorialBatchCatalogV2={
+  outcomes:Array<{group_key:string;status:'topic'|'narrative'|'noise'|'insufficient_evidence'|'technical_error';
+    concept_key:string|null;technical_error_code:string|null;cited_ref_ids:string[]}>;
+  revision:SignalTopicConsolidationRevisionV1|null;
+};
+/** Converts one immutable decision per numeric group to the existing editable,
+ * revisioned catalog. A technical failure remains an explicit outcome and
+ * blocks completeness; it is never coerced to Noise or insufficient evidence. */
+export function buildSignalTopicEditorialBatchCatalogV2(args:{outcomes:SignalTopicEditorialBatchCatalogOutcomeV2[];revision:number}):SignalTopicEditorialBatchCatalogV2{
+  if(!Number.isSafeInteger(args.revision)||args.revision<1||!args.outcomes.length)throw new Error('topic_editorial_v2_catalog_input_invalid');
+  const seen=new Set<string>(),concepts:SignalTopicConsolidationRevisionV1['concepts']=[],decisions:SignalTopicConsolidationRevisionV1['decisions']=[];
+  const outcomes:SignalTopicEditorialBatchCatalogV2['outcomes']=[];
+  for(const item of args.outcomes){
+    const request=item.request;validateSignalTopicEditorialGroupRequestV2(request);
+    const groupKey=request.receipt.group_key;
+    if(seen.has(groupKey))throw new Error('topic_editorial_v2_catalog_duplicate_group');seen.add(groupKey);
+    const decision=item.decision;
+    if(item.technical_error_code!==null||decision===null){
+      if(!item.technical_error_code||!/^topic_editorial_v2_[a-z0-9_]+$/u.test(item.technical_error_code))throw new Error('topic_editorial_v2_catalog_error_code_invalid');
+      outcomes.push({group_key:groupKey,status:'technical_error',concept_key:null,technical_error_code:item.technical_error_code,cited_ref_ids:[]});
+      continue;
+    }
+    if(decision.group_key!==groupKey||decision.group_digest!==request.receipt.group_digest
+      ||decision.dossier_digest!==request.receipt.dossier_digest||decision.request_digest!==request.request_digest)
+      throw new Error('topic_editorial_v2_catalog_decision_scope_invalid');
+    const disposition=decision.disposition;
+    const kind: 'topic'|'narrative'|'noise'|'insufficient_evidence' = disposition==='unresolved'?'insufficient_evidence':disposition;
+    let conceptKey:string|null=null;
+    if(disposition==='topic'||disposition==='narrative'){
+      if(!decision.candidate)throw new Error('topic_editorial_v2_catalog_candidate_missing');
+      conceptKey=decision.candidate.candidate_key;
+      concepts.push({concept_key:conceptKey,kind:disposition,label:decision.candidate.label,definition:decision.candidate.definition,
+        locale:decision.candidate.locale,source:'model'});
+    }else if(decision.candidate!==null)throw new Error('topic_editorial_v2_catalog_candidate_unexpected');
+    decisions.push({group_key:groupKey,disposition,concept_key:conceptKey,source:'model',confidence:decision.confidence,rationale:decision.rationale});
+    outcomes.push({group_key:groupKey,status:kind,concept_key:conceptKey,technical_error_code:null,cited_ref_ids:[...decision.cited_ref_ids]});
+  }
+  if(new Set(concepts.map(item=>item.concept_key)).size!==concepts.length)throw new Error('topic_editorial_v2_catalog_concept_conflict');
+  if(outcomes.some(item=>item.status==='technical_error'))return {outcomes,revision:null};
+  concepts.sort((a,b)=>a.concept_key<b.concept_key?-1:a.concept_key>b.concept_key?1:0);
+  decisions.sort((a,b)=>a.group_key<b.group_key?-1:a.group_key>b.group_key?1:0);
+  const body={contract_version:'signal-topic-consolidation-revision-v1' as const,revision:args.revision,concepts,decisions};
+  const revision=parseSignalTopicConsolidationRevisionV1({...body,revision_digest:signalTopicConsolidationDigestV1(body)},
+    outcomes.map(item=>item.group_key));
+  return {outcomes,revision};
+}
+
+/** Persists the complete V2 result through the existing immutable revision
+ * editor. Incomplete/technical units are reported as technical errors and
+ * cannot produce a partial catalog revision. */
+export async function materializeSignalTopicEditorialBatchV2(args:Db&{workspace_id:string;actor_user_id:string;
+  numeric_execution_id:string;execution_id:string}){
+  const client=await args.database.connect();
+  let rows:Array<{request:SignalTopicEditorialGroupRequestV2;decision:SignalTopicEditorialGroupDecisionV2|null;technical_error_code:string|null}>;
+  let revision:number;
+  let consolidationRunId:string;
+  try{
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    await client.query('SET LOCAL search_path=public,extensions,pg_temp');
+    const owner=(await client.query<{numeric_run_id:string;expected:number;actor_user_id:string;materialized:boolean}>(`
+      SELECT e.numeric_run_id::text,e.actor_user_id::text,jsonb_array_length(e.plan->'requests') expected,
+        EXISTS(SELECT 1 FROM signal_topic_consolidation_revisions r WHERE r.consolidation_run_id=e.numeric_run_id
+          AND r.workspace_id=e.workspace_id AND r.status='validated' AND r.created_by_user_id=e.actor_user_id AND r.created_at>=e.created_at) materialized
+      FROM signal_topic_editorial_executions e JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
+      WHERE e.id=$1::uuid AND e.workspace_id=$2::uuid AND e.actor_user_id=$3::uuid
+        AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,
+    [args.execution_id,args.workspace_id,args.actor_user_id])).rows[0];
+    if(!owner)throw new Error('topic_editorial_v2_catalog_scope_invalid');
+    consolidationRunId=owner.numeric_run_id;
+    if(owner.materialized){
+      const prior=(await client.query<{revision:number}>(`SELECT revision FROM signal_topic_consolidation_revisions
+        WHERE consolidation_run_id=$1::uuid AND workspace_id=$2::uuid AND status='validated' AND created_by_user_id=$3::uuid
+          AND created_at>=(SELECT created_at FROM signal_topic_editorial_executions WHERE id=$4::uuid)
+        ORDER BY revision DESC LIMIT 1`,[owner.numeric_run_id,args.workspace_id,args.actor_user_id,args.execution_id])).rows[0];
+      await client.query('COMMIT');
+      return {consolidation_run_id:owner.numeric_run_id,revision:prior?.revision??null,replayed:true,technical_error_count:0};
+    }
+    const source=(await client.query<{request:SignalTopicEditorialGroupRequestV2;validation:SignalTopicEditorialMessageResultV2|null;
+      reused:SignalTopicEditorialGroupDecisionV2|null;outcome:string|null;call_status:string|null;item_error:string|null;batch_error:string|null}>(`
+      SELECT r.receipts->'request' request,item.validation,reused.decision reused,item.outcome,item.call_status,
+        COALESCE(item.validation->>'code',item.item_error) item_error,item.batch_error
+      FROM signal_topic_editorial_requests r
+      LEFT JOIN signal_topic_editorial_reused_decisions_v2 reused ON reused.request_id=r.id
+      LEFT JOIN LATERAL(SELECT entry.validation,entry.outcome,call.status call_status,call.error_code item_error,batch.error_code batch_error
+        FROM signal_topic_editorial_batch_items_v2 entry
+        JOIN signal_topic_editorial_provider_batches_v2 batch ON batch.id=entry.batch_id
+        JOIN signal_topic_editorial_calls call ON call.id=entry.call_id
+        WHERE entry.request_id=r.id ORDER BY batch.created_at DESC,batch.id DESC LIMIT 1) item ON true
+      WHERE r.execution_id=$1::uuid ORDER BY r.batch_index,r.request_digest`,[args.execution_id])).rows;
+    if(source.length!==owner.expected)throw new Error('topic_editorial_v2_catalog_coverage_incomplete');
+    rows=source.map(item=>{
+      const validation=item.validation;
+      if(item.reused)return {request:item.request,decision:item.reused,technical_error_code:null};
+      if(validation?.status==='accepted')return {request:item.request,decision:validation.decision,technical_error_code:null};
+      const code=item.item_error??item.batch_error??(item.outcome?`topic_editorial_v2_provider_${item.outcome}`:
+        item.call_status==='outcome_unknown'?'topic_editorial_v2_submission_unknown':'topic_editorial_v2_result_missing');
+      return {request:item.request,decision:null,technical_error_code:/^topic_editorial_v2_[a-z0-9_]+$/u.test(code)?code:'topic_editorial_v2_result_invalid'};
+    });
+    const next=(await client.query<{revision:number}>(`SELECT COALESCE(max(revision),0)+1 revision
+      FROM signal_topic_consolidation_revisions WHERE consolidation_run_id=$1::uuid AND workspace_id=$2::uuid`,
+    [owner.numeric_run_id,args.workspace_id])).rows[0]?.revision??1;
+    revision=next;
+    await client.query('COMMIT');
+  }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}
+  finally{client.release();}
+  const catalog=buildSignalTopicEditorialBatchCatalogV2({outcomes:rows!,revision:revision!});
+  const technicalErrorCount=catalog.outcomes.filter(item=>item.status==='technical_error').length;
+  if(!catalog.revision) return {consolidation_run_id:null,revision:null,replayed:false,technical_error_count:technicalErrorCount,
+    outcome_counts:countBatchCatalogOutcomesV2(catalog.outcomes)};
+  const stored=await materializeSignalTopicConsolidationRevisionV1({database:args.database,workspace_id:args.workspace_id,
+    actor_user_id:args.actor_user_id,consolidation_run_id:consolidationRunId!,revision:catalog.revision});
+  return {...stored,technical_error_count:0,outcome_counts:countBatchCatalogOutcomesV2(catalog.outcomes)};
+}
+function countBatchCatalogOutcomesV2(outcomes:SignalTopicEditorialBatchCatalogV2['outcomes']){
+  return {topic:outcomes.filter(item=>item.status==='topic').length,narrative:outcomes.filter(item=>item.status==='narrative').length,
+    noise:outcomes.filter(item=>item.status==='noise').length,insufficient_evidence:outcomes.filter(item=>item.status==='insufficient_evidence').length,
+    technical_error:outcomes.filter(item=>item.status==='technical_error').length};
 }
 
 /** The database independently binds the copied decision to the existing paid call

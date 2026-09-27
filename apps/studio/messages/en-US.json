@@ -3154,6 +3154,7 @@
           "reserved": "Reserved",
           "ambiguous": "Awaiting reconciliation",
           "progress": "Progress: {done, number} of {total, number} work units. Results are reviewed before publication.",
+          "outcomes": { "topics": "Topics", "narratives": "Narratives", "noise": "Noise", "insufficient": "Insufficient evidence", "errors": "Technical errors", "pending": "Pending", "errorPreserved": "Technical errors remain separate from Noise. The receipt is preserved and no false classification is published.", "errorCodes": "Codes: {codes}", "resume": "The Worker continues from saved manifests and results. Refresh this screen without restarting the analysis." },
           "quote": "Evaluate {count, number} groups with one request per group through Message Batches, with a total cap of {maximum}.",
           "expires": "Quote valid until {time}.",
           "confirmation": "I authorize this editorial review with a total cap of {maximum}.",

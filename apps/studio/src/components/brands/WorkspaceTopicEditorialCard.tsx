@@ -22,6 +22,21 @@ export function WorkspaceTopicEditorialCard({ value, now, confirmed, busy = fals
       <p role="status">{t(`states.${state}`)}</p>
       {execution ? <>
         <p>{t("progress", { done: execution.completed_screening_count, total: execution.expected_screening_count })}</p>
+        {value.batch_progress ? <>
+          <dl className="admin-summary-strip admin-summary-strip--compact" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 150px), 1fr))" }}>
+            <div><dt>{t("outcomes.topics")}</dt><dd>{value.batch_progress.topics}</dd></div>
+            <div><dt>{t("outcomes.narratives")}</dt><dd>{value.batch_progress.narratives}</dd></div>
+            <div><dt>{t("outcomes.noise")}</dt><dd>{value.batch_progress.noise}</dd></div>
+            <div><dt>{t("outcomes.insufficient")}</dt><dd>{value.batch_progress.insufficient_evidence}</dd></div>
+            <div><dt>{t("outcomes.errors")}</dt><dd>{value.batch_progress.technical_errors}</dd></div>
+            <div><dt>{t("outcomes.pending")}</dt><dd>{value.batch_progress.pending}</dd></div>
+          </dl>
+          {value.batch_progress.technical_errors > 0 ? <div role="alert" className="team-msg team-msg--error">
+            <p>{t("outcomes.errorPreserved")}</p>
+            {value.batch_progress.error_codes.length ? <p>{t("outcomes.errorCodes", { codes: value.batch_progress.error_codes.join(", ") })}</p> : null}
+          </div> : null}
+          {value.batch_progress.pending > 0 ? <p role="status">{t("outcomes.resume")}</p> : null}
+        </> : null}
         {!stale ? <dl className="admin-summary-strip admin-summary-strip--compact" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}>
           <div><dt>{t("maximum")}</dt><dd>{money(execution.maximum_micro_usd)}</dd></div>
           <div><dt>{t("confirmed")}</dt><dd>{money(execution.confirmed_micro_usd)}</dd></div>
