@@ -117,7 +117,10 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
       FROM latest e LEFT JOIN signal_topic_editorial_provider_batches_v2 b ON b.execution_id=e.id
       LEFT JOIN signal_topic_editorial_batch_items_v2 i ON i.batch_id=b.id
       LEFT JOIN signal_topic_editorial_calls c ON c.id=i.call_id
-      GROUP BY e.id,e.status,e.plan,e.hard_cap_micro_usd`,[args.workspaceId,args.numericExecutionId])).rows[0];
+      -- latest is a CTE, so PostgreSQL cannot use the base table's primary-key
+      -- functional dependency for correlated fields referenced by EXISTS.
+      GROUP BY e.id,e.workspace_id,e.numeric_run_id,e.actor_user_id,e.created_at,
+        e.status,e.plan,e.hard_cap_micro_usd`,[args.workspaceId,args.numericExecutionId])).rows[0];
     await client.query("COMMIT");
     if(!row)return null;
     const status=row.materialized?"completed":row.technical>0||BigInt(row.ambiguous)>0n?"failed":row.pending>0
