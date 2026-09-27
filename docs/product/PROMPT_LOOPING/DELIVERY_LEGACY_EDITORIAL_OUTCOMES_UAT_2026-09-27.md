@@ -42,6 +42,20 @@ La vista V1 del cribado anterior y la vista V2 de resultados editoriales ahora c
 
 El corte es sólo de lectura y no cambia la decisión, sus sellos, el corpus, la selección de Signal ni el gasto. La lectura de citas sigue acotada por workspace, ejecución, grupo, referencia, raíz y hash del fragmento. Se probaron el href renderizado y las dos formas de evidencia con identificadores sintéticos; no se modificó Alexa+ para hacer la prueba.
 
-Validación local: 51 pruebas focales PASS, typecheck de Studio PASS, ESLint focal PASS y `git diff --check` PASS. La revisión de código no encontró problema de aislamiento; corrigió la aceptación de una identidad representativa inconsistente. Falta desplegar y comprobar el recorrido real en UAT.
+Validación local: 51 pruebas focales PASS, typecheck de Studio PASS, ESLint focal PASS y `git diff --check` PASS. La revisión de código no encontró problema de aislamiento; corrigió la aceptación de una identidad representativa inconsistente.
 
-La latencia de la página permanece sin atribución causal. La evidencia actual no permite afirmar que el enlace cambie el rendimiento ni que la caché anterior cumpla un SLO. El siguiente paso tras verificar este corte es seguir otro hueco directamente visible del recorrido de producto; para medir latencia se requiere instrumentación por etapa antes de optimizar.
+## Verificación de linaje en UAT
+
+Fecha: 2026-09-27
+Commit: `c0c2c96`
+Despliegue Studio: `432c1a21-6ee1-4510-8a91-32d8054c5881` (ACTIVE)
+
+En la pantalla Topics de Alexa+ abrí una decisión V1 guardada, **Acceso anticipado a Alexa+ en México**, y comprobé que su cita ofrece **Abrir mención original**. La acción abrió Signal Menciones con `mention=02761c48-c79b-489e-867c-07f52faa8fcb`; el detalle cargado corresponde al texto citado del foro de Amazon y muestra el enlace al original. Esto confirma el recorrido cita guardada → raíz canónica → detalle real de la mención en UAT. Al entrar, la página mostró su estado de carga antes de presentar el detalle; no medí ese tiempo ni atribuyo todavía su causa.
+
+La verificación fue de lectura: no se editó ni seleccionó un Topic, no se guardaron decisiones y no cambió Signal. La cita sí lleva al registro citado; esto comprueba trazabilidad, no la precisión del resultado Topic ni la consolidación de los 1,652 grupos.
+
+También abrí el Noise guardado `guided:05d492c5-8e35-555a-b8e6-943f3c9f5278`. El detalle conserva la propuesta de Noise, el razonamiento sobre smart locks genéricos, la confianza registrada de 8% y dos citas de CNET. **Abrir mención original** llevó a `mention=2b5adef0-36a2-4f2e-9c40-d64ee57c4ed7`; el detalle mostró el artículo de CNET sobre la cerradura Nuki y el enlace al original. Esto confirma el mismo linaje para un resultado Noise y que la UI no lo presenta como decisión final. La precisión sigue sin calibrar.
+
+En ambas aperturas, Menciones mostró primero “Actualizando…” y después el detalle. No medí el intervalo completo; la observación confirma una carga visible, pero no establece latencia ni su causa.
+
+La latencia de la página permanece sin atribución causal. La evidencia actual no permite afirmar que el enlace cambie el rendimiento ni que la caché anterior cumpla un SLO. El siguiente corte de producto debe continuar desde el historial y la cita hacia la revisión consolidada completa; para optimizar latencia primero se necesita instrumentación por etapa.
