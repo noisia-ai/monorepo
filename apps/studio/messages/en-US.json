@@ -2777,8 +2777,8 @@
     "topics": {
       "analysis": {
         "legacyTitle": "Previous analysis",
-        "legacyBody": "Review the saved results and costs of the partial interpretation. To turn every group into useful Topics, continue with the editorial review above.",
-        "receiptLabels": {"cap": "Interpretation cap", "confirmed": "Confirmed Claude cost", "reserved": "Reserved Claude cost"},
+        "legacyBody": "This panel preserves results and costs from an earlier partial interpretation. The cap shown belongs to that run; the complete editorial review above uses the brand’s current policy.",
+        "receiptLabels": {"cap": "Previous run cap", "confirmed": "Confirmed Claude cost", "reserved": "Reserved Claude cost"},
         "admissionGrant": {
           "title": "Continue interpretation · spending authorization",
           "receipts": "Confirmed: {confirmed} · Reserved: {reserved}.",

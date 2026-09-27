@@ -2777,8 +2777,8 @@
     "topics": {
       "analysis": {
         "legacyTitle": "Análisis anterior",
-        "legacyBody": "Consulta los resultados y costos guardados de la interpretación parcial. Para convertir todos los grupos en Topics útiles, continúa con la revisión editorial de arriba.",
-        "receiptLabels": {"cap": "Tope de interpretación", "confirmed": "Claude confirmado", "reserved": "Claude reservado"},
+        "legacyBody": "Este panel conserva resultados y costos de una interpretación anterior y parcial. El tope mostrado pertenece a esa ejecución; la revisión editorial completa de arriba usa la política vigente de la marca.",
+        "receiptLabels": {"cap": "Tope del análisis anterior", "confirmed": "Claude confirmado", "reserved": "Claude reservado"},
         "admissionGrant": {
           "title": "Continuar la interpretación · permiso de gasto",
           "receipts": "Confirmado: {confirmed} · Reservado: {reserved}.",
