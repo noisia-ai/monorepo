@@ -3,7 +3,7 @@ import test from 'node:test';
 import {readFile} from 'node:fs/promises';
 import {signalWorkspaceEmbeddingDigestV1,signalTopicConsolidationActivationCommandV1,signalTopicConsolidationServingSnapshotSchemaV1} from '@noisia/query-engine';
 import {selectSignalWorkspaceTopicV1} from './signal-workspace-topic-selection';
-import {loadSignalWorkspaceTopicsOverviewV1} from './signal-workspace-topics-serving';
+import {loadSignalWorkspaceTopicDetailV1,loadSignalWorkspaceTopicEvidenceV1,loadSignalWorkspaceTopicsOverviewV1} from './signal-workspace-topics-serving';
 import {loadSignalTopicConsolidationActivationStatusV1,readSignalTopicConsolidationServingBindingV1,mutateSignalTopicConsolidationBindingV1} from './signal-topic-consolidation-activation';
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`,sha=(c:string)=>`sha256:${c.repeat(64)}`;
 const term=`consolidated_${'a'.repeat(64)}`;
@@ -54,6 +54,37 @@ test('active consolidation uses common rights/population reader with exact selec
  assert.deepEqual(result?.terms.map(item=>[item.kind,item.mention_count]),[['topic',2],['narrative',1]]);
  assert.equal(result?.coverage.noise,1);assert.equal(result?.coverage.unresolved,1);
  assert.equal(queries.some(sql=>sql.includes('loadSignalWorkspaceClassificationInput')),false);
+});
+test('narrative detail and evidence preserve editorial kind through the same rights-filtered serving path',async()=>{
+ const queries:string[]=[];
+ const client={async query(sql:string){queries.push(sql);
+  if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes('brand_access_level'))return{rows:[authority]};
+  if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{binding,snapshot}]};
+  if(sql.includes('WITH source_generation AS MATERIALIZED')&&sql.includes('SELECT count(*) FILTER'))return{rows:[{
+   evidence_visible_total:1,denominator:1,processed:1,assigned_unique:1,abstained:0,noise:0,unresolved:0,
+   unresolved_exclusive:0,withheld:0,rights_digest:sha('d'),date_from:null,date_to:null,
+   counts:[{term_key:narrativeTerm,mention_count:1}],series:[],observed_at:'2026-09-12T00:00:00.000000Z'}]};
+  if(sql.includes('SELECT root.root_id mention_id'))return{rows:[{mention_id:id(20),text:'A cited narrative mention',platform:'reddit',
+   occurred_at:'2026-09-12T00:00:00.000000Z',url:'https://example.test/source',evidence_fragment:null}]};
+  if(sql.includes('topic_roots AS MATERIALIZED'))return{rows:[{mention_count:1,undated_mentions:0,positive:0,neutral:1,negative:0,unclassified:0,
+   series:[{date:'2026-09-12',mention_count:1}],related:[]}]};
+  throw Error(`Unexpected SQL ${sql.slice(0,80)}`);
+ },release(){}};
+ const database={connect:async()=>client as never};
+ const scope={database,workspace_id:id(1),actor_user_id:id(2),term_key:narrativeTerm,kind:'narrative' as const};
+ const overview=await loadSignalWorkspaceTopicsOverviewV1({database,workspace_id:id(1),actor_user_id:id(2)});
+ assert.equal(overview?.terms.find(item=>item.term_key===narrativeTerm)?.kind,'narrative');
+ const evidence=await loadSignalWorkspaceTopicEvidenceV1({...scope,expected_scope_digest:overview!.scope_digest});
+ assert.equal(evidence.kind,'narrative');assert.equal(evidence.term_key,narrativeTerm);assert.equal(evidence.items[0]?.mention_id,id(20));
+ const detail=await loadSignalWorkspaceTopicDetailV1({...scope,expected_scope_digest:overview!.scope_digest});
+ assert.equal(detail.kind,'narrative');assert.equal(detail.term_key,narrativeTerm);assert.equal(detail.mention_count,1);
+ const topicCursor=Buffer.from(JSON.stringify({root_id:id(20),scope:overview!.scope_digest,term:narrativeTerm,kind:'topic'})).toString('base64url');
+ await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({...scope,cursor:topicCursor}),/workspace_topics_scope_changed/u,
+  'pagination cursor must remain bound to the Narrative kind');
+ await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({...scope,kind:'topic'}),/workspace_topics_topic_unavailable/u,
+  'a Narrative must not be retrievable by relabeling its kind as Topic');
+ assert.ok(queries.some(sql=>sql.includes('client-mention-list')&&sql.includes('client-text-or-excerpt')));
 });
 test('activation requires every CAS fence and explicit concepts; invalid command never opens DB',async()=>{
  const command={action:'activate',snapshot_id:id(3),snapshot_digest:sha('c'),revision_digest:sha('b'),selected_concept_keys:[],

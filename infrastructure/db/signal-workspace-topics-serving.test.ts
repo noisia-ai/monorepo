@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { signalTopicDefinitionDigestV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceClassificationInputV1 } from "./signal-workspace-classification";
-import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicsOverviewV1 } from "./signal-workspace-topics-serving";
+import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1, loadSignalWorkspaceTopicsOverviewV1 } from "./signal-workspace-topics-serving";
 
 const id = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
 const sha = (value: string) => `sha256:${value.repeat(64).slice(0, 64)}`;
@@ -120,6 +120,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   const args = { database: { async connect() { return client as never; } }, workspace_id: workspaceId,
     actor_user_id: actorId, term_key: "service", expected_scope_digest: overview!.scope_digest };
   const detail = await loadSignalWorkspaceTopicDetailV1(args);
+  assert.equal(detail.kind, "topic");
   assert.equal(detail.mention_count, 12);
   assert.equal(detail.undated_mentions, 2);
   assert.deepEqual(detail.sentiment, { positive: 3, neutral: 2, negative: 3, unclassified: 4,
@@ -133,6 +134,10 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.match(detailQueries[0]!.sql, /WHERE root.metrics/);
   await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, expected_scope_digest: "stale" }), /workspace_topics_scope_changed/);
   await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, term_key: "unselected" }), /workspace_topics_topic_unavailable/);
+  await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, kind: "narrative" }), /workspace_topics_topic_unavailable/,
+    "a topic key cannot be served through the narrative endpoint");
+  await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({ ...args, kind: "narrative" }), /workspace_topics_topic_unavailable/,
+    "evidence kind must match the selected catalogue term");
   access = false;
   await assert.rejects(loadSignalWorkspaceTopicDetailV1(args), /workspace_topics_forbidden/);
   assert.equal(detailQueries.length, 1, "scope rejection must precede aggregate query");

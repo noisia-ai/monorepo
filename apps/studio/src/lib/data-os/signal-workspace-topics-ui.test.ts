@@ -60,6 +60,13 @@ test("consolidated Signal separates Topics and narratives and exposes real edito
   assert.match(narrativeDisposition, /data-availability="available"/); assert.match(narrativeDisposition, /<strong>3<\/strong>/);
   assert.match(narrativeDisposition, /classified as Noise/);
 });
+
+test("native Topic and Narrative panels request evidence through their matching kind route", async () => {
+  const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  assert.match(source, /topics-narratives\/\$\{sectionKind\}\/\$\{encodeURIComponent\(term\.term_key\)\}\/evidence/u);
+  assert.match(source, /body\.kind !== sectionKind/u);
+  assert.match(source, /page\.kind === sectionKind/u);
+});
 test("stale generation preserves counts while disabling stale evidence access", async () => {
   const html = await render("en-US", { ...data, is_current: false });
   assert.match(html, /Previous result/); assert.match(html, /last complete result is retained/);

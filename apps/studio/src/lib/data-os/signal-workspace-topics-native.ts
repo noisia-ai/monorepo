@@ -38,16 +38,16 @@ export async function loadNativeSignalTopicsV1(scope: ActorScope & { imported_fa
   if (native && invalid) throw invalid;
   return native;
 }
-export async function loadNativeSignalTopicDetailV1(scope: ActorScope, term_key: string, params: URLSearchParams) {
+export async function loadNativeSignalTopicDetailV1(scope: ActorScope, term_key: string, params: URLSearchParams, kind: "topic" | "narrative" = "topic") {
   const { pool } = await import("@/lib/db");
-  return loadSignalWorkspaceTopicDetailV1({ database: pool, ...scope, ...nativeTopicsQueryV1(params), term_key,
+  return loadSignalWorkspaceTopicDetailV1({ database: pool, ...scope, ...nativeTopicsQueryV1(params), term_key, kind,
     expected_scope_digest: params.get("scope_digest") ?? "" });
 }
-export async function loadNativeSignalTopicEvidenceV1(scope: ActorScope, term_key: string, params: URLSearchParams) {
+export async function loadNativeSignalTopicEvidenceV1(scope: ActorScope, term_key: string, params: URLSearchParams, kind: "topic" | "narrative" = "topic") {
   const limit = params.has("limit") ? Number(params.get("limit")) : 25;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw Object.assign(new Error("Invalid limit"), { code: "workspace_topic_filter_invalid", status: 422 });
   const { pool } = await import("@/lib/db");
-  return loadSignalWorkspaceTopicEvidenceV1({ database: pool, ...scope, ...nativeTopicsQueryV1(params), term_key, limit,
+  return loadSignalWorkspaceTopicEvidenceV1({ database: pool, ...scope, ...nativeTopicsQueryV1(params), term_key, kind, limit,
     ...(params.get("cursor") ? { cursor: params.get("cursor")! } : {}),
     ...(params.get("scope_digest") ? { expected_scope_digest: params.get("scope_digest")! } : {}) });
 }

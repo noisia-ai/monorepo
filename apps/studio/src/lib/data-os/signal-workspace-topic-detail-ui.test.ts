@@ -8,7 +8,7 @@ import type { SignalWorkspaceTopicDetailV1 } from "@noisia/db";
 import { SignalWorkspaceTopicDetailMetrics, validNativeTopicDetail } from "../../components/signal-v2/SignalWorkspaceTopicDetail";
 Object.assign(globalThis, { React });
 const detail: SignalWorkspaceTopicDetailV1 = {
-  contract_version: "signal-workspace-topic-detail-v1", workspace_id: "workspace", generation_id: "generation",
+  contract_version: "signal-workspace-topic-detail-v1", workspace_id: "workspace", generation_id: "generation", kind: "topic",
   scope_digest: "scope", term_key: "assistant", mention_count: 12, undated_mentions: 2,
   series: [{ date: "2026-09-01", mention_count: 10 }],
   sentiment: { positive: 3, neutral: 2, negative: 3, unclassified: 4, meaning: "evidence_sentiment_not_topic_polarity" },
@@ -16,6 +16,8 @@ const detail: SignalWorkspaceTopicDetailV1 = {
 };
 test("native detail rejects stale scope and impossible aggregate counts", () => {
   assert.equal(validNativeTopicDetail(detail, detail), true);
+  assert.equal(validNativeTopicDetail(detail, { ...detail, kind: "narrative" }), false);
+  assert.equal(validNativeTopicDetail(detail, { ...detail, kind: "narrative" }), false);
   for (const field of ["workspace_id", "generation_id", "scope_digest", "term_key"] as const)
     assert.equal(validNativeTopicDetail({ ...detail, [field]: "other" }, detail), false);
   assert.equal(validNativeTopicDetail({ ...detail, sentiment: { ...detail.sentiment, positive: 13 } }, detail), false);

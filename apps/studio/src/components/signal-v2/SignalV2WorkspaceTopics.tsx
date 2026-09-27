@@ -75,7 +75,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   const sectionKind = section === "narratives" ? "narrative" : "topic";
   const sectionTerms = workspaceTermsForSectionV1(data, section === "narratives" ? "narratives" : "topics");
   const term = sectionTerms.find(item => item.term_key === selectedKey) ?? sectionTerms[0] ?? null;
-  const evidence = page?.scope_digest === data.scope_digest && page.term_key === term?.term_key
+  const evidence = page?.scope_digest === data.scope_digest && page.kind === sectionKind && page.term_key === term?.term_key
     && page.workspace_id === data.workspace_id && data.is_current ? page : null;
   const dateFrom = data.filters.date_from ?? data.available_dates.date_from;
   const dateTo = data.filters.date_to ?? data.available_dates.date_to;
@@ -93,7 +93,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
     if (data.filters.date_to) params.set("date_to", data.filters.date_to);
     if (cursor) params.set("cursor", cursor);
     try {
-      const response = await fetch(`/api/data-os/signal/${data.workspace_id}/topics-narratives/topic/${encodeURIComponent(term.term_key)}/evidence?${params}`,
+      const response = await fetch(`/api/data-os/signal/${data.workspace_id}/topics-narratives/${sectionKind}/${encodeURIComponent(term.term_key)}/evidence?${params}`,
         { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || version !== sequence.current) return;
       if (!response.ok) {
@@ -103,21 +103,21 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
       const body = await response.json() as SignalWorkspaceTopicEvidencePageV1;
       if (controller.signal.aborted || version !== sequence.current) return;
       if (body.contract_version !== "signal-workspace-topic-evidence-v1" || body.workspace_id !== data.workspace_id
-        || body.generation_id !== data.generation_id || body.scope_digest !== data.scope_digest || body.term_key !== term.term_key) {
+        || body.generation_id !== data.generation_id || body.scope_digest !== data.scope_digest || body.kind !== sectionKind || body.term_key !== term.term_key) {
         setPage(null); throw new Error("evidenceStale");
       }
-      setPage(previous => cursor && previous?.scope_digest === body.scope_digest && previous.term_key === body.term_key
+      setPage(previous => cursor && previous?.scope_digest === body.scope_digest && previous.kind === body.kind && previous.term_key === body.term_key
         ? { ...body, items: [...previous.items, ...body.items.filter(item => !previous.items.some(prior => prior.mention_id === item.mention_id))] }
         : body);
     } catch (cause) {
       if (!controller.signal.aborted && version === sequence.current) setError(cause instanceof Error ? cause.message : "evidenceError");
     } finally { if (!controller.signal.aborted && version === sequence.current) setReading(false); }
-  }, [data.filters.date_from, data.filters.date_to, data.generation_id, data.is_current, data.scope_digest, data.workspace_id, term]);
+  }, [data.filters.date_from, data.filters.date_to, data.generation_id, data.is_current, data.scope_digest, data.workspace_id, sectionKind, term]);
   useEffect(() => {
     const fence = sequence;
     sequence.current++; request.current?.abort(); setPage(null); setError(null); setReading(false);
     return () => { fence.current++; request.current?.abort(); };
-  }, [data.scope_digest, data.workspace_id, data.generation_id, data.is_current, term?.term_key]);
+  }, [data.scope_digest, data.workspace_id, data.generation_id, data.is_current, term?.term_key, sectionKind]);
   useEffect(() => {
     if ((section === "topics" || section === "narratives" || surface === "summary") && data.is_current && term) void read();
   }, [read, section, surface, data.is_current, term]);
@@ -202,7 +202,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
         <div className="signal-v2-tn__evidence-intro"><p>{t(sectionKind === "narrative" ? "narrativeMembership" : "membership", { count: term?.mention_count ?? 0 })}</p><p>{t("traceability")}</p></div>
         <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={!term || !data.is_current}
           onClick={() => { setDrawer(true); if (!evidence) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
-        {term ? <SignalWorkspaceTopicDetail data={data} termKey={term.term_key} onSelect={select} /> : null}
+        {term ? <SignalWorkspaceTopicDetail data={data} termKey={term.term_key} kind={sectionKind} onSelect={select} /> : null}
         <div className="signal-v2-tn__preview"><strong>{t("detailMetrics.evidence")}</strong>
           {evidence?.items.slice(0, 5).map(item => <button key={item.mention_id} type="button" onClick={() => setDrawer(true)}>
             <span><SignalSourceIcon label={item.platform} platform={item.platform} size={15} />{item.platform}</span><p>{item.text}</p>

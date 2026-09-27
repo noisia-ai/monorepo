@@ -48,6 +48,7 @@ export type SignalWorkspaceTopicEvidencePageV1 = {
   contract_version: "signal-workspace-topic-evidence-v1";
   workspace_id: string;
   generation_id: string;
+  kind: "topic" | "narrative";
   term_key: string;
   scope_digest: string;
   items: Array<{

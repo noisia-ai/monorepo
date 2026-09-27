@@ -446,7 +446,7 @@ export async function loadSignalWorkspaceTopicsOverviewV1(args: Args): Promise<S
 
 export type SignalWorkspaceTopicDetailV1 = {
   contract_version: "signal-workspace-topic-detail-v1";
-  workspace_id: string; generation_id: string; scope_digest: string; term_key: string;
+  workspace_id: string; generation_id: string; scope_digest: string; kind: "topic" | "narrative"; term_key: string;
   mention_count: number; undated_mentions: number;
   series: Array<{ date: string; mention_count: number }>;
   sentiment: { positive: number; neutral: number; negative: number; unclassified: number;
@@ -458,13 +458,14 @@ export type SignalWorkspaceTopicDetailV1 = {
 /** Uses the same selected, current, rights-filtered canonical roots as overview.
  * Counts are aggregate metrics, never extrapolated from the evidence page. */
 export async function loadSignalWorkspaceTopicDetailV1(args: Omit<Args, "include_unselected"> & {
-  term_key: string; expected_scope_digest: string;
+  term_key: string; kind?: "topic" | "narrative"; expected_scope_digest: string;
 }): Promise<SignalWorkspaceTopicDetailV1> {
+  const kind = args.kind ?? "topic";
   if (!args.term_key || args.term_key.length > 160 || !args.expected_scope_digest)
     return fail("workspace_topics_detail_request_invalid", 422);
   return transaction(args.database, async client => {
     const ctx = await context(client, args);
-    if (!ctx.generation || !ctx.native || !displayedTopics(ctx).some(topic => topic.term_key === args.term_key))
+    if (!ctx.generation || !ctx.native || !displayedTopics(ctx).some(topic => topic.term_key === args.term_key && topic.kind === kind))
       return fail("workspace_topics_topic_unavailable", 404);
     if (!ctx.is_current) return fail("workspace_topics_evidence_stale");
     const view = await overview(client, args, ctx);
@@ -495,9 +496,9 @@ export async function loadSignalWorkspaceTopicDetailV1(args: Omit<Args, "include
           ORDER BY shared_mentions DESC,member.term_key LIMIT 20
         ) relation),'[]') related
       FROM topic_roots`, [...populationParams(args, ctx), args.term_key])).rows[0]!;
-    const labels = new Map(view.terms.map(term => [term.term_key, term.label]));
+    const labels = new Map(view.terms.filter(term => term.kind === kind).map(term => [term.term_key, term.label]));
     return { contract_version: "signal-workspace-topic-detail-v1", workspace_id: args.workspace_id,
-      generation_id: ctx.generation.id, scope_digest: view.scope_digest, term_key: args.term_key,
+      generation_id: ctx.generation.id, scope_digest: view.scope_digest, kind, term_key: args.term_key,
       mention_count: summary.mention_count, undated_mentions: summary.undated_mentions, series: summary.series,
       sentiment: { positive: summary.positive, neutral: summary.neutral, negative: summary.negative,
         unclassified: summary.unclassified, meaning: "evidence_sentiment_not_topic_polarity" },
@@ -509,13 +510,14 @@ export async function loadSignalWorkspaceTopicDetailV1(args: Omit<Args, "include
 
 /** Stable root UUID keyset. The cursor is only a locator, never authorization. */
 export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "include_unselected"> & {
-  term_key: string; cursor?: string | null; expected_scope_digest?: string | null; limit?: number;
+  term_key: string; kind?: "topic" | "narrative"; cursor?: string | null; expected_scope_digest?: string | null; limit?: number;
 }): Promise<SignalWorkspaceTopicEvidencePageV1> {
+  const kind = args.kind ?? "topic";
   const limit = args.limit ?? 20;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || !args.term_key || args.term_key.length > 160) return fail("workspace_topics_evidence_request_invalid", 422);
   return transaction(args.database, async client => {
     const ctx = await context(client, args);
-    if (!ctx.generation || !ctx.native || !displayedTopics(ctx).some(topic => topic.term_key === args.term_key)) return fail("workspace_topics_topic_unavailable", 404);
+    if (!ctx.generation || !ctx.native || !displayedTopics(ctx).some(topic => topic.term_key === args.term_key && topic.kind === kind)) return fail("workspace_topics_topic_unavailable", 404);
     if (!ctx.is_current) return fail("workspace_topics_evidence_stale");
     const view = await overview(client, args, ctx);
     if (args.expected_scope_digest && args.expected_scope_digest !== view.scope_digest) return fail("workspace_topics_scope_changed");
@@ -523,9 +525,10 @@ export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "inclu
     if (args.cursor) {
       try {
         if (args.cursor.length > 1024) return fail("workspace_topics_cursor_invalid", 422);
-        const decoded = JSON.parse(Buffer.from(args.cursor, "base64url").toString("utf8")) as { root_id: string; scope: string; term: string };
+        const decoded = JSON.parse(Buffer.from(args.cursor, "base64url").toString("utf8")) as { root_id: string; scope: string; term: string; kind?: "topic" | "narrative" };
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(decoded.root_id)
-          || decoded.scope !== view.scope_digest || decoded.term !== args.term_key) return fail("workspace_topics_scope_changed");
+          || decoded.scope !== view.scope_digest || decoded.term !== args.term_key
+          || (decoded.kind !== undefined && decoded.kind !== kind) || (kind === "narrative" && decoded.kind !== "narrative")) return fail("workspace_topics_scope_changed");
         after = decoded.root_id;
       } catch (error) { if (error instanceof SignalWorkspaceTopicsServingError) throw error; return fail("workspace_topics_cursor_invalid", 422); }
     }
@@ -544,9 +547,9 @@ export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "inclu
       ORDER BY root.root_id LIMIT $8`, [...populationParams(args, ctx), args.term_key, after, limit + 1])).rows;
     const items = rows.slice(0, limit);
     return { contract_version: "signal-workspace-topic-evidence-v1", workspace_id: args.workspace_id,
-      generation_id: ctx.generation.id, term_key: args.term_key, scope_digest: view.scope_digest, items,
+      generation_id: ctx.generation.id, kind, term_key: args.term_key, scope_digest: view.scope_digest, items,
       next_cursor: rows.length > limit ? Buffer.from(JSON.stringify({ root_id: items.at(-1)!.mention_id,
-        scope: view.scope_digest, term: args.term_key })).toString("base64url") : null };
+        scope: view.scope_digest, term: args.term_key, kind })).toString("base64url") : null };
   });
 }
 

@@ -32,10 +32,10 @@ export async function GET(
   const { workspaceId, kind, termKey } = await context.params;
   const params = new URL(request.url).searchParams;
   if (params.get("view") === "all_conversations") {
-    if (kind !== "topic") return topicResponse({ error: "workspace_topic_not_found" }, 404);
+    if (kind !== "topic" && kind !== "narrative") return topicResponse({ error: "workspace_topic_not_found" }, 404);
     const scoped = await loadSignalWorkspaceContextForTopics(workspaceId);
     if ("response" in scoped) return scoped.response;
-    try { return topicResponse(await loadNativeSignalTopicEvidenceV1({ workspace_id: workspaceId, actor_user_id: scoped.session.appUser.id }, termKey, params)); }
+    try { return topicResponse(await loadNativeSignalTopicEvidenceV1({ workspace_id: workspaceId, actor_user_id: scoped.session.appUser.id }, termKey, params, kind)); }
     catch (error) { return topicError(error, "workspace_topic_evidence_unavailable"); }
   }
   const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "topics-narratives", request);
