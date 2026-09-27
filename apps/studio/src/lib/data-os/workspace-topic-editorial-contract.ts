@@ -11,11 +11,14 @@ export const editorialKey = (v: unknown): v is string => typeof v === "string" &
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, expected: string[]) => Object.keys(v).sort().join() === expected.sort().join();
 export type WorkspaceTopicEditorialCommandV1 =
+  | { action: "start_editorial"; numeric_execution_id: string }
   | { action: "authorize_editorial"; numeric_execution_id: string; quote_reference: string; confirmed_maximum_micro_usd: string }
   | { action: "retry_editorial"; numeric_execution_id: string; execution_id: string }
   | { action: "complete_catalog"; numeric_execution_id: string; execution_id: string };
 export function parseWorkspaceTopicEditorialCommandV1(v: unknown): WorkspaceTopicEditorialCommandV1 | null {
   if (!object(v) || !editorialUuid(v.numeric_execution_id)) return null;
+  if (v.action === "start_editorial" && keys(v, ["action", "numeric_execution_id"]))
+    return { action: v.action, numeric_execution_id: v.numeric_execution_id };
   if (v.action === "authorize_editorial" && keys(v, ["action", "numeric_execution_id", "quote_reference", "confirmed_maximum_micro_usd"])
     && editorialQuote(v.quote_reference) && editorialQuoteCap(v.quote_reference, v.confirmed_maximum_micro_usd))
     return { action: v.action, numeric_execution_id: v.numeric_execution_id, quote_reference: v.quote_reference, confirmed_maximum_micro_usd: v.confirmed_maximum_micro_usd };
@@ -85,10 +88,12 @@ export type WorkspaceTopicEditorialReceiptV1 = { contract_version: "workspace-to
   action: WorkspaceTopicEditorialCommandV1["action"]; numeric_execution_id: string; execution_id: string; idempotency_key: string; replayed: boolean; activation: "not_activated" };
 export function workspaceTopicEditorialIntentV1(workspace: string, body: WorkspaceTopicEditorialCommandV1, previous: WorkspaceTopicEditorialIntentV1 | null, createKey: () => string) {
   if (previous?.workspace_id === workspace && previous.body.action === body.action && previous.body.numeric_execution_id === body.numeric_execution_id
-    && (body.action === "authorize_editorial"
-      ? previous.body.action === "authorize_editorial" && previous.body.quote_reference === body.quote_reference
-        && previous.body.confirmed_maximum_micro_usd === body.confirmed_maximum_micro_usd
-      : previous.body.action !== "authorize_editorial" && previous.body.execution_id === body.execution_id)) return previous;
+    && (body.action === "start_editorial" ? true
+      : body.action === "authorize_editorial"
+        ? previous.body.action === "authorize_editorial" && previous.body.quote_reference === body.quote_reference
+          && previous.body.confirmed_maximum_micro_usd === body.confirmed_maximum_micro_usd
+        : previous.body.action !== "authorize_editorial" && previous.body.action !== "start_editorial"
+          && previous.body.execution_id === body.execution_id)) return previous;
   return { workspace_id: workspace, body: { ...body }, key: createKey() };
 }
 export class WorkspaceTopicEditorialRequestError extends Error {
@@ -103,7 +108,7 @@ export async function submitWorkspaceTopicEditorialIntentV1(intent: WorkspaceTop
     || v.contract_version !== "workspace-topic-editorial-receipt-v1" || v.workspace_id !== intent.workspace_id || v.action !== intent.body.action
     || v.numeric_execution_id !== intent.body.numeric_execution_id || v.idempotency_key !== intent.key || !editorialUuid(v.execution_id)
     || typeof v.replayed !== "boolean" || v.activation !== "not_activated"
-    || intent.body.action !== "authorize_editorial" && v.execution_id !== intent.body.execution_id)
+    || "execution_id" in intent.body && v.execution_id !== intent.body.execution_id)
     throw new WorkspaceTopicEditorialRequestError(response.status === 409 && object(v) && ["topic_editorial_quote_expired", "topic_editorial_quote_stale", "topic_editorial_existing_execution"].includes(String(v.error)));
   return v as WorkspaceTopicEditorialReceiptV1;
 }

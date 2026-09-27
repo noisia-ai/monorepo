@@ -2,7 +2,7 @@ import { loadSignalWorkspaceContextForTopics, requireIdempotencyKey, topicError,
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1 } from "@/lib/data-os/signal-topic-editorial-control";
 import { authorizeWorkspaceTopicEditorialBatchV2ForActor, loadWorkspaceTopicEditorialBatchStatusV2ForActor,
   quoteWorkspaceTopicEditorialBatchV2ForActor, completeWorkspaceTopicEditorialBatchV2ForActor,
-  canSupersedeFailedLegacyEditorialWithBatchV2ForActor } from "@/lib/data-os/signal-topic-editorial-batch-control-v2";
+  canSupersedeFailedLegacyEditorialWithBatchV2ForActor, startWorkspaceTopicEditorialBatchV2ForActor } from "@/lib/data-os/signal-topic-editorial-batch-control-v2";
 import { editorialUuid, parseWorkspaceTopicEditorialCommandV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -46,6 +46,12 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
   try { body = await request.json(); } catch { return topicResponse({ error: "topic_editorial_request_invalid" }, 422); }
   try {
     const command=parseWorkspaceTopicEditorialCommandV1(body);
+    if(command?.action==="start_editorial"){
+      return topicResponse(await startWorkspaceTopicEditorialBatchV2ForActor({workspaceId,
+        actorUserId:loaded.session.appUser.id,numericExecutionId:command.numeric_execution_id,idempotencyKey,
+        runtimeEnabled:process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED==="true"
+          &&process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED==="true"}),202);
+    }
     if(command?.action==="authorize_editorial"){
       return topicResponse(await authorizeWorkspaceTopicEditorialBatchV2ForActor({workspaceId,
         actorUserId:loaded.session.appUser.id,numericExecutionId:command.numeric_execution_id,

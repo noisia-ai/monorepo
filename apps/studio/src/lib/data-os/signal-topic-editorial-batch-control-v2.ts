@@ -47,6 +47,74 @@ export async function quoteWorkspaceTopicEditorialBatchV2ForActor(args:Args){
     maximum_micro_usd:quote.maximum_micro_usd,group_count:quote.expected_group_count,
     screening_count:quote.expected_group_count,global_count:1 as const}};
 }
+/** Starts under the workspace's already approved policy. The signed policy quote
+ * remains an internal, short-lived admission seal; it is never a separate UI gate. */
+export async function startWorkspaceTopicEditorialBatchV2ForActor(args:Args&{idempotencyKey:string;runtimeEnabled?:boolean}){
+  if(![args.workspaceId,args.actorUserId,args.numericExecutionId].every(editorialUuid)
+    ||!editorialKey(args.idempotencyKey))fail("topic_editorial_request_invalid",422);
+  const database=args.database??(await import("@/lib/db")).pool;
+
+  // Recover a committed start from the existing idempotency ledger before
+  // reading current source/policy. This preserves same-key recovery after a
+  // lost HTTP response or later source drift.
+  const client=await database.connect();
+  let prior:{quote_reference:string;hard_cap_micro_usd:string}|undefined;
+  try{
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
+    if(!caps.can_view)fail("processing_forbidden",403);
+    const row=(await client.query<{quote_reference:string;hard_cap_micro_usd:string}>(`SELECT e.quote_reference,e.hard_cap_micro_usd::text
+      FROM signal_topic_editorial_request_keys k
+      JOIN signal_topic_editorial_executions e ON e.workspace_id=k.workspace_id AND e.id=k.execution_id
+      JOIN signal_topic_consolidation_executions n ON n.workspace_id=e.workspace_id
+        AND n.consolidation_run_id=e.numeric_run_id AND n.id=$4::uuid
+      WHERE k.workspace_id=$1::uuid AND k.actor_user_id=$2::uuid AND k.idempotency_key=$3
+        AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,
+    [args.workspaceId,args.actorUserId,args.idempotencyKey,args.numericExecutionId])).rows[0];
+    if(row)prior=row;
+    const keyExists=(await client.query(`SELECT 1 FROM signal_topic_editorial_request_keys
+      WHERE workspace_id=$1::uuid AND actor_user_id=$2::uuid AND idempotency_key=$3`,
+    [args.workspaceId,args.actorUserId,args.idempotencyKey])).rowCount===1;
+    if(keyExists&&!row)fail("processing_idempotency_conflict",409);
+    await client.query("COMMIT");
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
+  finally{client.release();}
+  if(prior){
+    const replay=await replaySignalTopicEditorialBatchV2({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
+      numeric_execution_id:args.numericExecutionId,idempotency_key:args.idempotencyKey,quote_reference:prior.quote_reference,
+      confirmed_cap_micro_usd:prior.hard_cap_micro_usd});
+    if(!replay.replayed||!replay.execution_id)fail("topic_editorial_v2_replay_unavailable");
+    await reuseCompatibleSignalTopicEditorialPaidResultsV2({database,execution_id:replay.execution_id});
+    await prepareAllSignalTopicEditorialBatchV2({database,execution_id:replay.execution_id});
+    return {contract_version:"workspace-topic-editorial-receipt-v1" as const,workspace_id:args.workspaceId,
+      numeric_execution_id:args.numericExecutionId,action:"start_editorial" as const,execution_id:replay.execution_id,
+      idempotency_key:args.idempotencyKey,replayed:true,activation:"not_activated" as const};
+  }
+  if(args.runtimeEnabled===false)fail("topic_editorial_runtime_unavailable",503);
+  const source=await prepared(args),input=await loadSignalTopicConsolidationEditorialInputV1({database,
+    workspace_id:args.workspaceId,actor_user_id:args.actorUserId,numeric_run_id:source.run_id});
+  const {buildSignalTopicEditorialBatchPlanFromPreparedInputV2}=await import("@noisia/query-engine");
+  const plan=buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input,run_id:source.run_id});
+  const quote=await quoteSignalTopicEditorialBatchV2({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
+    run_id:source.run_id,plan,deadline:Math.floor(Date.now()/1000)+240});
+  if(quote.status!=="ready_to_authorize")fail(quote.status,quote.status==="access_required"?403:409);
+  if(!quote.quote_reference||!editorialCap(quote.maximum_micro_usd))fail("topic_editorial_policy_limit_unavailable");
+  const latest=await database.connect();let previous:string|null=null;
+  try{
+    const row=(await latest.query<{id:string|null}>(`SELECT id::text FROM signal_topic_editorial_executions
+      WHERE workspace_id=$1 AND numeric_run_id=$2 ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspaceId,source.run_id])).rows[0];
+    previous=row?.id??null;
+  }finally{latest.release();}
+  const result=await requestSignalTopicEditorialBatchV2({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
+    run_id:source.run_id,input,idempotency_key:args.idempotencyKey,quote_reference:quote.quote_reference,
+    previous_execution_id:previous});
+  await reuseCompatibleSignalTopicEditorialPaidResultsV2({database,execution_id:result.execution_id});
+  await prepareAllSignalTopicEditorialBatchV2({database,execution_id:result.execution_id});
+  return {contract_version:"workspace-topic-editorial-receipt-v1" as const,workspace_id:args.workspaceId,
+    numeric_execution_id:args.numericExecutionId,action:"start_editorial" as const,execution_id:result.execution_id,
+    idempotency_key:args.idempotencyKey,replayed:result.replayed,activation:"not_activated" as const};
+}
 export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args){
   if(![args.workspaceId,args.actorUserId,args.numericExecutionId].every(editorialUuid))fail("topic_editorial_request_invalid",422);
   const database=args.database??(await import("@/lib/db")).pool,client=await database.connect();

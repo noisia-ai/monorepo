@@ -1,10 +1,14 @@
 # Editorial consolidation in Studio
 
-The numeric control stays free. Once it is ready, its editorial section exposes an explicit quote and a separate authorization. GET status alone never hydrates corpus evidence. Only GET with `quote=1` builds the private server plan. POST accepts exactly an action, numeric control ID, opaque SQL quote reference and confirmed cap; retry/completion accept the scoped execution ID. It rejects browser plans, evidence, actor, provider and configuration fields.
+The numeric control stays free. Once it is ready, the editorial section has one **Start editorial review** action. GET status alone never hydrates corpus evidence. Starting sends only the numeric control ID and an idempotency key; the server loads the current evidence once, builds the private plan, obtains a short-lived policy seal internally, and submits that exact plan to atomic SQL admission. The browser never receives or supplies the quote, cap, plan, evidence, actor, provider or configuration. Same-key retry recovers the durable receipt from the existing request-key ledger.
 
-The maximum is the policy cap returned by SQL, capped at 20,000,000 microUSD. It is a total limit, not an estimate or a charge. The unchecked confirmation names the exact amount. A changed cap requires a fresh quote and confirmation. Quote expiration hides the amount and disables authorization. Historical confirmed/reserved/ambiguous costs come only from the current status read; they are hidden if that read fails.
+The policy seal is an internal admission check, not a price estimate. It binds the source, active workspace policy, configured execution maximum and daily exposure; SQL revalidates it while creating the admission and reservation. The user does not need to quote or approve every run after the workspace policy is configured. Actual confirmed, reserved and ambiguous amounts appear in progress once the execution exists. V1's explicit quote/confirmation command remains parseable for historical compatibility; the V2 Topics interface does not offer that two-step flow.
 
-## Private quote snapshot
+The maximum is the policy cap returned by SQL. It is a total limit, not an estimate or a charge. A changed policy is picked up on the next start and rechecked under the admission lock. The server fails closed when policy or remaining daily exposure cannot cover the configured execution maximum. Historical confirmed/reserved/ambiguous costs come only from the current status read; they are hidden if that read fails.
+
+## Legacy V1 quote snapshot
+
+The Redis quote snapshot below supports the historical V1 command path. The V2 Message Batches interface does not require a browser quote or cache-backed plan handoff.
 
 Studio requires `REDIS_URL` and `NOISIA_SIGNAL_TOPIC_EDITORIAL_QUOTE_KEY`, a canonical base64 encoding of 32 random bytes. This dedicated server secret is never returned to the browser or logged. The existing Worker receipt storage uses a private object bucket and has no reusable encryption-key contract for Studio. Keep the key stable across Studio replicas. Rotating it invalidates outstanding quotes, without affecting durable requests or results.
 

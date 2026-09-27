@@ -43,6 +43,9 @@ function fixture() {
 }
 test("commands accept only explicit capped authorization or scoped retry", () => {
   assert.deepEqual(parseWorkspaceTopicEditorialCommandV1(command), command);
+  assert.deepEqual(parseWorkspaceTopicEditorialCommandV1({ action: "start_editorial", numeric_execution_id: numeric }),
+    { action: "start_editorial", numeric_execution_id: numeric });
+  assert.equal(parseWorkspaceTopicEditorialCommandV1({ action: "start_editorial", numeric_execution_id: numeric, plan }), null);
   for (const change of [{ plan }, { evidence: [] }, { actor_user_id: actor }, { provider_available: true },
     { confirmed_maximum_micro_usd: "9223372036854775808" }, { confirmed_maximum_micro_usd: "0" },
     { confirmed_maximum_micro_usd: "500000000" }, { confirmed_maximum_micro_usd: 20 }, { confirmed_maximum_micro_usd: "030000000" }])
@@ -51,6 +54,15 @@ test("commands accept only explicit capped authorization or scoped retry", () =>
     confirmed_maximum_micro_usd: "500000000" }), { ...command, quote_reference: `v2.1789236000.${"b".repeat(64)}`,
       confirmed_maximum_micro_usd: "500000000" });
   assert.equal(parseWorkspaceTopicEditorialCommandV1({ action: command.action, numeric_execution_id: numeric, quote_reference: reference }), null);
+});
+test("V2 start keeps the policy quote internal and admits from one server-built input", async () => {
+  const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
+  const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/consolidation/editorial/route.ts", import.meta.url), "utf8");
+  const start = await readFile(new URL("./signal-topic-editorial-batch-control-v2.ts", import.meta.url), "utf8");
+  assert.match(ui, /action: "start_editorial" as const/u); assert.doesNotMatch(ui, /quote=1|onQuote|onAuthorize/u);
+  assert.match(route, /command\?\.action==="start_editorial"[\s\S]*startWorkspaceTopicEditorialBatchV2ForActor/u);
+  assert.match(start, /startWorkspaceTopicEditorialBatchV2ForActor[\s\S]*signal_topic_editorial_request_keys[\s\S]*replaySignalTopicEditorialBatchV2/u);
+  assert.match(start, /quoteSignalTopicEditorialBatchV2[\s\S]*requestSignalTopicEditorialBatchV2/u);
 });
 test("V2 policy quote accepts a policy-owned cap above the experiment budget with one item per group", () => {
   const largeQuote = { ...ready, status: "ready_to_authorize" as const, can_quote: true,
@@ -285,16 +297,26 @@ test("uncertain HTTP keeps the original cap/quote/key and checks receipt scope",
   }), result);
   await assert.rejects(submitWorkspaceTopicEditorialIntentV1(intent, async () => Response.json({ ...result, workspace_id: actor })));
 });
-for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: explicit unchecked confirmation, expiry and stale state hide spend amounts`, async () => {
+test("single-action start retains its idempotency key after an uncertain response", async () => {
+  const body = { action: "start_editorial" as const, numeric_execution_id: numeric };
+  const intent = workspaceTopicEditorialIntentV1(workspace, body, null, () => "start-key-001");
+  assert.equal(workspaceTopicEditorialIntentV1(workspace, body, intent, () => "new-start-key"), intent);
+  const result = { contract_version: "workspace-topic-editorial-receipt-v1", workspace_id: workspace,
+    numeric_execution_id: numeric, execution_id: execution, action: body.action, idempotency_key: intent.key,
+    replayed: true, activation: "not_activated" };
+  assert.deepEqual(await submitWorkspaceTopicEditorialIntentV1(intent, async (_url, init) => {
+    assert.equal((init?.headers as Record<string, string>)["Idempotency-Key"], "start-key-001");
+    assert.deepEqual(JSON.parse(String(init?.body)), body); return Response.json(result);
+  }), result);
+});
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: one start action uses policy without a per-run quote or confirmation`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const render = (props: Partial<ComponentProps<typeof WorkspaceTopicEditorialCard>> = {}) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>, createElement(WorkspaceTopicEditorialCard,
-      { value: ready, now, confirmed: false, onAuthorize: () => {}, ...props })));
-  const html = render(); assert.match(html, /type="checkbox"/u); assert.doesNotMatch(html, /checked=""/u);
-  assert.match(html, /disabled=""[^>]*>[^<]*(Autorizar|Authorize)/u); assert.match(html, /30\.00/u);
-  for (const hidden of [render({ now: Date.parse(expires) }), render({ stale: true })]) {
-    assert.doesNotMatch(hidden, /30\.00|type="checkbox"/u); assert.match(hidden, /data-serving-activation="not-activated"/u);
-  }
+      { value: ready, onStart: () => {}, ...props })));
+  const html = render(); assert.doesNotMatch(html, /type="checkbox"|30\.00|cotización editorial|editorial quote/iu);
+  assert.match(html, /(Iniciar revisión editorial|Start editorial review)/u);
+  assert.doesNotMatch(render({ stale: true }), /(Iniciar revisión editorial|Start editorial review)/u);
 });
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: an expired partial review cannot offer a futile retry before renewal`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
@@ -304,7 +326,7 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: an expired pa
       reserved_micro_usd: "0", ambiguous_micro_usd: "0" } };
   const render = (retryReady: boolean) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
-    createElement(WorkspaceTopicEditorialCard, { value: stopped, now, confirmed: false, retryReady, onRetry: () => {} })));
+    createElement(WorkspaceTopicEditorialCard, { value: stopped, retryReady, onRetry: () => {} })));
   assert.doesNotMatch(render(false), /<(?:button)[^>]*>[^<]*(?:Reanudar|Resume)/u);
   assert.match(render(true), /<(?:button)[^>]*>[^<]*(?:Reanudar|Resume)/u);
 });
@@ -330,9 +352,9 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: a quiescent f
   assert.equal(validWorkspaceTopicEditorialViewV1({ ...successorView, replaces_failed_v1: false }, workspace, numeric), false);
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
-    createElement(WorkspaceTopicEditorialCard, { value: successorView, now, confirmed: false, onQuote: () => {} })));
+    createElement(WorkspaceTopicEditorialCard, { value: successorView, onStart: () => {} })));
   assert.match(html, locale === "es-MX" ? /La revisión anterior quedó detenida/u : /The previous review stopped/u);
-  assert.match(html, locale === "es-MX" ? /Calcular cotización editorial/u : /Calculate editorial quote/u);
+  assert.match(html, locale === "es-MX" ? /Iniciar revisión editorial/u : /Start editorial review/u);
   assert.doesNotMatch(html, /Reanudar la misma revisión|Resume the same review/u);
 });
 
@@ -346,7 +368,7 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progres
       pending: 1, batch_states: { running: 1, prepared: 1 }, error_codes: ["topic_editorial_v2_output_invalid"] } };
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
-    createElement(WorkspaceTopicEditorialCard, { value: running, now, confirmed: false, onRefresh: () => {} })));
+    createElement(WorkspaceTopicEditorialCard, { value: running, onRefresh: () => {} })));
   assert.match(html, /topic_editorial_v2_output_invalid/u);
   assert.match(html, locale === "es-MX" ? /Narrativas/u : /Narratives/u);
   assert.match(html, locale === "es-MX" ? /Evidencia insuficiente/u : /Insufficient evidence/u);

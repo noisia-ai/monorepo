@@ -130,6 +130,7 @@ export async function requestWorkspaceTopicEditorialForActorV1(args: Omit<Access
   dependencies = defaultDependencies): Promise<WorkspaceTopicEditorialReceiptV1> {
   const command = parseWorkspaceTopicEditorialCommandV1(args.body);
   if (!command || !editorialKey(args.idempotencyKey)) fail("topic_editorial_request_invalid", 422);
+  if (command.action === "start_editorial") fail("topic_editorial_batch_v2_required", 409);
   const access = await options({ ...args, numericExecutionId: command.numeric_execution_id });
   const scope = await dependencies.inspect(access, args.idempotencyKey);
   if (!scope.can_request) fail("processing_forbidden", 403);
