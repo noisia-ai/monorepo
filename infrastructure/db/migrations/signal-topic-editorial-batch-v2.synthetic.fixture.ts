@@ -319,10 +319,15 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
    [workspace_id,admitted.execution_id])).rows[0]!;
   assert.deepEqual(finalCounts,{admissions:1,keys:2,batches:1,calls:2},
    'manifest creation is not a provider send; paid calls remain unattempted');
-  assert.equal((await query(`SELECT count(*)::int count FROM signal_topic_editorial_calls
-    WHERE execution_id=$1 AND status='reserved' AND provider_batch_id IS NULL`,[admitted.execution_id])).rows[0]!.count,2);
-  assert.equal((await query(`SELECT count(*)::int count FROM signal_topic_editorial_provider_batches_v2
-    WHERE execution_id=$1 AND provider_batch_id IS NOT NULL`,[admitted.execution_id])).rows[0]!.count,0);
+  const preparedState=(await query(`SELECT
+    (SELECT count(*)::int FROM signal_topic_editorial_provider_batches_v2
+      WHERE execution_id=$1 AND state='prepared' AND provider_batch_id IS NULL) batches_not_submitted,
+    (SELECT count(*)::int FROM signal_topic_editorial_calls
+      WHERE execution_id=$1 AND transport_version=2 AND status='reserved'
+       AND sent_at IS NULL AND response_body_private IS NULL) calls_not_submitted`,
+    [admitted.execution_id])).rows[0]!;
+  assert.deepEqual(preparedState,{batches_not_submitted:1,calls_not_submitted:2},
+   'manifest preparation reserves calls but must not submit a provider batch');
  });
  await scenario('long_prose_case_aliases_independent_items_and_exact_batch_price',async()=>{
   const admitted=await admission();const lease=await prepare(admitted.execution_id);await sendEnd(lease);
