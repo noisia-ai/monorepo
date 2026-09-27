@@ -11,10 +11,47 @@ import { AtomicCensusReadError, loadWorkspaceTopicAtomicCensusPageV1 } from "./w
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const pageSize = 20;
 type Scope = { database?: Pick<Pool, "connect">; workspaceId: string; actorUserId: string; numericExecutionId: string;
-  offset: number; limit: number };
-type SavedOwner = { id: string; status: string; plan_digest: string; plan_valid: boolean; state_body: unknown; state_digest: string };
+  offset: number; limit: number; planValidationCache?: PositivePlanValidationCacheV1 };
+type SavedOwner = { id: string; status: string; numeric_run_id: string; plan_digest: string; plan_body_digest: string | null;
+  state_body: unknown; state_digest: string };
 type SavedBatch = { batch_index: number; batch: unknown; output: unknown };
 type CitationRow = { group_key: string; ref_id: string; chunk_sha256: string; fragment: string | null; platform: string | null };
+
+const planValidatorVersion = "signal_topic_editorial_plan_valid_v1:0178-contract-v1";
+const planValidationCacheTtlMs = 30_000;
+const planValidationCacheMaxEntries = 256;
+type PlanIdentityV1 = { workspaceId: string; numericExecutionId: string; numericRunId: string; executionId: string; planDigest: string };
+
+/** Positive-only, bounded process cache. No authorization, state, page, or citation data is cached. */
+export class PositivePlanValidationCacheV1 {
+  private readonly entries = new Map<string, number>();
+  constructor(private readonly now: () => number = Date.now, private readonly ttlMs = planValidationCacheTtlMs,
+    private readonly maxEntries = planValidationCacheMaxEntries) {}
+
+  has(identity: PlanIdentityV1, validatorVersion = planValidatorVersion): boolean {
+    const key = this.key(identity, validatorVersion);
+    const expiresAt = this.entries.get(key);
+    if (expiresAt === undefined) return false;
+    if (expiresAt <= this.now()) { this.entries.delete(key); return false; }
+    this.entries.delete(key);
+    this.entries.set(key, expiresAt);
+    return true;
+  }
+
+  remember(identity: PlanIdentityV1, validatorVersion = planValidatorVersion): void {
+    const key = this.key(identity, validatorVersion);
+    this.entries.delete(key);
+    this.entries.set(key, this.now() + this.ttlMs);
+    while (this.entries.size > this.maxEntries) this.entries.delete(this.entries.keys().next().value as string);
+  }
+
+  private key(identity: PlanIdentityV1, validatorVersion: string): string {
+    return JSON.stringify([identity.workspaceId, identity.numericExecutionId, identity.numericRunId,
+      identity.executionId, identity.planDigest, validatorVersion]);
+  }
+}
+
+const processPlanValidationCache = new PositivePlanValidationCacheV1();
 
 export class LegacyEditorialOutcomeReadError extends Error {
   constructor(readonly code: string, readonly status: number) { super(code); }
@@ -72,8 +109,8 @@ export async function loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args: Scop
         JOIN signal_topic_consolidation_runs run ON run.id=execution.consolidation_run_id AND run.workspace_id=execution.workspace_id
         WHERE execution.workspace_id=$1::uuid AND execution.id=$2::uuid AND execution.status='ready'
       )
-      SELECT editorial.id::text id,editorial.status,editorial.plan_digest,
-        signal_topic_editorial_plan_valid_v1(editorial.numeric_run_id,editorial.plan) plan_valid,
+      SELECT editorial.id::text id,editorial.status,numeric.run_id::text numeric_run_id,
+        editorial.plan_digest,editorial.plan->>'plan_digest' plan_body_digest,
         editorial.state_body::jsonb state_body,editorial.state_digest
       FROM numeric JOIN LATERAL (
         SELECT candidate.* FROM signal_topic_editorial_executions candidate,numeric
@@ -87,7 +124,25 @@ export async function loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args: Scop
     const resultsByKey = new Map<string, { decision: Record<string, unknown>; evidenceRefs: string[] }>();
     let savedDecisionCount = 0, screeningBatchCount = 0, expectedBatchCount = 0;
     if (owner) {
-      if (!owner.plan_valid) return fail("topic_editorial_legacy_plan_invalid");
+      // The cache can skip only the expensive full-plan SQL validator. Bind it to the
+      // persisted identity and reject column/body drift before consulting the cache.
+      if (typeof owner.numeric_run_id !== "string" || !uuid.test(owner.numeric_run_id)
+        || typeof owner.plan_digest !== "string" || owner.plan_body_digest !== owner.plan_digest)
+        return fail("topic_editorial_legacy_plan_invalid");
+      const planIdentity = { workspaceId: args.workspaceId, numericExecutionId: args.numericExecutionId,
+        numericRunId: owner.numeric_run_id, executionId: owner.id, planDigest: owner.plan_digest };
+      const validationCache = args.planValidationCache ?? processPlanValidationCache;
+      if (!validationCache.has(planIdentity)) {
+        const valid = (await client.query<{ plan_valid: boolean }>(`SELECT signal_topic_editorial_plan_valid_v1(
+          editorial.numeric_run_id,editorial.plan) plan_valid
+          FROM signal_topic_editorial_executions editorial
+          WHERE editorial.id=$1::uuid AND editorial.workspace_id=$2::uuid
+            AND editorial.numeric_run_id=$3::uuid AND editorial.plan_digest=$4
+            AND editorial.plan->>'plan_digest'=$4`,
+        [owner.id, args.workspaceId, owner.numeric_run_id, owner.plan_digest])).rows[0]?.plan_valid;
+        if (valid !== true) return fail("topic_editorial_legacy_plan_invalid");
+        validationCache.remember(planIdentity);
+      }
       const planMetadata = (await client.query<{ expected_group_count: number; batch_count: number }>(`
         SELECT (editorial.plan->>'expected_group_count')::integer expected_group_count,
           jsonb_array_length(editorial.plan->'batches')::integer batch_count

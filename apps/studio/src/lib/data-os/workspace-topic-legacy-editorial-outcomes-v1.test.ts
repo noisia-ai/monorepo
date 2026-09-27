@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { buildSignalTopicEditorialScreeningPlanV1, signalTopicEditorialDigestV1 } from "@noisia/query-engine";
-import { loadWorkspaceTopicLegacyEditorialOutcomesPageV1 } from "./workspace-topic-legacy-editorial-outcomes-v1";
+import { loadWorkspaceTopicLegacyEditorialOutcomesPageV1, PositivePlanValidationCacheV1 } from "./workspace-topic-legacy-editorial-outcomes-v1";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const actorUserId = "00000000-0000-4000-8000-000000000002";
@@ -44,7 +44,7 @@ const stateBody = { contract_version: "signal-topic-editorial-runner-v1" as cons
   screening_outputs: [output], global: null };
 const stateDigest = signalTopicEditorialDigestV1(stateBody);
 
-function fakeDatabase(hasOwner = true) {
+function fakeDatabase(hasOwner = true, planValid = true) {
   const calls: Array<{ sql: string; params?: unknown[] }> = [];
   const client = { release() {}, async query(sql: string, params?: unknown[]) {
     calls.push({ sql, params });
@@ -58,7 +58,9 @@ function fakeDatabase(hasOwner = true) {
     if (sql.includes("SELECT sample.atomic_group_id")) return { rows: [{ atomic_group_id: "00000000-0000-4000-8000-000000000007",
       canonical_root_id: rootId, chunk_sha256: chunk, fragment: text, platform: "reddit", locale: "es-MX" }] };
     if (sql.includes("SELECT editorial.id::text id")) return { rows: hasOwner ? [{ id: stateBody.execution_key, status: "failed",
-      plan_digest: plan.plan_digest, plan_valid: true, state_body: stateBody, state_digest: stateDigest }] : [] };
+      numeric_run_id: runId, plan_digest: plan.plan_digest, plan_body_digest: plan.plan_digest, state_body: stateBody,
+      state_digest: stateDigest }] : [] };
+    if (sql.includes("SELECT signal_topic_editorial_plan_valid_v1")) return { rows: [{ plan_valid: planValid }] };
     if (sql.includes("SELECT (editorial.plan->>'expected_group_count')::integer")) return { rows: [{ expected_group_count: 1, batch_count: 1 }] };
     if (sql.includes("WITH editorial AS (") && sql.includes("jsonb_array_elements(editorial.plan->'batches')"))
       return { rows: hasOwner ? [{ batch_index: 0, batch, output }] : [] };
@@ -84,6 +86,25 @@ test("shows only sealed per-group V1 decisions with citations verified against t
   assert.equal(db.calls.filter(call => call.sql === "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").length, 1);
   assert.equal(db.calls.filter(call => call.sql === "COMMIT").length, 1);
   assert.ok(db.calls.some(call => call.sql.includes("signal_topic_editorial_plan_valid_v1")));
+});
+
+test("reuses only a positive full-plan validation while rechecking authorization, state, page outputs, and citations", async () => {
+  const db = fakeDatabase();
+  const cache = new PositivePlanValidationCacheV1();
+  const args = { database: db.database, workspaceId, actorUserId, numericExecutionId, offset: 0, limit: 20, planValidationCache: cache };
+  const first = await loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args);
+  const second = await loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args);
+  assert.deepEqual(second, first);
+  assert.equal(db.calls.filter(call => call.sql.includes("signal_topic_editorial_plan_valid_v1")).length, 1);
+  assert.equal(db.calls.filter(call => call.sql.includes("workspace.status workspace_status")).length, 2);
+  assert.equal(db.calls.filter(call => call.sql.includes("SELECT r.id,r.expected_group_count")).length, 2);
+  assert.equal(db.calls.filter(call => call.sql.includes("SELECT editorial.id::text id")).length, 2);
+  const ownerRead = db.calls.find(call => call.sql.includes("SELECT editorial.id::text id"))?.sql ?? "";
+  assert.match(ownerRead, /editorial\.plan->>'plan_digest' plan_body_digest/);
+  assert.doesNotMatch(ownerRead, /SELECT[^]*editorial\.plan\s*,/);
+  assert.equal(db.calls.filter(call => call.sql.includes("jsonb_array_elements(editorial.plan->'batches')")).length, 2);
+  assert.equal(db.calls.filter(call => call.sql.includes("jsonb_to_recordset($3::jsonb)")).length, 2);
+  assert.equal(db.calls.filter(call => call.sql === "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").length, 2);
 });
 
 test("does not invent legacy decisions when no saved screening execution exists", async () => {
@@ -117,4 +138,83 @@ test("rejects a corrupt state digest without exposing any partial decisions", as
   await assert.rejects(loadWorkspaceTopicLegacyEditorialOutcomesPageV1({ database: db.database, workspaceId, actorUserId,
     numericExecutionId, offset: 0, limit: 20 }), error => error instanceof Error && "code" in error
       && error.code === "topic_editorial_legacy_state_invalid");
+});
+
+test("fails closed when the embedded plan digest differs from the persisted digest, even after a cache hit", async () => {
+  const db = fakeDatabase();
+  const cache = new PositivePlanValidationCacheV1();
+  const args = { database: db.database, workspaceId, actorUserId, numericExecutionId, offset: 0, limit: 20, planValidationCache: cache };
+  await loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args);
+  const clientDb = db.database as unknown as { connect: () => Promise<{ release: () => void; query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> }> };
+  const originalConnect = clientDb.connect;
+  clientDb.connect = async () => {
+    const client = await originalConnect();
+    const originalQuery = client.query;
+    client.query = async (sql, params) => {
+      const result = await originalQuery(sql, params);
+      if (sql.includes("SELECT editorial.id::text id") && result.rows.length) {
+        const row = result.rows[0] as Record<string, unknown>;
+        return { rows: [{ ...row, plan_body_digest: digest("different-plan") }] };
+      }
+      return result;
+    };
+    return client;
+  };
+  await assert.rejects(loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args), error => error instanceof Error && "code" in error
+    && error.code === "topic_editorial_legacy_plan_invalid");
+  assert.equal(db.calls.filter(call => call.sql.includes("signal_topic_editorial_plan_valid_v1")).length, 1);
+});
+
+test("does not cache a false plan validation or a validator error", async () => {
+  const db = fakeDatabase(true, false);
+  const cache = new PositivePlanValidationCacheV1();
+  const args = { database: db.database, workspaceId, actorUserId, numericExecutionId, offset: 0, limit: 20, planValidationCache: cache };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args), error => error instanceof Error && "code" in error
+      && error.code === "topic_editorial_legacy_plan_invalid");
+  }
+  assert.equal(db.calls.filter(call => call.sql.includes("signal_topic_editorial_plan_valid_v1")).length, 2);
+
+  const errorDb = fakeDatabase();
+  const errorClientDb = errorDb.database as unknown as { connect: () => Promise<{ release: () => void; query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> }> };
+  const errorConnect = errorClientDb.connect;
+  errorClientDb.connect = async () => {
+    const client = await errorConnect();
+    const originalQuery = client.query;
+    client.query = async (sql, params) => {
+      const result = await originalQuery(sql, params);
+      if (sql.includes("SELECT signal_topic_editorial_plan_valid_v1")) throw new Error("validator unavailable");
+      return result;
+    };
+    return client;
+  };
+  const errorCache = new PositivePlanValidationCacheV1();
+  const errorArgs = { database: errorDb.database, workspaceId, actorUserId, numericExecutionId, offset: 0, limit: 20, planValidationCache: errorCache };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(loadWorkspaceTopicLegacyEditorialOutcomesPageV1(errorArgs), error => error instanceof Error && "code" in error
+      && error.code === "topic_editorial_legacy_outcomes_unavailable");
+  }
+  assert.equal(errorDb.calls.filter(call => call.sql.includes("SELECT signal_topic_editorial_plan_valid_v1")).length, 2);
+});
+
+test("bounds positive entries and scopes hits by workspace, numeric execution, run, execution, digest, and validator version", () => {
+  let now = 1_000;
+  const cache = new PositivePlanValidationCacheV1(() => now, 100, 2);
+  const identity = { workspaceId, numericExecutionId, numericRunId: runId, executionId: stateBody.execution_key, planDigest: plan.plan_digest };
+  cache.remember(identity);
+  assert.equal(cache.has(identity), true);
+  assert.equal(cache.has({ ...identity, workspaceId: "00000000-0000-4000-8000-000000000010" }), false);
+  assert.equal(cache.has({ ...identity, numericExecutionId: "00000000-0000-4000-8000-000000000011" }), false);
+  assert.equal(cache.has({ ...identity, numericRunId: "00000000-0000-4000-8000-000000000012" }), false);
+  assert.equal(cache.has({ ...identity, executionId: "00000000-0000-4000-8000-000000000013" }), false);
+  assert.equal(cache.has({ ...identity, planDigest: digest("other-plan") }), false);
+  assert.equal(cache.has(identity, "validator-v2"), false);
+  cache.remember(identity, "validator-v2");
+  assert.equal(cache.has(identity, "validator-v2"), true);
+  now += 100;
+  assert.equal(cache.has(identity), false);
+  cache.remember(identity);
+  cache.remember({ ...identity, executionId: "00000000-0000-4000-8000-000000000014" });
+  cache.remember({ ...identity, executionId: "00000000-0000-4000-8000-000000000015" });
+  assert.equal(cache.has(identity), false);
 });
