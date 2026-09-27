@@ -2,10 +2,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1, submitWorkspaceTopicEditorialIntentV1,
+  restoreWorkspaceTopicEditorialIntentV1, workspaceTopicEditorialIntentStorageKeyV1,
   WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialIntentV1, type WorkspaceTopicEditorialViewV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 import { WorkspaceTopicEditorialOutcomes } from "./WorkspaceTopicEditorialOutcomes";
 import { WorkspaceTopicLegacyEditorialOutcomes } from "./WorkspaceTopicLegacyEditorialOutcomes";
 import { startWorkspaceTopicEditorialPollV1 } from "@/lib/data-os/workspace-topic-editorial-polling";
+
+const editorialRequestWaitMs = 90_000;
+const editorialStatusWaitMs = 25_000;
 
 export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecutionId, mentionsHref, busy = false, stale = false, pending = false,
   retryReady = true, onStart, onRetry, onComplete, onReplay, onRefresh }: {
@@ -17,6 +21,9 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
   const money = (v: string) => new Intl.NumberFormat(locale, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(Number(v) / 1_000_000);
   const state = value.status;
   const execution = value.execution;
+  const preparationFailed = value.batch_progress?.error_codes.includes("topic_editorial_batch_preparation_failed") === true;
+  const preparing = !!value.batch_progress && value.batch_progress.pending > 0
+    && Object.keys(value.batch_progress.batch_states).length === 0 && !preparationFailed;
   return <section className="admin-section topics-manager__editorial" data-topic-editorial-state={state} data-serving-activation="not-activated">
     <div className="admin-section__head"><div><h3>{t("title")}</h3><p>{t("body")}</p></div></div>
     <div className="admin-section__body admin-drawer-form">
@@ -37,7 +44,16 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
             <p>{t("outcomes.errorPreserved")}</p>
             {value.batch_progress.error_codes.length ? <p>{t("outcomes.errorCodes", { codes: value.batch_progress.error_codes.join(", ") })}</p> : null}
           </div> : null}
-          {value.batch_progress.pending > 0 ? <p role="status">{t("outcomes.resume")}</p> : null}
+          {preparationFailed ? <p role="alert" className="team-msg team-msg--error">{t("preparationFailed")}</p> : null}
+          {preparationFailed && value.batch_progress.reused_results > 0 ? <p role="status">{t("reusedPreparationResults", {
+            count: value.batch_progress.reused_results
+          })}</p> : null}
+          {preparationFailed && Object.values(value.batch_progress.batch_states).some(count => count > 0) ? <p role="status">{t("savedPreparationManifests", {
+            count: Object.values(value.batch_progress.batch_states).reduce((total, count) => total + count, 0)
+          })}</p> : null}
+          {preparationFailed ? <p role="note">{t("preparationRetryBehavior")}</p> : null}
+          {value.batch_progress.pending > 0 && !preparationFailed
+            ? <p role="status">{t(preparing ? "outcomes.preparing" : "outcomes.resume")}</p> : null}
         </> : null}
         {value.batch_progress && execution && workspaceId && numericExecutionId && mentionsHref
           ? <WorkspaceTopicEditorialOutcomes workspaceId={workspaceId} numericExecutionId={numericExecutionId}
@@ -57,7 +73,7 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
         {pending ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onReplay} onClick={onReplay}>{t("replay")}</button>
           : value.can_quote && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onStart} onClick={onStart}>{t("start")}</button>
           : value.can_complete && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onComplete} onClick={onComplete}>{t("complete")}</button>
-          : value.can_retry && retryReady && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onRetry} onClick={onRetry}>{t("retry")}</button> : null}
+          : value.can_retry && retryReady && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onRetry} onClick={onRetry}>{t(preparationFailed ? "retryPreparation" : "retry")}</button> : null}
         <button type="button" className="admin-button" disabled={busy || !onRefresh} onClick={onRefresh}>{t("refresh")}</button>
       </div>
     </div>
@@ -65,8 +81,8 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
 }
 
 /** Parent keys this component by workspace and immutable numeric control ID. */
-export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionId, mentionsHref, disabled = false, onCatalogAvailable }: {
-  workspaceId: string; numericExecutionId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
+export function WorkspaceTopicEditorialControls({ workspaceId, actorId, numericExecutionId, mentionsHref, disabled = false, onCatalogAvailable }: {
+  workspaceId: string; actorId: string; numericExecutionId: string; mentionsHref: string; disabled?: boolean; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation.editorial"), locale = useLocale();
   const [value, setValue] = useState<WorkspaceTopicEditorialViewV1 | null>(null);
@@ -82,8 +98,17 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
   const delivered = useRef<string | null>(null);
   const current = useRef(`${workspaceId}:${numericExecutionId}`); current.current = `${workspaceId}:${numericExecutionId}`;
   const scope = `${workspaceId}:${numericExecutionId}`;
+  const intentStorageKey = workspaceTopicEditorialIntentStorageKeyV1(workspaceId, numericExecutionId, actorId);
+  const persistIntent = (value: WorkspaceTopicEditorialIntentV1) => {
+    try { window.sessionStorage.setItem(intentStorageKey, JSON.stringify(value)); } catch { /* In-memory same-key recovery remains available. */ }
+  };
+  const clearPersistedIntent = () => {
+    try { window.sessionStorage.removeItem(intentStorageKey); } catch { /* A stale opaque key is harmless and remains server-scoped. */ }
+  };
   const read = useCallback(async (): Promise<boolean | null> => {
     readController.current?.abort(); const controller = new AbortController(); readController.current = controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, editorialStatusWaitMs);
     try {
       const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation/editorial?numeric_execution_id=${encodeURIComponent(numericExecutionId)}`,
         { cache: "no-store", signal: controller.signal });
@@ -93,16 +118,23 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
       if (!response.ok || !validWorkspaceTopicEditorialViewV1(body, workspaceId, numericExecutionId)) throw new Error("status");
       setValue(body); setLoadError(false); setNow(Date.now()); return true;
     } catch {
-      if (!controller.signal.aborted && current.current === scope) { setLoadError(true); return false; }
+      if ((!controller.signal.aborted || timedOut) && current.current === scope) { setLoadError(true); return false; }
       return null;
     }
-    finally { if (readController.current === controller && current.current === scope) readController.current = null; }
+    finally {
+      clearTimeout(timeout);
+      if (readController.current === controller && current.current === scope) readController.current = null;
+    }
   }, [workspaceId, numericExecutionId, scope]);
   useEffect(() => {
-    setValue(null); setBusy(false); setPending(false); setRequestError(false); setLoadError(false); intent.current = null; void read();
+    let restored: WorkspaceTopicEditorialIntentV1 | null = null;
+    try { restored = restoreWorkspaceTopicEditorialIntentV1(window.sessionStorage.getItem(intentStorageKey), workspaceId, numericExecutionId); } catch { /* Storage may be unavailable in restricted browsers. */ }
+    intent.current = restored;
+    setValue(null); setBusy(false); setPending(!!restored); setRequestError(!!restored); setLoadError(false); void read();
     return () => { readController.current?.abort(); submitController.current?.abort(); };
-  }, [read]);
-  const renewalExecution = value?.status === "failed" ? value.execution?.execution_id : null;
+  }, [read, intentStorageKey, workspaceId, numericExecutionId]);
+  const preparationFailed = value?.batch_progress?.error_codes.includes("topic_editorial_batch_preparation_failed") === true;
+  const renewalExecution = value?.status === "failed" && !preparationFailed ? value.execution?.execution_id : null;
   const readRenewal = useCallback(async () => {
     if (!renewalExecution) return;
     setRenewalError(false);
@@ -171,6 +203,8 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
   }, [value, disabled, onCatalogAvailable]);
   const submit = async (replay = false) => {
     if (disabled || submitController.current || busy || !value || current.current !== scope) return;
+    // An unresolved request owns its key until the server returns a validated receipt or a terminal quote rejection.
+    if (!replay && intent.current) { setPending(true); setRequestError(true); void read(); return; }
     let next = intent.current;
     if (!replay) {
       const body = value.can_complete && value.execution ? { action: "complete_catalog" as const, numeric_execution_id: numericExecutionId, execution_id: value.execution.execution_id }
@@ -180,27 +214,32 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
       next = workspaceTopicEditorialIntentV1(workspaceId, body, intent.current, () => crypto.randomUUID());
     }
     if (!next || next.workspace_id !== workspaceId || next.body.numeric_execution_id !== numericExecutionId) return;
-    intent.current = next; setPending(true); setBusy(true); setRequestError(false);
+    intent.current = next; persistIntent(next); setPending(true); setBusy(true); setRequestError(false);
     readController.current?.abort();
     const controller = new AbortController(); submitController.current = controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, editorialRequestWaitMs);
     try {
       await submitWorkspaceTopicEditorialIntentV1(next, fetch, controller.signal);
       if (controller.signal.aborted || current.current !== scope) return;
-      intent.current = null; setPending(false); await read();
+      intent.current = null; clearPersistedIntent(); setPending(false); void read();
     } catch (error) {
-      if (!controller.signal.aborted && current.current === scope) {
-        if (error instanceof WorkspaceTopicEditorialRequestError && error.quoteRejected) { intent.current = null; setPending(false); }
-        setRequestError(true); await read();
+      if (current.current === scope && (!controller.signal.aborted || timedOut)) {
+        if (error instanceof WorkspaceTopicEditorialRequestError && error.quoteRejected) {
+          intent.current = null; clearPersistedIntent(); setPending(false);
+        }
+        setRequestError(true); void read();
       }
     } finally { if (submitController.current === controller) submitController.current = null;
-      if (!controller.signal.aborted && current.current === scope) setBusy(false); }
+      clearTimeout(timeout);
+      if (current.current === scope) setBusy(false); }
   };
   if (!value || value.workspace_id !== workspaceId || value.numeric_execution_id !== numericExecutionId)
     return loadError ? <p role="alert" className="team-msg team-msg--error">{t("loadError")} <button type="button" className="admin-button" onClick={() => void read()}>{t("refresh")}</button></p> : null;
   return <>
     <WorkspaceTopicEditorialCard value={value} workspaceId={workspaceId} numericExecutionId={numericExecutionId} mentionsHref={mentionsHref}
       busy={disabled || busy} stale={loadError} pending={pending}
-      retryReady={value.status !== "failed" || renewal?.status === "admission_not_expired"
+      retryReady={preparationFailed || value.status !== "failed" || renewal?.status === "admission_not_expired"
         || !!value.execution && value.execution.completed_screening_count === value.execution.expected_screening_count}
       onStart={() => void submit()} onRetry={() => void submit()}
       onComplete={() => void submit()} onReplay={() => void submit(true)} onRefresh={() => void read()} />

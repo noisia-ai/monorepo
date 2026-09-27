@@ -1,17 +1,19 @@
 import type { Job } from "bullmq";
-import type { SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
+import { prepareAllSignalTopicEditorialBatchV2, reuseCompatibleSignalTopicEditorialPaidResultsV2,
+  markSignalTopicEditorialBatchPreparationFailedV2, type SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
 import { createAnthropicMessageBatchesClient } from "../providers/anthropic-message-batches";
 import { runSignalTopicEditorialBatchTickV2 } from "./signal-topic-editorial-batch-v2";
 import { createSignalTopicEditorialBatchRuntimeStoresV2 } from "./signal-topic-editorial-batch-runtime-v2";
 
 export const SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2 = "signal-topic-editorial-message-batch-v2";
+export const SIGNAL_TOPIC_EDITORIAL_BATCH_PREPARATION_JOB_V2 = "signal-topic-editorial-batch-prepare-v2";
 type Environment = Readonly<Record<string, string | undefined>>;
 type Queue = {
   getJob(id: string): Promise<{ getState(): Promise<string>; retry(state: "completed" | "failed"): Promise<void> } | null | undefined>;
-  add(name: string, data: { batch_id: string }, options: Record<string, unknown>): Promise<unknown>;
+  add(name: string, data: { batch_id: string } | { execution_id: string }, options: Record<string, unknown>): Promise<unknown>;
 };
 type Options = { env?: Environment; database?: SignalTopicEditorialBatchDatabaseV2; queue?: Queue };
-const dispatchPhases = new Set(["database_read", "queue_lookup", "queue_state", "queue_retry", "queue_enqueue"]);
+const dispatchPhases = new Set(["database_read", "preparation_lookup", "queue_lookup", "queue_state", "queue_retry", "queue_enqueue"]);
 const safeErrorNames = new Set(["Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "AggregateError"]);
 function safeErrorCauseTag(error: unknown, depth = 0, seen = new Set<object>()): string {
   if (!error || typeof error !== "object" || depth > 2 || seen.has(error)) return "unknown";
@@ -64,7 +66,46 @@ export async function drainSignalTopicEditorialBatchesV2(options: Options = {}) 
         ORDER BY next_poll_at,id LIMIT 10`, [flags.provider_enabled]);
       ids = result.rows.map(row => row.id);
     } finally { client.release(); }
+    // Admission already persisted the immutable all-group plan and request rows.
+    // Recover local reuse/manifest preparation from that database authority; the
+    // queue carries only an execution ID and may deliver the job at least once.
+    phase = "preparation_lookup";
+    const preparationClient = await database.connect();
+    let executionIds: string[];
+    try {
+      const result = await preparationClient.query<{ id: string }>(`SELECT e.id::text id
+        FROM signal_topic_editorial_executions e
+        JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
+        WHERE e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+          AND o.stage<>'preparation_failed'
+          AND e.status IN('queued','running')
+          AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_provider_batches_v2 b WHERE b.execution_id=e.id)
+          AND EXISTS(SELECT 1 FROM signal_topic_editorial_requests r
+            WHERE r.execution_id=e.id AND r.phase='screening'
+              AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_reused_decisions_v2 reused WHERE reused.request_id=r.id))
+        ORDER BY e.created_at,e.id LIMIT 10`);
+      executionIds = result.rows.map(row => row.id);
+    } finally { preparationClient.release(); }
     let dispatched = 0;
+    for (const execution_id of executionIds) {
+      const jobId = `topic-editorial-batch-v2-prepare-${execution_id}`;
+      phase = "queue_lookup";
+      const existing = await queue.getJob(jobId);
+      if (existing) {
+        phase = "queue_state";
+        const state = await existing.getState();
+        if (state === "completed" || state === "failed") {
+          phase = "queue_retry";
+          await existing.retry(state);
+        }
+      } else {
+        phase = "queue_enqueue";
+        await queue.add(SIGNAL_TOPIC_EDITORIAL_BATCH_PREPARATION_JOB_V2, { execution_id }, { jobId,
+          attempts: 3, backoff: { type: "exponential", delay: 5000 },
+          removeOnComplete: true, removeOnFail: { age: 604800, count: 500 } });
+      }
+      dispatched++;
+    }
     for (const batch_id of ids) {
       const jobId = `topic-editorial-batch-v2-${batch_id}`;
       phase = "queue_lookup";
@@ -126,4 +167,43 @@ export async function signalTopicEditorialBatchJobV2(job: Pick<Job<{ batch_id: s
     },
   } });
   return { disabled: false, result };
+}
+
+/** Completes the local, replay-safe reuse/manifest phase after durable V2
+ * admission. It intentionally has no provider client or API-key access: only
+ * the separate batch job may submit once its provider flag is enabled. */
+export async function signalTopicEditorialBatchPreparationJobV2(
+  job: Pick<Job<{ execution_id: string }>, "id" | "data"> & Partial<Pick<Job<{ execution_id: string }>, "attemptsMade" | "opts">>,
+  options: {
+    env?: Environment;
+    database?: SignalTopicEditorialBatchDatabaseV2;
+    reuse?: typeof reuseCompatibleSignalTopicEditorialPaidResultsV2;
+    prepare?: typeof prepareAllSignalTopicEditorialBatchV2;
+    markFailed?: typeof markSignalTopicEditorialBatchPreparationFailedV2;
+  } = {},
+) {
+  const flags = signalTopicEditorialBatchConfigurationV2(options.env);
+  if (!flags.enabled) return { disabled: true };
+  const executionId = job.data?.execution_id;
+  if (typeof executionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(executionId)
+    || job.id !== `topic-editorial-batch-v2-prepare-${executionId}`) {
+    throw new Error("topic_editorial_batch_preparation_job_invalid");
+  }
+  const database = options.database ?? (await import("../db/client")).pool;
+  const reuse = options.reuse ?? reuseCompatibleSignalTopicEditorialPaidResultsV2;
+  const prepare = options.prepare ?? prepareAllSignalTopicEditorialBatchV2;
+  try {
+    const reused = await reuse({ database, execution_id: executionId });
+    const manifest = await prepare({ database, execution_id: executionId });
+    return { disabled: false, execution_id: executionId,
+      reused_items: reused.reused_items, needs_review_items: reused.needs_review_items,
+      provider_items: manifest.provider_items, batch_id: manifest.batch_id };
+  } catch (error) {
+    const attempts = Number(job.opts?.attempts ?? 1), attemptsMade = Number(job.attemptsMade ?? 0);
+    if (Number.isSafeInteger(attempts) && attempts > 0 && Number.isSafeInteger(attemptsMade) && attemptsMade + 1 >= attempts) {
+      const markFailed = options.markFailed ?? markSignalTopicEditorialBatchPreparationFailedV2;
+      await markFailed({ database, execution_id: executionId });
+    }
+    throw error;
+  }
 }

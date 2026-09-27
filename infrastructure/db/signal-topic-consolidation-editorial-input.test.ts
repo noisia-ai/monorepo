@@ -60,9 +60,9 @@ function fixture(count = 2) {
   return { source, inherited, trace, batches, dependencies, alter: (fn: typeof alter) => { alter = fn; },
     args: { ...scope, database: { connect: async () => client } } };
 }
-test('loads all groups through bounded snapshot evidence reads and emits only verified UTF-16 fragments', async () => {
-  const f = fixture(129), result = await loadSignalTopicConsolidationEditorialInputV1(f.args, f.dependencies);
-  assert.deepEqual(f.batches, [128, 1]); assert.equal(result.groups.length, 129); assert.equal(result.root_lineage.length, 129);
+test('loads all groups through fewer bounded snapshot evidence reads and emits verified UTF-16 fragments', async () => {
+  const f = fixture(513), result = await loadSignalTopicConsolidationEditorialInputV1(f.args, f.dependencies);
+  assert.deepEqual(f.batches, [512, 1]); assert.equal(result.groups.length, 513); assert.equal(result.root_lineage.length, 513);
   assert.equal(result.source_context_digest, f.source.census.context_digest); assert.equal(result.editorial_context_digest, digest(context));
   assert.equal(result.groups[0]!.evidence[0]!.text, 'Rutinas por voz'); assert.ok(!JSON.stringify(result).includes('root_text'));
   assert.deepEqual(f.trace.slice(-2), ['COMMIT', 'release']); assert.equal(f.trace[0], 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');

@@ -38,7 +38,7 @@ export type WorkspaceTopicEditorialViewV1 = {
     completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string;
     confirmed_micro_usd: string; reserved_micro_usd: string; ambiguous_micro_usd: string };
   batch_progress?: { topics:number;narratives:number;noise:number;insufficient_evidence:number;technical_errors:number;pending:number;
-    batch_states:Record<string,number>;error_codes:string[] };
+    reused_results:number;batch_states:Record<string,number>;error_codes:string[] };
 };
 const natural = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v) >= 0;
 const viewKeys = ["contract_version", "workspace_id", "numeric_execution_id", "status", "can_quote", "can_retry", "can_complete", "activation", "quote", "execution"];
@@ -70,8 +70,8 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
   } else if (["queued", "running", "failed", "review_ready", "completed"].includes(String(v.status))) return false;
   if ("batch_progress" in v) {
     const p=v.batch_progress;
-    if (!object(p) || !keys(p,["topics","narratives","noise","insufficient_evidence","technical_errors","pending","batch_states","error_codes"])
-      || ![p.topics,p.narratives,p.noise,p.insufficient_evidence,p.technical_errors,p.pending].every(natural)
+    if (!object(p) || !keys(p,["topics","narratives","noise","insufficient_evidence","technical_errors","pending","reused_results","batch_states","error_codes"])
+      || ![p.topics,p.narratives,p.noise,p.insufficient_evidence,p.technical_errors,p.pending,p.reused_results].every(natural)
       || !object(p.batch_states) || !Array.isArray(p.error_codes) || p.error_codes.length>100
       || p.error_codes.some(code=>typeof code!=="string"||code.length>120||!/^[a-z][a-z0-9_]+$/u.test(code))
       || Object.entries(p.batch_states).some(([state,count])=>!batchStates.includes(state)||!natural(count))) return false;
@@ -86,6 +86,20 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
 export type WorkspaceTopicEditorialIntentV1 = { workspace_id: string; key: string; body: WorkspaceTopicEditorialCommandV1 };
 export type WorkspaceTopicEditorialReceiptV1 = { contract_version: "workspace-topic-editorial-receipt-v1"; workspace_id: string;
   action: WorkspaceTopicEditorialCommandV1["action"]; numeric_execution_id: string; execution_id: string; idempotency_key: string; replayed: boolean; activation: "not_activated" };
+export function workspaceTopicEditorialIntentStorageKeyV1(workspace: string, numeric: string, actor: string) {
+  return `noisia:topic-editorial-intent:v1:${actor}:${workspace}:${numeric}`;
+}
+/** Restores only the opaque idempotency key and its small public command; never evidence or a provider plan. */
+export function restoreWorkspaceTopicEditorialIntentV1(raw: string | null, workspace: string, numeric: string): WorkspaceTopicEditorialIntentV1 | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (!object(value) || !keys(value, ["workspace_id", "key", "body"]) || value.workspace_id !== workspace || !editorialKey(value.key)) return null;
+    const body = parseWorkspaceTopicEditorialCommandV1(value.body);
+    if (!body || body.numeric_execution_id !== numeric) return null;
+    return { workspace_id: workspace, key: value.key, body };
+  } catch { return null; }
+}
 export function workspaceTopicEditorialIntentV1(workspace: string, body: WorkspaceTopicEditorialCommandV1, previous: WorkspaceTopicEditorialIntentV1 | null, createKey: () => string) {
   if (previous?.workspace_id === workspace && previous.body.action === body.action && previous.body.numeric_execution_id === body.numeric_execution_id
     && (body.action === "start_editorial" ? true

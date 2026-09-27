@@ -2,7 +2,8 @@ import { loadSignalWorkspaceContextForTopics, requireIdempotencyKey, topicError,
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1 } from "@/lib/data-os/signal-topic-editorial-control";
 import { authorizeWorkspaceTopicEditorialBatchV2ForActor, loadWorkspaceTopicEditorialBatchStatusV2ForActor,
   quoteWorkspaceTopicEditorialBatchV2ForActor, completeWorkspaceTopicEditorialBatchV2ForActor,
-  canSupersedeFailedLegacyEditorialWithBatchV2ForActor, startWorkspaceTopicEditorialBatchV2ForActor } from "@/lib/data-os/signal-topic-editorial-batch-control-v2";
+  canSupersedeFailedLegacyEditorialWithBatchV2ForActor, startWorkspaceTopicEditorialBatchV2ForActor,
+  retryWorkspaceTopicEditorialPreparationV2ForActor } from "@/lib/data-os/signal-topic-editorial-batch-control-v2";
 import { editorialUuid, parseWorkspaceTopicEditorialCommandV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +62,11 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
     }
     if(command?.action==="complete_catalog"){
       const v2=await completeWorkspaceTopicEditorialBatchV2ForActor({workspaceId,actorUserId:loaded.session.appUser.id,
+        numericExecutionId:command.numeric_execution_id,executionId:command.execution_id,idempotencyKey});
+      if(v2)return topicResponse(v2,202);
+    }
+    if(command?.action==="retry_editorial"){
+      const v2=await retryWorkspaceTopicEditorialPreparationV2ForActor({workspaceId,actorUserId:loaded.session.appUser.id,
         numericExecutionId:command.numeric_execution_id,executionId:command.execution_id,idempotencyKey});
       if(v2)return topicResponse(v2,202);
     }

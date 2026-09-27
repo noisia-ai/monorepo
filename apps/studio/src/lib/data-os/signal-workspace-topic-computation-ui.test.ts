@@ -81,7 +81,7 @@ for (const locale of ["es-MX", "en-US"]) {
   const render = (initialComputation: WorkspaceTopicComputationStatus | null, initial = management,
     navigation?: { dataHref: string; signalHref: string; brandOsHref: string }) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager,
-      { brandId: "new-brand", workspaceId: status.workspace_id, initial, initialComputation, navigation })));
+      { brandId: "new-brand", workspaceId: status.workspace_id, actorId: "00000000-0000-4000-8000-000000000001", initial, initialComputation, navigation })));
   test(`${locale}: complete workspace search replaces legacy readiness, costs and publication controls inside Topics`, () => {
     const html = render({ ...status, latest_ready: ready, latest_run: ready, is_current: true });
     assert.ok(html.includes(messages.AdminWorkspace.topics.computation.resultsTitle));

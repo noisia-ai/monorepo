@@ -64,7 +64,7 @@ test("manual and previous interests default to guidance, while emergent defaults
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const render = (data = base) => renderToStaticMarkup(createElement(NextIntlClientProvider,
-    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager, { brandId: "new-brand-id", workspaceId: "workspace-test", initial: data })));
+    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager, { brandId: "new-brand-id", workspaceId: "workspace-test", actorId: "00000000-0000-4000-8000-000000000001", initial: data })));
   test(`${locale}: an empty authorized brand can define interests without implying mentions or execution`, () => {
     const html = render();
     assert.match(html, /href="\/studio\/brands\/new-brand-id\/data"/u);

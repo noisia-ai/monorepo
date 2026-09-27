@@ -28,14 +28,14 @@ type ResultItem = { canonical_root_id: string; text: string; platform: string; p
   method: string; semantic_score: number | null; correction: "belongs" | "excluded" | null;
   correction_updated_at: string | null; definition_revision: number };
 
-type TopicsManagerProps = { brandId: string; initial: Management; workspaceId: string;
+type TopicsManagerProps = { brandId: string; initial: Management; workspaceId: string; actorId: string;
   initialComputation?: WorkspaceTopicComputationStatus | null; requestScope?: string;
   navigation?: { dataHref: string; signalHref: string; brandOsHref?: string | null };
 };
 export function TopicsManager(props: TopicsManagerProps) {
-  return <ScopedTopicsManager key={`${props.workspaceId}:${props.requestScope ?? "internal"}`} {...props} />;
+  return <ScopedTopicsManager key={`${props.actorId}:${props.workspaceId}:${props.requestScope ?? "internal"}`} {...props} />;
 }
-function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation = null, navigation }: TopicsManagerProps) {
+function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialComputation = null, navigation }: TopicsManagerProps) {
   const t = useTranslations("AdminWorkspace.topics");
   const tEvidence = useTranslations("AdminWorkspace.brandOs.fullEvidenceTopicCandidates");
   const locale = useLocale();
@@ -314,7 +314,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, initialComputation
           ? <Link className="admin-button" href={dataHref} prefetch={false}>{t("actions.import")}</Link> : null}
     </section> : null}
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
-    <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId}
+    <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId} actorId={actorId}
       mentionsHref={`/signal/${encodeURIComponent(data.workspace.slug)}/mentions`} onCatalogAvailable={refreshAvailableCatalog}
       onGroupCount={setConsolidationGroupCount} />
     <WorkspaceTopicConsolidationActivationControls disabled={editorDirty || busy !== null}
