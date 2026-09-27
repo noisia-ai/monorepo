@@ -8,6 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { readFile } from "node:fs/promises";
 import type { SignalTopicEditorialScreeningPlanV1 } from "@noisia/query-engine";
 import { WorkspaceTopicEditorialCard } from "../../components/brands/WorkspaceTopicEditorialCard";
+import { WorkspaceTopicEditorialOutcomes, parseWorkspaceTopicEditorialOutcomesPageV2 } from "../../components/brands/WorkspaceTopicEditorialOutcomes";
 import { RedisEditorialQuoteCache, getEditorialQuoteCacheV1, editorialQuoteRuntimeAvailableV1, editorialRecoveryRuntimeAvailableV1, type EditorialQuoteSnapshot } from "./workspace-topic-editorial-cache";
 import { parseWorkspaceTopicEditorialCommandV1, validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1,
   submitWorkspaceTopicEditorialIntentV1, WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialViewV1 } from "./workspace-topic-editorial-contract";
@@ -309,6 +310,48 @@ test("single-action start retains its idempotency key after an uncertain respons
     assert.deepEqual(JSON.parse(String(init?.body)), body); return Response.json(result);
   }), result);
 });
+
+test("saved editorial outcome pages validate execution scope, phase and bounded cited evidence", () => {
+  const decision = { disposition: "topic", label: "Setup friction", definition: "Customers describe difficulty setting up the device.",
+    locale: "en", rationale: "Several comments describe setup difficulty.", confidence: 0.92, source: "sonnet-4-6",
+    digest: "digest-1", cited_evidence_refs: ["mention-1"] };
+  const page = { contract_version: "workspace-topic-editorial-outcomes-page-v2", workspace_id: workspace,
+    numeric_execution_id: numeric, execution_id: execution, revision_status: "validated", offset: 0, limit: 20, total: 2,
+    items: [
+      { group_key: "open:cluster-7", outcome: "topic", phase: "consolidated", decision,
+        technical_error_code: null, transport_state: null,
+        evidence: [{ id: "mention-1", text: "Setup did not work for me.", source: "review", kind: "cited" }] },
+      { group_key: "open:cluster-8", outcome: "pending", phase: "pending", decision: null,
+        technical_error_code: null, transport_state: "not_submitted",
+        evidence: [{ id: "root-8", text: "A source group example.", source: "review", kind: "representative" }] }
+    ] };
+  const parsed = parseWorkspaceTopicEditorialOutcomesPageV2(page, { workspaceId: workspace, numericExecutionId: numeric,
+    executionId: execution, offset: 0 });
+  assert.equal(parsed?.items[0]?.outcome, "topic"); assert.equal(parsed?.items[0]?.phase, "consolidated");
+  assert.equal(parsed?.items[1]?.outcome, "pending"); assert.equal(parsed?.items[1]?.decision, null);
+  assert.equal(parsed?.items[1]?.evidence[0]?.kind, "representative");
+  assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2(page, { workspaceId: actor, numericExecutionId: numeric,
+    executionId: execution, offset: 0 }), null);
+  assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2({ ...page, items: [{ ...page.items[0],
+    evidence: [{ id: "1", text: null, source: null, kind: "representative" }, { id: "2", text: null, source: null, kind: "representative" },
+      { id: "3", text: null, source: null, kind: "representative" }] }] },
+  { workspaceId: workspace, numericExecutionId: numeric, executionId: execution, offset: 0 }), null);
+  assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2({ ...page, revision: "private-field" }, { workspaceId: workspace,
+    numericExecutionId: numeric, executionId: execution, offset: 0 }), null);
+  assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2({ ...page, items: [{ ...page.items[1], outcome: "technical",
+    decision, evidence: [] }] }, { workspaceId: workspace, numericExecutionId: numeric, executionId: execution, offset: 0 }), null);
+});
+
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: saved group outcomes are opt-in and pending is clearly not a decision`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceTopicEditorialOutcomes, { workspaceId: workspace, numericExecutionId: numeric, executionId: execution })));
+  assert.match(html, /aria-expanded="false"/u);
+  assert.match(html, locale === "es-MX" ? /Ver resultados guardados/u : /View saved outcomes/u);
+  assert.match(html, locale === "es-MX" ? /Los grupos pendientes aún no tienen una decisión editorial/u : /Pending groups do not yet have an editorial decision/u);
+  assert.doesNotMatch(html, /<blockquote/u);
+});
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: one start action uses policy without a per-run quote or confirmation`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const render = (props: Partial<ComponentProps<typeof WorkspaceTopicEditorialCard>> = {}) => renderToStaticMarkup(createElement(NextIntlClientProvider,
@@ -335,7 +378,8 @@ test("route authenticates first, forbids injected query data, and controls fence
   const batchControl = await readFile(new URL("./signal-topic-editorial-batch-control-v2.ts", import.meta.url), "utf8");
   assert.ok(route.indexOf("loadSignalWorkspaceContextForTopics(workspaceId)") < route.indexOf("request.json()"));
   assert.match(route, /query\.getAll\(key\)\.length !== 1/u);
-  assert.ok(batchControl.indexOf("if(replay.replayed)") < batchControl.indexOf("if(args.runtimeEnabled===false)"));
+  assert.match(batchControl,
+    /authorizeWorkspaceTopicEditorialBatchV2ForActor[\s\S]*?if\(replay\.replayed\)[\s\S]*?if\(args\.runtimeEnabled===false\)/u);
   assert.match(route, /view\.execution&&!predecessorEligible\)return topicResponse\(view\)/u);
   assert.match(batchControl, /canSupersedeFailedLegacyEditorialWithBatchV2ForActor/u);
   assert.match(batchControl, /e\.status='failed'[\s\S]*e\.execution_token IS NULL[\s\S]*c\.status NOT IN\('settled','definitely_not_sent'\)[\s\S]*o\.status IN\('queued','dispatching'\)/u);
