@@ -30,11 +30,15 @@ async function render(locale: string, payload = data, drawer = false) {
 }
 for (const locale of ["es-MX", "en-US"]) {
   test(`${locale}: native list uses its whole readable universe and does not invent legacy enrichment`, async () => {
-    const html = await render(locale);
+    const html = await render(locale, { ...data, filter: { ...data.filter, timezone: "America/Mexico_City" } });
     assert.ok(html.includes(locale === "es-MX" ? "10 conversaciones en las métricas" : "10 conversations in metrics"));
     assert.ok(html.includes(locale === "es-MX" ? "7 con texto disponible" : "7 with text available"));
     assert.ok(html.includes(locale === "es-MX" ? "resultados parciales" : "partial results"));
     assert.ok(html.includes(locale === "es-MX" ? "Todas las fechas" : "All dates"));
+    assert.ok(html.includes(locale === "es-MX"
+      ? "Zona horaria del workspace: America/Mexico_City"
+      : "Workspace timezone: America/Mexico_City"));
+    assert.doesNotMatch(html, /Fechas en UTC|Dates in UTC/);
     assert.match(html, /Evidence outside selected Topics\./);
     assert.doesNotMatch(html, /signal-v2-mentions-table__(scope|sentiment|engagement|context|role)/);
     assert.doesNotMatch(html, /signal-v2-mentions-export|No attribution|Sin atribución|1970/);

@@ -415,7 +415,7 @@ export function SignalV2Mentions({
               disabled={pageLoading || loading} onClick={() => void loadPage({ offset: 0, query: { date_from: null, date_to: null } })}>{t("mentions.native.allDates")}</button>
               : !native.available_dates.date_from || !native.available_dates.date_to ? <span>{t("mentions.native.allDates")}</span> : null}
             <button className="signal-v2-filter" type="button" disabled={pageLoading || loading} onClick={() => refreshRef.current()}><ArrowClockwise size={15} />{t("workspaceTopics.refresh")}</button>
-            <span>{t("workspaceTopics.utc")}</span>
+            <span>{t("workspaceTopics.workspaceTimezone", { timezone: data.filter.timezone ?? "UTC" })}</span>
           </> : <button className="signal-v2-filter-button" onClick={onOpenControls} type="button">
             <Funnel size={15} />
             {t("filters.more")}
