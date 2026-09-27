@@ -123,6 +123,20 @@ test("preparation scan excludes V1, completed/failed, manifest-ready and all-reu
     "a durable terminal preparation failure is not re-enqueued forever");
 });
 
+test("provider-enabled drainer delegates zero-cost grammar recovery to durable DB pacing", async () => {
+  let retries = 0;
+  const database = { connect: async () => ({ query: async () => ({ rows: [] }), release() {} }) } as
+    unknown as SignalTopicEditorialBatchDatabaseV2;
+  const queue = { getJob: async () => null, add: async () => assert.fail("no unrelated work") };
+  const result = await drainSignalTopicEditorialBatchesV2({ database, queue,
+    env: { NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED: "true",
+      NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED: "true" },
+    grammarRetry: async input => { assert.equal(input.database,database); retries++; return null; },
+  });
+  assert.deepEqual(result,{disabled:false,dispatched:0});
+  assert.equal(retries,1);
+});
+
 test("terminal preparation failure is recorded only on the last queue attempt", async () => {
   const executionId = "00000000-0000-4000-8000-000000000006";
   const env = { NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED: "true",

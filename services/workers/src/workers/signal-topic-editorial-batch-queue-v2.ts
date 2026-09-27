@@ -1,5 +1,6 @@
 import type { Job } from "bullmq";
 import { prepareAllSignalTopicEditorialBatchV2, reuseCompatibleSignalTopicEditorialPaidResultsV2,
+  prepareSignalTopicEditorialGrammarRetryV2,
   markSignalTopicEditorialBatchPreparationFailedV2, claimSignalTopicEditorialStartV2,
   completeSignalTopicEditorialStartV2, failSignalTopicEditorialStartV2, renewSignalTopicEditorialStartLeaseV2,
   performSignalTopicEditorialBatchStartV2,
@@ -16,8 +17,10 @@ type Queue = {
   getJob(id: string): Promise<{ getState(): Promise<string>; retry(state: "completed" | "failed"): Promise<void> } | null | undefined>;
   add(name: string, data: { batch_id: string } | { execution_id: string } | { start_id: string }, options: Record<string, unknown>): Promise<unknown>;
 };
-type Options = { env?: Environment; database?: SignalTopicEditorialBatchDatabaseV2; queue?: Queue };
-const dispatchPhases = new Set(["database_read", "preparation_lookup", "queue_lookup", "queue_state", "queue_retry", "queue_enqueue"]);
+type Options = { env?: Environment; database?: SignalTopicEditorialBatchDatabaseV2; queue?: Queue;
+  grammarRetry?: typeof prepareSignalTopicEditorialGrammarRetryV2 };
+const dispatchPhases = new Set(["database_read", "preparation_lookup", "queue_lookup", "queue_state", "queue_retry", "queue_enqueue", "grammar_retry"]);
+let nextGrammarRetryAt = 0;
 const safeErrorNames = new Set(["Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "AggregateError"]);
 function safeErrorCauseTag(error: unknown, depth = 0, seen = new Set<object>()): string {
   if (!error || typeof error !== "object" || depth > 2 || seen.has(error)) return "unknown";
@@ -156,6 +159,14 @@ export async function drainSignalTopicEditorialBatchesV2(options: Options = {}) 
           removeOnComplete: true, removeOnFail: { age: 604800, count: 500 } });
       }
       dispatched++;
+    }
+    // A completed Batch can contain zero-cost provider grammar-limit errors.
+    // The DB owns exact receipt selection, the 75-second provider-wide window,
+    // immutable retries and the spend cap; this merely wakes it periodically.
+    if (flags.provider_enabled && Date.now() >= nextGrammarRetryAt) {
+      nextGrammarRetryAt = Date.now() + 30_000;
+      phase = "grammar_retry";
+      await (options.grammarRetry ?? prepareSignalTopicEditorialGrammarRetryV2)({ database });
     }
     return { disabled: false, dispatched };
   } catch (error) {

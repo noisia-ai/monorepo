@@ -157,6 +157,72 @@ export function prepareSignalTopicEditorialBatchV2(args:Db&{execution_id:string;
   return invoke<{batch_id:string;manifest_digest:string;replayed:boolean}>(args.database,
     'SELECT prepare_signal_topic_editorial_batch_v2($1,$2::text[],$3) value',[args.execution_id,args.request_digests,args.submission_key]);
 }
+
+/** Anthropic currently compiles a distinct JSON grammar for each sealed group
+ * request. The first large Batch can therefore return zero-cost grammar rate
+ * errors. Retry only those exact, settled receipts, never successes, with a
+ * provider-wide cooldown. This uses the original immutable request and ledger.
+ * A transaction advisory lock keeps multiple Worker replicas from preparing
+ * different batches in the same cooldown window. */
+export async function prepareSignalTopicEditorialGrammarRetryV2(args:Db){
+  return tx(args.database,async client=>{
+    const lock=(await client.query<{locked:boolean}>(
+      "SELECT pg_try_advisory_xact_lock(hashtextextended('signal-topic-editorial-grammar-retry-v2',0)) locked"
+    )).rows[0]?.locked;
+    if(!lock)return null;
+    // Check the cheap global send window before scanning request receipts.
+    const pacing=(await client.query<{blocked:boolean}>(`SELECT EXISTS (
+      SELECT 1 FROM signal_topic_editorial_provider_batches_v2 b
+      WHERE b.state IN('prepared','submitting','submission_unknown')
+         OR b.submitted_at>clock_timestamp()-interval '75 seconds'
+    ) blocked`)).rows[0]?.blocked;
+    if(pacing)return null;
+    const candidate=await client.query<{execution_id:string;request_digests:string[];submission_key:string}>(`
+      WITH available AS (
+        SELECT e.id execution_id, r.request_digest, r.batch_index
+        FROM signal_topic_editorial_executions e
+        JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
+        JOIN signal_topic_editorial_requests r ON r.execution_id=e.id
+        JOIN LATERAL (
+          SELECT c.id,c.status,c.response_body_private,c.reserved_at
+          FROM signal_topic_editorial_calls c WHERE c.request_id=r.id AND c.transport_version=2
+          ORDER BY c.reserved_at DESC,c.id DESC LIMIT 1
+        ) latest ON true
+        JOIN signal_topic_editorial_batch_items_v2 item ON item.call_id=latest.id
+        JOIN signal_topic_editorial_provider_batches_v2 prior ON prior.id=item.batch_id
+        WHERE e.status IN('queued','running') AND o.stage='screening'
+          AND e.plan->>'contract_version' IN
+            ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')
+          AND clock_timestamp()+interval '3 minutes'<o.send_not_after
+          AND prior.state='applied' AND latest.status='settled'
+          AND item.outcome='errored' AND item.validation->>'status'='invalid_message'
+          AND item.validation->>'code'='topic_editorial_v2_provider_errored'
+          AND latest.response_body_private::jsonb->'result'->'error'->'error'->>'message'
+            LIKE 'Grammar compilation rate limit exceeded%'
+          AND (SELECT count(*) FROM signal_topic_editorial_calls attempts
+            WHERE attempts.request_id=r.id AND attempts.transport_version=2)<5
+          AND NOT EXISTS (SELECT 1 FROM signal_topic_editorial_reused_decisions_v2 reused WHERE reused.request_id=r.id)
+      ), chosen_execution AS (
+        SELECT execution_id FROM available GROUP BY execution_id ORDER BY execution_id LIMIT 1
+      ), selected AS (
+        SELECT a.execution_id,a.request_digest,a.batch_index FROM available a
+        JOIN chosen_execution e USING(execution_id) ORDER BY a.batch_index LIMIT 15
+      )
+      SELECT execution_id::text,array_agg(request_digest ORDER BY batch_index) request_digests,
+        'v2-grammar-retry-'||replace(execution_id::text,'-','')||'-'||
+        min(batch_index)::text||'-'||max(batch_index)::text||'-'||
+        (SELECT count(*)::text FROM signal_topic_editorial_provider_batches_v2 b WHERE b.execution_id=selected.execution_id)
+        submission_key
+      FROM selected GROUP BY execution_id`,[]);
+    const work=candidate.rows[0];
+    if(!work||work.request_digests.length===0)return null;
+    const result=(await client.query<{value:{batch_id:string;manifest_digest:string;replayed:boolean}}>(
+      'SELECT prepare_signal_topic_editorial_batch_v2($1::uuid,$2::text[],$3) value',
+      [work.execution_id,work.request_digests,work.submission_key])).rows[0]?.value;
+    if(!result)throw new Error('topic_editorial_v2_grammar_retry_unavailable');
+    return {...result,execution_id:work.execution_id,provider_items:work.request_digests.length};
+  });
+}
 /** Ensures the admitted execution has one durable provider manifest covering
  * every still-unreused logical group. Safe after a lost HTTP response: the key
  * and manifest digest are derived from the immutable execution snapshot. */
