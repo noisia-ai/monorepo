@@ -54,7 +54,7 @@ try {
   const migrationRoot = new URL('../../migrations/', import.meta.url);
   const names = await readdir(migrationRoot);
   report.migrations_rehearsed = [];
-  for (let version = 184; version <= 196; version++) {
+  for (let version = 184; version <= 197; version++) {
     const candidates = names.filter(name => name.startsWith(String(version).padStart(4, '0') + '_') && name.endsWith('.sql'));
     if (candidates.length !== 1) throw Error('noi19_dev_test_migration_identity_invalid');
     const sql = await readFile(new URL(candidates[0], migrationRoot), 'utf8');
@@ -75,7 +75,7 @@ try {
   report.assertions = exercised.scenarios.map(name => ({ name, status: 'passed' }));
   report.coverage = { fixture_roots: exercised.fixture_root_count, fixture_groups: exercised.fixture_group_count,
     materialization_tested: exercised.materialization_tested, concurrency_tested: exercised.concurrency_tested };
-  if (nested.depth || report.assertions.length < 6 || report.provider_transports !== 0)
+  if (nested.depth || report.assertions.length < 7 || report.provider_transports !== 0)
     throw Error('noi19_dev_test_assertions_incomplete');
   await client.query('ROLLBACK'); outer = false; report.physical_rollback = true;
   await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'); outer = true;

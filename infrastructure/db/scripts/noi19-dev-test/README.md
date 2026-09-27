@@ -103,20 +103,25 @@ provider transports against the newly sealed private target.
 The dedicated `editorial-batch-runner.mjs` uses the same sealed, empty
 `dev-test` database, but is a separate finite runner with its own
 `NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED=true` gate. It rehearses SQL0184–
-0196 inside one physical `READ COMMITTED` transaction and rolls all DDL and
+0197 inside one physical `READ COMMITTED` transaction and rolls all DDL and
 synthetic rows back before checking the sealed schema fingerprint and empty
 tables again. SQL0195 widens editorial text storage to the V2 response envelope;
 SQL0196 separates durable admission/replay from manifest reservation so prior
-paid receipts can be linked before a provider manifest is created. Neither is
-persistently applied by this test.
+paid receipts can be linked before a provider manifest is created. SQL0197 adds
+durable preparation-failure/retry behavior and is included in the rehearsal;
+none of these migrations is persistently applied by this test.
 
 The fixture exercises the policy-configured cap (without inheriting the former
 USD30 experiment ceiling), the exact V2 quote and same-key replay, immutable
 paid receipt reuse without a second V2 charge, durable batch preparation,
 result validation/import, full-group materialization into the editable revision,
-long-text preservation, and links to original groups and roots. It shares the
-established synthetic two-group context, creates no customer data, blocks HTTP,
-and makes zero provider calls. Technical failures remain separately counted
+long-text preservation, links to original groups and roots, and preparation
+failure/retry on the same admitted execution. The retry assertions require one
+admission, an append-only retry receipt, no duplicate admission, and zero
+provider submissions; a prepared manifest may contain reserved call rows but
+must not have a provider batch ID. It shares the established synthetic
+two-group context, creates no customer data, blocks HTTP, and makes zero
+provider calls. Technical failures remain separately counted
 and block a falsely complete catalog. A passing result still does not authorize
 deploying SQL or enabling product/provider flags; it proves only these database
 contracts under the one-connection rollback fixture.

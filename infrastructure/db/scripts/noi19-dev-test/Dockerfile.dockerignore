@@ -34,6 +34,7 @@
 !infrastructure/db/migrations/0194_signal_topic_editorial_batch_authorization_v2.sql
 !infrastructure/db/migrations/0195_signal_topic_editorial_v2_materialization_text.sql
 !infrastructure/db/migrations/0196_signal_topic_editorial_batch_reuse_before_prepare.sql
+!infrastructure/db/migrations/0197_signal_topic_editorial_preparation_retry.sql
 !infrastructure/db/scripts/
 !infrastructure/db/scripts/noi19-dev-test/
 !infrastructure/db/scripts/noi19-dev-test/**
@@ -58,5 +59,7 @@
 **/.env*
 **/node_modules
 **/.data
+**/.git
+**/.git/**
 **/*.pem
 **/*.key

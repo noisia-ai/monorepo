@@ -271,6 +271,59 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
   await denied(()=>query('SELECT claim_signal_topic_editorial_execution_v1($1,$2,300)',[admitted.execution_id,`topic-editorial-${admitted.execution_id}-1`]),/v2_owner_immutable|unavailable|invalid/);
   await denied(()=>store.admitSignalTopicEditorialBatchV2({...admitted.inputs,execution_cap_micro_usd:'999999999'}),/idempotency_conflict/);
  });
+ await scenario('preparation_failure_retry_reuses_admission_without_provider_submission',async()=>{
+  const admitted=await admission();
+  const initialCounts=(await query(`SELECT
+   (SELECT count(*)::int FROM signal_processing_admissions WHERE workspace_id=$1 AND target_id=$2) admissions,
+   (SELECT count(*)::int FROM signal_topic_editorial_request_keys WHERE execution_id=$2) keys,
+   (SELECT count(*)::int FROM signal_topic_editorial_provider_batches_v2 WHERE execution_id=$2) batches,
+   (SELECT count(*)::int FROM signal_topic_editorial_calls WHERE execution_id=$2) calls`,
+   [workspace_id,admitted.execution_id])).rows[0]!;
+  assert.deepEqual(initialCounts,{admissions:1,keys:1,batches:0,calls:0});
+
+  assert.deepEqual(await store.markSignalTopicEditorialBatchPreparationFailedV2({database,execution_id:admitted.execution_id}),
+   {execution_id:admitted.execution_id,stage:'preparation_failed',replayed:false});
+  assert.equal((await store.markSignalTopicEditorialBatchPreparationFailedV2({database,execution_id:admitted.execution_id})).replayed,true);
+  await denied(()=>store.prepareAllSignalTopicEditorialBatchV2({database,execution_id:admitted.execution_id}),
+   /preparation_retry_unavailable/u);
+
+  const retryKey=`preparation_retry_${randomUUID()}`;
+  const retryInput={database,workspace_id,actor_user_id,execution_id:admitted.execution_id,idempotency_key:retryKey};
+  assert.deepEqual(await store.retrySignalTopicEditorialBatchPreparationV2(retryInput),
+   {execution_id:admitted.execution_id,stage:'screening',replayed:false});
+  assert.deepEqual(await store.retrySignalTopicEditorialBatchPreparationV2(retryInput),
+   {execution_id:admitted.execution_id,stage:'screening',replayed:true});
+  await denied(()=>store.retrySignalTopicEditorialBatchPreparationV2({...retryInput,idempotency_key:`other_${randomUUID()}`}),
+   /preparation_retry_unavailable/u);
+  await denied(()=>store.retrySignalTopicEditorialBatchPreparationV2({...retryInput,actor_user_id:randomUUID()}),
+   /processing_forbidden/u);
+
+  const countsAfterRetry=(await query(`SELECT
+   (SELECT count(*)::int FROM signal_processing_admissions WHERE workspace_id=$1 AND target_id=$2) admissions,
+   (SELECT count(*)::int FROM signal_topic_editorial_request_keys WHERE execution_id=$2) keys,
+   (SELECT count(*)::int FROM signal_topic_editorial_provider_batches_v2 WHERE execution_id=$2) batches,
+   (SELECT count(*)::int FROM signal_topic_editorial_calls WHERE execution_id=$2) calls`,
+   [workspace_id,admitted.execution_id])).rows[0]!;
+  assert.deepEqual(countsAfterRetry,{admissions:1,keys:2,batches:0,calls:0},
+   'retry/replay must retain the original admission and cannot reserve a paid call');
+
+  const prepared=await store.prepareAllSignalTopicEditorialBatchV2({database,execution_id:admitted.execution_id});
+  assert.ok(prepared.batch_id);assert.equal(prepared.provider_items,2);
+  await denied(()=>store.markSignalTopicEditorialBatchPreparationFailedV2({database,execution_id:admitted.execution_id}),
+   /preparation_retry_unavailable/u);
+  const finalCounts=(await query(`SELECT
+   (SELECT count(*)::int FROM signal_processing_admissions WHERE workspace_id=$1 AND target_id=$2) admissions,
+   (SELECT count(*)::int FROM signal_topic_editorial_request_keys WHERE execution_id=$2) keys,
+   (SELECT count(*)::int FROM signal_topic_editorial_provider_batches_v2 WHERE execution_id=$2) batches,
+   (SELECT count(*)::int FROM signal_topic_editorial_calls WHERE execution_id=$2) calls`,
+   [workspace_id,admitted.execution_id])).rows[0]!;
+  assert.deepEqual(finalCounts,{admissions:1,keys:2,batches:1,calls:2},
+   'manifest creation is not a provider send; paid calls remain unattempted');
+  assert.equal((await query(`SELECT count(*)::int count FROM signal_topic_editorial_calls
+    WHERE execution_id=$1 AND status='reserved' AND provider_batch_id IS NULL`,[admitted.execution_id])).rows[0]!.count,2);
+  assert.equal((await query(`SELECT count(*)::int count FROM signal_topic_editorial_provider_batches_v2
+    WHERE execution_id=$1 AND provider_batch_id IS NOT NULL`,[admitted.execution_id])).rows[0]!.count,0);
+ });
  await scenario('long_prose_case_aliases_independent_items_and_exact_batch_price',async()=>{
   const admitted=await admission();const lease=await prepare(admitted.execution_id);await sendEnd(lease);
   const first=await persist(lease,0);assert.equal(first.result.settled_micro_usd,'534');assert.equal(first.result.usage_pending,false);

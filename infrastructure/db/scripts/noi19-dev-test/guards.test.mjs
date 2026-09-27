@@ -130,10 +130,12 @@ test('editorial Batch rehearsal needs separate approval and cannot inherit an ea
  assert.equal(receipt.fixture_mutations_started,false);
  const runner=await readFile(new URL('editorial-batch-runner.mjs',import.meta.url),'utf8');
  const imageRules=await readFile(new URL('Dockerfile.dockerignore',import.meta.url),'utf8');
- assert.match(runner,/for \(let version = 184; version <= 196; version\+\+\)/u);
+ assert.match(runner,/for \(let version = 184; version <= 197; version\+\+\)/u);
  assert.match(imageRules,/!infrastructure\/db\/migrations\/0194_signal_topic_editorial_batch_authorization_v2\.sql/u);
  assert.match(imageRules,/!infrastructure\/db\/migrations\/0195_signal_topic_editorial_v2_materialization_text\.sql/u);
  assert.match(imageRules,/!infrastructure\/db\/migrations\/0196_signal_topic_editorial_batch_reuse_before_prepare\.sql/u);
+ assert.match(imageRules,/!infrastructure\/db\/migrations\/0197_signal_topic_editorial_preparation_retry\.sql/u);
+ assert.match(imageRules,/\*\*\/\.git(?:\/\*\*)?/u);
 });
 
 test('read-only table inventory accepts newer schemas but mutation uses the exact sealed count',async()=>{

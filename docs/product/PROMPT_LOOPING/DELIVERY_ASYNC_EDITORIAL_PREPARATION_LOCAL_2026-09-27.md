@@ -28,14 +28,23 @@ La duración de cada fase del POST ya se registra en `signal-topic-editorial-sta
 - `pnpm lint`: 11/11 paquetes, sin errores; 13 warnings preexistentes en Studio.
 - Revisión focal del SQL 0197: sin hallazgos accionables.
 
+El runner privado rollback-only quedó ampliado para incluir SQL0197. Su fixture
+añade la secuencia fallo terminal → retry con clave nueva → replay de esa clave
+→ preparación del manifiesto, y comprueba que se mantiene una admisión, el
+recibo de retry es durable, no se duplica la admisión y no hay envío al
+proveedor. Las filas `reserved` que crea la preparación no cuentan como envío;
+el fixture las distingue por estado y ausencia de `provider_batch_id`. También
+se exige ahora que el runner complete al menos siete escenarios. Esta extensión
+sigue **sin ejecutarse contra PostgreSQL**.
+
 ## Límites
 
-Este corte está **sólo en el worktree local**. No ejecuté SQL, no desplegué Studio/Worker, no reintenté el POST UAT que seguía incierto, no llamé a Claude/JEV/Voyage y no alteré Alexa+, Signal ni Laika. No se ha probado todavía la recuperación real desde la interfaz UAT. Los checks no demuestran latencia, concurrencia ni recuperación física en PostgreSQL remoto.
+Este corte está **sólo en el worktree local**. No ejecuté SQL, no desplegué Studio/Worker, no repetí el POST UAT incierto luego del único replay con su misma clave, no llamé a Claude/JEV/Voyage y no alteré Alexa+, Signal ni Laika. No se ha probado todavía la recuperación real desde la interfaz UAT ni el fixture ampliado en PostgreSQL. Los checks locales no demuestran latencia, concurrencia ni recuperación física en PostgreSQL remoto.
 
 ## Siguiente corte
 
 1. Mantener sin cambios la solicitud UAT cuyo POST quedó incierto hasta poder reconciliarla por su clave original y un GET/recibo de sólo lectura.
-2. Con la solicitud aclarada, preparar runner privado para 0197 y su prueba sintética positiva/rollback, sin reaplicar migraciones previas.
+2. Construir y probar la imagen privada que contiene el runner actualizado; ejecutar SQL0184–0197 sólo en la transacción sintética con aprobación específica y recibo físico de rollback.
 3. Entregar Worker y Studio en orden compatible con DB; verificar estado de preparación, fallo terminal simulado y retry del mismo ID sin crear lote ni llamada al proveedor.
 4. Si ese corte pasa, evaluar los tiempos por fase del inicio en UAT y seguir con la consolidación completa de Alexa+ sólo bajo la política y ledger vigentes.
 
