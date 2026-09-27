@@ -71,6 +71,7 @@ export async function requestSignalTopicEditorialChunkedAdmissionV3(args:Args):P
       const rows=chunk.map(({batch_index,request})=>{
         const {request_digest,provider_request,...record}=request;
         return {batch_index,request,params_body:JSON.stringify(provider_request.params),
+          source_group_body:signalTopicEditorialCanonicalBodyV2(request.source_group),
           core_body:signalTopicEditorialCanonicalBodyV2({...record,params:provider_request.params})};
       });
       const inserted=await value<{inserted:number}>(client,

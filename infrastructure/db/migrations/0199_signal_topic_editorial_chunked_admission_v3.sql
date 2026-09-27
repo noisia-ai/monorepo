@@ -35,7 +35,7 @@ END $$;
 CREATE FUNCTION append_signal_topic_editorial_batch_v3(target_execution uuid,rows jsonb) RETURNS jsonb
  LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
 DECLARE execution signal_topic_editorial_executions%ROWTYPE;item jsonb;request jsonb;position integer;
- params_body text;core_body text;inserted integer:=0;
+ params_body text;core_body text;source_group_body text;inserted integer:=0;
 BEGIN
  SELECT * INTO execution FROM signal_topic_editorial_executions WHERE id=target_execution FOR UPDATE;
  IF execution.id IS NULL OR execution.plan->>'contract_version'<>'signal-topic-editorial-admission-header-v3'
@@ -44,14 +44,15 @@ BEGIN
  THEN RAISE EXCEPTION 'topic_editorial_v3_append_unavailable' USING ERRCODE='23514';END IF;
  FOR item IN SELECT value FROM jsonb_array_elements(rows) LOOP
   position:=(item->>'batch_index')::integer;request:=item->'request';
-  params_body:=item->>'params_body';core_body:=item->>'core_body';
+  params_body:=item->>'params_body';core_body:=item->>'core_body';source_group_body:=item->>'source_group_body';
   IF position IS NULL OR position<0 OR position>=(execution.plan->>'expected_group_count')::integer
-   OR params_body IS NULL OR core_body IS NULL
+   OR params_body IS NULL OR core_body IS NULL OR source_group_body IS NULL
   THEN RAISE EXCEPTION 'topic_editorial_v3_request_invalid' USING ERRCODE='23514';END IF;
   INSERT INTO signal_topic_editorial_requests(workspace_id,execution_id,phase,batch_index,request_digest,request_body,
    configuration,receipts,reserved_micro_usd)
   VALUES(execution.workspace_id,execution.id,'screening',position,request->>'request_digest',params_body,
-   request->'configuration',jsonb_build_object('request',request,'request_canonical_body',core_body),
+   request->'configuration',jsonb_build_object('request',request,'request_canonical_body',core_body,
+    'source_group_canonical_body',source_group_body),
    (octet_length(params_body)::bigint*3+128000::bigint*15+1)/2);
   inserted:=inserted+1;
  END LOOP;
@@ -258,6 +259,7 @@ CREATE TRIGGER topic_editorial_owner_guard_v3 BEFORE INSERT OR UPDATE ON signal_
 -- Validate one exact request against its immutable atomic group and cited
 -- evidence. This is bounded per row; no 80 MB JSONB plan is passed or scanned.
 CREATE FUNCTION signal_topic_editorial_request_valid_v3(target_run uuid,header jsonb,item jsonb,core_body text,params_body text,
+ source_group_body text,
  batch_position integer) RETURNS boolean LANGUAGE plpgsql STABLE SET search_path=public,extensions,pg_temp AS $$
 DECLARE run signal_topic_consolidation_runs%ROWTYPE;g signal_topic_atomic_groups%ROWTYPE;
  projected jsonb;receipt jsonb;evidence jsonb;summary jsonb;
@@ -278,6 +280,8 @@ BEGIN
   OR receipt->>'group_digest' IS DISTINCT FROM g.group_digest
   OR NOT COALESCE(receipt->>'source_group_digest' ~ '^sha256:[a-f0-9]{64}$',false)
   OR receipt->>'source_dossier_digest' IS DISTINCT FROM g.dossier_digest
+  OR projected IS DISTINCT FROM source_group_body::jsonb
+  OR receipt->>'source_group_digest' IS DISTINCT FROM signal_semantic_context_digest_v1(source_group_body)
   OR projected->>'group_key' IS DISTINCT FROM g.group_key
   OR projected->>'group_digest' IS DISTINCT FROM g.group_digest
   OR projected->>'source_dossier_digest' IS DISTINCT FROM g.dossier_digest
@@ -297,6 +301,8 @@ BEGIN
   OR ((item-'request_digest'-'provider_request')||jsonb_build_object('params',item->'provider_request'->'params')) IS DISTINCT FROM core_body::jsonb
   OR item->>'request_digest' IS DISTINCT FROM signal_semantic_context_digest_v1(core_body)
   OR item->'provider_request'->'params' IS DISTINCT FROM params_body::jsonb
+  OR (SELECT array_agg(key ORDER BY key) FROM jsonb_object_keys(item->'provider_request'->'params') key)
+     IS DISTINCT FROM ARRAY['max_tokens','messages','model','output_config','system','thinking']
   OR item->'provider_request'->>'custom_id' IS DISTINCT FROM 'e2_'||substr(item->>'request_digest',8,60)
   OR jsonb_typeof(item->'provider_request'->'params'->'messages') IS DISTINCT FROM 'array'
   OR jsonb_array_length(item->'provider_request'->'params'->'messages')<>1
@@ -325,17 +331,18 @@ END $$;
 
 CREATE OR REPLACE FUNCTION signal_topic_editorial_request_guard_v2() RETURNS trigger LANGUAGE plpgsql
  SET search_path=public,extensions,pg_temp AS $$
-DECLARE e signal_topic_editorial_executions%ROWTYPE;item jsonb;core_body text;expected_reserved bigint;
+DECLARE e signal_topic_editorial_executions%ROWTYPE;item jsonb;core_body text;source_group_body text;expected_reserved bigint;
 BEGIN
  SELECT * INTO e FROM signal_topic_editorial_executions WHERE id=NEW.execution_id;
  core_body:=NEW.receipts->>'request_canonical_body';
+ source_group_body:=NEW.receipts->>'source_group_canonical_body';
  expected_reserved:=(octet_length(NEW.request_body)::bigint*3+128000::bigint*15+1)/2;
  IF e.plan->>'contract_version'='signal-topic-editorial-admission-header-v3' THEN
   IF e.workspace_id IS DISTINCT FROM NEW.workspace_id OR NEW.phase<>'screening' OR NEW.parent_request_id IS NOT NULL
    OR NEW.configuration IS DISTINCT FROM signal_topic_editorial_configuration_v2()
    OR NEW.request_digest IS DISTINCT FROM NEW.receipts->'request'->>'request_digest'
    OR NEW.reserved_micro_usd<>expected_reserved
-   OR signal_topic_editorial_request_valid_v3(e.numeric_run_id,e.plan,NEW.receipts->'request',core_body,NEW.request_body,NEW.batch_index) IS DISTINCT FROM true
+   OR signal_topic_editorial_request_valid_v3(e.numeric_run_id,e.plan,NEW.receipts->'request',core_body,NEW.request_body,source_group_body,NEW.batch_index) IS DISTINCT FROM true
   THEN RAISE EXCEPTION 'topic_editorial_v3_request_invalid' USING ERRCODE='23514';END IF;
   RETURN NEW;
  END IF;
@@ -395,7 +402,7 @@ CREATE TRIGGER topic_editorial_v3_prepare_guard BEFORE INSERT ON signal_topic_ed
  FOR EACH ROW EXECUTE FUNCTION signal_topic_editorial_v3_prepare_guard();
 
 REVOKE ALL ON FUNCTION signal_topic_editorial_header_valid_v3(uuid,jsonb,text) FROM PUBLIC;
-REVOKE ALL ON FUNCTION signal_topic_editorial_request_valid_v3(uuid,jsonb,jsonb,text,text,integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION signal_topic_editorial_request_valid_v3(uuid,jsonb,jsonb,text,text,text,integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION begin_signal_topic_editorial_batch_v3(uuid,uuid,jsonb,text,text,text,uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION append_signal_topic_editorial_batch_v3(uuid,jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION finalize_signal_topic_editorial_batch_v3(uuid,uuid,text) FROM PUBLIC;
@@ -406,7 +413,7 @@ DO $$ DECLARE role_name text;BEGIN
  FOREACH role_name IN ARRAY ARRAY['anon','authenticated'] LOOP
   IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=role_name) THEN
    EXECUTE format('REVOKE ALL ON FUNCTION signal_topic_editorial_header_valid_v3(uuid,jsonb,text) FROM %I',role_name);
-   EXECUTE format('REVOKE ALL ON FUNCTION signal_topic_editorial_request_valid_v3(uuid,jsonb,jsonb,text,text,integer) FROM %I',role_name);
+   EXECUTE format('REVOKE ALL ON FUNCTION signal_topic_editorial_request_valid_v3(uuid,jsonb,jsonb,text,text,text,integer) FROM %I',role_name);
    EXECUTE format('REVOKE ALL ON FUNCTION begin_signal_topic_editorial_batch_v3(uuid,uuid,jsonb,text,text,text,uuid) FROM %I',role_name);
    EXECUTE format('REVOKE ALL ON FUNCTION append_signal_topic_editorial_batch_v3(uuid,jsonb) FROM %I',role_name);
    EXECUTE format('REVOKE ALL ON FUNCTION finalize_signal_topic_editorial_batch_v3(uuid,uuid,text) FROM %I',role_name);
