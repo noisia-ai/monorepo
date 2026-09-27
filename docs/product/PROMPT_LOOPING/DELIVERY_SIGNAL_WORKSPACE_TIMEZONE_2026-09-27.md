@@ -1,23 +1,43 @@
-# Zona horaria del calendario de Topics en Signal
+# Zona horaria consistente en Signal Workspace
 
 Fecha: 2026-09-27
 
 ## Resultado
 
-La página de Topics de Signal ya recibía y mostraba la zona IANA del workspace, pero construía el filtro de fechas con `UTC`. El calendario usa esa zona para decidir qué día considera “hoy” y cuál es la última fecha seleccionable. Cerca de medianoche, ambas partes podían mostrar fechas distintas.
+Topics, Narratives, selección, evidencia y Menciones usan la zona IANA guardada en el
+workspace para interpretar filtros civiles y mostrar fechas. La zona nunca se toma como
+autoridad desde un parámetro del navegador: las rutas resuelven la marca y pasan su zona
+confiable a los lectores. El parámetro `timezone` de URL se conserva por compatibilidad,
+pero no puede cambiar la consulta.
 
-Ahora el filtro de Topics recibe `workspaceTimezone`. El límite del calendario usa esa zona; sólo una zona antigua inválida cae a UTC para evitar que la pantalla falle. El cambio aplica por workspace y también alcanza Narratives porque comparte la misma pantalla y filtro.
+Los filtros `date_from` y `date_to` siguen siendo fechas civiles inclusivas. PostgreSQL
+convierte el inicio al comienzo del primer día local y el final al comienzo del día
+siguiente en esa zona, con intervalo `[inicio, fin)`. Así los días de 23 o 25 horas por
+cambio estacional no se aproximan como 24 horas fijas. Series, fechas disponibles y
+resúmenes diarios usan el mismo día local; `occurred_at` y las fechas originales de las
+menciones permanecen como instantes UTC. La zona forma parte de los scopes/cursors, por
+lo que uno emitido bajo otra zona no se reutiliza silenciosamente.
 
-## Verificación
+Las tablas, tarjetas, ficha de Menciones y drawer de evidencia de Topics/Narratives muestran
+los instantes en la zona del workspace. La selección y su recarga también reciben esa zona en
+GET y POST. Zonas antiguas inválidas conservan fallback explícito a UTC. No se añadió
+migración ni se recalcularon menciones.
 
-- Pruebas determinísticas antes y después de medianoche UTC: Ciudad de México conserva el día local, mientras Londres ya cambió al siguiente donde corresponde.
-- Zona IANA inválida cae de forma explícita a UTC.
-- Prueba del contrato confirma que Topics pasa la zona del workspace al filtro.
-- La suite focal `signal-workspace-topics-ui.test.ts`: 29/29 PASS.
-- Typecheck de Studio y ESLint focal PASS; `git diff --check` PASS.
+## Verificación local
 
-## Límites
+- Suite focal Studio: 51/51 PASS.
+- Suite focal DB serving: 2/2 PASS.
+- `pnpm typecheck`: 11/11 tareas PASS.
+- `pnpm lint`: 11/11 tareas PASS; Studio mantiene 13 advertencias preexistentes y cero errores.
+- `git diff --check`: PASS.
+- Casos determinísticos comprueban fechas locales alrededor de medianoche (incluido un
+  instante de evidencia que cae en días civiles distintos en UTC y Ciudad de México), y el
+  contrato de navegación inicial, filtros y selección. Las pruebas DB verifican el SQL
+  parametrizado y sus límites locales inclusivos/exclusivos.
 
-La cobertura real de Alexa+ termina el 12 de agosto de 2026, así que su calendario está acotado por esa fecha y no permite observar visualmente el límite de “hoy” en producción de esa marca. El arreglo cubre el límite sin cobertura mediante el helper determinístico; no cambia fechas almacenadas, filtros enviados al servidor, datos, SQL ni llamadas a proveedores.
+## Límites y entrega
 
-El cambio queda local hasta el despliegue de Studio UAT y su healthcheck. La prueba funcional en UAT consiste en abrir Signal > Topics/Narratives y confirmar que mantiene los mismos Topics y menciones; la prueba de cruce de medianoche queda cubierta localmente porque el corpus UAT no llega hasta hoy.
+El corpus Alexa+ de UAT termina el 12 de agosto de 2026, así que no permite observar en vivo
+el borde del día actual. No se ejecutaron importaciones, procesamiento, modelos ni SQL. Esta
+documentación describe el código local; sólo se considera entregado en UAT después de que el
+commit focal esté desplegado, el healthcheck esté activo y las pantallas se comprueben allí.

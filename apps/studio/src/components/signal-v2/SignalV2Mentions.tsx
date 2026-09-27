@@ -70,7 +70,7 @@ export type SignalNativeMentionsMetadata = {
   available_dates: { date_from: string | null; date_to: string | null };
   available_platforms?: string[];
   page_cursor?: string | null;
-  filters: { date_from: string | null; date_to: string | null; search_query: string | null; platforms: string[] };
+  filters: { date_from: string | null; date_to: string | null; timezone?: string; search_query: string | null; platforms: string[] };
   sort_direction: "asc" | "desc";
   metric_denominator: number;
   evidence_visible_total: number;
@@ -604,7 +604,8 @@ export function SignalV2Mentions({
               }}
               records={visibleRecords}
               renderCell={native ? (column, record) => column === "published"
-                ? <td className="signal-v2-mentions-table__published">{formatDate(record.occurred_at, "UTC", locale)}</td> : undefined : undefined}
+                ? <td className="signal-v2-mentions-table__published">{formatDate(record.occurred_at, data.filter.timezone, locale)}</td> : undefined : undefined}
+              timeZone={native ? data.filter.timezone : undefined}
               selectedIds={selectedIds}
               selectionLabels={{
                 add: t("mentions.selectionAdd"),
@@ -615,7 +616,7 @@ export function SignalV2Mentions({
             />
           ) : (
             <MentionCards
-              timeZone={native ? "UTC" : undefined}
+              timeZone={native ? data.filter.timezone : undefined}
               activeRecord={activeRecord}
               columns={visibleColumns}
               onActivate={activateRecord}
@@ -670,6 +671,7 @@ export function SignalV2Mentions({
         <SignalMentionDetailDrawer
           onClose={closeActiveRecord}
           record={activeRecord}
+          timeZone={native ? data.filter.timezone : undefined}
           variant={native ? "workspace" : "signal"}
         />
       ) : null}
@@ -757,6 +759,7 @@ export function SignalMentionDetailDrawer({
   operatorContent,
   record,
   technicalContent,
+  timeZone,
   variant = "signal"
 }: {
   footer?: ReactNode;
@@ -768,6 +771,7 @@ export function SignalMentionDetailDrawer({
   operatorContent?: ReactNode;
   record: SignalMentionRecordV1;
   technicalContent?: ReactNode;
+  timeZone?: string;
   variant?: "operator" | "signal" | "workspace";
 }) {
   const t = useTranslations("SignalV2");
@@ -943,7 +947,7 @@ export function SignalMentionDetailDrawer({
             </div> : null}
             {record.title ? <h2>{record.title}</h2> : null}
             <p>{record.text_snippet || t("mentions.detail.noText")}</p>
-            <small>{formatDateTime(record.occurred_at, variant === "workspace" ? "UTC" : undefined, variant === "workspace" ? locale : undefined)}</small>
+            <small>{formatDateTime(record.occurred_at, timeZone, locale)}</small>
             {record.url || operatorAction ? (
               <div className="signal-v2-mention-drawer__verbatim-actions">
                 {record.url ? (

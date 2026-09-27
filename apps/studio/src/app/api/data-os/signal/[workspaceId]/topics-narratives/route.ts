@@ -32,7 +32,8 @@ export async function GET(
     const scoped = await loadSignalWorkspaceContextForTopics(workspaceId);
     if ("response" in scoped) return scoped.response;
     try {
-      const native = await loadNativeSignalTopicsV1({ workspace_id: workspaceId, actor_user_id: scoped.session.appUser.id, imported_fallback: allowImportedSignalFallbackV1(scoped.workspace) }, params);
+      const native = await loadNativeSignalTopicsV1({ workspace_id: workspaceId, actor_user_id: scoped.session.appUser.id,
+        timezone: scoped.workspace.timezone, imported_fallback: allowImportedSignalFallbackV1(scoped.workspace) }, params);
       if (native) return topicResponse(native);
     } catch (error) { return topicError(error, "workspace_topics_unavailable"); }
   }

@@ -239,6 +239,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
     {!consolidated ? <p className="signal-v2-tn__evidence-intro">{t("noNarratives")}</p> : null}
     </div>
     {drawer && term ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t("computed")} title={term.label} intro={t("quality")}
+      timeZone={workspaceTimezone}
       records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at, platform: item.platform, originalUrl: item.url }))}
       loading={reading} loadingLabel={t("loading")} emptyLabel={t("noEvidence")} errorMessage={error ? t(error === "evidenceStale" ? "evidenceStale" : "evidenceError") : null}
       onClose={() => { request.current?.abort(); sequence.current++; setDrawer(false); setReading(false); }}

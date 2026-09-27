@@ -318,7 +318,7 @@ export function SignalV2BrandMonitoring({
       const start = payload.filters.date_from ?? payload.available_dates.date_from;
       const end = payload.filters.date_to ?? payload.available_dates.date_to;
       if (target !== "monitoring" && start && end) setData(current => ({ ...current, filter: { ...current.filter,
-        date_range: { start, end }, timezone: "UTC", granularity: "day", dimensions: {}, search_query: undefined },
+        date_range: { start, end }, timezone: data.workspace.timezone, granularity: "day", dimensions: {}, search_query: undefined },
         comparison: { ...current.comparison, mode: "none", date_range: null },
         coverage: { date_from: payload.available_dates.date_from, date_through: payload.available_dates.date_to, mentions: payload.denominator } }));
       return;
@@ -328,7 +328,7 @@ export function SignalV2BrandMonitoring({
       return;
     }
     setData(payload as SignalBrandMonitoringV1);
-  }, [beginContentArrival, strategicStudies]);
+  }, [beginContentArrival, data.workspace.timezone, strategicStudies]);
 
   const updateMentionsData = useCallback((next: SignalMentionsViewData) => {
     beginContentArrival();
@@ -364,7 +364,7 @@ export function SignalV2BrandMonitoring({
       || !["monitoring", "topics"].includes(currentModule) || pendingModule) return false;
     filterRequestRef.current?.abort(); const controller = new AbortController(); filterRequestRef.current = controller;
     const ticket = ++filterSequenceRef.current; setLoading(true); setError(null);
-    const params = new URLSearchParams({ view: "all_conversations", timezone: "UTC", granularity: "day", compare: "none" });
+    const params = new URLSearchParams({ view: "all_conversations", timezone: data.workspace.timezone, granularity: "day", compare: "none" });
     const from = selection?.start ?? topicsNarrativesData.filters.date_from;
     const to = selection?.end ?? topicsNarrativesData.filters.date_to;
     if (from) params.set("date_from", from); if (to) params.set("date_to", to);
@@ -387,7 +387,7 @@ export function SignalV2BrandMonitoring({
       if (!controller.signal.aborted && ticket === filterSequenceRef.current) setError(cause instanceof Error ? cause.message : t("errors.load"));
       return false;
     } finally { if (ticket === filterSequenceRef.current) { filterRequestRef.current = null; setLoading(false); } }
-  }, [topicsNarrativesData, currentModule, pendingModule, data.workspace.id, invalidateNativeTopicEvidence, t, applyModulePayload]);
+  }, [topicsNarrativesData, currentModule, pendingModule, data.workspace.id, data.workspace.timezone, invalidateNativeTopicEvidence, t, applyModulePayload]);
 
   const loadFilter = useCallback(async (selection: SignalAnalyticsFilterSelection) => {
     if (topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && ["monitoring", "topics"].includes(currentModule)) return readNativeTopics(selection);
@@ -421,7 +421,7 @@ export function SignalV2BrandMonitoring({
       }
       if (nativeMentions) {
         if (Object.entries(dimensions).some(([key, values]) => key !== "platform" && values?.length)) throw new Error(t("errors.load"));
-        params.set("view", "all_conversations"); params.set("timezone", "UTC"); params.set("granularity", "day"); params.set("compare", "none");
+        params.set("view", "all_conversations"); params.set("timezone", data.workspace.timezone); params.set("granularity", "day"); params.set("compare", "none");
         params.set("sort", "published"); params.set("direction", nativeMentions.sort_direction);
         params.delete("compareStart"); params.delete("compareEnd"); params.delete("dimension.platform");
         for (const value of dimensions.platform ?? []) params.append("platform", value);
@@ -434,7 +434,7 @@ export function SignalV2BrandMonitoring({
       if (currentModule === "topics") {
         addTaxonomyComparisonParams(params);
         if (topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1") {
-          params.set("view", "all_conversations"); params.set("timezone", "UTC"); params.set("granularity", "day"); params.set("compare", "none");
+          params.set("view", "all_conversations"); params.set("timezone", data.workspace.timezone); params.set("granularity", "day"); params.set("compare", "none");
           params.delete("comparison_start"); params.delete("comparison_end");
         }
       }
@@ -548,7 +548,7 @@ export function SignalV2BrandMonitoring({
         if (filters?.date_from) query.set("date_from", filters.date_from);
         if (filters?.date_to) query.set("date_to", filters.date_to);
       }
-      query.set("view", "all_conversations"); query.set("timezone", "UTC"); query.set("granularity", "day"); query.set("compare", "none");
+      query.set("view", "all_conversations"); query.set("timezone", data.workspace.timezone); query.set("granularity", "day"); query.set("compare", "none");
       query.delete("comparison_start"); query.delete("comparison_end"); query.delete("compareStart"); query.delete("compareEnd");
       if (target !== "mentions" && target !== currentModule) {
         for (const key of ["q", "platform", "sort", "direction", "cursor", "limit", "mention", "scope_digest", "offset"]) query.delete(key);

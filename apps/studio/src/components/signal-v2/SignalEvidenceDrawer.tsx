@@ -6,6 +6,7 @@ import { useLocale } from "next-intl";
 
 import { SignalSourceIcon } from "@/components/signal-v2/SignalSourceIcon";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
+import { formatSignalEvidenceDateV1 } from "./signal-evidence-date";
 
 export type SignalEvidenceDrawerRecord = {
   body: string;
@@ -35,6 +36,7 @@ export function SignalEvidenceDrawer({
   records,
   title,
   intro,
+  timeZone,
   viewEnrichedLabel
 }: {
   ariaLabel: string;
@@ -55,6 +57,7 @@ export function SignalEvidenceDrawer({
   openingRecordId?: string | null;
   records: SignalEvidenceDrawerRecord[];
   title: string;
+  timeZone?: string;
   viewEnrichedLabel: string;
 }) {
   const locale = useLocale();
@@ -94,7 +97,7 @@ export function SignalEvidenceDrawer({
                     />
                     {record.platform ?? "—"}
                   </strong>
-                  <time>{formatDrawerDate(record.occurredAt, locale)}</time>
+                  <time>{formatSignalEvidenceDateV1(record.occurredAt, locale, timeZone)}</time>
                 </div>
                 <p>{record.body}</p>
                 {quote ? <blockquote>{quote}</blockquote> : null}
@@ -133,18 +136,6 @@ export function SignalEvidenceDrawer({
         ) : null}
     </WorkspaceDrawer>
   );
-}
-
-function formatDrawerDate(value: string | null, locale: string) {
-  if (!value?.trim()) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(locale, {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: "UTC"
-  }).format(date);
 }
 
 function uniqueQuote(body: string, quote: string | null | undefined) {

@@ -25,10 +25,12 @@ test("native dates, literal search and repeated platforms preserve their exact m
     sort_direction: "asc", limit: 50
   });
   assert.deepEqual(nativeMentionsQueryV1(new URLSearchParams()), { platforms: [], sort_direction: "desc", limit: 50 });
+  assert.deepEqual(nativeMentionsQueryV1(new URLSearchParams("timezone=America/Mexico_City")),
+    { platforms: [], sort_direction: "desc", limit: 50 });
 });
 
 test("unsupported dimensions, ambiguous aliases, malformed limits and fabricated scopes fail closed", () => {
-  for (const query of ["view=brand", "view=all_conversations&view=brand", "timezone=America/Mexico_City",
+  for (const query of ["view=brand", "view=all_conversations&view=brand",
     "compare=previous_period", "dimension.topic=one", "dimension.platform=web", "metric_key=topic.volume",
     "sort=engagement", "sort=platform", "offset=1", "start=2026-02-30", "start=0000-01-01", "start=",
     "start=2026-09-01&end=2026-01-01", "start=2026-01-01&date_from=2026-01-02", "q=a&q=b",
@@ -45,11 +47,20 @@ test("paging and focus pass only the server-authorized caller with the exact nat
   const read = async (args: unknown) => { seen = args; return page(); };
   const result = await loadNativeSignalMentionsV1(scope,
     new URLSearchParams(`mention=${mention}&scope_digest=${digest}&view=all_conversations&limit=25`), { read });
-  assert.deepEqual(seen, { ...scope, platforms: [], sort_direction: "desc", limit: 25,
+  assert.deepEqual(seen, { ...scope, timezone: "UTC", platforms: [], sort_direction: "desc", limit: 25,
     expected_scope_digest: digest, focus_mention_id: mention });
   assert.equal(result?.record?.subject_id, mention);
   assert.equal(result?.native.generation_id, "generation");
   assert.equal(result?.filters_hash, digest);
+  assert.equal(result?.filter.timezone, "UTC");
+});
+
+test("workspace timezone is server scoped and returned for rendering native mention instants", async () => {
+  let seen: unknown;
+  const result = await loadNativeSignalMentionsV1({ ...scope, timezone: "America/Mexico_City" },
+    new URLSearchParams("timezone=Europe/London"), { read: async args => { seen = args; return page(); } });
+  assert.equal((seen as { timezone: string }).timezone, "America/Mexico_City");
+  assert.equal(result?.filter.timezone, "America/Mexico_City");
 });
 
 test("one authorized page can carry an out-of-page focus without changing list pagination", async () => {
@@ -130,7 +141,7 @@ test("a native invalid query is rejected after detection and cannot return an un
   await assert.rejects(loadNativeSignalMentionsV1(scope, new URLSearchParams("dimension.topic=one"), {
     read: async args => { calls.push(args); return page(); }
   }), /mention filters/);
-  assert.deepEqual(calls, [{ ...scope, limit: 1 }]);
+  assert.deepEqual(calls, [{ ...scope, timezone: "UTC", limit: 1 }]);
 });
 
 test("native detection preserves the existing non-native branch without exposing a native fallback", async () => {

@@ -104,7 +104,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   statements.length = 0;
   const overview = await loadSignalWorkspaceTopicsOverviewV1({
     database: { async connect() { return client as never; } }, workspace_id: workspaceId,
-    actor_user_id: actorId
+    actor_user_id: actorId, timezone: "America/Mexico_City"
   });
   assert.match(statements[0]!, /^BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\s+SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp$/);
   assert.equal(statements.some(statement => statement.startsWith("SET LOCAL")), false);
@@ -114,11 +114,12 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.match(topicQueries[0]!.sql, /id=\$2::uuid/u);
   assert.deepEqual(topicQueries[1]!.params, [workspaceId, workingProfile]);
   assert.equal(overview?.is_current, true);
+  assert.equal(overview?.filters.timezone, "America/Mexico_City");
   assert.deepEqual(overview?.terms.map(term => [term.label, term.definition_revision, term.mention_count]),
     [["Servicio al cliente", 1, 12]]);
   assert.equal(overview?.terms[0]?.kind, "topic"); assert.equal(overview?.coverage.noise, null);
   const args = { database: { async connect() { return client as never; } }, workspace_id: workspaceId,
-    actor_user_id: actorId, term_key: "service", expected_scope_digest: overview!.scope_digest };
+    actor_user_id: actorId, timezone: "America/Mexico_City", term_key: "service", expected_scope_digest: overview!.scope_digest };
   const detail = await loadSignalWorkspaceTopicDetailV1(args);
   assert.equal(detail.kind, "topic");
   assert.equal(detail.mention_count, 12);
@@ -128,10 +129,13 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.deepEqual(detail.series, [{ date: "2026-09-01", mention_count: 10 }]);
   assert.deepEqual(detail.related_topics, []);
   assert.equal(detailQueries.length, 1);
-  assert.equal(detailQueries[0]!.params[5], "service");
+  assert.equal(detailQueries[0]!.params[4], "America/Mexico_City");
+  assert.equal(detailQueries[0]!.params[6], "service");
   assert.match(detailQueries[0]!.sql, /count\(DISTINCT root.root_id\)/);
   assert.match(detailQueries[0]!.sql, /mention.workspace_id=\$1::uuid/);
   assert.match(detailQueries[0]!.sql, /WHERE root.metrics/);
+  assert.match(detailQueries[0]!.sql, /published_at>=\(\$3::date::timestamp AT TIME ZONE \$5::text\)/u);
+  assert.match(detailQueries[0]!.sql, /published_at<\(\(\$4::date\+1\)::timestamp AT TIME ZONE \$5::text\)/u);
   await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, expected_scope_digest: "stale" }), /workspace_topics_scope_changed/);
   await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, term_key: "unselected" }), /workspace_topics_topic_unavailable/);
   await assert.rejects(loadSignalWorkspaceTopicDetailV1({ ...args, kind: "narrative" }), /workspace_topics_topic_unavailable/,

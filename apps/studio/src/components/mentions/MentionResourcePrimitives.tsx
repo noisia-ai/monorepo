@@ -343,7 +343,8 @@ export function MentionResourceTable({
   records,
   renderCell,
   selectedIds,
-  selectionLabels
+  selectionLabels,
+  timeZone
 }: {
   columnLabel: (key: MentionColumn) => string;
   columns: MentionColumn[];
@@ -353,6 +354,7 @@ export function MentionResourceTable({
   records: SignalMentionRecordV1[];
   renderCell?: (column: MentionColumn, record: SignalMentionRecordV1) => ReactNode | undefined;
   selectedIds: string[];
+  timeZone?: string;
   selectionLabels: {
     add: string;
     clearPage: string;
@@ -415,7 +417,7 @@ export function MentionResourceTable({
               {columns.map((column) => {
                 const customCell = renderCell?.(column, record);
                 return customCell === undefined
-                  ? <MentionRecordCell column={column} key={column} record={record} />
+                  ? <MentionRecordCell column={column} key={column} record={record} timeZone={timeZone} />
                   : <Fragment key={column}>{customCell}</Fragment>;
               })}
             </tr>
@@ -457,10 +459,12 @@ function MentionColumnHeader({ column, label }: { column: MentionColumn; label: 
 
 export function MentionRecordCell({
   column,
-  record
+  record,
+  timeZone
 }: {
   column: MentionColumn;
   record: SignalMentionRecordV1;
+  timeZone?: string;
 }) {
   const t = useTranslations("SignalV2");
   switch (column) {
@@ -499,7 +503,7 @@ export function MentionRecordCell({
         </td>
       );
     case "published":
-      return <td className="signal-v2-mentions-table__published">{formatDate(record.occurred_at)}</td>;
+      return <td className="signal-v2-mentions-table__published">{formatDate(record.occurred_at, timeZone)}</td>;
     case "sentiment":
       return <td className="signal-v2-mentions-table__sentiment"><MentionSentiment value={record.sentiment} /></td>;
     case "engagement":
@@ -722,9 +726,9 @@ export function formatCount(value: number) {
   return new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
-function formatDate(value: string) {
+function formatDate(value: string, timeZone?: string) {
   if (!value || !Number.isFinite(Date.parse(value))) return "—";
-  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).format(new Date(value));
+  return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", ...(timeZone ? { timeZone } : {}) }).format(new Date(value));
 }
 
 function truncate(value: string, length: number) {

@@ -8,7 +8,7 @@ import type { SignalMentionRecordV1 } from "./signal-workspace-serving";
 import type { SignalMentionsViewData, SignalNativeMentionsMetadata } from "@/components/signal-v2/SignalV2Mentions";
 import { nativeTopicsViewV1 } from "./signal-workspace-topics-native";
 
-type ActorScope = { workspace_id: string; actor_user_id: string; imported_fallback?: boolean };
+type ActorScope = { workspace_id: string; actor_user_id: string; imported_fallback?: boolean; timezone?: string };
 type ReadArgs = Omit<SignalWorkspaceMentionsArgsV1, "database">;
 type Query = Omit<ReadArgs, keyof ActorScope>;
 export type NativeSignalMentionsViewData = SignalMentionsViewData & {
@@ -30,7 +30,7 @@ export function nativeMentionsQueryV1(params: URLSearchParams): Query {
   for (const key of params.keys()) {
     if (key !== "platform" && new Set(params.getAll(key)).size > 1) return invalid();
   }
-  if (!nativeTopicsViewV1(params) || params.has("timezone") && params.get("timezone") !== "UTC"
+  if (!nativeTopicsViewV1(params)
     || params.has("granularity") && params.get("granularity") !== "day"
     || params.has("compare") && params.get("compare") !== "none"
     || params.has("sort") && params.get("sort") !== "published"
@@ -82,7 +82,7 @@ function originalMentionUrl(value: string | null) {
 }
 
 export function nativeMentionsViewDataV1(page: SignalWorkspaceMentionsResultV1, limit: number,
-  focusedMentionId?: string, validatedPageCursor?: string | null): NativeSignalMentionsViewData {
+  focusedMentionId?: string, validatedPageCursor?: string | null, workspaceTimezone = page.filters.timezone ?? "UTC"): NativeSignalMentionsViewData {
   const record = (item: SignalWorkspaceMentionsResultV1["items"][number]): SignalMentionRecordV1 => ({
     subject_id: item.mention_id,
     // Empty means undated in the shared table; never synthesize a publication date.
@@ -118,7 +118,7 @@ export function nativeMentionsViewDataV1(page: SignalWorkspaceMentionsResultV1, 
       // an all-time view must continue to include undated roots.
       date_range: { start: page.filters.date_from ?? page.available_dates.date_from ?? "",
         end: page.filters.date_to ?? page.available_dates.date_to ?? "" },
-      timezone: "UTC", granularity: "day", dimensions: page.filters.platforms.length ? { platform: page.filters.platforms } : {},
+      timezone: workspaceTimezone, granularity: "day", dimensions: page.filters.platforms.length ? { platform: page.filters.platforms } : {},
       ...(page.filters.search_query ? { search_query: page.filters.search_query } : {}) },
     comparison: { mode: "none", date_range: null },
     native: { ...("source" in page && page.source === "workspace_imported" ? { source: page.source, classification_state: page.classification_state } : {}), workspace_id: page.workspace_id, generation_id: page.generation_id, scope_digest: page.scope_digest,
@@ -141,13 +141,14 @@ export async function loadNativeSignalMentionsV1(scope: ActorScope, params = new
   let query: Query | null = null, error: unknown;
   try { query = nativeMentionsQueryV1(params); } catch (caught) { error = caught; }
   // Probe only for the native/legacy distinction. Invalid native filters never reach a broader response.
-  const page = await read({ ...scope, ...(query ?? { limit: 1 }) });
+  const page = await read({ ...scope, timezone: scope.timezone ?? "UTC", ...(query ?? { limit: 1 }) });
   if (!page) return null;
   if (error) throw error;
   if (page.workspace_id !== scope.workspace_id || !page.is_current) throw Object.assign(new Error("Mention view changed."), {
     code: "workspace_mentions_scope_changed", status: 409
   });
-  return nativeMentionsViewDataV1(page, query?.limit ?? 50, query?.focus_mention_id ?? undefined, query?.cursor);
+  return nativeMentionsViewDataV1(page, query?.limit ?? 50, query?.focus_mention_id ?? undefined, query?.cursor,
+    page.filters.timezone ?? scope.timezone ?? "UTC");
 }
 
 export function nativeMentionsErrorResponseV1(error: unknown) {

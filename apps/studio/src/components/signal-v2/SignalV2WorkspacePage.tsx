@@ -85,7 +85,8 @@ export async function SignalV2WorkspacePage({
     for (const [key, value] of Object.entries(query)) {
       for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
     }
-    const scope = { workspace_id: workspace.id, actor_user_id: session.appUser.id, imported_fallback: allowImportedSignalFallbackV1(workspace) };
+    const scope = { workspace_id: workspace.id, actor_user_id: session.appUser.id, timezone: workspace.timezone,
+      imported_fallback: allowImportedSignalFallbackV1(workspace) };
     let native = null, focused = null, unavailable = false;
     try {
       native = await loadNativeSignalMentionsV1(scope, params);
@@ -119,7 +120,8 @@ export async function SignalV2WorkspacePage({
     for (const [key, value] of Object.entries(query)) {
       for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
     }
-    const native = await loadNativeSignalTopicsV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id, imported_fallback: allowImportedSignalFallbackV1(workspace) }, params);
+    const native = await loadNativeSignalTopicsV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id,
+      timezone: workspace.timezone, imported_fallback: allowImportedSignalFallbackV1(workspace) }, params);
     if (native) {
       const [workspaceOptions, releases] = await Promise.all([
         listSignalWorkspaceOptionsForUser(session.appUser),
@@ -128,7 +130,7 @@ export async function SignalV2WorkspacePage({
       const empty = buildEmptySignalBrandMonitoringV1(workspace);
       const dateFrom = native.filters.date_from ?? native.available_dates.date_from;
       const dateTo = native.filters.date_to ?? native.available_dates.date_to;
-      const filter = dateFrom && dateTo ? { ...empty.filter, timezone: "UTC", date_range: { start: dateFrom, end: dateTo } } : empty.filter;
+      const filter = dateFrom && dateTo ? { ...empty.filter, timezone: workspace.timezone, date_range: { start: dateFrom, end: dateTo } } : empty.filter;
       const nativeMonitoring = buildNativeSignalMonitoringV1({ ...empty, filter,
         comparison: resolveSignalComparisonV1({ filter, mode: "none" }) }, native);
       return <SignalV2BrandMonitoring activeModule={activeModule} activeStudy={null} brandName={workspace.name}

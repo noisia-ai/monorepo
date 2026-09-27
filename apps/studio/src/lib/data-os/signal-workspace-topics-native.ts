@@ -6,12 +6,12 @@ import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicsOverviewV1, 
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
 import type { TopicSignalSelectionV1 } from "./signal-topic-selection-ui";
 
-type ActorScope = { workspace_id: string; actor_user_id: string };
+type ActorScope = { workspace_id: string; actor_user_id: string; timezone?: string };
 export function nativeTopicsQueryV1(params: URLSearchParams) {
   const allowed = new Set(["view", "date_from", "date_to", "start", "end", "timezone", "granularity", "compare", "cursor", "scope_digest", "limit"]);
-  if ([...params.keys()].some(key => !allowed.has(key)) || (params.has("timezone") && params.get("timezone") !== "UTC")
+  if ([...params.keys()].some(key => !allowed.has(key))
     || (params.has("granularity") && params.get("granularity") !== "day") || (params.has("compare") && params.get("compare") !== "none")) {
-    throw Object.assign(new Error("Only dates in UTC are supported for computed Topics"), { code: "workspace_topic_filter_unsupported", status: 422 });
+    throw Object.assign(new Error("Only the supported date filters can be applied to native Topics"), { code: "workspace_topic_filter_unsupported", status: 422 });
   }
   const date_from = params.get("date_from") ?? params.get("start") ?? undefined;
   const date_to = params.get("date_to") ?? params.get("end") ?? undefined;
@@ -34,20 +34,20 @@ export async function loadNativeSignalTopicsV1(scope: ActorScope & { imported_fa
   let filter: ReturnType<typeof nativeTopicsQueryV1> = {}, invalid: unknown = null;
   const { pool } = await import("@/lib/db");
   try { filter = nativeTopicsQueryV1(params); } catch (error) { invalid = error; }
-  const native = await loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, ...filter });
+  const native = await loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...filter });
   if (native && invalid) throw invalid;
   return native;
 }
 export async function loadNativeSignalTopicDetailV1(scope: ActorScope, term_key: string, params: URLSearchParams, kind: "topic" | "narrative" = "topic") {
   const { pool } = await import("@/lib/db");
-  return loadSignalWorkspaceTopicDetailV1({ database: pool, ...scope, ...nativeTopicsQueryV1(params), term_key, kind,
+  return loadSignalWorkspaceTopicDetailV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...nativeTopicsQueryV1(params), term_key, kind,
     expected_scope_digest: params.get("scope_digest") ?? "" });
 }
 export async function loadNativeSignalTopicEvidenceV1(scope: ActorScope, term_key: string, params: URLSearchParams, kind: "topic" | "narrative" = "topic") {
   const limit = params.has("limit") ? Number(params.get("limit")) : 25;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) throw Object.assign(new Error("Invalid limit"), { code: "workspace_topic_filter_invalid", status: 422 });
   const { pool } = await import("@/lib/db");
-  return loadSignalWorkspaceTopicEvidenceV1({ database: pool, ...scope, ...nativeTopicsQueryV1(params), term_key, kind, limit,
+  return loadSignalWorkspaceTopicEvidenceV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...nativeTopicsQueryV1(params), term_key, kind, limit,
     ...(params.get("cursor") ? { cursor: params.get("cursor")! } : {}),
     ...(params.get("scope_digest") ? { expected_scope_digest: params.get("scope_digest")! } : {}) });
 }
@@ -56,7 +56,7 @@ export async function loadNativeTopicSelectionV1(scope: ActorScope, termKey: str
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: pool, ...scope });
   const [state, overview] = await Promise.all([
     loadSignalWorkspaceTopicSelectionV1({ database: pool, ...scope, ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}) }),
-    capabilities.can_select_signal ? loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, include_unselected: true }) : null
+    capabilities.can_select_signal ? loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", include_unselected: true }) : null
   ]);
   return nativeTopicSelectionViewV1(scope, termKey, idempotencyKey, state, overview, capabilities);
 }

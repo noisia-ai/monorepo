@@ -86,6 +86,21 @@ test("native Topics pass the workspace timezone into the calendar filter", async
   const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
   assert.match(source, /date_range: \{ start: dateFrom, end: dateTo \}[\s\S]*timezone: workspaceTimezone/u);
 });
+test("native Signal routes preserve workspace timezone from initial load through filtering and navigation", async () => {
+  const monitoring = await readFile(new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../../components/signal-v2/SignalV2WorkspacePage.tsx", import.meta.url), "utf8");
+  const topics = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  const evidenceDrawer = await readFile(new URL("../../components/signal-v2/SignalEvidenceDrawer.tsx", import.meta.url), "utf8");
+  const commandsRoute = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/[termKey]/commands/route.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(monitoring, /timezone(?::|",\s*)\s*"UTC"/u);
+  assert.match(monitoring, /timezone: data\.workspace\.timezone/u);
+  assert.match(monitoring, /params\.set\("timezone", data\.workspace\.timezone\)/u);
+  assert.match(monitoring, /query\.set\("timezone", data\.workspace\.timezone\)/u);
+  assert.match(page, /timezone: workspace\.timezone, date_range/u);
+  assert.match(topics, /<SignalEvidenceDrawer[\s\S]*?timeZone=\{workspaceTimezone\}/u);
+  assert.match(evidenceDrawer, /formatSignalEvidenceDateV1\(record\.occurredAt, locale, timeZone\)/u);
+  assert.equal((commandsRoute.match(/timezone: loaded\.workspace\.timezone/gu) ?? []).length, 2);
+});
 test("stale generation preserves counts while disabling stale evidence access", async () => {
   const html = await render("en-US", { ...data, is_current: false });
   assert.match(html, /Previous result/); assert.match(html, /last complete result is retained/);

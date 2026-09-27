@@ -11,7 +11,7 @@ export type SignalWorkspaceTopicsOverviewV1 = {
   is_current: boolean;
   is_processing: boolean;
   selection_revision: number;
-  filters: { date_from: string | null; date_to: string | null };
+  filters: { date_from: string | null; date_to: string | null; timezone?: string };
   available_dates: { date_from: string | null; date_to: string | null };
   scope_digest: string;
   observed_at: string;

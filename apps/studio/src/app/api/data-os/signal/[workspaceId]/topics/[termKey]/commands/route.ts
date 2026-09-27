@@ -20,7 +20,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
   if ("response" in loaded) return loaded.response;
   const key = new URL(request.url).searchParams.get("idempotency_key") ?? undefined;
   if (key !== undefined && (key.length < 8 || key.length > 200)) return topicResponse({ error: "topic_command_invalid" }, 422);
-  try { return topicResponse(await loadNativeTopicSelectionV1({ workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id }, termKey, key)); }
+  try { return topicResponse(await loadNativeTopicSelectionV1({ workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id, timezone: loaded.workspace.timezone }, termKey, key)); }
   catch (error) { return topicError(error, "topic_selection_unavailable"); }
 }
 
@@ -39,7 +39,7 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
           expected_definition_revision: input.expected_definition_revision, expected_definition_digest: input.expected_definition_digest,
           generation_id: input.generation_id, idempotency_key: input.idempotency_key };
         return topicResponse(await selectNativeTopicSignalV1({ workspace_id: workspaceId,
-          actor_user_id: loaded.session.appUser.id }, termKey, selection));
+          actor_user_id: loaded.session.appUser.id, timezone: loaded.workspace.timezone }, termKey, selection));
       } catch (error) { return topicError(error, "topic_selection_rejected"); }
     }
     command = signalTopicCommandSchemaV1.parse(body);

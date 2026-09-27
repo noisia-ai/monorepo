@@ -34,7 +34,7 @@ export async function GET(
     const scoped = await loadSignalWorkspaceContextForTopics(workspaceId);
     if ("response" in scoped) return scoped.response;
     try { return topicResponse(await loadNativeSignalTopicDetailV1({ workspace_id: workspaceId,
-      actor_user_id: scoped.session.appUser.id }, termKey, params, kind)); }
+      actor_user_id: scoped.session.appUser.id, timezone: scoped.workspace.timezone }, termKey, params, kind)); }
     catch (error) { return topicError(error, "workspace_topic_detail_unavailable"); }
   }
   const loaded = await loadSignalWorkspaceModuleContext(workspaceId, "topics-narratives", request);

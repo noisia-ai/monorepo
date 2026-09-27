@@ -15,7 +15,8 @@ import { loadSignalTopicWorkingProfileWithQueryableV1 } from "./signal-topic-cat
 import { readSignalTopicConsolidationServingBindingV1, type SignalTopicConsolidationServingSnapshotV1 } from "./signal-topic-consolidation-activation";
 
 type Database = Pick<Pool, "connect">;
-type Filters = { date_from?: string | null; date_to?: string | null };
+type CivilFilters = { date_from: string | null; date_to: string | null; timezone: string };
+type Filters = { date_from?: string | null; date_to?: string | null; timezone?: string };
 type Args = Filters & { database: Database; workspace_id: string; actor_user_id: string; include_unselected?: boolean; imported_fallback?: boolean };
 export type SignalWorkspaceMentionsArgsV1 = Omit<Args, "include_unselected"> & {
   search_query?: string | null; platforms?: string[]; sort_direction?: "asc" | "desc";
@@ -30,7 +31,7 @@ export type SignalWorkspaceMentionV1 = {
 export type SignalWorkspaceMentionsPageV1 = {
   contract_version: "signal-workspace-mentions-v1"; workspace_id: string; generation_id: string;
   source_engine_execution_id: string; is_current: true; is_processing: boolean; scope_digest: string;
-  filters: { date_from: string | null; date_to: string | null; search_query: string | null; platforms: string[] };
+  filters: { date_from: string | null; date_to: string | null; timezone?: string; search_query: string | null; platforms: string[] };
   sort: { field: "published"; direction: "asc" | "desc" };
   available_dates: { date_from: string | null; date_to: string | null };
   available_platforms: string[];
@@ -57,7 +58,7 @@ type Generation = { id: string; taxonomy_profile_id: string | null; preparation_
   correction_digest: string; source_valid: boolean };
 type CatalogTerm = SignalTopicDefinitionV1 & { kind: "topic" | "narrative" };
 type Context = { generation: Generation | null; topics: CatalogTerm[]; selection: Selection;
-  is_current: boolean; is_processing: boolean; filters: { date_from: string | null; date_to: string | null };
+  is_current: boolean; is_processing: boolean; filters: CivilFilters;
   native: boolean; consolidated: boolean; imported?: ImportedPopulation };
 
 export class SignalWorkspaceTopicsServingError extends Error {
@@ -65,6 +66,13 @@ export class SignalWorkspaceTopicsServingError extends Error {
 }
 const fail = (code: string, status = 409): never => { throw new SignalWorkspaceTopicsServingError(code, status); };
 const hash = (value: unknown) => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+function parseTimezone(value: string | null | undefined): string {
+  const timezone = value?.trim() || "UTC";
+  // Invalid legacy workspaces stay readable while new inputs are validated on
+  // write. UTC is the explicit compatibility fallback for native date views.
+  try { new Intl.DateTimeFormat("en", { timeZone: timezone }); return timezone; }
+  catch { return "UTC"; }
+}
 function parseDate(value: string | null | undefined): string | null {
   if (value == null) return null;
   if (!/^\d{4}-\d{2}-\d{2}$/u.test(value) || Number(value.slice(0, 4)) < 1 || !Number.isFinite(Date.parse(value))
@@ -140,7 +148,7 @@ async function importedPopulation(client: PoolClient, args: Args): Promise<Impor
 async function context(client: PoolClient, args: Args): Promise<Context> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
   if (!capabilities.can_view || args.include_unselected && !capabilities.can_edit_topics) return fail("workspace_topics_forbidden", 403);
-  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to) };
+  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to), timezone: parseTimezone(args.timezone) };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
   const binding = await readSignalTopicConsolidationServingBindingV1(client, args.workspace_id);
   if (binding?.snapshot) return consolidatedContext(binding.snapshot, filters);
@@ -221,7 +229,7 @@ async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Con
   "generation" | "is_current" | "is_processing" | "filters" | "native" | "imported">> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
   if (!capabilities.can_view) return fail("workspace_topics_forbidden", 403);
-  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to) };
+  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to), timezone: parseTimezone(args.timezone) };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
   const binding = await readSignalTopicConsolidationServingBindingV1(client, args.workspace_id);
   if (binding?.snapshot) return consolidatedContext(binding.snapshot, filters);
@@ -325,10 +333,10 @@ const populationSql = (imported = false) => `WITH source_generation AS MATERIALI
   LEFT JOIN root_rights rights ON rights.root_id=item.root_id
   WHERE item.workspace_id=$1::uuid AND item.snapshot_id=$2::uuid`}
 ), period_roots AS MATERIALIZED (
-  SELECT * FROM all_roots WHERE ($3::date IS NULL OR published_at>=$3::date)
-    AND ($4::date IS NULL OR published_at<$4::date+interval '1 day')
+  SELECT * FROM all_roots WHERE ($3::date IS NULL OR published_at>=($3::date::timestamp AT TIME ZONE $5::text))
+    AND ($4::date IS NULL OR published_at<(($4::date+1)::timestamp AT TIME ZONE $5::text))
 ), visible_terms AS MATERIALIZED (
-  SELECT * FROM jsonb_to_recordset($5::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean)
+  SELECT * FROM jsonb_to_recordset($6::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean)
 ), legacy_memberships AS MATERIALIZED (
   SELECT DISTINCT ON(assignment.canonical_root_id,term.term_key) assignment.canonical_root_id root_id,term.term_key,visible.visible,
     CASE WHEN assignment.membership_basis='computed_cluster' THEN assignment.membership_metadata->'evidence_fragment' ELSE NULL END evidence_fragment
@@ -375,7 +383,7 @@ function displayedTopics(ctx: Context, includeUnselected = false) {
 }
 function populationParams(args: Args, ctx: Context) {
   const visible = new Set(displayedTopics(ctx, args.include_unselected).map(topic => topic.term_key));
-  return [args.workspace_id, ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to,
+  return [args.workspace_id, ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, ctx.filters.timezone,
     JSON.stringify(ctx.topics.map(topic => ({ term_key: topic.term_key, visible: visible.has(topic.term_key),
       definition_digest: topic.definition_digest, definition_revision: topic.definition_revision })))];
 }
@@ -395,12 +403,12 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
       count(*) FILTER(WHERE NOT root.metrics)::int withheld,
       'sha256:'||encode(sha256(convert_to(COALESCE((SELECT string_agg(jsonb_build_array(id,data_source_id,metrics,evidence)::text,
         '' ORDER BY id) FROM authorized_imports),''),'UTF8')),'hex') rights_digest,
-      (SELECT to_char(min(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_from,
-      (SELECT to_char(max(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_to,
+      (SELECT to_char((min(published_at) AT TIME ZONE $5::text)::date,'YYYY-MM-DD') FROM all_roots WHERE metrics) date_from,
+      (SELECT to_char((max(published_at) AT TIME ZONE $5::text)::date,'YYYY-MM-DD') FROM all_roots WHERE metrics) date_to,
       COALESCE((SELECT jsonb_agg(counts ORDER BY term_key) FROM (SELECT term_key,count(*)::int mention_count FROM memberships GROUP BY term_key) counts),'[]') counts,
-      COALESCE((SELECT jsonb_agg(series ORDER BY date) FROM (SELECT to_char(published_at,'YYYY-MM-DD') date,count(*)::int mention_count,
+      COALESCE((SELECT jsonb_agg(series ORDER BY date) FROM (SELECT to_char((published_at AT TIME ZONE $5::text)::date,'YYYY-MM-DD') date,count(*)::int mention_count,
         count(*) FILTER(WHERE visible)::int assigned_unique
-        FROM population period WHERE metrics GROUP BY to_char(published_at,'YYYY-MM-DD')) series),'[]') series,
+        FROM population period WHERE metrics GROUP BY (published_at AT TIME ZONE $5::text)::date) series),'[]') series,
       to_char(statement_timestamp(),'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at
     FROM population root`, populationParams(args, ctx))).rows[0]!;
   const counts = new Map(summary.counts.map(row => [row.term_key, row.mention_count]));
@@ -476,7 +484,7 @@ export async function loadSignalWorkspaceTopicDetailV1(args: Omit<Args, "include
       related: Array<{ term_key: string; shared_mentions: number }> }>(`${populationSql(Boolean(ctx.imported))},
       topic_roots AS MATERIALIZED (
         SELECT DISTINCT root.root_id,root.published_at,mention.sentiment_score
-        FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$6
+        FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$7
         JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
         WHERE root.metrics
       )
@@ -486,13 +494,13 @@ export async function loadSignalWorkspaceTopicDetailV1(args: Omit<Args, "include
         count(*) FILTER(WHERE sentiment_score < -0.2)::int negative,
         count(*) FILTER(WHERE sentiment_score IS NULL)::int unclassified,
         COALESCE((SELECT jsonb_agg(point ORDER BY date) FROM (
-          SELECT to_char(published_at,'YYYY-MM-DD') date,count(*)::int mention_count
-          FROM topic_roots WHERE published_at IS NOT NULL GROUP BY to_char(published_at,'YYYY-MM-DD')
+          SELECT to_char((published_at AT TIME ZONE $5::text)::date,'YYYY-MM-DD') date,count(*)::int mention_count
+          FROM topic_roots WHERE published_at IS NOT NULL GROUP BY (published_at AT TIME ZONE $5::text)::date
         ) point),'[]') series,
         COALESCE((SELECT jsonb_agg(relation ORDER BY shared_mentions DESC,term_key) FROM (
           SELECT member.term_key,count(DISTINCT root.root_id)::int shared_mentions
           FROM topic_roots root JOIN memberships member ON member.root_id=root.root_id
-          WHERE member.term_key<>$6 GROUP BY member.term_key
+          WHERE member.term_key<>$7 GROUP BY member.term_key
           ORDER BY shared_mentions DESC,member.term_key LIMIT 20
         ) relation),'[]') related
       FROM topic_roots`, [...populationParams(args, ctx), args.term_key])).rows[0]!;
@@ -537,14 +545,14 @@ export async function loadSignalWorkspaceTopicEvidenceV1(args: Omit<Args, "inclu
         (member.evidence_fragment->>'start')::int,(member.evidence_fragment->>'end')::int) ELSE left(mention.text_clean,2000) END text,
         member.evidence_fragment,mention.platform,
         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url
-      FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$6
+      FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$7
       JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
       JOIN source_generation generation ON generation.id=$2::uuid
       JOIN signal_corpus_preparation_items prepared ON prepared.workspace_id=$1::uuid
         AND prepared.run_id=generation.preparation_run_id AND prepared.root_id=root.root_id
-      WHERE root.evidence AND ($7::uuid IS NULL OR root.root_id>$7::uuid)
+      WHERE root.evidence AND ($8::uuid IS NULL OR root.root_id>$8::uuid)
         AND prepared.asset_sha256=mention.text_clean_sha256
-      ORDER BY root.root_id LIMIT $8`, [...populationParams(args, ctx), args.term_key, after, limit + 1])).rows;
+      ORDER BY root.root_id LIMIT $9`, [...populationParams(args, ctx), args.term_key, after, limit + 1])).rows;
     const items = rows.slice(0, limit);
     return { contract_version: "signal-workspace-topic-evidence-v1", workspace_id: args.workspace_id,
       generation_id: ctx.generation.id, kind, term_key: args.term_key, scope_digest: view.scope_digest, items,
@@ -565,7 +573,7 @@ function mentionsRequest(args: SignalWorkspaceMentionsArgsV1) {
     || args.focus_mention_id != null && (!mentionUuid.test(args.focus_mention_id) || args.cursor != null)
     || args.expected_scope_digest != null && !/^sha256:[a-f0-9]{64}$/u.test(args.expected_scope_digest))
     return fail("workspace_mentions_request_invalid", 422);
-  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to),
+  const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to), timezone: parseTimezone(args.timezone),
     search_query: args.search_query?.trim() || null,
     platforms: [...new Set((args.platforms ?? []).map(value => value.trim().toLowerCase()))].sort() };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
@@ -611,8 +619,8 @@ const mentionsPopulationSql = (imported = false) => `${populationSql(imported)},
   SELECT root.* FROM mention_roots root WHERE root.metrics AND root.evidence AND root.text_valid
 ), filtered_mentions AS MATERIALIZED (
   SELECT root.* FROM visible_mentions root JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
-  WHERE ($6::text IS NULL OR strpos(lower(mention.text_clean),lower($6::text))>0)
-    AND (cardinality($7::text[])=0 OR lower(btrim(root.platform))=ANY($7::text[]))
+  WHERE ($7::text IS NULL OR strpos(lower(mention.text_clean),lower($7::text))>0)
+    AND (cardinality($8::text[])=0 OR lower(btrim(root.platform))=ANY($8::text[]))
 )`;
 type MentionsSummary = {
   metric_denominator: number; evidence_visible_total: number; total_count: number;
@@ -629,7 +637,8 @@ export function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV
 export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMentionsArgsV1): Promise<SignalWorkspaceMentionsResultV1 | null> {
   const request = mentionsRequest(args);
   const access = { database: args.database, workspace_id: args.workspace_id.toLowerCase(), actor_user_id: args.actor_user_id.toLowerCase(),
-    date_from: request.filters.date_from, date_to: request.filters.date_to, imported_fallback: args.imported_fallback };
+    date_from: request.filters.date_from, date_to: request.filters.date_to, timezone: request.filters.timezone,
+    imported_fallback: args.imported_fallback };
   return mentionsTransaction(args.database, async client => {
     const ctx = await mentionsContext(client, access);
     if (!ctx.native) return null;
@@ -638,7 +647,7 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
     // The transaction wrapper disables nested loops and JIT before this query:
     // skewed workspace estimates otherwise choose a quadratic plan and compile it.
     // Empty visible_terms intentionally avoids every membership/selection join.
-    const params = [access.workspace_id, ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, "[]",
+    const params = [access.workspace_id, ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, ctx.filters.timezone, "[]",
       request.filters.search_query, request.filters.platforms];
     const direction = request.direction === "asc" ? "ASC" : "DESC", operator = request.direction === "asc" ? ">" : "<";
     const before = request.direction === "asc" ? "<" : ">";
@@ -653,28 +662,28 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
           '' ORDER BY id) FROM authorized_imports),''),'UTF8')),'hex') rights_digest,
         COALESCE(bit_xor(root.population_hash),0)::text population_fingerprint_xor,
         COALESCE(sum(root.population_hash::numeric),0)::text population_fingerprint_sum,
-        (SELECT to_char(min(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_from,
-        (SELECT to_char(max(published_at),'YYYY-MM-DD') FROM all_roots WHERE metrics) date_to,
+        (SELECT to_char((min(published_at) AT TIME ZONE $5::text)::date,'YYYY-MM-DD') FROM all_roots WHERE metrics) date_from,
+        (SELECT to_char((max(published_at) AT TIME ZONE $5::text)::date,'YYYY-MM-DD') FROM all_roots WHERE metrics) date_to,
         ARRAY(SELECT DISTINCT lower(btrim(platform)) FROM visible_mentions
           WHERE platform IS NOT NULL AND btrim(platform)<>'' ORDER BY 1) available_platforms,
-        ($8::uuid IS NULL OR EXISTS(SELECT 1 FROM filtered_mentions cursor_root WHERE cursor_root.root_id=$8::uuid
-          AND cursor_root.published_at IS NOT DISTINCT FROM $9::timestamptz)) cursor_exists,
-        (SELECT count(*)::int FROM filtered_mentions prior WHERE $8::uuid IS NOT NULL AND
-          (($9::timestamptz IS NULL AND (prior.published_at IS NOT NULL OR prior.root_id<=$8::uuid))
-           OR ($9::timestamptz IS NOT NULL AND (prior.published_at ${before} $9::timestamptz
-             OR (prior.published_at=$9::timestamptz AND prior.root_id<=$8::uuid))))) cursor_offset
+        ($9::uuid IS NULL OR EXISTS(SELECT 1 FROM filtered_mentions cursor_root WHERE cursor_root.root_id=$9::uuid
+          AND cursor_root.published_at IS NOT DISTINCT FROM $10::timestamptz)) cursor_exists,
+        (SELECT count(*)::int FROM filtered_mentions prior WHERE $9::uuid IS NOT NULL AND
+          (($10::timestamptz IS NULL AND (prior.published_at IS NOT NULL OR prior.root_id<=$9::uuid))
+           OR ($10::timestamptz IS NOT NULL AND (prior.published_at ${before} $10::timestamptz
+             OR (prior.published_at=$10::timestamptz AND prior.root_id<=$9::uuid))))) cursor_offset
       FROM mention_roots root
     ), page AS MATERIALIZED (
       SELECT root.* FROM filtered_mentions root
-      WHERE ($8::uuid IS NULL OR ($9::timestamptz IS NULL AND root.published_at IS NULL AND root.root_id>$8::uuid)
-        OR ($9::timestamptz IS NOT NULL AND (root.published_at IS NULL OR root.published_at ${operator} $9::timestamptz
-          OR (root.published_at=$9::timestamptz AND root.root_id>$8::uuid))))
-      ORDER BY root.published_at ${direction} NULLS LAST,root.root_id ASC LIMIT $11
+      WHERE ($9::uuid IS NULL OR ($10::timestamptz IS NULL AND root.published_at IS NULL AND root.root_id>$9::uuid)
+        OR ($10::timestamptz IS NOT NULL AND (root.published_at IS NULL OR root.published_at ${operator} $10::timestamptz
+          OR (root.published_at=$10::timestamptz AND root.root_id>$9::uuid))))
+      ORDER BY root.published_at ${direction} NULLS LAST,root.root_id ASC LIMIT $12
     ), selected AS MATERIALIZED (
       SELECT root.*,false focus_only FROM page root
       UNION ALL
       SELECT root.*,true focus_only FROM filtered_mentions root
-      WHERE $10::uuid IS NOT NULL AND root.root_id=$10::uuid
+      WHERE $11::uuid IS NOT NULL AND root.root_id=$11::uuid
         AND NOT EXISTS(SELECT 1 FROM page listed WHERE listed.root_id=root.root_id)
     ) SELECT summary.*,
       CASE WHEN root.root_id IS NULL THEN NULL ELSE jsonb_build_object(
