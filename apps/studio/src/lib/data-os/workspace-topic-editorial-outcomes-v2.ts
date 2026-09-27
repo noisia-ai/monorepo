@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { loadSignalWorkspaceCapabilitiesStoreV1 } from "@noisia/db";
 import { AtomicCensusReadError, loadWorkspaceTopicAtomicCensusPageV1 } from "./workspace-topic-atomic-census";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -32,20 +31,17 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
     throw new EditorialOutcomeReadError("topic_editorial_outcomes_request_invalid", 422);
 
   const database = args.database ?? (await import("@/lib/db")).pool;
-  // Reuse the established bounded, verified evidence reader; it returns at most
-  // 20 groups and two evidence snippets per group, never corpus text wholesale.
-  const pageNumber = Math.floor(args.offset / censusPageSize) + 1;
-  const withinPageOffset = args.offset % censusPageSize;
-  const census = await loadWorkspaceTopicAtomicCensusPageV1({ database, workspaceId: args.workspaceId,
-    actorUserId: args.actorUserId, numericExecutionId: args.numericExecutionId, page: pageNumber, query: "" });
-  const groups = census.items.slice(withinPageOffset, withinPageOffset + args.limit);
   const client = await database.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
     await client.query("SET LOCAL search_path=public,extensions,pg_temp");
-    const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, workspace_id: args.workspaceId,
-      actor_user_id: args.actorUserId });
-    if (!caps.can_view) throw new EditorialOutcomeReadError("topic_editorial_outcomes_forbidden", 403);
+    // Load the page census and its decisions from one repeatable-read snapshot,
+    // so the revision banner cannot race a just-validated catalog.
+    const pageNumber = Math.floor(args.offset / censusPageSize) + 1;
+    const withinPageOffset = args.offset % censusPageSize;
+    const census = await loadWorkspaceTopicAtomicCensusPageV1({ queryable: client, workspaceId: args.workspaceId,
+      actorUserId: args.actorUserId, numericExecutionId: args.numericExecutionId, page: pageNumber, query: "" });
+    const groups = census.items.slice(withinPageOffset, withinPageOffset + args.limit);
     const ownerId = (await client.query<{ execution_id: string | null }>(`
       SELECT editorial.id::text execution_id
       FROM signal_topic_consolidation_executions numeric

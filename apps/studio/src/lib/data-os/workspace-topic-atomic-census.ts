@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "@noisia/db";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const pageSize = 20;
-type Scope = { database?: Pick<Pool, "connect">; workspaceId: string; actorUserId: string; numericExecutionId: string;
+type Scope = { database?: Pick<Pool, "connect">; queryable?: PoolClient; workspaceId: string; actorUserId: string; numericExecutionId: string;
   page: number; query: string };
 type GroupRow = { id: string; group_key: string; lane: "open" | "guided"; root_count: number; chunk_count: number;
   terms: string[]; disposition: "topic" | "narrative" | "noise" | "unresolved" | null; concept_label: string | null };
@@ -23,11 +23,14 @@ export async function loadWorkspaceTopicAtomicCensusPageV1(args: Scope): Promise
     || !Number.isSafeInteger(args.page) || args.page < 1 || args.page > 500
     || args.query.length > 100 || args.query.includes("\0"))
     throw new AtomicCensusReadError("topic_atomic_census_request_invalid", 422);
-  const database = args.database ?? (await import("@/lib/db")).pool;
-  const client = await database.connect();
+  const database = args.queryable ? null : args.database ?? (await import("@/lib/db")).pool;
+  const client = args.queryable ?? await database!.connect();
+  const ownsTransaction = !args.queryable;
   try {
-    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    if (ownsTransaction) {
+      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    }
     const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, workspace_id: args.workspaceId,
       actor_user_id: args.actorUserId });
     if (!caps.can_view) throw new AtomicCensusReadError("topic_atomic_census_forbidden", 403);
@@ -107,13 +110,13 @@ export async function loadWorkspaceTopicAtomicCensusPageV1(args: Scope): Promise
       for (const root of roots) byGroup.set(root.atomic_group_id,
         [{ root_id: root.canonical_root_id, text: null, platform: null, locale: null }]);
     }
-    await client.query("COMMIT");
+    if (ownsTransaction) await client.query("COMMIT");
     return { contract_version: "workspace-topic-atomic-census-page-v1", workspace_id: args.workspaceId,
       numeric_execution_id: args.numericExecutionId, total: run.expected_group_count, matching: count,
       page: args.page, page_size: pageSize, revision_status: run.revision_id ? "validated" : "pending",
       items: groups.map(({ id, ...group }) => ({ ...group, evidence: byGroup.get(id) ?? [] })) };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
+    if (ownsTransaction) await client.query("ROLLBACK").catch(() => undefined);
     throw error;
-  } finally { client.release(); }
+  } finally { if (ownsTransaction) client.release(); }
 }

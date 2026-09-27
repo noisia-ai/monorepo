@@ -102,9 +102,9 @@ export function WorkspaceTopicEditorialOutcomes({ workspaceId, numericExecutionI
       setPage(parsed); setOffset(nextOffset); setSelected(null);
     } catch { if (!controller.signal.aborted && active.current === scope) setFailed(true); }
     finally {
-      if (request.current === controller) request.current = null;
+      const ownsRequest = request.current === controller;
+      if (ownsRequest) { request.current = null; inFlight.current = false; }
       if (!controller.signal.aborted && active.current === scope) setLoading(false);
-      inFlight.current = false;
     }
   };
 
