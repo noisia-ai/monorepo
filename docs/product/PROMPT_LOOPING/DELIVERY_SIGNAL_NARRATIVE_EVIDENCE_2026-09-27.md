@@ -21,3 +21,9 @@ El lector comprueba que la clave seleccionada pertenece a la clase declarada, co
 La verificación positiva usa un snapshot y menciones sintéticos; Alexa+ sigue sin una revisión consolidada final activa, así que todavía no existe una Narrative real en UAT para recorrer de extremo a extremo. El corte queda listo para Studio UAT, pero no se debe describir como verificación visual positiva de Narrative hasta que haya una Narrative real servida.
 
 Después de instalarlo, verificar que Topics y Signal existentes sigan cargando sin cambios; al publicar una consolidación real, comprobar Narrative → evidencia → mención original desde la interfaz. El trabajo no calibra la calidad semántica ni completa los lotes pendientes de Alexa+.
+
+## Verificación de instalación UAT
+
+Studio UAT desplegó este corte en Railway `08fb570b-c970-4757-b6bc-3274d840f8e4`; el estado mostrado es `Active` y el healthcheck `/api/health` pasó. La pantalla Topics de Alexa+ abrió con los 1,652 grupos preparados, la revisión editorial conservada en 2/42 y los 36 Topics del catálogo previo. Signal también abrió con el Topic seleccionado y sus 67 menciones originales; la cobertura visible continúa parcial (36/1,652 grupos interpretados y 30,377 menciones sin resolver).
+
+Esta comprobación confirma que la instalación no dañó el recorrido Topic existente. La pestaña Narratives sigue marcada como no disponible en estos datos; por eso el nuevo detalle Narrative todavía no tiene una prueba visual positiva con datos reales en UAT. No se inició la revisión pagada, no hubo cambios de selección y no se tocó el corpus.

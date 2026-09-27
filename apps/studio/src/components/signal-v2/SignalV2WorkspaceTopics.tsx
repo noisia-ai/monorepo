@@ -80,7 +80,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   const dateFrom = data.filters.date_from ?? data.available_dates.date_from;
   const dateTo = data.filters.date_to ?? data.available_dates.date_to;
   const filter: SignalFilterV1 | null = dateFrom && dateTo ? { contract_version: "signal-backend-v1", date_range: { start: dateFrom, end: dateTo },
-    timezone: "UTC", granularity: "day", dimensions: {} } : null;
+    timezone: workspaceTimezone, granularity: "day", dimensions: {} } : null;
   const number = (value: number) => value.toLocaleString(locale);
   const share = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale,
     { style: "percent", maximumFractionDigits: 1 }).format(value);

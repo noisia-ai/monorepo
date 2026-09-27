@@ -52,6 +52,15 @@ export type SignalAnalyticsFilterSelection = {
   searchQuery?: string;
 };
 
+/** Uses the workspace's calendar day, falling back only for legacy invalid zones. */
+export function todayForSignalTimezone(timeZone: string) {
+  try {
+    return today(timeZone);
+  } catch {
+    return today("UTC");
+  }
+}
+
 export function SignalAnalyticsFilter({
   boundedToCoverage = false,
   comparison,
@@ -138,7 +147,7 @@ export function SignalAnalyticsFilter({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [compareOpen, customComparisonOpen, periodOpen]);
 
-  const todayInWorkspace = useMemo(() => today(filter.timezone), [filter.timezone]);
+  const todayInWorkspace = useMemo(() => todayForSignalTimezone(filter.timezone), [filter.timezone]);
   const periodAnchor = useMemo(() => (
     boundedToCoverage && coverage.date_through
       ? parseDate(coverage.date_through)

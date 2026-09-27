@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
 import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1 } from "@noisia/query-engine";
+import { todayForSignalTimezone } from "../../components/signal-v2/SignalAnalyticsFilter";
 import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
 import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
 import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
@@ -66,6 +67,24 @@ test("native Topic and Narrative panels request evidence through their matching 
   assert.match(source, /topics-narratives\/\$\{sectionKind\}\/\$\{encodeURIComponent\(term\.term_key\)\}\/evidence/u);
   assert.match(source, /body\.kind !== sectionKind/u);
   assert.match(source, /page\.kind === sectionKind/u);
+});
+test("the Topics calendar uses the workspace timezone on both sides of UTC midnight", t => {
+  const cases = [
+    { instant: "2026-09-27T04:30:00.000Z", expected: { mexico: "2026-09-26", london: "2026-09-27" } },
+    { instant: "2026-09-27T06:30:00.000Z", expected: { mexico: "2026-09-27", london: "2026-09-27" } }
+  ];
+  for (const item of cases) {
+    t.mock.timers.enable({ apis: ["Date"], now: new Date(item.instant) });
+    try {
+      assert.equal(todayForSignalTimezone("America/Mexico_City").toString(), item.expected.mexico);
+      assert.equal(todayForSignalTimezone("Europe/London").toString(), item.expected.london);
+    } finally { t.mock.timers.reset(); }
+  }
+  assert.equal(todayForSignalTimezone("not/a-timezone").toString(), todayForSignalTimezone("UTC").toString());
+});
+test("native Topics pass the workspace timezone into the calendar filter", async () => {
+  const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  assert.match(source, /date_range: \{ start: dateFrom, end: dateTo \}[\s\S]*timezone: workspaceTimezone/u);
 });
 test("stale generation preserves counts while disabling stale evidence access", async () => {
   const html = await render("en-US", { ...data, is_current: false });
