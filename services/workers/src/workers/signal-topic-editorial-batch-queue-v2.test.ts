@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
 import { drainSignalTopicEditorialBatchesV2, signalTopicEditorialBatchConfigurationV2,
   signalTopicEditorialBatchJobV2, signalTopicEditorialBatchPreparationJobV2, startSignalTopicEditorialBatchDrainerV2,
+  signalTopicEditorialBatchStartJobV2,
   SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2, SIGNAL_TOPIC_EDITORIAL_BATCH_PREPARATION_JOB_V2,
   safeSignalTopicEditorialBatchDispatchErrorV2 } from "./signal-topic-editorial-batch-queue-v2";
 
@@ -53,6 +54,7 @@ test("existing Data OS queue carries only durable IDs and still polls receipts w
       assert.deepEqual(values, [false]);
       return { rows: ids.map(id => ({ id })) };
     }
+    if (/FROM signal_topic_editorial_start_intents_v2/u.test(sql)) return { rows: [] };
     assert.match(sql, /signal-topic-editorial-screening-plan-v2/u);
     assert.match(sql, /e\.status IN\('queued','running'\)/u);
     assert.match(sql, /NOT EXISTS\(SELECT 1 FROM signal_topic_editorial_provider_batches_v2/u);
@@ -103,15 +105,16 @@ test("preparation job is deterministic, replayable and independent of provider s
 });
 
 test("preparation scan excludes V1, completed/failed, manifest-ready and all-reused work", async () => {
-  let sql = "";
+  const statements: string[] = [];
   const database = { connect: async () => ({ query: async (text: string) => {
-    sql = text;
+    statements.push(text);
     return { rows: [] };
   }, release() {} }) } as unknown as SignalTopicEditorialBatchDatabaseV2;
   await drainSignalTopicEditorialBatchesV2({ database,
     queue: { getJob: async () => null, add: async () => assert.fail("no candidates should enqueue") },
     env: { NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED: "true", NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED: "false" } });
-    assert.match(sql, /signal-topic-editorial-screening-plan-v2/u, "V1 plans are excluded");
+  const sql=statements.find(text=>text.includes("signal-topic-editorial-screening-plan-v2"))??"";
+  assert.match(sql, /signal-topic-editorial-screening-plan-v2/u, "V1 plans are excluded");
   assert.match(sql, /e\.status IN\('queued','running'\)/u, "completed/failed execution states are excluded");
   assert.match(sql, /NOT EXISTS\(SELECT 1 FROM signal_topic_editorial_provider_batches_v2/u, "existing manifests are excluded");
     assert.match(sql, /EXISTS\(SELECT 1 FROM signal_topic_editorial_requests r[\s\S]*?NOT EXISTS\(SELECT 1 FROM signal_topic_editorial_reused_decisions_v2/u,
@@ -149,4 +152,26 @@ test("worker rejects foreign job identity before DB or provider construction", a
     batch_id: "00000000-0000-4000-8000-000000000001" } },
   { env: { NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED: "true" },
     database: { connect: async () => { assert.fail("invalid job cannot connect"); } } }), /topic_editorial_batch_job_invalid/u);
+});
+test("durable start job quotes and admits under the original key without provider transport",async()=>{
+  const startId="00000000-0000-4000-8000-000000000011",executionId="00000000-0000-4000-8000-000000000012";
+  const scope={id:startId,workspace_id:"00000000-0000-4000-8000-000000000013",
+    actor_user_id:"00000000-0000-4000-8000-000000000014",numeric_execution_id:"00000000-0000-4000-8000-000000000015",
+    idempotency_key:"stable-request-key",lease_token:"00000000-0000-4000-8000-000000000016",attempt_count:1};
+  const statements:string[]=[];
+  const database={connect:async()=>({query:async(sql:string)=>{statements.push(sql);
+    return {rows:[sql.includes("status='completed'")?{...scope,execution_id:executionId}:scope]};},release(){}})} as unknown as SignalTopicEditorialBatchDatabaseV2;
+  let calls=0;
+  const env=new Proxy({NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED:"true",
+    NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED:"true"},{get(target,key){
+      if(key==="ANTHROPIC_API_KEY")assert.fail("start must not read the provider key");return Reflect.get(target,key);
+    }});
+  const result=await signalTopicEditorialBatchStartJobV2({id:`topic-editorial-batch-v2-start-${startId}`,
+    data:{start_id:startId}},{database,env,start:async args=>{
+      calls++;assert.equal(args.idempotency_key,scope.idempotency_key);
+      assert.equal(args.numeric_execution_id,scope.numeric_execution_id);
+      return {execution_id:executionId,replayed:false};
+    }});
+  assert.deepEqual(result,{claimed:true,execution_id:executionId,replayed:false});
+  assert.equal(calls,1);assert.ok(statements.some(sql=>sql.includes("status='completed'")));
 });

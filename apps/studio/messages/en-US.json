@@ -3167,6 +3167,7 @@
           "preserves": "The review is saved for editing and quality checks. The published catalog and Signal selection remain in place until a later activation.",
           "retryBlocked": "Results and costs are preserved. Resolve the authorization, source or reconciliation block before continuing.",
           "legacySuccessor": "The previous review stopped. A new Message Batches execution will preserve its receipts and reuse compatible results.",
+          "startFailedCode": "The start could not be confirmed ({code}). Refresh status before retrying; existing receipts are preserved.",
           "complete": "Complete catalog",
           "calculate": "Calculate editorial quote",
           "start": "Start editorial review",
@@ -3194,6 +3195,8 @@
           },
           "states": {
             "not_requested": "The groups are prepared. The active spending policy applies when you start the review.",
+            "preparing": "Request saved. The full corpus is being validated and the review is being prepared; you can leave this page.",
+            "start_failed": "Automatic validation did not finish. The groups and earlier results are preserved.",
             "runtime_unavailable": "Editorial review is not available yet. Preparation and saved results are preserved.",
             "access_required": "Permission is required to authorize this review.",
             "source_required": "Complete group preparation first.",

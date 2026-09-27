@@ -26,13 +26,14 @@ export function parseWorkspaceTopicEditorialCommandV1(v: unknown): WorkspaceTopi
     return { action: v.action, numeric_execution_id: v.numeric_execution_id, execution_id: v.execution_id };
   return null;
 }
-export const editorialStates = ["not_requested", "runtime_unavailable", "access_required", "source_required", "source_stale", "policy_required",
+export const editorialStates = ["not_requested", "preparing", "start_failed", "runtime_unavailable", "access_required", "source_required", "source_stale", "policy_required",
   "policy_action_required", "budget_unavailable", "quote_expired", "ready_to_authorize", "queued", "running", "failed", "review_ready", "completed"] as const;
 export type WorkspaceTopicEditorialViewV1 = {
   contract_version: "workspace-topic-editorial-view-v1"; workspace_id: string; numeric_execution_id: string;
   status: typeof editorialStates[number]; can_quote: boolean; can_retry: boolean; can_complete: boolean; activation: "not_activated";
   /** A failed, quiescent V1 owner can be superseded by the durable Message Batches path. */
   replaces_failed_v1?: boolean;
+  start_error_code?: string;
   quote: null | { reference: string; expires_at: string; maximum_micro_usd: string; group_count: number; screening_count: number; global_count: 1 };
   execution: null | { execution_id: string; status: "queued" | "running" | "failed" | "review_ready" | "completed";
     completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string;
@@ -44,12 +45,14 @@ const natural = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v
 const viewKeys = ["contract_version", "workspace_id", "numeric_execution_id", "status", "can_quote", "can_retry", "can_complete", "activation", "quote", "execution"];
 const batchStates = ["prepared", "submitting", "submission_unknown", "in_progress", "canceling", "ended", "applied", "rejected"];
 export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string, numeric: string): v is WorkspaceTopicEditorialViewV1 {
-  if (!object(v) || !(keys(v, viewKeys) || keys(v, [...viewKeys, "batch_progress"])
+  if (!object(v) || !(keys(v, viewKeys) || keys(v, [...viewKeys, "start_error_code"]) || keys(v, [...viewKeys, "batch_progress"])
     || keys(v, [...viewKeys, "replaces_failed_v1"]) || keys(v, [...viewKeys, "batch_progress", "replaces_failed_v1"]))
     || v.contract_version !== "workspace-topic-editorial-view-v1" || v.workspace_id !== workspace || v.numeric_execution_id !== numeric
     || !editorialStates.includes(v.status as WorkspaceTopicEditorialViewV1["status"]) || v.activation !== "not_activated"
     || typeof v.can_quote !== "boolean" || typeof v.can_retry !== "boolean" || typeof v.can_complete !== "boolean") return false;
   if ("replaces_failed_v1" in v && v.replaces_failed_v1 !== true) return false;
+  if ("start_error_code" in v && (v.status!=="start_failed" || typeof v.start_error_code!=="string"
+    || !/^[a-z][a-z0-9_]{1,119}$/u.test(v.start_error_code))) return false;
   if (v.quote !== null) {
     const q = v.quote;
     if (!object(q) || !keys(q, ["reference", "expires_at", "maximum_micro_usd", "group_count", "screening_count", "global_count"])
@@ -79,13 +82,16 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
     const execution=v.execution as WorkspaceTopicEditorialViewV1["execution"];
     if (execution && counts.reduce((sum,count)=>sum+count,0) !== execution.expected_screening_count) return false;
   }
-  if (v.can_quote && !["not_requested", "ready_to_authorize"].includes(String(v.status))) return false;
+  if (v.can_quote && !["not_requested", "start_failed", "ready_to_authorize"].includes(String(v.status))) return false;
   if (v.can_complete && (v.status !== "review_ready" || v.execution === null)) return false;
   return !v.can_retry || v.status === "failed" && v.execution !== null && (v.execution as Record<string, unknown>).ambiguous_micro_usd === "0";
 }
 export type WorkspaceTopicEditorialIntentV1 = { workspace_id: string; key: string; body: WorkspaceTopicEditorialCommandV1 };
 export type WorkspaceTopicEditorialReceiptV1 = { contract_version: "workspace-topic-editorial-receipt-v1"; workspace_id: string;
   action: WorkspaceTopicEditorialCommandV1["action"]; numeric_execution_id: string; execution_id: string; idempotency_key: string; replayed: boolean; activation: "not_activated" };
+export type WorkspaceTopicEditorialStartReceiptV2 = {contract_version:"workspace-topic-editorial-start-receipt-v2";
+  workspace_id:string;action:"start_editorial";numeric_execution_id:string;start_id:string|null;
+  execution_id:string|null;idempotency_key:string;replayed:boolean;activation:"not_activated"};
 export function workspaceTopicEditorialIntentStorageKeyV1(workspace: string, numeric: string, actor: string) {
   return `noisia:topic-editorial-intent:v1:${actor}:${workspace}:${numeric}`;
 }
@@ -113,11 +119,18 @@ export function workspaceTopicEditorialIntentV1(workspace: string, body: Workspa
 export class WorkspaceTopicEditorialRequestError extends Error {
   constructor(readonly quoteRejected: boolean) { super("topic_editorial_request_failed"); }
 }
-export async function submitWorkspaceTopicEditorialIntentV1(intent: WorkspaceTopicEditorialIntentV1, fetcher: typeof fetch, signal?: AbortSignal): Promise<WorkspaceTopicEditorialReceiptV1> {
+export async function submitWorkspaceTopicEditorialIntentV1(intent: WorkspaceTopicEditorialIntentV1, fetcher: typeof fetch, signal?: AbortSignal): Promise<WorkspaceTopicEditorialReceiptV1|WorkspaceTopicEditorialStartReceiptV2> {
   const response = await fetcher(`/api/data-os/signal/${encodeURIComponent(intent.workspace_id)}/topics/consolidation/editorial`, {
     method: "POST", cache: "no-store", signal, headers: { "Content-Type": "application/json", "Idempotency-Key": intent.key }, body: JSON.stringify(intent.body)
   });
   const v: unknown = await response.json();
+  if (intent.body.action==="start_editorial" && response.ok && object(v)
+    && keys(v,["contract_version","workspace_id","action","numeric_execution_id","start_id","execution_id","idempotency_key","replayed","activation"])
+    && v.contract_version==="workspace-topic-editorial-start-receipt-v2" && v.workspace_id===intent.workspace_id
+    && v.numeric_execution_id===intent.body.numeric_execution_id && v.action==="start_editorial"
+    && (editorialUuid(v.start_id)||v.start_id===null) && (editorialUuid(v.execution_id)||v.execution_id===null)
+    && (v.start_id!==null||v.execution_id!==null) && v.idempotency_key===intent.key
+    && typeof v.replayed==="boolean" && v.activation==="not_activated") return v as WorkspaceTopicEditorialStartReceiptV2;
   if (!response.ok || !object(v) || !keys(v, ["contract_version", "workspace_id", "action", "numeric_execution_id", "execution_id", "idempotency_key", "replayed", "activation"])
     || v.contract_version !== "workspace-topic-editorial-receipt-v1" || v.workspace_id !== intent.workspace_id || v.action !== intent.body.action
     || v.numeric_execution_id !== intent.body.numeric_execution_id || v.idempotency_key !== intent.key || !editorialUuid(v.execution_id)

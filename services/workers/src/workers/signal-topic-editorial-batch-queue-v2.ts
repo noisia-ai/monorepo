@@ -1,16 +1,20 @@
 import type { Job } from "bullmq";
 import { prepareAllSignalTopicEditorialBatchV2, reuseCompatibleSignalTopicEditorialPaidResultsV2,
-  markSignalTopicEditorialBatchPreparationFailedV2, type SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
+  markSignalTopicEditorialBatchPreparationFailedV2, claimSignalTopicEditorialStartV2,
+  completeSignalTopicEditorialStartV2, failSignalTopicEditorialStartV2, renewSignalTopicEditorialStartLeaseV2,
+  performSignalTopicEditorialBatchStartV2,
+  type SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
 import { createAnthropicMessageBatchesClient } from "../providers/anthropic-message-batches";
 import { runSignalTopicEditorialBatchTickV2 } from "./signal-topic-editorial-batch-v2";
 import { createSignalTopicEditorialBatchRuntimeStoresV2 } from "./signal-topic-editorial-batch-runtime-v2";
 
 export const SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2 = "signal-topic-editorial-message-batch-v2";
 export const SIGNAL_TOPIC_EDITORIAL_BATCH_PREPARATION_JOB_V2 = "signal-topic-editorial-batch-prepare-v2";
+export const SIGNAL_TOPIC_EDITORIAL_BATCH_START_JOB_V2 = "signal-topic-editorial-batch-start-v2";
 type Environment = Readonly<Record<string, string | undefined>>;
 type Queue = {
   getJob(id: string): Promise<{ getState(): Promise<string>; retry(state: "completed" | "failed"): Promise<void> } | null | undefined>;
-  add(name: string, data: { batch_id: string } | { execution_id: string }, options: Record<string, unknown>): Promise<unknown>;
+  add(name: string, data: { batch_id: string } | { execution_id: string } | { start_id: string }, options: Record<string, unknown>): Promise<unknown>;
 };
 type Options = { env?: Environment; database?: SignalTopicEditorialBatchDatabaseV2; queue?: Queue };
 const dispatchPhases = new Set(["database_read", "preparation_lookup", "queue_lookup", "queue_state", "queue_retry", "queue_enqueue"]);
@@ -86,7 +90,35 @@ export async function drainSignalTopicEditorialBatchesV2(options: Options = {}) 
         ORDER BY e.created_at,e.id LIMIT 10`);
       executionIds = result.rows.map(row => row.id);
     } finally { preparationClient.release(); }
+    phase = "preparation_lookup";
+    const startClient = await database.connect();
+    let startIds: string[];
+    try {
+      const result=await startClient.query<{id:string}>(`SELECT id::text FROM signal_topic_editorial_start_intents_v2
+        WHERE (status='queued' OR status='running' AND lease_expires_at<=clock_timestamp())
+          AND next_attempt_at<=clock_timestamp()
+        ORDER BY created_at,id LIMIT 10`);
+      startIds=result.rows.map(row=>row.id);
+    } finally { startClient.release(); }
     let dispatched = 0;
+    if (flags.provider_enabled) for (const start_id of startIds) {
+      const jobId=`topic-editorial-batch-v2-start-${start_id}`;
+      phase="queue_lookup";
+      const existing=await queue.getJob(jobId);
+      if(existing){
+        phase="queue_state";
+        const state=await existing.getState();
+        if(state==="completed"||state==="failed"){
+          phase="queue_retry";
+          await existing.retry(state);
+        }
+      }else{
+        phase="queue_enqueue";
+        await queue.add(SIGNAL_TOPIC_EDITORIAL_BATCH_START_JOB_V2,{start_id},{jobId,
+          attempts:1,removeOnComplete:true,removeOnFail:{age:604800,count:500}});
+      }
+      dispatched++;
+    }
     for (const execution_id of executionIds) {
       const jobId = `topic-editorial-batch-v2-prepare-${execution_id}`;
       phase = "queue_lookup";
@@ -128,6 +160,48 @@ export async function drainSignalTopicEditorialBatchesV2(options: Options = {}) 
     return { disabled: false, dispatched };
   } catch (error) {
     throw new Error(safeSignalTopicEditorialBatchDispatchErrorV2(error, phase));
+  }
+}
+
+/** The expensive quote/admission runs off the HTTP request. This job carries
+ * only an immutable intent ID; PostgreSQL claims it and the existing paid
+ * request key makes an interrupted admission replay-safe. */
+export async function signalTopicEditorialBatchStartJobV2(job: Pick<Job<{start_id:string}>,"id"|"data">, options: {
+  env?:Environment;database?:SignalTopicEditorialBatchDatabaseV2;
+  start?:typeof performSignalTopicEditorialBatchStartV2;
+}={}){
+  const flags=signalTopicEditorialBatchConfigurationV2(options.env);
+  if(!flags.enabled||!flags.provider_enabled)return {disabled:true};
+  const startId=job.data?.start_id;
+  if(typeof startId!=="string"||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(startId)
+    ||job.id!==`topic-editorial-batch-v2-start-${startId}`)throw new Error("topic_editorial_batch_start_job_invalid");
+  const pools=options.database?null:await import("../db/client");
+  const database=options.database??pools!.pool;
+  const heavyDatabase=options.database??pools!.numericPool;
+  const claimed=await claimSignalTopicEditorialStartV2({database,start_id:startId});
+  if(!claimed||!claimed.lease_token)return {claimed:false};
+  const start=options.start??performSignalTopicEditorialBatchStartV2;
+  const leaseToken=claimed.lease_token;
+  const heartbeat=setInterval(()=>{void renewSignalTopicEditorialStartLeaseV2({database,start_id:startId,
+    lease_token:leaseToken}).catch(()=>console.warn("[signal-topic-editorial-start-v2]",{outcome:"lease_renewal_failed"}));},60_000);
+  heartbeat.unref?.();
+  try{
+    const receipt=await start({database:heavyDatabase,workspace_id:claimed.workspace_id,actor_user_id:claimed.actor_user_id,
+      numeric_execution_id:claimed.numeric_execution_id,idempotency_key:claimed.idempotency_key});
+    await completeSignalTopicEditorialStartV2({database,start_id:startId,lease_token:leaseToken,execution_id:receipt.execution_id});
+    return {claimed:true,execution_id:receipt.execution_id,replayed:receipt.replayed};
+  }catch(error){
+    const value=error&&typeof error==="object"?error as {code?:unknown}:null;
+    const known=typeof value?.code==="string"&&/^[a-z][a-z0-9_]{1,119}$/u.test(value.code)?value.code:"topic_editorial_start_technical_error";
+    const terminal=claimed.attempt_count>=3 || ["processing_forbidden","topic_editorial_source_stale",
+      "policy_required","policy_action_required","budget_unavailable","topic_editorial_policy_limit_unavailable",
+      "topic_editorial_existing_execution"].includes(known);
+    await failSignalTopicEditorialStartV2({database,start_id:startId,lease_token:leaseToken,
+      terminal,error_code:known});
+    console.warn("[signal-topic-editorial-start-v2]",{outcome:terminal?"failed":"retry_scheduled",error_code:known});
+    return {claimed:true,failed:terminal,retry_scheduled:!terminal};
+  }finally{
+    clearInterval(heartbeat);
   }
 }
 

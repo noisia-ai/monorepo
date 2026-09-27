@@ -119,7 +119,7 @@ test("V2 start keeps the policy quote internal and admits from one server-built 
   const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/consolidation/editorial/route.ts", import.meta.url), "utf8");
   const start = await readFile(new URL("./signal-topic-editorial-batch-control-v2.ts", import.meta.url), "utf8");
   assert.match(ui, /action: "start_editorial" as const/u); assert.doesNotMatch(ui, /quote=1|onQuote|onAuthorize/u);
-  assert.match(route, /command\?\.action==="start_editorial"[\s\S]*startWorkspaceTopicEditorialBatchV2ForActor/u);
+  assert.match(route, /command\?\.action==="start_editorial"[\s\S]*enqueueSignalTopicEditorialStartV2/u);
   assert.match(start, /startWorkspaceTopicEditorialBatchV2ForActor[\s\S]*signal_topic_editorial_request_keys[\s\S]*replaySignalTopicEditorialBatchV2/u);
   assert.match(start, /quoteSignalTopicEditorialBatchV2[\s\S]*requestQuotedSignalTopicEditorialBatchPlanV2/u);
   assert.doesNotMatch(start, /reuseCompatibleSignalTopicEditorialPaidResultsV2|prepareAllSignalTopicEditorialBatchV2/u,

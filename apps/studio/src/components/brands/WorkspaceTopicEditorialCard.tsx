@@ -28,6 +28,13 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
     <div className="admin-section__head"><div><h3>{t("title")}</h3><p>{t("body")}</p></div></div>
     <div className="admin-section__body admin-drawer-form">
       <p role="status">{t(`states.${state}`)}</p>
+      {value.status==="start_failed" && value.start_error_code ? <p role="alert" className="team-msg team-msg--error">
+        {value.start_error_code==="policy_required" ? t("states.policy_required")
+          : value.start_error_code==="policy_action_required" ? t("states.policy_action_required")
+          : value.start_error_code==="budget_unavailable" ? t("states.budget_unavailable")
+          : value.start_error_code==="topic_editorial_source_stale" ? t("states.source_stale")
+          : value.start_error_code==="processing_forbidden" ? t("states.access_required")
+          : t("startFailedCode",{code:value.start_error_code})}</p> : null}
       {value.replaces_failed_v1 ? <p role="status">{t("legacySuccessor")}</p> : null}
       {execution ? <>
         <p>{t("progress", { done: execution.completed_screening_count, total: execution.expected_screening_count })}</p>
@@ -71,7 +78,7 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
       {value.status === "failed" && !value.can_retry && retryReady ? <p>{t("retryBlocked")}</p> : null}
       <div className="admin-form-actions">
         {pending ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onReplay} onClick={onReplay}>{t("replay")}</button>
-          : value.can_quote && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onStart} onClick={onStart}>{t("start")}</button>
+          : value.can_quote && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onStart} onClick={onStart}>{t(value.status==="start_failed"?"retry":"start")}</button>
           : value.can_complete && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onComplete} onClick={onComplete}>{t("complete")}</button>
           : value.can_retry && retryReady && !stale ? <button type="button" className="admin-button admin-button--primary" disabled={busy || !onRetry} onClick={onRetry}>{t(preparationFailed ? "retryPreparation" : "retry")}</button> : null}
         <button type="button" className="admin-button" disabled={busy || !onRefresh} onClick={onRefresh}>{t("refresh")}</button>
@@ -178,7 +185,7 @@ export function WorkspaceTopicEditorialControls({ workspaceId, actorId, numericE
     } catch { if (current.current === scope) setRenewalError(true); }
     finally { if (current.current === scope) setRenewalBusy(false); }
   };
-  const pollingExecutionId = value?.execution && ["queued", "running", "review_ready"].includes(value.status)
+  const pollingExecutionId = value?.status==="preparing" ? "start" : value?.execution && ["queued", "running", "review_ready"].includes(value.status)
     ? value.execution.execution_id : null;
   useEffect(() => {
     if (!pollingExecutionId) return;

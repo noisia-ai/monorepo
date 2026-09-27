@@ -5,7 +5,7 @@ import test from 'node:test';
 import {signalTopicEditorialDigestV1} from '../../packages/query-engine/src/signal-topic-consolidation-editorial-v1';
 import {buildSignalTopicEditorialScreeningPlanV2,validateSignalTopicEditorialGroupOutputV2,
  type SignalTopicEditorialGroupOutputV2} from '../../packages/query-engine/src/signal-topic-consolidation-editorial-v2';
-import {admitSignalTopicEditorialBatchV2,requestQuotedSignalTopicEditorialBatchPlanV2,requestSignalTopicEditorialBatchPlanV2,
+import {admitSignalTopicEditorialBatchV2,quoteSignalTopicEditorialBatchFastV2,requestQuotedSignalTopicEditorialBatchPlanV2,requestSignalTopicEditorialBatchPlanV2,
  markSignalTopicEditorialBatchPreparationFailedV2,retrySignalTopicEditorialBatchPreparationV2,
  signalTopicEditorialCanonicalBodyV2,releaseSignalTopicEditorialBatchLeaseV2,
  persistSignalTopicEditorialBatchItemV2,rejectSignalTopicEditorialBatchSubmissionV2,attachProviderSignalTopicEditorialBatchV2,
@@ -50,6 +50,16 @@ test('V2 canonical bodies agree with the existing QE digest for floats, Unicode 
  const body=signalTopicEditorialCanonicalBodyV2(input);
  assert.equal(`sha256:${createHash('sha256').update(body).digest('hex')}`,signalTopicEditorialDigestV1(input));
  assert.deepEqual(JSON.parse(body),input);
+});
+test('non-paying quote sends a digest and count, never the all-group evidence plan',async()=>{
+ const plan=batchPlan(),d=database({status:'ready_to_authorize',quote_reference:'v2.1799999999.'+'a'.repeat(64),
+   quote_expires_at:'2027-01-15T00:00:00Z',hard_cap_micro_usd:'100000000',expected_group_count:5});
+ const result=await quoteSignalTopicEditorialBatchFastV2({database:d.db,workspace_id:uuid(700),actor_user_id:uuid(702),
+   run_id:uuid(701),plan,deadline:1799999999});
+ assert.equal(result.status,'ready_to_authorize');
+ const query=d.queries.find(entry=>entry.sql.includes('signal_topic_editorial_quote_fast_v2'))!;
+ assert.deepEqual(query.values,[uuid(700),uuid(702),uuid(701),plan.plan_digest,5,1799999999]);
+ assert.ok(!JSON.stringify(query.values).includes('Mención de Alexa+'));
 });
 test('release carries a safe failure code and null poll without interpolating SQL',async()=>{
  const d=database(true);assert.equal(await releaseSignalTopicEditorialBatchLeaseV2({database:d.db,lease,next_poll_at:null,error_code:'topic_editorial_v2_submission_unknown',submission_unknown:true}),true);

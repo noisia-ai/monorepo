@@ -56,6 +56,26 @@ export async function quoteSignalTopicEditorialBatchV2(args:Db&{workspace_id:str
       provider_execution_enabled:false};
   });
 }
+/** Non-paying policy quote: bind the server-built plan digest without sending
+ * its 80+ MB evidence twice. Atomic admission revalidates every receipt. */
+export async function quoteSignalTopicEditorialBatchFastV2(args:Db&{workspace_id:string;actor_user_id:string;run_id:string;
+  plan:SignalTopicEditorialScreeningPlanV2;deadline:number}):Promise<SignalTopicEditorialBatchQuoteV2>{
+  validateSignalTopicEditorialScreeningPlanV2(args.plan);
+  if(args.plan.identity.workspace_id!==args.workspace_id||args.plan.identity.run_id!==args.run_id
+    ||!Number.isSafeInteger(args.deadline)||args.deadline<=0||args.deadline>9_999_999_999)
+    throw new Error('topic_editorial_v2_scope_invalid');
+  return tx(args.database,async client=>{
+    const value=(await client.query<{value:Record<string,unknown>}>(
+      'SELECT signal_topic_editorial_quote_fast_v2($1,$2,$3,$4,$5,$6::bigint) value',
+      [args.workspace_id,args.actor_user_id,args.run_id,args.plan.plan_digest,args.plan.expected_group_count,args.deadline])).rows[0]?.value;
+    if(!value||typeof value.status!=='string')throw new Error('topic_editorial_v2_quote_unavailable');
+    return {status:value.status,quote_reference:typeof value.quote_reference==='string'?value.quote_reference:null,
+      quote_expires_at:typeof value.quote_expires_at==='string'?value.quote_expires_at:null,
+      maximum_micro_usd:typeof value.hard_cap_micro_usd==='string'?value.hard_cap_micro_usd:null,
+      expected_group_count:typeof value.expected_group_count==='number'?value.expected_group_count:args.plan.expected_group_count,
+      provider_execution_enabled:false};
+  });
+}
 /** Promotes a freshly server-loaded, provenance-checked input and admits it under
  * the exact policy quote. Browser data never contains this plan or its evidence. */
 export async function requestSignalTopicEditorialBatchV2(args:Db&{workspace_id:string;actor_user_id:string;run_id:string;
