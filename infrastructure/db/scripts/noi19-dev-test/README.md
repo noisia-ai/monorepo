@@ -103,7 +103,7 @@ provider transports against the newly sealed private target.
 The dedicated `editorial-batch-runner.mjs` uses the same sealed, empty
 `dev-test` database, but is a separate finite runner with its own
 `NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED=true` gate. It rehearses SQL0184–
-0196 inside one physical `READ COMMITTED` transaction and rolls all DDL and
+0197 inside one physical `READ COMMITTED` transaction and rolls all DDL and
 synthetic rows back before checking the sealed schema fingerprint and empty
 tables again. SQL0195 widens editorial text storage to the V2 response envelope;
 SQL0196 separates durable admission/replay from manifest reservation so prior
