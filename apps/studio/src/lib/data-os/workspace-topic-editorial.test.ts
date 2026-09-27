@@ -13,6 +13,7 @@ import { RedisEditorialQuoteCache, getEditorialQuoteCacheV1, editorialQuoteRunti
 import { parseWorkspaceTopicEditorialCommandV1, validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1,
   submitWorkspaceTopicEditorialIntentV1, WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialViewV1 } from "./workspace-topic-editorial-contract";
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1, type WorkspaceTopicEditorialDependenciesV1 } from "./signal-topic-editorial-control";
+import { startWorkspaceTopicEditorialPollV1, workspaceTopicEditorialPollBaseDelayMsV1, workspaceTopicEditorialPollDelayMsV1 } from "./workspace-topic-editorial-polling";
 Object.assign(globalThis, { React });
 const workspace = "00000000-0000-4000-8000-000000000001", actor = "00000000-0000-4000-8000-000000000002";
 const numeric = "00000000-0000-4000-8000-000000000003", run = "00000000-0000-4000-8000-000000000004", execution = "00000000-0000-4000-8000-000000000005";
@@ -26,6 +27,57 @@ const command = { action: "authorize_editorial" as const, numeric_execution_id: 
 const access = { workspaceId: workspace, actorUserId: actor, database: {} as import("pg").Pool };
 const ready: WorkspaceTopicEditorialViewV1 = { contract_version: "workspace-topic-editorial-view-v1", workspace_id: workspace, numeric_execution_id: numeric,
   status: "ready_to_authorize", can_quote: true, can_retry: false, can_complete: false, quote, execution: null, activation: "not_activated" };
+
+function editorialPollScheduler() {
+  let nextId = 0, visible = true;
+  const tasks = new Map<number, { callback: () => Promise<void>; delayMs: number }>();
+  const listeners = new Set<() => void>();
+  return {
+    tasks,
+    isVisible: () => visible,
+    schedule(callback: () => Promise<void>, delayMs: number) { const id = ++nextId; tasks.set(id, { callback, delayMs }); return id; },
+    cancel(handle: unknown) { tasks.delete(handle as number); },
+    onVisibilityChange(callback: () => void) { listeners.add(callback); return () => { listeners.delete(callback); }; },
+    setVisible(next: boolean) { visible = next; for (const listener of listeners) listener(); },
+    async runNext() {
+      const entry = tasks.entries().next().value as [number, { callback: () => Promise<void>; delayMs: number }] | undefined;
+      assert.ok(entry, "a poll should be scheduled"); tasks.delete(entry![0]); await entry![1].callback();
+    }
+  };
+}
+
+test("editorial status polling backs off after failures and resets after recovery", async () => {
+  const scheduler = editorialPollScheduler(), results: Array<true | false | null> = [false, false, true]; let reads = 0;
+  const stop = startWorkspaceTopicEditorialPollV1({ read: async () => { reads++; return results.shift()!; }, isBusy: () => false, ...scheduler });
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  await scheduler.runNext(); assert.equal(reads, 1);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [10_000]);
+  await scheduler.runNext(); assert.equal(reads, 2);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [20_000]);
+  await scheduler.runNext(); assert.equal(reads, 3);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  stop(); assert.equal(scheduler.tasks.size, 0);
+});
+
+test("editorial status polling pauses while hidden and respects busy state", async () => {
+  const scheduler = editorialPollScheduler(); let reads = 0, busy = true;
+  const stop = startWorkspaceTopicEditorialPollV1({ read: async () => { reads++; return null; }, isBusy: () => busy, ...scheduler });
+  scheduler.setVisible(false); assert.equal(scheduler.tasks.size, 0);
+  scheduler.setVisible(true); assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [0]);
+  await scheduler.runNext(); assert.equal(reads, 0);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  busy = false; await scheduler.runNext(); assert.equal(reads, 1);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  stop(); assert.equal(scheduler.tasks.size, 0);
+});
+
+test("editorial status polling uses bounded exponential delay", () => {
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(-3), 5_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(1), 10_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(2), 20_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(3), 30_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(100), 30_000);
+});
 function fixture() {
   const calls: string[] = []; let stored: EditorialQuoteSnapshot | null = snapshot;
   const deps: WorkspaceTopicEditorialDependenciesV1 = {
@@ -59,6 +111,10 @@ test("commands accept only explicit capped authorization or scoped retry", () =>
 });
 test("V2 start keeps the policy quote internal and admits from one server-built input", async () => {
   const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
+  assert.match(ui, /startWorkspaceTopicEditorialPollV1\([\s\S]*?document\.visibilityState === "visible"[\s\S]*?document\.addEventListener\("visibilitychange"/u,
+    "editorial status polling pauses while the browser tab is hidden and resumes when it becomes visible");
+  assert.doesNotMatch(ui, /setInterval\(\(\) => \{ if \(!readController\.current && !submitController\.current\) void read\(\); \}, 5000\)/u,
+    "status polling must not keep hitting PostgreSQL at a fixed five-second rate after errors");
   const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/consolidation/editorial/route.ts", import.meta.url), "utf8");
   const start = await readFile(new URL("./signal-topic-editorial-batch-control-v2.ts", import.meta.url), "utf8");
   assert.match(ui, /action: "start_editorial" as const/u); assert.doesNotMatch(ui, /quote=1|onQuote|onAuthorize/u);
@@ -390,6 +446,10 @@ test("route authenticates first, forbids injected query data, and controls fence
   assert.match(batchControl, /canSupersedeFailedLegacyEditorialWithBatchV2ForActor/u);
   assert.match(batchControl, /e\.status='failed'[\s\S]*e\.execution_token IS NULL[\s\S]*c\.status NOT IN\('settled','definitely_not_sent'\)[\s\S]*o\.status IN\('queued','dispatching'\)/u);
   const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
+  assert.match(ui, /startWorkspaceTopicEditorialPollV1\([\s\S]*?document\.visibilityState === "visible"[\s\S]*?document\.addEventListener\("visibilitychange"/u,
+    "editorial status polling pauses while the browser tab is hidden and resumes when it becomes visible");
+  assert.doesNotMatch(ui, /setInterval\(\(\) => \{ if \(!readController\.current && !submitController\.current\) void read\(\); \}, 5000\)/u,
+    "status polling must not keep hitting PostgreSQL at a fixed five-second rate after errors");
   assert.match(ui, /await response\.json\(\);\s*if \(controller\.signal\.aborted \|\| current\.current !== scope\) return/u);
   assert.match(ui, /submitController\.current\?\.abort\(\)/u); assert.doesNotMatch(ui, /activateSignal|materializeSignal|ANTHROPIC_API_KEY/u);
 });

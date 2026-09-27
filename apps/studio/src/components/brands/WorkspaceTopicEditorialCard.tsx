@@ -5,6 +5,7 @@ import { validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1, su
   WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialIntentV1, type WorkspaceTopicEditorialViewV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 import { WorkspaceTopicEditorialOutcomes } from "./WorkspaceTopicEditorialOutcomes";
 import { WorkspaceTopicLegacyEditorialOutcomes } from "./WorkspaceTopicLegacyEditorialOutcomes";
+import { startWorkspaceTopicEditorialPollV1 } from "@/lib/data-os/workspace-topic-editorial-polling";
 
 export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecutionId, mentionsHref, busy = false, stale = false, pending = false,
   retryReady = true, onStart, onRetry, onComplete, onReplay, onRefresh }: {
@@ -81,18 +82,21 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
   const delivered = useRef<string | null>(null);
   const current = useRef(`${workspaceId}:${numericExecutionId}`); current.current = `${workspaceId}:${numericExecutionId}`;
   const scope = `${workspaceId}:${numericExecutionId}`;
-  const read = useCallback(async () => {
+  const read = useCallback(async (): Promise<boolean | null> => {
     readController.current?.abort(); const controller = new AbortController(); readController.current = controller;
     try {
       const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation/editorial?numeric_execution_id=${encodeURIComponent(numericExecutionId)}`,
         { cache: "no-store", signal: controller.signal });
       const body: unknown = await response.json();
-      if (controller.signal.aborted || current.current !== scope) return;
+      if (controller.signal.aborted || current.current !== scope) return null;
       if ([401, 403, 404].includes(response.status)) setValue(null);
       if (!response.ok || !validWorkspaceTopicEditorialViewV1(body, workspaceId, numericExecutionId)) throw new Error("status");
-      setValue(body); setLoadError(false); setNow(Date.now());
-    } catch { if (!controller.signal.aborted && current.current === scope) setLoadError(true); }
-    finally { if (readController.current === controller && !controller.signal.aborted && current.current === scope) readController.current = null; }
+      setValue(body); setLoadError(false); setNow(Date.now()); return true;
+    } catch {
+      if (!controller.signal.aborted && current.current === scope) { setLoadError(true); return false; }
+      return null;
+    }
+    finally { if (readController.current === controller && current.current === scope) readController.current = null; }
   }, [workspaceId, numericExecutionId, scope]);
   useEffect(() => {
     setValue(null); setBusy(false); setPending(false); setRequestError(false); setLoadError(false); intent.current = null; void read();
@@ -142,11 +146,22 @@ export function WorkspaceTopicEditorialControls({ workspaceId, numericExecutionI
     } catch { if (current.current === scope) setRenewalError(true); }
     finally { if (current.current === scope) setRenewalBusy(false); }
   };
+  const pollingExecutionId = value?.execution && ["queued", "running", "review_ready"].includes(value.status)
+    ? value.execution.execution_id : null;
   useEffect(() => {
-    if (!value?.execution || !["queued", "running", "review_ready"].includes(value.status)) return;
-    const timer = window.setInterval(() => { if (!readController.current && !submitController.current) void read(); }, 5000);
-    return () => window.clearInterval(timer);
-  }, [value, read]);
+    if (!pollingExecutionId) return;
+    return startWorkspaceTopicEditorialPollV1({
+      read,
+      isBusy: () => !!readController.current || !!submitController.current,
+      isVisible: () => document.visibilityState === "visible",
+      schedule: (callback, delayMs) => window.setTimeout(() => { void callback(); }, delayMs),
+      cancel: handle => window.clearTimeout(handle as number),
+      onVisibilityChange: callback => {
+        document.addEventListener("visibilitychange", callback);
+        return () => document.removeEventListener("visibilitychange", callback);
+      }
+    });
+  }, [pollingExecutionId, read]);
   useEffect(() => {
     const id = value?.status === "completed" ? value.execution?.execution_id : null;
     if (!id || disabled || !onCatalogAvailable || delivered.current === id) return;
