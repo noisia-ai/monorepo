@@ -189,7 +189,8 @@ export function WorkspaceTopicConsolidationControls({ workspaceId, mentionsHref,
   return <>
     <WorkspaceTopicConsolidationCard disabled={disabled || submitting} onAction={() => void prepare()} value={value} />
     {value.status === "ready" && value.execution ? <WorkspaceTopicEditorialControls
-      key={`${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId} numericExecutionId={value.execution.execution_id} disabled={disabled} onCatalogAvailable={onCatalogAvailable} /> : null}
+      key={`${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId} numericExecutionId={value.execution.execution_id}
+      mentionsHref={mentionsHref} disabled={disabled} onCatalogAvailable={onCatalogAvailable} /> : null}
     {value.status === "ready" && value.execution ? <WorkspaceTopicAtomicCensus
       key={`census:${workspaceId}:${value.execution.execution_id}`} workspaceId={workspaceId}
       numericExecutionId={value.execution.execution_id} mentionsHref={mentionsHref} /> : null}

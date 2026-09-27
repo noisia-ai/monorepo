@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import React, { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import test from "node:test";
 import { EditorialOutcomeReadError, loadWorkspaceTopicEditorialOutcomesPageV2 } from "./workspace-topic-editorial-outcomes-v2";
+import { parseWorkspaceTopicEditorialOutcomesPageV2 } from "../../components/brands/WorkspaceTopicEditorialOutcomes";
+import { WorkspaceTopicEvidenceMentionLink, workspaceTopicEvidenceHref } from "../../components/brands/workspace-topic-evidence-link";
+
+Object.assign(globalThis, { React });
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const actorUserId = "00000000-0000-4000-8000-000000000002";
@@ -17,7 +23,7 @@ const items = ["topic", "narrative", "noise", "insufficient", "technical", "pend
     source: index < 4 ? "model" : null, digest: null, cited_evidence_refs: index === 0 ? ["sha256:ref"] : [] },
   technical_error_code: group_key === "technical" ? "topic_editorial_v2_output_invalid" : null,
   transport_state: group_key === "pending" ? "outcome_unknown" : "accepted",
-  evidence: [{ id: null, root_id: `${rootId.slice(0, -1)}${index}`, text: "representative", source: "reddit", locale: "en-US", kind: "representative" }],
+  evidence: [{ id: `${rootId.slice(0, -1)}${index}`, root_id: `${rootId.slice(0, -1)}${index}`, text: "representative", source: "reddit", locale: "en-US", kind: "representative" }],
 }));
 
 function database(allowed = true, hasOwner = true, hasRevision = false) {
@@ -64,8 +70,9 @@ test("returns saved editorial states separately and keeps ambiguous delivery pen
     ["topic", "narrative", "noise", "insufficient", "technical", "pending"]);
   assert.equal(page.items[0]?.decision?.label, "Label 0");
   assert.equal(page.items[0]?.evidence[0]?.id, "sha256:ref");
+  assert.equal(page.items[0]?.evidence[0]?.root_id, rootId);
   assert.equal(page.items[0]?.evidence[0]?.kind, "cited");
-  assert.deepEqual(Object.keys(page.items[0]!.evidence[0]!).sort(), ["id", "kind", "source", "text"]);
+  assert.deepEqual(Object.keys(page.items[0]!.evidence[0]!).sort(), ["id", "kind", "root_id", "source", "text"]);
   assert.equal(db.calls.filter(call => call.sql === "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").length, 1,
     "census, outcome and evidence reads share one snapshot");
   assert.equal(db.calls.filter(call => call.sql === "COMMIT").length, 1);
@@ -126,6 +133,26 @@ test("a validated catalog may use representative evidence when no citation linea
   assert.equal(page.items[0]?.phase, "consolidated");
   assert.equal(page.items[0]?.decision?.label, "Saved topic");
   assert.equal(page.items[0]?.evidence[0]?.id, rootId);
+  assert.equal(page.items[0]?.evidence[0]?.root_id, rootId);
   assert.equal(page.items[0]?.evidence[0]?.kind, "representative");
-  assert.deepEqual(Object.keys(page.items[0]!.evidence[0]!).sort(), ["id", "kind", "source", "text"]);
+  assert.deepEqual(Object.keys(page.items[0]!.evidence[0]!).sort(), ["id", "kind", "root_id", "source", "text"]);
+  const parsed = parseWorkspaceTopicEditorialOutcomesPageV2(page, { workspaceId, numericExecutionId,
+    executionId: null, offset: 0 });
+  assert.ok(parsed);
+  assert.equal(parsed.items[0]?.evidence[0]?.root_id, rootId);
+  assert.equal(workspaceTopicEvidenceHref("/signal/alexa-plus/mentions", parsed.items[0]!.evidence[0]!.root_id),
+    `/signal/alexa-plus/mentions?mention=${rootId}`);
+  const malformed = structuredClone(page) as typeof page;
+  malformed.items[0]!.evidence[0]!.id = "00000000-0000-4000-8000-000000000099";
+  assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2(malformed, { workspaceId, numericExecutionId,
+    executionId: null, offset: 0 }), null, "representative link identity must match its evidence identity");
+});
+
+test("a cited reference opens its canonical mention root, not its evidence digest", () => {
+  const html = renderToStaticMarkup(createElement(WorkspaceTopicEvidenceMentionLink,
+    { mentionsHref: "/signal/alexa-plus/mentions", rootId }, "Open source mention"));
+  assert.match(html, new RegExp(`href="/signal/alexa-plus/mentions\\?mention=${rootId}"`, "u"));
+  assert.match(html, />Open source mention<\/a>/u);
+  assert.equal(workspaceTopicEvidenceHref("/signal/alexa-plus/mentions", rootId), `/signal/alexa-plus/mentions?mention=${rootId}`);
+  assert.notEqual(workspaceTopicEvidenceHref("/signal/alexa-plus/mentions", rootId), "/signal/alexa-plus/mentions?mention=sha256%3Aref");
 });

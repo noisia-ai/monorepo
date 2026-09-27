@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { buildSignalTopicEditorialScreeningPlanV1, signalTopicEditorialDigestV1 } from "@noisia/query-engine";
 import { loadWorkspaceTopicLegacyEditorialOutcomesPageV1, PositivePlanValidationCacheV1 } from "./workspace-topic-legacy-editorial-outcomes-v1";
+import { parseWorkspaceTopicLegacyEditorialOutcomesPageV1 } from "../../components/brands/WorkspaceTopicLegacyEditorialOutcomes";
 
 const workspaceId = "00000000-0000-4000-8000-000000000001";
 const actorUserId = "00000000-0000-4000-8000-000000000002";
@@ -65,7 +66,7 @@ function fakeDatabase(hasOwner = true, planValid = true) {
     if (sql.includes("WITH editorial AS (") && sql.includes("jsonb_array_elements(editorial.plan->'batches')"))
       return { rows: hasOwner ? [{ batch_index: 0, batch, output }] : [] };
     if (sql.includes("jsonb_to_recordset($3::jsonb)")) return { rows: [{ group_key: group.group_key, ref_id: refId,
-      chunk_sha256: chunk, fragment: text, platform: "reddit" }] };
+      root_id: rootId, chunk_sha256: chunk, fragment: text, platform: "reddit" }] };
     return { rows: [] };
   } };
   return { database: { connect: async () => client } as never, calls };
@@ -82,7 +83,11 @@ test("shows only sealed per-group V1 decisions with citations verified against t
   assert.equal(page.items[0]?.outcome, "topic");
   assert.equal(page.items[0]?.phase, "screening");
   assert.equal(page.items[0]?.decision?.label, decision.candidate.label);
-  assert.deepEqual(page.items[0]?.evidence, [{ id: refId, text, source: "reddit", kind: "cited" }]);
+  assert.deepEqual(page.items[0]?.evidence, [{ id: refId, root_id: rootId, text, source: "reddit", kind: "cited" }]);
+  assert.equal(parseWorkspaceTopicLegacyEditorialOutcomesPageV1(page, { workspaceId, numericExecutionId, offset: 0 })?.items[0]?.evidence[0]?.root_id, rootId);
+  assert.equal(parseWorkspaceTopicLegacyEditorialOutcomesPageV1({ ...page,
+    items: [{ ...page.items[0]!, evidence: [{ ...page.items[0]!.evidence[0]!, root_id: "invalid" }] }] },
+  { workspaceId, numericExecutionId, offset: 0 }), null);
   assert.equal(db.calls.filter(call => call.sql === "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").length, 1);
   assert.equal(db.calls.filter(call => call.sql === "COMMIT").length, 1);
   assert.ok(db.calls.some(call => call.sql.includes("signal_topic_editorial_plan_valid_v1")));

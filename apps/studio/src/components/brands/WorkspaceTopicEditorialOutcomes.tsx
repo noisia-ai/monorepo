@@ -2,13 +2,14 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { WorkspaceTopicEvidenceMentionLink } from "./workspace-topic-evidence-link";
 
 const pageSize = 20;
 const outcomes = ["topic", "narrative", "noise", "insufficient", "technical", "pending"] as const;
 const phases = ["consolidated", "screening", "pending"] as const;
 type OutcomeStatus = typeof outcomes[number];
 type OutcomePhase = typeof phases[number];
-type Evidence = { id: string; text: string | null; source: string | null; kind: "cited" | "representative" };
+type Evidence = { id: string; root_id: string; text: string | null; source: string | null; kind: "cited" | "representative" };
 type OutcomeDecision = { disposition: string; label: string | null; definition: string | null; locale: string | null; rationale: string | null;
   confidence: number | null; source: string | null; digest: string | null; cited_evidence_refs: string[] };
 type Outcome = { group_key: string; outcome: OutcomeStatus; phase: OutcomePhase; decision: OutcomeDecision | null;
@@ -19,6 +20,8 @@ export type WorkspaceTopicEditorialOutcomesPageV2 = { contract_version: "workspa
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const nullableText = (value: unknown, max: number): value is string | null => value === null || typeof value === "string" && value.length <= max;
+const uuid = (value: unknown): value is string => typeof value === "string"
+  && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value);
 const exactKeys = (value: Record<string, unknown>, expected: string[]) => Object.keys(value).sort().join("|") === [...expected].sort().join("|");
 
 /** Strictly accept the compact, paginated read DTO; never render arbitrary server JSON. */
@@ -54,9 +57,11 @@ export function parseWorkspaceTopicEditorialOutcomesPageV2(value: unknown, scope
       || !["pending", "technical"].includes(String(raw.outcome)) && decision === null) return null;
     const evidence: Evidence[] = [];
     for (const ref of raw.evidence) {
-      if (!object(ref) || !exactKeys(ref, ["id", "text", "source", "kind"]) || typeof ref.id !== "string" || !ref.id || ref.id.length > 200
+      if (!object(ref) || !exactKeys(ref, ["id", "root_id", "text", "source", "kind"]) || typeof ref.id !== "string" || !ref.id || ref.id.length > 200
+        || !uuid(ref.root_id)
         || !nullableText(ref.text, 5000) || !nullableText(ref.source, 500) || !["cited", "representative"].includes(String(ref.kind))) return null;
-      evidence.push({ id: ref.id, text: ref.text, source: ref.source, kind: ref.kind as Evidence["kind"] });
+      if (ref.kind === "representative" && ref.id !== ref.root_id) return null;
+      evidence.push({ id: ref.id, root_id: ref.root_id, text: ref.text, source: ref.source, kind: ref.kind as Evidence["kind"] });
     }
     if (decision && evidence.some(ref => ref.kind === "cited" && !decision?.cited_evidence_refs.includes(ref.id))) return null;
     items.push({ group_key: raw.group_key, outcome: raw.outcome as OutcomeStatus, phase: raw.phase as OutcomePhase,
@@ -69,8 +74,8 @@ export function parseWorkspaceTopicEditorialOutcomesPageV2(value: unknown, scope
 }
 
 /** User-triggered, read-only browser for outcomes already saved by the editorial execution. */
-export function WorkspaceTopicEditorialOutcomes({ workspaceId, numericExecutionId, executionId }: {
-  workspaceId: string; numericExecutionId: string; executionId: string;
+export function WorkspaceTopicEditorialOutcomes({ workspaceId, numericExecutionId, executionId, mentionsHref }: {
+  workspaceId: string; numericExecutionId: string; executionId: string; mentionsHref: string;
 }) {
   const t = useTranslations("AdminWorkspace.topics.consolidation.editorial.outcomeBrowser");
   const locale = useLocale();
@@ -152,6 +157,7 @@ export function WorkspaceTopicEditorialOutcomes({ workspaceId, numericExecutionI
                   <strong>{t(`evidenceKinds.${ref.kind}`)}</strong>
                   {ref.text ? <blockquote>{ref.text}</blockquote> : <span>{t("evidenceUnavailable")}</span>}
                     {ref.source ? <small>{ref.source}</small> : null}
+                    <WorkspaceTopicEvidenceMentionLink mentionsHref={mentionsHref} rootId={ref.root_id}>{t("openMention")}</WorkspaceTopicEvidenceMentionLink>
                   </li>)}</ul>
                 </div> : <p>{t("noEvidence")}</p>}
               </div>

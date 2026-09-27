@@ -180,13 +180,13 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
         AND asset.chunks->'chunks'->evidence.chunk_index->>'sha256'=evidence.chunk_sha256
       ORDER BY requested.group_key COLLATE "C",evidence.ref_id COLLATE "C"`,
     [args.workspaceId, args.numericExecutionId, JSON.stringify(citationRequests)])).rows : [];
-    const citationsByGroup = new Map<string, Array<{ id: string; text: string | null;
+    const citationsByGroup = new Map<string, Array<{ id: string; root_id: string; text: string | null;
       source: string | null; kind: "cited" }>>();
     for (const citation of citations) {
       const text = citation.fragment && `sha256:${createHash("sha256").update(citation.fragment, "utf8").digest("hex")}` === citation.chunk_sha256
         ? citation.fragment.slice(0, 360) : null;
       const list = citationsByGroup.get(citation.group_key) ?? [];
-      if (list.length < 2) list.push({ id: citation.ref_id, text, source: citation.platform, kind: "cited" });
+      if (list.length < 2) list.push({ id: citation.ref_id, root_id: citation.root_id, text, source: citation.platform, kind: "cited" });
       citationsByGroup.set(citation.group_key, list);
     }
     await client.query("COMMIT");
@@ -205,7 +205,7 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
         const consolidated = result?.phase === "consolidated" || census.revision_status === "validated" && group.disposition !== null;
         const phase = consolidated ? "consolidated" : result?.phase ?? "pending";
         const evidence = citationsByGroup.get(group.group_key)
-          ?? (phase === "consolidated" ? group.evidence.map(item => ({ id: item.root_id,
+          ?? (phase === "consolidated" ? group.evidence.map(item => ({ id: item.root_id, root_id: item.root_id,
             text: item.text, source: item.platform, kind: "representative" as const })) : []);
         return { group_key: group.group_key, outcome: category, phase,
           decision: category === "pending" || category === "technical" ? null : {

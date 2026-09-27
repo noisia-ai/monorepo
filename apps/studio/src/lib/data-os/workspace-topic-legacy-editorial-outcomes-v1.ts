@@ -15,7 +15,7 @@ type Scope = { database?: Pick<Pool, "connect">; workspaceId: string; actorUserI
 type SavedOwner = { id: string; status: string; numeric_run_id: string; plan_digest: string; plan_body_digest: string | null;
   state_body: unknown; state_digest: string };
 type SavedBatch = { batch_index: number; batch: unknown; output: unknown };
-type CitationRow = { group_key: string; ref_id: string; chunk_sha256: string; fragment: string | null; platform: string | null };
+type CitationRow = { group_key: string; ref_id: string; root_id: string; chunk_sha256: string; fragment: string | null; platform: string | null };
 
 const planValidatorVersion = "signal_topic_editorial_plan_valid_v1:0178-contract-v1";
 const planValidationCacheTtlMs = 30_000;
@@ -202,7 +202,7 @@ export async function loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args: Scop
         SELECT item.group_key,reference.ref_id FROM jsonb_to_recordset($3::jsonb) item(group_key text,ref_ids jsonb)
         CROSS JOIN LATERAL jsonb_array_elements_text(item.ref_ids) reference(ref_id)
       )
-      SELECT requested.group_key,evidence.ref_id,evidence.chunk_sha256,
+      SELECT requested.group_key,evidence.ref_id,evidence.canonical_root_id::text root_id,evidence.chunk_sha256,
         CASE WHEN asset.full_text IS NULL THEN NULL ELSE
           signal_topic_utf16_fragment_v1(asset.full_text,evidence.start_offset,evidence.end_offset) END fragment,
         evidence.platform
@@ -224,12 +224,12 @@ export async function loadWorkspaceTopicLegacyEditorialOutcomesPageV1(args: Scop
         AND asset.chunks->'chunks'->evidence.chunk_index->>'sha256'=evidence.chunk_sha256
       ORDER BY requested.group_key COLLATE "C",evidence.ref_id COLLATE "C"`,
     [args.workspaceId, args.numericExecutionId, JSON.stringify(citationRequests)])).rows : [];
-    const evidenceByGroup = new Map<string, Array<{ id: string; text: string | null; source: string | null; kind: "cited" }>>();
+    const evidenceByGroup = new Map<string, Array<{ id: string; root_id: string; text: string | null; source: string | null; kind: "cited" }>>();
     for (const citation of citations) {
       const text = citation.fragment && `sha256:${createHash("sha256").update(citation.fragment, "utf8").digest("hex")}` === citation.chunk_sha256
         ? citation.fragment.slice(0, 360) : null;
       const list = evidenceByGroup.get(citation.group_key) ?? [];
-      if (list.length < 2) list.push({ id: citation.ref_id, text, source: citation.platform, kind: "cited" });
+      if (list.length < 2) list.push({ id: citation.ref_id, root_id: citation.root_id, text, source: citation.platform, kind: "cited" });
       evidenceByGroup.set(citation.group_key, list);
     }
     await client.query("COMMIT");

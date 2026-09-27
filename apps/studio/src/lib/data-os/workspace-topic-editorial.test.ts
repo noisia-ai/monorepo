@@ -17,6 +17,7 @@ Object.assign(globalThis, { React });
 const workspace = "00000000-0000-4000-8000-000000000001", actor = "00000000-0000-4000-8000-000000000002";
 const numeric = "00000000-0000-4000-8000-000000000003", run = "00000000-0000-4000-8000-000000000004", execution = "00000000-0000-4000-8000-000000000005";
 const successor = "00000000-0000-4000-8000-000000000006";
+const mentionRoot = "00000000-0000-4000-8000-000000000007";
 const reference = `v1.1789236000.${"a".repeat(64)}`, expires = new Date(1789236000 * 1000).toISOString(), now = Date.parse(expires) - 60_000;
 const plan = { plan_digest: "server-plan", private_evidence: "private corpus text" } as unknown as SignalTopicEditorialScreeningPlanV1;
 const quote = { reference, expires_at: expires, maximum_micro_usd: "30000000", group_count: 1652, screening_count: 42, global_count: 1 as const };
@@ -320,16 +321,17 @@ test("saved editorial outcome pages validate execution scope, phase and bounded 
     items: [
       { group_key: "open:cluster-7", outcome: "topic", phase: "consolidated", decision,
         technical_error_code: null, transport_state: null,
-        evidence: [{ id: "mention-1", text: "Setup did not work for me.", source: "review", kind: "cited" }] },
+        evidence: [{ id: "mention-1", root_id: mentionRoot, text: "Setup did not work for me.", source: "review", kind: "cited" }] },
       { group_key: "open:cluster-8", outcome: "pending", phase: "pending", decision: null,
         technical_error_code: null, transport_state: "not_submitted",
-        evidence: [{ id: "root-8", text: "A source group example.", source: "review", kind: "representative" }] }
+        evidence: [{ id: actor, root_id: actor, text: "A source group example.", source: "review", kind: "representative" }] }
     ] };
   const parsed = parseWorkspaceTopicEditorialOutcomesPageV2(page, { workspaceId: workspace, numericExecutionId: numeric,
     executionId: execution, offset: 0 });
   assert.equal(parsed?.items[0]?.outcome, "topic"); assert.equal(parsed?.items[0]?.phase, "consolidated");
   assert.equal(parsed?.items[1]?.outcome, "pending"); assert.equal(parsed?.items[1]?.decision, null);
   assert.equal(parsed?.items[1]?.evidence[0]?.kind, "representative");
+  assert.equal(parsed?.items[0]?.evidence[0]?.root_id, mentionRoot);
   assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2(page, { workspaceId: actor, numericExecutionId: numeric,
     executionId: execution, offset: 0 }), null);
   assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2({ ...page, items: [{ ...page.items[0],
@@ -340,13 +342,17 @@ test("saved editorial outcome pages validate execution scope, phase and bounded 
     numericExecutionId: numeric, executionId: execution, offset: 0 }), null);
   assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2({ ...page, items: [{ ...page.items[1], outcome: "technical",
     decision, evidence: [] }] }, { workspaceId: workspace, numericExecutionId: numeric, executionId: execution, offset: 0 }), null);
+  assert.equal(parseWorkspaceTopicEditorialOutcomesPageV2({ ...page, items: [{ ...page.items[0],
+    evidence: [{ ...page.items[0]!.evidence[0], root_id: "not-a-uuid" }] }] }, { workspaceId: workspace,
+    numericExecutionId: numeric, executionId: execution, offset: 0 }), null);
 });
 
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: saved group outcomes are opt-in and pending is clearly not a decision`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
-    createElement(WorkspaceTopicEditorialOutcomes, { workspaceId: workspace, numericExecutionId: numeric, executionId: execution })));
+    createElement(WorkspaceTopicEditorialOutcomes, { workspaceId: workspace, numericExecutionId: numeric, executionId: execution,
+      mentionsHref: "/signal/alexa/mentions" })));
   assert.match(html, /aria-expanded="false"/u);
   assert.match(html, locale === "es-MX" ? /Ver resultados guardados/u : /View saved outcomes/u);
   assert.match(html, locale === "es-MX" ? /Los grupos pendientes aún no tienen una decisión editorial/u : /Pending groups do not yet have an editorial decision/u);
@@ -413,7 +419,7 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progres
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(WorkspaceTopicEditorialCard, { value: running, workspaceId: workspace, numericExecutionId: numeric,
-      onRefresh: () => {} })));
+      mentionsHref: "/signal/alexa/mentions", onRefresh: () => {} })));
   assert.match(html, /topic_editorial_v2_output_invalid/u);
   assert.match(html, locale === "es-MX" ? /Narrativas/u : /Narratives/u);
   assert.match(html, locale === "es-MX" ? /Evidencia insuficiente/u : /Insufficient evidence/u);

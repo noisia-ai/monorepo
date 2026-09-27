@@ -2,11 +2,12 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { WorkspaceTopicEvidenceMentionLink } from "./workspace-topic-evidence-link";
 
 const pageSize = 20;
 const outcomeKeys = ["topic", "narrative", "noise", "insufficient", "pending"] as const;
 type OutcomeKey = typeof outcomeKeys[number];
-type Evidence = { id: string; text: string | null; source: string | null; kind: "cited" };
+type Evidence = { id: string; root_id: string; text: string | null; source: string | null; kind: "cited" };
 type Decision = { disposition: string; label: string | null; definition: string | null; locale: string | null;
   rationale: string | null; confidence: number | null; cited_evidence_refs: string[] };
 type Item = { group_key: string; outcome: OutcomeKey; phase: "screening" | "pending";
@@ -16,8 +17,12 @@ type Page = { execution_id: string | null; execution_status: string | null; expe
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 const textOrNull = (value: unknown, max: number): value is string | null => value === null || typeof value === "string" && value.length <= max;
+const uuid = (value: unknown): value is string => typeof value === "string"
+  && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value);
 
-function parsePage(value: unknown, scope: { workspaceId: string; numericExecutionId: string; offset: number }): Page | null {
+export function parseWorkspaceTopicLegacyEditorialOutcomesPageV1(value: unknown, scope: {
+  workspaceId: string; numericExecutionId: string; offset: number;
+}): Page | null {
   if (!object(value) || value.contract_version !== "workspace-topic-legacy-editorial-outcomes-page-v1"
     || value.workspace_id !== scope.workspaceId || value.numeric_execution_id !== scope.numericExecutionId
     || value.offset !== scope.offset || value.limit !== pageSize || !Number.isSafeInteger(value.total) || Number(value.total) < 0
@@ -47,9 +52,9 @@ function parsePage(value: unknown, scope: { workspaceId: string; numericExecutio
     }
     const evidence: Evidence[] = [];
     for (const ref of raw.evidence) {
-      if (!object(ref) || typeof ref.id !== "string" || ref.id.length > 100 || !textOrNull(ref.text, 5000)
+      if (!object(ref) || typeof ref.id !== "string" || ref.id.length > 100 || !uuid(ref.root_id) || !textOrNull(ref.text, 5000)
         || !textOrNull(ref.source, 500) || ref.kind !== "cited" || decision?.cited_evidence_refs.includes(ref.id) !== true) return null;
-      evidence.push({ id: ref.id, text: ref.text, source: ref.source, kind: "cited" });
+      evidence.push({ id: ref.id, root_id: ref.root_id, text: ref.text, source: ref.source, kind: "cited" });
     }
     items.push({ group_key: raw.group_key, outcome: raw.outcome as OutcomeKey, phase: raw.phase as Item["phase"], decision, evidence });
   }
@@ -60,7 +65,9 @@ function parsePage(value: unknown, scope: { workspaceId: string; numericExecutio
 }
 
 /** Read-only viewer for paid legacy screening decisions; never labels them as a final Topic catalog. */
-export function WorkspaceTopicLegacyEditorialOutcomes({ workspaceId, numericExecutionId }: { workspaceId: string; numericExecutionId: string }) {
+export function WorkspaceTopicLegacyEditorialOutcomes({ workspaceId, numericExecutionId, mentionsHref }: {
+  workspaceId: string; numericExecutionId: string; mentionsHref: string;
+}) {
   const t = useTranslations("AdminWorkspace.topics.consolidation.editorial.legacyOutcomeBrowser"), locale = useLocale();
   const panelId = useId(), scope = `${workspaceId}:${numericExecutionId}`;
   const active = useRef(scope); active.current = scope;
@@ -81,7 +88,7 @@ export function WorkspaceTopicLegacyEditorialOutcomes({ workspaceId, numericExec
       const response = await fetch(`/api/data-os/signal/${encodeURIComponent(workspaceId)}/topics/consolidation/editorial/outcomes/legacy?${params}`,
         { cache: "no-store", signal: controller.signal });
       const body: unknown = await response.json();
-      const parsed = response.ok ? parsePage(body, { workspaceId, numericExecutionId, offset: nextOffset }) : null;
+      const parsed = response.ok ? parseWorkspaceTopicLegacyEditorialOutcomesPageV1(body, { workspaceId, numericExecutionId, offset: nextOffset }) : null;
       if (!parsed) throw new Error("legacy_outcomes_unavailable");
       if (controller.signal.aborted || active.current !== scope) return;
       setPage(parsed); setOffset(nextOffset); setSelected(null);
@@ -132,6 +139,7 @@ export function WorkspaceTopicLegacyEditorialOutcomes({ workspaceId, numericExec
                   {selectedItem.evidence.length ? <div><h5>{t("evidence")}</h5><ul>{selectedItem.evidence.map(ref => <li key={ref.id}>
                     <strong>{t("citedEvidence")}</strong>{ref.text ? <blockquote>{ref.text}</blockquote> : <span>{t("evidenceUnavailable")}</span>}
                     {ref.source ? <small>{ref.source}</small> : null}
+                    <WorkspaceTopicEvidenceMentionLink mentionsHref={mentionsHref} rootId={ref.root_id}>{t("openMention")}</WorkspaceTopicEvidenceMentionLink>
                   </li>)}</ul></div> : <p>{t("noEvidence")}</p>}
                 </div>
               </article> : null}
