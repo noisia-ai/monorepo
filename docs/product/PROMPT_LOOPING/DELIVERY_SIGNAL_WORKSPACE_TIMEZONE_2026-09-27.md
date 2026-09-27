@@ -38,6 +38,20 @@ migración ni se recalcularon menciones.
 ## Límites y entrega
 
 El corpus Alexa+ de UAT termina el 12 de agosto de 2026, así que no permite observar en vivo
-el borde del día actual. No se ejecutaron importaciones, procesamiento, modelos ni SQL. Esta
-documentación describe el código local; sólo se considera entregado en UAT después de que el
-commit focal esté desplegado, el healthcheck esté activo y las pantallas se comprueben allí.
+el borde del día actual. No se ejecutaron importaciones, procesamiento, modelos ni SQL.
+
+Entrega focal comprobada en UAT:
+
+- `e4b4fb2` desplegado en Studio mediante `a595d86c-7e5f-45f1-b53b-48f9ef1c25b9`;
+  healthcheck `/api/health` activo.
+- `787347f` desplegado en Studio mediante `11499d10-cb7a-4f09-83fe-5130498f240a`;
+  healthcheck `/api/health` activo.
+- Signal Menciones, workspace Alexa+, recargado desde la interfaz interna: muestra
+  **“Zona horaria del workspace: America/Mexico_City”**, 43,159 conversaciones métricas y
+  43,159 consultables. Las fechas de la tabla continúan en el día local observado (11 ago
+  2026). Ya no indica “Fechas en UTC”.
+- Signal Topics/Narratives y su drawer de evidencia se comprobaron antes en `a595d86c`:
+  zona visible del workspace y evidencia del 30 de mayo mostrada en fecha local.
+
+La prueba visual confirma el contrato y la etiqueta, pero el corpus no tiene menciones del
+periodo actual; no demuestra un borde de fecha presente ni un cambio estacional de producción.
