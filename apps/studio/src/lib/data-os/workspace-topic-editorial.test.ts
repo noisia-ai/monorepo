@@ -13,6 +13,8 @@ import { RedisEditorialQuoteCache, getEditorialQuoteCacheV1, editorialQuoteRunti
 import { parseWorkspaceTopicEditorialCommandV1, validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1,
   restoreWorkspaceTopicEditorialIntentV1, workspaceTopicEditorialIntentStorageKeyV1,
   submitWorkspaceTopicEditorialIntentV1, WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialViewV1 } from "./workspace-topic-editorial-contract";
+import { startWorkspaceTopicEditorialPollV1, workspaceTopicEditorialPollBaseDelayMsV1,
+  workspaceTopicEditorialPollDelayMsV1 } from "./workspace-topic-editorial-polling";
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1, type WorkspaceTopicEditorialDependenciesV1 } from "./signal-topic-editorial-control";
 Object.assign(globalThis, { React });
 const workspace = "00000000-0000-4000-8000-000000000001", actor = "00000000-0000-4000-8000-000000000002";
@@ -27,6 +29,62 @@ const command = { action: "authorize_editorial" as const, numeric_execution_id: 
 const access = { workspaceId: workspace, actorUserId: actor, database: {} as import("pg").Pool };
 const ready: WorkspaceTopicEditorialViewV1 = { contract_version: "workspace-topic-editorial-view-v1", workspace_id: workspace, numeric_execution_id: numeric,
   status: "ready_to_authorize", can_quote: true, can_retry: false, can_complete: false, quote, execution: null, activation: "not_activated" };
+
+function editorialPollScheduler() {
+  let nextId = 0, visible = true;
+  const tasks = new Map<number, { callback: () => Promise<void>; delayMs: number }>();
+  const listeners = new Set<() => void>();
+  return {
+    tasks,
+    isVisible: () => visible,
+    schedule(callback: () => Promise<void>, delayMs: number) {
+      const id = ++nextId; tasks.set(id, { callback, delayMs }); return id;
+    },
+    cancel(handle: unknown) { tasks.delete(handle as number); },
+    onVisibilityChange(callback: () => void) { listeners.add(callback); return () => { listeners.delete(callback); }; },
+    setVisible(next: boolean) { visible = next; for (const listener of listeners) listener(); },
+    async runNext() {
+      const entry = tasks.entries().next().value as [number, { callback: () => Promise<void>; delayMs: number }] | undefined;
+      assert.ok(entry, "a poll should be scheduled"); tasks.delete(entry![0]); await entry![1].callback();
+    }
+  };
+}
+
+test("editorial status polling backs off after failures and resets after recovery", async () => {
+  const scheduler = editorialPollScheduler(), results: Array<true | false | null> = [false, false, true]; let reads = 0;
+  const stop = startWorkspaceTopicEditorialPollV1({ read: async () => { reads++; return results.shift()!; },
+    isBusy: () => false, ...scheduler });
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  await scheduler.runNext(); assert.equal(reads, 1);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [10_000]);
+  await scheduler.runNext(); assert.equal(reads, 2);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [20_000]);
+  await scheduler.runNext(); assert.equal(reads, 3);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  stop(); assert.equal(scheduler.tasks.size, 0);
+});
+
+test("editorial status polling pauses while hidden, refreshes on return and respects in-flight reads", async () => {
+  const scheduler = editorialPollScheduler(); let reads = 0, busy = true;
+  const stop = startWorkspaceTopicEditorialPollV1({ read: async () => { reads++; return null; },
+    isBusy: () => busy, ...scheduler });
+  scheduler.setVisible(false); assert.equal(scheduler.tasks.size, 0);
+  await Promise.resolve(); assert.equal(reads, 0);
+  scheduler.setVisible(true); assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [0]);
+  await scheduler.runNext(); assert.equal(reads, 0);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  busy = false; await scheduler.runNext(); assert.equal(reads, 1);
+  assert.deepEqual([...scheduler.tasks.values()].map(task => task.delayMs), [workspaceTopicEditorialPollBaseDelayMsV1]);
+  stop(); assert.equal(scheduler.tasks.size, 0);
+});
+
+test("editorial status polling uses bounded exponential delay", () => {
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(-3), 5_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(1), 10_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(2), 20_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(3), 30_000);
+  assert.equal(workspaceTopicEditorialPollDelayMsV1(100), 30_000);
+});
 function fixture() {
   const calls: string[] = []; let stored: EditorialQuoteSnapshot | null = snapshot;
   const deps: WorkspaceTopicEditorialDependenciesV1 = {
@@ -425,6 +483,10 @@ test("route authenticates first, forbids injected query data, and controls fence
     "V2 retry is limited to a durable preparation-failed owner");
   assert.match(batchControl, /e\.status='failed'[\s\S]*e\.execution_token IS NULL[\s\S]*c\.status NOT IN\('settled','definitely_not_sent'\)[\s\S]*o\.status IN\('queued','dispatching'\)/u);
   const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
+  assert.match(ui, /startWorkspaceTopicEditorialPollV1\([\s\S]*?document\.visibilityState === "visible"[\s\S]*?document\.addEventListener\("visibilitychange"/u,
+    "editorial status polling pauses while the browser tab is hidden and resumes when it becomes visible");
+  assert.doesNotMatch(ui, /setInterval\(\(\) => \{ if \(!readController\.current && !submitController\.current\) void read\(\); \}, 5000\)/u,
+    "status polling must not keep hitting PostgreSQL at a fixed five-second rate after errors");
   assert.match(ui, /await response\.json\(\);\s*if \(controller\.signal\.aborted \|\| current\.current !== scope\) return/u);
   assert.match(ui, /submitController\.current\?\.abort\(\)/u);
   assert.match(ui, /editorialRequestWaitMs\s*=\s*90_000/u);
