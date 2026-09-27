@@ -66,6 +66,10 @@ test("returns saved editorial states separately and keeps ambiguous delivery pen
   assert.equal(page.items[0]?.evidence[0]?.id, "sha256:ref");
   assert.equal(page.items[0]?.evidence[0]?.kind, "cited");
   assert.deepEqual(Object.keys(page.items[0]!.evidence[0]!).sort(), ["id", "kind", "source", "text"]);
+  assert.equal(db.calls.filter(call => call.sql === "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY").length, 1,
+    "census, outcome and evidence reads share one snapshot");
+  assert.equal(db.calls.filter(call => call.sql === "COMMIT").length, 1);
+  assert.equal(db.calls.some(call => call.sql === "ROLLBACK"), false);
   assert.deepEqual(page.items[1]?.evidence, [], "screening decisions without citations do not inherit representative evidence");
   assert.equal(page.items[3]?.decision?.disposition, "unresolved");
   assert.equal(page.items[4]?.technical_error_code, "topic_editorial_v2_output_invalid");

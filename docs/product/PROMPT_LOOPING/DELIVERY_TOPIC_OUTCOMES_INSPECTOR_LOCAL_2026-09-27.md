@@ -18,10 +18,13 @@ El endpoint está limitado a workspace, ejecución numérica y ejecución editor
 
 Se agregaron traducciones ES-MX/EN-US y cobertura de interfaz en `workspace-topic-editorial.test.ts`. También se corrigió la aserción textual antigua de esa suite para que compruebe el orden de replay/runtime dentro de `authorizeWorkspaceTopicEditorialBatchV2ForActor`, en vez de comparar coincidencias de funciones distintas.
 
+## Revisión y correcciones
+
+Una revisión independiente encontró dos riesgos de concurrencia: que el banner de revisión y las decisiones se leyeran desde snapshots distintos, y que la finalización de una solicitud abortada limpiara el bloqueo de una solicitud nueva. El censo ahora puede reutilizar la transacción de lectura que lo invoca, por lo que página, decisiones y citas comparten `REPEATABLE READ`; el cliente sólo limpia `inFlight` si termina el mismo controlador vigente.
+
 ## Verificación
 
-- Pruebas focales de lectura: 6/6.
-- Suite editorial combinada: 43/43.
+- Pruebas de censo, resultados y suite editorial combinadas: 49/49.
 - TypeScript de Studio: PASS.
 - ESLint focal: PASS.
 - JSON ES-MX/EN-US y `git diff --check`: PASS.
