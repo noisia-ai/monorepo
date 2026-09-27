@@ -3160,6 +3160,7 @@
           "confirmation": "I authorize this editorial review with a total cap of {maximum}.",
           "preserves": "The review is saved for editing and quality checks. The published catalog and Signal selection remain in place until a later activation.",
           "retryBlocked": "Results and costs are preserved. Resolve the authorization, source or reconciliation block before continuing.",
+          "legacySuccessor": "The previous review stopped. A new Message Batches execution will preserve its receipts and reuse compatible results.",
           "complete": "Complete catalog",
           "calculate": "Calculate editorial quote",
           "authorize": "Authorize editorial review",

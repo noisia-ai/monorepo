@@ -28,6 +28,8 @@ export const editorialStates = ["not_requested", "runtime_unavailable", "access_
 export type WorkspaceTopicEditorialViewV1 = {
   contract_version: "workspace-topic-editorial-view-v1"; workspace_id: string; numeric_execution_id: string;
   status: typeof editorialStates[number]; can_quote: boolean; can_retry: boolean; can_complete: boolean; activation: "not_activated";
+  /** A failed, quiescent V1 owner can be superseded by the durable Message Batches path. */
+  replaces_failed_v1?: boolean;
   quote: null | { reference: string; expires_at: string; maximum_micro_usd: string; group_count: number; screening_count: number; global_count: 1 };
   execution: null | { execution_id: string; status: "queued" | "running" | "failed" | "review_ready" | "completed";
     completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string;
@@ -39,10 +41,12 @@ const natural = (v: unknown): v is number => Number.isSafeInteger(v) && Number(v
 const viewKeys = ["contract_version", "workspace_id", "numeric_execution_id", "status", "can_quote", "can_retry", "can_complete", "activation", "quote", "execution"];
 const batchStates = ["prepared", "submitting", "submission_unknown", "in_progress", "canceling", "ended", "applied", "rejected"];
 export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string, numeric: string): v is WorkspaceTopicEditorialViewV1 {
-  if (!object(v) || !(keys(v, viewKeys) || keys(v, [...viewKeys, "batch_progress"]))
+  if (!object(v) || !(keys(v, viewKeys) || keys(v, [...viewKeys, "batch_progress"])
+    || keys(v, [...viewKeys, "replaces_failed_v1"]) || keys(v, [...viewKeys, "batch_progress", "replaces_failed_v1"]))
     || v.contract_version !== "workspace-topic-editorial-view-v1" || v.workspace_id !== workspace || v.numeric_execution_id !== numeric
     || !editorialStates.includes(v.status as WorkspaceTopicEditorialViewV1["status"]) || v.activation !== "not_activated"
     || typeof v.can_quote !== "boolean" || typeof v.can_retry !== "boolean" || typeof v.can_complete !== "boolean") return false;
+  if ("replaces_failed_v1" in v && v.replaces_failed_v1 !== true) return false;
   if (v.quote !== null) {
     const q = v.quote;
     if (!object(q) || !keys(q, ["reference", "expires_at", "maximum_micro_usd", "group_count", "screening_count", "global_count"])

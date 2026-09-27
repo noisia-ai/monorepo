@@ -3160,6 +3160,7 @@
           "confirmation": "Autorizo esta revisión editorial con un tope total de {maximum}.",
           "preserves": "La revisión se guarda para edición y control de calidad. El catálogo publicado y la selección de Signal se conservan hasta una activación posterior.",
           "retryBlocked": "La revisión conserva sus resultados y costos. Para continuar se necesita resolver el bloqueo de autorización, fuente o conciliación.",
+          "legacySuccessor": "La revisión anterior quedó detenida. Una nueva ejecución por Message Batches conservará sus recibos y reutilizará los resultados compatibles.",
           "complete": "Completar catálogo",
           "calculate": "Calcular cotización editorial",
           "authorize": "Autorizar revisión editorial",

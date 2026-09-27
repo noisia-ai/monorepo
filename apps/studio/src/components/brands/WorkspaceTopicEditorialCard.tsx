@@ -20,6 +20,7 @@ export function WorkspaceTopicEditorialCard({ value, now, confirmed, busy = fals
     <div className="admin-section__head"><div><h3>{t("title")}</h3><p>{t("body")}</p></div></div>
     <div className="admin-section__body admin-drawer-form">
       <p role="status">{t(`states.${state}`)}</p>
+      {value.replaces_failed_v1 ? <p role="status">{t("legacySuccessor")}</p> : null}
       {execution ? <>
         <p>{t("progress", { done: execution.completed_screening_count, total: execution.expected_screening_count })}</p>
         {value.batch_progress ? <>

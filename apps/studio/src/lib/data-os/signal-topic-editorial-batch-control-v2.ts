@@ -136,6 +136,37 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
   finally{client.release();}
 }
+/** Allows a failed legacy owner to move forward only when its durable work is
+ * quiescent. The V2 admission SQL repeats this fence under lock; this read is
+ * solely for choosing the truthful UI path and never grants provider authority. */
+export async function canSupersedeFailedLegacyEditorialWithBatchV2ForActor(args:Args){
+  if(![args.workspaceId,args.actorUserId,args.numericExecutionId].every(editorialUuid))fail("topic_editorial_request_invalid",422);
+  const database=args.database??(await import("@/lib/db")).pool,client=await database.connect();
+  try{
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    await client.query("SET LOCAL search_path=public,extensions,pg_temp");
+    const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
+    if(!caps.can_view||!caps.can_request_processing)return false;
+    const row=(await client.query<{eligible:boolean}>(`SELECT EXISTS(
+      SELECT 1 FROM signal_topic_consolidation_executions n
+      JOIN signal_topic_consolidation_runs r ON r.id=n.consolidation_run_id AND r.workspace_id=n.workspace_id
+      JOIN signal_topic_editorial_executions e ON e.numeric_run_id=r.id AND e.workspace_id=n.workspace_id
+      WHERE n.workspace_id=$1::uuid AND n.id=$2::uuid AND n.status='ready'
+        AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v1' AND e.status='failed'
+        AND e.execution_token IS NULL
+        AND e.id=(SELECT candidate.id FROM signal_topic_editorial_executions candidate
+          WHERE candidate.workspace_id=e.workspace_id AND candidate.numeric_run_id=e.numeric_run_id
+          ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1)
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_calls c WHERE c.execution_id=e.id
+          AND c.status NOT IN('settled','definitely_not_sent'))
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_outbox o WHERE o.execution_id=e.id
+          AND o.status IN('queued','dispatching'))
+    ) eligible`,[args.workspaceId,args.numericExecutionId])).rows[0];
+    await client.query("COMMIT");
+    return row?.eligible===true;
+  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
+  finally{client.release();}
+}
 export async function authorizeWorkspaceTopicEditorialBatchV2ForActor(args:Args&{quoteReference:string;confirmedMaximumMicroUsd:string;
   idempotencyKey:string;runtimeEnabled?:boolean}){
   if(![args.workspaceId,args.actorUserId,args.numericExecutionId].every(editorialUuid)

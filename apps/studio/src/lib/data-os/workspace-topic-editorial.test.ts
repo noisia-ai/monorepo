@@ -314,10 +314,26 @@ test("route authenticates first, forbids injected query data, and controls fence
   assert.ok(route.indexOf("loadSignalWorkspaceContextForTopics(workspaceId)") < route.indexOf("request.json()"));
   assert.match(route, /query\.getAll\(key\)\.length !== 1/u);
   assert.ok(batchControl.indexOf("if(replay.replayed)") < batchControl.indexOf("if(args.runtimeEnabled===false)"));
-  assert.match(route, /if\(view\.execution\)return topicResponse\(view\)/u);
+  assert.match(route, /view\.execution&&!predecessorEligible\)return topicResponse\(view\)/u);
+  assert.match(batchControl, /canSupersedeFailedLegacyEditorialWithBatchV2ForActor/u);
+  assert.match(batchControl, /e\.status='failed'[\s\S]*e\.execution_token IS NULL[\s\S]*c\.status NOT IN\('settled','definitely_not_sent'\)[\s\S]*o\.status IN\('queued','dispatching'\)/u);
   const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
   assert.match(ui, /await response\.json\(\);\s*if \(controller\.signal\.aborted \|\| current\.current !== scope\) return/u);
   assert.match(ui, /submitController\.current\?\.abort\(\)/u); assert.doesNotMatch(ui, /activateSignal|materializeSignal|ANTHROPIC_API_KEY/u);
+});
+
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: a quiescent failed V1 review is clearly offered as a V2 successor`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const successorView: WorkspaceTopicEditorialViewV1 = { ...ready, status: "not_requested", can_quote: true,
+    quote: null, execution: null, replaces_failed_v1: true };
+  assert.equal(validWorkspaceTopicEditorialViewV1(successorView, workspace, numeric), true);
+  assert.equal(validWorkspaceTopicEditorialViewV1({ ...successorView, replaces_failed_v1: false }, workspace, numeric), false);
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceTopicEditorialCard, { value: successorView, now, confirmed: false, onQuote: () => {} })));
+  assert.match(html, locale === "es-MX" ? /La revisión anterior quedó detenida/u : /The previous review stopped/u);
+  assert.match(html, locale === "es-MX" ? /Calcular cotización editorial/u : /Calculate editorial quote/u);
+  assert.doesNotMatch(html, /Reanudar la misma revisión|Resume the same review/u);
 });
 
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progress keeps semantic outcomes and technical errors separate and explains resume`, async () => {

@@ -1,7 +1,8 @@
 import { loadSignalWorkspaceContextForTopics, requireIdempotencyKey, topicError, topicResponse } from "../../_lib";
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1 } from "@/lib/data-os/signal-topic-editorial-control";
 import { authorizeWorkspaceTopicEditorialBatchV2ForActor, loadWorkspaceTopicEditorialBatchStatusV2ForActor,
-  quoteWorkspaceTopicEditorialBatchV2ForActor, completeWorkspaceTopicEditorialBatchV2ForActor } from "@/lib/data-os/signal-topic-editorial-batch-control-v2";
+  quoteWorkspaceTopicEditorialBatchV2ForActor, completeWorkspaceTopicEditorialBatchV2ForActor,
+  canSupersedeFailedLegacyEditorialWithBatchV2ForActor } from "@/lib/data-os/signal-topic-editorial-batch-control-v2";
 import { editorialUuid, parseWorkspaceTopicEditorialCommandV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,15 +18,21 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     const v2=await loadWorkspaceTopicEditorialBatchStatusV2ForActor({workspaceId,actorUserId:loaded.session.appUser.id,numericExecutionId});
     if(v2)return topicResponse(v2);
     const view=await loadWorkspaceTopicEditorialForActorV1({workspaceId,actorUserId:loaded.session.appUser.id,numericExecutionId});
-    if(!withQuote)return topicResponse(view);
-    // A non-quiescent legacy owner cannot be replaced by V2. Keep its truthful
-    // progress visible instead of composing a quote over an incompatible view.
-    if(view.execution)return topicResponse(view);
+    // V1 retry remains available for legacy semantics, but a failed/quiescent
+    // owner can instead become V2's explicit predecessor. SQL repeats this
+    // exact transition fence during admission and preserves compatible receipts.
+    const predecessorEligible=view.execution?.status==="failed"
+      ?await canSupersedeFailedLegacyEditorialWithBatchV2ForActor({workspaceId,actorUserId:loaded.session.appUser.id,numericExecutionId})
+      :false;
+    if(view.execution&&!predecessorEligible)return topicResponse(view);
+    const base=predecessorEligible?{...view,status:"not_requested" as const,can_quote:true,can_retry:false,can_complete:false,
+      quote:null,execution:null,replaces_failed_v1:true as const}:view;
+    if(!withQuote)return topicResponse(base);
     if(process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED!=="true"
       ||process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED!=="true")
-      return topicResponse({...view,status:"runtime_unavailable",can_quote:false,quote:null});
+      return topicResponse({...base,status:"runtime_unavailable",can_quote:false,quote:null});
     const quote=await quoteWorkspaceTopicEditorialBatchV2ForActor({workspaceId,actorUserId:loaded.session.appUser.id,numericExecutionId});
-    return topicResponse({...view,status:quote.status as typeof view.status,can_quote:quote.status==="ready_to_authorize",quote:quote.quote});
+    return topicResponse({...base,status:quote.status as typeof view.status,can_quote:quote.status==="ready_to_authorize",quote:quote.quote});
   }
   catch (error) { return topicError(error, "topic_editorial_status_unavailable"); }
 }
