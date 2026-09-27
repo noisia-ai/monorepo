@@ -114,7 +114,7 @@ test('consolidated editor rehearsal needs its own approval, sealed target, and n
  assert.equal(report.fixture_mutations_started,false);
 });
 
-test('editorial Batch rehearsal needs separate approval and cannot inherit an earlier gate',()=>{
+test('editorial Batch rehearsal needs separate approval and cannot inherit an earlier gate',async()=>{
  const batchEnv={...env,NOISIA_NOI19_PRIVATE_TEST_APPROVED:undefined,
   NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED:'true'};
  assert.equal(guardEnvironment(batchEnv,seal,'NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED').database,'noisia_dev_test');
@@ -128,6 +128,10 @@ test('editorial Batch rehearsal needs separate approval and cannot inherit an ea
  const receipt=JSON.parse(result.stdout);
  assert.equal(receipt.remote_connected,false);
  assert.equal(receipt.fixture_mutations_started,false);
+ const runner=await readFile(new URL('editorial-batch-runner.mjs',import.meta.url),'utf8');
+ const imageRules=await readFile(new URL('Dockerfile.dockerignore',import.meta.url),'utf8');
+ assert.match(runner,/for \(let version = 184; version <= 194; version\+\+\)/u);
+ assert.match(imageRules,/!infrastructure\/db\/migrations\/0194_signal_topic_editorial_batch_authorization_v2\.sql/u);
 });
 
 test('read-only table inventory accepts newer schemas but mutation uses the exact sealed count',async()=>{

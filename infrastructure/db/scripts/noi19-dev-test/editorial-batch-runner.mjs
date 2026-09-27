@@ -54,7 +54,7 @@ try {
   const migrationRoot = new URL('../../migrations/', import.meta.url);
   const names = await readdir(migrationRoot);
   report.migrations_rehearsed = [];
-  for (let version = 184; version <= 193; version++) {
+  for (let version = 184; version <= 194; version++) {
     const candidates = names.filter(name => name.startsWith(String(version).padStart(4, '0') + '_') && name.endsWith('.sql'));
     if (candidates.length !== 1) throw Error('noi19_dev_test_migration_identity_invalid');
     const sql = await readFile(new URL(candidates[0], migrationRoot), 'utf8');

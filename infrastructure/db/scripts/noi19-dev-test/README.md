@@ -98,6 +98,25 @@ No remote readiness or delivery claim is valid until phase two returns
 `status=passed`, `physical_rollback=true`, `post_rollback_empty=true` and zero
 provider transports against the newly sealed private target.
 
+## Editorial Batch V2 authorization acceptance
+
+The dedicated `editorial-batch-runner.mjs` uses the same sealed, empty
+`dev-test` database, but is a separate finite runner with its own
+`NOISIA_EDITORIAL_BATCH_PRIVATE_TEST_APPROVED=true` gate. It rehearses SQL0184–
+0194 inside one physical `READ COMMITTED` transaction and rolls all DDL and
+synthetic rows back before checking the sealed schema fingerprint and empty
+tables again. SQL0194 adds only quote/admission/replay functions; it is not
+persistently applied by this test.
+
+The fixture now exercises the policy's configured USD1,000 cap (above the old
+USD30 experiment ceiling), the exact V2 quote, atomic admission plus durable
+batch preparation, same-key/lost-response replay, mismatched cap/control
+rejection, and absence of a provider batch ID. It shares the established
+synthetic two-group context, creates no customer data, blocks HTTP, and makes
+zero provider calls. A passing result still does not authorize deploying SQL
+or enabling product/provider flags; it proves only these database contracts
+under the one-connection rollback fixture.
+
 ## Signal from import: separate focal gate (SQL0182 schema)
 
 The historical `db:test:noi19-private` runner and its 269-table/SQL0152 gate

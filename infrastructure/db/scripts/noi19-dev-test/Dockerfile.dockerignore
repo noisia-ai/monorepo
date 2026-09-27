@@ -31,6 +31,7 @@
 !infrastructure/db/migrations/0191_signal_topic_editorial_paid_missing_group_recovery.sql
 !infrastructure/db/migrations/0192_signal_topic_editorial_truncated_duplicate_quarantine.sql
 !infrastructure/db/migrations/0193_signal_topic_editorial_message_batches_v2.sql
+!infrastructure/db/migrations/0194_signal_topic_editorial_batch_authorization_v2.sql
 !infrastructure/db/scripts/
 !infrastructure/db/scripts/noi19-dev-test/
 !infrastructure/db/scripts/noi19-dev-test/**

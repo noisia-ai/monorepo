@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash,randomUUID} from 'node:crypto';
-import {buildSignalTopicEditorialScreeningPlanV2,SIGNAL_TOPIC_EDITORIAL_CONFIGURATION_V2,
+import {buildSignalTopicEditorialScreeningPlanV2,buildSignalTopicEditorialBatchPlanFromPreparedInputV2,SIGNAL_TOPIC_EDITORIAL_CONFIGURATION_V2,
   classifySignalTopicEditorialMessageResultV2,type SignalTopicEditorialGroupRequestV2} from '../../../packages/query-engine/src/signal-topic-consolidation-editorial-v2';
 import {validateSignalTopicEditorialScreeningOutputV1} from '../../../packages/query-engine/src/signal-topic-consolidation-editorial-v1';
 import {reuseSignalTopicEditorialPaidGroupV2,type SignalTopicEditorialPaidSourceCallV2} from '../../../packages/query-engine/src/signal-topic-editorial-paid-reuse-v2';
@@ -219,6 +219,38 @@ export async function exerciseSignalTopicEditorialBatchV2Synthetic(args:Syntheti
   await denied(()=>store.persistSignalTopicEditorialBatchItemV2({...input,raw_body:raw_body+' '}),/receipt_immutable/);
   return {result,validation,raw_body};
  }
+ await scenario('policy_quote_atomic_authorization_and_same_key_replay',async()=>{
+  await policy(2);
+  const batchPlan=buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input:source,run_id:seed.scope.numeric_run_id});
+  assert.equal(batchPlan.expected_group_count,2);assert.equal(batchPlan.requests.length,2);
+  const deadline=Math.floor(Date.now()/1000)+240,idempotency_key=randomUUID();
+  const quote=await store.quoteSignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,run_id:seed.scope.numeric_run_id,
+   plan:batchPlan,deadline});
+  assert.equal(quote.status,'ready_to_authorize');assert.equal(quote.maximum_micro_usd,'1000000000');
+  assert.equal(quote.expected_group_count,2);assert.equal(quote.provider_execution_enabled,false);
+  assert.ok(quote.quote_reference?.startsWith(`v2.${deadline}.`));
+  const admitted=await store.requestSignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,run_id:seed.scope.numeric_run_id,
+   input:source,idempotency_key,quote_reference:quote.quote_reference!});
+  assert.equal(admitted.replayed,false);assert.equal(admitted.expected_items,2);
+  assert.ok(admitted.batch_id);assert.ok(admitted.manifest_digest);
+  const replay=await store.replaySignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,
+   numeric_execution_id:seed.numeric_execution_id,idempotency_key,quote_reference:quote.quote_reference!,
+   confirmed_cap_micro_usd:'1000000000'});
+  assert.equal(replay.replayed,true);assert.equal(replay.execution_id,admitted.execution_id);assert.equal(replay.batch_id,admitted.batch_id);
+  assert.equal(replay.manifest_digest,admitted.manifest_digest);
+  await denied(()=>store.replaySignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,
+   numeric_execution_id:seed.numeric_execution_id,idempotency_key,quote_reference:quote.quote_reference!,
+   confirmed_cap_micro_usd:'30000000'}),/idempotency_conflict/u);
+  await denied(()=>store.replaySignalTopicEditorialBatchV2({database,workspace_id,actor_user_id,
+   numeric_execution_id:randomUUID(),idempotency_key,quote_reference:quote.quote_reference!,
+   confirmed_cap_micro_usd:'1000000000'}),/idempotency_conflict/u);
+  const counts=(await query(`SELECT
+    (SELECT count(*)::int FROM signal_processing_admissions WHERE workspace_id=$1 AND target_id=$2) admissions,
+    (SELECT count(*)::int FROM signal_topic_editorial_provider_batches_v2 WHERE execution_id=$2) batches,
+    (SELECT count(*)::int FROM signal_topic_editorial_calls WHERE execution_id=$2) calls`,[workspace_id,admitted.execution_id])).rows[0]!;
+  assert.equal(counts.admissions,1);assert.equal(counts.batches,1);assert.equal(counts.calls,2);
+  assert.equal((await query('SELECT count(*)::int count FROM signal_topic_editorial_provider_batches_v2 WHERE execution_id=$1 AND provider_batch_id IS NOT NULL',[admitted.execution_id])).rows[0]!.count,0);
+ });
  await scenario('admission_replay_schema_scope_and_v1_isolation',async()=>{
   const admitted=await admission();
   const legacyStatus=await loadSignalTopicConsolidationEditorialStatusV1(seed.scope);
