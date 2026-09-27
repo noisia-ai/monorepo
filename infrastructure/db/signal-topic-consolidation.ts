@@ -761,6 +761,7 @@ export async function materializeSignalTopicCommunityPlanV1(args: {
 export async function materializeSignalTopicConsolidationRevisionV1(args: {
   database: SignalTopicConsolidationDatabaseV1; workspace_id: string; actor_user_id: string;
   consolidation_run_id: string; revision: unknown;
+  concept_metadata?: Map<string,{priority_rank:number;priority_rationale:string;global_request_digest:string;cited_ref_ids:string[]}>;
 }): Promise<{ consolidation_run_id: string; revision_id: string; revision: number; revision_digest: string; replayed: boolean }> {
   const workspace = uuid(args.workspace_id, "topic_consolidation_workspace_invalid"), actor = uuid(args.actor_user_id, "topic_consolidation_actor_invalid"),
     runId = uuid(args.consolidation_run_id, "topic_consolidation_run_invalid");
@@ -774,12 +775,41 @@ export async function materializeSignalTopicConsolidationRevisionV1(args: {
     const groups = (await client.query<{ id: string; group_key: string }>(`SELECT id,group_key FROM signal_topic_atomic_groups
       WHERE consolidation_run_id=$1::uuid AND workspace_id=$2::uuid ORDER BY group_key COLLATE "C"`,[runId,workspace])).rows;
     const revision = parseSignalTopicConsolidationRevisionV1(args.revision,groups.map(group => group.group_key));
+    const conceptMetadata=new Map<string,Record<string,unknown>>();
+    if(args.concept_metadata){
+      if(args.concept_metadata.size!==revision.concepts.length)
+        throw new SignalTopicConsolidationContractError('topic_consolidation_priority_incomplete');
+      for(const concept of revision.concepts){
+        const item=args.concept_metadata.get(concept.concept_key);
+        if(!item||!Number.isSafeInteger(item.priority_rank)||item.priority_rank<1
+          ||typeof item.priority_rationale!=='string'||!item.priority_rationale.trim()
+          ||!digestPattern.test(item.global_request_digest)||!Array.isArray(item.cited_ref_ids)
+          ||!item.cited_ref_ids.length||new Set(item.cited_ref_ids).size!==item.cited_ref_ids.length
+          ||item.cited_ref_ids.some(ref=>!digestPattern.test(ref)))
+          throw new SignalTopicConsolidationContractError('topic_consolidation_priority_invalid');
+        const metadata={contract_version:'signal-topic-editorial-concept-metadata-v2',...item};
+        if(Buffer.byteLength(JSON.stringify(metadata),'utf8')>32768)
+          throw new SignalTopicConsolidationContractError('topic_consolidation_priority_too_large');
+        conceptMetadata.set(concept.concept_key,metadata);
+      }
+      const ranks=[...conceptMetadata.values()].map(item=>item.priority_rank as number).sort((a,b)=>a-b);
+      if(ranks.some((rank,index)=>rank!==index+1))
+        throw new SignalTopicConsolidationContractError('topic_consolidation_priority_invalid');
+    }
     const existing = (await client.query<{ id: string; status: string; revision_digest: string | null }>(`SELECT id,status,revision_digest
       FROM signal_topic_consolidation_revisions WHERE consolidation_run_id=$1::uuid AND workspace_id=$2::uuid AND revision=$3 FOR UPDATE`,
     [runId,workspace,revision.revision])).rows[0];
     if (existing) {
       if (existing.status !== "validated" || existing.revision_digest !== revision.revision_digest)
         throw new SignalTopicConsolidationContractError("topic_consolidation_revision_replay_conflict");
+      if(args.concept_metadata){
+        const stored=(await client.query<{concept_key:string;metadata:unknown}>(`SELECT concept_key,metadata
+          FROM signal_topic_editorial_concepts WHERE revision_id=$1::uuid`,[existing.id])).rows;
+        if(stored.length!==conceptMetadata.size||stored.some(row=>
+          !conceptMetadata.has(row.concept_key)||signalTopicConsolidationDigestV1(row.metadata)
+            !==signalTopicConsolidationDigestV1(conceptMetadata.get(row.concept_key))))
+          throw new SignalTopicConsolidationContractError('topic_consolidation_priority_replay_conflict');
+      }
       return { consolidation_run_id: runId, revision_id: existing.id, revision: revision.revision,
         revision_digest: revision.revision_digest, replayed: true };
     }
@@ -795,10 +825,11 @@ export async function materializeSignalTopicConsolidationRevisionV1(args: {
     [revisionId,runId,workspace,run.source_engine_execution_id,revision.revision,previous?.id ?? null,actor]);
     const conceptIds = new Map(revision.concepts.map(concept => [concept.concept_key,randomUUID()]));
     for (const page of chunks(revision.concepts, 500)) await client.query(`INSERT INTO signal_topic_editorial_concepts(
-      id,revision_id,consolidation_run_id,workspace_id,concept_key,kind,label,definition,locale,source)
+      id,revision_id,consolidation_run_id,workspace_id,concept_key,kind,label,definition,locale,source,metadata)
       SELECT (body->>'id')::uuid,$1::uuid,$2::uuid,$3::uuid,body->>'concept_key',body->>'kind',body->>'label',
-        body->>'definition',body->>'locale',body->>'source' FROM jsonb_array_elements($4::jsonb) body`,
-    [revisionId,runId,workspace,JSON.stringify(page.map(concept => ({ id: conceptIds.get(concept.concept_key),...concept })))]);
+        body->>'definition',body->>'locale',body->>'source',body->'metadata' FROM jsonb_array_elements($4::jsonb) body`,
+    [revisionId,runId,workspace,JSON.stringify(page.map(concept => ({ id: conceptIds.get(concept.concept_key),...concept,
+      metadata:conceptMetadata.get(concept.concept_key)??{} })))]);
     const groupIds = new Map(groups.map(group => [group.group_key,group.id]));
     for (const page of chunks(revision.decisions, 2_000)) await client.query(`INSERT INTO signal_topic_consolidation_decisions(
       revision_id,atomic_group_id,consolidation_run_id,workspace_id,disposition,concept_id,source,confidence,rationale,decision_digest)
