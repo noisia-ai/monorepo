@@ -62,8 +62,10 @@ function database(allowed = true, hasOwner = true, hasRevision = false) {
 
 test("returns saved editorial states separately and keeps ambiguous delivery pending", async () => {
   const db = database();
+  const timings: Array<{ phase: string; durationMs: number }> = [];
   const page = await loadWorkspaceTopicEditorialOutcomesPageV2({ database: db.database, workspaceId, actorUserId,
-    numericExecutionId, editorialExecutionId, offset: 0, limit: 20 });
+    numericExecutionId, editorialExecutionId, offset: 0, limit: 20,
+    onPhaseTiming: (phase, durationMs) => timings.push({ phase, durationMs }) });
   assert.equal(page.contract_version, "workspace-topic-editorial-outcomes-page-v2");
   assert.equal(page.execution_id, editorialExecutionId);
   assert.deepEqual(page.items.map((item: { outcome: string }) => item.outcome),
@@ -90,6 +92,16 @@ test("returns saved editorial states separately and keeps ambiguous delivery pen
   assert.match(outcomeSql, /request_row\.receipts->'request'->'receipt'->>'group_key'/u);
   assert.match(outcomeSql, /revision\.status='validated'/u);
   assert.match(outcomeSql, /screened\.outcome IN\('errored','canceled','expired','submission_rejected'\)/u);
+  assert.deepEqual(timings.map(item => item.phase), ["db_connect", "snapshot_start", "census_access", "owner_read",
+    "outcomes_read", "citations_read", "citation_mapping", "snapshot_commit", "response_assembly"]);
+  assert.ok(timings.every(item => Number.isFinite(item.durationMs) && item.durationMs >= 0));
+});
+
+test("timing instrumentation failure cannot change the bounded read result", async () => {
+  const page = await loadWorkspaceTopicEditorialOutcomesPageV2({ database: database().database, workspaceId, actorUserId,
+    numericExecutionId, editorialExecutionId, offset: 0, limit: 20, onPhaseTiming: () => { throw new Error("telemetry failed"); } });
+  assert.equal(page.items.length, 6);
+  assert.equal(page.contract_version, "workspace-topic-editorial-outcomes-page-v2");
 });
 
 test("uses page-sized stable offsets and rejects invalid or unbounded paging before connecting", async () => {
