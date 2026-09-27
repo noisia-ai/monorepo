@@ -3210,6 +3210,7 @@
             "running": "The review is running; each result is preserved.",
             "failed": "The review stopped. Earlier results and costs are preserved.",
             "review_ready": "The proposal is validated and is being saved for editing.",
+            "consolidation_pending": "Review of the original groups is complete. They still need to be merged and ranked; there is no consolidated catalog for Signal yet.",
             "completed": "The new review is saved for editing and quality checks. Signal retains its published version."
           }
         },

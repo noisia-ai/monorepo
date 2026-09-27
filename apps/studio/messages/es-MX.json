@@ -3210,6 +3210,7 @@
             "running": "La revisión está en curso; cada resultado se conserva.",
             "failed": "La revisión se detuvo. Sus resultados y costos anteriores se conservan.",
             "review_ready": "La propuesta está validada y se está guardando para edición.",
+            "consolidation_pending": "Terminó la revisión de los grupos originales. Falta unirlos y priorizarlos; aún no hay un catálogo consolidado para Signal.",
             "completed": "La nueva revisión está guardada para edición y control de calidad. Signal conserva su versión publicada."
           }
         },

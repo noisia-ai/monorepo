@@ -383,8 +383,9 @@ export async function materializeSignalTopicEditorialBatchV2(args:Db&{workspace_
   try{
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     await client.query('SET LOCAL search_path=public,extensions,pg_temp');
-    const owner=(await client.query<{numeric_run_id:string;expected:number;actor_user_id:string;materialized:boolean}>(`
+    const owner=(await client.query<{numeric_run_id:string;expected:number;actor_user_id:string;materialized:boolean;contract_version:string}>(`
       SELECT e.numeric_run_id::text,e.actor_user_id::text,jsonb_array_length(e.plan->'requests') expected,
+        e.plan->>'contract_version' contract_version,
         EXISTS(SELECT 1 FROM signal_topic_consolidation_revisions r WHERE r.consolidation_run_id=e.numeric_run_id
           AND r.workspace_id=e.workspace_id AND r.status='validated' AND r.created_by_user_id=e.actor_user_id AND r.created_at>=e.created_at) materialized
       FROM signal_topic_editorial_executions e JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
@@ -392,6 +393,10 @@ export async function materializeSignalTopicEditorialBatchV2(args:Db&{workspace_
         AND e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')`,
     [args.execution_id,args.workspace_id,args.actor_user_id])).rows[0];
     if(!owner)throw new Error('topic_editorial_v2_catalog_scope_invalid');
+    // V3 screening is only the first editorial pass. Publishing one concept
+    // per atomic BERTopic group would misrepresent it as global consolidation.
+    if(owner.contract_version==='signal-topic-editorial-admission-header-v3')
+      throw new Error('topic_editorial_global_review_pending');
     consolidationRunId=owner.numeric_run_id;
     if(owner.materialized){
       const prior=(await client.query<{revision:number}>(`SELECT revision FROM signal_topic_consolidation_revisions

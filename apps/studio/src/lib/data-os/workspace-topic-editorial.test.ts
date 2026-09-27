@@ -121,7 +121,7 @@ test("V2 start keeps the policy quote internal and admits from one server-built 
   assert.match(ui, /action: "start_editorial" as const/u); assert.doesNotMatch(ui, /quote=1|onQuote|onAuthorize/u);
   assert.match(route, /command\?\.action==="start_editorial"[\s\S]*enqueueSignalTopicEditorialStartV2/u);
   assert.match(start, /startWorkspaceTopicEditorialBatchV2ForActor[\s\S]*signal_topic_editorial_request_keys[\s\S]*replaySignalTopicEditorialBatchV2/u);
-  assert.match(start, /quoteSignalTopicEditorialBatchV2[\s\S]*requestQuotedSignalTopicEditorialBatchPlanV2/u);
+  assert.match(start, /quoteSignalTopicEditorialChunkedAdmissionV3[\s\S]*requestSignalTopicEditorialChunkedAdmissionV3/u);
   assert.doesNotMatch(start, /reuseCompatibleSignalTopicEditorialPaidResultsV2|prepareAllSignalTopicEditorialBatchV2/u,
     "after admission, replay-safe reuse and manifest preparation are owned by the asynchronous Worker");
 });
@@ -437,6 +437,19 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: one start act
   const html = render(); assert.doesNotMatch(html, /type="checkbox"|30\.00|cotización editorial|editorial quote/iu);
   assert.match(html, /(Iniciar revisión editorial|Start editorial review)/u);
   assert.doesNotMatch(render({ stale: true }), /(Iniciar revisión editorial|Start editorial review)/u);
+});
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: completed V3 screening cannot publish an unconsolidated atomic catalog`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const pending: WorkspaceTopicEditorialViewV1 = { ...ready, status: "consolidation_pending", can_quote: false,
+    can_complete: false, quote: null, execution: { execution_id: execution, status: "consolidation_pending",
+      completed_screening_count: 1652, expected_screening_count: 1652, maximum_micro_usd: "100000000",
+      confirmed_micro_usd: "10000000", reserved_micro_usd: "0", ambiguous_micro_usd: "0" } };
+  assert.equal(validWorkspaceTopicEditorialViewV1(pending, workspace, numeric), true);
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
+    createElement(WorkspaceTopicEditorialCard, { value: pending, onComplete: () => {} })));
+  assert.match(html, locale === "es-MX" ? /aún no hay un catálogo consolidado/u : /no consolidated catalog/u);
+  assert.doesNotMatch(html, /<button[^>]*>[^<]*(?:Completar|Complete)/u);
 });
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: an expired partial review cannot offer a futile retry before renewal`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));

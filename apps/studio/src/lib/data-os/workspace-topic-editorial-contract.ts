@@ -27,15 +27,15 @@ export function parseWorkspaceTopicEditorialCommandV1(v: unknown): WorkspaceTopi
   return null;
 }
 export const editorialStates = ["not_requested", "preparing", "start_failed", "runtime_unavailable", "access_required", "source_required", "source_stale", "policy_required",
-  "policy_action_required", "budget_unavailable", "quote_expired", "ready_to_authorize", "queued", "running", "failed", "review_ready", "completed"] as const;
+  "policy_action_required", "budget_unavailable", "quote_expired", "ready_to_authorize", "queued", "running", "failed", "review_ready", "consolidation_pending", "completed"] as const;
 export type WorkspaceTopicEditorialViewV1 = {
   contract_version: "workspace-topic-editorial-view-v1"; workspace_id: string; numeric_execution_id: string;
   status: typeof editorialStates[number]; can_quote: boolean; can_retry: boolean; can_complete: boolean; activation: "not_activated";
   /** A failed, quiescent V1 owner can be superseded by the durable Message Batches path. */
   replaces_failed_v1?: boolean;
   start_error_code?: string;
-  quote: null | { reference: string; expires_at: string; maximum_micro_usd: string; group_count: number; screening_count: number; global_count: 1 };
-  execution: null | { execution_id: string; status: "queued" | "running" | "failed" | "review_ready" | "completed";
+  quote: null | { reference: string; expires_at: string; maximum_micro_usd: string; group_count: number; screening_count: number; global_count: 0 | 1 };
+  execution: null | { execution_id: string; status: "queued" | "running" | "failed" | "review_ready" | "consolidation_pending" | "completed";
     completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string;
     confirmed_micro_usd: string; reserved_micro_usd: string; ambiguous_micro_usd: string };
   batch_progress?: { topics:number;narratives:number;noise:number;insufficient_evidence:number;technical_errors:number;pending:number;
@@ -59,18 +59,18 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
       || !editorialQuote(q.reference) || typeof q.expires_at !== "string" || !Number.isFinite(Date.parse(q.expires_at))
       || Math.floor(Date.parse(q.expires_at) / 1000) !== Number(q.reference.split(".")[1])
       || !editorialQuoteCap(q.reference, q.maximum_micro_usd) || !natural(q.group_count) || q.group_count < 1 || q.group_count > 5000
-      || !natural(q.screening_count) || q.screening_count !== (q.reference.startsWith("v2.") ? q.group_count : Math.ceil(q.group_count / 40)) || q.global_count !== 1
+      || !natural(q.screening_count) || q.screening_count !== (q.reference.startsWith("v2.") ? q.group_count : Math.ceil(q.group_count / 40)) || (q.global_count !== 0 && q.global_count !== 1)
       || v.status !== "ready_to_authorize" || v.execution !== null || !v.can_quote) return false;
   } else if (v.status === "ready_to_authorize") return false;
   if (v.execution !== null) {
     const e = v.execution;
     if (!object(e) || !keys(e, ["execution_id", "status", "completed_screening_count", "expected_screening_count", "maximum_micro_usd", "confirmed_micro_usd", "reserved_micro_usd", "ambiguous_micro_usd"])
-      || !editorialUuid(e.execution_id) || !["queued", "running", "failed", "review_ready", "completed"].includes(String(e.status))
+      || !editorialUuid(e.execution_id) || !["queued", "running", "failed", "review_ready", "consolidation_pending", "completed"].includes(String(e.status))
       || e.status !== v.status || !natural(e.completed_screening_count) || !natural(e.expected_screening_count)
       || e.expected_screening_count > 5000 || e.completed_screening_count > e.expected_screening_count
       || !editorialCap(e.maximum_micro_usd) || !editorialMoney(e.confirmed_micro_usd) || !editorialMoney(e.reserved_micro_usd)
       || !editorialMoney(e.ambiguous_micro_usd) || v.can_quote || v.quote !== null) return false;
-  } else if (["queued", "running", "failed", "review_ready", "completed"].includes(String(v.status))) return false;
+  } else if (["queued", "running", "failed", "review_ready", "consolidation_pending", "completed"].includes(String(v.status))) return false;
   if ("batch_progress" in v) {
     const p=v.batch_progress;
     if (!object(p) || !keys(p,["topics","narratives","noise","insufficient_evidence","technical_errors","pending","reused_results","batch_states","error_codes"])
