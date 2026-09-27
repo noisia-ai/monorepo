@@ -47,7 +47,7 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
           <div><dt>{t("ambiguous")}</dt><dd>{money(execution.ambiguous_micro_usd)}</dd></div>
         </dl> : null}
       </> : null}
-      {!value.batch_progress && workspaceId && numericExecutionId
+      {workspaceId && numericExecutionId
         ? <WorkspaceTopicLegacyEditorialOutcomes workspaceId={workspaceId} numericExecutionId={numericExecutionId} /> : null}
       <p className="admin-drawer-form__hint">{t("preserves")}</p>
       {value.status === "failed" && !value.can_retry && retryReady ? <p>{t("retryBlocked")}</p> : null}

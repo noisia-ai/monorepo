@@ -61,7 +61,7 @@ function parsePage(value: unknown, scope: { workspaceId: string; numericExecutio
 
 /** Read-only viewer for paid legacy screening decisions; never labels them as a final Topic catalog. */
 export function WorkspaceTopicLegacyEditorialOutcomes({ workspaceId, numericExecutionId }: { workspaceId: string; numericExecutionId: string }) {
-  const t = useTranslations("AdminWorkspace.topics.consolidation.legacyOutcomeBrowser"), locale = useLocale();
+  const t = useTranslations("AdminWorkspace.topics.consolidation.editorial.legacyOutcomeBrowser"), locale = useLocale();
   const panelId = useId(), scope = `${workspaceId}:${numericExecutionId}`;
   const active = useRef(scope); active.current = scope;
   const controllerRef = useRef<AbortController | null>(null), inFlight = useRef(false);

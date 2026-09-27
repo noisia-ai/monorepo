@@ -412,12 +412,15 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progres
       pending: 1, batch_states: { running: 1, prepared: 1 }, error_codes: ["topic_editorial_v2_output_invalid"] } };
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
-    createElement(WorkspaceTopicEditorialCard, { value: running, onRefresh: () => {} })));
+    createElement(WorkspaceTopicEditorialCard, { value: running, workspaceId: workspace, numericExecutionId: numeric,
+      onRefresh: () => {} })));
   assert.match(html, /topic_editorial_v2_output_invalid/u);
   assert.match(html, locale === "es-MX" ? /Narrativas/u : /Narratives/u);
   assert.match(html, locale === "es-MX" ? /Evidencia insuficiente/u : /Insufficient evidence/u);
   assert.match(html, locale === "es-MX" ? /Errores técnicos/u : /Technical errors/u);
   assert.match(html, locale === "es-MX" ? /manifiestos y resultados guardados/u : /saved manifests and results/u);
+  assert.match(html, locale === "es-MX" ? /Ver cribado anterior/u : /View previous screening/u,
+    "current V2 batch progress must not hide the read-only V1 history browser");
 });
 
 test("free completion derives immutable state/census and replays with provider/cache disabled", async () => {
