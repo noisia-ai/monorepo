@@ -1,8 +1,12 @@
 /** Browser contract: no plans, source text, configuration, ledger IDs or provider switches. */
 export const editorialUuid = (v: unknown): v is string => typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(v);
-export const editorialQuote = (v: unknown): v is string => typeof v === "string" && /^v1\.[0-9]{10}\.[a-f0-9]{64}$/u.test(v);
-export const editorialMoney = (v: unknown): v is string => typeof v === "string" && /^(0|[1-9]\d{0,15})$/u.test(v);
-export const editorialCap = (v: unknown): v is string => editorialMoney(v) && BigInt(v) > 0n && BigInt(v) <= 30_000_000n;
+export const editorialQuote = (v: unknown): v is string => typeof v === "string" && /^v[12]\.[0-9]{10}\.[a-f0-9]{64}$/u.test(v);
+export const editorialMoney = (v: unknown): v is string => typeof v === "string" && /^(0|[1-9]\d{0,18})$/u.test(v);
+const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
+/** The authorized amount is policy-owned; only PostgreSQL's storage range bounds it. */
+export const editorialCap = (v: unknown): v is string => editorialMoney(v) && BigInt(v) > 0n && BigInt(v) <= POSTGRES_BIGINT_MAX;
+const editorialQuoteCap = (reference: string, value: unknown): value is string => editorialCap(value)
+  && (reference.startsWith("v2.") || BigInt(value) <= 30_000_000n);
 export const editorialKey = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9._:-]{8,200}$/u.test(v);
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, expected: string[]) => Object.keys(v).sort().join() === expected.sort().join();
@@ -13,7 +17,7 @@ export type WorkspaceTopicEditorialCommandV1 =
 export function parseWorkspaceTopicEditorialCommandV1(v: unknown): WorkspaceTopicEditorialCommandV1 | null {
   if (!object(v) || !editorialUuid(v.numeric_execution_id)) return null;
   if (v.action === "authorize_editorial" && keys(v, ["action", "numeric_execution_id", "quote_reference", "confirmed_maximum_micro_usd"])
-    && editorialQuote(v.quote_reference) && editorialCap(v.confirmed_maximum_micro_usd))
+    && editorialQuote(v.quote_reference) && editorialQuoteCap(v.quote_reference, v.confirmed_maximum_micro_usd))
     return { action: v.action, numeric_execution_id: v.numeric_execution_id, quote_reference: v.quote_reference, confirmed_maximum_micro_usd: v.confirmed_maximum_micro_usd };
   if ((v.action === "retry_editorial" || v.action === "complete_catalog") && keys(v, ["action", "numeric_execution_id", "execution_id"]) && editorialUuid(v.execution_id))
     return { action: v.action, numeric_execution_id: v.numeric_execution_id, execution_id: v.execution_id };
@@ -40,8 +44,8 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
     if (!object(q) || !keys(q, ["reference", "expires_at", "maximum_micro_usd", "group_count", "screening_count", "global_count"])
       || !editorialQuote(q.reference) || typeof q.expires_at !== "string" || !Number.isFinite(Date.parse(q.expires_at))
       || Math.floor(Date.parse(q.expires_at) / 1000) !== Number(q.reference.split(".")[1])
-      || !editorialCap(q.maximum_micro_usd) || !natural(q.group_count) || q.group_count < 1 || q.group_count > 5000
-      || !natural(q.screening_count) || q.screening_count !== Math.ceil(q.group_count / 40) || q.global_count !== 1
+      || !editorialQuoteCap(q.reference, q.maximum_micro_usd) || !natural(q.group_count) || q.group_count < 1 || q.group_count > 5000
+      || !natural(q.screening_count) || q.screening_count !== (q.reference.startsWith("v2.") ? q.group_count : Math.ceil(q.group_count / 40)) || q.global_count !== 1
       || v.status !== "ready_to_authorize" || v.execution !== null || !v.can_quote) return false;
   } else if (v.status === "ready_to_authorize") return false;
   if (v.execution !== null) {
@@ -49,7 +53,7 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
     if (!object(e) || !keys(e, ["execution_id", "status", "completed_screening_count", "expected_screening_count", "maximum_micro_usd", "confirmed_micro_usd", "reserved_micro_usd", "ambiguous_micro_usd"])
       || !editorialUuid(e.execution_id) || !["queued", "running", "failed", "review_ready", "completed"].includes(String(e.status))
       || e.status !== v.status || !natural(e.completed_screening_count) || !natural(e.expected_screening_count)
-      || e.expected_screening_count > 125 || e.completed_screening_count > e.expected_screening_count
+      || e.expected_screening_count > 5000 || e.completed_screening_count > e.expected_screening_count
       || !editorialCap(e.maximum_micro_usd) || !editorialMoney(e.confirmed_micro_usd) || !editorialMoney(e.reserved_micro_usd)
       || !editorialMoney(e.ambiguous_micro_usd) || v.can_quote || v.quote !== null) return false;
   } else if (["queued", "running", "failed", "review_ready", "completed"].includes(String(v.status))) return false;
@@ -62,7 +66,10 @@ export type WorkspaceTopicEditorialReceiptV1 = { contract_version: "workspace-to
   action: WorkspaceTopicEditorialCommandV1["action"]; numeric_execution_id: string; execution_id: string; idempotency_key: string; replayed: boolean; activation: "not_activated" };
 export function workspaceTopicEditorialIntentV1(workspace: string, body: WorkspaceTopicEditorialCommandV1, previous: WorkspaceTopicEditorialIntentV1 | null, createKey: () => string) {
   if (previous?.workspace_id === workspace && previous.body.action === body.action && previous.body.numeric_execution_id === body.numeric_execution_id
-    && (body.action === "authorize_editorial" || previous.body.action !== "authorize_editorial" && previous.body.execution_id === body.execution_id)) return previous;
+    && (body.action === "authorize_editorial"
+      ? previous.body.action === "authorize_editorial" && previous.body.quote_reference === body.quote_reference
+        && previous.body.confirmed_maximum_micro_usd === body.confirmed_maximum_micro_usd
+      : previous.body.action !== "authorize_editorial" && previous.body.execution_id === body.execution_id)) return previous;
   return { workspace_id: workspace, body: { ...body }, key: createKey() };
 }
 export class WorkspaceTopicEditorialRequestError extends Error {

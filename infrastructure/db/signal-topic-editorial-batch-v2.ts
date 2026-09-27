@@ -1,14 +1,17 @@
 import {createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {
-  validateSignalTopicEditorialScreeningPlanV2, classifySignalTopicEditorialMessageResultV2,
+  validateSignalTopicEditorialScreeningPlanV2, buildSignalTopicEditorialBatchPlanFromPreparedInputV2, classifySignalTopicEditorialMessageResultV2,
   type SignalTopicEditorialScreeningPlanV2,type SignalTopicEditorialGroupRequestV2,
   type SignalTopicEditorialMessageResultV2,
 } from '../../packages/query-engine/src/signal-topic-consolidation-editorial-v2';
+import type {SignalTopicEditorialPreparedInputV1} from '../../packages/query-engine/src/signal-topic-consolidation-bridge-v1';
 import type {SignalTopicEditorialPaidReuseResultV2} from '../../packages/query-engine/src/signal-topic-editorial-paid-reuse-v2';
 import type {SignalTopicEditorialDatabaseV1} from './signal-topic-consolidation-editorial';
 
 export type SignalTopicEditorialBatchDatabaseV2=SignalTopicEditorialDatabaseV1;
+export type SignalTopicEditorialBatchQuoteV2={status:string;quote_reference:string|null;quote_expires_at:string|null;
+  maximum_micro_usd:string|null;expected_group_count:number;provider_execution_enabled:false};
 export type SignalTopicEditorialBatchStateV2='prepared'|'submitting'|'submission_unknown'|'in_progress'|'canceling'|'ended'|'applied'|'rejected';
 export type SignalTopicEditorialBatchLeaseV2={
   batch_id:string;execution_id:string;lease_token:string;submission_token:string;
@@ -27,6 +30,56 @@ export function signalTopicEditorialCanonicalBodyV2(value:unknown):string {
   const body=ordered(value);
   if(body===undefined)throw new Error('topic_editorial_v2_json_invalid');
   return body;
+}
+function unsignedPlan(plan:SignalTopicEditorialScreeningPlanV2){const {plan_digest,...body}=plan;return body;}
+/** Policy-backed quote. The full plan and its evidence are server-only arguments. */
+export async function quoteSignalTopicEditorialBatchV2(args:Db&{workspace_id:string;actor_user_id:string;run_id:string;
+  plan:SignalTopicEditorialScreeningPlanV2;deadline?:number}):Promise<SignalTopicEditorialBatchQuoteV2>{
+  validateSignalTopicEditorialScreeningPlanV2(args.plan);
+  if(args.plan.identity.workspace_id!==args.workspace_id||args.plan.identity.run_id!==args.run_id
+    ||args.deadline!==undefined&&(!Number.isSafeInteger(args.deadline)||args.deadline<=0||args.deadline>9_999_999_999))
+    throw new Error('topic_editorial_v2_scope_invalid');
+  const planBody=signalTopicEditorialCanonicalBodyV2(unsignedPlan(args.plan));
+  return tx(args.database,async client=>{
+    const value=(await client.query<{value:Record<string,unknown>}>(
+      'SELECT signal_topic_editorial_quote_v2($1,$2,$3,$4::jsonb,$5,$6::bigint) value',
+      [args.workspace_id,args.actor_user_id,args.run_id,JSON.stringify(args.plan),planBody,args.deadline??null])).rows[0]?.value;
+    if(!value||typeof value.status!=='string')throw new Error('topic_editorial_v2_quote_unavailable');
+    return {status:value.status,quote_reference:typeof value.quote_reference==='string'?value.quote_reference:null,
+      quote_expires_at:typeof value.quote_expires_at==='string'?value.quote_expires_at:null,
+      maximum_micro_usd:typeof value.hard_cap_micro_usd==='string'?value.hard_cap_micro_usd:null,
+      expected_group_count:typeof value.expected_group_count==='number'?value.expected_group_count:args.plan.expected_group_count,
+      provider_execution_enabled:false};
+  });
+}
+/** Promotes a freshly server-loaded, provenance-checked input and admits it under
+ * the exact policy quote. Browser data never contains this plan or its evidence. */
+export async function requestSignalTopicEditorialBatchV2(args:Db&{workspace_id:string;actor_user_id:string;run_id:string;
+  input:SignalTopicEditorialPreparedInputV1;idempotency_key:string;quote_reference:string;previous_execution_id?:string|null}){
+  const plan=buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input:args.input,run_id:args.run_id});
+  validateSignalTopicEditorialScreeningPlanV2(plan);
+  if(plan.identity.workspace_id!==args.workspace_id||plan.identity.run_id!==args.run_id
+    ||!/^v2\.[0-9]{10}\.[a-f0-9]{64}$/u.test(args.quote_reference)
+    ||!/^[-A-Za-z0-9._:]{8,200}$/u.test(args.idempotency_key))throw new Error('topic_editorial_v2_request_invalid');
+  const {plan_digest:_digest,...body}=plan,planBody=signalTopicEditorialCanonicalBodyV2(body);
+  const requestBodies=plan.requests.map(request=>{const {request_digest,...core}=request;
+    const {provider_request,...record}=core;
+    const coreBody=signalTopicEditorialCanonicalBodyV2({...record,params:provider_request.params});
+    if(sha(coreBody)!==request_digest)throw new Error('topic_editorial_v2_request_digest_invalid');
+    return {params_body:JSON.stringify(provider_request.params),core_body:coreBody};});
+  return invoke<{execution_id:string;expected_items:number;stage:'screening';replayed:boolean;batch_id:string;manifest_digest:string}>(args.database,
+    'SELECT request_signal_topic_editorial_batch_v2($1,$2,$3::jsonb,$4,$5::jsonb,$6,$7,$8::uuid) value',
+    [args.workspace_id,args.actor_user_id,JSON.stringify(plan),planBody,JSON.stringify(requestBodies),args.idempotency_key,
+      args.quote_reference,args.previous_execution_id??null]);
+}
+/** Durable same-key recovery is source-independent but still matches the original sealed quote/cap. */
+export async function replaySignalTopicEditorialBatchV2(args:Db&{workspace_id:string;actor_user_id:string;
+  numeric_execution_id:string;idempotency_key:string;quote_reference:string;confirmed_cap_micro_usd:string}){
+  if(!/^v2\.[0-9]{10}\.[a-f0-9]{64}$/u.test(args.quote_reference)||!/^\d{1,19}$/u.test(args.confirmed_cap_micro_usd))
+    throw new Error('topic_editorial_v2_request_invalid');
+  return invoke<{replayed:boolean;execution_id?:string;expected_items?:number;stage?:'screening';batch_id?:string;manifest_digest?:string}>(args.database,
+    'SELECT replay_signal_topic_editorial_batch_v2($1,$2,$3::uuid,$4,$5,$6::bigint) value',
+    [args.workspace_id,args.actor_user_id,args.numeric_execution_id,args.idempotency_key,args.quote_reference,args.confirmed_cap_micro_usd]);
 }
 async function tx<T>(database:SignalTopicEditorialBatchDatabaseV2,work:(client:PoolClient)=>Promise<T>):Promise<T>{
   const client=await database.connect();

@@ -43,10 +43,21 @@ function fixture() {
 }
 test("commands accept only explicit capped authorization or scoped retry", () => {
   assert.deepEqual(parseWorkspaceTopicEditorialCommandV1(command), command);
-  for (const change of [{ plan }, { evidence: [] }, { actor_user_id: actor }, { provider_available: true }, { confirmed_maximum_micro_usd: "30000001" },
-    { confirmed_maximum_micro_usd: "0" }, { confirmed_maximum_micro_usd: 20 }, { confirmed_maximum_micro_usd: "030000000" }])
+  for (const change of [{ plan }, { evidence: [] }, { actor_user_id: actor }, { provider_available: true },
+    { confirmed_maximum_micro_usd: "9223372036854775808" }, { confirmed_maximum_micro_usd: "0" },
+    { confirmed_maximum_micro_usd: "500000000" }, { confirmed_maximum_micro_usd: 20 }, { confirmed_maximum_micro_usd: "030000000" }])
     assert.equal(parseWorkspaceTopicEditorialCommandV1({ ...command, ...change }), null);
+  assert.deepEqual(parseWorkspaceTopicEditorialCommandV1({ ...command, quote_reference: `v2.1789236000.${"b".repeat(64)}`,
+    confirmed_maximum_micro_usd: "500000000" }), { ...command, quote_reference: `v2.1789236000.${"b".repeat(64)}`,
+      confirmed_maximum_micro_usd: "500000000" });
   assert.equal(parseWorkspaceTopicEditorialCommandV1({ action: command.action, numeric_execution_id: numeric, quote_reference: reference }), null);
+});
+test("V2 policy quote accepts a policy-owned cap above the experiment budget with one item per group", () => {
+  const largeQuote = { ...ready, status: "ready_to_authorize" as const, can_quote: true,
+    quote: { reference: `v2.1789236000.${"b".repeat(64)}`, expires_at: expires,
+      maximum_micro_usd: "500000000", group_count: 1652, screening_count: 1652, global_count: 1 as const } };
+  assert.equal(validWorkspaceTopicEditorialViewV1(largeQuote, workspace, numeric), true);
+  assert.equal(validWorkspaceTopicEditorialViewV1({ ...largeQuote, quote: { ...largeQuote.quote!, screening_count: 42 } }, workspace, numeric), false);
 });
 test("quote is server-built, redacted, capped and cache never contains the database connection", async () => {
   const f = fixture(); const result = await loadWorkspaceTopicEditorialForActorV1({ ...access, numericExecutionId: numeric, withQuote: true }, f.deps);
@@ -215,7 +226,7 @@ test("a zero-checkpoint obsolete failed plan offers and authorizes a fresh revie
 test("view validator rejects cross scope, injected secrets, inflated cap and contradictory authorization", () => {
   assert.equal(validWorkspaceTopicEditorialViewV1(ready, workspace, numeric), true);
   for (const value of [{ ...ready, workspace_id: actor }, { ...ready, numeric_execution_id: actor }, { ...ready, provider: "anthropic" },
-    { ...ready, quote: { ...quote, maximum_micro_usd: "30000001" } }, { ...ready, quote: { ...quote, plan } },
+    { ...ready, quote: { ...quote, maximum_micro_usd: "9223372036854775808" } }, { ...ready, quote: { ...quote, plan } },
     { ...ready, can_retry: true }, { ...ready, quote: null }, { ...ready, quote: { ...quote, expires_at: new Date(now).toISOString() } }])
     assert.equal(validWorkspaceTopicEditorialViewV1(value, workspace, numeric), false);
 });
@@ -258,8 +269,11 @@ test("Redis error events and abandoned connection failures are handled without t
 });
 test("uncertain HTTP keeps the original cap/quote/key and checks receipt scope", async () => {
   const intent = workspaceTopicEditorialIntentV1(workspace, command, null, () => "original-key");
-  const rotated = workspaceTopicEditorialIntentV1(workspace, { ...command, quote_reference: `v1.1789236010.${"b".repeat(64)}`, confirmed_maximum_micro_usd: "1" }, intent, () => "wrong-key");
-  assert.equal(rotated, intent);
+  const sameIntent = workspaceTopicEditorialIntentV1(workspace, { ...command }, intent, () => "wrong-key");
+  assert.equal(sameIntent, intent);
+  const refreshed = workspaceTopicEditorialIntentV1(workspace, { ...command, quote_reference: `v2.1789236010.${"b".repeat(64)}`,
+    confirmed_maximum_micro_usd: "500000000" }, intent, () => "refreshed-key");
+  assert.equal(refreshed.key, "refreshed-key");
   await assert.rejects(submitWorkspaceTopicEditorialIntentV1(intent, async () => new Response("{}", { status: 503 })), (e: unknown) => e instanceof WorkspaceTopicEditorialRequestError && !e.quoteRejected);
   await assert.rejects(submitWorkspaceTopicEditorialIntentV1(intent, async () => new Response(JSON.stringify({ error: "topic_editorial_quote_expired" }), { status: 409 })),
     (e: unknown) => e instanceof WorkspaceTopicEditorialRequestError && e.quoteRejected);
@@ -296,8 +310,11 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: an expired pa
 });
 test("route authenticates first, forbids injected query data, and controls fence after JSON awaits", async () => {
   const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/consolidation/editorial/route.ts", import.meta.url), "utf8");
+  const batchControl = await readFile(new URL("./signal-topic-editorial-batch-control-v2.ts", import.meta.url), "utf8");
   assert.ok(route.indexOf("loadSignalWorkspaceContextForTopics(workspaceId)") < route.indexOf("request.json()"));
   assert.match(route, /query\.getAll\(key\)\.length !== 1/u);
+  assert.ok(batchControl.indexOf("if(replay.replayed)") < batchControl.indexOf("if(args.runtimeEnabled===false)"));
+  assert.match(route, /if\(view\.execution\)return topicResponse\(view\)/u);
   const ui = await readFile(new URL("../../components/brands/WorkspaceTopicEditorialCard.tsx", import.meta.url), "utf8");
   assert.match(ui, /await response\.json\(\);\s*if \(controller\.signal\.aborted \|\| current\.current !== scope\) return/u);
   assert.match(ui, /submitController\.current\?\.abort\(\)/u); assert.doesNotMatch(ui, /activateSignal|materializeSignal|ANTHROPIC_API_KEY/u);
