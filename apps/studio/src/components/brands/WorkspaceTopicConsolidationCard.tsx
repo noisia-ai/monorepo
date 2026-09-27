@@ -69,7 +69,7 @@ export function WorkspaceTopicConsolidationCard({ value, disabled = false, onAct
   const active = value.status === "queued" || value.status === "running";
   const tone = value.status === "ready" ? "good" : value.status === "failed" || value.status.endsWith("required")
     || value.status === "source_stale" || value.status === "policy_expired" || value.status === "budget_unavailable"
-    ? "warning" : value.status === "ready_to_prepare" ? "not_available" : "warning";
+    ? "warning" : value.status === "ready_to_prepare" ? "good" : "warning";
 
   return <section className="admin-section topics-manager__consolidation" data-provider-execution="disabled"
     data-topic-consolidation-state={value.status}>

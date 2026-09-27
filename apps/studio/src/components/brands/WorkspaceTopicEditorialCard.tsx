@@ -4,6 +4,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { validWorkspaceTopicEditorialViewV1, workspaceTopicEditorialIntentV1, submitWorkspaceTopicEditorialIntentV1,
   WorkspaceTopicEditorialRequestError, type WorkspaceTopicEditorialIntentV1, type WorkspaceTopicEditorialViewV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
 import { WorkspaceTopicEditorialOutcomes } from "./WorkspaceTopicEditorialOutcomes";
+import { WorkspaceTopicLegacyEditorialOutcomes } from "./WorkspaceTopicLegacyEditorialOutcomes";
 
 export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecutionId, busy = false, stale = false, pending = false,
   retryReady = true, onStart, onRetry, onComplete, onReplay, onRefresh }: {
@@ -46,6 +47,8 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
           <div><dt>{t("ambiguous")}</dt><dd>{money(execution.ambiguous_micro_usd)}</dd></div>
         </dl> : null}
       </> : null}
+      {!value.batch_progress && workspaceId && numericExecutionId
+        ? <WorkspaceTopicLegacyEditorialOutcomes workspaceId={workspaceId} numericExecutionId={numericExecutionId} /> : null}
       <p className="admin-drawer-form__hint">{t("preserves")}</p>
       {value.status === "failed" && !value.can_retry && retryReady ? <p>{t("retryBlocked")}</p> : null}
       <div className="admin-form-actions">

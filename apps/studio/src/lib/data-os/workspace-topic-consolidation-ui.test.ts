@@ -67,7 +67,9 @@ for (const locale of ["es-MX", "en-US"] as const) {
     assert.ok(html.includes("1,652") || html.includes("1652"));
     assert.ok(html.includes(locale === "es-MX" ? "Convertir grupos en Topics útiles" : "Turn groups into useful Topics"));
     assert.ok(html.includes(locale === "es-MX" ? "No tendrás que aprobar grupo por grupo" : "not need to approve groups one by one"));
-    assert.ok(html.includes(locale === "es-MX" ? "Esta preparación es gratuita" : "This preparation is free"));
+    assert.ok(html.includes(locale === "es-MX"
+      ? "La revisión seguirá la política de procesamiento configurada para esta marca"
+      : "processing policy"));
     assert.doesNotMatch(html, /\$|USD|20\.00/u);
     assert.equal((html.match(/<button\b/g) ?? []).length, 1);
     assert.equal((html.match(/>No disponible<|>Unavailable</g) ?? []).length, 0);
