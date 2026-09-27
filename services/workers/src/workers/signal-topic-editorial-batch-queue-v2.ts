@@ -35,7 +35,10 @@ export function safeSignalTopicEditorialBatchDispatchErrorV2(error: unknown, pha
     : /^[0-9A-Z]{5}$/iu.test(code) ? `postgres_${code.toLowerCase()}` : null;
   const safeMessage = /^topic_editorial_batch_[a-z0-9_]{1,100}$/u.test(message) ? message : null;
   const causeTag = safeErrorCauseTag(error);
-  return `topic_editorial_batch_dispatch_${stage}_${knownCode ?? safeMessage ?? causeTag ?? "failed"}`;
+  // Prefer a typed nested cause over the generic safe wrapper message. The
+  // wrapper remains useful only when no allowlisted cause/code was available.
+  const typedCause = causeTag !== "error" && causeTag !== "unknown" ? causeTag : null;
+  return `topic_editorial_batch_dispatch_${stage}_${knownCode ?? typedCause ?? safeMessage ?? causeTag}`;
 }
 export function signalTopicEditorialBatchConfigurationV2(env: Environment = process.env) {
   const enabled = env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED === "true";

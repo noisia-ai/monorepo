@@ -20,6 +20,11 @@ test("dispatch diagnostics preserve phase and safe codes without leaking private
   const unsafeCode = Object.assign(new Error("private SQL details"), { code: "password=private" });
   assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(unsafeCode, "database_read"),
     "topic_editorial_batch_dispatch_database_read_error");
+  const safelyWrapped = new Error("topic_editorial_batch_database_read_error", {
+    cause: Object.assign(new Error("private SQL text"), { code: "42P01" }),
+  });
+  assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(safelyWrapped, "database_read"),
+    "topic_editorial_batch_dispatch_database_read_error_cause_error_42p01");
 });
 
 test("disabled Batch lane does not open DB, queue, key, timer or provider", async () => {
