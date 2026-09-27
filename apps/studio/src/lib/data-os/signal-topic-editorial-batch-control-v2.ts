@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalTopicConsolidationEditorialInputV1, quoteSignalTopicEditorialBatchV2,
-  requestSignalTopicEditorialBatchV2, replaySignalTopicEditorialBatchV2,
+import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalTopicConsolidationEditorialInputV1,
+  replaySignalTopicEditorialBatchV2,
   materializeSignalTopicEditorialBatchV2,
   quoteSignalTopicEditorialChunkedAdmissionV3,requestSignalTopicEditorialChunkedAdmissionV3,
   replaySignalTopicEditorialChunkedAdmissionV3,
