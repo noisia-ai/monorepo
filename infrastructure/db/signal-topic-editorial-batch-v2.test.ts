@@ -5,12 +5,15 @@ import test from 'node:test';
 import {signalTopicEditorialDigestV1} from '../../packages/query-engine/src/signal-topic-consolidation-editorial-v1';
 import {buildSignalTopicEditorialScreeningPlanV2,validateSignalTopicEditorialGroupOutputV2,
  type SignalTopicEditorialGroupOutputV2} from '../../packages/query-engine/src/signal-topic-consolidation-editorial-v2';
-import {admitSignalTopicEditorialBatchV2,signalTopicEditorialCanonicalBodyV2,releaseSignalTopicEditorialBatchLeaseV2,
+import {admitSignalTopicEditorialBatchV2,requestQuotedSignalTopicEditorialBatchPlanV2,requestSignalTopicEditorialBatchPlanV2,
+ markSignalTopicEditorialBatchPreparationFailedV2,retrySignalTopicEditorialBatchPreparationV2,
+ signalTopicEditorialCanonicalBodyV2,releaseSignalTopicEditorialBatchLeaseV2,
  persistSignalTopicEditorialBatchItemV2,rejectSignalTopicEditorialBatchSubmissionV2,attachProviderSignalTopicEditorialBatchV2,
  buildSignalTopicEditorialBatchCatalogV2,type SignalTopicEditorialBatchCatalogOutcomeV2,
  type SignalTopicEditorialBatchDatabaseV2,type SignalTopicEditorialBatchLeaseV2} from './signal-topic-editorial-batch-v2';
 const migration=readFileSync(new URL('./migrations/0193_signal_topic_editorial_message_batches_v2.sql',import.meta.url),'utf8');
 const sequencingMigration=readFileSync(new URL('./migrations/0196_signal_topic_editorial_batch_reuse_before_prepare.sql',import.meta.url),'utf8');
+const preparationRetryMigration=readFileSync(new URL('./migrations/0197_signal_topic_editorial_preparation_retry.sql',import.meta.url),'utf8');
 const lease={batch_id:'00000000-0000-4000-8000-000000000001',lease_token:'00000000-0000-4000-8000-000000000002',submission_token:'00000000-0000-4000-8000-000000000003'} as SignalTopicEditorialBatchLeaseV2;
 const uuid=(i:number)=>`00000000-0000-4000-8000-${String(i).padStart(12,'0')}`;
 const context={brand_name:'Alexa+',default_locale:'es-MX',summary:'Asistente de voz.',audiences:['hogares'],categories:['asistentes de voz'],
@@ -82,6 +85,74 @@ test('invalid sealed input fails before opening any database transaction',async(
  const d=database(null);
  await assert.rejects(admitSignalTopicEditorialBatchV2({database:d.db,workspace_id:'x',actor_user_id:'x',plan:{} as never,idempotency_key:'test-key',policy_version_id:'x',execution_cap_micro_usd:'1',send_not_after:'never'}));
  assert.equal(d.queries.length,0);
+});
+test('request admits the exact already-quoted plan without rebuilding it from source input',async()=>{
+ const plan=batchPlan(),d=database({execution_id:uuid(900),expected_items:plan.requests.length,stage:'screening',replayed:false});
+ const result=await requestQuotedSignalTopicEditorialBatchPlanV2({database:d.db,workspace_id:plan.identity.workspace_id,actor_user_id:uuid(702),
+  run_id:plan.identity.run_id,plan,idempotency_key:'same-plan-request-key',quote_reference:`v2.1790000000.${'a'.repeat(64)}`});
+ assert.equal(result.execution_id,uuid(900));
+ const call=d.queries.find(item=>item.sql.includes('request_signal_topic_editorial_batch_v2_unprepared'))!;
+ assert.equal(JSON.parse(call.values![2] as string).plan_digest,plan.plan_digest);
+ assert.equal(createHash('sha256').update(call.values![3] as string).digest('hex'),plan.plan_digest.slice(7));
+ const requests=JSON.parse(call.values![4] as string) as Array<{params_body:string;core_body:string}>;
+ assert.equal(requests.length,plan.requests.length);
+ assert.deepEqual(JSON.parse(call.values![2] as string),plan);
+ assert.equal(d.queries.at(-1)!.sql,'COMMIT');
+});
+test('unquoted generic plan admission retains complete Query Engine validation',async()=>{
+ const plan=batchPlan(),d=database({execution_id:uuid(901),expected_items:plan.requests.length,stage:'screening',replayed:false});
+ const result=await requestSignalTopicEditorialBatchPlanV2({database:d.db,workspace_id:plan.identity.workspace_id,actor_user_id:uuid(702),
+  run_id:plan.identity.run_id,plan,idempotency_key:'generic-plan-request-key',quote_reference:`v2.1790000000.${'a'.repeat(64)}`});
+ assert.equal(result.execution_id,uuid(901));
+ const invalid=database(null);
+ await assert.rejects(requestSignalTopicEditorialBatchPlanV2({database:invalid.db,workspace_id:plan.identity.workspace_id,actor_user_id:uuid(702),
+  run_id:plan.identity.run_id,plan:{...plan,expected_group_count:plan.expected_group_count+1},idempotency_key:'generic-plan-request-key',
+  quote_reference:`v2.1790000000.${'a'.repeat(64)}`}),/topic_editorial_v2_plan_invalid/u);
+ assert.equal(invalid.queries.length,0);
+});
+test('preparation failure is durably marked through its V2-only DB contract',async()=>{
+ const d=database({execution_id:uuid(902),stage:'preparation_failed',replayed:false});
+ const result=await markSignalTopicEditorialBatchPreparationFailedV2({database:d.db,execution_id:uuid(902)});
+ assert.deepEqual(result,{execution_id:uuid(902),stage:'preparation_failed',replayed:false});
+ assert.equal(d.queries[2]!.sql,'SELECT mark_signal_topic_editorial_batch_preparation_failed_v2($1::uuid) value');
+ assert.deepEqual(d.queries[2]!.values,[uuid(902)]);assert.equal(d.queries.at(-1)!.sql,'COMMIT');
+ const invalid=database(null);
+ await assert.rejects(markSignalTopicEditorialBatchPreparationFailedV2({database:invalid.db,execution_id:'bad'}),/topic_editorial_v2_execution_invalid/u);
+ assert.equal(invalid.queries.length,0);
+});
+test('preparation retry uses workspace/actor/execution and a fresh immutable key',async()=>{
+ const d=database({execution_id:uuid(903),stage:'screening',replayed:true});
+ const result=await retrySignalTopicEditorialBatchPreparationV2({database:d.db,workspace_id:uuid(700),actor_user_id:uuid(702),
+  execution_id:uuid(903),idempotency_key:'fresh-preparation-retry-key'});
+ assert.deepEqual(result,{execution_id:uuid(903),stage:'screening',replayed:true});
+ assert.equal(d.queries[2]!.sql,'SELECT retry_signal_topic_editorial_batch_preparation_v2($1::uuid,$2::uuid,$3::uuid,$4) value');
+ assert.deepEqual(d.queries[2]!.values,[uuid(700),uuid(702),uuid(903),'fresh-preparation-retry-key']);
+ assert.equal(d.queries.at(-1)!.sql,'COMMIT');
+ const invalid=database(null);
+ await assert.rejects(retrySignalTopicEditorialBatchPreparationV2({database:invalid.db,workspace_id:uuid(700),actor_user_id:uuid(702),
+  execution_id:uuid(903),idempotency_key:'short'}),/topic_editorial_v2_request_invalid/u);
+ assert.equal(invalid.queries.length,0);
+});
+test('0197 limits retry to admitted V2 owners before provider work and keeps the original admission immutable',()=>{
+ const retryBody=preparationRetryMigration.slice(preparationRetryMigration.indexOf('CREATE FUNCTION retry_signal_topic_editorial_batch_preparation_v2'));
+ assert.match(preparationRetryMigration,/stage IN\('screening','screening_ready','review_pending','preparation_failed'\)/u);
+ assert.match(preparationRetryMigration,/plan->>'contract_version' IS DISTINCT FROM 'signal-topic-editorial-screening-plan-v2'/u);
+ assert.match(preparationRetryMigration,/EXISTS\(SELECT 1 FROM signal_topic_editorial_provider_batches_v2 WHERE execution_id=e\.id\)/u);
+ assert.match(preparationRetryMigration,/EXISTS\(SELECT 1 FROM signal_topic_editorial_calls WHERE execution_id=e\.id\)/u);
+ assert.match(preparationRetryMigration,/signal_topic_editorial_source_v1\(e\.numeric_run_id\) IS DISTINCT FROM e\.source_binding/u);
+ assert.match(preparationRetryMigration,/processing_idempotency_conflict/u);
+ assert.match(preparationRetryMigration,/topic_editorial_preparation_retry_unavailable/u);
+ assert.match(preparationRetryMigration,/PERFORM signal_brand_context_processing_lock_actor_v1\(target_workspace,target_actor\)/u);
+ assert.match(preparationRetryMigration,/BEFORE INSERT ON signal_topic_editorial_provider_batches_v2/u);
+ assert.match(preparationRetryMigration,/o\.stage IS DISTINCT FROM 'preparation_failed'/u);
+ assert.match(retryBody,/a\.target_id IS DISTINCT FROM e\.id/u);
+ assert.match(retryBody,/a\.execution_cap_micro_usd IS DISTINCT FROM e\.hard_cap_micro_usd/u);
+ assert.match(retryBody,/UPDATE signal_topic_editorial_batch_owners_v2 SET stage='screening'/u);
+ assert.ok(retryBody.indexOf('RETURN prior.result')<retryBody.indexOf('signal_topic_editorial_source_v1(e.numeric_run_id)'),
+  'an exact retry-key replay must survive later source drift');
+ assert.match(preparationRetryMigration,/INSERT INTO signal_topic_editorial_request_keys/u);
+ assert.doesNotMatch(preparationRetryMigration,/INSERT INTO signal_processing_admissions|UPDATE signal_processing_admissions|UPDATE signal_topic_editorial_executions|INSERT INTO signal_topic_editorial_calls/u);
+ assert.doesNotMatch(preparationRetryMigration,/CREATE TABLE/u);
 });
 test('0193 preserves historical functions, isolates trigger transport and revokes all new functions after definition',()=>{
  assert.doesNotMatch(migration,/CREATE OR REPLACE FUNCTION/u);

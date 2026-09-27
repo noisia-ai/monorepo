@@ -61,11 +61,32 @@ export async function quoteSignalTopicEditorialBatchV2(args:Db&{workspace_id:str
 export async function requestSignalTopicEditorialBatchV2(args:Db&{workspace_id:string;actor_user_id:string;run_id:string;
   input:SignalTopicEditorialPreparedInputV1;idempotency_key:string;quote_reference:string;previous_execution_id?:string|null}){
   const plan=buildSignalTopicEditorialBatchPlanFromPreparedInputV2({input:args.input,run_id:args.run_id});
+  return requestSignalTopicEditorialBatchPlanV2({...args,plan});
+}
+/** Admits the exact server-built plan already quoted by the caller. Keeping this
+ * path separate avoids rebuilding a large evidence plan after policy quoting;
+ * the SQL function still revalidates its canonical digest, source and quote. */
+export async function requestSignalTopicEditorialBatchPlanV2(args:Db&{workspace_id:string;actor_user_id:string;run_id:string;
+  plan:SignalTopicEditorialScreeningPlanV2;idempotency_key:string;quote_reference:string;previous_execution_id?:string|null}){
+  const plan=args.plan;
   validateSignalTopicEditorialScreeningPlanV2(plan);
-  if(plan.identity.workspace_id!==args.workspace_id||plan.identity.run_id!==args.run_id
-    ||!/^v2\.[0-9]{10}\.[a-f0-9]{64}$/u.test(args.quote_reference)
-    ||!/^[-A-Za-z0-9._:]{8,200}$/u.test(args.idempotency_key))throw new Error('topic_editorial_v2_request_invalid');
-  const {plan_digest:_digest,...body}=plan,planBody=signalTopicEditorialCanonicalBodyV2(body);
+  return requestQuotedSignalTopicEditorialBatchPlanV2(args);
+}
+/** Fast path for a server-held plan that quoteSignalTopicEditorialBatchV2 just
+ * validated. The admission SQL repeats the exact source, policy, quote and
+ * plan-digest checks atomically; it does not trust browser-supplied evidence. */
+export async function requestQuotedSignalTopicEditorialBatchPlanV2(args:Db&{workspace_id:string;actor_user_id:string;run_id:string;
+  plan:SignalTopicEditorialScreeningPlanV2;idempotency_key:string;quote_reference:string;previous_execution_id?:string|null}){
+  const plan=args.plan;
+  if(!plan||!Array.isArray(plan.requests)||!plan.identity
+    ||!/^v2\.[0-9]{10}\.[a-f0-9]{64}$/u.test(args.quote_reference))throw new Error('topic_editorial_v2_request_invalid');
+  if(plan.identity.workspace_id!==args.workspace_id||plan.identity.run_id!==args.run_id)
+    throw new Error('topic_editorial_v2_scope_invalid');
+  const {plan_digest:_digest,...unsigned}=plan;
+  const sealedBody=signalTopicEditorialCanonicalBodyV2(unsigned);
+  if(sha(sealedBody)!==plan.plan_digest)throw new Error('topic_editorial_v2_plan_digest_invalid');
+  if(!/^[-A-Za-z0-9._:]{8,200}$/u.test(args.idempotency_key))throw new Error('topic_editorial_v2_request_invalid');
+  const planBody=sealedBody;
   const requestBodies=plan.requests.map(request=>{const {request_digest,...core}=request;
     const {provider_request,...record}=core;
     const coreBody=signalTopicEditorialCanonicalBodyV2({...record,params:provider_request.params});
@@ -145,6 +166,30 @@ export async function prepareAllSignalTopicEditorialBatchV2(args:Db&{execution_i
   const prepared=await prepareSignalTopicEditorialBatchV2({database:args.database,execution_id:args.execution_id,
     request_digests:digests,submission_key});
   return {...prepared,provider_items:digests.length};
+}
+
+/** Records a terminal pre-provider preparation failure on the V2 owner. The
+ * database refuses this transition once any provider manifest or call exists. */
+export async function markSignalTopicEditorialBatchPreparationFailedV2(args:Db&{execution_id:string}){
+  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(args.execution_id))
+    throw new Error('topic_editorial_v2_execution_invalid');
+  return invoke<{execution_id:string;stage:'preparation_failed';replayed:boolean}>(args.database,
+    'SELECT mark_signal_topic_editorial_batch_preparation_failed_v2($1::uuid) value',[args.execution_id]);
+}
+
+/** Starts a new durable preparation attempt against the original admitted V2
+ * execution. A fresh immutable key is required; no new quote, cap or spend is
+ * created here, and the database rechecks actor scope and source freshness. */
+export async function retrySignalTopicEditorialBatchPreparationV2(args:Db&{workspace_id:string;actor_user_id:string;
+  execution_id:string;idempotency_key:string}){
+  const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+  if(!uuid.test(args.workspace_id)||!uuid.test(args.actor_user_id)||!uuid.test(args.execution_id))
+    throw new Error('topic_editorial_v2_request_invalid');
+  if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))
+    throw new Error('topic_editorial_v2_request_invalid');
+  return invoke<{execution_id:string;stage:'screening';replayed:boolean}>(args.database,
+    'SELECT retry_signal_topic_editorial_batch_preparation_v2($1::uuid,$2::uuid,$3::uuid,$4) value',
+    [args.workspace_id,args.actor_user_id,args.execution_id,args.idempotency_key]);
 }
 
 /** Copies only prior, fully settled V1 decisions whose raw provider receipt,
