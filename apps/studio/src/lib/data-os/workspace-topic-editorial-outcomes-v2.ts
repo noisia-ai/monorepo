@@ -63,7 +63,7 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
       LEFT JOIN LATERAL (
         SELECT candidate.id FROM signal_topic_editorial_executions candidate
         WHERE candidate.workspace_id=numeric.workspace_id AND candidate.numeric_run_id=numeric.consolidation_run_id
-          AND candidate.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+          AND candidate.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')
         ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 1
       ) editorial ON true
       WHERE numeric.workspace_id=$1::uuid AND numeric.id=$2::uuid AND numeric.status='ready'`,
@@ -81,7 +81,7 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
       ), latest_v2 AS (
         SELECT editorial.* FROM signal_topic_editorial_executions editorial,numeric
         WHERE editorial.workspace_id=$1::uuid AND editorial.numeric_run_id=numeric.run_id
-          AND editorial.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+          AND editorial.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')
         ORDER BY editorial.created_at DESC,editorial.id DESC LIMIT 1
       ), scope AS (
         SELECT group_row.id group_id,group_row.group_key,revision.id revision_id

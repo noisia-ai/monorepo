@@ -168,7 +168,8 @@ export async function prepareAllSignalTopicEditorialBatchV2(args:Db&{execution_i
   try{
     const result=await client.query<{request_digest:string}>(`SELECT r.request_digest FROM signal_topic_editorial_requests r
       JOIN signal_topic_editorial_executions e ON e.id=r.execution_id
-      WHERE r.execution_id=$1::uuid AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+      WHERE r.execution_id=$1::uuid AND e.plan->>'contract_version' IN
+        ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')
         AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_reused_decisions_v2 reused WHERE reused.request_id=r.id)
       ORDER BY r.batch_index,r.request_digest`,[args.execution_id]);
     digests=result.rows.map(row=>row.request_digest);
@@ -177,7 +178,8 @@ export async function prepareAllSignalTopicEditorialBatchV2(args:Db&{execution_i
     const db=await args.database.connect();
     try{const row=(await db.query<{expected:number;reused:number}>(`SELECT jsonb_array_length(e.plan->'requests') expected,
       (SELECT count(*)::integer FROM signal_topic_editorial_reused_decisions_v2 r WHERE r.execution_id=e.id) reused
-      FROM signal_topic_editorial_executions e WHERE e.id=$1::uuid AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,[args.execution_id])).rows[0];
+      FROM signal_topic_editorial_executions e WHERE e.id=$1::uuid AND e.plan->>'contract_version' IN
+        ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')`,[args.execution_id])).rows[0];
       if(!row||row.expected===0||row.expected!==row.reused)throw new Error('topic_editorial_v2_manifest_empty');
       return {batch_id:null,manifest_digest:null,replayed:true,provider_items:0,reused_items:row.reused};
     }finally{db.release();}
@@ -225,10 +227,17 @@ export async function reuseCompatibleSignalTopicEditorialPaidResultsV2(args:Db&{
     const targetResult=await client.query<{plan:SignalTopicEditorialScreeningPlanV2;previous_execution_id:string|null}>(`
       SELECT e.plan,o.previous_execution_id::text FROM signal_topic_editorial_executions e
       JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
-      WHERE e.id=$1::uuid AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,[args.execution_id]);
+      WHERE e.id=$1::uuid AND e.plan->>'contract_version' IN
+        ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')`,[args.execution_id]);
     target=targetResult.rows[0]??null;
     if(!target)return {reused_items:0,needs_review_items:0};
     if(!target.previous_execution_id)return {reused_items:0,needs_review_items:0};
+    if(target.plan.contract_version==='signal-topic-editorial-admission-header-v3' as string){
+      const requestRows=await client.query<{request:SignalTopicEditorialGroupRequestV2}>(`
+        SELECT receipts->'request' request FROM signal_topic_editorial_requests
+        WHERE execution_id=$1::uuid ORDER BY batch_index`,[args.execution_id]);
+      target.plan={...target.plan,requests:requestRows.rows.map(row=>row.request)};
+    }
     const result=await client.query<{plan:SignalTopicEditorialScreeningPlanV1;calls:typeof prior extends infer _ ? Array<{
       request_digest:string;response_body_private:string;response_sha256:string;response_output:unknown;response_http_status:number;
       response_complete:boolean;call_id:string;execution_id:string;workspace_id:string;run_id:string}>:never}>(`
@@ -380,7 +389,7 @@ export async function materializeSignalTopicEditorialBatchV2(args:Db&{workspace_
           AND r.workspace_id=e.workspace_id AND r.status='validated' AND r.created_by_user_id=e.actor_user_id AND r.created_at>=e.created_at) materialized
       FROM signal_topic_editorial_executions e JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
       WHERE e.id=$1::uuid AND e.workspace_id=$2::uuid AND e.actor_user_id=$3::uuid
-        AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,
+        AND e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')`,
     [args.execution_id,args.workspace_id,args.actor_user_id])).rows[0];
     if(!owner)throw new Error('topic_editorial_v2_catalog_scope_invalid');
     consolidationRunId=owner.numeric_run_id;

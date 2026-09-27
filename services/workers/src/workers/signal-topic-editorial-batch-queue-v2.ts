@@ -80,7 +80,7 @@ export async function drainSignalTopicEditorialBatchesV2(options: Options = {}) 
       const result = await preparationClient.query<{ id: string }>(`SELECT e.id::text id
         FROM signal_topic_editorial_executions e
         JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
-        WHERE e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+        WHERE e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')
           AND o.stage<>'preparation_failed'
           AND e.status IN('queued','running')
           AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_provider_batches_v2 b WHERE b.execution_id=e.id)

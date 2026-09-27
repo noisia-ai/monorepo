@@ -75,7 +75,7 @@ export async function startWorkspaceTopicEditorialBatchV2ForActor(args:Args&{ide
         JOIN signal_topic_consolidation_executions n ON n.workspace_id=e.workspace_id
           AND n.consolidation_run_id=e.numeric_run_id AND n.id=$4::uuid
         WHERE k.workspace_id=$1::uuid AND k.actor_user_id=$2::uuid AND k.idempotency_key=$3
-          AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,
+          AND e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')`,
       [args.workspaceId,args.actorUserId,args.idempotencyKey,args.numericExecutionId])).rows[0];
       if(row)existing=row;
       const keyExists=(await client.query(`SELECT 1 FROM signal_topic_editorial_request_keys
@@ -142,7 +142,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
       ), latest AS (
         SELECT e.* FROM signal_topic_editorial_executions e,numeric n
         WHERE e.workspace_id=$1 AND e.numeric_run_id=n.consolidation_run_id
-          AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'
+          AND e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')
         ORDER BY e.created_at DESC,e.id DESC LIMIT 1
       ), unit_outcomes AS (
         SELECT r.id,r.request_digest,
@@ -237,7 +237,7 @@ export async function retryWorkspaceTopicEditorialPreparationV2ForActor(args:Arg
       JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
       JOIN signal_topic_consolidation_executions n ON n.workspace_id=e.workspace_id AND n.consolidation_run_id=e.numeric_run_id
       WHERE e.workspace_id=$1::uuid AND e.id=$2::uuid AND n.id=$3::uuid
-        AND e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2'`,
+        AND e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')`,
     [args.workspaceId,args.executionId,args.numericExecutionId])).rows[0];
     await client.query("COMMIT");
     if(row?.stage!=="preparation_failed")return null;
@@ -328,7 +328,7 @@ export async function completeWorkspaceTopicEditorialBatchV2ForActor(args:Args&{
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
     if(!caps.can_view)fail("processing_forbidden",403);
     const row=(await client.query<{run_id:string;is_v2:boolean}>(`SELECT r.consolidation_run_id::text run_id,
-      e.plan->>'contract_version'='signal-topic-editorial-screening-plan-v2' is_v2
+      e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3') is_v2
       FROM signal_topic_consolidation_executions n JOIN signal_topic_consolidation_runs r
         ON r.id=n.consolidation_run_id AND r.workspace_id=n.workspace_id
       JOIN signal_topic_editorial_executions e ON e.numeric_run_id=r.id AND e.workspace_id=n.workspace_id
