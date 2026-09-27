@@ -11,6 +11,18 @@ type Queue = {
   add(name: string, data: { batch_id: string }, options: Record<string, unknown>): Promise<unknown>;
 };
 type Options = { env?: Environment; database?: SignalTopicEditorialBatchDatabaseV2; queue?: Queue };
+const dispatchPhases = new Set(["database_read", "queue_lookup", "queue_state", "queue_retry", "queue_enqueue"]);
+export function safeSignalTopicEditorialBatchDispatchErrorV2(error: unknown, phase: string) {
+  const stage = dispatchPhases.has(phase) ? phase : "unknown";
+  const value = error && typeof error === "object" ? error as { code?: unknown; message?: unknown } : null;
+  const code = typeof value?.code === "string" ? value.code : "";
+  const message = typeof value?.message === "string" ? value.message : "";
+  const knownCode = /^(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|ENETUNREACH|EHOSTUNREACH|08000|08003|08006|57P01|57P02|57P03)$/u.test(code)
+    ? `transport_${code.toLowerCase()}`
+    : /^[0-9A-Z]{5}$/iu.test(code) ? `postgres_${code.toLowerCase()}` : null;
+  const safeMessage = /^topic_editorial_batch_[a-z0-9_]{1,100}$/u.test(message) ? message : null;
+  return `topic_editorial_batch_dispatch_${stage}_${knownCode ?? safeMessage ?? "failed"}`;
+}
 export function signalTopicEditorialBatchConfigurationV2(env: Environment = process.env) {
   const enabled = env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED === "true";
   return { enabled, provider_enabled: enabled && env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED === "true" };
@@ -22,32 +34,43 @@ export async function drainSignalTopicEditorialBatchesV2(options: Options = {}) 
   if (!flags.enabled) return { disabled: true, dispatched: 0 };
   const database = options.database ?? (await import("../db/client")).pool;
   const queue = options.queue ?? (await import("../queues/data-os")).dataOsProducer;
-  const client = await database.connect();
-  let ids: string[];
+  let phase = "database_read";
   try {
-    const result = await client.query<{ id: string }>(`SELECT id FROM signal_topic_editorial_provider_batches_v2
-      WHERE state IN('prepared','submitting','in_progress','canceling','ended')
-        AND next_poll_at <= clock_timestamp()
-        AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
-        AND (state <> 'prepared' OR $1::boolean)
-      ORDER BY next_poll_at,id LIMIT 10`, [flags.provider_enabled]);
-    ids = result.rows.map(row => row.id);
-  } finally { client.release(); }
-  let dispatched = 0;
-  for (const batch_id of ids) {
-    const jobId = `topic-editorial-batch-v2-${batch_id}`;
-    const existing = await queue.getJob(jobId);
-    if (existing) {
-      const state = await existing.getState();
-      if (state === "completed" || state === "failed") await existing.retry(state);
-    } else {
-      await queue.add(SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2, { batch_id }, { jobId,
-        attempts: 3, backoff: { type: "exponential", delay: 5000 },
-        removeOnComplete: true, removeOnFail: { age: 604800, count: 500 } });
+    const client = await database.connect();
+    let ids: string[];
+    try {
+      const result = await client.query<{ id: string }>(`SELECT id FROM signal_topic_editorial_provider_batches_v2
+        WHERE state IN('prepared','submitting','in_progress','canceling','ended')
+          AND next_poll_at <= clock_timestamp()
+          AND (lease_expires_at IS NULL OR lease_expires_at <= clock_timestamp())
+          AND (state <> 'prepared' OR $1::boolean)
+        ORDER BY next_poll_at,id LIMIT 10`, [flags.provider_enabled]);
+      ids = result.rows.map(row => row.id);
+    } finally { client.release(); }
+    let dispatched = 0;
+    for (const batch_id of ids) {
+      const jobId = `topic-editorial-batch-v2-${batch_id}`;
+      phase = "queue_lookup";
+      const existing = await queue.getJob(jobId);
+      if (existing) {
+        phase = "queue_state";
+        const state = await existing.getState();
+        if (state === "completed" || state === "failed") {
+          phase = "queue_retry";
+          await existing.retry(state);
+        }
+      } else {
+        phase = "queue_enqueue";
+        await queue.add(SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2, { batch_id }, { jobId,
+          attempts: 3, backoff: { type: "exponential", delay: 5000 },
+          removeOnComplete: true, removeOnFail: { age: 604800, count: 500 } });
+      }
+      dispatched++;
     }
-    dispatched++;
+    return { disabled: false, dispatched };
+  } catch (error) {
+    throw new Error(safeSignalTopicEditorialBatchDispatchErrorV2(error, phase));
   }
-  return { disabled: false, dispatched };
 }
 
 export function startSignalTopicEditorialBatchDrainerV2(options: Options & { interval_ms?: number; run_immediately?: boolean } = {}) {
@@ -55,8 +78,10 @@ export function startSignalTopicEditorialBatchDrainerV2(options: Options & { int
   let closed = false, pending: Promise<unknown> | null = null;
   const drainNow = () => {
     if (closed || !enabled) return Promise.resolve();
-    return pending ??= drainSignalTopicEditorialBatchesV2(options).catch(() => {
-      console.warn("topic_editorial_batch_dispatch_failed");
+    return pending ??= drainSignalTopicEditorialBatchesV2(options).catch(error => {
+      const message = error instanceof Error && /^topic_editorial_batch_dispatch_[a-z_0-9]{1,200}$/u.test(error.message)
+        ? error.message : safeSignalTopicEditorialBatchDispatchErrorV2(error, "unknown");
+      console.warn(message);
     }).finally(() => { pending = null; });
   };
   const timer = enabled ? setInterval(() => { void drainNow(); }, options.interval_ms ?? 5000) : null;

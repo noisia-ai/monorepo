@@ -3,7 +3,18 @@ import { test } from "node:test";
 import type { SignalTopicEditorialBatchDatabaseV2 } from "@noisia/db";
 import { drainSignalTopicEditorialBatchesV2, signalTopicEditorialBatchConfigurationV2,
   signalTopicEditorialBatchJobV2, startSignalTopicEditorialBatchDrainerV2,
-  SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2 } from "./signal-topic-editorial-batch-queue-v2";
+  SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2, safeSignalTopicEditorialBatchDispatchErrorV2 } from "./signal-topic-editorial-batch-queue-v2";
+
+test("dispatch diagnostics preserve phase and safe codes without leaking private messages", () => {
+  assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(Object.assign(new Error("private SQL details"), { code: "42P01" }), "database_read"),
+    "topic_editorial_batch_dispatch_database_read_postgres_42p01");
+  assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(Object.assign(new Error("redis://private-secret"), { code: "ECONNRESET" }), "queue_lookup"),
+    "topic_editorial_batch_dispatch_queue_lookup_transport_econnreset");
+  assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(new Error("topic_editorial_batch_storage_receipt_invalid"), "queue_enqueue"),
+    "topic_editorial_batch_dispatch_queue_enqueue_topic_editorial_batch_storage_receipt_invalid");
+  assert.equal(safeSignalTopicEditorialBatchDispatchErrorV2(new Error("postgres://user:secret@db/private"), "anything/unexpected"),
+    "topic_editorial_batch_dispatch_unknown_failed");
+});
 
 test("disabled Batch lane does not open DB, queue, key, timer or provider", async () => {
   const database = { connect: async () => { assert.fail("disabled database"); } };
