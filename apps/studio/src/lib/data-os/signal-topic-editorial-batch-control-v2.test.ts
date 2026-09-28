@@ -26,6 +26,13 @@ test("completed requires materialization and no pending/recovering/technical/amb
   assert.equal(resolveWorkspaceTopicEditorialBatchStatusV2({ ...accepted, ambiguous_micro_usd: "1" }), "failed");
 });
 
+test("a technical error is visible while other batches continue; failure is terminal only after work settles", () => {
+  const active={...grammarRecovery,technical_errors:1,batch_states:{applied:2,in_progress:1}};
+  assert.equal(resolveWorkspaceTopicEditorialBatchStatusV2(active),"running");
+  assert.equal(resolveWorkspaceTopicEditorialBatchStatusV2({...active,pending:0,recovering:0}),"failed");
+  assert.equal(resolveWorkspaceTopicEditorialBatchStatusV2({...active,preparation_failed:true}),"failed");
+});
+
 test("grammar retry status does not expose a manual retry or complete-catalog gate", () => {
   const status = resolveWorkspaceTopicEditorialBatchStatusV2(grammarRecovery);
   assert.equal(status === "review_ready" || status === "completed", false);

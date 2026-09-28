@@ -21,11 +21,12 @@ export function resolveWorkspaceTopicEditorialBatchStatusV2(input:{materialized:
   const ambiguous=BigInt(input.ambiguous_micro_usd)>0n;
   const complete=input.materialized&&input.pending===0&&input.recovering===0&&input.technical_errors===0&&!ambiguous;
   if(complete)return "completed" as const;
-  if(input.preparation_failed||input.technical_errors>0||ambiguous)return "failed" as const;
+  if(input.preparation_failed||ambiguous)return "failed" as const;
   if(input.pending>0||input.recovering>0){
     const states=Object.keys(input.batch_states);
     return states.length===0||(input.batch_states.prepared??0)>0&&states.length===1?"queued" as const:"running" as const;
   }
+  if(input.technical_errors>0)return "failed" as const;
   return input.contract_version==='signal-topic-editorial-admission-header-v3'?"consolidation_pending" as const:"review_ready" as const;
 }
 async function prepared(args:Args){
