@@ -119,7 +119,7 @@ export async function loadSignalWorkspaceTopicComputationStatusV1(args: {
   // or to assess freshness of an earlier completed search. Never return its private text.
   if (mode === "workspace" && (state.embedding_run_id || isCurrent)) {
     try {
-      const built = await loadSignalWorkspaceTopicInputSnapshotV1(args);
+      const built = await loadSignalWorkspaceTopicInputSnapshotV1({...args,input_interests_only:true});
       isCurrent = isCurrent && ready?.taxonomy_profile_id === built.profile_id
         && ready.context_digest === built.input.context_digest && ready.definition_digest === built.input.definition_digest;
       if (state.embedding_run_id) {

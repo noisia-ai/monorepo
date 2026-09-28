@@ -181,7 +181,7 @@ async function missingPrototypes(client:PoolClient,workspace:string,input:Signal
  WHERE cache.id IS NULL`,[workspace,JSON.stringify(inputs),input.embedding_profile.config_digest,input.embedding_profile.model,input.embedding_profile.provider])).rows[0]!.missing);
 }
 /** Server-only preparation of the exact immutable definition/context inputs. No vectors or provider calls. */
-export async function loadSignalWorkspaceTopicInputSnapshotV1(args:{database:SignalWorkspaceTopicDatabaseV1;workspace_id:string;actor_user_id:string}){
+export async function loadSignalWorkspaceTopicInputSnapshotV1(args:{database:SignalWorkspaceTopicDatabaseV1;workspace_id:string;actor_user_id:string;input_interests_only?:boolean}){
  return transaction(args.database,client=>loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,queryable:client}));
 }
 /** Caller owns transaction/snapshot consistency. This read never creates a run or another pool. */
@@ -213,7 +213,9 @@ export async function requestSignalWorkspaceTopicComputationV1(args:{database:Si
    [args.embedding_run_id,args.workspace_id])).rows[0];
   if(!embedded)return fail("workspace_topic_complete_embeddings_required");assertSignalWorkspaceEmbeddingProfileV1(embedded.profile);
   if(embedded.counts.completed_roots!==embedded.counts.eligible_roots||embedded.counts.processed_chunk_references!==embedded.counts.total_chunk_references)return fail("workspace_topic_corpus_embeddings_incomplete");
-  const built=await snapshot(client,args.workspace_id,embedded.profile);
+  // Discovery outputs stay visible in the catalog, but only explicit interests
+  // (or discoveries deliberately promoted to guidance) are search inputs.
+  const built=await snapshot(client,args.workspace_id,embedded.profile,false,true);
   if(await missingPrototypes(client,args.workspace_id,built.input)>0)return fail("workspace_topic_prototypes_required");
   const active=(await client.query("SELECT id FROM signal_topic_catalog_executions WHERE taxonomy_profile_id=$1::uuid AND status IN('queued','running')",[built.profile_id])).rows[0];
   if(active)return fail("workspace_topic_execution_active");
