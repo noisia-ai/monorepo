@@ -23,7 +23,7 @@ export type SignalTopicEditorialGlobalStageObservationV2 = {
   stage_kind: Kind; round: number; batch_index: number; descriptor: Review;
   validation: SignalTopicEditorialGlobalStageValidationV2 | null;
   call_status: string | null; batch_state: string | null;
-  retryable_grammar_error: boolean;
+  retryable_receipt_error: boolean;
 };
 export type SignalTopicEditorialGlobalAdvancePlanV2 =
   | { action: "prepare"; stage_kind: Kind; round: number; reviews: Review[] }
@@ -64,8 +64,8 @@ function inspect<T>(kind: Kind, round: number, reviews: Review[], requests: Sign
       waiting = true; continue;
     }
     if (validation.status !== status || !("result" in validation)) {
-      if (current.retryable_grammar_error)
-        return { state: "waiting", reason: "topic_editorial_global_stage_grammar_retry_pending" };
+      if (current.retryable_receipt_error)
+        return { state: "waiting", reason: "topic_editorial_global_stage_receipt_retry_pending" };
       return { state: "blocked", reason: "topic_editorial_global_stage_result_not_accepted" };
     }
     results.push({ batch_index: index, result: validation.result as T });

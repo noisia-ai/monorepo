@@ -78,22 +78,28 @@ export async function prepareSignalTopicEditorialGlobalStageV2(args:{database:Si
   return tx(args.database,async client=>{
     let execution=(await client.query<{organization_id:string;processing_admission_id:string;budget_date:string;budget_timezone:string;
       policy_version_id:string;hard_cap_micro_usd:string;stage:string;send_not_after:string;expected_group_count:number}>(`
-      SELECT e.organization_id,e.processing_admission_id,a.budget_date,a.budget_timezone,a.policy_version_id,
+      SELECT e.organization_id,e.processing_admission_id,
+        CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END budget_date,
+        a.budget_timezone,a.policy_version_id,
         e.hard_cap_micro_usd::text,o.stage,o.send_not_after::text,run.expected_group_count
       FROM signal_topic_editorial_executions e JOIN signal_processing_admissions a ON a.id=e.processing_admission_id
       JOIN signal_topic_consolidation_runs run ON run.id=e.numeric_run_id AND run.workspace_id=e.workspace_id
       JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
+      LEFT JOIN signal_topic_editorial_global_continuations_v2 grant_row ON grant_row.execution_id=e.id
       WHERE e.id=$1::uuid AND e.workspace_id=$2::uuid AND e.actor_user_id=$3::uuid`,
     [args.execution_id,args.workspace_id,args.actor_user_id])).rows[0];
     if(!execution||execution.stage!=='review_pending')throw new Error('topic_editorial_global_stage_owner_invalid');
     await client.query('SELECT signal_processing_lock_v1($1::uuid,$2::date)',[execution.organization_id,execution.budget_date]);
     await client.query('SELECT signal_brand_context_processing_lock_actor_v1($1::uuid,$2::uuid)',[args.workspace_id,args.actor_user_id]);
     execution=(await client.query<{organization_id:string;processing_admission_id:string;budget_date:string;budget_timezone:string;
-      policy_version_id:string;hard_cap_micro_usd:string;stage:string;send_not_after:string;expected_group_count:number}>(`SELECT e.organization_id,e.processing_admission_id,a.budget_date,a.budget_timezone,a.policy_version_id,
+      policy_version_id:string;hard_cap_micro_usd:string;stage:string;send_not_after:string;expected_group_count:number}>(`SELECT e.organization_id,e.processing_admission_id,
+        CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END budget_date,
+        a.budget_timezone,a.policy_version_id,
         e.hard_cap_micro_usd::text,o.stage,o.send_not_after::text,run.expected_group_count
       FROM signal_topic_editorial_executions e JOIN signal_processing_admissions a ON a.id=e.processing_admission_id
       JOIN signal_topic_consolidation_runs run ON run.id=e.numeric_run_id AND run.workspace_id=e.workspace_id
       JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
+      LEFT JOIN signal_topic_editorial_global_continuations_v2 grant_row ON grant_row.execution_id=e.id
       WHERE e.id=$1::uuid AND e.workspace_id=$2::uuid AND e.actor_user_id=$3::uuid FOR UPDATE OF e,o`,
       [args.execution_id,args.workspace_id,args.actor_user_id])).rows[0];
     if(!execution||execution.stage!=='review_pending')throw new Error('topic_editorial_global_stage_owner_invalid');
@@ -251,7 +257,7 @@ export type SignalTopicEditorialGlobalStageProgressV2={stage_id:string;execution
   snapshot_digest:string;screening_review_digest:string;expected_group_count:number;requests:Array<{
     stage_kind:'shard'|'merge'|'rank';round:number;batch_index:number;descriptor:unknown;input_body:string;request_body:string;
     validation:SignalTopicEditorialGlobalStageValidationV2|null;raw_sha256:string|null;call_status:string|null;batch_state:string|null;error_code:string|null;
-    retryable_grammar_error:boolean;
+    retryable_receipt_error:boolean;
   }>;};
 
 /** Read accepted, sealed requests and receipts in one MVCC snapshot. This is the
@@ -263,21 +269,28 @@ export async function loadSignalTopicEditorialGlobalStageProgressV2(args:{databa
     await client.query('SET LOCAL search_path=public,extensions,pg_temp');
     const stage=(await client.query<{stage_id:string;execution_id:string;workspace_id:string;actor_user_id:string;snapshot_digest:string;
       screening_review_digest:string;expected_group_count:number;send_not_after:string;admission_not_after:string;policy_status:string;policy_valid_until:string}>(`SELECT s.stage_id::text,s.execution_id::text,s.workspace_id::text,e.actor_user_id::text,
-      s.snapshot_digest,s.screening_review_digest,s.expected_group_count,o.send_not_after::text,a.admission_not_after::text,p.status policy_status,p.valid_until::text policy_valid_until
+      s.snapshot_digest,s.screening_review_digest,s.expected_group_count,
+      CASE WHEN grant_row.execution_id IS NULL THEN o.send_not_after ELSE p.valid_until END::text send_not_after,
+      CASE WHEN grant_row.execution_id IS NULL THEN a.admission_not_after ELSE p.valid_until END::text admission_not_after,
+      p.status policy_status,p.valid_until::text policy_valid_until
       FROM signal_topic_editorial_global_stages_v2 s JOIN signal_topic_editorial_executions e ON e.id=s.execution_id
       JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id AND o.workspace_id=e.workspace_id
       JOIN signal_processing_admissions a ON a.id=e.processing_admission_id JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id
+      LEFT JOIN signal_topic_editorial_global_continuations_v2 grant_row ON grant_row.execution_id=e.id
       WHERE s.stage_id=$1::uuid`,[args.stage_id])).rows[0];
     if(!stage)throw new Error('topic_editorial_global_stage_missing');
     const rows=(await client.query<{stage_kind:'shard'|'merge'|'rank';round:number;batch_index:number;stage_contract_body:string;
       input_body:string;request_body:string;validation:unknown;raw_sha256:string|null;call_status:string|null;batch_state:string|null;
-      error_code:string|null;retryable_grammar_error:boolean}>(`SELECT r.stage_kind,r.round,r.batch_index,r.stage_contract_body,r.input_body,r.request_body,attempt.validation,
+      error_code:string|null;retryable_receipt_error:boolean}>(`SELECT r.stage_kind,r.round,r.batch_index,r.stage_contract_body,r.input_body,r.request_body,attempt.validation,
         attempt.raw_sha256,attempt.call_status,attempt.batch_state,attempt.error_code,
-        COALESCE(attempt.call_status='settled' AND attempt.settled_micro_usd=0 AND attempt.observed_micro_usd=0
-          AND attempt.outcome='errored' AND attempt.validation->>'status'='provider_error'
-          AND attempt.grammar_message LIKE 'Grammar compilation rate limit exceeded%'
+        COALESCE(attempt.call_status='settled' AND (
+          (attempt.settled_micro_usd=0 AND attempt.observed_micro_usd=0
+            AND attempt.outcome='errored' AND attempt.validation->>'status'='provider_error'
+            AND attempt.grammar_message LIKE 'Grammar compilation rate limit exceeded%')
+          OR (attempt.outcome='succeeded' AND attempt.validation->>'status'='invalid_output'
+            AND attempt.validation->>'code'='topic_editorial_global_shard_citation_invalid'))
           AND attempt.attempt_count<5 AND clock_timestamp()<least($2::timestamptz,$3::timestamptz,$4::timestamptz)
-          AND $5='active',false) retryable_grammar_error
+          AND $5='active',false) retryable_receipt_error
       FROM signal_topic_editorial_global_stage_requests_v2 r
       LEFT JOIN LATERAL (SELECT c.status call_status,c.error_code,c.settled_micro_usd,c.observed_micro_usd,b.state batch_state,i.validation,i.raw_sha256,
         i.outcome,c.response_body_private::jsonb->'result'->'error'->'error'->>'message' grammar_message,
@@ -289,7 +302,7 @@ export async function loadSignalTopicEditorialGlobalStageProgressV2(args:{databa
     await client.query('COMMIT');
     return {...stage,requests:rows.map(row=>({...row,descriptor:JSON.parse(row.stage_contract_body) as unknown,
       validation:row.validation===null?null:typeof row.validation==='string'?JSON.parse(row.validation) as SignalTopicEditorialGlobalStageValidationV2:
-        row.validation as SignalTopicEditorialGlobalStageValidationV2,retryable_grammar_error:row.retryable_grammar_error}))} satisfies SignalTopicEditorialGlobalStageProgressV2;
+        row.validation as SignalTopicEditorialGlobalStageValidationV2,retryable_receipt_error:row.retryable_receipt_error}))} satisfies SignalTopicEditorialGlobalStageProgressV2;
   }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
 }
 
@@ -317,11 +330,14 @@ export function createSignalTopicEditorialGlobalStageRuntimeStoresV2(args:{datab
         // preparation: preparation owns org/day + actor + execution and may need
         // the same durable stage while the call trigger waits on execution.
         const scope=(await client.query<{execution_id:string;workspace_id:string;actor_user_id:string;organization_id:string;budget_date:string}>(`
-          SELECT e.id::text execution_id,e.workspace_id::text,e.actor_user_id::text,e.organization_id::text,a.budget_date::text
+          SELECT e.id::text execution_id,e.workspace_id::text,e.actor_user_id::text,e.organization_id::text,
+            CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END::text budget_date
           FROM signal_topic_editorial_global_stage_batches_v2 b
           JOIN signal_topic_editorial_global_stages_v2 s ON s.stage_id=b.stage_id
           JOIN signal_topic_editorial_executions e ON e.id=s.execution_id
-          JOIN signal_processing_admissions a ON a.id=e.processing_admission_id WHERE b.id=$1::uuid`,[args.batch_id])).rows[0];
+          JOIN signal_processing_admissions a ON a.id=e.processing_admission_id
+          LEFT JOIN signal_topic_editorial_global_continuations_v2 grant_row ON grant_row.execution_id=e.id
+          WHERE b.id=$1::uuid`,[args.batch_id])).rows[0];
         if(!scope)throw new Error('topic_editorial_global_stage_lease_lost');
         await client.query('SELECT signal_processing_lock_v1($1::uuid,$2::date)',[scope.organization_id,scope.budget_date]);
         await client.query('SELECT signal_brand_context_processing_lock_actor_v1($1::uuid,$2::uuid)',[scope.workspace_id,scope.actor_user_id]);
@@ -577,9 +593,9 @@ export async function markSignalTopicEditorialGlobalStageBlockedV2(args:{databas
   });
 }
 
-/** Retry only Anthropic's exact zero-cost grammar compilation rate-limit error.
- * The sealed request is byte-identical; the retry is a new immutable call and
- * Batch item, limited to five total attempts and paced provider-wide. */
+/** Retry exact zero-cost grammar errors or a paid shard with invalid citations.
+ * The sealed request is byte-identical; accepted paid siblings stay untouched.
+ * Each retry is a new immutable call, at most five attempts per request. */
 export async function prepareSignalTopicEditorialGlobalStageGrammarRetryV2(args:{database:SignalTopicEditorialGlobalStageDatabaseV2}){
   return tx(args.database,async client=>{
     const locked=(await client.query<{locked:boolean}>(`SELECT pg_try_advisory_xact_lock(hashtextextended('signal-topic-editorial-global-grammar-retry-v2',0)) locked`)).rows[0]?.locked;
@@ -598,19 +614,24 @@ export async function prepareSignalTopicEditorialGlobalStageGrammarRetryV2(args:
         ORDER BY c.request_id,c.reserved_at DESC,c.id DESC)
       SELECT s.stage_id::text,s.execution_id::text,s.workspace_id::text,s.organization_id::text,r.id::text request_id,
         c.id::text previous_call_id,r.stage_kind,r.custom_id,r.call_identity,r.stage_contract_body,r.request_body,r.input_digest,r.request_digest,
-        a.budget_date::text reserved_date,a.budget_timezone,e.hard_cap_micro_usd::text hard_cap,s.screening_review_digest
+        CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END::text reserved_date,
+        a.budget_timezone,e.hard_cap_micro_usd::text hard_cap,s.screening_review_digest
       FROM signal_topic_editorial_global_stages_v2 s
       JOIN signal_topic_editorial_executions e ON e.id=s.execution_id
       JOIN signal_topic_editorial_batch_owners_v2 owner ON owner.execution_id=e.id AND owner.workspace_id=e.workspace_id
       JOIN signal_processing_admissions a ON a.id=e.processing_admission_id
+      LEFT JOIN signal_topic_editorial_global_continuations_v2 grant_row ON grant_row.execution_id=e.id
       JOIN signal_topic_editorial_global_stage_requests_v2 r ON r.stage_id=s.stage_id
       JOIN latest c ON c.request_id=r.id
       JOIN signal_topic_editorial_global_stage_batch_items_v2 i ON i.call_id=c.id AND i.request_id=r.id
       JOIN signal_topic_editorial_global_stage_batches_v2 b ON b.id=i.batch_id
       WHERE s.state='open' AND owner.stage='review_pending' AND e.status IN('queued','running')
-        AND c.status='settled' AND c.settled_micro_usd=0 AND c.observed_micro_usd=0
-        AND b.state='imported' AND i.outcome='errored' AND i.validation->>'status'='provider_error'
-        AND c.response_body_private::jsonb->'result'->'error'->'error'->>'message' LIKE 'Grammar compilation rate limit exceeded%'
+        AND c.status='settled' AND b.state='imported' AND (
+          (c.settled_micro_usd=0 AND c.observed_micro_usd=0 AND i.outcome='errored'
+            AND i.validation->>'status'='provider_error'
+            AND c.response_body_private::jsonb->'result'->'error'->'error'->>'message' LIKE 'Grammar compilation rate limit exceeded%')
+          OR (i.outcome='succeeded' AND i.validation->>'status'='invalid_output'
+            AND i.validation->>'code'='topic_editorial_global_shard_citation_invalid'))
         AND (SELECT count(*) FROM signal_topic_editorial_global_stage_calls_v2 attempts WHERE attempts.request_id=r.id)<5
       ORDER BY s.created_at,r.stage_kind,r.round,r.batch_index LIMIT 100`,[])).rows;
     if(!candidates.length)return null;

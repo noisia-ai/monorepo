@@ -176,14 +176,20 @@ export async function drainSignalTopicEditorialGlobalAdvancementsV2(options: Dra
               JOIN signal_topic_editorial_batch_owners_v2 owner ON owner.execution_id=stage.execution_id
               JOIN signal_processing_admissions admission ON admission.id=stage.processing_admission_id
               JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
+              LEFT JOIN signal_topic_editorial_global_continuations_v2 grant_row ON grant_row.execution_id=stage.execution_id
               WHERE request.stage_id=stage.stage_id AND latest.batch_state='imported'
-                AND latest.status='settled' AND latest.settled_micro_usd=0 AND latest.observed_micro_usd=0
-                AND latest.outcome='errored' AND latest.validation->>'status'='provider_error'
-                AND latest.response_body_private::jsonb->'result'->'error'->'error'->>'message'
-                  LIKE 'Grammar compilation rate limit exceeded%'
+                AND latest.status='settled'
+                AND (((latest.settled_micro_usd=0 AND latest.observed_micro_usd=0)
+                  AND latest.outcome='errored' AND latest.validation->>'status'='provider_error'
+                  AND latest.response_body_private::jsonb->'result'->'error'->'error'->>'message'
+                    LIKE 'Grammar compilation rate limit exceeded%')
+                  OR (latest.outcome='succeeded' AND latest.validation->>'status'='invalid_output'
+                    AND latest.validation->>'code'='topic_editorial_global_shard_citation_invalid'))
                 AND (SELECT count(*) FROM signal_topic_editorial_global_stage_calls_v2 attempts
                   WHERE attempts.request_id=request.id)<5
-                AND clock_timestamp()<least(owner.send_not_after,admission.admission_not_after,policy.valid_until)
+                AND clock_timestamp()<CASE WHEN grant_row.execution_id IS NULL
+                  THEN least(owner.send_not_after,admission.admission_not_after,policy.valid_until)
+                  ELSE policy.valid_until END
                 AND policy.status='active')))))
         AND NOT EXISTS (
           SELECT 1 FROM signal_topic_editorial_requests request
@@ -290,7 +296,7 @@ export async function signalTopicEditorialGlobalAdvanceJobV2(
         round: request.round, batch_index: request.batch_index,
         descriptor: request.descriptor, validation: request.validation,
         call_status: request.call_status, batch_state: request.batch_state,
-        retryable_grammar_error: request.retryable_grammar_error }) as SignalTopicEditorialGlobalStageObservationV2) });
+        retryable_receipt_error: request.retryable_receipt_error }) as SignalTopicEditorialGlobalStageObservationV2) });
   } catch (error) {
     const code = error instanceof Error && /^topic_editorial_[a-z0-9_]{1,100}$/u.test(error.message)
       ? error.message : "topic_editorial_global_stage_plan_invalid";

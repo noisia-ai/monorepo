@@ -1,0 +1,11 @@
+# Continuación de consolidación global Alexa+ — 28 septiembre
+
+La ejecución V3 `d4dee83e-f35d-43f7-865e-f868580a7427` conserva 1,652 decisiones de cribado (1,580 aceptadas nuevas y 72 reutilizadas). El primer Batch global válido produjo 35 shards aceptados y 7 shards con citas de grupos incorrectos; no existe todavía catálogo consolidado final. El validador hizo bien en rechazar esas siete respuestas: aceptar o recortar sus citas habría atribuido evidencia falsa. El gasto global asentado previo al reintento era USD 7.162878; el cribado asentado era USD 22.331826.
+
+El operador autorizó continuar esa misma ejecución sin otro límite artificial de horas. SQL0207 agrega una autorización inmutable sólo para su fase global: conserva actor, workspace, admisión original, política activa, Sonnet 4.6, tope de USD 1,700 por ejecución y USD 2,000 por día, con fecha presupuestaria del día actual. La política vigente termina el 4 de octubre. No altera solicitudes, prompts, respuestas pagadas ni las 35 decisiones válidas. Los siete intentos de citas inválidas admiten reintento de la misma solicitud sellada, hasta cinco intentos totales; respuestas válidas previas no se reenvían.
+
+Ensayo UAT en transacción revertida: SQL0207 analizó y el guard reabrió el stage; sin continuación la reserva nueva fue rechazada, con continuación se reservó exactamente un reintento de una solicitud fallida. El rollback dejó las filas intactas. Typecheck DB/Worker, prueba focal DB y prueba de avance Worker pasaron. Este ensayo no equivale a Batch nuevo ni a catálogo final.
+
+SQL0207 se aplicó **una sola vez** a UAT a las `2026-09-28T06:23:02.587Z`, SHA256 `9d603d5c56161ae4cf9160488d6c779bfc0130a5224062029e0c9657d33959de`. En la misma transacción se registró la continuación autorizada para esta ejecución. Recibo posterior: 42 solicitudes, 35 resultados aceptados, 7 inválidos, cero llamadas inciertas; el stage quedó `blocked` a propósito hasta desplegar el Worker nuevo. **No reaplicar SQL0207 ni registrar otra continuación.**
+
+Pendiente: entregar el Worker focal, reabrir el stage mediante el guard, observar sólo siete solicitudes reintentadas, completar merge/ranking, comprobar los 1,652 grupos y Noise con ejemplos reales, materializar Topics consolidados y verificar selección/Signal en la interfaz. No declarar completa la consolidación por el ensayo o por el cribado.

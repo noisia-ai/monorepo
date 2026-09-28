@@ -65,7 +65,7 @@ test("advance waits for exact accepted shards, then creates merge, then complete
   } });
   const shardObservation: SignalTopicEditorialGlobalStageObservationV2 = { stage_kind: "shard", round: 0,
     batch_index: shard.batch_index, descriptor: shard, validation: { status: "accepted_shard", result: shardResult },
-    call_status: "settled", batch_state: "imported", retryable_grammar_error: false };
+    call_status: "settled", batch_state: "imported", retryable_receipt_error: false };
   const second = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest, requests: [shardObservation] });
   assert.equal(second.action, "prepare");
   if (second.action !== "prepare") return;
@@ -79,7 +79,7 @@ test("advance waits for exact accepted shards, then creates merge, then complete
   } });
   const mergeObservation: SignalTopicEditorialGlobalStageObservationV2 = { stage_kind: "merge", round: 1,
     batch_index: review.batch_index, descriptor: review, validation: { status: "accepted_merge", result: mergeResult },
-    call_status: "settled", batch_state: "imported", retryable_grammar_error: false };
+    call_status: "settled", batch_state: "imported", retryable_receipt_error: false };
   const final = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest,
     requests: [shardObservation, mergeObservation] });
   assert.equal(final.action, "materialize");
@@ -90,7 +90,7 @@ test("advance waits for exact accepted shards, then creates merge, then complete
   }
 });
 
-test("terminal invalid stage blocks, while an exact zero-cost grammar retry waits", () => {
+test("terminal invalid stage blocks, while eligible grammar or citation retries wait", () => {
   const units = makeUnits(1), snapshot_digest = units[0]!.request.identity.snapshot_digest;
   const first = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest, requests: [] });
   if (first.action !== "prepare") throw new Error("expected shard");
@@ -98,14 +98,18 @@ test("terminal invalid stage blocks, while an exact zero-cost grammar retry wait
   const failed: SignalTopicEditorialGlobalStageObservationV2 = { stage_kind: "shard", round: 0,
     batch_index: 0, descriptor: shard, validation: { status: "provider_error",
       code: "topic_editorial_global_stage_provider_errored" }, call_status: "settled", batch_state: "imported",
-    retryable_grammar_error: false };
+    retryable_receipt_error: false };
   const blocked = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest, requests: [failed] });
   assert.deepEqual(blocked, { action: "blocked", reason: "topic_editorial_global_stage_result_not_accepted" });
   const waiting = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest,
-    requests: [{ ...failed, retryable_grammar_error: true }] });
-  assert.deepEqual(waiting, { action: "waiting", reason: "topic_editorial_global_stage_grammar_retry_pending" });
+    requests: [{ ...failed, retryable_receipt_error: true }] });
+  assert.deepEqual(waiting, { action: "waiting", reason: "topic_editorial_global_stage_receipt_retry_pending" });
+  const citation = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest,
+    requests: [{ ...failed, validation: { status: "invalid_output",
+      code: "topic_editorial_global_shard_citation_invalid" }, retryable_receipt_error: true }] });
+  assert.deepEqual(citation, { action: "waiting", reason: "topic_editorial_global_stage_receipt_retry_pending" });
   const rejected = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest, requests: [{ ...failed,
-    validation: null, call_status: "definitely_not_sent", batch_state: "rejected", retryable_grammar_error: false }] });
+    validation: null, call_status: "definitely_not_sent", batch_state: "rejected", retryable_receipt_error: false }] });
   assert.deepEqual(rejected, { action: "blocked", reason: "topic_editorial_global_stage_submission_rejected" });
 });
 
@@ -126,7 +130,7 @@ test("multiple merge lots without reduction require one compact global ranking p
     } });
     return { stage_kind: "shard", round: 0, batch_index: review.batch_index, descriptor: review,
       validation: { status: "accepted_shard", result }, call_status: "settled", batch_state: "imported",
-      retryable_grammar_error: false };
+      retryable_receipt_error: false };
   });
   const partial = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest,
     requests: shardObservations.slice(0, 1) });
@@ -147,7 +151,7 @@ test("multiple merge lots without reduction require one compact global ranking p
     } });
     return { stage_kind: "merge", round: 1, batch_index: review.batch_index, descriptor: review,
       validation: { status: "accepted_merge", result }, call_status: "settled", batch_state: "imported",
-      retryable_grammar_error: false };
+      retryable_receipt_error: false };
   });
   const ranked = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest,
     requests: [...shardObservations, ...mergeObservations] });
@@ -165,7 +169,7 @@ test("multiple merge lots without reduction require one compact global ranking p
   } });
   const rankObservation: SignalTopicEditorialGlobalStageObservationV2 = { stage_kind: "rank", round: 0,
     batch_index: 0, descriptor: rank, validation: { status: "accepted_rank", result: rankResult },
-    call_status: "settled", batch_state: "imported", retryable_grammar_error: false };
+    call_status: "settled", batch_state: "imported", retryable_receipt_error: false };
   const final = planSignalTopicEditorialGlobalAdvanceV2({ units, snapshot_digest,
     requests: [...shardObservations, ...mergeObservations, rankObservation] });
   assert.equal(final.action, "materialize");
