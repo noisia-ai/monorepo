@@ -106,7 +106,11 @@ export function startDataOsWorker() {
     },
     {
       connection: redisConnection,
-      concurrency: readDataOsWorkerConcurrency()
+      concurrency: readDataOsWorkerConcurrency(),
+      // Global editorial advancement reads the entire sealed corpus before it
+      // materializes a revision. A 30 s lease expires during that read on UAT,
+      // so BullMQ stalls and repeats the same work before it can commit.
+      lockDuration: 300_000
     }
   );
 }
