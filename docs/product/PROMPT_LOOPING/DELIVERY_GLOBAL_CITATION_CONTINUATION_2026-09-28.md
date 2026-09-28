@@ -8,4 +8,10 @@ Ensayo UAT en transacción revertida: SQL0207 analizó y el guard reabrió el st
 
 SQL0207 se aplicó **una sola vez** a UAT a las `2026-09-28T06:23:02.587Z`, SHA256 `9d603d5c56161ae4cf9160488d6c779bfc0130a5224062029e0c9657d33959de`. En la misma transacción se registró la continuación autorizada para esta ejecución. Recibo posterior: 42 solicitudes, 35 resultados aceptados, 7 inválidos, cero llamadas inciertas; el stage quedó `blocked` a propósito hasta desplegar el Worker nuevo. **No reaplicar SQL0207 ni registrar otra continuación.**
 
-Pendiente: entregar el Worker focal, reabrir el stage mediante el guard, observar sólo siete solicitudes reintentadas, completar merge/ranking, comprobar los 1,652 grupos y Noise con ejemplos reales, materializar Topics consolidados y verificar selección/Signal en la interfaz. No declarar completa la consolidación por el ensayo o por el cribado.
+Pendiente: observar sólo siete solicitudes reintentadas, completar merge/ranking, comprobar los 1,652 grupos y Noise con ejemplos reales, materializar Topics consolidados y verificar selección/Signal en la interfaz. No declarar completa la consolidación por el ensayo o por el cribado.
+
+## Reanudación del lote de siete
+
+Worker `1fc5b37` quedó ACTIVE en Railway (despliegue `9569ba1a-da70-44c5-b3b1-25efaa0b4367`). Con ese runtime activo se reabrió el stage `6d31bebb-1ccc-4a74-8b95-c8ea873076b5`; el Worker preparó un lote de **siete** y conservó los 35 aceptados. El primer envío quedó en `prepared` con `topic_editorial_global_stage_manifest_binding_invalid`: las solicitudes selladas ya estaban en estado `submitted`, mientras el guard del primer envío exigía `prepared`. No llegó a Claude ni generó gasto.
+
+SQL0208 permite el manifiesto de una solicitud `submitted` únicamente si su llamada reservada es un reintento enlazado; la guardia de la llamada ya exige un fallo exacto y limita intentos. Se probó el paso `prepared → submitting` sobre ese mismo lote en transacción revertida. SQL0208 se aplicó **una sola vez** a UAT a las `2026-09-28T06:42:29.607Z`, SHA256 `88ea2e10bed0c4f04321012f69cfc399ea0548b07070d12277f19df38dcc7494`. El lote quedó preparado para el siguiente turno del Worker; aún faltaba verificar envío y aceptación cuando se escribió este recibo. **No reaplicar SQL0208.**
