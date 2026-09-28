@@ -7,6 +7,7 @@ import {signalTopicEditorialGlobalStageRequestIdentityV2,signalTopicEditorialGlo
   type SignalTopicEditorialGlobalStageValidationV2} from '../../services/workers/src/workers/signal-topic-editorial-global-stage-v2';
 import {signalTopicEditorialStagedScreeningReviewDigestV2,
   repairSignalTopicEditorialGlobalShardFormattingV2,
+  repairSignalTopicEditorialGlobalMergeMemberKeysV2,
   type SignalTopicEditorialGlobalCatalogInputV2} from '../../packages/query-engine/src/signal-topic-editorial-global-v2';
 import type {SignalTopicEditorialGlobalUnitV2} from '../../packages/query-engine/src/signal-topic-editorial-global-v2';
 import {materializeSignalTopicConsolidationRevisionV1,parseSignalTopicConsolidationRevisionV1,signalTopicConsolidationDigestV1} from './signal-topic-consolidation';
@@ -308,17 +309,17 @@ export async function loadSignalTopicEditorialGlobalStageProgressV2(args:{databa
   }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
 }
 
-/** Resolve only a blocked shard whose paid raw response already contains one
- * valid own-group citation for every decision. The original Batch item stays
- * immutable; the request's previously unused validation slot records the
- * exact raw receipt and the structural changes. No new provider call. */
+/** Resolve only structurally recoverable paid shard or merge output. The
+ * original Batch item stays immutable; the request's previously unused
+ * validation slot records the exact raw receipt and structural changes. */
 export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{database:SignalTopicEditorialGlobalStageDatabaseV2}){
   return tx(args.database,async client=>{
     const stage=(await client.query<{stage_id:string}>(`SELECT s.stage_id::text FROM signal_topic_editorial_global_stages_v2 s
       WHERE s.state='blocked' AND EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_requests_v2 r
         JOIN signal_topic_editorial_global_stage_batch_items_v2 i ON i.request_id=r.id
         WHERE r.stage_id=s.stage_id AND r.validation IS NULL
-          AND i.validation->>'code' IN('topic_editorial_global_shard_citation_invalid','topic_editorial_global_shard_coverage_invalid'))
+          AND i.validation->>'code' IN('topic_editorial_global_shard_citation_invalid','topic_editorial_global_shard_coverage_invalid',
+            'topic_editorial_global_merge_member_invalid'))
         AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_calls_v2 c WHERE c.stage_id=s.stage_id
           AND c.status NOT IN('settled','definitely_not_sent'))
         AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_batches_v2 b WHERE b.stage_id=s.stage_id
@@ -338,11 +339,12 @@ export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{d
         JOIN signal_topic_editorial_global_stage_calls_v2 c ON c.id=i.call_id
         WHERE i.request_id=r.id ORDER BY b.created_at DESC LIMIT 1)latest ON true
       WHERE r.stage_id=$1::uuid ORDER BY r.stage_kind,r.round,r.batch_index`,[stage.stage_id])).rows;
-    const corrections:Array<{request_id:string;raw_text:string;validation:unknown;removed:number;merged:number}>=[];
+    const corrections:Array<{request_id:string;raw_text:string;validation:unknown;removed:number;merged:number;replaced:number;deduplicated:number}>=[];
     for(const row of rows){
       const prior=row.validation as {status?:string}|null,latest=row.latest_validation as {status?:string}|null;
-      if(prior?.status==='accepted_shard'||latest?.status==='accepted_shard')continue;
-      if(row.stage_kind!=='shard'||row.call_status!=='settled'||row.batch_state!=='imported'
+      const acceptedStatus=row.stage_kind==='shard'?'accepted_shard':row.stage_kind==='merge'?'accepted_merge':'accepted_rank';
+      if(prior?.status===acceptedStatus||latest?.status===acceptedStatus)continue;
+      if(!['shard','merge'].includes(row.stage_kind)||row.call_status!=='settled'||row.batch_state!=='imported'
         ||row.state!=='submitted'||!row.raw_text||row.raw_sha256!==sha(row.raw_text)
         ||!row.prior_validation_sha256||!row.batch_id||!row.call_id)return {recovered:false,reason:'source_unavailable'};
       let response:unknown;
@@ -351,14 +353,28 @@ export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{d
         if(content?.length!==1||typeof content[0]?.text!=='string')return {recovered:false,reason:'raw_response_invalid'};
         response=JSON.parse(content[0].text);}
       catch{return {recovered:false,reason:'raw_response_invalid'};}
-      const shard=JSON.parse(row.stage_contract_body) as Parameters<typeof repairSignalTopicEditorialGlobalShardFormattingV2>[0]['shard'];
-      const fixed=repairSignalTopicEditorialGlobalShardFormattingV2({shard,value:response});
-      if(!fixed)return {recovered:false,reason:'format_not_repairable'};
-      corrections.push({request_id:row.request_id,raw_text:row.raw_text,removed:fixed.removed_invalid_citations,
-        merged:fixed.merged_noise_duplicates,validation:{status:'accepted_shard',result:fixed.result,
-          structural_repair:{kind:'citation_surplus_or_duplicate_noise',source_batch_id:row.batch_id,source_call_id:row.call_id,
-            prior_validation_sha256:row.prior_validation_sha256,removed_invalid_citations:fixed.removed_invalid_citations,
-            merged_noise_duplicates:fixed.merged_noise_duplicates}}});
+      if(row.stage_kind==='shard'){
+        const shard=JSON.parse(row.stage_contract_body) as Parameters<typeof repairSignalTopicEditorialGlobalShardFormattingV2>[0]['shard'];
+        const fixed=repairSignalTopicEditorialGlobalShardFormattingV2({shard,value:response});
+        if(!fixed)return {recovered:false,reason:'format_not_repairable'};
+        corrections.push({request_id:row.request_id,raw_text:row.raw_text,removed:fixed.removed_invalid_citations,
+          merged:fixed.merged_noise_duplicates,replaced:0,deduplicated:0,validation:{status:'accepted_shard',result:fixed.result,
+            structural_repair:{kind:'citation_surplus_or_duplicate_noise',source_batch_id:row.batch_id,source_call_id:row.call_id,
+              prior_validation_sha256:row.prior_validation_sha256,removed_invalid_citations:fixed.removed_invalid_citations,
+              merged_noise_duplicates:fixed.merged_noise_duplicates}}});
+      }else{
+        if((latest as {code?:string}|null)?.code!=='topic_editorial_global_merge_member_invalid')
+          return {recovered:false,reason:'merge_validation_code_mismatch'};
+        const review=JSON.parse(row.stage_contract_body) as Parameters<typeof repairSignalTopicEditorialGlobalMergeMemberKeysV2>[0]['review'];
+        const fixed=repairSignalTopicEditorialGlobalMergeMemberKeysV2({review,value:response});
+        if(!fixed)return {recovered:false,reason:'merge_keys_not_repairable'};
+        corrections.push({request_id:row.request_id,raw_text:row.raw_text,removed:0,merged:0,
+          replaced:fixed.replaced_child_keys,deduplicated:fixed.deduplicated_parent_keys,
+          validation:{status:'accepted_merge',result:fixed.result,
+            structural_repair:{kind:'complete_child_lineage_alias',source_batch_id:row.batch_id,source_call_id:row.call_id,
+              prior_validation_sha256:row.prior_validation_sha256,replaced_child_keys:fixed.replaced_child_keys,
+              deduplicated_parent_keys:fixed.deduplicated_parent_keys}}});
+      }
     }
     if(!corrections.length)return {recovered:false,reason:'no_corrections'};
     for(const row of corrections){
@@ -376,7 +392,9 @@ export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{d
     if(!reopened)throw new Error('topic_editorial_global_stage_recovery_conflict');
     return {recovered:true,stage_id:stage.stage_id,corrected_requests:corrections.length,
       removed_invalid_citations:corrections.reduce((n,row)=>n+row.removed,0),
-      merged_noise_duplicates:corrections.reduce((n,row)=>n+row.merged,0)};
+      merged_noise_duplicates:corrections.reduce((n,row)=>n+row.merged,0),
+      replaced_child_keys:corrections.reduce((n,row)=>n+row.replaced,0),
+      deduplicated_parent_keys:corrections.reduce((n,row)=>n+row.deduplicated,0)};
   });
 }
 

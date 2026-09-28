@@ -7,6 +7,7 @@ import {buildSignalTopicEditorialGlobalMergeReviewsV2,buildSignalTopicEditorialG
   applySignalTopicEditorialGlobalRootV2,buildSignalTopicEditorialGlobalCatalogInputV2,composeSignalTopicEditorialGlobalShardOutcomesV2,
   summarizeSignalTopicEditorialGlobalMergeRoundV2,validateSignalTopicEditorialGlobalMergeResultV2,validateSignalTopicEditorialGlobalShardResultV2,
   repairSignalTopicEditorialGlobalShardFormattingV2,
+  repairSignalTopicEditorialGlobalMergeMemberKeysV2,
   buildSignalTopicEditorialGlobalRankingReviewV2,validateSignalTopicEditorialGlobalRankingResultV2,
   applySignalTopicEditorialGlobalRankingV2,
   type SignalTopicEditorialGlobalShardResultV2,type SignalTopicEditorialGlobalUnitV2} from './signal-topic-editorial-global-v2';
@@ -241,6 +242,33 @@ test('bounded merge rounds can merge concepts from different screening lots with
   assert.equal(catalog.concept_metadata.get(final[0]!.concept_key)?.priority_rank,1);
   assert.equal(catalog.group_evidence.every(item=>item.cited_ref_ids.length===1),true);
   assert.equal(catalog.outcome_counts.topic,6);
+});
+
+test('merge key recovery maps complete child lineage but refuses splits or missing children',()=>{
+  const shards=buildSignalTopicEditorialGlobalShardsV2({units:makeUnits(4),expected_group_count:4,batch_size:2});
+  const results=shards.map(shard=>({batch_index:shard.batch_index,result:shardResult(shard)}));
+  const first=buildSignalTopicEditorialGlobalMergeReviewsV2({shards,results,round:1,fan_in:2});
+  const parents=first.map(review=>validateSignalTopicEditorialGlobalMergeResultV2({review,value:{
+    contract_version:'signal-topic-editorial-global-merge-result-v2',concepts:[{concept_key:'parent',kind:'topic',label:'Asunto',definition:'Tema agrupado.',
+      priority_rationale:'Relevancia de marca.',member_concept_keys:review.nodes.map(node=>node.concept_key)}]}}).concepts[0]!);
+  const review=buildSignalTopicEditorialGlobalMergeReviewsV2({prior_nodes:parents,snapshot_digest:shards[0]!.snapshot_digest,
+    context:shards[0]!.context,round:2,fan_in:2})[0]!;
+  const body={contract_version:'signal-topic-editorial-global-merge-result-v2',concepts:review.nodes.map(node=>({
+    concept_key:'copy-'+node.concept_key,kind:node.kind,label:node.label,definition:node.definition,priority_rationale:'Pertinencia editorial.',
+    member_concept_keys:[...node.source_concept_keys]}))};
+  assert.throws(()=>validateSignalTopicEditorialGlobalMergeResultV2({review,value:body}),/member_invalid/u);
+  const fixed=repairSignalTopicEditorialGlobalMergeMemberKeysV2({review,value:body});
+  assert.equal(fixed?.replaced_child_keys,4);assert.equal(fixed?.deduplicated_parent_keys,2);
+  assert.equal(fixed?.result.concepts.length,2);
+  assert.equal(new Set(fixed?.result.concepts.flatMap(node=>node.members.map(member=>member.group_key))).size,4);
+  const split={...body,concepts:body.concepts.map((concept,index)=>({...concept,
+    member_concept_keys:index===0?[concept.member_concept_keys[0]!]:index===1?
+      [...concept.member_concept_keys,body.concepts[0]!.member_concept_keys[1]!]:concept.member_concept_keys}))};
+  assert.equal(repairSignalTopicEditorialGlobalMergeMemberKeysV2({review,value:split}),null);
+  const missing={...body,concepts:[{...body.concepts[0]!,member_concept_keys:[body.concepts[0]!.member_concept_keys[0]!]},body.concepts[1]!]};
+  assert.equal(repairSignalTopicEditorialGlobalMergeMemberKeysV2({review,value:missing}),null);
+  const invented={...body,concepts:[{...body.concepts[0]!,member_concept_keys:['topic-v2-invented']},body.concepts[1]!]};
+  assert.equal(repairSignalTopicEditorialGlobalMergeMemberKeysV2({review,value:invented}),null);
 });
 
 test('a broad consolidated topic keeps the complete citation census without oversized concept metadata',()=>{

@@ -624,6 +624,51 @@ export function validateSignalTopicEditorialGlobalMergeResultV2(args:{review:Sig
     ranking_status:review.batch_count===1?'global':'aggregate_required'};
 }
 
+/** Claude may cite the exact child keys carried in a merge node instead of
+ * its current key. Recover only if every child of that node is cited in one
+ * output concept of the same kind; no split or inferred membership is allowed. */
+export function repairSignalTopicEditorialGlobalMergeMemberKeysV2(args:{review:SignalTopicEditorialGlobalMergeReviewV2;value:unknown}):{
+  result:SignalTopicEditorialGlobalMergeResultV2;replaced_child_keys:number;deduplicated_parent_keys:number
+}|null{
+  const parsed=mergeOutputSchema.safeParse(args.value);if(!parsed.success)return null;
+  const byCurrent=new Map(args.review.nodes.map(node=>[node.concept_key,node]));
+  if(byCurrent.size!==args.review.nodes.length)return null;
+  const byChild=new Map<string,string>();
+  for(const node of args.review.nodes)for(const key of node.source_concept_keys){
+    if(byCurrent.has(key)||byChild.has(key))return null;
+    byChild.set(key,node.concept_key);
+  }
+  let replaced=0,deduplicated=0;
+  const assigned=new Map<string,number>();
+  const concepts=parsed.data.concepts.map((concept,index)=>{
+    const current:string[]=[];
+    const seenInOutput=new Set<string>();
+    const childKeys=new Set(concept.member_concept_keys);
+    if(childKeys.size!==concept.member_concept_keys.length)return null;
+    for(const key of concept.member_concept_keys){
+      const parent=byCurrent.has(key)?key:byChild.get(key);
+      if(!parent||byCurrent.get(parent)?.kind!==concept.kind)return null;
+      if(key!==parent)replaced++;
+      if(seenInOutput.has(parent)){deduplicated++;continue;}
+      seenInOutput.add(parent);current.push(parent);
+    }
+    for(const parent of current){
+      const node=byCurrent.get(parent)!;
+      const direct=childKeys.has(parent);
+      const citedChildren=node.source_concept_keys.filter(key=>childKeys.has(key));
+      if(!direct&&citedChildren.length!==node.source_concept_keys.length)return null;
+      if(direct&&citedChildren.length)return null;
+      if(assigned.has(parent))return null;
+      assigned.set(parent,index);
+    }
+    return {...concept,member_concept_keys:current};
+  });
+  if(concepts.some(concept=>concept===null)||assigned.size!==byCurrent.size||replaced===0)return null;
+  try{return {result:validateSignalTopicEditorialGlobalMergeResultV2({review:args.review,
+    value:{...parsed.data,concepts}}),replaced_child_keys:replaced,deduplicated_parent_keys:deduplicated};}
+  catch{return null;}
+}
+
 /** Summarize a fully received merge round. Equal cardinality is explicit
  * no-progress: stop repeating semantic work and report that global ranking
  * still needs a cross-lot aggregation pass. */
