@@ -429,8 +429,8 @@ export function createSignalTopicEditorialGlobalStageRuntimeStoresV2(args:{datab
       const item=lease.items.find(x=>x.provider_request.custom_id===args2.custom_id);
       if(!item)throw new Error('topic_editorial_global_stage_validation_binding_invalid');
       const result=await client.query(`UPDATE signal_topic_editorial_global_stage_batch_items_v2 SET validation=$4::jsonb,
-        validation_sha256=signal_topic_editorial_digest_json_v1($4::jsonb)
-        WHERE batch_id=$1::uuid AND custom_id=$2 AND raw_sha256=$3 AND (validation IS NULL OR validation_sha256=signal_topic_editorial_digest_json_v1($4::jsonb))`,
+        validation_sha256=signal_topic_editorial_global_validation_digest_v2($4::jsonb)
+        WHERE batch_id=$1::uuid AND custom_id=$2 AND raw_sha256=$3 AND (validation IS NULL OR validation_sha256=signal_topic_editorial_global_validation_digest_v2($4::jsonb))`,
         [args.batch_id,args2.custom_id,args2.raw_sha256,JSON.stringify(args2.validation)]);
       if(!result.rowCount)throw new Error('topic_editorial_global_stage_validation_binding_invalid');
     });},
