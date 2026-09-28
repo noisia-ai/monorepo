@@ -51,6 +51,10 @@ export async function signalWorkspaceTopicComputationJobV1(
   });
   if (!lease) return { execution_id: job.data.execution_id, replayed: true };
   let completedRoots = 0;
+  // The execution snapshot and its prototype embeddings are immutable. Keep only
+  // a single complete page per job; larger catalogs continue through paged reads.
+  let cachedTopics: Awaited<ReturnType<typeof store.readTopics>> | null = null;
+  let cachedPrototypes: { termKeys: string; page: Awaited<ReturnType<typeof store.readPrototypes>> } | null = null;
   try {
     for (;;) {
       const page = await store.readRoots({ database, lease, limit: boundedSize(options.root_page_size, 100) });
@@ -87,8 +91,10 @@ export async function signalWorkspaceTopicComputationJobV1(
     let afterTerm: string | null = null;
     let scannedChunks = false;
     for (;;) {
-      const page = await store.readTopics({ database, lease: activeLease,
-        after_term_key: afterTerm, limit: boundedSize(options.topic_page_size, 32) });
+      const page: Awaited<ReturnType<typeof store.readTopics>> = afterTerm === null && cachedTopics
+        ? cachedTopics : await store.readTopics({ database, lease: activeLease,
+          after_term_key: afterTerm, limit: boundedSize(options.topic_page_size, 32) });
+      if (afterTerm === null && page.done) cachedTopics = page;
       if (page.items.length === 0 && !page.done) throw new Error("workspace_topic_definition_page_stalled");
       const topics: SignalWorkspaceSearchTopicV1[] = [];
       for (const item of page.items) {
@@ -129,8 +135,13 @@ export async function signalWorkspaceTopicComputationJobV1(
           if (topics.length > 0) {
             let after: { term_key: string; input_digest: string } | null = null;
             for (;;) {
-              const prototypes = await store.readPrototypes({ database, lease: activeLease,
-                term_keys: topics.map(topic => topic.term_key), after, limit: 128 });
+              const termKeys = topics.map(topic => topic.term_key);
+              const cacheKey = termKeys.join("\u0000");
+              const prototypes: Awaited<ReturnType<typeof store.readPrototypes>> =
+                after === null && cachedTopics?.done && cachedPrototypes?.termKeys === cacheKey
+                  ? cachedPrototypes.page : await store.readPrototypes({ database, lease: activeLease,
+                    term_keys: termKeys, after, limit: 128 });
+              if (after === null && cachedTopics?.done && prototypes.done) cachedPrototypes = { termKeys: cacheKey, page: prototypes };
               if (prototypes.items.length === 0 && !prototypes.done) throw new Error("workspace_topic_prototype_page_stalled");
               if (prototypes.items.length > 0) {
                 accumulator.addPrototypePage(prototypes.items);

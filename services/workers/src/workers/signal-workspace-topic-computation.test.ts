@@ -14,12 +14,13 @@ type Stores = NonNullable<NonNullable<Parameters<typeof run>[1]>["stores"]>;
 const digest = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 const vector = (index: number) => Array.from({ length: 1024 }, (_, position) => position === index ? 1 : 0);
 
-function fixture(topicCount = 67) {
+function fixture(topicCount = 67, wideFirst = true) {
   let cursor: string | null = null, active = false, finished = false;
   let failSecondPage = false, omitChunk = false, omitPrototype = false;
   const committed: Array<Parameters<Stores["commitRoot"]>[0]> = [];
   const failures: string[] = [];
   const chunksRead: Array<{ root: string; after: number | null }> = [];
+  let topicReads = 0, prototypeReads = 0;
   const roots: SignalWorkspaceTopicRootV1[] = [1, 2].map(index => ({
     root_id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
     asset_sha256: digest(`asset${index}`), fingerprint: digest(`root${index}`), expected_chunks: index === 1 ? 1 : 130,
@@ -28,7 +29,7 @@ function fixture(topicCount = 67) {
   const prototypes: SignalWorkspaceTopicPrototypeV1[] = [];
   const topics: SignalWorkspaceSearchTopicV1[] = Array.from({ length: topicCount }, (_, index) => {
     const term = `topic_${String(index).padStart(3, "0")}`;
-    const local: SignalWorkspaceTopicPrototypeV1[] = Array.from({ length: index === 0 ? 132 : 2 }, (_, input): SignalWorkspaceTopicPrototypeV1 => ({
+    const local: SignalWorkspaceTopicPrototypeV1[] = Array.from({ length: index === 0 && wideFirst ? 132 : 2 }, (_, input): SignalWorkspaceTopicPrototypeV1 => ({
       term_key: term, input_digest: digest(`${term}:${input}`),
       role: input === 0 ? "topic_positive" : input === 1 ? "topic_negative" : "scope_positive",
       vector: vector(input === 0 && index === topicCount - 1 ? 0 : 1),
@@ -47,11 +48,13 @@ function fixture(topicCount = 67) {
     readRoots: async args => { const available = roots.filter(root => args.lease.cursor_root_id === null || root.root_id > args.lease.cursor_root_id);
       const items = available.slice(0, args.limit); return { items, done: items.length === available.length }; },
     readTopics: async args => {
+      topicReads++;
       const available = topics.filter(topic => args.after_term_key === null || topic.term_key > args.after_term_key);
       const items = available.slice(0, args.limit);
       return { items, done: items.length === available.length, next_term_key: items.at(-1)?.term_key ?? args.after_term_key };
     },
     readPrototypes: async args => {
+      prototypeReads++;
       const available = prototypes.filter(item => args.term_keys.includes(item.term_key)
         && (args.after === null || `${item.term_key}:${item.input_digest}` > `${args.after.term_key}:${args.after.input_digest}`));
       const items = available.slice(0, args.limit);
@@ -84,6 +87,7 @@ function fixture(topicCount = 67) {
   };
   const job = { id: "workspace-topic-fixture-1", data: { execution_id: makeLease().execution_id }, updateProgress: async () => undefined };
   return { store, roots, committed, failures, chunksRead, job,
+    get topicReads() { return topicReads; }, get prototypeReads() { return prototypeReads; },
     interrupt() { failSecondPage = true; }, omitChunk() { omitChunk = true; }, omitPrototype() { omitPrototype = true; } };
 }
 
@@ -104,6 +108,18 @@ test("workspace topic Worker evaluates all 67 Topics, all 130 chunks and paged p
   assert.equal(saved.semantic_scope_available, false);
   const replay = await run(f.job, { database: {} as never, stores: f.store });
   assert.ok("replayed" in replay && replay.replayed === true);
+});
+
+test("one immutable definition/prototype page is reused across roots", async () => {
+  const f = fixture(1);
+  await run(f.job, { database: {} as never, stores: f.store });
+  assert.equal(f.topicReads, 1);
+  // Topic zero has 132 prototypes, so its paged vectors are deliberately not cached.
+  assert.equal(f.prototypeReads, 6);
+  const small = fixture(2, false);
+  await run(small.job, { database: {} as never, stores: small.store });
+  assert.equal(small.topicReads, 1);
+  assert.equal(small.prototypeReads, 1);
 });
 
 test("interruption preserves completed root and retries only the unfinished complete root", async () => {
