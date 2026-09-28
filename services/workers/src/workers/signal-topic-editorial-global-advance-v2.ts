@@ -110,8 +110,17 @@ export function planSignalTopicEditorialGlobalAdvanceV2(args: {
       snapshot_digest: args.snapshot_digest, context: shards[0]!.context, round: round + 1 });
   }
   if (needsRank && root.length) {
-    const rank = buildSignalTopicEditorialGlobalRankingReviewV2({ snapshot_digest: args.snapshot_digest,
+    const generatedRank = buildSignalTopicEditorialGlobalRankingReviewV2({ snapshot_digest: args.snapshot_digest,
       context: shards[0]!.context, concepts: root });
+    // A submitted request is immutable. Reuse its sealed descriptor when only
+    // the prompt wording has evolved; the exact ranked input must still match.
+    const priorRank = args.requests.find(item => item.stage_kind === "rank" && item.round === 0 && item.batch_index === 0);
+    if (priorRank && (priorRank.descriptor.contract_version !== "signal-topic-editorial-global-ranking-review-v2"
+      || priorRank.descriptor.input_body !== generatedRank.input_body
+      || priorRank.descriptor.input_digest !== generatedRank.input_digest
+      || priorRank.descriptor.snapshot_digest !== generatedRank.snapshot_digest))
+      return { action: "blocked", reason: "topic_editorial_global_stage_request_drift" };
+    const rank = (priorRank?.descriptor as SignalTopicEditorialGlobalRankingReviewV2 | undefined) ?? generatedRank;
     const ranked = inspect<SignalTopicEditorialGlobalRankingResultV2>("rank", 0, [rank],
       args.requests, "accepted_rank");
     if (ranked.state === "missing") return { action: "prepare", stage_kind: "rank", round: 0, reviews: ranked.reviews };

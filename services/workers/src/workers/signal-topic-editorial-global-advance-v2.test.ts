@@ -177,4 +177,18 @@ test("multiple merge lots without reduction require one compact global ranking p
     assert.equal(final.catalog.group_evidence.length, 41);
     assert.equal(final.catalog.revision?.concepts.length, 41);
   }
+  const historicalBody=rank.request_body.replace('una razón breve por concepto','una razón de máximo 32 caracteres por concepto');
+  const historicalRank={...rank,request_body:historicalBody,
+    request_digest:sha({input_digest:rank.input_digest,request_body:historicalBody}),
+    preflight:{...rank.preflight,request_body_utf8_bytes:new TextEncoder().encode(historicalBody).byteLength}};
+  const historicalResult=validateSignalTopicEditorialGlobalRankingResultV2({review:historicalRank,value:{
+    contract_version:'signal-topic-editorial-global-ranking-result-v2',concepts:rank.concept_keys.map(concept_key=>({
+      concept_key,priority_rationale:'Una razón bien explicada para la prioridad.'}))}});
+  const historical=planSignalTopicEditorialGlobalAdvanceV2({units,snapshot_digest,
+    requests:[...shardObservations,...mergeObservations,{...rankObservation,descriptor:historicalRank,
+      validation:{status:'accepted_rank',result:historicalResult}}]});
+  assert.equal(historical.action,'materialize','a paid ranking retains its sealed historical prompt');
+  const drift=planSignalTopicEditorialGlobalAdvanceV2({units,snapshot_digest,
+    requests:[...shardObservations,...mergeObservations,{...rankObservation,descriptor:{...historicalRank,input_body:'{}'}}]});
+  assert.deepEqual(drift,{action:'blocked',reason:'topic_editorial_global_stage_request_drift'});
 });
