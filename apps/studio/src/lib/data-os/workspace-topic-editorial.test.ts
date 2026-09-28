@@ -79,6 +79,17 @@ test("editorial status polling uses bounded exponential delay", () => {
   assert.equal(workspaceTopicEditorialPollDelayMsV1(3), 30_000);
   assert.equal(workspaceTopicEditorialPollDelayMsV1(100), 30_000);
 });
+
+test("live grammar recovery is an explicit disjoint bucket, not omitted from the corpus partition", () => {
+  const progressView: WorkspaceTopicEditorialViewV1 = { ...ready, status: "running", can_quote: false, quote: null,
+    execution: { execution_id: execution, status: "running", completed_screening_count: 149,
+      expected_screening_count: 1652, maximum_micro_usd: "1000000000", confirmed_micro_usd: "1000",
+      reserved_micro_usd: "250", ambiguous_micro_usd: "0" },
+    batch_progress: { topics: 25, narratives: 17, noise: 102, insufficient_evidence: 5, technical_errors: 0,
+      pending: 723, recovering: 780, reused_results: 72, batch_states: { ended: 1 }, error_codes: [] } };
+  assert.equal(validWorkspaceTopicEditorialViewV1(progressView, workspace, numeric), true);
+  assert.equal(validWorkspaceTopicEditorialViewV1({ ...progressView, batch_progress: { ...progressView.batch_progress!, recovering: 0 } }, workspace, numeric), false);
+});
 function fixture() {
   const calls: string[] = []; let stored: EditorialQuoteSnapshot | null = snapshot;
   const deps: WorkspaceTopicEditorialDependenciesV1 = {
@@ -530,11 +541,11 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: a quiescent f
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progress keeps semantic outcomes and technical errors separate and explains resume`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   const running: WorkspaceTopicEditorialViewV1 = { ...ready, status: "running", can_quote: false, can_retry: false,
-    quote: null, execution: { execution_id: execution, status: "running", completed_screening_count: 4,
-      expected_screening_count: 5, maximum_micro_usd: "1000000000", confirmed_micro_usd: "1000",
+    quote: null, execution: { execution_id: execution, status: "running", completed_screening_count: 5,
+      expected_screening_count: 6, maximum_micro_usd: "1000000000", confirmed_micro_usd: "1000",
       reserved_micro_usd: "250", ambiguous_micro_usd: "0" },
     batch_progress: { topics: 1, narratives: 1, noise: 1, insufficient_evidence: 0, technical_errors: 1,
-      pending: 1, reused_results: 0, batch_states: { running: 1, prepared: 1 }, error_codes: ["topic_editorial_v2_output_invalid"] } };
+      pending: 1, recovering: 1, reused_results: 0, batch_states: { running: 1, prepared: 1 }, error_codes: ["topic_editorial_v2_output_invalid"] } };
   const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(WorkspaceTopicEditorialCard, { value: running, workspaceId: workspace, numericExecutionId: numeric,
@@ -543,6 +554,8 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: Batch progres
   assert.match(html, locale === "es-MX" ? /Narrativas/u : /Narratives/u);
   assert.match(html, locale === "es-MX" ? /Evidencia insuficiente/u : /Insufficient evidence/u);
   assert.match(html, locale === "es-MX" ? /Errores técnicos/u : /Technical errors/u);
+  assert.match(html, locale === "es-MX" ? /En recuperación/u : /Recovering/u);
+  assert.match(html, locale === "es-MX" ? /No cuentan como Noise/u : /neither Noise nor resolved outcomes/u);
   assert.match(html, locale === "es-MX" ? /manifiestos y resultados guardados/u : /saved manifests and results/u);
   assert.match(html, locale === "es-MX" ? /Ver cribado anterior/u : /View previous screening/u,
     "current V2 batch progress must not hide the read-only V1 history browser");

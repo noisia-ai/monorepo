@@ -16,6 +16,7 @@ const grammarRecovery = {
 test("recovering grammar-rate-limit items remain pending/running, never terminal or publishable Noise", () => {
   assert.equal(resolveWorkspaceTopicEditorialBatchStatusV2(grammarRecovery), "running");
   assert.equal(resolveWorkspaceTopicEditorialBatchStatusV2({ ...grammarRecovery, materialized: true }), "running");
+  assert.equal(resolveWorkspaceTopicEditorialBatchStatusV2({ ...grammarRecovery, pending: 0 }), "running");
 });
 
 test("completed requires materialization and no pending/recovering/technical/ambiguous work", () => {

@@ -46,7 +46,9 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
             <div><dt>{t("outcomes.insufficient")}</dt><dd>{value.batch_progress.insufficient_evidence}</dd></div>
             <div><dt>{t("outcomes.errors")}</dt><dd>{value.batch_progress.technical_errors}</dd></div>
             <div><dt>{t("outcomes.pending")}</dt><dd>{value.batch_progress.pending}</dd></div>
+            {(value.batch_progress.recovering??0)>0 ? <div><dt>{t("outcomes.recovering")}</dt><dd>{value.batch_progress.recovering}</dd></div> : null}
           </dl>
+          {(value.batch_progress.recovering??0)>0 ? <p role="status">{t("outcomes.recoveryHint")}</p> : null}
           {value.batch_progress.technical_errors > 0 ? <div role="alert" className="team-msg team-msg--error">
             <p>{t("outcomes.errorPreserved")}</p>
             {value.batch_progress.error_codes.length ? <p>{t("outcomes.errorCodes", { codes: value.batch_progress.error_codes.join(", ") })}</p> : null}

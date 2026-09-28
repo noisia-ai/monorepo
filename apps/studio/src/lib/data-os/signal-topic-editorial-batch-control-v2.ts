@@ -22,7 +22,7 @@ export function resolveWorkspaceTopicEditorialBatchStatusV2(input:{materialized:
   const complete=input.materialized&&input.pending===0&&input.recovering===0&&input.technical_errors===0&&!ambiguous;
   if(complete)return "completed" as const;
   if(input.preparation_failed||input.technical_errors>0||ambiguous)return "failed" as const;
-  if(input.pending>0){
+  if(input.pending>0||input.recovering>0){
     const states=Object.keys(input.batch_states);
     return states.length===0||(input.batch_states.prepared??0)>0&&states.length===1?"queued" as const:"running" as const;
   }
@@ -195,7 +195,10 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
             AND item.outcome='errored' AND item.validation->>'status'='invalid_message'
             AND item.validation->>'code'='topic_editorial_v2_provider_errored'
             AND item.response_body->'result'->'error'->'error'->>'message' LIKE 'Grammar compilation rate limit exceeded%'
-            AND item.attempt_count<5 AND clock_timestamp()+interval '3 minutes'<r.send_not_after,false) grammar_recovering
+            AND item.attempt_count<5 AND clock_timestamp()+interval '3 minutes'<r.send_not_after,false) grammar_recovering,
+          COALESCE(reused.request_id IS NOT NULL OR item.validation->>'status' IN('accepted','invalid_message')
+            OR item.outcome IN('errored','canceled','expired','submission_rejected')
+            OR item.call_status='settled' AND item.validation IS NULL,false) terminal
         FROM requests r
         LEFT JOIN signal_topic_editorial_reused_decisions_v2 reused ON reused.request_id=r.id
         LEFT JOIN latest_items item ON item.request_id=r.id
@@ -204,9 +207,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
         WHERE b.execution_id=e.id GROUP BY state
       ), progress AS (
         SELECT count(*)::integer expected,
-          count(*) FILTER(WHERE NOT grammar_recovering AND (reused OR validation->>'status'='accepted'
-            OR validation->>'status'='invalid_message' OR outcome IN('errored','canceled','expired','submission_rejected')
-            OR call_status='settled' AND validation IS NULL))::integer done,
+          count(*) FILTER(WHERE NOT grammar_recovering AND terminal)::integer done,
           count(*) FILTER(WHERE reused)::integer reused_results,
           count(*) FILTER(WHERE (reused OR validation->>'status'='accepted')
             AND COALESCE(reused_disposition,validation->'decision'->>'disposition')='topic')::integer topic,
@@ -218,11 +219,12 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
             AND COALESCE(reused_disposition,validation->'decision'->>'disposition')='unresolved')::integer insufficient,
           count(*) FILTER(WHERE grammar_recovering)::integer recovering,
           count(*) FILTER(WHERE NOT reused AND NOT grammar_recovering AND
-            (validation->>'status'='invalid_message' OR outcome IN('errored','canceled','expired','submission_rejected')
-              OR call_status='settled' AND validation IS NULL))::integer technical,
-          count(*) FILTER(WHERE grammar_recovering OR NOT reused AND NOT (validation->>'status'='accepted'
-            OR validation->>'status'='invalid_message' OR outcome IN('errored','canceled','expired','submission_rejected')
-            OR call_status='settled' AND validation IS NULL))::integer pending,
+            COALESCE(validation->>'status'='invalid_message' OR outcome IN('errored','canceled','expired','submission_rejected')
+              OR call_status='settled' AND validation IS NULL,false))::integer technical,
+          -- pending and recovering are disjoint unresolved buckets. Treat
+          -- unknown/null join state as pending so all expected requests remain
+          -- represented and the public partition stays exhaustive.
+          count(*) FILTER(WHERE NOT reused AND NOT grammar_recovering AND NOT terminal)::integer pending,
           array_remove(ARRAY(SELECT DISTINCT code FROM (
             SELECT item_error code FROM unit_outcomes WHERE item_error IS NOT NULL AND NOT grammar_recovering
             UNION SELECT batch_error FROM unit_outcomes WHERE batch_error IS NOT NULL AND NOT grammar_recovering
@@ -260,7 +262,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
         completed_screening_count:row.done,expected_screening_count:row.expected,maximum_micro_usd:row.maximum,
         confirmed_micro_usd:row.confirmed,reserved_micro_usd:row.reserved,ambiguous_micro_usd:row.ambiguous},
       batch_progress:{topics:row.topic,narratives:row.narrative,noise:row.noise,insufficient_evidence:row.insufficient,
-        technical_errors:row.technical,pending:row.pending,reused_results:row.reused_results,
+        technical_errors:row.technical,pending:row.pending,recovering:row.recovering,reused_results:row.reused_results,
         batch_states:row.batch_states,error_codes:row.error_codes}};
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
   finally{client.release();}
