@@ -36,6 +36,7 @@ import { startSignalWorkspaceEmbeddingsDrainerV1 } from "./workers/signal-worksp
 import { startSignalTopicConsolidationOutboxDrainerV1 } from "./workers/signal-topic-consolidation-queue";
 import { startSignalTopicEditorialOutboxDrainerV1 } from "./workers/signal-topic-editorial-queue";
 import { startSignalTopicEditorialBatchDrainerV2 } from "./workers/signal-topic-editorial-batch-queue-v2";
+import { startSignalTopicEditorialGlobalStageDrainerV2 } from "./workers/signal-topic-editorial-global-stage-queue-v2";
 
 const startupEvidence = await assertUatWorkerStartup({
   database: pool,
@@ -63,6 +64,7 @@ const topicConsolidationDrainer = dataOsWorker ? startSignalTopicConsolidationOu
 // require their own flag and key. All flags default off.
 const topicEditorialDrainer = dataOsWorker ? startSignalTopicEditorialOutboxDrainerV1() : null;
 const topicEditorialBatchDrainer = dataOsWorker ? startSignalTopicEditorialBatchDrainerV2() : null;
+const topicEditorialGlobalStageDrainer = dataOsWorker ? startSignalTopicEditorialGlobalStageDrainerV2() : null;
 const semanticResolutionWorker = isDataOsWorkerEnabled()
   ? startSignalSemanticResolutionWorker()
   : null;
@@ -140,6 +142,7 @@ async function shutdown() {
   await topicConsolidationDrainer?.close();
   await topicEditorialDrainer?.close();
   await topicEditorialBatchDrainer?.close();
+  await topicEditorialGlobalStageDrainer?.close();
   await workspaceImportOutboxDrainer.close();
   await semanticReviewProjectionOutboxDrainer?.close();
   await semanticResolutionChildOutboxDrainer?.close();

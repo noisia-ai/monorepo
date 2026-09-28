@@ -50,6 +50,9 @@ import { SIGNAL_TOPIC_EDITORIAL_JOB_V1, signalTopicEditorialJobV1 } from "../wor
 import { SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2, SIGNAL_TOPIC_EDITORIAL_BATCH_PREPARATION_JOB_V2,
   SIGNAL_TOPIC_EDITORIAL_BATCH_START_JOB_V2, signalTopicEditorialBatchJobV2,
   signalTopicEditorialBatchPreparationJobV2, signalTopicEditorialBatchStartJobV2 } from "../workers/signal-topic-editorial-batch-queue-v2";
+import { SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_JOB_V2, SIGNAL_TOPIC_EDITORIAL_GLOBAL_ADVANCE_JOB_V2,
+  signalTopicEditorialGlobalStageJobV2, signalTopicEditorialGlobalAdvanceJobV2
+} from "../workers/signal-topic-editorial-global-stage-queue-v2";
 
 export { redisConnection };
 
@@ -81,6 +84,8 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2) return signalTopicEditorialBatchJobV2(job);
       if (job.name === SIGNAL_TOPIC_EDITORIAL_BATCH_PREPARATION_JOB_V2) return signalTopicEditorialBatchPreparationJobV2(job);
       if (job.name === SIGNAL_TOPIC_EDITORIAL_BATCH_START_JOB_V2) return signalTopicEditorialBatchStartJobV2(job);
+      if (job.name === SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_JOB_V2) return signalTopicEditorialGlobalStageJobV2(job);
+      if (job.name === SIGNAL_TOPIC_EDITORIAL_GLOBAL_ADVANCE_JOB_V2) return signalTopicEditorialGlobalAdvanceJobV2(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }

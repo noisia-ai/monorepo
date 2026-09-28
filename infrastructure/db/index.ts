@@ -93,5 +93,6 @@ export * from "./signal-topic-consolidation-edition";
 export * from "./signal-topic-editorial-batch-v2";
 export * from "./signal-topic-editorial-admission-v3";
 export * from "./signal-topic-editorial-global-v2";
+export * from "./signal-topic-editorial-global-stage-v2";
 export * from "./signal-topic-editorial-start-intent-v2";
 export * from "./signal-topic-editorial-batch-start-v2";
