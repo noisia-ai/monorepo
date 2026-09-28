@@ -16,6 +16,18 @@ function deadlineFromQuote(reference:string):number{
   if(!match)fail("topic_editorial_quote_expired");
   return Number(match[1]);
 }
+export function resolveWorkspaceTopicEditorialBatchStatusV2(input:{materialized:boolean;preparation_failed:boolean;technical_errors:number;
+  ambiguous_micro_usd:string;pending:number;recovering:number;batch_states:Record<string,number>;contract_version:string}){
+  const ambiguous=BigInt(input.ambiguous_micro_usd)>0n;
+  const complete=input.materialized&&input.pending===0&&input.recovering===0&&input.technical_errors===0&&!ambiguous;
+  if(complete)return "completed" as const;
+  if(input.preparation_failed||input.technical_errors>0||ambiguous)return "failed" as const;
+  if(input.pending>0){
+    const states=Object.keys(input.batch_states);
+    return states.length===0||(input.batch_states.prepared??0)>0&&states.length===1?"queued" as const:"running" as const;
+  }
+  return input.contract_version==='signal-topic-editorial-admission-header-v3'?"consolidation_pending" as const:"review_ready" as const;
+}
 async function prepared(args:Args){
   if(![args.workspaceId,args.actorUserId,args.numericExecutionId].every(editorialUuid))fail("topic_editorial_request_invalid",422);
   const database=args.database??(await import("@/lib/db")).pool;
@@ -141,7 +153,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
     if(!caps.can_view)fail("processing_forbidden",403);
     const row=(await client.query<{execution_id:string;status:string;owner_stage:string;contract_version:string;expected:number;done:number;reused_results:number;maximum:string;confirmed:string;reserved:string;ambiguous:string;materialized:boolean;
-      topic:number;narrative:number;noise:number;insufficient:number;technical:number;pending:number;batch_states:Record<string,number>;error_codes:string[]}>(`
+      topic:number;narrative:number;noise:number;insufficient:number;technical:number;pending:number;recovering:number;batch_states:Record<string,number>;error_codes:string[]}>(`
       WITH numeric AS (
         SELECT consolidation_run_id FROM signal_topic_consolidation_executions
         WHERE workspace_id=$1 AND id=$2 AND status='ready'
@@ -150,71 +162,96 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
         WHERE e.workspace_id=$1 AND e.numeric_run_id=n.consolidation_run_id
           AND e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3')
         ORDER BY e.created_at DESC,e.id DESC LIMIT 1
+      ), requests AS (
+        SELECT r.id,r.request_digest,e.id execution_id,e.status execution_status,o.stage owner_stage,o.send_not_after
+        FROM latest e JOIN signal_topic_editorial_requests r ON r.execution_id=e.id
+        JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
+      ), call_attempts AS (
+        SELECT c.request_id,count(*)::integer attempt_count FROM latest e
+        JOIN signal_topic_editorial_calls c ON c.execution_id=e.id AND c.transport_version=2
+        GROUP BY c.request_id
+      ), latest_items AS (
+        -- Read every provider result for this execution once. The old correlated
+        -- WHERE item.request_id=request.id lookup could repeatedly scan the
+        -- large items table because its leading key is batch_id, not request_id.
+        SELECT DISTINCT ON(i.request_id) i.request_id,i.validation,i.outcome,c.status call_status,
+          COALESCE(i.validation->>'code',c.error_code) error_code,b.state batch_state,b.error_code batch_error,
+          c.response_body_private::jsonb response_body,COALESCE(attempts.attempt_count,0) attempt_count
+        FROM latest e JOIN signal_topic_editorial_provider_batches_v2 b ON b.execution_id=e.id
+        JOIN signal_topic_editorial_batch_items_v2 i ON i.batch_id=b.id
+        JOIN signal_topic_editorial_calls c ON c.id=i.call_id
+        LEFT JOIN call_attempts attempts ON attempts.request_id=i.request_id
+        ORDER BY i.request_id,b.created_at DESC,b.id DESC
       ), unit_outcomes AS (
         SELECT r.id,r.request_digest,
           reused.request_id IS NOT NULL reused,reused.decision->>'disposition' reused_disposition,
           item.validation,item.outcome,item.call_status,item.error_code item_error,
-          item.batch_state,item.batch_error
-        FROM latest e JOIN signal_topic_editorial_requests r ON r.execution_id=e.id
+          item.batch_state,item.batch_error,
+          -- This counts requests whose exact grammar failure remains eligible for
+          -- the existing retry path. The Worker schedules them only after the full
+          -- ended Batch is imported and its state becomes applied.
+          COALESCE(r.owner_stage='screening' AND r.execution_status IN('queued','running')
+            AND item.batch_state IN('ended','applied') AND item.call_status='settled' AND reused.request_id IS NULL
+            AND item.outcome='errored' AND item.validation->>'status'='invalid_message'
+            AND item.validation->>'code'='topic_editorial_v2_provider_errored'
+            AND item.response_body->'result'->'error'->'error'->>'message' LIKE 'Grammar compilation rate limit exceeded%'
+            AND item.attempt_count<5 AND clock_timestamp()+interval '3 minutes'<r.send_not_after,false) grammar_recovering
+        FROM requests r
         LEFT JOIN signal_topic_editorial_reused_decisions_v2 reused ON reused.request_id=r.id
-        LEFT JOIN LATERAL (
-          SELECT i.validation,i.outcome,c.status call_status,b.state batch_state,
-            COALESCE(i.validation->>'code',c.error_code) error_code,b.error_code batch_error
-          FROM signal_topic_editorial_batch_items_v2 i
-          JOIN signal_topic_editorial_provider_batches_v2 b ON b.id=i.batch_id
-          JOIN signal_topic_editorial_calls c ON c.id=i.call_id
-          WHERE i.request_id=r.id ORDER BY b.created_at DESC,b.id DESC LIMIT 1
-        ) item ON true
+        LEFT JOIN latest_items item ON item.request_id=r.id
       ), batches AS (
         SELECT state,count(*)::integer n FROM signal_topic_editorial_provider_batches_v2 b,latest e
         WHERE b.execution_id=e.id GROUP BY state
+      ), progress AS (
+        SELECT count(*)::integer expected,
+          count(*) FILTER(WHERE NOT grammar_recovering AND (reused OR validation->>'status'='accepted'
+            OR validation->>'status'='invalid_message' OR outcome IN('errored','canceled','expired','submission_rejected')
+            OR call_status='settled' AND validation IS NULL))::integer done,
+          count(*) FILTER(WHERE reused)::integer reused_results,
+          count(*) FILTER(WHERE (reused OR validation->>'status'='accepted')
+            AND COALESCE(reused_disposition,validation->'decision'->>'disposition')='topic')::integer topic,
+          count(*) FILTER(WHERE (reused OR validation->>'status'='accepted')
+            AND COALESCE(reused_disposition,validation->'decision'->>'disposition')='narrative')::integer narrative,
+          count(*) FILTER(WHERE (reused OR validation->>'status'='accepted')
+            AND COALESCE(reused_disposition,validation->'decision'->>'disposition')='noise')::integer noise,
+          count(*) FILTER(WHERE (reused OR validation->>'status'='accepted')
+            AND COALESCE(reused_disposition,validation->'decision'->>'disposition')='unresolved')::integer insufficient,
+          count(*) FILTER(WHERE grammar_recovering)::integer recovering,
+          count(*) FILTER(WHERE NOT reused AND NOT grammar_recovering AND
+            (validation->>'status'='invalid_message' OR outcome IN('errored','canceled','expired','submission_rejected')
+              OR call_status='settled' AND validation IS NULL))::integer technical,
+          count(*) FILTER(WHERE grammar_recovering OR NOT reused AND NOT (validation->>'status'='accepted'
+            OR validation->>'status'='invalid_message' OR outcome IN('errored','canceled','expired','submission_rejected')
+            OR call_status='settled' AND validation IS NULL))::integer pending,
+          array_remove(ARRAY(SELECT DISTINCT code FROM (
+            SELECT item_error code FROM unit_outcomes WHERE item_error IS NOT NULL AND NOT grammar_recovering
+            UNION SELECT batch_error FROM unit_outcomes WHERE batch_error IS NOT NULL AND NOT grammar_recovering
+          ) errors ORDER BY code),'') error_codes
+        FROM unit_outcomes
+      ), costs AS (
+        SELECT COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled'),0)::text confirmed,
+          COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0)))
+            FILTER(WHERE c.status IN('reserved','in_flight','response_persisted')),0)::text reserved,
+          COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0)))
+            FILTER(WHERE c.status='outcome_unknown'),0)::text ambiguous
+        FROM latest e LEFT JOIN signal_topic_editorial_calls c ON c.execution_id=e.id
       )
       SELECT e.id::text execution_id,e.status,o.stage owner_stage,e.plan->>'contract_version' contract_version,
         EXISTS(SELECT 1 FROM signal_topic_consolidation_revisions r WHERE r.consolidation_run_id=e.numeric_run_id
           AND r.workspace_id=e.workspace_id AND r.status='validated' AND r.created_by_user_id=e.actor_user_id AND r.created_at>=e.created_at) materialized,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE u.reused OR u.validation->>'status'='accepted'
-          OR u.validation->>'status'='invalid_message' OR u.outcome IN('errored','canceled','expired','submission_rejected')
-          OR u.call_status='settled' AND u.validation IS NULL) done,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE u.reused) reused_results,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE (u.reused OR u.validation->>'status'='accepted')
-          AND COALESCE(u.reused_disposition,u.validation->'decision'->>'disposition')='topic') topic,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE (u.reused OR u.validation->>'status'='accepted')
-          AND COALESCE(u.reused_disposition,u.validation->'decision'->>'disposition')='narrative') narrative,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE (u.reused OR u.validation->>'status'='accepted')
-          AND COALESCE(u.reused_disposition,u.validation->'decision'->>'disposition')='noise') noise,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE (u.reused OR u.validation->>'status'='accepted')
-          AND COALESCE(u.reused_disposition,u.validation->'decision'->>'disposition')='unresolved') insufficient,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE NOT u.reused AND
-          (u.validation->>'status'='invalid_message' OR u.outcome IN('errored','canceled','expired','submission_rejected')
-            OR u.call_status='settled' AND u.validation IS NULL)) technical,
-        (SELECT count(*)::integer FROM unit_outcomes u WHERE NOT u.reused
-          AND NOT (u.validation->>'status'='accepted' OR u.validation->>'status'='invalid_message'
-            OR u.outcome IN('errored','canceled','expired','submission_rejected')
-            OR u.call_status='settled' AND u.validation IS NULL)) pending,
+        p.expected,p.done,p.reused_results,p.topic,p.narrative,p.noise,p.insufficient,p.technical,p.pending,p.recovering,
         COALESCE((SELECT jsonb_object_agg(state,n) FROM batches),'{}'::jsonb) batch_states,
-        array_remove(ARRAY(SELECT DISTINCT code FROM (
-          SELECT item_error code FROM unit_outcomes WHERE item_error IS NOT NULL
-          UNION SELECT batch_error FROM unit_outcomes WHERE batch_error IS NOT NULL
-          UNION SELECT 'topic_editorial_batch_preparation_failed' WHERE o.stage='preparation_failed'
-        ) errors ORDER BY code),'') error_codes,
+        CASE WHEN o.stage='preparation_failed' THEN array_append(p.error_codes,'topic_editorial_batch_preparation_failed') ELSE p.error_codes END error_codes,
         e.hard_cap_micro_usd::text maximum,
-        COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled'),0)::text confirmed,
-        COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0))) FILTER(WHERE c.status IN('reserved','in_flight','response_persisted')),0)::text reserved,
-        COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0))) FILTER(WHERE c.status='outcome_unknown'),0)::text ambiguous
+        costs.confirmed,costs.reserved,costs.ambiguous
       FROM latest e JOIN signal_topic_editorial_batch_owners_v2 o ON o.execution_id=e.id
-      LEFT JOIN signal_topic_editorial_provider_batches_v2 b ON b.execution_id=e.id
-      LEFT JOIN signal_topic_editorial_batch_items_v2 i ON i.batch_id=b.id
-      LEFT JOIN signal_topic_editorial_calls c ON c.id=i.call_id
-      -- latest is a CTE, so PostgreSQL cannot use the base table's primary-key
-      -- functional dependency for correlated fields referenced by EXISTS.
-      GROUP BY e.id,e.workspace_id,e.numeric_run_id,e.actor_user_id,e.created_at,
-        e.status,e.plan,e.hard_cap_micro_usd,o.stage`,[args.workspaceId,args.numericExecutionId])).rows[0];
+      CROSS JOIN progress p CROSS JOIN costs`,[args.workspaceId,args.numericExecutionId])).rows[0];
     await client.query("COMMIT");
     if(!row)return null;
     const preparationFailed=row.owner_stage==="preparation_failed";
-    const status=row.materialized?"completed":preparationFailed||row.technical>0||BigInt(row.ambiguous)>0n?"failed":row.pending>0
-      ? Object.keys(row.batch_states).length===0||(row.batch_states.prepared??0)>0&&Object.keys(row.batch_states).length===1?"queued":"running"
-      :row.contract_version==='signal-topic-editorial-admission-header-v3'?"consolidation_pending":"review_ready";
+    const status=resolveWorkspaceTopicEditorialBatchStatusV2({materialized:row.materialized,preparation_failed:preparationFailed,
+      technical_errors:row.technical,ambiguous_micro_usd:row.ambiguous,pending:row.pending,recovering:row.recovering,
+      batch_states:row.batch_states,contract_version:row.contract_version});
     return {contract_version:"workspace-topic-editorial-view-v1" as const,workspace_id:args.workspaceId,
       numeric_execution_id:args.numericExecutionId,status,
       can_quote:false,can_retry:caps.can_request_processing&&preparationFailed&&BigInt(row.ambiguous)===0n,
