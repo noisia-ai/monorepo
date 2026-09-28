@@ -106,7 +106,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
     database: { async connect() { return client as never; } }, workspace_id: workspaceId,
     actor_user_id: actorId, timezone: "America/Mexico_City"
   });
-  assert.match(statements[0]!, /^BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\s+SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp$/);
+  assert.match(statements[0]!, /^BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;\s+SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp;\s+SET LOCAL enable_nestloop=off; SET LOCAL jit=off$/);
   assert.equal(statements.some(statement => statement.startsWith("SET LOCAL")), false);
   assert.match(statements[1]!, /brand_access_level/);
   assert.equal(topicQueries.length, 2);

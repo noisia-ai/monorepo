@@ -92,19 +92,9 @@ export function workspaceTopicsInterpretationCoverageV1(value: unknown): SignalW
 async function transaction<T>(database: Database, work: (client: PoolClient) => Promise<T>): Promise<T> {
   const client = await database.connect();
   try {
-    // Preserve ordered transaction-local fences while avoiding two network trips.
-    // A failure aborts setup before any authorized read and is rolled back below.
-    await client.query(`BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
-      SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp`);
-    const value = await work(client); await client.query("COMMIT"); return value;
-  } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
-  finally { client.release(); }
-}
-async function mentionsTransaction<T>(database: Database, work: (client: PoolClient) => Promise<T>): Promise<T> {
-  const client = await database.connect();
-  try {
-    // One simple-query roundtrip installs the same transaction-local fences.
-    // The statements remain server-ordered and any failure aborts this read.
+    // The population joins have highly skewed workspace estimates. The default
+    // nested-loop/JIT plan took 21-40s for Alexa+ Topics, detail and evidence;
+    // the same read-only queries took 2-4s with these transaction-local settings.
     await client.query(`BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
       SET LOCAL TIME ZONE 'UTC'; SET LOCAL search_path=public,extensions,pg_temp;
       SET LOCAL enable_nestloop=off; SET LOCAL jit=off`);
@@ -639,7 +629,7 @@ export async function loadSignalWorkspaceMentionsV1(args: SignalWorkspaceMention
   const access = { database: args.database, workspace_id: args.workspace_id.toLowerCase(), actor_user_id: args.actor_user_id.toLowerCase(),
     date_from: request.filters.date_from, date_to: request.filters.date_to, timezone: request.filters.timezone,
     imported_fallback: args.imported_fallback };
-  return mentionsTransaction(args.database, async client => {
+  return transaction(args.database, async client => {
     const ctx = await mentionsContext(client, access);
     if (!ctx.native) return null;
     if (!ctx.generation && !ctx.imported) return fail("workspace_mentions_generation_unavailable", 404);
