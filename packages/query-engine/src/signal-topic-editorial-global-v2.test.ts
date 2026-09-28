@@ -4,7 +4,22 @@ import test from 'node:test';
 import {signalTopicEditorialDigestV1 as sha,type SignalTopicEditorialScreeningGroupV1} from './signal-topic-consolidation-editorial-v1';
 import {buildSignalTopicEditorialScreeningPlanV2,validateSignalTopicEditorialGroupOutputV2} from './signal-topic-consolidation-editorial-v2';
 import {buildSignalTopicEditorialGlobalReviewV2,validateSignalTopicEditorialGlobalResultV2,
+  SIGNAL_TOPIC_EDITORIAL_GLOBAL_SHARD_OUTPUT_SCHEMA_V2,SIGNAL_TOPIC_EDITORIAL_GLOBAL_MERGE_OUTPUT_SCHEMA_V2,
+  SIGNAL_TOPIC_EDITORIAL_GLOBAL_RANKING_OUTPUT_SCHEMA_V2,
   type SignalTopicEditorialGlobalUnitV2} from './signal-topic-editorial-global-v2';
+
+test('all global provider grammars avoid unsupported JSON Schema constraints',()=>{
+  const forbidden=new Set(['maxItems','minItems','maxLength','minLength','minimum','maximum','multipleOf']);
+  const walk=(value:unknown):void=>{
+    if(!value||typeof value!=='object')return;
+    for(const [key,child] of Object.entries(value)){
+      assert.ok(!forbidden.has(key),`unsupported provider constraint: ${key}`);
+      walk(child);
+    }
+  };
+  for(const schema of [SIGNAL_TOPIC_EDITORIAL_GLOBAL_SHARD_OUTPUT_SCHEMA_V2,
+    SIGNAL_TOPIC_EDITORIAL_GLOBAL_MERGE_OUTPUT_SCHEMA_V2,SIGNAL_TOPIC_EDITORIAL_GLOBAL_RANKING_OUTPUT_SCHEMA_V2])walk(schema);
+});
 
 const id=(n:number)=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 const context={brand_name:'Alexa+',default_locale:'es-MX',summary:'Asistente de voz con IA.',audiences:['hogares'],

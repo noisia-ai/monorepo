@@ -37,7 +37,10 @@ function stableUuid(parts: unknown[]): string {
 export function signalTopicEditorialGlobalStageIdV2(executionId: string, screeningReviewDigest: string) {
   if (!uuid.test(executionId) || !/^sha256:[0-9a-f]{64}$/u.test(screeningReviewDigest))
     throw new Error("topic_editorial_global_stage_identity_invalid");
-  return stableUuid(["signal-topic-editorial-global-stage-v2", executionId, screeningReviewDigest]);
+  // The v2 stage may retain provider-rejected, zero-cost manifests. A new
+  // stage identity keeps those receipts immutable while using the supported
+  // structured-output schema for every newly prepared request.
+  return stableUuid(["signal-topic-editorial-global-stage-v3", executionId, screeningReviewDigest]);
 }
 
 type Review = SignalTopicEditorialGlobalShardV2 | SignalTopicEditorialGlobalMergeReviewV2
@@ -134,7 +137,23 @@ export async function drainSignalTopicEditorialGlobalAdvancementsV2(options: Dra
       WHERE e.plan->>'contract_version'='signal-topic-editorial-admission-header-v3'
         AND e.status IN('queued','running') AND o.stage='review_pending'
         AND EXISTS (SELECT 1 FROM signal_topic_editorial_requests request WHERE request.execution_id=e.id)
-        AND (stage.stage_id IS NULL OR (stage.state='open' AND (
+        AND (stage.stage_id IS NULL OR (stage.state='blocked'
+          AND NOT EXISTS (SELECT 1 FROM signal_topic_editorial_global_stages_v2 successor
+            WHERE successor.execution_id=e.id AND successor.state IN('open','complete','materialized'))
+          AND (SELECT count(*) FROM signal_topic_editorial_global_stage_requests_v2 request
+            WHERE request.stage_id=stage.stage_id)>0
+          AND (SELECT count(*) FROM signal_topic_editorial_global_stage_requests_v2 request
+            WHERE request.stage_id=stage.stage_id AND EXISTS (
+              SELECT 1 FROM signal_topic_editorial_global_stage_batch_items_v2 item
+              JOIN signal_topic_editorial_global_stage_batches_v2 batch ON batch.id=item.batch_id
+              JOIN signal_topic_editorial_global_stage_calls_v2 call ON call.id=item.call_id
+              WHERE item.request_id=request.id AND batch.state='imported' AND item.outcome='errored'
+                AND item.validation->>'status'='provider_error' AND call.status='settled'
+                AND call.settled_micro_usd=0 AND call.observed_micro_usd=0
+                AND call.response_body_private::jsonb->'result'->'error'->'error'->>'message'
+                  LIKE 'output_config.format.schema: For ''array'' type, property ''maxItems'' is not supported%'
+            ))=(SELECT count(*) FROM signal_topic_editorial_global_stage_requests_v2 request
+              WHERE request.stage_id=stage.stage_id)) OR (stage.state='open' AND (
           EXISTS (SELECT 1 FROM signal_topic_editorial_global_stage_requests_v2 partial
             WHERE partial.stage_id=stage.stage_id AND (
               SELECT count(DISTINCT sibling.batch_index) FROM signal_topic_editorial_global_stage_requests_v2 sibling

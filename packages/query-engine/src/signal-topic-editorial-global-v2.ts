@@ -233,33 +233,33 @@ const rankingOutputSchema=z.object({contract_version:z.literal('signal-topic-edi
 export const SIGNAL_TOPIC_EDITORIAL_GLOBAL_SHARD_OUTPUT_SCHEMA_V2={type:'object',additionalProperties:false,
   required:['contract_version','concepts','noise','unresolved'],properties:{
     contract_version:{type:'string',enum:['signal-topic-editorial-global-shard-result-v2']},
-    concepts:{type:'array',maxItems:100,items:{type:'object',additionalProperties:false,
+    concepts:{type:'array',items:{type:'object',additionalProperties:false,
       required:['concept_key','kind','label','definition','members'],properties:{
         concept_key:{type:'string'},kind:{type:'string',enum:['topic','narrative']},label:{type:'string'},definition:{type:'string'},
-        members:{type:'array',maxItems:100,items:{type:'object',additionalProperties:false,
+        members:{type:'array',items:{type:'object',additionalProperties:false,
           required:['group_key','cited_ref_ids','rationale'],properties:{group_key:{type:'string'},
-            cited_ref_ids:{type:'array',maxItems:10,items:{type:'string'}},rationale:{type:'string'}}}}}}},
-    noise:{type:'array',maxItems:100,items:{type:'object',additionalProperties:false,
+            cited_ref_ids:{type:'array',items:{type:'string'}},rationale:{type:'string'}}}}}}},
+    noise:{type:'array',items:{type:'object',additionalProperties:false,
       required:['group_key','cited_ref_ids','rationale'],properties:{group_key:{type:'string'},
-        cited_ref_ids:{type:'array',maxItems:10,items:{type:'string'}},rationale:{type:'string'}}}},
-    unresolved:{type:'array',maxItems:100,items:{type:'object',additionalProperties:false,
+        cited_ref_ids:{type:'array',items:{type:'string'}},rationale:{type:'string'}}}},
+    unresolved:{type:'array',items:{type:'object',additionalProperties:false,
       required:['group_key','cited_ref_ids','rationale'],properties:{group_key:{type:'string'},
-        cited_ref_ids:{type:'array',maxItems:10,items:{type:'string'}},rationale:{type:'string'}}}},
+        cited_ref_ids:{type:'array',items:{type:'string'}},rationale:{type:'string'}}}},
   }} as const;
 export const SIGNAL_TOPIC_EDITORIAL_GLOBAL_MERGE_OUTPUT_SCHEMA_V2={type:'object',additionalProperties:false,
   required:['contract_version','concepts'],properties:{
     contract_version:{type:'string',enum:['signal-topic-editorial-global-merge-result-v2']},
-    concepts:{type:'array',maxItems:100,items:{type:'object',additionalProperties:false,
+    concepts:{type:'array',items:{type:'object',additionalProperties:false,
       required:['concept_key','kind','label','definition','priority_rationale','member_concept_keys'],properties:{
         concept_key:{type:'string'},kind:{type:'string',enum:['topic','narrative']},label:{type:'string'},definition:{type:'string'},
-        priority_rationale:{type:'string'},member_concept_keys:{type:'array',maxItems:100,items:{type:'string'}}}}},
+        priority_rationale:{type:'string'},member_concept_keys:{type:'array',items:{type:'string'}}}}},
   }} as const;
 export const SIGNAL_TOPIC_EDITORIAL_GLOBAL_RANKING_OUTPUT_SCHEMA_V2={type:'object',additionalProperties:false,
   required:['contract_version','concepts'],properties:{
     contract_version:{type:'string',enum:['signal-topic-editorial-global-ranking-result-v2']},
-    concepts:{type:'array',maxItems:5000,items:{type:'object',additionalProperties:false,
+    concepts:{type:'array',items:{type:'object',additionalProperties:false,
       required:['concept_key','priority_rationale'],properties:{concept_key:{type:'string'},
-        priority_rationale:{type:'string',maxLength:32,pattern:'^[^\\u0000-\\u001f\\u007f]*$'}}}},
+        priority_rationale:{type:'string'}}}},
   }} as const;
 /** Conservative byte preflight leaves a wide margin below Sonnet 4.6 context
  * and output limits. It is not a substitute for the provider tokenizer. */

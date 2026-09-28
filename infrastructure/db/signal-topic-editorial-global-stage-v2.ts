@@ -112,12 +112,12 @@ export async function prepareSignalTopicEditorialGlobalStageV2(args:{database:Si
     const stage=(await client.query<{stage_id:string}>(`INSERT INTO signal_topic_editorial_global_stages_v2(stage_id,workspace_id,organization_id,
         execution_id,processing_admission_id,snapshot_digest,screening_review_digest,expected_group_count)
       VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8)
-      ON CONFLICT(execution_id,snapshot_digest,screening_review_digest) DO NOTHING
+      ON CONFLICT(stage_id) DO NOTHING
       RETURNING stage_id::text`,[args.stage_id,args.workspace_id,execution.organization_id,args.execution_id,execution.processing_admission_id,
         args.snapshot_digest,args.screening_review_digest,execution.expected_group_count])).rows[0];
     if(stage?.stage_id!==args.stage_id){const replay=(await client.query<{stage_id:string}>(`SELECT stage_id::text FROM signal_topic_editorial_global_stages_v2
-      WHERE execution_id=$1::uuid AND snapshot_digest=$2 AND screening_review_digest=$3 FOR UPDATE`,
-      [args.execution_id,args.snapshot_digest,args.screening_review_digest])).rows[0];
+      WHERE stage_id=$1::uuid AND execution_id=$2::uuid AND snapshot_digest=$3 AND screening_review_digest=$4 FOR UPDATE`,
+      [args.stage_id,args.execution_id,args.snapshot_digest,args.screening_review_digest])).rows[0];
       if(replay?.stage_id!==args.stage_id)throw new Error('topic_editorial_global_stage_identity_conflict');}
     let reserved=0n;
     const requestRows=[] as Array<{request_id:string;call_id:string;item:SignalTopicEditorialGlobalStageItemV2;stage_identity:string;request_digest:string;request_body:string;input_body:string;input_digest:string;max_tokens:number}>;
