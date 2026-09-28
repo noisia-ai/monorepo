@@ -225,7 +225,7 @@ const mergeOutputSchema=z.object({contract_version:z.literal('signal-topic-edito
     priority_rationale:z.string(),member_concept_keys:z.array(z.string())}).strict()),
 }).strict();
 const rankingOutputSchema=z.object({contract_version:z.literal('signal-topic-editorial-global-ranking-result-v2'),
-  concepts:z.array(z.object({concept_key:z.string(),priority_rationale:z.string().max(32)
+  concepts:z.array(z.object({concept_key:z.string(),priority_rationale:z.string()
     .regex(/^[^\u0000-\u001f\u007f]*$/u)}).strict()).max(5000),
 }).strict();
 /** Keep provider grammar shape identical across batches; only bounded item
@@ -718,13 +718,12 @@ export function buildSignalTopicEditorialGlobalRankingReviewV2(args:{snapshot_di
   const input={contract_version:'signal-topic-editorial-global-ranking-input-v2',snapshot_digest:args.snapshot_digest,
     default_locale:args.context.default_locale,context:args.context,concept_count:concepts.length,concepts};
   const input_body=JSON.stringify(input),input_digest=sha(input),request_body=JSON.stringify({model:SIGNAL_TOPIC_EDITORIAL_MODEL_V2,
-    max_tokens:128_000,system:`Ordena globalmente todos los Topics y Narratives según su utilidad y relevancia para la marca, usando Brand OS. Considera definición, audiencias, categoría, competidores y límites; no infieras popularidad, sentimiento o volumen. La lista es compacta y omite citas intencionalmente: no cambies nombres, definiciones, pertenencia o evidencia, sólo asigna el orden y una razón de máximo 32 caracteres por concepto. Conserva Topic y Narrative como tipos separados conceptualmente. Devuelve todas las claves exactamente una vez en orden descendente de relevancia, con razones breves en el idioma del contexto. Devuelve JSON.`,
+    max_tokens:128_000,system:`Ordena globalmente todos los Topics y Narratives según su utilidad y relevancia para la marca, usando Brand OS. Considera definición, audiencias, categoría, competidores y límites; no infieras popularidad, sentimiento o volumen. La lista es compacta y omite citas intencionalmente: no cambies nombres, definiciones, pertenencia o evidencia, sólo asigna el orden y una razón breve por concepto. Conserva Topic y Narrative como tipos separados conceptualmente. Devuelve todas las claves exactamente una vez en orden descendente de relevancia, con razones en el idioma del contexto. Devuelve JSON.`,
     output_config:{effort:'high',format:{type:'json_schema',schema:SIGNAL_TOPIC_EDITORIAL_GLOBAL_RANKING_OUTPUT_SCHEMA_V2}},
     messages:[{role:'user',content:JSON.stringify({input_digest,...input})}]}),request_digest=sha({input_digest,request_body});
   const request_body_utf8_bytes=new TextEncoder().encode(request_body).byteLength;
-  // Bound every reason by 32 Unicode code points (4 UTF-8 bytes each). The
-  // placeholder JSON supplies exact punctuation and key lengths; add the
-  // difference between worst-case UTF-8 and the ASCII placeholder.
+  // This estimate preserves the historical review contract. Actual response
+  // size is checked independently; it is not a content-length constraint.
   const estimated_max_output_utf8_bytes=estimateSignalTopicEditorialGlobalRankingOutputBytesV2(concepts.map(item=>item.concept_key));
   if(request_body_utf8_bytes>SIGNAL_TOPIC_EDITORIAL_GLOBAL_RANKING_MAX_REQUEST_UTF8_BYTES_V2)
     return fail('topic_editorial_global_ranking_preflight_input_oversize');
@@ -751,11 +750,38 @@ export function validateSignalTopicEditorialGlobalRankingResultV2(args:{review:S
     ||sha({input_digest:review.input_digest,request_body:review.request_body})!==review.request_digest
     ||review.concept_count!==review.concept_keys.length||new Set(review.concept_keys).size!==review.concept_keys.length)
     return fail('topic_editorial_global_ranking_output_invalid');
+  if(new TextEncoder().encode(JSON.stringify(parsed.data)).byteLength
+    >SIGNAL_TOPIC_EDITORIAL_GLOBAL_RANKING_MAX_OUTPUT_UTF8_BYTES_V2)
+    return fail('topic_editorial_global_ranking_output_invalid');
   const ranked=parsed.data.concepts;
   if(ranked.length!==review.concept_count||new Set(ranked.map(item=>item.concept_key)).size!==ranked.length
     ||ranked.some(item=>!review.concept_keys.includes(item.concept_key)||!validText(item.priority_rationale)))
     return fail('topic_editorial_global_ranking_coverage_invalid');
   return {contract_version:parsed.data.contract_version,request_digest:review.request_digest,concepts:ranked};
+}
+
+/** Recover only a one-to-one Topic/Narrative prefix slip on a paid ranking.
+ * The 24-character identity suffix, order, and rationale remain unchanged. */
+export function repairSignalTopicEditorialGlobalRankingKeyV2(args:{review:SignalTopicEditorialGlobalRankingReviewV2;value:unknown}):
+  {result:SignalTopicEditorialGlobalRankingResultV2;replaced_kind_prefixes:number}|null{
+  const parsed=rankingOutputSchema.safeParse(args.value);
+  if(!parsed.success||parsed.data.concepts.length!==args.review.concept_count)return null;
+  const expected=new Set(args.review.concept_keys),suffix=/^(topic|narrative)-v2-([0-9a-f]{24})$/u;
+  if(expected.size!==args.review.concept_count)return null;
+  let replaced=0;
+  const concepts=parsed.data.concepts.map(item=>{
+    if(expected.has(item.concept_key))return item;
+    const match=suffix.exec(item.concept_key);
+    if(!match)return item;
+    const other=`${match[1]==='topic'?'narrative':'topic'}-v2-${match[2]}`;
+    if(!expected.has(other))return item;
+    replaced++;
+    return {...item,concept_key:other};
+  });
+  if(!replaced||new Set(concepts.map(item=>item.concept_key)).size!==expected.size)return null;
+  try{return {result:validateSignalTopicEditorialGlobalRankingResultV2({review:args.review,
+    value:{...parsed.data,concepts}}),replaced_kind_prefixes:replaced};}
+  catch{return null;}
 }
 
 export function applySignalTopicEditorialGlobalRankingV2(args:{concepts:SignalTopicEditorialGlobalMergeNodeV2[];

@@ -8,6 +8,7 @@ import {buildSignalTopicEditorialGlobalMergeReviewsV2,buildSignalTopicEditorialG
   summarizeSignalTopicEditorialGlobalMergeRoundV2,validateSignalTopicEditorialGlobalMergeResultV2,validateSignalTopicEditorialGlobalShardResultV2,
   repairSignalTopicEditorialGlobalShardFormattingV2,
   repairSignalTopicEditorialGlobalMergeMemberKeysV2,
+  repairSignalTopicEditorialGlobalRankingKeyV2,
   buildSignalTopicEditorialGlobalRankingReviewV2,validateSignalTopicEditorialGlobalRankingResultV2,
   applySignalTopicEditorialGlobalRankingV2,
   type SignalTopicEditorialGlobalShardResultV2,type SignalTopicEditorialGlobalUnitV2} from './signal-topic-editorial-global-v2';
@@ -349,6 +350,23 @@ test('global rank-only pass keeps all concepts, excludes long evidence, and requ
       {concept_key:'concept-2',priority_rationale:'Primero.'},{concept_key:'concept-2',priority_rationale:'Duplicado.'},
       {concept_key:'concept-1',priority_rationale:'Falta concept-0.'},
     ]}}),/coverage_invalid/u);
+});
+
+test('rank recovery preserves long reasons and fixes only an exact kind-prefix slip',()=>{
+  const suffix='80a4b7ab99a1cd4b561800df';
+  const expected=`narrative-v2-${suffix}`;
+  const concepts=[{concept_key:expected,kind:'narrative' as const,label:'Narrativa',definition:'Definición.',
+    priority_rationale:null,priority_rank:null,source_concept_keys:['source'],
+    members:[{group_key:'open:g',cited_ref_ids:['ref'],rationale:'Evidencia.',community_key:'community',neighbors:[]}]}];
+  const review=buildSignalTopicEditorialGlobalRankingReviewV2({snapshot_digest:sha('snapshot'),context,concepts});
+  const value={contract_version:'signal-topic-editorial-global-ranking-result-v2',concepts:[{
+    concept_key:`topic-v2-${suffix}`,priority_rationale:'Una explicación razonada de prioridad.'}]};
+  const fixed=repairSignalTopicEditorialGlobalRankingKeyV2({review,value});
+  assert.equal(fixed?.replaced_kind_prefixes,1);
+  assert.equal(fixed?.result.concepts[0]?.concept_key,expected);
+  assert.equal(fixed?.result.concepts[0]?.priority_rationale,value.concepts[0]!.priority_rationale);
+  assert.equal(repairSignalTopicEditorialGlobalRankingKeyV2({review,value:{...value,concepts:[{
+    ...value.concepts[0]!,concept_key:'topic-v2-ffffffffffffffffffffffff'}]}}),null);
 });
 
 test('rank preflight accepts 1,652 compact concepts and blocks oversized 5,000-concept input',()=>{

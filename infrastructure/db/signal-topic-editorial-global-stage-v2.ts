@@ -8,6 +8,7 @@ import {signalTopicEditorialGlobalStageRequestIdentityV2,signalTopicEditorialGlo
 import {signalTopicEditorialStagedScreeningReviewDigestV2,
   repairSignalTopicEditorialGlobalShardFormattingV2,
   repairSignalTopicEditorialGlobalMergeMemberKeysV2,
+  repairSignalTopicEditorialGlobalRankingKeyV2,
   type SignalTopicEditorialGlobalCatalogInputV2} from '../../packages/query-engine/src/signal-topic-editorial-global-v2';
 import type {SignalTopicEditorialGlobalUnitV2} from '../../packages/query-engine/src/signal-topic-editorial-global-v2';
 import {materializeSignalTopicConsolidationRevisionV1,parseSignalTopicConsolidationRevisionV1,signalTopicConsolidationDigestV1} from './signal-topic-consolidation';
@@ -319,7 +320,8 @@ export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{d
         JOIN signal_topic_editorial_global_stage_batch_items_v2 i ON i.request_id=r.id
         WHERE r.stage_id=s.stage_id AND r.validation IS NULL
           AND i.validation->>'code' IN('topic_editorial_global_shard_citation_invalid','topic_editorial_global_shard_coverage_invalid',
-            'topic_editorial_global_merge_member_invalid'))
+            'topic_editorial_global_merge_member_invalid','topic_editorial_global_ranking_output_invalid',
+            'topic_editorial_global_ranking_coverage_invalid'))
         AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_calls_v2 c WHERE c.stage_id=s.stage_id
           AND c.status NOT IN('settled','definitely_not_sent'))
         AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_batches_v2 b WHERE b.stage_id=s.stage_id
@@ -344,7 +346,7 @@ export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{d
       const prior=row.validation as {status?:string}|null,latest=row.latest_validation as {status?:string}|null;
       const acceptedStatus=row.stage_kind==='shard'?'accepted_shard':row.stage_kind==='merge'?'accepted_merge':'accepted_rank';
       if(prior?.status===acceptedStatus||latest?.status===acceptedStatus)continue;
-      if(!['shard','merge'].includes(row.stage_kind)||row.call_status!=='settled'||row.batch_state!=='imported'
+      if(!['shard','merge','rank'].includes(row.stage_kind)||row.call_status!=='settled'||row.batch_state!=='imported'
         ||row.state!=='submitted'||!row.raw_text||row.raw_sha256!==sha(row.raw_text)
         ||!row.prior_validation_sha256||!row.batch_id||!row.call_id)return {recovered:false,reason:'source_unavailable'};
       let response:unknown;
@@ -362,7 +364,7 @@ export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{d
             structural_repair:{kind:'citation_surplus_or_duplicate_noise',source_batch_id:row.batch_id,source_call_id:row.call_id,
               prior_validation_sha256:row.prior_validation_sha256,removed_invalid_citations:fixed.removed_invalid_citations,
               merged_noise_duplicates:fixed.merged_noise_duplicates}}});
-      }else{
+      }else if(row.stage_kind==='merge'){
         if((latest as {code?:string}|null)?.code!=='topic_editorial_global_merge_member_invalid')
           return {recovered:false,reason:'merge_validation_code_mismatch'};
         const review=JSON.parse(row.stage_contract_body) as Parameters<typeof repairSignalTopicEditorialGlobalMergeMemberKeysV2>[0]['review'];
@@ -374,6 +376,18 @@ export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{d
             structural_repair:{kind:'complete_child_lineage_alias',source_batch_id:row.batch_id,source_call_id:row.call_id,
               prior_validation_sha256:row.prior_validation_sha256,replaced_child_keys:fixed.replaced_child_keys,
               deduplicated_parent_keys:fixed.deduplicated_parent_keys}}});
+      }else{
+        if(!['topic_editorial_global_ranking_output_invalid','topic_editorial_global_ranking_coverage_invalid']
+          .includes((latest as {code?:string}|null)?.code??''))
+          return {recovered:false,reason:'rank_validation_code_mismatch'};
+        const review=JSON.parse(row.stage_contract_body) as Parameters<typeof repairSignalTopicEditorialGlobalRankingKeyV2>[0]['review'];
+        const fixed=repairSignalTopicEditorialGlobalRankingKeyV2({review,value:response});
+        if(!fixed)return {recovered:false,reason:'rank_key_not_repairable'};
+        corrections.push({request_id:row.request_id,raw_text:row.raw_text,removed:0,merged:0,
+          replaced:fixed.replaced_kind_prefixes,deduplicated:0,
+          validation:{status:'accepted_rank',result:fixed.result,
+            structural_repair:{kind:'exact_kind_prefix_alias',source_batch_id:row.batch_id,source_call_id:row.call_id,
+              prior_validation_sha256:row.prior_validation_sha256,replaced_kind_prefixes:fixed.replaced_kind_prefixes}}});
       }
     }
     if(!corrections.length)return {recovered:false,reason:'no_corrections'};
