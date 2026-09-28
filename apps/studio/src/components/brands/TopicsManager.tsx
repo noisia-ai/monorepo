@@ -55,7 +55,9 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
   const [resultState, setResultState] = useState<"relevant" | "doubt" | "excluded">("relevant");
   const [busy, setBusy] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
-  const [consolidatedServing, setConsolidatedServing] = useState(false);
+  // Wait for the serving binding before reading a legacy topic selection. A
+  // consolidated Signal has a different catalog, so its old term keys can 404.
+  const [consolidatedServing, setConsolidatedServing] = useState<boolean | null>(null);
   const [consolidationGroupCount, setConsolidationGroupCount] = useState<number | null>(null);
   const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
   const selectedIsDiscovery = selected?.origin === "workspace_discovery";
@@ -479,7 +481,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
             <strong>{t("editor.pendingTitle")}</strong><p>{t("editor.pendingBody")}</p>
             {signalHref ? <Link className="admin-button" href={signalHref} prefetch={false}>{t("signalSelection.openSignal")}</Link> : null}
           </div> : null}
-          {!creating && selected && (selected.origin === "workspace_discovery" || Boolean(navigation)) && selected.lifecycle !== "archived" ? <TopicSignalControls
+          {consolidatedServing === false && !creating && selected && (selected.origin === "workspace_discovery" || Boolean(navigation)) && selected.lifecycle !== "archived" ? <TopicSignalControls
             workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
             definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null} refreshKey={associationReceipt}
             signalHref={signalHref} onAccessDenied={clearAccess} /> : null}

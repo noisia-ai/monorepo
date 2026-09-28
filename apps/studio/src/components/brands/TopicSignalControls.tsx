@@ -54,7 +54,7 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
       const response = await fetch(`${endpoint}${key ? `?idempotency_key=${encodeURIComponent(key)}` : ""}`,
         { cache: "no-store", signal: controller.signal });
       if (!alive.current || run !== epoch.current) return;
-      if ([401, 403, 404].includes(response.status)) {
+      if ([401, 403].includes(response.status)) {
         clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden");
       }
       if (!response.ok) throw new Error("load");
@@ -70,7 +70,7 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
           intent.current = restored; setPending(restored);
           const recovery = await fetch(`${endpoint}?idempotency_key=${encodeURIComponent(restored.key)}`, { cache: "no-store", signal: controller.signal });
           if (!alive.current || run !== epoch.current) return;
-          if ([401, 403, 404].includes(recovery.status)) { clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden"); }
+          if ([401, 403].includes(recovery.status)) { clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden"); }
           if (!recovery.ok) throw new Error("load");
           const recovered = await recovery.json();
           if (!alive.current || run !== epoch.current) return;
@@ -132,7 +132,7 @@ export function TopicSignalControls({ workspaceId, termKey, definitionRevision, 
       const response = await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": value.key },
         body: JSON.stringify(value.body), signal: controller.signal });
       if (!alive.current || run !== epoch.current) return;
-      if ([401, 403, 404].includes(response.status)) { clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden"); }
+      if ([401, 403].includes(response.status)) { clearIntent(); current.current = null; setData(null); accessDenied.current?.(); throw new Error("forbidden"); }
       if (!response.ok) { rejected = response.status < 500; throw new Error(response.status === 409 ? "conflict" : "save"); }
       const body = await response.json();
       if (!alive.current || run !== epoch.current) return;

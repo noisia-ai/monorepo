@@ -152,7 +152,7 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
   workspaceId: string;
   signalHref: string;
   disabled?: boolean;
-  onServingChange?: (serving: boolean) => void;
+  onServingChange?: (serving: boolean | null) => void;
 }) {
   const [value, setValue] = useState<WorkspaceTopicConsolidationActivationStatusV1 | null>(null);
   const [selectedConceptKeys, setSelectedConceptKeys] = useState<string[]>([]);
@@ -182,7 +182,7 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
       if (controller.signal.aborted || !mounted.current || scope.current !== workspaceId) return;
       if ([401, 403, 404].includes(response.status)) {
         setValue(null); setSelectedConceptKeys([]); setAccessDenied(true); setLoadError(false); setEditing(null);
-        onServingChange?.(false); return null;
+        onServingChange?.(null); return null;
       }
       const parsed = response.ok ? parseWorkspaceTopicConsolidationActivationStatusV1(body, workspaceId) : null;
       if (!parsed) throw new Error("topic_consolidation_activation_status_invalid");
@@ -216,7 +216,7 @@ export function WorkspaceTopicConsolidationActivationControls({ workspaceId, sig
     mounted.current = true; intent.current = null; selectionSnapshot.current = null;
     setValue(null); setSelectedConceptKeys([]); setLoading(true); setBusy(false); setPending(false);
     setLoadError(false); setRequestError(false); setAccessDenied(false); setEditing(null); setEditionError(false); void read();
-    onServingChange?.(false);
+    onServingChange?.(null);
     return () => { mounted.current = false; readController.current?.abort(); submitController.current?.abort(); };
   }, [read, onServingChange]);
 
