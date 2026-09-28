@@ -431,6 +431,45 @@ export function validateSignalTopicEditorialGlobalShardResultV2(args:{shard:Sign
   return {contract_version:parsed.data.contract_version,request_digest:shard.request_digest,concepts,noise,unresolved};
 }
 
+/** Repair only structural citation surplus and identical Noise dispositions.
+ * Raw paid output remains untouched; every retained citation must still belong
+ * to its own group, and the ordinary full-census validator makes the decision. */
+export function repairSignalTopicEditorialGlobalShardFormattingV2(args:{shard:SignalTopicEditorialGlobalShardV2;value:unknown}):{
+  result:SignalTopicEditorialGlobalShardResultV2;removed_invalid_citations:number;merged_noise_duplicates:number
+}|null{
+  const parsed=shardOutputSchema.safeParse(args.value);if(!parsed.success)return null;
+  const byKey=new Map(args.shard.groups.map(group=>[group.group_key,new Set(group.evidence.map(item=>item.ref_id))]));
+  let removed=0,merged=0;
+  const citations=(key:string,refs:string[],required:boolean):string[]|null=>{
+    const allowed=byKey.get(key);if(!allowed)return null;
+    const valid=refs.filter(ref=>allowed.has(ref));removed+=refs.length-valid.length;
+    if((required&&!valid.length)||new Set(valid).size!==valid.length)return null;
+    return valid;
+  };
+  const concepts=[] as typeof parsed.data.concepts;
+  for(const concept of parsed.data.concepts){
+    const members=[] as typeof concept.members;
+    for(const member of concept.members){const refs=citations(member.group_key,member.cited_ref_ids,true);if(!refs)return null;
+      members.push({...member,cited_ref_ids:refs});}
+    concepts.push({...concept,members});
+  }
+  const noise=new Map<string,(typeof parsed.data.noise)[number]>();
+  for(const item of parsed.data.noise){const refs=citations(item.group_key,item.cited_ref_ids,true);if(!refs)return null;
+    const previous=noise.get(item.group_key);
+    if(previous){merged++;noise.set(item.group_key,{group_key:item.group_key,
+      cited_ref_ids:[...new Set([...previous.cited_ref_ids,...refs])],
+      rationale:previous.rationale.length>=item.rationale.length?previous.rationale:item.rationale});}
+    else noise.set(item.group_key,{...item,cited_ref_ids:refs});
+  }
+  const unresolved=[] as typeof parsed.data.unresolved;
+  for(const item of parsed.data.unresolved){const refs=citations(item.group_key,item.cited_ref_ids,false);if(!refs)return null;
+    unresolved.push({...item,cited_ref_ids:refs});}
+  if(removed===0&&merged===0)return null;
+  try{return {result:validateSignalTopicEditorialGlobalShardResultV2({shard:args.shard,value:{...parsed.data,concepts,
+      noise:[...noise.values()],unresolved}}),removed_invalid_citations:removed,merged_noise_duplicates:merged};}
+  catch{return null;}
+}
+
 /** Convert completed shards to small merge-lot requests. Each node carries the
  * exact original group/citation lineage; merge replies may join concept nodes,
  * never relabel or reassign their underlying mention groups. */

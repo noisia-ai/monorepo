@@ -6,6 +6,7 @@ import {buildSignalTopicEditorialScreeningPlanV2,validateSignalTopicEditorialGro
 import {buildSignalTopicEditorialGlobalMergeReviewsV2,buildSignalTopicEditorialGlobalShardsV2,
   applySignalTopicEditorialGlobalRootV2,buildSignalTopicEditorialGlobalCatalogInputV2,composeSignalTopicEditorialGlobalShardOutcomesV2,
   summarizeSignalTopicEditorialGlobalMergeRoundV2,validateSignalTopicEditorialGlobalMergeResultV2,validateSignalTopicEditorialGlobalShardResultV2,
+  repairSignalTopicEditorialGlobalShardFormattingV2,
   buildSignalTopicEditorialGlobalRankingReviewV2,validateSignalTopicEditorialGlobalRankingResultV2,
   applySignalTopicEditorialGlobalRankingV2,
   type SignalTopicEditorialGlobalShardResultV2,type SignalTopicEditorialGlobalUnitV2} from './signal-topic-editorial-global-v2';
@@ -128,6 +129,23 @@ test('shard result rejects cross-group citations, omissions, duplicates, and ung
   assert.throws(()=>validateSignalTopicEditorialGlobalShardResultV2({shard,value:{...base,concepts:[]}}),/coverage_invalid/u);
   assert.throws(()=>validateSignalTopicEditorialGlobalShardResultV2({shard,value:{...base,concepts:[],noise:[
     {group_key:a.group_key,cited_ref_ids:[],rationale:'No evidence'}],unresolved:[{group_key:b.group_key,cited_ref_ids:[],rationale:'uncertain'}]}}),/citation_invalid/u);
+});
+
+test('format repair retains only own-group citations and merges duplicate Noise without changing disposition',()=>{
+  const shard=buildSignalTopicEditorialGlobalShardsV2({units:makeUnits(2),expected_group_count:2,batch_size:2})[0]!;
+  const [a,b]=shard.groups;const forged='sha256:'+ 'f'.repeat(64);
+  const value={contract_version:'signal-topic-editorial-global-shard-result-v2',concepts:[],noise:[
+    {group_key:a!.group_key,cited_ref_ids:[a!.evidence[0]!.ref_id,forged],rationale:'Racional A'},
+    {group_key:a!.group_key,cited_ref_ids:[a!.evidence[0]!.ref_id],rationale:'Racional A más completo'},
+    {group_key:b!.group_key,cited_ref_ids:[b!.evidence[0]!.ref_id],rationale:'Racional B'}],unresolved:[]};
+  assert.throws(()=>validateSignalTopicEditorialGlobalShardResultV2({shard,value}),/citation_invalid/u);
+  const fixed=repairSignalTopicEditorialGlobalShardFormattingV2({shard,value});
+  assert.equal(fixed?.removed_invalid_citations,1);assert.equal(fixed?.merged_noise_duplicates,1);
+  assert.deepEqual(fixed?.result.noise.map(item=>item.group_key).sort(),shard.group_keys.slice().sort());
+  assert.deepEqual(fixed?.result.noise.find(item=>item.group_key===a!.group_key)?.cited_ref_ids,[a!.evidence[0]!.ref_id]);
+  assert.equal(repairSignalTopicEditorialGlobalShardFormattingV2({shard,value:{...value,noise:[
+    {group_key:a!.group_key,cited_ref_ids:[forged],rationale:'Sin evidencia'},value.noise[2]]}}),null);
+  assert.equal(repairSignalTopicEditorialGlobalShardFormattingV2({shard,value:{...value,noise:[value.noise[0]]}}),null);
 });
 
 test('census keeps Noise, insufficient evidence, and technical error as separate terminal outcomes',()=>{

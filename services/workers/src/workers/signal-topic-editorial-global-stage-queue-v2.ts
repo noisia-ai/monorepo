@@ -4,6 +4,7 @@ import { createSignalTopicEditorialGlobalStageRuntimeStoresV2,
   loadSignalTopicEditorialGlobalUnitsV2, loadSignalTopicEditorialGlobalStageProgressV2,
   markSignalTopicEditorialGlobalStageBlockedV2, materializeSignalTopicEditorialStagedGlobalCatalogV2,
   prepareSignalTopicEditorialGlobalStageGrammarRetryV2, prepareSignalTopicEditorialGlobalStageV2,
+  recoverSignalTopicEditorialGlobalShardFormattingV2,
   type SignalTopicEditorialGlobalStageProgressV2 } from "@noisia/db";
 import { signalTopicEditorialStagedScreeningReviewDigestV2,
   type SignalTopicEditorialGlobalMergeReviewV2, type SignalTopicEditorialGlobalRankingReviewV2,
@@ -177,7 +178,7 @@ export async function drainSignalTopicEditorialGlobalAdvancementsV2(options: Dra
               JOIN signal_processing_admissions admission ON admission.id=stage.processing_admission_id
               JOIN signal_processing_policy_versions policy ON policy.id=admission.policy_version_id
               LEFT JOIN signal_topic_editorial_global_continuations_v2 grant_row ON grant_row.execution_id=stage.execution_id
-              WHERE request.stage_id=stage.stage_id AND latest.batch_state='imported'
+              WHERE request.stage_id=stage.stage_id AND request.validation IS NULL AND latest.batch_state='imported'
                 AND latest.status='settled'
                 AND (((latest.settled_micro_usd=0 AND latest.observed_micro_usd=0)
                   AND latest.outcome='errored' AND latest.validation->>'status'='provider_error'
@@ -230,11 +231,12 @@ export function startSignalTopicEditorialGlobalStageDrainerV2(options: DrainOpti
     if (closed || !enabled) return Promise.resolve();
     return pending ??= (async () => {
       await drainSignalTopicEditorialGlobalStagesV2(options);
+      const database = options.database ?? (await import("../db/client")).pool;
+      await recoverSignalTopicEditorialGlobalShardFormattingV2({ database });
       await drainSignalTopicEditorialGlobalAdvancementsV2(options);
       if (signalTopicEditorialGlobalStageConfigurationV2(options.env).provider_enabled
         && Date.now() >= nextGrammarRetryAt) {
         nextGrammarRetryAt = Date.now() + 30_000;
-        const database = options.database ?? (await import("../db/client")).pool;
         await prepareSignalTopicEditorialGlobalStageGrammarRetryV2({ database });
       }
     })().catch(error => {

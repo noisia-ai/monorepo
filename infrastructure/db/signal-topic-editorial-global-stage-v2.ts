@@ -6,6 +6,7 @@ import type {AnthropicBatchHttpReceipt,AnthropicBatchState} from '../../services
 import {signalTopicEditorialGlobalStageRequestIdentityV2,signalTopicEditorialGlobalStageManifestDigestV2,
   type SignalTopicEditorialGlobalStageValidationV2} from '../../services/workers/src/workers/signal-topic-editorial-global-stage-v2';
 import {signalTopicEditorialStagedScreeningReviewDigestV2,
+  repairSignalTopicEditorialGlobalShardFormattingV2,
   type SignalTopicEditorialGlobalCatalogInputV2} from '../../packages/query-engine/src/signal-topic-editorial-global-v2';
 import type {SignalTopicEditorialGlobalUnitV2} from '../../packages/query-engine/src/signal-topic-editorial-global-v2';
 import {materializeSignalTopicConsolidationRevisionV1,parseSignalTopicConsolidationRevisionV1,signalTopicConsolidationDigestV1} from './signal-topic-consolidation';
@@ -281,9 +282,10 @@ export async function loadSignalTopicEditorialGlobalStageProgressV2(args:{databa
     if(!stage)throw new Error('topic_editorial_global_stage_missing');
     const rows=(await client.query<{stage_kind:'shard'|'merge'|'rank';round:number;batch_index:number;stage_contract_body:string;
       input_body:string;request_body:string;validation:unknown;raw_sha256:string|null;call_status:string|null;batch_state:string|null;
-      error_code:string|null;retryable_receipt_error:boolean}>(`SELECT r.stage_kind,r.round,r.batch_index,r.stage_contract_body,r.input_body,r.request_body,attempt.validation,
+      error_code:string|null;retryable_receipt_error:boolean}>(`SELECT r.stage_kind,r.round,r.batch_index,r.stage_contract_body,r.input_body,r.request_body,
+        COALESCE(r.validation,attempt.validation) validation,
         attempt.raw_sha256,attempt.call_status,attempt.batch_state,attempt.error_code,
-        COALESCE(attempt.call_status='settled' AND (
+        COALESCE(r.validation IS NULL AND attempt.call_status='settled' AND (
           (attempt.settled_micro_usd=0 AND attempt.observed_micro_usd=0
             AND attempt.outcome='errored' AND attempt.validation->>'status'='provider_error'
             AND attempt.grammar_message LIKE 'Grammar compilation rate limit exceeded%')
@@ -304,6 +306,78 @@ export async function loadSignalTopicEditorialGlobalStageProgressV2(args:{databa
       validation:row.validation===null?null:typeof row.validation==='string'?JSON.parse(row.validation) as SignalTopicEditorialGlobalStageValidationV2:
         row.validation as SignalTopicEditorialGlobalStageValidationV2,retryable_receipt_error:row.retryable_receipt_error}))} satisfies SignalTopicEditorialGlobalStageProgressV2;
   }catch(error){await client.query('ROLLBACK').catch(()=>undefined);throw error;}finally{client.release();}
+}
+
+/** Resolve only a blocked shard whose paid raw response already contains one
+ * valid own-group citation for every decision. The original Batch item stays
+ * immutable; the request's previously unused validation slot records the
+ * exact raw receipt and the structural changes. No new provider call. */
+export async function recoverSignalTopicEditorialGlobalShardFormattingV2(args:{database:SignalTopicEditorialGlobalStageDatabaseV2}){
+  return tx(args.database,async client=>{
+    const stage=(await client.query<{stage_id:string}>(`SELECT s.stage_id::text FROM signal_topic_editorial_global_stages_v2 s
+      WHERE s.state='blocked' AND EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_requests_v2 r
+        JOIN signal_topic_editorial_global_stage_batch_items_v2 i ON i.request_id=r.id
+        WHERE r.stage_id=s.stage_id AND r.validation IS NULL
+          AND i.validation->>'code' IN('topic_editorial_global_shard_citation_invalid','topic_editorial_global_shard_coverage_invalid'))
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_calls_v2 c WHERE c.stage_id=s.stage_id
+          AND c.status NOT IN('settled','definitely_not_sent'))
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_editorial_global_stage_batches_v2 b WHERE b.stage_id=s.stage_id
+          AND b.state<>'imported')
+      ORDER BY s.created_at LIMIT 1 FOR UPDATE OF s`)).rows[0];
+    if(!stage)return {recovered:false,reason:'no_blocked_shard'};
+    const rows=(await client.query<{request_id:string;stage_kind:string;state:string;stage_contract_body:string;validation:unknown;
+      raw_text:string|null;raw_sha256:string|null;latest_validation:unknown;prior_validation_sha256:string|null;batch_id:string|null;call_id:string|null;
+      call_status:string|null;batch_state:string|null}>(`SELECT r.id::text request_id,r.stage_kind,r.state,r.stage_contract_body,r.validation,
+      latest.raw_text,latest.raw_sha256,latest.validation latest_validation,latest.validation_sha256 prior_validation_sha256,
+      latest.batch_id::text,latest.call_id::text,latest.call_status,latest.batch_state
+      FROM signal_topic_editorial_global_stage_requests_v2 r
+      LEFT JOIN LATERAL(SELECT i.raw_text,i.raw_sha256,i.validation,i.validation_sha256,i.batch_id,i.call_id,
+        c.status call_status,b.state batch_state
+        FROM signal_topic_editorial_global_stage_batch_items_v2 i
+        JOIN signal_topic_editorial_global_stage_batches_v2 b ON b.id=i.batch_id
+        JOIN signal_topic_editorial_global_stage_calls_v2 c ON c.id=i.call_id
+        WHERE i.request_id=r.id ORDER BY b.created_at DESC LIMIT 1)latest ON true
+      WHERE r.stage_id=$1::uuid ORDER BY r.stage_kind,r.round,r.batch_index`,[stage.stage_id])).rows;
+    const corrections:Array<{request_id:string;raw_text:string;validation:unknown;removed:number;merged:number}>=[];
+    for(const row of rows){
+      const prior=row.validation as {status?:string}|null,latest=row.latest_validation as {status?:string}|null;
+      if(prior?.status==='accepted_shard'||latest?.status==='accepted_shard')continue;
+      if(row.stage_kind!=='shard'||row.call_status!=='settled'||row.batch_state!=='imported'
+        ||row.state!=='submitted'||!row.raw_text||row.raw_sha256!==sha(row.raw_text)
+        ||!row.prior_validation_sha256||!row.batch_id||!row.call_id)return {recovered:false,reason:'source_unavailable'};
+      let response:unknown;
+      try{const envelope=JSON.parse(row.raw_text) as {result?:{message?:{content?:Array<{type?:string;text?:string}>}}};
+        const content=envelope.result?.message?.content?.filter(item=>item.type==='text');
+        if(content?.length!==1||typeof content[0]?.text!=='string')return {recovered:false,reason:'raw_response_invalid'};
+        response=JSON.parse(content[0].text);}
+      catch{return {recovered:false,reason:'raw_response_invalid'};}
+      const shard=JSON.parse(row.stage_contract_body) as Parameters<typeof repairSignalTopicEditorialGlobalShardFormattingV2>[0]['shard'];
+      const fixed=repairSignalTopicEditorialGlobalShardFormattingV2({shard,value:response});
+      if(!fixed)return {recovered:false,reason:'format_not_repairable'};
+      corrections.push({request_id:row.request_id,raw_text:row.raw_text,removed:fixed.removed_invalid_citations,
+        merged:fixed.merged_noise_duplicates,validation:{status:'accepted_shard',result:fixed.result,
+          structural_repair:{kind:'citation_surplus_or_duplicate_noise',source_batch_id:row.batch_id,source_call_id:row.call_id,
+            prior_validation_sha256:row.prior_validation_sha256,removed_invalid_citations:fixed.removed_invalid_citations,
+            merged_noise_duplicates:fixed.merged_noise_duplicates}}});
+    }
+    if(!corrections.length)return {recovered:false,reason:'no_corrections'};
+    for(const row of corrections){
+      await client.query(`UPDATE signal_topic_editorial_global_stage_requests_v2
+        SET state='received',raw_text=$2,raw_sha256=$3,received_at=clock_timestamp()
+        WHERE id=$1::uuid AND state='submitted' AND raw_text IS NULL`,[row.request_id,row.raw_text,sha(row.raw_text)]);
+      const validation=stable(row.validation);
+      await client.query(`UPDATE signal_topic_editorial_global_stage_requests_v2
+        SET state='validated',validation=$2::jsonb,
+          validation_sha256=signal_topic_editorial_global_validation_digest_v2($2::jsonb),validated_at=clock_timestamp()
+        WHERE id=$1::uuid AND state='received' AND validation IS NULL`,[row.request_id,validation]);
+    }
+    const reopened=(await client.query<{stage_id:string}>(`UPDATE signal_topic_editorial_global_stages_v2
+      SET state='open',completed_at=NULL WHERE stage_id=$1::uuid AND state='blocked' RETURNING stage_id::text`,[stage.stage_id])).rows[0];
+    if(!reopened)throw new Error('topic_editorial_global_stage_recovery_conflict');
+    return {recovered:true,stage_id:stage.stage_id,corrected_requests:corrections.length,
+      removed_invalid_citations:corrections.reduce((n,row)=>n+row.removed,0),
+      merged_noise_duplicates:corrections.reduce((n,row)=>n+row.merged,0)};
+  });
 }
 
 function decodeLeaseRow(row:{id:string;stage_id:string;stage_kind:'shard'|'merge'|'rank';state:SignalTopicEditorialGlobalStageLeaseV2['state'];
@@ -632,6 +706,7 @@ export async function prepareSignalTopicEditorialGlobalStageGrammarRetryV2(args:
             AND c.response_body_private::jsonb->'result'->'error'->'error'->>'message' LIKE 'Grammar compilation rate limit exceeded%')
           OR (i.outcome='succeeded' AND i.validation->>'status'='invalid_output'
             AND i.validation->>'code'='topic_editorial_global_shard_citation_invalid'))
+        AND r.validation IS NULL
         AND (SELECT count(*) FROM signal_topic_editorial_global_stage_calls_v2 attempts WHERE attempts.request_id=r.id)<5
       ORDER BY s.created_at,r.stage_kind,r.round,r.batch_index LIMIT 100`,[])).rows;
     if(!candidates.length)return null;
