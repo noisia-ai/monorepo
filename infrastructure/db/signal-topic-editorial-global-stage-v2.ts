@@ -238,13 +238,16 @@ export async function persistSignalTopicEditorialGlobalStageCatalogV2(args:{data
     const stage=(await client.query<{expected_group_count:number}>(`SELECT expected_group_count FROM signal_topic_editorial_global_stages_v2
       WHERE stage_id=$1::uuid`,[args.stage_id])).rows[0];
     if(!stage||stage.expected_group_count!==args.group_evidence.length)throw new Error('topic_editorial_global_catalog_coverage_invalid');
-    const source=(await client.query<{matching:number;distinct_count:number;total:number}>(`SELECT
+    const source=(await client.query<{matching:number;distinct_count:number}>(`SELECT
       count(*) FILTER(WHERE EXISTS(SELECT 1 FROM signal_topic_atomic_groups g WHERE g.consolidation_run_id=e.numeric_run_id AND g.group_key=entry.value->>'group_key'))::int matching,
-      count(DISTINCT entry.value->>'group_key')::int distinct_count,
-      (SELECT count(*)::int FROM signal_topic_atomic_groups g WHERE g.consolidation_run_id=e.numeric_run_id) total
+      count(DISTINCT entry.value->>'group_key')::int distinct_count
       FROM signal_topic_editorial_global_stages_v2 s JOIN signal_topic_editorial_executions e ON e.id=s.execution_id
       CROSS JOIN jsonb_array_elements($2::jsonb) AS entry(value) WHERE s.stage_id=$1::uuid`,[args.stage_id,evidence])).rows[0];
-    if(!source||source.matching!==stage.expected_group_count||source.distinct_count!==stage.expected_group_count||source.total!==stage.expected_group_count)
+    const total=(await client.query<{total:number}>(`SELECT count(*)::int total FROM signal_topic_atomic_groups g
+      JOIN signal_topic_editorial_executions e ON e.numeric_run_id=g.consolidation_run_id
+      JOIN signal_topic_editorial_global_stages_v2 s ON s.execution_id=e.id
+      WHERE s.stage_id=$1::uuid`,[args.stage_id])).rows[0]?.total;
+    if(!source||source.matching!==stage.expected_group_count||source.distinct_count!==stage.expected_group_count||total!==stage.expected_group_count)
       throw new Error('topic_editorial_global_catalog_source_mismatch');
     const prior=(await client.query<{catalog_digest:string;catalog_body:unknown;group_evidence:unknown}>(`SELECT catalog_digest,catalog_body,group_evidence
       FROM signal_topic_editorial_global_stage_catalog_v2 WHERE stage_id=$1::uuid FOR UPDATE`,[args.stage_id])).rows[0];
