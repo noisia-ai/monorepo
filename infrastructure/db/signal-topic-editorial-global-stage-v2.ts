@@ -601,8 +601,10 @@ export async function materializeSignalTopicEditorialStagedGlobalCatalogV2(args:
       throw new Error('topic_editorial_global_catalog_source_mismatch');
     numericRun=run.numeric_run_id;
     const stageRequests=(await client.query<{request_count:number;terminal_count:number;technical:number}>(`SELECT count(*)::int request_count,
-      count(*) FILTER(WHERE item.outcome IS NOT NULL AND item.validation IS NOT NULL AND call.status='settled')::int terminal_count,
-      count(*) FILTER(WHERE item.validation->>'status' IN('invalid_output','provider_error','canceled','expired'))::int technical
+      count(*) FILTER(WHERE item.outcome IS NOT NULL AND COALESCE(req.validation,item.validation) IS NOT NULL
+        AND call.status='settled')::int terminal_count,
+      count(*) FILTER(WHERE COALESCE(req.validation,item.validation)->>'status'
+        IN('invalid_output','provider_error','canceled','expired'))::int technical
       FROM signal_topic_editorial_global_stages_v2 s
       LEFT JOIN signal_topic_editorial_global_stage_requests_v2 req ON req.stage_id=s.stage_id
       LEFT JOIN LATERAL(SELECT i.outcome,i.validation,c.status FROM signal_topic_editorial_global_stage_batch_items_v2 i
