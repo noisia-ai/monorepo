@@ -23,11 +23,16 @@ jobs:
         # Hard gate: no secrets / committed .env files reach main.
         # Pinned binary instead of gitleaks-action@v2 (the action needs GITHUB_TOKEN
         # and an org license; the binary is dependency-free). --redact hides any match.
+        # --log-opts=HEAD scans exactly what reaches main: on a pull_request HEAD is the
+        # merge commit (main + the PR), on a push it is main. Without it, gitleaks walks
+        # every ref that fetch-depth: 0 pulled in, so one unrelated branch with a false
+        # positive fails every PR in the repo. A branch is still scanned in full the day
+        # it opens its own PR against main.
         run: |
           VER=8.21.2
           curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_x64.tar.gz" \
             | tar -xz -C /usr/local/bin gitleaks
-          gitleaks detect --source . --no-banner --redact --exit-code 1
+          gitleaks detect --source . --no-banner --redact --exit-code 1 --log-opts="HEAD"
 
       - name: Block committed env files
         run: |
