@@ -48,6 +48,7 @@ python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/
 | `METHODOLOGY.md` | What you may claim and how strongly |
 | `DATA.md` | How the corpus is processed: ETL, quality gates, output contracts |
 | `PROPOSALS.md` | Proposals and the product block |
+| `INTERNAL.md` | Decks for the team: status, operation, product and its state |
 | `PROMPTS.md` | The parameterized prompt that starts a run |
 
 ## Two principles

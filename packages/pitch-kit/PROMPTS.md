@@ -36,6 +36,10 @@ LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni m�
 Y si el entregable toca lo comercial, la KB manda sobre el contenido:
 packages/kb/00-overview/positioning.md y packages/kb/02-services/product-model.md
 
+SI LO QUE VOY A PEDIR ES UNA PRESENTACIÓN INTERNA para el equipo, un status, cómo operamos o el
+estado del producto, detente aquí: no es un entregable de cliente y este cuestionario no aplica.
+Lee packages/pitch-kit/INTERNAL.md y sigue el prompt de decks internos de PROMPTS.md.
+
 PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna:
 1. ¿Reporte, estudio, o los dos?
 2. ¿En qué idiomas? Si son dos, se construyen juntos desde una sola fuente de contenido.
@@ -96,6 +100,63 @@ NO NEGOCIABLES:
 Avísame en cuanto una decisión cambie el universo o la interpretación, y si los datos no dan para
 lo que pedí, dímelo antes de construir, no después. Al final dime qué puede afirmarse, qué solo es
 direccional y qué no permite concluir esta base.
+```
+
+## Prompt para decks internos
+
+Para una presentación al equipo: un status update, cómo operamos, el producto y su estado. **No
+uses el prompt maestro para esto**: está hecho para entregables de cliente, y seguirlo al pie de la
+letra es lo que hace que un deck interno salga con tono de pitch.
+
+```text
+Vamos a hacer una presentación INTERNA de Noisia, para el equipo. No es un reporte, un estudio ni
+una propuesta: no corras el cuestionario de entregables del kit ni uses su tono comercial.
+
+EL KIT ESTÁ EN: /Users/brandhon_o/Downloads/noisia-product/packages/pitch-kit/
+Rama: pitch-kit/canon-2026-09
+
+LEE PRIMERO:
+- INTERNAL.md     manda sobre la voz, la estructura y la portada de este deck. Completo.
+- CANON.md        el contrato del sistema
+- LAYOUTS.md, COPY_RULES.md, CHARTS.md, ICONS.md   para el diseño, que sí es el del kit
+- slides/catalog.json   los componentes que existen
+Y mira renderizado, completo, el deck aprobado más reciente de examples/_local/ como vara de
+calidad visual. De ahí se toma el acabado, no el tono.
+
+PREGÚNTAME ANTES DE EMPEZAR:
+1. ¿Quién va a estar en la sala, y qué tiene que saber al salir?
+2. ¿Qué universos cubre? Por ejemplo, lo que operamos hoy y el producto en desarrollo.
+3. ¿Cuál es la fuente de verdad de cada uno? Repo, rama, documentos, recibos de UAT, capturas.
+4. ¿Hay algo que no deba aparecer?
+
+ANTES DE CONSTRUIR, entrégame en texto y espera mi visto bueno:
+- el mapa narrativo: los universos, sus capítulos y cómo se conectan entre sí;
+- la lista de funciones que no pueden quedar sin explicar;
+- el estado de cada una con su evidencia: existe en código, comprobado en UAT, diseñado o pendiente.
+
+REGLAS DE ESTE DECK, todas en INTERNAL.md:
+- Portada: solo el título. Sin ilustración, sin eyebrow, sin subtítulo.
+- El título de cada slide nombra el tema, llano. Nada que venda, justifique o impresione.
+- Cada función: para qué sirve, qué recibe, qué proceso y qué componente, qué resultado deja, qué
+  existe y qué falta, y cómo alimenta lo siguiente. Repartido en las slides que haga falta.
+- Cada tecnología se explica por lo que hace, no solo se nombra. Un logo solo si es real y va
+  atado a una función.
+- Diagramas: cada flecha es una relación real, entradas y salidas nombradas, orden de lectura obvio.
+- Los ejemplos simulados dicen "simulado". Las capturas son reales y recortadas a lo relevante.
+- Máximo tres tamaños de texto en todo el deck.
+- Todo el diseño del kit sigue vigente: engine, cards, sin bordes de acento, sin gradientes,
+  iconos reales, cero em dash, el footer.
+- El deck vive fuera del repo.
+
+FLUJO:
+mapa narrativo aprobado
+  → slides sobre el engine
+  → render de cada slide con builders/qa-render.py, y las miras todas
+  → PDF revisado página por página
+  → GUION_POR_SLIDE.md con el detalle y las fuentes que no caben en la slide
+
+Si en una revisión te digo "rehazla entera", reconsidera la estructura y el diseño del conjunto, no
+solo las slides que mencioné.
 ```
 
 ## Bloque · Estudio de Triggers y Barriers

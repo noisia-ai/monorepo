@@ -90,8 +90,10 @@ renderer rasterises an SVG filter and it comes out as cloud, not grain, and it d
 
 ## The cover (all families)
 
-Every shipped deck converged on the same cover, so it is canon now. Full-bleed illustration on the
-right, copy anchored bottom-left:
+Every shipped client deck converged on the same cover, so it is canon now. Full-bleed illustration
+on the right, copy anchored bottom-left. **Not for internal decks**: their cover is the title and
+nothing else (`INTERNAL.md`).
+
 
 | Element | Rule |
 |---|---|

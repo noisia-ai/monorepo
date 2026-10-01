@@ -138,6 +138,11 @@ Dos generalizaciones que valen por sí solas:
 estudio, donde el título es la pregunta de investigación; la slide de brief; y las páginas de
 referencia, glosario y método, que se nombran por lo que son.
 
+**Y una familia entera donde la regla se invierte: los decks internos.** Un status update o una
+explicación del producto para el equipo no vende ninguna conclusión. Ahí el título nombra el tema,
+llano: "Operación actual", "Brand OS", "Qué falta". Aplicarles esta regla es lo que hace que un
+deck interno suene a pitch. Ver `INTERNAL.md`.
+
 ### El título no puede afirmar más que el dato, ni menos
 
 Antes de cerrar un título se revisa contra la cifra que lo sostiene. Si la cifra sostiene una

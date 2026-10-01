@@ -54,13 +54,13 @@ Dentro del kit, cuando dos documentos se contradigan gana el de arriba:
 Un deck entregado enseña forma, densidad y ritmo. **No manda sobre una regla** y no autoriza
 reusar contenido de otro cliente.
 
-## 3. Las cinco familias de entregable
+## 3. Las seis familias de entregable
 
 Antes de la tabla, la distinción que evita el malentendido más caro: **lo que Noisia vende son
 Reportes y Estudios.** El catálogo comercial, R1 a R3 y E1 a E5, vive en
 `packages/kb/02-services/product-model.md` y manda sobre cualquier cosa que se escriba aquí.
 
-Las cinco familias de abajo son **artefactos, no productos**. Una muestra es una pieza comercial
+Las seis familias de abajo son **artefactos, no productos**. Una muestra es una pieza comercial
 recortada de un estudio, no algo que se cotiza aparte. Una propuesta es cómo se acuerda el trabajo
 antes de que exista. El bloque de producto solo explica a la compañía. Ninguna de esas tres se
 vende por sí sola, y ninguna se presenta al cliente como si fuera una línea de servicio.
@@ -72,7 +72,7 @@ Noisia confirma que puede entregarla. Y **Foundation, Intelligence y Strategy so
 interna de profundidad**, nunca la historia comercial: no van en una slide. La escalera visible es
 workshop, reporte, estudio y estudios recurrentes.
 
-Dicho eso, no son cinco plantillas. Son cinco preguntas distintas, y confundirlas es el otro error
+Dicho eso, no son seis plantillas. Son seis preguntas distintas, y confundirlas es el otro error
 caro.
 
 | Familia | Pregunta que responde | Arranca de | Largo típico | Secuencia canónica |
@@ -82,6 +82,7 @@ caro.
 | **Muestra** | Qué tan buena es la lectura de Noisia, con alcance recortado | Una pregunta corta y un corpus acotado | 10 a 14 slides | `LAYOUTS.md`, variante de Estudio |
 | **Propuesta** | Qué haremos, para qué decisión, con qué alcance y qué recibe el cliente | Un discovery | 10 a 14 slides | `PROPOSALS.md` |
 | **Producto** | Qué es Noisia y dónde entra | Nada, es institucional | 14 a 15 slides | `PROPOSALS.md`, bloque de producto |
+| **Interno** | Qué existe, cómo funciona y qué falta | Una necesidad del equipo | Las que haga falta | `INTERNAL.md` |
 
 Dos fronteras que no se cruzan:
 
@@ -89,6 +90,10 @@ Dos fronteras que no se cruzan:
   una pregunta y responde por qué. Un reporte con una tesis inventada es un estudio mal hecho.
 - **Propuesta no adelanta hallazgos.** Puede enseñar la forma de la entrega y el nivel de
   evidencia. No puede decir qué va a encontrar. Ver `PROPOSALS.md`, regla de frontera.
+- **Interno no es cliente.** Las otras cinco familias se escriben para alguien de fuera; esta, para
+  el equipo. Varias de las reglas más fuertes del kit, el título que afirma el hallazgo, la portada
+  con ilustración y el cuestionario del prompt de arranque, en un deck interno son justo lo que no
+  se hace. `INTERNAL.md` dice cuáles cambian y cuáles se quedan.
 
 Cada familia **se delimita a sí misma en sus glosarios**, con el vocabulario del cliente y no con
 el nuestro. Ahí se declara qué se midió, contra qué se compara y hasta dónde llega la lectura. No
@@ -110,6 +115,7 @@ Lee solo lo que tu entregable necesita:
 | Criterio | `METHODOLOGY.md` | Qué se puede afirmar y con qué fuerza |
 | Ejecución de datos | `DATA.md` | Inventario, ETL, gates de calidad, contratos de salida |
 | Comercial | `PROPOSALS.md` | Propuestas, alcance, entregables, lo que no incluye |
+| Interno | `INTERNAL.md` | Decks para el equipo: status, operación, producto y su estado |
 | Arranque | `PROMPTS.md` | El prompt con el que empieza cualquier corrida |
 | Campo | `LEARNINGS.md` | Lo que enseñó un deck real antes de volverse regla |
 | Registro | `templates/` | Procedencia, changelog y guion por slide |
