@@ -38,7 +38,7 @@ When you create a reusable slide / rule / builder improvement:
 1. **Sanitize** — strip all client specifics down to a generic template.
 2. **Add** the fragment at `slides/<id>/<id>.html`.
 3. **Register** it in `slides/catalog.json` (id, name, file, category, `when`, variants, placeholders, plus `height` and `fits_with`: what the slide occupies and what else fits with it. Measure them once so the next person does not discover them by rendering). A missing or stale catalog entry is the only real bug here — the catalog is how the next agent discovers your slide.
-4. **PR it** (branch → PR, CI green). Additions under `slides/**` are exempt from Code-Owner review (see root `.github/CODEOWNERS`) so they land fast.
+4. **PR it** (branch → PR, CI green). **The kit lives on `main`.** It is documentation, not product, so there is no long-lived kit branch: each change goes in a short branch cut from `main`, merges by PR, and the branch is deleted. Additions under `slides/**` are exempt from Code-Owner review (see root `.github/CODEOWNERS`) so they land fast.
 
 ## 🔀 When a deck session learns something
 
@@ -64,7 +64,7 @@ Only if the user explicitly asks a deck session to edit the kit itself:
 
 - Before touching anything, run `git status`. **If there are changes you did not make, stop and ask.**
   They belong to another session.
-- Work on the kit branch, additive edits only, nothing with client data.
+- Cut a short branch from an up-to-date `main`, additive edits only, nothing with client data.
 - **Commit before you finish.** Never leave the tree dirty for the next session to inherit.
 - Leave a short record of what you changed in the case folder, so the integration can be checked.
 

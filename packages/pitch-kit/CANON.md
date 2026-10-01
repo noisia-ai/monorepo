@@ -251,6 +251,10 @@ y el anterior se conserva. Ver la convención de nombres en `LEARNINGS.md`, Vers
 
 ## 7. Dónde vive cada cosa
 
+**El kit vive en `main`.** Es documentación, no producto ni features, así que no hay una rama larga
+del kit: cada cambio sale de `main` en una rama corta, entra por PR con el CI en verde y la rama se
+borra. Quien arranque un deck trabaja sobre `main` actualizado.
+
 Este repo es **público**. La regla 1 de `AGENTS.md` no tiene excepciones.
 
 | Va al repo | Se queda fuera, en `examples/_local/` o una carpeta local |

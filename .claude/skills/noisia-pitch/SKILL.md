@@ -69,7 +69,7 @@ When the user does ask you to integrate (into the kit itself):
 1. Run `git status` first. If there are changes you did not make, stop and ask.
 2. **Sanitize.** Strip ALL client data, names, real numbers, and findings to a generic template with `{{PLACEHOLDER}}`s (the repo is public).
 3. **Add** the fragment under `packages/pitch-kit/slides/<new-id>/<new-id>.html` and **register** it in `slides/catalog.json`, with `height` and `fits_with`.
-4. **Commit before you finish**, on the kit branch, and open a PR (CI must pass). Never leave the tree dirty.
+4. **Commit before you finish**, on a short branch cut from an up-to-date `main`, and open a PR (CI must pass). Once it merges, the branch is deleted. Never leave the tree dirty.
 
 Next time anyone runs this skill, `catalog.json` already lists your slide. That's how "the slides legales someone asked for" stop getting lost.
 
