@@ -40,8 +40,64 @@ En la slide de equipo: **datos primero, estratega al final** (Analista de datos 
 - **Ilustraciones Noisia**: siluetas con aberración cromática cian/rojo. Usa **PNG con fondo transparente** (evita bordes); si el PNG trae fondo blanco, monta con `mix-blend-mode: multiply`.
 - **Bug flexbox recurrente**: una imagen `flex:1` empuja caption/footer fuera del canvas → añade **`min-height:0`** al contenedor flex.
 - **Sombras en PDF**: `--print-to-pdf` (build-pdf.mjs) **rasteriza `box-shadow` y `backdrop-filter` como cuadros grises** detrás de cada card. Ya hay un `@media print` en `engine/deck.css` que aplana `.glass` a superficie sólida con borde solo para impresión (pantalla intacta). Si haces cards custom fuera de `.glass`, aplánalas igual (fondo sólido + borde, sin sombra) o hazlas de color pleno (p. ej. negro con iconos blancos).
+- **No toques el `position` de `deck-stage`.** Un bloque de estilos copiado de otro deck traía
+  `deck-stage{position:relative}`, que pisa el `position:fixed` del componente y colapsa el lienzo.
+  Copia componentes, no la hoja entera de otro caso.
+- **El QA es `builders/qa-render.py`.** Para inspeccionar el PDF impreso cuando no hay `pdftoppm`,
+  PyMuPDF (`import fitz`) rasteriza cada página y arma una hoja de contactos en pocas líneas.
+- **El primer borrador se arma sobre el kit y contra un deck aprobado.** En un caso el primer
+  intento llevaba CSS propio y copy genérico y se rechazó entero. Antes de escribir, se abre el
+  deck aprobado más cercano de `examples/_local/` y se usa como vara.
 - **Verifica el PDF real, no el screenshot de pantalla.** El artefacto de sombras solo aparece en el print. Renderiza la página impresa: `pypdf` (extrae la página) → `sips -s format png` para inspeccionarla.
 
 ## Caveats honestos (siempre)
 - **Geo**: "La precisión de la geolocalización depende de la fuente de datos". El social listening mide **conversación digital, no presencia física** ni verdad de campo — verifica contra la agenda real antes de afirmar ausencia/silencio.
 - Reacciones ≠ sentimiento: "haha" (burla) puede dominar aunque el modelo marque neutral. Revísalo.
+
+## Propuesta con un ejemplo trabajado sobre datos del cliente
+Caso: cruce de un NPS con la conversación, en una telco, con una categoría analizada completa como
+ejemplo y el resto del deck explicando el servicio. Lo que se corrigió en dos rondas:
+
+- **Dos bloques, dos voces.** El bloque del ejemplo se escribe como si el cliente lo presentara
+  internamente: “el NPS”, nunca “tu NPS”, y sin Noisia explicándole nada. El bloque de método e
+  implementación sí es Noisia hablándole al cliente. Ese bloque va diagramado: flujo con las cifras
+  del embudo, tabla puente entre sus categorías y las nuestras, cadencia.
+- **La portada lleva el hallazgo principal del ejemplo**, sobre el sujeto (la categoría), no una
+  pregunta sobre el método. A la derecha, la versión simple del visual principal.
+- **El índice se cambia por un resumen ejecutivo.** Un índice que explica el método no le sirve a
+  nadie. Tres o cuatro tarjetas, cada una con su cifra y su hallazgo.
+- **Rótulos llanos donde la idea es simple.** Una tabla que compara las dos fuentes se titula
+  “NPS vs Social” y sus columnas dicen NPS y Social. Frases como “aquí, sin traducir” o
+  “en dos idiomas” sobran.
+- **La slide de interpretación se llama “el trasfondo”.** Es casi un insight sin serlo: por qué el
+  hallazgo pesa como pesa. “Lectura” no se entiende y “análisis” promete más de lo que es.
+- **Nombres acuñados para el método, aunque sean en inglés**, en el eyebrow de la sección: Voice
+  Convergence, el lenguaje común. Una frase-eslogan en el título no reemplaza un nombre.
+- **Las recomendaciones sobre la promesa de la marca se escriben como alineación**, no como
+  ultimátum. “Sostén la promesa o deja de decirla” se leyó grosero; “alinear comunicación y
+  experiencia” dice lo mismo.
+- **No se afirma que el cliente no mide algo sin revisar toda su taxonomía.** Ver `DATA.md` §18.5.
+- **El límite se dice en la slide.** Dónde la conversación no sirve y la encuesta es la referencia.
+  Le dio más credibilidad al deck que cualquier hallazgo.
+- **Nada del contexto que se le dio al agente llega a la slide.** Ni nombres de la contraparte, ni
+  lo que pasó en la reunión anterior, ni datos de negocio que el cliente comentó de pasada. Si al
+  cliente no le aporta, no va.
+
+## Versiones y entrega
+- **Una versión nunca pisa a la anterior.** El deck vigente se llama
+  `<Cliente>_<tema>_V0X_<AAAA-MM-DD>.pdf`; al reemplazarlo, el PDF y su fuente pasan a `_archive/`
+  con prefijo de fecha. Hubo un caso con nueve archivos de versiones sueltos en dos carpetas y
+  costó encontrar el bueno.
+- **`VERSIONS.md` en la carpeta del deck**: cuál es el vigente, cómo se reconstruye, y qué cambió
+  entre versiones, con los números base de cada una.
+- **Fuente y build separados.** La fuente editable lleva marcadores donde entran gráficos
+  generados; el `index.html` se arma con un script y no se edita a mano.
+- **Si el análisis cambia, el análisis es reproducible**: scripts de pipeline, métricas y gráficos
+  en una carpeta del caso, y las correcciones de la revisión manual en un archivo `id · campo ·
+  valor` que el pipeline aplica.
+- **Con el deck va un guion por slide**: qué decir, la cifra que se dice en voz alta, el paso a la
+  siguiente y las preguntas probables con su respuesta.
+- **Si la audiencia ya vio una versión anterior**, el guion abre con una tabla de qué cambió y la
+  frase que explica por qué cambiaron los números. El crédito a quien pidió el cambio se da de
+  palabra, nunca en la slide.
+

@@ -226,6 +226,12 @@ ya trabaja el marco, conteos y participación, siempre con el denominador visibl
 método el volumen total sí se dice, porque ahí se está explicando el alcance. Etiquetas que se
 traslapan nunca se suman. El criterio completo está en `CANON.md`, sección 5.3.
 
+**Los números se escriben como en el mercado del cliente.** En Chile y el resto del Cono Sur, coma
+decimal y punto de miles: 0,29 y 1.224. En México, al revés. Se decide al empezar el deck y no se
+mezcla. Y **la pregunta “¿de dónde sale ese porcentaje?” se responde antes de que la hagan**: una
+línea de “cómo leer los porcentajes” en la slide de método, y el embudo con sus cifras (capturado,
+depurado, núcleo) en la misma slide.
+
 ## 3. Tono Noisia para press
 - Simple sobre sofisticado. Si una slide necesita explicación, falló.
 - Una idea por slide. El título dice la idea; el cuerpo la prueba.

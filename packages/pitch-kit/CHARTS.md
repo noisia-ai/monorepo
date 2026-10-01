@@ -149,3 +149,41 @@ hallazgo como cualquier otro (`COPY_RULES.md`).
 Ningún número del chart, ni de la slide, se escribe a mano. Se calcula de la tabla codificada al
 construir el deck. Un número tecleado sobrevive al corpus que lo contradice; uno calculado, no.
 Ver `CANON.md` §6.
+
+## 9. Matriz de dispersión
+
+Una matriz que se ve dibujada no se cree. Salió de una corrección de cliente sobre la primera
+matriz de convergencia: puntos bien puestos pero sin escala, una diagonal con la palabra
+“coinciden” encima y un rótulo que decía “sin debate”. El lector no sabía si los puntos venían de
+datos o de intuición.
+
+- **Ejes con escala.** Marcas numéricas en los dos ejes, unidad dicha una vez, y cada eje nombra
+  la métrica completa (“inclinación en el NPS · puntos”), no un sinónimo.
+- **Cada punto lleva sus dos cifras** debajo del nombre: “NPS +21 · conversación −1”.
+- **La diagonal es gris claro y punteada**, y si lleva texto es neutro: “misma inclinación en
+  ambas”. Nada de “coinciden” encima, que se lee como conclusión.
+- **Los cuadrantes se nombran en las esquinas**, en gris claro, con lo que significan: “motiva en
+  la encuesta, no en digital”. Se deja una franja libre en el borde del rango para que esos
+  rótulos nunca toquen un punto ni una marca del eje.
+- **El tamaño del punto dice qué es** en `.foot` (menciones, peso en el indicador).
+- **La fórmula va en `.foot`**, una línea: qué se resta de qué y por qué así.
+- **Los rótulos de los puntos se colocan por código**, relativos al radio de cada burbuja (a la
+  derecha, arriba o abajo), no con coordenadas tecleadas. En matrices de más de diez puntos se
+  rotulan solo los del sujeto y los de mayor peso; el resto se lee por color en la leyenda.
+- **El color separa lecturas, no series**: diverge, coinciden en lo negativo, coinciden en lo
+  positivo. La leyenda a la derecha explica cada grupo en una frase.
+
+Si la matriz es el visual principal, la portada lleva su versión simple: cuadrada, a la derecha,
+solo puntos, diagonal y dos o tres nombres.
+
+## 10. Semáforo de valencia
+
+Cuando una métrica tiene tres columnas (recomendar, qué mejorar, no recomendar, o motiva, neutral,
+desmotiva), el color es fijo en todo el deck: verde `#008f66` (`--positive`), ámbar `#c98a12` (`--amber`), coral `#e2543c` (`--coral`),
+con sus fondos suaves para encabezados y chips. La inclinación de una fila se marca con un chip del
+mismo código y un umbral declarado en `.foot`.
+
+Una tabla que compara dos fuentes **agrupa por columna, no por fuente**: encabezado de color por
+valencia y debajo el par NPS · conversación. La celda donde las fuentes divergen se resalta con
+fondo amarillo suave y borde, y solo esa; si se resaltan todas, ninguna dice nada.
+

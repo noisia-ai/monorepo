@@ -193,6 +193,16 @@ perfectamente y ninguna habla de la experiencia:
 - **Cluster de entretenimiento.** Un personaje o activo de marca que se vuelve fenómeno cultural
   arrastra festival, conciertos y televisión. En un caso fue el 14% del corpus de un competidor.
 
+**Una marca que existe en varios países se resuelve por la cuenta, no solo por el campo país.** En
+un caso de telco con el mismo nombre en tres mercados, casi la mitad del crudo era de los otros dos
+(hasta 79% en algunas consultas) y el campo país venía vacío en un tercio. Lo que resolvió la
+geografía fue el post padre: la página de Facebook y el handle de TikTok donde vive el comentario
+dicen de qué país es la conversación, y el texto del padre confirma. A eso se suman señales del
+texto propio: comunas y regiones, instituciones locales, modismos, moneda, el handle de soporte de
+la marca en ese país. Una mención sin país y sin ninguna señal **no entra a ciegas**: en ese caso,
+las que sí traían país y tampoco tenían señal eran del mercado objetivo solo en 60%. Se leen y se
+decide una por una, o quedan fuera.
+
 Si un archivo falla pertinencia: se conserva la versión anterior como evidencia de control, se
 corrige el query, se exporta de nuevo, se comparan volumen y anclas, se mide cuánto del archivo
 corregido ya estaba en el universo principal y se declara cuál versión queda vigente. **No se
@@ -316,6 +326,13 @@ Emparejadas, quedó 47% y 46%.
 
 Sin validación formal, los conteos se llaman direccionales. Así, con esa palabra.
 
+**El elogio por comparación se lee como queja.** “Donde nadie tiene señal, la marca sí”, “jamás
+me ha fallado”, “me cambié y no he tenido problemas” están llenos de palabras negativas. Un
+clasificador por reglas los manda a la queja. En un caso, las reglas daban menos de 1% de elogio;
+leídas una por una las 2,266 menciones, el elogio real era 7%, y era justo el lado que la
+comparación con el cliente necesitaba. Cuando el análisis compara valencias, la valencia se revisa
+completa o con una muestra grande por clase antes de publicar cualquier reparto.
+
 ### Si se usa un modelo generativo
 
 Entra después del perfilado, para descubrimiento de temas, naming, clasificación asistida y
@@ -356,6 +373,39 @@ especializadas. El rol se demuestra con verbatims de ese canal, no se asigna por
 plataforma.
 
 Esta lectura alimenta la slide de canales, que es parte de la secuencia canónica en `LAYOUTS.md`.
+
+## 18.5 Cruce con un indicador del cliente
+
+Cuando la conversación se compara con un indicador que el cliente ya mide (NPS, satisfacción,
+razones de abandono), el indicador manda en tres cosas.
+
+- **El alcance.** Antes de escuchar se confirma qué cubre el indicador: qué producto, qué
+  población, qué periodo. En un caso el NPS era solo de la línea móvil y el primer corte mezcló
+  menciones de hogar; el cliente encontró un porcentaje cruzado contra una categoría que su
+  encuesta no tiene y preguntó de dónde salía. Lo que no cabe en el alcance se excluye, y lo que
+  no se puede atribuir va a un balde **ambiguo**, fuera del cruce, con su volumen y una línea de
+  sensibilidad en `.foot`: cuánto cambiaría la cifra si se sumara.
+- **La taxonomía.** Se compara contra las categorías del cliente con sus nombres, no contra las
+  nuestras. Si un driver de la conversación no existe en esa categoría del indicador, primero se
+  busca en las demás: lo que parecía un punto ciego (la posventa dentro de las quejas de red) el
+  cliente lo medía en otra categoría. Eso es un **cruce entre categorías**, no un punto ciego, y
+  se reporta como hallazgo: qué parte de las quejas de una categoría también reclama otra. En ese
+  caso, una de cada cuatro quejas de red arrastraba atención, cobros o plan.
+- **Las columnas.** Si el indicador separa razones para recomendar, para mejorar y para no
+  recomendar, cada categoría es un espectro y se compara columna contra columna. Comparar solo las
+  quejas es sesgo de confirmación: el tema dominante domina todas las columnas, así que “coinciden
+  en la queja” no prueba nada. Dentro de cada columna se mide participación (de las menciones que
+  desmotivan, qué parte habla de cada driver), igual que las razones codificadas. La dirección se
+  resume como **inclinación**: peso en la columna positiva menos peso en la negativa, en puntos,
+  calculada igual en las dos fuentes. Así no importa que la conversación sea mayoritariamente
+  queja: no se compara cuánto se elogia, sino de qué se habla.
+
+Además se reporta cuántas **personas distintas** hay detrás de las menciones del núcleo. Si el
+reparto por persona da casi lo mismo que por mención, se dice: la conversación no depende de pocos
+autores. Y lo que la conversación no mide bien se dice en la slide: en ese caso internet y
+llamadas se reclamaban como “sin señal” y quedaban subrepresentados, así que para esos dos drivers
+la referencia era la encuesta. **No se afirma que la conversación predice el indicador.** Lo que sí
+se puede mostrar es el evento en el mismo mes y el porqué.
 
 ## 19. Contratos de salida
 
@@ -422,6 +472,9 @@ Un entregable no pasa a deck mientras falle un gate que afecte su conclusión pr
 | Citar sin hilo | Sentido incompleto | Recuperar publicación raíz y respuestas |
 | Convertir multilabel en porcentajes sumables | Lectura matemática falsa | Declarar traslape y denominador |
 | Ocultar el ruido eliminado | Falsa sensación de cobertura | Publicar exclusiones y su volumen |
+| Comparar solo la columna negativa contra el indicador | Convergencia fabricada por el tema dominante | Comparar las tres columnas y la inclinación |
+| Cruzar fuera del alcance del indicador | Cifras que el cliente no reconoce | Confirmar producto y población; ambiguas fuera con sensibilidad |
+| Incluir sin país ni señal en una marca multipaís | Contaminación de otro mercado | Resolver por cuenta padre y señales; leer o excluir |
 
 ## 23. Checklist operativo
 

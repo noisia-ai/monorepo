@@ -44,6 +44,18 @@ Hard rules, learned the hard way:
   with and without the accent, or half a Spanish-language corpus never shows up.
 - **Wildcards are prefix only, ≥4 chars.** `rent*` catches rent/renta/rental/rented; pair it with a
   subject anchor so it doesn't catch unrelated words.
+- **Porting the client's booleans from another tool.** When the client already has queries built
+  in another listening tool, reuse their logic but clean it before pasting: drop section comment
+  markers (`<<<...>>>`), turn `-(...)` into `NOT (...)`, expand single-character wildcards (`?`) by
+  hand, and remove field operators (`title:`, `author:`, `site:`, `subreddit:`, `url:`,
+  `engagingWith:`) and every proximity operator. None of them parse.
+- **"Invalid query format" does not say where.** Split the query in halves and paste each half
+  until the broken clause shows up. In practice it is almost always a leftover `NEAR` or a field
+  operator.
+- **One query per client subcategory, each anchored to the brand.** When the study will be compared
+  against a client metric with its own categories, each query is `(brand anchor) AND (that
+  subcategory's terms)`, so every export maps to one client category. The overlap between those
+  exports is measured and deduplicated after ingest (`DATA.md` §9), never by merging queries.
 
 ## 2. Data reality checks — before you trust the corpus
 

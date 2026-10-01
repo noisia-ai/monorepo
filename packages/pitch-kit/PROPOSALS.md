@@ -37,6 +37,12 @@ ya tiene el cliente y cuáles construye Noisia, qué evidencia interna puede com
 de entrega y quién lo consume, el deadline, qué queda explícitamente fuera, y si los términos
 comerciales ya fueron aprobados.
 
+**Un índice único de escucha no se vende como indicador de gestión.** Un cliente lo pidió y lo
+descartó después: un score de conversación no es controlable, porque una contingencia o un tema
+ajeno lo mueve sin que cambie el servicio. Lo que sí se sostuvo fue una matriz que cruza la
+conversación con el indicador que el cliente ya gestiona, categoría por categoría (`DATA.md`
+§18.5).
+
 ## 3. Qué familia comercial es
 
 El catálogo vive en `packages/kb/02-services/product-model.md` y manda sobre lo que se escribe
@@ -147,6 +153,13 @@ funciona.
 
 **Continuidad.** Si un ejemplo muestra una mención, su clasificación, un gráfico y una conclusión,
 los cuatro tienen que ser coherentes entre sí. La simulación también necesita lógica interna.
+
+**Real y simulado en el mismo visual.** Una propuesta puede mostrar cómo se vería el entregable
+completo con una parte medida y otra simulada: el eje del indicador del cliente real y el de la
+conversación simulado para las categorías que todavía no se escuchan, o la conversación real de un
+mes y el indicador de ese mes sintético. Se permite si la slide dice, en el título de la sección o
+en `.foot`, qué parte es real y cuál no, eje por eje. Nunca un rótulo general de "ilustrativo" que
+deje dudar cuál de las dos cosas lo es.
 
 ## 7. Responsabilidades
 
