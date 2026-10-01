@@ -20,8 +20,9 @@ nada. Copia el bloque completo, no le quites las preguntas.
 ```text
 Vamos a construir un entregable de Noisia. Antes de proponer nada, lee el kit y pregúntame.
 
-EL KIT ESTÁ EN: /Users/brandhon_o/Downloads/noisia-product/packages/pitch-kit/
-Rama: pitch-kit/canon-2026-09
+EL KIT ESTÁ EN: packages/pitch-kit/, dentro del repo de Noisia. Si no sabes dónde está el repo en
+esta máquina, pregúntame. Trabaja sobre main actualizado (git pull), y si no encuentras
+packages/pitch-kit/CANON.md estás en una versión vieja del kit: detente y avísame.
 
 LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni método:
 - CANON.md        el contrato: las tres autoridades, las familias, las reglas transversales
@@ -119,8 +120,9 @@ letra es lo que hace que un deck interno salga con tono de pitch.
 Vamos a hacer una presentación INTERNA de Noisia, para el equipo. No es un reporte, un estudio ni
 una propuesta: no corras el cuestionario de entregables del kit ni uses su tono comercial.
 
-EL KIT ESTÁ EN: /Users/brandhon_o/Downloads/noisia-product/packages/pitch-kit/
-Rama: pitch-kit/canon-2026-09
+EL KIT ESTÁ EN: packages/pitch-kit/, dentro del repo de Noisia. Si no sabes dónde está el repo en
+esta máquina, pregúntame. Trabaja sobre main actualizado (git pull), y si no encuentras
+packages/pitch-kit/CANON.md estás en una versión vieja del kit: detente y avísame.
 
 LEE PRIMERO:
 - INTERNAL.md     manda sobre la voz, la estructura y la portada de este deck. Completo.
