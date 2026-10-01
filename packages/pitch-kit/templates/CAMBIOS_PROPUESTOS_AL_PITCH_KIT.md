@@ -3,7 +3,7 @@
 > Plantilla. Vive en la carpeta del caso, nunca en el repo. **Es un reporte: nada de esto se
 > aplicó al kit.** Una sola sesión lo verifica contra el repo y lo integra (`AGENTS.md`).
 >
-> Rama del kit que se leyó: << rama y commit >>. Registro completo de decisiones del caso en
+> Versión del kit que se leyó: << commit de main >>. Registro completo de decisiones del caso en
 > `PROVENANCE_AND_CHANGELOG.md` de esta misma carpeta.
 
 | # | Qué | Dónde vive |
