@@ -40,6 +40,34 @@ When you create a reusable slide / rule / builder improvement:
 3. **Register** it in `slides/catalog.json` (id, name, file, category, `when`, variants, placeholders, plus `height` and `fits_with`: what the slide occupies and what else fits with it. Measure them once so the next person does not discover them by rendering). A missing or stale catalog entry is the only real bug here — the catalog is how the next agent discovers your slide.
 4. **PR it** (branch → PR, CI green). Additions under `slides/**` are exempt from Code-Owner review (see root `.github/CODEOWNERS`) so they land fast.
 
+## 🔀 When a deck session learns something
+
+Several sessions run at once on this machine, and more than one may be pointed at this same folder.
+**A session building a deck does not edit the kit.** Two sessions writing the same rulebook at the
+same time overwrite each other with no warning, and an uncommitted edit left in the tree gets mixed
+into whatever the next session commits. It has already happened once; it came out fine only
+because that session happened to be careful.
+
+The default, for every deck session:
+
+1. **Write what you learned in the case folder**, never in the repo:
+   `<case>/CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md`, from `templates/CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md`.
+   It is a report: what the kit says today, what happened, what you propose, and where it goes.
+   Your `PROVENANCE_AND_CHANGELOG.md` keeps the case's own decisions; the CAMBIOS file is what is
+   meant to reach the kit.
+2. **Say which of your decisions were exceptions for this case.** An exception recorded in a case
+   file is not canon, and the next session will read it as a rule unless you say otherwise.
+3. **Stop there.** One session, the one the user asks to integrate, verifies the claims against the
+   repo, folds them in, and commits.
+
+Only if the user explicitly asks a deck session to edit the kit itself:
+
+- Before touching anything, run `git status`. **If there are changes you did not make, stop and ask.**
+  They belong to another session.
+- Work on the kit branch, additive edits only, nothing with client data.
+- **Commit before you finish.** Never leave the tree dirty for the next session to inherit.
+- Leave a short record of what you changed in the case folder, so the integration can be checked.
+
 ## Building a deck
 See `.claude/skills/noisia-pitch/SKILL.md`. Short version: assemble `deck-template.html` + chosen `slides/*` fragments into a working `index.html`, fill placeholders, then `build-pdf.mjs` and/or `build-pptx.py`.
 

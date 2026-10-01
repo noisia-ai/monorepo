@@ -56,12 +56,20 @@ Use the returned metrics **as-is** (Signal computes them deterministically — n
 ## 4. 🔁 Contribute back — this is the point
 The kit only stays useful if it grows. **Before you finish a deck, ask yourself: did I build something reusable that the kit didn't have?** (A new slide type — e.g. legal/pricing/roadmap — a new rule, a builder fix, a better default.)
 
-If yes:
-1. **Sanitize it.** Strip ALL client data, names, real numbers, and findings. Reduce it to a generic template with `{{PLACEHOLDER}}`s. (See the confidentiality rule below — this is non-negotiable on a public repo.)
-2. **Add the fragment** under `packages/pitch-kit/slides/<new-id>/<new-id>.html`.
-3. **Register it** in `packages/pitch-kit/slides/catalog.json` (id, name, file, category, `when`, variants, placeholders).
-4. **Open a PR** (branch → PR; CI must pass). Slide additions under `slides/**` are exempt from Code-Owner review, so they merge fast.
-5. In the PR body, one line: what the slide is and when to use it.
+If yes, **do not edit the kit from the session that built the deck.** Several sessions run at once
+and two of them writing the same rulebook overwrite each other without warning. Instead:
+
+1. **Write it down in the case folder**, in `CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md`, from
+   `packages/pitch-kit/templates/`: what the kit says today, what happened, what you propose, where.
+2. **Mark which of your decisions were exceptions for this case**, so nobody turns them into a rule.
+3. **Stop.** One session, the one the user asks to integrate, verifies it against the repo and folds
+   it in. The full protocol is in `packages/pitch-kit/AGENTS.md`.
+
+When the user does ask you to integrate (into the kit itself):
+1. Run `git status` first. If there are changes you did not make, stop and ask.
+2. **Sanitize.** Strip ALL client data, names, real numbers, and findings to a generic template with `{{PLACEHOLDER}}`s (the repo is public).
+3. **Add** the fragment under `packages/pitch-kit/slides/<new-id>/<new-id>.html` and **register** it in `slides/catalog.json`, with `height` and `fits_with`.
+4. **Commit before you finish**, on the kit branch, and open a PR (CI must pass). Never leave the tree dirty.
 
 Next time anyone runs this skill, `catalog.json` already lists your slide. That's how "the slides legales someone asked for" stop getting lost.
 

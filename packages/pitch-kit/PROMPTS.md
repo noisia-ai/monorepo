@@ -33,6 +33,8 @@ LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni m�
 - DATA.md         el pipeline, sus gates y sus contratos de salida
 - LEARNINGS.md    reglas de campo, incluida la terminología por terreno
 - slides/catalog.json   qué slides existen y qué cabe en cada una
+Y antes de escribir, mira renderizado el deck aprobado más reciente de examples/_local/: es la vara
+de calidad. Un primer borrador con CSS propio y copy genérico ya se rechazó entero una vez.
 Y si el entregable toca lo comercial, la KB manda sobre el contenido:
 packages/kb/00-overview/positioning.md y packages/kb/02-services/product-model.md
 
@@ -100,6 +102,11 @@ NO NEGOCIABLES:
 Avísame en cuanto una decisión cambie el universo o la interpretación, y si los datos no dan para
 lo que pedí, dímelo antes de construir, no después. Al final dime qué puede afirmarse, qué solo es
 direccional y qué no permite concluir esta base.
+
+AL TERMINAR, no edites el kit ni hagas commits en el repo desde esta sesión. Escribe lo que
+aprendimos en CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md, en la carpeta del caso, desde
+packages/pitch-kit/templates/, y marca cuáles de nuestras decisiones fueron excepción de este caso
+y no deben volverse regla.
 ```
 
 ## Prompt para decks internos
@@ -157,6 +164,11 @@ mapa narrativo aprobado
 
 Si en una revisión te digo "rehazla entera", reconsidera la estructura y el diseño del conjunto, no
 solo las slides que mencioné.
+
+AL TERMINAR, no edites el kit ni hagas commits en el repo desde esta sesión. Escribe lo que
+aprendimos en CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md, en la carpeta del caso, desde
+packages/pitch-kit/templates/, y marca cuáles de nuestras decisiones fueron excepción de este caso
+y no deben volverse regla.
 ```
 
 ## Bloque · Estudio de Triggers y Barriers

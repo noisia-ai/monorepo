@@ -22,6 +22,11 @@ con su copia parcial de las mismas reglas. Todos quedan absorbidos aquí:
 Regla de higiene: **un handoff nuevo no se escribe.** Si aprendiste algo reutilizable, entra al
 rulebook que le toca y se cita desde aquí. Un documento suelto más es deuda, no memoria.
 
+**Quién lo mete.** Una sesión que arma un deck no edita el kit: escribe lo que aprendió en
+`CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md` dentro de la carpeta del caso, desde `templates/`, y una sola
+sesión lo verifica contra el repo y lo integra. Dos sesiones escribiendo el mismo rulebook se
+pisan sin aviso. El protocolo completo está en `AGENTS.md`.
+
 ## 2. Jerarquía de fuentes
 
 Hay tres autoridades y no se pisan.
