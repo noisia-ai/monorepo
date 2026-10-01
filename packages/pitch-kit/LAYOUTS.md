@@ -270,6 +270,55 @@ taken, and that the system moves, so it gets re-read.
 That last term is the study's honesty clause and it is not optional. A study that cannot say how
 far it goes is selling a projection it did not make.
 
+### When the study answers several questions
+
+The skeleton that held up in a long study: cover, index, the frame, hypothesis, channels, the map,
+then **one sub-cover per research question**, its analysis, and **a recommendation closing each
+question**, not all of them piled at the end. Then the brand lens, mirror, kanban, the answer and
+the questions to validate; the method, glossary and brands go to the annex.
+
+**Recommendations follow one format**: action, owner, indicator and risk. Each carries the study's
+evidence and **a real precedent with its source**. Only on layers a brand can move. If there is no
+precedent, say so ("open ground"); if a competitor already did it, it goes in as a risk ("reads as
+a copy").
+
+**A client's own hypothesis is measured part by part.** When the client brings a brand idea, each
+part gets its quantity per channel. If a part barely appears, say it with the number and show where
+it does appear. The client wants to place its ideas on numbers; it already has the qualitative.
+
+**The closing slide separates what people write from what matters to them.** Social measures what
+people write; what matters is validated by survey. Three columns: the question, what social already
+shows, and the concrete question for the questionnaire with its screener. It also tells the client
+which parts depend on us and which on them.
+
+**Adding a finding means re-reading the whole deck.** A new finding changes old slides: the answer,
+the kanban, the index, the recommendations. In one case a single new reading improved ten existing
+slides. Patching only the new slide leaves the deck arguing with itself.
+
+### Composition rules from the same case
+
+- The insight `.note` and the `.foot` sit at the bottom of the slide, and the content block is
+  centred vertically; half a slide left empty reads as unfinished.
+- Side-by-side cards: columns with `justify-content:space-between` and their metadata with
+  `margin-top:auto`, so every card's meta lines up.
+- A text that must fit one line (a channel's role) gets `white-space:nowrap` and copy short enough
+  to fit. **Never an ellipsis cutting it.**
+- An image has to show what its text says, or it comes out. Full proportion, never cropped to fill,
+  with a caption. If there is spare space, redistribute the content, never stretch the image.
+- Something qualitative that happens over time goes as a journey with the `.jm` frame: context data
+  above, a curve with real data per moment, and under it each phase with its case count, a
+  description and a verified quote.
+- A cover asset is cut to its contour **without quantising colours**: quantising leaves rings in the
+  halo. Position it by looking at the render.
+- **Titles stay within two lines** at the deck's scale. Shortening a title means rendering again:
+  one shortened after review shipped broken, three lines over a matrix.
+
+### Dense decks: `.deck-dense`
+
+Past about thirty slides the default scale overflows. Put `class="deck-dense"` on `<deck-stage>`:
+title 54 → 46px, eyebrow 21 → 18px, top and bottom padding 90 → 68 and 60px, title gap 52 → 34px.
+These are the values one long deck settled on after overriding them by hand.
+
 ## Muestra — the study, cut short
 
 Same spine as the study, with the back half collapsed. Keep: cover, brief, the framework slide,

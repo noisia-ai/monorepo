@@ -39,6 +39,19 @@ Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no e
 
 > El contrato que ordena todo el sistema es **`CANON.md`**. Íconos y layouts también son reglas: **`ICONS.md`** (Iconoir para semánticos + Simple Icons para marcas, nada dibujado a mano) y **`LAYOUTS.md`** (las dos formas canónicas: Reporte y Estudio T&B).
 
+### Nada del contexto del brief llega al deck, tampoco a las notas
+
+El deck lleva el estudio: datos, hallazgos, citas verificadas, recomendaciones, método, límites y
+preguntas a validar. **Nada de lo que se le contó al agente para hacerlo.** Quién pidió qué
+hipótesis, el proveedor de la encuesta, un patrocinio dicho en privado, lo que pasó en la reunión
+anterior, palabras de proceso como "lo que pediste" o "alcance pendiente". Dos casos distintos lo
+filtraron, y en los dos estaba también en las **notas del orador**, que viajan dentro del HTML
+aunque nadie las vea en pantalla.
+
+Se verifica con herramienta, no a ojo: `builders/leak-check.py`, con una lista de nombres del caso
+en un `names.txt` que vive en la carpeta del caso y nunca en el repo. Si encuentra algo, el build
+no sale.
+
 ## 0.5 Posicionamiento, no solo estilo
 
 Tres reglas que vienen de feedback de cliente y que cambian el sentido de la slide, no su forma:
@@ -192,6 +205,20 @@ final se compara contra el original.
 **Deck en inglés con citas en español.** La cita se muestra en su idioma original, porque es la
 evidencia y no se toca. Debajo va una lectura en inglés, más chica y en gris, y la ficha queda
 igual. Traducir la cita y poner el original abajo invierte cuál es el dato y cuál es el apoyo.
+
+**Los términos locales van con su glosa corta**, en el idioma del deck, cada vez que aparecen en un
+título o una etiqueta: `zoeira (banter: mocking the rival)`, `secar (rooting against the rival)`.
+El término se queda, porque es como la gente habla; la glosa evita que el lector se pierda.
+
+**El fragmento de una cita es literal.** Se quitan las @menciones del inicio y las ligas, y nada
+más. Si se recorta, el recorte tiene que existir tal cual en el original: quien arma el deck lo
+comprueba con algo como `assert fragmento in texto_original`, no a ojo.
+
+**En inglés tampoco se dice "read".** "Read" y "lectura" no se entienden ni como sustantivo ni
+como título de sección. Para el método: "how it was measured", "qualitative".
+
+**Lo que la conversación no puede medir se nombra como pregunta a validar**, nunca como encargo a
+alguien: "research questions to validate", no "for the survey team" ni el nombre del proveedor.
 
 ### Sin dramatizar
 

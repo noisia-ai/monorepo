@@ -227,6 +227,17 @@ node builders/build-pdf.mjs <deck>/index.html <deck>/salida.pdf
 node builders/build-portable.mjs <deck>/index.html <deck>/salida.html
 ```
 
+**Después de cada cambio se vuelve a renderizar esa slide y se mira, y al final se revisa el PDF
+exportado, no el HTML.** `qa-render.py` marca tinta pegada al borde; no detecta texto encimado ni
+huecos. Esos solo los ve alguien mirando. Un título acortado después del último render salió
+entregado en tres líneas encima de una matriz.
+
+**El feedback trae más pedidos de los que enumera.** Antes de responder a una ronda se lee completa
+y se listan todos los pedidos, aunque quien la manda diga "son tres".
+
+**Una versión nunca pisa a la anterior.** Cada ronda grande va a su propia carpeta y su propio PDF,
+y el anterior se conserva. Ver la convención de nombres en `LEARNINGS.md`, Versiones y entrega.
+
 ## 7. Dónde vive cada cosa
 
 Este repo es **público**. La regla 1 de `AGENTS.md` no tiene excepciones.
@@ -276,7 +287,8 @@ Y la revisión técnica pasa:
 - [ ] El footer dice `noisia · social intelligence architects` y la numeración `NN / TOTAL` es correcta.
 - [ ] Se enlaza `deck-components.css` y el `<style>` del deck no redefine sus clases.
 - [ ] Cada slide se renderizó a 1920 × 1080 y se vio, no solo se leyó en código.
-- [ ] El PDF se revisó página por página.
+- [ ] El PDF se revisó página por página, y después del último cambio se volvió a renderizar.
+- [ ] `builders/leak-check.py` pasó limpio sobre slides y notas del orador.
 - [ ] Cada verbatim tiene liga, plataforma y fecha.
 - [ ] Ningún dato de cliente entró a este repo.
 

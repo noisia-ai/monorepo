@@ -374,6 +374,27 @@ plataforma.
 
 Esta lectura alimenta la slide de canales, que es parte de la secuencia canónica en `LAYOUTS.md`.
 
+**Todos los canales en la misma base.** Ningún canal va como "fuente aparte" con su propio conteo y
+sin análisis: si se agrega uno, se codifica con las mismas reglas y entra al análisis completo. En
+la slide de canales, **una sola métrica por canal y orden por tamaño**; cuando el cliente pidió
+quitar el resto, quedó más clara.
+
+**Una matriz canal por motivo responde qué hacer y dónde.** La matriz es la evidencia; la columna
+que dice qué hacer en cada plataforma es lo que el equipo creativo usa. Las redes van con su icono,
+sin repetir el nombre.
+
+**Las interacciones son una capa aparte del volumen, y la diferencia es un hallazgo.** El volumen
+dice de qué se habla; las interacciones dicen a qué se reacciona. En un caso, "hablan del rival y
+reaccionan a lo suyo" salió exactamente de comparar las dos, y fue el insight más fuerte del
+estudio. Se reportan juntas, nunca sumadas.
+
+**Junto a cada cifra por partido, por día o por hora, va el total del corpus.** Una cifra por
+evento sin su total no se entiende.
+
+**Un patrón de palabras no se reporta sin leer su muestra.** Un patrón de "amistad" dio 145
+coincidencias y solo una de cada cuatro hablaba de amistad. Se reporta lo que se validó leyendo,
+con la proporción a la vista.
+
 ## 18.5 Cruce con un indicador del cliente
 
 Cuando la conversación se compara con un indicador que el cliente ya mide (NPS, satisfacción,

@@ -338,3 +338,9 @@
 .jmcell .dt { font-size:14px; color:var(--fg-secondary); line-height:1.3; }
 .jmnote { display:flex; gap:9px; align-items:center; font-size:15px; font-weight:600; color:var(--fg-secondary); }
 .jmnote .sw { width:26px; height:9px; border-radius:99px; display:inline-block; }
+
+/* --- dense decks (more than ~30 slides) -------------------------------------- */
+/* Put class="deck-dense" on <deck-stage>. Values from a long deck that overrode them by hand. */
+.deck-dense { --pad-top:68px; --pad-bottom:60px; --gap-title:34px; }
+.deck-dense .hl { font-size:46px; }
+.deck-dense .eb { font-size:18px; }
