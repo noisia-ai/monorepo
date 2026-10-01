@@ -17,9 +17,14 @@ Lo que Noisia **no es** ayuda a entender lo que sí es:
 
 ### 1. No somos software
 
-No vendemos licencias. No revendemos Brandwatch ni Sprinklr ni Talkwalker. No tenemos un dashboard que le entregamos al cliente. La infraestructura es propia y opera detrás de cámaras — el cliente recibe el destilado, no la herramienta.
+No vendemos licencias ni asientos. La oferta está explícitamente desvinculada del modelo *Software as a Service*: la plataforma es infraestructura interna — es cómo producimos, no lo que facturamos.
 
 **Por qué importa:** porque cobrar por software te obliga a que el cliente lo use lo más posible. Cobrar por inteligencia te obliga a que la decisión sea la mejor posible, aunque eso signifique entregar 5 páginas en lugar de 50.
+
+**Dos precisiones (jul 2026):**
+
+- El cliente **sí puede recibir un dashboard**, y es el nuestro. Lo que no vendemos es el acceso a operarlo: entregamos la lectura ya hecha. Que el output salga de nuestra herramienta y no de un Looker o un Power BI es parte del producto.
+- La línea de **Data** (ver `02-services/product-model.md`) sí contempla reventa de datos y de plataformas, y acompañar al cliente a implementar sus propias herramientas. Es un negocio distinto al de reportes y estudios, y se vende como tal — no como "Noisia es un software".
 
 ### 2. No somos market research tradicional
 
@@ -32,6 +37,23 @@ No hacemos focus groups, no diseñamos encuestas, no contratamos panelistas. Tra
 No hacemos roadmaps de marca, no facilitamos workshops, no diseñamos branding. Operamos en una capa anterior: **la lectura del ecosistema** que después alimenta la estrategia.
 
 **Por qué importa:** porque la consultora típica interpreta data ajena. Noisia construye la data y la interpreta. Eso elimina el desacople entre quien orquesta el corpus y quien lee los hallazgos.
+
+## Y lo que sí somos (jul 2026)
+
+Las tres negaciones de arriba se sostienen, pero solas producen el problema que se nombró en el
+workshop de producto: **sabemos muy bien lo que no somos y no sabíamos decir lo que sí somos.**
+La afirmación en positivo:
+
+> **Hacemos investigación de mercado con fuentes de datos sociales.** Nos das un brief y una
+> fecha; nosotros resolvemos todo lo que hay en medio y te entregamos la lectura.
+
+Y se compra de tres maneras: **Reportes** (qué está pasando, continuo), **Estudios** (qué hacer
+al respecto, por pedido) y **Data** (materia prima para tu propio equipo). Ver
+`02-services/product-model.md`.
+
+Nota sobre la palabra "social listening": nos mete en la comparación equivocada — nos evalúan
+contra un software y ahí perdemos. No se usa sola como definición de lo que somos. Si se usa,
+va con apellido.
 
 ## Contra quién competimos realmente
 
@@ -58,8 +80,8 @@ No hacemos roadmaps de marca, no facilitamos workshops, no diseñamos branding. 
 Mejor no venderle. Lista de señales de mismatch:
 
 - **Quiere rate card antes de hablar.** El precio depende de la pregunta. Si "muéstrame tarifa" es bloqueante, hay otras firmas.
-- **Quiere reportes mensuales recurrentes sin decisión asociada.** Eso es servicio de listening, no inteligencia. Hay tools más baratos.
-- **Quiere que el output entre directo a un dashboard de la marca para que terceros lo consuman.** Trazabilidad y dashboards-de-otros no se llevan bien.
+- ~~**Quiere reportes mensuales recurrentes sin decisión asociada.**~~ **Revocado en jul 2026.** Eso es exactamente la línea de **Reportes** y es un producto Noisia. Lo que sigue siendo mal fit es que ese cliente espere del reporte la profundidad de un estudio: el reporte dice lo que hay, el estudio dice qué hacer con eso.
+- **Quiere que el output entre directo a un dashboard de la marca para que terceros lo consuman.** Trazabilidad y dashboards-de-otros no se llevan bien. (Si lo que quiere son los datos para su propio equipo, eso es la línea de **Data**, no un mal fit.)
 - **Quiere proyecciones futuras / forecasting cuantitativo.** No es lo que las metodologías hacen.
 - **Quiere que el equipo creativo de su agencia "use Noisia como input."** Si no hay un decisor de cliente que lea el output, va a quedar guardado.
 - **No tiene una decisión enfrente.** Si no hay nada que decidir en los próximos 6 meses, es prematuro.

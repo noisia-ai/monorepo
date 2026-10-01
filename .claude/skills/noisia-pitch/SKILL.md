@@ -10,28 +10,38 @@ You produce on-brand Noisia pitch decks and, crucially, **leave the kit better t
 Everything lives in `packages/pitch-kit/`. Read `packages/pitch-kit/AGENTS.md` for the full rules.
 
 ## 1. Know what you have (read these first)
+- `packages/pitch-kit/CANON.md` — **the contract.** Which of the five families you are building
+  (reporte, estudio, muestra, propuesta, producto), which doc owns which rule, what the cross-cutting
+  hard rules are, and the definition of done. Read it before deciding anything else. For a study,
+  `packages/pitch-kit/DATA.md` is the execution manual for the corpus; for a proposal,
+  `packages/pitch-kit/PROPOSALS.md`.
 - `packages/pitch-kit/slides/recipes.json` — **deck blueprints for common asks** (explain a methodology, propose/quote a study). Each recipe tells you what to ASK, what KB to LOAD, and which slides to use. Check here first — most requests match a recipe.
 - `packages/pitch-kit/slides/catalog.json` — **the index of every available slide**. How you know what's possible. Read it before proposing a structure.
-- `packages/kb/` — the Knowledge Base (methodologies, services, pricing, process, cases). **The content of a Noisia pitch comes from here — don't invent it.** Always load `00-overview/principles.md`; then the files the recipe lists.
+- `packages/kb/` — the Knowledge Base (methodologies, services, pricing, process, cases). **The content of a Noisia pitch comes from here — don't invent it.** Always load `00-overview/principles.md` **and `02-services/product-model.md`** (the offer is Reportes / Estudios / Data — the Foundation/Intelligence/Strategy tiers are internal calibration, not the sales structure); then the files the recipe lists.
+- **Sell studies by the question, not the method.** (This is for selling. In a *delivered* study the frame slide IS titled with the method's name in English; see `COPY_RULES.md`.) Never name a methodology on a pitch slide — use the question it answers ("¿qué empuja la compra y qué la detiene?", not "Triggers & Barriers"). The method detail is for when the client asks how. See `product-model.md`.
+- The **commercial KB lives in Google Drive**, not in this repo: pricing amounts, sales script, objections, client notes. If the deck needs those and you don't have the Drive folder in context, ask — don't invent a number and don't put currency amounts on a slide.
 - `packages/pitch-kit/engine/` — the brand engine: `noisia-tokens.css` (palette/type), `deck.css` (slide layout), `deck-stage.js` (16:9 viewer + print/PPTX), `deck-template.html` (the shell).
 
 ## 2. Build the deck
 1. **Match a recipe** in `recipes.json` and **ask its qualifying questions before building.** Don't guess the answers — they change the deck:
    - *Explain-a-methodology* (e.g. Triggers & Barriers): which methodology, which audience/category for the examples. Load the methodology's KB file; the examples (e.g. T&B's 4 layers with trigger+barrier) come from there, set in the client's category.
-   - *Study proposal / quote*: **is it a single project or a monthly retainer?** how many brands/competitors? how many markets? which sources & time window? any tight deadline? These set the tier (Foundation/Intelligence/Strategy) and the whole quote. The **growth-ladder slide ("cómo crecemos el negocio") is obligatory** in proposals, and **never put currency amounts on a slide** (pricing-logic rule — show the logic + modality, not numbers). The tiers **Foundation / Intelligence / Strategy are a reference, not a cage** — if the real scope doesn't fit a tier, propose a custom scope honestly instead of forcing the project into one.
-2. Pull deliverables, timeline and tier facts from `packages/kb/02-services/<tier>.md` + `pricing-logic.md` + `delivery-format.md` — keep them consistent across the study-scope, deliverables and timeline slides. Then order the slides from the recipe (or `catalog.json` for a custom deck).
+   - *Report proposal* (`report-proposal`): is it **R1** (their brand), **R2** (brand + competitors) or **R3** (one campaign)? Who are the real competitors (2–4; more dilutes the read)? Which markets? Do they already own a listening tool — if yes they're a **better** prospect, not a worse one. Reports sell with a **3-month minimum**: month one builds the baseline, and without a prior period the report can't say what changed.
+   - *Study proposal* (`study-proposal`): which of the five decision moments — **E1 lanzar, E2 entrar, E3 defender, E4 optimizar, E5 innovar**? How many brands/competitors and markets (each extra market is ~+80%)? Sources and time window? Tight deadline?
+   - Both: the **growth-ladder slide is obligatory** — it now reads Workshop → Reporte → Estudio → Estudios recurrentes. If you see Foundation/Intelligence/Strategy on a deck, it's stale. And **never put currency amounts on a slide** (pricing-logic rule — show the logic and the modality, not numbers).
+2. Pull the product's deliverables, timeline and **"qué NO incluye"** from the catalog in `packages/kb/02-services/product-model.md` + `pricing-logic.md` + `delivery-format.md` — keep them consistent across the study-scope, deliverables and timeline slides. Stating what's excluded is what prevents the scope fight in month two; don't drop it to look generous. Then order the slides from the recipe (or `catalog.json` for a custom deck).
 3. Make a working folder **outside the repo** (or `packages/pitch-kit/examples/_local/`, which is gitignored) and assemble:
-   - `cp packages/pitch-kit/engine/{noisia-tokens.css,deck.css,deck-stage.js} <work>/`
+   - `cp packages/pitch-kit/engine/{noisia-tokens.css,deck.css,deck-components.css,deck-stage.js} <work>/` and link all three stylesheets in that order. Your deck's own `<style>` covers only what is specific to it: never redefine a component class (`CANON.md` §5.1).
    - `cp packages/pitch-kit/assets/logo_norm.svg <work>/`
    - Copy `engine/deck-template.html` to `<work>/index.html`, and paste the chosen slide fragments (from `slides/<id>/<id>.html`) where `<!-- SLIDES -->` is. Fill every `{{PLACEHOLDER}}` and fix each footer's `NN / TOTAL`.
 4. Render:
    - **PDF:** `node packages/pitch-kit/builders/build-pdf.mjs <work>/index.html <work>/deck.pdf`
    - **PPTX (editable):** write a `deck.json` (shape in `builders/build-pptx.py` header) then `python3 packages/pitch-kit/builders/build-pptx.py <work>/deck.json <work>/deck.pptx`
-5. Verify: open the PDF; every slide is 1920×1080, no overflow, footers numbered, no `{{PLACEHOLDER}}` left.
+   - **Portable single file (no-clone / for a non-technical teammate):** `node packages/pitch-kit/builders/build-portable.mjs <work>/index.html <work>/deck.portable.html` — inlines the whole engine (CSS + JS as base64 + logo as data URI) into ONE `.html`. The teammate opens it in Chrome → Print → Save as PDF, with no repo, no Node, no server. Same 1920×1080 output.
+5. Verify: render each slide at 1920×1080 and **look at it**, then open the PDF page by page. No overflow, footers numbered, no `{{PLACEHOLDER}}` left, and `grep -c '—' index.html` returns `0`. The full list is `CANON.md` §8.
 
 ## 2.5 Humanize + client-ready sanitize (mandatory — before you render)
 **Run every word through `packages/pitch-kit/COPY_RULES.md`.** Non-negotiable:
-- **Client-ready:** strip anything internal — slide purpose/navigation text (the header is always `noisia.ai`, never "cómo crecemos juntos"), `{{placeholders}}`, comments, process notes, emojis. The client sees only their message.
+- **Client-ready:** strip anything internal — slide purpose/navigation text (the header-right is `noisia.ai` or a short section label, never "cómo crecemos juntos"; the footer-left is always `noisia · social intelligence architects`), `{{placeholders}}`, comments, process notes, emojis. The client sees only their message.
 - **Humanize:** kill AI tells (additionally/crucial/leverage/"se posiciona como"/inflated significance/rule-of-three/em-dash & bold spam). Simple over sophisticated — Noisia is complex, the press isn't.
 - **Spanish decks:** don't translate standard tech anglicisms — it's **Dashboard**, not "Panel de control"; keep insight, brief, performance, corpus, trigger. Use the client's own category terms.
 
@@ -46,12 +56,20 @@ Use the returned metrics **as-is** (Signal computes them deterministically — n
 ## 4. 🔁 Contribute back — this is the point
 The kit only stays useful if it grows. **Before you finish a deck, ask yourself: did I build something reusable that the kit didn't have?** (A new slide type — e.g. legal/pricing/roadmap — a new rule, a builder fix, a better default.)
 
-If yes:
-1. **Sanitize it.** Strip ALL client data, names, real numbers, and findings. Reduce it to a generic template with `{{PLACEHOLDER}}`s. (See the confidentiality rule below — this is non-negotiable on a public repo.)
-2. **Add the fragment** under `packages/pitch-kit/slides/<new-id>/<new-id>.html`.
-3. **Register it** in `packages/pitch-kit/slides/catalog.json` (id, name, file, category, `when`, variants, placeholders).
-4. **Open a PR** (branch → PR; CI must pass). Slide additions under `slides/**` are exempt from Code-Owner review, so they merge fast.
-5. In the PR body, one line: what the slide is and when to use it.
+If yes, **do not edit the kit from the session that built the deck.** Several sessions run at once
+and two of them writing the same rulebook overwrite each other without warning. Instead:
+
+1. **Write it down in the case folder**, in `CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md`, from
+   `packages/pitch-kit/templates/`: what the kit says today, what happened, what you propose, where.
+2. **Mark which of your decisions were exceptions for this case**, so nobody turns them into a rule.
+3. **Stop.** One session, the one the user asks to integrate, verifies it against the repo and folds
+   it in. The full protocol is in `packages/pitch-kit/AGENTS.md`.
+
+When the user does ask you to integrate (into the kit itself):
+1. Run `git status` first. If there are changes you did not make, stop and ask.
+2. **Sanitize.** Strip ALL client data, names, real numbers, and findings to a generic template with `{{PLACEHOLDER}}`s (the repo is public).
+3. **Add** the fragment under `packages/pitch-kit/slides/<new-id>/<new-id>.html` and **register** it in `slides/catalog.json`, with `height` and `fits_with`.
+4. **Commit before you finish**, on the kit branch, and open a PR (CI must pass). Never leave the tree dirty.
 
 Next time anyone runs this skill, `catalog.json` already lists your slide. That's how "the slides legales someone asked for" stop getting lost.
 

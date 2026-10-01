@@ -1,0 +1,23 @@
+<!-- slide: cover-study · Portada de estudio / reporte / muestra, con ilustración · variants: light
+     The cover every shipped study converged on. Illustration bleeds off the right edge and sits
+     BEHIND the copy; the research question is the title. Needs assets/cover-illustration.png.
+     Header-right: market and year, or noisia.ai. Pick one convention and hold it for the whole deck. -->
+<section class="slide" data-label="Portada">
+  <div class="atmos plain"></div>
+  <div class="frame">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>{{HEADER_RIGHT}}</span></div>
+    </div>
+    <img class="cover-art" src="assets/cover-illustration.png" alt="">
+    <div class="mid">
+      <div class="cover-copy">
+        <span class="eyebrow signal" style="background:var(--teal-soft); color:var(--teal);">{{EYEBROW}}</span>
+        <h1 class="title display" style="font-size:82px; line-height:1.02;">{{QUESTION_LINE_1}}<br>{{QUESTION_LINE_2}} <span class="accent">{{ACCENT_WORD}}</span></h1>
+        <p class="sub">{{SUBHEAD}}</p>
+        <p class="cover-meta-line">{{SUBJECT}} &nbsp;·&nbsp; {{MARKET}} &nbsp;·&nbsp; {{PERIOD}}</p>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>

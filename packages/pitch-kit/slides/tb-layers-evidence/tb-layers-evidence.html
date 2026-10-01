@@ -1,0 +1,59 @@
+<!-- slide: tb-layers-evidence · Las cuatro capas, demostradas con verbatims reales · variants: light
+     The evidence variant of `tb-layers`. Instead of a small map with four permission cards below,
+     the asset runs large and the flanks carry real quotes: triggers over the teal blob on the left,
+     barriers over the coral on the right. The slide stops explaining the framework and starts
+     demonstrating it. The permission cards collapse into the one-line legend under the title.
+
+     MEASURED, not guessed. On the 1920x1080 canvas these numbers hold:
+       · usable block 1700x620 starting at y ~ 326. The title must fit ONE line: at two lines the
+         block eats the footer.
+       · asset 1104px wide (650 tall), centred, top:-18px, z-index:0, no crop and NO mask.
+         The rings occupy x ~ 496 to x ~ 1064 inside the block, so the centre lane stays clear.
+       · two 400px gutters; card 376px, anchored with `left` on the left and `right` on the right.
+       · four vertical slots per side. Left tops: 48, 192, 336, 480. Right tops: 62, 262, 476.
+         The first starts at 48 because the side label lives at top:0 and anything under 40px
+         collides with it. The 0 to 28px horizontal jitter only stops it reading as an aligned list.
+       · quote 14px italic, cut at 118 characters in Spanish and 92 in English, with the English
+         reading below at 12.5px and 96 characters max. That yields ~100px tall in Spanish and
+         ~132px in English, which is what fixes the 144px slot pitch.
+       · five to nine verbatims. Fewer and the slide empties out; more and they hit the rings.
+
+     The asset ships as it is, with its innermost ring in English, in both languages, with nothing
+     on top of it. Only its size and what surrounds it change. -->
+<section class="slide" data-label="Las cuatro capas">
+  <div class="frame">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>{{HEADER_RIGHT}}</span></div>
+    </div>
+    <div class="mid" style="justify-content:flex-start;">
+      <span class="eb"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir, see ICONS.md --></svg>{{EYEBROW}}</span>
+      <h2 class="hl" style="margin-bottom:8px;">{{TITLE}}</h2>
+      <!-- The four permission cards collapse into this single line. -->
+      <p class="sub" style="margin-bottom:0;">{{PERMISSION_LEGEND}}</p>
+
+      <div style="position:relative; height:620px; margin-top:6px;">
+        <img src="assets/tb-map.png" alt="" style="position:absolute; left:50%; top:-18px; transform:translateX(-50%); width:1104px; height:auto; max-width:none; z-index:0;">
+
+        <span class="ph" style="position:absolute; left:0; top:0; color:var(--teal);">{{LEFT_LABEL}}</span>
+        <div class="vqe" style="left:0;   top:48px;">{{Q1}}</div>
+        <div class="vqe" style="left:18px; top:192px;">{{Q2}}</div>
+        <div class="vqe" style="left:6px;  top:336px;">{{Q3}}</div>
+        <div class="vqe" style="left:24px; top:480px;">{{Q4}}</div>
+
+        <span class="ph" style="position:absolute; right:0; top:0; color:var(--coral); text-align:right;">{{RIGHT_LABEL}}</span>
+        <div class="vqe" style="right:0;   top:62px;">{{Q5}}</div>
+        <div class="vqe" style="right:14px; top:262px;">{{Q6}}</div>
+        <div class="vqe" style="right:28px; top:476px;">{{Q7}}</div>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>
+
+<!-- Each {{Qn}} is one card. Shape, with the platform mark, the date and the layer in the meta row:
+<div class="qt">"la cita, tal cual, sin la liga pegada dentro del texto"</div>
+<div class="rd">the English reading, only on an English deck</div>
+<div class="mt"><span class="cc" style="background:#000"><svg viewBox="0 0 24 24" fill="#fff"><path d="…"/></svg></span>
+  <a href="…">ago 2026</a><span class="tag met">psicológico</span></div>
+-->

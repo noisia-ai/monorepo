@@ -14,6 +14,31 @@ Este es el archivo maestro de continuidad operativa de Noisia. Todo lo que no es
 - No es código. Es contenido operativo. Si una sección termina necesitando ejecución, vive en `/src`, no aquí.
 - No es archivo histórico de proyectos. Los casos reales (con cliente, fechas, hallazgos) NO van aquí — esos viven encriptados o en repos privados por NDA.
 
+## Frontera Git / Drive (desde jul 2026)
+
+Este KB es el **KB técnico y metodológico**. Existe un segundo KB, el **comercial**, que vive en
+Google Drive y no en este repo.
+
+| Vive en **Git** (aquí) | Vive en **Drive** (KB comercial) |
+| ---------------------- | -------------------------------- |
+| Cómo se ejecuta una metodología (playbooks) | Guion de venta, objeciones, tono comercial |
+| Principios de evidencia, corpus, trazabilidad | Catálogo comercial con precios reales |
+| Definición conceptual de las 6 metodologías | Clientes, pipeline, notas de reuniones |
+| Modelo de producto y lógica de pricing **sin montos** | Montos, márgenes, descuentos |
+| Formato de entrega y quality gates | Transcripts y minutas |
+
+Dos razones, y las dos importan:
+
+1. **Este repo es público.** Nada con nombre de cliente, monto real o estrategia comercial puede
+   pasar por aquí.
+2. **El equipo comercial no es técnico.** Pedirle que edite markdown vía git para actualizar un
+   precio garantiza que el KB se desactualice. En Drive lo edita quien lo necesita, y Claude o
+   ChatGPT lo leen conectados a la carpeta.
+
+El punto de contacto entre los dos es `02-services/product-model.md`: los nombres de las líneas
+y de los productos se definen aquí — porque el producto y el pitch tienen que decir lo mismo — y
+se copian al KB comercial cuando cambian.
+
 ## Estructura
 
 ```
@@ -22,7 +47,7 @@ knowledge-base/
 ├── Design.md                   ← meta-doc: cómo está pensado este KB y cómo usarlo
 ├── 00-overview/                ← qué es Noisia, posicionamiento, principios
 ├── 01-methodologies/           ← las 6 metodologías propietarias (definición + teoría)
-├── 02-services/                ← Foundation, Intelligence, Strategy + lógica de pricing
+├── 02-services/                ← modelo de producto (Reportes/Estudios/Data), tiers, pricing
 ├── 03-process/                 ← diagnóstico, corpus, trazabilidad, entrega
 ├── 04-cases/                   ← los 6 use cases (qué metodología corre cada uno)
 └── 05-ai-playbooks/            ← protocolos ejecutables por una IA o analista nuevo
@@ -39,7 +64,8 @@ La separación importa: el conceptual rota poco (la teoría no cambia). El playb
 
 ## Cómo aportar
 
-1. Toda edición pasa por `git`. Nada de Google Docs paralelos.
+1. Toda edición **de este KB** pasa por `git`. El KB comercial se edita en Drive; no se duplica
+   contenido entre los dos (ver "Frontera Git / Drive" arriba).
 2. Si afinas un playbook por aprendizajes de un proyecto, anota el contexto en el commit message — no en el archivo. El archivo se queda en presente operativo, no en historial.
 3. Si encuentras una contradicción entre el sitio público y este KB, **el KB manda**. El sitio se actualiza, no al revés.
 4. Si una decisión metodológica está pendiente, va en `Design.md` → "Open questions". No en un .md suelto.

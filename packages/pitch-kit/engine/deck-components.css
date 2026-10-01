@@ -1,0 +1,346 @@
+/* ============================================================================
+   deck-components.css — reusable layout components for Noisia decks
+   ----------------------------------------------------------------------------
+   Load AFTER noisia-tokens.css and deck.css. These are the building blocks the
+   report (R) and study (T&B) layouts are made of, extracted from the shipped
+   Smart Speakers / Alexa+ decks so every deck reuses the same, tested pieces
+   instead of re-inventing CSS per project.
+
+   See LAYOUTS.md for which components each canonical layout uses, ICONS.md for
+   the icon rules, and COPY_RULES.md for the words.
+   ============================================================================ */
+
+:root { --coral:#e2543c; --coral-soft:#fdece8; --teal:#008a8a; --teal-soft:#e6f7f7; }
+.slide .slide-header .right span { color:var(--fg-secondary); font-weight:500; font-size:var(--edge-size); }
+.slide.dark .slide-header .right span { color:rgba(255,255,255,0.5); }
+
+/* --- eyebrow + section title ------------------------------------------------ */
+.eb { display:inline-flex; align-items:center; gap:10px; font-size:21px; font-weight:700; color:var(--teal); margin-bottom:14px; }
+.slide.dark .eb { color:var(--signal); }
+.ic { width:24px; height:24px; flex:none; display:block; }
+.eb .ic { width:22px; height:22px; }
+.hl { font-size:54px; font-weight:500; line-height:1.07; margin:0 0 22px; color:var(--ink); }
+.slide.dark .hl { color:#fff; }
+.accent { color:var(--teal); } .slide.dark .accent { color:var(--signal); }
+.sub { font-size:23px; line-height:1.45; color:var(--fg-secondary); max-width:1200px; }
+.ph { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-secondary); margin-bottom:16px; }
+
+/* The eyebrow takes the sign of the slide: coral on a slide whose finding is negative, green on a
+   positive one, teal when it is neutral or structural. An all-teal deck flattens that cue. */
+.eb.neg { color:var(--coral); } .eb.pos { color:var(--positive); }
+
+/* --- icon chip (tinted square holding an Iconoir glyph) --------------------- */
+.icobox { width:46px; height:46px; border-radius:13px; display:flex; align-items:center; justify-content:center; flex:none; }
+.t-teal{background:var(--teal-soft);color:var(--teal);} .t-coral{background:var(--coral-soft);color:var(--coral);}
+.t-green{background:var(--positive-soft);color:var(--positive);} .t-ink{background:#f0f0f0;color:var(--ink);}
+
+/* --- layout helpers -------------------------------------------------------- */
+.mid { flex:1; display:flex; flex-direction:column; justify-content:center; min-height:0; }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:48px; }
+.up{color:var(--positive);} .dn{color:var(--coral);}
+
+/* --- KPI tiles ------------------------------------------------------------- */
+.kpi { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:22px 24px; display:flex; flex-direction:column; gap:5px; }
+.kpi .kl { font-size:17px; font-weight:600; color:var(--fg-secondary); }
+.kpi .kn { font-size:46px; font-weight:700; line-height:1; color:var(--ink); }
+.kpi .km { font-size:15px; color:var(--fg-secondary); }
+
+/* --- horizontal bars (share of voice, channels) — SOFT gradient ------------ */
+.bars { display:flex; flex-direction:column; gap:13px; }
+.bar { display:grid; grid-template-columns:220px 1fr 58px; align-items:center; gap:15px; }
+.bar .bl { display:flex; align-items:center; gap:10px; font-size:19px; font-weight:600; color:var(--fg-primary); }
+.bar .track { display:block; height:12px; background:var(--surface-02); border-radius:99px; overflow:hidden; }
+.bar .fill { display:block; height:12px; border-radius:99px; background:#0d8a8a; }
+.bar .bv { font-size:19px; font-weight:700; text-align:right; color:var(--teal); }
+.bar.mut .fill{background:var(--neutral-05);} .bar.mut .bv{color:var(--fg-secondary);}
+/* labelled bar variant with trailing channel chips (study "lo que empuja/frena") */
+.barh { display:flex; align-items:center; gap:14px; }
+.barh .bl{font-size:20px;font-weight:600;color:var(--fg-primary);width:340px;display:flex;align-items:center;gap:11px;}
+.barh .track{flex:1;height:12px;background:var(--surface-02);border-radius:99px;overflow:hidden;}
+.barh .fill{display:block;height:12px;border-radius:99px;background:#0d8a8a;}
+.barh .fill.c{background:#d6492f;}
+.barh .bv{font-size:19px;font-weight:700;color:var(--teal);width:56px;text-align:right;} .barh .bv.c{color:var(--coral);}
+.chns{display:flex;gap:6px;justify-content:flex-end;}
+.cc{width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;flex:none;} .cc svg{width:15px;height:15px;}
+
+/* --- sentiment split bar (neg vs pos among those with an opinion) ----------- */
+.sbrow { display:grid; grid-template-columns:150px 1fr 62px; align-items:center; gap:15px; }
+.sbrow .bl { display:flex; align-items:center; gap:10px; font-size:20px; font-weight:600; color:var(--fg-primary); }
+.split { display:flex; height:15px; border-radius:99px; overflow:hidden; background:var(--surface-02); }
+.split i { display:block; height:15px; }
+.split .neg { background:#d6492f; }
+.split .pos { background:#0d8a8a; }
+.sbrow .bv { font-size:20px; font-weight:700; text-align:right; color:var(--coral); }
+
+/* --- topics / data table --------------------------------------------------- */
+.tbl { width:100%; border-collapse:collapse; }
+.tbl th { text-align:left; font-size:15px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-secondary); padding:0 0 14px; border-bottom:1px solid var(--border-subtle); }
+.tbl td { padding:14px 0; border-bottom:1px solid var(--border-subtle); font-size:21px; color:var(--fg-primary); }
+.tbl td .nm { font-weight:600; color:var(--ink); }
+.tag { font-size:14px; font-weight:600; padding:3px 11px; border-radius:99px; }
+.tag.neg{background:var(--coral-soft);color:var(--coral);} .tag.pos{background:var(--positive-soft);color:var(--positive);} .tag.neu{background:#f0f0f0;color:var(--fg-secondary);}
+/* `.neg/.pos/.neu` carry sentiment load. `.met` is a plain metric and carries none: use it for
+   interactions, reach or any neutral number. A count in a coral chip reads as bad news. */
+.tag.met{background:var(--surface-02);color:var(--fg-secondary);font-weight:700;}
+.chn { display:inline-flex; align-items:center; gap:9px; font-size:19px; font-weight:600; color:var(--fg-primary); }
+.mini { display:inline-block; width:120px; height:9px; border-radius:99px; background:var(--surface-02); overflow:hidden; vertical-align:middle; }
+.mini i { display:block; height:9px; border-radius:99px; background:#0d8a8a; }
+
+/* --- verbatim card (real quote + source chip + link) ----------------------- */
+.vq { border:1px solid var(--border-subtle); border-radius:14px; padding:18px 22px; display:flex; flex-direction:column; gap:10px; background:var(--canvas); }
+.vq .qt { font-size:19px; font-style:italic; line-height:1.4; color:var(--fg-primary); }
+/* Translated reading, for a deck in one language quoting another. The quote stays in its original
+   language because it is the evidence; this line sits under it, smaller and quieter. Translating
+   the quote and putting the original below inverts which one is the data (COPY_RULES.md). */
+.vq .qtr { font-size:14.5px; line-height:1.36; color:var(--fg-secondary); }
+/* Structured meta row: platform mark, date and link on the left, a chip pushed to the right.
+   Two cases built this as a local `.vqx`; it belongs here. */
+.vq .mt { display:flex; align-items:center; gap:10px; font-size:13px; font-weight:600; color:var(--fg-secondary); }
+.vq .mt .cc { width:22px; height:22px; border-radius:6px; } .vq .mt .cc svg { width:12px; height:12px; }
+.vq .mt a { color:var(--teal); text-decoration:none; }
+.vq .mt .tag { margin-left:auto; }
+.sq { width:24px; height:24px; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; flex:none; }
+.sq .ic, .sq > svg { width:14px; height:14px; }
+/* A Simple Icons glyph carries no .ic class, so `.sq .ic` alone left it unsized and it spilled
+   out of the chip. Brand marks still read best in `.cc` or `.bmk` (ICONS.md). */
+.src { display:inline-flex; align-items:center; gap:9px; font-size:14px; color:var(--fg-secondary); font-weight:600; }
+.src a { color:var(--teal); text-decoration:none; }
+
+/* --- flank verbatim card (tb-layers-evidence) ------------------------------ */
+/* Flat on purpose: white, 1px border, radius 13, NO shadow. Chrome prints a shadow here as a grey
+   rectangle over the asset. Width and slot pitch are measured; see the fragment's header. */
+.vqe { position:absolute; width:376px; background:#fff; border:1px solid var(--border-subtle);
+       border-radius:13px; padding:13px 15px; z-index:2; }
+.vqe .qt { font-size:14px; font-style:italic; line-height:1.4; color:var(--fg-primary); }
+.vqe .rd { font-size:12.5px; line-height:1.35; color:var(--fg-secondary); margin-top:6px; }
+.vqe .mt { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:600;
+           color:var(--fg-secondary); margin-top:9px; }
+.vqe .mt .cc { width:20px; height:20px; border-radius:6px; } .vqe .mt .cc svg { width:11px; height:11px; }
+.vqe .mt a { color:var(--teal); text-decoration:none; }
+.vqe .mt .tag { margin-left:auto; }
+
+/* --- read rows (icon + label + description) -------------------------------- */
+.irow { display:grid; grid-template-columns:46px 1fr; gap:15px; align-items:start; }
+.irow .il { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--teal); margin-bottom:3px; }
+.irow .id { font-size:19px; color:var(--fg-secondary); line-height:1.4; }
+.irow.coral .il { color:var(--coral); } .irow.green .il { color:var(--positive); }
+
+/* --- footnote: a methodological aside, NOT an insight ---------------------- */
+/* The teal `.note` is reserved for insights. Putting a caveat in it gives a footnote the visual
+   weight of a finding. Use `.foot` for scope notes, axis explanations and honest limits. */
+.foot { display:flex; align-items:flex-start; gap:10px; font-size:15px; font-style:italic;
+        line-height:1.45; color:var(--fg-secondary); }
+.foot .ic { width:17px; height:17px; flex:none; margin-top:2px; opacity:.7; }
+.foot p { margin:0; max-width:none; }
+
+/* --- insight marker -------------------------------------------------------- */
+/* The word `insight`, always that word, in Times italic lowercase next to its icon. It marks a
+   type of content, not a title, so it never changes from slide to slide. Clients could not tell an
+   insight card from any other card while each one carried its own heading. */
+.insig { display:inline-flex; align-items:center; gap:8px; font-family:"Times New Roman", Times, serif;
+         font-style:italic; font-size:19px; color:var(--teal); margin-bottom:8px; }
+.insig .ic { width:18px; height:18px; }
+
+/* --- soft note (NEVER a black card) ---------------------------------------- */
+.note { display:grid; grid-template-columns:44px 1fr; gap:14px; align-items:center; background:var(--teal-soft); border-radius:14px; padding:18px 22px; }
+.note .icobox { width:44px; height:44px; background:#fff; color:var(--teal); }
+.note p { margin:0; font-size:20px; line-height:1.4; color:var(--fg-primary); max-width:none; }
+.note b { color:var(--teal); font-weight:700; }
+
+/* --- consolidated cards (chart + bars at equal height) --------------------- */
+.vcard { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:18px; padding:26px 30px; display:flex; flex-direction:column; }
+.vbody { height:230px; display:flex; flex-direction:column; justify-content:center; margin:18px 0 16px; }
+/* Full-width card: a fixed body height scales a wide viewBox down to the height and leaves dead
+   air on both sides. On `.vcard.wide` the body grows to its content and the chart fills the track. */
+.vcard.wide .vbody { height:auto; }
+.vcard.wide .vbody > svg { width:100%; height:auto; display:block; }
+.vfoot { font-size:18px; line-height:1.45; color:var(--fg-secondary); border-top:1px solid var(--border-subtle); padding-top:16px; }
+.vfoot b { color:var(--fg-primary); }
+
+/* --- head-to-head card ----------------------------------------------------- */
+.hh { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:18px; padding:24px 28px; display:flex; flex-direction:column; gap:12px; }
+.hh .he { display:inline-flex; align-items:center; gap:10px; font-size:15px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--teal); }
+.hh .hc { font-size:22px; line-height:1.32; color:var(--ink); font-weight:500; } .hh .hc b { color:var(--teal); font-weight:700; }
+.hh .hf { display:flex; align-items:baseline; gap:10px; }
+.hh .hf b { font-size:38px; font-weight:700; line-height:1; color:var(--ink); }
+/* The denominator. A competitor at zero without its base reads as a brand that does not exist,
+   when the truth is often that it has conversation and none of it is about what is being compared. */
+.hh .hd { font-size:14px; color:var(--fg-secondary); line-height:1.35; }
+.hh .hq { font-size:16px; font-style:italic; color:var(--fg-secondary); line-height:1.4; border-top:1px solid var(--border-subtle); padding-top:12px; margin-top:auto; }
+
+/* --- Triggers & Barriers matrix (4 layers x push/pull) --------------------- */
+.mtx { display:grid; grid-template-columns:170px 1fr 1fr; gap:11px; }
+.mtx .mh { font-size:16px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; padding:0 18px 4px; }
+.mtx .lay { display:flex; flex-direction:column; justify-content:center; padding:0 4px; } .mtx .lay h4 { font-size:21px; margin:0; color:var(--ink); }
+.cell { border-radius:14px; padding:15px 18px; display:flex; flex-direction:column; gap:8px; }
+.cell.tr { background:var(--positive-soft); } .cell.br { background:var(--coral-soft); } .cell.dim { background:#f3f3f3; }
+.cell .ct { font-size:20px; font-weight:600; color:var(--ink); line-height:1.15; }
+.cmeta { display:flex; align-items:center; gap:14px; font-size:14px; font-weight:600; color:var(--fg-secondary); }
+.cmeta .cn{font-weight:700;} .cell.tr .cn{color:var(--positive);} .cell.br .cn{color:var(--coral);}
+.sdot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:middle;}
+
+/* --- kanban (where a brand can act: full / partial / align only) ----------- */
+.kan { display:grid; grid-template-columns:1.4fr 1fr 1fr; gap:22px; align-items:start; }
+.kcol { display:flex; flex-direction:column; gap:14px; }
+.khead { font-size:16px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; padding:0 4px; }
+.kcard { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:22px 24px; }
+.kcard h4{font-size:22px;margin:10px 0 6px;color:var(--ink);} .kcard p{font-size:17px;margin:0;color:var(--fg-secondary);line-height:1.4;}
+/* NOTE: chip modifier is `kmid`, never `mid` — `.mid` is the slide content wrapper (flex-column) and collides. */
+.kchip{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:6px 13px;border-radius:99px;background:var(--teal-soft);color:var(--teal);white-space:nowrap;}
+.kchip.kmid{background:#eef3f6;color:#5f86a0;} .kchip.no{background:#f0f0f0;color:var(--fg-secondary);}
+.kchip svg{width:15px;height:15px;flex:none;}
+
+/* --- mirror (every pull has a shadow) -------------------------------------- */
+.mir { display:grid; grid-template-columns:1fr 54px 1fr; gap:18px; align-items:stretch; }
+.mcell { border-radius:14px; padding:18px 22px; display:flex; flex-direction:column; gap:6px; justify-content:center; }
+.mcell.tr{background:var(--positive-soft);} .mcell.br{background:var(--coral-soft);}
+.mcell .ml{font-size:14px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;} .mcell.tr .ml{color:var(--positive);} .mcell.br .ml{color:var(--coral);}
+.mcell .mt{font-size:20px;color:var(--ink);line-height:1.25;}
+.mvs{display:flex;align-items:center;justify-content:center;color:var(--fg-secondary);}
+
+/* --- index cards (brief) --------------------------------------------------- */
+.idx { display:grid; grid-template-columns:repeat(5,1fr); gap:16px; }
+.idxc { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:14px; padding:20px 18px; display:flex; flex-direction:column; gap:8px; }
+.idxc .n{font-size:15px;font-weight:700;color:var(--teal);} .idxc h4{font-size:19px;margin:0;color:var(--ink);line-height:1.2;} .idxc p{font-size:15px;margin:0;color:var(--fg-secondary);line-height:1.35;}
+
+/* --- glossary -------------------------------------------------------------- */
+.gloss { display:grid; grid-template-columns:1fr 1fr; gap:22px 56px; }
+.gterm { display:grid; grid-template-columns:40px 1fr; gap:14px; }
+.gterm h4 { font-size:23px; margin:0 0 4px; color:var(--ink); }
+.gterm p { font-size:18px; color:var(--fg-secondary); line-height:1.4; margin:0; }
+
+/* --- brand / channel chip (holds a Simple Icons glyph, white on brand color) */
+.chip { display:inline-flex; align-items:center; gap:9px; font-size:18px; font-weight:600; color:var(--fg-primary); background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:99px; padding:8px 16px; }
+.bmk { width:22px; height:22px; border-radius:6px; display:inline-flex; align-items:center; justify-content:center; flex:none; } .bmk svg { width:13px; height:13px; }
+
+.lg { display:flex; align-items:center; gap:11px; font-size:20px; } .dot { width:13px; height:13px; border-radius:50%; flex:none; }
+
+/* ============================================================================
+   Promoted from shipped decks (see CANON.md §9). Each of these was rebuilt
+   inline in three or more decks before it landed here. Don't redefine them in a
+   deck's own <style>.
+   ========================================================================== */
+
+/* --- generic surface card -------------------------------------------------- */
+.card { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:26px 28px; }
+.card.soft{background:#fafafa;} .card.teal{background:var(--teal-soft);border-color:#cceaea;} .card.coral{background:var(--coral-soft);border-color:#f2cfc7;}
+
+/* --- cover with illustration bleeding right (LAYOUTS.md → the cover) -------- */
+.cover-art { position:absolute; right:-110px; top:50%; transform:translateY(-50%); height:113%; width:auto; z-index:0; pointer-events:none; opacity:.88; }
+/* The cover slide must carry `atmos plain` (deck.css): the cyan blob over the art reads as a wash. */
+.cover-copy { position:relative; z-index:2; max-width:1120px; display:flex; flex-direction:column; justify-content:flex-end; }
+.cover-copy .sub { font-size:26px; margin-top:8px; max-width:820px; }
+.cover-meta-line { font-size:19px; color:var(--fg-secondary); margin-top:6px; }
+
+/* --- channel roles: where the conversation lives, and what each channel does */
+.roles { display:flex; flex-direction:column; gap:14px; }
+.roles.cols { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+.role { display:grid; grid-template-columns:250px 1fr; gap:20px; align-items:center; }
+.role .rl { display:flex; align-items:center; gap:12px; }
+.role .rn { font-size:20px; font-weight:700; color:var(--ink); }
+.role .rp { font-size:15px; color:var(--fg-secondary); }
+.role .rd { font-size:18px; color:var(--fg-secondary); line-height:1.4; margin-top:6px; } .role .rd b { color:var(--fg-primary); }
+.rbar { height:12px; min-width:28px; border-radius:99px; background:#0d8a8a; display:inline-block; vertical-align:middle; }
+
+/* --- framework cards: explain the frame BEFORE any slide uses it ----------- */
+.fwg { display:grid; grid-template-columns:1fr 1fr; gap:26px; }
+.fwc { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:28px 30px; display:grid; grid-template-columns:52px 1fr; gap:18px; align-items:start; }
+.fwc .tag { font-size:14px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--teal); padding:0; background:none; }
+.fwc h4 { font-size:24px; margin:2px 0 0; color:var(--ink); }
+.fwc p { font-size:17px; color:var(--fg-secondary); line-height:1.5; margin:10px 0 0; }
+
+/* --- T&B map slide: the diagram sits BEHIND the copy ----------------------- */
+.tbmap { position:relative; height:560px; margin:-24px 0 6px; }
+.tbmap img { position:absolute; left:50%; top:-30px; transform:translateX(-50%); width:1320px; max-width:none; height:auto; z-index:-1; }
+.tbmap .tl { position:absolute; top:250px; width:340px; z-index:1; }
+.tbmap .tl.pull { left:0; } .tbmap .tl.shadow { right:0; text-align:right; }
+.tbmap .tl h4 { font-size:26px; font-weight:700; margin:0 0 8px; } .tbmap .tl.pull h4 { color:var(--teal); } .tbmap .tl.shadow h4 { color:var(--coral); }
+.tbmap .tl p { font-size:19px; color:var(--fg-secondary); line-height:1.45; margin:0; }
+
+/* --- permission to act, under the map (feeds the kanban on "where to act") - */
+.lperm { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
+.lperm > div { background:#fafafa; border:1px solid var(--border-subtle); border-radius:14px; padding:16px 20px; }
+.lperm b { display:block; font-size:18px; color:var(--ink); }
+.lperm span { display:block; margin-top:6px; font-size:15px; font-weight:700; color:var(--positive); }
+.lperm > div.partial span { color:var(--teal); } .lperm > div.align span { color:var(--fg-secondary); }
+
+
+/* ============================================================================
+   Promoted from two independent cases (a report and a study each, in two
+   languages). Eleven of these were byte-identical across both before promotion,
+   which is the kit's own signal: build it twice, it belongs here.
+   ========================================================================== */
+
+/* --- per-slide background image (gen-backgrounds.py) ----------------------- */
+/* Goes behind the frame, with the slide carrying `atmos plain` so the engine's own blob is off. */
+.slide > .bg { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; pointer-events:none; }
+/* A cover over a dark full-bleed image: the footer lifts so it does not vanish into the artwork.
+   Only that footer, never the deck's edge opacity. */
+.cover-white .slide-footer { opacity:.82; }
+.cover-white .slide-footer span:first-child { color:#fff; font-weight:500; }
+
+/* --- big figure with its unit ---------------------------------------------- */
+.kfig { display:flex; align-items:baseline; gap:10px; }
+.kfig b { font-size:54px; font-weight:700; line-height:1; color:var(--ink); }
+.kfig span { font-size:19px; font-weight:600; color:var(--fg-secondary); }
+
+/* --- de-noising funnel (study and sample only, see LAYOUTS.md) ------------- */
+.fnl { display:flex; flex-direction:column; gap:7px; }
+.fnl .fr { display:grid; grid-template-columns:1fr 130px; align-items:center; gap:16px; padding:11px 20px; border-radius:11px; background:var(--surface-01); border:1px solid var(--border-subtle); }
+.fnl .fr.keep { background:var(--teal-soft); border-color:#bfe6e6; }
+.fnl .fr .lb { font-size:19px; color:var(--fg-primary); }
+.fnl .fr .vl { font-size:22px; font-weight:700; text-align:right; color:var(--fg-secondary); }
+.fnl .fr.keep .lb, .fnl .fr.keep .vl { color:var(--teal); font-weight:700; }
+
+/* --- brand comparison grid -------------------------------------------------- */
+/* `.bl` is the denominator and it is not optional: a brand at zero without its base reads as a
+   brand that does not exist. `.me` marks the subject of the study. */
+.hgrid { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; }
+.hcell { background:var(--surface-01); border:1px solid var(--border-subtle); border-radius:16px; padding:20px 22px; }
+.hcell .bn { display:flex; align-items:center; gap:10px; font-size:20px; font-weight:700; color:var(--ink); margin-bottom:12px; }
+.hcell .bv { font-size:40px; font-weight:700; line-height:1; }
+.hcell .bl { font-size:14px; color:var(--fg-secondary); margin-top:5px; line-height:1.35; }
+.hcell.me { background:#fff; border-color:var(--coral); }
+
+/* --- heat matrix (theme x something) --------------------------------------- */
+/* Holds six rows comfortably. At eight, use `.tmx.compact`, which is the measured tightening. */
+.tmx { display:grid; gap:9px; }
+.tmx .th { font-size:13px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:var(--fg-secondary); text-align:center; padding-bottom:3px; }
+.tmx .rh { font-size:18px; font-weight:700; color:var(--ink); display:flex; align-items:center; gap:9px; }
+.tmx .cl { border-radius:10px; text-align:center; font-size:20px; font-weight:700; padding:13px 0; color:var(--fg-secondary); background:var(--surface-02); }
+.tmx .cl.h1 { background:#fdece8; color:#c0442c; }
+.tmx .cl.h2 { background:#f9cfc4; color:#9c2f1a; }
+.tmx .cl.h3 { background:#e2543c; color:#fff; }
+.tmx .cl.z { color:var(--neutral-09); }
+.tmx.compact { gap:6px; }
+.tmx.compact .cl { padding:7px 0; font-size:18px; }
+.tmx.compact .rh { font-size:16.5px; } .tmx.compact .rh .ic { width:18px; height:18px; }
+.tmx.compact .th { font-size:12px; }
+
+/* --- mobility cards (what can be moved, and how much) ---------------------- */
+.mob { display:grid; grid-template-columns:1fr 1fr 1fr; gap:20px; }
+.mob .mc { border-radius:16px; padding:22px 24px; border:1px solid var(--border-subtle); background:var(--surface-01); display:flex; flex-direction:column; gap:10px; }
+.mob .mc .hd { display:flex; align-items:center; gap:10px; }
+.mob .mc h4 { font-size:21px; margin:0; color:var(--ink); }
+.mob .mc p { font-size:16px; margin:0; color:var(--fg-secondary); line-height:1.4; }
+
+/* --- journey / phase map with a metric per phase --------------------------- */
+/* The chart is hand-drawn SVG (CHARTS.md); this is the frame around it. `.jmlab` takes a
+   grid-template-columns matching the chart's left padding plus one column per phase, so every
+   label sits under its point. */
+.jm { position:relative; }
+.jm svg { display:block; width:100%; height:auto; }
+.jmlab { display:grid; margin-top:10px; }
+.jmcell { padding:0 10px; text-align:center; border-left:1px solid var(--border-subtle); }
+.jmcell:first-child { border-left:none; }
+.jmcell .ph { font-size:19px; font-weight:700; color:var(--ink); margin-bottom:3px; }
+.jmcell .sc { font-size:27px; font-weight:700; line-height:1; margin-bottom:5px; }
+.jmcell .dt { font-size:14px; color:var(--fg-secondary); line-height:1.3; }
+.jmnote { display:flex; gap:9px; align-items:center; font-size:15px; font-weight:600; color:var(--fg-secondary); }
+.jmnote .sw { width:26px; height:9px; border-radius:99px; display:inline-block; }
+
+/* --- dense decks (more than ~30 slides) -------------------------------------- */
+/* Put class="deck-dense" on <deck-stage>. Values from a long deck that overrode them by hand. */
+.deck-dense { --pad-top:68px; --pad-bottom:60px; --gap-title:34px; }
+.deck-dense .hl { font-size:46px; }
+.deck-dense .eb { font-size:18px; }

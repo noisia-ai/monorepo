@@ -1,0 +1,64 @@
+<!-- slide: method · Cómo se leyó: alcance, límites y trazabilidad · variants: light
+     Near the end of a study or sample. Makes the whole deck defensible in one slide.
+     CLIENT-SAFE, this is the rule that gets broken most: no tool names, no query syntax, no file
+     names, no scripts, and never the word ETL. Say it in business language. The technical detail
+     belongs in PROVENANCE_AND_CHANGELOG.md (templates/).
+     The .note carries the honest limit: which claims are exact and which are directional
+     (METHODOLOGY.md + DATA.md §20). Whether volume shows as counts or share: CANON.md §5.3. -->
+<section class="slide" data-label="Método">
+  <div class="frame">
+    <div class="slide-header">
+      <div class="left"><img class="logo" src="logo_norm.svg" alt="Noisia"></div>
+      <div class="right"><span>{{HEADER_RIGHT}}</span></div>
+    </div>
+    <div class="mid">
+      <span class="eb"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths, see ICONS.md --></svg>{{EYEBROW}}</span>
+      <h2 class="hl">{{TITLE}}</h2>
+      <!-- Tira de datos duros. Seis celdas: periodo, mercado, corpus original, corpus depurado, y
+           la cobertura de la codificación. El original junto al depurado es lo que le da dimensión
+           al descarte, y la cobertura evita que un porcentaje sobre una base chica se lea como si
+           fuera sobre el corpus completo. -->
+      <div style="display:grid; grid-template-columns:repeat(6,1fr); gap:14px; margin:20px 0 8px;">
+        <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_1_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_1_VALUE}}</b></div>
+        <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_2_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_2_VALUE}}</b></div>
+        <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_3_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_3_VALUE}}</b></div>
+        <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_4_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_4_VALUE}}</b></div>
+        <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_5_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_5_VALUE}}</b></div>
+        <div class="card" style="padding:16px 18px;"><div class="ph" style="margin-bottom:6px;">{{FACT_6_LABEL}}</div><b style="font-size:20px;color:var(--ink);">{{FACT_6_VALUE}}</b></div>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px 44px; margin-top:18px;">
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">qué se escuchó</div><div class="id">{{SCOPE}}</div></div>
+        </div>
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">qué se dejó fuera</div><div class="id">{{EXCLUSIONS}}</div></div>
+        </div>
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">cómo se leyó</div><div class="id">{{READING}}</div></div>
+        </div>
+        <div class="irow">
+          <div class="icobox t-teal"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir inner paths --></svg></div>
+          <div><div class="il">evidencia</div><div class="id">{{EVIDENCE}}</div></div>
+        </div>
+      </div>
+      <!-- Fuentes con su conteo: deja comprobar el mix sin abrir el anexo. Marca de plataforma
+           en Simple Icons, blanca sobre el color de la marca (ICONS.md). -->
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:22px;">
+        <span class="ph" style="margin:0 6px 0 0;">fuentes</span>
+        <span class="chip"><span class="bmk" style="background:{{SOURCE_1_COLOR}}"><svg viewBox="0 0 24 24" fill="#fff"><!-- simple-icons path --></svg></span><b>{{SOURCE_1_COUNT}}</b> {{SOURCE_1_UNIT}}</span>
+        <span class="chip"><span class="bmk" style="background:{{SOURCE_2_COLOR}}"><svg viewBox="0 0 24 24" fill="#fff"><!-- simple-icons path --></svg></span><b>{{SOURCE_2_COUNT}}</b> {{SOURCE_2_UNIT}}</span>
+        <span class="chip"><span class="bmk" style="background:{{SOURCE_3_COLOR}}"><svg viewBox="0 0 24 24" fill="#fff"><!-- simple-icons path --></svg></span><b>{{SOURCE_3_COUNT}}</b> {{SOURCE_3_UNIT}}</span>
+      </div>
+      <!-- El límite honesto va en .foot, NUNCA en .note: el card teal es de insights, y una
+           acotación ahí adentro se lee con peso de hallazgo. -->
+      <div class="foot" style="margin-top:20px;">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><!-- iconoir --></svg>
+        <p style="margin:0;">{{LIMIT}}</p>
+      </div>
+    </div>
+    <div class="slide-footer"><span>noisia · social intelligence architects</span><span>{{FOOTER_NN}} / {{FOOTER_TOTAL}}</span></div>
+  </div>
+</section>
