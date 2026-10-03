@@ -124,6 +124,6 @@ export async function signalWorkspaceInterestDecisionPreparationJobV2(
   if (verifiedOwner.owner_id !== ownerId || ![verifiedOwner.workspace_id, verifiedOwner.actor_user_id,
     verifiedOwner.generation_id, verifiedOwner.source_execution_id].every(value => uuid.test(value))) fail("owner_invalid");
   const result = await (options.prepare ?? prepareSignalWorkspaceInterestDecisionWithDatabaseV2)({
-    database, ...verifiedOwner, max_pages: 1, max_batches: 1 });
+    database, ...verifiedOwner, max_pages: 8, max_batches: 8 });
   return { disabled: false, result };
 }
