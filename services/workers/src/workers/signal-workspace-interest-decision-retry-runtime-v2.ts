@@ -5,7 +5,8 @@ type Database = Pick<Pool, "connect">;
 type Environment = Readonly<Record<string, string | undefined>>;
 type Candidate = { owner_id: string; actor_user_id: string; page_id: string;
   request_digest: string; prior_call_id: string; attempt_index: number;
-  batch_state: string; call_status: string; outcome: string | null; validation_status: string | null };
+  batch_state: string; batch_error_code: string | null; call_status: string;
+  outcome: string | null; validation_status: string | null };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const digest = /^sha256:[0-9a-f]{64}$/u;
 const fail = (code: string): never => { throw new Error(`workspace_interest_retry_v2_${code}`); };
@@ -28,16 +29,16 @@ export async function signalWorkspaceInterestDecisionRetrySchemaReadyV2(database
   } finally { client.release(); }
 }
 
-/** A previous Batch must be applied with a settled failed item. Definitive
- * HTTP Batch rejections remain for manual recovery; no accepted evidence,
- * unknown send or unsettled call is eligible. SQL repeats these checks under
- * the owner lock, so a stale selector cannot authorize a second send. */
+/** Only an applied failed item or a Batch proven absent by a complete provider
+ * inventory may be retried. An explicit HTTP rejection remains paused for
+ * operator diagnosis. SQL repeats the request/call checks under the owner lock. */
 async function readCandidates(database: Database): Promise<Candidate[]> {
   const client = await database.connect();
   try {
     return (await client.query<Candidate>(`SELECT o.id::text owner_id,o.actor_user_id::text,
       r.page_id::text,r.request_digest,c.id::text prior_call_id,c.attempt_index,
-      b.state batch_state,c.status call_status,c.outcome,c.validation_status
+      b.state batch_state,b.last_error_code batch_error_code,
+      c.status call_status,c.outcome,c.validation_status
       FROM signal_interest_decision_requests_v1 r
       JOIN signal_interest_decision_owners_v1 o ON o.id=r.owner_id
       JOIN LATERAL (SELECT call.* FROM signal_interest_decision_calls_v1 call
@@ -45,10 +46,12 @@ async function readCandidates(database: Database): Promise<Candidate[]> {
       JOIN signal_interest_decision_batches_v1 b ON b.id=c.batch_id
       WHERE o.provider_contract_version=2 AND r.provider_contract_version=2
         AND o.status='ready' AND o.manifest_complete
-        AND c.attempt_index<5 AND b.state='applied'
-        AND c.status='settled'
-        AND (c.outcome='errored' OR c.outcome='succeeded'
-          AND c.validation_status IN ('invalid_output','refusal','max_tokens','invalid_message'))
+        AND c.attempt_index<5 AND (
+          b.state='applied' AND c.status='settled'
+            AND (c.outcome='errored' OR c.outcome='succeeded'
+              AND c.validation_status IN ('invalid_output','refusal','max_tokens','invalid_message'))
+          OR b.state='rejected' AND b.last_error_code='provider_inventory_absent'
+            AND c.status='definitely_not_sent')
         AND NOT EXISTS (SELECT 1 FROM signal_interest_decision_root_evidence_v1 e
           WHERE e.request_id=r.id)
       ORDER BY o.created_at,r.page_id,r.request_index LIMIT 64`)).rows;
@@ -69,9 +72,13 @@ export async function drainSignalWorkspaceInterestDecisionRetriesV2(options: {
     if (![row.owner_id,row.actor_user_id,row.page_id,row.prior_call_id].every(value => uuid.test(value))
       || !digest.test(row.request_digest) || !Number.isSafeInteger(row.attempt_index)
       || row.attempt_index < 1 || row.attempt_index >= 5) fail("candidate_invalid");
-    if (row.batch_state !== "applied" || row.call_status !== "settled"
-      || !(row.outcome === "errored" || row.outcome === "succeeded"
-        && ["invalid_output","refusal","max_tokens","invalid_message"].includes(row.validation_status ?? "")))
+    const settledFailure = row.batch_state === "applied" && row.call_status === "settled"
+      && (row.outcome === "errored" || row.outcome === "succeeded"
+        && ["invalid_output","refusal","max_tokens","invalid_message"].includes(row.validation_status ?? ""));
+    const inventoryAbsent = row.batch_state === "rejected"
+      && row.batch_error_code === "provider_inventory_absent"
+      && row.call_status === "definitely_not_sent";
+    if (!settledFailure && !inventoryAbsent)
       continue;
     const key = `${row.owner_id}:${row.page_id}`;
     groups.set(key, [...(groups.get(key) ?? []), row]);
