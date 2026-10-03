@@ -1,0 +1,18 @@
+# Interés definido: revisión semántica antes de continuar — 3 octubre 2026
+
+Complementa el Compass, el plan de intereses y el recibo de Batches. Alexa+ es un corpus de aceptación, no una configuración especial para clientes. La ejecución V2 `7ea63f0d-a857-4cec-ba5e-597544c7057c` conserva sus manifiestos y recibos; este documento no autoriza modificar solicitudes ya enviadas ni sus decisiones.
+
+## Hallazgo en datos reales
+
+Con 5,120 decisiones validadas, hay 46 `belongs`, 5,052 `not_belongs` y 22 `insufficient`. Se leyeron los 46 positivos contra el texto original guardado y la definición sellada del interés «Activación no solicitada y consentimiento de Alexa+». Una lectura de QA identifica al menos 20 positivos claramente ajenos al alcance específico: acceso aún pendiente (`02112cad…`), incompatibilidad de Echo Studio (`0226a8ae…`), falla de sonido después de actualizar (`08f8c391…`), actualización voluntaria que el usuario celebra (`0ca52626…`), consulta de compatibilidad (`0d1210b9…`), instrucción para activar Alexa+ en España (`13042b54…`), aceptación explícita de la invitación (`13ff3c60…`) y deseo de activar Alexa+ en Uruguay (`158040aa…`). En cambio, `012c1d42…`, `0a08c5ca…`, `117c7233…` y `11ad8c2a…` describen activación impuesta o reactivación tras optar por salir.
+
+Esto **no** es una estimación de precisión: no hay etiquetado humano independiente, hay artículos largos que requieren lectura completa y todavía faltan 38,039 raíces. Sí es evidencia suficiente de que la pertenencia no se debe publicar ni continuar pagando el resto con esta definición/decisor sin calibración. La validación de citas funcionó técnicamente; el modelo extendió «activación» a acceso, compatibilidad y cualquier actualización, ignorando exclusiones de consentimiento. El benchmark previo de 12 textos era un piloto técnico, no acreditaba esta frontera.
+
+## Decisión de producto
+
+- Conservar el flag de nuevos envíos V2 en `false`. Los 80 Batches aplicados y los 228 reconciliados como no enviados se mantienen auditables; no duplicar POST ni alterar los hashes de la ejecución.
+- Tras resolver el saldo de Claude, **no** reactivar de inmediato los 367 lotes preparados. Primero ensayar una nueva definición/versión de decisión sobre un conjunto independiente de positivos, negativos y casos mixtos tomados del corpus, incluyendo todos los contraejemplos anteriores. El criterio debe exigir evidencia expresa de imposición, falta de consentimiento, rechazo/opt-out o control de datos de voz; acceso deseado, actualización voluntaria y problemas funcionales por sí solos deben quedar fuera. Medir también falsos negativos; el bajo número de positivos no acredita recall.
+- Si el contrato mejorado supera esa evaluación, crear una ejecución con identidad nueva y recibos propios, reutilizando texto/embeddings y la infraestructura de transporte/ledger. Sólo entonces decidir si los 5,120 resultados previos son reutilizables bajo una comprobación semántica adicional o si requieren reclasificación; jamás reutilizarlos porque coinciden lexicalmente ni cambiar su prompt sellado en sitio.
+- Aceptar Alexa+ cuando **un interés** cubra 43,159/43,159 raíces con membresías persistentes, evidencia pertinente, selección reversible desde Topics y Signal comprobado. Después dejar Alexa+ y probar una marca nueva y segunda carga incremental real antes del release de producción.
+
+La mejora de Topics `bd860f0` separa lotes preparados y lotes recuperables, y deja de llamar «cargo confirmado» a las llamadas reservadas. En UAT, SQL 0219/0220 se aplicó una vez; verificar el runtime nuevo antes de afirmar que la mejora visual está desplegada. El draft PR #14 integra el release, pero no implica despliegue de producción.
