@@ -50,9 +50,12 @@ async function stage<T>(scope: Scope, work: (client: PoolClient) => Promise<T>):
  * benchmark. The client supplies only scope and a replay key. This function
  * never creates a benchmark, paid admission, provider call, or generation. */
 export async function bootstrapSignalInterestDecisionModelAuthorityV2(scope: Scope) {
-  if (!uuid.test(scope.workspace_id) || !uuid.test(scope.actor_user_id)
-    || !termKey.test(scope.interest_term_key) || !requestKey.test(scope.idempotency_key))
-    fail("interest_decision_model_authority_request_invalid");
+  // Keep these failures distinct. The public API still returns a safe code,
+  // while an operator can identify which server-side mapping was invalid.
+  if (!uuid.test(scope.workspace_id)) fail("interest_decision_model_authority_workspace_invalid");
+  if (!uuid.test(scope.actor_user_id)) fail("interest_decision_model_authority_actor_invalid");
+  if (!termKey.test(scope.interest_term_key)) fail("interest_decision_model_authority_term_invalid");
+  if (!requestKey.test(scope.idempotency_key)) fail("interest_decision_model_authority_key_invalid");
   const key = sha(scope.idempotency_key);
   const receipt = await stage(scope, async client => {
     // An ambiguous response must recover the original identity, even if the
