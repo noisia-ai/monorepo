@@ -23,7 +23,8 @@ test("retry prepares the same sealed request only after a terminal known failure
       if (statement.includes("to_regprocedure")) return { rows: [{ ready: true }] };
       if (statement.includes("JOIN LATERAL")) return { rows: [{ owner_id: ownerId,
         actor_user_id: actorId, page_id: pageId, request_digest: requestDigest,
-        prior_call_id: callId, attempt_index: 1 }] };
+        prior_call_id: callId, attempt_index: 1, batch_state: "applied",
+        call_status: "settled", outcome: "errored", validation_status: null }] };
       if (statement.includes("renew_signal_interest_decision_admission_v2"))
         return { rows: [{ result: { admission_id: randomUUID() } }] };
       if (statement.includes("prepare_signal_interest_decision_batch_v2"))
@@ -36,12 +37,30 @@ test("retry prepares the same sealed request only after a terminal known failure
   assert.deepEqual(result, { disabled: false, schema_ready: true, prepared: 1 });
   const selector = sql.find(statement => statement.includes("JOIN LATERAL"))!;
   assert.match(selector, /c\.attempt_index<5/u);
-  assert.match(selector, /b\.state IN \('applied','rejected'\)/u);
-  assert.match(selector, /c\.status='definitely_not_sent'/u);
+  assert.match(selector, /b\.state='applied'/u);
+  assert.match(selector, /c\.status='settled'/u);
+  assert.doesNotMatch(selector, /definitely_not_sent|'rejected'/u);
   assert.match(selector, /c\.validation_status IN \('invalid_output','refusal','max_tokens','invalid_message'\)/u);
   assert.match(selector, /NOT EXISTS \(SELECT 1 FROM signal_interest_decision_root_evidence_v1/u);
   const preparedAt = sql.findIndex(statement => statement.includes("SELECT prepare_signal_interest_decision_batch_v2"));
   assert.ok(sql.findIndex(statement => statement.includes("SELECT renew_signal_interest_decision_admission_v2")) < preparedAt);
   assert.deepEqual(params[preparedAt]!.slice(0, 3), [ownerId, pageId, [requestDigest]]);
   assert.match(String(params[preparedAt]![3]), /^interest-decision-retry:[0-9a-f-]{36}:[0-9a-f]{32}$/u);
+});
+
+test("definitive HTTP rejection cannot enter automatic item retry", async () => {
+  const ownerId = randomUUID(), actorId = randomUUID(), pageId = randomUUID();
+  const sql: string[] = [];
+  const database = { connect: async () => ({ query: async (statement: string) => {
+    sql.push(statement);
+    if (statement.includes("to_regprocedure")) return { rows: [{ ready: true }] };
+    if (statement.includes("JOIN LATERAL")) return { rows: [{ owner_id: ownerId,
+      actor_user_id: actorId, page_id: pageId, request_digest: `sha256:${"a".repeat(64)}`,
+      prior_call_id: randomUUID(), attempt_index: 1, batch_state: "rejected",
+      call_status: "definitely_not_sent", outcome: null, validation_status: null }] };
+    return assert.fail("rejected Batch must not renew or prepare");
+  }, release() {} }) };
+  assert.deepEqual(await drainSignalWorkspaceInterestDecisionRetriesV2({ env: enabled,
+    database: database as never }), { disabled: false, schema_ready: true, prepared: 0 });
+  assert.equal(sql.some(statement => statement.includes("SELECT prepare_signal_interest_decision_batch_v2")), false);
 });
