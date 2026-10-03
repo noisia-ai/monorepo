@@ -84,6 +84,7 @@ async function reviewTag(
     corpusId: string;
     notes: string;
     reviewerUserId: string | null;
+    syntheticLocalReview: boolean;
     tagId: string;
     verifyExisting: boolean;
   }
@@ -96,6 +97,9 @@ async function reviewTag(
         rt.value,
         rt.confidence,
         rt.review_status,
+        rt.approval_source,
+        rt.approval_policy_version,
+        rt.approved_at,
         rt.evidence,
         tx.taxonomy_key,
         tt.term_key
@@ -119,13 +123,21 @@ async function reviewTag(
   const previousValue = {
     confidence: current.confidence,
     review_status: current.review_status,
+    approval_source: current.approval_source,
+    approval_policy_version: current.approval_policy_version,
+    approved_at: current.approved_at,
     taxonomy_key: current.taxonomy_key,
     term_key: current.term_key,
     value: current.value
   };
   const nextValue = {
     ...previousValue,
-    review_status: nextStatus
+    review_status: nextStatus,
+    approval_source: nextStatus === "approved" ? (input.syntheticLocalReview ? "policy" : "human") : null,
+    approval_policy_version: nextStatus === "approved" && input.syntheticLocalReview
+      ? "data-os-local-smoke-v1"
+      : null,
+    approved_at: null as Date | null
   };
   if (input.verifyExisting && current.review_status === nextStatus) {
     const prior = await client.query(
@@ -151,15 +163,24 @@ async function reviewTag(
     } satisfies ReviewTargetSummary & { taxonomy_key: string };
   }
 
-  await client.query(
+  const updated = await client.query<{ approved_at: Date | null }>(
     `
       UPDATE record_tags
-      SET review_status = $3
+      SET review_status = $3,
+          approval_source = $4,
+          approval_policy_version = $5,
+          approved_at = CASE WHEN $3 = 'approved' THEN now() ELSE NULL END
       WHERE id = $1
         AND study_corpus_id = $2
+      RETURNING approved_at
     `,
-    [input.tagId, input.corpusId, nextStatus]
+    [input.tagId, input.corpusId, nextStatus, nextValue.approval_source, nextValue.approval_policy_version]
   );
+  const saved = updated.rows[0];
+  if (updated.rows.length !== 1 || !saved) {
+    throw new Error("The reviewable tag changed before its decision could be saved.");
+  }
+  nextValue.approved_at = saved.approved_at;
 
   await client.query(
     `
@@ -467,6 +488,7 @@ async function main() {
       corpusId,
       notes,
       reviewerUserId,
+      syntheticLocalReview: autoSelectLocal,
       tagId,
       verifyExisting
     });
