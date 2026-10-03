@@ -7,6 +7,8 @@ export type DefinedInterestDecisionStatusV1 = {
   owner_id?: string; status: "not_started" | "open" | "ready" | "completed" | "blocked";
   expected_roots: number; manifest_roots: number; accepted_roots: number;
   unknown_batches: number; unsettled_calls: number; manifest_complete?: boolean;
+  terminal_failed_roots?: number;
+  technical_error_code?: "interest_decision_attempts_exhausted" | null;
   classification_status?: string | null; classification_processed_roots?: number;
   classification_total_roots?: number; classification_error_code?: string | null;
   generation_status?: string | null;
@@ -23,17 +25,22 @@ export function definedInterestDecisionViewV1(status: DefinedInterestDecisionSta
   const started = status?.status !== "not_started" && status !== null;
   const classificationReady = status?.classification_status === "ready" && status.generation_status === "ready";
   const materializationFailed = status?.classification_status === "failed";
+  const terminalFailed = Boolean(status?.status === "ready" && status.manifest_complete
+    && (status.terminal_failed_roots ?? 0) > 0
+    && status.accepted_roots + (status.terminal_failed_roots ?? 0) >= status.expected_roots
+    && status.unknown_batches === 0 && status.unsettled_calls === 0);
   const phase = status?.status === "completed" ? classificationReady ? "complete"
     : materializationFailed ? "materializationFailed" : "materializing"
-    : status?.status ?? "not_started";
+    : terminalFailed ? "technicalFailed" : status?.status ?? "not_started";
   return {
     canStart: !disabled && !dirty && !intent && status?.status === "not_started",
     canReplaceRejected: !disabled && !dirty && status?.status === "not_started"
       && intent?.rejected_before_admission === true,
-    shouldPoll: Boolean(status && (active(status) || status.status === "completed"
+    shouldPoll: Boolean(status && !terminalFailed && (active(status) || status.status === "completed"
       && !classificationReady && !materializationFailed) && status.unknown_batches === 0),
     showProgress: Boolean(started),
-    attention: Boolean(status && (status.unknown_batches > 0 || status.unsettled_calls > 0)),
+    attention: Boolean(status && (status.unknown_batches > 0 || status.unsettled_calls > 0
+      || (status.terminal_failed_roots ?? 0) > 0)),
     phase,
   };
 }
@@ -46,6 +53,14 @@ export function validDefinedInterestDecisionStatusV1(value: unknown): value is D
       row.unknown_batches, row.unsettled_calls].every(count => Number.isSafeInteger(count) && (count as number) >= 0)
     && [row.classification_processed_roots, row.classification_total_roots].every(count => count === undefined
       || Number.isSafeInteger(count) && (count as number) >= 0)
+    && (row.terminal_failed_roots === undefined
+      || Number.isSafeInteger(row.terminal_failed_roots) && (row.terminal_failed_roots as number) >= 0)
+    && (row.terminal_failed_roots === undefined
+      || (row.accepted_roots as number) + (row.terminal_failed_roots as number) <= (row.expected_roots as number))
+    && (row.technical_error_code === undefined || row.technical_error_code === null
+      || row.technical_error_code === "interest_decision_attempts_exhausted")
+    && ((row.terminal_failed_roots ?? 0) === 0
+      || row.technical_error_code === "interest_decision_attempts_exhausted")
     && [row.classification_status, row.classification_error_code, row.generation_status]
       .every(value => value === undefined || value === null || typeof value === "string")
     && (row.owner_id === undefined || typeof row.owner_id === "string");
@@ -180,6 +195,9 @@ export function DefinedInterestDecisionControls({ actorId, workspaceId, termKey,
       })}</p> : null}
       {status.unknown_batches > 0 ? <p role="alert">{t("unknown", { count: status.unknown_batches })}</p> : null}
       {status.unsettled_calls > 0 ? <p role="status">{t("unsettled", { count: status.unsettled_calls })}</p> : null}
+      {(status.terminal_failed_roots ?? 0) > 0 ? <p role="alert">{t("terminalFailed", {
+        count: status.terminal_failed_roots ?? 0
+      })}</p> : null}
     </> : null}
     <div className="admin-form-actions">
       {view.canStart ? <button type="button" className="admin-button admin-button--primary"

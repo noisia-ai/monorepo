@@ -3028,6 +3028,7 @@
           "ready": "Procesando solicitudes y verificando decisiones.",
           "materializing": "Las decisiones están validadas; ahora se guardan las pertenencias de la generación.",
           "materializationFailed": "Las decisiones se conservaron, pero no se pudieron terminar de guardar las pertenencias.",
+          "technicalFailed": "La clasificación se detuvo tras agotar los intentos técnicos. Se conservaron las decisiones validadas y sus recibos.",
           "complete": "Clasificación y pertenencias listas. Revisa la selección de Signal por separado.",
           "blocked": "La clasificación quedó detenida. Se conservaron los recibos y el avance."
         },
@@ -3036,6 +3037,7 @@
         "materialization": "Pertenencias procesadas: {done, number} de {total, number} menciones.",
         "unknown": "{count, plural, one {# lote tiene un envío incierto} other {# lotes tienen envíos inciertos}}. No se reenviarán automáticamente.",
         "unsettled": "{count, plural, one {# llamada aún no tiene costo conciliado} other {# llamadas aún no tienen costo conciliado}}.",
+        "terminalFailed": "{count, plural, one {# mención no pudo clasificarse tras los intentos técnicos permitidos} other {# menciones no pudieron clasificarse tras los intentos técnicos permitidos}}. Es un fallo de procesamiento, no una decisión de evidencia insuficiente. Requiere recuperación manual.",
         "start": "Clasificar este interés", "retrySame": "Reintentar la misma solicitud", "newAttempt": "Iniciar nueva solicitud", "refresh": "Actualizar estado",
         "newAttemptExplanation": "El servidor rechazó el inicio y acabamos de comprobar que no existe una ejecución. Puedes generar otra solicitud después de corregir el problema.",
         "saveFirst": "Guarda los cambios del interés antes de clasificarlo.",
