@@ -67,6 +67,8 @@ test("all page roots and complete chunks enter deterministic Sonnet JSON request
   assert.equal(JSON.stringify(params.output_config.format.schema).includes('"interest_identity_digest"'), true);
   assert.equal(JSON.stringify(params.output_config.format.schema).includes('"definition_revision"'), false);
   const changed = build({ page: { ...page, roots: [...roots.slice(0, 1), { ...roots[1]!, fingerprint: sha("changed") }, ...roots.slice(2)] } });
+  const changedParams = changed.requests[0]!.provider_request.params as unknown as typeof params;
+  assert.deepEqual(changedParams.output_config.format.schema, params.output_config.format.schema);
   assert.notEqual(changed.manifest_digest, manifest.manifest_digest);
   assert.notEqual(changed.requests[0]!.provider_request.custom_id, manifest.requests[0]!.provider_request.custom_id);
 });
@@ -143,6 +145,12 @@ test("provider failures, refusal and invalid citations are never semantic negati
   const invalid = output(request);
   invalid.decisions[0]!.citations[0]!.quote = "fabricated";
   assert.equal(parseSignalWorkspaceInterestDecisionBatchItemV1({ manifest, ...success(request, invalid) }).status, "invalid_output");
+  const wrongRequest = output(request);
+  wrongRequest.request_digest = sha("another request");
+  assert.equal(parseSignalWorkspaceInterestDecisionBatchItemV1({ manifest, ...success(request, wrongRequest) }).status, "invalid_output");
+  const wrongRoot = output(request);
+  wrongRoot.decisions[0]!.root_id = randomUUID();
+  assert.equal(parseSignalWorkspaceInterestDecisionBatchItemV1({ manifest, ...success(request, wrongRoot) }).status, "invalid_output");
 });
 
 test("foreign, missing and conflicting results require recovery; POST ambiguity never retries", () => {

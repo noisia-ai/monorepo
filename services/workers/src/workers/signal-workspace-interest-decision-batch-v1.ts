@@ -48,17 +48,20 @@ const citationSchema = { type: "object", additionalProperties: false,
     quote: { type: "string" }, role: { type: "string", enum: ["supports", "contradicts", "context"] },
   } } as const;
 
-function outputSchema(request: SignalWorkspaceInterestDecisionRequestV1) {
+// Keep the provider grammar identical across requests. The previous per-request
+// enums forced a new grammar compilation for every set of root IDs and digests;
+// the sealed manifest and parser below enforce those exact identities instead.
+function outputSchema() {
   return { type: "object", additionalProperties: false,
     required: ["contract_version", "request_digest", "interest_identity_digest", "decisions"],
     properties: {
-      contract_version: { type: "string", enum: [request.contract_version] },
-      request_digest: { type: "string", enum: [request.request_digest] },
-      interest_identity_digest: { type: "string", enum: [signalWorkspaceEmbeddingDigestV1(request.interest)] },
+      contract_version: { type: "string", enum: ["signal-workspace-interest-decision-v1"] },
+      request_digest: { type: "string" },
+      interest_identity_digest: { type: "string" },
       decisions: { type: "array", items: { type: "object", additionalProperties: false,
         required: ["root_id", "root_fingerprint", "asset_sha256", "verdict", "rationale", "citations"],
         properties: {
-          root_id: { type: "string", enum: request.roots.map(root => root.root_id) },
+          root_id: { type: "string" },
           root_fingerprint: { type: "string" }, asset_sha256: { type: "string" },
           verdict: { type: "string", enum: ["belongs", "not_belongs", "insufficient"] },
           rationale: { type: "string" }, citations: { type: "array", items: citationSchema },
@@ -88,7 +91,7 @@ function providerRequest(request: SignalWorkspaceInterestDecisionRequestV1): Ant
   const params = { model: SIGNAL_WORKSPACE_INTEREST_DECISION_MODEL_V1,
     max_tokens: SIGNAL_WORKSPACE_INTEREST_DECISION_MAX_OUTPUT_TOKENS_V1,
     thinking: { type: "disabled" }, system: instructions,
-    output_config: { effort: "high", format: { type: "json_schema", schema: outputSchema(request) } },
+    output_config: { effort: "high", format: { type: "json_schema", schema: outputSchema() } },
     messages: [{ role: "user", content }] };
   const provider_request_digest = signalWorkspaceEmbeddingDigestV1({ request_digest: request.request_digest,
     configuration: SIGNAL_WORKSPACE_INTEREST_DECISION_PROVIDER_CONFIGURATION_V1, params });
