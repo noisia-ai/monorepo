@@ -21061,6 +21061,8 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__list > button.is-active, .topics-manager__history > button.is-active { background: #fff; border-color: rgba(0,138,138,.28); box-shadow: 0 7px 20px rgba(30,42,42,.06); }
 .topics-manager__list > button > span, .topics-manager__history > button > span { display: grid; gap: 5px; min-width: 0; }
 .topics-manager__list > button > span:last-child, .topics-manager__history > button > span:last-child { justify-items: end; align-content: start; }
+.topics-manager__list > button { grid-template-columns: minmax(0,1fr); }
+.topics-manager__list > button > span:last-child { justify-items: start; }
 .topics-manager__history { margin-top: 14px; border-top: 1px solid var(--neutral-04); }
 .topics-manager__history summary { padding: 14px 4px 4px; color: var(--neutral-09); cursor: pointer; font-size: 12px; font-weight: 650; }
 .topics-manager__list button strong { font-size: 14px; }
