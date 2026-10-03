@@ -74,7 +74,10 @@ function fixture() {
         candidate:{candidate_key:"b0000-routine",label:"Rutinas del hogar",definition:"Rutinas de iluminación del hogar.",locale:"es-MX"},confidence:0.9,rationale:null,cited_ref_ids:[prepared.groups[0]!.evidence[0]!.ref_id]}]}
       :{contract_version:"signal-topic-editorial-global-result-v1",concepts:[{concept_key:"topic-routines",kind:"topic",label:"Rutinas del hogar",definition:"Rutinas de iluminación del hogar.",locale:"es-MX",
         priority_rank:1,priority_rationale:"Rutina observada en evidencia.",member_group_keys:[prepared.groups[0]!.group_key]}],noise_group_keys:[] as string[],unresolved_group_keys:[]};
-    if((!isRepair||invalidRepair)&&invalidPhase==="screening"&&output.decisions)output.decisions[0]!.cited_ref_ids=[digest("unknown citation")];
+    if((!isRepair||invalidRepair)&&invalidPhase==="screening"&&output.decisions){
+      if(invalidRepair)output.decisions[0]!.candidate.locale="en-US";
+      else output.decisions[0]!.cited_ref_ids=[digest("unknown citation")];
+    }
     if((!isRepair||invalidRepair)&&invalidPhase==="global"&&output.concepts)output.noise_group_keys=[prepared.groups[0]!.group_key];
     return Response.json({type:"message",role:"assistant",model:"claude-sonnet-4-6",stop_reason:"end_turn",content:[{type:"text",text:JSON.stringify(output)}],usage:{input_tokens:100,output_tokens:20}});};
   const job={id:lease.worker_job_id,data:{execution_id:lease.execution_id},updateProgress:async()=>{}};
@@ -174,6 +177,9 @@ test("a semantically invalid repair remains paid and fail-closed on replay with 
  for(const phase of ["screening","global"] as const){
   const f=fixture();f.invalidate(phase,true);
   await assert.rejects(signalTopicEditorialJobV1(f.job,f.options),/topic_editorial_repair_invalid/u);
+  assert.equal(f.repairs.size,1);
+  assert.equal(f.stats.sends,phase==="screening"?2:3);
+  assert.equal(f.calls.size,phase==="screening"?2:3);
   const before=structuredClone([...f.calls]);const sends=f.stats.sends;
   await assert.rejects(signalTopicEditorialJobV1(f.job,{...f.options,provider_enabled:false}),/topic_editorial_repair_invalid/u);
   assert.equal(f.stats.sends,sends);assert.equal(f.repairs.size,1);assert.deepEqual([...f.calls],before);
