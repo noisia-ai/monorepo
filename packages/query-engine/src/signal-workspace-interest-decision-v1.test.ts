@@ -86,6 +86,10 @@ test("source chunks are bound to their exact text, offsets and unique root/chunk
     /duplicate_chunk/u);
   assert.throws(() => buildSignalWorkspaceInterestDecisionRequestV1({ ...body, roots: [{ ...roots[0]!, chunks: [{ ...roots[0]!.chunks[0]!, text: "tampered" }] }] }),
     /source_chunk_invalid/u);
+  const whitespace = "   ";
+  assert.equal(buildSignalWorkspaceInterestDecisionRequestV1({ ...body, roots: [{ ...roots[0]!,
+    asset_sha256: sha(whitespace), chunks: [{ chunk_index: 0, start: 0, end: whitespace.length,
+      chunk_sha256: sha(whitespace), text: whitespace }] }] }).roots[0]?.chunks[0]?.text, whitespace);
 });
 
 test("mixed evidence remains insufficient and cannot become approval by adding a score", () => {
@@ -121,4 +125,10 @@ test("canonical output digest supports exact replay despite response ordering", 
   assert.deepEqual(first, reordered);
   const changed = output(); changed.decisions[0] = { ...changed.decisions[0]!, rationale: "Otra conclusión." };
   assert.notEqual(parseSignalWorkspaceInterestDecisionOutputV1({ request, output: changed }).output_digest, first.output_digest);
+});
+
+test("a verbose but structured rationale is accepted without an arbitrary short text gate", () => {
+  const long = output();
+  long.decisions[0] = { ...long.decisions[0]!, rationale: "Evidencia: ".repeat(800) };
+  assert.equal(parseSignalWorkspaceInterestDecisionOutputV1({ request, output: long }).output.decisions[0]?.verdict, "belongs");
 });

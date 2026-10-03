@@ -9,10 +9,11 @@ export const SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_LIMIT_V1 = 64;
 const digest = z.string().regex(/^sha256:[0-9a-f]{64}$/u);
 const termKey = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,119}$/u);
 const nonblank = z.string().trim().min(1);
-const verbatim = z.string().min(1).max(1400).refine(value => value.trim().length > 0);
+const sourceText = z.string().min(1).max(1400);
+const verbatim = sourceText.refine(value => value.trim().length > 0);
 const chunkSchema = z.object({
   chunk_index: z.number().int().nonnegative(), start: z.number().int().nonnegative(),
-  end: z.number().int().positive(), chunk_sha256: digest, text: verbatim
+  end: z.number().int().positive(), chunk_sha256: digest, text: sourceText
 }).strict();
 const rootSchema = z.object({
   root_id: z.string().uuid(), fingerprint: digest, correction_digest: digest, asset_sha256: digest,
@@ -58,7 +59,7 @@ const citationSchema = z.object({
 const decisionSchema = z.object({
   root_id: z.string().uuid(), root_fingerprint: digest, asset_sha256: digest,
   verdict: z.enum(["belongs", "not_belongs", "insufficient"]),
-  rationale: nonblank.max(4000), citations: z.array(citationSchema).max(16)
+  rationale: nonblank, citations: z.array(citationSchema).max(128)
 }).strict().superRefine((value, ctx) => {
   if (value.verdict === "belongs" && !value.citations.some(citation => citation.role === "supports")) {
     issue(ctx, "interest_decision_support_required");
