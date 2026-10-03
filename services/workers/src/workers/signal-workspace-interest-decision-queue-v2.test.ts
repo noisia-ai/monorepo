@@ -61,6 +61,27 @@ test("V2 feature transport never repeats an uncertain POST", async () => {
   assert.deepEqual(h.events.filter(event => event === "reserve"), ["reserve"]);
 });
 
+test("V2 explicit billing and rate-limit rejections take the durable rejection path", async () => {
+  for (const status of [402, 429]) {
+    const h = harness();
+    let posts = 0;
+    h.stores.markKnownRejection = async (_lease, _code, receipt) => {
+      assert.equal(receipt?.http_status, status);
+      assert.equal(receipt?.complete, true);
+      assert.equal(receipt?.raw_body, "private provider receipt");
+      h.events.push("reject");
+      h.lease.state = "submission_unknown";
+    };
+    const provider = createAnthropicMessageBatchesClient({ apiKey: "test-only", fetch: async () => {
+      posts++;
+      return new Response("private provider receipt", { status });
+    } });
+    assert.equal(await runSignalWorkspaceInterestDecisionBatchTickV2({ stores: h.stores, provider }), "known_rejection");
+    assert.equal(posts, 1);
+    assert.deepEqual(h.events, ["reserve", "reject", "release"]);
+  }
+});
+
 test("V2 provider item error stores raw before semantic status and remains recoverable", async () => {
   const h = harness();
   const item: AnthropicBatchItem = { custom_id: manifest.requests[0]!.provider_request.custom_id,

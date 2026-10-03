@@ -73,10 +73,16 @@ test("POST response loss, malformed success and HTTP500 are ambiguous, never ret
   }
 });
 
-test("HTTP rejection can be distinguished from submission uncertainty without logging its body", async () => {
-  const client = createAnthropicMessageBatchesClient({ apiKey: "test-secret", fetch: async () =>
-    new Response("test-secret and private prompt", { status: 429 }) });
-  await assert.rejects(client.create([request]), matches("batch_http_429", "not_submitted"));
+test("explicit billing and rate-limit rejections are known not submitted and retain private receipts", async () => {
+  for (const status of [402, 429]) {
+    let calls = 0;
+    const client = createAnthropicMessageBatchesClient({ apiKey: "test-secret", fetch: async () => {
+      calls++;
+      return new Response("test-secret and private prompt", { status });
+    } });
+    await assert.rejects(client.create([request]), matches(`batch_http_${status}`, "not_submitted"));
+    assert.equal(calls, 1);
+  }
 });
 
 test("GET uses provider identity, not returned result URL; streams unordered outcomes and Unicode", async () => {
