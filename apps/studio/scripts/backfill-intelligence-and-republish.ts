@@ -22,6 +22,7 @@ type CliOptions = {
   republish: boolean;
   force: boolean;
   embeddings: boolean;
+  allowCostly: boolean;
   limit: number;
   analysisId?: string;
   outputId?: string;
@@ -102,7 +103,11 @@ async function main() {
     openSignals += openSignalCount;
 
     if (options.embeddings && options.apply) {
-      if (process.env.VOYAGE_API_KEY || process.env.OPENAI_API_KEY) {
+      if (!options.allowCostly) {
+        console.warn(
+          `[embeddings-skip] ${analysis.id} requires --allow-costly and NOISIA_ALLOW_COSTLY_BACKFILL=true`
+        );
+      } else if (process.env.VOYAGE_API_KEY || process.env.OPENAI_API_KEY) {
         const queue = getQueryEngineQueue();
         await queue.add(
           "embed_corpus_semantics",
@@ -363,13 +368,13 @@ async function republishOutputs(options: CliOptions, analysisIds: string[]) {
       ...defaultSignalManifest,
       ...(output.manifest && typeof output.manifest === "object" ? output.manifest : {})
     });
-    const payload = buildSignalPayload({
+    const payload = preserveLiveIntelligenceBlock(buildSignalPayload({
       state,
       corpus,
       manifest,
       headline: output.headline,
       summary: output.summary
-    });
+    }), output.payload);
 
     if (options.apply) {
       await db
@@ -414,6 +419,7 @@ function parseArgs(args: string[]): CliOptions {
     republish: false,
     force: false,
     embeddings: false,
+    allowCostly: false,
     limit: 100,
     analysisStatuses: ["approved_by_im", "approved_by_kam"],
     outputStatuses: ["published"]
@@ -424,6 +430,7 @@ function parseArgs(args: string[]): CliOptions {
     else if (arg === "--republish") options.republish = true;
     else if (arg === "--force") options.force = true;
     else if (arg === "--embeddings") options.embeddings = true;
+    else if (arg === "--allow-costly") options.allowCostly = process.env.NOISIA_ALLOW_COSTLY_BACKFILL === "true";
     else if (arg.startsWith("--limit=")) options.limit = positiveInt(arg.slice("--limit=".length), 100);
     else if (arg.startsWith("--analysis-id=")) options.analysisId = arg.slice("--analysis-id=".length);
     else if (arg.startsWith("--output-id=")) options.outputId = arg.slice("--output-id=".length);
@@ -432,6 +439,16 @@ function parseArgs(args: string[]): CliOptions {
   }
 
   return options;
+}
+
+function preserveLiveIntelligenceBlock<TPayload extends Record<string, unknown>>(
+  nextPayload: TPayload,
+  previousPayload: unknown
+) {
+  const previous = recordValue(previousPayload);
+  const live = recordValue(previous.live_intelligence);
+  if (!live.status) return nextPayload;
+  return { ...nextPayload, live_intelligence: live };
 }
 
 function coerceInsightKind(value: unknown) {

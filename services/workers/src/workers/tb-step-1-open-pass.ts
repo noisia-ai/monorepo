@@ -14,11 +14,14 @@ import { pool } from "../db/client";
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
+  assertTbGovernedRuntimeBoundary,
   enqueueStep,
+  loadTbPinnedModel,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  runTbGovernedProviderCall
 } from "./tb-shared";
 
 type StepJobData = {
@@ -90,7 +93,7 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
 
     // Build a stratified sample over the snapshot's mention set, capped.
     const requestedSampleSize = resolveOpenPassSampleSize(ctx);
-    const sample = await sampleSnapshotMentions(ctx.snapshot_id, ctx.study_corpus_id, requestedSampleSize);
+    const sample = await sampleSnapshotMentions(ctx.snapshot_id, requestedSampleSize);
     const mentions = sample.mentions;
     if (mentions.length === 0) {
       throw new Error("Snapshot tiene 0 menciones — no se puede ejecutar open pass");
@@ -114,7 +117,7 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
       );
     }
 
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
 
     // Run batches in parallel with limited concurrency. We collect all the
     // per-batch results, then persist in one go.
@@ -123,9 +126,18 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
     let batchesFailed = 0;
 
     for (let i = 0; i < batches.length; i += BATCH_CONCURRENCY) {
+      await assertTbGovernedRuntimeBoundary({ tbAnalysisId, pipelineStepId });
       const slice = batches.slice(i, i + BATCH_CONCURRENCY);
       const results = await Promise.allSettled(
-        slice.map((batch) => processBatch({ batch, ctx, model, outputLanguage, ragContext }))
+        slice.map((batch, batchOffset) => processBatch({
+          batch,
+          ctx,
+          model,
+          outputLanguage,
+          ragContext,
+          tbAnalysisId,
+          operationKey: `step1-open-pass-${i + batchOffset + 1}`
+        }))
       );
       for (const r of results) {
         batchesDone += 1;
@@ -139,6 +151,7 @@ export async function tbStep1OpenPassJob(job: Job<StepJobData>) {
       // Progress 15 → 85 across all batches
       const pct = 15 + Math.round((batchesDone / batches.length) * 70);
       await job.updateProgress(pct);
+      await assertTbGovernedRuntimeBoundary({ tbAnalysisId, pipelineStepId });
     }
 
     if (allTagged.length === 0) {
@@ -280,16 +293,52 @@ async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContex
  */
 async function sampleSnapshotMentions(
   snapshotId: string,
-  corpusId: string,
   maxSample: number
 ): Promise<{ mentions: MentionRow[]; strata: SampleStratum[]; strategy: string }> {
+  const governed = await pool.query<{
+    strategic_authority_version: string | null;
+    sealed_count: number;
+  }>(
+    `SELECT snapshot.strategic_authority_version,
+       (SELECT count(*)::int FROM signal_strategic_sealed_sample_items item
+        WHERE item.snapshot_id=snapshot.id) AS sealed_count
+     FROM corpus_snapshots snapshot WHERE snapshot.id=$1::uuid`,
+    [snapshotId]
+  ).catch((error) => {
+    if (["42P01", "42703"].includes((error as { code?: string }).code ?? "")) return { rows: [] };
+    throw error;
+  });
+  if (governed.rows[0]?.strategic_authority_version === "signal-strategic-snapshot-authority-v1") {
+    if (governed.rows[0].sealed_count < 1) throw new Error("governed_strategic_sample_not_sealed");
+    const sealed = await pool.query<MentionRow>(
+      `SELECT mention.id,COALESCE(mention.resolved_platform,mention.platform,'unknown') AS platform,
+         mention.text_snippet,mention.text_clean
+       FROM signal_strategic_sealed_sample_items item
+       JOIN mentions mention ON mention.id=item.mention_id
+       WHERE item.snapshot_id=$1::uuid
+       ORDER BY item.ordinal`,
+      [snapshotId]
+    );
+    return {
+      mentions: sealed.rows,
+      strategy: "canonical_root_sha256_rank_v1",
+      strata: [{
+        stratum_key: "governed-sealed",
+        mention_role: "governed",
+        entity_label: "Governed sealed sample",
+        count: sealed.rows.length,
+        quota: sealed.rows.length,
+        sampled: sealed.rows.length
+      }]
+    };
+  }
   const totalRow = await pool.query<{ total: number }>(
     `SELECT COUNT(*)::int AS total
      FROM mentions m
      JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
-     WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
+     WHERE csm.snapshot_id = $1
        AND length(m.text_clean) >= 20`,
-    [snapshotId, corpusId]
+    [snapshotId]
   );
   const total = totalRow.rows[0]?.total ?? 0;
 
@@ -299,11 +348,11 @@ async function sampleSnapshotMentions(
       `SELECT m.id, COALESCE(m.resolved_platform, m.platform, 'unknown') AS platform, m.text_snippet, m.text_clean
        FROM mentions m
        JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
-       WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
+       WHERE csm.snapshot_id = $1
          AND length(m.text_clean) >= 20
        ORDER BY random()
-       LIMIT $3`,
-      [snapshotId, corpusId, maxSample]
+       LIMIT $2`,
+      [snapshotId, maxSample]
     );
     return {
       mentions: r.rows,
@@ -346,10 +395,10 @@ async function sampleSnapshotMentions(
      FROM mentions m
      JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
      LEFT JOIN import_batches ib ON ib.id = m.source_file_id
-     WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
+     WHERE csm.snapshot_id = $1
        AND length(m.text_clean) >= 20
      GROUP BY 1, 2, 3`,
-    [snapshotId, corpusId]
+    [snapshotId]
   );
 
   const strata = allocateEntityQuotas({ strata: strataRows.rows, maxSample, total });
@@ -360,16 +409,16 @@ async function sampleSnapshotMentions(
        FROM mentions m
        JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
        LEFT JOIN import_batches ib ON ib.id = m.source_file_id
-       WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
+       WHERE csm.snapshot_id = $1
          AND COALESCE(
            ib.corpus_entity_id::text,
            NULLIF(m.batch_entity_label, ''),
            NULLIF(ib.entity_label, ''),
            COALESCE(ib.mention_type, 'unattributed')
-         ) = $3
+         ) = $2
          AND length(m.text_clean) >= 20
        GROUP BY 1`,
-      [snapshotId, corpusId, stratum.stratum_key]
+      [snapshotId, stratum.stratum_key]
     );
 
     let remainingQuota = stratum.quota;
@@ -389,18 +438,18 @@ async function sampleSnapshotMentions(
        FROM mentions m
        JOIN corpus_snapshot_mentions csm ON csm.mention_id = m.id
        LEFT JOIN import_batches ib ON ib.id = m.source_file_id
-       WHERE csm.snapshot_id = $1 AND m.study_corpus_id = $2
+       WHERE csm.snapshot_id = $1
          AND COALESCE(
            ib.corpus_entity_id::text,
            NULLIF(m.batch_entity_label, ''),
            NULLIF(ib.entity_label, ''),
            COALESCE(ib.mention_type, 'unattributed')
-         ) = $3
-         AND COALESCE(m.resolved_platform, m.platform, 'unknown') = $4
+         ) = $2
+         AND COALESCE(m.resolved_platform, m.platform, 'unknown') = $3
          AND length(m.text_clean) >= 20
        ORDER BY random()
-       LIMIT $5`,
-        [snapshotId, corpusId, stratum.stratum_key, p.platform, quota]
+       LIMIT $4`,
+        [snapshotId, stratum.stratum_key, p.platform, quota]
       );
       allRows.push(...r.rows);
       stratum.sampled += r.rows.length;
@@ -411,9 +460,9 @@ async function sampleSnapshotMentions(
     }
   }
 
-  // If proportional rounding pushed us over the cap, trim randomly.
+  // If proportional rounding pushed us over the cap, trim deterministically.
   if (allRows.length > maxSample) {
-    allRows.sort(() => Math.random() - 0.5);
+    allRows.sort((left, right) => left.id.localeCompare(right.id));
     return { mentions: allRows.slice(0, maxSample), strata, strategy: "entity_platform_stratified" };
   }
 
@@ -476,6 +525,8 @@ async function processBatch(args: {
   model: string;
   outputLanguage: string;
   ragContext: Awaited<ReturnType<typeof loadTbRagPromptContext>>;
+  tbAnalysisId: string;
+  operationKey: string;
 }): Promise<{ mentionId: string; tags: string[] }[]> {
   const { batch, ctx, model, outputLanguage, ragContext } = args;
   const prompt = buildOpenPassPrompt({
@@ -487,7 +538,16 @@ async function processBatch(args: {
     mentions: batch
   });
 
-  const r = await generateText({ model: anthropic(model), prompt, temperature: 0.2 });
+  const r = await runTbGovernedProviderCall({
+    tbAnalysisId: args.tbAnalysisId,
+    operationKey: args.operationKey,
+    prompt,
+    maxOutputTokens: 4000,
+    invoke: (maxOutputTokens) => generateText({
+      model: anthropic(model), prompt, temperature: 0.2,
+      maxOutputTokens, maxRetries: 0
+    })
+  });
   const parsed = parseOpenPassResponse(r.text);
 
   // Index by mention_id and only keep ids that were in the batch we sent

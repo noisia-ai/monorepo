@@ -1,8 +1,26 @@
 export type SignalModuleKey =
   | "overview"
+  | "live_composer"
+  | "engine_methodology"
+  | "competitive_wave"
+  | "narrative_ownership"
+  | "value_perception"
+  | "brand_positioning"
+  | "category_opportunity"
+  | "white_space"
+  | "journey_friction"
+  | "decision_velocity"
+  | "cultural_codes"
+  | "advocacy_proxy"
+  | "audience_segment"
+  | "influence_architecture"
+  | "trust_risk"
+  | "evidence_confidence"
   | "tb_decision_field"
   | "opportunities"
   | "competitive_intelligence"
+  | "tb_comparative_dashboard"
+  | "competitive_tb_matrix"
   | "action_studio"
   | "evidence"
   | "quality_boundaries"
@@ -12,9 +30,27 @@ export type SignalModuleKey =
 
 export const defaultSignalManifest: Record<SignalModuleKey, boolean> = {
   overview: true,
+  live_composer: true,
+  engine_methodology: false,
+  competitive_wave: false,
+  narrative_ownership: false,
+  value_perception: false,
+  brand_positioning: false,
+  category_opportunity: false,
+  white_space: false,
+  journey_friction: false,
+  decision_velocity: false,
+  cultural_codes: false,
+  advocacy_proxy: false,
+  audience_segment: false,
+  influence_architecture: false,
+  trust_risk: false,
+  evidence_confidence: false,
   tb_decision_field: true,
   opportunities: true,
   competitive_intelligence: true,
+  tb_comparative_dashboard: true,
+  competitive_tb_matrix: true,
   action_studio: true,
   evidence: true,
   quality_boundaries: true,
@@ -36,6 +72,102 @@ export const signalModuleMeta: Array<{
     status: "ready"
   },
   {
+    key: "live_composer",
+    label: "Live Composer",
+    description: "Capa multimétodo: deduplica señales vivas, oportunidades y riesgos entre lentes.",
+    status: "partial"
+  },
+  {
+    key: "engine_methodology",
+    label: "Engine Methodology",
+    description: "Output beta de una metodología engine, con charts, findings y limitaciones del lente.",
+    status: "partial"
+  },
+  {
+    key: "competitive_wave",
+    label: "Competitive Wave",
+    description: "Mapa competitivo por ejes, rankings y lectura de posicionamiento entre entidades.",
+    status: "partial"
+  },
+  {
+    key: "narrative_ownership",
+    label: "Narrative Ownership",
+    description: "Qué entidad posee cada narrativa, si es activo, riesgo o espacio disputable.",
+    status: "partial"
+  },
+  {
+    key: "value_perception",
+    label: "Value Perception",
+    description: "Matriz de beneficio, costo percibido, valor defendible y whitespace candidato.",
+    status: "partial"
+  },
+  {
+    key: "brand_positioning",
+    label: "Brand Positioning",
+    description: "Ejes perceptuales y territorios de posicionamiento detectados desde corpus vivo.",
+    status: "partial"
+  },
+  {
+    key: "category_opportunity",
+    label: "Category Opportunity",
+    description: "Demanda, urgencia, cobertura y oportunidades por categoría, entidad o necesidad.",
+    status: "partial"
+  },
+  {
+    key: "white_space",
+    label: "White Space",
+    description: "Espacios capturables, huecos competitivos y límites de evidencia para priorizar apuestas.",
+    status: "partial"
+  },
+  {
+    key: "journey_friction",
+    label: "Journey Friction",
+    description: "Fricciones y aceleradores por fase del journey, con quick wins direccionales.",
+    status: "partial"
+  },
+  {
+    key: "decision_velocity",
+    label: "Decision Velocity",
+    description: "Blockers y accelerators que frenan o aceleran el avance en la decisión.",
+    status: "partial"
+  },
+  {
+    key: "cultural_codes",
+    label: "Cultural Codes",
+    description: "Códigos, símbolos y tensiones culturales por categoría, marca o comunidad.",
+    status: "partial"
+  },
+  {
+    key: "advocacy_proxy",
+    label: "Advocacy Proxy",
+    description: "Promotores, pasivos y detractores desde corpus vivo; no es NPS encuestado.",
+    status: "partial"
+  },
+  {
+    key: "audience_segment",
+    label: "Audience Segment",
+    description: "Señales comparadas por segmento cuando el corpus trae metadata o pistas de audiencia.",
+    status: "partial"
+  },
+  {
+    key: "influence_architecture",
+    label: "Influence Architecture",
+    description: "Nodos, comunidades y arquitectura de influencia cuando hay author/handle metadata suficiente.",
+    status: "partial"
+  },
+  {
+    key: "trust_risk",
+    label: "Trust & Risk",
+    description: "Drivers de confianza, riesgos reputacionales y vulnerabilidades por entidad.",
+    status: "partial"
+  },
+  {
+    key: "evidence_confidence",
+    label: "Evidence Confidence",
+    description: "Trazabilidad, diversidad de evidencia y límites de confianza sobre hallazgos vivos.",
+    status: "partial"
+  },
+  {
     key: "tb_decision_field",
     label: "T&B Decision Field",
     description: "Vista propietaria central: fuerzas que motivan, frenan y qué tan movibles son.",
@@ -51,6 +183,18 @@ export const signalModuleMeta: Array<{
     key: "competitive_intelligence",
     label: "Competitive Intelligence",
     description: "Qué es de la marca, qué posee la competencia y qué es de categoría.",
+    status: "ready"
+  },
+  {
+    key: "tb_comparative_dashboard",
+    label: "T&B Comparative",
+    description: "Dashboard comparativo barato: heatmap, ownership y split trigger/barrier por entidad.",
+    status: "ready"
+  },
+  {
+    key: "competitive_tb_matrix",
+    label: "Competitive T&B Matrix",
+    description: "Matriz #11 de triggers/barriers por entidad usando el análisis T&B existente.",
     status: "ready"
   },
   {
@@ -106,9 +250,27 @@ export type SignalOutputManifest = Record<SignalModuleKey, boolean> & {
 };
 
 export const defaultSignalDemoBlurredSections: SignalModuleKey[] = [
+  "live_composer",
+  "engine_methodology",
+  "competitive_wave",
+  "narrative_ownership",
+  "value_perception",
+  "brand_positioning",
+  "category_opportunity",
+  "white_space",
+  "journey_friction",
+  "decision_velocity",
+  "cultural_codes",
+  "advocacy_proxy",
+  "audience_segment",
+  "influence_architecture",
+  "trust_risk",
+  "evidence_confidence",
   "tb_decision_field",
   "opportunities",
   "competitive_intelligence",
+  "tb_comparative_dashboard",
+  "competitive_tb_matrix",
   "action_studio",
   "evidence",
   "emerging_patterns",

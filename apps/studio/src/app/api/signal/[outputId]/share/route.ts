@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { brands, invitations, organizations, users } from "@noisia/db";
+import { brands, invitations, organizations, themes, users } from "@noisia/db";
 import { db } from "@/lib/db";
 import { unauthorized, validationError } from "@/lib/api/responses";
 import { authContinuePath } from "@/lib/auth/redirects";
@@ -11,8 +11,14 @@ import { displayRole, getUserType, normalizeRole } from "@/lib/auth/roles";
 import { syncClientBrandAccessForOrganization } from "@/lib/auth/org-sync";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import { loadPublishedSignalOverview } from "@/lib/data-os/published-signal-overview";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness
+} from "@/lib/data-os/signal-serving";
 import { renderSignalShareEmail, sendEmail } from "@/lib/email";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
+import { hasSignalServingContract } from "@/lib/signal/semantics";
 import { absoluteAppUrl } from "@/lib/url/origin";
 
 const INVITATION_TTL_DAYS = 14;
@@ -37,23 +43,8 @@ export async function POST(
   if (!output) {
     return Response.json({ error: "not_found", message: "Reporte no encontrado." }, { status: 404 });
   }
-  if (!output.brandId) {
-    return Response.json({ error: "not_shareable", message: "Este reporte no está asociado a una marca." }, { status: 422 });
-  }
-
-  const [brand] = await db
-    .select({
-      id: brands.id,
-      organizationId: brands.organizationId,
-      organizationName: organizations.displayName,
-      organizationLegalName: organizations.legalName
-    })
-    .from(brands)
-    .innerJoin(organizations, eq(organizations.id, brands.organizationId))
-    .where(eq(brands.id, output.brandId))
-    .limit(1);
-
-  if (!brand) {
+  const shareScope = await resolveSignalShareScope(output);
+  if (!shareScope) {
     return Response.json({ error: "brand_not_found", message: "No encontramos la organización del reporte." }, { status: 422 });
   }
 
@@ -61,7 +52,9 @@ export async function POST(
   const lang = parsed.data.lang ?? "es";
   const role = "client_viewer";
   const roleLabel = displayRole(role);
-  const reportPath = `/signal/${outputId}/deck?lang=${lang}`;
+  const reportPath = output.kind === "signal_pulse"
+    ? `/pulse/${outputId}/deck?lang=${lang}`
+    : `/signal/${outputId}/deck?lang=${lang}`;
   const reportUrl = absoluteAppUrl(request, reportPath);
   const loginUrl = absoluteAppUrl(
     request,
@@ -71,7 +64,7 @@ export async function POST(
   const inviteResult = await createOrResolveShareInvite({
     email,
     role,
-    organizationId: brand.organizationId,
+    organizationId: shareScope.organizationId,
     invitedByUserId: session.appUser.id
   });
 
@@ -93,8 +86,8 @@ export async function POST(
         email,
         invitation_status: inviteResult.statusLabel,
         role,
-        organization_id: brand.organizationId,
-        organization_name: brand.organizationName ?? brand.organizationLegalName,
+        organization_id: shareScope.organizationId,
+        organization_name: shareScope.organizationName,
         report_url: reportUrl,
         login_url: loginUrl
       },
@@ -103,6 +96,50 @@ export async function POST(
     },
     { status: inviteResult.created ? 201 : 200 }
   );
+}
+
+async function resolveSignalShareScope(output: NonNullable<Awaited<ReturnType<typeof getSignalOutputForUser>>>) {
+  if (output.brandId) {
+    const [brand] = await db
+      .select({
+        organizationId: brands.organizationId,
+        organizationName: organizations.displayName,
+        organizationLegalName: organizations.legalName
+      })
+      .from(brands)
+      .innerJoin(organizations, eq(organizations.id, brands.organizationId))
+      .where(eq(brands.id, output.brandId))
+      .limit(1);
+
+    return brand
+      ? {
+          organizationId: brand.organizationId,
+          organizationName: brand.organizationName ?? brand.organizationLegalName
+        }
+      : null;
+  }
+
+  if (output.themeId) {
+    const [theme] = await db
+      .select({
+        organizationId: themes.organizationId,
+        organizationName: organizations.displayName,
+        organizationLegalName: organizations.legalName
+      })
+      .from(themes)
+      .innerJoin(organizations, eq(organizations.id, themes.organizationId))
+      .where(eq(themes.id, output.themeId))
+      .limit(1);
+
+    return theme?.organizationId
+      ? {
+          organizationId: theme.organizationId,
+          organizationName: theme.organizationName ?? theme.organizationLegalName
+        }
+      : null;
+  }
+
+  return null;
 }
 
 async function createOrResolveShareInvite(args: {
@@ -232,8 +269,20 @@ async function sendShareEmailBestEffort(args: {
   roleLabel: string;
 }) {
   try {
-    const vm = adaptTbSignalPayload(args.output.payload);
-    const brandLabel = args.output.brandName ?? args.output.brandFallbackName ?? vm.report.brand_name;
+    if (args.output.kind === "signal_pulse") {
+      return sendSignalPulseShareEmail(args);
+    }
+    const rawVm = adaptTbSignalPayload(args.output.payload);
+    const relationalOverview = await loadShareRelationalOverview(args.output);
+    const vm = relationalOverview
+      ? {
+          ...rawVm,
+          findings: relationalOverview.findings,
+          actionCards: relationalOverview.action_studio,
+          strategicOpportunities: relationalOverview.opportunities
+        }
+      : rawVm;
+    const brandLabel = args.output.brandName ?? args.output.brandFallbackName ?? args.output.themeName ?? vm.report.brand_name;
     const methodologyName = args.output.methodologyName ?? vm.report.methodology_name;
     const reportTitle = args.output.headline ?? args.output.title ?? vm.report.headline;
     const executiveRead = truncate(
@@ -278,6 +327,84 @@ async function sendShareEmailBestEffort(args: {
   }
 }
 
+async function loadShareRelationalOverview(
+  output: NonNullable<Awaited<ReturnType<typeof getSignalOutputForUser>>>
+) {
+  if (!hasSignalServingContract(output.manifest)) return null;
+  if (!output.tbAnalysisId || !output.snapshotId) {
+    throw new Error("El Signal publicado no tiene snapshot o analisis relacional.");
+  }
+
+  const readiness = await getSignalServingReadiness({
+    analysisId: output.tbAnalysisId,
+    outputId: output.id,
+    requireDataRefs: true,
+    snapshotId: output.snapshotId
+  });
+  const assessment = assessSignalServingReadiness(readiness);
+  if (!assessment.ready) {
+    throw new Error(
+      `El Signal publicado no cumple el contrato relacional: ${assessment.hardBlocks.map((issue) => issue.code).join(", ")}`
+    );
+  }
+
+  return loadPublishedSignalOverview({
+    analysisId: output.tbAnalysisId,
+    corpusId: output.studyCorpusId,
+    outputId: output.id,
+    requireGovernedRef: true,
+    snapshotId: output.snapshotId
+  });
+}
+
+async function sendSignalPulseShareEmail(args: {
+  email: string;
+  output: NonNullable<Awaited<ReturnType<typeof getSignalOutputForUser>>>;
+  reportUrl: string;
+  loginUrl: string;
+  roleLabel: string;
+}) {
+  const payload = asRecord(args.output.payload);
+  const report = asRecord(payload.report);
+  const executiveRead = asRecord(payload.executive_read);
+  const signals = arrayOfRecords(payload.signals);
+  const moves = arrayOfRecords(payload.marketing_moves);
+  const brandLabel = (args.output.brandName ?? args.output.brandFallbackName ?? args.output.themeName ?? stringValue(report.title)) || "Signal Pulse";
+  const reportTitle = args.output.headline ?? (stringValue(executiveRead.headline) || args.output.title || "Signal Pulse listo para revisar");
+  const executiveText = [
+    stringValue(executiveRead.body),
+    stringValue(executiveRead.action) ? `Move sugerido: ${stringValue(executiveRead.action)}` : ""
+  ].filter(Boolean).join(" ");
+  const highlights = signals
+    .slice(0, 4)
+    .map((signal) => stringValue(signal.title))
+    .filter(Boolean);
+  const opportunities = moves
+    .slice(0, 3)
+    .map((move) => stringValue(move.action_text))
+    .filter(Boolean);
+
+  const { html, text } = renderSignalShareEmail({
+    brandLabel,
+    methodologyName: "Signal Pulse",
+    reportTitle,
+    businessQuestion: stringValue(report.business_question),
+    executiveRead: truncate(executiveText || args.output.summary || "El Pulse mensual ya está disponible para revisión.", 520),
+    highlights,
+    opportunities,
+    reportUrl: args.reportUrl,
+    loginUrl: args.loginUrl,
+    roleLabel: args.roleLabel
+  });
+
+  return sendEmail({
+    to: args.email,
+    subject: `${brandLabel}: Signal Pulse listo para revisar`,
+    html,
+    text
+  });
+}
+
 function isUniqueViolation(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === "23505";
 }
@@ -285,4 +412,16 @@ function isUniqueViolation(error: unknown) {
 function truncate(value: string, max: number) {
   const clean = value.trim();
   return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function arrayOfRecords(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value) ? value.map(asRecord) : [];
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : value == null ? "" : String(value);
 }

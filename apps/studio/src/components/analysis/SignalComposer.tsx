@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { Icon } from "@/components/ui/Icon";
+import { composerModulesForLenses, labelForLens, normalizeStudyAnalysisPlan } from "@/lib/multimethod/analysis-plan";
 import {
   defaultSignalDemoBlurredSections,
   defaultSignalManifest,
@@ -26,20 +27,38 @@ type DraftOutput = {
   publishedAt: Date | string | null;
 } | null;
 
+type PublishFailure = {
+  methodology_slug: string;
+  module_key: string;
+  error: string;
+  message: string;
+  failed_checks: Array<{ id: string; detail: string }>;
+};
+
 export function SignalComposer({
   corpusId,
   analysisId,
   brandName,
+  analysisPlan,
   draft
 }: {
   corpusId: string;
   analysisId: string;
   brandName: string;
+  analysisPlan: unknown;
   draft: DraftOutput;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const initialManifest = useMemo(() => normalizeManifest(draft?.manifest), [draft?.manifest]);
+  const studyPlan = useMemo(() => normalizeStudyAnalysisPlan(analysisPlan), [analysisPlan]);
+  const plannedModuleKeys = useMemo(
+    () => composerModulesForLenses(studyPlan.selected_lenses).filter(isSignalModuleKey),
+    [studyPlan.selected_lenses]
+  );
+  const initialManifest = useMemo(
+    () => normalizeManifest(draft?.manifest, plannedModuleKeys),
+    [draft?.manifest, plannedModuleKeys]
+  );
   const [title, setTitle] = useState(draft?.title ?? `${brandName} · Triggers & Barriers`);
   const [headline, setHeadline] = useState(draft?.headline ?? `Qué mueve y qué frena la decisión sobre ${brandName}`);
   const [summary, setSummary] = useState(
@@ -49,6 +68,7 @@ export function SignalComposer({
   const [manifest, setManifest] = useState(initialManifest);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [publishFailures, setPublishFailures] = useState<PublishFailure[]>([]);
   const [outputId, setOutputId] = useState(draft?.id ?? null);
   const [status, setStatus] = useState(draft?.status ?? "sin preparar");
 
@@ -96,6 +116,7 @@ export function SignalComposer({
   function submit(action: "save_draft" | "publish") {
     setError(null);
     setFeedback(null);
+    setPublishFailures([]);
 
     startTransition(async () => {
       const response = await fetch(`/api/corpora/${corpusId}/tb-analysis/${analysisId}/signal-output`, {
@@ -106,10 +127,12 @@ export function SignalComposer({
       const payload = await response.json() as {
         output?: { id: string; status: string; title: string };
         message?: string;
+        failed_lenses?: PublishFailure[];
       };
 
       if (!response.ok || !payload.output) {
         setError(payload.message ?? "No se pudo preparar Signal.");
+        setPublishFailures(Array.isArray(payload.failed_lenses) ? payload.failed_lenses : []);
         return;
       }
 
@@ -127,8 +150,8 @@ export function SignalComposer({
           <p className="vitals-eyebrow">Siguiente paso</p>
           <h2>Preparar Noisia Signal</h2>
           <p>
-            Elige qué secciones entran al cockpit cliente. El output queda congelado
-            como snapshot publicado con hallazgos, evidencia, límites y corpus view.
+            Elige qué módulos vivos entran al cockpit cliente. El reporte queda publicado
+            con lectura editorial, pero consulta corpus, historia y lentes desde DB.
           </p>
         </div>
         <div className="signal-composer-status">
@@ -136,6 +159,13 @@ export function SignalComposer({
           <strong>{selectedCount} módulos</strong>
           {demoMode.enabled ? <small>{demoBlurredCount} blurred</small> : null}
         </div>
+      </div>
+
+      <div className="signal-composer-plan">
+        <span>Plan del estudio</span>
+        {studyPlan.selected_lenses.map((slug) => (
+          <small key={slug}>{labelForLens(slug)}</small>
+        ))}
       </div>
 
       <div className="signal-composer-form">
@@ -209,6 +239,19 @@ export function SignalComposer({
         <div>
           {feedback ? <p className="analysis-action-success">{feedback}</p> : null}
           {error ? <p className="analysis-action-error">{error}</p> : null}
+          {publishFailures.length > 0 ? (
+            <div className="signal-publish-failures">
+              {publishFailures.map((failure) => (
+                <article key={`${failure.methodology_slug}-${failure.error}`}>
+                  <strong>{labelForLens(failure.methodology_slug)}</strong>
+                  <span>{failure.message}</span>
+                  {failure.failed_checks.length > 0 ? (
+                    <small>{failure.failed_checks.map((check) => check.detail).join(" · ")}</small>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div className="signal-composer-buttons">
           {outputId ? (
@@ -230,12 +273,17 @@ export function SignalComposer({
   );
 }
 
-function normalizeManifest(value: unknown): SignalOutputManifest {
+function normalizeManifest(value: unknown, plannedModuleKeys: SignalModuleKey[]): SignalOutputManifest {
+  const recommended = {
+    ...defaultSignalManifest,
+    ...Object.fromEntries(plannedModuleKeys.map((key) => [key, true]))
+  };
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return normalizeSignalOutputManifest(defaultSignalManifest);
+    return normalizeSignalOutputManifest(recommended);
   }
   const input = value as Partial<Record<SignalModuleKey, boolean>> & Record<string, unknown>;
   return normalizeSignalOutputManifest({
+    ...recommended,
     ...legacyManifestToV2(input),
     ...input
   });
@@ -247,9 +295,13 @@ function legacyManifestToV2(input: Record<string, unknown>): Partial<Record<Sign
 
   return {
     overview: booleanOrDefault(input.overview, defaultSignalManifest.overview),
+    live_composer: booleanOrDefault(input.overview, defaultSignalManifest.live_composer),
+    engine_methodology: booleanOrDefault(input.engine_methodology, defaultSignalManifest.engine_methodology),
     tb_decision_field: booleanOrDefault(input.tension_map, defaultSignalManifest.tb_decision_field),
     opportunities: booleanOrDefault(input.overview, defaultSignalManifest.opportunities),
     competitive_intelligence: booleanOrDefault(input.compare, defaultSignalManifest.competitive_intelligence),
+    tb_comparative_dashboard: booleanOrDefault(input.compare, defaultSignalManifest.tb_comparative_dashboard),
+    competitive_tb_matrix: booleanOrDefault(input.compare, defaultSignalManifest.competitive_tb_matrix),
     action_studio: booleanOrDefault(input.actions, defaultSignalManifest.action_studio),
     evidence: booleanOrDefault(input.verbatims, defaultSignalManifest.evidence),
     quality_boundaries: true,
@@ -260,4 +312,8 @@ function legacyManifestToV2(input: Record<string, unknown>): Partial<Record<Sign
 
 function booleanOrDefault(value: unknown, fallback: boolean) {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function isSignalModuleKey(value: string): value is SignalModuleKey {
+  return signalModuleMeta.some((module) => module.key === value);
 }

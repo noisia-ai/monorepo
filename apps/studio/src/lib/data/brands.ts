@@ -48,12 +48,18 @@ export async function listBrandsForUser(appUser: AppUser, filters: BrandFilters 
   const rows =
     appUser.userType === "noisia_internal"
       ? await db.select(baseSelect).from(brands).innerJoin(organizations, eq(organizations.id, brands.organizationId))
-      : await db
+      : !appUser.organizationId
+        ? []
+        : await db
           .select(baseSelect)
           .from(userBrandAccess)
           .innerJoin(brands, eq(brands.id, userBrandAccess.brandId))
           .innerJoin(organizations, eq(organizations.id, brands.organizationId))
-          .where(and(eq(userBrandAccess.userId, appUser.id), isNull(userBrandAccess.revokedAt)));
+          .where(and(
+            eq(userBrandAccess.userId, appUser.id),
+            isNull(userBrandAccess.revokedAt),
+            eq(brands.organizationId, appUser.organizationId)
+          ));
 
   // TODO mejora-futura: mover filtros/paginacion a SQL cuando la lista pase
   // de cientos de marcas. En MVP favorecemos claridad y filtros flexibles.
@@ -188,7 +194,7 @@ export async function getBrandDetailForUser(appUser: AppUser, brandId: string) {
     })
     .from(competitors)
     .innerJoin(brandSeeds, eq(brandSeeds.id, competitors.competitorBrandSeedId))
-    .where(eq(competitors.brandId, brand.id));
+    .where(and(eq(competitors.brandId, brand.id),eq(competitors.status,"current")));
   const knowledgeRows = await db
     .select({
       id: brandKnowledgeSources.id,
@@ -201,7 +207,7 @@ export async function getBrandDetailForUser(appUser: AppUser, brandId: string) {
       updatedAt: brandKnowledgeSources.updatedAt
     })
     .from(brandKnowledgeSources)
-    .where(eq(brandKnowledgeSources.brandId, brand.id))
+    .where(and(eq(brandKnowledgeSources.brandId, brand.id), isNull(brandKnowledgeSources.studyCorpusId)))
     .orderBy(desc(brandKnowledgeSources.createdAt));
   const corpora = await listCorporaForBrand(brand.id);
 

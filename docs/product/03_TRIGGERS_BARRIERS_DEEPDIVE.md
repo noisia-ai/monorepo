@@ -30,10 +30,12 @@ Insights Manager crea estudio
         ↓
 Engine de Validación de Queries
   → genera primer query con brand_seeds + signal_phrases T&B + memoria industria seguros
-  → corre contra SentiOne API
-  → IA evalúa: densidad, balance, ruido
-  → Insights Manager confirma o ajusta en puntos críticos
-  → loop hasta corpus aprobado (~12 meses de historia)
+  → Insights Manager ejecuta cada query en su proveedor de listening
+  → importa una primera extracción CSV etiquetada por query pack
+  → IA evalúa evidencia importada: densidad, cobertura y ruido
+  → Insights Manager confirma o aplica ajustes en puntos críticos
+  → cada ajuste crea una nueva iteración y exige una extracción fresca
+  → el diagnóstico separado del corpus evalúa el conjunto completo antes de aprobarlo
         ↓
 Pre-flight check (5 puntos)
   → si falla, NO procede
@@ -180,9 +182,9 @@ query_seeds = {
 ### 4.2 Loop de validación
 
 ```
-ITER 1: corre query → SentiOne devuelve N menciones + muestra
+ITER 1: corre query en el proveedor elegido → importa una extracción CSV por query pack
         ↓
-IA evalúa la muestra (50 menciones aleatorias):
+IA evalúa hasta 100 menciones importadas por pack:
   - Densidad temática (¿hablan de seguros realmente? o aparece "El Potosí" en otros contextos?)
   - Balance triggers/barriers (¿hay ambos polos?)
   - Cobertura de fuentes (¿>=3 plataformas distintas?)
@@ -190,12 +192,14 @@ IA evalúa la muestra (50 menciones aleatorias):
   - Idioma consistente (¿todo ES?)
   - Geo MX (¿es conversación mexicana?)
         ↓
-Si calidad >75% → corpus pre-aprobado, mostrar al Insights Manager
+Si calidad >75% → query lista para extracción completa, mostrar al Insights Manager
 Si calidad 50-75% → IA propone 2-3 ajustes (agregar phrase X, excluir phrase Y, sumar fuente Z)
                     Insights Manager confirma cuáles aplicar
 Si calidad <50% → Replantear: tal vez el nombre de marca tiene problema de ambigüedad sistemático,
                   o falta brand handle, o competidor mal definido.
                   Solicita al Insights Manager rediseñar antes de iterar más
+        ↓
+La aprobación del corpus ocurre en un diagnóstico separado sobre el corpus importado completo.
         ↓
 ITER 2-N: repite con ajustes
         ↓

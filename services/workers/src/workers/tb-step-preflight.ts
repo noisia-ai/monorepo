@@ -9,8 +9,13 @@ import {
   type PreflightResult
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import {
+  auditCorpusDataOs,
+  auditStrategicSnapshotDataOs,
+  persistCorpusDataOsAudit
+} from "./data-os-corpus-audit";
 import { loadTbRagPromptContext } from "./tb-rag-context";
-import { enqueueStep, markStepCompleted, markStepFailed, markStepRunning, releaseCorpusLock } from "./tb-shared";
+import { enqueueStep, loadTbPinnedModel, markStepCompleted, markStepFailed, markStepRunning, releaseCorpusLock, runTbGovernedProviderCall, transitionTbGovernedRun } from "./tb-shared";
 
 type TbPreflightJobData = {
   tbAnalysisId: string;
@@ -23,6 +28,8 @@ type AnalysisContextRow = {
   brand_name: string | null;
   brand_display_name: string | null;
   target_window_months: number | null;
+  snapshot_id: string;
+  strategic_contract_version: string | null;
 };
 
 type SourceCountRow = { platform: string; count: number };
@@ -35,6 +42,48 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
 
   try {
     const ctx = await loadAnalysisContext(tbAnalysisId);
+    const dataOsAudit = ctx.strategic_contract_version?.startsWith("signal-tb-strategic-")
+      ? await auditStrategicSnapshotDataOs({ tbAnalysisId, stage: "pre_analysis" })
+      : await auditCorpusDataOs({
+          corpusId: ctx.study_corpus_id,
+          stage: "pre_analysis",
+          tbAnalysisId
+        });
+    await persistCorpusDataOsAudit({ tbAnalysisId, audit: dataOsAudit });
+    await replaceLimitations(
+      tbAnalysisId,
+      "data_os_preflight",
+      dataOsAudit.warnings.map((warning) => `${warning.code}: ${warning.message}`)
+    );
+
+    if (!dataOsAudit.ready_for_claude) {
+      const blockers = dataOsAudit.blockers.map((blocker) => `${blocker.code}: ${blocker.message}`);
+      await markStepCompleted({
+        pipelineStepId,
+        resultSummary: {
+          decision: "ABORTAR_DATA_OS",
+          claude_called: false,
+          data_os_contract: dataOsAudit.contract,
+          data_os_status: dataOsAudit.status,
+          blockers,
+          warnings: dataOsAudit.warnings
+        }
+      });
+      await abortAnalysis({
+        tbAnalysisId,
+        prefix: "Data OS",
+        blockers
+      });
+      await releaseCorpusLock(tbAnalysisId);
+      await job.updateProgress(100);
+      return {
+        decision: "ABORTAR_DATA_OS",
+        claude_called: false,
+        blockers: dataOsAudit.blockers
+      };
+    }
+
+    await job.updateProgress(20);
     const ragContext = await loadTbRagPromptContext(tbAnalysisId);
     await job.updateProgress(25);
 
@@ -47,13 +96,21 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
     };
     await job.updateProgress(45);
 
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
     const prompt = buildPreflightPrompt(input);
-
     let result: PreflightResult;
     try {
-      const r = await generateText({ model: anthropic(model), prompt, temperature: 0.1 });
-      console.log(`[tb-preflight] response first 240: ${r.text.slice(0, 240)}`);
+      const r = await runTbGovernedProviderCall({
+        tbAnalysisId,
+        operationKey: "preflight",
+        prompt,
+        maxOutputTokens: 8000,
+        invoke: (maxOutputTokens) => generateText({
+          model: anthropic(model), prompt, temperature: 0.1,
+          maxOutputTokens, maxRetries: 0
+        })
+      });
+      console.log("[tb-preflight] provider response received", { chars: r.text.length });
       result = parsePreflightResponse(r.text);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -81,6 +138,9 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
       pipelineStepId,
       resultSummary: {
         decision: result.decision,
+        claude_called: true,
+        data_os_contract: dataOsAudit.contract,
+        data_os_status: dataOsAudit.status,
         passed: result.checks.filter((c) => c.result === "PASS").length,
         warned: result.checks.filter((c) => c.result === "WARN").length,
         failed: result.checks.filter((c) => c.result === "FAIL").length,
@@ -92,34 +152,15 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
     if (result.decision === "ABORTAR") {
       // Hard abort. The UI shows the failed gates + reasons so the IM can fix
       // the corpus and re-run.
-      await pool.query(
-        `UPDATE tb_analyses
-         SET status = 'aborted_preflight',
-             failed_at = NOW(),
-             failure_reason = $1
-         WHERE id = $2`,
-        [`Preflight: ${result.blockers.join(" | ").slice(0, 480) || "checks failed"}`, tbAnalysisId]
-      );
+      await replaceLimitations(tbAnalysisId, "preflight", result.warnings);
+      await abortAnalysis({ tbAnalysisId, prefix: "Preflight", blockers: result.blockers });
       await releaseCorpusLock(tbAnalysisId);
       await job.updateProgress(100);
       return { decision: "ABORTAR", blockers: result.blockers };
     }
 
-    // If we have warnings, persist them to limitations so they appear in the
-    // final output. Tag them as "preflight" so the renderer can group by origin.
-    if (result.decision === "PROCEDER_WITH_WARNINGS" && result.warnings.length > 0) {
-      const limitationEntries = result.warnings.map((w) => ({
-        source: "preflight",
-        text: w
-      }));
-      await pool.query(
-        `UPDATE tb_analyses
-         SET limitations = COALESCE(limitations, '[]'::jsonb) || $1::jsonb,
-             updated_at = NOW()
-         WHERE id = $2`,
-        [JSON.stringify(limitationEntries), tbAnalysisId]
-      );
-    }
+    // Replace warnings from this origin so retries cannot duplicate caveats.
+    await replaceLimitations(tbAnalysisId, "preflight", result.warnings);
 
     // PROCEDER or PROCEDER_WITH_WARNINGS → enqueue step 1
     const next = await enqueueStep({ tbAnalysisId, step: "step1_open_pass" });
@@ -140,6 +181,66 @@ export async function tbPreflightJob(job: Job<TbPreflightJobData>) {
   }
 }
 
+async function replaceLimitations(
+  tbAnalysisId: string,
+  source: string,
+  messages: string[]
+): Promise<void> {
+  const entries = messages.map((text) => ({ source, text }));
+  await pool.query(
+    `UPDATE tb_analyses
+     SET limitations = COALESCE(
+           (
+             SELECT jsonb_agg(item)
+             FROM jsonb_array_elements(
+               CASE
+                 WHEN jsonb_typeof(COALESCE(limitations, '[]'::jsonb)) = 'array'
+                   THEN COALESCE(limitations, '[]'::jsonb)
+                 ELSE '[]'::jsonb
+               END
+             ) AS item
+             WHERE item->>'source' <> $2
+           ),
+           '[]'::jsonb
+         ) || $3::jsonb,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [tbAnalysisId, source, JSON.stringify(entries)]
+  );
+}
+
+async function abortAnalysis(args: {
+  tbAnalysisId: string;
+  prefix: string;
+  blockers: string[];
+}): Promise<void> {
+  const reason = `${args.prefix}: ${args.blockers.join(" | ").slice(0, 480) || "checks failed"}`;
+  await pool.query(
+    `UPDATE tb_analyses
+     SET status = 'aborted_preflight',
+         failed_at = NOW(),
+         failure_reason = $1,
+         updated_at = NOW()
+     WHERE id = $2`,
+    [reason, args.tbAnalysisId]
+  );
+  await transitionTbGovernedRun({
+    tbAnalysisId: args.tbAnalysisId,
+    expectedStatuses: ["queued", "running", "failed"],
+    nextStatus: "failed",
+    workerKey: `tb-preflight-abort:${createStableWorkerSuffix(reason)}`
+  });
+}
+
+function createStableWorkerSuffix(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+}
+
 async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContextRow> {
   const r = await pool.query<AnalysisContextRow>(
     `SELECT
@@ -147,7 +248,9 @@ async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContex
        sc.business_question,
        b.name AS brand_name,
        b.display_name AS brand_display_name,
-       sc.target_window_months
+       sc.target_window_months,
+       ta.snapshot_id,
+       ta.strategic_contract_version
      FROM tb_analyses ta
      JOIN study_corpora sc ON sc.id = ta.study_corpus_id
      LEFT JOIN brands b ON b.id = sc.brand_id
@@ -160,19 +263,33 @@ async function loadAnalysisContext(tbAnalysisId: string): Promise<AnalysisContex
 }
 
 async function buildPreflightInput(ctx: AnalysisContextRow): Promise<PreflightInput> {
+  const governed = ctx.strategic_contract_version === "signal-tb-strategic-v2";
+  const membershipSql = governed
+    ? `signal_strategic_run_controls control
+       JOIN signal_strategic_sealed_sample_items membership
+         ON membership.run_control_id=control.id
+       JOIN mentions mention ON mention.id=membership.mention_id`
+    : `corpus_snapshot_mentions membership
+       JOIN mentions mention ON mention.id=membership.mention_id`;
+  const scopeSql = governed
+    ? `control.snapshot_id = $1::uuid`
+    : `membership.snapshot_id = $1::uuid`;
   const totalRow = await pool.query<{ total: number }>(
-    `SELECT COUNT(*)::int AS total FROM mentions
-     WHERE study_corpus_id = $1 AND inclusion_status = 'included'`,
-    [ctx.study_corpus_id]
+    `SELECT COUNT(*)::int AS total
+     FROM ${membershipSql}
+     WHERE ${scopeSql}`,
+    [ctx.snapshot_id]
   );
   const total = totalRow.rows[0]?.total ?? 0;
 
   const sourcesRows = await pool.query<SourceCountRow>(
-    `SELECT platform, COUNT(*)::int AS count FROM mentions
-     WHERE study_corpus_id = $1 AND inclusion_status = 'included'
-     GROUP BY platform
+    `SELECT COALESCE(mention.resolved_platform, mention.platform) AS platform,
+       COUNT(*)::int AS count
+     FROM ${membershipSql}
+     WHERE ${scopeSql}
+     GROUP BY COALESCE(mention.resolved_platform, mention.platform)
      ORDER BY count DESC`,
-    [ctx.study_corpus_id]
+    [ctx.snapshot_id]
   );
   const sources = sourcesRows.rows.map((s) => ({
     name: s.platform,
@@ -181,11 +298,12 @@ async function buildPreflightInput(ctx: AnalysisContextRow): Promise<PreflightIn
   }));
 
   const langRows = await pool.query<LanguageRow>(
-    `SELECT language, COUNT(*)::int AS count FROM mentions
-     WHERE study_corpus_id = $1 AND inclusion_status = 'included'
-     GROUP BY language
+    `SELECT mention.language, COUNT(*)::int AS count
+     FROM ${membershipSql}
+     WHERE ${scopeSql}
+     GROUP BY mention.language
      ORDER BY count DESC LIMIT 6`,
-    [ctx.study_corpus_id]
+    [ctx.snapshot_id]
   );
   const languageDistribution = langRows.rows.map((l) => ({
     lang: l.language ?? "unk",

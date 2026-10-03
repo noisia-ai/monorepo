@@ -1,0 +1,27 @@
+# Interés definido: guías y búsqueda — 28 septiembre 2026
+
+## Avance comprobado
+
+La política activa de la organización en UAT era v6 con sólo `topic_consolidation`; por ello la preparación de guías de un interés editado no podía cotizarse. Se creó v7 en una transacción con bloqueo y comparación exacta de v6: conserva el tope diario USD 2,000, vencimiento 4 de octubre, zona horaria y acción editorial; agrega las dos acciones de contexto que la versión histórica v4 ya tenía (`brand_context_proposal`, `topic_prototype_embeddings`, topes USD 1 y USD 5). v6 quedó revocada. El ensayo con rollback y la lectura posterior confirmaron tres acciones en v7. No hubo migración SQL ni alteración de recibos previos.
+
+La ruta cliente de Topics mostró una cotización de USD 5 para preparar las guías del interés «Activación no solicitada y consentimiento de Alexa+». Desde esa interfaz se confirmó la solicitud. Recibo nuevo `4fe65c73-a3d7-47ef-a724-c0287fa7ce81`, ejecución Voyage `e87b3951-28e2-4e7e-bac9-cf21aca1090b` completada a las 13:45 UTC, costo conciliado USD 0.000018. El plan contiene **un interés y 56 entradas**; la lectura de las 56 contra la caché versionada encontró **cero faltantes**. No se repitió el corpus, BERTopic ni la revisión Claude.
+
+## Bloqueo y corrección focal
+
+La búsqueda continuaba deshabilitada porque su preflight y su ejecución incluían los 36 Topics descubiertos del catálogo parcial histórico como si fueran intereses de entrada. Exigía 740 prototipos ausentes de esas salidas, aunque las 56 entradas del interés explícito ya estaban completas. El compilador de guías existente distingue `discovery_guidance`; la preparación de Brand OS ya utilizaba `input_interests_only:true`.
+
+`d7ee83b` hace que el preflight y la solicitud de búsqueda usen ese mismo filtro. Los Topics descubiertos siguen en su catálogo y el Signal consolidado permanece activo; sólo dejan de bloquear la búsqueda de intereses definidos. La ejecución conserva su snapshot y su identidad. Con la misma base UAT en modo lectura, el código nuevo devolvió `mode=workspace`, `state=ready`, `missing_prototypes=0`, corpus embebido existente `228cdd17-d1ce-4be6-a2f4-092e21f2502c`. Typecheck de DB, 13 pruebas focales y diff check pasaron. No se aplicó SQL.
+
+## Búsqueda UAT iniciada; aceptación pendiente
+
+El commit se envió a la rama UAT `codex/noisia-topic-results-uat-2026-09-06`; Worker `18c03920-0648-4584-b772-943ea09072bd` y Studio `073e51fa-ab73-4d52-80e3-3695a55013e7` quedaron activos. Desde Topics cliente, el interés mostró **Buscar menciones** habilitado y se inició una sola búsqueda del corpus existente. Ejecución `ae868220-cb51-49eb-a783-235330bcdd3b`: snapshot de un interés, denominador 43,159, estado `running`, 73 raíces procesadas a las 14:32 UTC y ningún error. Las sugerencias iniciales son `doubt`, no membresías aceptadas.
+
+El ritmo inicial era aproximadamente 40 raíces/minuto por lecturas repetidas de las mismas definiciones y prototipos en cada raíz. Se preparó una optimización focal del Worker que conserva en memoria sólo una página completa e inmutable de Topics/prototipos; los catálogos mayores mantienen paginación. Las pruebas focales y el typecheck pasan. Queda pendiente entregarla, medir el ritmo real, terminar la búsqueda, comprobar citas y cerrar decisión con evidencia → membresías persistentes → Signal del mismo interés. La similitud no es aprobación automática y esta búsqueda no equivale todavía a clasificación final.
+
+**Continuación verificada:** `8fd3005` entregado; Worker `979df457-b90b-4eec-9117-d445fc3d32e4` ACTIVE. El reinicio recuperó la misma ejecución y continuó después de la raíz 253 con `dispatch_generation=2`; a las 14:40 UTC llevaba 349/43,159, sin error ni nueva solicitud. El ritmo posterior temprano ronda 67 raíces/minuto: mejora real pero insuficiente para un corpus de millones. Mantener la ejecución y atacar la granularidad de viajes/transacciones por raíz antes de considerarla escalable. La UI muestra progreso de esa misma ejecución; no lanzar una segunda búsqueda.
+
+Una inspección de ocho candidatos iniciales mostró por qué `doubt` no debe transformarse en pertenencia por score: una mención sobre usar una función de Alexa+ marcó 0.712, mientras un reporte explícito de reactivación no deseada marcó 0.663. El siguiente corte debe tomar una decisión con contexto y evidencia, representar casos mixtos/insuficientes y guardar membresías del mismo `term_key`; no usar umbral o top-k como aprobación.
+
+## Medición posterior del cuello de botella
+
+A las 15:02 UTC la misma ejecución llevaba 1,847 raíces; a las 15:08 UTC, 2,247, todavía `running` y sin error. La mejora estabilizó ~67 raíces/minuto, lo que proyecta unas 10 horas para esta búsqueda si el ritmo no cambia. No es un SLO aceptable para corpus grandes. `pg_stat_statements` desde su reset de las 00:04 UTC mostró el SELECT de fragmentos en ~7.29 ms de ejecución de servidor y los SELECT/UPDATE del checkpoint generalmente por debajo de 2 ms; una ida y vuelta simple desde este host al pooler de Supabase mide ~83–99 ms. Esto indica que los múltiples viajes/transactions por raíz probablemente dominan el tiempo; el RTT del Worker no se midió directamente. La corrección de escala debe agrupar lecturas/commits o acercar cómputo y base de datos sin perder cursor, evidencia, derechos ni recuperación. No se debe relajar la validación o muestrear el corpus para hacer subir el progreso.

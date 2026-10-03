@@ -1,0 +1,5 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": { "builder": "DOCKERFILE", "dockerfilePath": "infrastructure/db/scripts/noi19-dev-test/Dockerfile" },
+  "deploy": { "startCommand": "node /app/infrastructure/db/scripts/noi19-dev-test/bootstrap-readonly.mjs", "restartPolicyType": "NEVER", "numReplicas": 1 }
+}

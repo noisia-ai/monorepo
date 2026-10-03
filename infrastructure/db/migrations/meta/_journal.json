@@ -176,6 +176,223 @@
       "when": 1780199300000,
       "tag": "0024_corpus_snapshot_aggregates",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1780199310000,
+      "tag": "0025_engine_methodologies",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1780636320000,
+      "tag": "0026_live_intelligence_store",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1780642800000,
+      "tag": "0027_query_pack_provenance_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1780642860000,
+      "tag": "0028_signal_observation_run_uniqueness",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1780642920000,
+      "tag": "0029_engine_cost_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1780642980000,
+      "tag": "0030_monthly_cut_and_composer",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1780643040000,
+      "tag": "0031_study_analysis_plan",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1780643100000,
+      "tag": "0032_import_batch_query_pack_link",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1780643160000,
+      "tag": "0033_engine_run_mention_map",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1780643220000,
+      "tag": "0034_signal_pulse_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1782929400000,
+      "tag": "0035_data_os_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1782929460000,
+      "tag": "0036_data_os_observations",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1783969200000,
+      "tag": "0037_engine_validation_separation",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1784055600000,
+      "tag": "0038_query_validation_lineage",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1784142000000,
+      "tag": "0039_query_validation_imported_evidence",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1784228400000,
+      "tag": "0040_data_os_semantic_observation_contract",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1784314800000,
+      "tag": "0041_tb_data_os_coding_bridge",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1784401200000,
+      "tag": "0042_data_os_static_catalog_semantics",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1784487600000,
+      "tag": "0043_data_os_asset_records_metric_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1784574000000,
+      "tag": "0044_query_pack_entity_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1784660400000,
+      "tag": "0045_signal_serving_entities",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1784746800000,
+      "tag": "0046_analysis_artifact_evidence_graph",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1784833200000,
+      "tag": "0047_signal_workspace_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1784919600000,
+      "tag": "0048_signal_recurring_refresh",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1785006000000,
+      "tag": "0049_signal_metric_catalog_v1",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1785013200000,
+      "tag": "0050_signal_metric_materializations_v1",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1785016800000,
+      "tag": "0051_signal_backend_foundation_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1785020400000,
+      "tag": "0052_signal_metric_interpretations_v1",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1785024000000,
+      "tag": "0053_tb_structured_evidence_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1785027600000,
+      "tag": "0054_tb_temporal_strategic_releases",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1785031200000,
+      "tag": "0055_signal_v2_front_ready_indexes",
+      "breakpoints": true
     }
   ]
 }

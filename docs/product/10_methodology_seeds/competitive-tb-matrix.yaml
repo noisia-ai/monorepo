@@ -1,0 +1,43 @@
+slug: competitive-tb-matrix
+name: Competitive Trigger / Barrier Matrix
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué triggers y barriers domina cada entidad, cuáles son disputables y
+  dónde la evidencia sigue siendo insuficiente?
+
+inputs:
+  corpus:
+    minimum_viable: 900
+    ideal: 3000
+  competitive_corpus:
+    required: true
+    minimum_entities: 2
+  depends_on:
+    - triggers-barriers
+
+outputs:
+  - id: competitive_tb_matrix
+    name: Competitive T&B Matrix
+    type: heatmap
+  - id: dominance_ranking
+    name: Dominance Ranking
+    type: bar_ranking
+
+default_dashboard_blocks:
+  - block_id: competitive_tb_matrix
+  - block_id: dominance_ranking
+  - block_id: confidence_layer
+  - block_id: evidence_list_top
+
+quality_gates:
+  - id: cell_threshold_visible
+    description: "Celdas con baja evidencia se muestran como direccionales, no se ocultan."
+  - id: uses_tb_codings
+    description: "La matriz se calcula sobre codings T&B existentes; no re-codifica innecesariamente."
+  - id: confidence_calibrated
+    description: "Cada celda lleva confianza calculada."
+
+ai_prompts:
+  engine_spec: competitive-tb-matrix

@@ -7,10 +7,18 @@ import { useSignalUiLanguage } from "@/components/signal/SignalReportShell";
  * (reimagined 16:9 layout) in a new tab, carrying the report's active UI
  * language so the deck chrome matches the rendered insights.
  */
-export function SignalDeckButton({ outputId }: { outputId: string }) {
+export function SignalDeckButton({
+  outputId,
+  hrefBase = "/signal",
+  labelOverride
+}: {
+  outputId: string;
+  hrefBase?: "/signal" | "/pulse";
+  labelOverride?: { en: string; es: string };
+}) {
   const { uiLanguage } = useSignalUiLanguage();
-  const label = uiLanguage === "en" ? "Press deck" : "Deck de prensa";
-  const href = `/signal/${outputId}/deck?lang=${uiLanguage}`;
+  const label = labelOverride?.[uiLanguage] ?? (uiLanguage === "en" ? "Press deck" : "Deck de prensa");
+  const href = `${hrefBase}/${outputId}/deck?lang=${uiLanguage}`;
 
   return (
     <a className="signal-deck-btn" href={href} target="_blank" rel="noopener noreferrer">

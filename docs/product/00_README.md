@@ -34,6 +34,55 @@ Mándale el ZIP `noisia_studio_product_spec.zip` y este mensaje:
 | 12 | `12_TEST_STRATEGY.md` | Unit + integration + contract + E2E + AI quality |
 | 13 | `13_DIAGRAMS.md` | ER + sequence + state + flow (todos Mermaid) |
 | 14 | `14_ACCEPTANCE_CRITERIA.md` | AC por feature de las 6 fases del MVP |
+| 15 | `15_ACCESS_GATEWAY_WORKSPACE_SWITCHER.md` | Gateway de acceso y workspace switcher |
+| 16 | `16_STUDIO_I18N_ROLLOUT.md` | Rollout i18n de Studio |
+| 17 | `17_REPORTING_API_LOOKER_CONTRACT.md` | Contrato Reporting API / Looker |
+| 18 | `18_REPORTING_API_V2_PUBLIC_CONTRACT.md` | Contrato público Reporting API v2 |
+| 19 | `19_STUDIO_SPRINT_BACKLOG.md` | Backlog de sprint Studio |
+| 20 | `20_ENGINE_HARDENING_HANDOFF.md` | Handoff de hardening del Engine |
+| 21 | `21_LIVE_INTELLIGENCE_PLAN.md` | Plan para pasar de reportes JSON a inteligencia viva |
+| 22 | `22_NOISIA_DATA_OS_CUT_1.md` | Spec productivo de Data OS: catálogos, taxonomías, tags, calidad, lineage y serving APIs |
+| 23 | `23_NOISIA_DATA_OS_STAGING_RUNBOOK.md` | Runbook corto para staging, shadow run, evidencia PR y rollback Data OS |
+| 24 | `24_NOISIA_DATA_OS_TECH_BENCHMARK.md` | Benchmark de tecnologia/proceso: lakehouse, CDP-like, catalogo, semantic layer, orquestacion y criterios de adopcion |
+| 25 | `25_NOISIA_DATA_OS_STAGING_HANDOFF.md` | Checklist de operador para pasar del corte local verificado al evidence pack staging/preview |
+| 26 | `26_NOISIA_DATA_OS_COMPLETION_AUDIT.md` | Matriz de cierre para decidir si el Goal Data OS puede marcarse completo |
+| 27 | `27_BRAND_OS_DATA_OS_PERSISTENCE_AUDIT.md` | Auditoría de persistencia Brand OS: campos, catálogos, seeds, KB, Data OS lineage y gaps de sincronización |
+| 28 | `28_CORPUS_ENGINE_VALIDATION_CONTRACT.md` | Contrato que separa evaluación post-ingesta por query pack y certificación revisionada del corpus |
+| 29 | `29_STUDY_TO_DECK_FEATURE.md` | Especificación del flujo de Study a presentación editable |
+| 30 | `30_QUERY_CONSTRUCTION_V2.md` | Compilador gobernado de queries: modos, identidad, ambigüedad, configuración, tags y lineage |
+| 31 | `31_SIGNAL_PRODUCT_NORTH_STAR.md` | North Star de Signal: dashboard casi always-on, interpretaciones Claude y reportes estratégicos en una URL estable |
+| 32 | `32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md` | Roadmap backend de Signal V2 ejecutable por tareas secuenciales con gates y handoffs |
+| 33 | `33_SIGNAL_V2_SHOPIFY_UI_REFERENCE.md` | Referencia inspeccionada para el shell de Signal V2: navegación, búsqueda, filtros, densidad y arquitectura de render |
+| 34 | `34_SIGNAL_BRAND_MONITORING_V1.md` | Contrato de producto y métricas para la primera vista always-on de Signal V2: Monitoreo de marca |
+| 35 | `35_SIGNAL_FILTERING_ARCHITECTURE.md` | Contrato de filtros de Signal V2 y paridad entre URL, serving y visualizaciones |
+| 36 | `36_SIGNAL_MONTHLY_INSIGHTS_V1.md` | Arquitectura de insights mensuales versionados para Monitoreo de marca |
+| 37 | `37_SIGNAL_WORKSPACE_INFORMATION_ARCHITECTURE.md` | Una URL por marca, selector de workspaces y estudios T&B nombrados como páginas con releases |
+| 38 | `38_SIGNAL_LOADING_AND_NAVIGATION_STANDARD.md` | Contrato obligatorio de navegación persistente, stale content, skeletons y performance percibida para todo Signal |
+| 39 | `39_SIGNAL_TOPICS_NARRATIVES_BACKEND_AUDIT.md` | Auditoría de serving, reconciliación y calidad semántica de Topics & Narratives |
+| 40 | `40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md` | Runbook de staging y comprobación real de Topics & Narratives |
+| 41 | `41_SIGNAL_TRIGGERS_BARRIERS_V2_HANDOFF.md` | Handoff ejecutable para Decision field y Evidence de Triggers & Barriers V2 |
+| 42 | `42_SIGNAL_WORKSPACE_DATA_OWNERSHIP.md` | Canon workspace-first: ingesta por marca, menciones canónicas, enrichment, poblaciones, snapshots y estudios |
+| 43 | `43_SIGNAL_V2_FRONTEND_SYSTEM.md` | Estado y reglas no regresivas del frontend Signal V2 construido con referencia Shopify |
+| 44 | `44_SIGNAL_WORKSPACE_DATA_PLANE_HANDOFF.md` | Handoff y prompt ejecutable para migrar ownership de data desde study_corpora al workspace |
+| 45 | `45_SIGNAL_WORKSPACE_DATA_PLANE_IMPLEMENTATION_AUDIT.md` | Evidencia de implementación local del data plane workspace-owned y gates pendientes de staging/cutover |
+| 46 | `46_NOISIA_ADMIN_FRONTEND_AUDIT.md` | Auditoría del Admin contra Signal V2 y Shopify: shell, componentes, rutas, IA y contrato de rediseño |
+| 47 | `47_SIGNAL_WORKSPACE_STAGING_REHEARSAL.md` | Rehearsal de staging, transición semántica, evidence y gates de promoción/rollback |
+| 48 | `48_NOISIA_ADMIN_MENTIONS_FRONTEND_HANDOFF.md` | Recuperación y estado funcional de Admin Mentions y Semantic Review |
+| 49 | `49_NOISIA_WORKSPACE_OS_BRANCH_CONTEXT_HANDOFF.md` | Contexto integral de la rama y orden de continuación entre Data, Brand, Study, Signal y Admin |
+| 50 | `50_SIGNAL_GOVERNED_VIEWS_AND_POPULATION_POLICIES.md` | Canon CDP-like que separa retención, calidad, semántica, views, visibilidad y denominadores gobernados |
+| 51 | `51_SIGNAL_GOVERNED_SERVING_ORCHESTRATION/` | Plan y bitácora de ejecución secuencial para serving gobernado, multi-view y Gate D |
+| 52 | `52_NOISIA_FEATURES_DESCRIPTION_V02.md` | Catálogo funcional Noisia V0.2: capacidades actuales, brechas, criterios de salida y estructura preparada para Linear |
+| 53 | `53_NOISIA_GREENFIELD_WORKSPACE_READINESS_AUDIT.md` | Auditoría del camino greenfield y de sus superficies productizadas frente a scripts de staging |
+| 54 | `54_ALEXA_GREENFIELD_OPERATOR_QA.md` | Bitácora operator QA de Alexa: creación de marca, policies, imports, Review, serving y T&B |
+| 55 | `55_SIGNAL_ACQUISITION_SEMANTIC_CASCADE_AND_TOPIC_CONTRACTS.md` | Canon del plan de adquisición, ETL económico, cascada con abstención y contratos T&N full-pop |
+| 56 | `56_SIGNAL_SEMANTIC_CASCADE_EXECUTION_PLAN.md` | Plan ejecutable 10A–10H: arquitectura, persistencia, workers, benchmark, APIs, QA, gates y rollback de la cascada semántica y T&N |
+| 57 | `57_SIGNAL_ACQUISITION_PLAN_SCHEMA_CONTRACT_AUDIT.md` | Auditoría 10A.1 y cierre local 10A.2: ownership, schema, writers, APIs, import seal, typed provider projection, compatibilidad y gate Frontend 10A.3 |
+| 58 | `58_SIGNAL_LOCAL_MODELING_BENCHMARK.md` | Gates 10C/10C.1: export canónico read-only, benchmark locale-aware full-pop y resultado `no_adoption` con packet diagnóstico, sin providers ni writes a serving |
+| 59 | `59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md` | Handoff 10C.0/10C.1: reparación de canon, benchmark locale-aware y contratos offline de contexto/naming |
+| 60 | `60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md` | Corte online Preview/UAT: Railway aislado, Supabase staging, Redis UAT, guardas de Worker, QA y rollback |
+| 61 | `61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md` | Handoff operativo UAT: custodia de accesos, checklist browser/async, rollback, defect protocol y continuación greenfield Amazon Alexa |
+| 62 | `62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md` | Preregistración 10C.2 ligada al corpus Amazon Alexa multi-scope congelado; sampling, splits, candidatos y hard gates, sin ejecutar modelado ni abrir 10D |
+| 75 | [Topic Rule Drafts y pruebas léxicas](75_TOPIC_RULE_DRAFTS_AND_LEXICAL_TRIALS.md) | Contrato local de borradores ligados a candidatos, pruebas sobre membresías congeladas, límites y denominadores; no activa Topics. |
 
 ---
 
@@ -152,7 +201,55 @@ noisia_studio_product_spec/
 ├── 11_BRAND_SEEDS_CATALOG.yaml
 ├── 12_TEST_STRATEGY.md
 ├── 13_DIAGRAMS.md
-└── 14_ACCEPTANCE_CRITERIA.md
+├── 14_ACCEPTANCE_CRITERIA.md
+├── 15_ACCESS_GATEWAY_WORKSPACE_SWITCHER.md
+├── 16_STUDIO_I18N_ROLLOUT.md
+├── 17_REPORTING_API_LOOKER_CONTRACT.md
+├── 18_REPORTING_API_V2_PUBLIC_CONTRACT.md
+├── 19_STUDIO_SPRINT_BACKLOG.md
+├── 20_ENGINE_HARDENING_HANDOFF.md
+├── 21_LIVE_INTELLIGENCE_PLAN.md
+├── 22_NOISIA_DATA_OS_CUT_1.md
+├── 23_NOISIA_DATA_OS_STAGING_RUNBOOK.md
+├── 24_NOISIA_DATA_OS_TECH_BENCHMARK.md
+├── 25_NOISIA_DATA_OS_STAGING_HANDOFF.md
+├── 26_NOISIA_DATA_OS_COMPLETION_AUDIT.md
+├── 27_BRAND_OS_DATA_OS_PERSISTENCE_AUDIT.md
+├── 28_CORPUS_ENGINE_VALIDATION_CONTRACT.md
+├── 29_STUDY_TO_DECK_FEATURE.md
+├── 30_QUERY_CONSTRUCTION_V2.md
+├── 31_SIGNAL_PRODUCT_NORTH_STAR.md
+├── 32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md
+├── 33_SIGNAL_V2_SHOPIFY_UI_REFERENCE.md
+├── 34_SIGNAL_BRAND_MONITORING_V1.md
+├── 35_SIGNAL_FILTERING_ARCHITECTURE.md
+├── 36_SIGNAL_MONTHLY_INSIGHTS_V1.md
+├── 37_SIGNAL_WORKSPACE_INFORMATION_ARCHITECTURE.md
+├── 38_SIGNAL_LOADING_AND_NAVIGATION_STANDARD.md
+├── 39_SIGNAL_TOPICS_NARRATIVES_BACKEND_AUDIT.md
+├── 40_SIGNAL_TOPICS_NARRATIVES_STAGING_RUNBOOK.md
+├── 41_SIGNAL_TRIGGERS_BARRIERS_V2_HANDOFF.md
+├── 42_SIGNAL_WORKSPACE_DATA_OWNERSHIP.md
+├── 43_SIGNAL_V2_FRONTEND_SYSTEM.md
+├── 44_SIGNAL_WORKSPACE_DATA_PLANE_HANDOFF.md
+├── 45_SIGNAL_WORKSPACE_DATA_PLANE_IMPLEMENTATION_AUDIT.md
+├── 46_NOISIA_ADMIN_FRONTEND_AUDIT.md
+├── 47_SIGNAL_WORKSPACE_STAGING_REHEARSAL.md
+├── 48_NOISIA_ADMIN_MENTIONS_FRONTEND_HANDOFF.md
+├── 49_NOISIA_WORKSPACE_OS_BRANCH_CONTEXT_HANDOFF.md
+├── 50_SIGNAL_GOVERNED_VIEWS_AND_POPULATION_POLICIES.md
+├── 51_SIGNAL_GOVERNED_SERVING_ORCHESTRATION/
+├── 52_NOISIA_FEATURES_DESCRIPTION_V02.md
+├── 53_NOISIA_GREENFIELD_WORKSPACE_READINESS_AUDIT.md
+├── 54_ALEXA_GREENFIELD_OPERATOR_QA.md
+├── 55_SIGNAL_ACQUISITION_SEMANTIC_CASCADE_AND_TOPIC_CONTRACTS.md
+├── 56_SIGNAL_SEMANTIC_CASCADE_EXECUTION_PLAN.md
+├── 57_SIGNAL_ACQUISITION_PLAN_SCHEMA_CONTRACT_AUDIT.md
+├── 58_SIGNAL_LOCAL_MODELING_BENCHMARK.md
+├── 59_SIGNAL_10C1_CORRECTIVE_BENCHMARK_HANDOFF.md
+├── 60_NOISIA_PREVIEW_UAT_RELEASE_CUT.md
+├── 61_NOISIA_PREVIEW_UAT_OPERATOR_HANDOFF.md
+└── 62_SIGNAL_10C2_MULTISCOPE_PREREGISTRATION.md
 ```
 
-15 archivos + 6 YAMLs en subfolder = paquete completo.
+Este índice es un paquete vivo; el canon vigente incluye los documentos 00-62 y los YAMLs de metodología.

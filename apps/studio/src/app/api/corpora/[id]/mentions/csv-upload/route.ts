@@ -6,16 +6,27 @@ import { Readable } from "node:stream";
 
 import { and, eq } from "drizzle-orm";
 
-import { corpusEntities, importBatches } from "@noisia/db";
+import {
+  corpusEntities,
+  importBatches,
+  queryIterations,
+  queryPacks,
+  queryValidationRuns,
+  recordSignalDataAcceptance,
+  recordSignalWorkspaceDataAcceptance
+} from "@noisia/db";
 import { forbidden, unauthorized } from "@/lib/api/responses";
 
 export const runtime = "nodejs";
 export const maxDuration = 900; // 15 min — very large CSVs (hundreds of MB) stream + ingest in parallel
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
+import { advanceCorpusRevision } from "@/lib/corpus/revision";
 import { ingestSentioneCsvStream } from "@/lib/csv/sentione";
+import { declareSourceTimestampContext, sourceTimestampFailure } from "@/lib/csv/source-timestamp-context";
 import { getCorpusForUser } from "@/lib/data/corpora";
-import { db } from "@/lib/db";
+import { resolveWorkspaceIngestionForCorpus } from "@/lib/data-os/workspace-ingestion";
+import { db, pool } from "@/lib/db";
 import { getQueryEngineQueue } from "@/lib/queue/query-engine";
 
 const WORKER_INGEST_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -43,14 +54,23 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
 
   const request = _request;
   // Metadata travels in query params and the CSV is the raw request body. This
-  // lets the server stream the file (see ingestSentioneCsvStream) instead of
+  // lets the server stream the provider-neutral listening export instead of
   // buffering the whole multipart payload in memory, which OOMs on ~0.5GB CSVs.
   const query = new URL(request.url).searchParams;
-  const sourceLabel = query.get("source_label") ?? "sentione_csv";
+  let timestampContext: ReturnType<typeof declareSourceTimestampContext>;
+  try {
+    timestampContext = declareSourceTimestampContext(query.get("source_timezone"));
+  } catch (error) {
+    const failure = sourceTimestampFailure(error);
+    if (!failure) throw error;
+    return Response.json({ error: failure.code, message: failure.code, details: failure.detail }, { status: 422 });
+  }
+  const sourceLabel = query.get("source_label") ?? "listening_csv";
   const fileNameRaw = query.get("file_name");
   const fileName = typeof fileNameRaw === "string" && fileNameRaw.trim().length > 0 ? fileNameRaw.trim().slice(0, 300) : sourceLabel;
   const mentionTypeRaw = query.get("mention_type");
   const iterationIdRaw = query.get("query_iteration_id");
+  const queryPackIdRaw = query.get("query_pack_id");
   const competitorIdRaw = query.get("competitor_id");
   const corpusEntityIdRaw = query.get("corpus_entity_id");
   const entityLabelRaw = query.get("entity_label");
@@ -59,13 +79,92 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
     mentionTypeRaw === "brand" || mentionTypeRaw === "competitor" || mentionTypeRaw === "industry"
       ? (mentionTypeRaw as "brand" | "competitor" | "industry")
       : null;
-  const queryIterationId = typeof iterationIdRaw === "string" && iterationIdRaw.length > 0 ? iterationIdRaw : null;
+  const queryIterationId = isUuid(iterationIdRaw) ? iterationIdRaw : null;
+  const queryPackId = isUuid(queryPackIdRaw) ? queryPackIdRaw : null;
+  const [linkedQueryPack] = queryPackId
+    ? await db
+        .select({
+          id: queryPacks.id,
+          queryIterationId: queryPacks.queryIterationId,
+          lensSlug: queryPacks.lensSlug,
+          signalIntent: queryPacks.signalIntent,
+          scope: queryPacks.scope
+        })
+        .from(queryPacks)
+        .where(and(eq(queryPacks.id, queryPackId), eq(queryPacks.studyCorpusId, corpus.id)))
+        .limit(1)
+    : [];
+  if (queryPackId && (!linkedQueryPack || linkedQueryPack.id !== queryPackId)) {
+    return Response.json(
+      { error: "validation_error", message: "Query pack not found for this corpus." },
+      { status: 422 }
+    );
+  }
+  if (
+    linkedQueryPack?.queryIterationId &&
+    queryIterationId &&
+    linkedQueryPack.queryIterationId !== queryIterationId
+  ) {
+    return Response.json(
+      { error: "validation_error", message: "Query pack does not belong to the selected iteration." },
+      { status: 422 }
+    );
+  }
+  const resolvedQueryIterationId = queryIterationId ?? linkedQueryPack?.queryIterationId ?? null;
+  const [linkedIteration] = resolvedQueryIterationId
+    ? await db
+        .select({
+          id: queryIterations.id,
+          decision: queryIterations.insightsManagerDecision,
+          approvedValidationRunId: queryIterations.approvedQueryValidationRunId
+        })
+        .from(queryIterations)
+        .where(and(
+          eq(queryIterations.id, resolvedQueryIterationId),
+          eq(queryIterations.studyCorpusId, corpus.id)
+        ))
+        .limit(1)
+    : [];
+  if (resolvedQueryIterationId && !linkedIteration) {
+    return Response.json(
+      { error: "validation_error", message: "Query iteration not found for this corpus." },
+      { status: 422 }
+    );
+  }
+
+  const [approvedValidationRun] = linkedIteration?.approvedValidationRunId
+    ? await db
+        .select({ id: queryValidationRuns.id, status: queryValidationRuns.status })
+        .from(queryValidationRuns)
+        .where(and(
+          eq(queryValidationRuns.id, linkedIteration.approvedValidationRunId),
+          eq(queryValidationRuns.studyCorpusId, corpus.id),
+          eq(queryValidationRuns.queryIterationId, linkedIteration.id)
+        ))
+        .limit(1)
+    : [];
+  if (
+    linkedIteration &&
+    (
+      linkedIteration.decision !== "query_approved" ||
+      !approvedValidationRun ||
+      approvedValidationRun.status !== "ready"
+    )
+  ) {
+    return Response.json(
+      {
+        error: "query_not_approved",
+        message: "Aprueba una query confirmada con una muestra fresca de la fuente de listening antes de importar sus menciones."
+      },
+      { status: 409 }
+    );
+  }
   const competitorId =
-    typeof competitorIdRaw === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(competitorIdRaw)
+    isUuid(competitorIdRaw)
       ? competitorIdRaw
       : null;
   const corpusEntityId =
-    typeof corpusEntityIdRaw === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(corpusEntityIdRaw)
+    isUuid(corpusEntityIdRaw)
       ? corpusEntityIdRaw
       : null;
   const [linkedEntity] = corpusEntityId
@@ -92,6 +191,10 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       : linkedEntity?.name ?? defaultEntityLabel(mentionType);
   const entityKind = linkedEntity?.entityKind ?? normalizeEntityKind(entityKindRaw, mentionType, competitorId, entityLabel);
   const resolvedCompetitorId = linkedEntity?.competitorId ?? competitorId;
+  const workspaceIngestion = await resolveWorkspaceIngestionForCorpus(
+    corpus.id,
+    "listening_csv"
+  );
   const shouldQueueIngest = shouldUseWorkerIngest(request, query, {
     hasSharedCsvUploadDir: hasConfiguredCsvUploadDir()
   });
@@ -110,17 +213,23 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
   const [batch] = await db
     .insert(importBatches)
     .values({
+      workspaceId: workspaceIngestion.workspaceId,
       studyCorpusId: corpus.id,
-      queryIterationId,
+      contributedByStudyCorpusId: corpus.id,
+      dataSourceId: workspaceIngestion.dataSourceId,
+      queryIterationId: resolvedQueryIterationId,
+      queryPackId: linkedQueryPack?.id ?? null,
+      queryValidationRunId: approvedValidationRun?.id ?? null,
       mentionType,
       competitorId: resolvedCompetitorId,
       corpusEntityId: linkedEntity?.id,
       entityKind,
       entityLabel,
-      sourceSystem: "sentione_csv",
+      sourceSystem: "listening_csv",
       sourceFileName: fileName,
       sourceFileHash: "pending",
       importedByUserId: session.appUser.id,
+      processingMetrics: timestampContext.processingMetrics,
       status: shouldQueueIngest ? "queued" : "processing"
     })
     .returning();
@@ -144,6 +253,8 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
         "ingest_mentions_csv",
         {
           corpusId: corpus.id,
+          workspaceId: workspaceIngestion.workspaceId,
+          dataSourceId: workspaceIngestion.dataSourceId,
           importBatchId: batch.id,
           sourceFileName: fileName,
           storagePath,
@@ -160,6 +271,7 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       return Response.json(
         {
           import_batch_id: batch.id,
+          query_validation_run_id: approvedValidationRun?.id ?? null,
           job_id: job.id,
           polling_url: `/api/jobs/${job.id}`,
           status: "queued",
@@ -180,9 +292,12 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
 
   try {
     const { stats, fileHash: hash } = await ingestSentioneCsvStream({
+      workspaceId: workspaceIngestion.workspaceId,
+      dataSourceId: workspaceIngestion.dataSourceId,
       corpusId: corpus.id,
       importBatchId: batch.id,
       sourceFileName: fileName,
+      sourceTimezone: timestampContext.timezone,
       entityLabel,
       stream: request.body
     });
@@ -199,14 +314,47 @@ export async function POST(_request: Request, context: { params: Promise<{ id: s
       })
       .where(eq(importBatches.id, batch.id));
 
+    const persistedCount = stats.included_count + stats.excluded_count;
+    const corpusRevision = persistedCount > 0
+      ? await advanceCorpusRevision(corpus.id)
+      : null;
+    const acceptances = await recordSignalDataAcceptance(pool, {
+      studyCorpusId: corpus.id,
+      sourceKey: "listening_csv",
+      importBatchId: batch.id,
+      corpusRevision,
+      materializedAt: new Date()
+    });
+    const workspaceAcceptance = await recordSignalWorkspaceDataAcceptance(pool, {
+      workspaceId: workspaceIngestion.workspaceId,
+      sourceKey: `source-${workspaceIngestion.dataSourceId}`,
+      dataSourceId: workspaceIngestion.dataSourceId,
+      importBatchId: batch.id,
+      materializedAt: new Date()
+    });
+
     return Response.json({
       import_batch_id: batch.id,
-      stats
+      query_validation_run_id: approvedValidationRun?.id ?? null,
+      stats,
+      corpus_revision: corpusRevision,
+      signal_data: {
+        watermarks_changed: acceptances.filter((item) => item.changed).length,
+        invalidations_created: acceptances.filter((item) => item.invalidationId).length,
+        workspace_watermark_changed: workspaceAcceptance.changed
+      }
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error("[csv-upload] ingest failed:", message);
-    await db.update(importBatches).set({ status: "failed" }).where(eq(importBatches.id, batch.id));
+    const failure = sourceTimestampFailure(error);
+    await db.update(importBatches).set({ status: "failed",
+      ...(failure ? { failureCode: failure.code, failureDetail: failure.detail, failedAt: new Date() } : {})
+    }).where(eq(importBatches.id, batch.id));
+    if (failure) {
+      return Response.json({ import_batch_id: batch.id, error: failure.code, message: failure.code,
+        details: failure.detail }, { status: 422 });
+    }
     return Response.json(
       { error: "import_failed", message },
       { status: 500 }
@@ -246,6 +394,10 @@ async function persistRawUpload(stream: ReadableStream<Uint8Array>, storagePath:
 
 function safeFileName(fileName: string) {
   return fileName.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 160) || "mentions.csv";
+}
+
+function isUuid(value: string | null): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function defaultEntityLabel(mentionType: "brand" | "competitor" | "industry" | null) {

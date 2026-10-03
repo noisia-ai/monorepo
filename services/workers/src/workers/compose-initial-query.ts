@@ -1,18 +1,16 @@
-import { anthropic } from "@ai-sdk/anthropic";
-import { generateText } from "ai";
 import type { Job } from "bullmq";
 
 import {
-  buildFallbackQuery,
-  buildQueryComposerPrompt,
-  parseComposedQueryJson,
+  adaptStudyQueryComposerInputV1,
+  composeQueryDraftWithProviderV1,
   QUERY_ENGINE_PIPELINE_VERSION,
-  SENTIONE_LQL_RULES,
-  type ComposedQuery,
+  type QueryCompetitorEntity,
   type QueryComposerInput
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { generateAnthropicBoundedTextV1 } from "../providers/anthropic-bounded-text";
 import { ensureQueryStrategyBrief, loadAnalysisRagContext } from "./analysis-rag-context";
+import { materializeQueryPacksForIteration } from "./query-packs";
 
 type ComposeInitialQueryJobData = {
   corpusId: string;
@@ -77,7 +75,17 @@ export async function composeInitialQueryJob(job: Job<ComposeInitialQueryJobData
   };
   await job.updateProgress(50);
 
-  const composed = await composeWithClaude(input, model);
+  const composed = await composeQueryDraftWithProviderV1({
+    input: adaptStudyQueryComposerInputV1(input),
+    model,
+    provider: {
+      async generate(request) {
+        const result = await generateAnthropicBoundedTextV1({ model: request.model,
+          prompt: request.prompt, temperature: request.temperature });
+        return { text: result.text };
+      }
+    }
+  });
   await job.updateProgress(75);
 
   const iterationNumber = await nextIterationNumber(input.corpus.id);
@@ -113,123 +121,22 @@ export async function composeInitialQueryJob(job: Job<ComposeInitialQueryJobData
     throw new Error("Could not persist query iteration.");
   }
 
+  const queryPacks = await materializeQueryPacksForIteration({
+    corpusId: input.corpus.id,
+    queryIterationId: iteration.id,
+    input,
+    composed,
+    requestedByUserId: job.data.requestedByUserId
+  });
+
   await job.updateProgress(100);
 
   return {
     query_iteration_id: iteration.id,
     query_text: iteration.query_text,
-    iteration_number: iterationNumber
+    iteration_number: iterationNumber,
+    planned_query_packs: queryPacks.planned_packs
   };
-}
-
-async function composeWithClaude(input: QueryComposerInput, model: string): Promise<ComposedQuery> {
-  const prompt = buildQueryComposerPrompt(input);
-
-  try {
-    const result = await generateText({
-      model: anthropic(model),
-      prompt,
-      temperature: 0.2
-    });
-
-    const composed = parseComposedQueryJson(result.text, input, model);
-
-    // Hard requirement: secondary queries should exist when possible. Retry focused
-    // derivations if Claude omitted either one.
-    if (!composed.competitor_query_text || composed.competitor_query_text.length === 0) {
-      console.warn(`[compose-initial] missing competitor_query — retrying`);
-      const competitor = await generateCompetitorQueryRetry({
-        brandQueryText: composed.query_text,
-        input,
-        model
-      });
-      if (competitor) composed.competitor_query_text = competitor;
-    }
-    if (!composed.industry_query_text || composed.industry_query_text.length === 0) {
-      console.warn(`[compose-initial] missing industry_query — retrying`);
-      const industry = await generateIndustryQueryRetry({
-        brandQueryText: composed.query_text,
-        input,
-        model
-      });
-      if (industry) return { ...composed, industry_query_text: industry };
-    }
-
-    return composed;
-  } catch (error) {
-    // TODO mejora-futura: registrar errores LLM en tabla pipeline_logs y
-    // alertar cuando fallback se use mas de N veces por dia.
-    const fallback = buildFallbackQuery(input);
-    return {
-      ...fallback,
-      query_components: {
-        ...fallback.query_components,
-        model,
-        fallback_used: true,
-        fallback_reason: error instanceof Error ? error.message : "unknown_llm_error"
-      }
-    };
-  }
-}
-
-async function generateCompetitorQueryRetry(params: {
-  brandQueryText: string;
-  input: QueryComposerInput;
-  model: string;
-}): Promise<string | null> {
-  const { brandQueryText, input, model } = params;
-  const competitors = input.competitors.slice(0, 20);
-  if (competitors.length === 0) return null;
-  const prompt = [
-    "Tarea unica: derivar la version COMPETENCIA de una query booleana de marca.",
-    "Devuelve SOLAMENTE la query booleana en una sola linea. Sin JSON, sin comentarios.",
-    "La query de competencia debe contener SOLO competidores nombrados + las mismas frases de senal. NO incluyas la marca principal.",
-    "",
-    SENTIONE_LQL_RULES,
-    "",
-    `Competidores disponibles: ${competitors.join(", ")}`,
-    "",
-    `Query de marca:\n${brandQueryText}`,
-    "",
-    `Contexto: ${input.subject.type}/${input.subject.name}, industria=${input.subject.industry ?? "n/a"}.`,
-    "Devuelve la query de competencia ahora (una linea):"
-  ].join("\n");
-  try {
-    const r = await generateText({ model: anthropic(model), prompt, temperature: 0.2 });
-    const cleaned = r.text.trim().replace(/^```[a-z]*\s*/i, "").replace(/```$/i, "").replace(/^["']|["']$/g, "").trim();
-    if (cleaned.length === 0 || cleaned.length > 4000) return null;
-    return cleaned;
-  } catch {
-    return null;
-  }
-}
-
-async function generateIndustryQueryRetry(params: {
-  brandQueryText: string;
-  input: QueryComposerInput;
-  model: string;
-}): Promise<string | null> {
-  const { brandQueryText, input, model } = params;
-  const prompt = [
-    "Tarea unica: derivar la version INDUSTRIA de una query booleana de marca.",
-    "Devuelve SOLAMENTE la query booleana en una sola linea. Sin JSON, sin comentarios.",
-    "La query de industria NO debe contener nombres de marca, handles ni competidores. Solo categoria + frases de señal.",
-    "",
-    SENTIONE_LQL_RULES,
-    "",
-    `Query de marca:\n${brandQueryText}`,
-    "",
-    `Contexto: ${input.subject.type}/${input.subject.name}, industria=${input.subject.industry ?? "n/a"}.`,
-    "Devuelve la query de industria ahora (una linea):"
-  ].join("\n");
-  try {
-    const r = await generateText({ model: anthropic(model), prompt, temperature: 0.2 });
-    const cleaned = r.text.trim().replace(/^```[a-z]*\s*/i, "").replace(/```$/i, "").replace(/^["']|["']$/g, "").trim();
-    if (cleaned.length === 0 || cleaned.length > 4000) return null;
-    return cleaned;
-  } catch {
-    return null;
-  }
 }
 
 async function loadComposerInput(corpusId: string): Promise<QueryComposerInput> {
@@ -294,6 +201,13 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
     [row.brand_id]
   );
   const corpusEntitySeeds = await loadCorpusEntitySeeds([row.corpus_id, row.base_corpus_id]);
+  const competitorEntities = mergeCompetitorEntities(
+    competitors.rows.map((competitor) => ({
+      name: competitor.canonical_name,
+      aliases: competitor.aliases ?? []
+    })),
+    corpusEntitySeeds.competitorEntities
+  );
   const industryMemory = row.brand_industry
     ? await pool.query<MemoryRow>(
         `
@@ -347,10 +261,8 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
       version: row.methodology_version,
       manifest: row.manifest
     },
-    competitors: competitors.rows.flatMap((competitor) => [
-      competitor.canonical_name,
-      ...(competitor.aliases ?? [])
-    ]).concat(corpusEntitySeeds.competitors),
+    competitors: flattenCompetitorEntities(competitorEntities),
+    competitorEntities,
     brandSeeds: [
       row.brand_name ?? "",
       row.brand_display_name ?? "",
@@ -366,6 +278,8 @@ async function loadBrandInput(row: CorpusComposerRow): Promise<QueryComposerInpu
 
 async function loadThemeInput(row: CorpusComposerRow): Promise<QueryComposerInput> {
   const corpusEntitySeeds = await loadCorpusEntitySeeds([row.corpus_id, row.base_corpus_id]);
+  const competitorEntities = mergeCompetitorEntities(corpusEntitySeeds.competitorEntities);
+  const ragContext = await loadAnalysisRagContext(row.corpus_id, null);
   return {
     corpus: {
       id: row.corpus_id,
@@ -393,10 +307,11 @@ async function loadThemeInput(row: CorpusComposerRow): Promise<QueryComposerInpu
       version: row.methodology_version,
       manifest: row.manifest
     },
-    competitors: corpusEntitySeeds.competitors,
+    competitors: flattenCompetitorEntities(competitorEntities),
+    competitorEntities,
     brandSeeds: [row.theme_name ?? "", ...corpusEntitySeeds.primaryBrand].filter(Boolean),
-    knowledgeSources: [],
-    queryStrategyBrief: undefined,
+    knowledgeSources: ragContext.knowledgeSources,
+    queryStrategyBrief: ragContext.queryStrategyBrief ?? undefined,
     memoryIndustry: [],
     memoryBrand: []
   };
@@ -405,7 +320,7 @@ async function loadThemeInput(row: CorpusComposerRow): Promise<QueryComposerInpu
 async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
   const ids = Array.from(new Set(corpusIds.filter((id): id is string => Boolean(id))));
   if (ids.length === 0) {
-    return { competitors: [], primaryBrand: [] };
+    return { competitorEntities: [], primaryBrand: [] };
   }
   const result = await pool.query<{
     entity_kind: string;
@@ -424,7 +339,7 @@ async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
     [ids]
   );
 
-  const competitors: string[] = [];
+  const competitorEntities: QueryCompetitorEntity[] = [];
   const primaryBrand: string[] = [];
   for (const row of result.rows) {
     const seeds = [
@@ -433,14 +348,57 @@ async function loadCorpusEntitySeeds(corpusIds: Array<string | null>) {
       ...(row.handles ?? []),
       ...(row.query_seeds ?? [])
     ].filter(Boolean);
-    if (row.entity_kind === "competitor") competitors.push(...seeds);
+    if (row.entity_kind === "competitor") {
+      competitorEntities.push({
+        name: row.name,
+        aliases: uniqueStrings([...(row.aliases ?? []), ...(row.query_seeds ?? [])]),
+        handles: uniqueStrings(row.handles ?? [])
+      });
+    }
     if (row.entity_kind === "primary_brand") primaryBrand.push(...seeds);
   }
 
   return {
-    competitors: Array.from(new Set(competitors)).slice(0, 80),
+    competitorEntities: mergeCompetitorEntities(competitorEntities),
     primaryBrand: Array.from(new Set(primaryBrand)).slice(0, 40)
   };
+}
+
+function mergeCompetitorEntities(...groups: QueryCompetitorEntity[][]): QueryCompetitorEntity[] {
+  const merged = new Map<string, QueryCompetitorEntity>();
+  for (const entity of groups.flat()) {
+    const name = entity.name.trim();
+    if (!name) continue;
+    const key = normalizeEntityName(name);
+    const current = merged.get(key);
+    merged.set(key, {
+      name: current?.name ?? name,
+      aliases: uniqueStrings([...(current?.aliases ?? []), ...(entity.aliases ?? [])])
+        .filter((value) => normalizeEntityName(value) !== key),
+      handles: uniqueStrings([...(current?.handles ?? []), ...(entity.handles ?? [])])
+    });
+  }
+  return Array.from(merged.values()).slice(0, 20);
+}
+
+function flattenCompetitorEntities(entities: QueryCompetitorEntity[]) {
+  return uniqueStrings(entities.flatMap((entity) => [
+    entity.name,
+    ...(entity.aliases ?? []),
+    ...(entity.handles ?? [])
+  ])).slice(0, 80);
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function normalizeEntityName(value: string) {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .toLowerCase();
 }
 
 async function nextIterationNumber(corpusId: string) {

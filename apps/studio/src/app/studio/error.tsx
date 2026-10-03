@@ -1,27 +1,36 @@
 "use client";
 
-import { Icon } from "@/components/ui/Icon";
+import { ArrowClockwise, WarningCircle } from "@phosphor-icons/react";
+import { useTranslations } from "next-intl";
+
+import {
+  AdminFeedbackState,
+  AdminWorkspaceHeader
+} from "@/components/admin/AdminWorkspacePrimitives";
 
 export default function StudioError({ error, reset }: { error: Error; reset: () => void }) {
+  const t = useTranslations("AdminWorkspace.feedback.error");
+
   return (
-    <main className="app-content">
-      <div className="studio-page">
-        <section className="studio-error-card" role="alert">
-          <div className="studio-error-icon">
-            <Icon name="alert" size={24} />
-          </div>
-          <div>
-            <p className="vitals-eyebrow">Studio</p>
-            <h1>No pudimos cargar esta vista</h1>
-            <p>
-              {error.message || "La conexión respondió de forma inesperada. Intenta de nuevo."}
-            </p>
-          </div>
-          <button className="wizard-cta" onClick={reset} type="button">
-            <Icon name="refresh" size={14} /> Reintentar
+    <div className="admin-workspace-page">
+      <AdminWorkspaceHeader
+        eyebrow={t("eyebrow")}
+        subtitle={t("subtitle")}
+        title={t("title")}
+      />
+      <AdminFeedbackState
+        actions={(
+          <button className="admin-button admin-button--primary" onClick={reset} type="button">
+            <ArrowClockwise aria-hidden size={15} />
+            {t("retry")}
           </button>
-        </section>
-      </div>
-    </main>
+        )}
+        body={t("body")}
+        detail={error.message ? <><strong>{t("detail")}</strong><span>{error.message}</span></> : undefined}
+        icon={<WarningCircle size={22} weight="fill" />}
+        title={t("stateTitle")}
+        tone="danger"
+      />
+    </div>
   );
 }

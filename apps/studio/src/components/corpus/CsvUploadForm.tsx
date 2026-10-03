@@ -73,12 +73,12 @@ export function CsvUploadForm({
     <div className="upload-panel">
       <form className="upload-box" onSubmit={handleSubmit}>
         <label>
-          <span>Archivo CSV SentiOne</span>
+          <span>Archivo CSV de listening</span>
           <input accept=".csv,text/csv" name="file" ref={fileRef} required type="file" />
         </label>
         <label>
           <span>Etiqueta interna</span>
-          <input defaultValue="sentione_export" name="source_label" />
+          <input defaultValue="listening_export" name="source_label" />
         </label>
         <button disabled={status === "uploading"} type="submit">
           {status === "uploading" ? "Importando…" : "Importar CSV"}

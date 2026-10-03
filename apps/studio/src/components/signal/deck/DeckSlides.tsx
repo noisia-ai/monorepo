@@ -27,6 +27,12 @@ type DeckMeta = {
   windowLabel: string | null;
   corpusTotal: number;
   dateLabel: string;
+  liveIntelligence: {
+    status: string;
+    signals: number;
+    observations: number;
+    evidence: number;
+  } | null;
 };
 
 const COLORS = {
@@ -50,6 +56,12 @@ const T = {
     decisionToInform: "Decision to inform",
     confirmed: "Confirmed by the corpus",
     signalStrength: "Signal landscape",
+    engineLens: "Methodology lens",
+    engineLensSub: "Beta lens output with traceable evidence and readiness gates.",
+    readiness: "Readiness",
+    topMethodSignals: "Top methodology signals",
+    conclusions: "Conclusions",
+    missing: "Missing",
     findings: "Findings",
     triggers: "Triggers",
     barriers: "Barriers",
@@ -86,6 +98,8 @@ const T = {
     emergingSub: "Open signals from the corpus, beyond the method.",
     boundaries: "Quality & boundaries",
     boundariesSub: "What this published cut can and cannot claim.",
+    liveMemory: "Live memory",
+    liveMemoryNote: "linked to persistent signals",
     closingTitle: "From conversation to decision.",
     section: "Section",
     validated: "Validated by Noisia AI",
@@ -102,6 +116,12 @@ const T = {
     decisionToInform: "Decisión a informar",
     confirmed: "Confirmado por el corpus",
     signalStrength: "Panorama de señal",
+    engineLens: "Lente metodológico",
+    engineLensSub: "Output beta del lente con evidencia trazable y gates de readiness.",
+    readiness: "Readiness",
+    topMethodSignals: "Señales principales del método",
+    conclusions: "Conclusiones",
+    missing: "Falta",
     findings: "Hallazgos",
     triggers: "Triggers",
     barriers: "Barreras",
@@ -138,6 +158,8 @@ const T = {
     emergingSub: "Señales abiertas del corpus, fuera del método.",
     boundaries: "Calidad y límites",
     boundariesSub: "Qué puede y qué no puede afirmar este corte publicado.",
+    liveMemory: "Memoria viva",
+    liveMemoryNote: "ligada a señales persistentes",
     closingTitle: "De la conversación a la decisión.",
     section: "Sección",
     validated: "Validado por Noisia AI",
@@ -279,6 +301,115 @@ export function DeckSlides({
         ),
       }),
   });
+
+  /* Engine beta lens — only appears for engine outputs */
+  const engineView = vm.engineBlock?.methodology_view ?? null;
+  if (engineView) {
+    slides.push({
+      key: "engine-view",
+      node: (num, total) =>
+        shell({
+          num,
+          total,
+          meta,
+          eyebrow: t.engineLens,
+          icon: <Layers size={17} />,
+          title: engineView.title,
+          compactTitle: true,
+          children: (
+            <div className="deck-cols is-wide-left">
+              <div className="deck-stack is-center">
+                <p className="deck-body">{truncate(engineView.primary_question || vm.engineBlock?.summary || "", 460)}</p>
+                <div className="deck-cards cols-2" style={{ marginTop: 8 }}>
+                  {engineView.cards.slice(0, 4).map((card) => (
+                    <article className="deck-card" key={card.label}>
+                      <span className="deck-card-eyebrow">{card.label}</span>
+                      <h4 style={{ fontSize: 36 }}>{truncate(card.value, 42)}</h4>
+                      <p>{truncate(card.detail, 170)}</p>
+                      <div className="deck-card-meta">
+                        <span className="deck-chip">{prettify(card.confidence)}</span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </div>
+              <div className="deck-stack is-center">
+                <div className="deck-card">
+                  <span className="deck-card-eyebrow"><Info size={16} /> {t.readiness}</span>
+                  <h4>{prettify(engineView.readiness.status)}</h4>
+                  <p>{truncate(engineView.readiness.reason, 260)}</p>
+                  {engineView.readiness.missing.length > 0 ? (
+                    <div className="deck-card-meta">
+                      <span className="deck-chip">{t.missing}: {truncate(engineView.readiness.missing.join(", "), 90)}</span>
+                    </div>
+                  ) : null}
+                </div>
+                {vm.engineBlock?.limitations?.[0] ? (
+                  <div className="deck-card">
+                    <span className="deck-card-eyebrow"><AlertTriangle size={16} /> {t.boundaries}</span>
+                    <p>{truncate(vm.engineBlock.limitations[0], 260)}</p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ),
+        }),
+    });
+
+    if (engineView.rows.length > 0 || engineView.conclusions.length > 0) {
+      slides.push({
+        key: "engine-signals",
+        node: (num, total) =>
+          shell({
+            num,
+            total,
+            meta,
+            eyebrow: t.engineLens,
+            icon: <BarChart2 size={17} />,
+            title: t.topMethodSignals,
+            compactTitle: true,
+            children: (
+              <div className="deck-cols is-even">
+                <div>
+                  <span className="deck-card-eyebrow">{t.topMethodSignals}</span>
+                  <div className="deck-cards cols-1" style={{ marginTop: 12 }}>
+                    {engineView.rows.slice(0, 5).map((row, index) => (
+                      <article className="deck-card" key={`${row.finding_id}-${index}`}>
+                        <span className="deck-card-rank">{String(index + 1).padStart(2, "0")}</span>
+                        <h4 style={{ fontSize: 24 }}>{truncate(row.label, 88)}</h4>
+                        <p>{truncate(row.axis ?? row.entity ?? "Sin eje secundario", 160)}</p>
+                        <div className="deck-card-meta">
+                          <span className="deck-chip">{fmt(row.evidence_count)} {t.evidence}</span>
+                          <span className="deck-chip">{t.score} {row.score === null ? "n/a" : row.score.toFixed(2)}</span>
+                          <span className="deck-chip">{prettify(row.confidence)}</span>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <span className="deck-card-eyebrow">{t.conclusions}</span>
+                  <div className="deck-cards cols-1" style={{ marginTop: 12 }}>
+                    {engineView.conclusions.slice(0, 5).map((item, index) => (
+                      <article className="deck-card" key={`${item.kind}-${index}`}>
+                        <span className="deck-card-eyebrow">{prettify(item.kind)}</span>
+                        <h4 style={{ fontSize: 24 }}>{truncate(item.title, 88)}</h4>
+                        <p>{truncate(item.detail, 220)}</p>
+                        {item.finding_ids.length > 0 ? (
+                          <div className="deck-card-meta">
+                            <span className="deck-chip">{truncate(item.finding_ids.join(", "), 90)}</span>
+                          </div>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ),
+          }),
+      });
+    }
+  }
 
   /* 3 · Dashboard — metrics + the three charts in one view */
   const m = vm.metrics;
@@ -561,10 +692,14 @@ export function DeckSlides({
   }
 
   /* Boundaries */
+  const liveBoundary = meta.liveIntelligence?.status === "ok"
+    ? `${t.liveMemory}: ${fmt(meta.liveIntelligence.signals)} señales, ${fmt(meta.liveIntelligence.observations)} observaciones y ${fmt(meta.liveIntelligence.evidence)} evidencias ${t.liveMemoryNote}.`
+    : null;
   const boundaries = [
+    liveBoundary,
     ...vm.clientBoundaries,
     ...(vm.knowledgeImpact?.strategic_constraints ?? []),
-  ].filter(Boolean).slice(0, 5);
+  ].filter((item): item is string => typeof item === "string" && item.length > 0).slice(0, 5);
   if (boundaries.length > 0) {
     slides.push({
       key: "boundaries",

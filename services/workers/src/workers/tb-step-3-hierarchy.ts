@@ -11,19 +11,29 @@ import {
   TB_HIERARCHY_MAX_CLUSTERS,
   TB_HIERARCHY_MIN_FREQUENCY,
   TB_HIERARCHY_SAMPLES_PER_CLUSTER,
+  validateTbStructuredEvidenceRefs,
   type CodedTag,
   type HierarchyClusterInput,
   type TbLayer
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import {
+  assertCorpusDataOsAuditReady,
+  auditCorpusDataOs,
+  persistCorpusDataOsAudit,
+  summarizeCorpusDataOsAudit
+} from "./data-os-corpus-audit";
+import { materializeTbCodingDataOs } from "./tb-data-os-bridge";
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
+  loadTbPinnedModel,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  runTbGovernedProviderCall
 } from "./tb-shared";
 
 type StepJobData = {
@@ -119,7 +129,7 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
     await job.updateProgress(55);
 
     // Single Claude call to score all clusters
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
     const prompt = buildHierarchyPrompt({
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
@@ -128,11 +138,19 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
       ragContext,
       clusters: clustersWithSamples
     });
-
     let evalResult;
     try {
-      const r = await generateText({ model: anthropic(model), prompt, temperature: 0.15 });
-      console.log(`[tb-step3] response first 200: ${r.text.slice(0, 200)}`);
+      const r = await runTbGovernedProviderCall({
+        tbAnalysisId,
+        operationKey: "step3-hierarchy",
+        prompt,
+        maxOutputTokens: 8000,
+        invoke: (maxOutputTokens) => generateText({
+          model: anthropic(model), prompt, temperature: 0.15,
+          maxOutputTokens, maxRetries: 0
+        })
+      });
+      console.log("[tb-step3] provider response received", { chars: r.text.length });
       evalResult = parseHierarchyResponse(r.text);
     } catch (err) {
       throw new Error(`Hierarchy parse failed: ${err instanceof Error ? err.message : err}`);
@@ -140,6 +158,13 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
 
     if (evalResult.evaluated.length === 0) {
       throw new Error("Claude no devolvio clusters evaluados");
+    }
+    const availableEvidenceTokens = structuredEvidenceTokens(ragContext.structured_observations);
+    for (const evaluation of evalResult.evaluated) {
+      evaluation.structured_evidence_refs = validateTbStructuredEvidenceRefs(
+        evaluation.structured_evidence_refs,
+        availableEvidenceTokens
+      );
     }
     await job.updateProgress(78);
 
@@ -206,6 +231,17 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
 
     // Persist findings + citations + back-link mention codings
     const stats = await persistFindings({ tbAnalysisId, toPersist });
+    const dataOsBridge = await materializeTbCodingDataOs({
+      tbAnalysisId,
+      stage: "step3_hierarchy"
+    });
+    const dataOsAudit = await auditCorpusDataOs({
+      corpusId: dataOsBridge.study_corpus_id,
+      stage: "post_coding",
+      tbAnalysisId
+    });
+    await persistCorpusDataOsAudit({ tbAnalysisId, audit: dataOsAudit });
+    assertCorpusDataOsAuditReady(dataOsAudit, "T&B hierarchy bridge");
     await job.updateProgress(96);
 
     await markStepCompleted({
@@ -216,7 +252,10 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
         evaluated_clusters: evalResult.evaluated.length,
         findings_inserted: stats.findingsInserted,
         citations_inserted: stats.citationsInserted,
+        structured_evidence_refs_inserted: stats.structuredEvidenceRefsInserted,
         codings_linked: stats.codingsLinked,
+        data_os_coding_bridge: dataOsBridge,
+        data_os_post_coding: summarizeCorpusDataOsAudit(dataOsAudit),
         top_findings: toPersist
           .slice()
           .sort((a, b) => b.score - a.score)
@@ -238,6 +277,8 @@ export async function tbStep3HierarchyJob(job: Job<StepJobData>) {
     return {
       findings: stats.findingsInserted,
       citations: stats.citationsInserted,
+      data_os_coding_bridge: dataOsBridge,
+      data_os_post_coding: summarizeCorpusDataOsAudit(dataOsAudit),
       next_step_job_id: next.jobId
     };
   } catch (err) {
@@ -339,9 +380,8 @@ async function populateClusterMentions(args: {
 async function attachSamples(eligible: CandidateCluster[]): Promise<HierarchyClusterWithMentions[]> {
   const result: HierarchyClusterWithMentions[] = [];
   for (const c of eligible) {
-    // Take up to N random mention_ids from this cluster's pool
-    const pool_ = c.mention_ids.slice();
-    pool_.sort(() => Math.random() - 0.5);
+    // Stable samples keep retries/evidence reproducible.
+    const pool_ = [...new Set(c.mention_ids)].sort((left, right) => left.localeCompare(right));
     const sampleIds = pool_.slice(0, TB_HIERARCHY_SAMPLES_PER_CLUSTER);
     let samples: { mention_id: string; text: string }[] = [];
     if (sampleIds.length > 0) {
@@ -383,9 +423,10 @@ type PersistedFinding = {
 async function persistFindings(args: {
   tbAnalysisId: string;
   toPersist: PersistedFinding[];
-}): Promise<{ findingsInserted: number; citationsInserted: number; codingsLinked: number }> {
+}): Promise<{ findingsInserted: number; citationsInserted: number; structuredEvidenceRefsInserted: number; codingsLinked: number }> {
   let findingsInserted = 0;
   let citationsInserted = 0;
+  let structuredEvidenceRefsInserted = 0;
   let codingsLinked = 0;
 
   for (const p of args.toPersist) {
@@ -468,6 +509,23 @@ async function persistFindings(args: {
       citationsInserted += 1;
     }
 
+    for (const token of p.evaluation.structured_evidence_refs) {
+      const [kind, sourceId] = token.split(":") as ["observation" | "record", string];
+      const result = await pool.query(`
+        INSERT INTO tb_finding_structured_evidence_refs (
+          finding_id, source_type, data_observation_id, data_asset_record_id,
+          evidence_role, reference_token, metadata
+        ) VALUES (
+          $1::uuid, $2,
+          CASE WHEN $2 = 'data_observation' THEN $3::uuid END,
+          CASE WHEN $2 = 'data_asset_record' THEN $3::uuid END,
+          'claim_specific', $4, '{"declared_by":"tb_step3_hierarchy"}'::jsonb
+        )
+        ON CONFLICT (finding_id, reference_token) DO NOTHING
+      `, [findingDbId, kind === "observation" ? "data_observation" : "data_asset_record", sourceId, token]);
+      structuredEvidenceRefsInserted += result.rowCount ?? 0;
+    }
+
     // Back-link tb_mention_codings.finding_id for all mentions in this cluster
     if (p.cluster.member_tags.length > 0) {
       // Mentions whose emergent_tags overlap with this cluster's member_tags
@@ -485,7 +543,18 @@ async function persistFindings(args: {
     }
   }
 
-  return { findingsInserted, citationsInserted, codingsLinked };
+  return { findingsInserted, citationsInserted, structuredEvidenceRefsInserted, codingsLinked };
+}
+
+function structuredEvidenceTokens(value: unknown) {
+  if (!value || typeof value !== "object") return [];
+  const tokens = (value as { evidence_tokens?: unknown }).evidence_tokens;
+  if (!Array.isArray(tokens)) return [];
+  return tokens.flatMap((item) =>
+    item && typeof item === "object" && typeof (item as { token?: unknown }).token === "string"
+      ? [(item as { token: string }).token]
+      : []
+  );
 }
 
 async function loadFindingPeriod(mentionIds: string[]) {

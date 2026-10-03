@@ -4,6 +4,12 @@ import { unauthorized, validationError } from "@/lib/api/responses";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { getSignalOutputForUser } from "@/lib/data/signal";
 import { retrieveSignalSemanticContext, type SemanticMatch } from "@/lib/rag/semantic";
+import {
+  isSignalChatLlmEnabled,
+  isSignalChatModelAllowed,
+  SIGNAL_CHAT_ALLOW_OPUS_FLAG,
+  SIGNAL_CHAT_LLM_FLAG
+} from "@/lib/signal/chat-guards";
 
 export const runtime = "nodejs";
 
@@ -49,6 +55,22 @@ export async function POST(
     );
   }
 
+  if (!isSignalChatLlmEnabled()) {
+    return Response.json({
+      answer: buildFallbackAnswer(retrieval.matches),
+      evidence: retrieval.matches.map((match) => ({
+        source_type: match.source_type,
+        title: match.title,
+        platform: match.platform,
+        published_at: match.published_at,
+        similarity: Number(match.similarity.toFixed(3)),
+        text: match.text.slice(0, 360)
+      })),
+      status: "llm_disabled",
+      reason: `Signal chat LLM is disabled. Set ${SIGNAL_CHAT_LLM_FLAG}=true only after QA.`
+    });
+  }
+
   const answer = await answerWithClaude({
     question: parsed.data.question,
     brandName: output.brandName ?? output.brandFallbackName ?? "Marca",
@@ -81,6 +103,14 @@ async function answerWithClaude(args: {
   if (!apiKey) {
     return buildFallbackAnswer(args.matches);
   }
+  const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+  if (!isSignalChatModelAllowed(model)) {
+    return [
+      `Signal chat LLM is configured with "${model}", but Opus is blocked for this feature.`,
+      `Set ${SIGNAL_CHAT_ALLOW_OPUS_FLAG}=true only after explicit cost approval.`,
+      buildFallbackAnswer(args.matches)
+    ].join("\n");
+  }
 
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -90,7 +120,7 @@ async function answerWithClaude(args: {
       "content-type": "application/json"
     },
     body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6",
+      model,
       max_tokens: 700,
       temperature: 0.1,
       system: [
@@ -153,10 +183,10 @@ function compactMatch(match: SemanticMatch) {
 
 function buildFallbackAnswer(matches: SemanticMatch[]) {
   if (matches.length === 0) {
-    return "No encontre evidencia semantica suficiente dentro del snapshot publicado para responder con confianza.";
+    return "No encontré evidencia semántica suficiente dentro del snapshot publicado para responder con confianza.";
   }
   return [
-    "Encontré evidencia relacionada, pero Claude no está disponible para sintetizarla en este ambiente.",
+    "Encontré evidencia relacionada, pero la síntesis LLM está apagada en este ambiente.",
     ...matches.slice(0, 4).map((match) => `Evidencia: ${match.text.slice(0, 220)}`)
   ].join("\n");
 }

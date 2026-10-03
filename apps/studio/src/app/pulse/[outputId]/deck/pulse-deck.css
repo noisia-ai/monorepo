@@ -1,0 +1,87 @@
+.pulse-deck-shell {
+  --deck-signal: #14b8a6;
+  --deck-signal-dark: #0f766e;
+  --deck-whisper: #8a4b73;
+}
+
+.pulse-deck-cover .deck-title {
+  max-width: 18ch;
+}
+
+.pulse-deck-title {
+  margin-top: 24px;
+  max-width: 24ch;
+}
+
+.pulse-deck-body {
+  flex: 1;
+  min-height: 0;
+  margin-top: 28px;
+}
+
+.pulse-deck-metrics {
+  grid-template-columns: 1fr;
+  align-content: center;
+  margin: 0;
+}
+
+.pulse-deck-metrics .deck-metric b {
+  font-size: 42px;
+}
+
+.pulse-deck-action h4 {
+  font-size: 34px;
+}
+
+.pulse-deck-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(420px, 0.85fr);
+  gap: 34px;
+  height: 100%;
+}
+
+.pulse-deck-impact-map {
+  width: 100%;
+  height: 100%;
+  min-height: 560px;
+  border: 1px solid var(--deck-border);
+  border-radius: var(--deck-radius);
+  background: var(--deck-surface-01);
+  padding: 20px;
+}
+
+.pulse-deck-impact-map path {
+  stroke: rgba(10, 10, 10, 0.18);
+  stroke-width: 0.45;
+}
+
+.pulse-deck-impact-map circle {
+  fill: rgba(20, 184, 166, 0.55);
+  stroke: rgba(15, 118, 110, 0.95);
+  stroke-width: 0.45;
+}
+
+.pulse-deck-impact-map text {
+  fill: var(--deck-fg-2);
+  font-size: 2.8px;
+}
+
+.pulse-deck-signal-cards,
+.pulse-deck-move-cards {
+  align-content: start;
+}
+
+.pulse-deck-signal-cards .deck-card,
+.pulse-deck-move-cards .deck-card {
+  min-height: 245px;
+}
+
+.pulse-deck-signal-cards .deck-card h4,
+.pulse-deck-move-cards .deck-card h4 {
+  font-size: 25px;
+}
+
+.pulse-deck-signal-cards .deck-quote {
+  font-size: 18px;
+  padding-left: 16px;
+}

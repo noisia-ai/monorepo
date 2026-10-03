@@ -1,0 +1,43 @@
+slug: narrative-ownership
+name: Narrative Ownership
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué narrativas posee cada entidad, cuáles son negativas, compartidas o
+  huérfanas, y dónde hay whitespace narrativo?
+
+inputs:
+  corpus:
+    minimum_viable: 1500
+    ideal: 5000
+  competitive_corpus:
+    required: true
+
+outputs:
+  - id: narrative_ownership_ranking
+    name: Narrative Ownership Ranking
+    type: bar_ranking
+  - id: narrative_matrix
+    name: Narrative Matrix
+    type: stacked_share
+  - id: negative_owned_narratives
+    name: Owned Negative Narratives
+    type: tension_card
+
+default_dashboard_blocks:
+  - block_id: narrative_ownership_ranking
+  - block_id: narrative_matrix
+  - block_id: whitespace_narratives
+  - block_id: confidence_layer
+
+quality_gates:
+  - id: narrative_emergent_not_imposed
+    description: "Las narrativas nacen del corpus, no de una taxonomia prefijada."
+  - id: owned_negative_flagged
+    description: "Narrativas negativas owned se marcan como riesgo."
+  - id: confidence_calibrated
+    description: "Cada narrativa lleva confianza."
+
+ai_prompts:
+  engine_spec: narrative-ownership

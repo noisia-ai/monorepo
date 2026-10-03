@@ -1,0 +1,658 @@
+import type { Job } from "bullmq";
+
+import { recordSignalDataAcceptance } from "@noisia/db";
+import {
+  SIGNAL_INVALIDATION_JOB_NAME,
+  SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
+  SIGNAL_MATERIALIZE_JOB_NAME,
+  SIGNAL_REFRESH_CONTRACT_VERSION,
+  SIGNAL_REFRESH_RUN_JOB_NAME,
+  buildSignalRefreshRunIdempotencyKeyV1,
+  expandSignalVelocityInvalidationThroughV1,
+  type SignalInvalidationJobDataV1,
+  type SignalMaterializeJobDataV1,
+  type SignalRefreshRunJobDataV1,
+  type SignalRefreshTickJobDataV1,
+} from "@noisia/query-engine";
+import { pool } from "../db/client";
+import {
+  buildSignalRefreshRunOptions,
+  enqueueRecoverableSignalRefreshRun
+} from "./signal-refresh-runtime";
+import { SIGNAL_TAXONOMY_ENRICHMENT_RETIRED_REASON } from "./signal-taxonomy-enrichment-runtime";
+
+type DuePolicy = {
+  id: string;
+  workspace_id: string;
+  source_key: string;
+  cadence: "hourly" | "daily" | "weekly" | "monthly";
+  timezone: string;
+  scheduled_for: Date;
+  study_corpus_id: string | null;
+};
+
+type RecoverableRun = {
+  id: string;
+  refresh_policy_id: string;
+  workspace_id: string;
+  source_key: string;
+  scheduled_for: Date;
+  idempotency_key: string;
+};
+
+export async function signalRefreshTickJob(_job: Job<SignalRefreshTickJobDataV1>) {
+  await pool.query(`
+    UPDATE signal_data_watermarks
+    SET source_freshness_state = 'stale',
+        data_freshness_state = CASE
+          WHEN data_freshness_state = 'not_available' THEN data_freshness_state
+          ELSE 'stale'
+        END,
+        updated_at = now()
+    WHERE stale_after IS NOT NULL
+      AND stale_after <= now()
+      AND (source_freshness_state <> 'stale' OR data_freshness_state NOT IN ('stale', 'not_available'))
+  `);
+
+  const client = await pool.connect();
+  let dueCount = 0;
+  try {
+    await client.query("BEGIN");
+    const due = await client.query<DuePolicy>(`
+      SELECT policy.id::text, policy.workspace_id::text, policy.source_key,
+        policy.cadence, policy.timezone, policy.expected_next_run AS scheduled_for,
+        membership.study_corpus_id::text
+      FROM signal_refresh_policies policy
+      LEFT JOIN LATERAL (
+        SELECT swc.study_corpus_id
+        FROM signal_workspace_corpora swc
+        WHERE swc.workspace_id = policy.workspace_id
+          AND swc.valid_to IS NULL
+          AND swc.role IN ('operational', 'legacy')
+        ORDER BY CASE swc.role WHEN 'operational' THEN 0 ELSE 1 END,
+          swc.valid_from DESC, swc.study_corpus_id
+        LIMIT 1
+      ) membership ON true
+      WHERE policy.enabled = true
+        AND policy.expected_next_run <= now()
+      ORDER BY policy.expected_next_run, policy.id
+      FOR UPDATE OF policy SKIP LOCKED
+      LIMIT 100
+    `);
+    dueCount = due.rowCount ?? 0;
+    for (const policy of due.rows) {
+      const idempotencyKey = buildSignalRefreshRunIdempotencyKeyV1({
+        refresh_policy_id: policy.id,
+        scheduled_for: policy.scheduled_for
+      });
+      await client.query(`
+        INSERT INTO signal_refresh_runs (
+          refresh_policy_id, workspace_id, study_corpus_id, source_key,
+          idempotency_key, trigger, status, attempt, scheduled_for,
+          error_code, error_summary, result_summary
+        ) VALUES (
+          $1::uuid, $2::uuid, $3::uuid, $4,
+          $5, 'scheduled', 'queued', 1, $6::timestamptz,
+          NULL, '{}'::jsonb, '{"outbox":"postgres"}'::jsonb
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING
+      `, [
+        policy.id,
+        policy.workspace_id,
+        policy.study_corpus_id,
+        policy.source_key,
+        idempotencyKey,
+        policy.scheduled_for
+      ]);
+    }
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+
+  const recoverable = await pool.query<RecoverableRun>(`
+    SELECT run.id::text, run.refresh_policy_id::text, run.workspace_id::text,
+      run.source_key, run.scheduled_for, run.idempotency_key
+    FROM signal_refresh_runs run
+    JOIN signal_refresh_policies policy ON policy.id = run.refresh_policy_id
+    WHERE policy.enabled = true
+      AND run.trigger = 'scheduled'
+      AND run.status IN ('queued', 'failed')
+      AND run.scheduled_for <= now()
+      AND run.completed_at IS NULL
+    ORDER BY run.scheduled_for, run.id
+    LIMIT 100
+  `);
+
+  const queue = await signalRefreshQueue();
+  let policiesEnqueued = 0;
+  let policiesRecoverable = 0;
+  for (const run of recoverable.rows) {
+    const data: SignalRefreshRunJobDataV1 = {
+      contract_version: SIGNAL_REFRESH_CONTRACT_VERSION,
+      refresh_policy_id: run.refresh_policy_id,
+      workspace_id: run.workspace_id,
+      source_key: run.source_key,
+      scheduled_for: run.scheduled_for.toISOString(),
+      idempotency_key: run.idempotency_key
+    };
+    const deterministicJobId = `signal-refresh-${run.idempotency_key.slice(7, 39)}`;
+    const result = await enqueueRecoverableSignalRefreshRun({
+      add: () => queue.add(
+        SIGNAL_REFRESH_RUN_JOB_NAME,
+        data,
+        buildSignalRefreshRunOptions(deterministicJobId)
+      ),
+      markEnqueuedAndAdvance: async (jobId) => {
+        const update = await pool.connect();
+        try {
+          await update.query("BEGIN");
+          await update.query(`
+            UPDATE signal_refresh_runs
+            SET status = 'queued', bullmq_job_id = $2,
+                error_code = NULL, error_summary = '{}'::jsonb, updated_at = now()
+            WHERE id = $1::uuid AND status IN ('queued', 'failed')
+          `, [run.id, jobId ?? deterministicJobId]);
+          await update.query(`
+            UPDATE signal_refresh_policies
+            SET expected_next_run = CASE cadence
+                  WHEN 'hourly' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 hour') AT TIME ZONE timezone
+                  WHEN 'daily' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 day') AT TIME ZONE timezone
+                  WHEN 'weekly' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 week') AT TIME ZONE timezone
+                  WHEN 'monthly' THEN ((expected_next_run AT TIME ZONE timezone) + interval '1 month') AT TIME ZONE timezone
+                  ELSE expected_next_run
+                END,
+                updated_at = now()
+            WHERE id = $1::uuid AND expected_next_run = $2::timestamptz
+          `, [run.refresh_policy_id, run.scheduled_for]);
+          await update.query("COMMIT");
+        } catch (error) {
+          await update.query("ROLLBACK").catch(() => undefined);
+          throw error;
+        } finally {
+          update.release();
+        }
+      },
+      markEnqueueFailed: async (error) => {
+        await pool.query(`
+          UPDATE signal_refresh_runs
+          SET status = 'failed', error_code = 'enqueue_failed',
+              error_summary = jsonb_build_object('message', $2), updated_at = now()
+          WHERE id = $1::uuid AND status IN ('queued', 'failed')
+        `, [run.id, safeErrorMessage(error)]);
+      }
+    });
+    if (result.enqueued) policiesEnqueued += 1;
+    else policiesRecoverable += 1;
+  }
+
+  const invalidations = await pool.query<{ id: string }>(`
+    SELECT id::text
+    FROM signal_data_invalidations
+    WHERE status IN ('pending', 'failed')
+      AND attempt < 3
+    ORDER BY created_at, id
+    LIMIT 100
+  `);
+  for (const invalidation of invalidations.rows) {
+    const data: SignalInvalidationJobDataV1 = {
+      contract_version: SIGNAL_REFRESH_CONTRACT_VERSION,
+      invalidation_id: invalidation.id
+    };
+    await queue.add(
+      SIGNAL_INVALIDATION_JOB_NAME,
+      data,
+      buildSignalRefreshRunOptions(`signal-invalidation-${invalidation.id}`)
+    );
+  }
+  const taxonomyRunsEnqueued = await reconcileTaxonomyEnrichmentRuns(queue);
+  return {
+    policies_due: dueCount,
+    policies_enqueued: policiesEnqueued,
+    policies_recoverable: policiesRecoverable,
+    invalidations_enqueued: invalidations.rowCount ?? 0,
+    taxonomy_enrichment_runs_enqueued: taxonomyRunsEnqueued
+  };
+}
+
+export async function signalRefreshRunJob(job: Job<SignalRefreshRunJobDataV1>) {
+  const client = await pool.connect();
+  const lockKey = `${job.data.workspace_id}:${job.data.source_key}`;
+  let locked = false;
+  try {
+    const lock = await client.query<{ locked: boolean }>(
+      `SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked`,
+      [lockKey]
+    );
+    locked = lock.rows[0]?.locked === true;
+    if (!locked) throw new Error("refresh_lock_unavailable");
+
+    const policy = await client.query<{
+      policy_id: string;
+      workspace_id: string;
+      source_key: string;
+      adapter_key: string;
+      data_source_id: string | null;
+      study_corpus_id: string | null;
+    }>(`
+      SELECT
+        policy.id::text AS policy_id,
+        policy.workspace_id::text,
+        policy.source_key,
+        policy.adapter_key,
+        policy.data_source_id::text,
+        COALESCE(ds.study_corpus_id, membership.study_corpus_id)::text AS study_corpus_id
+      FROM signal_refresh_policies policy
+      LEFT JOIN data_sources ds ON ds.id = policy.data_source_id
+      LEFT JOIN LATERAL (
+        SELECT swc.study_corpus_id
+        FROM signal_workspace_corpora swc
+        WHERE swc.workspace_id = policy.workspace_id
+          AND swc.valid_to IS NULL
+        ORDER BY CASE swc.role WHEN 'operational' THEN 0 WHEN 'legacy' THEN 1 ELSE 2 END,
+          swc.valid_from DESC
+        LIMIT 1
+      ) membership ON true
+      WHERE policy.id = $1::uuid
+        AND policy.workspace_id = $2::uuid
+        AND policy.source_key = $3
+        AND policy.enabled = true
+      LIMIT 1
+    `, [job.data.refresh_policy_id, job.data.workspace_id, job.data.source_key]);
+    const selected = policy.rows[0];
+    if (!selected?.study_corpus_id) return completeSkipped(client, job, "policy_or_corpus_not_available");
+    const studyCorpusId = selected.study_corpus_id;
+
+    const run = await client.query<{ id: string; status: string }>(`
+      INSERT INTO signal_refresh_runs (
+        refresh_policy_id, workspace_id, study_corpus_id, source_key,
+        idempotency_key, bullmq_job_id, trigger, status, attempt, scheduled_for, started_at
+      ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 'scheduled', 'running', $7, $8, now())
+      ON CONFLICT (idempotency_key) DO UPDATE SET
+        bullmq_job_id = EXCLUDED.bullmq_job_id,
+        attempt = GREATEST(signal_refresh_runs.attempt, EXCLUDED.attempt),
+        status = CASE
+          WHEN signal_refresh_runs.status IN ('completed', 'skipped') THEN signal_refresh_runs.status
+          ELSE 'running'
+        END,
+        started_at = CASE
+          WHEN signal_refresh_runs.status IN ('completed', 'skipped') THEN signal_refresh_runs.started_at
+          ELSE now()
+        END,
+        updated_at = now()
+      RETURNING id::text, status
+    `, [
+      selected.policy_id,
+      selected.workspace_id,
+      studyCorpusId,
+      selected.source_key,
+      job.data.idempotency_key,
+      job.id ?? null,
+      job.attemptsMade + 1,
+      job.data.scheduled_for
+    ]);
+    if (run.rows[0]?.status === "completed" || run.rows[0]?.status === "skipped") {
+      return { run_id: run.rows[0].id, reconciliation_only: true };
+    }
+
+    const event = await resolveLatestAcceptedEvent(client, { ...selected, study_corpus_id: studyCorpusId });
+    if (!event) {
+      await client.query(`
+        UPDATE signal_refresh_runs
+        SET status = 'skipped', completed_at = now(),
+            result_summary = '{"reason":"no_completed_source_event"}'::jsonb,
+            updated_at = now()
+        WHERE id = $1::uuid
+      `, [run.rows[0]?.id]);
+      return { run_id: run.rows[0]?.id, status: "skipped" };
+    }
+
+    const acceptances = await recordSignalDataAcceptance(client, {
+      studyCorpusId,
+      sourceKey: selected.source_key,
+      dataSourceId: selected.data_source_id,
+      sourceSyncRunId: event.sourceSyncRunId,
+      importBatchId: event.importBatchId,
+      materializedAt: new Date()
+    });
+    await client.query(`
+      UPDATE signal_refresh_runs
+      SET status = 'completed', completed_at = now(),
+          result_summary = jsonb_build_object(
+            'watermarks_changed', $2::int,
+            'invalidations_created', $3::int
+          ),
+          error_code = NULL, error_summary = '{}'::jsonb, updated_at = now()
+      WHERE id = $1::uuid
+    `, [
+      run.rows[0]?.id,
+      acceptances.filter((item) => item.changed).length,
+      acceptances.filter((item) => item.invalidationId).length
+    ]);
+    return { run_id: run.rows[0]?.id, status: "completed", acceptances: acceptances.length };
+  } catch (error) {
+    const finalAttempt = job.attemptsMade + 1 >= Number(job.opts.attempts ?? 1);
+    await client.query(`
+      INSERT INTO signal_refresh_runs (
+        refresh_policy_id, workspace_id, source_key, idempotency_key,
+        bullmq_job_id, trigger, status, attempt, scheduled_for, completed_at,
+        error_code, error_summary
+      ) VALUES (
+        (SELECT id FROM signal_refresh_policies WHERE id = $5::uuid),
+        $6::uuid, $7, $1, $8, 'scheduled', $2, $9, $10, now(),
+        $3, jsonb_build_object('message', $4)
+      )
+      ON CONFLICT (idempotency_key) DO UPDATE SET
+        status = EXCLUDED.status,
+        completed_at = now(),
+        attempt = GREATEST(signal_refresh_runs.attempt, EXCLUDED.attempt),
+        error_code = EXCLUDED.error_code,
+        error_summary = EXCLUDED.error_summary,
+        updated_at = now()
+    `, [
+      job.data.idempotency_key,
+      finalAttempt ? "dead_letter" : "failed",
+      safeErrorCode(error),
+      safeErrorMessage(error),
+      job.data.refresh_policy_id,
+      job.data.workspace_id,
+      job.data.source_key,
+      job.id ?? null,
+      job.attemptsMade + 1,
+      job.data.scheduled_for
+    ]).catch(() => undefined);
+    throw error;
+  } finally {
+    if (locked) await client.query(`SELECT pg_advisory_unlock(hashtextextended($1, 0))`, [lockKey]).catch(() => undefined);
+    client.release();
+  }
+}
+
+export async function signalInvalidationJob(
+  job: Job<SignalInvalidationJobDataV1>,
+  dependencies: {
+    enqueueMaterialization?: (data: SignalMaterializeJobDataV1) => Promise<void>;
+  } = {}
+) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const claimed = await client.query<{
+      id: string;
+      workspace_id: string;
+      study_corpus_id: string | null;
+      population_id: string | null;
+      source_key: string;
+      affected_from: string | null;
+      affected_through: string | null;
+    }>(`
+      UPDATE signal_data_invalidations
+      SET status = 'processing', attempt = attempt + 1, error_summary = '{}'::jsonb
+      WHERE id = $1::uuid
+        AND status IN ('pending', 'failed')
+        AND attempt < 3
+      RETURNING id::text, workspace_id::text, study_corpus_id::text,
+        population_id::text, source_key,
+        affected_from::text, affected_through::text
+    `, [job.data.invalidation_id]);
+    const invalidation = claimed.rows[0];
+    if (!invalidation) {
+      await client.query("COMMIT");
+      return { reconciliation_only: true };
+    }
+    const governedPopulation = invalidation.population_id
+      ? await client.query<{
+          population_id: string;
+          population_version: number;
+          population_definition_hash: string;
+        }>(`
+          SELECT definition.id::text AS population_id,
+            definition.version AS population_version,
+            definition.definition_hash AS population_definition_hash
+          FROM signal_population_definitions definition
+          JOIN signal_workspace_population_pointers pointer
+            ON pointer.population_id = definition.id
+           AND pointer.workspace_id = definition.workspace_id
+           AND pointer.purpose = 'operational'
+          WHERE definition.id = $1::uuid
+            AND definition.workspace_id = $2::uuid
+            AND definition.status = 'active'
+        `, [invalidation.population_id, invalidation.workspace_id])
+      : null;
+    const populationScope = governedPopulation?.rows[0] ?? null;
+    if (invalidation.population_id && !populationScope) {
+      throw new Error("signal_operational_population_invalidation_scope_not_available");
+    }
+    if (!invalidation.population_id && !invalidation.study_corpus_id) {
+      throw new Error("signal_invalidation_scope_not_available");
+    }
+    const operationalScopeId = invalidation.population_id ?? invalidation.study_corpus_id!;
+    const materializationScopeSql = invalidation.population_id
+      ? "materialization.population_id = $1::uuid"
+      : "materialization.study_corpus_id = $1::uuid";
+
+    const expandedVelocityThrough = expandSignalVelocityInvalidationThroughV1(invalidation.affected_through);
+    const materializations = await client.query(`
+      UPDATE metric_materializations materialization
+      SET stale_after = LEAST(COALESCE(materialization.stale_after, now()), now()),
+          materialization_state = CASE
+            WHEN materialization.workspace_id IS NOT NULL THEN 'stale'
+            ELSE materialization.materialization_state
+          END
+      WHERE ${materializationScopeSql}
+        AND (
+          (
+            materialization.workspace_id IS NOT NULL
+            AND (
+              (
+                ($2::date IS NULL OR materialization.period_end >= $2::date)
+                AND ($3::date IS NULL OR materialization.period_start <= $3::date)
+              )
+              OR (
+                materialization.metric_key = 'conversation.velocity'
+                AND ($2::date IS NULL OR materialization.period_end >= $2::date)
+                AND ($4::date IS NULL OR materialization.period_start <= $4::date)
+              )
+            )
+          )
+          OR (
+            materialization.workspace_id IS NULL
+            AND (
+              materialization.period_id IS NULL
+              OR EXISTS (
+                SELECT 1 FROM report_periods period
+                WHERE period.id = materialization.period_id
+                  AND ($2::date IS NULL OR period.period_end >= $2::date)
+                  AND ($3::date IS NULL OR period.period_start <= $3::date)
+              )
+            )
+          )
+        )
+    `, [
+      operationalScopeId,
+      invalidation.affected_from,
+      invalidation.affected_through,
+      expandedVelocityThrough
+    ]);
+        const interpretations = await client.query(`
+          WITH stale_freshness AS (
+            UPDATE signal_interpretation_freshness freshness
+            SET state = 'stale', reason = 'data_watermark_advanced', updated_at = now()
+            WHERE freshness.workspace_id = $1::uuid
+              AND freshness.state <> 'not_available'
+              AND (
+                (
+                  $4::boolean = true
+                  AND freshness.data_scope->>'population_id' = $2
+                )
+                OR (
+                  $4::boolean = false
+                  AND (
+                    freshness.data_scope->'study_corpus_ids' ? $2
+                    OR freshness.data_scope->>'study_corpus_id' = $2
+                  )
+                )
+                OR freshness.data_scope->'source_keys' ? $3
+              )
+            RETURNING latest_interpretation_id
+          )
+          UPDATE metric_interpretations interpretation
+          SET status = 'stale', stale_reason = 'data_watermark_advanced'
+          WHERE interpretation.id IN (
+            SELECT latest_interpretation_id FROM stale_freshness
+            WHERE latest_interpretation_id IS NOT NULL
+          )
+        `, [
+          invalidation.workspace_id,
+          operationalScopeId,
+          invalidation.source_key,
+          Boolean(invalidation.population_id)
+        ]);
+    const materializationJob: SignalMaterializeJobDataV1 = {
+      contract_version: SIGNAL_MATERIALIZATION_CONTRACT_VERSION,
+      trigger: "invalidation",
+      workspace_id: invalidation.workspace_id,
+      ...(populationScope
+        ? {
+            population_id: populationScope.population_id,
+            population_version: populationScope.population_version,
+            population_definition_hash: populationScope.population_definition_hash
+          }
+        : { study_corpus_id: invalidation.study_corpus_id! }),
+      invalidation_id: invalidation.id,
+      affected_from: invalidation.affected_from,
+      affected_through: expandedVelocityThrough
+    };
+    if (dependencies.enqueueMaterialization) {
+      await dependencies.enqueueMaterialization(materializationJob);
+    } else {
+      await (await signalRefreshQueue()).add(
+        SIGNAL_MATERIALIZE_JOB_NAME,
+        materializationJob,
+        buildSignalRefreshRunOptions(`signal-materialize-${invalidation.id}`)
+      );
+    }
+    await client.query(`
+      UPDATE signal_data_invalidations
+      SET status = 'completed', processed_at = now(),
+          scope = scope || jsonb_build_object(
+            'materializations_invalidated', $2::int,
+            'interpretations_invalidated', $3::int,
+            'conversation_velocity_dependency_through', $4::date
+          )
+      WHERE id = $1::uuid
+    `, [
+      invalidation.id,
+      materializations.rowCount ?? 0,
+      interpretations.rowCount ?? 0,
+      expandedVelocityThrough
+    ]);
+    await client.query("COMMIT");
+    return {
+      materializations_invalidated: materializations.rowCount ?? 0,
+      interpretations_invalidated: interpretations.rowCount ?? 0,
+      taxonomy_enrichment_runs: 0,
+      taxonomy_enrichment_state: "retired_10b"
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => undefined);
+    const finalAttempt = job.attemptsMade + 1 >= Number(job.opts.attempts ?? 1);
+    await pool.query(`
+      UPDATE signal_data_invalidations
+      SET status = $2, error_summary = jsonb_build_object('message', $3)
+      WHERE id = $1::uuid AND status <> 'completed'
+    `, [job.data.invalidation_id, finalAttempt ? "dead_letter" : "failed", safeErrorMessage(error)]).catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function reconcileTaxonomyEnrichmentRuns(
+  _queue: Awaited<ReturnType<typeof signalRefreshQueue>>
+) {
+  await pool.query(`
+    UPDATE signal_refresh_runs
+    SET status = 'blocked',
+      error_code = $1,
+      error_summary = jsonb_build_object('code',$1,'retryable',false),
+      result_summary = COALESCE(result_summary,'{}'::jsonb)
+        || jsonb_build_object('kill_switch','gate-10b','provider_calls',0),
+      completed_at = COALESCE(completed_at,now()),
+      updated_at = now()
+    WHERE run_type = 'taxonomy_enrichment'
+      AND status IN ('queued','running','partial','failed')
+  `, [SIGNAL_TAXONOMY_ENRICHMENT_RETIRED_REASON]);
+  return 0;
+}
+
+async function signalRefreshQueue() {
+  const { getSignalRefreshQueue } = await import("../queues/signal-refresh");
+  return getSignalRefreshQueue();
+}
+
+async function resolveLatestAcceptedEvent(
+  client: import("pg").PoolClient,
+  policy: { adapter_key: string; study_corpus_id: string; data_source_id: string | null }
+) {
+  if (policy.adapter_key === "manual_import") {
+    const result = await client.query<{ id: string }>(`
+      SELECT id::text
+      FROM import_batches
+      WHERE study_corpus_id = $1::uuid AND status = 'completed'
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `, [policy.study_corpus_id]);
+    return result.rows[0] ? { importBatchId: result.rows[0].id, sourceSyncRunId: null } : null;
+  }
+  if (policy.adapter_key === "data_source_sync" && policy.data_source_id) {
+    const result = await client.query<{ id: string }>(`
+      SELECT id::text
+      FROM source_sync_runs
+      WHERE data_source_id = $1::uuid AND status = 'completed'
+      ORDER BY finished_at DESC NULLS LAST, created_at DESC, id DESC
+      LIMIT 1
+    `, [policy.data_source_id]);
+    return result.rows[0] ? { importBatchId: null, sourceSyncRunId: result.rows[0].id } : null;
+  }
+  throw new Error("refresh_adapter_not_available");
+}
+
+async function completeSkipped(
+  client: import("pg").PoolClient,
+  job: Job<SignalRefreshRunJobDataV1>,
+  reason: string
+) {
+  await client.query(`
+    INSERT INTO signal_refresh_runs (
+      refresh_policy_id, workspace_id, source_key, idempotency_key,
+      bullmq_job_id, trigger, status, attempt, scheduled_for, completed_at, result_summary
+    ) VALUES ((SELECT id FROM signal_refresh_policies WHERE id = $1::uuid), $2::uuid, $3, $4, $5, 'scheduled', 'skipped', $6, $7, now(), jsonb_build_object('reason', $8))
+    ON CONFLICT (idempotency_key) DO NOTHING
+  `, [
+    job.data.refresh_policy_id,
+    job.data.workspace_id,
+    job.data.source_key,
+    job.data.idempotency_key,
+    job.id ?? null,
+    job.attemptsMade + 1,
+    job.data.scheduled_for,
+    reason
+  ]);
+  return { status: "skipped", reason };
+}
+
+function safeErrorCode(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message === "refresh_lock_unavailable") return message;
+  if (message === "refresh_adapter_not_available") return message;
+  return "refresh_failed";
+}
+
+function safeErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/postgres(?:ql)?:\/\/\S+/giu, "[redacted-database-url]").slice(0, 500);
+}

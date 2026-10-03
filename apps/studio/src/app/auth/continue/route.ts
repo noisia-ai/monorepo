@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { getLocaleFromPreferences, localeCookieName } from "@/i18n/locales";
-import { postLoginPath } from "@/lib/auth/redirects";
+import { canonicalAppUrl, loginPath, postLoginPath } from "@/lib/auth/redirects";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
@@ -16,13 +16,12 @@ export async function GET(request: NextRequest) {
   const next = request.nextUrl.searchParams.get("next");
 
   if (!session) {
-    const loginUrl = new URL("/login", request.nextUrl.origin);
-    if (next) loginUrl.searchParams.set("next", next);
-    return NextResponse.redirect(loginUrl);
+    const loginUrl = new URL(canonicalAppUrl(loginPath(next || "/studio")), request.url);
+    return noStoreRedirect(loginUrl);
   }
 
-  const destination = new URL(postLoginPath(session.appUser.primaryRole, next), request.nextUrl.origin);
-  const response = NextResponse.redirect(destination);
+  const destination = new URL(canonicalAppUrl(postLoginPath(session.appUser.primaryRole, next)), request.url);
+  const response = noStoreRedirect(destination);
 
   const preferredLocale = getLocaleFromPreferences(session.appUser.preferences);
   if (preferredLocale) {
@@ -35,5 +34,11 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  return response;
+}
+
+function noStoreRedirect(destination: URL) {
+  const response = NextResponse.redirect(destination);
+  response.headers.set("Cache-Control", "no-store");
   return response;
 }

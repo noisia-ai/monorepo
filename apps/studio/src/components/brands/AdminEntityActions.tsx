@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
 import { Icon } from "@/components/ui/Icon";
+import { WorkspaceConfirmDialog } from "@/components/workspace/WorkspaceShell";
 
 export function ArchiveCorpusButton({
   corpusId,
@@ -16,11 +17,10 @@ export function ArchiveCorpusButton({
   const t = useTranslations("AdminActions");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function archive() {
-    if (!window.confirm(t("archiveCorpusConfirm", { name: corpusName }))) return;
-
     setBusy(true);
     setError(null);
     try {
@@ -32,14 +32,26 @@ export function ArchiveCorpusButton({
       setError(err instanceof Error ? err.message : t("archiveCorpusError"));
     } finally {
       setBusy(false);
+      setConfirmOpen(false);
     }
   }
 
   return (
     <div className="admin-action-stack">
-      <button className="wizard-cta wizard-cta--danger" type="button" disabled={busy} onClick={archive}>
+      <button className="admin-button admin-button--danger" type="button" disabled={busy} onClick={() => setConfirmOpen(true)}>
         <Icon name={busy ? "spinner" : "x"} size={13} /> {busy ? t("archiving") : t("archiveCorpus")}
       </button>
+      <WorkspaceConfirmDialog
+        busy={busy}
+        cancelLabel={t("confirmCancel")}
+        confirmLabel={t("confirmArchive")}
+        message={t("archiveCorpusConfirm", { name: corpusName })}
+        open={confirmOpen}
+        title={t("archiveCorpusTitle")}
+        tone="danger"
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={archive}
+      />
       {error ? <span className="team-msg team-msg--error">{error}</span> : null}
     </div>
   );
@@ -47,19 +59,20 @@ export function ArchiveCorpusButton({
 
 export function DeleteBrandButton({
   brandId,
-  brandName
+  brandName,
+  compact = false
 }: {
   brandId: string;
   brandName: string;
+  compact?: boolean;
 }) {
   const t = useTranslations("AdminActions");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
 
   async function remove() {
-    if (!window.confirm(t("deleteBrandConfirm", { name: brandName }))) return;
-
     setBusy(true);
     setMessage(null);
     try {
@@ -77,14 +90,34 @@ export function DeleteBrandButton({
       setMessage({ tone: "error", text: err instanceof Error ? err.message : t("deleteBrandError") });
     } finally {
       setBusy(false);
+      setConfirmOpen(false);
     }
   }
 
   return (
-    <div className="admin-action-stack">
-      <button className="wizard-cta wizard-cta--danger" type="button" disabled={busy} onClick={remove}>
-        <Icon name={busy ? "spinner" : "x"} size={13} /> {busy ? t("deleting") : t("deleteBrand")}
+    <div className={`admin-action-stack${compact ? " admin-action-stack--compact" : ""}`}>
+      <button
+        aria-label={t("deleteBrand")}
+        className={compact ? "admin-button admin-button--danger admin-button--icon" : "admin-button admin-button--danger"}
+        type="button"
+        disabled={busy}
+        title={t("deleteBrand")}
+        onClick={() => setConfirmOpen(true)}
+      >
+        <Icon name={busy ? "spinner" : compact ? "trash" : "x"} size={13} />
+        {!compact ? (busy ? t("deleting") : t("deleteBrand")) : null}
       </button>
+      <WorkspaceConfirmDialog
+        busy={busy}
+        cancelLabel={t("confirmCancel")}
+        confirmLabel={t("confirmDelete")}
+        message={t("deleteBrandConfirm", { name: brandName })}
+        open={confirmOpen}
+        title={t("deleteBrandTitle")}
+        tone="danger"
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={remove}
+      />
       {message ? <span className={`team-msg team-msg--${message.tone}`}>{message.text}</span> : null}
     </div>
   );
@@ -92,19 +125,20 @@ export function DeleteBrandButton({
 
 export function PermanentDeleteBrandButton({
   brandId,
-  brandName
+  brandName,
+  compact = false
 }: {
   brandId: string;
   brandName: string;
+  compact?: boolean;
 }) {
   const t = useTranslations("AdminActions");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function removePermanently() {
-    if (!window.confirm(t("permanentDeleteBrandConfirm", { name: brandName }))) return;
-
     setBusy(true);
     setError(null);
     try {
@@ -117,14 +151,34 @@ export function PermanentDeleteBrandButton({
       setError(err instanceof Error ? err.message : t("permanentDeleteBrandError"));
     } finally {
       setBusy(false);
+      setConfirmOpen(false);
     }
   }
 
   return (
-    <div className="admin-action-stack">
-      <button className="wizard-cta wizard-cta--danger" type="button" disabled={busy} onClick={removePermanently}>
-        <Icon name={busy ? "spinner" : "x"} size={13} /> {busy ? t("deleting") : t("permanentDelete")}
+    <div className={`admin-action-stack${compact ? " admin-action-stack--compact" : ""}`}>
+      <button
+        aria-label={t("permanentDelete")}
+        className={compact ? "admin-button admin-button--danger admin-button--icon" : "admin-button admin-button--danger"}
+        type="button"
+        disabled={busy}
+        title={t("permanentDelete")}
+        onClick={() => setConfirmOpen(true)}
+      >
+        <Icon name={busy ? "spinner" : compact ? "trash" : "x"} size={13} />
+        {!compact ? (busy ? t("deleting") : t("permanentDelete")) : null}
       </button>
+      <WorkspaceConfirmDialog
+        busy={busy}
+        cancelLabel={t("confirmCancel")}
+        confirmLabel={t("confirmPermanentDelete")}
+        message={t("permanentDeleteBrandConfirm", { name: brandName })}
+        open={confirmOpen}
+        title={t("permanentDeleteBrandTitle")}
+        tone="danger"
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={removePermanently}
+      />
       {error ? <span className="team-msg team-msg--error">{error}</span> : null}
     </div>
   );
@@ -142,12 +196,10 @@ export function DeleteThemeButton({
   const t = useTranslations("AdminActions");
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "warn" | "error"; text: string } | null>(null);
 
   async function remove() {
-    const confirmKey = isArchived ? "permanentDeleteThemeConfirm" : "deleteThemeConfirm";
-    if (!window.confirm(t(confirmKey, { name: themeName }))) return;
-
     setBusy(true);
     setMessage(null);
     try {
@@ -166,15 +218,27 @@ export function DeleteThemeButton({
       setMessage({ tone: "error", text: err instanceof Error ? err.message : t("deleteThemeError") });
     } finally {
       setBusy(false);
+      setConfirmOpen(false);
     }
   }
 
   return (
     <div className="admin-action-stack">
-      <button className="wizard-cta wizard-cta--danger" type="button" disabled={busy} onClick={remove}>
+      <button className="admin-button admin-button--danger" type="button" disabled={busy} onClick={() => setConfirmOpen(true)}>
         <Icon name={busy ? "spinner" : "x"} size={13} />{" "}
         {busy ? t("deleting") : isArchived ? t("permanentDelete") : t("deleteTheme")}
       </button>
+      <WorkspaceConfirmDialog
+        busy={busy}
+        cancelLabel={t("confirmCancel")}
+        confirmLabel={isArchived ? t("confirmPermanentDelete") : t("confirmDelete")}
+        message={t(isArchived ? "permanentDeleteThemeConfirm" : "deleteThemeConfirm", { name: themeName })}
+        open={confirmOpen}
+        title={t(isArchived ? "permanentDeleteThemeTitle" : "deleteThemeTitle")}
+        tone="danger"
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={remove}
+      />
       {message ? <span className={`team-msg team-msg--${message.tone}`}>{message.text}</span> : null}
     </div>
   );

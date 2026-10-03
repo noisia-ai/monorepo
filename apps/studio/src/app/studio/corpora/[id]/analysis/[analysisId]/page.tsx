@@ -1,13 +1,25 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import {
+  AdminStatus,
+  AdminSummaryStrip,
+  AdminWorkspaceHeader
+} from "@/components/admin/AdminWorkspacePrimitives";
 import { ApproveAnalysisButton } from "@/components/analysis/ApproveAnalysisButton";
+import { SignalPulseReviewComposer } from "@/components/analysis/SignalPulseReviewComposer";
 import { SignalComposer } from "@/components/analysis/SignalComposer";
 import { Icon, type IconName } from "@/components/ui/Icon";
-import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
+import { StatusPill } from "@/components/ui/StatusPill";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getCorpusForUser, getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import { getDraftSignalOutput } from "@/lib/data/signal";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness
+} from "@/lib/data-os/signal-serving";
+import { loadPublishedSignalOverview } from "@/lib/data-os/published-signal-overview";
+import { pool } from "@/lib/db";
 import { buildSignalPayload } from "@/lib/signal/build";
 
 export const dynamic = "force-dynamic";
@@ -24,12 +36,59 @@ export default async function TbAnalysisReviewPage({
   const corpus = await getCorpusForUser(session.appUser, id);
 
   if (!corpus) notFound();
+  if (corpus.methodologySlug === "signal-pulse") {
+    const state = await getSignalPulseReviewState(corpus.id, analysisId);
+    if (!state) notFound();
+    return <SignalPulseAnalysisReview corpus={corpus} state={state} />;
+  }
 
   const state = await getTbAnalysisForCorpus(corpus.id, analysisId, { includeAggregates: true });
   if (!state) notFound();
+  const workspaceReview = await resolveWorkspaceReviewContext(analysisId,corpus.id);
 
   const { analysis, recommendations, gates, findingSummary } = state;
   const draftOutput = await getDraftSignalOutput(analysis.id);
+  const [relationalResult, signalServingReadiness] = await Promise.all([
+    (async () => {
+      if (!analysis.snapshotId) return { overview: null, error: null };
+      try {
+        const overview = await loadPublishedSignalOverview({
+          snapshotId: analysis.snapshotId,
+          analysisId: analysis.id,
+          corpusId: corpus.id,
+          outputId: draftOutput?.id ?? undefined,
+          requireGovernedRef: draftOutput?.status === "published"
+        });
+        return { overview, error: null };
+      } catch (error) {
+        console.error("[analysis-review] Failed to load the relational Signal contract", error);
+        return {
+          overview: null,
+          error: "Review no pudo resolver el contrato relacional del snapshot."
+        };
+      }
+    })(),
+    analysis.snapshotId
+      ? getSignalServingReadiness({
+        analysisId: analysis.id,
+        snapshotId: analysis.snapshotId,
+        outputId: draftOutput?.id ?? null,
+        requireDataRefs: draftOutput?.status === "published"
+      })
+      : Promise.resolve(null)
+  ]);
+  const relationalOverview = relationalResult.overview;
+  const relationalOverviewError = relationalResult.error;
+  const signalServingAssessment = signalServingReadiness
+    ? assessSignalServingReadiness(signalServingReadiness)
+    : {
+        ready: false,
+        hardBlocks: [{
+          code: "snapshot_missing",
+          message: "El análisis no tiene un snapshot inmutable que pueda gobernar Review y Signal."
+        }],
+        warnings: []
+      };
   const signalDraft = draftOutput
     ? {
         id: draftOutput.id,
@@ -55,63 +114,93 @@ export default async function TbAnalysisReviewPage({
   });
   const knowledgeImpact = asRecord(signalPreview.knowledge_impact);
   const knowledgeSources = arrayRecords(knowledgeImpact.sources_used);
-  const opportunities = arrayRecords(signalPreview.strategic_opportunities);
+  const opportunities = relationalOverview
+    ? relationalOverview.opportunities.map((row) => row as unknown as JsonRecord)
+    : [];
   const emergingPatterns = arrayRecords(signalPreview.emerging_patterns);
-  const actionCards = arrayRecords(signalPreview.action_cards);
+  const actionCards = relationalOverview
+    ? relationalOverview.action_studio.map((row) => row as unknown as JsonRecord)
+    : arrayRecords(signalPreview.action_cards);
   const competitive = asRecord(signalPreview.competitive);
   const competitiveEntities = arrayRecords(competitive.entities);
   const boundaries = asRecord(signalPreview.client_boundaries);
-  const publicFindings = arrayRecords(signalPreview.findings);
+  const publicFindings = relationalOverview?.findings
+    .map((row) => row as unknown as JsonRecord) ?? [];
   const activation = asRecord(analysis.activationPlaybook);
   const triggerRecs = recommendations.filter((rec) => rec.kind === "activation");
   const frictionRecs = recommendations.filter((rec) => rec.kind === "friction_removal");
   const structuralNotes = recommendations.filter((rec) => rec.kind === "structural_note");
-  const canApprove = analysis.status === "needs_review";
-  const failedPostGates = gates
+  const canApprove = analysis.status === "needs_review"
+    && signalServingAssessment.ready
+    && Boolean(relationalOverview)
+    && !relationalOverviewError;
+  const failedPostGates = [
+    ...gates
     .filter((gate) => gate.gateName.startsWith("post_") && !gate.passed)
-    .map((gate) => ({ gateName: gate.gateName, notes: gate.notes }));
+    .map((gate) => ({ gateName: gate.gateName, notes: gate.notes })),
+    ...signalServingAssessment.hardBlocks.map((issue) => ({
+      gateName: `data_os_${issue.code}`,
+      notes: issue.detail ? `${issue.message} ${issue.detail}` : issue.message
+    })),
+    ...signalServingAssessment.warnings.map((warning) => ({
+      gateName: `data_os_${warning.code}`,
+      notes: warning.detail ? `${warning.message} ${warning.detail}` : warning.message
+    })),
+    ...(relationalOverviewError
+      ? [{ gateName: "data_os_relational_contract", notes: relationalOverviewError }]
+      : [])
+  ];
+
+  const reviewMetrics = relationalOverview?.metrics ?? {
+    findings_total: findingSummary.total,
+    barriers_total: findingSummary.barriers,
+    triggers_total: findingSummary.triggers,
+    movable_total: findingSummary.movable
+  };
+  const isApproved = analysis.status === "approved_by_im" || analysis.status === "approved_by_kam";
+  const reviewStatus = isApproved
+    ? <AdminStatus state="good"><Icon name="check" size={12} /> Aprobado</AdminStatus>
+    : analysis.status === "needs_review"
+      ? <AdminStatus state="warning"><Icon name="info" size={12} /> Requiere revisión</AdminStatus>
+      : analysis.status === "failed"
+        ? <AdminStatus state="danger"><Icon name="alert" size={12} /> Falló</AdminStatus>
+        : <AdminStatus><Icon name="spinner" size={12} /> {analysis.status}</AdminStatus>;
 
   return (
-    <div className="studio-page analysis-review-page">
-      <section className="analysis-review-hero">
-        <div>
-          <Link prefetch={false} className="analysis-back-link" href={`/studio/corpora/${corpus.id}/engine`}>
-            <Icon name="arrow-right" size={14} />
-            Volver al engine
-          </Link>
-          <p className="vitals-eyebrow">Revisión del análisis</p>
-          <h1>Síntesis estratégica</h1>
-          <p>
-            Lee lo que encontró el motor, valida si las acciones hacen sentido
-            y aprueba sólo cuando el entregable ya esté listo para convertirse en reporte.
-          </p>
-        </div>
-        <div className="analysis-review-actions">
-          {analysis.status === "approved_by_im" || analysis.status === "approved_by_kam" ? (
-            <SuccessPill>Aprobado</SuccessPill>
-          ) : analysis.status === "needs_review" ? (
-            <StatusPill tone="warn"><Icon name="info" size={12} /> Requiere revisión</StatusPill>
-          ) : (
-            <StatusPill tone={analysis.status === "failed" ? "error" : "running"}>
-              <Icon name={analysis.status === "failed" ? "alert" : "spinner"} size={12} />
-              {analysis.status}
-            </StatusPill>
-          )}
-          <ApproveAnalysisButton
-            corpusId={corpus.id}
-            analysisId={analysis.id}
-            disabled={!canApprove}
-            failedGates={failedPostGates}
-          />
-        </div>
-      </section>
+    <div className="admin-workspace-page admin-study-surface analysis-review-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <>
+            <Link prefetch={false} className="admin-button" href={workspaceReview
+              ? `/studio/brands/${workspaceReview.brandId}/reports`
+              : `/studio/corpora/${corpus.id}/engine`}>
+              Volver al engine
+            </Link>
+            {analysis.status === "needs_review" ? (
+              <ApproveAnalysisButton
+                corpusId={corpus.id}
+                analysisId={analysis.id}
+                disabled={!canApprove}
+                failedGates={failedPostGates}
+                workspaceId={workspaceReview?.workspaceId}
+              />
+            ) : null}
+          </>
+        )}
+        eyebrow="Revisión del análisis"
+        status={reviewStatus}
+        subtitle="Lee lo que encontró el motor, valida si las acciones hacen sentido y aprueba sólo cuando el entregable ya esté listo para convertirse en reporte."
+        title="Síntesis estratégica"
+      />
 
-      <section className="analysis-review-vitals">
-        <MetricCard label="Hallazgos" value={findingSummary.total} />
-        <MetricCard label="Barreras" value={findingSummary.barriers} />
-        <MetricCard label="Señales positivas" value={findingSummary.triggers} />
-        <MetricCard label="Accionables" value={findingSummary.movable} />
-      </section>
+      <AdminSummaryStrip
+        items={[
+          { label: "Hallazgos", value: reviewMetrics.findings_total, hint: "Síntesis estratégica" },
+          { label: "Barreras", value: reviewMetrics.barriers_total, hint: "Barreras que la marca sí puede mover" },
+          { label: "Señales positivas", value: reviewMetrics.triggers_total, hint: "Señales positivas para aprovechar" },
+          { label: "Accionables", value: reviewMetrics.movable_total, hint: "Plan de acción" }
+        ]}
+      />
 
       <section className="analysis-review-card analysis-review-brief">
         <div className="analysis-section-head">
@@ -147,20 +236,96 @@ export default async function TbAnalysisReviewPage({
         </div>
       </section>
 
-      <section className="analysis-review-card">
-        <div className="analysis-section-head">
-          <SectionTitle icon="check" eyebrow="Signal readiness" title="Componentes que sí llegarán al dashboard" />
-          <span>{signalPreview.schema_version}</span>
+      <details className="analysis-review-card analysis-operator-disclosure">
+        <summary className="analysis-section-head">
+          <SectionTitle icon="layers" eyebrow="Data OS · fuente de verdad" title="Readiness relacional del Signal" />
+          <span className="analysis-operator-disclosure__meta">
+            <span>{signalServingReadiness?.contractVersion ?? "sin snapshot"}</span>
+            <Icon name="chevron-down" size={15} />
+          </span>
+        </summary>
+        <div className="analysis-operator-disclosure__body">
+          <EmptyCard text="Estos conteos salen del snapshot y de las tablas relacionales del análisis. Snapshot, evidencia y dimensiones gobernadas son un gate de Review. Las refs del dashboard pertenecen al output y se vuelven obligatorias al publicar." />
+          {signalServingReadiness ? (
+            <>
+            <div className="analysis-readiness-grid">
+              <ReadinessTile label="Menciones del snapshot" value={signalServingReadiness.counts.mentions} detail="Población inmutable en corpus_snapshot_mentions" />
+              <ReadinessTile label="Hallazgos" value={signalServingReadiness.counts.findings} detail={`${signalServingReadiness.counts.findingsWithEvidence}/${signalServingReadiness.counts.findings} con evidencia del snapshot`} />
+              <ReadinessTile label="Oportunidades" value={signalServingReadiness.counts.opportunities} detail={`${signalServingReadiness.counts.opportunitiesWithEvidence}/${signalServingReadiness.counts.opportunities} con evidencia del snapshot`} />
+              <ReadinessTile label="Action Studio" value={signalServingReadiness.counts.actions} detail={`${signalServingReadiness.counts.actionsWithEvidence}/${signalServingReadiness.counts.actions} con evidencia del snapshot`} />
+              <ReadinessTile label="Citas" value={signalServingReadiness.counts.citationLinks} detail={`${signalServingReadiness.counts.citations} menciones únicas citadas`} />
+              <ReadinessTile label="Tags" value={signalServingReadiness.counts.tags} detail={`${signalServingReadiness.counts.tagTerms} términos taxonómicos`} />
+              <ReadinessTile label="Features" value={signalServingReadiness.counts.features} detail={`${signalServingReadiness.counts.featureKeys} feature keys`} />
+              <ReadinessTile
+                label="Refs requeridas"
+                value={`${signalServingReadiness.dataRefs.required.length - signalServingReadiness.dataRefs.missing.length}/${signalServingReadiness.dataRefs.required.length}`}
+                detail={signalServingReadiness.dataRefs.complete
+                  ? "Contrato de serving completo para el output"
+                  : draftOutput?.status === "published"
+                    ? "Output publicado con refs incompletas"
+                    : "Pendientes permitidas antes de publicar"}
+              />
+            </div>
+            <div className="quality-gate-list">
+              {signalServingAssessment.hardBlocks.map((issue) => (
+                <div className="quality-gate-row" key={issue.code}>
+                  <span className="quality-gate-icon quality-gate-icon--warn">
+                    <Icon name="alert" size={15} />
+                  </span>
+                  <strong>{issue.code}</strong>
+                  <span>{issue.message}{issue.detail ? ` ${issue.detail}` : ""}</span>
+                </div>
+              ))}
+              {signalServingAssessment.warnings.map((issue) => (
+                <div className="quality-gate-row" key={issue.code}>
+                  <span className="quality-gate-icon quality-gate-icon--warn">
+                    <Icon name="info" size={15} />
+                  </span>
+                  <strong>{issue.code}</strong>
+                  <span>{issue.message}{issue.detail ? ` ${issue.detail}` : ""}</span>
+                </div>
+              ))}
+              {signalServingReadiness.dataRefs.required.map((refKey) => {
+                const present = signalServingReadiness.dataRefs.present.includes(refKey);
+                const publishedMissing = !present && draftOutput?.status === "published";
+                return (
+                  <div className="quality-gate-row" key={refKey}>
+                    <span className={`quality-gate-icon${present ? " quality-gate-icon--ok" : publishedMissing ? " quality-gate-icon--warn" : ""}`}>
+                      <Icon name={present ? "check" : publishedMissing ? "alert" : "info"} size={15} />
+                    </span>
+                    <strong>{refKey}</strong>
+                    <span>{dataRefReadinessDetail(present, draftOutput?.status)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            </>
+          ) : (
+            <EmptyCard text="El análisis todavía no tiene snapshot inmutable. Review queda bloqueado porque Signal no tendría una población reproducible ni evidencia verificable que publicar." />
+          )}
         </div>
-        <div className="analysis-readiness-grid">
-          <ReadinessTile label="Findings públicos" value={publicFindings.length} detail="Decision Field + Evidence" />
-          <ReadinessTile label="Opportunities" value={opportunities.length} detail="Prioridades accionables" />
-          <ReadinessTile label="Action Studio" value={actionCards.length} detail={`${countClientReadyActions(actionCards)} con texto útil`} />
-          <ReadinessTile label="Competitive" value={competitiveEntities.length} detail={competitiveEntities.length > 0 ? "Benchmark conectado" : "Sin entidades competitivas"} />
-          <ReadinessTile label="Emerging Patterns" value={emergingPatterns.length} detail="Fuera del método T&B" />
-          <ReadinessTile label="Boundaries" value={arrayValue(boundaries.limitations).length} detail="Límites client-safe" />
+      </details>
+
+      <details className="analysis-review-card analysis-operator-disclosure">
+        <summary className="analysis-section-head">
+          <SectionTitle icon="check" eyebrow="Proyección narrativa / JSON" title="Bloques derivados para presentación" />
+          <span className="analysis-operator-disclosure__meta">
+            <span>{signalPreview.schema_version}</span>
+            <Icon name="chevron-down" size={15} />
+          </span>
+        </summary>
+        <div className="analysis-operator-disclosure__body">
+          <EmptyCard text="Esta narrativa y su payload JSON son una proyección de compatibilidad y presentación, no la fuente de verdad. El dashboard debe resolver métricas y evidencia desde el contrato relacional mostrado arriba." />
+          <div className="analysis-readiness-grid">
+            <ReadinessTile label="Findings públicos" value={publicFindings.length} detail="Decision Field + Evidence" />
+            <ReadinessTile label="Opportunities" value={opportunities.length} detail="Prioridades accionables" />
+            <ReadinessTile label="Action Studio" value={actionCards.length} detail={`${countClientReadyActions(actionCards)} con texto útil`} />
+            <ReadinessTile label="Competitive" value={competitiveEntities.length} detail={competitiveEntities.length > 0 ? "Benchmark conectado" : "Sin entidades competitivas"} />
+            <ReadinessTile label="Emerging Patterns" value={emergingPatterns.length} detail="Fuera del método T&B" />
+            <ReadinessTile label="Boundaries" value={arrayValue(boundaries.limitations).length} detail="Límites client-safe" />
+          </div>
         </div>
-      </section>
+      </details>
 
       {arrayValue(activation.top_triggers_movibles).length === 0 ? (
         <section className="analysis-empty-signal">
@@ -293,6 +458,7 @@ export default async function TbAnalysisReviewPage({
       {analysis.status === "approved_by_im" || analysis.status === "approved_by_kam" ? (
         <SignalComposer
           analysisId={analysis.id}
+          analysisPlan={corpus.analysisPlan}
           brandName={corpus.brandName ?? corpus.themeName ?? "la marca"}
           corpusId={corpus.id}
           draft={signalDraft}
@@ -300,6 +466,401 @@ export default async function TbAnalysisReviewPage({
       ) : null}
     </div>
   );
+}
+
+async function resolveWorkspaceReviewContext(analysisId: string,corpusId: string) {
+  return (await pool.query<{ workspaceId: string; brandId: string }>(
+    `SELECT analysis.workspace_id::text AS "workspaceId",
+       workspace.brand_id::text AS "brandId"
+     FROM tb_analyses analysis
+     JOIN signal_strategic_run_controls control
+       ON control.workspace_id=analysis.workspace_id
+      AND control.tb_analysis_id=analysis.id
+      AND control.snapshot_id=analysis.snapshot_id
+     JOIN signal_workspaces workspace ON workspace.id=analysis.workspace_id
+     WHERE analysis.id=$1::uuid
+       AND analysis.study_corpus_id=$2::uuid
+       AND analysis.report_key='triggers-barriers'
+       AND analysis.strategic_contract_version='signal-tb-strategic-v2'`,
+    [analysisId,corpusId]
+  )).rows[0];
+}
+
+type SignalPulseReviewState = Awaited<ReturnType<typeof getSignalPulseReviewState>> extends infer T ? NonNullable<T> : never;
+
+function SignalPulseAnalysisReview({
+  corpus,
+  state
+}: {
+  corpus: NonNullable<Awaited<ReturnType<typeof getCorpusForUser>>>;
+  state: SignalPulseReviewState;
+}) {
+  const meta = asRecord(state.analysis.meta_json);
+  const signalPulseMeta = asRecord(meta.signal_pulse);
+  const readiness = asRecord(signalPulseMeta.readiness);
+  const cluster = asRecord(signalPulseMeta.cluster);
+  const interpretation = asRecord(signalPulseMeta.interpretation);
+  const qualityGates = arrayRecords(meta.quality_gates);
+  const failedGates = qualityGates.filter((gate) => gate.passed === false);
+  const noisySignals = state.signals.filter((signal) => looksNonActionableSignal(signal.title, signal.description, signal.dimensions));
+  const publishableSignals = state.signals.filter((signal) => isPublishableSignal(signal.title, signal.description, signal.dimensions, Number(signal.current_volume ?? signal.volume ?? 0)));
+  const hiddenSignalCount = Math.max(0, state.signals.length - publishableSignals.length);
+  const repeatedMoveCount = state.moves.filter((move) => move.action_text.includes("Bajarlo a una serie corta")).length;
+  const reviewIssues = [
+    ...failedGates.map((gate) => `Gate fallido: ${stringValue(gate.id) || "quality_gate"}`),
+    ...noisySignals.slice(0, 6).map((signal) => `Señal requiere curaduría: ${signal.title}`),
+    publishableSignals.length === 0 ? "0 señales publicables en el corte actual; hay que regenerar síntesis o revisar clustering antes de publicar." : null,
+    repeatedMoveCount >= 3 ? `${repeatedMoveCount} marketing moves repiten la misma fórmula.` : null
+  ].filter((issue): issue is string => Boolean(issue));
+  const publishBlocked = state.analysis.status !== "needs_review" && state.analysis.status !== "approved"
+    ? true
+    : reviewIssues.length > 0;
+  const measuredMentions = Number(readiness.conversation_mentions ?? 0);
+  const signalPulseMentions = Number(readiness.signal_pulse_mentions ?? 0);
+  const sampledRows = Number(cluster.mentions_sampled ?? 0);
+  const maxClaudeSamples = Math.min(state.signals.length, 12) * 6;
+  const cutMeta = asRecord(signalPulseMeta.cut);
+  const cutLabel = (state.cut?.label ?? stringValue(cutMeta.label)) || "Corte pendiente";
+  const dataThrough = (state.cut?.period_end ?? stringValue(cutMeta.data_through)) || null;
+  const windowStart = (state.cut?.window_start ?? stringValue(cutMeta.window_start)) || null;
+  const windowEnd = (state.cut?.window_end ?? stringValue(cutMeta.window_end)) || dataThrough;
+  const defaultHeadline = stringValue(interpretation.headline) || `${corpus.brandName ?? corpus.themeName ?? "La marca"} necesita revisión editorial de señales antes de publicar.`;
+  const defaultSummary = stringValue(interpretation.body) || "Revisa señales, evidencia, moves y gates antes de abrir el Pulse al cliente.";
+
+  return (
+    <div className="admin-workspace-page admin-study-surface analysis-review-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <>
+            <Link prefetch={false} className="admin-button" href={`/studio/corpora/${corpus.id}/engine`}>
+              Volver al engine
+            </Link>
+            <Link prefetch={false} className="admin-button" href={`/studio/corpora/${corpus.id}/mentions`}>
+              <Icon name="search" size={15} />
+              Revisar menciones
+            </Link>
+          </>
+        )}
+        eyebrow="Review Signal Pulse"
+        status={(
+          <AdminStatus state={publishBlocked ? "warning" : "good"}>
+            <Icon name={publishBlocked ? "alert" : "check"} size={12} />
+            {publishBlocked ? "Requiere curaduría" : "Listo para publicar"}
+          </AdminStatus>
+        )}
+        subtitle="Valida que las señales sean accionables, que los moves no sean genéricos y que el reporte sea honesto sobre qué midió SQL/embeddings y qué interpretó Claude."
+        title="Revisión táctica antes de publicar"
+      />
+
+      <AdminSummaryStrip
+        items={[
+          { label: "Corte", value: cutLabel, hint: "Corte pendiente" },
+          { label: "Data through", value: formatDateLabel(dataThrough), hint: "Ventana" },
+          { label: "Menciones medidas", value: measuredMentions, hint: "SQL/embeddings midieron" },
+          { label: "Menciones SP", value: signalPulseMentions, hint: "Query pack SP" }
+        ]}
+      />
+
+      <section className="analysis-review-card">
+        <div className="analysis-section-head">
+          <SectionTitle icon="layers" eyebrow="Truth in analysis" title="Qué se midió vs qué vio Claude" />
+          <span>{state.cost.events} eventos · USD {state.cost.estimated_cost_usd.toFixed(4)}</span>
+        </div>
+        <div className="analysis-readiness-grid signal-pulse-review-grid">
+          <ReadinessTile label="SQL/embeddings midieron" value={measuredMentions} detail="Menciones incluidas dentro del corpus." />
+          <ReadinessTile label="Query pack SP" value={signalPulseMentions} detail="Menciones atribuidas al pack Signal Pulse." />
+          <ReadinessTile label="Cluster global sample" value={sampledRows || "n/d"} detail="Filas usadas para candidatos globales." />
+          <ReadinessTile label="Candidatos por periodo" value={Number(cluster.period_first_candidate_clusters ?? 0)} detail="Clusters detectados mes a mes." />
+          <ReadinessTile label="Claude sintetizó" value={publishableSignals.length} detail={`Hasta ${maxClaudeSamples} snippets cortos; las keywords quedan fuera del Pulse.`} />
+          <ReadinessTile label="Ventana" value={`${formatDateLabel(windowStart)} - ${formatDateLabel(windowEnd)}`} detail="Los comparativos usan la ventana; el publish usa el corte actual." />
+        </div>
+      </section>
+
+      {reviewIssues.length > 0 ? (
+        <section className="analysis-empty-signal signal-pulse-review-warning">
+          <Icon name="alert" size={18} />
+          <div>
+            <h2>No publicar todavía</h2>
+            <ul>
+              {reviewIssues.map((issue) => <li key={issue}>{issue}</li>)}
+            </ul>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="analysis-review-card">
+        <div className="analysis-section-head">
+          <SectionTitle icon="wave" eyebrow="Signal review" title="Señales que entrarían al Pulse" />
+          <span>{publishableSignals.length} publicables · {hiddenSignalCount} fuera</span>
+        </div>
+        <div className="analysis-preview-list analysis-preview-list--two">
+          {publishableSignals.length > 0 ? publishableSignals.slice(0, 8).map((signal, index) => {
+            const currentVolume = Number(signal.current_volume ?? signal.volume ?? 0);
+            const windowVolume = Number(signal.window_volume ?? 0);
+            const bodyPrefix = `${currentVolume} menciones en ${signal.cut_period_label || cutLabel}; ${windowVolume} en ventana. Última actividad: ${signal.last_seen_period || "sin actividad en ventana"}.`;
+            return (
+              <PreviewItem
+                key={signal.id}
+                code={`${index + 1}`}
+                title={signal.title}
+                body={`${bodyPrefix} ${signal.description || stringValue(signal.dimensions.marketing_read) || "Sin lectura editorial guardada."}`}
+                meta={`${signal.cut_period_label || cutLabel} · impacto SQL ${formatImpact(signal.impact_v1)} · confianza ${signal.confidence || "baja"}`}
+              />
+            );
+          }) : <EmptyCard text="Esta corrida no produjo señales publicables del corte actual. Hay que regenerar síntesis o revisar clustering antes de publicar." />}
+        </div>
+      </section>
+
+      <section className="analysis-review-card">
+        <div className="analysis-section-head">
+          <SectionTitle icon="arrow-up" eyebrow="Marketing moves" title="Acciones propuestas" />
+          <span>{repeatedMoveCount >= 3 ? "revisar copy" : "candidate"}</span>
+        </div>
+        <div className="analysis-preview-list">
+          {state.moves.length > 0 ? state.moves.slice(0, 12).map((move, index) => (
+            <PreviewItem
+              key={move.id}
+              code={move.move_type || `MOVE-${index + 1}`}
+              title={move.owner_suggestion || "Marketing"}
+              body={move.action_text}
+              meta={move.confidence || "sin confianza"}
+            />
+          )) : <EmptyCard text="No hay marketing moves materializados. Signal Pulse no debe publicarse sin acciones." />}
+        </div>
+      </section>
+
+      <section className="analysis-review-card">
+        <div className="analysis-section-head">
+          <SectionTitle icon="check" eyebrow="Quality gates" title="Chequeos automáticos" />
+          <span>{qualityGates.length || "pendiente"}</span>
+        </div>
+        {qualityGates.length > 0 ? (
+          <div className="quality-gate-list">
+            {qualityGates.map((gate) => (
+              <div className="quality-gate-row" key={stringValue(gate.id)}>
+                <span className={`quality-gate-icon ${gate.passed ? "quality-gate-icon--ok" : "quality-gate-icon--warn"}`}>
+                  {gate.passed ? <Icon name="check" size={15} /> : <Icon name="alert" size={15} />}
+                </span>
+                <strong>{stringValue(gate.id).replaceAll("_", " ")}</strong>
+                <span>{stringValue(gate.detail) || "Sin detalle."}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyCard text="Faltan quality gates de Signal Pulse. Guarda draft o vuelve a correr antes de publicar." />
+        )}
+      </section>
+
+      <SignalPulseReviewComposer
+        analysisId={state.analysis.id}
+        corpusId={corpus.id}
+        defaultHeadline={defaultHeadline}
+        defaultSummary={defaultSummary}
+        defaultTitle={`${corpus.brandName ?? corpus.themeName ?? "Signal Pulse"} · Signal Pulse`}
+        draft={state.draft}
+        publishBlocked={publishBlocked}
+      />
+    </div>
+  );
+}
+
+async function getSignalPulseReviewState(corpusId: string, analysisId: string) {
+  const analysis = (await pool.query<{
+    id: string;
+    status: string;
+    current_step: string;
+    meta_json: Record<string, unknown> | null;
+  }>(
+    `SELECT id::text, status, current_step, meta_json
+     FROM engine_analyses
+     WHERE id = $1
+       AND study_corpus_id = $2
+       AND methodology_slug = 'signal-pulse'
+     LIMIT 1`,
+    [analysisId, corpusId]
+  )).rows[0];
+  if (!analysis) return null;
+
+  const [cut, signals, moves, cost, draft] = await Promise.all([
+    pool.query<{
+      id: string;
+      label: string;
+      period_start: string;
+      period_end: string;
+      window_start: string | null;
+      window_end: string | null;
+    }>(
+      `
+        WITH window_bounds AS (
+          SELECT MIN(period_start)::text AS window_start, MAX(period_end)::text AS window_end
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+        )
+        SELECT rp.id::text,
+               rp.label,
+               rp.period_start::text,
+               rp.period_end::text,
+               wb.window_start,
+               wb.window_end
+        FROM report_periods rp
+        CROSS JOIN window_bounds wb
+        WHERE rp.study_corpus_id = $1
+          AND rp.granularity = 'month'
+        ORDER BY rp.period_start DESC
+        LIMIT 1
+      `,
+      [corpusId]
+    ),
+    pool.query<{
+      id: string;
+      title: string;
+      description: string | null;
+      signal_type: string | null;
+      dimensions: Record<string, unknown> | null;
+      volume: number;
+      current_volume: number;
+      window_volume: number;
+      active_periods: number;
+      last_seen_period: string | null;
+      cut_period_label: string | null;
+      impact_v1: string | null;
+      confidence: string | null;
+    }>(
+      `
+        WITH cut_period AS (
+          SELECT id, label
+          FROM report_periods
+          WHERE study_corpus_id = $1 AND granularity = 'month'
+          ORDER BY period_start DESC
+          LIMIT 1
+        ),
+        current_metrics AS (
+          SELECT
+            spm.canonical_signal_id,
+            spm.volume,
+            spm.impact_v1::text AS impact_v1,
+            spm.confidence,
+            cp.label AS cut_period_label
+          FROM signal_period_metrics spm
+          JOIN cut_period cp ON cp.id = spm.period_id
+          WHERE spm.study_corpus_id = $1
+        ),
+        window_metrics AS (
+          SELECT
+            spm.canonical_signal_id,
+            COALESCE(SUM(spm.volume), 0)::int AS window_volume,
+            COUNT(*) FILTER (WHERE spm.volume > 0)::int AS active_periods,
+            (array_remove(array_agg(rp.label ORDER BY rp.period_start DESC) FILTER (WHERE spm.volume > 0), NULL))[1] AS last_seen_period
+          FROM signal_period_metrics spm
+          JOIN report_periods rp ON rp.id = spm.period_id
+          WHERE spm.study_corpus_id = $1
+            AND rp.granularity = 'month'
+          GROUP BY spm.canonical_signal_id
+        )
+        SELECT
+          cs.id::text AS id,
+          cs.canonical_title AS title,
+          cs.description,
+          cs.signal_type,
+          cs.dimensions,
+          COALESCE(current_metrics.volume, 0)::int AS volume,
+          COALESCE(current_metrics.volume, 0)::int AS current_volume,
+          COALESCE(window_metrics.window_volume, 0)::int AS window_volume,
+          COALESCE(window_metrics.active_periods, 0)::int AS active_periods,
+          window_metrics.last_seen_period,
+          current_metrics.cut_period_label,
+          current_metrics.impact_v1,
+          current_metrics.confidence
+        FROM canonical_signals cs
+        LEFT JOIN current_metrics ON current_metrics.canonical_signal_id = cs.id
+        LEFT JOIN window_metrics ON window_metrics.canonical_signal_id = cs.id
+        WHERE cs.study_corpus_id = $1
+          AND cs.methodology_slug = 'signal-pulse'
+          AND cs.status <> 'archived'
+        ORDER BY (COALESCE(current_metrics.volume, 0) > 0) DESC,
+                 COALESCE(current_metrics.impact_v1::numeric, 0) DESC,
+                 COALESCE(window_metrics.window_volume, 0) DESC
+        LIMIT 80
+      `,
+      [corpusId]
+    ),
+    pool.query<{
+      id: string;
+      move_type: string | null;
+      action_text: string;
+      owner_suggestion: string | null;
+      confidence: string | null;
+    }>(
+      `SELECT id::text, move_type, action_text, owner_suggestion, confidence
+       FROM marketing_moves
+       WHERE study_corpus_id = $1
+         AND engine_analysis_id = $2
+         AND EXISTS (
+           SELECT 1
+           FROM canonical_signals cs
+           WHERE cs.id = ANY(marketing_moves.signal_refs)
+             AND cs.study_corpus_id = marketing_moves.study_corpus_id
+             AND cs.methodology_slug = 'signal-pulse'
+             AND cs.status = 'active'
+             AND COALESCE(cs.dimensions->>'review_status', '') = 'publish_candidate'
+             AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de síntesis:%'
+             AND lower(cs.canonical_title) NOT LIKE 'cluster pendiente de sintesis:%'
+             AND lower(cs.canonical_title) !~ '^(fricción|friccion|oportunidad|territorio): (hasta|siempre|manejar|pinche|velocidad|mejor|nada|seguro|aseguradora|aseguradoras|choque|accidente|vehiculo|vehículo|qualitas|quálitas|sabritas|gobernador|padrino|antojo|groseras|vieja)$'
+         )
+       ORDER BY position NULLS LAST, created_at
+       LIMIT 80`,
+      [corpusId, analysisId]
+    ),
+    pool.query<{
+      events: number;
+      total_tokens: number;
+      estimated_cost_usd: string | null;
+    }>(
+      `SELECT COUNT(*)::int AS events,
+              COALESCE(SUM(total_tokens), 0)::int AS total_tokens,
+              COALESCE(SUM(estimated_cost_usd), 0)::text AS estimated_cost_usd
+       FROM engine_cost_events
+       WHERE engine_analysis_id = $1`,
+      [analysisId]
+    ),
+    pool.query<{
+      id: string;
+      title: string;
+      headline: string | null;
+      summary: string | null;
+      status: string;
+    }>(
+      `SELECT id::text, title, headline, summary, status
+       FROM published_outputs
+       WHERE engine_analysis_id = $1
+         AND output_type = 'signal_pulse_dashboard'
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [analysisId]
+    )
+  ]);
+
+  const costRow = cost.rows[0];
+  return {
+    analysis,
+    cut: cut.rows[0] ?? null,
+    signals: signals.rows.map((row) => ({
+      ...row,
+      dimensions: row.dimensions ?? {},
+      volume: Number(row.volume ?? 0),
+      current_volume: Number(row.current_volume ?? 0),
+      window_volume: Number(row.window_volume ?? 0),
+      active_periods: Number(row.active_periods ?? 0),
+      impact_v1: numberValue(row.impact_v1)
+    })),
+    moves: moves.rows,
+    cost: {
+      events: Number(costRow?.events ?? 0),
+      total_tokens: Number(costRow?.total_tokens ?? 0),
+      estimated_cost_usd: Number(costRow?.estimated_cost_usd ?? 0)
+    },
+    draft: draft.rows[0] ?? null
+  };
 }
 
 function SectionTitle({ icon, eyebrow, title }: { icon: IconName; eyebrow: string; title: string }) {
@@ -312,15 +873,6 @@ function SectionTitle({ icon, eyebrow, title }: { icon: IconName; eyebrow: strin
         <p className="vitals-eyebrow">{eyebrow}</p>
         <h2>{title}</h2>
       </div>
-    </div>
-  );
-}
-
-function MetricCard({ label, value }: { label: string; value: number | string | null }) {
-  return (
-    <div className="analysis-metric-card">
-      <span>{label}</span>
-      <strong>{typeof value === "number" ? new Intl.NumberFormat("es-MX").format(value) : value ?? "-"}</strong>
     </div>
   );
 }
@@ -497,11 +1049,106 @@ function stringValue(value: unknown): string {
 }
 
 function numberValue(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function formatDateLabel(value: string | null | undefined) {
+  if (!value) return "-";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("es-MX", { month: "short", year: "numeric", timeZone: "UTC" }).format(date);
+}
+
+function formatImpact(value: unknown) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(1) : "0.0";
 }
 
 function countClientReadyActions(actions: JsonRecord[]) {
   return actions.filter((action) => stringValue(action.action_text).trim().length > 20).length;
+}
+
+function dataRefReadinessDetail(present: boolean, outputStatus: string | null | undefined) {
+  if (present) return "Disponible en dashboard_data_refs para este output.";
+  if (outputStatus === "published") return "Falta en un output publicado; debe corregirse antes de servir el dashboard.";
+  if (outputStatus) return "Pendiente en el draft; se valida al publicar y no bloquea la aprobación del análisis.";
+  return "Se crea con el draft/output y no bloquea la aprobación del análisis.";
+}
+
+const RAW_SIGNAL_REVIEW_TERMS = new Set([
+  "accidente", "accidentes", "aclarar", "actuan", "alcanzo", "antojo", "aseguradora",
+  "aseguradoras", "auto", "autos", "choque", "choques", "danos", "danos", "directo",
+  "excelente", "gobernador", "groseras", "manicomio", "padrino", "particulares",
+  "potosi", "qualitas", "responsable", "saber", "sabritas", "seguro", "seguros",
+  "situacion", "vehiculo", "vehiculos", "vieja"
+]);
+
+function isPublishCandidate(dimensions: JsonRecord) {
+  return stringValue(dimensions.review_status) === "publish_candidate";
+}
+
+function isPublishableSignal(title: string, description: string | null, dimensions: JsonRecord, currentVolume: number) {
+  return isPublishCandidate(dimensions)
+    && currentVolume > 0
+    && !looksNonActionableSignal(title, description, dimensions)
+    && !looksRawKeywordSignal(title);
+}
+
+function looksNonActionableSignal(title: string, description: string | null, dimensions: JsonRecord) {
+  const source = `${title} ${description ?? ""} ${stringValue(dimensions.marketing_read)} ${stringValue(dimensions.action_hint)}`.toLowerCase();
+  const normalizedTitle = title
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  if (
+    /^cluster pendiente de sintesis:/.test(normalizedTitle)
+    || /^(barrera|trigger):/.test(normalizedTitle)
+    || /^(friccion|oportunidad|territorio|riesgo creativo|claim a testear|senal emergente|gap de pauta|contencion|monitoreo): (hasta|siempre|manejar|pinche|velocidad|mejor|nada|seguro|aseguradora|aseguradoras|choque|accidente|vehiculo|qualitas|sabritas|gobernador|padrino|antojo|groseras|vieja)$/.test(normalizedTitle)
+  ) {
+    return true;
+  }
+  return [
+    "pendiente de síntesis",
+    "pendiente de sintesis",
+    "señal débil",
+    "sin relevancia",
+    "sin valor",
+    "sin conexión",
+    "sin conexion",
+    "sin ancla",
+    "no accionable",
+    "ruido",
+    "conversación política",
+    "conversacion politica",
+    "menciones religiosas",
+    "fútbol",
+    "futbol",
+    "links sin contexto"
+  ].some((pattern) => source.includes(pattern));
+}
+
+function looksRawKeywordSignal(title: string) {
+  const titleTerm = normalizeReviewSignalPhrase(title.replace(/^(fricción|friccion|oportunidad|territorio|prioridad|riesgo creativo|claim a testear|señal emergente|senal emergente|gap de pauta|contención|contencion|monitoreo|cluster pendiente de síntesis|cluster pendiente de sintesis):\s*/i, ""));
+  return isRawReviewPhrase(titleTerm);
+}
+
+function normalizeReviewSignalPhrase(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isRawReviewPhrase(value: string) {
+  if (!value) return false;
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length === 1) return true;
+  const rawCount = words.filter((word) => RAW_SIGNAL_REVIEW_TERMS.has(word)).length;
+  return words.length <= 3 && rawCount >= Math.max(1, words.length - 1);
 }
 
 function recommendationFallback(rec: {
