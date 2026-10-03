@@ -220,9 +220,10 @@ export async function startDefinedInterestDecisionSelfServiceV2(scope: Scope, id
 }
 
 /** Read progress without exposing request bodies or provider receipts. */
-export async function loadDefinedInterestDecisionProductV2(scope: Scope) {
+export async function loadDefinedInterestDecisionProductV2(scope: Scope,
+  database?: Pick<Pool, "query">) {
   assertScope(scope);
-  const { pool } = await import("@/lib/db");
+  const pool = database ?? (await import("@/lib/db")).pool;
   const result = await pool.query<{ result: Record<string, unknown> }>(`SELECT
     signal_interest_decision_status_v1(owner.id,$2::uuid)||jsonb_build_object(
       'classification_status',execution.status,
@@ -235,8 +236,8 @@ export async function loadDefinedInterestDecisionProductV2(scope: Scope) {
     JOIN signal_topic_catalog_executions execution ON execution.generation_id=generation.id
       AND execution.workspace_id=owner.workspace_id
     WHERE owner.workspace_id=$1::uuid AND owner.actor_user_id=$2::uuid AND owner.term_key=$3
-      AND owner.provider_contract_version=2
-    ORDER BY owner.created_at DESC,owner.id DESC LIMIT 1`, [scope.workspace_id,scope.actor_user_id,scope.term_key]);
+    ORDER BY owner.provider_contract_version DESC,owner.created_at DESC,owner.id DESC LIMIT 1`,
+  [scope.workspace_id,scope.actor_user_id,scope.term_key]);
   return result.rows[0]?.result ?? { status: "not_started", expected_roots: 0,
     manifest_roots: 0, accepted_roots: 0, unknown_batches: 0, unsettled_calls: 0,
     classification_status: null, classification_processed_roots: 0,

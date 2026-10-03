@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool, PoolClient } from "pg";
-import { definedInterestDecisionV2Enabled, startDefinedInterestDecisionProductV2,
+import { definedInterestDecisionV2Enabled, loadDefinedInterestDecisionProductV2,
+  startDefinedInterestDecisionProductV2,
   startDefinedInterestDecisionSelfServiceV2 } from "./signal-defined-interest-decision-v2";
 
 const id = "00000000-0000-4000-8000-000000000001";
@@ -124,4 +125,17 @@ test("historical V1 bootstrap key delegates to V1 self-service without V2 regist
   assert.deepEqual(result, receipt);
   assert.equal(attempts, 1);
   assert.equal(legacy, 1);
+});
+
+test("V2 status reader includes historical V1 fallback while preferring a V2 owner", async () => {
+  const status = { status: "ready", expected_roots: 43159 };
+  const statements: string[] = [];
+  const database = { query: async (sql: string, params: unknown[]) => {
+    statements.push(sql);
+    assert.deepEqual(params, [id,id,"consent"]);
+    return { rows: [{ result: status }] };
+  } } as unknown as Pick<Pool, "query">;
+  assert.deepEqual(await loadDefinedInterestDecisionProductV2(scope, database), status);
+  assert.match(statements[0]!, /ORDER BY owner\.provider_contract_version DESC,owner\.created_at DESC/u);
+  assert.equal(statements[0]!.includes("owner.provider_contract_version=2"), false);
 });
