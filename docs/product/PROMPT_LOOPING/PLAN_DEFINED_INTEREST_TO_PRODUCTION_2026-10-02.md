@@ -37,6 +37,8 @@ Para el producto self-service, la política de la organización autoriza la acci
 
 El máximo de tokens del request a Batches es un techo de transporte, no un permiso para truncar respuestas. La reserva se calcula con el peor caso sellado (entrada y `max_tokens`) a la tarifa Batch vigente; se envía por oleadas y el settlement libera la parte no usada. Un interés aprobado necesita además conservar citas exactas por raíz ligadas al recibo settled: SQL0140 exige `membership_metadata IS NULL` para `membership_basis='decision'`, de modo que la cita no cabe dentro de esa asignación. Signal debe leer la evidencia durable asociada; mostrar un fragmento genérico de 2,000 caracteres no prueba la decisión.
 
+La selección de un interés definido no puede depender de que exista un snapshot consolidado de descubrimientos. Debe funcionar con la generación clasificada y el corpus vigentes de una marca nueva; cuando también exista un catálogo consolidado, ambas capas se componen sin cambiar la selección de conceptos previa. Un diseño que sólo funcione porque Alexa+ ya tiene snapshot consolidado no satisface este corte.
+
 ## Criterio de producción
 
 No basta un estado `ready` o pruebas simuladas. La aceptación exige: cliente sin ingeniería crea marca, configura Brand OS/intereses, carga CSV con procedencia, ejecuta corpus completo, comprende Topics descubiertos y definidos, selecciona resultados útiles en Signal y repite la carga; métricas y límites se explican honestamente. Los resultados deben sobrevivir reintentos, despliegues y revocación de acceso. Proveedores pagados requieren política y ledger vigentes; el loop no renueva topes ni fechas por sí solo. No se toca producción/main ni se proclama precisión semántica sin evaluación real.
