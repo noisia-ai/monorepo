@@ -19,8 +19,8 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const fail = (code: string): never => { throw new Error(`workspace_interest_batch_v2_runtime_${code}`); };
 
-/** V2 has a sealed-output SQL function, but no V2 admission, claim or raw
- * settlement contract. This module is deliberately absent from the drainer. */
+/** This standalone settled-call inspector has no provider transport. Paid V2
+ * dispatch lives in provider-runtime-v2 and has separate feature/SQL gates. */
 export function signalWorkspaceInterestDecisionRuntimeConfigurationV2(env: Environment = process.env) {
   return { enabled: env.NOISIA_SIGNAL_INTEREST_DECISION_V2_ENABLED === "true",
     provider_ready: false as const };
@@ -37,8 +37,7 @@ const expectedValidationStatus = (result: SignalWorkspaceInterestDecisionItemRes
   result.status === "provider_error" ? "errored" : result.status;
 
 /** Local post-settlement seam. The existing ledger must already contain exact
- * provider bytes and billed usage. This function never writes either field and
- * cannot prepare, claim, reserve, send or retry a provider Batch. */
+ * provider bytes and billed usage. This function never writes either field. */
 export async function applySettledSignalWorkspaceInterestDecisionItemV2(args: {
   database: Database; call_id: string; env?: Environment;
 }): Promise<{ disabled: true } | { disabled: false; call_id: string;

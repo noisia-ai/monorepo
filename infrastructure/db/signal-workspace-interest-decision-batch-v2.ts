@@ -13,17 +13,17 @@ type Request = { contract_version: string; root_ids: string[]; request: Record<s
   provider_request_bytes: number };
 type Manifest = { contract_version: string; expected_root_ids: string[]; page_digest: string;
   configuration: Record<string, unknown>; requests: Request[]; manifest_digest: string };
-export type SignalWorkspaceInterestDecisionBatchLeaseV1 = { batch_id: string; lease_token: string;
+export type SignalWorkspaceInterestDecisionBatchLeaseV2 = { batch_id: string; lease_token: string;
   state: "prepared" | "submitting" | "submission_unknown" | "in_progress" | "canceling" | "ended";
   provider_batch_id: string | null; manifest: Manifest };
-export type SignalWorkspaceInterestDecisionItemResultV1 =
+export type SignalWorkspaceInterestDecisionItemResultV2 =
   | { status: "accepted"; custom_id: string; request_digest: string; raw_sha256: string; parsed: unknown }
   | { status: "provider_error" | "canceled" | "expired" | "refusal" | "max_tokens" | "invalid_message" | "invalid_output";
       custom_id: string; request_digest: string; raw_sha256: string; code: string };
-export class SignalWorkspaceInterestDecisionBatchStoreError extends Error {
-  constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceInterestDecisionBatchStoreError"; }
+export class SignalWorkspaceInterestDecisionBatchStoreErrorV2 extends Error {
+  constructor(readonly code: string, readonly status = 409) { super(code); this.name = "SignalWorkspaceInterestDecisionBatchStoreErrorV2"; }
 }
-const fail = (code: string, status = 409): never => { throw new SignalWorkspaceInterestDecisionBatchStoreError(code, status); };
+const fail = (code: string, status = 409): never => { throw new SignalWorkspaceInterestDecisionBatchStoreErrorV2(code, status); };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const jsonDigest = (value: unknown) => signalWorkspaceEmbeddingDigestV1(value);
@@ -44,19 +44,20 @@ const canonicalState = (state: State) => {
 };
 
 /** Revalidate the immutable stored manifest before it crosses the DB→Worker seam. */
-export function validateSignalWorkspaceInterestDecisionBatchManifestV1(value: unknown, expectedBody: string,
-  expectedDigest: string): Manifest {
+export function validateSignalWorkspaceInterestDecisionBatchManifestV2(value: unknown, expectedBody: string,
+  expectedDigest: string, expectedConfiguration: unknown): Manifest {
   const raw = parseJson(value, "manifest_invalid");
-  if (raw.contract_version !== "signal-workspace-interest-decision-page-manifest-v1" || !Array.isArray(raw.requests)
+  if (raw.contract_version !== "signal-workspace-interest-decision-page-manifest-v2" || !Array.isArray(raw.requests)
     || !Array.isArray(raw.expected_root_ids) || !isRecord(raw.configuration)
     || typeof raw.page_digest !== "string" || typeof raw.manifest_digest !== "string") return fail("manifest_invalid", 503);
   const manifest = raw as unknown as Manifest;
   if (!manifest.requests.length) return fail("manifest_invalid", 503);
   const { manifest_digest: _digest, ...core } = manifest;
-  if (manifest.manifest_digest !== jsonDigest(core) || sha(expectedBody) !== expectedDigest) return fail("manifest_digest_invalid", 503);
+  if (manifest.manifest_digest !== jsonDigest(core) || sha(expectedBody) !== expectedDigest
+    || jsonDigest(manifest.configuration) !== jsonDigest(expectedConfiguration)) return fail("manifest_digest_invalid", 503);
   let roots: string[] = [];
   for (const item of manifest.requests) {
-    if (!item || item.contract_version !== "signal-workspace-interest-decision-batch-request-v1"
+    if (!item || item.contract_version !== "signal-workspace-interest-decision-batch-request-v2"
       || !Array.isArray(item.root_ids) || !isRecord(item.request) || !isRecord(item.provider_request)
       || typeof item.provider_request.custom_id !== "string" || !isRecord(item.provider_request.params)
       || typeof item.provider_request_digest !== "string" || !Number.isSafeInteger(item.provider_request_bytes)
@@ -68,7 +69,7 @@ export function validateSignalWorkspaceInterestDecisionBatchManifestV1(value: un
     if ((rebuilt as { request_digest?: unknown }).request_digest !== item.request.request_digest
       || jsonDigest({ request_digest: item.request.request_digest, configuration: manifest.configuration,
         params: item.provider_request.params }) !== item.provider_request_digest
-      || item.provider_request.custom_id !== `id1_${item.provider_request_digest.slice(7, 67)}`
+      || item.provider_request.custom_id !== `id2_${item.provider_request_digest.slice(7, 67)}`
       || jsonDigest(item.root_ids) !== jsonDigest((item.request.roots as Array<{ root_id: string }>).map(root => root.root_id)))
       return fail("manifest_request_digest_invalid", 503);
     roots = roots.concat(item.root_ids);
@@ -101,12 +102,12 @@ async function inTransaction<T>(database: Database, work: (client: PoolClient) =
 /** SQL owns policy, reservations, leases, settlement and replay. Raw result bytes are
  * stored before the DB settlement routine is called. The caller supplies the existing
  * workspace-engine object store; no parallel storage namespace is introduced. */
-export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { database: Database; storeRawReceipt: RawReceiptStorage }) {
+export function createSignalWorkspaceInterestDecisionBatchStoresV2(args: { database: Database; storeRawReceipt: RawReceiptStorage }) {
   const terminalLeases = new WeakSet<object>();
-  const checkLease = (lease: SignalWorkspaceInterestDecisionBatchLeaseV1) => {
+  const checkLease = (lease: SignalWorkspaceInterestDecisionBatchLeaseV2) => {
     if (!uuid.test(lease.batch_id) || !uuid.test(lease.lease_token)) fail("lease_invalid");
   };
-  const withLease = <T>(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, fn: (client: PoolClient) => Promise<T>) => {
+  const withLease = <T>(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, fn: (client: PoolClient) => Promise<T>) => {
     checkLease(lease); return inTransaction(args.database, fn);
   };
   return {
@@ -115,7 +116,7 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
         || input.request_digests.length > 64 || input.request_digests.some(value => !/^sha256:[0-9a-f]{64}$/u.test(value)))
         fail("prepare_invalid", 422);
       return inTransaction(args.database, async client => {
-        const result = (await client.query<{ result: unknown }>(`SELECT prepare_signal_interest_decision_batch_v1(
+        const result = (await client.query<{ result: unknown }>(`SELECT prepare_signal_interest_decision_batch_v2(
           $1::uuid,$2::uuid,$3::text[],$4::text) AS result`,
           [input.owner_id,input.page_id,input.request_digests,input.submission_key])).rows[0]?.result;
         const row = parseJson(result, "prepare_result_invalid");
@@ -135,29 +136,32 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
         if (![id, ownerId, token].every(value => uuid.test(value)) || typeof lease.manifest_body !== "string"
           || typeof lease.manifest_digest !== "string" || !["prepared","submitting","submission_unknown","in_progress","canceling","ended"].includes(String(lease.state)))
           return fail("lease_invalid", 503);
-        const page = (await client.query<{ manifest: unknown; workspace_id: string }>(`SELECT p.manifest,o.workspace_id::text
+        const page = (await client.query<{ manifest: unknown; workspace_id: string;
+          configuration: unknown; owner_version: number }>(`SELECT p.manifest,o.workspace_id::text,
+          signal_interest_decision_provider_config_v2() configuration,
+          o.provider_contract_version owner_version
           FROM signal_interest_decision_batches_v1 b JOIN signal_interest_decision_pages_v1 p ON p.id=b.page_id
           JOIN signal_interest_decision_owners_v1 o ON o.id=b.owner_id WHERE b.id=$1::uuid AND b.owner_id=$2::uuid
-            AND o.provider_contract_version=1
             AND NOT EXISTS (SELECT 1 FROM signal_interest_decision_requests_v1 r
-              WHERE r.page_id=p.id AND r.provider_contract_version<>1)`,[id,ownerId])).rows[0];
-        if (!page) return fail("lease_source_missing", 503);
-        const manifest = validateSignalWorkspaceInterestDecisionBatchManifestV1(page.manifest, lease.manifest_body, lease.manifest_digest);
-        return { batch_id: id, lease_token: token, state: lease.state as SignalWorkspaceInterestDecisionBatchLeaseV1["state"],
+              WHERE r.page_id=p.id AND r.provider_contract_version<>2)`,[id,ownerId])).rows[0];
+        if (!page || page.owner_version!==2) return fail("lease_source_missing", 503);
+        const manifest = validateSignalWorkspaceInterestDecisionBatchManifestV2(page.manifest,
+          lease.manifest_body, lease.manifest_digest,page.configuration);
+        return { batch_id: id, lease_token: token, state: lease.state as SignalWorkspaceInterestDecisionBatchLeaseV2["state"],
           provider_batch_id: typeof lease.provider_batch_id === "string" ? lease.provider_batch_id : null, manifest };
       });
     },
-    async reserveAndMarkSubmitting(lease: SignalWorkspaceInterestDecisionBatchLeaseV1) {
-      await withLease(lease, async client => { await client.query("SELECT mark_submitting_signal_interest_decision_batch_v1($1::uuid,$2::uuid)",[lease.batch_id,lease.lease_token]); });
+    async reserveAndMarkSubmitting(lease: SignalWorkspaceInterestDecisionBatchLeaseV2) {
+      await withLease(lease, async client => { await client.query("SELECT mark_submitting_signal_interest_decision_batch_v2($1::uuid,$2::uuid)",[lease.batch_id,lease.lease_token]); });
     },
-    async attachProviderBatch(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, state: State) {
+    async attachProviderBatch(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, state: State) {
       const body = canonicalState(state);
       await withLease(lease, async client => { const result = (await client.query<{ result: unknown }>(`SELECT attach_provider_signal_interest_decision_batch_v1(
         $1::uuid,(SELECT submission_token FROM signal_interest_decision_batches_v1 WHERE id=$1::uuid),$2::text,$3::text) AS result`,
         [lease.batch_id,body,sha(body)])).rows[0]?.result; const row=parseJson(result,"attach_result_invalid");
         if (row.provider_batch_id !== state.id) fail("provider_receipt_mismatch",503); });
     },
-    async markSubmissionUnknown(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, code: string, acknowledged_state: State | null,
+    async markSubmissionUnknown(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, code: string, acknowledged_state: State | null,
       receipt?: {http_status:number;raw_body:string;complete:boolean;provider_request_id:string|null}|null) {
       if (!acknowledged_state && !receipt) {
         const result=await withLease(lease, async client => parseJson((await client.query<{result:unknown}>(`SELECT quarantine_signal_interest_decision_batch_v1($1::uuid,$2::uuid,$3::text) result`,
@@ -175,7 +179,7 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
       if (quarantined.state!=="submission_unknown") fail("quarantine_result_invalid",503);
       terminalLeases.add(lease);
     },
-    async markKnownRejection(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, code: string, receipt: {http_status:number;raw_body:string;complete:boolean;provider_request_id:string|null}|null) {
+    async markKnownRejection(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, code: string, receipt: {http_status:number;raw_body:string;complete:boolean;provider_request_id:string|null}|null) {
       if (!receipt || !receipt.complete || ![400,401,403,404,413,422].includes(receipt.http_status)) return fail("known_rejection_receipt_required",422);
       const validReceipt=receipt;
       const digest=sha(validReceipt.raw_body);
@@ -186,13 +190,13 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
         terminalLeases.add(lease);
       }); void code;
     },
-    async recordPoll(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, state: State) {
+    async recordPoll(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, state: State) {
       const body=canonicalState(state), next=new Date(Date.now()+60_000).toISOString();
       await withLease(lease, async client => { const row=parseJson((await client.query<{result:unknown}>(`SELECT poll_signal_interest_decision_batch_v1(
         $1::uuid,$2::uuid,$3::text,$4::text,$5::timestamptz) result`,[lease.batch_id,lease.lease_token,body,sha(body),next])).rows[0]?.result,"poll_result_invalid");
         if (row.provider_batch_id!==state.id || row.state!==state.processing_status) fail("poll_receipt_mismatch",503); });
     },
-    async persistRawAndSettle(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, result: {custom_id:string;raw_text:string;raw_sha256:string}) {
+    async persistRawAndSettle(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, result: {custom_id:string;raw_text:string;raw_sha256:string}) {
       if (sha(result.raw_text)!==result.raw_sha256) fail("raw_receipt_digest_invalid",422);
       checkLease(lease);
       const bound=lease.manifest.requests.find(request=>request.provider_request.custom_id===result.custom_id);
@@ -211,14 +215,14 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
       // The SQL function revalidates batch, token, request binding and raw digest
       // after the object-store operation; content-addressing makes PUT replay safe.
       return withLease(lease, async client => {
-        const row=parseJson((await client.query<{result:unknown}>(`SELECT persist_signal_interest_decision_item_v1(
+        const row=parseJson((await client.query<{result:unknown}>(`SELECT persist_signal_interest_decision_item_v2(
           $1::uuid,$2::uuid,$3::text,$4::text,$5::text,$6::text) result`,[lease.batch_id,lease.lease_token,result.custom_id,
           result.raw_text,result.raw_sha256,storageKey])).rows[0]?.result,"settlement_result_invalid");
         if (typeof row.call_id!=="string" || !["settled","outcome_unknown"].includes(String(row.status))) fail("settlement_result_invalid",503);
         return {raw_sha256:result.raw_sha256,settlement:row.status==="settled"?"settled" as const:"ambiguous" as const,replayed:row.replayed===true};
       });
     },
-    async recordOutcome(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, result: SignalWorkspaceInterestDecisionItemResultV1) {
+    async recordOutcome(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, result: SignalWorkspaceInterestDecisionItemResultV2) {
       await withLease(lease, async client => {
         const call=(await client.query<{id:string;raw_sha256:string}>(`SELECT c.id::text,c.raw_sha256 FROM signal_interest_decision_calls_v1 c
           JOIN signal_interest_decision_requests_v1 r ON r.id=c.request_id WHERE c.batch_id=$1::uuid AND r.custom_id=$2::text`,
@@ -226,12 +230,12 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
         if (!call) return fail("outcome_receipt_binding_invalid",409);
         if (call.raw_sha256!==result.raw_sha256) fail("outcome_receipt_binding_invalid",409);
         const validCall=call;
-        const applied=parseJson((await client.query<{result:unknown}>(`SELECT apply_signal_interest_decision_item_v1($1::uuid) result`,[validCall.id])).rows[0]?.result,"outcome_result_invalid");
-        const expected=result.status==="accepted"?"accepted":result.status==="provider_error"?"errored":result.status;
+        const applied=parseJson((await client.query<{result:unknown}>(`SELECT apply_signal_interest_decision_item_v2($1::uuid) result`,[validCall.id])).rows[0]?.result,"outcome_result_invalid");
+        const expected=result.status==="provider_error"?"errored":result.status;
         if (applied.validation_status!==expected) fail("outcome_validation_mismatch",409);
       });
     },
-    async finishImport(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, result: {provider_state:State;received_custom_ids:string[];status:"ready_for_review"|"needs_recovery"}) {
+    async finishImport(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, result: {provider_state:State;received_custom_ids:string[];status:"ready_for_review"|"needs_recovery"}) {
       const canonical=canonicalState(result.provider_state);
       const expectedIds=lease.manifest.requests.map(request=>request.provider_request.custom_id).sort();
       const received=[...result.received_custom_ids].sort();
@@ -245,7 +249,7 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
         terminalLeases.add(lease);
       }); void canonical;
     },
-    async releaseLease(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, result: {next_poll_at:string|null;error_code:string|null}) {
+    async releaseLease(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, result: {next_poll_at:string|null;error_code:string|null}) {
       if (terminalLeases.has(lease)) { terminalLeases.delete(lease); return; }
       await withLease(lease, async client => {
         if (result.next_poll_at!==null && (!Number.isFinite(Date.parse(result.next_poll_at)) || Date.parse(result.next_poll_at)<=Date.now()))
@@ -259,7 +263,7 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV1(args: { datab
     async finishOwner(owner_id: string) {
       if (!uuid.test(owner_id)) fail("owner_id_invalid",422);
       return inTransaction(args.database, async client => {
-        const row=parseJson((await client.query<{result:unknown}>(`SELECT finish_signal_interest_decision_v1($1::uuid) result`,[owner_id])).rows[0]?.result,"owner_finish_invalid");
+        const row=parseJson((await client.query<{result:unknown}>(`SELECT finish_signal_interest_decision_v2($1::uuid) result`,[owner_id])).rows[0]?.result,"owner_finish_invalid");
         if (row.owner_id!==owner_id || row.completed!==true) fail("owner_finish_invalid",503);
         return row;
       });

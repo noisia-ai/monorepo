@@ -62,6 +62,16 @@ import { SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V1,
 import { SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1,
   signalWorkspaceInterestDecisionMaterializationJobV1,
   startSignalWorkspaceInterestDecisionMaterializationDrainerV1 } from "../workers/signal-workspace-interest-decision-materialization-runtime-v1";
+import { signalWorkspaceInterestDecisionBatchJobV2,
+  startSignalWorkspaceInterestDecisionBatchDrainerV2 } from "../workers/signal-workspace-interest-decision-provider-runtime-v2";
+import { SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V2 } from "../workers/signal-workspace-interest-decision-queue-v2";
+import { SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V2,
+  signalWorkspaceInterestDecisionPreparationJobV2,
+  startSignalWorkspaceInterestDecisionPreparationDrainerV2 } from "../workers/signal-workspace-interest-decision-preparation-runtime-v2";
+import { SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V2,
+  signalWorkspaceInterestDecisionMaterializationJobV2,
+  startSignalWorkspaceInterestDecisionMaterializationDrainerV2 } from "../workers/signal-workspace-interest-decision-materialization-runtime-v2";
+import { startSignalWorkspaceInterestDecisionRetryDrainerV2 } from "../workers/signal-workspace-interest-decision-retry-runtime-v2";
 
 export { redisConnection };
 
@@ -98,6 +108,9 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V1) return signalWorkspaceInterestDecisionBatchJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V1) return signalWorkspaceInterestDecisionPreparationJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1) return signalWorkspaceInterestDecisionMaterializationJobV1(job);
+      if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V2) return signalWorkspaceInterestDecisionBatchJobV2(job);
+      if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V2) return signalWorkspaceInterestDecisionPreparationJobV2(job);
+      if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V2) return signalWorkspaceInterestDecisionMaterializationJobV2(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }
@@ -130,10 +143,18 @@ export function startDataOsWorker() {
   const batchDrainer = startSignalWorkspaceInterestDecisionBatchDrainerV1();
   const preparationDrainer = startSignalWorkspaceInterestDecisionPreparationDrainerV1();
   const materializationDrainer = startSignalWorkspaceInterestDecisionMaterializationDrainerV1();
+  const batchDrainerV2 = startSignalWorkspaceInterestDecisionBatchDrainerV2();
+  const preparationDrainerV2 = startSignalWorkspaceInterestDecisionPreparationDrainerV2();
+  const materializationDrainerV2 = startSignalWorkspaceInterestDecisionMaterializationDrainerV2();
+  const retryDrainerV2 = startSignalWorkspaceInterestDecisionRetryDrainerV2();
   worker.on("closed", () => {
     void batchDrainer.close();
     void preparationDrainer.close();
     void materializationDrainer.close();
+    void batchDrainerV2.close();
+    void preparationDrainerV2.close();
+    void materializationDrainerV2.close();
+    void retryDrainerV2.close();
   });
   return worker;
 }

@@ -1,8 +1,8 @@
 import type { Job } from "bullmq";
 import type { SignalWorkspaceClassificationDatabaseV1 } from "@noisia/db";
-import { materializeSignalWorkspaceInterestDecisionV1 } from "./signal-workspace-interest-decision-materialization-v1";
+import { materializeSignalWorkspaceInterestDecisionV2 } from "./signal-workspace-interest-decision-materialization-v2";
 
-export const SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1 = "signal-workspace-interest-decision-materialization-v1";
+export const SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V2 = "signal-workspace-interest-decision-materialization-v2";
 type Environment = Readonly<Record<string,string | undefined>>;
 type Database = SignalWorkspaceClassificationDatabaseV1;
 type Queue = {
@@ -15,29 +15,52 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const jobIdFor = (executionId: string) => `workspace-classification-${executionId}`;
 const fail = (code: string): never => { throw new Error(`workspace_interest_materialization_runtime_${code}`); };
 
-export function signalWorkspaceInterestDecisionMaterializationEnabledV1(env: Environment = process.env) {
-  return env.NOISIA_SIGNAL_INTEREST_DECISION_MATERIALIZATION_ENABLED === "true";
+export function signalWorkspaceInterestDecisionMaterializationEnabledV2(env: Environment = process.env) {
+  return env.NOISIA_SIGNAL_INTEREST_DECISION_V2_ENABLED === "true"
+    && env.NOISIA_SIGNAL_INTEREST_DECISION_MATERIALIZATION_ENABLED === "true";
 }
 
-export async function signalWorkspaceInterestDecisionMaterializationSchemaReadyV1(database: Database) {
+export async function signalWorkspaceInterestDecisionMaterializationSchemaReadyV2(database: Database) {
   const result = await database.query<{ ready: boolean }>(`SELECT
     to_regclass('public.signal_interest_decision_owners_v1') IS NOT NULL
     AND to_regclass('public.signal_interest_decision_root_evidence_v1') IS NOT NULL
     AND to_regclass('public.signal_interest_decision_calls_v1') IS NOT NULL
     AND to_regclass('public.signal_classification_generation_items') IS NOT NULL
-    AND to_regprocedure('public.signal_interest_decision_source_current_v1(uuid,uuid)') IS NOT NULL
+    AND to_regprocedure('public.signal_interest_decision_source_current_v2(uuid,uuid)') IS NOT NULL
+    AND to_regprocedure('public.finish_signal_interest_decision_v2(uuid)') IS NOT NULL
     AS ready`);
   return result.rows[0]?.ready === true;
 }
 
 /** PostgreSQL owner + execution status is the durable dispatch ledger. A
  * completed BullMQ job is retried only while its SQL cursor is still open. */
-export async function drainSignalWorkspaceInterestDecisionMaterializationsV1(options: Options = {}) {
-  if (!signalWorkspaceInterestDecisionMaterializationEnabledV1(options.env))
+export async function drainSignalWorkspaceInterestDecisionMaterializationsV2(options: Options = {}) {
+  if (!signalWorkspaceInterestDecisionMaterializationEnabledV2(options.env))
     return { disabled: true, schema_ready: false, dispatched: 0 };
   const database = options.database ?? (await import("../db/client")).pool;
-  if (!await signalWorkspaceInterestDecisionMaterializationSchemaReadyV1(database))
+  if (!await signalWorkspaceInterestDecisionMaterializationSchemaReadyV2(database))
     return { disabled: false, schema_ready: false, dispatched: 0 };
+  // Completion is a durable SQL transition. A crash after the last Batch import
+  // must still let the next drainer pass finish this owner.
+  const readyOwners = (await database.query<{ owner_id: string }>(`SELECT o.id::text owner_id
+    FROM signal_interest_decision_owners_v1 o
+    WHERE o.provider_contract_version=2 AND o.status='ready' AND o.manifest_complete
+      AND (SELECT count(*) FROM signal_interest_decision_root_evidence_v1 e
+        WHERE e.owner_id=o.id)=o.expected_roots
+      AND NOT EXISTS (SELECT 1 FROM signal_interest_decision_requests_v1 r
+        WHERE r.owner_id=o.id AND NOT EXISTS (
+          SELECT 1 FROM signal_interest_decision_request_roots_v1 rr
+          JOIN signal_interest_decision_root_evidence_v1 e
+            ON e.owner_id=rr.owner_id AND e.request_id=rr.request_id AND e.root_id=rr.root_id
+          WHERE rr.request_id=r.id))
+    ORDER BY o.created_at,o.id LIMIT 10`)).rows;
+  for (const owner of readyOwners) {
+    if (!uuid.test(owner.owner_id)) return fail("owner_id_invalid");
+    const receipt = (await database.query<{ result: { owner_id?: string; completed?: boolean } }>(
+      `SELECT finish_signal_interest_decision_v2($1::uuid) result`, [owner.owner_id])).rows[0]?.result;
+    if (receipt?.owner_id !== owner.owner_id || receipt.completed !== true)
+      return fail("owner_finish_invalid");
+  }
   const queue = options.queue ?? (await import("../queues/data-os")).dataOsProducer;
   const rows = (await database.query<{ execution_id: string }>(`SELECT execution.id::text execution_id
     FROM signal_interest_decision_owners_v1 owner
@@ -45,8 +68,7 @@ export async function drainSignalWorkspaceInterestDecisionMaterializationsV1(opt
     JOIN signal_topic_catalog_executions execution ON execution.generation_id=generation.id
     JOIN signal_topic_catalog_executions source ON source.id=owner.source_execution_id
       AND source.workspace_id=owner.workspace_id
-    WHERE owner.provider_contract_version=1 AND owner.status='completed'
-      AND owner.completed_at IS NOT NULL AND owner.manifest_complete
+    WHERE owner.provider_contract_version=2 AND owner.status='completed' AND owner.completed_at IS NOT NULL AND owner.manifest_complete
       AND owner.workspace_id=execution.workspace_id AND owner.expected_roots=execution.denominator
       AND generation.status='open' AND generation.input_contract='workspace-topic-classification-v1'
       AND generation.input_snapshot->>'interest_term_key'=owner.term_key
@@ -68,11 +90,11 @@ export async function drainSignalWorkspaceInterestDecisionMaterializationsV1(opt
     const jobId = jobIdFor(row.execution_id);
     const existing = await queue.getJob(jobId);
     if (existing) {
-      if (existing.name !== SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1)
+      if (existing.name !== SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V2)
         return fail("job_name_conflict");
       const state = await existing.getState();
       if (state === "completed" || state === "failed") await existing.retry(state);
-    } else await queue.add(SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1,
+    } else await queue.add(SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V2,
       { execution_id: row.execution_id }, { jobId, attempts: 1,
         removeOnComplete: true, removeOnFail: { age: 604800, count: 500 } });
     dispatched++;
@@ -80,14 +102,14 @@ export async function drainSignalWorkspaceInterestDecisionMaterializationsV1(opt
   return { disabled: false, schema_ready: true, dispatched };
 }
 
-export function startSignalWorkspaceInterestDecisionMaterializationDrainerV1(options: Options & {
+export function startSignalWorkspaceInterestDecisionMaterializationDrainerV2(options: Options & {
   interval_ms?: number; run_immediately?: boolean;
 } = {}) {
-  const enabled = signalWorkspaceInterestDecisionMaterializationEnabledV1(options.env);
+  const enabled = signalWorkspaceInterestDecisionMaterializationEnabledV2(options.env);
   let closed = false, pending: Promise<unknown> | null = null;
   const drainNow = () => {
     if (closed || !enabled) return Promise.resolve();
-    return pending ??= drainSignalWorkspaceInterestDecisionMaterializationsV1(options).catch(() => {
+    return pending ??= drainSignalWorkspaceInterestDecisionMaterializationsV2(options).catch(() => {
       console.warn("workspace_interest_materialization_dispatch_failed");
     }).finally(() => { pending = null; });
   };
@@ -97,18 +119,18 @@ export function startSignalWorkspaceInterestDecisionMaterializationDrainerV1(opt
   return { drainNow, close: async () => { closed = true; if (timer) clearInterval(timer); await pending; } };
 }
 
-export async function signalWorkspaceInterestDecisionMaterializationJobV1(
+export async function signalWorkspaceInterestDecisionMaterializationJobV2(
   job: Pick<Job<{ execution_id: string }>, "id" | "data">,
   options: { env?: Environment; database?: Database } = {},
 ) {
-  if (!signalWorkspaceInterestDecisionMaterializationEnabledV1(options.env)) return { disabled: true };
+  if (!signalWorkspaceInterestDecisionMaterializationEnabledV2(options.env)) return { disabled: true };
   const executionId = job.data?.execution_id;
   if (typeof executionId !== "string" || !uuid.test(executionId) || job.id !== jobIdFor(executionId))
     return fail("job_invalid");
   const database = options.database ?? (await import("../db/client")).pool;
-  if (!await signalWorkspaceInterestDecisionMaterializationSchemaReadyV1(database))
+  if (!await signalWorkspaceInterestDecisionMaterializationSchemaReadyV2(database))
     return fail("schema_unavailable");
-  const result = await materializeSignalWorkspaceInterestDecisionV1({ database,
+  const result = await materializeSignalWorkspaceInterestDecisionV2({ database,
     execution_id: executionId, worker_job_id: job.id });
   return { disabled: false, result };
 }
