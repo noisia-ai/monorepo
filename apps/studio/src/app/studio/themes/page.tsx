@@ -1,145 +1,159 @@
+import { ArrowRight, Plus, SquaresFour } from "@phosphor-icons/react/dist/ssr";
 import Link from "next/link";
+import { getLocale, getTranslations } from "next-intl/server";
 
-import { StudioNav } from "@/components/layout/StudioNav";
-import { Icon } from "@/components/ui/Icon";
-import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
+import { AdminThemeFilters } from "@/components/admin/AdminThemeFilters";
+import {
+  AdminResourceSection,
+  AdminStatus,
+  AdminWorkspaceHeader,
+  formatAdminDate
+} from "@/components/admin/AdminWorkspacePrimitives";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { listThemesForUser } from "@/lib/data/themes";
+import type { AdminOperationalState } from "@/lib/data/admin-workspace";
 import {
   getPositiveNumber,
   getSearchParam,
   resolveSearchParams,
-  type StudioSearchParams,
+  type StudioSearchParams
 } from "@/lib/url/search";
 
 export const dynamic = "force-dynamic";
 
 export default async function ThemesPage({ searchParams }: { searchParams?: StudioSearchParams }) {
+  const [locale, t] = await Promise.all([getLocale(), getTranslations("AdminWorkspace.themes")]);
   const session = await requireStudioUser("/studio/themes");
-
   const params = await resolveSearchParams(searchParams);
   const filters = {
     organization: getSearchParam(params, "organization"),
     industry: getSearchParam(params, "industry"),
     status: getSearchParam(params, "status"),
     page: getPositiveNumber(getSearchParam(params, "page"), 1),
-    pageSize: 25,
+    pageSize: 25
   };
   const result = await listThemesForUser(session.appUser, filters);
   const totalPages = Math.max(1, Math.ceil(result.pagination.total / result.pagination.pageSize));
+  const hasActiveFilters = Boolean(filters.organization || filters.industry || filters.status);
 
   return (
-    <>
-      <StudioNav activeSection="themes" crumbs={[{ label: "Themes" }]} user={session.appUser} />
-      <main className="app-content">
-        <div className="studio-page">
-          <header className="page-head">
-            <div>
-              <p className="vitals-eyebrow">Studio</p>
-              <h1 className="page-head-title">Themes</h1>
-              <p className="page-head-sub">
-                {result.pagination.total} {result.pagination.total === 1 ? "theme" : "themes"} ·
-                página {result.pagination.page} de {totalPages}
-              </p>
-              <p className="page-head-sub">
-                Themes son estudios temáticos no atados a una marca: sirven para investigar tópicos,
-                categorías o tensiones de mercado y después correr corpora con metodologías.
-              </p>
-            </div>
-          </header>
+    <div className="admin-workspace-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <Link className="admin-button admin-button--primary" href="/studio/corpora/new?subject=theme" prefetch={false}>
+            <Plus aria-hidden size={15} /> {t("create")}
+          </Link>
+        )}
+        eyebrow={t("eyebrow")}
+        icon={<SquaresFour aria-hidden />}
+        subtitle={t("subtitle")}
+        title={t("title")}
+      />
 
-          <form className="filter-bar-v2">
-            <label className="filter-field">
-              <span className="filter-label">Organización</span>
-              <input
-                className="filter-input"
-                defaultValue={filters.organization ?? ""}
-                name="organization"
-                placeholder="internal, slug o UUID"
-              />
-            </label>
-            <label className="filter-field">
-              <span className="filter-label">Industria</span>
-              <input
-                className="filter-input"
-                defaultValue={filters.industry ?? ""}
-                name="industry"
-                placeholder="ej. seguros"
-              />
-            </label>
-            <label className="filter-field">
-              <span className="filter-label">Status</span>
-              <select className="filter-input" defaultValue={filters.status ?? ""} name="status">
-                <option value="">Todos</option>
-                <option value="draft">Draft</option>
-                <option value="active">Active</option>
-                <option value="published">Published</option>
-                <option value="archived">Archived</option>
-              </select>
-            </label>
-            <button className="wizard-cta wizard-cta--secondary" type="submit">
-              <Icon name="play" size={13} /> Filtrar
-            </button>
-          </form>
+      <AdminResourceSection
+        className="admin-theme-index"
+        subtitle={t("table.subtitle")}
+        title={t("table.title")}
+      >
+        <AdminThemeFilters
+          industry={filters.industry}
+          labels={{
+            apply: t("filters.apply"),
+            industry: t("filters.industry"),
+            industryPlaceholder: t("filters.industryPlaceholder"),
+            organization: t("filters.organization"),
+            organizationPlaceholder: t("filters.organizationPlaceholder"),
+            search: t("filters.search"),
+            status: t("filters.status"),
+            statuses: {
+              active: t("statuses.active"),
+              all: t("statuses.all"),
+              archived: t("statuses.archived"),
+              draft: t("statuses.draft"),
+              published: t("statuses.published")
+            }
+          }}
+          organization={filters.organization}
+          status={filters.status}
+        />
 
-          {result.data.length === 0 ? (
-            <div className="empty-card">
-              <Icon name="info" size={20} className="empty-card-icon" />
-              <p>No hay themes con esos filtros.</p>
-            </div>
-          ) : (
-            <ul className="brand-grid">
-              {result.data.map((theme) => (
-                <li key={theme.id}>
-                  <Link prefetch={false} href={`/studio/themes/${theme.id}`} className="brand-card">
-                    <div className="brand-card-head">
-                      <div>
-                        <p className="brand-card-eyebrow">
-                          {theme.organizationName ?? theme.organizationSlug ?? "Noisia Internal"}
-                        </p>
-                        <h3 className="brand-card-name">{theme.name}</h3>
+        {result.data.length === 0 ? (
+          <div className="admin-empty">
+            <strong>{t(hasActiveFilters ? "empty.filteredTitle" : "empty.defaultTitle")}</strong>
+            <p>{t(hasActiveFilters ? "empty.filteredBody" : "empty.defaultBody")}</p>
+            {!hasActiveFilters ? (
+              <Link className="admin-button" href="/studio/corpora/new?subject=theme" prefetch={false}>
+                <Plus aria-hidden size={15} /> {t("create")}
+              </Link>
+            ) : null}
+          </div>
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead>
+                <tr>
+                  <th>{t("columns.theme")}</th>
+                  <th>{t("columns.organization")}</th>
+                  <th>{t("columns.focus")}</th>
+                  <th>{t("columns.status")}</th>
+                  <th>{t("columns.created")}</th>
+                  <th><span className="sr-only">{t("columns.actions")}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.data.map((theme) => (
+                  <tr key={theme.id}>
+                    <td>
+                      <div className="admin-table__primary">
+                        <Link href={`/studio/themes/${theme.id}`} prefetch={false}>{theme.name}</Link>
+                        <small>{theme.slug}</small>
                       </div>
-                      {theme.status === "published" || theme.status === "active" ? (
-                        <SuccessPill>{theme.status}</SuccessPill>
-                      ) : (
-                        <StatusPill tone="idle">{theme.status}</StatusPill>
-                      )}
-                    </div>
-                    <p className="brand-card-meta">
-                      {theme.industryFocus && theme.industryFocus.length > 0
-                        ? theme.industryFocus.join(", ")
-                        : "Sin industria"}
-                    </p>
-                    <footer className="brand-card-foot">
-                      <Icon name="arrow-right" size={16} className="brand-card-arrow" />
-                    </footer>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
+                    </td>
+                    <td>{theme.organizationName ?? theme.organizationSlug ?? t("internal")}</td>
+                    <td className="admin-table__muted">
+                      {theme.industryFocus?.length ? theme.industryFocus.join(", ") : t("noFocus")}
+                    </td>
+                    <td><AdminStatus state={themeState(theme.status)}>{t(`statuses.${theme.status}`)}</AdminStatus></td>
+                    <td className="admin-table__muted">{formatAdminDate(theme.createdAt?.toISOString(), locale)}</td>
+                    <td>
+                      <Link className="admin-button admin-button--icon" href={`/studio/themes/${theme.id}`} prefetch={false} title={t("open")}>
+                        <ArrowRight aria-hidden size={15} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AdminResourceSection>
 
-          {totalPages > 1 && (
-            <nav className="pagination-v2" aria-label="Paginación de themes">
-              <Link prefetch={false}
-                className="wizard-cta wizard-cta--ghost"
-                href={`/studio/themes?page=${Math.max(1, filters.page - 1)}`}
-              >
-                <Icon name="chevron-down" size={13} className="icon--flip" /> Anterior
-              </Link>
-              <span className="pagination-position">
-                {filters.page} / {totalPages}
-              </span>
-              <Link prefetch={false}
-                className="wizard-cta wizard-cta--ghost"
-                href={`/studio/themes?page=${Math.min(totalPages, filters.page + 1)}`}
-              >
-                Siguiente <Icon name="arrow-right" size={13} />
-              </Link>
-            </nav>
-          )}
-        </div>
-      </main>
-    </>
+      {totalPages > 1 ? (
+        <nav aria-label={t("pagination.label")} className="admin-pagination">
+          <Link className="admin-button" href={pageHref(filters.page - 1, filters)} aria-disabled={filters.page <= 1} prefetch={false}>
+            {t("pagination.previous")}
+          </Link>
+          <span>{t("pagination.position", { page: filters.page, total: totalPages })}</span>
+          <Link className="admin-button" href={pageHref(filters.page + 1, filters)} aria-disabled={filters.page >= totalPages} prefetch={false}>
+            {t("pagination.next")}
+          </Link>
+        </nav>
+      ) : null}
+    </div>
   );
+}
+
+function themeState(status: string): AdminOperationalState {
+  if (status === "active" || status === "published") return "good";
+  if (status === "archived") return "not_available";
+  return "warning";
+}
+
+function pageHref(page: number, filters: { organization?: string; industry?: string; status?: string }) {
+  const params = new URLSearchParams();
+  if (filters.organization) params.set("organization", filters.organization);
+  if (filters.industry) params.set("industry", filters.industry);
+  if (filters.status) params.set("status", filters.status);
+  params.set("page", String(Math.max(1, page)));
+  return `/studio/themes?${params.toString()}`;
 }

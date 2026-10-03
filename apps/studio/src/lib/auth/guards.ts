@@ -1,13 +1,16 @@
 import { redirect } from "next/navigation";
 
 import { canAccessPortal, canAccessStudio } from "@/lib/auth/roles";
-import { loginPath } from "@/lib/auth/redirects";
-import { getAuthenticatedAppUser } from "@/lib/auth/session";
+import { loginPath, sessionRefreshPath } from "@/lib/auth/redirects";
+import { resolveAuthenticatedAppSession } from "@/lib/auth/session";
 
 export async function requireStudioUser(next: string) {
-  const session = await getAuthenticatedAppUser();
+  const { lifecycle, session } = await resolveAuthenticatedAppSession();
 
   if (!session) {
+    if (lifecycle === "refresh_required") {
+      redirect(sessionRefreshPath(next));
+    }
     redirect(loginPath(next));
   }
 
@@ -23,9 +26,12 @@ export async function requireStudioUser(next: string) {
 }
 
 export async function requirePortalUser(next = "/portal") {
-  const session = await getAuthenticatedAppUser();
+  const { lifecycle, session } = await resolveAuthenticatedAppSession();
 
   if (!session) {
+    if (lifecycle === "refresh_required") {
+      redirect(sessionRefreshPath(next));
+    }
     redirect(loginPath(next));
   }
 

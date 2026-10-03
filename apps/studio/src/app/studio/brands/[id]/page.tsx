@@ -1,182 +1,188 @@
+import { AdminSourceCaptureScopes } from "@/components/admin/AdminSourceCaptureScopes";
 import Link from "next/link";
-import { getTranslations } from "next-intl/server";
+import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
+import { ArrowRight, Gauge, Plus, Tag } from "@phosphor-icons/react/dist/ssr";
+import { getLocale, getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import {
-  ArchiveCorpusButton,
-  DeleteBrandButton,
-  PermanentDeleteBrandButton
-} from "@/components/brands/AdminEntityActions";
-import { StudioNav } from "@/components/layout/StudioNav";
-import { CompetitorManager } from "@/components/brands/CompetitorManager";
-import { Icon } from "@/components/ui/Icon";
-import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
+  AdminResourceSection,
+  AdminStatus,
+  AdminWorkspaceHeader,
+  formatAdminDate
+} from "@/components/admin/AdminWorkspacePrimitives";
+import { AdminCorpusProgress, AdminCorpusSummaryStrip } from "@/components/admin/AdminCorpusSummary";
+import { loadWorkspaceAnalysisForActorV1 } from "@/lib/data-os/signal-workspace-analysis";
+import { adminCorpusAnalysisStep, adminCorpusNeedsImport } from "@/lib/data/admin-corpus-presentation";
+import type { WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { requireStudioUser } from "@/lib/auth/guards";
+import {
+  getAdminBrandWorkspace,
+  type AdminBrandWorkspace
+} from "@/lib/data/admin-workspace";
 import { getBrandDetailForUser } from "@/lib/data/brands";
 
 export const dynamic = "force-dynamic";
 
-export default async function BrandDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const t = await getTranslations("BrandDetail");
-  const tBrands = await getTranslations("Brands");
+export default async function BrandWorkspaceOverview({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const session = await requireStudioUser(`/studio/brands/${id}`);
-
-  const brand = await getBrandDetailForUser(session.appUser, id);
-
-  if (!brand) {
-    notFound();
-  }
-
-  const brandLabel = brand.displayName ?? brand.name;
+  const [t, locale, session] = await Promise.all([
+    getTranslations("AdminWorkspace"),
+    getLocale(),
+    requireStudioUser(`/studio/brands/${id}`)
+  ]);
+  const [workspace, brand] = await Promise.all([
+    getAdminBrandWorkspace(session.appUser, id),
+    getBrandDetailForUser(session.appUser, id)
+  ]);
+  if (!workspace || !brand) notFound();
+  const { summary } = workspace;
+  const currentReport = workspace.reports.find((report) => report.reportKey === "triggers-barriers") ?? null;
+  const analysis = summary.workspaceId ? await loadWorkspaceAnalysisForActorV1({
+    workspaceId: summary.workspaceId, actorUserId: session.appUser.id
+  }).catch(() => null) : null;
+  const issues = workspaceIssues(workspace, analysis);
 
   return (
-    <>
-      <StudioNav
-        activeSection="brands"
-        crumbs={[
-          { label: tBrands("crumb"), href: "/studio/brands" },
-          { label: brandLabel },
-        ]}
-        user={session.appUser}
+    <div className="admin-workspace-page">
+      <AdminWorkspaceHeader
+        actions={(
+          <>
+            {summary.workspaceSlug ? (
+              <Link className="admin-button" href={`/signal/${summary.workspaceSlug}`} prefetch={false}>
+                <Gauge aria-hidden size={15} />{t("brand.actions.openSignal")}
+              </Link>
+            ) : null}
+            <Link className="admin-button" href={`/studio/brands/${summary.brandId}/data?action=add-source`} prefetch={false}>
+              <Plus aria-hidden size={15} weight="bold" />{t("brand.actions.addData")}
+            </Link>
+            <Link className="admin-button admin-button--primary" href={`/studio/brands/${summary.brandId}/topics`} prefetch={false}>
+              <Tag aria-hidden size={15} />{t("topics.title")}
+            </Link>
+          </>
+        )}
+        eyebrow={`${summary.organizationName} · ${t("brand.eyebrow")}`}
+        icon={<Gauge aria-hidden size={21} weight="fill" />}
+        status={<AdminStatus state={summary.workspaceStatus === "active" ? "good" : "warning"}>{summary.workspaceStatus ? t(`states.${summary.workspaceStatus}`) : t("states.not_available")}</AdminStatus>}
+        subtitle={summary.industry ?? t("brand.noIndustry")}
+        title={summary.brandName}
       />
-      <main className="app-content">
-        <div className="studio-page">
-          {/* Hero */}
-          <header className="vitals">
-            <div className="vitals-main">
-              <p className="vitals-eyebrow">{brand.organizationName ?? brand.organizationSlug ?? t("brandFallback")}</p>
-              <h1 className="vitals-name">{brandLabel}</h1>
-              <div className="brand-hero-pills">
-                {brand.status === "active" ? (
-                  <SuccessPill>{t("active")}</SuccessPill>
-                ) : (
-                  <StatusPill tone="idle">{brand.status}</StatusPill>
-                )}
-                {brand.industry && (
-                  <StatusPill tone="info">
-                    {[brand.industry, brand.industrySub].filter(Boolean).join(" / ")}
-                  </StatusPill>
-                )}
-                {brand.countries && brand.countries.length > 0 && (
-                  <StatusPill tone="idle">{brand.countries.join(" · ")}</StatusPill>
-                )}
-              </div>
-            </div>
-            <div className="vitals-stats">
-              <Stat label={t("corpora")} value={String(brand.corpora.length)} sub={t("methodologies")} highlight />
-              <Stat label={t("competitors")} value={String(brand.competitors.length)} sub={t("seeds")} />
-            </div>
-            <div className="brand-hero-actions">
-              <Link prefetch={false} className="wizard-cta" href={`/studio/corpora/new?brand=${brand.id}`}>
-                <Icon name="sparkle" size={14} /> {t("newStudy")}
-              </Link>
-              <Link prefetch={false} className="wizard-cta wizard-cta--secondary" href={`/studio/brands/${brand.id}/edit`}>
-                <Icon name="pencil" size={14} /> {t("editBrand")}
-              </Link>
-              {brand.status === "archived" ? (
-                <PermanentDeleteBrandButton brandId={brand.id} brandName={brandLabel} />
-              ) : (
-                <DeleteBrandButton brandId={brand.id} brandName={brandLabel} />
-              )}
-            </div>
-          </header>
+      <BrandMonitoringJourney brandId={id} />
 
-          {/* Metadata strip */}
-          <section className="meta-strip">
-            <div className="meta-strip-item">
-              <span className="meta-strip-label">Slug</span>
-              <code className="meta-strip-value">{brand.slug}</code>
-            </div>
-            <div className="meta-strip-item">
-              <span className="meta-strip-label">{t("organization")}</span>
-              <span className="meta-strip-value">{brand.organizationName ?? brand.organizationSlug ?? "—"}</span>
-            </div>
-            <div className="meta-strip-item">
-              <span className="meta-strip-label">{t("industry")}</span>
-              <span className="meta-strip-value">
-                {[brand.industry, brand.industrySub].filter(Boolean).join(" / ") || "—"}
-              </span>
-            </div>
-            <div className="meta-strip-item">
-              <span className="meta-strip-label">{t("countries")}</span>
-              <span className="meta-strip-value">{brand.countries?.join(", ") ?? "—"}</span>
-            </div>
-          </section>
+      <AdminCorpusSummaryStrip corpus={summary.corpus} />
 
-          <CompetitorManager
-            brandId={brand.id}
-            competitors={brand.competitors.slice().sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))}
-          />
+      <section className="admin-two-column">
+        <AdminResourceSection subtitle={t("brand.health.subtitle")} title={t("brand.health.title")}>
+          <AdminCorpusProgress corpus={summary.corpus} analysis={analysis} brandId={id} workspaceSlug={summary.workspaceSlug} />
+        </AdminResourceSection>
 
-          {/* Corpora cards */}
-          <section className="dash-section">
-            <header className="dash-section-head">
-              <h2>{t("corpora")} ({brand.corpora.length})</h2>
-            </header>
-            {brand.corpora.length === 0 ? (
-              <div className="empty-card">
-                <Icon name="info" size={20} className="empty-card-icon" />
-                <p>{t("emptyCorpora")}</p>
-              </div>
-            ) : (
-              <ul className="corpus-grid">
-                {brand.corpora.map((corpus) => (
-                  <li key={corpus.id}>
-                    <article className="corpus-card">
-                      <div className="corpus-card-head">
-                        <div>
-                          <p className="corpus-card-eyebrow">{corpus.methodologyName}</p>
-                          {corpus.name && <h3 className="corpus-card-title">{corpus.name}</h3>}
-                          <h3 className="corpus-card-question">
-                            {corpus.businessQuestion ?? t("targetWindow", { months: corpus.targetWindowMonths ?? "—" })}
-                          </h3>
-                        </div>
-                        {corpus.status === "corpus_approved" ? (
-                          <SuccessPill>{t("approved")}</SuccessPill>
-                        ) : (
-                          <StatusPill tone="idle">
-                            <Icon name="refresh" size={11} /> {corpus.status}
-                          </StatusPill>
-                        )}
-                      </div>
-                      <footer className="corpus-card-foot">
-                        <Link prefetch={false} href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card-cta">
-                          {t("openEngine")} <Icon name="arrow-right" size={13} />
-                        </Link>
-                        <ArchiveCorpusButton
-                          corpusId={corpus.id}
-                          corpusName={corpus.name ?? corpus.businessQuestion ?? corpus.id}
-                        />
-                      </footer>
-                    </article>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
-      </main>
-    </>
+        <AdminResourceSection subtitle={t("brand.issues.subtitle")} title={t("brand.issues.title")}>
+          {issues.length === 0 ? (
+            <div className="admin-empty admin-empty--compact"><strong>{t("brand.issues.emptyTitle")}</strong><p>{t("brand.issues.emptyBody")}</p></div>
+          ) : (
+            <ul className="admin-issue-list">
+              {issues.map((issue) => (
+                <li key={issue.code}>
+                  <div><strong>{t(`brand.issues.items.${issue.code}`)}</strong><span>{t(`brand.issues.hints.${issue.code}`, { count: issue.count })}</span></div>
+                  <Link aria-label={t(`brand.issues.items.${issue.code}`)} className="admin-button admin-button--icon" href={issue.href} prefetch={false}><ArrowRight aria-hidden size={14} /></Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </AdminResourceSection>
+      </section>
+
+      <section className="admin-section">
+        <header className="admin-section__head">
+          <div><h2>{t("brand.sources.title")}</h2><p>{t("brand.sources.subtitle")}</p></div>
+          <Link className="admin-button" href={`/studio/brands/${summary.brandId}/data`} prefetch={false}>{t("brand.sources.open")}<ArrowRight aria-hidden size={14} /></Link>
+        </header>
+        {workspace.sources.length === 0 ? (
+          <div className="admin-empty"><strong>{t("brand.sources.emptyTitle")}</strong><p>{t("brand.sources.emptyBody")}</p></div>
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead><tr><th>{t("data.columns.source")}</th><th>{t("brand.sources.captureScopes.title")}</th><th>{t("data.columns.freshness")}</th><th>{t("data.columns.lastImport")}</th></tr></thead>
+              <tbody>{workspace.sources.slice(0, 6).map((source) => (
+                <tr key={source.id}>
+                  <td><div className="admin-table__primary"><strong>{source.name}</strong><small>{source.provider} · {source.connectionMethod}</small></div></td>
+                  <td><AdminSourceCaptureScopes summary={source.importCaptureScopes} /></td>
+                  <td><AdminStatus state={freshnessTone(source.freshnessState)}>{t(`states.${source.freshnessState}`)}</AdminStatus></td>
+                  <td className="admin-table__muted">{formatAdminDate(source.latestImport?.createdAt, locale)}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <AdminResourceSection subtitle={t("brand.resources.subtitle")} title={t("brand.resources.title")}>
+        <ul className="admin-resource-list">
+          <li className="admin-resource-row">
+            <div className="admin-resource-row__main">
+              <strong>{t("brand.brandOs.title")}</strong>
+              <span className="admin-resource-row__secondary">{t("brand.brandOs.summary", {
+                aliases: brand.brandSeedHandles?.length ?? 0,
+                competitors: brand.competitors.length,
+                knowledge: brand.knowledgeSources.length
+              })}</span>
+            </div>
+            <div className="admin-resource-row__actions">
+              <span className="admin-resource-row__secondary">{t("brand.brandOs.profilesCount", { count: workspace.profiles.length })}</span>
+              <Link className="admin-button" href={`/studio/brands/${summary.brandId}/brand-os`} prefetch={false}>{t("brand.brandOs.open")}<ArrowRight aria-hidden size={14} /></Link>
+            </div>
+          </li>
+          <li className="admin-resource-row">
+            <div className="admin-resource-row__main">
+              <strong>{t("brand.reports.title")}</strong>
+              <span className="admin-resource-row__secondary">{t("brand.reports.summary", {
+                revision: currentReport?.currentRevision ? `r${currentReport.currentRevision}` : t("reports.states.not_available"),
+                review: currentReport?.runsNeedingReview ?? 0,
+                published: formatAdminDate(currentReport?.currentReleasePublishedAt, locale)
+              })}</span>
+            </div>
+            <div className="admin-resource-row__actions">
+              <AdminStatus state={runTone(currentReport?.latestRunStatus)}>{currentReport?.latestRunStatus ? t(`reports.states.${currentReport.latestRunStatus}`) : t("reports.states.not_available")}</AdminStatus>
+              <Link className="admin-button" href={`/studio/brands/${summary.brandId}/reports`} prefetch={false}>{t("brand.reports.open")}<ArrowRight aria-hidden size={14} /></Link>
+            </div>
+          </li>
+        </ul>
+      </AdminResourceSection>
+    </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  sub,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className={`vital-stat${highlight ? " vital-stat--hi" : ""}`}>
-      <span className="vital-stat-label">{label}</span>
-      <span className="vital-stat-value">{value}</span>
-      {sub && <span className="vital-stat-sub">{sub}</span>}
-    </div>
-  );
+function workspaceIssues(workspace: AdminBrandWorkspace, analysis: WorkspaceAnalysisStatus | null) {
+  const summary = workspace.summary;
+  const base = `/studio/brands/${summary.brandId}`;
+  const issues: Array<{ code: string; count: number; href: string }> = [];
+  if (!summary.workspaceId) issues.push({ code: "workspace", count: 1, href: `${base}/settings` });
+  if (adminCorpusNeedsImport(summary.corpus)) issues.push({ code: "sources", count: 0, href: `${base}/data` });
+  if ((!summary.corpus || summary.corpus.measurement_state === "unavailable") && summary.workspaceId) issues.push({ code: "receipt_unavailable", count: 0, href: `${base}/data#corpus-readiness` });
+  if (summary.corpus?.state === "needs_attention") issues.push({ code: "receipt_attention", count: 0, href: `${base}/data#corpus-readiness` });
+  if ((summary.corpus?.received_unique_roots ?? 0) > 0) {
+    const step = adminCorpusAnalysisStep(summary.corpus, analysis);
+    const dataStep = ["needs_preparation", "missing_embeddings"].includes(step);
+    issues.push({ code: step === "authorization_expired" ? "analysis_permission" : step === "interrupted" ? "analysis_interrupted"
+      : step === "running" ? "analysis_running" : ["complete", "no_groups"].includes(step) ? "topics" : "analysis",
+      count: 0, href: dataStep ? `${base}/data#corpus-readiness` : `${base}/topics` });
+  }
+  if (summary.staleSources + summary.failedSources > 0) issues.push({ code: "freshness", count: summary.staleSources + summary.failedSources, href: `${base}/data` });
+  if (summary.pendingImports > 0) issues.push({ code: "imports", count: summary.pendingImports, href: `${base}/data` });
+  if (summary.reportsNeedingReview > 0) issues.push({ code: "review", count: summary.reportsNeedingReview, href: `${base}/reports` });
+  return issues;
+}
+
+function freshnessTone(state: string) {
+  if (state === "fresh") return "good" as const;
+  if (state === "failed") return "danger" as const;
+  if (state === "stale" || state === "partial") return "warning" as const;
+  return "not_available" as const;
+}
+
+function runTone(state: string | null | undefined) {
+  if (state === "approved_by_im" || state === "approved_by_kam" || state === "done") return "good" as const;
+  if (state === "failed" || state === "aborted_preflight") return "danger" as const;
+  if (state) return "warning" as const;
+  return "not_available" as const;
 }

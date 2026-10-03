@@ -13,13 +13,20 @@ Marca o entidad reconocible que se busca explícitamente en una query. Caso: "Se
 Etiqueta visual que aparece junto a una cita cuando esa cita menciona una marca específica. Se renderiza en el dashboard.
 
 ### Brand_methodology_corpus
-Unidad atómica de trabajo en Noisia Studio. Combinación 1:1 de `(marca × metodología)`. Cada uno tiene su propio corpus, su propio análisis, su propio dashboard. Una marca con 3 metodologías tiene 3 corpora distintos.
+Unidad actual de ejecución metodológica en Noisia Studio. Combinación de
+`(sujeto × metodología)` con criterios, codificaciones, análisis y revisiones propias.
+En el North Star de Signal deja de equivaler a un dashboard cliente separado: una Signal
+home puede componer Social Listening y varias revisiones metodológicas, mientras la
+ingesta canónica se reutiliza mediante vistas gobernadas.
 
 ### Codificación
 Proceso de etiquetar cada mención del corpus contra la tipología propia de una metodología. Para T&B: codificar significa asignar polaridad (trigger/barrier) y layer (psicológico/personal/social/cultural).
 
 ### Corpus
-Conjunto de menciones que sostiene una metodología corrida sobre una marca. Equivalente a `brand_methodology_corpus`.
+Conjunto gobernado y versionado de menciones, registros y observaciones que sostiene la
+inteligencia de un sujeto. `study_corpora` sigue siendo la unidad operativa durante la
+transición, pero el destino es separar la ingesta canónica reutilizable de las vistas y
+cortes específicos de cada metodología.
 
 ### Engine de Validación de Queries
 Componente central de Noisia Studio. Combina IA con seeds de metodología y memoria por industria para construir y refinar queries iterativamente hasta obtener un corpus accionable. Lo opera el Insights Manager con asistencia visual de progreso.
@@ -52,7 +59,9 @@ Sistema interpretativo estructurado que se aplica sobre un corpus. Las 6 Noisia:
 Atributo de un finding que indica si la marca puede actuar sobre él. Tres valores: `movible_por_marca`, `influenciable_parcialmente`, `estructural`.
 
 ### Output
-Un dashboard. No es un PDF ni un PowerPoint. Es un dashboard conectado en vivo a la data, con dos vistas de la misma data: Dashboard normal + Scrollytelling. El PDF es derivado.
+Revisión identificable publicada dentro de Signal: por ejemplo, una corrida estratégica
+T&B aprobada o un export derivado. No es la identidad permanente del dashboard. Signal
+es el producto vivo; el output conserva exactamente qué se aprobó o presentó.
 
 ### Pipeline_version
 Identificador de la versión del pipeline (ingesta + clasificación + análisis) que produjo una decisión. Cada decisión (clasificación de mención, exclusión, codificación) lleva su versión. Permite mejorar el pipeline sin perder histórico.
@@ -65,6 +74,26 @@ Vista vertical narrativa de un dashboard. Misma data que la vista Dashboard norm
 
 ### Signal phrase
 Frase del lenguaje del consumidor que la metodología busca en el corpus. Para T&B: "vale la pena el seguro" (trigger), "letra chica del seguro" (barrier). Las signal phrases son específicas por metodología.
+
+### Signal
+Dashboard vivo y permanente de inteligencia de una marca o tema. En una URL estable
+reúne Social Listening casi always-on, interpretaciones de grupos de métricas, corridas
+estratégicas revisadas, evidencia e histórico. Ver
+`31_SIGNAL_PRODUCT_NORTH_STAR.md`.
+
+### Metric group
+Familia gobernada de métricas que comparte pregunta, dimensiones, denominadores y
+política de refresh. Sus números se calculan de forma determinística; Claude interpreta
+un paquete versionado del grupo.
+
+### Metric interpretation
+Artefacto versionado producido por Claude para un metric group, periodo, filtros y
+watermark específicos. Explica significado e incertidumbre, pero no calcula los valores
+del dashboard.
+
+### Strategic release
+Revisión aprobada e inmutable de una corrida metodológica, como Triggers & Barriers
+mensual. Convive con la data operativa viva sin ser reescrita por cada import nuevo.
 
 ### Tag emergente
 Etiqueta en lenguaje del consumidor (no en jerga de marketing) que la IA asigna en el Paso 1 abierto de una metodología. Antes de codificar contra la tipología formal.

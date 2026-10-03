@@ -47,7 +47,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -55,3 +55,21 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
+      - name: Studio production build
+        # Build-time placeholders exercise route collection without any live
+        # service credential or database connection. Runtime secrets stay in Railway.
+        env:
+          DATABASE_URL: postgresql://test@127.0.0.1:1/noisia_test
+          KINDE_ISSUER_URL: https://ci.example.invalid
+          KINDE_CLIENT_ID: ci-placeholder
+          KINDE_CLIENT_SECRET: ci-placeholder
+          KINDE_SITE_URL: https://studio.example.invalid
+          KINDE_POST_LOGOUT_REDIRECT_URL: https://studio.example.invalid
+          KINDE_POST_LOGIN_REDIRECT_URL: https://studio.example.invalid/auth/continue
+        run: pnpm --filter @noisia/studio build
+      - name: Data OS readiness
+        run: pnpm data-os:verify
+      - name: Data OS local smoke
+        run: |
+          pnpm data-os:local-smoke
+          pnpm data-os:validate-local-smoke

@@ -125,7 +125,11 @@ export function ReportFilterPanel({
   }
 
   return (
-    <div className={`report-filter-shell${open ? " is-open" : ""}`} aria-hidden={!open}>
+    <div
+      aria-hidden={!open}
+      className={`report-filter-shell${open ? " is-open" : ""}`}
+      inert={!open}
+    >
       <button className="report-filter-scrim" onClick={onClose} tabIndex={open ? 0 : -1} type="button" />
       <aside aria-label={title} className="report-filter-panel" role="dialog">
         <header className="report-filter-head">

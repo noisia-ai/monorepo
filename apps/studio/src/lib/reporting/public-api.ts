@@ -1,9 +1,14 @@
 import { timingSafeEqual } from "node:crypto";
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { brands, methodologies, publishedOutputs, studyCorpora } from "@noisia/db";
+import { brands, methodologies, publishedOutputs, studyCorpora, themes } from "@noisia/db";
 
 import { db } from "@/lib/db";
+import {
+  sanitizePulseChartRefsForVisibility,
+  sanitizePulsePeriodsForVisibility
+} from "@/lib/signal-pulse/pulse-api";
+import { resolveSignalPulseVisibility } from "@/lib/signal-pulse/runtime-contracts";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
 
 export type ReportingDataset =
@@ -28,6 +33,8 @@ export type ReportingV2Section =
   | "action-cards"
   | "strategic-opportunities"
   | "competitive-intelligence"
+  | "engine-methodology"
+  | "methodology-view"
   | "emerging-patterns"
   | "future-signals"
   | "market-analysis"
@@ -35,6 +42,12 @@ export type ReportingV2Section =
   | "evidence-deep-dives"
   | "aggregates"
   | "evidence-sample"
+  | "signals"
+  | "marketing-moves"
+  | "paid-organic"
+  | "competitive-category"
+  | "sources"
+  | "quality"
   | "manifest";
 
 type ApiKeyConfig = {
@@ -120,6 +133,42 @@ const V2_SECTION_ALIASES: Record<string, ReportingV2Section> = {
   "competitive-intelligence": "competitive-intelligence",
   "competitive_intelligence": "competitive-intelligence",
   competitive: "competitive-intelligence",
+  "engine-methodology": "engine-methodology",
+  "engine_methodology": "engine-methodology",
+  "competitive-wave": "engine-methodology",
+  "competitive_wave": "engine-methodology",
+  "narrative-ownership": "engine-methodology",
+  "narrative_ownership": "engine-methodology",
+  "value-perception": "engine-methodology",
+  "value_perception": "engine-methodology",
+  "brand-positioning": "engine-methodology",
+  "brand_positioning": "engine-methodology",
+  "category-opportunity": "engine-methodology",
+  "category_opportunity": "engine-methodology",
+  "white-space": "engine-methodology",
+  "white_space": "engine-methodology",
+  "journey-friction": "engine-methodology",
+  "journey_friction": "engine-methodology",
+  "decision-velocity": "engine-methodology",
+  "decision_velocity": "engine-methodology",
+  "cultural-codes": "engine-methodology",
+  "cultural_codes": "engine-methodology",
+  "advocacy-proxy": "engine-methodology",
+  "advocacy_proxy": "engine-methodology",
+  "audience-segment": "engine-methodology",
+  "audience_segment": "engine-methodology",
+  "influence-architecture": "engine-methodology",
+  "influence_architecture": "engine-methodology",
+  "trust-risk": "engine-methodology",
+  "trust_risk": "engine-methodology",
+  "evidence-confidence": "engine-methodology",
+  "evidence_confidence": "engine-methodology",
+  engine: "engine-methodology",
+  lens: "engine-methodology",
+  "methodology-view": "methodology-view",
+  "methodology_view": "methodology-view",
+  "lens-view": "methodology-view",
+  "lens_view": "methodology-view",
   "emerging-patterns": "emerging-patterns",
   "emerging_patterns": "emerging-patterns",
   patterns: "emerging-patterns",
@@ -143,6 +192,19 @@ const V2_SECTION_ALIASES: Record<string, ReportingV2Section> = {
   "mentions-sample": "evidence-sample",
   "mentions_sample": "evidence-sample",
   verbatims: "evidence-sample",
+  signals: "signals",
+  "signal-pulse-signals": "signals",
+  "marketing-moves": "marketing-moves",
+  "marketing_moves": "marketing-moves",
+  moves: "marketing-moves",
+  "paid-organic": "paid-organic",
+  "paid_organic": "paid-organic",
+  performance: "paid-organic",
+  "competitive-category": "competitive-category",
+  "competitive_category": "competitive-category",
+  category: "competitive-category",
+  sources: "sources",
+  quality: "quality",
   manifest: "manifest"
 };
 
@@ -179,6 +241,7 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
       outputId: publishedOutputs.id,
       studyCorpusId: publishedOutputs.studyCorpusId,
       outputType: publishedOutputs.outputType,
+      kind: publishedOutputs.kind,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
@@ -186,6 +249,7 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
       publishedAt: publishedOutputs.publishedAt,
       brandName: brands.displayName,
       brandFallbackName: brands.name,
+      themeName: themes.name,
       methodologyName: methodologies.name,
       methodologySlug: publishedOutputs.methodologySlug
     })
@@ -193,6 +257,7 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
     .innerJoin(studyCorpora, eq(studyCorpora.id, publishedOutputs.studyCorpusId))
     .innerJoin(methodologies, eq(methodologies.id, studyCorpora.methodologyId))
     .leftJoin(brands, eq(brands.id, publishedOutputs.brandId))
+    .leftJoin(themes, eq(themes.id, publishedOutputs.themeId))
     .where(and(...where))
     .orderBy(desc(publishedOutputs.publishedAt), desc(publishedOutputs.updatedAt));
 
@@ -204,7 +269,7 @@ export async function listReportsForGrant(grant: ApiKeyGrant) {
     headline: row.headline,
     summary: row.summary,
     report_version: row.version,
-    brand_name: row.brandName ?? row.brandFallbackName,
+    brand_name: reportSubjectName(row),
     methodology: row.methodologyName,
     methodology_slug: row.methodologySlug,
     published_at: row.publishedAt?.toISOString() ?? null
@@ -223,16 +288,19 @@ export async function listReportsForGrantV2(grant: ApiKeyGrant) {
       outputId: publishedOutputs.id,
       studyCorpusId: publishedOutputs.studyCorpusId,
       outputType: publishedOutputs.outputType,
+      kind: publishedOutputs.kind,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
       version: publishedOutputs.version,
       manifest: publishedOutputs.manifest,
       payload: publishedOutputs.payload,
+      visibilityConfig: publishedOutputs.visibilityConfig,
       publishedAt: publishedOutputs.publishedAt,
       updatedAt: publishedOutputs.updatedAt,
       brandName: brands.displayName,
       brandFallbackName: brands.name,
+      themeName: themes.name,
       methodologyName: methodologies.name,
       methodologySlug: publishedOutputs.methodologySlug
     })
@@ -240,6 +308,7 @@ export async function listReportsForGrantV2(grant: ApiKeyGrant) {
     .innerJoin(studyCorpora, eq(studyCorpora.id, publishedOutputs.studyCorpusId))
     .innerJoin(methodologies, eq(methodologies.id, studyCorpora.methodologyId))
     .leftJoin(brands, eq(brands.id, publishedOutputs.brandId))
+    .leftJoin(themes, eq(themes.id, publishedOutputs.themeId))
     .where(and(...where))
     .orderBy(desc(publishedOutputs.publishedAt), desc(publishedOutputs.updatedAt));
 
@@ -257,12 +326,12 @@ export async function listReportsForGrantV2(grant: ApiKeyGrant) {
       summary: stringValue(report.summary) || row.summary,
       report_version: row.version,
       schema_version: numberValue(payload.schema_version) || row.version,
-      brand_name: stringValue(report.brand_name) || row.brandName || row.brandFallbackName,
+      brand_name: reportSubjectName(row, report),
       methodology: stringValue(report.methodology_name) || row.methodologyName,
       methodology_slug: stringValue(report.methodology_slug) || row.methodologySlug,
       published_at: row.publishedAt?.toISOString() ?? null,
       updated_at: row.updatedAt?.toISOString() ?? null,
-      sections: getEnabledV2Sections(row.manifest),
+      sections: getEnabledV2Sections(row.manifest, row.payload, row.visibilityConfig),
       links: {
         full: `/api/public/v2/reports/${row.outputId}`,
         sections: `/api/public/v2/reports/${row.outputId}/sections/{section}`
@@ -291,17 +360,20 @@ export async function getPublishedOutputForReporting(outputId: string) {
       studyCorpusId: publishedOutputs.studyCorpusId,
       brandId: publishedOutputs.brandId,
       outputType: publishedOutputs.outputType,
+      kind: publishedOutputs.kind,
       title: publishedOutputs.title,
       headline: publishedOutputs.headline,
       summary: publishedOutputs.summary,
       version: publishedOutputs.version,
       manifest: publishedOutputs.manifest,
       payload: publishedOutputs.payload,
+      visibilityConfig: publishedOutputs.visibilityConfig,
       publishedAt: publishedOutputs.publishedAt,
       generatedAt: publishedOutputs.createdAt,
       updatedAt: publishedOutputs.updatedAt,
       brandName: brands.displayName,
       brandFallbackName: brands.name,
+      themeName: themes.name,
       methodologyName: methodologies.name,
       methodologySlug: publishedOutputs.methodologySlug
     })
@@ -309,6 +381,7 @@ export async function getPublishedOutputForReporting(outputId: string) {
     .innerJoin(studyCorpora, eq(studyCorpora.id, publishedOutputs.studyCorpusId))
     .innerJoin(methodologies, eq(methodologies.id, studyCorpora.methodologyId))
     .leftJoin(brands, eq(brands.id, publishedOutputs.brandId))
+    .leftJoin(themes, eq(themes.id, publishedOutputs.themeId))
     .where(and(eq(publishedOutputs.id, outputId), eq(publishedOutputs.status, "published"), isNull(publishedOutputs.archivedAt)))
     .limit(1);
 
@@ -332,6 +405,10 @@ export function resolveReportingV2Section(section: string | null | undefined): R
 }
 
 export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, dataset: ReportingDataset) {
+  if (output.kind === "signal_pulse" || output.methodologySlug === "signal-pulse") {
+    return buildSignalPulseReportingDataset(output, dataset);
+  }
+
   const payload = asRecord(output.payload);
   const report = asRecord(payload.report);
   const metrics = asRecord(payload.metrics);
@@ -343,7 +420,7 @@ export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, d
       {
         output_id: output.outputId,
         report_version: output.version,
-        brand_name: stringValue(report.brand_name) || output.brandName || output.brandFallbackName,
+        brand_name: reportSubjectName(output, report),
         methodology: stringValue(report.methodology_name) || output.methodologyName,
         methodology_slug: stringValue(report.methodology_slug) || output.methodologySlug,
         business_question: stringValue(report.business_question),
@@ -580,6 +657,144 @@ export function buildReportingDataset(output: NonNullable<PublishedOutputRow>, d
   });
 }
 
+function buildSignalPulseReportingDataset(output: NonNullable<PublishedOutputRow>, dataset: ReportingDataset) {
+  const payload = asRecord(output.payload);
+  const report = asRecord(payload.report);
+  const executiveRead = asRecord(payload.executive_read);
+  const rawPeriods = arrayValue(payload.periods).map(asRecord);
+  const signals = arrayValue(payload.signals).map(asRecord);
+  const moves = arrayValue(payload.marketing_moves).map(asRecord);
+  const evidence = arrayValue(payload.evidence).map(asRecord);
+  const subjectName = reportSubjectName(output, report);
+  const visibility = resolveSignalPulseVisibility({
+    config: output.visibilityConfig,
+    isInternalUser: false
+  });
+  const periods = sanitizePulsePeriodsForVisibility(rawPeriods, visibility);
+
+  if (dataset === "summary") {
+    return [
+      {
+        output_id: output.outputId,
+        report_version: output.version,
+        brand_name: subjectName,
+        methodology: output.methodologyName,
+        methodology_slug: output.methodologySlug,
+        business_question: stringValue(report.business_question),
+        headline: stringValue(executiveRead.headline) || output.headline,
+        summary: stringValue(executiveRead.body) || output.summary,
+        generated_at: stringValue(payload.generated_at) || output.generatedAt?.toISOString() || null,
+        published_at: output.publishedAt?.toISOString() ?? null,
+        corpus_total_mentions: signals.reduce((total, signal) => total + numberValue(signal.volume), 0),
+        window_start: stringValue(periods[0]?.period_start),
+        window_end: stringValue(periods.at(-1)?.period_end),
+        window_months: periods.length
+      }
+    ];
+  }
+
+  if (dataset === "kpis") {
+    return [
+      ["signals_total", "Signals total", signals.length],
+      ["moves_total", "Marketing moves", moves.length],
+      ["periods_total", "Report periods", periods.length],
+      ["evidence_total", visibility.showEvidence ? evidence.length : 0]
+    ].map(([metricKey, metricLabel, metricValue]) => ({
+      output_id: output.outputId,
+      metric_key: metricKey,
+      metric_label: metricLabel,
+      metric_value: numberValue(metricValue)
+    }));
+  }
+
+  if (dataset === "findings") {
+    return signals.map((signal) => ({
+      output_id: output.outputId,
+      finding_id: stringValue(signal.id),
+      finding_name: stringValue(signal.title),
+      polarity: stringValue(signal.polarity_bucket),
+      layer: stringValue(signal.signal_type),
+      mobility: stringValue(signal.lifecycle_state),
+      confidence: stringValue(signal.confidence),
+      frequency_mentions: numberValue(signal.volume),
+      intensity_score: numberValue(signal.impact_v1),
+      predictive_capacity: 0,
+      composite_score: numberValue(signal.impact_v1),
+      citation_count: numberValue(signal.evidence_count),
+      period_start: stringValue(periods.at(-1)?.period_start),
+      period_end: stringValue(periods.at(-1)?.period_end),
+      public_quote: ""
+    }));
+  }
+
+  if (dataset === "recommendations") {
+    return moves.map((move, index) => ({
+      output_id: output.outputId,
+      recommendation_id: stringValue(move.id),
+      finding_id: stringArray(move.signal_refs)[0] ?? "",
+      finding_ids: stringArray(move.signal_refs).join(","),
+      finding_name: stringValue(move.move_type),
+      kind: stringValue(move.move_type),
+      target_team: stringValue(move.owner_suggestion),
+      recommendation_text: stringValue(move.action_text),
+      rationale: "",
+      intervention_type: stringValue(move.timing),
+      estimated_effort: "",
+      estimated_impact: "",
+      success_signal: stringValue(move.measurement_suggestion),
+      suggested_owner: stringValue(move.owner_suggestion),
+      recommended_medium: "",
+      recommended_tone: "",
+      confidence: stringValue(move.confidence),
+      priority_rank: index + 1
+    }));
+  }
+
+  if (dataset === "time-series-monthly") {
+    return periods.map((period) => {
+      const coverage = asRecord(period.coverage);
+      return {
+        output_id: output.outputId,
+        month: stringValue(period.label),
+        mention_count: numberValue(coverage.conversation)
+      };
+    });
+  }
+
+  if (dataset === "platform-distribution") {
+    const counts = new Map<string, number>();
+    for (const period of periods) {
+      const bySource = asRecord(asRecord(period.coverage).by_source);
+      for (const [platform, count] of Object.entries(bySource)) {
+        counts.set(platform, (counts.get(platform) ?? 0) + numberValue(count));
+      }
+    }
+    const total = Array.from(counts.values()).reduce((sum, count) => sum + count, 0);
+    return Array.from(counts.entries()).map(([platform, count]) => ({
+      output_id: output.outputId,
+      platform,
+      mention_count: count,
+      share_pct: total > 0 ? Math.round((count / total) * 10000) / 100 : 0
+    }));
+  }
+
+  if (dataset === "evidence-sample") {
+    if (!visibility.showEvidence) return [];
+    return evidence.slice(0, 80).map((row) => ({
+      output_id: output.outputId,
+      mention_id: stringValue(row.mention_id),
+      finding_id: stringValue(row.signal_id),
+      finding_name: "",
+      text: stringValue(row.quote),
+      platform: stringValue(row.platform),
+      published_at: stringValue(row.published_at),
+      is_protagonist: Boolean(row.is_protagonist)
+    }));
+  }
+
+  return [];
+}
+
 export function jsonDatasetResponse(output: NonNullable<PublishedOutputRow>, dataset: ReportingDataset, rows: Array<Record<string, unknown>>) {
   return Response.json(
     {
@@ -608,11 +823,16 @@ export function csvDatasetResponse(dataset: ReportingDataset, rows: Array<Record
 }
 
 export function buildReportingV2Document(output: NonNullable<PublishedOutputRow>) {
+  if (output.kind === "signal_pulse" || output.methodologySlug === "signal-pulse") {
+    return buildSignalPulseReportingV2Document(output);
+  }
+
   const payload = asRecord(output.payload);
   const viewModel = adaptTbSignalPayload(payload);
   const aggregates = asRecord(viewModel.aggregates);
   const corpus = asRecord(aggregates.corpus);
   const corpusWindow = asRecord(corpus.window);
+  const subjectName = reportSubjectName(output, asRecord(payload.report)) ?? viewModel.report.brand_name;
   const metadata = {
     api_version: 2,
     output_id: output.outputId,
@@ -623,7 +843,7 @@ export function buildReportingV2Document(output: NonNullable<PublishedOutputRow>
     published_at: output.publishedAt?.toISOString() ?? null,
     generated_at: stringValue(payload.generated_at) || output.generatedAt?.toISOString() || null,
     updated_at: output.updatedAt?.toISOString() ?? null,
-    brand_name: viewModel.report.brand_name || output.brandName || output.brandFallbackName,
+    brand_name: subjectName,
     methodology: viewModel.report.methodology_name || output.methodologyName,
     methodology_slug: viewModel.report.methodology_slug || output.methodologySlug,
     business_question: viewModel.report.business_question,
@@ -636,7 +856,7 @@ export function buildReportingV2Document(output: NonNullable<PublishedOutputRow>
   };
   const sections = {
     overview: {
-      report: viewModel.report,
+      report: { ...viewModel.report, brand_name: subjectName },
       metrics: viewModel.metrics,
       knowledge_impact: viewModel.knowledgeImpact,
       client_boundaries: viewModel.clientBoundaries
@@ -649,6 +869,8 @@ export function buildReportingV2Document(output: NonNullable<PublishedOutputRow>
     action_cards: viewModel.actionCards,
     strategic_opportunities: viewModel.strategicOpportunities,
     competitive_intelligence: viewModel.competitive,
+    engine_methodology: viewModel.engineBlock,
+    methodology_view: viewModel.engineBlock?.methodology_view ?? null,
     emerging_patterns: viewModel.emergingPatterns,
     future_signals: viewModel.futureSignals,
     market_analysis: viewModel.marketAnalysis,
@@ -670,39 +892,147 @@ export function buildReportingV2Document(output: NonNullable<PublishedOutputRow>
 
 export function buildReportingV2Section(output: NonNullable<PublishedOutputRow>, section: ReportingV2Section) {
   const document = buildReportingV2Document(output);
+  const sections = document.sections as Record<string, unknown>;
 
   switch (section) {
     case "full":
       return document;
     case "overview":
-      return document.sections.overview;
+      return sections.overview;
     case "findings":
-      return document.sections.findings;
+      return sections.findings;
     case "decision-field":
-      return document.sections.decision_field;
+      return sections.decision_field;
     case "action-cards":
-      return document.sections.action_cards;
+      return sections.action_cards;
     case "strategic-opportunities":
-      return document.sections.strategic_opportunities;
+      return sections.strategic_opportunities;
     case "competitive-intelligence":
-      return document.sections.competitive_intelligence;
+      return sections.competitive_intelligence;
+    case "engine-methodology":
+      return sections.engine_methodology;
+    case "methodology-view":
+      return sections.methodology_view;
     case "emerging-patterns":
-      return document.sections.emerging_patterns;
+      return sections.emerging_patterns;
     case "future-signals":
-      return document.sections.future_signals;
+      return sections.future_signals;
     case "market-analysis":
-      return document.sections.market_analysis;
+      return sections.market_analysis;
     case "knowledge-impact":
-      return document.sections.knowledge_impact;
+      return sections.knowledge_impact;
     case "evidence-deep-dives":
-      return document.sections.evidence_deep_dives;
+      return sections.evidence_deep_dives;
     case "aggregates":
-      return document.sections.aggregates;
+      return sections.aggregates;
     case "evidence-sample":
-      return document.sections.evidence_sample;
+      return sections.evidence_sample;
+    case "signals":
+      return sections.signals;
+    case "marketing-moves":
+      return sections.marketing_moves;
+    case "paid-organic":
+      return sections.paid_organic;
+    case "competitive-category":
+      return sections.competitive_category;
+    case "sources":
+      return sections.sources;
+    case "quality":
+      return sections.quality;
     case "manifest":
-      return document.sections.manifest;
+      return sections.manifest;
   }
+}
+
+function buildSignalPulseReportingV2Document(output: NonNullable<PublishedOutputRow>) {
+  const payload = asRecord(output.payload);
+  const report = asRecord(payload.report);
+  const executiveRead = asRecord(payload.executive_read);
+  const rawPeriods = arrayValue(payload.periods).map(asRecord);
+  const signals = arrayValue(payload.signals).map(asRecord);
+  const moves = arrayValue(payload.marketing_moves).map(asRecord);
+  const evidence = arrayValue(payload.evidence).map(asRecord);
+  const sources = arrayValue(payload.sources).map(asRecord);
+  const qualityGates = arrayValue(payload.quality_gates).map(asRecord);
+  const performance = asRecord(payload.performance);
+  const rawChartRefs = asRecord(payload.chart_refs);
+  const cost = asRecord(payload.cost);
+  const visibility = resolveSignalPulseVisibility({
+    config: output.visibilityConfig,
+    isInternalUser: false
+  });
+  const periods = sanitizePulsePeriodsForVisibility(rawPeriods, visibility);
+  const chartRefs = sanitizePulseChartRefsForVisibility(rawChartRefs, visibility);
+  const sectionsEnabled = getSignalPulseV2Sections(visibility);
+  const subjectName = reportSubjectName(output, report) ?? stringValue(report.title);
+  const metadata = {
+    api_version: 2,
+    output_id: output.outputId,
+    output_type: output.outputType,
+    report_version: output.version,
+    schema_version: numberValue(payload.schema_version) || output.version,
+    title: output.title,
+    published_at: output.publishedAt?.toISOString() ?? null,
+    generated_at: stringValue(payload.generated_at) || output.generatedAt?.toISOString() || null,
+    updated_at: output.updatedAt?.toISOString() ?? null,
+    brand_name: subjectName,
+    methodology: output.methodologyName,
+    methodology_slug: output.methodologySlug,
+    business_question: stringValue(report.business_question),
+    visibility: {
+      paid_data: visibility.showPaidOrganic,
+      competitive: visibility.showCompetitive,
+      evidence: visibility.showEvidence
+    },
+    corpus: {
+      period_count: periods.length,
+      window_start: stringValue(periods[0]?.period_start),
+      window_end: stringValue(periods.at(-1)?.period_end)
+    }
+  };
+  const locked = (section: string) => ({
+    locked: true,
+    section,
+    reason: "not_authorized_for_client_export"
+  });
+  const sections = {
+    overview: {
+      report: {
+        title: stringValue(report.title) || output.title,
+        brand_name: subjectName,
+        business_question: stringValue(report.business_question)
+      },
+      executive_read: executiveRead,
+      periods,
+      chart_refs: chartRefs
+    },
+    signals,
+    marketing_moves: moves,
+    evidence_sample: visibility.showEvidence ? evidence.slice(0, 80) : locked("evidence_sample"),
+    paid_organic: visibility.showPaidOrganic ? performance : locked("paid_organic"),
+    competitive_category: visibility.showCompetitive ? {
+      signals,
+      evidence_sample: visibility.showEvidence ? evidence.slice(0, 80) : []
+    } : locked("competitive_category"),
+    sources: visibility.showSources ? sources : locked("sources"),
+    quality: visibility.showQuality ? {
+      quality_gates: qualityGates,
+      limitations: arrayValue(payload.limitations).map(stringValue).filter(Boolean),
+      cost
+    } : locked("quality"),
+    manifest: {
+      kind: "signal_pulse",
+      sections: sectionsEnabled,
+      visibility: metadata.visibility
+    }
+  };
+
+  return {
+    metadata,
+    report: sections.overview.report,
+    manifest: sections.manifest,
+    sections
+  };
 }
 
 export function jsonV2Response(
@@ -784,6 +1114,13 @@ function canAccessOutput(outputs: string[], outputId: string) {
   return outputs.includes("*") || outputs.includes(outputId);
 }
 
+function reportSubjectName(
+  row: { brandName?: string | null; brandFallbackName?: string | null; themeName?: string | null },
+  report: Record<string, unknown> = {}
+) {
+  return stringValue(report.brand_name) || row.brandName || row.brandFallbackName || row.themeName || null;
+}
+
 function safeEqual(a: string, b: string) {
   const aBuffer = Buffer.from(a);
   const bBuffer = Buffer.from(b);
@@ -831,15 +1168,43 @@ function numberValue(value: unknown) {
   return 0;
 }
 
-function getEnabledV2Sections(manifest: unknown) {
+export function getEnabledV2Sections(manifest: unknown, payload: unknown = null, visibilityConfig: unknown = null) {
   const flags = asRecord(manifest);
-  const sectionMap: Array<[ReportingV2Section, string[]]> = [
+  const payloadRecord = asRecord(payload);
+  if (stringValue(payloadRecord.kind) === "signal_pulse" || stringValue(flags.kind) === "signal_pulse") {
+    return getSignalPulseV2Sections(resolveSignalPulseVisibility({
+      config: visibilityConfig,
+      isInternalUser: false
+    }));
+  }
+  const engineBlock = asRecord(asRecord(payload).engine_block);
+  const hasEngineBlock = Boolean(stringValue(engineBlock.methodology_slug) || stringValue(engineBlock.kind));
+  const engineModuleKeys = [
+    "engine_methodology",
+    "competitive_wave",
+    "narrative_ownership",
+    "value_perception",
+    "brand_positioning",
+    "category_opportunity",
+    "white_space",
+    "journey_friction",
+    "decision_velocity",
+    "cultural_codes",
+    "advocacy_proxy",
+    "audience_segment",
+    "influence_architecture",
+    "trust_risk",
+    "evidence_confidence"
+  ];
+  const sectionMap: Array<[ReportingV2Section, string[], { requiresEngine?: boolean }?]> = [
     ["overview", ["overview"]],
     ["findings", ["overview", "tb_decision_field", "evidence"]],
     ["decision-field", ["tb_decision_field"]],
     ["action-cards", ["action_studio"]],
     ["strategic-opportunities", ["opportunities"]],
     ["competitive-intelligence", ["competitive_intelligence"]],
+    ["engine-methodology", engineModuleKeys, { requiresEngine: true }],
+    ["methodology-view", engineModuleKeys, { requiresEngine: true }],
     ["emerging-patterns", ["emerging_patterns"]],
     ["future-signals", ["emerging_patterns"]],
     ["market-analysis", ["emerging_patterns"]],
@@ -851,10 +1216,26 @@ function getEnabledV2Sections(manifest: unknown) {
   ];
 
   if (Object.keys(flags).length === 0) {
-    return sectionMap.map(([section]) => section);
+    return sectionMap
+      .filter(([, , options]) => !options?.requiresEngine || hasEngineBlock)
+      .map(([section]) => section);
   }
 
   return sectionMap
-    .filter(([, keys]) => keys.some((key) => flags[key] !== false))
+    .filter(([, keys, options]) => (!options?.requiresEngine || hasEngineBlock) && keys.some((key) => flags[key] !== false))
     .map(([section]) => section);
+}
+
+function getSignalPulseV2Sections(visibility: ReturnType<typeof resolveSignalPulseVisibility>): ReportingV2Section[] {
+  return [
+    "overview",
+    "signals",
+    "marketing-moves",
+    visibility.showEvidence ? "evidence-sample" : null,
+    visibility.showPaidOrganic ? "paid-organic" : null,
+    visibility.showCompetitive ? "competitive-category" : null,
+    visibility.showSources ? "sources" : null,
+    visibility.showQuality ? "quality" : null,
+    "manifest"
+  ].filter((section): section is ReportingV2Section => Boolean(section));
 }

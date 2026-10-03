@@ -1,0 +1,48 @@
+slug: signal-pulse
+name: Signal Pulse
+version: "0.1"
+status: beta
+
+business_question: |
+  Que senales tacticas de marketing cambiaron en el periodo, que evidencia
+  las sostiene y que movimientos debe priorizar el equipo de Marketing?
+
+inputs:
+  corpus:
+    minimum_viable: 1500
+    ideal: 5000
+  performance_records:
+    required_for_paid_organic: true
+
+outputs:
+  - id: signal_pulse_overview
+    name: Signal Pulse Overview
+    type: pulse_dashboard
+  - id: signal_library
+    name: Signal Library
+    type: signal_table
+  - id: marketing_moves
+    name: Marketing Moves
+    type: action_board
+
+default_dashboard_blocks:
+  - block_id: overview
+  - block_id: signals
+  - block_id: marketing_moves
+  - block_id: evidence
+  - block_id: corpus_view
+  - block_id: composer
+  - block_id: quality_settings
+
+quality_gates:
+  - id: period_coverage
+    description: "Cada corte publicado tiene periodos comparables o warnings visibles."
+  - id: chart_data_available
+    description: "Cada chart critico usa un data_ref materializado."
+  - id: no_invented_numbers
+    description: "Los numeros visibles vienen de SQL/materializaciones, no de texto generado."
+  - id: cost_within_budget
+    description: "La corrida respeta el budget cap confirmado antes de encolar."
+
+ai_prompts:
+  engine_spec: signal-pulse

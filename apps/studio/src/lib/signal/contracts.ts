@@ -4,6 +4,95 @@ export type TbPolarity = "trigger" | "barrier" | "mixed";
 export type TbLayer = "psicologico" | "personal" | "social" | "cultural";
 export type TbMobility = "movible_por_marca" | "parcialmente_movible" | "estructural";
 export type TbConfidence = "alta" | "media" | "baja_direccional";
+export type CompetitiveOwnership =
+  | "brand_owned"
+  | "competitor_owned"
+  | "category_wide"
+  | "shared"
+  | "insufficient_evidence";
+
+export type EngineChart = {
+  chart_id: string;
+  type:
+    | "matrix_2x2"
+    | "wave_plot"
+    | "heatmap"
+    | "force_graph"
+    | "radial"
+    | "radar"
+    | "scatter_effort_impact"
+    | "bar_ranking"
+    | "diverging_bar"
+    | "gauge"
+    | "timeline"
+    | "waterfall"
+    | "stacked_share"
+    | "bubble_field"
+    | "sankey_flow"
+    | "evidence_list"
+    | "tension_card"
+    | "confidence_badge";
+  title: string;
+  data: unknown;
+  encodings?: Record<string, unknown>;
+  evidence_ids: string[];
+  confidence: TbConfidence;
+};
+
+export type EngineMethodologyBlock = {
+  kind: string;
+  title: string;
+  subtitle: string | null;
+  methodology_slug: string;
+  summary: string;
+  methodology_view?: EngineMethodologyView | null;
+  charts: EngineChart[];
+  findings: Array<{
+    finding_id: string;
+    title: string;
+    dimensions: Record<string, unknown>;
+    score: number | null;
+    ownership: CompetitiveOwnership | null;
+    evidence_count: number;
+    public_quote: string | null;
+    confidence: TbConfidence;
+  }>;
+  evidence_index: Array<{ finding_id: string; mention_ids: string[] }>;
+  limitations: string[];
+};
+
+export type EngineMethodologyView = {
+  kind: string;
+  title: string;
+  primary_question: string;
+  readiness: {
+    status: "beta_ready" | "directional" | "insufficient_evidence";
+    reason: string;
+    missing: string[];
+  };
+  cards: Array<{
+    label: string;
+    value: string;
+    detail: string;
+    confidence: TbConfidence;
+  }>;
+  rows: Array<{
+    finding_id: string;
+    label: string;
+    axis: string | null;
+    entity: string | null;
+    score: number | null;
+    evidence_count: number;
+    confidence: TbConfidence;
+    dimensions: Record<string, unknown>;
+  }>;
+  conclusions: Array<{
+    kind: "protect" | "dispute" | "watch" | "validate";
+    title: string;
+    detail: string;
+    finding_ids: string[];
+  }>;
+};
 
 export type PublicTbFinding = {
   finding_id: string;
@@ -75,6 +164,20 @@ export type ComparativeDashboardPayload = {
     competitor_mentions: number;
     category_mentions: number;
   };
+  charts: Array<{
+    chart_id: string;
+    type: "heatmap" | "bubble_field" | "diverging_bar" | "bar_ranking";
+    title: string;
+    data: unknown;
+    confidence: TbConfidence;
+  }>;
+  conclusions: {
+    brand_owned_triggers: unknown[];
+    competitor_owned_triggers: unknown[];
+    category_wide_barriers: unknown[];
+    whitespace: unknown[];
+    gaps_accionables: unknown[];
+  };
   ownership_rankings: Array<{
     ownership: string;
     findings_count: number;
@@ -90,12 +193,54 @@ export type ComparativeDashboardPayload = {
       finding_name: string;
       mention_count: number;
       share_pct: number;
-      ownership: string;
+      ownership: CompetitiveOwnership;
+      differentiation_index: number;
+      confidence: TbConfidence;
     }>;
   }>;
 };
 
+export type CompetitiveTbMatrixBlock = {
+  kind: "competitive_tb_matrix";
+  title: string;
+  summary: string;
+  findings: Array<{
+    finding_id: string;
+    finding_name: string;
+    polarity: TbPolarity;
+    layer: string;
+    mobility: string | null;
+    total_mentions: number;
+    ownership: CompetitiveOwnership;
+    dominant_entity_id: string | null;
+    dominant_entity_name: string | null;
+    confidence: TbConfidence;
+    by_entity: Array<{
+      entity_id: string;
+      entity_name: string;
+      entity_kind: string;
+      mention_count: number;
+      share_pct: number;
+      ownership: CompetitiveOwnership;
+      differentiation_index: number;
+      confidence: TbConfidence;
+      evidence_ids: string[];
+    }>;
+  }>;
+  rankings: Array<{
+    entity_id: string;
+    entity_name: string;
+    owned_findings_count: number;
+    strongest_findings: string[];
+  }>;
+  disputable: unknown[];
+  do_not_copy: unknown[];
+  exclusive_barriers: unknown[];
+  limitations: string[];
+};
+
 export type MethodologyComparativeBlocks = {
+  competitive_tb_matrix: CompetitiveTbMatrixBlock;
   vpm: {
     title: string;
     rows: Array<{ entity: string; value_axis: string; score: number | null; evidence_count: number }>;
@@ -199,6 +344,14 @@ export type EvidenceDeepDive = {
   proof_points: string[];
 };
 
+export type LiveIntelligencePayloadBlock = {
+  status: string;
+  signals: number;
+  observations: number;
+  evidence: number;
+  finding_links: unknown[];
+};
+
 export type SignalPayloadV2 = {
   schema_version: 4;
   generated_at: string;
@@ -223,6 +376,7 @@ export type SignalPayloadV2 = {
   action_cards: PublicActionCard[];
   competitive: CompetitiveSignalPayload;
   methodology_blocks: MethodologyComparativeBlocks;
+  engine_block?: EngineMethodologyBlock | null;
   emerging_patterns: EmergingPattern[];
   knowledge_impact: SignalKnowledgeImpact | null;
   strategic_opportunities: StrategicOpportunity[];
@@ -235,4 +389,5 @@ export type SignalPayloadV2 = {
   actions: unknown;
   aggregates: unknown;
   client_boundaries: string[];
+  live_intelligence?: LiveIntelligencePayloadBlock;
 };

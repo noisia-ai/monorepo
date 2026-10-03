@@ -1,0 +1,44 @@
+slug: competitive-wave
+name: Competitive / Market Wave
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué entidades lideran la categoría, cuáles son retadoras y dónde existe
+  whitespace competitivo defendible?
+
+inputs:
+  corpus:
+    minimum_viable: 1500
+    ideal: 5000
+  competitive_corpus:
+    required: true
+    minimum_entities: 3
+
+outputs:
+  - id: wave_plot
+    name: Competitive Wave Plot
+    type: wave_plot
+  - id: score_breakdown
+    name: Score Breakdown
+    type: bar_ranking
+  - id: evidence_drilldown
+    name: Evidence Drilldown
+    type: evidence_list
+
+default_dashboard_blocks:
+  - block_id: wave_plot
+  - block_id: score_breakdown
+  - block_id: confidence_layer
+  - block_id: evidence_list_top
+
+quality_gates:
+  - id: axis_balance
+    description: "Los ejes de comparacion tienen evidencia suficiente por entidad."
+  - id: competitor_required
+    description: "La lectura no se publica sin entidades competitivas atribuidas."
+  - id: confidence_calibrated
+    description: "Cada punto de la wave lleva confianza y evidencia."
+
+ai_prompts:
+  engine_spec: competitive-wave

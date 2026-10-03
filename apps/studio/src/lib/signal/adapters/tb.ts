@@ -1,5 +1,8 @@
 import type {
+  CompetitiveOwnership,
   CompetitiveSignalPayload,
+  EngineMethodologyBlock,
+  EngineMethodologyView,
   EvidenceDeepDive,
   EmergingPattern,
   FutureSignal,
@@ -23,6 +26,7 @@ export type TbDashboardViewModel = {
   actionCards: PublicActionCard[];
   competitive: CompetitiveSignalPayload;
   methodologyBlocks: MethodologyComparativeBlocks;
+  engineBlock: EngineMethodologyBlock | null;
   emergingPatterns: EmergingPattern[];
   knowledgeImpact: SignalKnowledgeImpact | null;
   strategicOpportunities: StrategicOpportunity[];
@@ -68,6 +72,7 @@ export function adaptTbSignalPayload(payload: unknown): TbDashboardViewModel {
     actionCards,
     competitive: normalizeCompetitive(source.competitive),
     methodologyBlocks: normalizeMethodologyBlocks(source.methodology_blocks),
+    engineBlock: normalizeEngineBlock(source.engine_block),
     emergingPatterns: normalizeEmergingPatterns(source.emerging_patterns),
     knowledgeImpact: normalizeKnowledgeImpact(source.knowledge_impact),
     strategicOpportunities: normalizeStrategicOpportunities(source.strategic_opportunities),
@@ -81,6 +86,117 @@ export function adaptTbSignalPayload(payload: unknown): TbDashboardViewModel {
     aggregates: asRecord(source.aggregates),
     clientBoundaries: stringArray(source.client_boundaries)
   };
+}
+
+function normalizeEngineBlock(input: unknown): EngineMethodologyBlock | null {
+  const value = asRecord(input);
+  if (!stringValue(value.kind) && !stringValue(value.methodology_slug)) return null;
+  return {
+    kind: stringValue(value.kind) || stringValue(value.methodology_slug),
+    title: stringValue(value.title) || "Engine methodology",
+    subtitle: stringValue(value.subtitle) || null,
+    methodology_slug: stringValue(value.methodology_slug) || stringValue(value.kind),
+    summary: stringValue(value.summary),
+    methodology_view: normalizeEngineMethodologyView(value.methodology_view),
+    charts: arrayValue(value.charts).map(asRecord).map((chart, index) => ({
+      chart_id: stringValue(chart.chart_id) || `chart-${index + 1}`,
+      type: coerceEngineChartType(chart.type),
+      title: stringValue(chart.title) || "Chart",
+      data: chart.data ?? null,
+      encodings: asRecord(chart.encodings),
+      evidence_ids: stringArray(chart.evidence_ids),
+      confidence: coerceConfidence(chart.confidence)
+    })),
+    findings: arrayValue(value.findings).map(asRecord).map((finding, index) => ({
+      finding_id: stringValue(finding.finding_id) || `engine-${index + 1}`,
+      title: stringValue(finding.title) || "Finding",
+      dimensions: asRecord(finding.dimensions),
+      score: finding.score === null ? null : numberValue(finding.score),
+      ownership: stringValue(finding.ownership) ? coerceOwnership(finding.ownership) : null,
+      evidence_count: numberValue(finding.evidence_count),
+      public_quote: stringValue(finding.public_quote) || null,
+      confidence: coerceConfidence(finding.confidence)
+    })),
+    evidence_index: arrayValue(value.evidence_index).map(asRecord).map((item) => ({
+      finding_id: stringValue(item.finding_id),
+      mention_ids: stringArray(item.mention_ids)
+    })).filter((item) => item.finding_id),
+    limitations: stringArray(value.limitations)
+  };
+}
+
+function normalizeEngineMethodologyView(input: unknown): EngineMethodologyView | null {
+  const value = asRecord(input);
+  if (!stringValue(value.kind) && !stringValue(value.title)) return null;
+  const readiness = asRecord(value.readiness);
+  return {
+    kind: stringValue(value.kind) || "engine_methodology",
+    title: stringValue(value.title) || "Methodology view",
+    primary_question: stringValue(value.primary_question),
+    readiness: {
+      status: coerceEngineReadiness(readiness.status),
+      reason: stringValue(readiness.reason),
+      missing: stringArray(readiness.missing)
+    },
+    cards: arrayValue(value.cards).map(asRecord).map((card) => ({
+      label: stringValue(card.label),
+      value: stringValue(card.value),
+      detail: stringValue(card.detail),
+      confidence: coerceConfidence(card.confidence)
+    })).filter((card) => card.label),
+    rows: arrayValue(value.rows).map(asRecord).map((row, index) => ({
+      finding_id: stringValue(row.finding_id) || `engine-view-${index + 1}`,
+      label: stringValue(row.label),
+      axis: stringValue(row.axis) || null,
+      entity: stringValue(row.entity) || null,
+      score: row.score === null ? null : numberValue(row.score),
+      evidence_count: numberValue(row.evidence_count),
+      confidence: coerceConfidence(row.confidence),
+      dimensions: asRecord(row.dimensions)
+    })).filter((row) => row.label),
+    conclusions: arrayValue(value.conclusions).map(asRecord).map((item) => ({
+      kind: coerceEngineConclusionKind(item.kind),
+      title: stringValue(item.title),
+      detail: stringValue(item.detail),
+      finding_ids: stringArray(item.finding_ids)
+    })).filter((item) => item.title || item.detail)
+  };
+}
+
+function coerceEngineReadiness(value: unknown): EngineMethodologyView["readiness"]["status"] {
+  if (value === "beta_ready" || value === "insufficient_evidence") return value;
+  return "directional";
+}
+
+function coerceEngineConclusionKind(value: unknown): EngineMethodologyView["conclusions"][number]["kind"] {
+  if (value === "protect" || value === "dispute" || value === "watch") return value;
+  return "validate";
+}
+
+function coerceEngineChartType(value: unknown): EngineMethodologyBlock["charts"][number]["type"] {
+  const allowed: EngineMethodologyBlock["charts"][number]["type"][] = [
+    "matrix_2x2",
+    "wave_plot",
+    "heatmap",
+    "force_graph",
+    "radial",
+    "radar",
+    "scatter_effort_impact",
+    "bar_ranking",
+    "diverging_bar",
+    "gauge",
+    "timeline",
+    "waterfall",
+    "stacked_share",
+    "bubble_field",
+    "sankey_flow",
+    "evidence_list",
+    "tension_card",
+    "confidence_badge"
+  ];
+  return allowed.includes(value as EngineMethodologyBlock["charts"][number]["type"])
+    ? value as EngineMethodologyBlock["charts"][number]["type"]
+    : "evidence_list";
 }
 
 function normalizeKnowledgeImpact(input: unknown): SignalKnowledgeImpact | null {
@@ -299,6 +415,20 @@ function normalizeComparativeDashboard(input: unknown): CompetitiveSignalPayload
       competitor_mentions: numberValue(summary.competitor_mentions),
       category_mentions: numberValue(summary.category_mentions)
     },
+    charts: arrayValue(value.charts).map(asRecord).map((chart, index) => ({
+      chart_id: stringValue(chart.chart_id) || `comparative-chart-${index + 1}`,
+      type: coerceComparativeChartType(chart.type),
+      title: stringValue(chart.title) || "Comparative chart",
+      data: chart.data ?? null,
+      confidence: coerceConfidence(chart.confidence)
+    })),
+    conclusions: {
+      brand_owned_triggers: arrayValue(asRecord(value.conclusions).brand_owned_triggers),
+      competitor_owned_triggers: arrayValue(asRecord(value.conclusions).competitor_owned_triggers),
+      category_wide_barriers: arrayValue(asRecord(value.conclusions).category_wide_barriers),
+      whitespace: arrayValue(asRecord(value.conclusions).whitespace),
+      gaps_accionables: arrayValue(asRecord(value.conclusions).gaps_accionables)
+    },
     ownership_rankings: arrayValue(value.ownership_rankings).map(asRecord).map((item) => ({
       ownership: stringValue(item.ownership),
       findings_count: numberValue(item.findings_count),
@@ -314,7 +444,9 @@ function normalizeComparativeDashboard(input: unknown): CompetitiveSignalPayload
         finding_name: stringValue(finding.finding_name),
         mention_count: numberValue(finding.mention_count),
         share_pct: numberValue(finding.share_pct),
-        ownership: stringValue(finding.ownership)
+        ownership: coerceOwnership(finding.ownership),
+        differentiation_index: numberValue(finding.differentiation_index),
+        confidence: coerceConfidence(finding.confidence)
       })).filter((finding) => finding.finding_id)
     })).filter((entity) => entity.entity_id && entity.entity_name)
   };
@@ -330,6 +462,7 @@ function normalizeMethodologyBlocks(input: unknown): MethodologyComparativeBlock
   const velocity = block("decision_velocity", "Decision Velocity · Blockers/accelerators por journey");
 
   return {
+    competitive_tb_matrix: normalizeCompetitiveTbMatrix(value.competitive_tb_matrix),
     vpm: {
       title: stringValue(vpm.title),
       rows: arrayValue(vpm.rows).map(asRecord).map((row) => ({
@@ -378,6 +511,48 @@ function normalizeMethodologyBlocks(input: unknown): MethodologyComparativeBlock
   };
 }
 
+function normalizeCompetitiveTbMatrix(input: unknown): MethodologyComparativeBlocks["competitive_tb_matrix"] {
+  const value = asRecord(input);
+  return {
+    kind: "competitive_tb_matrix",
+    title: stringValue(value.title) || "Competitive T&B Matrix · Triggers y barriers por entidad",
+    summary: stringValue(value.summary) || "Matriz densa de findings por entidad con share, ownership, diferencial y confianza.",
+    findings: arrayValue(value.findings).map(asRecord).map((finding) => ({
+      finding_id: stringValue(finding.finding_id),
+      finding_name: stringValue(finding.finding_name),
+      polarity: coercePolarity(finding.polarity),
+      layer: stringValue(finding.layer) || "unmapped",
+      mobility: stringValue(finding.mobility) || null,
+      total_mentions: numberValue(finding.total_mentions),
+      ownership: coerceOwnership(finding.ownership),
+      dominant_entity_id: stringValue(finding.dominant_entity_id) || null,
+      dominant_entity_name: stringValue(finding.dominant_entity_name) || null,
+      confidence: coerceConfidence(finding.confidence),
+      by_entity: arrayValue(finding.by_entity).map(asRecord).map((entity) => ({
+        entity_id: stringValue(entity.entity_id),
+        entity_name: stringValue(entity.entity_name),
+        entity_kind: stringValue(entity.entity_kind),
+        mention_count: numberValue(entity.mention_count),
+        share_pct: numberValue(entity.share_pct),
+        ownership: coerceOwnership(entity.ownership),
+        differentiation_index: numberValue(entity.differentiation_index),
+        confidence: coerceConfidence(entity.confidence),
+        evidence_ids: stringArray(entity.evidence_ids)
+      })).filter((entity) => entity.entity_id && entity.entity_name)
+    })).filter((finding) => finding.finding_id && finding.finding_name),
+    rankings: arrayValue(value.rankings).map(asRecord).map((row) => ({
+      entity_id: stringValue(row.entity_id),
+      entity_name: stringValue(row.entity_name),
+      owned_findings_count: numberValue(row.owned_findings_count),
+      strongest_findings: stringArray(row.strongest_findings)
+    })).filter((row) => row.entity_id && row.entity_name),
+    disputable: arrayValue(value.disputable),
+    do_not_copy: arrayValue(value.do_not_copy),
+    exclusive_barriers: arrayValue(value.exclusive_barriers),
+    limitations: stringArray(value.limitations)
+  };
+}
+
 function normalizeEmergingPatterns(input: unknown): EmergingPattern[] {
   return arrayValue(input).map(asRecord).map((item, index) => ({
     pattern_id: stringValue(item.pattern_id) || `EP-${index + 1}`,
@@ -419,6 +594,26 @@ function coerceMobility(value: unknown): PublicTbFinding["mobility"] {
 
 function coerceConfidence(value: unknown): PublicTbFinding["confidence"] {
   return value === "alta" || value === "baja_direccional" ? value : "media";
+}
+
+function coerceOwnership(value: unknown): CompetitiveOwnership {
+  if (
+    value === "brand_owned" ||
+    value === "competitor_owned" ||
+    value === "category_wide" ||
+    value === "shared" ||
+    value === "insufficient_evidence"
+  ) {
+    return value;
+  }
+  return "insufficient_evidence";
+}
+
+function coerceComparativeChartType(value: unknown): NonNullable<CompetitiveSignalPayload["dashboard"]>["charts"][number]["type"] {
+  const allowed: NonNullable<CompetitiveSignalPayload["dashboard"]>["charts"][number]["type"][] = ["heatmap", "bubble_field", "diverging_bar", "bar_ranking"];
+  return allowed.includes(value as NonNullable<CompetitiveSignalPayload["dashboard"]>["charts"][number]["type"])
+    ? value as NonNullable<CompetitiveSignalPayload["dashboard"]>["charts"][number]["type"]
+    : "heatmap";
 }
 
 function coerceTeam(value: unknown): PublicActionCard["target_team"] {

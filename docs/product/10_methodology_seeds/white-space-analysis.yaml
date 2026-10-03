@@ -1,0 +1,43 @@
+slug: white-space-analysis
+name: White Space Analysis
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué espacios tienen demanda real, baja cobertura competitiva y permiso
+  creíble para que la marca los ocupe?
+
+inputs:
+  corpus:
+    minimum_viable: 1200
+    ideal: 4500
+  competitive_corpus:
+    required: true
+
+outputs:
+  - id: whitespace_map
+    name: Whitespace Map
+    type: bubble_field
+  - id: capture_plan
+    name: Capture Plan
+    type: structured
+  - id: absence_evidence
+    name: Absence Evidence
+    type: evidence_list
+
+default_dashboard_blocks:
+  - block_id: whitespace_map
+  - block_id: capture_plan
+  - block_id: absence_evidence
+  - block_id: confidence_layer
+
+quality_gates:
+  - id: demand_and_absence_evidence
+    description: "Whitespace requiere evidencia de demanda y evidencia de ausencia/cobertura baja."
+  - id: brand_permission_evidence
+    description: "El permiso de marca se sostiene con corpus o KB."
+  - id: confidence_calibrated
+    description: "Cada whitespace lleva confianza."
+
+ai_prompts:
+  engine_spec: white-space-analysis

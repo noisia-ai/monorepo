@@ -1,96 +1,207 @@
-# AGENT GUARDRAILS — safety rules for humans and AI agents
+# AGENT GUARDRAILS - safety rules for humans and AI agents
 
-> **Canon.** These are the safety boundaries for this repo. They follow 2026 state-of-the-art:
-> the effective guardrails live at the **infrastructure level** (branch protection, CODEOWNERS,
-> CI, `.gitignore`), not just in prompts — a confused context window or prompt injection cannot
-> bypass a protected branch or a required check. This file documents what's enforced and what an
-> agent must never do on its own.
+> **Canon.** These are the safety boundaries for this repo. The effective
+> guardrails live at the infrastructure level (branch protection, CODEOWNERS,
+> CI, `.gitignore`), not just in prompts. A confused context window or prompt
+> injection cannot bypass a protected branch or a required check.
 
-## The golden rules
+## The Golden Rules
 
-1. **Never commit or push directly to `main`.** `main` deploys to prod (Railway). All changes go
-   through a **branch → PR → review → merge**. This applies to agents *and* humans.
-2. **Never weaken authorization to make something work.** If a guard blocks you, that's usually
-   correct — escalate, don't delete the check.
-3. **Never put secrets in git.** No `.env*` (except `.env.example`), no keys in code, configs, or
-   agent files. If a secret was exposed, rotate it.
-4. **Migrations are forward-only and hand-verified.** The drizzle snapshot meta is drifted (see
-   root `AGENTS.md`); a generated migration can silently re-create or drop tables.
-5. **Spending real money (LLM runs) requires a visible budget cap first.** See money pipelines below.
+1. **Never commit or push directly to `main`.** `main` deploys to prod. All
+   changes go through branch -> PR -> review -> merge.
+2. **Never weaken authorization to make something work.** If a guard blocks
+   you, escalate or find the authorized path.
+3. **Never put secrets in git.** No `.env*` except `.env.example`; no keys in
+   code, configs or agent files. If a secret was exposed, rotate it.
+4. **Migrations are forward-only and hand-verified.** Drizzle metadata is
+   drifted; generated SQL can silently include unrelated DDL.
+5. **Spending real money requires a visible budget cap first.** Engine, Signal
+   Pulse and enrichment jobs can call paid LLM APIs.
 
-## What is enforced where (defense in depth)
+## What Is Enforced Where
 
 | Layer | Control | Where |
-|-------|---------|-------|
-| Repo | `.env*` ignored, env backups ignored, only `.env.example` allowed | `.gitignore` |
+|---|---|---|
+| Repo | `.env*` ignored, only `.env.example` allowed | `.gitignore` |
 | Merge | PR required, Code Owner review on sensitive paths | `.github/CODEOWNERS` + branch protection |
-| Merge | `typecheck` + `lint` + `test` + **secret scan** must pass | `.github/workflows/ci.yml` |
-| PR | Publishing checklist (sensitive-area flags, deploy plan) | `.github/pull_request_template.md` |
-| Docs | This file + nested `AGENTS.md` | repo-wide |
+| Merge | typecheck, lint, test, secret scan and Data OS readiness | `.github/workflows/ci.yml` |
+| PR | Publishing checklist and sensitive-area flags | `.github/pull_request_template.md` |
+| Docs | This file + root/nested `AGENTS.md` | repo-wide |
 
-### Branch protection to enable on GitHub (one-time, by a human admin)
+### Branch Protection To Enable On GitHub
 
-Repo files can't set this — an admin must turn it on for `main` (Settings → Branches / Rules):
-- ✅ Require a pull request before merging
-- ✅ Require review from **Code Owners**
-- ✅ Require status checks to pass → select **`ci`**
-- ✅ Require branches to be up to date before merging
-- ✅ Block force pushes & deletions; **do not allow bypassing** the above (include admins)
-- ✅ (optional, recommended) Require linear history + signed commits
+Repo files cannot set this; a human admin must turn it on for `main`:
 
-Until this is on, the rules above are convention only. **Turn it on.**
+- Require a pull request before merging.
+- Require review from Code Owners.
+- Require status checks to pass: select `ci`.
+- Require branches to be up to date before merging.
+- Block force pushes and deletions.
+- Do not allow bypassing the above.
 
----
+Until this is enabled, the rules above are convention only.
 
-## What Studio does, and what must be protected (never touch casually)
+## Protected Studio Surfaces
 
-`apps/studio` is the product. Its security model: **Kinde authenticates; our DB authorizes**, and
-**every API route enforces authorization server-side** via role helpers
-(`canAccessStudio` / `canAccessPortal` / `canManageCorpus` / `canManageTeam`) plus
-ownership scoping (`getCorpusForUser`, `getSignalOutputForUser`). The danger is not the happy path
-— it's quietly removing one of these checks. Protected surfaces, in priority order:
+Studio's security model: **Kinde authenticates; our DB authorizes**. Every route
+must enforce authorization server-side via role helpers (`canAccessStudio`,
+`canAccessPortal`, `canManageCorpus`, `canManageTeam`) plus ownership scoping
+(`getCorpusForUser`, `getSignalOutputForUser`).
 
-### 🔴 1. Auth & authorization — `apps/studio/src/lib/auth/**`
-The decision core: `session.ts` (identity + role from DB), `roles.ts` (`canManage*`, `bootstrapRoleForEmail`),
-`guards.ts` (suspended/role redirects), `org-sync.ts`, `redirects.ts`. Every route trusts these.
-**Rules:** don't move authZ back into the Kinde token; don't broaden a `canManage*`; don't add
-Kinde middleware; keep the `status==="suspended"` rejection. Any change → Code Owner review.
+### 1. Auth & Authorization
 
-### 🔴 2. Team / role mutation — `apps/studio/src/app/api/team/**`, `lib/data/team.ts`
-`team/users/[id]` changes roles (privilege-escalation surface — note the self-demotion guard:
-an admin can't strip their own `noisia_admin` or suspend themselves), `team/invitations/**` grants
-access by email. A bug here = account takeover. Gated by `canManageTeam` (noisia_admin only). Don't loosen it.
+Paths:
 
-### 🔴 3. Database — `infrastructure/db/**`
-Schema + migrations `0001..00NN`. Prod data is irreversible. Forward-only, hand-verify generated
-SQL (drizzle meta drift), include the apply plan + `ANALYZE` in the PR.
+- `apps/studio/src/lib/auth/**`
+- `apps/studio/src/middleware.ts`
 
-### 🟠 4. Public reporting API — `api/public/v1`, `api/public/v2`, `lib/reporting/**`, `docs/api/**`
-External, customer-facing contract with **visibility/redaction** (paid data hidden, internal tabs
-hidden from clients, customer-neutral docs). Breaking it leaks data or breaks integrators (Looker,
-ReadMe webhook). Version changes; never silently alter v1 output or remove a redaction.
+Rules:
 
-### 🟠 5. Money pipelines — `corpora/run-engine`, `corpora/[id]/tb-analysis`, `packages/query-engine`, `services/workers`
-These enqueue LLM jobs that cost real Anthropic dollars (~$0.0029/mention coded; a careless run ≈ $87).
-**Always surface a budget cap before queueing**, use resilient (retry+skip) batches, `ANALYZE` after
-materializations, and run a single worker instance (zombie workers — see `services/workers/AGENTS.md`).
+- Do not move authorization into Kinde token claims.
+- Do not broaden `canManage*` helpers casually.
+- Do not re-add Kinde middleware if it reintroduces protected-route login loops.
+- Keep suspended-user rejection.
 
-### 🟡 6. Destructive & external-side-effect routes
-- Destructive: `corpora/[id]/cleanup/apply`, `snapshots/[snapshotId]/restore`, and any `DELETE`
-  (brands/themes/orgs). Confirm intent; they mutate or wipe corpus data.
-- External: `signal/[outputId]/share` (sends email via Resend), `readme/personalized-docs` (webhook).
-  These reach the outside world — don't trigger them as a side effect of testing.
+### 2. Team / Role Mutation
 
-### 🟡 7. Deploy & infra — `.github/**`, `supabase/config.toml`, Railway config, `turbo.json`
-Changing CI, the secret-scan, or deploy descriptors changes the safety perimeter itself. Code Owner review.
+Paths:
 
----
+- `apps/studio/src/app/api/team/**`
+- `apps/studio/src/lib/data/team.ts`
 
-## Quick decision guide for an agent
+Rules:
 
-- About to `git push origin main`? **Stop.** Make a branch + PR.
-- A guard/check is in your way? **Don't delete it.** Ask, or find the authorized role path.
-- Editing anything under §1–§7 above? Flag it in the PR template and expect Code Owner review.
-- Generated a migration? Read every line; keep only intended DDL; note the apply plan.
-- About to run an engine/pulse job? Confirm the budget cap is shown and the worker is the only instance.
-- See a secret in the diff or a tracked `.env`? Remove it, rotate it, tell the user.
+- No privilege escalation path.
+- Keep admin self-demotion/self-suspension guards.
+- Keep invitation grants scoped and reviewable.
+
+### 3. Database / Migrations
+
+Path:
+
+- `infrastructure/db/**`
+
+Rules:
+
+- Forward-only migrations.
+- Hand-verify SQL, especially with drifted Drizzle metadata.
+- Include apply plan and rollback plan in the PR.
+- Run `ANALYZE` after large materializations.
+
+### 4. Data OS / Live Serving
+
+Paths:
+
+- `apps/studio/src/app/api/data-os/**`
+- `apps/studio/src/lib/data-os/**`
+- `apps/studio/scripts/data-os-serving-smoke.ts`
+- `infrastructure/db/scripts/data-os-*.ts`
+- `docs/product/22_NOISIA_DATA_OS_CUT_1.md`
+- `docs/product/23_NOISIA_DATA_OS_STAGING_RUNBOOK.md`
+- `docs/adr/007-noisia-data-os-cut-1.md`
+
+Rules:
+
+- `published_outputs.payload` remains the fallback snapshot and rollback path.
+- `NOISIA_DATA_OS_ENABLED`, `NOISIA_DATA_OS_SERVING_ENABLED` and
+  `NOISIA_SIGNAL_PULSE_LIVE_API_ENABLED` default to `false`.
+- `NOISIA_SIGNAL_PULSE_LIVE_RENDER_ENABLED` also defaults to `false`; do not enable it
+  before staging evidence proves live-vs-payload parity and human review is complete.
+- `NOISIA_DATA_OS_WORKER_ENABLED`, `NOISIA_DATA_OS_WORKER_RUNS_ENABLED` and
+  `NOISIA_DATA_OS_WORKER_REMOTE_APPROVED` default to `false`; worker execution is
+  only for approved staging/throwaway shadow runs. Remote worker approval is ignored
+  unless `NOISIA_REMOTE_DATABASE_TARGET` is `staging`, `throwaway` or `preview`.
+- Do not expose `/api/data-os/*` to clients until real staging/prod-shadow
+  evidence passes.
+- Required gates for a production-bound Data OS PR:
+  `data-os:verify`, `data-os:candidates`, `data-os:shadow-run`,
+  `data-os:analyze`, `data-os:serving-smoke` and `data-os:evidence`.
+- Client-visible or production enablement additionally requires
+  `data-os:release-gate` against a staging/preview evidence pack, including
+  `database_format_postgres_url`.
+- CI also runs the disposable Postgres Data OS smoke path:
+  migration smoke, deterministic backfill, shadow QA, evidence and serving smoke.
+- Do not enable `NOISIA_DATA_OS_TAGGING_ENABLED` for LLM enrichment in Cut 1.
+- Do not run remote Data OS backfill/shadow/evidence scripts without the explicit
+  `*_ALLOW_REMOTE=true` guard plus `NOISIA_REMOTE_DATABASE_TARGET=staging`,
+  `throwaway` or `preview`. Production is not an accepted remote target.
+- The all-in-one staging wrapper also requires
+  `NOISIA_DATA_OS_STAGING_SHADOW_APPROVED=true` after the operator confirms
+  `DATABASE_URL` is staging/throwaway/preview, not production.
+- `data-os:staging-shadow` writes local review evidence under `.data/data-os-evidence`
+  by default, including `staging-check.txt` with `DATABASE_URL_FORMAT=postgres_url`
+  and redacted env readiness. Treat those files as client/operational data: review
+  and paste the relevant summary into the PR, but do not commit the evidence directory.
+- Do not treat Brand OS/Knowledge as prompt-only context. Production-bound evidence
+  must show `brand_os_briefs >= 1` plus Brand OS links, Knowledge assertion links and
+  Knowledge usage events so briefs, objectives, seeds and assertions remain analyzable.
+- Production/client-visible Data OS requires `review-sample.json` from
+  `data-os:review-sample`, `NOISIA_DATA_OS_REVIEW_SAMPLE_APPROVED=true`, and
+  `staging-check.txt` showing review tag/assertion ID format checks. This proves at
+  least one tag and one knowledge assertion wrote auditable human-review events before
+  `data-os:release-gate` can report production review readiness.
+
+### 5. Public Reporting API
+
+Paths:
+
+- `apps/studio/src/app/api/public/**`
+- `apps/studio/src/lib/reporting/**`
+- `docs/api/**`
+
+Rules:
+
+- Version breaking changes.
+- Never remove visibility/redaction checks silently.
+- Do not leak paid/internal sections to client-safe outputs.
+
+### 6. Money Pipelines
+
+Paths:
+
+- `apps/studio/src/app/api/corpora/**`
+- `packages/query-engine/**`
+- `services/workers/**`
+
+Rules:
+
+- Surface a budget cap before queueing.
+- Use resilient retry/skip batches.
+- Run a single worker instance locally.
+- SQL calculates; Claude interprets.
+
+### 7. Destructive & External-Side-Effect Routes
+
+Examples:
+
+- cleanup/apply, snapshot restore, destructive `DELETE` routes.
+- email/share routes.
+- ReadMe personalized docs webhook.
+
+Rules:
+
+- Confirm intent before side effects.
+- Keep external calls out of tests unless explicitly mocked.
+
+### 8. Deploy & Infra
+
+Paths:
+
+- `.github/**`
+- `supabase/config.toml`
+- Railway config
+- `turbo.json`
+
+Rules:
+
+- Changing CI, secret scan or deploy descriptors changes the safety perimeter
+  itself. Code Owner review required.
+
+## Quick Decision Guide
+
+- About to push to `main`? Stop. Make a branch and PR.
+- A guard/check is in your way? Do not delete it.
+- Editing a protected surface? Flag it in the PR template.
+- Generated a migration? Read every line.
+- About to run an LLM job? Confirm cost cap and worker state.
+- See a secret in diff or a tracked `.env`? Remove it, rotate it, tell the user.

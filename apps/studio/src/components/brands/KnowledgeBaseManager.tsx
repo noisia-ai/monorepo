@@ -1,10 +1,13 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { useBrandContextPreparation } from "./BrandContextPreparationNotice";
 import { Icon } from "@/components/ui/Icon";
+import { WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
+import { BRAND_KNOWLEDGE_SOURCE_MAX_CHARS } from "@/lib/data-os/brand-automatic-knowledge";
 
 type KnowledgeSource = {
   id: string;
@@ -14,29 +17,47 @@ type KnowledgeSource = {
   status: string;
 };
 
-export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; sources: KnowledgeSource[] }) {
+export function KnowledgeBaseManager({ brandId, sources }: {
+  brandId: string;
+  sources: KnowledgeSource[];
+  unfunded?: boolean;
+}) {
   const t = useTranslations("KnowledgeBaseManager");
   const router = useRouter();
+  const preparation = useBrandContextPreparation(false);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [isAdding, setIsAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sourceKind, setSourceKind] = useState("brand_brief");
+  const [addingOpen, setAddingOpen] = useState(false);
+  const addFormId = useId(), titleInput = useRef<HTMLInputElement | null>(null);
+  const sourceKinds = ["brand_brief", "campaign_brief", "market_notes", "competitive_notes", "always_on_context"] as const;
+  const sourceOptions = sourceKinds.map((value) => ({ value, label: t(`types.${value}`) }));
+  useEffect(() => { if (addingOpen) titleInput.current?.focus(); }, [addingOpen]);
 
   async function addSource(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isAdding) return;
     const targetForm = event.currentTarget;
     setError(null);
     setIsAdding(true);
 
     const form = new FormData(targetForm);
+    const payload = payloadFromForm(form);
+    const action = `add-knowledge:${brandId}`;
+    const intent = preparation.forUnfundedRequest(action, payload);
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payloadFromForm(form))
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ ...payload, preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.message ?? t("fallbackAddError"));
+      preparation.accepted(action);
       targetForm.reset();
+      setSourceKind("brand_brief");
+      setAddingOpen(false);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackAddError"));
@@ -51,14 +72,18 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
     setPendingId(sourceId);
 
     const form = new FormData(event.currentTarget);
+    const action = `edit-knowledge:${sourceId}`;
+    const payload = payloadFromForm(form);
+    const intent = preparation.forUnfundedRequest(action, payload);
     try {
       const res = await fetch(`/api/brands/${brandId}/knowledge/${sourceId}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payloadFromForm(form))
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ ...payload, preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.message ?? t("fallbackSaveError"));
+      preparation.accepted(action);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackSaveError"));
@@ -72,10 +97,15 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
     setError(null);
     setPendingId(sourceId);
 
+    const action = `delete-knowledge:${sourceId}`;
+    const intent = preparation.forUnfundedRequest(action, { source_id: sourceId });
     try {
-      const res = await fetch(`/api/brands/${brandId}/knowledge/${sourceId}`, { method: "DELETE" });
+      const res = await fetch(`/api/brands/${brandId}/knowledge/${sourceId}`, { method: "DELETE",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ preparation: intent }) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json?.message ?? t("fallbackDeleteError"));
+      preparation.accepted(action);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackDeleteError"));
@@ -85,79 +115,109 @@ export function KnowledgeBaseManager({ brandId, sources }: { brandId: string; so
   }
 
   return (
-    <section className="new-study-panel knowledge-editor">
-      <div className="new-study-section-head">
-        <p className="vitals-eyebrow">{t("eyebrow")}</p>
-        <h2>{t("title")}</h2>
-      </div>
+    <section className="admin-section workspace-resource-section">
+      <header className="admin-section__head">
+        <div>
+          <p className="workspace-form__eyebrow">{t("eyebrow")}</p>
+          <h2>{t("title")}</h2>
+          <p>{t("multipleHelp")}</p>
+        </div>
+        <button aria-controls={addFormId} aria-expanded={addingOpen} className="admin-button admin-button--primary"
+          disabled={isAdding} onClick={() => setAddingOpen(true)} type="button"><Icon name="sparkle" size={14} /> {t("addNew")}</button>
+      </header>
+      <div className="workspace-resource-section__body">
       {error && (
-        <p className="new-study-error">
+        <p className="workspace-form__error" role="alert">
           <Icon name="alert" size={14} /> {error}
         </p>
       )}
-      <form className="knowledge-editor-card" onSubmit={addSource}>
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{t("fieldTitle")}</span>
-            <input className="filter-input new-study-input" name="title" placeholder={t("fieldTitlePlaceholder")} required />
+      <p className="admin-drawer-form__hint">{t("sourceCount", { count: sources.length })}</p>
+      <details className="workspace-disclosure workspace-disclosure--create" id={addFormId} open={addingOpen}
+        onToggle={(event) => setAddingOpen(event.currentTarget.open)}>
+        <summary>
+          <span>{t("newTitle")}</span>
+          <Icon name="chevron-down" size={14} />
+        </summary>
+        <form className="workspace-disclosure__form" onSubmit={addSource}>
+          <div className="workspace-form__grid">
+            <label className="workspace-field">
+              <span>{t("fieldTitle")}</span>
+              <input className="workspace-control" name="title" ref={titleInput} maxLength={180} placeholder={t("fieldTitlePlaceholder")} required />
+            </label>
+            <WorkspaceSelectField
+              ariaLabel={t("type")}
+              label={t("type")}
+              name="source_kind"
+              onChange={setSourceKind}
+              options={sourceOptions}
+              value={sourceKind}
+            />
+          </div>
+          <label className="workspace-field workspace-field--wide">
+            <span>{t("content")}</span>
+            <textarea className="workspace-control workspace-control--textarea" name="raw_text" required maxLength={BRAND_KNOWLEDGE_SOURCE_MAX_CHARS} placeholder={t("contentPlaceholder")} rows={4} />
           </label>
-          <label className="new-study-field">
-            <span>{t("type")}</span>
-            <select className="filter-input new-study-input" name="source_kind" defaultValue="brand_brief">
-              <option value="brand_brief">Brand brief</option>
-              <option value="campaign_brief">Campaign brief</option>
-              <option value="market_notes">Market notes</option>
-              <option value="competitive_notes">Competitive notes</option>
-              <option value="always_on_context">Always-on context</option>
-            </select>
-          </label>
-        </div>
-        <label className="new-study-field new-study-field--wide">
-          <span>{t("content")}</span>
-          <textarea className="filter-input new-study-textarea" name="raw_text" required placeholder={t("contentPlaceholder")} />
-        </label>
-        <div className="knowledge-editor-actions">
-          <button className="wizard-cta wizard-cta--secondary" type="submit" disabled={isAdding}>
-            <Icon name={isAdding ? "spinner" : "sparkle"} size={13} /> {t("add")}
-          </button>
-        </div>
-      </form>
+          <div className="workspace-form__actions">
+            <button className="admin-button admin-button--primary" type="submit" disabled={isAdding}>
+              <Icon name={isAdding ? "spinner" : "sparkle"} size={13} /> {t("add")}
+            </button>
+          </div>
+        </form>
+      </details>
 
-      <div className="knowledge-editor-list">
+      <div className="workspace-disclosure-list">
         {sources.length === 0 ? (
-          <p className="new-study-helper">{t("empty")}</p>
+          <div className="admin-empty"><p>{t("empty")}</p></div>
         ) : (
           sources.map((source) => (
-            <form className="knowledge-editor-card" key={source.id} onSubmit={(event) => saveSource(event, source.id)}>
-              <div className="new-study-grid">
-                <label className="new-study-field">
-                  <span>{t("fieldTitle")}</span>
-                  <input className="filter-input new-study-input" name="title" defaultValue={source.title} required />
+            <details className="workspace-disclosure" key={source.id}>
+              <summary>
+                <span>
+                  <strong>{source.title}</strong>
+                  <small>{source.sourceKind === "brand_os_context" ? t("types.brand_os_context") : sourceOptions.find((option) => option.value === source.sourceKind)?.label ?? t("types.other")}</small>
+                </span>
+                <Icon name="chevron-down" size={14} />
+              </summary>
+              <p className="workspace-disclosure__preview">{source.rawText ? compactText(source.rawText) : t("emptySource")}</p>
+              <form className="workspace-disclosure__form" onSubmit={(event) => saveSource(event, source.id)}>
+                <div className="workspace-form__grid">
+                  <label className="workspace-field">
+                    <span>{t("fieldTitle")}</span>
+                    <input className="workspace-control" name="title" defaultValue={source.title} maxLength={180} required />
+                  </label>
+                  <label className="workspace-field">
+                    <span>{t("type")}</span>
+                    {source.sourceKind === "brand_os_context" ? <><span className="workspace-control">{t("types.brand_os_context")}</span><input type="hidden" name="source_kind" value="brand_os_context" /></> :
+                      <select className="workspace-control" name="source_kind" defaultValue={source.sourceKind} required>
+                        {!sourceOptions.some(option => option.value === source.sourceKind) ? <option value={source.sourceKind}>{t("types.other")}</option> : null}
+                        {sourceOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                      </select>}
+                  </label>
+                </div>
+                <label className="workspace-field workspace-field--wide">
+                  <span>{t("content")}</span>
+                  <textarea className="workspace-control workspace-control--textarea" name="raw_text" defaultValue={source.rawText ?? ""} required maxLength={BRAND_KNOWLEDGE_SOURCE_MAX_CHARS} rows={5} />
                 </label>
-                <label className="new-study-field">
-                  <span>{t("type")}</span>
-                  <input className="filter-input new-study-input" name="source_kind" defaultValue={source.sourceKind} required />
-                </label>
-              </div>
-              <label className="new-study-field new-study-field--wide">
-                <span>{t("content")}</span>
-                <textarea className="filter-input new-study-textarea" name="raw_text" defaultValue={source.rawText ?? ""} required />
-              </label>
-              <div className="knowledge-editor-actions">
-                <span>{source.status}</span>
-                <button className="wizard-cta wizard-cta--ghost" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
-                  <Icon name={pendingId === source.id ? "spinner" : "x"} size={13} /> {t("delete")}
-                </button>
-                <button className="wizard-cta" type="submit" disabled={pendingId === source.id}>
-                  <Icon name={pendingId === source.id ? "spinner" : "check"} size={13} /> {t("save")}
-                </button>
-              </div>
-            </form>
+                <div className="workspace-form__actions workspace-form__actions--between">
+                  <button className="admin-button admin-button--danger" type="button" onClick={() => deleteSource(source.id)} disabled={pendingId === source.id}>
+                    <Icon name={pendingId === source.id ? "spinner" : "x"} size={13} /> {t("delete")}
+                  </button>
+                  <button className="admin-button admin-button--primary" type="submit" disabled={pendingId === source.id}>
+                    <Icon name={pendingId === source.id ? "spinner" : "check"} size={13} /> {t("save")}
+                  </button>
+                </div>
+              </form>
+            </details>
           ))
         )}
       </div>
+      </div>
     </section>
   );
+}
+
+function compactText(value: string) {
+  return value.trim().replace(/\s+/g, " ").slice(0, 380);
 }
 
 function payloadFromForm(form: FormData) {

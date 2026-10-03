@@ -4,6 +4,7 @@ import { getLocale } from "next-intl/server";
 import type { ReactNode } from "react";
 
 import "./globals.css";
+import "./workspace-shell.css";
 
 export const metadata: Metadata = {
   title: "Noisia Studio",

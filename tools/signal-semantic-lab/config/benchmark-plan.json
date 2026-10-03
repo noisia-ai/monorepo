@@ -1,0 +1,209 @@
+{
+  "contract_version": "signal-local-modeling-benchmark-plan-v1",
+  "preregistered_at": "2026-08-16T08:36:25-06:00",
+  "preregistration_amendments": [
+    {
+      "timestamp": "2026-08-16T09:08:00-06:00",
+      "stage": "smoke",
+      "reason": "The preregistered FASTopic absolute threshold of 0.35 is outside the probability scale of a fixed 50-topic simplex and caused artificial 100% abstention. Before calibration, set the threshold to 0.0 and report that FASTopic has no native density outlier class. This changes neither hard gates nor ranking.",
+      "changed_fields": [
+        "discovery.fastopic.assignment_threshold",
+        "embeddings.*.max_sequence_length",
+        "embeddings.bge-m3.onnx_execution_provider",
+        "hard_gates.maximum_estimated_full_runtime_seconds"
+      ]
+    },
+    {
+      "timestamp": "2026-08-16T09:46:00-06:00",
+      "stage": "smoke",
+      "reason": "BGE-M3 at 512 tokens projected beyond the 8-hour full-pop gate on CPU, while CoreML terminated with exit 137. Before calibration and without inspecting quality results, use the same 128-token envelope for both embeddings and the reproducible CPU backend.",
+      "changed_fields": [
+        "embeddings.*.max_sequence_length",
+        "embeddings.bge-m3.onnx_execution_provider"
+      ]
+    },
+    {
+      "timestamp": "2026-08-16T09:55:00-06:00",
+      "stage": "pre-calibration-audit",
+      "reason": "Complete the preregistered hard-gate implementation before calibration results: stratified stage quotas, entity coverage, and explicit full-seed stability thresholds. No candidate ranking or calibration output was observed.",
+      "changed_fields": [
+        "metrics.coverage_slices",
+        "hard_gates.minimum_full_adjusted_rand",
+        "hard_gates.minimum_full_matched_assignment_consistency"
+      ]
+    }
+  ],
+  "question": "Which licensed, pinned multilingual embedding and topic-discovery combination is technically operable and most useful for operator review on the complete governed Signal benchmark population?",
+  "decision_rule": "No automatic winner. Pass hard gates, produce a blinded packet, and defer adoption to human review.",
+  "hardware_budget": {
+    "architecture": "arm64",
+    "device": "cpu_or_mps_if_supported",
+    "physical_ram_bytes": 19327352832,
+    "max_peak_ram_bytes": 14495514624,
+    "max_download_bytes": 20000000000,
+    "smoke_timeout_seconds": 1800,
+    "calibration_timeout_seconds": 10800,
+    "full_candidate_timeout_seconds": 28800
+  },
+  "corpus": {
+    "export_contract": "signal-semantic-benchmark-export-v1",
+    "required_usage": "llm-processing",
+    "text_normalization": "unicode-nfkc-whitespace-v1",
+    "canonical_dedup": true,
+    "minimum_full_population": 1
+  },
+  "splits": {
+    "seed": 104729,
+    "train_fraction": 0.6,
+    "calibration_fraction": 0.2,
+    "holdout_fraction": 0.2,
+    "stratify_by": ["month", "scope", "language", "platform"],
+    "group_by": ["canonical_family_key", "content_hash"]
+  },
+  "stages": {
+    "smoke_max_records": 1200,
+    "calibration_max_records": 12000,
+    "full_population": true,
+    "finalist_count": 2,
+    "final_seeds": [17, 43, 71]
+  },
+  "embeddings": [
+    {
+      "key": "multilingual-e5-small",
+      "repository": "intfloat/multilingual-e5-small",
+      "revision": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/intfloat/multilingual-e5-small/blob/614241f622f53c4eeff9890bdc4f31cfecc418b3/README.md",
+      "artifact_bytes": 470642255,
+      "max_sequence_length": 128,
+      "artifact_files": [
+        {
+          "path": "model.safetensors",
+          "sha256": "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477",
+          "bytes": 470641600
+        },
+        {
+          "path": "config.json",
+          "sha256": "69137736cab8b8903a07fe8afaafdda25aac55415a12a55d1bffa9f581abf959",
+          "bytes": 655
+        }
+      ],
+      "dimension": 384,
+      "query_prefix": "query: ",
+      "trust_remote_code": false
+    },
+    {
+      "key": "bge-m3",
+      "repository": "BAAI/bge-m3",
+      "revision": "5617a9f61b028005a4858fdac845db406aefb181",
+      "license": "MIT",
+      "license_url": "https://huggingface.co/BAAI/bge-m3/blob/5617a9f61b028005a4858fdac845db406aefb181/README.md",
+      "artifact_bytes": 2267546218,
+      "max_sequence_length": 128,
+      "onnx_execution_provider": "CPUExecutionProvider",
+      "artifact_files": [
+        {
+          "path": "onnx/model.onnx",
+          "sha256": "f84251230831afb359ab26d9fd37d5936d4d9bb5d1d5410e66442f630f24435b",
+          "bytes": 724923
+        },
+        {
+          "path": "onnx/model.onnx_data",
+          "sha256": "1eebfb28493f67bba03ce0ef64bfdc7fc5a3bd9d7493f818bb1d78cd798416b4",
+          "bytes": 2266820608
+        },
+        {
+          "path": "config.json",
+          "sha256": "26159e7ad065073448460117eb24b7a4572f6f4e78eadff65dc0a11c052449fa",
+          "bytes": 687
+        }
+      ],
+      "dimension": 1024,
+      "query_prefix": "",
+      "trust_remote_code": false
+    }
+  ],
+  "discovery": [
+    {
+      "key": "lexical-nmf",
+      "framework": "scikit-learn",
+      "version": "1.9.0",
+      "license": "BSD-3-Clause",
+      "n_topics": 50,
+      "max_features": 30000,
+      "min_df": 5,
+      "max_df": 0.95,
+      "max_iter": 400
+    },
+    {
+      "key": "bertopic",
+      "framework": "BERTopic",
+      "version": "0.17.4",
+      "revision": "75f2910562f0e372beee29acbbd2a2835ba72cf2",
+      "license": "MIT",
+      "license_url": "https://github.com/MaartenGr/BERTopic/blob/v0.17.4/LICENSE",
+      "umap_n_neighbors": 15,
+      "umap_n_components": 5,
+      "umap_min_dist": 0.0,
+      "hdbscan_min_cluster_size": 80,
+      "hdbscan_min_samples": 15,
+      "top_n_words": 15
+    },
+    {
+      "key": "fastopic",
+      "framework": "FASTopic",
+      "version": "1.0.1",
+      "revision": "51150f1ac22c4599ab0e390b14c031a98cffed68",
+      "license": "Apache-2.0",
+      "license_url": "https://github.com/bobxwu/FASTopic/blob/51150f1ac22c4599ab0e390b14c031a98cffed68/LICENSE",
+      "n_topics": 50,
+      "epochs": 100,
+      "learning_rate": 0.002,
+      "low_memory": true,
+      "low_memory_batch_size": 2048,
+      "assignment_threshold": 0.0,
+      "top_n_words": 15
+    }
+  ],
+  "material_dependencies": [
+    {
+      "key": "umap-learn",
+      "version": "0.5.12",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/lmcinnes/umap/blob/master/LICENSE.txt"
+    },
+    {
+      "key": "hdbscan",
+      "version": "0.8.44",
+      "license": "BSD-3-Clause",
+      "url": "https://github.com/scikit-learn-contrib/hdbscan/blob/master/LICENSE"
+    }
+  ],
+  "metrics": {
+    "top_terms": 15,
+    "coherence": "c_npmi@gensim-4.4.0",
+    "coherence_max_records": 20000,
+    "cluster_matching": "maximum-overlap-hungarian-v1",
+    "stability": ["adjusted_rand", "matched_assignment_consistency", "topic_jaccard"],
+    "coverage_slices": ["scope", "entity", "language", "platform", "month"],
+    "gold_metrics": ["precision", "recall", "f1", "pr_auc", "ece", "brier", "risk_coverage"]
+  },
+  "hard_gates": {
+    "license_compatible": true,
+    "immutable_revision": true,
+    "denominator_reconciles": true,
+    "no_leakage": true,
+    "max_peak_ram_bytes": 14495514624,
+    "max_download_bytes": 20000000000,
+    "maximum_estimated_full_runtime_seconds": 28800,
+    "full_population_required_for_finalist": true,
+    "operator_review_required_for_recommendation": true,
+    "minimum_coverage": 0.5,
+    "minimum_topic_diversity": 0.5,
+    "minimum_full_adjusted_rand": 0.25,
+    "minimum_full_matched_assignment_consistency": 0.5,
+    "minimum_effective_topics": 10,
+    "maximum_effective_topics": 200,
+    "finalist_selection": "one-per-framework-lexicographic-coverage-diversity-redundancy-duration-v1"
+  }
+}

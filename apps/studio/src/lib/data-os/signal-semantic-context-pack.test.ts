@@ -1,0 +1,445 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import test from "node:test";
+import { createTranslator } from "next-intl";
+
+import { SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3 } from "@noisia/query-engine";
+
+import {
+  formatSignalSemanticContextUsdPerMillionTokensV1,
+  isRecoverableBrandContextAuthorityErrorV1,
+  signalSemanticContextPackEmptyStateV1
+} from "@/components/brands/SemanticContextPackManager";
+import {
+  cycleWorkspaceDrawerFocusV1,
+  restoreWorkspaceDrawerFocusV1
+} from "@/components/workspace/WorkspaceShell";
+
+import {
+  SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS,
+  SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS,
+  SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS,
+  SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES,
+  signalSemanticContextPublishedContentReadyV1,
+  signalSemanticContextProviderConfigurationFromEnvV1
+} from "@/lib/data-os/signal-semantic-context-pack";
+import {
+  canPrepareSignalSemanticContextTerminalSuccessorV1,
+  canStartSignalSemanticContextProposalGenerationV1,
+  isSignalSemanticContextRunSessionCurrentV1,
+  parseSignalSemanticContextRunSessionReferenceV1,
+  signalSemanticContextRejectedRevalidationCountValuesV1,
+  serializeSignalSemanticContextRunSessionReferenceV1
+} from "@/lib/data-os/signal-semantic-context-run-session";
+
+test("proposal generation entry is gated by the server-discovered generation run", () => {
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "draft", elementCount: 0, hasServerDiscoveredRun: false
+  }), true, "an untouched draft remains actionable");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "draft", elementCount: 0, hasServerDiscoveredRun: true
+  }), false, "terminal and nonterminal server-discovered runs both suppress generation");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "draft", elementCount: 1, hasServerDiscoveredRun: false
+  }), false, "existing elements preserve the established review actions");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: "published", elementCount: 0, hasServerDiscoveredRun: false
+  }), false, "published generations cannot start proposal generation");
+  assert.equal(canStartSignalSemanticContextProposalGenerationV1({
+    lifecycleState: null, elementCount: 0, hasServerDiscoveredRun: false
+  }), false, "missing generation state fails closed");
+});
+
+test("Brand OS treats a governed brand without a generation as ready to prepare", () => {
+  assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false, error: null,
+    hasGeneration: false, unavailableReason: null }), "ready_to_prepare");
+  assert.equal(signalSemanticContextPackEmptyStateV1({ initialLoading: false,
+    error: "unexpected_summary_failure", hasGeneration: false, unavailableReason: null }), "error",
+  "an actual request failure always wins over an empty-state reason");
+});
+
+test("Brand OS keeps a missing or stale canonical snapshot actionable", () => {
+  for (const code of ["brand_os_snapshot_required", "brand_os_snapshot_stale"]) {
+    assert.equal(isRecoverableBrandContextAuthorityErrorV1({ code }), true,
+      `${code} can be rebuilt by the existing preparation command`);
+  }
+  assert.equal(isRecoverableBrandContextAuthorityErrorV1({ code: "locale_market_authority_required" }), false,
+    "invalid locale or market input still needs an explicit correction");
+  assert.equal(isRecoverableBrandContextAuthorityErrorV1(new Error("network")), false,
+    "transport failures must remain visible errors");
+});
+
+test("an explicitly automatic empty publication remains ready while legacy empty packs stay closed", () => {
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:0,
+    quarantinedExceptions:0,automaticActivation:true}),true);
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:0,
+    quarantinedExceptions:0,automaticActivation:false}),false);
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:1,
+    quarantinedExceptions:0,automaticActivation:true}),false);
+  assert.equal(signalSemanticContextPublishedContentReadyV1({approved:0,pending:1,
+    quarantinedExceptions:1,automaticActivation:true}),true,
+  "validated automatic exceptions remain quarantined rather than blocking Brand OS base context");
+});
+
+test("terminal successor preparation is non-paid and restricted to consumed empty drafts", () => {
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "failed", providerCallCount: 1
+  }), true);
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "stale", providerCallCount: 0
+  }), true);
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "dead_letter", providerCallCount: 0
+  }), true, "a terminal no-call dead letter can advance without spending");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "dead_letter", providerCallCount: 1
+  }), false, "an ambiguous provider outcome is never offered as an eligible transition");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "failed", providerCallCount: 0
+  }), false, "a definitely-not-started run keeps the existing safe retry path");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 1, runStatus: "failed", providerCallCount: 1
+  }), false, "reviewable elements cannot be bypassed");
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "published", elementCount: 0, runStatus: "failed", providerCallCount: 1
+  }), false);
+  assert.equal(canPrepareSignalSemanticContextTerminalSuccessorV1({
+    lifecycleState: "draft", elementCount: 0, runStatus: "processing", providerCallCount: 0
+  }), false);
+});
+
+test("rejected paid-response reconciliation preserves observed counts generically", () => {
+  const fixture = {
+    proposal_count_before: 41,
+    normalized_proposal_count: 2,
+    proposals_appended: 1
+  };
+  const first = signalSemanticContextRejectedRevalidationCountValuesV1(fixture);
+  const reload = signalSemanticContextRejectedRevalidationCountValuesV1(fixture);
+  assert.deepEqual(first, { received: 41, retained: 2, appended: 1 });
+  assert.deepEqual(reload, first, "server reload renders the same persisted reconciliation");
+  assert.deepEqual(signalSemanticContextRejectedRevalidationCountValuesV1({
+    proposal_count_before: 77, normalized_proposal_count: 0, proposals_appended: 0
+  }), { received: 77, retained: 0, appended: 0 },
+  "observed zeroes must remain explicit instead of being omitted or marked unavailable");
+});
+
+test("semantic context run references are bound to their generation", () => {
+  const stored = serializeSignalSemanticContextRunSessionReferenceV1(
+    "semantic-context-v3",
+    "semantic-context-proposal-run-3"
+  );
+  const parsed = parseSignalSemanticContextRunSessionReferenceV1(stored);
+
+  assert.deepEqual(parsed, {
+    version: 1,
+    generation_key: "semantic-context-v3",
+    run_key: "semantic-context-proposal-run-3"
+  });
+  assert.ok(parsed);
+  assert.equal(isSignalSemanticContextRunSessionCurrentV1(parsed, "semantic-context-v3"), true);
+  assert.equal(isSignalSemanticContextRunSessionCurrentV1(parsed, "semantic-context-v4"), false);
+});
+
+test("legacy and malformed run references fail closed", () => {
+  assert.equal(parseSignalSemanticContextRunSessionReferenceV1("old-run-key"), null);
+  assert.equal(parseSignalSemanticContextRunSessionReferenceV1("{"), null);
+  assert.equal(parseSignalSemanticContextRunSessionReferenceV1(JSON.stringify({
+    version: 1,
+    generation_key: "semantic-context-v3",
+    run_key: "../../../private"
+  })), null);
+});
+
+test("semantic context vocabulary is closed and keeps relation authority separate",()=>{
+  assert.equal(SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS.length,20);
+  assert.deepEqual(SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS,
+    ["is_a","part_of","surface_of","competes_with","associated_with"]);
+  assert.deepEqual(SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES,["brand_os_profile","brand_os_product",
+    "brand_os_competitor","brand_os_seed_term","knowledge_source","knowledge_chunk",
+    "knowledge_assertion"]);
+  assert.deepEqual(SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS,["brand_os_drift",
+    "knowledge_drift","locale_market_drift","provider_lineage_missing",
+    "provider_lineage_changed","operator_requested_reconciliation","terminal_provider_run"]);
+});
+
+test("provider preflight configuration is server-owned and unavailable without pinned inputs",()=>{
+  const unavailable=signalSemanticContextProviderConfigurationFromEnvV1({});
+  assert.equal(unavailable.available,false);
+  assert.equal(unavailable.hard_cap_usd,0);
+  const configured=signalSemanticContextProviderConfigurationFromEnvV1({
+    NOISIA_SEMANTIC_CONTEXT_PROVIDER:"fixture",NOISIA_SEMANTIC_CONTEXT_MODEL:"fixture-model",
+    NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION:"immutable-v1",
+    NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION:"pricing-v1",
+    NOISIA_SEMANTIC_CONTEXT_PROMPT_DIGEST:`sha256:${"a".repeat(64)}`,
+    NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS:"1000",
+    NOISIA_SEMANTIC_CONTEXT_MAX_OUTPUT_TOKENS:"500",
+    NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS:"1",
+    NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS:"2",
+    NOISIA_SEMANTIC_CONTEXT_HARD_CAP_USD:"1"
+  });
+  assert.equal(configured.available,true);
+  assert.equal(configured.prompt_template_digest,
+    SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_PROMPT_DIGEST_V3,
+  "the server-owned product configuration must seal the same prompt lineage as runtime preflight");
+});
+
+test("management routes keep authority fields and provider proposal writes off the browser surface",async()=>{
+  const root=resolve(process.cwd(),"src/app/api/data-os/signal/[workspaceId]/semantic-context");
+  const [base,decisions,preflight,reconcile,revalidate,helper]=await Promise.all([
+    readFile(resolve(root,"route.ts"),"utf8"),readFile(resolve(root,"decisions/route.ts"),"utf8"),
+    readFile(resolve(root,"preflight/route.ts"),"utf8"),
+    readFile(resolve(root,"reconcile/route.ts"),"utf8"),
+    readFile(resolve(root,"proposals/[runKey]/revalidate/route.ts"),"utf8"),
+    readFile(resolve(root,"_lib.ts"),"utf8")]);
+  const routes=[base,decisions,preflight,reconcile,revalidate,helper].join("\n");
+  assert.match(routes,/loadSignalWorkspaceContextForManagement/u);
+  assert.match(routes,/noisia_internal/u);
+  assert.doesNotMatch(decisions,/workspace_id|brand_os_digest|knowledge_digest|prompt_template_digest|model_version/u);
+  assert.doesNotMatch(routes,/appendSignalSemanticContextProposals/u,
+    "provider/server projection proposals are not a browser write contract");
+  assert.doesNotMatch(routes,/Anthropic|Voyage|generateText|messages\.create/u);
+  assert.doesNotMatch(reconcile,/workspace_id|brand_os_digest|knowledge_digest|model_version|pricing_version/u);
+  assert.match(reconcile,/Idempotency-Key/u);
+  assert.match(revalidate,/Idempotency-Key/u);
+  assert.doesNotMatch(revalidate,/response_digest|brand_os_digest|knowledge_digest|entity_type|provider:/u);
+  assert.match(revalidate,/REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE|parseSignalSemanticContextProposalRevalidationRequestV1/u);
+});
+
+test("Brand OS mounts the canonical semantic context review after Knowledge and keeps authority server-side",async()=>{
+  const [page,manager,workbench,service,dbWriter,reconcileRoute,esMx,enUs]=await Promise.all([
+    readFile(resolve(process.cwd(),"src/app/studio/brands/[id]/brand-os/page.tsx"),"utf8"),
+    readFile(resolve(process.cwd(),"src/components/brands/SemanticContextPackManager.tsx"),"utf8"),
+    readFile(resolve(process.cwd(),"src/components/brands/SemanticContextReviewWorkbench.tsx"),"utf8"),
+    readFile(resolve(process.cwd(),"src/lib/data-os/signal-semantic-context-pack.ts"),"utf8"),
+    readFile(resolve(process.cwd(),"../../infrastructure/db/signal-semantic-context-proposal.ts"),"utf8"),
+    readFile(resolve(process.cwd(),"src/app/api/data-os/signal/[workspaceId]/semantic-context/reconcile/route.ts"),"utf8"),
+    readFile(resolve(process.cwd(),"messages/es-MX.json"),"utf8"),
+    readFile(resolve(process.cwd(),"messages/en-US.json"),"utf8")
+  ]);
+  assert.ok(page.indexOf("<SemanticContextPackManager")>page.indexOf("<KnowledgeBaseManager"));
+  assert.doesNotMatch(page,/ClientBrandContextProcessingQuote/u);
+  assert.match(manager,/WorkspaceDrawer/u);
+  assert.match(manager,/WorkspaceConfirmDialog/u);
+  assert.match(manager,/GENERATE_PENDING_SEMANTIC_CONTEXT_PROPOSALS/u);
+  assert.match(manager,/SemanticContextReviewWorkbench/u);
+  assert.match(manager,/automatic_disposition/u,
+    "the generation result consumes the server-owned automatic disposition summary");
+  assert.match(manager,/run\.ready/u);
+  assert.match(manager,/run\.exceptions/u);
+  assert.match(manager,/draftWritable=\{generation\.lifecycle_state === "draft"\}/u,
+    "published automatic context keeps carried edits but hides draft-only actions");
+  assert.match(workbench,/reviewWorkbench\.readyCount/u);
+  assert.match(workbench,/reviewWorkbench\.exceptionCount/u);
+  assert.doesNotMatch(manager,/publish_reviewed_semantic_context/u);
+  assert.match(manager,/Idempotency-Key/u);
+  assert.match(manager,/\/reconcile/u);
+  assert.match(manager,/actions\.reconcile/u);
+  assert.match(manager,/terminal_provider_run/u);
+  assert.match(manager,/actions\.prepareSuccessor/u);
+  assert.match(manager,/terminalSuccessor\.message/u);
+  assert.match(manager,/forUnfundedRequest\(action, requestIdentity\)/u,
+    "reconciliation cannot silently include a provider quote or confirmation");
+  assert.match(manager,/useBrandContextPreparation\(false\)/u,
+    "the editable manager must not fetch or render a price before the composed quote surface");
+  assert.doesNotMatch(manager,/<BrandContextPreparationNotice|\.forRequest\(/u,
+    "Brand OS has one composed quote surface rather than repeated legacy notices");
+  assert.match(manager,/expected_generation_key: activeGenerationKey/u,
+    "terminal recovery is bound to the generation the operator inspected");
+  assert.match(reconcileRoute,/brand_context_terminal_recovery_admission_forbidden/u,
+    "the server rejects any paid admission attached to terminal recovery");
+  assert.match(reconcileRoute,/reason !== "terminal_provider_run"[\s\S]*reconcileSignalBrandOsForBrandMutationV1[\s\S]*ensureBrandContextPreparationForWorkspaceV1/u,
+    "fresh paid preparation first rebuilds or verifies the canonical Brand OS projection; terminal recovery remains spend-free");
+  assert.match(manager,/noisia:semantic-context-run/u,
+    "same-tab polling may retain a bounded run hint");
+  assert.match(manager,/isSignalSemanticContextRunSessionCurrentV1/u,
+    "a remembered run hint must remain generation-bound");
+  assert.match(manager,/serializeSignalSemanticContextRunSessionReferenceV1\(generation\.generation_key/u,
+    "same-tab polling state retains the generation identity with the run key");
+  assert.match(manager,/summary\.latest_proposal_run/u,
+    "fresh loads must bind the server-discovered run without sessionStorage authority");
+  assert.match(manager,/const canStartProposalGeneration = !preparationLoading && !preparationError && !preparation && canStartSignalSemanticContextProposalGenerationV1\(\{/u,
+    "all legacy proposal entry points share one preparation and server-run-aware state guard");
+  assert.equal(manager.match(/\{canStartProposalGeneration \?/gu)?.length,2,
+    "the action bar and empty state must use the same proposal entry guard");
+  assert.doesNotMatch(manager,/generation\?\.lifecycle_state === "draft" && elements\.length === 0 \?/u,
+    "the action bar must not bypass a server-discovered terminal or active run");
+  assert.match(manager,/saved\.run_key !== run\.run_key/u,
+    "a browser hint cannot replace the server-selected run");
+  assert.doesNotMatch(manager,/requestJson<ProposalRun>\([^\n]+saved\.run_key/u,
+    "initial hydration must never load an arbitrary browser-supplied run key");
+  assert.match(service,/loadLatestSignalSemanticContextProposalRunForGenerationV1/u);
+  assert.match(dbWriter,/NOT EXISTS\([\s\S]+supersedes_generation_id=generation\.id/u,
+    "superseded generation history must fail closed");
+  assert.match(dbWriter,/signal_data_governance_actor_is_valid\(workspace\.id,\$5::uuid\)/u,
+    "terminal discovery retains DB-owned actor authorization");
+  assert.match(manager,/density="compact"/u,
+    "Brand OS must use the canonical compact summary density");
+  assert.match(manager,/type Counts = \{ pending: number; approved: number; rejected: number; merged: number \}/u,
+    "the manager hydration contract includes merged leaves");
+  assert.match(manager,/\{ pending: 0, approved: 0, rejected: 0, merged: 0 \}/u,
+    "the empty summary preserves the complete V2 disposition shape");
+  assert.match(manager,/counts\.pending \+ counts\.approved \+ counts\.rejected \+ counts\.merged/u,
+    "terminal merged leaves remain part of the generation element count");
+  assert.match(manager,/run\.status === "failed" && run\.provider_call_count === 0/u,
+    "safe retry is offered only before a provider call starts");
+  assert.match(manager,/paid_response_revalidation/u,
+    "refresh must render the operator-safe paid-response revalidation result");
+  assert.match(manager,/revalidationRejectedDetail/u,
+    "a rejected paid-response recovery must remain visible without exposing private output");
+  assert.doesNotMatch(manager,/run\.error\?\.message/u,
+    "operator UI must never expose raw provider validation messages");
+  assert.doesNotMatch(manager,/provider_response_private|provider_request_identity|raw_provider_response|response_payload/u,
+    "terminal run rendering must not expose private provider state");
+  assert.doesNotMatch(manager,/confidence_authoritative|source_ref\}/u,
+    "the operator UI must not present confidence or private source references as authority");
+  const esMessages=JSON.parse(esMx).AdminWorkspace.brandOs.semanticContext;
+  const enMessages=JSON.parse(enUs).AdminWorkspace.brandOs.semanticContext;
+  assert.doesNotMatch(JSON.stringify(esMessages),/Claude|Anthropic/u,
+    "Semantic Context product copy does not name the provider");
+  assert.doesNotMatch(JSON.stringify(enMessages),/Claude|Anthropic/u,
+    "Semantic Context product copy does not name the provider");
+  const arbitraryCounts = signalSemanticContextRejectedRevalidationCountValuesV1({
+    proposal_count_before: 41, normalized_proposal_count: 2, proposals_appended: 1
+  });
+  const observedZeroCounts = signalSemanticContextRejectedRevalidationCountValuesV1({
+    proposal_count_before: 77, normalized_proposal_count: 0, proposals_appended: 0
+  });
+  const esT = createTranslator({ locale: "es-MX", messages: esMessages });
+  const enT = createTranslator({ locale: "en-US", messages: enMessages });
+  for (const [copy, counts] of [
+    [esT("run.revalidationRejectedDetail", arbitraryCounts), arbitraryCounts],
+    [enT("run.revalidationRejectedDetail", arbitraryCounts), arbitraryCounts],
+    [esT("run.revalidationRejectedDetail", observedZeroCounts), observedZeroCounts],
+    [enT("run.revalidationRejectedDetail", observedZeroCounts), observedZeroCounts]
+  ] as const) {
+    assert.match(copy, new RegExp(String(counts.received), "u"));
+    assert.match(copy, new RegExp(String(counts.retained), "u"));
+    assert.match(copy, new RegExp(String(counts.appended), "u"));
+    assert.doesNotMatch(copy, /revalidationRejectedDetail|\{(?:received|retained|appended)\}|not_available/u);
+  }
+  assert.match(esT("run.revalidationRejectedDetail", observedZeroCounts), /segunda llamada/u);
+  assert.match(enT("run.revalidationRejectedDetail", observedZeroCounts), /second provider call/u);
+  assert.match(manager,/revalidationRejectedDetail", rejectedRevalidationCounts/u,
+    "the rejected banner must bind all public reconciliation counts");
+  assert.doesNotMatch(manager,/actions\.(?:recover|revalidate)/u,
+    "terminal paid-response history must not add recovery actions");
+  for(const blocker of ["semantic_context_capacity_contract_insufficient",
+    "semantic_context_model_output_capacity_unsupported",
+    "semantic_context_configured_output_capacity_insufficient",
+    "semantic_context_generation_run_exists"]){
+    assert.match(manager,new RegExp(blocker,"u"));
+    assert.equal(typeof esMessages.blockers[blocker],"string");
+    assert.equal(typeof enMessages.blockers[blocker],"string");
+  }
+  assert.equal(typeof esMessages.title,"string");
+  assert.equal(typeof enMessages.title,"string");
+  assert.doesNotMatch(manager,/acquisition_brief_required/u,
+    "the ordinary Brand OS path no longer depends on a hidden acquisition brief");
+});
+
+test("Semantic Context flight card exposes server pricing and remains keyboard-safe before consent",async()=>{
+  const root=process.cwd();
+  const[manager,service,drawer,styles,esMx,enUs]=await Promise.all([
+    readFile(resolve(root,"src/components/brands/SemanticContextPackManager.tsx"),"utf8"),
+    readFile(resolve(root,"src/lib/data-os/signal-semantic-context-pack.ts"),"utf8"),
+    readFile(resolve(root,"src/components/workspace/WorkspaceShell.tsx"),"utf8"),
+    readFile(resolve(root,"src/app/workspace-shell.css"),"utf8"),
+    readFile(resolve(root,"messages/es-MX.json"),"utf8"),
+    readFile(resolve(root,"messages/en-US.json"),"utf8")
+  ]);
+
+  assert.match(service,/pricing_unit:"usd_per_million_tokens"/u);
+  assert.match(service,/input_usd_per_million_tokens:configuration\.input_usd_per_million_tokens/u);
+  assert.match(service,/output_usd_per_million_tokens:configuration\.output_usd_per_million_tokens/u);
+  assert.match(manager,/generation\.pricingVersion/u);
+  assert.match(manager,/provider\.input_usd_per_million_tokens/u);
+  assert.match(manager,/provider\.output_usd_per_million_tokens/u);
+  assert.doesNotMatch(manager,/anthropic-public-2026-08-12|USD\s*3(?:\.0+)?\b|USD\s*15(?:\.0+)?\b/u,
+    "pricing values must remain server-owned");
+  assert.match(formatSignalSemanticContextUsdPerMillionTokensV1("3","en-US"),/^USD\s*3$/u);
+  assert.match(formatSignalSemanticContextUsdPerMillionTokensV1("15","es-MX"),/^USD\s*15$/u);
+  assert.equal(formatSignalSemanticContextUsdPerMillionTokensV1("invalid","es-MX"),"USD —");
+
+  assert.match(drawer,/event\.key !== "Tab"/u);
+  assert.match(drawer,/cycleWorkspaceDrawerFocusV1\(panel, document\.activeElement, event\.shiftKey\)/u);
+  assert.match(drawer,/restoreWorkspaceDrawerFocusV1\(explicitReturnFocusTo \?\? fallbackReturnFocusTo\)/u);
+  assert.match(drawer,/aria-hidden="true"[\s\S]+tabIndex=\{-1\}/u,
+    "the click-only scrim must not impersonate the close control in keyboard order");
+  assert.match(manager,/preflightOpenerRef\.current = event\.currentTarget/u,
+    "the opener is captured before the asynchronous preflight can move focus to BODY");
+  assert.match(manager,/returnFocusRef=\{preflightOpenerRef\}/u);
+
+  assert.match(manager,/aria-busy="true" aria-live="polite"[\s\S]+role="status"/u);
+  assert.match(styles,/\.semantic-context-pack__preflight-loading[\s\S]+justify-content: center/u);
+  assert.match(manager,/const \[budgetConfirmed, setBudgetConfirmed\] = useState\(false\)/u);
+  assert.match(manager,/preflight\.readiness !== "ready" \|\| !budgetConfirmed \|\| busy === "generate"/u);
+  assert.match(manager,/setBudgetConfirmed\(false\); setDrawer\(null\)/u);
+
+  for(const messages of [JSON.parse(esMx),JSON.parse(enUs)]){
+    const generation=messages.AdminWorkspace.brandOs.semanticContext.generation;
+    for(const key of ["pricingVersion","inputRate","outputRate","perMillionTokens","loadingPreflight"]){
+      assert.equal(typeof generation[key],"string");
+      assert.ok(generation[key].length>0);
+    }
+  }
+});
+
+test("canonical drawer cycles live focusables and restores its captured opener",()=>{
+  let focused = "";
+  const createControl = (name: string, options: { disabled?: boolean; hidden?: boolean } = {}) => {
+    const control = {
+      disabled: options.disabled ?? false,
+      hidden: options.hidden ?? false,
+      isConnected: true,
+      ownerDocument: {
+        defaultView: {
+          getComputedStyle: () => ({ display: "block", visibility: "visible" })
+        }
+      },
+      getAttribute: (attribute: string) => attribute === "aria-hidden" ? "false" : null,
+      closest: () => null,
+      getClientRects: () => control.hidden ? [] : [{}],
+      focus: (options?: FocusOptions) => {
+        assert.equal(options?.preventScroll, true);
+        focused = name;
+      }
+    };
+    return control;
+  };
+
+  const close = createControl("close");
+  const checkbox = createControl("checkbox");
+  const paidAction = createControl("paid-action", { disabled: true });
+  const hiddenAction = createControl("hidden-action", { hidden: true });
+  const controls = [close, checkbox, paidAction, hiddenAction];
+  const panel = {
+    querySelectorAll: () => controls
+  } as unknown as HTMLElement;
+
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, close as unknown as Element, false), checkbox);
+  assert.equal(focused, "checkbox", "normal forward interior navigation is explicit");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, false), close);
+  assert.equal(focused, "close", "forward navigation wraps at the last enabled control");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, close as unknown as Element, true), checkbox);
+  assert.equal(focused, "checkbox", "backward navigation wraps at the first enabled control");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, true), close);
+  assert.equal(focused, "close", "normal backward interior navigation is explicit");
+
+  paidAction.disabled = false;
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, false), paidAction,
+    "each key press re-queries newly enabled controls instead of retaining stale refs");
+  paidAction.hidden = true;
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, checkbox as unknown as Element, false), close,
+    "a control hidden after render is removed from the live cycle");
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, null, false), close);
+  assert.equal(cycleWorkspaceDrawerFocusV1(panel, null, true), checkbox);
+
+  const opener = createControl("opener");
+  assert.equal(restoreWorkspaceDrawerFocusV1(opener as unknown as HTMLElement), true);
+  assert.equal(focused, "opener");
+  opener.isConnected = false;
+  assert.equal(restoreWorkspaceDrawerFocusV1(opener as unknown as HTMLElement), false,
+    "detached openers fail safely instead of sending focus to BODY or stale DOM");
+});

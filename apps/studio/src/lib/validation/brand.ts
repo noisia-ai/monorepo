@@ -1,6 +1,15 @@
 import { z } from "zod";
+import {
+  STUDY_BUSINESS_QUESTION_MAX_CHARS,
+  STUDY_CONTEXT_MAX_CHARS,
+  STUDY_SOURCE_SNAPSHOT_MAX_CHARS
+} from "@/lib/study-intake-context";
+import { BRAND_KNOWLEDGE_NOTES_MAX_CHARS } from "@/lib/data-os/brand-automatic-knowledge";
+import { COUNTRY_CATALOG } from "@/lib/country-catalog";
 
-const countryCodeSchema = z.string().length(2).transform((value) => value.toUpperCase());
+const countryCodes = new Set<string>(COUNTRY_CATALOG.map((country) => country.code));
+const countryCodeSchema = z.string().regex(/^[a-z]{2}$/iu).transform((value) => value.toUpperCase())
+  .refine((value) => countryCodes.has(value), "Selecciona un código de país ISO alpha-2 válido.");
 const optionalText = (max: number, min = 0) =>
   z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
@@ -11,6 +20,23 @@ const shortListItem = (max: number, min = 1) =>
     (value) => (typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, max) : value),
     z.string().min(min).max(max)
   );
+const timezoneSchema = z.string().min(1).max(120).refine((value) => {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}, "Selecciona una zona horaria IANA válida.");
+
+export const brandContextPreparationIntentSchema = z.object({
+  idempotency_key: z.string().min(8).max(200).regex(/^[A-Za-z0-9._:-]+$/u),
+  quote_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/u).optional(),
+  confirmation: z.literal("prepare_brand_context_within_shown_cap").optional()
+}).strict().refine(
+  (value) => Boolean(value.quote_digest) === Boolean(value.confirmation),
+  { message: "La cotización y su confirmación deben enviarse juntas." }
+);
 
 export const createBrandSchema = z.object({
   organization_id: z.string().uuid().optional(),
@@ -19,14 +45,16 @@ export const createBrandSchema = z.object({
   name: z.string().min(2).max(160),
   display_name: optionalText(160),
   industry: optionalText(80, 2),
-  industry_sub: optionalText(80, 2),
-  countries: z.array(countryCodeSchema).min(1).default(["MX"]),
+  industry_sub: optionalText(500, 2),
+  countries: z.array(countryCodeSchema).min(1).max(32).default(["MX"]),
   description: optionalText(12000),
-  brand_seed_handles: z.array(shortListItem(240)).default([]),
-  competitors: z.array(shortListItem(240, 2)).default([]),
-  knowledge_notes: optionalText(50000),
+  brand_seed_handles: z.array(shortListItem(240)).max(100).default([]),
+  competitors: z.array(shortListItem(240, 2)).max(100).default([]),
+  knowledge_notes: optionalText(BRAND_KNOWLEDGE_NOTES_MAX_CHARS),
+  timezone: timezoneSchema.default("America/Mexico_City"),
   status: z.enum(["active", "paused", "archived"]).default("active"),
-  primary_brand_manager_user_id: z.string().uuid().optional()
+  primary_brand_manager_user_id: z.string().uuid().optional(),
+  preparation: brandContextPreparationIntentSchema.optional()
 }).refine((data) => data.organization_id || data.organization_name, {
   path: ["organization_name"],
   message: "Selecciona una organización o crea una nueva."
@@ -38,11 +66,13 @@ export const updateBrandSchema = z.object({
   name: z.string().min(2).max(160),
   display_name: optionalText(160),
   industry: optionalText(80, 2),
-  industry_sub: optionalText(80, 2),
-  countries: z.array(countryCodeSchema).min(1).default(["MX"]),
+  industry_sub: optionalText(500, 2),
+  countries: z.array(countryCodeSchema).min(1).max(32).default(["MX"]),
   description: optionalText(12000),
-  brand_seed_handles: z.array(shortListItem(240)).default([]),
-  status: z.enum(["active", "paused", "archived"]).default("active")
+  brand_seed_handles: z.array(shortListItem(240)).max(100).default([]),
+  timezone: timezoneSchema,
+  status: z.enum(["active", "paused", "archived"]).default("active"),
+  preparation: brandContextPreparationIntentSchema.optional()
 });
 
 export const createThemeSchema = z.object({
@@ -62,16 +92,43 @@ export const createStudySchema = z.object({
   theme_id: z.string().uuid().optional(),
   base_corpus_id: z.string().uuid().optional(),
   methodology_id: z.string().uuid(),
-  business_question: z.string().min(10).max(800),
-  decision_to_inform: optionalText(800),
-  audience_segment: optionalText(400),
-  category_context: optionalText(1200),
-  hypotheses: optionalText(1200),
-  competitive_context: optionalText(2400),
-  known_barriers: optionalText(1200),
-  known_triggers: optionalText(1200),
-  strategic_constraints: optionalText(1200),
-  success_criteria: optionalText(1200),
+  analysis_plan: z.object({
+    version: z.literal(1).optional(),
+    report_kind: z.enum(["signal", "signal_pulse"]).optional(),
+    primary_methodology_slug: z.string().max(120).optional(),
+    selected_lenses: z.array(z.string().max(120)).max(40).optional(),
+    lens_configs: z.record(z.unknown()).optional(),
+    composer_modules: z.array(z.string().max(120)).max(40).optional(),
+    marketing_brief: z.record(z.unknown()).optional(),
+    budget_cap_usd: z.coerce.number().positive().max(1000).optional()
+  }).optional(),
+  business_question: z.string().min(10).max(STUDY_BUSINESS_QUESTION_MAX_CHARS),
+  study_context: optionalText(STUDY_CONTEXT_MAX_CHARS),
+  source_manifest: z.array(z.object({
+    name: z.string().min(1).max(180),
+    kind: z.string().max(80).optional(),
+    size_bytes: z.number().int().nonnegative().optional(),
+    mime_type: z.string().max(160).optional(),
+    summary: z.string().max(1200).optional(),
+    preview_text: z.string().max(STUDY_SOURCE_SNAPSHOT_MAX_CHARS).optional(),
+    dataset_inventory: z.array(z.string().max(500)).max(80).optional(),
+    sheet_count: z.number().int().nonnegative().optional(),
+    row_count: z.number().int().nonnegative().optional(),
+    field_names: z.array(z.string().max(120)).max(120).optional(),
+    source_profile: z.record(z.unknown()).optional(),
+    preview_status: z.enum(["ready", "error"]).optional(),
+    preview_error: z.string().max(600).optional()
+  })).max(20).optional(),
+  data_os_field_specs: z.record(z.unknown()).optional(),
+  decision_to_inform: optionalText(12000),
+  audience_segment: optionalText(12000),
+  category_context: optionalText(24000),
+  hypotheses: optionalText(24000),
+  competitive_context: optionalText(24000),
+  known_barriers: optionalText(24000),
+  known_triggers: optionalText(24000),
+  strategic_constraints: optionalText(12000),
+  success_criteria: optionalText(12000),
   geo_focus: z.array(countryCodeSchema).min(1).max(6).default(["MX"]),
   target_window_months: z.coerce.number().int().min(1).max(36).default(12)
 }).refine((data) => Number(Boolean(data.brand_id)) + Number(Boolean(data.theme_id)) === 1, {
@@ -79,7 +136,7 @@ export const createStudySchema = z.object({
   message: "Selecciona una marca o un theme, pero no ambos."
 }).refine((data) => !data.base_corpus_id || Boolean(data.brand_id), {
   path: ["base_corpus_id"],
-  message: "El baseline de industria sólo aplica para estudios de marca."
+  message: "El corpus reusable sólo aplica para estudios de marca."
 });
 
 const corpusEntityKindSchema = z.enum(["primary_brand", "competitor", "category"]);
