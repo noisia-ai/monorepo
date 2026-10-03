@@ -66,7 +66,8 @@ async function main() {
       ...process.env,
       DATABASE_URL: databaseUrl,
       DATABASE_SSL: "false",
-      NOISIA_DB_SMOKE_RESET_SCHEMA: "true"
+      NOISIA_DB_SMOKE_RESET_SCHEMA: "true",
+      NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: "true"
     }
   });
 }

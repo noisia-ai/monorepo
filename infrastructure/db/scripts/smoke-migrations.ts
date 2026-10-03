@@ -65,6 +65,23 @@ async function assertPgVectorAvailable(client: pg.Client) {
   }
 }
 
+async function ensureDisposableSupabaseRoles(client: pg.Client, databaseUrl: string) {
+  if (process.env.NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES !== "true") return;
+  if (!LOCAL_HOSTS.has(new URL(databaseUrl).hostname)
+    || process.env.NOISIA_DB_SMOKE_RESET_SCHEMA !== "true") {
+    throw new Error("Supabase role emulation is restricted to a disposable local smoke database.");
+  }
+
+  // Supabase supplies these database roles. The plain pgvector image used by
+  // CI does not, while migration 0220 explicitly revokes their access.
+  for (const role of ["anon", "authenticated", "service_role"]) {
+    const existing = await client.query("select 1 from pg_roles where rolname = $1", [role]);
+    if (existing.rowCount === 0) {
+      await client.query(`create role ${pg.escapeIdentifier(role)} nologin`);
+    }
+  }
+}
+
 async function applyMigration(client: pg.Client, migrationPath: string) {
   const sql = await readFile(migrationPath, "utf8");
 
@@ -284,6 +301,7 @@ async function main() {
     await client.query(`set statement_timeout = '5min'`);
     await assertPgVectorAvailable(client);
     await assertEmptySchema(client);
+    await ensureDisposableSupabaseRoles(client, databaseUrl);
     // Match Supabase/Railway installations where restricted functions call the
     // schema-qualified pgcrypto API. The disposable smoke reset removes this
     // schema, so rebuild it before replaying the numbered migrations.
