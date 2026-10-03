@@ -9,7 +9,9 @@ import {
   signalWorkspaceInterestDecisionRuntimeConfigurationV1,
   signalWorkspaceInterestDecisionSchemaReadyV1,
 } from "./signal-workspace-interest-decision-runtime-v1";
-import { SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V1 } from "./signal-workspace-interest-decision-queue-v1";
+import { runSignalWorkspaceInterestDecisionBatchTickV1,
+  SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V1,
+  type SignalWorkspaceInterestDecisionBatchLeaseV1 } from "./signal-workspace-interest-decision-queue-v1";
 
 const batchId = randomUUID(), ownerId = randomUUID(), workspaceId = randomUUID(), callId = randomUUID();
 const enabled = { NOISIA_SIGNAL_INTEREST_DECISION_BATCH_ENABLED: "true",
@@ -32,7 +34,7 @@ test("interest decision runtime is off by default and cannot read a key or DB", 
     { disabled: true });
 });
 
-test("SQL0211 schema gate prevents jobs and provider construction before migration", async () => {
+test("SQL0211/0214 schema gate prevents jobs and provider construction before migration", async () => {
   const sql: string[] = [];
   const database = { connect: async () => ({ query: async (statement: string) => {
     sql.push(statement); return { rows: [{ ready: false }] };
@@ -40,6 +42,7 @@ test("SQL0211 schema gate prevents jobs and provider construction before migrati
   assert.equal(await signalWorkspaceInterestDecisionSchemaReadyV1(database as never), false);
   assert.match(sql[0] ?? "", /mark_submitting_signal_interest_decision_batch_v1/u);
   assert.match(sql[0] ?? "", /persist_signal_interest_decision_item_v1/u);
+  assert.match(sql[0] ?? "", /rollover_prepared_signal_interest_decision_batch_v1/u);
   assert.deepEqual(await drainSignalWorkspaceInterestDecisionBatchesV1({ env: enabled, database: database as never,
     queue: { getJob: async () => assert.fail("queue must stay untouched"), add: async () => assert.fail("queue must stay untouched") } }),
   { disabled: false, schema_ready: false, dispatched: 0 });
@@ -145,4 +148,99 @@ test("a revoked or expired policy stops a prepared batch before send", async () 
   await assert.rejects(stores.reserveAndMarkSubmitting({ batch_id: batchId,
     lease_token: randomUUID() } as never), /workspace_interest_batch_runtime_policy_expired_or_changed/u);
   assert.equal(sql.some(statement => statement.includes("mark_submitting_signal_interest_decision_batch_v1")), false);
+});
+
+function rolloverHarness(options: { prior_day?: boolean; renewed?: boolean; replayed?: boolean;
+  renewal_error?: Error; rollover_error?: Error; missing_preflight?: boolean; mismatch?: boolean } = {}) {
+  const events: string[] = [];
+  const actorId = randomUUID(), successorId = randomUUID(), manifestDigest = sha("sealed manifest");
+  const lease = { batch_id: batchId, lease_token: randomUUID(), state: "prepared", provider_batch_id: null,
+    manifest: { manifest_digest: manifestDigest } } as SignalWorkspaceInterestDecisionBatchLeaseV1;
+  let claimed = false;
+  const database = { connect: async () => {
+    events.push("connect");
+    return { query: async (statement: string, parameters?: unknown[]) => {
+      if (statement.includes("admission.budget_date<")) {
+        events.push("preflight");
+        assert.deepEqual(parameters, [lease.batch_id, lease.lease_token]);
+        return { rows: options.missing_preflight ? [] : [{ owner_id: ownerId, actor_user_id: actorId,
+          prior_day: options.prior_day ?? true }] };
+      }
+      if (statement.includes("renew_signal_interest_decision_admission_v1")) {
+        events.push("renew");
+        assert.deepEqual(parameters, [ownerId, actorId]);
+        if (options.renewal_error) throw options.renewal_error;
+        return { rows: [{ result: { admission_id: randomUUID(), replayed: options.renewed ?? false } }] };
+      }
+      if (statement.includes("rollover_prepared_signal_interest_decision_batch_v1")) {
+        events.push("rollover");
+        assert.deepEqual(parameters, [lease.batch_id, lease.lease_token, actorId]);
+        if (options.rollover_error) throw options.rollover_error;
+        claimed = true;
+        return { rows: [{ result: { batch_id: successorId, expired_batch_id: lease.batch_id,
+          manifest_digest: options.mismatch ? sha("different manifest") : manifestDigest,
+          replayed: options.replayed ?? false } }] };
+      }
+      assert.fail(`unexpected SQL: ${statement}`);
+    }, release: () => { events.push("release connection"); } };
+  } };
+  const batch_stores = {
+    claimDue: async () => { events.push("claim"); return claimed ? null : lease; },
+    reserveAndMarkSubmitting: async () => { events.push("reserve"); },
+    releaseLease: async () => { events.push("release lease"); },
+  };
+  const stores = createSignalWorkspaceInterestDecisionRuntimeStoresV1({ database: database as never,
+    batch_stores: batch_stores as never });
+  return { stores, lease, events, successorId };
+}
+
+test("prior-day prepared Batch renews then rolls to a queued successor without provider IO", async () => {
+  const h = rolloverHarness();
+  const provider = { create: async () => assert.fail("old Batch must not POST"),
+    get: async () => assert.fail("old Batch must not poll") };
+  assert.equal(await runSignalWorkspaceInterestDecisionBatchTickV1({ stores: h.stores,
+    provider: provider as never, batch_id: batchId }), "idle");
+  assert.deepEqual(h.events, ["claim", "connect", "preflight", "renew", "rollover", "release connection"]);
+  assert.equal(await h.stores.claimDue(batchId), null);
+  assert.equal(h.events.filter(event => event === "renew").length, 1);
+  assert.equal(h.events.includes("reserve"), false);
+  assert.equal(h.events.includes("release lease"), false);
+});
+
+test("rollover replay is terminal for the old Batch and cannot duplicate a provider POST", async () => {
+  const h = rolloverHarness({ renewed: true, replayed: true });
+  assert.equal(await h.stores.claimDue(batchId), null);
+  assert.equal(await h.stores.claimDue(batchId), null);
+  assert.deepEqual(h.events.filter(event => event === "rollover"), ["rollover"]);
+  assert.equal(h.events.includes("reserve"), false);
+  assert.equal(h.events.includes("release lease"), false);
+});
+
+test("current-day and already-submitted leases retain their existing path", async () => {
+  const current = rolloverHarness({ prior_day: false });
+  assert.equal(await current.stores.claimDue(batchId), current.lease);
+  assert.deepEqual(current.events, ["claim", "connect", "preflight", "release connection"]);
+  for (const state of ["submitting", "submission_unknown", "in_progress", "ended"] as const) {
+    const events: string[] = [];
+    const lease = { ...current.lease, state };
+    const stores = createSignalWorkspaceInterestDecisionRuntimeStoresV1({
+      database: { connect: async () => { assert.fail("submitted/uncertain lease must bypass rollover"); } } as never,
+      batch_stores: { claimDue: async () => { events.push("claim"); return lease; } } as never,
+    });
+    assert.equal(await stores.claimDue(batchId), lease);
+    assert.deepEqual(events, ["claim"]);
+  }
+});
+
+test("rollover preflight, policy renewal, SQL, and receipt failures stop before paid reservation", async () => {
+  for (const options of [{ missing_preflight: true },
+    { renewal_error: new Error("interest_decision_policy_required") },
+    { rollover_error: new Error("connection lost after commit") }, { mismatch: true }]) {
+    const h = rolloverHarness(options);
+    await assert.rejects(h.stores.claimDue(batchId),
+      /rollover_preflight_unavailable|interest_decision_policy_required|connection lost after commit|rollover_receipt_invalid/u);
+    assert.equal(h.events.includes("reserve"), false);
+    assert.equal(h.events.includes("release lease"), false);
+    if (options.renewal_error) assert.equal(h.events.includes("rollover"), false);
+  }
 });

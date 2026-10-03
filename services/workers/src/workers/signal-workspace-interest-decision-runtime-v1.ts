@@ -28,7 +28,7 @@ export function signalWorkspaceInterestDecisionRuntimeConfigurationV1(env: Envir
   return { enabled, provider_enabled: enabled && env.NOISIA_SIGNAL_INTEREST_DECISION_BATCH_PROVIDER_ENABLED === "true" };
 }
 
-/** Do not wake a paid job against an unapplied or partially applied SQL0211. */
+/** Do not wake a paid job against an unapplied or partially applied SQL0211/0214. */
 export async function signalWorkspaceInterestDecisionSchemaReadyV1(database: Database): Promise<boolean> {
   const client = await database.connect();
   try {
@@ -46,7 +46,9 @@ export async function signalWorkspaceInterestDecisionSchemaReadyV1(database: Dat
       AND to_regprocedure('public.reject_signal_interest_decision_batch_v1(uuid,uuid,integer,text,text)') IS NOT NULL
       AND to_regprocedure('public.persist_signal_interest_decision_item_v1(uuid,uuid,text,text,text,text)') IS NOT NULL
       AND to_regprocedure('public.apply_signal_interest_decision_item_v1(uuid)') IS NOT NULL
-      AND to_regprocedure('public.finish_signal_interest_decision_batch_v1(uuid,uuid)') IS NOT NULL AS ready`);
+      AND to_regprocedure('public.finish_signal_interest_decision_batch_v1(uuid,uuid)') IS NOT NULL
+      AND to_regprocedure('public.renew_signal_interest_decision_admission_v1(uuid,uuid)') IS NOT NULL
+      AND to_regprocedure('public.rollover_prepared_signal_interest_decision_batch_v1(uuid,uuid,uuid)') IS NOT NULL AS ready`);
     return result.rows[0]?.ready === true;
   } finally { client.release(); }
 }
@@ -56,6 +58,7 @@ export async function signalWorkspaceInterestDecisionSchemaReadyV1(database: Dat
 export function createSignalWorkspaceInterestDecisionRuntimeStoresV1(options: {
   database: Database; storage?: WorkspaceEngineStorageV1;
   create_storage?: () => WorkspaceEngineStorageV1; temporary_root?: string;
+  batch_stores?: SignalWorkspaceInterestDecisionBatchStoresV1;
 }): SignalWorkspaceInterestDecisionBatchStoresV1 {
   let storage = options.storage;
   const getStorage = () => storage ??= (options.create_storage ?? createWorkspaceEngineStorageV1)();
@@ -80,8 +83,45 @@ export function createSignalWorkspaceInterestDecisionRuntimeStoresV1(options: {
     } });
   // SQL returns the sealed manifest as JSON. The worker validates the full page
   // before provider I/O; the DB adapter validates it independently at claim.
-  const stores = db as unknown as SignalWorkspaceInterestDecisionBatchStoresV1;
-  return { ...stores, async reserveAndMarkSubmitting(lease) {
+  const stores = options.batch_stores ?? db as unknown as SignalWorkspaceInterestDecisionBatchStoresV1;
+  return { ...stores, async claimDue(batch_id) {
+    const lease = await stores.claimDue(batch_id);
+    if (!lease || lease.state !== "prepared") return lease;
+    const client = await options.database.connect();
+    try {
+      const preflight = (await client.query<{ owner_id: string; actor_user_id: string; prior_day: boolean }>(`SELECT
+        owner.id::text owner_id,owner.actor_user_id::text actor_user_id,
+        admission.budget_date<(clock_timestamp() AT TIME ZONE admission.budget_timezone)::date prior_day
+        FROM signal_interest_decision_batches_v1 batch
+        JOIN signal_interest_decision_owners_v1 owner ON owner.id=batch.owner_id
+        JOIN signal_processing_admissions admission ON admission.id=batch.admission_id
+        WHERE batch.id=$1::uuid AND batch.lease_token=$2::uuid
+          AND batch.state='prepared' AND batch.lease_expires_at>clock_timestamp()`,
+      [lease.batch_id, lease.lease_token])).rows[0];
+      if (!preflight || !uuid.test(preflight.owner_id) || !uuid.test(preflight.actor_user_id)
+        || typeof preflight.prior_day !== "boolean") return fail("rollover_preflight_unavailable");
+      if (!preflight.prior_day) return lease;
+      // SQL0211 refuses renewal when the policy/source is no longer current.
+      // A failed renewal leaves the old prepared lease untouched for inspection;
+      // neither it nor a subsequent SQL0214 error may authorize a provider POST.
+      const renewal = (await client.query<{ result: { admission_id?: string; replayed?: boolean } }>(
+        `SELECT renew_signal_interest_decision_admission_v1($1::uuid,$2::uuid) result`,
+        [preflight.owner_id, preflight.actor_user_id])).rows[0]?.result;
+      if (!renewal || !uuid.test(String(renewal.admission_id)) || typeof renewal.replayed !== "boolean")
+        return fail("renewal_receipt_invalid");
+      const result = (await client.query<{ result: { batch_id?: string; expired_batch_id?: string;
+        manifest_digest?: string; replayed?: boolean } }>(
+        `SELECT rollover_prepared_signal_interest_decision_batch_v1($1::uuid,$2::uuid,$3::uuid) result`,
+        [lease.batch_id, lease.lease_token, preflight.actor_user_id])).rows[0]?.result;
+      if (!result || result.expired_batch_id !== lease.batch_id
+        || !uuid.test(String(result.batch_id)) || result.batch_id === lease.batch_id
+        || result.manifest_digest !== lease.manifest.manifest_digest || typeof result.replayed !== "boolean")
+        return fail("rollover_receipt_invalid");
+      // SQL0214 clears the old lease and creates a new prepared Batch. The next
+      // drainer pass dispatches its new ID; this job must never POST the old ID.
+      return null;
+    } finally { client.release(); }
+  }, async reserveAndMarkSubmitting(lease) {
     await getStorage().assertReady?.();
     // SQL0211 binds a prepared batch to its original admission. A new owner-day
     // admission cannot move that batch or its reserved calls across midnight.
