@@ -171,8 +171,10 @@ BEGIN
   OR NOT signal_interest_decision_provider_input_valid_v2(request,provider_input)
   OR jsonb_array_length(request->'roots') NOT BETWEEN 1 AND 64
   OR item->'root_ids' IS DISTINCT FROM
-     (SELECT jsonb_agg(root->>'root_id' ORDER BY n) FROM jsonb_array_elements(request->'roots') WITH ORDINALITY r(root,n))
-  OR (SELECT count(DISTINCT root->>'root_id') FROM jsonb_array_elements(request->'roots') root)
+     (SELECT jsonb_agg(r.root_value->>'root_id' ORDER BY r.n)
+      FROM jsonb_array_elements(request->'roots') WITH ORDINALITY r(root_value,n))
+  OR (SELECT count(DISTINCT r.root_value->>'root_id')
+      FROM jsonb_array_elements(request->'roots') r(root_value))
      <>jsonb_array_length(request->'roots')
  THEN RETURN false;END IF;
  FOR root IN SELECT value FROM jsonb_array_elements(request->'roots') LOOP
