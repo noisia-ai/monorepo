@@ -232,8 +232,12 @@ export function parseSignalWorkspaceInterestDecisionBatchItemV1(args: {
 export function signalWorkspaceInterestDecisionTransportRecoveryV1(error: unknown):
   "known_rejection" | "submission_unknown" | "retry_read" | "unknown_failure" {
   if (!(error instanceof AnthropicBatchTransportError)) return "unknown_failure";
-  return error.submission === "not_submitted" ? "known_rejection"
-    : error.submission === "submission_unknown" ? "submission_unknown" : "retry_read";
+  // Only an explicit, complete HTTP refusal can release exposure as a definite
+  // rejection. In particular 409/429 and local preflight errors are not that
+  // receipt: the SQL ledger quarantines them until independently reconciled.
+  return error.submission === "not_submitted"
+    && [400, 401, 403, 404, 413, 422].includes(error.httpStatus ?? -1) ? "known_rejection"
+    : error.submission === "read_failed" ? "retry_read" : "submission_unknown";
 }
 
 /** Results can arrive out of order. No accepted page exists until every custom

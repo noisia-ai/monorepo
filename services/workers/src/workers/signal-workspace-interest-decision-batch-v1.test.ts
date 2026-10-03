@@ -168,8 +168,12 @@ test("foreign, missing and conflicting results require recovery; POST ambiguity 
     rawText: JSON.stringify({ ...item.item, custom_id: "foreign" }) }), /result_envelope_mismatch/u);
   assert.equal(signalWorkspaceInterestDecisionTransportRecoveryV1(new AnthropicBatchTransportError("timeout", "submission_unknown")),
     "submission_unknown");
-  assert.equal(signalWorkspaceInterestDecisionTransportRecoveryV1(new AnthropicBatchTransportError("400", "not_submitted")),
+  assert.equal(signalWorkspaceInterestDecisionTransportRecoveryV1(new AnthropicBatchTransportError("400", "not_submitted", 400)),
     "known_rejection");
+  for (const status of [409, 429]) assert.equal(signalWorkspaceInterestDecisionTransportRecoveryV1(
+    new AnthropicBatchTransportError(`batch_http_${status}`, "not_submitted", status)), "submission_unknown");
+  assert.equal(signalWorkspaceInterestDecisionTransportRecoveryV1(
+    new AnthropicBatchTransportError("batch_request_invalid", "not_submitted")), "submission_unknown");
   assert.equal(signalWorkspaceInterestDecisionTransportRecoveryV1(new AnthropicBatchTransportError("read", "read_failed")),
     "retry_read");
 });

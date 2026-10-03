@@ -69,6 +69,10 @@ export const signalWorkspaceClassificationDecisionSchemaV1 = z.object({
   score: z.number().finite().nullable(),
   evidence_digest: digest,
   lineage_digest: digest,
+  /** Settled, cited interest decision identity. SQL verifies the referenced
+   * root, verdict, receipt, model and policy before admitting a membership. */
+  interest_decision_evidence_id: z.string().uuid().optional(),
+  interest_output_digest: digest.optional(),
   // Actual membership in a numerical cluster is reproducible evidence. It is
   // deliberately not authority to approve the cluster's interpreted meaning.
   membership_basis: z.literal("computed_cluster").optional(),
@@ -88,6 +92,9 @@ export const signalWorkspaceClassificationDecisionSchemaV1 = z.object({
   }).strict(), signalWorkspaceIncrementalMembershipMetadataSchemaV1]).optional()
 }).strict().superRefine((value, ctx) => {
   const problem = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+  if (Boolean(value.interest_decision_evidence_id) !== Boolean(value.interest_output_digest)
+    || value.interest_decision_evidence_id && (value.resolution_method !== "model" || value.membership_basis === "computed_cluster"))
+    problem("workspace_classification_interest_evidence_invalid");
   if (value.membership_basis === "computed_cluster") {
     if (!value.membership_metadata || value.disposition !== "pending" || value.resolution_method !== "model"
       || value.approval_policy_id !== null) problem("workspace_classification_computed_membership_not_approval");

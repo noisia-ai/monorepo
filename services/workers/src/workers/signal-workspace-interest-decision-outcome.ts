@@ -21,6 +21,8 @@ export type SignalWorkspaceInterestDecisionVerifiedAuthorityV1 = {
   model_receipt_digest: string;
   model_receipt_output_digest: string;
   approval_policy_id: string | null;
+  /** Read from settled SQL evidence, not inferred from the LLM response. */
+  evidence_by_root_id: Readonly<Record<string, { id: string; output_digest: string; decision_digest: string }>>;
 };
 
 /** This adapter is valid only for a classification snapshot containing exactly
@@ -35,8 +37,10 @@ export function buildSignalWorkspaceInterestDecisionOutcomesV1(args: {
 }): SignalWorkspaceClassificationOutcomeV1[] {
   const { request, identity, authority } = args;
   const parsed = parseSignalWorkspaceInterestDecisionOutputV1({ request, output: args.parsed.output });
+  // The provider receipt hashes the exact output bytes stored by SQL. The parser
+  // hashes normalized JSON, which can differ after key/citation ordering changes.
   if (parsed.output_digest !== args.parsed.output_digest || !shaPattern.test(authority.model_receipt_digest)
-    || authority.model_receipt_output_digest !== parsed.output_digest) return fail("model_receipt_mismatch");
+    || !shaPattern.test(authority.model_receipt_output_digest)) return fail("model_receipt_mismatch");
   if (!uuidPattern.test(authority.model_version_id)
     || authority.approval_policy_id !== null && !uuidPattern.test(authority.approval_policy_id)) return fail("authority_invalid");
   const interest = request.interest;
@@ -51,6 +55,10 @@ export function buildSignalWorkspaceInterestDecisionOutcomesV1(args: {
   const decisions = new Map(parsed.output.decisions.map(decision => [decision.root_id, decision]));
   return request.roots.map(source => {
     const decision = decisions.get(source.root_id)!;
+    const savedEvidence = authority.evidence_by_root_id[source.root_id];
+    if (!savedEvidence || !uuidPattern.test(savedEvidence.id)
+      || savedEvidence.output_digest !== authority.model_receipt_output_digest
+      || !shaPattern.test(savedEvidence.decision_digest)) return fail("saved_evidence_missing");
     const coverageHash = createHash("sha256");
     const assetHash = createHash("sha256");
     let offset = 0;
@@ -65,10 +73,12 @@ export function buildSignalWorkspaceInterestDecisionOutcomesV1(args: {
     if (`sha256:${assetHash.digest("hex")}` !== source.asset_sha256) return fail("chunk_coverage_incomplete");
     const root = { root_id: source.root_id, fingerprint: source.fingerprint,
       correction_digest: source.correction_digest };
-    const evidence_digest = signalWorkspaceEmbeddingDigestV1({ contract_version: request.contract_version,
-      request_digest: request.request_digest, output_digest: parsed.output_digest, decision });
+    const evidence_digest = savedEvidence.decision_digest;
     const lineage_digest = signalWorkspaceEmbeddingDigestV1({ evidence_digest,
-      model_receipt_digest: authority.model_receipt_digest, model_version_id: authority.model_version_id,
+      model_receipt_digest: authority.model_receipt_digest,
+      model_receipt_output_digest: authority.model_receipt_output_digest,
+      parsed_output_digest: parsed.output_digest,
+      model_version_id: authority.model_version_id,
       classification_identity: identity });
     const disposition: "approved" | "rejected" = decision.verdict === "belongs" ? "approved" : "rejected";
     if (decision.verdict === "belongs" && authority.approval_policy_id === null) return fail("approval_policy_required");
@@ -78,7 +88,9 @@ export function buildSignalWorkspaceInterestDecisionOutcomesV1(args: {
       disposition, resolution_method: "model" as const, model_version_id: authority.model_version_id,
       labeling_function_version_id: null, approval_policy_id: disposition === "approved" ? authority.approval_policy_id : null,
       decided_by_user_id: null, correction_operation_id: null, score: null,
-      evidence_digest, lineage_digest
+      evidence_digest, lineage_digest,
+      interest_decision_evidence_id: savedEvidence.id,
+      interest_output_digest: savedEvidence.output_digest
     }];
     const outcome: SignalWorkspaceClassificationOutcomeV1 = {
       contract_version: "signal-workspace-classification-v1", root,

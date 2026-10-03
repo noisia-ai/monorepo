@@ -38,7 +38,7 @@ export type SignalWorkspaceInterestDecisionBatchStoresV1 = {
   reserveAndMarkSubmitting(lease: SignalWorkspaceInterestDecisionBatchLeaseV1): Promise<void>;
   attachProviderBatch(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, state: AnthropicBatchState): Promise<void>;
   markSubmissionUnknown(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, code: string,
-    acknowledged_state: AnthropicBatchState | null): Promise<void>;
+    acknowledged_state: AnthropicBatchState | null, receipt?: AnthropicBatchHttpReceipt | null): Promise<void>;
   markKnownRejection(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, code: string,
     receipt: AnthropicBatchHttpReceipt | null): Promise<void>;
   recordPoll(lease: SignalWorkspaceInterestDecisionBatchLeaseV1, state: AnthropicBatchState): Promise<void>;
@@ -119,7 +119,8 @@ export async function runSignalWorkspaceInterestDecisionBatchTickV1(args: {
             error instanceof AnthropicBatchTransportError ? anthropicBatchErrorReceipt(error) : null);
           return "known_rejection";
         }
-        await args.stores.markSubmissionUnknown(lease, errorCode, null);
+        await args.stores.markSubmissionUnknown(lease, errorCode, null,
+          error instanceof AnthropicBatchTransportError ? anthropicBatchErrorReceipt(error) : null);
         return "submission_unknown";
       }
       try { checkState(state, lease); }

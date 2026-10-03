@@ -14,6 +14,7 @@ export type SignalEvidenceDrawerRecord = {
   occurredAt: string | null;
   originalUrl?: string | null;
   platform?: string | null;
+  provenanceLabel?: string | null;
   quote?: string | null;
 };
 
@@ -100,6 +101,7 @@ export function SignalEvidenceDrawer({
                   <time>{formatSignalEvidenceDateV1(record.occurredAt, locale, timeZone)}</time>
                 </div>
                 <p>{record.body}</p>
+                {record.provenanceLabel ? <small>{record.provenanceLabel}</small> : null}
                 {quote ? <blockquote>{quote}</blockquote> : null}
                 <div className="signal-v2-tn__evidence-actions">
                   {onOpenEnriched ? (

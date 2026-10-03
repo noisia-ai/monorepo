@@ -208,7 +208,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
           onClick={() => { setDrawer(true); if (!evidence) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
         {term?.evidence_available === false ? <p className="signal-v2-tn__evidence-intro">{t("definedEvidencePending")}</p> : null}
         {term ? <SignalWorkspaceTopicDetail data={data} termKey={term.term_key} kind={sectionKind} onSelect={select} /> : null}
-        {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t("detailMetrics.evidence")}</strong>
+        {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t(term?.basis === "defined_interest" ? "membershipEvidence" : "detailMetrics.evidence")}</strong>
           {evidence?.items.slice(0, 5).map(item => <button key={item.mention_id} type="button" onClick={() => setDrawer(true)}>
             <span><SignalSourceIcon label={item.platform} platform={item.platform} size={15} />{item.platform}</span><p>{item.text}</p>
           </button>)}
@@ -244,9 +244,12 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
     </section>
     {!consolidated ? <p className="signal-v2-tn__evidence-intro">{t("noNarratives")}</p> : null}
     </div>
-    {drawer && term && term.evidence_available !== false ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t("computed")} title={term.label} intro={t("quality")}
+    {drawer && term && term.evidence_available !== false ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t(term.basis === "defined_interest" ? "membershipEvidence" : "computed")} title={term.label} intro={t(term.basis === "defined_interest" ? "definedQuality" : "quality")}
       timeZone={workspaceTimezone}
-      records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at, platform: item.platform, originalUrl: item.url }))}
+      records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at,
+        platform: item.platform, originalUrl: item.url,
+        provenanceLabel: item.evidence_origin === "human_correction" ? t("humanCorrection")
+          : item.decision_citation ? t("citedDecision") : null }))}
       loading={reading} loadingLabel={t("loading")} emptyLabel={t("noEvidence")} errorMessage={error ? t(error === "evidenceStale" ? "evidenceStale" : "evidenceError") : null}
       onClose={() => { request.current?.abort(); sequence.current++; setDrawer(false); setReading(false); }}
       onOpenEnriched={onOpenMention ? record => { setDrawer(false); onOpenMention(record.id); } : undefined}

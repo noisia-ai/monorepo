@@ -482,13 +482,16 @@ async function persistRoot(client: PoolClient, run: Run, root: SignalWorkspaceCl
   const values=decisions.map(decision=>({...decision,source_assignment_id:source?.assignments.get(decision.term_key)??null}));
   if(values.length) await client.query(`INSERT INTO signal_classification_assignments(workspace_id,generation_id,generation_item_id,canonical_root_id,
    taxonomy_profile_id,taxonomy_term_id,resolution_method,disposition,labeling_function_version_id,model_version_id,approval_policy_id,
-   decided_by_user_id,score,evidence_digest,lineage_digest,operation_id,source_assignment_id,correction_operation_id,definition_digest,definition_revision,membership_basis,membership_metadata)
+   decided_by_user_id,score,evidence_digest,lineage_digest,operation_id,source_assignment_id,correction_operation_id,definition_digest,definition_revision,membership_basis,membership_metadata,
+   interest_decision_evidence_id,interest_output_digest)
    SELECT $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,row.taxonomy_term_id,row.resolution_method,row.disposition,row.labeling_function_version_id,
     row.model_version_id,row.approval_policy_id,row.decided_by_user_id,row.score,row.evidence_digest,row.lineage_digest,$6::uuid,row.source_assignment_id,
-    row.correction_operation_id,row.definition_digest,row.definition_revision,COALESCE(row.membership_basis,'decision'),row.membership_metadata
+    row.correction_operation_id,row.definition_digest,row.definition_revision,COALESCE(row.membership_basis,'decision'),row.membership_metadata,
+    row.interest_decision_evidence_id,row.interest_output_digest
    FROM jsonb_to_recordset($7::jsonb) row(taxonomy_term_id uuid,resolution_method text,disposition text,labeling_function_version_id uuid,
     model_version_id uuid,approval_policy_id uuid,decided_by_user_id uuid,score numeric,evidence_digest text,lineage_digest text,source_assignment_id uuid,
-    correction_operation_id uuid,definition_digest text,definition_revision integer,membership_basis text,membership_metadata jsonb)`,
+    correction_operation_id uuid,definition_digest text,definition_revision integer,membership_basis text,membership_metadata jsonb,
+    interest_decision_evidence_id uuid,interest_output_digest text)`,
   [run.workspace_id,run.generation_id,item,root.root_id,run.taxonomy_profile_id,op,JSON.stringify(values)]);
   await client.query(`UPDATE signal_topic_catalog_executions SET cursor_root_id=$2::uuid,processed_roots=processed_roots+1,
    processed_chunks=processed_chunks+$3,progress=LEAST(99,((processed_roots+1)*100/GREATEST(denominator,1))),updated_at=clock_timestamp()
@@ -547,16 +550,18 @@ export async function commitSignalWorkspaceClassificationPageV1(args:{database:S
      INSERT INTO signal_classification_assignments(workspace_id,generation_id,generation_item_id,canonical_root_id,
       taxonomy_profile_id,taxonomy_term_id,resolution_method,disposition,labeling_function_version_id,model_version_id,approval_policy_id,
       decided_by_user_id,score,evidence_digest,lineage_digest,operation_id,source_assignment_id,correction_operation_id,
-      definition_digest,definition_revision,membership_basis,membership_metadata)
+      definition_digest,definition_revision,membership_basis,membership_metadata,interest_decision_evidence_id,interest_output_digest)
      SELECT $1::uuid,$2::uuid,entry.item_id,entry.root_id,$3::uuid,decision.taxonomy_term_id,decision.resolution_method,
       decision.disposition,decision.labeling_function_version_id,decision.model_version_id,decision.approval_policy_id,
       decision.decided_by_user_id,decision.score,decision.evidence_digest,decision.lineage_digest,entry.operation_id,NULL,
-      decision.correction_operation_id,decision.definition_digest,decision.definition_revision,COALESCE(decision.membership_basis,'decision'),decision.membership_metadata
+      decision.correction_operation_id,decision.definition_digest,decision.definition_revision,COALESCE(decision.membership_basis,'decision'),decision.membership_metadata,
+      decision.interest_decision_evidence_id,decision.interest_output_digest
      FROM jsonb_to_recordset($4::jsonb) entry(item_id uuid,root_id uuid,operation_id uuid,decisions jsonb)
      CROSS JOIN LATERAL jsonb_to_recordset(entry.decisions) decision(taxonomy_term_id uuid,resolution_method text,disposition text,
       labeling_function_version_id uuid,model_version_id uuid,approval_policy_id uuid,decided_by_user_id uuid,score numeric,
       evidence_digest text,lineage_digest text,correction_operation_id uuid,definition_digest text,definition_revision integer,
-      membership_basis text,membership_metadata jsonb)`,[run.workspace_id,run.generation_id,run.taxonomy_profile_id,payload]);
+      membership_basis text,membership_metadata jsonb,interest_decision_evidence_id uuid,interest_output_digest text)`,
+      [run.workspace_id,run.generation_id,run.taxonomy_profile_id,payload]);
     await client.query(`INSERT INTO signal_classification_events(workspace_id,operation_id,event_index,event_kind,object_type,object_id,
      previous_state_digest,next_state_digest,event_digest)
      SELECT $1::uuid,row.operation_id,0,'results-appended','generation-item',row.item_id,NULL,row.result_digest,row.event_digest

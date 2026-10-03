@@ -721,7 +721,7 @@
       "withheld": "{count} menciones no están disponibles para esta consulta.", "empty": "No hay Topics seleccionados", "emptyBody": "Elige los Topics que quieres ver en Signal desde el catálogo editable de la marca.",
       "emptyNarratives": "No hay narrativas seleccionadas", "emptyNarrativesBody": "No hay narrativas seleccionadas en esta versión de Signal.",
       "selectedTopics": "Topics seleccionados", "selectedNarratives": "Narrativas seleccionadas", "topic": "Topic", "narrative": "Narrativa", "mentions": "Menciones", "share": "% del corpus", "definition": "Definición",
-      "membership": "{count} menciones con pertenencia calculada.", "definedMembership": "{count} menciones con una decisión aprobada para este interés.", "definedQuality": "La pertenencia se basa en una decisión guardada para este interés y su definición vigente.", "definedEvidencePending": "Las citas de la decisión aún no están disponibles aquí. Abre la mención original desde Menciones; esta vista no presenta un fragmento genérico como cita.", "narrativeMembership": "{count} menciones sustentan esta narrativa.", "evidence": "Ver evidencia", "trend": "Menciones en Topics seleccionados", "editorialTrend": "Menciones en Topics y narrativas seleccionados",
+      "membership": "{count} menciones con pertenencia calculada.", "definedMembership": "{count} menciones con una decisión aprobada para este interés.", "definedQuality": "La pertenencia se basa en una decisión guardada para este interés y su definición vigente.", "definedEvidencePending": "Las citas de la decisión aún no están disponibles aquí. Abre la mención original desde Menciones; esta vista no presenta un fragmento genérico como cita.", "membershipEvidence": "Evidencia de pertenencia", "citedDecision": "Cita de la decisión guardada", "humanCorrection": "Corrección humana; se muestra la mención original, no una cita de Claude.", "narrativeMembership": "{count} menciones sustentan esta narrativa.", "evidence": "Ver evidencia", "trend": "Menciones en Topics seleccionados", "editorialTrend": "Menciones en Topics y narrativas seleccionados",
       "noNarratives": "Las narrativas y los insights aún no están disponibles para este análisis.", "close": "Cerrar", "loading": "Cargando…", "noEvidence": "No hay evidencia disponible en este periodo.",
       "evidenceStale": "La evidencia cambió o ya no tienes acceso. Actualiza el resultado antes de consultarla de nuevo.", "evidenceError": "No pudimos cargar la evidencia. Inténtalo de nuevo.",
       "more": "Ver más", "original": "Abrir original"
@@ -3019,6 +3019,54 @@
         "newQuote": "Calcular nueva versión"
       },
       "eyebrow": "Topics",
+      "definedInterestDecision": {
+        "title": "Clasificación de este interés",
+        "body": "Evalúa las menciones de este interés con decisiones y citas verificables. Los candidatos de búsqueda no se convierten en pertenencias automáticamente.",
+        "states": {
+          "not_started": "Aún no se inició la clasificación de este interés.",
+          "open": "Preparando las menciones y sus solicitudes.",
+          "ready": "Procesando solicitudes y verificando decisiones.",
+          "materializing": "Las decisiones están validadas; ahora se guardan las pertenencias de la generación.",
+          "materializationFailed": "Las decisiones se conservaron, pero no se pudieron terminar de guardar las pertenencias.",
+          "complete": "Clasificación y pertenencias listas. Revisa la selección de Signal por separado.",
+          "blocked": "La clasificación quedó detenida. Se conservaron los recibos y el avance."
+        },
+        "manifest": "Menciones preparadas: {done, number} de {total, number}.",
+        "accepted": "Decisiones con recibo validado: {count, number}. Este conteo incluye resultados positivos y negativos.",
+        "materialization": "Pertenencias procesadas: {done, number} de {total, number} menciones.",
+        "unknown": "{count, plural, one {# lote tiene un envío incierto} other {# lotes tienen envíos inciertos}}. No se reenviarán automáticamente.",
+        "unsettled": "{count, plural, one {# llamada aún no tiene costo conciliado} other {# llamadas aún no tienen costo conciliado}}.",
+        "start": "Clasificar este interés", "retrySame": "Reintentar la misma solicitud", "refresh": "Actualizar estado",
+        "saveFirst": "Guarda los cambios del interés antes de clasificarlo.",
+        "pending": "La solicitud conserva la misma clave hasta confirmar su recibo; reintentar no crea otra solicitud.",
+        "errors": {
+          "load": "No pudimos comprobar el avance. Actualiza el estado para intentarlo de nuevo.",
+          "request": "No se confirmó la solicitud. Verifica el estado y, si hace falta, reintenta la misma solicitud.",
+          "rejected": "El servidor rechazó el inicio. La solicitud conserva su clave; actualiza el estado antes de reintentarla.",
+          "storage": "El navegador no pudo conservar la clave de solicitud. Habilita el almacenamiento de esta sesión antes de continuar.",
+          "forbidden": "Ya no tienes acceso a esta clasificación.",
+          "analysisRequired": "Primero termina la búsqueda vigente de este interés.",
+          "authorityRequired": "Aún falta habilitar la evaluación y política del modelo para este interés.",
+          "authorityStale": "La definición o la autoridad del modelo cambió. Actualiza el interés antes de continuar.",
+          "policyRequired": "La organización todavía no tiene una política vigente para esta clasificación.",
+          "capExhausted": "El tope autorizado no alcanza para reservar la siguiente solicitud. El avance se conserva.",
+          "sourceStale": "La búsqueda o los derechos cambiaron. Actualiza el interés antes de continuar."
+        }
+      },
+      "definedInterestSelection": {
+        "title": "Interés definido con clasificación revisada",
+        "ready": "Clasificación vigente: {count, plural, one {# mención aprobada} other {# menciones aprobadas}}. Puedes elegir si aparece en Signal.",
+        "notReady": "La clasificación con decisiones aprobadas todavía no está lista para este interés. La afinidad de búsqueda no equivale a pertenencia.",
+        "processing": "La clasificación está en proceso. Actualiza el estado cuando termine.",
+        "selected": "Este interés está seleccionado y vigente en Signal.",
+        "selectedStale": "La selección anterior se conserva, pero su clasificación o sus derechos ya no están vigentes en Signal.",
+        "show": "Mostrar interés en Signal", "remove": "Quitar interés de Signal", "saving": "Comprobando…",
+        "refresh": "Actualizar estado", "recover": "Verificar solicitud", "retry": "Reenviar misma solicitud",
+        "openSignal": "Ver en Signal", "saveFirst": "Guarda los cambios del interés antes de seleccionarlo.",
+        "pending": "La solicitud se conserva para poder verificarla sin duplicar el cambio.",
+        "forbidden": "Ya no tienes acceso a esta selección.", "conflict": "La definición, clasificación o selección cambió. Actualiza el estado.",
+        "load": "No pudimos comprobar el estado de este interés.", "save": "No pudimos confirmar el cambio. Verifica la solicitud antes de reintentar."
+      },
       "signalSelection": {
         "memberships": "{count, plural, one {# mención asociada} other {# menciones asociadas}}", "openSignal": "Ver en Signal",
         "show": "Mostrar en Signal", "remove": "Quitar de Signal", "saving": "Consultando…", "resend": "Confirmar la misma solicitud",

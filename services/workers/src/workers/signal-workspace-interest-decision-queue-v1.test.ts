@@ -65,7 +65,8 @@ function harness(manifest = one) {
     async reserveAndMarkSubmitting() { events.push("reserve"); lease.state = "submitting"; },
     async attachProviderBatch(_lease, providerState) { events.push("attach"); lease.provider_batch_id = providerState.id;
       lease.state = providerState.processing_status; },
-    async markSubmissionUnknown(_lease, _code, acknowledged) { events.push(acknowledged ? "unknown_ack" : "unknown");
+    async markSubmissionUnknown(_lease, _code, acknowledged, receipt) {
+      events.push(acknowledged ? "unknown_ack" : receipt ? `unknown_${receipt.http_status}` : "unknown");
       lease.state = "submission_unknown"; },
     async markKnownRejection(_lease, _code, receipt) { events.push(`reject_${receipt?.http_status ?? "missing"}`);
       lease.state = "submission_unknown"; },
@@ -142,6 +143,20 @@ test("known HTTP rejection stores its private receipt and does not import", asyn
   assert.equal(posts, 1);
   assert.ok(h.events.includes("reject_400"));
   assert.ok(h.events.every(event => !event.startsWith("raw_") && !event.startsWith("outcome_")));
+});
+
+test("409 and 429 quarantine their HTTP receipts without re-posting", async () => {
+  for (const status of [409, 429]) {
+    const h = harness(); let posts = 0;
+    const provider = createAnthropicMessageBatchesClient({ apiKey: "test-only", fetch: async () => {
+      posts++; return new Response('{"type":"error"}', { status });
+    } });
+    assert.equal(await runSignalWorkspaceInterestDecisionBatchTickV1({ stores: h.stores, provider }), "submission_unknown");
+    assert.equal(await runSignalWorkspaceInterestDecisionBatchTickV1({ stores: h.stores, provider }), "submission_unknown");
+    assert.equal(posts, 1);
+    assert.ok(h.events.includes(`unknown_${status}`));
+    assert.ok(h.events.every(event => !event.startsWith("reject_")));
+  }
 });
 
 test("ACK storage failure retains known provider identity for reconciliation without a second POST", async () => {

@@ -4,7 +4,8 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
-import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1 } from "@noisia/query-engine";
+import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1,
+  SignalWorkspaceDefinedInterestOverviewV1 } from "@noisia/query-engine";
 import { todayForSignalTimezone } from "../../components/signal-v2/SignalAnalyticsFilter";
 import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
 import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
@@ -42,6 +43,29 @@ test("empty completed catalogue is actionable without creating synthetic Topics 
   const html = await render("en-US", { ...data, terms: [] });
   assert.match(html, /No Topics selected/); assert.match(html, /Manage Topics/);
   assert.match(html, /Narratives and insights are not yet available/); assert.doesNotMatch(html, /topic0|topic1/);
+});
+test("a defined interest labels settled citations and never presents cluster evidence as its decision", async () => {
+  const interest: SignalWorkspaceDefinedInterestOverviewV1 = {
+    ...data, source: "workspace_defined_interest", classification_state: "ready", generation_id: null,
+    source_engine_execution_id: null, interest_generation_ids: ["interest-generation"],
+    interest_selection_digest: "sha256:selection", evidence_visible_total: 10,
+    coverage: { processed: 10, assigned_unique: 2, abstained: null, noise: null, unresolved: null, withheld: 0 },
+    terms: [{ ...data.terms[0]!, term_key: "activation", label: "Unrequested activation", kind: "topic",
+      basis: "defined_interest", interest_generation_id: "interest-generation", evidence_available: true,
+      mention_count: 2, share_of_corpus: 0.2 }]
+  };
+  const cited = await render("en-US", interest);
+  assert.match(cited, /Defined interests/);
+  assert.match(cited, /Membership evidence/);
+  const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  assert.match(source, /item\.evidence_origin === "human_correction" \? t\("humanCorrection"\)/u);
+  assert.match(source, /item\.decision_citation \? t\("citedDecision"\)/u);
+  assert.doesNotMatch(cited, /Clusters were computed from the mentions/);
+  const pending = await render("en-US", { ...interest,
+    terms: [{ ...interest.terms[0]!, evidence_available: false }] });
+  assert.match(pending, /Decision citations are not available here yet/);
+  const evidenceButton = pending.match(/<button\b[^>]*>(?:(?!<\/button>)[\s\S])*View evidence<\/button>/)?.[0];
+  assert.ok(evidenceButton); assert.match(evidenceButton, /disabled=""/);
 });
 test("consolidated Signal separates Topics and narratives and exposes real editorial dispositions", async () => {
   const consolidated = { ...data,
@@ -242,11 +266,13 @@ for (const locale of ["es-MX", "en-US"]) {
         onClose: () => undefined,
         openOriginalLabel: "Open original",
         openingEnrichedLabel: "Opening",
-        records: [{ body: "Real mention without a published date", id: "mention", occurredAt: null, platform: "reddit" }],
+        records: [{ body: "Real mention without a published date", id: "mention", occurredAt: null, platform: "reddit",
+          provenanceLabel: "Human correction, not a Claude citation" }],
         title: "Topic",
         viewEnrichedLabel: "Open mention"
       })));
     assert.match(html, /<time>—<\/time>/);
+    assert.match(html, /Human correction, not a Claude citation/);
     assert.doesNotMatch(html, /1970|Jan 1|1 ene|1 de ene/i);
   });
 }

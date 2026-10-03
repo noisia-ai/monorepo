@@ -45,7 +45,13 @@ export function topicError(error: unknown, fallback: string) {
       topic_consolidation_quote_stale: "The preparation quote expired. Refresh Topics to receive a current quote.",
       topic_consolidation_preflight_blocked: "Topics preparation is not available for the current analysis.",
       topic_consolidation_existing_execution: "This analysis already has a Topics preparation.",
-      topic_consolidation_source_stale: "The analysis changed. Refresh Topics before preparing it."
+      topic_consolidation_source_stale: "The analysis changed. Refresh Topics before preparing it.",
+      interest_decision_analysis_required: "Analyze the current corpus before classifying this interest.",
+      interest_decision_definition_unavailable: "Save and prepare this interest before classifying it.",
+      interest_decision_model_authority_required: "Interest classification is not yet available for this brand.",
+      interest_decision_model_authority_stale: "The interest changed. Refresh its classification setup.",
+      interest_decision_policy_required: "Interest classification is not enabled by this organization's current processing policy.",
+      interest_decision_source_stale: "The corpus or interest changed. Refresh Topics before retrying."
     };
     return topicResponse({ error: error.code,
       message: messages[error.code] ?? "This Topics action could not be completed. Refresh and try again." }, status);

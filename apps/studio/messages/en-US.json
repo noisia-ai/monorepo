@@ -723,7 +723,7 @@
       "withheld": "{count} mentions are unavailable for this query.", "empty": "No Topics selected", "emptyBody": "Choose the Topics you want to see in Signal from the brand’s editable catalogue.",
       "emptyNarratives": "No narratives selected", "emptyNarrativesBody": "No narrative is selected for this Signal version.",
       "selectedTopics": "Selected Topics", "selectedNarratives": "Selected narratives", "topic": "Topic", "narrative": "Narrative", "mentions": "Mentions", "share": "% of corpus", "definition": "Definition",
-      "membership": "{count} mentions with computed membership.", "definedMembership": "{count} mentions with an approved decision for this interest.", "definedQuality": "Membership is based on a saved decision for this interest and its current definition.", "definedEvidencePending": "Decision citations are not available here yet. Open the original mention from Mentions; this view does not present a generic excerpt as a citation.", "narrativeMembership": "{count} mentions support this narrative.", "evidence": "View evidence", "trend": "Mentions in selected Topics", "editorialTrend": "Mentions in selected Topics and narratives",
+      "membership": "{count} mentions with computed membership.", "definedMembership": "{count} mentions with an approved decision for this interest.", "definedQuality": "Membership is based on a saved decision for this interest and its current definition.", "definedEvidencePending": "Decision citations are not available here yet. Open the original mention from Mentions; this view does not present a generic excerpt as a citation.", "membershipEvidence": "Membership evidence", "citedDecision": "Citation from saved decision", "humanCorrection": "Human correction; the original mention is shown, not a Claude citation.", "narrativeMembership": "{count} mentions support this narrative.", "evidence": "View evidence", "trend": "Mentions in selected Topics", "editorialTrend": "Mentions in selected Topics and narratives",
       "noNarratives": "Narratives and insights are not yet available for this analysis.", "close": "Close", "loading": "Loading…", "noEvidence": "No evidence is available in this period.",
       "evidenceStale": "The evidence changed or access is no longer available. Refresh the result before viewing it again.", "evidenceError": "We could not load the evidence. Try again.",
       "more": "Show more", "original": "Open original"
@@ -3019,6 +3019,54 @@
         "newQuote": "Calculate new version"
       },
       "eyebrow": "Topics",
+      "definedInterestDecision": {
+        "title": "Classify this interest",
+        "body": "Evaluate mentions for this interest with verifiable decisions and citations. Search candidates do not become memberships automatically.",
+        "states": {
+          "not_started": "Classification has not started for this interest.",
+          "open": "Preparing mentions and requests.",
+          "ready": "Processing requests and verifying decisions.",
+          "materializing": "Decisions are validated; generation memberships are now being saved.",
+          "materializationFailed": "Decisions were retained, but memberships could not be fully saved.",
+          "complete": "Classification and memberships are ready. Choose Signal visibility separately.",
+          "blocked": "Classification stopped. Receipts and progress were retained."
+        },
+        "manifest": "Mentions prepared: {done, number} of {total, number}.",
+        "accepted": "Decisions with validated receipts: {count, number}. This includes positive and negative results.",
+        "materialization": "Memberships processed: {done, number} of {total, number} mentions.",
+        "unknown": "{count, plural, one {# batch has an uncertain submission} other {# batches have uncertain submissions}}. They will not be sent again automatically.",
+        "unsettled": "{count, plural, one {# call still has unsettled cost} other {# calls still have unsettled cost}}.",
+        "start": "Classify this interest", "retrySame": "Retry the same request", "refresh": "Refresh status",
+        "saveFirst": "Save interest changes before classifying it.",
+        "pending": "The request keeps the same key until its receipt is confirmed; retrying will not create a second request.",
+        "errors": {
+          "load": "We could not check progress. Refresh the status to try again.",
+          "request": "The request was not confirmed. Check its status and retry the same request if needed.",
+          "rejected": "The server rejected the start request. Its key was retained; refresh status before retrying it.",
+          "storage": "The browser could not keep the request key. Enable session storage before continuing.",
+          "forbidden": "You no longer have access to this classification.",
+          "analysisRequired": "Complete the current search for this interest first.",
+          "authorityRequired": "The model evaluation and policy still need to be enabled for this interest.",
+          "authorityStale": "The interest definition or model authority changed. Refresh the interest before continuing.",
+          "policyRequired": "This organization does not yet have an active policy for this classification.",
+          "capExhausted": "The authorized cap cannot reserve the next request. Progress was retained.",
+          "sourceStale": "The search or source rights changed. Refresh this interest before continuing."
+        }
+      },
+      "definedInterestSelection": {
+        "title": "Defined interest with reviewed classification",
+        "ready": "Current classification: {count, plural, one {# approved mention} other {# approved mentions}}. You can choose whether it appears in Signal.",
+        "notReady": "Classification with approved decisions is not ready for this interest. Search affinity does not establish membership.",
+        "processing": "Classification is in progress. Refresh when it finishes.",
+        "selected": "This interest is selected and current in Signal.",
+        "selectedStale": "The earlier selection remains, but its classification or rights are no longer current in Signal.",
+        "show": "Show interest in Signal", "remove": "Remove interest from Signal", "saving": "Checking…",
+        "refresh": "Refresh status", "recover": "Check request", "retry": "Resend same request",
+        "openSignal": "View in Signal", "saveFirst": "Save changes to this interest before selecting it.",
+        "pending": "The request is retained so its result can be checked without duplicating the change.",
+        "forbidden": "You no longer have access to this selection.", "conflict": "The definition, classification, or selection changed. Refresh its status.",
+        "load": "We could not check this interest's status.", "save": "We could not confirm the change. Check the request before retrying."
+      },
       "signalSelection": {
         "memberships": "{count, plural, one {# associated mention} other {# associated mentions}}", "openSignal": "View in Signal",
         "show": "Show in Signal", "remove": "Remove from Signal", "saving": "Checking…", "resend": "Confirm the same request",

@@ -39,6 +39,7 @@ test('active consolidation uses common rights/population reader with exact selec
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{binding,snapshot}]};
+  if(sql.includes('FROM signal_defined_interest_selections selected'))return{rows:[]};
   if(sql.includes('WITH source_generation AS MATERIALIZED')){
    assert.match(sql,/signal_topic_consolidation_snapshot_roots_v1/u);
    assert.match(sql,/signal_topic_consolidation_snapshot_memberships_v1/u);
@@ -61,6 +62,7 @@ test('narrative detail and evidence preserve editorial kind through the same rig
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{binding,snapshot}]};
+  if(sql.includes('FROM signal_defined_interest_selections selected'))return{rows:[]};
   if(sql.includes('WITH source_generation AS MATERIALIZED')&&sql.includes('SELECT count(*) FILTER'))return{rows:[{
    evidence_visible_total:1,denominator:1,processed:1,assigned_unique:1,abstained:0,noise:0,unresolved:0,
    unresolved_exclusive:0,withheld:0,rights_digest:sha('d'),date_from:null,date_to:null,

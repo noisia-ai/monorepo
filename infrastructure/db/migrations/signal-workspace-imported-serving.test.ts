@@ -17,6 +17,7 @@ function fixture() {
       organization_status: "active", brand_same_organization: true, actor_status: state.allowed ? "active" : "suspended",
       user_type: "noisia_internal", primary_role: "noisia_admin", same_organization: false, brand_access_level: null }] };
     if (sql.includes("signal_topic_consolidation_binding_v1")) return { rows: [] };
+    if (sql.includes("FROM signal_defined_interest_selections selected")) return { rows: [] };
     if (sql.includes("topic_signal_selection selection")) return { rows: [{ selection: null, native: false, is_processing: false }] };
     if (sql.includes("SELECT generation.id,generation.taxonomy_profile_id") || sql.includes("term.metadata->'topic' definition")) return { rows: [] };
     if (sql.includes("candidate.input_contract='workspace-topic-classification-v1'")) return { rows: [{ native: state.generated,
@@ -24,8 +25,8 @@ function fixture() {
         policy_live: state.current, input_revision: "1", current_revision: "1", finalized_digest: sha(3) } : {}) }] };
     if (sql.includes("HAVING count(*)>0")) return { rows: state.accepted ? [{ receipt_digest: state.receipt, input_revision: "1" }] : [] };
     if (sql.includes("mention_roots AS MATERIALIZED")) {
-      const after = values[7], offset = after ? roots.findIndex(root => root.mention_id === after) + 1 : 0;
-      const items = roots.slice(offset, offset + Number(values[10])).slice(0, state.evidence);
+      const after = values[8], offset = after ? roots.findIndex(root => root.mention_id === after) + 1 : 0;
+      const items = roots.slice(offset, offset + Number(values[11])).slice(0, state.evidence);
       const summary = { metric_denominator: state.metrics, evidence_visible_total: state.evidence, total_count: state.evidence,
         withheld_evidence_count: state.metrics - state.evidence, integrity_withheld_count: 0, rights_digest: state.rights,
         population_fingerprint_xor: "123", population_fingerprint_sum: "456", date_from: "2026-09-01", date_to: "2026-09-01",

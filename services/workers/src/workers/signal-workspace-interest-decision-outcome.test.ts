@@ -43,10 +43,19 @@ function output(): SignalWorkspaceInterestDecisionOutputV1 {
         role: index === 0 ? "supports" as const : "context" as const }] })) };
 }
 const parsed = parseSignalWorkspaceInterestDecisionOutputV1({ request, output: output() });
-const authority = { model_version_id: randomUUID(), approval_policy_id: randomUUID(),
-  model_receipt_digest: sha("settled-claude-receipt"), model_receipt_output_digest: parsed.output_digest };
-const build = (changes: Partial<Parameters<typeof buildSignalWorkspaceInterestDecisionOutcomesV1>[0]> = {}) =>
-  buildSignalWorkspaceInterestDecisionOutcomesV1({ request, parsed, identity, compiler_digest, authority, ...changes });
+const model_version_id = randomUUID(), approval_policy_id = randomUUID();
+const authorityFor = (value: typeof parsed) => ({ model_version_id, approval_policy_id,
+  model_receipt_digest: sha("settled-claude-receipt"),
+  model_receipt_output_digest: sha(JSON.stringify(value.output)),
+  evidence_by_root_id: Object.fromEntries(value.output.decisions.map(decision => [decision.root_id,
+    { id: randomUUID(), output_digest: sha(JSON.stringify(value.output)),
+      decision_digest: signalWorkspaceEmbeddingDigestV1(decision) }])) });
+const authority = authorityFor(parsed);
+const build = (changes: Partial<Parameters<typeof buildSignalWorkspaceInterestDecisionOutcomesV1>[0]> = {}) => {
+  const selected = changes.parsed ?? parsed;
+  return buildSignalWorkspaceInterestDecisionOutcomesV1({ request, parsed: selected, identity, compiler_digest,
+    authority: changes.authority ?? (selected === parsed ? authority : authorityFor(selected)), ...changes });
+};
 
 test("valid receipt and policy produce one complete classified outcome per root", () => {
   const outcomes = build();
@@ -54,6 +63,9 @@ test("valid receipt and policy produce one complete classified outcome per root"
   assert.deepEqual(outcomes.map(item => item.decisions.length), [1, 1, 0]);
   assert.equal(outcomes[0]!.decisions[0]!.model_version_id, authority.model_version_id);
   assert.equal(outcomes[0]!.decisions[0]!.approval_policy_id, authority.approval_policy_id);
+  assert.equal(outcomes[0]!.decisions[0]!.interest_decision_evidence_id,
+    authority.evidence_by_root_id[roots[0]!.root_id]?.id);
+  assert.equal(outcomes[0]!.decisions[0]!.interest_output_digest, authority.model_receipt_output_digest);
   assert.equal(outcomes[1]!.decisions[0]!.approval_policy_id, null);
   assert.ok(outcomes.every(item => item.coverage.expected_chunks === 1 && item.coverage.processed_chunks === 1));
   assert.ok(outcomes.every(item => item.decisions.every(decision => decision.score === null)));
@@ -62,8 +74,17 @@ test("valid receipt and policy produce one complete classified outcome per root"
 test("model and policy receipts are explicit inputs, never inferred from the verdict", () => {
   assert.throws(() => build({ authority: { ...authority, approval_policy_id: null } }), /approval_policy_required/u);
   assert.throws(() => build({ authority: { ...authority, model_version_id: "missing" } }), /authority_invalid/u);
-  assert.throws(() => build({ authority: { ...authority, model_receipt_output_digest: sha("different") } }), /model_receipt_mismatch/u);
+  assert.throws(() => build({ authority: { ...authority, model_receipt_output_digest: sha("different") } }), /saved_evidence_missing/u);
+  assert.throws(() => build({ authority: { ...authority, model_receipt_output_digest: "not-a-digest" } }), /model_receipt_mismatch/u);
   assert.throws(() => build({ authority: { ...authority, model_receipt_digest: "not-a-digest" } }), /model_receipt_mismatch/u);
+  assert.throws(() => build({ authority: { ...authority, evidence_by_root_id: {} } }), /saved_evidence_missing/u);
+});
+
+test("provider byte digest and normalized parser digest remain distinct authorities", () => {
+  const rawDigest = sha(JSON.stringify(parsed.output));
+  assert.equal(rawDigest, authority.model_receipt_output_digest);
+  assert.notEqual(rawDigest, parsed.output_digest);
+  assert.equal(build()[0]!.decisions[0]!.interest_output_digest, rawDigest);
 });
 
 test("classification identity must represent precisely this one interest", () => {
@@ -81,8 +102,7 @@ test("full contiguous chunks must reconstruct the asset before coverage is asser
   const decision = { ...parsed.output.decisions[0]!, asset_sha256: sha("unseen text") };
   const cited = parseSignalWorkspaceInterestDecisionOutputV1({ request: incomplete,
     output: { ...parsed.output, request_digest: incomplete.request_digest, decisions: [decision] } });
-  assert.throws(() => build({ request: incomplete, parsed: cited, authority: { ...authority,
-    model_receipt_output_digest: cited.output_digest } }), /chunk_coverage_incomplete/u);
+  assert.throws(() => build({ request: incomplete, parsed: cited, authority: authorityFor(cited) }), /chunk_coverage_incomplete/u);
   const splitText = "Part onePart two";
   const gap = buildSignalWorkspaceInterestDecisionRequestV1({ ...requestBody, roots: [{ ...roots[0]!,
     asset_sha256: sha(splitText), chunks: [
@@ -93,8 +113,7 @@ test("full contiguous chunks must reconstruct the asset before coverage is asser
     ...parsed.output, request_digest: gap.request_digest, decisions: [{ ...decision,
       asset_sha256: sha(splitText), citations: [{ chunk_index: 0, chunk_sha256: sha("Part one"),
         quote_start: 0, quote_end: 4, quote: "Part", role: "supports" }] }] } });
-  assert.throws(() => build({ request: gap, parsed: gapOutput, authority: { ...authority,
-    model_receipt_output_digest: gapOutput.output_digest } }), /chunk_coverage_incomplete/u);
+  assert.throws(() => build({ request: gap, parsed: gapOutput, authority: authorityFor(gapOutput) }), /chunk_coverage_incomplete/u);
 });
 
 test("tampered parsed output is revalidated and replay hashes stay stable", () => {
@@ -104,6 +123,5 @@ test("tampered parsed output is revalidated and replay hashes stay stable", () =
   assert.throws(() => build({ parsed: bad }), /citation_invalid/u);
   const changed = parseSignalWorkspaceInterestDecisionOutputV1({ request, output: {
     ...output(), decisions: [{ ...output().decisions[0]!, rationale: "Otra explicación." }, ...output().decisions.slice(1)] } });
-  assert.notEqual(build({ parsed: changed, authority: { ...authority,
-    model_receipt_output_digest: changed.output_digest } })[0]!.evidence_digest, build()[0]!.evidence_digest);
+  assert.notEqual(build({ parsed: changed, authority: authorityFor(changed) })[0]!.evidence_digest, build()[0]!.evidence_digest);
 });

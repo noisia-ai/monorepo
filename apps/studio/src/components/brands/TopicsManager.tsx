@@ -11,6 +11,8 @@ import { TopicCandidateEvidence } from "@/components/brands/TopicCandidateEviden
 import { useWorkspaceTopicComputation } from "./useWorkspaceTopicComputation";
 import { WorkspaceAnalysisControls } from "./WorkspaceAnalysisControls";
 import { TopicSignalControls } from "./TopicSignalControls";
+import { DefinedInterestSignalControls } from "./DefinedInterestSignalControls";
+import { DefinedInterestDecisionControls } from "./DefinedInterestDecisionControls";
 import { ClientProcessingJourney } from "./ClientProcessingJourney";
 import { WorkspaceTopicConsolidationControls } from "./WorkspaceTopicConsolidationCard";
 import { WorkspaceTopicConsolidationActivationControls } from "./WorkspaceTopicConsolidationActivationCard";
@@ -481,10 +483,21 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
             <strong>{t("editor.pendingTitle")}</strong><p>{t("editor.pendingBody")}</p>
             {signalHref ? <Link className="admin-button" href={signalHref} prefetch={false}>{t("signalSelection.openSignal")}</Link> : null}
           </div> : null}
-          {consolidatedServing === false && !creating && selected && (selected.origin === "workspace_discovery" || Boolean(navigation)) && selected.lifecycle !== "archived" ? <TopicSignalControls
+          {consolidatedServing === false && !creating && selected && selected.origin !== "manual"
+            && (selected.origin === "workspace_discovery" || Boolean(navigation)) && selected.lifecycle !== "archived" ? <TopicSignalControls
             workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
             definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null} refreshKey={associationReceipt}
             signalHref={signalHref} onAccessDenied={clearAccess} /> : null}
+          {!creating && selected?.origin === "manual" && selected.lifecycle !== "archived" ? <DefinedInterestDecisionControls
+            actorId={actorId} workspaceId={workspaceId} termKey={selected.term_key}
+            dirty={editorDirty} disabled={busy !== null || !canExecute} onAccessDenied={clearAccess} /> : null}
+          {!creating && selected?.origin === "manual" && selected.lifecycle !== "archived" ? <DefinedInterestSignalControls
+            actorId={actorId} workspaceId={workspaceId} termKey={selected.term_key} definitionDigest={selected.definition_digest}
+            dirty={editorDirty} disabled={busy !== null} signalHref={signalHref} onAccessDenied={clearAccess}
+            legacyControl={consolidatedServing === false && Boolean(navigation) ? <TopicSignalControls
+              workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
+              definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null}
+              refreshKey={associationReceipt} signalHref={signalHref} onAccessDenied={clearAccess} /> : null} /> : null}
           {processingVisible && !creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
           {processingVisible && !creating && !selectedIsDiscovery && workspaceSearch && computation.data ? <>
             {computation.data.preflight.state !== "ready" ? <p className="topics-manager__cost-notice" role="status">

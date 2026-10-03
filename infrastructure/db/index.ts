@@ -38,6 +38,7 @@ export * from "./signal-workspace-interest-decision-source";
 export * from "./signal-workspace-interest-decision-batch-v1";
 export * from "./signal-workspace-classification";
 export * from "./signal-workspace-topics-serving";
+export * from "./signal-workspace-defined-interest-selection";
 
 export * from "./signal-workspace-engine";
 export * from "./signal-workspace-engine-interpretation";

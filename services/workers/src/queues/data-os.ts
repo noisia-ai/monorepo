@@ -53,6 +53,15 @@ import { SIGNAL_TOPIC_EDITORIAL_BATCH_JOB_V2, SIGNAL_TOPIC_EDITORIAL_BATCH_PREPA
 import { SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_JOB_V2, SIGNAL_TOPIC_EDITORIAL_GLOBAL_ADVANCE_JOB_V2,
   signalTopicEditorialGlobalStageJobV2, signalTopicEditorialGlobalAdvanceJobV2
 } from "../workers/signal-topic-editorial-global-stage-queue-v2";
+import { signalWorkspaceInterestDecisionBatchJobV1,
+  startSignalWorkspaceInterestDecisionBatchDrainerV1 } from "../workers/signal-workspace-interest-decision-runtime-v1";
+import { SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V1 } from "../workers/signal-workspace-interest-decision-queue-v1";
+import { SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V1,
+  signalWorkspaceInterestDecisionPreparationJobV1,
+  startSignalWorkspaceInterestDecisionPreparationDrainerV1 } from "../workers/signal-workspace-interest-decision-preparation-runtime-v1";
+import { SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1,
+  signalWorkspaceInterestDecisionMaterializationJobV1,
+  startSignalWorkspaceInterestDecisionMaterializationDrainerV1 } from "../workers/signal-workspace-interest-decision-materialization-runtime-v1";
 
 export { redisConnection };
 
@@ -65,7 +74,7 @@ export async function closeDataOsProducer() {
 }
 
 export function startDataOsWorker() {
-  return new Worker(
+  const worker = new Worker(
     dataOsQueueName,
     async (job) => {
       assertSignalTaxonomyJobNotRetiredV1(job.name);
@@ -86,6 +95,9 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_TOPIC_EDITORIAL_BATCH_START_JOB_V2) return signalTopicEditorialBatchStartJobV2(job);
       if (job.name === SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_JOB_V2) return signalTopicEditorialGlobalStageJobV2(job);
       if (job.name === SIGNAL_TOPIC_EDITORIAL_GLOBAL_ADVANCE_JOB_V2) return signalTopicEditorialGlobalAdvanceJobV2(job);
+      if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V1) return signalWorkspaceInterestDecisionBatchJobV1(job);
+      if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V1) return signalWorkspaceInterestDecisionPreparationJobV1(job);
+      if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1) return signalWorkspaceInterestDecisionMaterializationJobV1(job);
       if (job.name === DATA_OS_SHADOW_RUN_JOB_NAME) {
         return dataOsShadowRunJob(job);
       }
@@ -113,6 +125,17 @@ export function startDataOsWorker() {
       lockDuration: 300_000
     }
   );
+  // Feature flag defaults off. The drainer only wakes batches after SQL0211
+  // has been installed; PostgreSQL still owns each lease and paid reservation.
+  const batchDrainer = startSignalWorkspaceInterestDecisionBatchDrainerV1();
+  const preparationDrainer = startSignalWorkspaceInterestDecisionPreparationDrainerV1();
+  const materializationDrainer = startSignalWorkspaceInterestDecisionMaterializationDrainerV1();
+  worker.on("closed", () => {
+    void batchDrainer.close();
+    void preparationDrainer.close();
+    void materializationDrainer.close();
+  });
+  return worker;
 }
 
 export function startDataOsHeartbeat() {
