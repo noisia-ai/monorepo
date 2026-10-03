@@ -2,26 +2,22 @@ import { ArrowRight, Database } from "@phosphor-icons/react/dist/ssr";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import "@/app/signal-v2/signal-v2.css";
 
 import {
   AdminResourceSection,
   AdminSettingsRow,
-  AdminStatus,
   AdminWorkspaceHeader
 } from "@/components/admin/AdminWorkspacePrimitives";
 import { AdminCorpusSummaryStrip } from "@/components/admin/AdminCorpusSummary";
 import { SelfServiceImportManager } from "@/components/admin/SelfServiceImportManager";
 import { WorkspaceCorpusReadinessPanel } from "@/components/admin/WorkspaceCorpusReadinessPanel";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
-import { GovernancePreparationManager } from "@/components/admin/GovernancePreparationManager";
+import { LazyGovernancePreparation } from "@/components/admin/LazyGovernancePreparation";
 import { requireStudioUser } from "@/lib/auth/guards";
-import { getAdminBrandWorkspaceSummary } from "@/lib/data/admin-workspace";
-import { loadSignalGovernancePreparationV1 } from "@/lib/data-os/signal-governance-control-plane";
-import { resolveSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
-import { loadWorkspaceCorpusReadinessForActorV1 } from "@/lib/data-os/workspace-corpus-readiness";
-import { pool } from "@/lib/db";
+import { getAdminBrandWorkspaceIdentity, loadAdminBrandWorkspacePageCorpus } from "@/lib/data/admin-workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -31,55 +27,39 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
     getTranslations("AdminWorkspace"),
     requireStudioUser(`/studio/brands/${id}/data`)
   ]);
-  const summary = await getAdminBrandWorkspaceSummary(session.appUser, id);
-  if (!summary) notFound();
-  const resolvedWorkspace = summary.workspaceId && session.appUser.userType === "noisia_internal"
-    ? await resolveSignalWorkspaceForUser(session.appUser, { workspaceId: summary.workspaceId })
-    : null;
-  const governance = resolvedWorkspace
-    ? await loadSignalGovernancePreparationV1({ queryable: pool, workspace: resolvedWorkspace })
-    : null;
-  const corpusReadiness = summary.workspaceId
-    ? await loadWorkspaceCorpusReadinessForActorV1({
-      queryable: pool, workspaceId: summary.workspaceId, actorUserId: session.appUser.id
-    }).catch(() => null)
-    : null;
+  const identity = await getAdminBrandWorkspaceIdentity(session.appUser, id);
+  if (!identity) notFound();
 
   return (
     <div className="admin-workspace-page">
       <AdminWorkspaceHeader
-        actions={summary.workspaceSlug ? (
+        actions={identity.workspaceId ? (
           <Link className="admin-button" href={`/studio/brands/${id}/data/mentions`} prefetch={false}>
             {t("data.actions.openMentions")}<ArrowRight aria-hidden size={14} />
           </Link>
         ) : undefined}
-        eyebrow={`${summary.brandName} · ${t("data.eyebrow")}`}
+        eyebrow={`${identity.brandName} · ${t("data.eyebrow")}`}
         icon={<Database aria-hidden size={21} weight="fill" />}
         subtitle={t("data.subtitle")}
         title={t("data.title")}
       />
       <BrandMonitoringJourney brandId={id} current="data" />
 
-      <AdminCorpusSummaryStrip corpus={summary.corpus} />
+      {identity.workspaceId ? (
+        <Suspense fallback={<p className="admin-section__body" role="status">{t("data.corpusSummaryLoading")}</p>}>
+          <DataCorpusSummary actor={session.appUser} workspaceId={identity.workspaceId} />
+        </Suspense>
+      ) : <AdminCorpusSummaryStrip corpus={null} />}
 
-      {summary.workspaceId ? (
+      {identity.workspaceId ? (
         <>
-          <WorkspaceCorpusReadinessPanel initial={corpusReadiness} workspaceId={summary.workspaceId} />
+          <WorkspaceCorpusReadinessPanel initial={null} workspaceId={identity.workspaceId} />
           <SelfServiceImportManager
             brandId={id}
-            timezone={summary.timezone ?? "America/Mexico_City"}
-            workspaceId={summary.workspaceId}
+            timezone={identity.timezone ?? "America/Mexico_City"}
+            workspaceId={identity.workspaceId}
           />
-          {governance ? (
-            <details className="admin-section" style={{ padding: 16 }}>
-              <summary>{t("data.advancedPreparation.title")}</summary>
-              <p className="admin-table__muted">{t("data.advancedPreparation.body")}</p>
-              <GovernancePreparationManager
-                initial={governance}
-                workspaceId={summary.workspaceId}
-              />
-            </details>
-          ) : null}
+          <LazyGovernancePreparation key={identity.workspaceId} workspaceId={identity.workspaceId} />
           <AdminResourceSection
             subtitle={t("data.destinations.subtitle")}
             title={t("data.destinations.title")}
@@ -130,14 +110,13 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
         </section>
       )}
 
-      {!governance ? <AdminResourceSection subtitle={t("data.governance.subtitle")} title={t("data.governance.title")}>
-        <div className="admin-settings-list">
-          <AdminSettingsRow title={t("data.governance.population")} value={summary.populationVersion ? t("data.governance.populationVersion", { version: summary.populationVersion }) : t("states.not_available")} />
-          <AdminSettingsRow title={t("data.governance.defaultScope")} value="primary_brand" />
-          <AdminSettingsRow title={t("data.governance.pending")} value={<AdminStatus state={summary.pendingImports > 0 ? "warning" : "good"}>{summary.pendingImports}</AdminStatus>} />
-          <AdminSettingsRow title={t("data.governance.failed")} value={<AdminStatus state={summary.importsFailed + summary.failedSources > 0 ? "danger" : "good"}>{summary.importsFailed + summary.failedSources}</AdminStatus>} />
-        </div>
-      </AdminResourceSection> : null}
     </div>
   );
+}
+
+async function DataCorpusSummary({ actor, workspaceId }: {
+  actor: { id: string; userType: string }; workspaceId: string;
+}) {
+  const corpus = await loadAdminBrandWorkspacePageCorpus(actor, [workspaceId]);
+  return <AdminCorpusSummaryStrip corpus={corpus.get(workspaceId) ?? null} />;
 }

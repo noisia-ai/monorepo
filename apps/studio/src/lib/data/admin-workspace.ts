@@ -228,14 +228,16 @@ export async function getAdminDashboard(user: AdminUser) {
 export type AdminBrandWorkspaceIdentity = {
   brandName: string;
   workspaceId: string | null;
+  timezone: string | null;
 };
 
 export async function getAdminBrandWorkspaceIdentity(
   user: AdminUser, brandLookup: string
 ): Promise<AdminBrandWorkspaceIdentity | null> {
   if (user.userType !== "noisia_internal") return null;
-  const result = await pool.query<{ brand_name: string; workspace_id: string | null }>(`
-    SELECT COALESCE(brand.display_name, brand.name) AS brand_name, workspace.id::text AS workspace_id
+  const result = await pool.query<{ brand_name: string; workspace_id: string | null; timezone: string | null }>(`
+    SELECT COALESCE(brand.display_name, brand.name) AS brand_name,
+      workspace.id::text AS workspace_id, workspace.timezone
     FROM brands brand
     JOIN organizations organization ON organization.id = brand.organization_id
     JOIN users actor ON actor.id = $2::uuid
@@ -247,7 +249,7 @@ export async function getAdminBrandWorkspaceIdentity(
     LIMIT 1
   `, [brandLookup, user.id]);
   const row = result.rows[0];
-  return row ? { brandName: row.brand_name, workspaceId: row.workspace_id } : null;
+  return row ? { brandName: row.brand_name, workspaceId: row.workspace_id, timezone: row.timezone } : null;
 }
 
 export async function getAdminBrandWorkspaceSummary(

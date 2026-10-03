@@ -37,10 +37,12 @@ const USAGES = [
 
 export function GovernancePreparationManager({
   initial,
-  workspaceId
+  workspaceId,
+  onChanged
 }: {
   initial: SignalGovernancePreparationV1;
   workspaceId: string;
+  onChanged?: () => Promise<void>;
 }) {
   const t = useTranslations("AdminWorkspace.data.preparation");
   const locale = useLocale();
@@ -79,7 +81,8 @@ export function GovernancePreparationManager({
       if (!response.ok) throw new Error(payload.message ?? t("errors.command"));
       retryKeys.current.delete(requestIdentity);
       setDrawer(null);
-      router.refresh();
+      if (onChanged) await onChanged();
+      else router.refresh();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : t("errors.command"));
     } finally {
