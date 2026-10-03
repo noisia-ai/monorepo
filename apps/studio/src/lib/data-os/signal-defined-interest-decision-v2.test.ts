@@ -137,5 +137,6 @@ test("V2 status reader includes historical V1 fallback while preferring a V2 own
   } } as unknown as Pick<Pool, "query">;
   assert.deepEqual(await loadDefinedInterestDecisionProductV2(scope, database), status);
   assert.match(statements[0]!, /ORDER BY owner\.provider_contract_version DESC,owner\.created_at DESC/u);
-  assert.equal(statements[0]!.includes("owner.provider_contract_version=2"), false);
+  assert.match(statements[0]!, /CASE WHEN owner\.provider_contract_version=2\s+THEN signal_interest_decision_status_v2/u);
+  assert.match(statements[0]!, /ELSE signal_interest_decision_status_v1/u);
 });

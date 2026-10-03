@@ -225,7 +225,9 @@ export async function loadDefinedInterestDecisionProductV2(scope: Scope,
   assertScope(scope);
   const pool = database ?? (await import("@/lib/db")).pool;
   const result = await pool.query<{ result: Record<string, unknown> }>(`SELECT
-    signal_interest_decision_status_v1(owner.id,$2::uuid)||jsonb_build_object(
+    (CASE WHEN owner.provider_contract_version=2
+      THEN signal_interest_decision_status_v2(owner.id,$2::uuid)
+      ELSE signal_interest_decision_status_v1(owner.id,$2::uuid) END)||jsonb_build_object(
       'classification_status',execution.status,
       'classification_processed_roots',execution.processed_roots,
       'classification_total_roots',execution.denominator,
@@ -240,6 +242,7 @@ export async function loadDefinedInterestDecisionProductV2(scope: Scope,
   [scope.workspace_id,scope.actor_user_id,scope.term_key]);
   return result.rows[0]?.result ?? { status: "not_started", expected_roots: 0,
     manifest_roots: 0, accepted_roots: 0, unknown_batches: 0, unsettled_calls: 0,
+    terminal_failed_roots: 0, technical_error_code: null,
     classification_status: null, classification_processed_roots: 0,
     classification_total_roots: 0, classification_error_code: null, generation_status: null };
 }
