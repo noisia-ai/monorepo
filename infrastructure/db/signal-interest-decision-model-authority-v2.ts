@@ -6,7 +6,7 @@ import {
   type SignalWorkspaceClassificationDatabaseV1,
 } from "./signal-workspace-classification";
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const termKey = /^[a-z0-9][a-z0-9._-]{0,119}$/u;
 const requestKey = /^[A-Za-z0-9._:-]{8,200}$/u;
 const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
