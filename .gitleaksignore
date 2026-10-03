@@ -1,0 +1,42 @@
+# Reviewed false positives in historical V02 commits.
+# Each entry pins the original commit, path, rule and line; later commits are still scanned.
+# Findings are synthetic lease/idempotency values or domain identifiers, not provider credentials.
+# Do not add broad path or rule exclusions.
+
+2ff9df4a094dd6bef00d236efd1f0b331be5f2e4:packages/query-engine/src/signal-metric-catalog-v1.ts:generic-api-key:31
+3215de791017f6122bf23aaf04332298adc44a94:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:2276
+3215de791017f6122bf23aaf04332298adc44a94:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:2282
+3215de791017f6122bf23aaf04332298adc44a94:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:2291
+433f5f75e2896a616173cd92950b796e4d4f82ba:apps/studio/scripts/signal-strategic-execution-corpus-staging.ts:generic-api-key:79
+433f5f75e2896a616173cd92950b796e4d4f82ba:infrastructure/db/migrations/signal-semantic-review.integration.test.ts:generic-api-key:175
+433f5f75e2896a616173cd92950b796e4d4f82ba:infrastructure/db/migrations/signal-semantic-review.integration.test.ts:generic-api-key:218
+433f5f75e2896a616173cd92950b796e4d4f82ba:infrastructure/db/migrations/signal-semantic-review.integration.test.ts:generic-api-key:469
+433f5f75e2896a616173cd92950b796e4d4f82ba:packages/query-engine/src/signal-governed-views-v1.ts:generic-api-key:345
+433f5f75e2896a616173cd92950b796e4d4f82ba:packages/query-engine/src/signal-governed-views-v1.ts:generic-api-key:400
+433f5f75e2896a616173cd92950b796e4d4f82ba:tools/signal-semantic-lab/config/benchmark-plan-10c1.json:generic-api-key:159
+433f5f75e2896a616173cd92950b796e4d4f82ba:tools/signal-semantic-lab/config/benchmark-plan-10c1.json:generic-api-key:160
+4c75d54c6ee6a0e241c9c8daba047c9fe96fba1a:infrastructure/db/scripts/prepare-signal-topics-uat-acceptance.ts:generic-api-key:78
+67569e991e2ba027d7fa78581739783686092bf5:packages/query-engine/src/signal-workspace-embeddings-v1.ts:generic-api-key:15
+67569e991e2ba027d7fa78581739783686092bf5:packages/query-engine/src/signal-workspace-embeddings-v1.ts:generic-api-key:16
+a28022afd05c842ab8a7f07d1a08350a05e5dc55:tools/signal-semantic-lab/config/benchmark-plan-10c3b-proposed.json:generic-api-key:23
+a28022afd05c842ab8a7f07d1a08350a05e5dc55:tools/signal-semantic-lab/config/benchmark-plan-10c3b-proposed.json:generic-api-key:32
+a5650c1d21361d21e7170dbd22c10028c07275f6:infrastructure/db/scripts/noi19-dev-test/target-guard.mjs:generic-api-key:10
+a5650c1d21361d21e7170dbd22c10028c07275f6:infrastructure/db/scripts/noi19-dev-test/target-guard.mjs:generic-api-key:32
+be8046f7559b8af39fb7d42c961c0a638603cea0:infrastructure/db/signal-workspace-interest-decision-batch-v1.test.ts:generic-api-key:50
+be8046f7559b8af39fb7d42c961c0a638603cea0:infrastructure/db/signal-workspace-interest-decision-batch-v1.test.ts:generic-api-key:65
+be8046f7559b8af39fb7d42c961c0a638603cea0:infrastructure/db/signal-workspace-interest-decision-batch-v1.test.ts:generic-api-key:81
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:1109
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:1113
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:673
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:694
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:755
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:783
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:805
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:835
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:926
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:958
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:964
+d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:994
+d3b4604d3a994d9f79913ac4cee735d46d0d2bb2:tools/signal-semantic-lab/config/benchmark-plan-10c2-v3.json:generic-api-key:197
+d3b4604d3a994d9f79913ac4cee735d46d0d2bb2:tools/signal-semantic-lab/config/benchmark-plan-10c2-v3.json:generic-api-key:198
+e2623ca7d27f84bdff4996cf73ea68f3193192ed:infrastructure/db/signal-topic-evaluation-v2-execution.test.ts:generic-api-key:23
