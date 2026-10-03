@@ -35,6 +35,7 @@ export * from "./signal-workspace-topic-prototypes-management";
 export * from "./signal-workspace-topic-computation";
 export * from "./signal-workspace-topic-computation-management";
 export * from "./signal-workspace-interest-decision-source";
+export * from "./signal-workspace-interest-decision-batch-v1";
 export * from "./signal-workspace-classification";
 export * from "./signal-workspace-topics-serving";
 
