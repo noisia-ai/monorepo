@@ -23,7 +23,7 @@ test("retry prepares the same sealed request only after a terminal known failure
       if (statement.includes("to_regprocedure")) return { rows: [{ ready: true }] };
       if (statement.includes("JOIN LATERAL")) return { rows: [{ owner_id: ownerId,
         actor_user_id: actorId, page_id: pageId, request_digest: requestDigest,
-        prior_call_id: callId, attempt_index: 1, batch_state: "applied",
+        prior_call_id: callId, attempt_index: 1, batch_state: "applied", batch_error_code: null,
         call_status: "settled", outcome: "errored", validation_status: null }] };
       if (statement.includes("renew_signal_interest_decision_admission_v2"))
         return { rows: [{ result: { admission_id: randomUUID() } }] };
@@ -39,7 +39,7 @@ test("retry prepares the same sealed request only after a terminal known failure
   assert.match(selector, /c\.attempt_index<5/u);
   assert.match(selector, /b\.state='applied'/u);
   assert.match(selector, /c\.status='settled'/u);
-  assert.doesNotMatch(selector, /definitely_not_sent|'rejected'/u);
+  assert.match(selector, /b\.last_error_code='provider_inventory_absent'/u);
   assert.match(selector, /c\.validation_status IN \('invalid_output','refusal','max_tokens','invalid_message'\)/u);
   assert.match(selector, /NOT EXISTS \(SELECT 1 FROM signal_interest_decision_root_evidence_v1/u);
   const preparedAt = sql.findIndex(statement => statement.includes("SELECT prepare_signal_interest_decision_batch_v2"));
@@ -57,10 +57,35 @@ test("definitive HTTP rejection cannot enter automatic item retry", async () => 
     if (statement.includes("JOIN LATERAL")) return { rows: [{ owner_id: ownerId,
       actor_user_id: actorId, page_id: pageId, request_digest: `sha256:${"a".repeat(64)}`,
       prior_call_id: randomUUID(), attempt_index: 1, batch_state: "rejected",
-      call_status: "definitely_not_sent", outcome: null, validation_status: null }] };
+      batch_error_code: "provider_rejected", call_status: "definitely_not_sent",
+      outcome: null, validation_status: null }] };
     return assert.fail("rejected Batch must not renew or prepare");
   }, release() {} }) };
   assert.deepEqual(await drainSignalWorkspaceInterestDecisionRetriesV2({ env: enabled,
     database: database as never }), { disabled: false, schema_ready: true, prepared: 0 });
   assert.equal(sql.some(statement => statement.includes("SELECT prepare_signal_interest_decision_batch_v2")), false);
+});
+
+test("complete negative provider inventory permits a successor with the same sealed request", async () => {
+  const ownerId = randomUUID(), actorId = randomUUID(), pageId = randomUUID();
+  const requestDigest = `sha256:${"b".repeat(64)}`;
+  const params: unknown[][] = [];
+  const database = { connect: async () => ({ query: async (statement: string, values: unknown[] = []) => {
+    params.push(values);
+    if (statement.includes("to_regprocedure")) return { rows: [{ ready: true }] };
+    if (statement.includes("JOIN LATERAL")) return { rows: [{ owner_id: ownerId,
+      actor_user_id: actorId, page_id: pageId, request_digest: requestDigest,
+      prior_call_id: randomUUID(), attempt_index: 1, batch_state: "rejected",
+      batch_error_code: "provider_inventory_absent", call_status: "definitely_not_sent",
+      outcome: null, validation_status: null }] };
+    if (statement.includes("renew_signal_interest_decision_admission_v2"))
+      return { rows: [{ result: { admission_id: randomUUID() } }] };
+    if (statement.includes("prepare_signal_interest_decision_batch_v2"))
+      return { rows: [{ result: { batch_id: randomUUID(), replayed: false } }] };
+    return { rows: [] };
+  }, release() {} }) };
+  const result = await drainSignalWorkspaceInterestDecisionRetriesV2({ env: enabled,
+    database: database as never });
+  assert.equal(result.prepared, 1);
+  assert.ok(params.some(values => Array.isArray(values[2]) && values[2][0] === requestDigest));
 });
