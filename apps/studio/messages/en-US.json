@@ -3275,6 +3275,10 @@
         "previousCatalogNotice": "Signal uses a consolidated revision; a newer proposal may still be awaiting publication. The list below keeps defined interests and earlier partial results for reference, not the current consolidated catalog.",
         "previousCatalogTitle": "Interests and earlier results",
         "previousCatalogBody": "Earlier partial Topics remain here; check above to see which consolidated version is published.",
+        "definedCatalogTitle": "Your defined interests",
+        "definedCatalogBody": "Edit the interests you want to find in conversations. Earlier partial results remain available separately.",
+        "definedCatalogJump": "Go to your defined interests",
+        "previousCatalogToggle": "View {count, number} earlier partial results",
         "activation": {
           "title": "Publish proposal to Signal",
           "body": "Review Claude's complete proposal and choose which concepts will shape the next Signal.",

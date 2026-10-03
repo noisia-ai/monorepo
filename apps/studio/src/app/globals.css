@@ -21023,11 +21023,14 @@ body:has(.signal-report)::before { display: none; }
 }
 .topics-manager__tabs button.is-active, .topics-manager__results nav button.is-active { background: #fff; color: var(--neutral-12); box-shadow: 0 1px 4px rgba(24,24,24,.08); }
 .topics-manager__tabs button:focus-visible, .topics-manager__results nav button:focus-visible,
-.topics-manager__list > button:focus-visible, .topics-manager__result-list button:focus-visible {
+.topics-manager__list button:focus-visible, .topics-manager__list summary:focus-visible, .topics-manager__result-list button:focus-visible {
   outline: 2px solid var(--signal); outline-offset: 2px;
 }
 .topics-manager__search { display: flex; align-items: center; gap: 8px; min-width: 180px; margin-left: auto; padding: 0 11px; border: 1px solid var(--neutral-04); border-radius: 11px; background: #fff; }
 .topics-manager__search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; padding: 9px 0; font: inherit; }
+.topics-manager__jump { display: inline-flex; align-items: center; margin: 4px 0 14px; color: var(--signal-dark); font-size: 13px; font-weight: 650; text-decoration: underline; text-underline-offset: 3px; }
+.topics-manager__jump:focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.topics-manager__list { scroll-margin-top: 20px; }
 .topics-manager__progress { display: grid; grid-template-columns: auto minmax(100px,1fr) auto; align-items: center; gap: 12px; padding: 12px 16px; border-radius: 12px; background: rgba(0,138,138,.08); color: var(--signal-dark); font-size: 13px; }
 .topics-manager__progress progress { width: 100%; accent-color: var(--signal); }
 .topics-manager__atomic-groups { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,360px),1fr)); gap: 12px; }
@@ -21053,11 +21056,13 @@ body:has(.signal-report)::before { display: none; }
 .topics-manager__list header p, .topics-manager__detail header p, .topics-manager__discovered header p,
 .topics-manager__results header p { margin: 5px 0 0; color: var(--neutral-09); font-size: 13px; line-height: 1.45; }
 .topics-manager__list > header > span, .topics-manager__discovered > header > span { min-width: 30px; padding: 5px 9px; border-radius: 999px; background: var(--neutral-03); text-align: center; font-size: 12px; font-weight: 700; }
-.topics-manager__list > button { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 14px; margin-top: 7px; padding: 13px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-.topics-manager__list > button:hover { background: rgba(255,255,255,.62); border-color: var(--neutral-04); }
-.topics-manager__list > button.is-active { background: #fff; border-color: rgba(0,138,138,.28); box-shadow: 0 7px 20px rgba(30,42,42,.06); }
-.topics-manager__list > button > span { display: grid; gap: 5px; min-width: 0; }
-.topics-manager__list > button > span:last-child { justify-items: end; align-content: start; }
+.topics-manager__list > button, .topics-manager__history > button { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 14px; margin-top: 7px; padding: 13px; border: 1px solid transparent; border-radius: 12px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.topics-manager__list > button:hover, .topics-manager__history > button:hover { background: rgba(255,255,255,.62); border-color: var(--neutral-04); }
+.topics-manager__list > button.is-active, .topics-manager__history > button.is-active { background: #fff; border-color: rgba(0,138,138,.28); box-shadow: 0 7px 20px rgba(30,42,42,.06); }
+.topics-manager__list > button > span, .topics-manager__history > button > span { display: grid; gap: 5px; min-width: 0; }
+.topics-manager__list > button > span:last-child, .topics-manager__history > button > span:last-child { justify-items: end; align-content: start; }
+.topics-manager__history { margin-top: 14px; border-top: 1px solid var(--neutral-04); }
+.topics-manager__history summary { padding: 14px 4px 4px; color: var(--neutral-09); cursor: pointer; font-size: 12px; font-weight: 650; }
 .topics-manager__list button strong { font-size: 14px; }
 .topics-manager__list button small { display: -webkit-box; overflow: hidden; color: var(--neutral-09); font-size: 11px; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .topics-manager__list button time { color: var(--neutral-08); font-size: 10px; font-weight: 650; }
