@@ -63,6 +63,16 @@ test("processing-policy view validates exact monetary strings and exposes one in
     "a route change cannot render the previous workspace policy while its replacement loads");
 });
 
+test("defined-interest authority is readable without changing the initial analysis ceiling", () => {
+  const withInterest = { ...ready, actions: [...ready.actions,
+    { ...action("interest_decision", "provider", "1700000000"), provider: "anthropic" as const,
+      model: "claude-sonnet-4-6" }] };
+  assert.equal(validClientProcessingPolicyViewV1(withInterest), true);
+  assert.equal(clientProcessingRouteMaximumMicroUsdV1(withInterest), "2000000");
+  assert.equal(validClientProcessingPolicyViewV1({ ...withInterest,
+    actions: [...withInterest.actions, withInterest.actions.at(-1)] }), false);
+});
+
 test("processing-policy view rejects malformed, duplicated or inconsistent authority receipts", () => {
   for (const invalid of [
     { ...ready, workspace_id: "" },

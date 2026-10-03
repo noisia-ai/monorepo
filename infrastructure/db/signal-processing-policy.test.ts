@@ -113,6 +113,18 @@ test("one enabled Claude action cannot enable another Claude action", async () =
   assert.equal(result.actions.find(action => action.action === "brand_context_proposal")?.available, true);
   assert.equal(result.actions.find(action => action.action === "topic_interpretation")?.available, false);
 });
+test("defined-interest policy action remains separately unavailable until its runtime is ready", async () => {
+  const row = { ...policy, actions: [{ action: "interest_decision", kind: "provider", provider: "anthropic",
+    model: "claude-sonnet-4-6", configuration_digest: digest, max_execution_micro_usd: "700", automatic_allowed: false }] };
+  const unavailable = await readSignalProcessingPolicyWithQueryableV1({ ...reader(row), workspace_id: workspace,
+    actor_user_id: actor });
+  assert.equal(unavailable.actions[0]?.available, false);
+  const available = await readSignalProcessingPolicyWithQueryableV1({ ...reader(row), workspace_id: workspace,
+    actor_user_id: actor, action_availability: { interest_decision: true } });
+  assert.equal(available.actions[0]?.available, true);
+  assert.equal(available.remaining_micro_usd, unavailable.remaining_micro_usd);
+});
+
 test("monetary org is assigned at insertion, retained on updates and used independently of current workspace tenant", () => {
   const sql = readFileSync(new URL("./migrations/0155_signal_processing_policy.sql", import.meta.url), "utf8");
   assert.equal((sql.match(/ADD COLUMN processing_organization_id uuid/gu) ?? []).length, 3);
