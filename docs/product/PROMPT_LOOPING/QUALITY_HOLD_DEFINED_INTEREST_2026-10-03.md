@@ -8,6 +8,14 @@ Con 5,120 decisiones validadas, hay 46 `belongs`, 5,052 `not_belongs` y 22 `insu
 
 Esto **no** es una estimación de precisión: no hay etiquetado humano independiente, hay artículos largos que requieren lectura completa y todavía faltan 38,039 raíces. Sí es evidencia suficiente de que la pertenencia no se debe publicar ni continuar pagando el resto con esta definición/decisor sin calibración. La validación de citas funcionó técnicamente; el modelo extendió «activación» a acceso, compatibilidad y cualquier actualización, ignorando exclusiones de consentimiento. El benchmark previo de 12 textos era un piloto técnico, no acreditaba esta frontera.
 
+## Cohorte de desafío independiente, sólo para diagnóstico
+
+Se congelaron 41 textos completos y breves del mismo corpus con digest `sha256:7f3b9382198e0035c1fc5e8b3dbf470591537c9d86890d064c91db4a619bf123`. Dos revisores etiquetaron sin ver el veredicto V2 ni las etiquetas del otro: coincidieron en pertenencia en 39/41; se adjudicaron esas dos discrepancias y una diferencia sobre texto mixto. El paquete privado, etiquetas y referencia V2 quedan fuera de Git, con permisos `0600` bajo `/Users/brandhon_o/Downloads/noisia-website/.data/quality/2026-10-03/`. La selección condicionó 24 ejemplos a los positivos de V2 y limitó longitud; **no representa la distribución del corpus y no permite estimar precisión o recall**. Sirve para probar que un sucesor corrige fallos concretos.
+
+Contra esas etiquetas, de los 24 `belongs` V2 hubo 6 positivos y 18 negativos; 11 `not_belongs` fueron negativos, y los 6 `insufficient` también se etiquetaron negativos. Una respuesta de soporte que ofrece cancelar Alexa+ quedó positiva por ser ayuda explícita para opt-out; una pregunta hipotética sobre grabaciones, negativa por no afirmar falta de consentimiento ni control. La rúbrica conserva el caso de salida voluntaria: pedir expresamente desactivar o volver a Alexa anterior puede pertenecer aunque la activación no haya sido impuesta.
+
+Existe un constructor **local e inerte** de solicitud V3 con prompt más preciso e identidad nueva. Reusa exactamente la entrada por spans y el esquema de salida V2, pero no está conectado a owner, admisión, dispatcher, UI o proveedor. Las pruebas fijan que los bytes del manifiesto V2 no cambien. Este código no constituye evaluación de calidad ni habilita los 367 lotes preparados: primero se necesita ensayo V3 sobre la cohorte y después un conjunto no condicionado por predicciones anteriores para medir falsos negativos y aprobar el producto.
+
 ## Decisión de producto
 
 - Conservar el flag de nuevos envíos V2 en `false`. Los 80 Batches aplicados y los 228 reconciliados como no enviados se mantienen auditables; no duplicar POST ni alterar los hashes de la ejecución.
