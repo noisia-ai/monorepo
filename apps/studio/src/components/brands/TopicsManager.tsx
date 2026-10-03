@@ -34,6 +34,10 @@ type TopicsManagerProps = { brandId: string; initial: Management; workspaceId: s
   initialComputation?: WorkspaceTopicComputationStatus | null; requestScope?: string;
   navigation?: { dataHref: string; signalHref: string; brandOsHref?: string | null };
 };
+function preferredTopic(topics: Topic[]) {
+  return topics.find((item) => item.lifecycle !== "archived" && item.origin === "manual")
+    ?? topics.find((item) => item.lifecycle !== "archived");
+}
 export function TopicsManager(props: TopicsManagerProps) {
   return <ScopedTopicsManager key={`${props.actorId}:${props.workspaceId}:${props.requestScope ?? "internal"}`} {...props} />;
 }
@@ -46,10 +50,10 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
   const [query, setQuery] = useState("");
   const [discoveryLimit, setDiscoveryLimit] = useState(20);
   const [candidateScopes, setCandidateScopes] = useState<Record<string, Topic["scope"]>>({});
-  const [selectedKey, setSelectedKey] = useState<string | null>(initial.topics.find((item) => item.lifecycle !== "archived")?.term_key ?? null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(preferredTopic(initial.topics)?.term_key ?? null);
   const [creating, setCreating] = useState(false);
   const [editor, setEditor] = useState<Editor>(() => {
-    const topic = initial.topics.find((item) => item.lifecycle !== "archived");
+    const topic = preferredTopic(initial.topics);
     return topic ? editorFromTopic(topic) : emptyEditor();
   });
   const [results, setResults] = useState<ResultItem[]>([]);
@@ -92,7 +96,11 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
     if (tab === "archived" ? item.lifecycle !== "archived" : item.lifecycle === "archived") return false;
     const needle = query.trim().toLocaleLowerCase();
     return !needle || `${item.label} ${item.definition}`.toLocaleLowerCase().includes(needle);
-  }), [data.topics, query, tab]);
+  }).sort((left, right) => Number(right.origin === "manual") - Number(left.origin === "manual")), [data.topics, query, tab]);
+  const definedTopics = visibleTopics.filter((item) => item.origin === "manual");
+  const previousTopics = visibleTopics.filter((item) => item.origin !== "manual");
+  const foldPreviousCatalog = consolidatedServing === true && tab === "topics"
+    && definedTopics.length > 0 && !query.trim();
   const workspaceDiscoveries = useMemo(() => data.topics.filter((item) => item.origin === "workspace_discovery"
     && (!query.trim() || `${item.label} ${item.definition}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))), [data.topics, query]);
   const visibleCandidates = useMemo(() => data.discovered.items.filter((item) => !query.trim()
@@ -130,7 +138,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
     const next = await response.json() as Management;
     if (!live.current || controller.signal.aborted || next.workspace.id !== workspaceId) throw new Error("catalog_refresh_deferred");
     setData(next);
-    if (selectedKey && !next.topics.some((item) => item.term_key === selectedKey)) setSelectedKey(next.topics[0]?.term_key ?? null);
+    if (selectedKey && !next.topics.some((item) => item.term_key === selectedKey)) setSelectedKey(preferredTopic(next.topics)?.term_key ?? null);
     return next;
   }, [clearAccess, selectedKey, t, workspaceId]);
 
@@ -158,7 +166,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
       setData(next);
       if (!now.creating) {
         const topic = next.topics.find(item => item.term_key === now.selectedKey)
-          ?? next.topics.find(item => item.lifecycle !== "archived");
+          ?? preferredTopic(next.topics);
         setSelectedKey(topic?.term_key ?? null); setEditor(topic ? editorFromTopic(topic) : emptyEditor());
       }
       setFeedback(current => current?.text === loadError ? null : current);
@@ -303,6 +311,20 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
     finally { setBusy(null); }
   }
 
+  function topicListButton(topic: Topic) {
+    return <button className={selectedKey === topic.term_key ? "is-active" : ""}
+      key={topic.term_key} disabled={busy !== null} onClick={() => { if (topic.term_key !== selectedKey && canLeaveEditor()) editTopic(topic); }} type="button">
+      <span><strong>{topic.label}</strong><small>{topic.definition}</small>
+        <time dateTime={topic.updated_at}>{t("list.updated", {
+          date: new Date(topic.updated_at).toLocaleDateString(locale, { timeZone: data.workspace.timezone ?? "UTC" })
+        })}</time></span>
+      <span><AdminStatus state={topicStatusTone(topic)}>{topicStatusLabel(topic)}</AdminStatus>
+        {!processingVisible || workspaceSearch || topic.origin === "workspace_discovery" ? null : topic.status === "searching" || topic.status === "updating" ? <small>…</small>
+          : topic.status === "draft" ? <small>{t("list.notSearched")}</small>
+            : workspaceSearch ? null : <small>{t("list.mentions", { count: topic.counts.relevant })}</small>}</span>
+    </button>;
+  }
+
   if (!data.capabilities.can_view) return <p className="team-msg team-msg--error" role="alert">{t("requestErrors.forbidden")}</p>;
   return <div className="topics-manager">
     {navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
@@ -318,6 +340,8 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
           ? <Link className="admin-button" href={dataHref} prefetch={false}>{t("actions.import")}</Link> : null}
     </section> : null}
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
+    {data.topics.some((item) => item.origin === "manual" && item.lifecycle !== "archived")
+      ? <a className="topics-manager__jump" href="#defined-interests">{t("consolidation.definedCatalogJump")}</a> : null}
     <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId} actorId={actorId}
       mentionsHref={`/signal/${encodeURIComponent(data.workspace.slug)}/mentions`} onCatalogAvailable={refreshAvailableCatalog}
       onGroupCount={setConsolidationGroupCount} />
@@ -409,22 +433,21 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
       </div> : null}
       {!workspaceDiscoveries.length && !visibleCandidates.length ? <div className="admin-empty"><strong>{t("discovered.empty")}</strong><p>{t("discovered.emptyBody")}</p></div> : null}
     </section> : <div className="topics-manager__layout">
-      <aside className="admin-section topics-manager__list">
+      <aside className="admin-section topics-manager__list" id="defined-interests">
         <header><div><h2>{tab === "archived" ? t("archived.title")
-          : consolidatedServing ? t("consolidation.previousCatalogTitle") : t("list.title")}</h2>
-          <p>{consolidatedServing && tab !== "archived" ? t("consolidation.previousCatalogBody") : t("list.body")}</p>
-          </div><span>{visibleTopics.length}</span></header>
-        {visibleTopics.length ? visibleTopics.map((topic) => <button className={selectedKey === topic.term_key ? "is-active" : ""}
-          key={topic.term_key} disabled={busy !== null} onClick={() => { if (topic.term_key !== selectedKey && canLeaveEditor()) editTopic(topic); }} type="button">
-          <span><strong>{topic.label}</strong><small>{topic.definition}</small>
-            <time dateTime={topic.updated_at}>{t("list.updated", {
-              date: new Date(topic.updated_at).toLocaleDateString(locale, { timeZone: data.workspace.timezone ?? "UTC" })
-            })}</time></span>
-          <span><AdminStatus state={topicStatusTone(topic)}>{topicStatusLabel(topic)}</AdminStatus>
-            {!processingVisible || workspaceSearch || topic.origin === "workspace_discovery" ? null : topic.status === "searching" || topic.status === "updating" ? <small>…</small>
-              : topic.status === "draft" ? <small>{t("list.notSearched")}</small>
-                : workspaceSearch ? null : <small>{t("list.mentions", { count: topic.counts.relevant })}</small>}</span>
-        </button>) : <div className="admin-empty admin-empty--compact"><strong>{t(tab === "archived" ? "archived.empty" : "list.empty")}</strong></div>}
+          : foldPreviousCatalog ? t("consolidation.definedCatalogTitle")
+            : consolidatedServing ? t("consolidation.previousCatalogTitle") : t("list.title")}</h2>
+          <p>{foldPreviousCatalog ? t("consolidation.definedCatalogBody")
+            : consolidatedServing && tab !== "archived" ? t("consolidation.previousCatalogBody") : t("list.body")}</p>
+          </div><span>{foldPreviousCatalog ? definedTopics.length : visibleTopics.length}</span></header>
+        {visibleTopics.length ? foldPreviousCatalog ? <>
+          {definedTopics.map(topicListButton)}
+          {previousTopics.length ? <details className="topics-manager__history">
+            <summary>{t("consolidation.previousCatalogToggle", { count: previousTopics.length })}</summary>
+            {previousTopics.map(topicListButton)}
+          </details> : null}
+        </> : visibleTopics.map(topicListButton)
+          : <div className="admin-empty admin-empty--compact"><strong>{t(tab === "archived" ? "archived.empty" : "list.empty")}</strong></div>}
       </aside>
 
       <main className="admin-section topics-manager__detail">

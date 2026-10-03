@@ -83,6 +83,15 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(searchButton, "search must be disabled before data is available");
     assert.match(html, /Difficulty completing a purchase/u);
   });
+  test(`${locale}: a defined interest opens before earlier discovered results`, () => {
+    const earlier = { ...emergentTopic, term_key: "earlier-discovery", label: "Earlier discovered result" };
+    const html = render({ ...base, topics: [earlier, savedTopic] });
+    assert.match(html, /<h2>Purchase friction<\/h2>/u);
+    assert.match(html, /href="#defined-interests"/u);
+    const list = html.slice(html.indexOf("topics-manager__list"), html.indexOf("topics-manager__detail"));
+    assert.ok(list.indexOf("Purchase friction") < list.indexOf("Earlier discovered result"));
+    assert.match(list, /Earlier discovered result/u, "older results remain accessible");
+  });
   test(`${locale}: an emergent mixed-scope draft uses the same editor without adopting, guiding, or following automatically`, () => {
     const html = render({ ...base, topics: [emergentTopic] });
     assert.match(html, /<option value="all_conversations" selected=""/u);

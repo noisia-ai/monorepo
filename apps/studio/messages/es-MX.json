@@ -3275,6 +3275,10 @@
         "previousCatalogNotice": "Signal usa una revisión consolidada; una propuesta más reciente puede seguir pendiente de publicación. La lista siguiente conserva intereses definidos y resultados parciales anteriores para consulta, no el catálogo consolidado vigente.",
         "previousCatalogTitle": "Intereses y resultados anteriores",
         "previousCatalogBody": "Los Topics parciales previos se conservan aquí; revisa arriba cuál versión consolidada está publicada.",
+        "definedCatalogTitle": "Tus intereses definidos",
+        "definedCatalogBody": "Edita los intereses que quieres encontrar en las conversaciones. Los resultados parciales anteriores se conservan por separado.",
+        "definedCatalogJump": "Ir a tus intereses definidos",
+        "previousCatalogToggle": "Ver {count, number} resultados parciales anteriores",
         "activation": {
           "title": "Publicar propuesta en Signal",
           "body": "Revisa la propuesta completa de Claude y elige qué conceptos formarán el siguiente Signal.",
