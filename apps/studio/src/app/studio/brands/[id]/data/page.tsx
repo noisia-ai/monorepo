@@ -2,7 +2,6 @@ import { ArrowRight, Database } from "@phosphor-icons/react/dist/ssr";
 import { getTranslations } from "next-intl/server";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 
 import "@/app/signal-v2/signal-v2.css";
 
@@ -11,13 +10,12 @@ import {
   AdminSettingsRow,
   AdminWorkspaceHeader
 } from "@/components/admin/AdminWorkspacePrimitives";
-import { AdminCorpusSummaryStrip } from "@/components/admin/AdminCorpusSummary";
 import { SelfServiceImportManager } from "@/components/admin/SelfServiceImportManager";
 import { WorkspaceCorpusReadinessPanel } from "@/components/admin/WorkspaceCorpusReadinessPanel";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { LazyGovernancePreparation } from "@/components/admin/LazyGovernancePreparation";
 import { requireStudioUser } from "@/lib/auth/guards";
-import { getAdminBrandWorkspaceIdentity, loadAdminBrandWorkspacePageCorpus } from "@/lib/data/admin-workspace";
+import { getAdminBrandWorkspaceIdentity } from "@/lib/data/admin-workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -44,12 +42,6 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
         title={t("data.title")}
       />
       <BrandMonitoringJourney brandId={id} current="data" />
-
-      {identity.workspaceId ? (
-        <Suspense fallback={<p className="admin-section__body" role="status">{t("data.corpusSummaryLoading")}</p>}>
-          <DataCorpusSummary actor={session.appUser} workspaceId={identity.workspaceId} />
-        </Suspense>
-      ) : <AdminCorpusSummaryStrip corpus={null} />}
 
       {identity.workspaceId ? (
         <>
@@ -112,11 +104,4 @@ export default async function BrandDataPage({ params }: { params: Promise<{ id: 
 
     </div>
   );
-}
-
-async function DataCorpusSummary({ actor, workspaceId }: {
-  actor: { id: string; userType: string }; workspaceId: string;
-}) {
-  const corpus = await loadAdminBrandWorkspacePageCorpus(actor, [workspaceId]);
-  return <AdminCorpusSummaryStrip corpus={corpus.get(workspaceId) ?? null} />;
 }

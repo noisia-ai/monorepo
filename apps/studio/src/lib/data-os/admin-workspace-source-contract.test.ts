@@ -153,14 +153,15 @@ test("single-brand loaders preserve access and lookup without querying workspace
   }
 });
 
-test("Admin Data keeps corpus summary while Topics reads identity and both retain page guards", async () => {
+test("Admin Data reads identity before import and avoids duplicate corpus work; Topics retains its guard", async () => {
   for (const page of ["data", "topics"]) {
     const source = await readFile(new URL(`../../app/studio/brands/[id]/${page}/page.tsx`, import.meta.url), "utf8");
     assert.match(source, /getAdminBrandWorkspaceIdentity\(session\.appUser, id\)/u);
     if (page === "topics") assert.doesNotMatch(source, /getAdminBrandWorkspaceSummary|loadAdminWorkspaceCorpus/u);
     else {
       assert.match(source, /<SelfServiceImportManager/u);
-      assert.match(source, /<Suspense[\s\S]*?<DataCorpusSummary/u);
+      assert.match(source, /<WorkspaceCorpusReadinessPanel initial=\{null\}/u);
+      assert.doesNotMatch(source, /loadAdminBrandWorkspacePageCorpus|AdminCorpusSummaryStrip/u);
       assert.doesNotMatch(source, /await getAdminBrandWorkspaceSummary|await loadSignalGovernancePreparation/u);
     }
     assert.doesNotMatch(source, /getAdminBrandWorkspace\(/u);
