@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool, PoolClient } from "pg";
-import { startDefinedInterestDecisionProductV1 } from "./signal-defined-interest-decision";
+import { startDefinedInterestDecisionProductV1,
+  startDefinedInterestDecisionSelfServiceV1 } from "./signal-defined-interest-decision";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const generation = "00000000-0000-4000-8000-000000000002";
@@ -49,4 +50,40 @@ test("a key for another interest cannot be reused or create another generation",
   assert.equal(statements.at(-1), "ROLLBACK");
   assert.equal(statements.some(sql => sql.includes("SELECT request_signal_interest_decision_v1")), false);
   assert.equal(released, true);
+});
+
+test("self-service recovers a paid receipt before attempting any model bootstrap", async () => {
+  let attempts = 0; let bootstraps = 0;
+  const receipt = { owner_id: owner, generation_id: generation, execution_id: execution,
+    expected_roots: 43159, replayed: true };
+  const result = await startDefinedInterestDecisionSelfServiceV1({
+    workspace_id: id, actor_user_id: id, term_key: "consent" }, "request-12345678", {
+    attempt: async () => { attempts++; return receipt; },
+    bootstrap: async () => { bootstraps++; throw new Error("must_not_bootstrap"); }
+  });
+  assert.deepEqual(result, receipt); assert.equal(attempts, 1); assert.equal(bootstraps, 0);
+});
+
+test("self-service bootstraps only missing model authority and retries the same key", async () => {
+  let attempts = 0; let bootstraps = 0;
+  const fakeDatabase = { connect: async () => { throw new Error("must_not_connect"); } } as unknown as Pool;
+  const result = await startDefinedInterestDecisionSelfServiceV1({
+    workspace_id: id, actor_user_id: id, term_key: "consent" }, "request-12345678", {
+    database: fakeDatabase,
+    attempt: async (_scope, key, database) => {
+      assert.equal(key, "request-12345678"); assert.equal(database, fakeDatabase);
+      return ++attempts === 1 ? Promise.reject(new Error("interest_decision_model_authority_required"))
+        : { owner_id: owner, generation_id: generation, execution_id: execution, expected_roots: 43159,
+          replayed: false };
+    },
+    bootstrap: async value => { bootstraps++; assert.equal(value.database, fakeDatabase);
+      assert.equal(value.interest_term_key, "consent");
+      return { model_version_id: id, prepublication_receipt_id: id, approval_policy_id: id, replayed: false }; }
+  });
+  assert.equal(result.owner_id, owner); assert.equal(attempts, 2); assert.equal(bootstraps, 1);
+  await assert.rejects(startDefinedInterestDecisionSelfServiceV1({
+    workspace_id: id, actor_user_id: id, term_key: "consent" }, "request-12345678", {
+    database: fakeDatabase, attempt: async () => { throw new Error("interest_decision_policy_required"); },
+    bootstrap: async () => { throw new Error("must_not_bootstrap"); }
+  }), /interest_decision_policy_required/u);
 });

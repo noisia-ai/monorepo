@@ -1,5 +1,5 @@
 import { loadDefinedInterestDecisionProductV1,
-  startDefinedInterestDecisionProductV1 } from
+  startDefinedInterestDecisionSelfServiceV1 } from
   "@/lib/data-os/signal-defined-interest-decision";
 import { loadSignalWorkspaceContextForTopics,
   requireIdempotencyKey, topicError, topicResponse } from "../../_lib";
@@ -29,7 +29,7 @@ export async function POST(request: Request,
     if (!body || typeof body !== "object" || Array.isArray(body)
       || Object.keys(body).length !== 1 || body.action !== "classify_interest")
       return topicResponse({ error: "interest_decision_request_invalid" }, 422);
-    return topicResponse(await startDefinedInterestDecisionProductV1({
+    return topicResponse(await startDefinedInterestDecisionSelfServiceV1({
       workspace_id: workspaceId, actor_user_id: loaded.session.appUser.id,
       term_key: termKey }, key), 202);
   } catch (error) { return topicError(error, "interest_decision_start_rejected"); }

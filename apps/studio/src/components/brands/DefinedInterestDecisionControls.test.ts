@@ -15,6 +15,12 @@ test("only an explicit untouched interest can start one decision request", () =>
   assert.equal(definedInterestDecisionViewV1(status("not_started"), true, false, null).canStart, false);
   assert.equal(definedInterestDecisionViewV1(status("not_started"), false, true, null).canStart, false);
   assert.equal(definedInterestDecisionViewV1(status("not_started"), false, false, { key: "same-key-1" }).canStart, false);
+  assert.equal(definedInterestDecisionViewV1(status("not_started"), false, false,
+    { key: "same-key-1", rejected_before_admission: true }).canReplaceRejected, true);
+  assert.equal(definedInterestDecisionViewV1(null, false, false,
+    { key: "same-key-1", rejected_before_admission: true }).canReplaceRejected, false);
+  assert.equal(definedInterestDecisionViewV1(status("ready"), false, false,
+    { key: "same-key-1", rejected_before_admission: true }).canReplaceRejected, false);
   assert.equal(definedInterestDecisionViewV1(status("completed"), false, false, null).canStart, false);
   assert.equal(definedInterestDecisionViewV1(status("blocked"), false, false, null).canStart, false);
 });

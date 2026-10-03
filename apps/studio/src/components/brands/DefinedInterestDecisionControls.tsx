@@ -11,7 +11,7 @@ export type DefinedInterestDecisionStatusV1 = {
   classification_total_roots?: number; classification_error_code?: string | null;
   generation_status?: string | null;
 };
-type Intent = { key: string; owner_id?: string };
+type Intent = { key: string; owner_id?: string; rejected_before_admission?: boolean };
 const storageKey = (actorId: string, workspaceId: string, termKey: string) =>
   `noisia:interest-decision:${actorId}:${workspaceId}:${termKey}`;
 const requestKey = /^[A-Za-z0-9._:-]{8,200}$/u;
@@ -28,6 +28,8 @@ export function definedInterestDecisionViewV1(status: DefinedInterestDecisionSta
     : status?.status ?? "not_started";
   return {
     canStart: !disabled && !dirty && !intent && status?.status === "not_started",
+    canReplaceRejected: !disabled && !dirty && status?.status === "not_started"
+      && intent?.rejected_before_admission === true,
     shouldPoll: Boolean(status && (active(status) || status.status === "completed"
       && !classificationReady && !materializationFailed) && status.unknown_batches === 0),
     showProgress: Boolean(started),
@@ -109,7 +111,9 @@ export function DefinedInterestDecisionControls({ actorId, workspaceId, termKey,
       if (raw) {
         const parsed: unknown = JSON.parse(raw);
         if (parsed && typeof parsed === "object" && requestKey.test(String((parsed as Intent).key))
-          && (!("owner_id" in parsed) || typeof (parsed as Intent).owner_id === "string")) restored = parsed as Intent;
+          && (!("owner_id" in parsed) || typeof (parsed as Intent).owner_id === "string")
+          && (!("rejected_before_admission" in parsed)
+            || typeof (parsed as Intent).rejected_before_admission === "boolean")) restored = parsed as Intent;
       }
     } catch { /* no recoverable browser storage */ }
     setIntent(restored); void read(restored);
@@ -136,8 +140,16 @@ export function DefinedInterestDecisionControls({ actorId, workspaceId, termKey,
         setStatus(null); clearIntent(); onAccessDenied?.(); throw new Error("forbidden");
       }
       const receipt = await response.json() as { owner_id?: unknown; error?: unknown };
-      if (!response.ok) throw new Error(errorCode(receipt) === "request" && response.status < 500
-        ? "rejected" : errorCode(receipt));
+      if (!response.ok) {
+        const code = errorCode(receipt);
+        if (response.status >= 400 && response.status < 500 && code !== "request") {
+          const rejected = { ...pending, rejected_before_admission: true };
+          saveIntent(rejected);
+          setStatus(null);
+          await read(rejected);
+        }
+        throw new Error(code === "request" && response.status < 500 ? "rejected" : code);
+      }
       if (typeof receipt.owner_id !== "string") throw new Error("request");
       const confirmed = { ...pending, owner_id: receipt.owner_id };
       saveIntent(confirmed);
@@ -149,6 +161,7 @@ export function DefinedInterestDecisionControls({ actorId, workspaceId, termKey,
   const knownError = error === "forbidden" ? "forbidden"
     : error === "interest_decision_analysis_required" ? "analysisRequired"
       : error === "interest_decision_model_authority_required" ? "authorityRequired"
+        : error === "interest_decision_platform_benchmark_required" ? "benchmarkRequired"
         : error === "interest_decision_model_authority_stale" ? "authorityStale"
           : error === "interest_decision_policy_required" ? "policyRequired"
             : error === "interest_decision_cap_exhausted" ? "capExhausted"
@@ -173,11 +186,15 @@ export function DefinedInterestDecisionControls({ actorId, workspaceId, termKey,
         disabled={busy} onClick={() => void send()}>{t("start")}</button> : null}
       {intent ? <button type="button" className="admin-button" disabled={busy || disabled || dirty}
         onClick={() => void send()}>{t("retrySame")}</button> : null}
+      {view.canReplaceRejected ? <button type="button" className="admin-button"
+        disabled={busy} onClick={() => { clearIntent(); setError(null); }}>
+        {t("newAttempt")}</button> : null}
       <button type="button" className="admin-button" disabled={busy} onClick={() => void read(intent)}>
         {t("refresh")}</button>
     </div>
     {dirty ? <p>{t("saveFirst")}</p> : null}
     {intent ? <p role="status">{t("pending")}</p> : null}
+    {view.canReplaceRejected ? <p>{t("newAttemptExplanation")}</p> : null}
     {error ? <p role="alert">{t(`errors.${knownError}`)}</p> : null}
   </section>;
 }

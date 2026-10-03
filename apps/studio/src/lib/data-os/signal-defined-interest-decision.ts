@@ -1,5 +1,6 @@
 import {
   beginSignalWorkspaceClassificationWithClientV1,
+  bootstrapSignalInterestDecisionModelAuthorityV1,
   loadSignalWorkspaceClassificationInputV1,
 } from "@noisia/db";
 import { signalWorkspaceClassificationIdentitySchemaV1,
@@ -151,6 +152,26 @@ export async function startDefinedInterestDecisionProductV1(scope: Scope, idempo
       return fail(error.message);
     throw error;
   } finally { client.release(); }
+}
+
+/** Replay the paid receipt first. Only a genuinely new request may bootstrap
+ * model authority, and that bootstrap never creates provider work or money.
+ * This order matters when the HTTP response was lost and Brand OS changed. */
+export async function startDefinedInterestDecisionSelfServiceV1(scope: Scope, idempotencyKey: string,
+  options: { database?: Pool;
+    bootstrap?: typeof bootstrapSignalInterestDecisionModelAuthorityV1;
+    attempt?: typeof startDefinedInterestDecisionProductV1 } = {}) {
+  const attempt = options.attempt ?? startDefinedInterestDecisionProductV1;
+  try { return await attempt(scope, idempotencyKey, options.database); }
+  catch (error) {
+    if (!(error instanceof Error && error.message === "interest_decision_model_authority_required")) throw error;
+  }
+  const database = options.database ?? (await import("@/lib/db")).pool;
+  await (options.bootstrap ?? bootstrapSignalInterestDecisionModelAuthorityV1)({
+    workspace_id: scope.workspace_id, actor_user_id: scope.actor_user_id,
+    interest_term_key: scope.term_key, idempotency_key: idempotencyKey, database
+  });
+  return attempt(scope, idempotencyKey, database);
 }
 
 /** Read progress without exposing request bodies or provider receipts. */

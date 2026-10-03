@@ -3036,7 +3036,8 @@
         "materialization": "Memberships processed: {done, number} of {total, number} mentions.",
         "unknown": "{count, plural, one {# batch has an uncertain submission} other {# batches have uncertain submissions}}. They will not be sent again automatically.",
         "unsettled": "{count, plural, one {# call still has unsettled cost} other {# calls still have unsettled cost}}.",
-        "start": "Classify this interest", "retrySame": "Retry the same request", "refresh": "Refresh status",
+        "start": "Classify this interest", "retrySame": "Retry the same request", "newAttempt": "Start a new request", "refresh": "Refresh status",
+        "newAttemptExplanation": "The server rejected the start, and we just confirmed there is no execution. You can start a new request after resolving the issue.",
         "saveFirst": "Save interest changes before classifying it.",
         "pending": "The request keeps the same key until its receipt is confirmed; retrying will not create a second request.",
         "errors": {
@@ -3047,6 +3048,7 @@
           "forbidden": "You no longer have access to this classification.",
           "analysisRequired": "Complete the current search for this interest first.",
           "authorityRequired": "The model evaluation and policy still need to be enabled for this interest.",
+          "benchmarkRequired": "Classification is waiting for the platform quality evaluation. No mentions were sent and no cost was incurred.",
           "authorityStale": "The interest definition or model authority changed. Refresh the interest before continuing.",
           "policyRequired": "This organization does not yet have an active policy for this classification.",
           "capExhausted": "The authorized cap cannot reserve the next request. Progress was retained.",

@@ -3036,7 +3036,8 @@
         "materialization": "Pertenencias procesadas: {done, number} de {total, number} menciones.",
         "unknown": "{count, plural, one {# lote tiene un envío incierto} other {# lotes tienen envíos inciertos}}. No se reenviarán automáticamente.",
         "unsettled": "{count, plural, one {# llamada aún no tiene costo conciliado} other {# llamadas aún no tienen costo conciliado}}.",
-        "start": "Clasificar este interés", "retrySame": "Reintentar la misma solicitud", "refresh": "Actualizar estado",
+        "start": "Clasificar este interés", "retrySame": "Reintentar la misma solicitud", "newAttempt": "Iniciar nueva solicitud", "refresh": "Actualizar estado",
+        "newAttemptExplanation": "El servidor rechazó el inicio y acabamos de comprobar que no existe una ejecución. Puedes generar otra solicitud después de corregir el problema.",
         "saveFirst": "Guarda los cambios del interés antes de clasificarlo.",
         "pending": "La solicitud conserva la misma clave hasta confirmar su recibo; reintentar no crea otra solicitud.",
         "errors": {
@@ -3047,6 +3048,7 @@
           "forbidden": "Ya no tienes acceso a esta clasificación.",
           "analysisRequired": "Primero termina la búsqueda vigente de este interés.",
           "authorityRequired": "Aún falta habilitar la evaluación y política del modelo para este interés.",
+          "benchmarkRequired": "La clasificación espera la evaluación de calidad de la plataforma. No se enviaron menciones ni se generó gasto.",
           "authorityStale": "La definición o la autoridad del modelo cambió. Actualiza el interés antes de continuar.",
           "policyRequired": "La organización todavía no tiene una política vigente para esta clasificación.",
           "capExhausted": "El tope autorizado no alcanza para reservar la siguiente solicitud. El avance se conserva.",
