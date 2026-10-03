@@ -217,43 +217,55 @@ async function seedFixture(client: pg.Client) {
       [IDS.dataSource, IDS.corpus, IDS.organization, IDS.brand]
     );
 
+    const sourceWorkspace = await q(
+      client,
+      "SELECT workspace_id FROM data_sources WHERE id = $1",
+      [IDS.dataSource]
+    );
+    const workspaceId = sourceWorkspace.rows[0]?.workspace_id as string | undefined;
+    if (!workspaceId) throw new Error("Data OS smoke source did not resolve a workspace");
+
     await q(
       client,
       `
         INSERT INTO source_sync_runs (
-          id, data_source_id, finished_at, status, records_total, records_valid,
+          id, data_source_id, workspace_id, finished_at, status, records_total, records_valid,
           records_duplicate, records_failed, coverage_start, coverage_end
         )
-        VALUES ($1, $2, now(), 'completed', 2, 2, 0, 0, '2026-06-01', '2026-06-30')
+        VALUES ($1, $2, $3, now(), 'completed', 2, 2, 0, 0, '2026-06-01', '2026-06-30')
         ON CONFLICT (id) DO UPDATE SET
+          workspace_id = EXCLUDED.workspace_id,
           finished_at = EXCLUDED.finished_at,
           status = EXCLUDED.status,
           records_total = EXCLUDED.records_total,
           records_valid = EXCLUDED.records_valid
       `,
-      [IDS.sourceSyncRun, IDS.dataSource]
+      [IDS.sourceSyncRun, IDS.dataSource, workspaceId]
     );
 
     await q(
       client,
       `
         INSERT INTO import_batches (
-          id, study_corpus_id, mention_type, entity_kind, entity_label,
+          id, workspace_id, data_source_id, study_corpus_id,
+          mention_type, entity_kind, entity_label,
           source_system, source_file_name, source_file_hash, record_count,
           included_count, excluded_count, duplicate_count, status
         )
         VALUES (
-          $1, $2, 'brand', 'primary_brand', 'Noisia Smoke Brand',
-          'fixture', 'data-os-smoke.csv', $3, 2, 2, 0, 0, 'completed'
+          $1, $2, $3, $4, 'brand', 'primary_brand', 'Noisia Smoke Brand',
+          'fixture', 'data-os-smoke.csv', $5, 2, 2, 0, 0, 'completed'
         )
         ON CONFLICT (id) DO UPDATE SET
+          workspace_id = EXCLUDED.workspace_id,
+          data_source_id = EXCLUDED.data_source_id,
           record_count = EXCLUDED.record_count,
           included_count = EXCLUDED.included_count,
           excluded_count = EXCLUDED.excluded_count,
           duplicate_count = EXCLUDED.duplicate_count,
           status = EXCLUDED.status
       `,
-      [IDS.importBatch, IDS.corpus, hash("data-os-smoke.csv")]
+      [IDS.importBatch, workspaceId, IDS.dataSource, IDS.corpus, hash("data-os-smoke.csv")]
     );
 
     for (const [id, externalId, text, publishedAt, platform, sentimentScore] of [
@@ -264,20 +276,26 @@ async function seedFixture(client: pg.Client) {
         client,
         `
           INSERT INTO mentions (
-            id, study_corpus_id, external_id, source_system, source_file_id,
+            id, workspace_id, data_source_id, canonical_mention_id, provider_record_id,
+            study_corpus_id, external_id, source_system, source_file_id,
             text_hash, text_raw, text_clean, text_snippet, text_length, language,
             published_at, platform, resolved_platform, content_type, url, country,
             engagement, sentiment_source, sentiment_score, quality_score,
             inclusion_status, quality_flags, raw_metadata
           )
           VALUES (
-            $1, $2, $3, 'fixture', $4,
-            $5, $6, $6, left($6, 160), length($6), 'es',
-            $7, $8, $8, 'post', 'https://example.invalid/data-os-smoke', 'MX',
-            '{"likes":12,"comments":3}'::jsonb, 'fixture', $9, 90,
+            $1, $2, $3, $1, $4,
+            $5, $4, 'fixture', $6,
+            $7, $8, $8, left($8, 160), length($8), 'es',
+            $9, $10, $10, 'post', 'https://example.invalid/data-os-smoke', 'MX',
+            '{"likes":12,"comments":3}'::jsonb, 'fixture', $11, 90,
             'included', '[]'::jsonb, '{"fixture":true}'::jsonb
           )
           ON CONFLICT (id) DO UPDATE SET
+            workspace_id = EXCLUDED.workspace_id,
+            data_source_id = EXCLUDED.data_source_id,
+            canonical_mention_id = EXCLUDED.canonical_mention_id,
+            provider_record_id = EXCLUDED.provider_record_id,
             text_hash = EXCLUDED.text_hash,
             text_raw = EXCLUDED.text_raw,
             text_clean = EXCLUDED.text_clean,
@@ -290,7 +308,7 @@ async function seedFixture(client: pg.Client) {
             inclusion_status = EXCLUDED.inclusion_status,
             updated_at = now()
         `,
-        [id, IDS.corpus, externalId, IDS.importBatch, hash(`${IDS.corpus}:${externalId}:${text}`), text, publishedAt, platform, sentimentScore]
+        [id, workspaceId, IDS.dataSource, externalId, IDS.corpus, IDS.importBatch, hash(`${IDS.corpus}:${externalId}:${text}`), text, publishedAt, platform, sentimentScore]
       );
     }
 
