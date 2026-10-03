@@ -25,6 +25,6 @@ El Worker incorpora un sucesor idempotente **sólo** para rechazos con inventari
 
 ## Próxima acción
 
-1. El operador agrega fondos en Claude Console. Esa transacción financiera queda de su lado. Después verificar saldo/ledger y reactivar envíos con el código corregido, sobre la **misma ejecución**, sin repetir importación, embeddings ni BERTopic.
-2. Completar las 43,159 decisiones, medir falsos positivos del interés de consentimiento con casos independientes y sólo entonces probar membresía persistente, selección reversible y Signal. Las citas literales no prueban pertinencia por sí solas.
+1. El operador agrega fondos en Claude Console. Esa transacción financiera queda de su lado. El saldo por sí solo **no** reactiva el proveedor: primero resolver el hold semántico de `QUALITY_HOLD_DEFINED_INTEREST_2026-10-03.md` con una evaluación independiente. No repetir importación, embeddings ni BERTopic.
+2. Sólo con calidad comprobada, decidir explícitamente si se puede continuar la ejecución sellada o si hace falta una identidad nueva; no mutar los prompts ni reutilizar decisiones incompatibles. Completar 43,159 decisiones, membresías persistentes, selección reversible y Signal. Las citas literales no prueban pertinencia por sí solas.
 3. Cerrar Alexa+ al demostrar un interés completo con evidencia, recuperación y costo. La aceptación restante para producto general es otra marca creada desde UI con una segunda carga incremental, más el corte de release integrado. El draft PR #14 integra `main` y UAT para validar CI; no implica merge o despliegue de producción.
