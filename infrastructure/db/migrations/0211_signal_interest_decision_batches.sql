@@ -1187,6 +1187,281 @@ CREATE TRIGGER validate_signal_interest_decision_platform_benchmark_v1 BEFORE IN
  ON signal_interest_decision_platform_benchmarks_v1 FOR EACH ROW
  EXECUTE FUNCTION validate_signal_interest_decision_platform_benchmark_v1();
 
+-- Platform quality is established before the first paid workspace decision.
+-- This receipt is distinct from signal_classification_evaluations: that table
+-- continues to describe settled coverage of an actual client generation.
+CREATE TABLE signal_interest_decision_prepublication_evaluations_v1 (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ workspace_id uuid NOT NULL REFERENCES signal_workspaces(id),
+ taxonomy_profile_id uuid NOT NULL REFERENCES signal_taxonomy_profiles(id),
+ model_version_id uuid NOT NULL UNIQUE REFERENCES tagging_model_versions(id),
+ benchmark_id uuid NOT NULL REFERENCES signal_interest_decision_platform_benchmarks_v1(id),
+ actor_user_id uuid NOT NULL REFERENCES users(id),
+ interest_term_key text NOT NULL CHECK(interest_term_key~'^[a-z0-9][a-z0-9._-]{0,119}$'),
+ identity_digest text NOT NULL CHECK(identity_digest~'^sha256:[a-f0-9]{64}$'),
+ evaluation_evidence_digest text NOT NULL CHECK(evaluation_evidence_digest~'^sha256:[a-f0-9]{64}$'),
+ thresholds_digest text NOT NULL CHECK(thresholds_digest~'^sha256:[a-f0-9]{64}$'),
+ receipt_digest text NOT NULL CHECK(receipt_digest~'^sha256:[a-f0-9]{64}$'),
+ idempotency_key text NOT NULL CHECK(idempotency_key~'^sha256:[a-f0-9]{64}$'),
+ request_digest text NOT NULL CHECK(request_digest~'^sha256:[a-f0-9]{64}$'),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ UNIQUE(workspace_id,actor_user_id,idempotency_key)
+);
+CREATE FUNCTION validate_signal_interest_decision_prepublication_evaluation_v1() RETURNS trigger
+LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+DECLARE m tagging_model_versions%ROWTYPE;b signal_interest_decision_platform_benchmarks_v1%ROWTYPE;
+ identity jsonb; expected_request text;
+BEGIN
+ NEW.created_at:=clock_timestamp();
+ SELECT * INTO m FROM tagging_model_versions WHERE id=NEW.model_version_id;
+ SELECT * INTO b FROM signal_interest_decision_platform_benchmarks_v1 WHERE id=NEW.benchmark_id;
+ identity:=m.configuration->'workspace_classification_identity';
+ expected_request:=signal_semantic_context_digest_json_v2(jsonb_build_object(
+  'workspace_id',NEW.workspace_id,'taxonomy_profile_id',NEW.taxonomy_profile_id,
+  'model_version_id',NEW.model_version_id,'benchmark_id',NEW.benchmark_id,
+  'actor_user_id',NEW.actor_user_id,'interest_term_key',NEW.interest_term_key,
+  'identity_digest',NEW.identity_digest));
+ IF m.id IS NULL OR b.id IS NULL OR m.registry_contract_version<>'signal-tagging-model-registry-v1'
+  OR m.taxonomy_profile_id IS DISTINCT FROM NEW.taxonomy_profile_id
+  OR NOT EXISTS(SELECT 1 FROM signal_taxonomy_profiles profile
+   WHERE profile.id=NEW.taxonomy_profile_id AND profile.workspace_id=NEW.workspace_id
+    AND profile.status='active')
+  OR m.registered_by_user_id IS DISTINCT FROM NEW.actor_user_id
+  OR NOT (signal_workspace_classification_actor_v1(NEW.workspace_id,NEW.actor_user_id)
+   OR signal_processing_actor_v1(NEW.workspace_id,NEW.actor_user_id))
+  OR m.provider<>'anthropic' OR m.artifact_digest IS DISTINCT FROM signal_interest_decision_model_digest_v1()
+  OR m.configuration IS DISTINCT FROM jsonb_build_object('provider_config',signal_interest_decision_provider_config_v1(),
+   'workspace_classification_identity',identity,'platform_benchmark_id',b.id,
+   'interest_term_key',NEW.interest_term_key)
+  OR m.configuration_digest IS DISTINCT FROM signal_semantic_context_digest_json_v2(m.configuration)
+  OR jsonb_typeof(identity)<>'object' OR (SELECT count(*) FROM jsonb_object_keys(identity))<>10
+  OR NOT (identity ?& ARRAY['contract_version','workspace_id','engine_key','engine_version',
+   'engine_artifact_digest','embedding_config_digest','catalog_digest','compiler_digest',
+   'context_digest','decision_policy_digest'])
+  OR identity->>'contract_version'<>'signal-workspace-classification-v1'
+  OR identity->>'workspace_id' IS DISTINCT FROM NEW.workspace_id::text
+  OR identity->>'engine_key'<>'interest_decision' OR identity->'engine_version'<>'1'::jsonb
+  OR identity->>'engine_artifact_digest' IS DISTINCT FROM m.artifact_digest
+  OR EXISTS(SELECT 1 FROM jsonb_each_text(identity) field
+   WHERE field.key IN('embedding_config_digest','catalog_digest','compiler_digest',
+    'context_digest','decision_policy_digest') AND field.value!~'^sha256:[a-f0-9]{64}$')
+  OR NEW.identity_digest IS DISTINCT FROM signal_semantic_context_digest_json_v2(identity)
+  OR b.model_artifact_digest IS DISTINCT FROM m.artifact_digest
+  OR b.provider_config_digest IS DISTINCT FROM signal_semantic_context_digest_json_v2(signal_interest_decision_provider_config_v1())
+  OR b.prompt_digest IS DISTINCT FROM signal_interest_decision_provider_config_v1()->>'prompt_digest'
+  OR b.dataset_digest IS DISTINCT FROM m.dataset_digest OR b.labels_digest IS DISTINCT FROM m.gold_set_digest
+  OR b.approved_at>clock_timestamp()
+  OR NEW.evaluation_evidence_digest IS DISTINCT FROM b.evaluation_evidence_digest
+  OR NEW.thresholds_digest IS DISTINCT FROM b.thresholds_digest
+  OR NEW.request_digest IS DISTINCT FROM expected_request
+  OR NEW.receipt_digest IS DISTINCT FROM signal_semantic_context_digest_json_v2(jsonb_build_object(
+   'contract_version','signal-interest-decision-prepublication-evaluation-v1',
+   'request_digest',expected_request,'evaluation_evidence_digest',b.evaluation_evidence_digest,
+   'thresholds_digest',b.thresholds_digest))
+  OR NOT EXISTS(SELECT 1 FROM signal_tagging_model_version_events event
+   WHERE event.workspace_id=NEW.workspace_id AND event.model_version_id=m.id AND event.status='draft')
+  OR EXISTS(SELECT 1 FROM signal_tagging_model_version_events event
+   WHERE event.workspace_id=NEW.workspace_id AND event.model_version_id=m.id AND event.status<>'draft')
+ THEN RAISE EXCEPTION 'interest_decision_prepublication_authority_invalid' USING ERRCODE='23514';END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER validate_signal_interest_decision_prepublication_evaluation_v1 BEFORE INSERT
+ ON signal_interest_decision_prepublication_evaluations_v1 FOR EACH ROW
+ EXECUTE FUNCTION validate_signal_interest_decision_prepublication_evaluation_v1();
+
+CREATE FUNCTION register_signal_interest_decision_prepublication_evaluation_v1(
+ target_workspace uuid,target_model uuid,target_benchmark uuid,target_actor uuid,target_term_key text,target_key text)
+RETURNS TABLE(evaluation_id uuid,replayed boolean)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions,pg_temp AS $$
+DECLARE m tagging_model_versions%ROWTYPE;b signal_interest_decision_platform_benchmarks_v1%ROWTYPE;
+ prior signal_interest_decision_prepublication_evaluations_v1%ROWTYPE;identity_digest text;request_digest text;
+BEGIN
+ IF target_key IS NULL OR target_key!~'^sha256:[a-f0-9]{64}$' THEN
+  RAISE EXCEPTION 'interest_decision_prepublication_key_invalid' USING ERRCODE='22023';END IF;
+ SELECT * INTO m FROM tagging_model_versions WHERE id=target_model;
+ SELECT * INTO b FROM signal_interest_decision_platform_benchmarks_v1 WHERE id=target_benchmark;
+ IF m.id IS NULL OR b.id IS NULL THEN
+  RAISE EXCEPTION 'interest_decision_prepublication_authority_invalid' USING ERRCODE='23514';END IF;
+ PERFORM signal_processing_lock_actor_v1(target_workspace,target_actor,false);
+ IF NOT (signal_workspace_classification_actor_v1(target_workspace,target_actor)
+  OR signal_processing_actor_v1(target_workspace,target_actor)) THEN
+  RAISE EXCEPTION 'interest_decision_prepublication_actor_forbidden' USING ERRCODE='42501';END IF;
+ identity_digest:=signal_semantic_context_digest_json_v2(m.configuration->'workspace_classification_identity');
+ request_digest:=signal_semantic_context_digest_json_v2(jsonb_build_object(
+  'workspace_id',target_workspace,'taxonomy_profile_id',m.taxonomy_profile_id,
+  'model_version_id',target_model,'benchmark_id',target_benchmark,
+  'actor_user_id',target_actor,'interest_term_key',target_term_key,'identity_digest',identity_digest));
+ PERFORM pg_advisory_xact_lock(hashtextextended('interest-decision-prepublication:'||target_workspace::text||':'||target_actor::text||':'||target_key,0));
+ SELECT * INTO prior FROM signal_interest_decision_prepublication_evaluations_v1
+  WHERE workspace_id=target_workspace AND actor_user_id=target_actor AND idempotency_key=target_key FOR UPDATE;
+ IF prior.id IS NOT NULL THEN
+  IF prior.request_digest IS DISTINCT FROM request_digest THEN
+   RAISE EXCEPTION 'processing_idempotency_conflict' USING ERRCODE='23514';END IF;
+  evaluation_id:=prior.id;replayed:=true;RETURN NEXT;RETURN;
+ END IF;
+ INSERT INTO signal_interest_decision_prepublication_evaluations_v1(workspace_id,taxonomy_profile_id,
+  model_version_id,benchmark_id,actor_user_id,interest_term_key,identity_digest,evaluation_evidence_digest,
+  thresholds_digest,receipt_digest,idempotency_key,request_digest)
+ VALUES(target_workspace,m.taxonomy_profile_id,target_model,target_benchmark,target_actor,target_term_key,identity_digest,
+  b.evaluation_evidence_digest,b.thresholds_digest,
+  signal_semantic_context_digest_json_v2(jsonb_build_object(
+   'contract_version','signal-interest-decision-prepublication-evaluation-v1',
+   'request_digest',request_digest,'evaluation_evidence_digest',b.evaluation_evidence_digest,
+   'thresholds_digest',b.thresholds_digest)),target_key,request_digest)
+ RETURNING id INTO evaluation_id;
+ replayed:=false;RETURN NEXT;
+END $$;
+
+ALTER TABLE signal_tagging_model_version_events
+ ADD COLUMN prepublication_receipt_id uuid
+ REFERENCES signal_interest_decision_prepublication_evaluations_v1(id) ON DELETE RESTRICT;
+
+-- Stage one is one statement/transaction. The later lifecycle transitions
+-- intentionally use separate transactions: SQL0087 timestamps policy creation
+-- at transaction start and orders model events by their creation timestamps.
+CREATE FUNCTION register_signal_interest_decision_model_v1(target_workspace uuid,
+ target_profile uuid,target_term_key text,target_identity jsonb,target_benchmark uuid,
+ target_actor uuid,target_key text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions,pg_temp AS $$
+DECLARE b signal_interest_decision_platform_benchmarks_v1%ROWTYPE;
+ cfg jsonb;identity_digest text;registry_key text;provenance_digest text;
+ model_id uuid;model_created boolean;receipt_id uuid;receipt_replayed boolean;
+BEGIN
+ IF target_key IS NULL OR target_key!~'^sha256:[a-f0-9]{64}$'
+  OR target_term_key IS NULL OR target_term_key!~'^[a-z0-9][a-z0-9._-]{0,119}$'
+ THEN RAISE EXCEPTION 'interest_decision_model_registration_invalid' USING ERRCODE='22023';END IF;
+ PERFORM signal_processing_lock_actor_v1(target_workspace,target_actor,false);
+ IF NOT (signal_workspace_classification_actor_v1(target_workspace,target_actor)
+  OR signal_processing_actor_v1(target_workspace,target_actor)) THEN
+  RAISE EXCEPTION 'interest_decision_prepublication_actor_forbidden' USING ERRCODE='42501';END IF;
+ SELECT * INTO b FROM signal_interest_decision_platform_benchmarks_v1 WHERE id=target_benchmark;
+ IF b.id IS NULL OR jsonb_typeof(target_identity)<>'object' THEN
+  RAISE EXCEPTION 'interest_decision_model_registration_invalid' USING ERRCODE='23514';END IF;
+ identity_digest:=signal_semantic_context_digest_json_v2(target_identity);
+ registry_key:='interest_decision:'||substr(signal_semantic_context_digest_json_v2(jsonb_build_object(
+  'workspace_id',target_workspace,'taxonomy_profile_id',target_profile,
+  'interest_term_key',target_term_key,'identity_digest',identity_digest,
+  'benchmark_id',b.id)),8);
+ cfg:=jsonb_build_object('provider_config',signal_interest_decision_provider_config_v1(),
+  'workspace_classification_identity',target_identity,'platform_benchmark_id',b.id,
+  'interest_term_key',target_term_key);
+ provenance_digest:=signal_semantic_context_digest_json_v2(jsonb_build_object(
+  'benchmark_id',b.id,'evaluation_evidence_digest',b.evaluation_evidence_digest,
+  'thresholds_digest',b.thresholds_digest));
+ SELECT registered.model_version_id,registered.created INTO model_id,model_created
+ FROM register_signal_tagging_model_v1(target_workspace,target_profile,registry_key,'1',
+  'anthropic',NULL,signal_interest_decision_model_digest_v1(),'provider_api',
+  'message_batches',cfg,signal_semantic_context_digest_json_v2(cfg),
+  b.dataset_digest,b.labels_digest,NULL,provenance_digest,NULL,target_actor,
+  signal_semantic_context_digest_v1(target_key||':model'),
+  signal_semantic_context_digest_json_v2(jsonb_build_object('registry_key',registry_key,
+   'configuration',cfg,'benchmark_id',b.id,'actor_user_id',target_actor))) registered;
+ SELECT receipt.evaluation_id,receipt.replayed INTO receipt_id,receipt_replayed
+ FROM register_signal_interest_decision_prepublication_evaluation_v1(
+  target_workspace,model_id,b.id,target_actor,target_term_key,
+  signal_semantic_context_digest_v1(target_key||':receipt')) receipt;
+ RETURN jsonb_build_object('model_version_id',model_id,'prepublication_receipt_id',receipt_id,
+  'registry_key',registry_key,'replayed',NOT model_created AND receipt_replayed);
+END $$;
+
+-- Stage two records the prepublication receipt in the existing append-only
+-- model operation ledger. SQL0087's evaluation FK remains untouched; this
+-- separate column is reserved for exactly this evaluated interest transition.
+CREATE FUNCTION transition_signal_interest_decision_model_evaluated_v1(target_workspace uuid,
+ target_model uuid,target_receipt uuid,target_actor uuid,target_key text)
+RETURNS TABLE(model_version_id uuid,status text,created boolean)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions,pg_temp AS $$
+DECLARE operation signal_classification_operations%ROWTYPE;
+ receipt signal_interest_decision_prepublication_evaluations_v1%ROWTYPE;
+ prior_digest text;request_hash text;
+BEGIN
+ IF target_key IS NULL OR target_key!~'^sha256:[a-f0-9]{64}$' THEN
+  RAISE EXCEPTION 'interest_decision_model_transition_invalid' USING ERRCODE='22023';END IF;
+ PERFORM signal_processing_lock_actor_v1(target_workspace,target_actor,false);
+ IF NOT (signal_workspace_classification_actor_v1(target_workspace,target_actor)
+  OR signal_processing_actor_v1(target_workspace,target_actor)) THEN
+  RAISE EXCEPTION 'interest_decision_prepublication_actor_forbidden' USING ERRCODE='42501';END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(target_workspace::text||':tagging-model-transition:'||target_model::text,0));
+ SELECT * INTO receipt FROM signal_interest_decision_prepublication_evaluations_v1 source
+  WHERE source.id=target_receipt AND source.workspace_id=target_workspace
+   AND source.model_version_id=target_model AND source.actor_user_id=target_actor;
+ IF receipt.id IS NULL THEN
+  RAISE EXCEPTION 'interest_decision_model_transition_invalid' USING ERRCODE='23514';END IF;
+ request_hash:=signal_semantic_context_digest_json_v2(jsonb_build_object(
+  'workspace_id',target_workspace,'model_version_id',target_model,
+  'prepublication_receipt_id',target_receipt,'actor_user_id',target_actor));
+ INSERT INTO signal_classification_operations(workspace_id,actor_user_id,operation_kind,
+  idempotency_key,request_digest)
+ VALUES(target_workspace,target_actor,'transition-model',target_key,request_hash)
+ ON CONFLICT(workspace_id,idempotency_key) DO NOTHING;
+ SELECT * INTO operation FROM signal_classification_operations
+  WHERE workspace_id=target_workspace AND idempotency_key=target_key FOR UPDATE;
+ IF operation.operation_kind<>'transition-model' OR operation.actor_user_id<>target_actor
+  OR operation.request_digest<>request_hash THEN
+  RAISE EXCEPTION 'Classification idempotency key was reused with incompatible input.' USING ERRCODE='40001';END IF;
+ IF operation.status='completed' THEN
+  model_version_id:=(operation.result->>'model_version_id')::uuid;
+  status:=operation.result->>'status';created:=false;RETURN NEXT;RETURN;
+ END IF;
+ SELECT event.evidence_digest INTO prior_digest FROM signal_tagging_model_version_events event
+  WHERE event.workspace_id=target_workspace AND event.model_version_id=target_model
+  ORDER BY event.created_at DESC,event.id DESC LIMIT 1;
+ INSERT INTO signal_tagging_model_version_events(workspace_id,model_version_id,operation_id,
+  event_index,status,evaluation_id,prepublication_receipt_id,actor_user_id,effective_at,evidence_digest)
+ VALUES(target_workspace,target_model,operation.id,0,'evaluated',NULL,receipt.id,
+  target_actor,clock_timestamp(),receipt.receipt_digest);
+ INSERT INTO signal_classification_events(workspace_id,operation_id,event_index,event_kind,
+  object_type,object_id,previous_state_digest,next_state_digest,event_digest)
+ VALUES(target_workspace,operation.id,0,'model-transitioned','model-version',target_model,
+  prior_digest,receipt.receipt_digest,
+  'sha256:'||encode(digest(convert_to(operation.id::text||':0:'||receipt.receipt_digest,'UTF8'),'sha256'),'hex'));
+ UPDATE signal_classification_operations SET status='completed',completed_at=now(),
+  result=jsonb_build_object('model_version_id',target_model,'status','evaluated') WHERE id=operation.id;
+ model_version_id:=target_model;status:='evaluated';created:=true;RETURN NEXT;
+END $$;
+
+-- The existing lifecycle remains unchanged for every other model. The single
+-- additional evaluated path accepts a validated platform receipt, never a
+-- client coverage evaluation in disguise.
+CREATE OR REPLACE FUNCTION validate_signal_tagging_model_version_event_v1()
+RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+DECLARE prior_status text;prior_effective_at timestamptz;
+BEGIN
+ SELECT event.status,event.effective_at INTO prior_status,prior_effective_at
+ FROM signal_tagging_model_version_events event
+ WHERE event.workspace_id=NEW.workspace_id AND event.model_version_id=NEW.model_version_id
+ ORDER BY event.created_at DESC,event.id DESC LIMIT 1;
+ IF NOT EXISTS(SELECT 1 FROM tagging_model_versions model
+  WHERE model.id=NEW.model_version_id AND model.registry_contract_version='signal-tagging-model-registry-v1'
+   AND model.taxonomy_profile_id IN(SELECT id FROM signal_taxonomy_profiles WHERE workspace_id=NEW.workspace_id))
+  OR NOT EXISTS(SELECT 1 FROM signal_classification_operations operation
+   WHERE operation.id=NEW.operation_id AND operation.workspace_id=NEW.workspace_id
+    AND operation.actor_user_id=NEW.actor_user_id
+    AND operation.operation_kind IN('register-model','transition-model'))
+  OR NOT signal_data_governance_actor_is_valid(NEW.workspace_id,NEW.actor_user_id)
+  OR (prior_status IS NULL AND NEW.status<>'draft')
+  OR (prior_status='draft' AND NEW.status<>'evaluated')
+  OR (prior_status='evaluated' AND NEW.status NOT IN('approved','retired'))
+  OR (prior_status='approved' AND NEW.status<>'retired') OR prior_status='retired'
+  OR (prior_effective_at IS NOT NULL AND NEW.effective_at<prior_effective_at)
+  OR (NEW.status='evaluated' AND (NEW.evaluation_id IS NULL)=(NEW.prepublication_receipt_id IS NULL))
+  OR (NEW.status='draft' AND (NEW.evaluation_id IS NOT NULL OR NEW.prepublication_receipt_id IS NOT NULL))
+  OR (NEW.status<>'evaluated' AND NEW.prepublication_receipt_id IS NOT NULL)
+  OR (NEW.status='evaluated' AND NEW.evaluation_id IS NOT NULL AND NOT EXISTS(
+   SELECT 1 FROM signal_classification_evaluations evaluation
+   WHERE evaluation.id=NEW.evaluation_id AND evaluation.workspace_id=NEW.workspace_id
+    AND evaluation.evaluated_model_version_id=NEW.model_version_id))
+  OR (NEW.status='evaluated' AND NEW.prepublication_receipt_id IS NOT NULL AND NOT EXISTS(
+   SELECT 1 FROM signal_interest_decision_prepublication_evaluations_v1 receipt
+   JOIN tagging_model_versions model ON model.id=receipt.model_version_id
+   WHERE receipt.id=NEW.prepublication_receipt_id AND receipt.workspace_id=NEW.workspace_id
+    AND receipt.model_version_id=NEW.model_version_id AND receipt.actor_user_id=NEW.actor_user_id
+    AND model.artifact_digest=signal_interest_decision_model_digest_v1()
+    AND receipt.receipt_digest=NEW.evidence_digest AND receipt.created_at<=NEW.effective_at))
+ THEN RAISE EXCEPTION 'Tagging model lifecycle transition is invalid.' USING ERRCODE='23514';END IF;
+ RETURN NEW;
+END $$;
+
 -- SQL0087 evaluates published assignments. Before publication, this exact
 -- model instead records complete settled coverage and points to the approved
 -- platform benchmark. Precision/recall/F1 remain NULL for the client corpus.
@@ -1332,6 +1607,9 @@ BEGIN
   RAISE EXCEPTION 'interest_decision_history_immutable' USING ERRCODE='23514';END IF;
  RETURN NEW;
 END $$;
+CREATE TRIGGER signal_interest_decision_prepublication_immutable_v1
+ BEFORE UPDATE OR DELETE ON signal_interest_decision_prepublication_evaluations_v1 FOR EACH ROW
+ EXECUTE FUNCTION signal_interest_decision_immutable_row_v1();
 CREATE TRIGGER signal_interest_decision_request_key_immutable_v1
  BEFORE UPDATE OR DELETE ON signal_interest_decision_request_keys_v1 FOR EACH ROW
  EXECUTE FUNCTION signal_interest_decision_immutable_row_v1();
@@ -1466,7 +1744,8 @@ REVOKE ALL ON signal_interest_decision_owners_v1,signal_interest_decision_reques
  signal_interest_decision_requests_v1,signal_interest_decision_request_roots_v1,
  signal_interest_decision_batches_v1,signal_interest_decision_batch_polls_v1,
  signal_interest_decision_calls_v1,signal_interest_decision_root_evidence_v1,
- signal_interest_decision_platform_benchmarks_v1 FROM PUBLIC;
+ signal_interest_decision_platform_benchmarks_v1,
+ signal_interest_decision_prepublication_evaluations_v1 FROM PUBLIC;
 DO $$ DECLARE role_name text;table_name text;routine record; BEGIN
  FOREACH role_name IN ARRAY ARRAY['anon','authenticated'] LOOP
   IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=role_name) THEN
@@ -1475,7 +1754,8 @@ DO $$ DECLARE role_name text;table_name text;routine record; BEGIN
     'signal_interest_decision_requests_v1','signal_interest_decision_request_roots_v1',
     'signal_interest_decision_batches_v1','signal_interest_decision_batch_polls_v1',
     'signal_interest_decision_calls_v1','signal_interest_decision_root_evidence_v1',
-    'signal_interest_decision_platform_benchmarks_v1']) LOOP
+    'signal_interest_decision_platform_benchmarks_v1',
+    'signal_interest_decision_prepublication_evaluations_v1']) LOOP
     EXECUTE format('REVOKE ALL ON TABLE %I FROM %I',table_name,role_name);
    END LOOP;
   END IF;
@@ -1497,6 +1777,8 @@ END $$;
 DO $$ DECLARE signature text; BEGIN
  FOREACH signature IN ARRAY ARRAY[
   'request_signal_interest_decision_v1(uuid,uuid,uuid,uuid,text)',
+  'register_signal_interest_decision_model_v1(uuid,uuid,text,jsonb,uuid,uuid,text)',
+  'transition_signal_interest_decision_model_evaluated_v1(uuid,uuid,uuid,uuid,text)',
   'renew_signal_interest_decision_admission_v1(uuid,uuid)',
   'append_signal_interest_decision_page_v1(uuid,jsonb,text,text,jsonb)',
   'prepare_signal_interest_decision_batch_v1(uuid,uuid,text[],text)',
