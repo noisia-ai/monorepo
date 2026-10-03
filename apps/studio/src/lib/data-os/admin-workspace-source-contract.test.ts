@@ -67,13 +67,13 @@ test("single-brand loaders preserve access and lookup without querying workspace
     if (sql.includes("FROM brands brand") && sql.includes("JOIN users actor")) {
       assert.equal(values.length, 2);
       assert.equal(values[1], actor.id);
-      assert.match(sql, /SELECT COALESCE\(brand\.display_name, brand\.name\) AS brand_name, workspace\.id::text AS workspace_id\s+FROM/u);
+      assert.match(sql, /SELECT COALESCE\(brand\.display_name, brand\.name\) AS brand_name,\s+workspace\.id::text AS workspace_id, workspace\.timezone\s+FROM/u);
       assert.match(sql, /actor\.id = \$2::uuid\s+AND actor\.user_type = 'noisia_internal' AND actor\.status = 'active'/u);
       assert.match(sql, /workspace\.brand_id = brand\.id\s+AND workspace\.organization_id = brand\.organization_id AND workspace\.status <> 'archived'/u);
       assert.match(sql, /WHERE brand\.id::text = \$1::text OR brand\.slug = \$1::text/u);
       assert.doesNotMatch(sql, /corpus|mentions|data_sources|import_batches|reports|profiles|count\(|LATERAL/iu);
       return { rows: actorActive && (values[0] === brandId || values[0] === row.brand_slug)
-        ? [{ brand_name: row.brand_name, workspace_id: row.workspace_id }] : [] };
+        ? [{ brand_name: row.brand_name, workspace_id: row.workspace_id, timezone: row.workspace_id ? row.timezone : null }] : [] };
     }
     if (sql.includes("FROM brands brand")) {
       if (values.length === 2) {
@@ -113,7 +113,7 @@ test("single-brand loaders preserve access and lookup without querying workspace
       row.workspace_id = workspaceId;
       assert.equal(await getAdminBrandWorkspaceIdentity({ ...actor, userType: "client" }, brandId), null);
       assert.equal(queries.length, 0);
-      const expected = { brandName: row.brand_name, workspaceId };
+      const expected = { brandName: row.brand_name, workspaceId, timezone: row.timezone };
       assert.deepEqual(await getAdminBrandWorkspaceIdentity(actor, brandId), expected);
       assert.equal(queries.length, 1);
       assert.deepEqual(await getAdminBrandWorkspaceIdentity(actor, row.brand_slug), expected);
@@ -121,7 +121,7 @@ test("single-brand loaders preserve access and lookup without querying workspace
       assert.equal(await getAdminBrandWorkspaceIdentity(actor, "missing"), null);
       assert.equal(queries.length, 3);
       row.workspace_id = null;
-      assert.deepEqual(await getAdminBrandWorkspaceIdentity(actor, brandId), { ...expected, workspaceId: null });
+      assert.deepEqual(await getAdminBrandWorkspaceIdentity(actor, brandId), { ...expected, workspaceId: null, timezone: null });
       assert.equal(queries.length, 4);
       actorActive = false;
       assert.equal(await getAdminBrandWorkspaceIdentity(actor, brandId), null);
@@ -156,16 +156,19 @@ test("single-brand loaders preserve access and lookup without querying workspace
 test("Admin Data keeps corpus summary while Topics reads identity and both retain page guards", async () => {
   for (const page of ["data", "topics"]) {
     const source = await readFile(new URL(`../../app/studio/brands/[id]/${page}/page.tsx`, import.meta.url), "utf8");
-    assert.match(source, page === "topics"
-      ? /getAdminBrandWorkspaceIdentity\(session\.appUser, id\)/u
-      : /getAdminBrandWorkspaceSummary\(session\.appUser, id\)/u);
+    assert.match(source, /getAdminBrandWorkspaceIdentity\(session\.appUser, id\)/u);
     if (page === "topics") assert.doesNotMatch(source, /getAdminBrandWorkspaceSummary|loadAdminWorkspaceCorpus/u);
+    else {
+      assert.match(source, /<SelfServiceImportManager/u);
+      assert.match(source, /<Suspense[\s\S]*?<DataCorpusSummary/u);
+      assert.doesNotMatch(source, /await getAdminBrandWorkspaceSummary|await loadSignalGovernancePreparation/u);
+    }
     assert.doesNotMatch(source, /getAdminBrandWorkspace\(/u);
     assert.ok(source.includes('requireStudioUser(`/studio/brands/${id}/' + page + '`)'));
-    assert.match(source, /resolveSignalWorkspaceForUser\(session\.appUser/u);
-    assert.match(source, page === "topics"
-      ? /if \(!identity\?\.workspaceId\) notFound\(\);/u
-      : /if \(!summary\) notFound\(\);/u);
+    if (page === "topics") {
+      assert.match(source, /resolveSignalWorkspaceForUser\(session\.appUser/u);
+      assert.match(source, /if \(!identity\?\.workspaceId\) notFound\(\);/u);
+    } else assert.match(source, /if \(!identity\) notFound\(\);/u);
     if (page === "topics") assert.match(source, /if \(!workspace\) notFound\(\);/u);
   }
 });
