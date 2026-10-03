@@ -87,7 +87,7 @@ BEGIN
    'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
    'different_interest',identity,b,'ee100000-0000-4000-8000-000000000003','sha256:'||repeat('a',64));
   RAISE EXCEPTION 'changed interest reused key';
- EXCEPTION WHEN sqlstate '40001' THEN NULL;END;
+ EXCEPTION WHEN sqlstate '23514' THEN NULL;END;
  BEGIN
   PERFORM register_signal_interest_decision_model_v1(
    'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
@@ -109,18 +109,22 @@ BEGIN
  EXCEPTION WHEN sqlstate '23514' THEN NULL;END;
  client_result:=register_signal_interest_decision_model_v1(
   'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
+  'explicit_interest',identity,b,'ee100000-0000-4000-8000-000000000004','sha256:'||repeat('5',64));
+ IF client_result->>'replayed'<>'true'
+  OR client_result->>'model_version_id'<>result->>'model_version_id'
+  OR client_result->>'prepublication_receipt_id'<>result->>'prepublication_receipt_id'
+ THEN RAISE EXCEPTION 'second admin failed to adopt partial model';END IF;
+ again:=register_signal_interest_decision_model_v1(
+  'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
+  'explicit_interest',identity,b,'ee100000-0000-4000-8000-000000000003','sha256:'||repeat('4',64));
+ IF again->>'model_version_id'<>result->>'model_version_id'
+  OR (SELECT count(*) FROM tagging_model_versions WHERE model_key=result->>'registry_key')<>1
+ THEN RAISE EXCEPTION 'new request key duplicated model';END IF;
+ client_result:=register_signal_interest_decision_model_v1(
+  'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
   'client_interest',identity||jsonb_build_object('context_digest','sha256:'||repeat('6',64)),
   b,'ee100000-0000-4000-8000-000000000004','sha256:'||repeat('6',64));
  IF client_result->>'replayed'<>'false' THEN RAISE EXCEPTION 'client admin was not admitted';END IF;
- UPDATE user_brand_access SET revoked_at=clock_timestamp()
-  WHERE user_id='ee100000-0000-4000-8000-000000000004';
- BEGIN
-  PERFORM register_signal_interest_decision_model_v1(
-   'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
-   'client_interest',identity||jsonb_build_object('context_digest','sha256:'||repeat('6',64)),
-   b,'ee100000-0000-4000-8000-000000000004','sha256:'||repeat('6',64));
-  RAISE EXCEPTION 'revoked client replayed registration';
- EXCEPTION WHEN sqlstate '42501' THEN NULL;END;
  IF (SELECT count(*) FROM signal_interest_decision_prepublication_evaluations_v1)<>2
   OR (SELECT count(*) FROM signal_interest_decision_owners_v1)<>0
   OR (SELECT count(*) FROM signal_processing_admissions WHERE action='interest_decision')<>0
@@ -147,12 +151,26 @@ BEGIN
  EXCEPTION WHEN sqlstate '23514' THEN NULL;END;
  SELECT * INTO result FROM transition_signal_interest_decision_model_evaluated_v1(
   'ee100000-0000-4000-8000-000000000008',s.model_id,s.receipt_id,
-  'ee100000-0000-4000-8000-000000000003','sha256:'||repeat('d',64));
+  'ee100000-0000-4000-8000-000000000004','sha256:'||repeat('d',64));
  IF result.status<>'evaluated' OR NOT result.created THEN RAISE EXCEPTION 'prepublication evaluation did not transition';END IF;
  SELECT * INTO result FROM transition_signal_interest_decision_model_evaluated_v1(
   'ee100000-0000-4000-8000-000000000008',s.model_id,s.receipt_id,
-  'ee100000-0000-4000-8000-000000000003','sha256:'||repeat('d',64));
+  'ee100000-0000-4000-8000-000000000004','sha256:'||repeat('d',64));
  IF result.created THEN RAISE EXCEPTION 'evaluated transition replay duplicated event';END IF;
+ SELECT * INTO result FROM transition_signal_interest_decision_model_evaluated_v1(
+  'ee100000-0000-4000-8000-000000000008',s.model_id,s.receipt_id,
+  'ee100000-0000-4000-8000-000000000003','sha256:'||repeat('1',64));
+ IF result.created THEN RAISE EXCEPTION 'new actor/key duplicated evaluated event';END IF;
+ UPDATE user_brand_access SET revoked_at=clock_timestamp()
+  WHERE user_id='ee100000-0000-4000-8000-000000000004';
+ BEGIN
+  PERFORM register_signal_interest_decision_model_v1(
+   'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
+   'explicit_interest',s.identity,
+   (SELECT benchmark_id FROM signal_interest_decision_prepublication_evaluations_v1 WHERE id=s.receipt_id),
+   'ee100000-0000-4000-8000-000000000004','sha256:'||repeat('5',64));
+  RAISE EXCEPTION 'revoked client replayed adoption';
+ EXCEPTION WHEN sqlstate '42501' THEN NULL;END;
  IF NOT EXISTS(SELECT 1 FROM signal_tagging_model_version_events event
   WHERE event.model_version_id=s.model_id AND event.status='evaluated'
    AND event.evaluation_id IS NULL AND event.prepublication_receipt_id=s.receipt_id) THEN
@@ -183,7 +201,7 @@ BEGIN
 END $$;
 
 DO $$
-DECLARE s interest_prepublication_test_state%ROWTYPE;result record;
+DECLARE s interest_prepublication_test_state%ROWTYPE;result record;adopted jsonb;
 BEGIN
  SELECT * INTO s FROM interest_prepublication_test_state;
  SELECT * INTO result FROM register_signal_classification_approval_policy_v1(
@@ -204,6 +222,19 @@ BEGIN
   WHERE policy.status='approved' AND policy.model_version_id=state.model_id
    AND policy.definition_hash=state.identity->>'decision_policy_digest') THEN
   RAISE EXCEPTION 'policy and identity mismatch';END IF;
+ adopted:=register_signal_interest_decision_model_v1(
+  'ee100000-0000-4000-8000-000000000008','ee100000-0000-4000-8000-000000000012',
+  'explicit_interest',s.identity,
+  (SELECT benchmark_id FROM signal_interest_decision_prepublication_evaluations_v1 WHERE id=s.receipt_id),
+  'ee100000-0000-4000-8000-000000000003','sha256:'||repeat('2',64));
+ IF adopted->>'model_version_id'<>s.model_id::text
+  OR adopted->>'prepublication_receipt_id'<>s.receipt_id::text
+ THEN RAISE EXCEPTION 'complete model was not adopted';END IF;
+ SELECT * INTO result FROM transition_signal_interest_decision_model_evaluated_v1(
+  'ee100000-0000-4000-8000-000000000008',s.model_id,s.receipt_id,
+  'ee100000-0000-4000-8000-000000000003','sha256:'||repeat('3',64));
+ IF result.created OR result.status<>'evaluated' THEN
+  RAISE EXCEPTION 'completed lifecycle replay appended an event';END IF;
  IF (SELECT count(*) FROM signal_classification_evaluations)<>0
   OR (SELECT count(*) FROM signal_interest_decision_owners_v1)<>0
   OR (SELECT count(*) FROM signal_processing_admissions WHERE action='interest_decision')<>0

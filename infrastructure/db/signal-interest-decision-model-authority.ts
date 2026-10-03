@@ -54,7 +54,6 @@ export async function bootstrapSignalInterestDecisionModelAuthorityV1(scope: Sco
     || !termKey.test(scope.interest_term_key) || !requestKey.test(scope.idempotency_key))
     fail("interest_decision_model_authority_request_invalid");
   const key = sha(scope.idempotency_key);
-  const receiptKey = sha(`${key}:receipt`);
   const receipt = await stage(scope, async client => {
     // An ambiguous response must recover the original identity, even if the
     // brand context or interest definition changed after registration.
@@ -63,11 +62,13 @@ export async function bootstrapSignalInterestDecisionModelAuthorityV1(scope: Sco
       receipt.interest_term_key,receipt.receipt_digest,
       model.model_key registry_key,
       model.configuration->'workspace_classification_identity' identity
-      FROM signal_interest_decision_prepublication_evaluations_v1 receipt
+      FROM signal_interest_decision_model_bootstrap_keys_v1 bootstrap
+      JOIN signal_interest_decision_prepublication_evaluations_v1 receipt
+       ON receipt.id=bootstrap.prepublication_receipt_id
       JOIN tagging_model_versions model ON model.id=receipt.model_version_id
-      WHERE receipt.workspace_id=$1::uuid AND receipt.actor_user_id=$2::uuid
-       AND receipt.idempotency_key=$3`,
-      [scope.workspace_id, scope.actor_user_id, receiptKey])).rows[0];
+      WHERE bootstrap.workspace_id=$1::uuid AND bootstrap.actor_user_id=$2::uuid
+       AND bootstrap.idempotency_key=$3`,
+      [scope.workspace_id, scope.actor_user_id, key])).rows[0];
     if (prior) {
       if (prior.interest_term_key !== scope.interest_term_key)
         fail("processing_idempotency_conflict");
@@ -130,23 +131,69 @@ export async function bootstrapSignalInterestDecisionModelAuthorityV1(scope: Sco
       scope.actor_user_id, sha(`${key}:evaluated`)])).rows[0]);
   if (!evaluated) fail("interest_decision_model_authority_transition_invalid");
 
-  const approved = await stage(scope, async client => (await client.query<{ created: boolean }>(
-    `SELECT created FROM transition_signal_tagging_model_v1($1::uuid,$2::uuid,
-      'approved',NULL,clock_timestamp(),$3::text,$4::uuid,$5::text,$6::text)`,
-    [scope.workspace_id, receipt.model_version_id, receipt.receipt_digest,
-      scope.actor_user_id, sha(`${key}:approved`),
-      sha(`interest-decision-approved:${receipt.model_version_id}:${receipt.prepublication_receipt_id}:${scope.actor_user_id}`)])).rows[0]);
+  const approved = await stage(scope, async client => {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended(
+      $1::text||':tagging-model-transition:'||$2::text,0))`,
+    [scope.workspace_id, receipt.model_version_id]);
+    const state = (await client.query<{ status: string; evidence_digest: string;
+      evaluated_receipt_id: string | null }>(`SELECT event.status,event.evidence_digest,
+      (SELECT prior.prepublication_receipt_id::text FROM signal_tagging_model_version_events prior
+       WHERE prior.workspace_id=event.workspace_id AND prior.model_version_id=event.model_version_id
+        AND prior.status='evaluated' ORDER BY prior.created_at DESC,prior.id DESC LIMIT 1)
+       evaluated_receipt_id
+      FROM signal_tagging_model_version_events event
+      WHERE event.workspace_id=$1::uuid AND event.model_version_id=$2::uuid
+      ORDER BY event.created_at DESC,event.id DESC LIMIT 1`,
+    [scope.workspace_id, receipt.model_version_id])).rows[0];
+    if (!state || state.evaluated_receipt_id !== receipt.prepublication_receipt_id)
+      fail("interest_decision_model_authority_transition_invalid");
+    if (state.status === "approved") {
+      if (state.evidence_digest !== receipt.receipt_digest)
+        fail("interest_decision_model_authority_transition_invalid");
+      return { created: false };
+    }
+    if (state.status !== "evaluated")
+      fail("interest_decision_model_authority_transition_invalid");
+    return (await client.query<{ created: boolean }>(
+      `SELECT created FROM transition_signal_tagging_model_v1($1::uuid,$2::uuid,
+        'approved',NULL,clock_timestamp(),$3::text,$4::uuid,$5::text,$6::text)`,
+      [scope.workspace_id, receipt.model_version_id, receipt.receipt_digest,
+        scope.actor_user_id, sha(`${key}:approved`),
+        sha(`interest-decision-approved:${receipt.model_version_id}:${receipt.prepublication_receipt_id}:${scope.actor_user_id}`)])).rows[0];
+  });
   if (!approved) fail("interest_decision_model_authority_transition_invalid");
 
-  const policy = await stage(scope, async client => (await client.query<{
-    approval_policy_id: string; created: boolean }>(`SELECT approval_policy_id::text,created
+  const policy = await stage(scope, async client => {
+    await client.query(`SELECT pg_advisory_xact_lock(hashtextextended(
+      $1::text||':classification-policy:'||$2::text,0))`,
+    [scope.workspace_id, receipt.registry_key]);
+    const prior = (await client.query<{ approval_policy_id: string;
+      taxonomy_profile_id: string; authority_kind: string; model_version_id: string;
+      definition_hash: string; status: string; effective_to: string | null }>(`SELECT
+      id::text approval_policy_id,taxonomy_profile_id::text,authority_kind,
+      model_version_id::text,definition_hash,status,effective_to::text
+      FROM signal_classification_approval_policies
+      WHERE workspace_id=$1::uuid AND policy_key=$2::text AND version=1 FOR UPDATE`,
+    [scope.workspace_id, receipt.registry_key])).rows[0];
+    if (prior) {
+      if (prior.taxonomy_profile_id !== receipt.taxonomy_profile_id
+        || prior.authority_kind !== "model"
+        || prior.model_version_id !== receipt.model_version_id
+        || prior.definition_hash !== identity.decision_policy_digest
+        || prior.status !== "approved" || prior.effective_to !== null)
+        fail("interest_decision_model_authority_policy_invalid");
+      return { approval_policy_id: prior.approval_policy_id, created: false };
+    }
+    return (await client.query<{ approval_policy_id: string; created: boolean }>(
+      `SELECT approval_policy_id::text,created
       FROM register_signal_classification_approval_policy_v1($1::uuid,$2::uuid,$3::text,
        1,'model',NULL,$4::uuid,NULL,$5::text,'approved',clock_timestamp(),NULL,NULL,
        $6::uuid,$7::text,$8::text)`,
-    [scope.workspace_id, receipt.taxonomy_profile_id, receipt.registry_key,
-      receipt.model_version_id, identity.decision_policy_digest, scope.actor_user_id,
-      sha(`${key}:policy`),
-      sha(`interest-decision-policy:${receipt.model_version_id}:${identity.decision_policy_digest}:${scope.actor_user_id}`)])).rows[0]);
+      [scope.workspace_id, receipt.taxonomy_profile_id, receipt.registry_key,
+        receipt.model_version_id, identity.decision_policy_digest, scope.actor_user_id,
+        sha(`${key}:policy`),
+        sha(`interest-decision-policy:${receipt.model_version_id}:${identity.decision_policy_digest}:${scope.actor_user_id}`)])).rows[0];
+  });
   if (!policy || !uuid.test(policy.approval_policy_id))
     fail("interest_decision_model_authority_policy_invalid");
   return { model_version_id: receipt.model_version_id,

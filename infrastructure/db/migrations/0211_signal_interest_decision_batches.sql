@@ -759,8 +759,31 @@ END $$;
 CREATE FUNCTION mark_submitting_signal_interest_decision_batch_v1(target_batch uuid,target_token uuid)
 RETURNS jsonb LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
 DECLARE b signal_interest_decision_batches_v1%ROWTYPE;a signal_processing_admissions%ROWTYPE;
+ owner_org uuid;owner_workspace uuid;locked_workspace uuid;
 BEGIN
+ -- Revocation of the processing policy takes this organization lock. Governance
+ -- changes increment the corpus input revision; SHARE fences that increment.
+ -- Take both before the batch lock, then recheck authority with a fresh
+ -- READ COMMITTED statement snapshot before recording a possible provider POST.
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'processing_capacity_requires_read_committed' USING ERRCODE='25001';END IF;
+ SELECT owner.organization_id,owner.workspace_id INTO owner_org,owner_workspace
+ FROM signal_interest_decision_batches_v1 batch
+ JOIN signal_interest_decision_owners_v1 owner ON owner.id=batch.owner_id
+ WHERE batch.id=target_batch;
+ IF owner_org IS NULL OR owner_workspace IS NULL THEN
+  RAISE EXCEPTION 'interest_decision_batch_unavailable' USING ERRCODE='23514';END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(
+  'signal-processing-policy:'||owner_org::text,0));
+ SELECT state.workspace_id INTO locked_workspace FROM signal_corpus_preparation_input_state state
+ WHERE state.workspace_id=owner_workspace FOR SHARE;
+ IF locked_workspace IS NULL THEN
+  RAISE EXCEPTION 'interest_decision_source_stale' USING ERRCODE='23514';END IF;
  SELECT * INTO b FROM signal_interest_decision_batches_v1 WHERE id=target_batch FOR UPDATE;
+ IF b.id IS NULL OR NOT EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 owner
+  WHERE owner.id=b.owner_id AND owner.workspace_id=locked_workspace
+   AND owner.organization_id=owner_org) THEN
+  RAISE EXCEPTION 'interest_decision_batch_unavailable' USING ERRCODE='23514';END IF;
  PERFORM signal_interest_decision_batch_lease_v1(b.id,target_token);
  IF b.state<>'prepared' OR b.provider_batch_id IS NOT NULL THEN
   RAISE EXCEPTION 'interest_decision_submission_already_attempted' USING ERRCODE='23514';END IF;
@@ -1269,6 +1292,39 @@ CREATE TRIGGER validate_signal_interest_decision_prepublication_evaluation_v1 BE
  ON signal_interest_decision_prepublication_evaluations_v1 FOR EACH ROW
  EXECUTE FUNCTION validate_signal_interest_decision_prepublication_evaluation_v1();
 
+-- A fresh caller can adopt the same immutable model and receipt. This key
+-- ledger also pins retries after the source context has moved on.
+CREATE TABLE signal_interest_decision_model_bootstrap_keys_v1 (
+ workspace_id uuid NOT NULL REFERENCES signal_workspaces(id),
+ actor_user_id uuid NOT NULL REFERENCES users(id),
+ idempotency_key text NOT NULL CHECK(idempotency_key~'^sha256:[a-f0-9]{64}$'),
+ request_digest text NOT NULL CHECK(request_digest~'^sha256:[a-f0-9]{64}$'),
+ model_version_id uuid NOT NULL REFERENCES tagging_model_versions(id),
+ prepublication_receipt_id uuid NOT NULL REFERENCES signal_interest_decision_prepublication_evaluations_v1(id),
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(workspace_id,actor_user_id,idempotency_key)
+);
+CREATE FUNCTION validate_signal_interest_decision_model_bootstrap_key_v1() RETURNS trigger
+LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+DECLARE receipt signal_interest_decision_prepublication_evaluations_v1%ROWTYPE;
+BEGIN
+ SELECT * INTO receipt FROM signal_interest_decision_prepublication_evaluations_v1
+  WHERE id=NEW.prepublication_receipt_id;
+ IF receipt.id IS NULL OR receipt.workspace_id IS DISTINCT FROM NEW.workspace_id
+  OR receipt.model_version_id IS DISTINCT FROM NEW.model_version_id
+  OR NOT (signal_workspace_classification_actor_v1(NEW.workspace_id,NEW.actor_user_id)
+   OR signal_processing_actor_v1(NEW.workspace_id,NEW.actor_user_id))
+  OR NEW.request_digest IS DISTINCT FROM signal_semantic_context_digest_json_v2(jsonb_build_object(
+   'workspace_id',receipt.workspace_id,'taxonomy_profile_id',receipt.taxonomy_profile_id,
+   'interest_term_key',receipt.interest_term_key,'identity_digest',receipt.identity_digest,
+   'benchmark_id',receipt.benchmark_id))
+ THEN RAISE EXCEPTION 'interest_decision_model_bootstrap_key_invalid' USING ERRCODE='23514';END IF;
+ NEW.created_at:=clock_timestamp();RETURN NEW;
+END $$;
+CREATE TRIGGER validate_signal_interest_decision_model_bootstrap_key_v1 BEFORE INSERT
+ ON signal_interest_decision_model_bootstrap_keys_v1 FOR EACH ROW
+ EXECUTE FUNCTION validate_signal_interest_decision_model_bootstrap_key_v1();
+
 CREATE FUNCTION register_signal_interest_decision_prepublication_evaluation_v1(
  target_workspace uuid,target_model uuid,target_benchmark uuid,target_actor uuid,target_term_key text,target_key text)
 RETURNS TABLE(evaluation_id uuid,replayed boolean)
@@ -1326,6 +1382,9 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions,pg_temp AS $
 DECLARE b signal_interest_decision_platform_benchmarks_v1%ROWTYPE;
  cfg jsonb;identity_digest text;registry_key text;provenance_digest text;
  model_id uuid;model_created boolean;receipt_id uuid;receipt_replayed boolean;
+ request_digest text;prior_key signal_interest_decision_model_bootstrap_keys_v1%ROWTYPE;
+ existing_model tagging_model_versions%ROWTYPE;
+ existing_receipt signal_interest_decision_prepublication_evaluations_v1%ROWTYPE;
 BEGIN
  IF target_key IS NULL OR target_key!~'^sha256:[a-f0-9]{64}$'
   OR target_term_key IS NULL OR target_term_key!~'^[a-z0-9][a-z0-9._-]{0,119}$'
@@ -1348,18 +1407,64 @@ BEGIN
  provenance_digest:=signal_semantic_context_digest_json_v2(jsonb_build_object(
   'benchmark_id',b.id,'evaluation_evidence_digest',b.evaluation_evidence_digest,
   'thresholds_digest',b.thresholds_digest));
- SELECT registered.model_version_id,registered.created INTO model_id,model_created
- FROM register_signal_tagging_model_v1(target_workspace,target_profile,registry_key,'1',
-  'anthropic',NULL,signal_interest_decision_model_digest_v1(),'provider_api',
-  'message_batches',cfg,signal_semantic_context_digest_json_v2(cfg),
-  b.dataset_digest,b.labels_digest,NULL,provenance_digest,NULL,target_actor,
-  signal_semantic_context_digest_v1(target_key||':model'),
-  signal_semantic_context_digest_json_v2(jsonb_build_object('registry_key',registry_key,
-   'configuration',cfg,'benchmark_id',b.id,'actor_user_id',target_actor))) registered;
- SELECT receipt.evaluation_id,receipt.replayed INTO receipt_id,receipt_replayed
- FROM register_signal_interest_decision_prepublication_evaluation_v1(
-  target_workspace,model_id,b.id,target_actor,target_term_key,
-  signal_semantic_context_digest_v1(target_key||':receipt')) receipt;
+ request_digest:=signal_semantic_context_digest_json_v2(jsonb_build_object(
+  'workspace_id',target_workspace,'taxonomy_profile_id',target_profile,
+  'interest_term_key',target_term_key,'identity_digest',identity_digest,
+  'benchmark_id',b.id));
+ PERFORM pg_advisory_xact_lock(hashtextextended(
+  'interest-decision-model-bootstrap:'||target_workspace::text||':'||target_actor::text||':'||target_key,0));
+ SELECT * INTO prior_key FROM signal_interest_decision_model_bootstrap_keys_v1
+  WHERE workspace_id=target_workspace AND actor_user_id=target_actor
+   AND idempotency_key=target_key FOR UPDATE;
+ IF prior_key.idempotency_key IS NOT NULL THEN
+  IF prior_key.request_digest IS DISTINCT FROM request_digest THEN
+   RAISE EXCEPTION 'processing_idempotency_conflict' USING ERRCODE='23514';END IF;
+  RETURN jsonb_build_object('model_version_id',prior_key.model_version_id,
+   'prepublication_receipt_id',prior_key.prepublication_receipt_id,
+   'registry_key',registry_key,'replayed',true);
+ END IF;
+ -- Match SQL0087's generic registry lock before looking for an existing row.
+ PERFORM pg_advisory_xact_lock(hashtextextended(target_workspace::text||':tagging-model:'||registry_key,0));
+ SELECT * INTO existing_model FROM tagging_model_versions model
+  WHERE model.model_key=registry_key AND model.version='1' FOR UPDATE;
+ IF existing_model.id IS NOT NULL THEN
+  SELECT * INTO existing_receipt FROM signal_interest_decision_prepublication_evaluations_v1
+   WHERE model_version_id=existing_model.id;
+  IF existing_model.registry_contract_version<>'signal-tagging-model-registry-v1'
+   OR existing_model.taxonomy_profile_id IS DISTINCT FROM target_profile
+   OR existing_model.provider<>'anthropic' OR existing_model.artifact_digest IS DISTINCT FROM signal_interest_decision_model_digest_v1()
+   OR existing_model.runtime_kind<>'provider_api' OR existing_model.artifact_format<>'message_batches'
+   OR existing_model.configuration IS DISTINCT FROM cfg
+   OR existing_model.configuration_digest IS DISTINCT FROM signal_semantic_context_digest_json_v2(cfg)
+   OR existing_model.dataset_digest IS DISTINCT FROM b.dataset_digest
+   OR existing_model.gold_set_digest IS DISTINCT FROM b.labels_digest
+   OR existing_model.provenance_digest IS DISTINCT FROM provenance_digest
+   OR existing_receipt.id IS NULL OR existing_receipt.workspace_id IS DISTINCT FROM target_workspace
+   OR existing_receipt.taxonomy_profile_id IS DISTINCT FROM target_profile
+   OR existing_receipt.benchmark_id IS DISTINCT FROM b.id
+   OR existing_receipt.interest_term_key IS DISTINCT FROM target_term_key
+   OR existing_receipt.identity_digest IS DISTINCT FROM identity_digest
+   OR existing_receipt.evaluation_evidence_digest IS DISTINCT FROM b.evaluation_evidence_digest
+   OR existing_receipt.thresholds_digest IS DISTINCT FROM b.thresholds_digest
+  THEN RAISE EXCEPTION 'interest_decision_model_adoption_conflict' USING ERRCODE='23514';END IF;
+  model_id:=existing_model.id;receipt_id:=existing_receipt.id;model_created:=false;receipt_replayed:=true;
+ ELSE
+  SELECT registered.model_version_id,registered.created INTO model_id,model_created
+  FROM register_signal_tagging_model_v1(target_workspace,target_profile,registry_key,'1',
+   'anthropic',NULL,signal_interest_decision_model_digest_v1(),'provider_api',
+   'message_batches',cfg,signal_semantic_context_digest_json_v2(cfg),
+   b.dataset_digest,b.labels_digest,NULL,provenance_digest,NULL,target_actor,
+   signal_semantic_context_digest_v1(target_key||':model'),
+   signal_semantic_context_digest_json_v2(jsonb_build_object('registry_key',registry_key,
+    'configuration',cfg,'benchmark_id',b.id,'actor_user_id',target_actor))) registered;
+  SELECT receipt.evaluation_id,receipt.replayed INTO receipt_id,receipt_replayed
+  FROM register_signal_interest_decision_prepublication_evaluation_v1(
+   target_workspace,model_id,b.id,target_actor,target_term_key,
+   signal_semantic_context_digest_v1(target_key||':receipt')) receipt;
+ END IF;
+ INSERT INTO signal_interest_decision_model_bootstrap_keys_v1(workspace_id,actor_user_id,
+  idempotency_key,request_digest,model_version_id,prepublication_receipt_id)
+ VALUES(target_workspace,target_actor,target_key,request_digest,model_id,receipt_id);
  RETURN jsonb_build_object('model_version_id',model_id,'prepublication_receipt_id',receipt_id,
   'registry_key',registry_key,'replayed',NOT model_created AND receipt_replayed);
 END $$;
@@ -1373,7 +1478,7 @@ RETURNS TABLE(model_version_id uuid,status text,created boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,extensions,pg_temp AS $$
 DECLARE operation signal_classification_operations%ROWTYPE;
  receipt signal_interest_decision_prepublication_evaluations_v1%ROWTYPE;
- prior_digest text;request_hash text;
+ prior_digest text;request_hash text;current_status text;
 BEGIN
  IF target_key IS NULL OR target_key!~'^sha256:[a-f0-9]{64}$' THEN
   RAISE EXCEPTION 'interest_decision_model_transition_invalid' USING ERRCODE='22023';END IF;
@@ -1384,12 +1489,34 @@ BEGIN
  PERFORM pg_advisory_xact_lock(hashtextextended(target_workspace::text||':tagging-model-transition:'||target_model::text,0));
  SELECT * INTO receipt FROM signal_interest_decision_prepublication_evaluations_v1 source
   WHERE source.id=target_receipt AND source.workspace_id=target_workspace
-   AND source.model_version_id=target_model AND source.actor_user_id=target_actor;
+   AND source.model_version_id=target_model;
  IF receipt.id IS NULL THEN
   RAISE EXCEPTION 'interest_decision_model_transition_invalid' USING ERRCODE='23514';END IF;
  request_hash:=signal_semantic_context_digest_json_v2(jsonb_build_object(
   'workspace_id',target_workspace,'model_version_id',target_model,
   'prepublication_receipt_id',target_receipt,'actor_user_id',target_actor));
+ SELECT * INTO operation FROM signal_classification_operations
+  WHERE workspace_id=target_workspace AND idempotency_key=target_key FOR UPDATE;
+ IF operation.id IS NOT NULL AND (operation.operation_kind<>'transition-model'
+  OR operation.actor_user_id<>target_actor OR operation.request_digest<>request_hash) THEN
+  RAISE EXCEPTION 'Classification idempotency key was reused with incompatible input.' USING ERRCODE='40001';END IF;
+ IF operation.status='completed' THEN
+  model_version_id:=(operation.result->>'model_version_id')::uuid;
+  status:=operation.result->>'status';created:=false;RETURN NEXT;RETURN;
+ END IF;
+ SELECT event.status INTO current_status FROM signal_tagging_model_version_events event
+  WHERE event.workspace_id=target_workspace AND event.model_version_id=target_model
+  ORDER BY event.created_at DESC,event.id DESC LIMIT 1;
+ IF current_status IN('evaluated','approved') THEN
+  IF NOT EXISTS(SELECT 1 FROM signal_tagging_model_version_events event
+   WHERE event.workspace_id=target_workspace AND event.model_version_id=target_model
+    AND event.status='evaluated' AND event.prepublication_receipt_id=target_receipt
+    AND event.evidence_digest=receipt.receipt_digest) THEN
+   RAISE EXCEPTION 'interest_decision_model_adoption_conflict' USING ERRCODE='23514';END IF;
+  model_version_id:=target_model;status:='evaluated';created:=false;RETURN NEXT;RETURN;
+ END IF;
+ IF current_status IS DISTINCT FROM 'draft' THEN
+  RAISE EXCEPTION 'interest_decision_model_transition_invalid' USING ERRCODE='23514';END IF;
  INSERT INTO signal_classification_operations(workspace_id,actor_user_id,operation_kind,
   idempotency_key,request_digest)
  VALUES(target_workspace,target_actor,'transition-model',target_key,request_hash)
@@ -1455,7 +1582,7 @@ BEGIN
    SELECT 1 FROM signal_interest_decision_prepublication_evaluations_v1 receipt
    JOIN tagging_model_versions model ON model.id=receipt.model_version_id
    WHERE receipt.id=NEW.prepublication_receipt_id AND receipt.workspace_id=NEW.workspace_id
-    AND receipt.model_version_id=NEW.model_version_id AND receipt.actor_user_id=NEW.actor_user_id
+    AND receipt.model_version_id=NEW.model_version_id
     AND model.artifact_digest=signal_interest_decision_model_digest_v1()
     AND receipt.receipt_digest=NEW.evidence_digest AND receipt.created_at<=NEW.effective_at))
  THEN RAISE EXCEPTION 'Tagging model lifecycle transition is invalid.' USING ERRCODE='23514';END IF;
@@ -1610,6 +1737,9 @@ END $$;
 CREATE TRIGGER signal_interest_decision_prepublication_immutable_v1
  BEFORE UPDATE OR DELETE ON signal_interest_decision_prepublication_evaluations_v1 FOR EACH ROW
  EXECUTE FUNCTION signal_interest_decision_immutable_row_v1();
+CREATE TRIGGER signal_interest_decision_model_bootstrap_key_immutable_v1
+ BEFORE UPDATE OR DELETE ON signal_interest_decision_model_bootstrap_keys_v1 FOR EACH ROW
+ EXECUTE FUNCTION signal_interest_decision_immutable_row_v1();
 CREATE TRIGGER signal_interest_decision_request_key_immutable_v1
  BEFORE UPDATE OR DELETE ON signal_interest_decision_request_keys_v1 FOR EACH ROW
  EXECUTE FUNCTION signal_interest_decision_immutable_row_v1();
@@ -1745,7 +1875,8 @@ REVOKE ALL ON signal_interest_decision_owners_v1,signal_interest_decision_reques
  signal_interest_decision_batches_v1,signal_interest_decision_batch_polls_v1,
  signal_interest_decision_calls_v1,signal_interest_decision_root_evidence_v1,
  signal_interest_decision_platform_benchmarks_v1,
- signal_interest_decision_prepublication_evaluations_v1 FROM PUBLIC;
+ signal_interest_decision_prepublication_evaluations_v1,
+ signal_interest_decision_model_bootstrap_keys_v1 FROM PUBLIC;
 DO $$ DECLARE role_name text;table_name text;routine record; BEGIN
  FOREACH role_name IN ARRAY ARRAY['anon','authenticated'] LOOP
   IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=role_name) THEN
@@ -1755,7 +1886,8 @@ DO $$ DECLARE role_name text;table_name text;routine record; BEGIN
     'signal_interest_decision_batches_v1','signal_interest_decision_batch_polls_v1',
     'signal_interest_decision_calls_v1','signal_interest_decision_root_evidence_v1',
     'signal_interest_decision_platform_benchmarks_v1',
-    'signal_interest_decision_prepublication_evaluations_v1']) LOOP
+    'signal_interest_decision_prepublication_evaluations_v1',
+    'signal_interest_decision_model_bootstrap_keys_v1']) LOOP
     EXECUTE format('REVOKE ALL ON TABLE %I FROM %I',table_name,role_name);
    END LOOP;
   END IF;
