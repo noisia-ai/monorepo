@@ -3027,7 +3027,7 @@
         "previousVersion": "Signal conserva la versión calculada anterior mientras estos cambios están pendientes."
       },
       "computation": {
-        "available": "Candidatos disponibles",
+        "available": "Búsqueda terminada · clasificación pendiente",
         "outdated": "Búsqueda anterior",
         "candidate": "Candidato · pertenencia sin confirmar",
         "recover": "Recuperar solicitud",
@@ -3035,9 +3035,9 @@
         "readyBody": "La búsqueda compara el texto completo con todos los intereses guardados. Utiliza los vectores ya preparados, sin nuevas llamadas de IA.",
         "progress": "Evaluando {done} de {total} menciones",
         "resultsEyebrow": "Búsqueda del catálogo completo",
-        "resultsTitle": "Candidatos por afinidad",
-        "resultsBody": "Estos resultados ordenan evidencia para revisar. La similitud no demuestra pertenencia al tópico ni autoriza su publicación.",
-        "coverage": "{roots} menciones · {chunks} fragmentos evaluados · {pairs} comparaciones tópico–mención. {retained} candidatos conservados; {omitted} fuera de la lista breve. Se conservan hasta 32 tópicos candidatos por mención; se evalúa todo el catálogo.",
+        "resultsTitle": "Afinidad sin decisión de pertenencia",
+        "resultsBody": "La búsqueda actual conserva hasta 32 intereses compatibles por mención, incluso con afinidad baja. Estas filas sirven para ordenar evidencia: no indican cuántas menciones pertenecen al interés ni se publican en Signal.",
+        "coverage": "{roots} menciones · {chunks} fragmentos evaluados · {pairs} comparaciones interés–mención. {retained} filas de afinidad conservadas; {omitted} fuera de la lista breve. Ninguna fila equivale a una mención clasificada.",
         "previous": "Se muestra la última búsqueda completada. Hay cambios o una nueva búsqueda pendiente de completar.",
         "freshnessUnknown": "No se pudo comprobar si este resultado sigue vigente.",
         "ranking": "Afinidad: {score}",

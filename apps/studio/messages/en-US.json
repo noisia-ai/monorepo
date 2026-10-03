@@ -3027,7 +3027,7 @@
         "previousVersion": "Signal keeps the previously calculated version while these changes are pending."
       },
       "computation": {
-        "available": "Candidates available",
+        "available": "Search complete · classification pending",
         "outdated": "Previous search",
         "candidate": "Candidate · membership unconfirmed",
         "recover": "Recover request",
@@ -3035,9 +3035,9 @@
         "readyBody": "Search compares the complete text with all saved interests. It uses prepared vectors without new AI calls.",
         "progress": "Evaluating {done} of {total} mentions",
         "resultsEyebrow": "Complete catalog search",
-        "resultsTitle": "Candidates ranked by affinity",
-        "resultsBody": "These results rank evidence for review. Similarity does not establish topic membership or authorize publication.",
-        "coverage": "{roots} mentions · {chunks} text chunks evaluated · {pairs} topic–mention comparisons. {retained} candidates retained; {omitted} outside the shortlist. Up to 32 candidate topics are retained per mention; the entire catalog is evaluated.",
+        "resultsTitle": "Affinity without a membership decision",
+        "resultsBody": "The current search retains up to 32 compatible interests per mention, even with low affinity. These rows help order evidence: they do not count mentions that belong to the interest and are not published to Signal.",
+        "coverage": "{roots} mentions · {chunks} text chunks evaluated · {pairs} interest–mention comparisons. {retained} affinity rows retained; {omitted} outside the shortlist. No row is a classified mention.",
         "previous": "Showing the last completed search. Changes or a new search are still pending completion.",
         "freshnessUnknown": "We could not verify whether this result is still current.",
         "ranking": "Affinity: {score}",
