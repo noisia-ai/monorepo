@@ -7,6 +7,7 @@ export type DefinedInterestDecisionStatusV1 = {
   owner_id?: string; status: "not_started" | "open" | "ready" | "completed" | "blocked";
   expected_roots: number; manifest_roots: number; accepted_roots: number;
   unknown_batches: number; unsettled_calls: number; manifest_complete?: boolean;
+  prepared_batches?: number; recoverable_batches?: number;
   terminal_failed_roots?: number;
   technical_error_code?: "interest_decision_attempts_exhausted" | null;
   classification_status?: string | null; classification_processed_roots?: number;
@@ -51,7 +52,8 @@ export function validDefinedInterestDecisionStatusV1(value: unknown): value is D
   return ["not_started", "open", "ready", "completed", "blocked"].includes(String(row.status))
     && [row.expected_roots, row.manifest_roots, row.accepted_roots,
       row.unknown_batches, row.unsettled_calls].every(count => Number.isSafeInteger(count) && (count as number) >= 0)
-    && [row.classification_processed_roots, row.classification_total_roots].every(count => count === undefined
+    && [row.classification_processed_roots, row.classification_total_roots,
+      row.prepared_batches, row.recoverable_batches].every(count => count === undefined
       || Number.isSafeInteger(count) && (count as number) >= 0)
     && (row.terminal_failed_roots === undefined
       || Number.isSafeInteger(row.terminal_failed_roots) && (row.terminal_failed_roots as number) >= 0)
@@ -194,6 +196,10 @@ export function DefinedInterestDecisionControls({ actorId, workspaceId, termKey,
         done: status.classification_processed_roots ?? 0, total: status.classification_total_roots ?? status.expected_roots
       })}</p> : null}
       {status.unknown_batches > 0 ? <p role="alert">{t("unknown", { count: status.unknown_batches })}</p> : null}
+      {(status.prepared_batches ?? 0) > 0 ? <p>{t("prepared", {
+        count: status.prepared_batches ?? 0 })}</p> : null}
+      {(status.recoverable_batches ?? 0) > 0 ? <p>{t("recoverable", {
+        count: status.recoverable_batches ?? 0 })}</p> : null}
       {status.unsettled_calls > 0 ? <p role="status">{t("unsettled", { count: status.unsettled_calls })}</p> : null}
       {(status.terminal_failed_roots ?? 0) > 0 ? <p role="alert">{t("terminalFailed", {
         count: status.terminal_failed_roots ?? 0

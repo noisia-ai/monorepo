@@ -232,7 +232,12 @@ export async function loadDefinedInterestDecisionProductV2(scope: Scope,
       'classification_processed_roots',execution.processed_roots,
       'classification_total_roots',execution.denominator,
       'classification_error_code',execution.error_code,
-      'generation_status',generation.status) result
+      'generation_status',generation.status,
+      'prepared_batches',(SELECT count(*) FROM signal_interest_decision_batches_v1 batch
+        WHERE batch.owner_id=owner.id AND batch.state='prepared'),
+      'recoverable_batches',(SELECT count(*) FROM signal_interest_decision_batches_v1 batch
+        WHERE batch.owner_id=owner.id AND batch.state='rejected'
+          AND batch.last_error_code='provider_inventory_absent')) result
     FROM signal_interest_decision_owners_v1 owner
     JOIN signal_classification_generations generation ON generation.id=owner.generation_id
     JOIN signal_topic_catalog_executions execution ON execution.generation_id=generation.id
@@ -242,6 +247,7 @@ export async function loadDefinedInterestDecisionProductV2(scope: Scope,
   [scope.workspace_id,scope.actor_user_id,scope.term_key]);
   return result.rows[0]?.result ?? { status: "not_started", expected_roots: 0,
     manifest_roots: 0, accepted_roots: 0, unknown_batches: 0, unsettled_calls: 0,
+    prepared_batches: 0, recoverable_batches: 0,
     terminal_failed_roots: 0, technical_error_code: null,
     classification_status: null, classification_processed_roots: 0,
     classification_total_roots: 0, classification_error_code: null, generation_status: null };

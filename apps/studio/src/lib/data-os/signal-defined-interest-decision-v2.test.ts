@@ -139,4 +139,6 @@ test("V2 status reader includes historical V1 fallback while preferring a V2 own
   assert.match(statements[0]!, /ORDER BY owner\.provider_contract_version DESC,owner\.created_at DESC/u);
   assert.match(statements[0]!, /CASE WHEN owner\.provider_contract_version=2\s+THEN signal_interest_decision_status_v2/u);
   assert.match(statements[0]!, /ELSE signal_interest_decision_status_v1/u);
+  assert.match(statements[0]!, /'prepared_batches'.*SELECT count\(\*\).*batch\.state='prepared'/su);
+  assert.match(statements[0]!, /'recoverable_batches'.*batch\.last_error_code='provider_inventory_absent'/su);
 });
