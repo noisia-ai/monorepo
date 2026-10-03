@@ -76,3 +76,31 @@ test("begin rejects malformed interest and incompatible projection before databa
       output_artifact_id:id("7"),materialization_artifact_id:id("8"),mapping_digest:sha("mapping"),policy_digest:sha("policy"),
       model_version_id:null}}),/interest_invalid/u);
 });
+
+test("client admin grant opens only the governed interest decision generation",async()=>{
+  const baseIdentity:SignalWorkspaceClassificationIdentityV1={contract_version:"signal-workspace-classification-v1",
+    workspace_id:id("3"),engine_key:"interest_decision",engine_version:1,engine_artifact_digest:sha("engine"),
+    embedding_config_digest:sha("embedding"),catalog_digest:sha("catalog"),compiler_digest:sha("compiler"),
+    context_digest:sha("context"),decision_policy_digest:sha("policy")};
+  const base={workspace_id:id("3"),actor_user_id:id("4"),idempotency_key:"client-interest-key",
+    embedding_run_id:id("5"),identity:baseIdentity};
+  let accessLevel="admin";
+  const client={query:async(sql:string)=>{
+    if(sql.includes("workspace.status workspace_status"))return{rows:[{
+      workspace_status:"active",brand_status:"active",organization_status:"active",brand_same_organization:true,
+      actor_status:"active",user_type:"client",primary_role:"client_admin",same_organization:true,
+      brand_access_level:accessLevel
+    }]};
+    if(sql.includes("pg_advisory_xact_lock"))throw new Error("passed_authorization");
+    throw new Error("unexpected query");
+  }} as unknown as PoolClient;
+  await assert.rejects(beginSignalWorkspaceClassificationWithClientV1(client,
+    {...base,interest_term_key:"alexa_consent"}),/passed_authorization/u);
+  await assert.rejects(beginSignalWorkspaceClassificationWithClientV1(client,base),/workspace_classification_forbidden/u);
+  await assert.rejects(beginSignalWorkspaceClassificationWithClientV1(client,
+    {...base,interest_term_key:"alexa_consent",identity:{...baseIdentity,engine_key:"other_engine"}}),
+    /workspace_classification_forbidden/u);
+  accessLevel="comment";
+  await assert.rejects(beginSignalWorkspaceClassificationWithClientV1(client,
+    {...base,interest_term_key:"alexa_consent"}),/workspace_classification_forbidden/u);
+});

@@ -71,8 +71,16 @@ async function tx<T>(database: SignalWorkspaceClassificationDatabaseV1, work: (c
   try { await client.query(readOnly ? "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" : "BEGIN"); await client.query("SET LOCAL TIME ZONE 'UTC'"); await client.query("SET LOCAL search_path=public,extensions,pg_temp"); const value = await work(client); await client.query("COMMIT"); return value; }
   catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; } finally { client.release(); }
 }
-async function authorize(queryable: Queryable, workspace_id: string, actor_user_id: string) {
-  if (!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable, workspace_id, actor_user_id})).can_execute_topics) return fail("workspace_classification_forbidden", 403);
+async function authorize(queryable: Queryable, workspace_id: string, actor_user_id: string,
+  interest_term_key?: string | null, identity?: SignalWorkspaceClassificationIdentityV1) {
+  const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({queryable, workspace_id, actor_user_id});
+  if (capabilities.can_execute_topics) return;
+  // Client processing authority is limited to the separately governed interest
+  // decision. The generation trigger checks its exact registered model/policy;
+  // this does not authorize general classification or human corrections.
+  if (interest_term_key && identity?.engine_key === "interest_decision"
+    && identity.engine_version === 1 && capabilities.can_request_processing) return;
+  return fail("workspace_classification_forbidden", 403);
 }
 async function lockInputs(queryable: Queryable, workspace_id: string) {
   await queryable.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`signal-taxonomy:${workspace_id}:topic`]);
@@ -151,7 +159,7 @@ function view(run: Run, token = run.execution_token!): SignalWorkspaceClassifica
     input_digest: run.input_digest, identity: run.identity};
 }
 async function current(client: PoolClient, run: Run, full = true) {
-  await authorize(client, run.workspace_id, run.actor_user_id);
+  await authorize(client, run.workspace_id, run.actor_user_id, run.interest_term_key, run.identity);
   if (run.current_revision !== run.input_revision || !run.policy_live || !run.sources_complete || !run.projection_current) return fail("workspace_classification_inputs_changed");
   if (!full) return;
   if(run.interest_term_key!=null&&!interestTermKey.test(run.interest_term_key))return fail("workspace_classification_context_changed");
@@ -201,7 +209,8 @@ export async function beginSignalWorkspaceClassificationWithClientV1(client:Pool
   const requestDigest = digest({embedding_run_id: args.embedding_run_id, identity,
     ...(args.interest_term_key?{interest_term_key:args.interest_term_key}:{}),
     ...(args.source_projection?{source_projection:args.source_projection}:{})});
-    await authorize(client, args.workspace_id, args.actor_user_id); await lockInputs(client, args.workspace_id);
+    await authorize(client, args.workspace_id, args.actor_user_id, args.interest_term_key, identity);
+    await lockInputs(client, args.workspace_id);
     const prior = (await client.query<{id: string; generation_id: string; input_contract: string; actor_user_id: string; request_digest: string}>(
       "SELECT id,generation_id,input_contract,actor_user_id,request_digest FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND idempotency_key=$2", [args.workspace_id, args.idempotency_key])).rows[0];
     if (prior) {
