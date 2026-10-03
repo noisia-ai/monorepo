@@ -211,7 +211,7 @@ export function parseSignalWorkspaceInterestDecisionBatchItemV2(args: {
 export function signalWorkspaceInterestDecisionTransportRecoveryV2(error: unknown):
   "known_rejection" | "submission_unknown" | "retry_read" | "unknown_failure" {
   if (!(error instanceof AnthropicBatchTransportError)) return "unknown_failure";
-  return error.submission === "not_submitted" && [400, 401, 403, 404, 413, 422].includes(error.httpStatus ?? -1)
+  return error.submission === "not_submitted" && [400, 401, 402, 403, 404, 413, 422, 429].includes(error.httpStatus ?? -1)
     ? "known_rejection" : error.submission === "read_failed" ? "retry_read" : "submission_unknown";
 }
 

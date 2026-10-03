@@ -180,7 +180,7 @@ export function createSignalWorkspaceInterestDecisionBatchStoresV2(args: { datab
       terminalLeases.add(lease);
     },
     async markKnownRejection(lease: SignalWorkspaceInterestDecisionBatchLeaseV2, code: string, receipt: {http_status:number;raw_body:string;complete:boolean;provider_request_id:string|null}|null) {
-      if (!receipt || !receipt.complete || ![400,401,403,404,413,422].includes(receipt.http_status)) return fail("known_rejection_receipt_required",422);
+      if (!receipt || !receipt.complete || ![400,401,402,403,404,413,422,429].includes(receipt.http_status)) return fail("known_rejection_receipt_required",422);
       const validReceipt=receipt;
       const digest=sha(validReceipt.raw_body);
       await withLease(lease, async client => {

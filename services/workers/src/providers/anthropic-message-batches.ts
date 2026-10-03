@@ -80,7 +80,10 @@ export function createAnthropicMessageBatchesClient(options: {
         const raw_body = await readBoundedText(response, MAX_CONTROL_BYTES);
         // A rejection can be retried by policy. A server/transport failure may have
         // accepted a POST: custom_id is NOT a provider idempotency key.
-        const rejected = response.status >= 400 && response.status < 500 && response.status !== 408;
+        // Only statuses accepted by the durable rejection ledger may be treated
+        // as definitively unsent. In particular, billing (402) and throttling
+        // (429) are explicit provider rejections, not uncertain POST outcomes.
+        const rejected = [400, 401, 402, 403, 404, 413, 422, 429].includes(response.status);
         const error = new AnthropicBatchTransportError(
           `batch_http_${response.status}`, creates && rejected ? "not_submitted" : uncertain,
           response.status,
