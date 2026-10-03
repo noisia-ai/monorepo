@@ -67,6 +67,10 @@ test("a pending key clears only after the exact owner receipt is read", () => {
 
 test("malformed progress never enables the paid start control", () => {
   assert.equal(validDefinedInterestDecisionStatusV1(status("not_started")), true);
+  assert.equal(validDefinedInterestDecisionStatusV1({ ...status("ready"),
+    prepared_batches: 367, recoverable_batches: 228 }), true);
+  assert.equal(validDefinedInterestDecisionStatusV1({ ...status("ready"),
+    recoverable_batches: -1 }), false);
   assert.equal(validDefinedInterestDecisionStatusV1({ ...status("ready"), accepted_roots: "16" }), false);
   assert.equal(validDefinedInterestDecisionStatusV1({ ...status("ready"), unknown_batches: -1 }), false);
   assert.equal(validDefinedInterestDecisionStatusV1({ ...status("ready"), status: "doubt" }), false);
