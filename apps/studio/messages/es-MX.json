@@ -3758,7 +3758,6 @@
       },
       "workspaceMissing": { "title": "Workspace no disponible", "body": "Esta marca legacy no terminó la inicialización del workspace." },
       "advancedPreparation": {"title": "Diagnósticos avanzados de datos y reportes", "body": "Configuración detallada de vistas gobernadas, revisión semántica y reportes. El recorrido principal de preparación y análisis se muestra arriba.", "loading": "Cargando diagnósticos…", "error": "No pudimos cargar los diagnósticos.", "retry": "Reintentar"},
-      "corpusSummaryLoading": "Cargando datos recibidos…",
       "destinations": {
         "title": "Gestionar los datos del workspace",
         "subtitle": "Abre cada recurso en su espacio de trabajo; esta vista conserva fuentes, imports y gobernanza.",

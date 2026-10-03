@@ -3758,7 +3758,6 @@
       },
       "workspaceMissing": { "title": "Workspace unavailable", "body": "This legacy brand has not completed workspace initialization." },
       "advancedPreparation": {"title": "Advanced data and report diagnostics", "body": "Detailed configuration for governed views, semantic review and reports. The main preparation and analysis flow appears above.", "loading": "Loading diagnostics…", "error": "We couldn't load the diagnostics.", "retry": "Retry"},
-      "corpusSummaryLoading": "Loading received data…",
       "destinations": {
         "title": "Manage workspace data",
         "subtitle": "Open each resource in its own workspace; this overview retains sources, imports, and governance.",
