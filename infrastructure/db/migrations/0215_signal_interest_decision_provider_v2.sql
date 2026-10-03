@@ -285,6 +285,10 @@ BEGIN
   END LOOP;
   IF verdict='belongs' AND NOT support OR verdict='not_belongs' AND NOT exclude_evidence THEN
    RAISE EXCEPTION 'interest_decision_v2_evidence_role_invalid' USING ERRCODE='23514';END IF;
+  -- Match the canonical V1 parser's citation order before sealing evidence.
+  SELECT COALESCE(jsonb_agg(value ORDER BY (value->>'chunk_index')::integer,
+   (value->>'quote_start')::integer,(value->>'quote_end')::integer,value->>'role'),'[]'::jsonb)
+   INTO normalized_citations FROM jsonb_array_elements(normalized_citations);
   normalized:=normalized||jsonb_build_array(jsonb_build_object('root_id',root->>'root_id',
    'root_fingerprint',root->>'fingerprint','asset_sha256',root->>'asset_sha256',
    'verdict',verdict,'rationale',decision->>'rationale','citations',normalized_citations));

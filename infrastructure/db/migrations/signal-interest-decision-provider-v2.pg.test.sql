@@ -102,6 +102,11 @@ BEGIN
   OR (SELECT count(*) FROM signal_interest_decision_root_evidence_v1 WHERE call_id=test_call_id)<>2
   OR (SELECT count(*) FROM signal_interest_decision_root_evidence_v1 WHERE call_id=test_call_id
    AND output_digest=f->>'output_digest')<>2
+  OR EXISTS(SELECT 1 FROM signal_interest_decision_root_evidence_v1 evidence
+   WHERE evidence.call_id=test_call_id AND evidence.decision_digest IS DISTINCT FROM
+    signal_semantic_context_digest_json_v2(jsonb_build_object('root_id',evidence.root_id,
+     'root_fingerprint',evidence.root_fingerprint,'asset_sha256',evidence.asset_sha256,
+     'verdict',evidence.verdict,'rationale',evidence.rationale,'citations',evidence.citations)))
   OR (SELECT raw_body FROM signal_interest_decision_calls_v1 WHERE id=test_call_id) IS DISTINCT FROM f->>'raw_body'
  THEN RAISE EXCEPTION 'V2 raw evidence receipt failed';END IF;
  result:=apply_signal_interest_decision_item_v2(test_call_id);
