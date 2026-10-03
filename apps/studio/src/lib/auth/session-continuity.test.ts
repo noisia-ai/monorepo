@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { readFile, readdir } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -31,6 +31,24 @@ import { loginPath, safeSessionReturnPath, sessionRefreshPath } from "@/lib/auth
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 const STUDIO_ROOT = resolve(TEST_DIR, "../../..");
 const REPO_ROOT = resolve(STUDIO_ROOT, "../..");
+
+async function sourceFilesContaining(fragment: string, excludeTests = false): Promise<string[]> {
+  const matches: string[] = [];
+  async function visit(directory: string): Promise<void> {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = resolve(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(path);
+      } else if (entry.isFile() && (!excludeTests || !entry.name.endsWith(".test.ts"))) {
+        if ((await readFile(path, "utf8")).includes(fragment)) {
+          matches.push(relative(STUDIO_ROOT, path).replaceAll("\\", "/"));
+        }
+      }
+    }
+  }
+  await visit(resolve(STUDIO_ROOT, "src"));
+  return matches.sort();
+}
 
 class MemoryBarrier implements SessionRefreshBarrier {
   records = new Map<string, SessionRefreshBarrierRecord>();
@@ -794,15 +812,7 @@ test("SDK is pinned and no middleware or protected-link prefetch regression exis
   assert.match(lockfile, /'@kinde-oss\/kinde-auth-nextjs':\n\s+specifier: 2\.12\.2/);
   await assert.rejects(readFile(resolve(STUDIO_ROOT, "src/middleware.ts"), "utf8"));
 
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execute = promisify(execFile);
-  const result = await execute("rg", ["-n", "prefetch=\\{true\\}", "src"], { cwd: STUDIO_ROOT })
-    .catch((error: { code?: number; stdout?: string }) => {
-      if (error.code === 1) return { stdout: "" };
-      throw error;
-    });
-  assert.equal(result.stdout.trim(), "");
+  assert.deepEqual(await sourceFilesContaining("prefetch={true}", true), []);
 });
 
 test("the pinned SDK refresh contract commits all three rotated cookies before returning", async () => {
@@ -832,16 +842,8 @@ test("the pinned SDK refresh contract commits all three rotated cookies before r
 });
 
 test("refreshTokens is callable only inside the dedicated refresh boundary", async () => {
-  const { execFile } = await import("node:child_process");
-  const { promisify } = await import("node:util");
-  const execute = promisify(execFile);
-  const result = await execute(
-    "rg",
-    ["-l", "refreshTokens\\(", "src", "-g", "!*.test.ts"],
-    { cwd: STUDIO_ROOT }
-  );
   assert.deepEqual(
-    result.stdout.trim().split("\n").sort(),
+    await sourceFilesContaining("refreshTokens(", true),
     [
       "src/app/auth/session/refresh/route.ts",
       "src/lib/auth/session-continuity.ts"
