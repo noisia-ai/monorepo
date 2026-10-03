@@ -5,6 +5,7 @@ import { signalWorkspaceEmbeddingDigestV1, type SignalTopicDefinitionV1 } from "
 import type { SignalWorkspaceInterestDecisionSourcePageV1 } from "@noisia/db";
 import {
   canonicalSignalInterestDecisionJsonV1,
+  createSignalWorkspaceInterestDecisionPreparationStoresV1,
   prepareSignalWorkspaceInterestDecisionPagesV1,
   sealSignalWorkspaceInterestDecisionSourcePageV1,
   type SignalWorkspaceInterestDecisionPreparationStoresV1,
@@ -147,4 +148,41 @@ test("bounded ticks resume sealing and then prepare one unprepared page", async 
   assert.equal(prepareCalls, 2);
   assert.equal((await tick()).phase, "complete");
   assert.equal(prepareCalls, 2);
+});
+
+test("paid batch preparation renews the same owner's daily admission first", async () => {
+  const statements: string[] = [];
+  const pageId = randomUUID(), batchId = randomUUID(), admissionId = randomUUID();
+  const database = { connect: async () => ({ query: async (statement: string, params?: unknown[]) => {
+    statements.push(statement);
+    if (statement.includes("renew_signal_interest_decision_admission_v1")) {
+      assert.deepEqual(params, [identity.owner_id, identity.actor_user_id]);
+      return { rows: [{ result: { admission_id: admissionId, budget_date: "2026-10-03", replayed: false } }] };
+    }
+    if (statement.includes("prepare_signal_interest_decision_batch_v1"))
+      return { rows: [{ result: { batch_id: batchId, replayed: false } }] };
+    return { rows: [] };
+  }, release: () => undefined }) };
+  const stores = createSignalWorkspaceInterestDecisionPreparationStoresV1({ database: database as never,
+    ...identity });
+  assert.deepEqual(await stores.prepareBatch({ page_id: pageId, request_digests: [sha("request")] }),
+    { batch_id: batchId, replayed: false });
+  assert.ok(statements.findIndex(sql => sql.includes("renew_signal_interest_decision_admission_v1"))
+    < statements.findIndex(sql => sql.includes("prepare_signal_interest_decision_batch_v1")));
+});
+
+for (const policyError of ["interest_decision_policy_required", "interest_decision_policy_changed_today"]) test(
+  `${policyError} creates no prepared batch`, async () => {
+  const statements: string[] = [];
+  const database = { connect: async () => ({ query: async (statement: string) => {
+    statements.push(statement);
+    if (statement.includes("renew_signal_interest_decision_admission_v1"))
+      throw new Error(policyError);
+    return { rows: [] };
+  }, release: () => undefined }) };
+  const stores = createSignalWorkspaceInterestDecisionPreparationStoresV1({ database: database as never,
+    ...identity });
+  await assert.rejects(stores.prepareBatch({ page_id: randomUUID(), request_digests: [sha("request")] }),
+    error => error instanceof Error && error.message === policyError);
+  assert.equal(statements.some(sql => sql.includes("prepare_signal_interest_decision_batch_v1")), false);
 });

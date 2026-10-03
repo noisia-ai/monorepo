@@ -116,3 +116,33 @@ test("private storage readiness precedes the database paid-send reservation", as
     lease_token: randomUUID() } as never), /private bucket unavailable/u);
   assert.deepEqual(events, ["storage"]);
 });
+
+test("a prior-day prepared batch never reaches paid send", async () => {
+  const sql: string[] = [];
+  const database = { connect: async () => ({ query: async (statement: string) => {
+    sql.push(statement);
+    if (statement.includes("admission_current"))
+      return { rows: [{ admission_current: false, policy_current: true }] };
+    return { rows: [] };
+  }, release() {} }) };
+  const stores = createSignalWorkspaceInterestDecisionRuntimeStoresV1({ database: database as never,
+    storage: { assertReady: async () => undefined } as never });
+  await assert.rejects(stores.reserveAndMarkSubmitting({ batch_id: batchId,
+    lease_token: randomUUID() } as never), /workspace_interest_batch_runtime_admission_expired/u);
+  assert.equal(sql.some(statement => statement.includes("mark_submitting_signal_interest_decision_batch_v1")), false);
+});
+
+test("a revoked or expired policy stops a prepared batch before send", async () => {
+  const sql: string[] = [];
+  const database = { connect: async () => ({ query: async (statement: string) => {
+    sql.push(statement);
+    if (statement.includes("admission_current"))
+      return { rows: [{ admission_current: true, policy_current: false }] };
+    return { rows: [] };
+  }, release() {} }) };
+  const stores = createSignalWorkspaceInterestDecisionRuntimeStoresV1({ database: database as never,
+    storage: { assertReady: async () => undefined } as never });
+  await assert.rejects(stores.reserveAndMarkSubmitting({ batch_id: batchId,
+    lease_token: randomUUID() } as never), /workspace_interest_batch_runtime_policy_expired_or_changed/u);
+  assert.equal(sql.some(statement => statement.includes("mark_submitting_signal_interest_decision_batch_v1")), false);
+});

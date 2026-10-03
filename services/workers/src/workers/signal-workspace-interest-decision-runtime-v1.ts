@@ -83,6 +83,26 @@ export function createSignalWorkspaceInterestDecisionRuntimeStoresV1(options: {
   const stores = db as unknown as SignalWorkspaceInterestDecisionBatchStoresV1;
   return { ...stores, async reserveAndMarkSubmitting(lease) {
     await getStorage().assertReady?.();
+    // SQL0211 binds a prepared batch to its original admission. A new owner-day
+    // admission cannot move that batch or its reserved calls across midnight.
+    // Stop before provider I/O and let the durable batch remain inspectable.
+    const client = await options.database.connect();
+    try {
+      const row = (await client.query<{ admission_current: boolean; policy_current: boolean }>(`SELECT
+        a.budget_date=(clock_timestamp() AT TIME ZONE a.budget_timezone)::date
+          AND a.admission_not_after>clock_timestamp() admission_current,
+        p.status='active' AND p.valid_from<=clock_timestamp()
+          AND p.valid_until>clock_timestamp() policy_current
+        FROM signal_interest_decision_batches_v1 batch
+        JOIN signal_processing_admissions a ON a.id=batch.admission_id
+        JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id
+        WHERE batch.id=$1::uuid AND batch.lease_token=$2::uuid
+          AND batch.lease_expires_at>clock_timestamp()`,
+      [lease.batch_id, lease.lease_token])).rows[0];
+      if (!row) return fail("admission_unavailable");
+      if (!row.policy_current) return fail("policy_expired_or_changed");
+      if (!row.admission_current) return fail("admission_expired");
+    } finally { client.release(); }
     await stores.reserveAndMarkSubmitting(lease);
   } };
 }

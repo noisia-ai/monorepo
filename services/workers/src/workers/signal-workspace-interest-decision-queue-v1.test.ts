@@ -119,6 +119,17 @@ test("reservation or lease failure blocks HTTP before POST", async () => {
   assert.equal(h.events.at(-1), "release");
 });
 
+test("an authority change at the SQL send fence remains visible without a POST", async () => {
+  const h = harness(), mock = fakeProvider();
+  let recordedCode: string | null = null;
+  h.stores.reserveAndMarkSubmitting = async () => { throw new Error("interest_decision_batch_authority_invalid"); };
+  h.stores.releaseLease = async (_lease, result) => { recordedCode = result.error_code; };
+  assert.equal(await runSignalWorkspaceInterestDecisionBatchTickV1({ stores: h.stores, provider: mock.provider }),
+    "retry_read");
+  assert.equal(recordedCode, "workspace_interest_batch_authority_changed");
+  assert.deepEqual(mock.events, []);
+});
+
 test("lost HTTP response and stale submitting lease quarantine the same batch", async () => {
   const h = harness();
   let posts = 0;

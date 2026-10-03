@@ -62,7 +62,8 @@ const hash = (text: string) => `sha256:${createHash("sha256").update(text, "utf8
 const fail = (code: string): never => { throw new Error(`workspace_interest_batch_${code}`); };
 const safeCode = (error: unknown) => error instanceof AnthropicBatchTransportError
   ? error.code : error instanceof Error && /^workspace_interest_batch_[a-z_]+$/u.test(error.message)
-    ? error.message : "workspace_interest_batch_store_or_runtime_error";
+    ? error.message : error instanceof Error && error.message === "interest_decision_batch_authority_invalid"
+      ? "workspace_interest_batch_authority_changed" : "workspace_interest_batch_store_or_runtime_error";
 function checkState(state: AnthropicBatchState, lease: SignalWorkspaceInterestDecisionBatchLeaseV1) {
   const expected = lease.manifest.requests.length;
   const counts = state.request_counts;

@@ -211,6 +211,16 @@ export function createSignalWorkspaceInterestDecisionPreparationStoresV1(args: {
       return rows;
     },
     async prepareBatch(page) {
+      // A source owner may span budget days. Renew only when there is a page
+      // needing paid preparation; SQL reuses today's admission and checks the
+      // active policy, source and original owner cap before creating a new one.
+      const renewal = await query<{ result: { admission_id: string; budget_date: string;
+        replayed: boolean } }>(args.database,
+        `SELECT renew_signal_interest_decision_admission_v1($1::uuid,$2::uuid) result`,
+        [args.owner_id, args.actor_user_id]);
+      if (!uuid.test(renewal[0]?.result?.admission_id ?? "")
+        || !/^\d{4}-\d{2}-\d{2}$/u.test(renewal[0]?.result?.budget_date ?? "")
+        || typeof renewal[0]?.result?.replayed !== "boolean") fail("admission_renewal_invalid");
       const rows = await query<{ result: { batch_id: string; replayed: boolean } }>(args.database,
         `SELECT prepare_signal_interest_decision_batch_v1($1::uuid,$2::uuid,$3::text[],$4::text) result`,
         [args.owner_id, page.page_id, page.request_digests, `interest-decision-page:${page.page_id}`]);
