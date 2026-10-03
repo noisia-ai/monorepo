@@ -20,7 +20,7 @@ Una tercera cohorte de desafío, también independiente de los veredictos V2, to
 
 Existe un constructor **local e inerte** de solicitud V3 con prompt más preciso e identidad nueva. Reusa exactamente la entrada por spans y el esquema de salida V2, pero no está conectado a owner, admisión, dispatcher, UI o proveedor. Las pruebas fijan que los bytes del manifiesto V2 no cambien. Este código no constituye evaluación de calidad ni habilita los 367 lotes preparados: primero se necesita ensayo V3 sobre la cohorte y después un conjunto no condicionado por predicciones anteriores para medir falsos negativos y aprobar el producto.
 
-El constructor se ejecutó sólo en memoria con la primera solicitud real sellada de UAT (64 raíces) y con las cinco solicitudes V2 más grandes: regeneró identidades distintas y las cinco quedaron bajo el máximo técnico de 512 KiB; la mayor pasó de 516,675 a 517,915 bytes. No hubo POST, costo, modificación de filas ni aprobación semántica.
+El constructor se ejecutó sólo en memoria con la primera solicitud real sellada de UAT (64 raíces) y con las cinco solicitudes V2 más grandes: regeneró identidades distintas y las cinco quedaron bajo el máximo técnico de 512 KiB. Tras añadir la regla de identidad de producto, se repitió la mayor y pasó de 516,675 a 518,122 bytes. No hubo POST, costo, modificación de filas ni aprobación semántica.
 
 ## Decisión de producto
 

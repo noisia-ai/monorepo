@@ -60,6 +60,7 @@ test("V3 prompt and identity are distinct while sealed V2 bytes remain unchanged
   assert.match(v3Params.system as string, /No infieras esa falta/u);
   assert.match(v3Params.system as string, /reactivación tras optar por salir/u);
   assert.match(v3Params.system as string, /solicitud expresa de desactivar o revertir el producto/u);
+  assert.match(v3Params.system as string, /Una comparación con ese producto/u);
   assert.match(v3Params.system as string, /Una conversación mixta pertenece sólo si/u);
 });
 
