@@ -615,6 +615,10 @@
     }
   },
   "SignalV2": {
+    "definedInterest": {
+      "status": "Defined interests",
+      "subtitle": "Selected interests classified from your imported conversations. Open discovery has not been run for this corpus."
+    },
     "imported": {
       "mentionsSubtitle": "Imported conversations for your brand",
       "status": "Imported conversations",
@@ -711,7 +715,7 @@
       "emptyPreparingBody": "Classification is in progress. The result will appear here when it finishes; your Topics and selections are preserved.",
       "title": "Topics & narratives", "scope": "All received conversations with viewing rights. No implied attribution to the brand.",
       "current": "Up to date", "stale": "Previous result", "manage": "Manage Topics", "refresh": "Refresh", "utc": "Dates in UTC", "workspaceTimezone": "Workspace timezone: {timezone}",
-      "computed": "Computed membership", "quality": "Clusters were computed from the mentions. Their semantic precision has not yet been calibrated.",
+      "computed": "Computed membership", "quality": "Clusters were computed from the mentions. Their semantic precision has not yet been calibrated.", "definedSource": "Defined interests",
       "staleBody": "The last complete result is retained. Evidence requires a current generation and current permissions.",
       "denominator": "Mentions in period", "assigned": "In selected Topics", "assignedEditorial": "In selected concepts", "abstained": "Without a stable cluster", "noise": "Noise", "pending": "Unresolved", "unresolved": "Unresolved",
       "denominatorHelp": "Each mention counts once in the total and may belong to several Topics. Topic percentages may add up to more than 100%.",
@@ -719,7 +723,7 @@
       "withheld": "{count} mentions are unavailable for this query.", "empty": "No Topics selected", "emptyBody": "Choose the Topics you want to see in Signal from the brand’s editable catalogue.",
       "emptyNarratives": "No narratives selected", "emptyNarrativesBody": "No narrative is selected for this Signal version.",
       "selectedTopics": "Selected Topics", "selectedNarratives": "Selected narratives", "topic": "Topic", "narrative": "Narrative", "mentions": "Mentions", "share": "% of corpus", "definition": "Definition",
-      "membership": "{count} mentions with computed membership.", "narrativeMembership": "{count} mentions support this narrative.", "evidence": "View evidence", "trend": "Mentions in selected Topics", "editorialTrend": "Mentions in selected Topics and narratives",
+      "membership": "{count} mentions with computed membership.", "definedMembership": "{count} mentions with an approved decision for this interest.", "definedQuality": "Membership is based on a saved decision for this interest and its current definition.", "definedEvidencePending": "Decision citations are not available here yet. Open the original mention from Mentions; this view does not present a generic excerpt as a citation.", "narrativeMembership": "{count} mentions support this narrative.", "evidence": "View evidence", "trend": "Mentions in selected Topics", "editorialTrend": "Mentions in selected Topics and narratives",
       "noNarratives": "Narratives and insights are not yet available for this analysis.", "close": "Close", "loading": "Loading…", "noEvidence": "No evidence is available in this period.",
       "evidenceStale": "The evidence changed or access is no longer available. Refresh the result before viewing it again.", "evidenceError": "We could not load the evidence. Try again.",
       "more": "Show more", "original": "Open original"

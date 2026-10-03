@@ -5,7 +5,8 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
-import type { SignalWorkspaceImportedOverviewV1 } from "@noisia/query-engine";
+import type { SignalWorkspaceImportedOverviewV1, SignalWorkspaceDefinedInterestOverviewV1,
+  SignalWorkspaceOverviewV1 } from "@noisia/query-engine";
 import type { SignalBrandMonitoringV1 } from "../signal-v2/brand-monitoring";
 // Node's CJS/ESM interop exposes next/image's namespace instead of its real
 // forwardRef component. Normalize only that package boundary for SSR tests.
@@ -179,13 +180,23 @@ const imported: SignalWorkspaceImportedOverviewV1 = {
   quality: "not_analyzed", interpretation_coverage: null, terms: [],
   series: [{ date: "2026-09-01", mention_count: 3, assigned_unique: null }], limitations: ["classification_required"]
 };
-async function render(locale: string, native = true) {
+const defined: SignalWorkspaceDefinedInterestOverviewV1 = {
+  ...imported, source: "workspace_defined_interest", classification_state: "ready",
+  interest_generation_ids: ["00000000-0000-4000-8000-000000000002"], interest_selection_digest: "sha256:selection",
+  quality: "not_calibrated", selection_revision: 0, evidence_visible_total: 3,
+  coverage: { processed: 3, assigned_unique: 1, abstained: null, noise: null, unresolved: null, withheld: 0 },
+  terms: [{ term_key: "activation_consent", kind: "topic", label: "Unrequested activation", definition: "Alexa+ activated without consent",
+    definition_revision: 1, definition_digest: "sha256:definition", selected: true, mention_count: 1, share_of_corpus: 1 / 3,
+    basis: "defined_interest", interest_generation_id: "00000000-0000-4000-8000-000000000002", evidence_available: false }],
+  series: [{ date: "2026-09-01", mention_count: 3, assigned_unique: 1 }], limitations: ["interest_only_not_open_discovery"]
+};
+async function render(locale: string, native = true, overview: SignalWorkspaceOverviewV1 = imported) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   return renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
     createElement(SignalV2BrandMonitoring, { activeModule: "monitoring", activeStudy: null, brandName: "Synthetic QA",
-      canRefreshInsights: false, initialData: native ? buildNativeSignalMonitoringV1(base, imported) : base,
-      initialMention: null, initialMentions: null, initialSettings: null, initialTopicsNarratives: native ? imported : null,
+      canRefreshInsights: false, initialData: native ? buildNativeSignalMonitoringV1(base, overview) : base,
+      initialMention: null, initialMentions: null, initialSettings: null, initialTopicsNarratives: native ? overview : null,
       initialTriggersBarriers: null, legacyOutputId: null, manageTopicsHref: null, strategicStudies: [], userName: "Synthetic QA",
       workspaceOptions: [], workspaceSubjectId: "synthetic-brand", viewKey: native ? "all_conversations" : "brand" })));
 }
@@ -208,5 +219,13 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.match(html, /signal-v2-attention-metrics/);
     assert.match(html, /signal-v2-conversation-columns/);
     assert.ok(html.includes(locale === "es-MX" ? "3 señales positivas" : "3 positive signals"));
+  });
+  test(`${locale}: a classified interest is shown without claiming open discovery or pending classification`, async () => {
+    const html = await render(locale, true, defined);
+    assert.ok(html.includes(locale === "es-MX" ? "Intereses definidos" : "Defined interests"));
+    assert.ok(html.includes(locale === "es-MX" ? "El descubrimiento abierto aún no se ha ejecutado"
+      : "Open discovery has not been run"));
+    assert.ok(!html.includes(locale === "es-MX" ? "La clasificación de Topics todavía está pendiente"
+      : "Topic classification is still pending"));
   });
 }

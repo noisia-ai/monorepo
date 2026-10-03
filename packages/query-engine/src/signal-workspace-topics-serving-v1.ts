@@ -38,7 +38,11 @@ export type SignalWorkspaceTopicsOverviewV1 = {
     selected: boolean;
     mention_count: number;
     share_of_corpus: number | null;
-    basis: "computed_cluster";
+    basis: "computed_cluster" | "defined_interest";
+    /** Present only for an independently classified, selected interest. */
+    interest_generation_id?: string;
+    /** False until the cited decision receipt is available to the evidence API. */
+    evidence_available?: boolean;
   }>;
   series: Array<{ date: string; mention_count: number; assigned_unique: number }>;
   limitations: string[];
@@ -77,4 +81,26 @@ export type SignalWorkspaceImportedOverviewV1 = Omit<SignalWorkspaceTopicsOvervi
   series: Array<{ date: string; mention_count: number; assigned_unique: null }>;
   coverage: { processed: null; assigned_unique: null; abstained: null; noise: null; unresolved: null; withheld: null };
 };
-export type SignalWorkspaceOverviewV1 = SignalWorkspaceTopicsOverviewV1 | SignalWorkspaceImportedOverviewV1;
+/** A brand may publish defined interests without running open discovery. Each
+ * interest owns a separate classification generation; there is no fictitious
+ * workspace-wide generation or BERTopic interpretation behind this view. */
+export type SignalWorkspaceDefinedInterestOverviewV1 = Omit<SignalWorkspaceTopicsOverviewV1,
+  "source" | "generation_id" | "source_engine_execution_id" | "terms" | "coverage"> & {
+  source: "workspace_defined_interest";
+  classification_state: "ready";
+  generation_id: null;
+  source_engine_execution_id: null;
+  interest_generation_ids: string[];
+  interest_selection_digest: string;
+  evidence_visible_total: number;
+  /** Open-discovery Noise and a single global abstention state have not been
+   * computed by independent interest decisions. Null is not zero. */
+  coverage: { processed: number; assigned_unique: number; abstained: null; noise: null;
+    unresolved: null; withheld: number };
+  terms: Array<SignalWorkspaceTopicsOverviewV1["terms"][number] & {
+    kind: "topic"; basis: "defined_interest"; interest_generation_id: string;
+    evidence_available: boolean;
+  }>;
+};
+export type SignalWorkspaceOverviewV1 = SignalWorkspaceTopicsOverviewV1 | SignalWorkspaceImportedOverviewV1
+  | SignalWorkspaceDefinedInterestOverviewV1;

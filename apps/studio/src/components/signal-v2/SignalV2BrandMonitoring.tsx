@@ -1419,8 +1419,14 @@ export function SignalV2BrandMonitoring({
           </span>
           </>}
           icon={<Megaphone size={20} weight="fill" />}
-          status={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && topicsNarrativesData.source === "workspace_imported" ? "imported.status" : "status.beta")}
-          subtitle={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && topicsNarrativesData.source === "workspace_imported" ? "imported.classificationPending" : "subtitle")}
+          status={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+            ? topicsNarrativesData.source === "workspace_imported" ? "imported.status"
+              : topicsNarrativesData.source === "workspace_defined_interest" ? "definedInterest.status" : "status.beta"
+            : "status.beta")}
+          subtitle={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+            ? topicsNarrativesData.source === "workspace_imported" ? "imported.classificationPending"
+              : topicsNarrativesData.source === "workspace_defined_interest" ? "definedInterest.subtitle" : "subtitle"
+            : "subtitle")}
           title={t("title")}
         />
 

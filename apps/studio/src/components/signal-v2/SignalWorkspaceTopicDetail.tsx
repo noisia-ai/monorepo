@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { SignalWorkspaceTopicDetailV1 } from "@noisia/db";
-import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
+import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceDefinedInterestOverviewV1 } from "@noisia/query-engine";
 import { SignalEChart } from "./SignalEChart";
 import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "./SignalTopicChartOptions";
 import { SignalTopicSentimentLegend } from "./SignalTopicsPrimitives";
@@ -29,14 +29,16 @@ export function validNativeTopicDetail(value: unknown, identity: Identity): valu
 }
 
 export function SignalWorkspaceTopicDetail({ data, termKey, kind = "topic", onSelect }: {
-  data: SignalWorkspaceTopicsOverviewV1; termKey: string; kind?: "topic" | "narrative"; onSelect: (key: string) => void;
+  data: SignalWorkspaceTopicsOverviewV1 | SignalWorkspaceDefinedInterestOverviewV1;
+  termKey: string; kind?: "topic" | "narrative"; onSelect: (key: string) => void;
 }) {
   const t = useTranslations("SignalV2.workspaceTopics.detailMetrics");
   const [detail, setDetail] = useState<SignalWorkspaceTopicDetailV1 | null>(null);
   const [failed, setFailed] = useState(false), [attempt, setAttempt] = useState(0);
+  const generationId = data.terms.find(term => term.term_key === termKey)?.interest_generation_id ?? data.generation_id;
   useEffect(() => {
     const controller = new AbortController(); setDetail(null); setFailed(false);
-    if (!data.is_current || !data.generation_id) return () => controller.abort();
+    if (!data.is_current || !generationId) return () => controller.abort();
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest });
     if (data.filters.date_from) params.set("date_from", data.filters.date_from);
     if (data.filters.date_to) params.set("date_to", data.filters.date_to);
@@ -44,12 +46,13 @@ export function SignalWorkspaceTopicDetail({ data, termKey, kind = "topic", onSe
       { cache: "no-store", signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error("detail_unavailable");
       const value: unknown = await response.json();
-      if (!validNativeTopicDetail(value, { workspace_id: data.workspace_id, generation_id: data.generation_id, scope_digest: data.scope_digest, kind, term_key: termKey })) throw new Error("detail_scope_changed");
+      if (!validNativeTopicDetail(value, { workspace_id: data.workspace_id, generation_id: generationId, scope_digest: data.scope_digest, kind, term_key: termKey })) throw new Error("detail_scope_changed");
       if (!controller.signal.aborted) setDetail(value);
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [data.workspace_id, data.generation_id, data.scope_digest, data.is_current, data.filters.date_from, data.filters.date_to, kind, termKey, attempt]);
-  const current = data.is_current && detail && validNativeTopicDetail(detail, { ...data, kind, term_key: termKey }) ? detail : null;
+  }, [data.workspace_id, generationId, data.scope_digest, data.is_current, data.filters.date_from, data.filters.date_to, kind, termKey, attempt]);
+  const current = data.is_current && detail && validNativeTopicDetail(detail, {
+    workspace_id: data.workspace_id, generation_id: generationId, scope_digest: data.scope_digest, kind, term_key: termKey }) ? detail : null;
   return <>{failed ? <p role="alert">{t("error")} <button className="signal-v2-filter" type="button" onClick={() => setAttempt(value => value + 1)}>{t("retry")}</button></p> : null}
     <SignalWorkspaceTopicDetailMetrics detail={current} loading={!current && !failed && data.is_current} onSelect={onSelect} />
   </>;

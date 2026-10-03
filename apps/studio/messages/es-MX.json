@@ -613,6 +613,10 @@
     }
   },
   "SignalV2": {
+    "definedInterest": {
+      "status": "Intereses definidos",
+      "subtitle": "Intereses seleccionados y clasificados en las conversaciones importadas. El descubrimiento abierto aún no se ha ejecutado para este corpus."
+    },
     "imported": {
       "mentionsSubtitle": "Conversaciones importadas de tu marca",
       "status": "Conversaciones importadas",
@@ -709,7 +713,7 @@
       "emptyPreparingBody": "La clasificación está en curso. El resultado aparecerá aquí cuando termine; tus Topics y su selección se conservan.",
       "title": "Tópicos y narrativas", "scope": "Todas las conversaciones recibidas con derechos de consulta. Sin atribución implícita a la marca.",
       "current": "Actualizado", "stale": "Resultado anterior", "manage": "Gestionar Topics", "refresh": "Actualizar", "utc": "Fechas en UTC", "workspaceTimezone": "Zona horaria del workspace: {timezone}",
-      "computed": "Pertenencia calculada", "quality": "Los grupos se calcularon sobre las menciones. Su precisión semántica todavía no está calibrada.",
+      "computed": "Pertenencia calculada", "quality": "Los grupos se calcularon sobre las menciones. Su precisión semántica todavía no está calibrada.", "definedSource": "Intereses definidos",
       "staleBody": "Se conserva el último resultado completo. La evidencia requiere una generación vigente y permisos actuales.",
       "denominator": "Menciones del periodo", "assigned": "En Topics seleccionados", "assignedEditorial": "En conceptos seleccionados", "abstained": "Sin grupo estable", "noise": "Noise", "pending": "Sin resolver", "unresolved": "Sin resolver",
       "denominatorHelp": "Cada mención se cuenta una vez en el total y puede pertenecer a varios Topics. Los porcentajes por Topic pueden sumar más de 100%.",
@@ -717,7 +721,7 @@
       "withheld": "{count} menciones no están disponibles para esta consulta.", "empty": "No hay Topics seleccionados", "emptyBody": "Elige los Topics que quieres ver en Signal desde el catálogo editable de la marca.",
       "emptyNarratives": "No hay narrativas seleccionadas", "emptyNarrativesBody": "No hay narrativas seleccionadas en esta versión de Signal.",
       "selectedTopics": "Topics seleccionados", "selectedNarratives": "Narrativas seleccionadas", "topic": "Topic", "narrative": "Narrativa", "mentions": "Menciones", "share": "% del corpus", "definition": "Definición",
-      "membership": "{count} menciones con pertenencia calculada.", "narrativeMembership": "{count} menciones sustentan esta narrativa.", "evidence": "Ver evidencia", "trend": "Menciones en Topics seleccionados", "editorialTrend": "Menciones en Topics y narrativas seleccionados",
+      "membership": "{count} menciones con pertenencia calculada.", "definedMembership": "{count} menciones con una decisión aprobada para este interés.", "definedQuality": "La pertenencia se basa en una decisión guardada para este interés y su definición vigente.", "definedEvidencePending": "Las citas de la decisión aún no están disponibles aquí. Abre la mención original desde Menciones; esta vista no presenta un fragmento genérico como cita.", "narrativeMembership": "{count} menciones sustentan esta narrativa.", "evidence": "Ver evidencia", "trend": "Menciones en Topics seleccionados", "editorialTrend": "Menciones en Topics y narrativas seleccionados",
       "noNarratives": "Las narrativas y los insights aún no están disponibles para este análisis.", "close": "Cerrar", "loading": "Cargando…", "noEvidence": "No hay evidencia disponible en este periodo.",
       "evidenceStale": "La evidencia cambió o ya no tienes acceso. Actualiza el resultado antes de consultarla de nuevo.", "evidenceError": "No pudimos cargar la evidencia. Inténtalo de nuevo.",
       "more": "Ver más", "original": "Abrir original"

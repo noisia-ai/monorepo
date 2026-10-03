@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowClockwise, Gauge, Quotes } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
-import type { SignalFilterV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
+import type { SignalFilterV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceDefinedInterestOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./SignalAnalyticsFilter";
 import { SignalDataScopeFilter } from "./SignalDataScopeFilter";
@@ -17,17 +17,18 @@ import { buildSignalTopicTrendOption } from "./SignalTopicChartOptions";
 
 const sections = ["topics", "narratives", "noise", "unresolved"] as const;
 type NativeTopicSection = typeof sections[number];
+type ComputedTopics = SignalWorkspaceTopicsOverviewV1 | SignalWorkspaceDefinedInterestOverviewV1;
 
 /** Older workspace catalogues did not carry a kind. Treat them as Topics while
  * consolidated catalogues preserve the server-owned editorial kind. */
-export function workspaceTermsForSectionV1(data: SignalWorkspaceTopicsOverviewV1, section: "topics" | "narratives") {
+export function workspaceTermsForSectionV1(data: ComputedTopics, section: "topics" | "narratives") {
   const kind = section === "narratives" ? "narrative" : "topic";
   return data.terms.filter(item => (item.kind === "narrative" ? "narrative" : "topic") === kind);
 }
 
 type WorkspaceTopicsProps = {
   brandName: string;
-  data: SignalWorkspaceTopicsOverviewV1; loading: boolean; manageTopicsHref: string | null;
+  data: ComputedTopics; loading: boolean; manageTopicsHref: string | null;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
   onRefresh?: () => Promise<boolean>; surface?: "summary" | "topics"; onOpenTopics?: () => void; refreshFailed?: boolean;
   onOpenMention?: (mentionId: string) => void;
@@ -75,6 +76,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   const sectionKind = section === "narratives" ? "narrative" : "topic";
   const sectionTerms = workspaceTermsForSectionV1(data, section === "narratives" ? "narratives" : "topics");
   const term = sectionTerms.find(item => item.term_key === selectedKey) ?? sectionTerms[0] ?? null;
+  const termGeneration = term?.interest_generation_id ?? data.generation_id;
   const evidence = page?.scope_digest === data.scope_digest && page.kind === sectionKind && page.term_key === term?.term_key
     && page.workspace_id === data.workspace_id && data.is_current ? page : null;
   const dateFrom = data.filters.date_from ?? data.available_dates.date_from;
@@ -85,7 +87,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   const share = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale,
     { style: "percent", maximumFractionDigits: 1 }).format(value);
   const read = useCallback(async (cursor?: string) => {
-    if (!term || !data.is_current || !data.generation_id) return;
+    if (!term || term.evidence_available === false || !data.is_current || !termGeneration) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     const version = ++sequence.current; setReading(true); setError(null);
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest, limit: "25" });
@@ -103,7 +105,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
       const body = await response.json() as SignalWorkspaceTopicEvidencePageV1;
       if (controller.signal.aborted || version !== sequence.current) return;
       if (body.contract_version !== "signal-workspace-topic-evidence-v1" || body.workspace_id !== data.workspace_id
-        || body.generation_id !== data.generation_id || body.scope_digest !== data.scope_digest || body.kind !== sectionKind || body.term_key !== term.term_key) {
+        || body.generation_id !== termGeneration || body.scope_digest !== data.scope_digest || body.kind !== sectionKind || body.term_key !== term.term_key) {
         setPage(null); throw new Error("evidenceStale");
       }
       setPage(previous => cursor && previous?.scope_digest === body.scope_digest && previous.kind === body.kind && previous.term_key === body.term_key
@@ -112,14 +114,14 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
     } catch (cause) {
       if (!controller.signal.aborted && version === sequence.current) setError(cause instanceof Error ? cause.message : "evidenceError");
     } finally { if (!controller.signal.aborted && version === sequence.current) setReading(false); }
-  }, [data.filters.date_from, data.filters.date_to, data.generation_id, data.is_current, data.scope_digest, data.workspace_id, sectionKind, term]);
+  }, [data.filters.date_from, data.filters.date_to, data.is_current, data.scope_digest, data.workspace_id, sectionKind, term, termGeneration]);
   useEffect(() => {
     const fence = sequence;
     sequence.current++; request.current?.abort(); setPage(null); setError(null); setReading(false);
     return () => { fence.current++; request.current?.abort(); };
-  }, [data.scope_digest, data.workspace_id, data.generation_id, data.is_current, term?.term_key, sectionKind]);
+  }, [data.scope_digest, data.workspace_id, data.is_current, term?.term_key, termGeneration, sectionKind]);
   useEffect(() => {
-    if ((section === "topics" || section === "narratives" || surface === "summary") && data.is_current && term) void read();
+    if ((section === "topics" || section === "narratives" || surface === "summary") && data.is_current && term?.evidence_available !== false) void read();
   }, [read, section, surface, data.is_current, term]);
   useEffect(() => {
     if (!data.is_processing || loading || refreshFailed || !onRefresh) return;
@@ -167,7 +169,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
         }}>{t(`sections.${key}`)}<span>{key === "topics" ? number(workspaceTermsForSectionV1(data, "topics").length)
           : key === "narratives" ? consolidated ? number(workspaceTermsForSectionV1(data, "narratives").length) : t("sections.unavailable")
           : key === "noise" ? data.coverage.noise === null ? t("sections.unavailable") : number(data.coverage.noise)
-          : number(data.coverage.unresolved)}</span></button>)}
+          : data.coverage.unresolved === null ? t("sections.unavailable") : number(data.coverage.unresolved)}</span></button>)}
     </div> : null}
     <div id={`${tabsId}-panel`} role={surface === "topics" ? "tabpanel" : undefined}
       aria-labelledby={surface === "topics" ? `${tabsId}-${section}` : undefined} tabIndex={surface === "topics" ? 0 : undefined}>
@@ -199,17 +201,20 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
           <article><small>{t("share")}</small><strong>{share(term?.share_of_corpus ?? null)}</strong></article>
           <article><small>{t("definitionVersion")}</small><strong>{number(term?.definition_revision ?? 0)}</strong></article>
         </div>
-        <div className="signal-v2-tn__evidence-intro"><p>{t(sectionKind === "narrative" ? "narrativeMembership" : "membership", { count: term?.mention_count ?? 0 })}</p><p>{t("traceability")}</p></div>
-        <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={!term || !data.is_current}
+        <div className="signal-v2-tn__evidence-intro"><p>{t(sectionKind === "narrative" ? "narrativeMembership"
+          : term?.basis === "defined_interest" ? "definedMembership" : "membership", { count: term?.mention_count ?? 0 })}</p>
+          <p>{term?.basis === "defined_interest" ? t("definedQuality") : t("traceability")}</p></div>
+        <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={!term || term.evidence_available === false || !data.is_current}
           onClick={() => { setDrawer(true); if (!evidence) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
+        {term?.evidence_available === false ? <p className="signal-v2-tn__evidence-intro">{t("definedEvidencePending")}</p> : null}
         {term ? <SignalWorkspaceTopicDetail data={data} termKey={term.term_key} kind={sectionKind} onSelect={select} /> : null}
-        <div className="signal-v2-tn__preview"><strong>{t("detailMetrics.evidence")}</strong>
+        {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t("detailMetrics.evidence")}</strong>
           {evidence?.items.slice(0, 5).map(item => <button key={item.mention_id} type="button" onClick={() => setDrawer(true)}>
             <span><SignalSourceIcon label={item.platform} platform={item.platform} size={15} />{item.platform}</span><p>{item.text}</p>
           </button>)}
           {!evidence?.items.length ? <p>{t(reading ? "loading" : "noEvidence")}</p> : null}
           {error ? <p role="alert">{t(error === "evidenceStale" ? "evidenceStale" : "evidenceError")}</p> : null}
-        </div>
+        </div> : null}
       </section>
     </div>}
     </div>
@@ -218,27 +223,28 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
         label: formatTopicDate(item.date, locale), value: item.assigned_unique
       })), t(consolidated ? "assignedEditorial" : "assigned"), false)} />
     </section> : null}
-    <section aria-label={t("computed")} className="signal-v2-tn__operations">
-      <div className="signal-v2-tn__coverage-note" role="status"><div><strong>{t("computed")}</strong><p>{t("quality")}</p>
+    <section aria-label={t(data.source === "workspace_defined_interest" ? "definedSource" : "computed")} className="signal-v2-tn__operations">
+      <div className="signal-v2-tn__coverage-note" role="status"><div><strong>{t(data.source === "workspace_defined_interest" ? "definedSource" : "computed")}</strong><p>{t(data.source === "workspace_defined_interest" ? "definedQuality" : "quality")}</p>
         {!data.is_current ? <p>{t("staleBody")}</p> : null}
         {data.interpretation_coverage ? <p>{t(data.interpretation_coverage.complete ? "interpretationComplete" : "interpretationPartial", {
           done: data.interpretation_coverage.interpreted_unit_count, total: data.interpretation_coverage.expected_unit_count })}</p>
           : data.generation_id ? <p>{t("interpretationUnknown")}</p> : null}
-        {data.coverage.unresolved > 0 ? <p>{t(consolidated ? "unresolvedCoverage" : "pendingCoverage", { count: data.coverage.unresolved })}</p> : null}
+        {data.coverage.unresolved !== null && data.coverage.unresolved > 0
+          ? <p>{t(consolidated ? "unresolvedCoverage" : "pendingCoverage", { count: data.coverage.unresolved })}</p> : null}
         {data.is_processing ? <p>{t("processing")}</p> : null}
       </div></div>
       <div className="signal-v2-tn__kpis">
         {([["denominator", data.denominator], [consolidated ? "assignedEditorial" : "assigned", data.coverage.assigned_unique],
           [consolidated ? "noise" : "abstained", data.coverage.noise ?? data.coverage.abstained],
           [consolidated ? "unresolved" : "pending", data.coverage.unresolved]] as const)
-          .map(([label, value]) => <SignalTopicsKpi key={label} label={t(label)} value={number(value)}
+          .map(([label, value]) => <SignalTopicsKpi key={label} label={t(label)} value={value === null ? "—" : number(value)}
             help={{ title: t(label), body: t(`metricHelp.${label}`) }} secondary={t(`metricCaption.${label}`)} />)}
       </div>
       <p className="signal-v2-tn__evidence-intro">{t(consolidated ? "denominatorHelpEditorial" : "denominatorHelp")}{data.coverage.withheld > 0 ? ` ${t("withheld", { count: data.coverage.withheld })}` : ""}</p>
     </section>
     {!consolidated ? <p className="signal-v2-tn__evidence-intro">{t("noNarratives")}</p> : null}
     </div>
-    {drawer && term ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t("computed")} title={term.label} intro={t("quality")}
+    {drawer && term && term.evidence_available !== false ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t("computed")} title={term.label} intro={t("quality")}
       timeZone={workspaceTimezone}
       records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at, platform: item.platform, originalUrl: item.url }))}
       loading={reading} loadingLabel={t("loading")} emptyLabel={t("noEvidence")} errorMessage={error ? t(error === "evidenceStale" ? "evidenceStale" : "evidenceError") : null}
@@ -250,18 +256,20 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
 }
 
 export function SignalWorkspaceTopicDisposition({ section, data }: {
-  section: Exclude<NativeTopicSection, "topics">; data: SignalWorkspaceTopicsOverviewV1;
+  section: Exclude<NativeTopicSection, "topics">; data: ComputedTopics;
 }) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
-  const available = section === "unresolved" || section === "noise" && data.coverage.noise !== null;
+  const available = section === "unresolved" ? data.coverage.unresolved !== null : section === "noise" && data.coverage.noise !== null;
   const count = section === "noise" ? data.coverage.noise : section === "unresolved" ? data.coverage.unresolved : null;
   const message = section === "noise" && available ? "noiseAvailable" : section === "unresolved" && data.coverage.noise !== null ? "unresolvedAvailable" : section;
   return <section className="signal-v2-tn__empty" role="status" data-availability={available ? "available" : "not_available"}>
     <Quotes size={24} aria-hidden /><strong>{t(`dispositions.${message}.title`)}</strong>
     {count !== null ? <strong>{count.toLocaleString(locale)}</strong> : null}
     <p>{t(`dispositions.${message}.body`)}</p>
-    {section === "noise" && !available ? <p>{t("noiseAbstention", { count: data.coverage.abstained })}</p> : null}
-    {section === "unresolved" ? <p>{t(data.coverage.noise !== null ? "unresolvedCoverage" : "pendingCoverage", { count: data.coverage.unresolved })}</p> : null}
+    {section === "noise" && !available && data.coverage.abstained !== null
+      ? <p>{t("noiseAbstention", { count: data.coverage.abstained })}</p> : null}
+    {section === "unresolved" && data.coverage.unresolved !== null
+      ? <p>{t(data.coverage.noise !== null ? "unresolvedCoverage" : "pendingCoverage", { count: data.coverage.unresolved })}</p> : null}
   </section>;
 }
 
