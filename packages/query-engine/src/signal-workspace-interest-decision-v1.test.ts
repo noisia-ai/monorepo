@@ -8,6 +8,7 @@ import {
   signalWorkspaceInterestDecisionClassificationIntentV1,
   type SignalWorkspaceInterestDecisionOutputV1
 } from "./signal-workspace-interest-decision-v1";
+import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-v1";
 
 const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const text = [
@@ -25,7 +26,8 @@ const request = buildSignalWorkspaceInterestDecisionRequestV1({ contract_version
   workspace_id: randomUUID(), context_digest: sha("context"), decision_policy_digest: sha("policy"), interest, roots });
 
 function output(): SignalWorkspaceInterestDecisionOutputV1 {
-  return { contract_version: contract, request_digest: request.request_digest, interest,
+  return { contract_version: contract, request_digest: request.request_digest,
+    interest_identity_digest: signalWorkspaceEmbeddingDigestV1(interest),
     decisions: roots.map((root, index) => ({ root_id: root.root_id, root_fingerprint: root.fingerprint,
       asset_sha256: root.asset_sha256, verdict: (["belongs", "not_belongs", "insufficient"] as const)[index]!,
       rationale: ["Reporta ausencia de permiso.", "Reporta aceptación expresa.", "Falta contexto sobre la aceptación."][index]!,
@@ -49,7 +51,9 @@ test("output identity must match the exact request, interest and every source ro
   assert.throws(() => parseSignalWorkspaceInterestDecisionOutputV1({ request,
     output: { ...base, request_digest: sha("other") } }), /interest_identity_mismatch/u);
   assert.throws(() => parseSignalWorkspaceInterestDecisionOutputV1({ request,
-    output: { ...base, interest: { ...interest, definition_digest: sha("changed") } } }), /interest_identity_mismatch/u);
+    output: { ...base, interest_identity_digest: sha("changed") } }), /interest_identity_mismatch/u);
+  assert.throws(() => parseSignalWorkspaceInterestDecisionOutputV1({ request,
+    output: { ...base, interest } }), /unrecognized_keys/u);
   assert.throws(() => parseSignalWorkspaceInterestDecisionOutputV1({ request,
     output: { ...base, decisions: [{ ...base.decisions[0]!, root_fingerprint: sha("changed") }, ...base.decisions.slice(1)] } }),
   /root_identity_mismatch/u);

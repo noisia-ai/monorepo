@@ -34,7 +34,8 @@ const identity: SignalWorkspaceClassificationIdentityV1 = {
 };
 function output(): SignalWorkspaceInterestDecisionOutputV1 {
   return { contract_version: "signal-workspace-interest-decision-v1", request_digest: request.request_digest,
-    interest, decisions: roots.map((root, index) => ({ root_id: root.root_id, root_fingerprint: root.fingerprint,
+    interest_identity_digest: signalWorkspaceEmbeddingDigestV1(interest),
+    decisions: roots.map((root, index) => ({ root_id: root.root_id, root_fingerprint: root.fingerprint,
       asset_sha256: root.asset_sha256, verdict: (["belongs", "not_belongs", "insufficient"] as const)[index]!,
       rationale: ["Sin permiso.", "Consentimiento explícito.", "Falta contexto."][index]!,
       citations: index === 2 ? [] : [{ chunk_index: 0, chunk_sha256: root.chunks[0]!.chunk_sha256,

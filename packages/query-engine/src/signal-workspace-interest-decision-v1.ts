@@ -72,7 +72,7 @@ const decisionSchema = z.object({
 });
 const outputSchema = z.object({
   contract_version: z.literal(SIGNAL_WORKSPACE_INTEREST_DECISION_CONTRACT_V1),
-  request_digest: digest, interest: interestSchema,
+  request_digest: digest, interest_identity_digest: digest,
   decisions: z.array(decisionSchema).min(1).max(SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_LIMIT_V1)
 }).strict();
 export type SignalWorkspaceInterestDecisionOutputV1 = z.infer<typeof outputSchema>;
@@ -90,7 +90,7 @@ export function parseSignalWorkspaceInterestDecisionOutputV1(args: {
   if (args.request.request_digest !== request.request_digest) fail("interest_decision_request_digest_mismatch");
   const output = outputSchema.parse(args.output);
   if (output.request_digest !== request.request_digest
-    || signalWorkspaceEmbeddingDigestV1(output.interest) !== signalWorkspaceEmbeddingDigestV1(request.interest)) {
+    || output.interest_identity_digest !== signalWorkspaceEmbeddingDigestV1(request.interest)) {
     fail("interest_decision_interest_identity_mismatch");
   }
   if (output.decisions.length !== request.roots.length) fail("interest_decision_root_coverage_mismatch");
