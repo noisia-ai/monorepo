@@ -129,7 +129,12 @@ await main(async () => {
                               act: dim("other"),
                               spam_or_bot: dim(false),
                               language: dim("es"),
-                              asunto: dim(null),
+                              asunto: dim(
+                                labeler.params.request_format ===
+                                  "required-ordinal-fields-v4"
+                                  ? ""
+                                  : null,
+                              ),
                             },
                           ]),
                         ),

@@ -185,7 +185,14 @@ function harness() {
                     ? Object.fromEntries(
                         call.inputs.map((_, ordinal) => [
                           `r${ordinal}`,
-                          facets,
+                          run.identity.params.request_format ===
+                          "required-ordinal-fields-v4"
+                            ? {
+                                ...facets,
+                                unrelated_reason: "none",
+                                asunto: dim(""),
+                              }
+                            : facets,
                         ]),
                       )
                     : call.inputs.map((_, root_ordinal) => ({

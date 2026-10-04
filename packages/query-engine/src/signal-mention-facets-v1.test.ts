@@ -245,14 +245,14 @@ test("Anthropic reads final text, refusal and truncation separately; exact cache
 test("ordinal grammar preserves legacy identities and requires every input key", async () => {
   const {
     buildFacetRequestV1,
-    facetLabelerIdentityV1,
+    facetLabelerIdentityOrdinalV3,
     facetLabelerIdentityLegacyV1,
     facetLabelerIdentityOrdinalV2,
     validateFacetLabelerIdentityV1,
   } = await import("./signal-mention-facets-v1");
   const legacy = facetLabelerIdentityLegacyV1(),
     previous = facetLabelerIdentityOrdinalV2(),
-    current = facetLabelerIdentityV1();
+    current = facetLabelerIdentityOrdinalV3();
   assert.equal(
     legacy.prompt_digest,
     "sha256:6b98bcb5ada4632d36ecce6576a53f2a9622e9acedb065ebc8085f161ee89ff7",
@@ -268,6 +268,10 @@ test("ordinal grammar preserves legacy identities and requires every input key",
   assert.equal(
     previous.schema_digest,
     "sha256:53a371b67816339162cb852a3eb1f31d1a4aff479e14cedb1210f9be09cbc64e",
+  );
+  assert.equal(
+    current.schema_digest,
+    "sha256:eb8c894adf24de6d4c4eb0425a2c388caa067c6823e103e3f85ba301efc8af38",
   );
   assert.equal(current.prompt_digest, previous.prompt_digest);
   assert.notEqual(current.schema_digest, previous.schema_digest);
@@ -402,4 +406,133 @@ test("ordinal grammar preserves legacy identities and requires every input key",
     () => buildFacetRequestV1([input(0)], ce, incompatible),
     /facet_labeler_identity_unsupported/u,
   );
+});
+
+test("union-free ordinal transport restores the exact semantic facet contract", async () => {
+  const {
+    buildFacetRequestV1,
+    facetLabelerIdentityV1,
+    facetLabelerIdentityLegacyV1,
+    facetLabelerIdentityOrdinalV3,
+    decodeFacetOrdinalWireV4,
+  } = await import("./signal-mention-facets-v1");
+  const identity = facetLabelerIdentityV1();
+  const legacy = facetLabelerIdentityLegacyV1();
+  assert.equal(identity.params.request_format, "required-ordinal-fields-v4");
+  assert.notEqual(
+    identity.prompt_digest,
+    facetLabelerIdentityOrdinalV3().prompt_digest,
+  );
+  const context: EntityContextV1 = {
+    entities: [
+      ...ce.entities,
+      {
+        entity_id: "b",
+        kind: "competitor",
+        name: "Second Example",
+        aliases: [],
+        disambiguation: null,
+      },
+    ],
+  };
+  const examples = [
+    {
+      ...facets(),
+      entities: dim([
+        { entity_id: "a", kind: "primary_brand", salience: "main" },
+        { entity_id: "b", kind: "competitor", salience: "secondary" },
+      ]),
+      asunto: dim("Comparison of installation experiences"),
+    },
+    { ...facets(), entities: dim([]), unrelated_reason: "off_topic" },
+    {
+      ...facets(),
+      entities: { ...dim([]), abstained: true },
+      language: { ...dim(null), confidence: "low", abstained: true },
+    },
+    {
+      ...facets(),
+      entities: dim([]),
+      unrelated_reason: "homonym",
+      spam_or_bot: dim(true),
+    },
+  ];
+  for (const count of [2, 8, 25]) {
+    const inputs = Array.from({ length: count }, (_, i) => ({
+      ...input(i),
+      language: null,
+    }));
+    const semantic = inputs.map((_, i) => examples[i % examples.length]!);
+    const wire = semantic.map((row) => ({
+      ...row,
+      unrelated_reason: row.unrelated_reason ?? "none",
+      language: { ...row.language, value: row.language.value ?? "" },
+      asunto: { ...row.asunto, value: row.asunto.value ?? "" },
+    }));
+    wire.forEach((row, i) =>
+      assert.deepEqual(decodeFacetOrdinalWireV4(row), semantic[i]),
+    );
+    const response = JSON.stringify({
+      roots: Object.fromEntries(wire.map((row, i) => [`r${i}`, row])),
+    });
+    assert.deepEqual(
+      parseFacetGroupV1(response, inputs, context, identity),
+      parseFacetGroupV1(
+        JSON.stringify({
+          roots: semantic.map((row, i) => ({ root_ordinal: i, facets: row })),
+        }),
+        inputs,
+        context,
+        legacy,
+      ),
+    );
+    const schema = buildFacetRequestV1(inputs, context, identity).output_config
+      .format.schema as any;
+    assert.deepEqual(
+      schema.properties.roots.required,
+      inputs.map((_, i) => `r${i}`),
+    );
+    const visit = (value: any) => {
+      if (value && typeof value === "object") {
+        assert.equal(value.anyOf, undefined);
+        assert.equal(value.oneOf, undefined);
+        assert.equal(Array.isArray(value.type), false);
+        for (const child of Object.values(value)) visit(child);
+      }
+    };
+    visit(schema);
+    const missing = JSON.parse(response);
+    delete missing.roots.r1;
+    assert.equal(
+      parseFacetGroupV1(JSON.stringify(missing), inputs, context, identity)
+        .split,
+      true,
+    );
+  }
+  const badLanguage = {
+    ...facets(),
+    unrelated_reason: "none",
+    language: dim("es-MX"),
+    asunto: dim(""),
+  };
+  const badTopic = {
+    ...badLanguage,
+    language: dim("es"),
+    asunto: dim("word ".repeat(13).trim()),
+  };
+  for (const bad of [
+    badLanguage,
+    badTopic,
+    { ...badLanguage, unrelated_reason: null },
+  ]) {
+    assert.equal(
+      parseFacetGroupV1(
+        JSON.stringify({ roots: { r0: bad } }),
+        [{ ...input(0), language: null }],
+        context,
+        identity,
+      ).results[0]?.error_code,
+      "invalid_facets",
+    );
+  }
 });
