@@ -544,7 +544,7 @@ await main(async () => {
           organizationId: null,
         },
         idempotencyKey: "mfp-membership-lazy-retire",
-        competitorIds: [competitorEntity.entity_id],
+        competitorIds: [competitorEntity!.entity_id],
         evidence: "Membership lazy context rollback regression",
       },
       { database },
