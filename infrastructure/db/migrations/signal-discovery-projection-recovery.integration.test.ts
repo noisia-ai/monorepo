@@ -9,6 +9,13 @@ import {signalWorkspaceTopicProjectionJobV1} from '../../../services/workers/src
 import {createWorkspaceEngineStorageV1} from '../../../services/workers/src/workers/signal-workspace-engine-storage';
 
 const enabled=process.env.NOISIA_MFP_DISCOVERY_PROJECTION_PG_TEST==='true';
+function safeFailure(error:unknown):Record<string,unknown>{
+ const e=error as {name?:unknown;code?:unknown;stack?:unknown;message?:unknown;actual?:unknown;operator?:unknown};
+ const value={name:typeof e?.name==='string'?e.name:'unknown',code:typeof e?.code==='string'?e.code:null,
+  first_frame:typeof e?.stack==='string'?e.stack.split('\n').find(line=>/^\s+at /u.test(line))?.trim():null,
+  safe_message:typeof e?.message==='string'&&/^[A-Za-z_ .-]{1,160}$/u.test(e.message)?e.message:null};
+ return e?.actual instanceof Error?{...value,actual:safeFailure(e.actual),operator:e.operator}:value;
+}
 test('real discovery artifacts recover full-corpus projection, fence post-claim relevance and preserve outside human correction',{skip:!enabled,timeout:600_000},async()=>{
  // Same private host/DNS/PostgreSQL identity guard as the corpus harness.
  const {openDatabase}=await import(new URL("../../../scripts/dev-corpus/guard.mjs",import.meta.url).href);
@@ -31,13 +38,13 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
     AND p.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-projection-v1'
     AND jsonb_typeof(e.input_snapshot->'discovery_population')='object' ORDER BY p.created_at DESC LIMIT 1`,[identity.workspace_id])).rows[0];
   assert.ok(owner,'requires an actual failed native projection; never creates or repeats fit/provider work');
-  let serial=0;const stack:string[]=[];let injectAssignmentDrift:(()=>Promise<void>)|null=null;
+  let serial=0;const stack:string[]=[];let injectAssignmentDrift:(()=>Promise<void>)|null=null;let assignmentDrifts=0;
   const query=async(sql:string,values?:unknown[])=>{
    if(sql.startsWith('BEGIN')){const name=`projection_${++serial}`;stack.push(name);return raw.query(`SAVEPOINT ${name}`);}
    if(sql==='COMMIT')return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
    if(sql==='ROLLBACK'){const name=stack.pop()!;await raw.query(`ROLLBACK TO SAVEPOINT ${name}`);return raw.query(`RELEASE SAVEPOINT ${name}`);}
-   if(sql.startsWith('INSERT INTO signal_classification_assignments')&&injectAssignmentDrift){
-    const inject=injectAssignmentDrift;injectAssignmentDrift=null;await inject();
+   if(sql.trimStart().startsWith('INSERT INTO signal_classification_assignments')&&injectAssignmentDrift){
+    const inject=injectAssignmentDrift;injectAssignmentDrift=null;assignmentDrifts++;await inject();
    }
    return raw.query(sql,values);
   };
@@ -73,8 +80,8 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
     // definition/context guards. It is visible only within the physical rollback.
     await raw.query(`INSERT INTO signal_topic_membership_operations(id,workspace_id,actor_user_id,execution_id,term_key,canonical_root_id,disposition,
      definition_revision,idempotency_key,request_digest,origin_input_contract,root_fingerprint,definition_digest,context_digest)
-     VALUES($1,$2,$3,$4,$5,$6,'belongs',$7,$1,$8,'workspace-topic-classification-v1',$9,$10,$11)`,
-    [operation,identity.workspace_id,identity.internal_user_id,owner.id,topic.term_key,humanRoot,topic.definition_revision,sha,outside.fingerprint,topic.definition_digest,claimed.lease.identity.context_digest]);
+     VALUES($1,$2,$3,$4,$5,$6,'belongs',$7,$12,$8,'workspace-topic-classification-v1',$9,$10,$11)`,
+    [operation,identity.workspace_id,identity.internal_user_id,owner.id,topic.term_key,humanRoot,topic.definition_revision,sha,outside.fingerprint,topic.definition_digest,claimed.lease.identity.context_digest,operation]);
     await raw.query(`INSERT INTO signal_topic_membership_overrides(workspace_id,term_key,canonical_root_id,disposition,definition_revision,actor_user_id,
      origin_input_contract,root_fingerprint,definition_digest,context_digest,correction_operation_id)
      SELECT workspace_id,term_key,canonical_root_id,disposition,definition_revision,actor_user_id,origin_input_contract,root_fingerprint,
@@ -87,21 +94,24 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
    await signalWorkspaceTopicProjectionJobV1({id:request.worker_job_id,data:{execution_id:request.execution_id},updateProgress:async()=>{}},
     {database,storage:{...storage,put:async()=>{throw new Error('projection must never upload');}},stores:{...stores,
      commitPage:async args=>{
+      let phase="pre_page";const driftsBefore=assignmentDrifts;
+      try{
       if(!checked){checked=true;await raw.query('SAVEPOINT relevance_change');try{
        await makeUnrelated();
        assert.equal((await raw.query('SELECT signal_workspace_projection_source_current_v1(g) current FROM signal_classification_generations g WHERE id=$1',[request.generation_id])).rows[0].current,false);
-       await assert.rejects(classification.commitSignalWorkspaceClassificationPageV1(args),/inputs_changed/);
+       await assert.rejects(classification.commitSignalWorkspaceClassificationPageV1(args),/inputs_changed/,'pre-page drift must reject');
       }finally{await raw.query('ROLLBACK TO SAVEPOINT relevance_change');await raw.query('RELEASE SAVEPOINT relevance_change');}
        // Change relevance after the application/page fence, immediately before
        // INSERT: the statement trigger independently rejects the whole write.
-       await raw.query('SAVEPOINT assignment_drift');try{
+       phase='assignment_insert';await raw.query('SAVEPOINT assignment_drift');try{
         injectAssignmentDrift=makeUnrelated;
-        await assert.rejects(classification.commitSignalWorkspaceClassificationPageV1(args),/workspace_projection_source_invalid/);
+        await assert.rejects(classification.commitSignalWorkspaceClassificationPageV1(args),/workspace_projection_source_invalid/,'assignment drift must reject');
         assert.equal(injectAssignmentDrift,null,'fixture reached the real assignment INSERT');
        }finally{injectAssignmentDrift=null;await raw.query('ROLLBACK TO SAVEPOINT assignment_drift');await raw.query('RELEASE SAVEPOINT assignment_drift');}
       }
-      const started=Date.now();const committed=await classification.commitSignalWorkspaceClassificationPageV1(args);
+      phase='actual_commit';const started=Date.now();const committed=await classification.commitSignalWorkspaceClassificationPageV1(args);
       pageDurations.push(Date.now()-started);pageSizes.push(args.outcomes.length);return committed;
+      }catch(error){console.error(JSON.stringify({projection_commit_failure:safeFailure(error),phase,assignment_drift_injected:assignmentDrifts>driftsBefore}));throw error;}
      }}});
    const completed=(await raw.query('SELECT status,denominator,processed_roots,processed_chunks::int FROM signal_topic_catalog_executions WHERE id=$1',[request.execution_id])).rows[0];
    assert.equal(completed.status,'ready');assert.equal(completed.denominator,counts.roots);assert.equal(completed.processed_roots,counts.roots);assert.equal(completed.processed_chunks,counts.chunks);
