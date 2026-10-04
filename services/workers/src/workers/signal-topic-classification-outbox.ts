@@ -15,6 +15,7 @@ import { SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_JOB_NAME } from "./signal-worksp
 type QueueLike = {
   add(name: string, data: unknown, options: Record<string, unknown>): Promise<unknown>;
   getJob(id: string): Promise<{ name: string; getState(): Promise<string>;
+    updateData?(data: unknown): Promise<void>;
     retry(state: "completed" | "failed"): Promise<void> } | null | undefined>;
 };
 type Options = { database?: Pick<Pool, "query" | "connect">; queue?: QueueLike; interval_ms?: number;
@@ -101,7 +102,16 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       if (prior) {
         if (prior.name !== jobName) throw new Error("topic_dispatch_contract_mismatch");
         const state = await prior.getState();
-        if (state === "completed" || state === "failed") await prior.retry(state);
+        if (state === "completed" || state === "failed") {
+          // An explicit free recovery can be requested by another authorized actor.
+          // Keep the durable job, but bind its next attempt to the current receipt.
+          // Never replace data on a queued/running job or weaken the Worker claim.
+          if (row.dispatch_kind === 'incremental_editorial_evidence') {
+            if (!prior.updateData) throw new Error("topic_dispatch_contract_mismatch");
+            await prior.updateData(data);
+          }
+          await prior.retry(state);
+        }
       } else await queue.add(jobName, data, {
         jobId: row.worker_job_id,
         attempts: row.input_contract === "legacy-topic-catalog-v1" ? 2 : 1,
