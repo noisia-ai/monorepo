@@ -129,7 +129,7 @@ function harness() {
       });
     },
     async finish() {
-      return labels.length === 2
+      return labels.length === inputs.length
         ? "completed"
         : calls.some((c) => c.status === "unknown")
           ? "failed"
@@ -419,13 +419,21 @@ test("unknown entity recovery after authority loss applies technical results wit
 test("required ordinal grammar flows through persisted request and worker parser", async () => {
   const h = harness();
   h.run.identity = facetLabelerIdentityV1();
+  for (let i = 2; i < 25; i++)
+    h.inputs.push({
+      ...h.inputs[0]!,
+      root_id: String(i),
+      input_digest: `d${i}`,
+    });
   const result = await runMentionFacetsTickV1({
     run_id: h.run.id,
     store: h.store,
     provider: h.provider,
   });
   assert.equal(result.status, "completed");
-  assert.equal(h.labels.length, 2);
+  assert.equal(h.labels.length, 25);
+  assert.ok(h.calls().every((call) => call.inputs.length <= 8));
+  assert.equal(h.calls().length, 4);
   assert.ok(h.labels.every((label) => label.status === "labeled"));
   assert.equal(h.submitted(), 1);
 });

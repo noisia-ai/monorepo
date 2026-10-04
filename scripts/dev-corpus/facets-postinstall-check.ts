@@ -5,10 +5,14 @@ import { main, openDatabase } from "./guard.mjs";
 import {
   createSignalLabelingStoreV1,
   requestMentionFacetsV1,
+  loadMentionFacetsStatusV1,
 } from "../../infrastructure/db/signal-labeling-runs";
 import { overrideMentionFacetV1 } from "../../infrastructure/db/signal-mention-facets";
 import { provisionSignalLabelingPolicyV1 } from "../../infrastructure/db/signal-labeling-policy-provisioning";
-import { facetLabelerIdentityV1 } from "../../packages/query-engine/src/signal-mention-facets-v1";
+import {
+  facetLabelerIdentityV1,
+  groupFacetInputsV1,
+} from "../../packages/query-engine/src/signal-mention-facets-v1";
 import { facetCallProposalV1 } from "../../services/workers/src/workers/signal-mention-facets-batch";
 import type { FacetResult } from "../../packages/query-engine/src/signal-mention-labeler-v1";
 const zeroUsage = {
@@ -110,7 +114,10 @@ await main(async () => {
       storeRaw: async (args) => `mock://${args.run_id}/${args.call_id}`,
     });
     const run = (await store.claim(requested.run_id))!;
-    check(run.identity.params.request_format === "required-ordinal-fields-v4");
+    check(
+      run.identity.params.request_format === "required-ordinal-fields-v3" &&
+        run.identity.params.max_roots_per_request === 8,
+    );
     const inputs = (await store.inputs(run)).slice(0, 3);
     const calls = await store.reserve(
       run,
@@ -167,6 +174,86 @@ await main(async () => {
     const rootA = inputs[0]!.root_id,
       rootB = inputs[1]!.root_id,
       rootC = inputs[2]!.root_id;
+    // Complete the synthetic population in pages to exercise read-only quotes
+    // when the selected identity is cached but the intended next identity differs.
+    const sample = (await current(rootA)).facets;
+    for (;;) {
+      const page = await store.inputs(run);
+      if (!page.length) break;
+      const pageCalls = await store.reserve(
+        run,
+        groupFacetInputsV1(
+          page,
+          JSON.stringify(run.context).length,
+          run.identity,
+        ).map((group) => facetCallProposalV1(run, group)),
+      );
+      await store.markSubmitting(run, pageCalls);
+      await store.persistRawPage(
+        run,
+        pageCalls.map((call) => ({
+          call,
+          raw: JSON.stringify({ simulation: true, custom_id: call.custom_id }),
+        })),
+      );
+      await store.settlePage(
+        run,
+        pageCalls.map((call) => ({
+          call,
+          usage: zeroUsage,
+          settled_micro_usd: 0,
+        })),
+      );
+      await store.apply(
+        run,
+        pageCalls.map((call) => ({
+          call,
+          results: call.inputs.map(
+            (input) =>
+              ({
+                root_id: input.root_id,
+                input_digest: input.input_digest,
+                entity_context_digest: run.entity_context_digest,
+                status: "labeled",
+                facets: sample,
+              }) as FacetResult,
+          ),
+        })),
+      );
+    }
+    const cachedQuote = await loadMentionFacetsStatusV1({
+      ...access,
+      identity: labeler,
+    });
+    check(
+      cachedQuote.estimate.roots === 0 && cachedQuote.estimated_micro_usd === 0,
+    );
+    const selectedBefore = (
+      await client.query(
+        "SELECT labeler_version_id FROM signal_workspace_labelers WHERE workspace_id=$1 AND kind='facets'",
+        [identity.workspace_id],
+      )
+    ).rows[0].labeler_version_id;
+    const nextQuote = await loadMentionFacetsStatusV1(access);
+    check(
+      nextQuote.estimate.roots > 0 &&
+        nextQuote.estimated_micro_usd > 0 &&
+        nextQuote.estimate.population_basis ===
+          "all_eligible_for_new_labeler" &&
+        nextQuote.estimate.max_roots_per_request === 8,
+    );
+    check(
+      nextQuote.pending === 0 &&
+        nextQuote.counts.every((row) => row.status === "labeled"),
+    );
+    check(
+      (
+        await client.query(
+          "SELECT labeler_version_id FROM signal_workspace_labelers WHERE workspace_id=$1 AND kind='facets'",
+          [identity.workspace_id],
+        )
+      ).rows[0].labeler_version_id === selectedBefore,
+    );
     // Confirm an identical model value: the entire coherent human decision must
     // survive when the next labeler has no semantic result.
     await overrideMentionFacetV1({

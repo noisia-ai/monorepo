@@ -117,6 +117,7 @@ await main(async () => {
     const proposals = groupFacetInputsV1(
       inputs,
       JSON.stringify(run.context).length,
+      run.identity,
     ).map((group) => facetCallProposalV1(run!, group));
     const reservation = reservationStore.reserve(run, proposals);
     const timeout = setTimeout(() => continueReserve(), 5000);

@@ -5,7 +5,7 @@ import { main, openDatabase } from "./guard.mjs";
 import {
   buildFacetRequestV1,
   facetInputDigestV1,
-  facetLabelerIdentityV1,
+  facetLabelerIdentityOrdinalV4,
   facetLabelerIdentityOrdinalV2,
   facetLabelerIdentityOrdinalV3,
   parseFacetGroupV1,
@@ -134,7 +134,7 @@ const identity =
     ? facetLabelerIdentityOrdinalV2()
     : version === 3
       ? facetLabelerIdentityOrdinalV3()
-      : facetLabelerIdentityV1();
+      : facetLabelerIdentityOrdinalV4();
 const params = buildFacetRequestV1(inputs, context, identity);
 const request = {
   custom_id: `mfp-sonnet-required-ordinals-${rootCount}-v${version}`,

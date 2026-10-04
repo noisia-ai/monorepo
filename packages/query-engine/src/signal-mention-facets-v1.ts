@@ -326,7 +326,7 @@ export function mentionFacetsOrdinalJsonSchemaV4(rootCount: number) {
     definitions: { facet: ordinalFacetSchemaV4 },
   };
 }
-export function facetLabelerIdentityV1(): LabelerIdentity {
+export function facetLabelerIdentityOrdinalV4(): LabelerIdentity {
   const previous = facetLabelerIdentityOrdinalV3();
   return {
     ...previous,
@@ -337,6 +337,23 @@ export function facetLabelerIdentityV1(): LabelerIdentity {
       request_format: MENTION_FACETS_ORDINAL_FORMAT_V4,
     },
   };
+}
+// Eight roots compiled and completed with the full facet grammar in a real probe.
+// This technical partition does not limit population or impose a financial cap.
+export function facetLabelerIdentityV1(): LabelerIdentity {
+  const demonstrated = facetLabelerIdentityOrdinalV3();
+  return {
+    ...demonstrated,
+    params: { ...demonstrated.params, max_roots_per_request: 8 },
+  };
+}
+export function facetMaxRootsPerRequestV1(identity: LabelerIdentity): number {
+  return z
+    .number()
+    .int()
+    .min(1)
+    .max(25)
+    .parse(identity.params.max_roots_per_request ?? 25);
 }
 const ordinalWireSchemaV4 = mentionFacetsSchemaV1.extend({
   unrelated_reason: z.enum(["homonym", "off_topic", "none"]),
@@ -363,7 +380,7 @@ function facetRequestFormatV1(identity: LabelerIdentity) {
   const legacy = facetLabelerIdentityLegacyV1(),
     previous = facetLabelerIdentityOrdinalV2(),
     ordinalV3 = facetLabelerIdentityOrdinalV3(),
-    current = facetLabelerIdentityV1();
+    current = facetLabelerIdentityOrdinalV4();
   if (
     identity.kind !== "facets" ||
     identity.provider !== "anthropic" ||
@@ -416,15 +433,22 @@ export function validateFacetLabelerIdentityV1(identity: LabelerIdentity) {
     (effort === "xhigh" || effort === "max")
   )
     throw new Error("facet_thinking_effort_unsupported");
-  return { format, thinking, effort, maxTokens };
+  return {
+    format,
+    thinking,
+    effort,
+    maxTokens,
+    maxRoots: facetMaxRootsPerRequestV1(identity),
+  };
 }
 export function buildFacetRequestV1(
   inputs: FacetInput[],
   context: EntityContextV1,
   identity: LabelerIdentity = facetLabelerIdentityV1(),
 ) {
-  const { format, thinking, effort, maxTokens } =
+  const { format, thinking, effort, maxTokens, maxRoots } =
     validateFacetLabelerIdentityV1(identity);
+  if (inputs.length > maxRoots) throw new Error("facet_root_count_invalid");
   return {
     model: identity.model,
     max_tokens: maxTokens,
@@ -471,7 +495,9 @@ export function buildFacetRequestV1(
 export function groupFacetInputsV1(
   inputs: FacetInput[],
   systemCharacters = 0,
+  identity: LabelerIdentity = facetLabelerIdentityLegacyV1(),
 ): FacetInput[][] {
+  const maxRoots = facetMaxRootsPerRequestV1(identity);
   const groups: FacetInput[][] = [];
   let group: FacetInput[] = [];
   let chars = systemCharacters;
@@ -488,7 +514,7 @@ export function groupFacetInputsV1(
       continue;
     }
     if (
-      group.length >= 25 ||
+      group.length >= maxRoots ||
       (group.length > 0 && (chars + size) / 3.5 > 20000)
     )
       flush();

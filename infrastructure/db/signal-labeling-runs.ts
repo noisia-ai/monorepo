@@ -2,6 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import {
   facetLabelerIdentityV1,
+  facetMaxRootsPerRequestV1,
   validateFacetLabelerIdentityV1,
   labelerDigestV1,
   signalWorkspaceEmbeddingDigestV1 as digest,
@@ -109,16 +110,22 @@ async function estimatePopulation(
   identity: LabelerIdentity,
   context: EntityContextV1,
   affected: string[] = [],
+  allPopulation = false,
 ) {
   const row = (
-    await c.query<{ roots: number; characters: string }>(
-      `SELECT count(*)::int roots,COALESCE(sum(length(full_text)+COALESCE(length(title),0)),0)::text characters
-  FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND ((status IN('pending','error') AND NOT requires_context_review) OR root_id=ANY($2::uuid[]))`,
-      [workspace, affected],
+    await c.query<{ roots: number; characters: string; long_roots: number }>(
+      `SELECT count(*)::int roots,COALESCE(sum(length(full_text)+COALESCE(length(title),0)),0)::text characters,
+  count(*) FILTER (WHERE length(full_text)>12000)::int long_roots
+  FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND ($3::boolean OR (status IN('pending','error') AND NOT requires_context_review) OR root_id=ANY($2::uuid[]))`,
+      [workspace, affected, allPopulation],
     )
   ).rows[0]!;
+  const maxRoots =
+    identity.provider === "typesafe" ? 1 : facetMaxRootsPerRequestV1(identity);
   const requests =
-    identity.provider === "typesafe" ? row.roots : Math.ceil(row.roots / 20);
+    identity.provider === "typesafe"
+      ? row.roots
+      : row.long_roots + Math.ceil((row.roots - row.long_roots) / maxRoots);
   const estimatedInput = Math.ceil(
     Number(row.characters) / 3.5 +
       ((JSON.stringify(context).length + 2400) / 3.5) * requests,
@@ -133,7 +140,13 @@ async function estimatePopulation(
     identity.provider === "typesafe" ? 0 : row.roots * 350;
   return {
     roots: row.roots,
+    population_basis: allPopulation
+      ? "all_eligible_for_new_labeler"
+      : "pending_or_affected",
+    target_labeler_digest: labelerDigestV1(identity),
     characters: Number(row.characters),
+    estimated_requests: requests,
+    max_roots_per_request: maxRoots,
     estimated_input_tokens: estimatedInput,
     estimated_output_tokens: estimatedOutput,
     input_usd_per_mtok: inputRate,
@@ -147,6 +160,7 @@ export async function loadMentionFacetsStatusV1(args: {
   database: LabelingDatabaseV1;
   workspace_id: string;
   actor_user_id: string;
+  identity?: LabelerIdentity;
 }) {
   return tx(args.database, async (c) => {
     await authorize(c, args.workspace_id, args.actor_user_id, false);
@@ -170,19 +184,21 @@ export async function loadMentionFacetsStatusV1(args: {
     const pending = counts
       .filter((x) => x.status === "pending")
       .reduce((n, x) => n + x.count, 0);
-    const labeler =
-      (
-        await c.query<{ identity: LabelerIdentity }>(
-          `SELECT l.identity FROM signal_workspace_labelers w JOIN signal_labeler_versions l ON l.id=w.labeler_version_id WHERE w.workspace_id=$1 AND w.kind='facets'`,
-          [args.workspace_id],
-        )
-      ).rows[0]?.identity ?? facetLabelerIdentityV1();
+    const selectedLabeler = (
+      await c.query<{ identity: LabelerIdentity }>(
+        `SELECT l.identity FROM signal_workspace_labelers w JOIN signal_labeler_versions l ON l.id=w.labeler_version_id WHERE w.workspace_id=$1 AND w.kind='facets'`,
+        [args.workspace_id],
+      )
+    ).rows[0]?.identity;
+    const labeler = args.identity ?? facetLabelerIdentityV1();
     const estimate = await estimatePopulation(
       c,
       args.workspace_id,
       labeler,
       change.context,
       change.changed ? change.affected : [],
+      !selectedLabeler ||
+        labelerDigestV1(selectedLabeler) !== labelerDigestV1(labeler),
     );
     return {
       contract_version: "mention-facets-status-v1",

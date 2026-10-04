@@ -411,12 +411,12 @@ test("ordinal grammar preserves legacy identities and requires every input key",
 test("union-free ordinal transport restores the exact semantic facet contract", async () => {
   const {
     buildFacetRequestV1,
-    facetLabelerIdentityV1,
+    facetLabelerIdentityOrdinalV4,
     facetLabelerIdentityLegacyV1,
     facetLabelerIdentityOrdinalV3,
     decodeFacetOrdinalWireV4,
   } = await import("./signal-mention-facets-v1");
-  const identity = facetLabelerIdentityV1();
+  const identity = facetLabelerIdentityOrdinalV4();
   const legacy = facetLabelerIdentityLegacyV1();
   assert.equal(identity.params.request_format, "required-ordinal-fields-v4");
   assert.notEqual(
@@ -535,4 +535,39 @@ test("union-free ordinal transport restores the exact semantic facet contract", 
       "invalid_facets",
     );
   }
+});
+
+test("demonstrated grammar partitions all 905 roots without changing facets or imposing a cost cap", async () => {
+  const {
+    facetLabelerIdentityV1,
+    facetLabelerIdentityOrdinalV3,
+    buildFacetRequestV1,
+  } = await import("./signal-mention-facets-v1");
+  const identity = facetLabelerIdentityV1();
+  const previous = facetLabelerIdentityOrdinalV3();
+  assert.equal(identity.prompt_digest, previous.prompt_digest);
+  assert.equal(identity.schema_digest, previous.schema_digest);
+  assert.equal(identity.params.max_roots_per_request, 8);
+  const inputs = Array.from({ length: 905 }, (_, i) =>
+    input(i, i % 101 === 0 ? "long ".repeat(2500) : "Example mention"),
+  );
+  const groups = groupFacetInputsV1(inputs, 0, identity);
+  assert.deepEqual(groups.flat(), inputs);
+  assert.ok(groups.every((group) => group.length <= 8));
+  assert.ok(
+    groups
+      .filter((group) => group.some((row) => row.text.length > 12000))
+      .every((group) => group.length === 1),
+  );
+  for (const group of groups)
+    assert.doesNotThrow(() => buildFacetRequestV1(group, ce, identity));
+  assert.throws(
+    () => buildFacetRequestV1(inputs.slice(0, 9), ce, identity),
+    /facet_root_count_invalid/u,
+  );
+  const eight = inputs.slice(1, 9);
+  assert.deepEqual(
+    buildFacetRequestV1(eight, ce, identity),
+    buildFacetRequestV1(eight, ce, previous),
+  );
 });

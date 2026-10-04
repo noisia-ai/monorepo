@@ -65,7 +65,10 @@ await main(async () => {
         [identity.workspace_id],
       )
     ).rows[0].count;
-    const estimateStatus = await loadMentionFacetsStatusV1(access);
+    const estimateStatus = await loadMentionFacetsStatusV1({
+      ...access,
+      identity: labeler,
+    });
     console.log(
       JSON.stringify({
         stage: "facets_estimate",
@@ -232,7 +235,10 @@ await main(async () => {
           }),
         );
     }
-    const status = await loadMentionFacetsStatusV1(access);
+    const status = await loadMentionFacetsStatusV1({
+      ...access,
+      identity: labeler,
+    });
     console.log(
       JSON.stringify({
         stage: "facets_result",

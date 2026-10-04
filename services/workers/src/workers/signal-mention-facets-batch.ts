@@ -104,9 +104,11 @@ export async function runMentionFacetsTickV1(args: {
       if (inputs.length) {
         await store.reserve(
           run,
-          groupFacetInputsV1(inputs, JSON.stringify(run.context).length).map(
-            (group) => facetCallProposalV1(run, group),
-          ),
+          groupFacetInputsV1(
+            inputs,
+            JSON.stringify(run.context).length,
+            run.identity,
+          ).map((group) => facetCallProposalV1(run, group)),
         );
         calls = await store.calls(run);
       }
