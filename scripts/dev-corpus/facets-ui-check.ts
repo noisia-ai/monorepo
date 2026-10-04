@@ -1,6 +1,6 @@
 /** Opt-in on the existing private MFP corpus. No DDL, providers or durable data changes. */
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
+import {readFile,writeFile} from "node:fs/promises";
 import {main,openDatabase} from "./guard.mjs";
 import {loadMentionFacetBrowserV1,overrideMentionFacetsBatchV1,loadFacetEntityContextV1,
   type LabelingDatabaseV1} from "../../infrastructure/db/signal-mention-facets";
@@ -10,11 +10,33 @@ await main(async()=>{
   const identity=JSON.parse(await readFile(".data/dev-corpus/identity.json","utf8"));
   const pool=await openDatabase(),client=await pool.connect();
   let phase="preflight",transaction=false,serial=0;
+  const explainOnly=process.argv.includes("--explain-only");
+  const plans:Record<string,unknown>={};
+  const reportPhase=(next:string)=>{phase=next;console.log(JSON.stringify({phase}));};
+  const sanitizePlan=(value:unknown):unknown=>{
+    if(typeof value==="string")return value.replace(/'(?:[^']|'')*'/g,"'[redacted]'")
+      .replace(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi,"[uuid]");
+    if(Array.isArray(value))return value.map(sanitizePlan);
+    if(value&&typeof value==="object")return Object.fromEntries(Object.entries(value).map(([key,item])=>[key,sanitizePlan(item)]));
+    return value;
+  };
   const stack:string[]=[];
   const query=async(text:string,values?:unknown[])=>{
     if(/^BEGIN\b/i.test(text)){const name=`facet_ui_${++serial}`;stack.push(name);return client.query(`SAVEPOINT ${name}`);}
     if(text==="COMMIT")return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
     if(text==="ROLLBACK"){const name=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${name}`);return client.query(`RELEASE SAVEPOINT ${name}`);}
+    if(/^WITH display_roots/.test(text)) {
+      const kind=text.includes("SELECT dimension,value")?"distributions":"page";
+      if(!plans[kind]) {
+        reportPhase(`explain_${kind}`);
+        const result=await client.query(`EXPLAIN (FORMAT JSON) ${text}`,values);
+        plans[kind]=sanitizePlan(result.rows[0]?.["QUERY PLAN"]);
+        await writeFile(".data/dev-corpus/facets-ui-plans.json",JSON.stringify({format:"postgres-explain-json",analyze:false,plans},null,2),{mode:0o600});
+        console.log(JSON.stringify({phase:`plan_${kind}_saved`,private_artifact:".data/dev-corpus/facets-ui-plans.json"}));
+        if(explainOnly)throw Error("mfp_explain_only_complete");
+      }
+      reportPhase(`execute_${kind}`);
+    }
     return client.query(text,values);
   };
   const database={query,connect:async()=>({query,release(){}})} as unknown as LabelingDatabaseV1;
@@ -33,8 +55,9 @@ await main(async()=>{
     const baseline=await census();
     assert.equal((await client.query(`SELECT count(*)::int n FROM signal_labeling_runs WHERE workspace_id=$1 AND status IN('queued','running')`,[identity.workspace_id])).rows[0].n,0);
     await client.query("BEGIN");transaction=true;
+    await client.query("SET LOCAL statement_timeout = '60s'");
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",[identity.workspace_id]);
-    phase="browser";
+    reportPhase("browser");
     const page=await loadMentionFacetBrowserV1({...access,limit:3});
     assert.equal(page.items.length,3);assert.ok(page.can_edit);assert.ok(page.distributions.length>0);
     assert.ok(page.items.every(item=>typeof item.text==="string"&&item.text.length>0));
@@ -45,19 +68,19 @@ await main(async()=>{
       const filtered=await loadMentionFacetBrowserV1({...access,dimension,value:bucket.value,limit:3});assert.ok(filtered.items.length>0);
     }
     const roots=page.items.map(item=>item.root_id);
-    phase="batch_corrections";
+    reportPhase("batch_corrections");
     const corrected=await overrideMentionFacetsBatchV1({...access,overrides:roots.map(root_id=>({root_id,dimension:"voice",value:{value:"institution",confidence:"high",abstained:false}}))});
     assert.equal(corrected.updated,3);
     for(const root_id of roots){const updated=await loadMentionFacetBrowserV1({...access,root_id});
       assert.equal(updated.items.length,1);assert.equal(updated.items[0]!.facets?.voice.value,"institution");assert.ok(updated.items[0]!.human_dimensions.includes("voice"));}
-    phase="context_pending_human_preserved";
+    reportPhase("context_pending_human_preserved");
     await client.query("SAVEPOINT alias_change");
     await client.query("UPDATE brands SET brand_seed_handles=COALESCE(brand_seed_handles,ARRAY[]::text[])||ARRAY['x'] WHERE id=$1",[identity.brand_id]);
     const stale=await loadMentionFacetBrowserV1({...access,root_id:roots[0]});
     assert.equal(stale.items[0]!.status,"pending");assert.equal(stale.items[0]!.facets?.voice.value,"institution");
     if(!page.items[0]!.human_dimensions.includes("act"))assert.equal(stale.items[0]!.facets?.act.abstained,true);
     await client.query("ROLLBACK TO SAVEPOINT alias_change");await client.query("RELEASE SAVEPOINT alias_change");
-    phase="context_review";
+    reportPhase("context_review");
     const ce=await loadFacetEntityContextV1(client,identity.workspace_id);
     const competitor=ce.entities.find(item=>item.kind==="competitor");assert.ok(competitor,"fixture_competitor_required");
     await overrideMentionFacetsBatchV1({...access,overrides:[{root_id:roots[0]!,dimension:"entities",value:{value:[{entity_id:competitor.entity_id,kind:"competitor",salience:"secondary"}],confidence:"high",abstained:false}}]});
@@ -71,15 +94,20 @@ await main(async()=>{
     const repaired=await loadMentionFacetBrowserV1({...access,root_id:roots[0]});assert.equal(repaired.items[0]!.requires_context_review,false);
     assert.equal(repaired.items[0]!.relevance,"unrelated");assert.equal(repaired.items[0]!.facets?.voice.value,"institution");
     await client.query("ROLLBACK TO SAVEPOINT retire_entity");await client.query("RELEASE SAVEPOINT retire_entity");
-    phase="revoked_text_rights";
+    reportPhase("revoked_text_rights");
     await client.query("UPDATE signal_licensing_policy_usages SET decision='prohibited' WHERE workspace_id=$1 AND usage_purpose='client-text-or-excerpt'",[identity.workspace_id]);
     const withheld=await loadMentionFacetBrowserV1({...access,limit:3});assert.equal(withheld.items.length,0);assert.equal(withheld.distributions.length,0);
-    phase="rollback";
+    reportPhase("rollback");
     await client.query("ROLLBACK");transaction=false;
     assert.deepEqual(await census(),baseline);
     console.log(JSON.stringify({status:"passed",browser:true,dimensions:9,batch_corrections:3,human_survives_stale:true,
       context_review_and_repair:true,revoked_text_withheld:true,rollback_verified:true,new_provider_calls:0}));
   } catch(error) {
+    if(error instanceof Error&&error.message==="mfp_explain_only_complete") {
+      await client.query("ROLLBACK");transaction=false;
+      console.log(JSON.stringify({status:"planned",analyze:false,rolled_back:true,new_provider_calls:0}));
+      return;
+    }
     console.error(JSON.stringify({status:"failed",phase,sql_code:error&&typeof error==="object"&&"code" in error?String(error.code):null}));
     throw error;
   } finally {
