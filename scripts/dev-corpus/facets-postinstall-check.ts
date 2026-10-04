@@ -116,7 +116,7 @@ await main(async () => {
       storeRaw: async (args) => `mock://${args.run_id}/${args.call_id}`,
     });
     const run = (await store.claim(requested.run_id))!;
-    const inputs = (await store.inputs(run)).slice(0, 2);
+    const inputs = (await store.inputs(run)).slice(0, 3);
     const calls = await store.reserve(
       run,
       inputs.map((input) => facetCallProposalV1(run, [input])),
@@ -170,7 +170,16 @@ await main(async () => {
         )
       ).rows[0];
     const rootA = inputs[0]!.root_id,
-      rootB = inputs[1]!.root_id;
+      rootB = inputs[1]!.root_id,
+      rootC = inputs[2]!.root_id;
+    // Confirm an identical model value: the entire coherent human decision must
+    // survive when the next labeler has no semantic result.
+    await overrideMentionFacetV1({
+      ...access,
+      root_id: rootC,
+      dimension: "unrelated_reason",
+      value: "off_topic",
+    });
     await overrideMentionFacetV1({
       ...access,
       root_id: rootA,
@@ -290,6 +299,14 @@ await main(async () => {
       );
       check(row.effective_entities_digest === entityDigest);
     }
+    const humanUnrelated = await current(rootC);
+    check(
+      humanUnrelated.status === "pending" &&
+        humanUnrelated.relevance === "unrelated" &&
+        !humanUnrelated.facets.entities.abstained &&
+        humanUnrelated.facets.entities.value.length === 0 &&
+        humanUnrelated.facets.unrelated_reason === "off_topic",
+    );
     const nextRun = (await store.claim(next.run_id))!;
     const nextCalls = await store.reserve(
       nextRun,
@@ -321,8 +338,8 @@ await main(async () => {
               root_id: input.root_id,
               input_digest: input.input_digest,
               entity_context_digest: nextRun.entity_context_digest,
-              status: input.root_id === rootA ? "error" : "refused",
-              ...(input.root_id === rootA
+              status: input.root_id !== rootB ? "error" : "refused",
+              ...(input.root_id !== rootB
                 ? { error_code: "synthetic_technical_error" }
                 : { refusal_category: "synthetic_refusal" }),
             }) as FacetResult,
@@ -342,6 +359,14 @@ await main(async () => {
         refused.relevance === "relevant",
     );
     check(errored.facets.voice.abstained && refused.facets.voice.abstained);
+    const humanError = await current(rootC);
+    check(
+      humanError.status === "error" &&
+        humanError.relevance === "unrelated" &&
+        !humanError.facets.entities.abstained &&
+        humanError.facets.unrelated_reason === "off_topic" &&
+        humanError.facets.voice.abstained,
+    );
     check(
       (
         await client.query(

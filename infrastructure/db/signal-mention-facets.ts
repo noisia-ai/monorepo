@@ -10,7 +10,6 @@ import {
   deriveRelevanceV1,
   effectiveEntitiesDigestV1,
   validateMentionFacetsV1,
-  signalWorkspaceEmbeddingDigestV1 as digest,
 } from "@noisia/query-engine";
 import { loadSignalSemanticResolutionGovernedContextV1 } from "./signal-semantic-resolution";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
@@ -239,13 +238,10 @@ export async function overrideMentionFacetV1(args: {
       args.dimension === "entities" ||
       args.dimension === "unrelated_reason"
     ) {
-      for (const dimension of ["entities", "unrelated_reason"] as const) {
-        if (
-          digest(normalized[dimension]) !==
-          digest((row.facets as typeof normalized)[dimension])
-        )
-          dimensions.add(dimension);
-      }
+      // A human confirmation owns the coherent decision, even when a value is
+      // identical to the provider's current value. Both must survive its expiry.
+      dimensions.add("entities");
+      dimensions.add("unrelated_reason");
     }
     const patches = [...dimensions].map((dimension) => ({
       dimension,
