@@ -352,7 +352,7 @@ await main(async () => {
         [edited.run_id],
       )
     ).rows
-      .flatMap((r) => r.inputs)
+      .flatMap((r: {inputs: unknown[]}) => r.inputs)
       .flatMap((r: any) => r.evaluated_concepts);
     check(
       evaluated.length > 0 &&
@@ -393,10 +393,86 @@ await main(async () => {
       run_id: preview.run_id,
     });
     check(previewRead.items.length <= 30, "preview is bounded by roots");
+    const beforeEntities = (
+      await client.query(
+        "SELECT count(*)::int n FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id<>$2 AND verdict='belongs'",
+        [access.workspace_id, root.root_id],
+      )
+    ).rows[0].n;
+    await overrideMentionFacetV1({
+      ...access,
+      root_id: root.root_id,
+      dimension: "entities",
+      value: {
+        value: entities.filter((e: any) => e.kind === "primary_brand"),
+        confidence: "high",
+        abstained: false,
+      },
+    });
+    const afterEntities = (
+      await client.query(
+        "SELECT m.concept_key,m.verdict,c.scope FROM signal_concept_memberships_current_v1 m JOIN signal_membership_concepts_v1 c USING(workspace_id,concept_key) WHERE m.workspace_id=$1 AND m.root_id=$2",
+        [access.workspace_id, root.root_id],
+      )
+    ).rows;
+    check(
+      afterEntities.every((r: any) => r.scope !== "competitor"),
+      "human entity correction removes incompatible decisions",
+    );
+    check(
+      afterEntities.some((r: any) => r.verdict === "pending"),
+      "changed entities invalidate affected model pairs",
+    );
+    check(
+      (
+        await client.query(
+          "SELECT count(*)::int n FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id<>$2 AND verdict='belongs'",
+          [access.workspace_id, root.root_id],
+        )
+      ).rows[0].n === beforeEntities,
+      "entity correction preserves other roots",
+    );
+    await client.query("SAVEPOINT ce_fence");
+    const version = (
+      await client.query(
+        "SELECT * FROM signal_entity_context_versions WHERE workspace_id=$1 ORDER BY version_no DESC LIMIT 1",
+        [access.workspace_id],
+      )
+    ).rows[0];
+    const other = (
+      await client.query(
+        "SELECT root_id FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND relevance='relevant' AND root_id<>$2 ORDER BY root_id LIMIT 1",
+        [access.workspace_id, root.root_id],
+      )
+    ).rows[0];
+    await client.query(
+      "INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,parent_digest,context,diff,affected_mode,affected_count) VALUES($1,$2,$3,$4,$5::jsonb,'{}'::jsonb,'targeted',1)",
+      [
+        access.workspace_id,
+        version.version_no + 1,
+        "sha256:" + "b".repeat(64),
+        version.digest,
+        JSON.stringify(version.context),
+      ],
+    );
+    await client.query(
+      "INSERT INTO signal_entity_context_affected_roots(workspace_id,version_no,root_id) VALUES($1,$2,$3)",
+      [access.workspace_id, version.version_no + 1, other.root_id],
+    );
+    check(
+      (
+        await client.query(
+          "SELECT count(*)::int n FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND source='model'",
+          [access.workspace_id, other.root_id],
+        )
+      ).rows[0].n === 0,
+      "affected CE version fences stale membership",
+    );
+    await client.query("ROLLBACK TO SAVEPOINT ce_fence");
     // Permissions are current data, independent of paid/model authority.
     await client.query("SAVEPOINT deny_metrics");
     await client.query(
-      "UPDATE signal_licensing_policy_usages SET decision='prohibited' WHERE workspace_id=$1 AND usage_purpose='client-derived-metrics'",
+      "UPDATE signal_licensing_policies SET status='retired' WHERE workspace_id=$1 AND status='active'",
       [access.workspace_id],
     );
     status = await loadConceptMembershipsStatusV1(access);

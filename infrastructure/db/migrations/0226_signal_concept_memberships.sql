@@ -41,7 +41,7 @@ CREATE VIEW signal_membership_concepts_v1 AS
  WHERE t.metadata#>>'{topic,lifecycle}'<>'archived' AND (t.metadata#>>'{topic,origin}'='manual' OR t.metadata#>>'{topic,origin}'='workspace_discovery' AND t.metadata#>>'{topic,source,run_key}' LIKE 'workspace-discovery:%');
 CREATE VIEW signal_concept_memberships_current_v1 AS
  WITH pairs AS (
- SELECT f.workspace_id,f.root_id,f.input_digest root_fingerprint,f.input_digest,
+ SELECT f.workspace_id,f.root_id,signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest)) root_fingerprint,f.input_digest,
  COALESCE(f.entity_context_digest,(SELECT digest FROM signal_entity_context_versions ce WHERE ce.workspace_id=f.workspace_id ORDER BY version_no DESC LIMIT 1)) entity_context_digest,
  f.effective_entities_digest,c.concept_key,c.definition_digest,
  chosen.labeler_digest
