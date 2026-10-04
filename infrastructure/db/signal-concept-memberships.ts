@@ -98,48 +98,52 @@ function snapshot(run: LabelingRunV1): Snapshot {
   if (!s?.concepts) fail("membership_snapshot_missing");
   return s;
 }
-/** Select by full-text fingerprint, effective entities and per-concept definition. No vectors or V2 classifications. */
-export async function selectMembershipInputsV1(
-  c: Queryable,
-  run: LabelingRunV1,
-): Promise<MembershipInputV1[]> {
-  const s = snapshot(run);
-  return (
-    await c.query<MembershipInputV1>(
-      `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4::jsonb) c(concept_key text,definition_digest text,scope text)), roots AS (
+/** One pending-pair predicate for estimates and dispatch: current semantic decisions and
+ * human overrides are reused; unresolved transports remain fenced. */
+const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4::jsonb) c(concept_key text,definition_digest text,scope text)) , current_pairs AS MATERIALIZED (
+ SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
+), roots AS MATERIALIZED (
  SELECT f.*,COALESCE(f.entity_context_digest,(SELECT digest FROM signal_entity_context_versions ce WHERE ce.workspace_id=f.workspace_id ORDER BY version_no DESC LIMIT 1)) effective_ce
  FROM signal_mention_facets_current_v1 f WHERE f.workspace_id=$1 AND f.relevance='relevant' AND NOT f.requires_context_review
- AND ($2::uuid IS NULL OR f.root_id>$2) AND ($3::uuid[] IS NULL OR f.root_id=ANY($3)))
- SELECT f.root_id,f.input_digest,signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest)) root_fingerprint,f.full_text text,f.title,f.platform,f.content_type,f.author,f.published_at::text,f.language,
- f.effective_ce entity_context_digest,f.effective_entities_digest,f.facets#>'{entities,value}' entities,f.facets#>>'{voice,value}' voice,f.facets#>>'{act,value}' act,
- (SELECT jsonb_agg(concept) FROM jsonb_array_elements($4::jsonb) concept WHERE concept->>'concept_key'=ANY(pending.keys)) evaluated_concepts
+ AND NOT (f.root_id=ANY($7::uuid[])) AND ($2::uuid IS NULL OR f.root_id>$2) AND ($3::uuid[] IS NULL OR f.root_id=ANY($3))), work AS (
+ SELECT f.*,pending.keys
  FROM roots f JOIN LATERAL (
  SELECT array_agg(c.concept_key) keys FROM concepts c
  WHERE (c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))
- AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM signal_concept_memberships_current_v1 current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
+ AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM current_pairs current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
  AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest AND current.verdict NOT IN('pending','error') AND (current.source='human' OR current.labeler_digest=$6)))
  AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls uncertain JOIN signal_labeling_runs r ON r.id=uncertain.run_id
  WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND uncertain.status IN('submitting','unknown')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest
  AND i->>'entity_context_digest'=f.effective_ce AND i->>'effective_entities_digest'=f.effective_entities_digest
  AND i->'evaluated_concepts' @> jsonb_build_array(jsonb_build_object('concept_key',c.concept_key,'definition_digest',c.definition_digest))))
- ) pending ON cardinality(pending.keys)>0 ORDER BY f.root_id LIMIT 200`,
-      [
-        run.workspace_id,
-        run.cursor_root_id,
-        s.sample_root_ids,
-        JSON.stringify(s.concepts),
-        s.preview,
-        run.labeler_digest,
-      ],
-    )
-  ).rows;
+ ) pending ON cardinality(pending.keys)>0)`;
+/** Select by full-text fingerprint, effective entities and per-concept definition. No vectors or V2 classifications. */
+export async function selectMembershipInputsV1(c: Queryable, run: LabelingRunV1): Promise<MembershipInputV1[]> {
+  const s = snapshot(run);
+  return (await c.query<MembershipInputV1>(`${membershipWorkSql}
+ SELECT f.root_id,f.input_digest,signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest)) root_fingerprint,f.full_text text,f.title,f.platform,f.content_type,f.author,f.published_at::text,f.language,
+ f.effective_ce entity_context_digest,f.effective_entities_digest,f.facets#>'{entities,value}' entities,f.facets#>>'{voice,value}' voice,f.facets#>>'{act,value}' act,
+ (SELECT jsonb_agg(concept) FROM jsonb_array_elements($4::jsonb) concept WHERE concept->>'concept_key'=ANY(f.keys)) evaluated_concepts
+ FROM work f ORDER BY f.root_id LIMIT 200`,
+    [run.workspace_id, run.cursor_root_id, s.sample_root_ids, JSON.stringify(s.concepts), s.preview, run.labeler_digest, []])).rows;
+}
+export async function estimateMembershipWorkV1(c: Queryable, args: {
+  workspace_id: string; concepts: ConceptForJudgeV1[]; context: EntityContextV1;
+  labeler_digest: string; sample: string[] | null; preview: boolean; stale_roots?: string[];
+}) {
+  const pop = (await c.query<{ roots: number; characters: string; pairs: string }>(`${membershipWorkSql}
+ SELECT count(*)::int roots,COALESCE(sum(length(full_text)),0)::text characters,
+ COALESCE(sum(cardinality(keys)),0)::text pairs FROM work`,
+    [args.workspace_id, null, args.sample, JSON.stringify(args.concepts), args.preview, args.labeler_digest, args.stale_roots ?? []])).rows[0]!;
+  return estimate(pop.roots, Number(pop.characters), args.concepts, args.context, Number(pop.pairs));
 }
 function estimate(
   roots: number,
   characters: number,
   concepts: ConceptForJudgeV1[],
   context: EntityContextV1,
+  pairs = roots * concepts.length,
 ) {
   const requests = Math.ceil(roots / 8),
     input = Math.ceil(
@@ -154,7 +158,7 @@ function estimate(
     roots,
     estimated_requests: requests,
     estimated_micro_usd: Math.ceil(
-      input * 2 + roots * Math.max(1, concepts.length) * 160 * 5,
+      input * 2 + pairs * 160 * 5,
     ),
   };
 }
@@ -203,14 +207,10 @@ export async function requestConceptMembershipsV1(args: {
               )
             ).rows.map((r) => r.root_id)
           : null;
-        const pop = (
-          await c.query<{ roots: number; characters: string }>(
-            `SELECT count(*)::int roots,COALESCE(sum(length(full_text)),0)::text characters FROM signal_mention_facets_current_v1 f WHERE workspace_id=$1 AND relevance='relevant' AND ($2::uuid[] IS NULL OR root_id=ANY($2)) AND EXISTS(SELECT 1 FROM jsonb_to_recordset($3::jsonb) c(scope text) WHERE c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))`,
-            [w, sample, JSON.stringify(concepts)],
-          )
-        ).rows[0]!;
+        const estimate = await estimateMembershipWorkV1(c, {workspace_id: w, concepts, context,
+          labeler_digest: ld, sample, preview: !!previewConcept});
         return {
-          ...estimate(pop.roots, Number(pop.characters), concepts, context),
+          ...estimate,
           snapshot: {
             preview: !!previewConcept,
             concepts,
@@ -439,12 +439,12 @@ export async function loadConceptMembershipsStatusV1(
       latest,
       entity_context_digest: change.digest,
       stale_count: change.changed ? change.affected.length : 0,
-      estimated_micro_usd: estimate(
-        population.relevant,
-        Number(population.characters),
-        concepts,
-        change.context,
-      ).estimated_micro_usd,
+      estimated_micro_usd: (await estimateMembershipWorkV1(c, {
+        workspace_id: args.workspace_id, concepts, context: change.context,
+        labeler_digest: digest(membershipLabelerIdentityV1()), sample: null, preview: false,
+        // These roots first need a current fiche; a read must not register CE or quote stale work.
+        stale_roots: change.changed ? change.affected : [],
+      })).estimated_micro_usd,
       preview_estimated_micro_usd: estimate(
         Math.min(30, population.relevant),
         population.relevant

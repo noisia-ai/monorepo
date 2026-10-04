@@ -14,7 +14,7 @@ export function validNativeTopicDetail(value: unknown, identity: Identity): valu
   if (!value || typeof value !== "object") return false;
   const item = value as SignalWorkspaceTopicDetailV1;
   return item.contract_version === "signal-workspace-topic-detail-v1" && item.workspace_id === identity.workspace_id
-    && typeof item.generation_id === "string" && item.generation_id === identity.generation_id && item.scope_digest === identity.scope_digest
+    && (item.generation_id === null || typeof item.generation_id === "string") && item.generation_id === identity.generation_id && item.scope_digest === identity.scope_digest
     && item.kind === identity.kind && item.term_key === identity.term_key
     && count(item.mention_count) && count(item.undated_mentions) && item.undated_mentions <= item.mention_count
     && Array.isArray(item.series) && new Set(item.series.map(point => point?.date)).size === item.series.length && item.series.every(point => !!point && typeof point.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(point.date) && count(point.mention_count))
@@ -35,10 +35,12 @@ export function SignalWorkspaceTopicDetail({ data, termKey, kind = "topic", onSe
   const t = useTranslations("SignalV2.workspaceTopics.detailMetrics");
   const [detail, setDetail] = useState<SignalWorkspaceTopicDetailV1 | null>(null);
   const [failed, setFailed] = useState(false), [attempt, setAttempt] = useState(0);
-  const generationId = data.terms.find(term => term.term_key === termKey)?.interest_generation_id ?? data.generation_id;
+  const selectedTerm = data.terms.find(term => term.term_key === termKey);
+  const generationId = selectedTerm?.interest_generation_id ?? data.generation_id;
+  const membership = selectedTerm?.basis === "concept_membership";
   useEffect(() => {
     const controller = new AbortController(); setDetail(null); setFailed(false);
-    if (!data.is_current || !generationId) return () => controller.abort();
+    if (!data.is_current || (!generationId && !membership)) return () => controller.abort();
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest });
     if (data.filters.date_from) params.set("date_from", data.filters.date_from);
     if (data.filters.date_to) params.set("date_to", data.filters.date_to);
@@ -50,7 +52,7 @@ export function SignalWorkspaceTopicDetail({ data, termKey, kind = "topic", onSe
       if (!controller.signal.aborted) setDetail(value);
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [data.workspace_id, generationId, data.scope_digest, data.is_current, data.filters.date_from, data.filters.date_to, kind, termKey, attempt]);
+  }, [data.workspace_id, generationId, membership, data.scope_digest, data.is_current, data.filters.date_from, data.filters.date_to, kind, termKey, attempt]);
   const current = data.is_current && detail && validNativeTopicDetail(detail, {
     workspace_id: data.workspace_id, generation_id: generationId, scope_digest: data.scope_digest, kind, term_key: termKey }) ? detail : null;
   return <>{failed ? <p role="alert">{t("error")} <button className="signal-v2-filter" type="button" onClick={() => setAttempt(value => value + 1)}>{t("retry")}</button></p> : null}

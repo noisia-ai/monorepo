@@ -292,3 +292,18 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.match(html, /signal-v2-module-header|signal-v2-page-head/);
   });
 }
+
+for (const locale of ["es-MX", "en-US"]) test(`${locale}: MFP shows relevance and semantic membership without cluster or approval claims`, async () => {
+  const mfp: SignalWorkspaceTopicsOverviewV1 = {...data, generation_id:null,source_engine_execution_id:null,interpretation_coverage:null,
+    denominator:905, coverage:{processed:905,assigned_unique:4,noise:null,unresolved:370,abstained:0,withheld:0},
+    membership_population:{relevant:374,unrelated:422,spam:40,unknown:69,without_concept:370},
+    terms:data.terms.map((term,index)=>({...term,basis:"concept_membership",mention_count:index?3:1}))};
+  const html = await render(locale,mfp);
+  assert.ok(html.includes(locale === "es-MX" ? "pertenencia semántica vigente" : "current semantic membership"));
+  assert.ok(html.includes(locale === "es-MX" ? "Spam o bots" : "Spam or bots"));
+  assert.ok(html.includes(locale === "es-MX" ? "Relevancia pendiente" : "Unresolved relevance"));
+  assert.match(html,/>40</); assert.match(html,/>69</);
+  assert.ok(html.includes(locale === "es-MX" ? "es un subconjunto" : "is a subset"));
+  assert.ok(!html.includes(locale === "es-MX" ? "una decisión aprobada" : "an approved decision"));
+  assert.ok(!html.includes(locale === "es-MX" ? "Los grupos se calcularon" : "Clusters were computed"));
+});
