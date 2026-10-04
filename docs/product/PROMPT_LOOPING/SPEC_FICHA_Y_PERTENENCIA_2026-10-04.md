@@ -1,8 +1,19 @@
-# SPEC — Ficha por mención y Motor de pertenencia (Noisia) · v1.1
+# SPEC — Ficha por mención y Motor de pertenencia (Noisia) · v1.3
 
 Fecha: 2026-10-04 · Autor: Claude Opus 5.5 (asesor) con el fundador · Destinatario: Codex (orquestador + sub-chats)
 Base de código: rama `develop` = `f4fb0b1` (idéntica a la integración del PR #14). Todas las rutas son relativas a la raíz del repo.
 **Ubicación canónica:** `docs/product/PROMPT_LOOPING/SPEC_FICHA_Y_PERTENENCIA_2026-10-04.md` (versionado en `develop`). Cualquier otra copia es histórica.
+
+Cambios v1.3 (autorización del fundador: presupuestos orientativos y entregas progresivas):
+- Se eliminan los topes fijos de las demos, evaluaciones y preview, el objetivo monetario global de construcción y el techo universal por estudio. La estimación sirve para informar; superarla no detiene el alcance autorizado ni exige otra aprobación de gasto (§6.5).
+- Un límite financiero estricto sólo existe si el operador/cliente lo configura explícitamente como tal; no se deriva de estimaciones, ejemplos ni presupuestos históricos. Se conserva ledger, conciliación, idempotencia y protección frente a trabajo duplicado.
+- JEV se verifica con fuentes oficiales y pruebas acotadas; no se exige una carta del proveedor ni un documento firmado como paso universal. Las restricciones reales de tratamiento de datos sí se respetan (§9.3).
+- Se autorizan entregas parciales coherentes en UAT con pruebas y recuperación; WS8 sigue siendo la aceptación integral previa a proponer producción, no un bloqueo para ver avances (§6.9, §9.8).
+
+Cambios v1.2 (petición del fundador: desarrollo remoto sin Docker en su Mac):
+- **Ejecución remota aislada** (§6, §8, §9.1): PostgreSQL, Redis, Worker y pruebas de integración corren en `dev-test`; la Mac sirve para edición, navegador y comandos ligeros. Builds y suites pesadas corren en runner remoto/CI.
+- **Reutilizar infraestructura existente:** comprobar el estado vigente del `dev-test` Railway documentado; no reconstruirlo ni repetir migraciones por asumir que está vacío. Separar base y cola del programa de UAT/producción y de otros trabajos.
+- **Mismo contrato de producto:** no cambian fichas, invalidación, pertenencia, evaluación, orden de WS ni aprobación de entrega UAT. Los prompts de WS1 y su aceptación quedan actualizados.
 
 Cambios v1.1 (revisión de Codex antes de WS2):
 - **Contexto de entidades e invalidación** (§4.2b): la validez de una ficha depende también del contexto de entidades del Brand OS; cambios en alias, productos o competidores invalidan sólo las menciones afectadas, de forma determinista.
@@ -11,6 +22,8 @@ Cambios v1.1 (revisión de Codex antes de WS2):
 ---
 
 ## 0. Cómo usar este documento
+
+La v1.3 incorpora la instrucción posterior del fundador sobre presupuestos y entregas. Los prompts de traspaso anteriores que aún mencionen aprobación documental JEV, topes fijos o esperar WS8 para UAT quedan superados en esos puntos por esta versión.
 
 1. **Codex orquestador** lee el documento completo una vez y abre **un sub-chat por Workstream (WS)** usando el bloque «Prompt del sub-chat» de cada sección 9.x. No reparte trabajo fuera de esos WS.
 2. Cada sub-chat lee sólo: §1–§6 de este spec + su sección 9.x + los archivos que esa sección enumera. No necesita leer historia, recibos viejos ni AGENTS banners anteriores.
@@ -21,14 +34,14 @@ Cambios v1.1 (revisión de Codex antes de WS2):
 
 ## 1. Resumen ejecutivo
 
-**Qué construimos:** un producto que, para **cualquier marca**, toma un corpus importado y produce, con un coste de Claude de ~USD 100 por estudio como techo de diseño:
+**Qué construimos:** un producto que, para **cualquier marca**, toma un corpus importado y produce los resultados siguientes, con coste estimado y real visibles según el corpus y el procesamiento requerido:
 
 1. una **ficha por mención** (de qué entidad habla, quién habla, qué hace, si es relevante, y un «asunto» corto);
 2. **discovery** (BERTopic + consolidación Claude, ya existentes) corriendo **sólo sobre menciones relevantes**;
 3. un **motor de pertenencia multi-concepto** que decide, mención por mención y con cita literal, a qué intereses/Topics pertenece cada mención relevante;
 4. **Signal** alimentado por esas pertenencias, con corrección humana y **segunda carga incremental**.
 
-**Qué NO es:** no es una solución para Alexa+. Alexa+ y cualquier corpus actual son **datos desechables de ejemplo**. No hay backfill ni compatibilidad con datos viejos. Se prueba con un corpus local de **~1,000 menciones**.
+**Qué NO es:** no es una solución para Alexa+. Alexa+ y cualquier corpus actual son **datos desechables de ejemplo**. No hay backfill ni compatibilidad con datos viejos. Se prueba con un corpus de desarrollo de **~1,000 menciones**, procesado en `dev-test` remoto.
 
 **Decisión clave:** no se extiende el pipeline «interest decision V2» (tablas, guardas y autoridad cableadas a un solo interés y al prompt V2). Se crea un **motor nuevo, aditivo**, que reutiliza transporte de Batches, cachés, preparación, embeddings, discovery y Signal.
 
@@ -152,7 +165,7 @@ Se construye desde el contexto gobernado existente (`loadSignalSemanticResolutio
 | Alias eliminado | Raíces cuya ficha vigente incluye esa entidad |
 | Entidad eliminada o con `kind` cambiado | Raíces cuya ficha vigente incluye esa entidad |
 | Cambio de `disambiguation` de una entidad | Raíces cuyo texto contiene cualquier alias de esa entidad, más las que la incluyen en su ficha vigente |
-| Alias o nombre < 3 caracteres, o cambio de entidad `category` sin alias propios | `affected_mode = full` (todas las raíces elegibles). Requiere confirmación explícita con coste estimado. |
+| Alias o nombre < 3 caracteres, o cambio de entidad `category` sin alias propios | `affected_mode = full` (todas las raíces elegibles). Requiere intención explícita de recalcular todo, con coste estimado; si la solicitud del operador ya incluye ese recálculo, no pedir otra confirmación. No es un permiso adicional por superar presupuesto. |
 
 **Regla de vigencia:** para cada raíz *r*, `v_min(r)` es la versión de CE más reciente en la que *r* quedó afectada (o la primera versión). La ficha vigente de *r* es la más reciente cuyo `entity_context_digest` pertenece a una versión **≥ `v_min(r)`**, con el mismo `input_digest` y `labeler_digest`. Si no existe, la raíz queda en estado `pending` (contabilizada, nunca se usa una ficha obsoleta). El run siguiente re-etiqueta sólo las raíces `pending` y las nuevas.
 
@@ -229,7 +242,7 @@ Tablas (nombres definitivos; columnas mínimas, Codex puede añadir índices):
 
 **WS2**
 - `signal_labeler_versions` — `id, kind (facets|membership), provider, model, prompt_digest, schema_digest, labeler_digest UNIQUE, identity jsonb, status (experimental|approved|retired), eval_report_ref text, approved_by_user_id, approved_at, created_at`. Registro ligero de etiquetadores; **no** reutiliza la cadena `tagging_model_versions`/benchmarks/guardas de V2.
-- `signal_labeling_runs` — `id, workspace_id, kind, labeler_version_id, preparation_run_id, concept_set_digest NULL, status (queued|running|completed|failed|canceled), counts jsonb, estimated_micro_usd, cap_micro_usd, idempotency_key, actor_user_id, timestamps`. Un run por ejecución de ficha o de pertenencia.
+- `signal_labeling_runs` — `id, workspace_id, kind, labeler_version_id, preparation_run_id, concept_set_digest NULL, status (queued|running|completed|failed|canceled), counts jsonb, estimated_micro_usd, budget_micro_usd NULL, cap_micro_usd NULL, idempotency_key, actor_user_id, timestamps`. Un run por ejecución de ficha o de pertenencia.
 - `signal_labeling_calls` — **ledger común** de ficha, pertenencia y JEV: `id, run_id, workspace_id, provider, model, transport (batch|sync), provider_batch_id, custom_id UNIQUE, request_digest, request_storage_key, status (reserved|submitting|submitted|settled|failed|unknown), reserved_micro_usd, settled_micro_usd, usage jsonb (incluye cache tokens), raw_sha256, raw_storage_key, stop_reason, refusal_category, timestamps`.
 - `signal_entity_context_versions` — `workspace_id, version_no, digest, parent_digest, context jsonb, diff jsonb, affected_mode (targeted|full), affected_count, created_at`. UNIQUE `(workspace_id, digest)` y `(workspace_id, version_no)`.
 - `signal_entity_context_affected_roots` — `workspace_id, version_no, root_id`. PK `(workspace_id, version_no, root_id)`. Vacía cuando `affected_mode = full` (la vigencia lo trata como «todas»).
@@ -242,6 +255,8 @@ Tablas (nombres definitivos; columnas mínimas, Codex puede añadir índices):
 - `signal_concept_membership_overrides` — `workspace_id, root_id, concept_key, verdict, actor_user_id, created_at, superseded_at`.
 - Vista `signal_concept_memberships_current_v1` — pertenencia vigente por (raíz, concepto) para la definición actual, overrides aplicados.
 
+**Semántica de presupuesto:** `estimated_micro_usd` es la previsión; `budget_micro_usd` es una referencia orientativa opcional, superable sin bloquear; `cap_micro_usd` es un máximo estricto opcional, sólo establecido por una elección explícita del operador/cliente. `NULL` significa que no hay máximo estricto configurado; nunca convertirlo a cero ni a un valor histórico por defecto. Costes y reservas se contabilizan también sin máximo estricto. El servidor deriva la política efectiva y sus permisos: el cliente no puede quitar ni elevar un máximo estricto existente enviando `NULL` o una cifra mayor.
+
 **Gobierno de coste** (WS2 lo hace una vez para ambos usos): añadir acciones `mention_facets` y `concept_membership` (proveedores `anthropic`, `typesafe`) siguiendo la receta existente: CHECKs de acción/proveedor (patrón `infrastructure/db/migrations/0211_signal_interest_decision_batches.sql:10-23`), envolver `signal_processing_org_exposure_v1` con el ledger nuevo (patrón `0155:147`, `0176:73`, `0211:157`), admisión con `admit_signal_processing_v1` (`0155:228`, TS `infrastructure/db/signal-processing-policy.ts:104`), y añadir las acciones a `SIGNAL_PROCESSING_ACTIONS_V1` (`signal-processing-policy.ts:4-5`) y a `apps/studio/src/lib/data-os/signal-processing-policy-ui.ts:12`. Provisionar estas acciones al crear marca (patrón `infrastructure/db/signal-brand-context-policy-provisioning.ts:110-115`).
 
 ---
@@ -252,11 +267,11 @@ Tablas (nombres definitivos; columnas mínimas, Codex puede añadir índices):
 2. **Aditivo.** No modificar migraciones existentes ni borrar código viejo en este programa. V2/V3 de interest decision y la búsqueda vectorial quedan **congelados**: flags en `false`, sin nuevas llamadas, sin borrar. Una limpieza posterior se planifica aparte.
 3. **Integridad mínima obligatoria, y nada más sin justificarlo en el PR:** `custom_id` idempotente; respuesta cruda persistida antes de parsear; reserva → liquidación de coste; claves por contenido; un resultado técnico nunca se convierte en veredicto semántico. No añadir sellos, digests, outboxes ni ledgers adicionales «por si acaso».
 4. **Escritura por lotes:** inserts multi-fila y transacciones por página (≥200 filas), lease por página, no por fila. Prohibido el patrón «una transacción con revalidación completa por raíz».
-5. **Proveedores:** sólo con flag de entorno activo, tope de coste por run (`cap_micro_usd`) y estimación previa visible. Nunca imprimir secretos. Claves: `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `TYPESAFE_API_KEY` (nueva).
+5. **Proveedores y presupuesto:** flag de entorno activo, autoridad vigente sobre el trabajo y estimación previa visible. El fundador autoriza superar los presupuestos orientativos de este programa para completar su alcance: no pausar ni pedir otra autorización sólo por una desviación monetaria. Registrar coste real/reservado, actualizar la previsión y avisar desviaciones relevantes sin bloquear la ejecución. No reducir cobertura, evidencia, entidades, longitud de respuesta ni calidad para ajustarse a una cifra orientativa. Un máximo estricto opcional sólo se aplica cuando el operador/cliente lo configura explícitamente; no heredar topes de experimentos ni introducir vencimientos horarios artificiales. Si la admisión existente exige siempre un cap, adaptar de forma focal su contrato a esta distinción, preservando los máximos estrictos ajenos y el historial: no fabricar un cap gigantesco, mutar solicitudes pagadas ni eludir autorización. Conservar reconciliación de resultados inciertos y detener reintentos duplicados o ciclos sin progreso; la autorización de gasto no autoriza trabajo ajeno al programa. Nunca imprimir secretos. Claves: `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `TYPESAFE_API_KEY` (nueva).
 6. **Autorización:** reutilizar `loadSignalWorkspaceCapabilitiesStoreV1`. Lanzar ficha/pertenencia exige `can_request_processing`; corregir exige `can_manage_topics` (o equivalente vigente). No debilitar guardas.
-7. **Pruebas:** runner `node --test --import tsx` por paquete. Postgres local (docker-compose pgvector pg16, `infrastructure/docker/docker-compose.yml`). Las pruebas con PG son opt-in por variable de entorno, como las existentes. Toda prueba de proveedor real va en un script aparte, nunca en `pnpm test`.
-8. **Definition of done de cada WS:** `pnpm typecheck` y `pnpm lint` verdes; tests del paquete tocado verdes; el comando de demo del WS corre localmente sobre el corpus de desarrollo; recibo de una página.
-9. **Nada a `main` ni a producción.** UAT sólo al cierre de WS8 y con aprobación explícita del fundador.
+7. **Pruebas y cómputo remotos:** runner `node --test --import tsx` por paquete. PostgreSQL con pgvector, Redis y Worker en `dev-test` aislado (§9.1); no levantar Docker, PostgreSQL ni Redis en la Mac del fundador. Las pruebas con PG siguen opt-in y se ejecutan desde un runner privado próximo a la base. Builds y suites pesadas en runner remoto/CI; edición, navegador y checks ligeros pueden ser locales. Toda prueba de proveedor real va en un script aparte, nunca en `pnpm test`.
+8. **Definition of done de cada WS:** `pnpm typecheck` y `pnpm lint` verdes; tests del paquete tocado verdes; el comando de demo del WS ejecuta el recorrido en `dev-test` sobre el corpus de desarrollo y devuelve estado/recibos; recibo de una página.
+9. **Entregas progresivas:** el fundador autoriza cortes parciales coherentes en UAT conforme se completen capacidades, sin esperar WS8 ni pedir otra aprobación genérica. Verificar el corte en dev-test, comprobarlo en la UI UAT y conservar una recuperación viable; usar flags para funcionalidad incompleta. No presentar resultados experimentales como clasificación acreditada ni saltar la evaluación semántica. Ejecutar en dev-test no equivale a entregar en UAT. **Nada a `main` ni a producción** sin la aceptación integral y el proceso de revisión/publicación correspondiente.
 10. **Idioma:** UI bilingüe es-MX/en-US; código en inglés; docs en español.
 
 ---
@@ -277,7 +292,7 @@ Estado limpio actual: `main` (producción), `develop` (troncal UAT = integració
 | WS | Nombre | Depende de | Paralelo con | Ingeniería estimada |
 |---|---|---|---|---|
 | WS0 | Higiene restante del repo | — | WS1 | 0.5–1 día |
-| WS1 | Corpus de desarrollo + harness local | — | WS0 | 2–3 días |
+| WS1 | Corpus de desarrollo + harness remoto aislado | — | WS0 | 2–3 días |
 | WS2 | Ficha v1 con Claude Sonnet 5.5 + ledger común | WS1 | WS3 | 4–5 días |
 | WS3 | Adaptador JEV + ficha con JEV | WS1, contrato de WS2 (§4) | WS2 | 2–3 días |
 | WS4 | Evaluación: prueba Sonnet 5.5 y prueba JEV, separadas | WS2, WS3, gold del fundador | WS5 (inicio) | 2 días + espera humana |
@@ -286,7 +301,7 @@ Estado limpio actual: `main` (producción), `develop` (troncal UAT = integració
 | WS7 | UI mínima (estado, ficha, intereses, excepciones, evidencia) | WS2; integra WS5/WS6 | WS5, WS6 | 4–5 días |
 | WS8 | Segunda carga incremental + E2E con marca nueva por UI | WS5, WS6, WS7 | — | 3–4 días |
 
-Total: ~4–5 semanas de ingeniería concentrada; las estimaciones son piso. Coste de proveedores durante la construcción: objetivo ≤ USD 30 en total.
+Total: ~4–5 semanas de ingeniería concentrada; las estimaciones son piso. Coste de proveedores: estimación actualizada por ejecución y recibo de consumo real; no hay una cifra fija de construcción que bloquee el programa. Se permite superar el presupuesto orientativo conforme a §6.5.
 
 **Fuera de este programa (no construir):** destilación profesor-alumno (scikit-learn ya está en la imagen del Worker, `services/workers/requirements-workspace-engine.txt`), ventana de marca para embeddings de textos largos, agrupación por «asunto», escala >150K, migración de datos viejos, limpieza de código V2/V3.
 
@@ -313,22 +328,26 @@ Archivo de la limpieza ya hecha: `~/Downloads/noisia-archive-2026-10-04/` (`MANI
 
 ---
 
-### 9.1 WS1 — Corpus de desarrollo y harness local
+### 9.1 WS1 — Corpus de desarrollo y harness remoto aislado
 
-**Objetivo:** un comando que levanta todo el pipeline local con ~1,000 menciones de cualquier marca, sin depender de bases remotas.
+**Objetivo:** ejecutar el pipeline con ~1,000 menciones de cualquier marca en un entorno remoto de desarrollo, operable desde un comando y desde la UI, sin servicios de datos ni cómputo pesado en la Mac.
+
+Reutilizar el entorno Railway `dev-test` documentado en `STORAGE_MIGRATION_2026-09-10.md`, `DEV_TEST_CONNECTION_RECOVERY_2026-09-24.md` y `DEV_TEST_SCHEMA_REBUILD_2026-09-24.md`. Esos recibos acreditan trabajos pasados, no disponibilidad actual: comprobar identidad, versión y ocupación vigentes antes de escribir. PostgreSQL 17 + pgvector ya fue provisionado; no degradarlo a PG16 por el ejemplo Docker anterior. No repetir la recuperación ni los upgrades históricos.
 
 Entregables:
-1. `scripts/dev-corpus/up.sh` (o `pnpm dev:corpus:up`): levanta Postgres local (docker-compose existente, pgvector pg16) y Redis local (añadir servicio a `infrastructure/docker/docker-compose.yml` si falta), aplica **todas** las migraciones con `infrastructure/db/scripts/smoke-migrations.ts` (sólo hosts locales).
-2. `scripts/dev-corpus/seed.ts`: crea organización, usuario interno, marca nueva por la misma función que usa la UI de alta (cliente admin), Brand OS mínimo (nombre, 2 competidores, categoría, alias) desde un JSON de entrada, fuente de datos con política de derechos que permita `llm-processing` y métricas, y política de procesamiento con las acciones del programa y un tope diario configurable.
+1. `scripts/dev-corpus/up.sh` (o `pnpm dev:corpus:up`): prepara o reutiliza una base lógica dedicada a MFP en PostgreSQL remoto, una instancia Redis dedicada y un Worker/runner privados en el mismo entorno y próximos a los datos. Nunca usa las conexiones de UAT/producción. Reutilizar el runner existente si está libre y es adecuado, preservando su configuración histórica; en otro caso usar un servicio de ejecución acotado al programa. Aplicar la cadena completa una sola vez sólo a una base nueva vacía; sobre una base existente aplicar únicamente migraciones pendientes verificadas. Reutilizar el runner remoto de migraciones existente; si se adapta `smoke-migrations.ts`, habilitar únicamente el destino dev-test explícitamente identificado, sin retirar sus protecciones para destinos arbitrarios.
+   - Un entorno MFP compartido por los WS, migraciones serializadas y fixtures con identidad de ejecución. No crear clones completos por prueba ni por WS. Registrar los recursos propios y su consumo; no borrar recursos ajenos para preparar el entorno.
+   - Studio de desarrollo con acceso autenticado para WS7/WS8; SQL, Redis y runner por red privada. Configurar callbacks y permisos del entorno sin eludir Kinde/authZ. Los comandos locales sólo lanzan/consultan trabajo remoto y transfieren CSV por canal cifrado; no exponer un proxy público de PostgreSQL ni imprimir credenciales.
+2. `scripts/dev-corpus/seed.ts`: crea organización, usuario interno, marca nueva por la misma función que usa la UI de alta (cliente admin), Brand OS mínimo (nombre, 2 competidores, categoría, alias) desde un JSON de entrada, fuente de datos con política de derechos que permita `llm-processing` y métricas, y política de procesamiento con las acciones del programa y presupuesto orientativo configurable; máximo estricto sólo si el operador lo configura explícitamente (§6.5).
 3. Importación **por el camino real**: `ingestSentioneCsvStream` / job `ingest_mentions_csv` (`infrastructure/db/sentione-csv-ingest.ts`, `services/workers/src/workers/mentions-csv-ingest.ts`), preparación (`services/workers/src/workers/signal-workspace-corpus-preparation.ts`) y embeddings.
-4. Embeddings: `NOISIA_DEV_EMBEDDINGS=fake|voyage`. `fake` reutiliza el patrón de vectores sintéticos (`infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts:108-127`), subiendo sus límites (hoy 3 textos y `page<8`). `voyage` usa el proveedor real con tope (1,000 menciones ≈ USD 0.05).
+4. Embeddings: `NOISIA_DEV_EMBEDDINGS=fake|voyage`. `fake` reutiliza el patrón de vectores sintéticos (`infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture.ts:108-127`), subiendo sus límites (hoy 3 textos y `page<8`). `voyage` usa el proveedor real con estimación según textos, tokens y tarifa vigente, y coste registrado conforme a §6.5.
 5. Corpus: `.data/dev-corpus/load1.csv` (~1,000 filas, formato SentiOne) y `.data/dev-corpus/load2.csv` (~250 filas: ~200 nuevas, ~30 duplicadas de load1, ~20 con texto modificado). El fundador provee los CSV, o Codex muestrea de un corpus existente local (cualquier marca; es desechable). Nunca versionar.
 6. Plantilla de gold: `scripts/dev-corpus/gold-template.ts` genera `.data/dev-corpus/gold-template.csv` con 150 raíces estratificadas (100 aleatorias + 50 enriquecidas: textos largos, alias ambiguos, competidores y **al menos 15 comparaciones con ≥2 entidades**), con columnas para cada dimensión de la ficha y 2–3 intereses de prueba. Las entidades se capturan como una celda con nombres del Brand OS separados por `;` y sufijo `*` para `main` (p. ej. `MarcaX*; CompetidorY`). Y `gold-import.ts` que valida contra el CE y convierte a `.data/dev-corpus/gold.jsonl`.
 7. `scripts/dev-corpus/status.ts`: imprime conteos por etapa (importadas, únicas, elegibles, con ficha, relevantes, con pertenencia) para que cada WS tenga un «demo» reproducible.
 
-Aceptación: desde cero, `up` + `seed` + import load1 + preparación + embeddings fake termina en < 10 min en la laptop y `status` cuadra los conteos. Una segunda corrida es idempotente.
+Aceptación: sobre el entorno remoto provisionado, `up` + `seed` + import load1 + preparación + embeddings fake termina en < 10 min y `status` cuadra los conteos. Medir y reportar aparte el aprovisionamiento/build inicial. Una segunda corrida es idempotente. La Mac no ejecuta contenedores, base, Redis ni Worker; la evidencia corresponde al recorrido remoto real, no a mocks de SQL.
 
-> **Prompt del sub-chat WS1:** «Lee el spec §1, §3, §6, §7 y §9.1. Rama `feat/mfp-ws1-dev-corpus` desde `develop`. Construye el harness local descrito reutilizando las funciones reales de alta de marca, importación, preparación y embeddings; no dupliques lógica de negocio en scripts. Nada de bases remotas. Entrega comandos documentados en `scripts/dev-corpus/README.md`.»
+> **Prompt del sub-chat WS1:** «Lee el spec §1, §3, §6, §7 y §9.1. Rama `feat/mfp-ws1-dev-corpus` desde `develop`. Construye el harness remoto aislado descrito reutilizando dev-test y las funciones reales de alta de marca, importación, preparación y embeddings; no dupliques lógica de negocio en scripts. PostgreSQL, Redis, Worker y pruebas pesadas remotos; no Docker en la Mac. Verifica el destino existente, separa recursos MFP y no repitas migraciones aplicadas ni uses UAT/producción. Entrega comandos documentados en `scripts/dev-corpus/README.md`.»
 
 ---
 
@@ -345,23 +364,23 @@ Archivos nuevos (sugeridos):
 - `packages/query-engine/src/signal-entity-context-v1.ts`: tipo y digest del CE, diff entre versiones, normalización y emparejamiento léxico de alias (funciones puras, probadas aparte).
 - `infrastructure/db/signal-labeling-runs.ts`, `infrastructure/db/signal-mention-facets.ts` (exportar desde `infrastructure/db/index.ts`).
 - `services/workers/src/workers/signal-mention-facets-batch.ts` + drainer, registrado en `services/workers/src/queues/data-os.ts` (rama por `job.name`, inicio/cierre del drainer como los existentes).
-- Ruta Studio `apps/studio/src/app/api/data-os/signal/[workspaceId]/facets/route.ts` (GET estado y estimación; POST lanzar con `idempotency_key` y `cap_micro_usd`).
+- Ruta Studio `apps/studio/src/app/api/data-os/signal/[workspaceId]/facets/route.ts` (GET estado y estimación; POST lanzar con `idempotency_key`, presupuesto orientativo opcional y política efectiva validada en servidor (§5–§6.5)).
 
 Comportamiento:
-0. **Contexto de entidades:** calcular el CE vigente; si cambió, registrar la versión y su conjunto afectado (§4.2b) en la misma transacción que crea el run. Si `affected_mode = full` y el run no trae confirmación explícita, el run queda `queued` esperando confirmación con su coste estimado.
+0. **Contexto de entidades:** calcular el CE vigente; si cambió, registrar la versión y su conjunto afectado (§4.2b) en la misma transacción que crea el run. Si `affected_mode = full` y el run no trae confirmación explícita, el run queda `queued` esperando confirmación del alcance de recálculo completo, no de gasto. Una solicitud explícita de recálculo completo ya satisface esa intención; no pedir confirmación repetida ni por superar la estimación.
 1. **Selección:** raíces `disposition='eligible'` de la preparación vigente que estén `pending` en `signal_mention_facets_current_v1`, es decir, sin ficha vigente para el `labeler_digest` activo según §4.2b (nuevas, con texto cambiado o afectadas por un cambio de CE). Nada más.
 2. **Agrupación:** 15–25 menciones por solicitud según presupuesto de tokens estimado (~20K de entrada por solicitud); textos > 12K caracteres van solos. Instrucciones + contexto de marca en el sistema con caché 1h.
 3. **Envío:** cliente existente `createAnthropicMessageBatchesClient` (`services/workers/src/providers/anthropic-message-batches.ts:53`). `custom_id = "mf1_" + hex(60)` del digest de la solicitud. Reservar coste en `signal_labeling_calls` antes de crear el batch; `submission_unknown` nunca se reenvía a ciegas (mismo criterio que `AnthropicBatchTransportError`).
 4. **Resultados:** guardar crudo (almacenamiento de objetos, como V2) antes de parsear; liquidar coste desde `usage` (incluidos tokens de caché); parsear con `anthropic-response-v1`; validar que cada mención del grupo aparece una vez; `max_tokens` o faltantes → dividir y reintentar.
 5. **Escritura:** inserts multi-fila en `signal_mention_facet_labels` con `ON CONFLICT DO NOTHING`, por página.
-6. **Estimación previa:** tokens ≈ caracteres/3.5 + sobrecosto por solicitud; mostrar USD estimado y tope.
+6. **Estimación previa:** tokens ≈ caracteres/3.5 + sobrecosto por solicitud; mostrar USD estimado, real y presupuesto orientativo; mostrar un máximo estricto sólo si está configurado explícitamente, sin exigir otro clic de autorización por la estimación.
 7. **Etiquetador inicial:** registrar en `signal_labeler_versions` con `status='experimental'`; WS4 lo pasa a `approved`.
 
-Pruebas: unitarias con `fetch` falso y stores falsos (patrón `services/workers/src/workers/signal-workspace-interest-decision-queue-v2.test.ts:36-58`): agrupación, digest, parser con bloques thinking + text, refusal, max_tokens con división, idempotencia de reenvío, liquidación con caché, validación de `entities` (IDs desconocidos, duplicados, vacío sin motivo). Tabla de casos para el conjunto afectado y la regla de vigencia de §4.2b: alias nuevo, alias eliminado, entidad eliminada, cambio de `kind`, alias corto → `full`, cambio narrativo del Brand OS → sin efecto. PG opt-in: run completo con proveedor simulado sobre 1,000 raíces en < 2 min de escritura.
+Pruebas: unitarias con `fetch` falso y stores falsos (patrón `services/workers/src/workers/signal-workspace-interest-decision-queue-v2.test.ts:36-58`): agrupación, digest, parser con bloques thinking + text, refusal, max_tokens con división, idempotencia de reenvío, liquidación con caché, validación de `entities` (IDs desconocidos, duplicados, vacío sin motivo). Tabla de casos para el conjunto afectado y la regla de vigencia de §4.2b: alias nuevo, alias eliminado, entidad eliminada, cambio de `kind`, alias corto → `full`, cambio narrativo del Brand OS → sin efecto. PG opt-in desde el runner privado dev-test: run completo con proveedor simulado sobre 1,000 raíces en < 2 min de escritura.
 
-Aceptación (demo): sobre el corpus WS1, con proveedor real y tope USD 3, 100% de raíces elegibles con estado (`labeled|abstained|refused|error`), coste liquidado visible, segunda ejecución no envía nada. Después, agregar un alias a un competidor y relanzar: sólo se envían las raíces del conjunto afectado (conteo en el recibo) y ninguna ficha obsoleta queda como vigente.
+Aceptación (demo): sobre el corpus WS1, con proveedor real y coste estimado/real visible conforme a §6.5, 100% de raíces elegibles con estado (`labeled|abstained|refused|error`), coste liquidado visible, segunda ejecución no envía nada. Después, agregar un alias a un competidor y relanzar: sólo se envían las raíces del conjunto afectado (conteo en el recibo) y ninguna ficha obsoleta queda como vigente.
 
-> **Prompt del sub-chat WS2:** «Lee el spec §1–§7 y §9.2. Rama `feat/mfp-ws2-facets` desde `develop`; migraciones 0221–0224. Implementa la ficha v1 con Sonnet 5.5 por Batches según §4.1, §4.2, §4.2b, §4.5 y §5; el contexto de entidades y su regla de vigencia son parte del alcance, no un extra. Reutiliza el cliente de Batches, el patrón de drainer de `data-os.ts` y la receta de acciones de política; no reutilices tablas ni guardas de interest decision V2. Prompts genéricos sin ninguna marca. Escritura por lotes. Demo sobre el corpus de WS1 con tope USD 3.»
+> **Prompt del sub-chat WS2:** «Lee el spec §1–§7 y §9.2. Rama `feat/mfp-ws2-facets` desde `develop`; migraciones 0221–0224. Implementa la ficha v1 con Sonnet 5.5 por Batches según §4.1, §4.2, §4.2b, §4.5 y §5; el contexto de entidades y su regla de vigencia son parte del alcance, no un extra. Reutiliza el cliente de Batches, el patrón de drainer de `data-os.ts` y la receta de acciones de política; no reutilices tablas ni guardas de interest decision V2. Prompts genéricos sin ninguna marca. Escritura por lotes. Demo sobre el corpus de WS1 con presupuesto orientativo y coste registrado (§6.5), sin detenerla al superar la estimación.»
 
 ---
 
@@ -369,7 +388,7 @@ Aceptación (demo): sobre el corpus WS1, con proveedor real y tope USD 3, 100% d
 
 **Objetivo:** producir la misma ficha con JEV para compararla en WS4, sin tocar el flujo de Claude.
 
-Prerrequisitos (bloqueantes, los resuelve el fundador): cuenta y `TYPESAFE_API_KEY`; confirmar por escrito con el proveedor idioma español, longitud máxima de `state`, retención/uso de datos y límites de tasa. Registrar respuestas en `docs/product/PROMPT_LOOPING/JEV_DUE_DILIGENCE.md`. Sin ese documento no se envía texto del corpus.
+Preparación a cargo de WS3: reutilizar la cuenta y `TYPESAFE_API_KEY` del archivo privado documentado en `MFP_ACCESS_AND_ENV_2026-10-04.md`. Verificar idioma, longitud de `state`, retención/uso de datos y límites de tasa con documentación oficial vigente y pruebas acotadas. Registrar fuentes, fecha, resultados y aspectos desconocidos en `docs/product/PROMPT_LOOPING/JEV_DUE_DILIGENCE.md`; el documento es evidencia de trabajo, no un trámite que necesite firma del fundador o carta del proveedor. La falta de un límite técnico documentado se investiga con entradas sintéticas y manejo de errores, no bloqueando todo el programa. Antes de enviar corpus real, comprobar que sus derechos y el tratamiento del proveedor permiten ese uso. Si existe una incompatibilidad o incertidumbre material de tratamiento de datos, retener sólo ese envío, explicar el punto concreto y continuar con datos sintéticos y la ruta Claude. No volver a pedir accesos ya disponibles.
 
 Archivos:
 - `services/workers/src/providers/typesafe-jev.ts`: cliente HTTP con el patrón del proveedor Voyage (`services/workers/src/workers/signal-workspace-embeddings-provider.ts:81`): una solicitud, sin reintentos internos, timeout por AbortController, sin redirecciones, respuesta acotada, resultado clasificado como `definitely_not_sent | outcome_unknown | known_response_invalid`. Flag `NOISIA_JEV_PROVIDER_ENABLED`. Limitador de concurrencia configurable.
@@ -383,7 +402,7 @@ Archivos:
 
 Aceptación: sobre el corpus WS1, 100% de raíces con estado, coste registrado con el precio configurado, probabilidades guardadas. Reporte de latencia p50/p95 por solicitud.
 
-> **Prompt del sub-chat WS3:** «Lee el spec §1–§7, §4.6 y §9.3. Rama `feat/mfp-ws3-jev` desde `develop` (rebase sobre WS2 cuando esté en develop; antes, programa contra los tipos de §4.2). No envíes texto hasta que exista `JEV_DUE_DILIGENCE.md` aprobado por el fundador. Reutiliza run, ledger y tabla de etiquetas de WS2.»
+> **Prompt del sub-chat WS3:** «Lee el spec §1–§7, §4.6 y §9.3. Rama `feat/mfp-ws3-jev` desde `develop` (rebase sobre WS2 cuando esté en develop; antes, programa contra los tipos de §4.2). Verifica las condiciones técnicas y de datos conforme a §9.3 y documenta fuentes y pruebas; no exijas aprobación documental rutinaria del fundador. Respeta las restricciones reales de envío de datos. Reutiliza run, ledger y tabla de etiquetas de WS2.»
 
 ---
 
@@ -415,7 +434,7 @@ Regla de decisión (preregistrada):
 
 Resultado: `docs/product/PROMPT_LOOPING/EVAL_MFP_<fecha>.md` y cambio de `status` a `approved` del etiquetador ganador en `signal_labeler_versions` (con `eval_report_ref`).
 
-Presupuesto: ≤ USD 5 por prueba.
+Presupuesto orientativo calculado según la matriz de evaluación y tarifas vigentes; superarlo no detiene la prueba autorizada. Reportar coste por variante y total, sin alterar el conjunto de evaluación para ajustarlo a una cifra (§6.5).
 
 > **Prompt del sub-chat WS4:** «Lee el spec §1–§7 y §9.4. Rama `feat/mfp-ws4-eval`. Construye el reporte y corre la prueba A (Sonnet 5.5) y la prueba B (JEV) por separado, con la partición dev/test fijada antes de ver resultados. No toques prompts usando test. Entrega el reporte y la propuesta de etiquetador aprobado; no lo apruebes sin confirmación del fundador.»
 
@@ -430,7 +449,7 @@ Archivos nuevos (sugeridos):
 - `infrastructure/db/migrations/0226_signal_concept_memberships.sql` (tablas y vista de §5, acción de política ya creada en WS2).
 - `infrastructure/db/signal-concept-memberships.ts`.
 - `services/workers/src/workers/signal-concept-membership-batch.ts` + drainer.
-- Ruta Studio `.../memberships/route.ts` (estado, estimación, lanzar) y `.../memberships/preview/route.ts` (**probar una definición** sobre 30 raíces relevantes elegidas por diversidad, con coste < USD 0.20, sin persistir como pertenencia vigente).
+- Ruta Studio `.../memberships/route.ts` (estado, estimación, lanzar) y `.../memberships/preview/route.ts` (**probar una definición** sobre 30 raíces relevantes elegidas por diversidad, con coste estimado y real visible, sin tope fijo de precio por preview, sin persistir como pertenencia vigente).
 
 Comportamiento:
 1. **Conceptos:** catálogo de trabajo vigente (intereses `manual` + adoptados de WS6), no archivados.
@@ -444,11 +463,11 @@ Comportamiento:
 
 Prompt genérico del juez (requisitos, no texto final): identificar la entidad/producto exacto antes de evaluar; aplicar inclusiones y exclusiones literalmente; usar ejemplos como guía de frontera, no como palabras clave; `belongs` exige que el texto afirme el hecho (no basta tema parecido ni hipótesis); un artículo pertenece si documenta el fenómeno definido, no si sólo menciona la marca; `insufficient` sólo cuando falta una condición necesaria; la ficha (voz, acto) se pasa como pista, no como regla.
 
-Pruebas: unitarias de validador (ordinales, ausencia = not_belongs, spans ajenos, max_tokens), compatibilidad por ámbito con menciones de una y de varias entidades (incluida una comparación marca–competidor evaluada para conceptos de ambos ámbitos), invalidación por edición de concepto, por cambio de CE y por corrección humana de entidades; PG opt-in con proveedor simulado; demo real sobre el corpus WS1 con los conceptos de WS4 y tope USD 3.
+Pruebas: unitarias de validador (ordinales, ausencia = not_belongs, spans ajenos, max_tokens), compatibilidad por ámbito con menciones de una y de varias entidades (incluida una comparación marca–competidor evaluada para conceptos de ambos ámbitos), invalidación por edición de concepto, por cambio de CE y por corrección humana de entidades; PG opt-in con proveedor simulado; demo real sobre el corpus WS1 con los conceptos de WS4, estimación actualizada y coste registrado (§6.5).
 
-Aceptación: 100% de pares (raíz relevante × concepto compatible) con estado; Signal local muestra los conceptos seleccionados con conteos y citas; editar la definición de un concepto y relanzar sólo recalcula ese concepto (verificado por conteo de llamadas).
+Aceptación: 100% de pares (raíz relevante × concepto compatible) con estado; Signal de desarrollo en dev-test muestra los conceptos seleccionados con conteos y citas; editar la definición de un concepto y relanzar sólo recalcula ese concepto (verificado por conteo de llamadas).
 
-> **Prompt del sub-chat WS5:** «Lee el spec §1–§7 y §9.5. Rama `feat/mfp-ws5-membership`; migraciones 0226–0230. No extiendas interest decision V2: crea el motor nuevo usando run/ledger de WS2 y el cliente de Batches. Extrae a un módulo compartido el particionado en spans y la reconstrucción de citas de V2 sin cambiar su comportamiento (prueba de regresión). Integra Signal con una rama nueva en `all_memberships`. Demo con tope USD 3.»
+> **Prompt del sub-chat WS5:** «Lee el spec §1–§7 y §9.5. Rama `feat/mfp-ws5-membership`; migraciones 0226–0230. No extiendas interest decision V2: crea el motor nuevo usando run/ledger de WS2 y el cliente de Batches. Extrae a un módulo compartido el particionado en spans y la reconstrucción de citas de V2 sin cambiar su comportamiento (prueba de regresión). Integra Signal con una rama nueva en `all_memberships`. Demo con presupuesto orientativo y coste registrado (§6.5), sin detenerla al superar la estimación.»
 
 ---
 
@@ -490,7 +509,7 @@ Aceptación: recorrido completo por UI sobre el corpus WS1 (crear interés, prob
 
 **Objetivo:** demostrar el producto completo con una marca nueva creada por UI y una segunda carga que actualiza sin rehacer.
 
-Flujo de aceptación (UI, local o dev-test):
+Flujo de aceptación (UI autenticada en dev-test, usando el navegador del operador):
 1. Crear marca nueva (no Alexa) → Brand OS con competidores y alias → 2–3 intereses.
 2. Importar `load1.csv` → preparación → ficha → discovery sobre relevantes → adoptar 2 conceptos → pertenencia → seleccionar en Signal.
 3. Importar `load2.csv` → la preparación reutiliza assets; la ficha procesa **sólo** `input_digest` nuevos/cambiados; la pertenencia procesa **sólo** raíces nuevas/cambiadas × conceptos, más todas las raíces para un concepto editado entre cargas; discovery: predicción de grupos conocidos para raíces nuevas (motor incremental existente, `tools/signal-semantic-lab/src/signal_semantic_lab/workspace_incremental_engine.py`) y propuesta de conceptos emergentes desde el residuo relevante sin concepto.
@@ -499,7 +518,7 @@ Flujo de aceptación (UI, local o dev-test):
 
 Métricas del recibo: llamadas y coste de la carga 2 vs. carga 1 (debe ser proporcional a lo nuevo), tiempo de pared por etapa, conteos que cuadran (toda raíz elegible con estado).
 
-Aceptación: lo anterior, con conteos de llamadas que prueben la reutilización, y QA del fundador sobre la UI. Sólo entonces se propone desplegar en UAT (con su aprobación).
+Aceptación: lo anterior, con conteos de llamadas que prueben la reutilización, y QA del fundador sobre la UI. Los cortes parciales pueden estar ya en UAT conforme a §6.9; verificar allí el recorrido integrado y su segunda carga antes de proponer producción. No declarar listo para producción por tener sólo una demo parcial.
 
 > **Prompt del sub-chat WS8:** «Lee el spec §1–§7 y §9.8. Rama `feat/mfp-ws8-incremental`; migraciones 0237–0239. Conecta las etapas para la segunda carga usando las claves por contenido ya definidas; no recalcules nada con clave vigente. Entrega el E2E guiado y el recibo con conteos de llamadas por carga.»
 
@@ -510,18 +529,18 @@ Aceptación: lo anterior, con conteos de llamadas que prueben la reutilización,
 | Riesgo | Mitigación |
 |---|---|
 | JEV no soporta bien español, textos largos o no da garantías de datos | Prueba B separada; due diligence previa; el producto no depende de JEV. |
-| La ficha de Claude excede el presupuesto en corpus grandes | Este programa se limita a ≤150K; destilación es el siguiente programa. |
+| La ficha de Claude cuesta más de lo previsto en corpus grandes | Actualizar la previsión y reportar consumo; continuar el alcance autorizado sin degradar calidad (§6.5). La escala >150K sigue fuera de la aceptación inicial, no es un tope financiero ni un límite permanente del producto. |
 | Ausencia = `not_belongs` oculta errores de truncamiento | Validación de ordinales, división en `max_tokens`, conjunto evaluado registrado. |
 | Prevalencia baja de algunos intereses hace ruidosas las métricas | Gold con estrato enriquecido; recall con intervalo; decisión preregistrada. |
 | Ramas paralelas chocan en migraciones o en `data-os.ts` | Rangos reservados; cambios en `data-os.ts` mínimos y en bloques separados; rebase frecuente sobre `develop`. |
 | Repetir el patrón de sobre-sellado y ciclos de control | Regla §6.3; los PR que añadan controles extra deben justificar el fallo concreto que previenen. |
 | La regla léxica de §4.2b no detecta referencias indirectas a una entidad recién agregada | Límite aceptado y documentado; «Recalcular ficha completa» con coste estimado; tamaño de conjuntos afectados reportado en WS2 y WS8. |
-| Muchas entidades en el CE encarecen la prueba JEV (2 preguntas por entidad) | Medir en WS3; si excede, limitar a la marca y los N competidores principales para la prueba y documentarlo. |
+| Muchas entidades en el CE encarecen la prueba JEV (2 preguntas por entidad) | Medir coste/latencia en WS3 y optimizar o particionar según límites reales del proveedor conservando todas las entidades; no eliminar competidores para ajustarse al presupuesto. |
 
 Preguntas para el fundador (no bloquean WS0–WS2):
 1. ¿Quién provee `load1.csv`/`load2.csv` (o autoriza muestrear un corpus local existente)?
 2. ¿Confirma los umbrales de §9.4 o los ajusta antes de WS4?
-3. ¿Cuenta y API key de JEV, y quién hace la due diligence con el proveedor?
+3. WS3 verifica JEV con la cuenta/clave compartidas y fuentes oficiales; consultar al fundador sólo si aparece una restricción concreta de derechos o tratamiento que requiera su decisión, no para aprobar un documento rutinario.
 4. ¿Etiqueta él el gold de 150 raíces o delega en alguien del equipo?
 
 ---
