@@ -270,10 +270,16 @@ const facetDisplayPopulation = `WITH display_roots AS MATERIALIZED (
     SELECT purpose FROM unnest(ARRAY['client-derived-metrics','client-mention-list','client-text-or-excerpt']) purpose
     WHERE NOT EXISTS (SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$1
       AND usage.licensing_policy_id=license.id AND usage.usage_purpose=purpose AND usage.decision='allowed'))
+), current_facets AS MATERIALIZED (
+  -- Keep the canonical human/context projection, but evaluate it once per workspace.
+  -- Joining the expanded view directly to underestimated rights roots caused its
+  -- entire population and correlated label lookups to run again for every root.
+  SELECT workspace_id,root_id,full_text,title,platform,status,facets,requires_context_review
+  FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
 ), scoped AS MATERIALIZED (
   SELECT f.*,m.url,o.patch,
     f.root_id=ANY($2::uuid[]) stale
-  FROM signal_mention_facets_current_v1 f JOIN display_roots d USING(root_id)
+  FROM current_facets f JOIN display_roots d USING(root_id)
   JOIN mentions m ON m.id=f.root_id AND m.workspace_id=$1
   LEFT JOIN LATERAL (SELECT jsonb_object_agg(o.dimension,o.value) patch FROM signal_mention_facet_overrides o
     WHERE o.workspace_id=f.workspace_id AND o.root_id=f.root_id AND o.superseded_at IS NULL) o ON true

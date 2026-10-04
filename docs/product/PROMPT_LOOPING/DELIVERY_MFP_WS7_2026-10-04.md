@@ -12,8 +12,8 @@ PR draft: [#21](https://github.com/noisia-ai/monorepo/pull/21), base `develop`. 
 - `node --test --import tsx …mfp-ui.test.ts …signal-mention-facets-ui.test.ts`: **10 PASS**, 0.35 s local; helpers, Unicode/citas, costes, locales, atomicidad y permisos revocados con DB simulada.
 - `node --test --import tsx …MfpEvidence.test.tsx`: **6 PASS**, 0.26 s local; render SSR en ambos idiomas, cita dentro del original, negativa sin evidencia inventada, nulo distinto de máximo cero.
 - Regresión Topics/editor/flag MFP: **18 PASS**, 1.5 s local, ambos idiomas.
-- PG real opt-in preparado: `node --import tsx scripts/dev-corpus/facets-ui-check.ts --rollback-check`, sólo runner privado y transacción con rollback; pendiente de ejecución coordinada por Root tras restaurar alias.
-- Parser TypeScript de archivos tocados: sin diagnósticos. `git diff --check`: limpio. Typecheck, lint, suites completas y build: CI remoto del PR, pendiente de conclusión al escribir este recibo.
+- PG real opt-in: el primer ensayo sobre las 905 raíces privadas se canceló a los 166 s durante distribuciones (`57014`), sin locks; Root confirmó rollback. No acredita PASS. El plan privado mostró 198 nodos/36 nested loops, estimación de una raíz y expansión repetida de la vista completa como lado interno del join. El nuevo CTE materializa una sola proyección por workspace con las columnas necesarias, sin modificar 0225 ni settings. Medición y repetición remotas pendientes. El harness conserva `--rollback-check`, añade `--explain-only` para guardar un plan saneado privado sin ejecutar la consulta, fases/SQLSTATE y timeout de 60 s por sentencia.
+- Parser TypeScript de archivos tocados: sin diagnósticos. `git diff --check`: limpio. Typecheck, lint, suites completas, build, readiness y smoke: [CI remoto verde de `5ba195b`](https://github.com/noisia-ai/monorepo/actions/runs/37200807400). El cambio posterior de instrumentación `1d164fd` pasó typecheck/lint; CI completo aún en curso al actualizar este recibo.
 
 ## Límites de entrega
 
