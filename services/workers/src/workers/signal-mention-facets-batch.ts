@@ -241,7 +241,12 @@ export async function runMentionFacetsTickV1(args: {
       const group =
         parsed.status === "split"
           ? { split: true, results: [] }
-          : parseFacetGroupV1(parsed.text!, call.inputs, run.context);
+          : parseFacetGroupV1(
+              parsed.text!,
+              call.inputs,
+              run.context,
+              run.identity,
+            );
       if (group.split) {
         if (run.error_code) {
           apply.push({

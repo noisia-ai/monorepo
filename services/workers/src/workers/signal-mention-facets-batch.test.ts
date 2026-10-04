@@ -12,6 +12,7 @@ import type {
 import {
   entityContextDigestV1,
   facetLabelerIdentityV1,
+  facetLabelerIdentityLegacyV1,
   type FacetResult,
 } from "@noisia/query-engine";
 import { AnthropicBatchTransportError } from "../providers/anthropic-message-batches";
@@ -35,7 +36,7 @@ function harness() {
     kind: "facets",
     context,
     entity_context_digest: entityContextDigestV1(context),
-    identity: facetLabelerIdentityV1(),
+    identity: facetLabelerIdentityLegacyV1(),
     labeler_digest: "labeler",
     lease_token: "lease",
     cursor_root_id: null,
@@ -179,10 +180,19 @@ function harness() {
             {
               type: "text",
               text: JSON.stringify({
-                roots: call.inputs.map((_, root_ordinal) => ({
-                  root_ordinal,
-                  facets,
-                })),
+                roots:
+                  run.identity.params.request_format ===
+                  "required-ordinal-fields-v2"
+                    ? Object.fromEntries(
+                        call.inputs.map((_, ordinal) => [
+                          `r${ordinal}`,
+                          facets,
+                        ]),
+                      )
+                    : call.inputs.map((_, root_ordinal) => ({
+                        root_ordinal,
+                        facets,
+                      })),
               }),
             },
           ],
@@ -398,4 +408,18 @@ test("unknown entity recovery after authority loss applies technical results wit
         result.status === "error" && result.error_code === "unknown_entity_id",
     ),
   );
+});
+
+test("required ordinal grammar flows through persisted request and worker parser", async () => {
+  const h = harness();
+  h.run.identity = facetLabelerIdentityV1();
+  const result = await runMentionFacetsTickV1({
+    run_id: h.run.id,
+    store: h.store,
+    provider: h.provider,
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(h.labels.length, 2);
+  assert.ok(h.labels.every((label) => label.status === "labeled"));
+  assert.equal(h.submitted(), 1);
 });

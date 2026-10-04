@@ -2,7 +2,7 @@ import { randomUUID, createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 import {
   facetLabelerIdentityV1,
-  buildFacetRequestV1,
+  validateFacetLabelerIdentityV1,
   labelerDigestV1,
   signalWorkspaceEmbeddingDigestV1 as digest,
   type FacetInput,
@@ -310,7 +310,7 @@ export async function requestMentionFacetsV1(args: {
       (args.full_recalculation ?? false) || supersededFull,
     );
     if (identity.provider === "anthropic")
-      buildFacetRequestV1([], change.context, identity);
+      validateFacetLabelerIdentityV1(identity);
     const labeler = (
       await c.query<{ id: string }>(
         `INSERT INTO signal_labeler_versions(kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)

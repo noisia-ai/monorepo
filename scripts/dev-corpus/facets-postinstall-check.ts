@@ -1,4 +1,4 @@
-/** Focal PostgreSQL rollback after 0221–0224. Installs 0225 only inside this transaction. */
+/** Focal PostgreSQL rollback on installed 0221–0225. No DDL and no provider transport. */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { main, openDatabase } from "./guard.mjs";
@@ -61,12 +61,6 @@ await main(async () => {
       )
     ).rows[0].definition;
     await client.query("BEGIN");
-    await client.query(
-      await readFile(
-        "infrastructure/db/migrations/0225_signal_facet_human_projection.sql",
-        "utf8",
-      ),
-    );
     let serial = 0;
     const stack: string[] = [];
     const query = async (sql: any, values?: any) => {
@@ -116,6 +110,7 @@ await main(async () => {
       storeRaw: async (args) => `mock://${args.run_id}/${args.call_id}`,
     });
     const run = (await store.claim(requested.run_id))!;
+    check(run.identity.params.request_format === "required-ordinal-fields-v2");
     const inputs = (await store.inputs(run)).slice(0, 3);
     const calls = await store.reserve(
       run,
@@ -404,7 +399,10 @@ await main(async () => {
         assertions,
         sqlstate: diagnostic.code,
         position: diagnostic.position,
-        frames: diagnostic.stack?.split("\n").filter((line) => line.trim().startsWith("at ")).slice(0, 4),
+        frames: diagnostic.stack
+          ?.split("\n")
+          .filter((line) => line.trim().startsWith("at "))
+          .slice(0, 4),
       }),
     );
     throw error;

@@ -241,3 +241,139 @@ test("Anthropic reads final text, refusal and truncation separately; exact cache
     4225,
   );
 });
+
+test("ordinal grammar preserves legacy identities and requires every input key", async () => {
+  const {
+    buildFacetRequestV1,
+    facetLabelerIdentityV1,
+    facetLabelerIdentityLegacyV1,
+    validateFacetLabelerIdentityV1,
+  } = await import("./signal-mention-facets-v1");
+  const legacy = facetLabelerIdentityLegacyV1(),
+    current = facetLabelerIdentityV1();
+  assert.equal(
+    legacy.prompt_digest,
+    "sha256:6b98bcb5ada4632d36ecce6576a53f2a9622e9acedb065ebc8085f161ee89ff7",
+  );
+  assert.equal(
+    legacy.schema_digest,
+    "sha256:6bc8a3548169c8de1a54785c0fc75bd8e16ab9053fe8f49cca4edf3a868f41aa",
+  );
+  assert.doesNotThrow(() => validateFacetLabelerIdentityV1(current));
+  assert.throws(
+    () => buildFacetRequestV1([], ce, current),
+    /facet_root_count_invalid/u,
+  );
+  assert.notEqual(current.prompt_digest, legacy.prompt_digest);
+  assert.notEqual(current.schema_digest, legacy.schema_digest);
+  for (const count of [2, 8, 25]) {
+    const inputs = Array.from({ length: count }, (_, i) => input(i));
+    const request = buildFacetRequestV1(inputs, ce, current);
+    const schema = request.output_config.format.schema as any;
+    const expectedKeys = inputs.map((_, i) => `r${i}`);
+    assert.deepEqual(schema.properties.roots.required, expectedKeys);
+    assert.deepEqual(
+      Object.keys(schema.properties.roots.properties),
+      expectedKeys,
+    );
+    assert.equal(schema.properties.roots.additionalProperties, false);
+    const body = JSON.parse(request.messages[0]!.content);
+    assert.equal(body.expected_root_count, count);
+    assert.deepEqual(
+      body.roots.map((root: any) => root.root_ordinal),
+      inputs.map((_, i) => i),
+    );
+    const response = {
+      roots: Object.fromEntries(expectedKeys.map((key) => [key, facets()])),
+    };
+    assert.deepEqual(
+      parseFacetGroupV1(
+        JSON.stringify(response),
+        inputs,
+        ce,
+        current,
+      ).results.map((row) => row.root_id),
+      inputs.map((row) => row.root_id),
+    );
+    delete response.roots.r1;
+    assert.equal(
+      parseFacetGroupV1(JSON.stringify(response), inputs, ce, current).split,
+      true,
+    );
+    assert.equal(
+      parseFacetGroupV1(
+        JSON.stringify({ roots: [{ root_ordinal: 0, facets: facets() }] }),
+        inputs,
+        ce,
+        current,
+      ).split,
+      true,
+    );
+    assert.equal(
+      parseFacetGroupV1(
+        JSON.stringify({ roots: { r0: facets() } }),
+        [input(0)],
+        ce,
+        legacy,
+      ).split,
+      true,
+    );
+    assert.ok(
+      Array.isArray(
+        JSON.parse(
+          buildFacetRequestV1(inputs, ce, legacy).messages[0]!.content,
+        ),
+      ),
+    );
+    assert.equal(
+      schema.properties.roots.properties.r0.$ref,
+      "#/definitions/facet",
+    );
+    assert.equal((JSON.stringify(schema).match(/"anyOf"/gu) ?? []).length, 3);
+    const fields = schema.definitions.facet.properties;
+    assert.ok(
+      new RegExp(fields.language.properties.value.anyOf[0].pattern).test("es"),
+    );
+    assert.equal(
+      new RegExp(fields.language.properties.value.anyOf[0].pattern).test(
+        "es-MX",
+      ),
+      false,
+    );
+    const topicPattern = new RegExp(
+      fields.asunto.properties.value.anyOf[0].pattern,
+    );
+    assert.equal(
+      topicPattern.test(Array.from({ length: 12 }, () => "tema").join(" ")),
+      true,
+    );
+    assert.equal(
+      topicPattern.test(Array.from({ length: 13 }, () => "tema").join(" ")),
+      false,
+    );
+    const tooLong = {
+      roots: Object.fromEntries(
+        expectedKeys.map((key) => [
+          key,
+          { ...facets(), asunto: dim("word ".repeat(13).trim()) },
+        ]),
+      ),
+    };
+    assert.ok(
+      parseFacetGroupV1(
+        JSON.stringify(tooLong),
+        inputs,
+        ce,
+        current,
+      ).results.every((row) => row.error_code === "invalid_facets"),
+    );
+  }
+  const incompatible = {
+    ...current,
+    params: { ...current.params, request_format: "legacy-array-v1" },
+  };
+  assert.throws(
+    () => buildFacetRequestV1([input(0)], ce, incompatible),
+    /facet_labeler_identity_unsupported/u,
+  );
+});
