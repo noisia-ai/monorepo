@@ -72,6 +72,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   const [drawer, setDrawer] = useState(false), [reading, setReading] = useState(false), [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState<SignalWorkspaceTopicEvidencePageV1 | null>(null);
   const request = useRef<AbortController | null>(null), sequence = useRef(0);
+  const mfp = data.membership_population;
   const consolidated = data.coverage.noise !== null;
   const sectionKind = section === "narratives" ? "narrative" : "topic";
   const sectionTerms = workspaceTermsForSectionV1(data, section === "narratives" ? "narratives" : "topics");
@@ -87,7 +88,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   const share = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale,
     { style: "percent", maximumFractionDigits: 1 }).format(value);
   const read = useCallback(async (cursor?: string) => {
-    if (!term || term.evidence_available === false || !data.is_current || !termGeneration) return;
+    if (!term || term.evidence_available === false || !data.is_current || (!termGeneration && term.basis !== "concept_membership")) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     const version = ++sequence.current; setReading(true); setError(null);
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest, limit: "25" });
@@ -166,14 +167,14 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
             : event.key === "ArrowLeft" ? (index + sections.length - 1) % sections.length : null;
           if (next === null) return;
           event.preventDefault(); selectSection(sections[next]!); tabButtons.current[next]?.focus();
-        }}>{t(`sections.${key}`)}<span>{key === "topics" ? number(workspaceTermsForSectionV1(data, "topics").length)
-          : key === "narratives" ? consolidated ? number(workspaceTermsForSectionV1(data, "narratives").length) : t("sections.unavailable")
-          : key === "noise" ? data.coverage.noise === null ? t("sections.unavailable") : number(data.coverage.noise)
+        }}>{t(mfp && key === "noise" ? "mfp.unrelated" : mfp && key === "unresolved" ? "mfp.without_concept" : `sections.${key}`)}<span>{key === "topics" ? number(workspaceTermsForSectionV1(data, "topics").length)
+          : key === "narratives" ? consolidated || mfp ? number(workspaceTermsForSectionV1(data, "narratives").length) : t("sections.unavailable")
+          : key === "noise" ? mfp ? number(mfp.unrelated) : data.coverage.noise === null ? t("sections.unavailable") : number(data.coverage.noise)
           : data.coverage.unresolved === null ? t("sections.unavailable") : number(data.coverage.unresolved)}</span></button>)}
     </div> : null}
     <div id={`${tabsId}-panel`} role={surface === "topics" ? "tabpanel" : undefined}
       aria-labelledby={surface === "topics" ? `${tabsId}-${section}` : undefined} tabIndex={surface === "topics" ? 0 : undefined}>
-    {surface === "topics" && (section === "noise" || section === "unresolved" || section === "narratives" && !consolidated)
+    {surface === "topics" && (section === "noise" || section === "unresolved" || section === "narratives" && !consolidated && !mfp)
       ? <SignalWorkspaceTopicDisposition section={section} data={data} />
       : !sectionTerms.length ? <section className="signal-v2-tn__empty"><Quotes size={24} />
         <strong>{t(data.is_processing ? "emptyPreparing" : section === "narratives" ? "emptyNarratives" : "empty")}</strong>
@@ -202,13 +203,13 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
           <article><small>{t("definitionVersion")}</small><strong>{number(term?.definition_revision ?? 0)}</strong></article>
         </div>
         <div className="signal-v2-tn__evidence-intro"><p>{t(sectionKind === "narrative" ? "narrativeMembership"
-          : term?.basis === "defined_interest" ? "definedMembership" : "membership", { count: term?.mention_count ?? 0 })}</p>
-          <p>{term?.basis === "defined_interest" ? t("definedQuality") : t("traceability")}</p></div>
+          : term?.basis === "concept_membership" ? "mfp.membership" : term?.basis === "defined_interest" ? "definedMembership" : "membership", { count: term?.mention_count ?? 0 })}</p>
+          <p>{term?.basis === "concept_membership" ? t("mfp.quality") : term?.basis === "defined_interest" ? t("definedQuality") : t("traceability")}</p></div>
         <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={!term || term.evidence_available === false || !data.is_current}
           onClick={() => { setDrawer(true); if (!evidence) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
         {term?.evidence_available === false ? <p className="signal-v2-tn__evidence-intro">{t("definedEvidencePending")}</p> : null}
         {term ? <SignalWorkspaceTopicDetail data={data} termKey={term.term_key} kind={sectionKind} onSelect={select} /> : null}
-        {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t(term?.basis === "defined_interest" ? "membershipEvidence" : "detailMetrics.evidence")}</strong>
+        {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t(term?.basis !== "computed_cluster" ? "membershipEvidence" : "detailMetrics.evidence")}</strong>
           {evidence?.items.slice(0, 5).map(item => <button key={item.mention_id} type="button" onClick={() => setDrawer(true)}>
             <span><SignalSourceIcon label={item.platform} platform={item.platform} size={15} />{item.platform}</span><p>{item.text}</p>
           </button>)}
@@ -223,28 +224,32 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
         label: formatTopicDate(item.date, locale), value: item.assigned_unique
       })), t(consolidated ? "assignedEditorial" : "assigned"), false)} />
     </section> : null}
-    <section aria-label={t(data.source === "workspace_defined_interest" ? "definedSource" : "computed")} className="signal-v2-tn__operations">
-      <div className="signal-v2-tn__coverage-note" role="status"><div><strong>{t(data.source === "workspace_defined_interest" ? "definedSource" : "computed")}</strong><p>{t(data.source === "workspace_defined_interest" ? "definedQuality" : "quality")}</p>
+    <section aria-label={t(mfp ? "mfp.source" : data.source === "workspace_defined_interest" ? "definedSource" : "computed")} className="signal-v2-tn__operations">
+      <div className="signal-v2-tn__coverage-note" role="status"><div><strong>{t(mfp ? "mfp.source" : data.source === "workspace_defined_interest" ? "definedSource" : "computed")}</strong><p>{t(mfp ? "mfp.quality" : data.source === "workspace_defined_interest" ? "definedQuality" : "quality")}</p>
         {!data.is_current ? <p>{t("staleBody")}</p> : null}
         {data.interpretation_coverage ? <p>{t(data.interpretation_coverage.complete ? "interpretationComplete" : "interpretationPartial", {
           done: data.interpretation_coverage.interpreted_unit_count, total: data.interpretation_coverage.expected_unit_count })}</p>
           : data.generation_id ? <p>{t("interpretationUnknown")}</p> : null}
-        {data.coverage.unresolved !== null && data.coverage.unresolved > 0
+        {!mfp && data.coverage.unresolved !== null && data.coverage.unresolved > 0
           ? <p>{t(consolidated ? "unresolvedCoverage" : "pendingCoverage", { count: data.coverage.unresolved })}</p> : null}
         {data.is_processing ? <p>{t("processing")}</p> : null}
       </div></div>
       <div className="signal-v2-tn__kpis">
-        {([["denominator", data.denominator], [consolidated ? "assignedEditorial" : "assigned", data.coverage.assigned_unique],
+        {mfp ? ([["denominator", data.denominator], ["selected", data.coverage.assigned_unique],
+          ["relevant", mfp.relevant], ["unrelated", mfp.unrelated], ["spam", mfp.spam], ["unknown", mfp.unknown],
+          ["without_concept", mfp.without_concept]] as const).map(([key, value]) => <SignalTopicsKpi key={key}
+            label={t(`mfp.${key}`)} secondary={t("mfp.rootUnit")} value={value === null ? "—" : number(value)}
+            help={{title: t(`mfp.${key}`), body: t(`mfp.help.${key}`)}} />) : ([["denominator", data.denominator], [consolidated ? "assignedEditorial" : "assigned", data.coverage.assigned_unique],
           [consolidated ? "noise" : "abstained", data.coverage.noise ?? data.coverage.abstained],
           [consolidated ? "unresolved" : "pending", data.coverage.unresolved]] as const)
           .map(([label, value]) => <SignalTopicsKpi key={label} label={t(label)} value={value === null ? "—" : number(value)}
             help={{ title: t(label), body: t(`metricHelp.${label}`) }} secondary={t(`metricCaption.${label}`)} />)}
       </div>
-      <p className="signal-v2-tn__evidence-intro">{t(consolidated ? "denominatorHelpEditorial" : "denominatorHelp")}{data.coverage.withheld > 0 ? ` ${t("withheld", { count: data.coverage.withheld })}` : ""}</p>
+      <p className="signal-v2-tn__evidence-intro">{t(mfp ? "mfp.denominatorHelp" : consolidated ? "denominatorHelpEditorial" : "denominatorHelp")}{data.coverage.withheld > 0 ? ` ${t("withheld", { count: data.coverage.withheld })}` : ""}</p>
     </section>
-    {!consolidated ? <p className="signal-v2-tn__evidence-intro">{t("noNarratives")}</p> : null}
+    {!consolidated && !mfp ? <p className="signal-v2-tn__evidence-intro">{t("noNarratives")}</p> : null}
     </div>
-    {drawer && term && term.evidence_available !== false ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t(term.basis === "defined_interest" ? "membershipEvidence" : "computed")} title={term.label} intro={t(term.basis === "defined_interest" ? "definedQuality" : "quality")}
+    {drawer && term && term.evidence_available !== false ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t(term.basis !== "computed_cluster" ? "membershipEvidence" : "computed")} title={term.label} intro={t(term.basis === "concept_membership" ? "mfp.quality" : term.basis === "defined_interest" ? "definedQuality" : "quality")}
       timeZone={workspaceTimezone}
       records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at,
         platform: item.platform, originalUrl: item.url, quote: "quote" in item && typeof item.quote === "string" ? item.quote : null,
@@ -262,6 +267,13 @@ export function SignalWorkspaceTopicDisposition({ section, data }: {
   section: Exclude<NativeTopicSection, "topics">; data: ComputedTopics;
 }) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
+  if (data.membership_population && (section === "noise" || section === "unresolved")) {
+    const key = section === "noise" ? "unrelated" : "without_concept";
+    return <section className="signal-v2-tn__empty" role="status" data-availability="available">
+      <Quotes size={24} aria-hidden /><strong>{t(`mfp.${key}`)}</strong>
+      <strong>{data.membership_population[key].toLocaleString(locale)}</strong><p>{t(`mfp.help.${key}`)}</p>
+    </section>;
+  }
   const available = section === "unresolved" ? data.coverage.unresolved !== null : section === "noise" && data.coverage.noise !== null;
   const count = section === "noise" ? data.coverage.noise : section === "unresolved" ? data.coverage.unresolved : null;
   const message = section === "noise" && available ? "noiseAvailable" : section === "unresolved" && data.coverage.noise !== null ? "unresolvedAvailable" : section;

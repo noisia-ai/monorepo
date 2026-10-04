@@ -54,3 +54,11 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.doesNotMatch(unclassified, /signal-v2-tn__sentiment-legend/);
   });
 }
+
+test("MFP detail accepts a null generation only when the current scope also has none", () => {
+  const membership = {...detail,generation_id:null};
+  assert.equal(validNativeTopicDetail(membership,membership),true);
+  assert.equal(validNativeTopicDetail(membership,detail),false);
+  assert.equal(validNativeTopicDetail(detail,membership),false);
+  assert.equal(validNativeTopicDetail({...membership,scope_digest:"stale"},membership),false);
+});

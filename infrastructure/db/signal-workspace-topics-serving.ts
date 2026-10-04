@@ -64,7 +64,7 @@ type DefinedInterest = { selection: SignalWorkspaceDefinedInterestOverlayV1; top
 type Context = { generation: Generation | null; topics: CatalogTerm[]; selection: Selection;
   is_current: boolean; is_processing: boolean; filters: CivilFilters;
   native: boolean; consolidated: boolean; imported?: ImportedPopulation;
-  defined_interests?: DefinedInterest[]; concept_membership?: boolean; membership_run_id?: string | null; membership_state_digest?: string };
+  defined_interests?: DefinedInterest[]; concept_membership?: boolean; membership_concept_keys?: Set<string>; membership_run_id?: string | null; membership_state_digest?: string };
 
 /** A defined interest has its own durable selection, separate from SQL0181's
  * consolidated concepts. Currentness and authority are rechecked at read. */
@@ -254,7 +254,7 @@ async function membershipContext(client: PoolClient, args: Args, filters: CivilF
     selection:{revision:Math.max(base?.selection.revision??0,...rows.map(r=>r.selection_revision)),items:{...base?.selection.items,...selected}},
     is_current:(!change.changed || change.affected.length===0),is_processing:state?.processing??false,filters,native:true,consolidated:!!base,
     ...(base?{}:{imported:{receipt_digest:hash({revision:state?.input_revision,selections:rows.map(r=>r.selection_digest)}),input_revision:state?.input_revision??null}}),
-    concept_membership:true,membership_run_id:state?.run_id??null,membership_state_digest:hash({membershipState,context:change.digest})};
+    concept_membership:true,membership_concept_keys:keys,membership_run_id:state?.run_id??null,membership_state_digest:hash({membershipState,context:change.digest})};
 }
 async function context(client: PoolClient, args: Args): Promise<Context> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
@@ -563,6 +563,7 @@ function populationParams(args: Args, ctx: Context) {
 }
 type Aggregate = { denominator: number; processed: number; assigned_unique: number; abstained: number; noise: number; unresolved: number;
   unresolved_exclusive: number;
+  membership_population?: SignalWorkspaceTopicsOverviewV1["membership_population"];
   interest_processed?: number;
   evidence_visible_total: number; withheld: number; rights_digest: string; date_from: string | null; date_to: string | null;
   counts: Array<{ term_key: string; mention_count: number }>; series: SignalWorkspaceTopicsOverviewV1["series"]; observed_at: string };
@@ -579,6 +580,13 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
       count(*) FILTER(WHERE root.metrics AND root.has_unresolved_topics)::int unresolved,
       count(*) FILTER(WHERE root.metrics AND ${ctx.concept_membership ? "root.relevance='relevant' AND NOT root.has_concept" : "root.resolution_state='unresolved'"})::int unresolved_exclusive,
       count(*) FILTER(WHERE NOT root.metrics)::int withheld,
+      ${ctx.concept_membership ? `jsonb_build_object(
+        'relevant',count(*) FILTER(WHERE root.metrics AND root.relevance='relevant'),
+        'unrelated',count(*) FILTER(WHERE root.metrics AND root.relevance='unrelated'),
+        'spam',count(*) FILTER(WHERE root.metrics AND root.relevance='spam'),
+        'unknown',count(*) FILTER(WHERE root.metrics AND (root.relevance='unknown' OR root.relevance IS NULL)),
+        'without_concept',count(*) FILTER(WHERE root.metrics AND root.relevance='relevant' AND NOT root.has_concept)
+      ) membership_population,` : ""}
       ${interestOnly ? `(SELECT count(DISTINCT item.canonical_root_id)::int
         FROM signal_classification_generation_items item JOIN period_roots checked ON checked.root_id=item.canonical_root_id AND checked.metrics
         WHERE item.workspace_id=$1::uuid AND item.generation_id=ANY($7::uuid[]) AND item.resolution_state<>'error') interest_processed,` : ""}
@@ -599,7 +607,8 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     selected: displayedTopics(ctx).some(selected => selected.term_key === topic.term_key),
     mention_count: counts.get(topic.term_key) ?? 0,
     share_of_corpus: summary.denominator ? (counts.get(topic.term_key) ?? 0) / summary.denominator : null,
-    basis: interestKeys.has(topic.term_key) ? "defined_interest" as const : "computed_cluster" as const,
+    basis: ctx.membership_concept_keys?.has(topic.term_key) ? "concept_membership" as const
+      : interestKeys.has(topic.term_key) ? "defined_interest" as const : "computed_cluster" as const,
     evidence_available: true,
     ...(interestKeys.has(topic.term_key) ? { interest_generation_id: ctx.defined_interests!.find(item => item.topic.term_key === topic.term_key)!.generation_id } : {}) }));
   const computed: SignalWorkspaceTopicsOverviewV1 = { contract_version: "signal-workspace-topics-serving-v1", source: "workspace_computed", workspace_id: args.workspace_id,
@@ -613,8 +622,9 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
       ...(ctx.imported ? { imported: ctx.imported } : {}),
       terms, filters: ctx.filters, rights: summary.rights_digest, ...(ctx.concept_membership?{membership_state:ctx.membership_state_digest,membership_run:ctx.membership_run_id}:{}) }), observed_at: summary.observed_at,
     denominator: summary.denominator, coverage: { processed: summary.processed, assigned_unique: summary.assigned_unique,
-      abstained: summary.abstained, noise: ctx.consolidated || ctx.concept_membership ? summary.noise : null,
+      abstained: summary.abstained, noise: ctx.concept_membership ? null : ctx.consolidated ? summary.noise : null,
       unresolved: ctx.consolidated || ctx.concept_membership ? summary.unresolved_exclusive : summary.unresolved, withheld: summary.withheld },
+    ...(ctx.concept_membership ? {membership_population: summary.membership_population} : {}),
     interpretation_coverage: workspaceTopicsInterpretationCoverageV1(ctx.generation?.interpretation_coverage),
     quality: "not_calibrated", terms, series: summary.series,
     limitations: ["computed_memberships_not_semantic_precision", "multilabel_counts_are_not_additive",

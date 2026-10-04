@@ -26,6 +26,11 @@ export type SignalWorkspaceTopicsOverviewV1 = {
     unresolved: number;
     withheld: number;
   };
+  /** MFP fiche relevance: the first four categories partition the rights-filtered,
+   * date-filtered root denominator. without_concept is a subset of relevant,
+   * considering every current MFP concept, independently of Signal selection.
+   * assigned_unique counts visible roots and is not an additional partition. */
+  membership_population?: { relevant: number; unrelated: number; spam: number; unknown: number; without_concept: number };
   interpretation_coverage: { interpreted_unit_count: number; expected_unit_count: number; complete: boolean } | null;
   quality: "not_calibrated";
   terms: Array<{
@@ -38,7 +43,7 @@ export type SignalWorkspaceTopicsOverviewV1 = {
     selected: boolean;
     mention_count: number;
     share_of_corpus: number | null;
-    basis: "computed_cluster" | "defined_interest";
+    basis: "computed_cluster" | "defined_interest" | "concept_membership";
     /** Present only for an independently classified, selected interest. */
     interest_generation_id?: string;
     /** False until the cited decision receipt is available to the evidence API. */

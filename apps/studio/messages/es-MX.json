@@ -630,6 +630,29 @@
       "highlights": "Todavía no hay conversaciones destacadas para este periodo. Puedes explorar las menciones."
     },
     "workspaceTopics": {
+      "mfp": {
+        "source": "Conceptos y pertenencias",
+        "quality": "Los conceptos adoptados usan decisiones semánticas guardadas para su definición vigente. Los conceptos de discovery conservan su agrupación. Estos resultados experimentales no acreditan precisión ni aprobación humana.",
+        "membership": "{count} menciones con pertenencia semántica vigente.",
+        "denominator": "Total de menciones",
+        "selected": "En conceptos seleccionados",
+        "relevant": "Relevantes",
+        "unrelated": "Ajenas",
+        "spam": "Spam o bots",
+        "unknown": "Relevancia sin determinar",
+        "without_concept": "Relevantes sin concepto",
+        "denominatorHelp": "Relevantes, ajenas, spam y relevancia sin determinar dividen el total de menciones únicas. Sin concepto es un subconjunto de relevantes y considera todos los conceptos de pertenencia, aunque no estén seleccionados. Las menciones seleccionadas y los conteos por concepto se superponen; no se suman a esas categorías.",
+        "help": {
+          "denominator": "Menciones únicas del período con derechos vigentes para métricas.",
+          "selected": "Menciones únicas en al menos un concepto visible seleccionado, por pertenencia o discovery.",
+          "relevant": "La ficha identifica al menos una entidad del contexto.",
+          "unrelated": "La ficha identifica contenido ajeno a las entidades del contexto; no es ruido editorial.",
+          "spam": "La ficha identifica spam o bots.",
+          "unknown": "La ficha no permite resolver la relevancia; puede faltar, estar obsoleta o contener abstenciones o errores.",
+          "without_concept": "Menciones relevantes sin un belongs vigente en ningún concepto de pertenencia. Incluye decisiones negativas, incertidumbre y trabajo pendiente; no equivale a rechazo."
+        },
+        "rootUnit": "Menciones únicas"
+      },
       "detailMetrics": {
         "presence": "Presencia de este concepto",
         "mentions": "Menciones",

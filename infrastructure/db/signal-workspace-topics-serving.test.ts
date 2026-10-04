@@ -94,12 +94,18 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let importedMode = false;
   let consolidatedMode = false;
   let noOverlap = false;
+  let membershipMode = false;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   let interestIdentity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   const client = {
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
+      if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [{topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a")}]};
+      if (membershipMode && sql.includes("SELECT context,digest,version_no")) return {rows: []};
+      if (membershipMode && sql.includes("SELECT root_id,title,full_text,facets")) return {rows: []};
+      if (membershipMode && sql.includes("string_agg(jsonb_build_array(root_id,concept_key")) return {rows:[{digest:sha("b")}]};
+      if (membershipMode && sql.includes("SELECT s.input_revision::text")) return {rows:[{input_revision:"7",run_id:id("70"),processing:false}]};
       if (sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids")) return { rows: [] };
       if (sql.includes("jsonb_typeof(input_snapshot->'discovery_population')='object') discovery")) return { rows: [{ discovery: false }] };
       if (/^(BEGIN|COMMIT|ROLLBACK|SET LOCAL)/u.test(sql)) return { rows: [] };
@@ -193,6 +199,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
             evidence_origin: "human_correction", decision_citation: null }] };
       }
       if (sql.includes("WITH source_generation AS MATERIALIZED")) return { rows: [{
+        ...(membershipMode ? {membership_population:{relevant:6,unrelated:3,spam:1,unknown:2,without_concept:4}} : {}),
         denominator: 12, processed: 12, assigned_unique: noOverlap ? 9 : importedMode ? 3 : 12,
         interest_processed: importedMode ? 10 : undefined, evidence_visible_total: 10,
         abstained: 0, noise: 0, unresolved: 0, unresolved_exclusive: 0, withheld: 0,
@@ -323,6 +330,24 @@ test("Signal keeps served semantics while applying a safe working label", async 
     "a topic key cannot be served through the narrative endpoint");
   await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({ ...args, kind: "narrative" }), /workspace_topics_topic_unavailable/,
     "evidence kind must match the selected catalogue term");
+  const previousFlag = process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;
+  try {
+    process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED = "true";
+    membershipMode = true; consolidatedMode = true;
+    const mfp = await loadSignalWorkspaceTopicsOverviewV1({database: args.database,workspace_id:workspaceId,actor_user_id:actorId});
+    assert.equal(mfp?.terms.find(t => t.term_key === "service")?.basis, "concept_membership");
+    assert.equal(mfp?.terms.find(t => t.term_key === consolidatedKey)?.basis, "computed_cluster");
+    assert.deepEqual(mfp?.membership_population, {relevant:6,unrelated:3,spam:1,unknown:2,without_concept:4});
+    assert.equal(mfp?.coverage.noise, null, "unrelated is not an editorial Noise disposition");
+    consolidatedMode = false;
+    const noDiscovery = await loadSignalWorkspaceTopicsOverviewV1({database:args.database,workspace_id:workspaceId,actor_user_id:actorId});
+    assert.equal(noDiscovery?.generation_id, null);
+    assert.equal(noDiscovery?.terms[0]?.basis, "concept_membership");
+  } finally {
+    membershipMode = false; consolidatedMode = false;
+    if (previousFlag === undefined) delete process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;
+    else process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED = previousFlag;
+  }
   access = false;
   await assert.rejects(loadSignalWorkspaceTopicDetailV1(args), /workspace_topics_forbidden/);
   assert.equal(detailQueries.length, 4, "scope rejection must precede another aggregate query");
