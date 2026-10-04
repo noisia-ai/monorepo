@@ -1,7 +1,7 @@
 # WS0 — revisión de archivos y ramas
 
 Base comparada: `develop c577f8f`. Spec/accesos v1.3 preservados previamente en `58bf0b5`.
-Este anexo conserva decisiones y comandos **preparados, no ejecutados**. Ninguna etiqueta ni rama fue borrada por WS0.
+Este anexo conserva las decisiones revisadas por root. Los 13 comandos remotos fueron ejecutados después de verificar las etiquetas remotas y sus SHA exactos; todas las etiquetas permanecen. WS0 no ejecutó borrados; root realizó esta integración.
 
 ## Decisiones sobre etiquetas
 
@@ -31,9 +31,9 @@ Se inventariaron **110 archivos / 2,289,848 bytes** que estaban untracked al ini
 
 La preservación byte a byte **no** acredita ausencia de datos privados ni convierte prompts o recibos antiguos en canon. El spec v1.3 y el banner nuevo de AGENTS fijan la precedencia actual.
 
-## Limpieza remota preparada
+## Limpieza remota ejecutada por root
 
-Verificados por `git ls-remote` los HEAD y etiquetas remotas a 2026-10-04. Cada rama propuesta tiene una etiqueta remota con el mismo SHA. El lease evita borrar una punta que haya avanzado. Root decide y ejecuta tras revisión; si el lease falla, volver a comparar, nunca forzarlo a ciegas.
+Verificados por `git ls-remote` los HEAD y etiquetas remotas a 2026-10-04. Cada rama propuesta tiene una etiqueta remota con el mismo SHA. El lease evita borrar una punta que haya avanzado. Root revisó y ejecutó los 13 borrados con resultado satisfactorio. Si se reutiliza este registro, no repetir los comandos sin revisar el estado nuevo.
 
 ```bash
 git push --force-with-lease=refs/heads/codex/archive-storage-migration-2026-09-10/front-recovery-p0:c0fc67106a145de045854da29b8435555307731d origin :refs/heads/codex/archive-storage-migration-2026-09-10/front-recovery-p0
@@ -53,4 +53,4 @@ git push --force-with-lease=refs/heads/feat/pitch-kit:0cdf4ebb4b109b884531b9f5e6
 
 Conservar `main`, `develop`, `feat/mfp-*` activos y la rama del PR #14 mientras exista. Root retirará `uat-editorial-polling` mediante las herramientas de la app y luego la rama local `codex/interest-membership-2026-10-02`, verificando primero trabajo/procesos pendientes. También consta un checkout antiguo `~/Downloads/noisia-product` en main: no creado por MFP; root debe comprobar su uso antes de retirarlo. Este corte no lo borra.
 
-La aceptación final de §9.0 (`git branch -a` sólo con ramas permitidas) **sigue pendiente** hasta ejecutar la limpieza. El candidato UTC y el foco móvil continúan identificados, sin claim de entrega funcional.
+La aceptación final de §9.0 (`git branch -a` sólo con ramas permitidas) **sigue pendiente** hasta retirar la rama local antigua y resolver el worktree histórico no adjunto a este chat. El candidato UTC y el foco móvil continúan identificados, sin claim de entrega funcional.
