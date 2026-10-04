@@ -301,7 +301,7 @@ for (const locale of ["es-MX", "en-US"]) test(`${locale}: MFP shows relevance an
   const html = await render(locale,mfp);
   assert.ok(html.includes(locale === "es-MX" ? "pertenencia semántica vigente" : "current semantic membership"));
   assert.ok(html.includes(locale === "es-MX" ? "Spam o bots" : "Spam or bots"));
-  assert.ok(html.includes(locale === "es-MX" ? "Relevancia pendiente" : "Unresolved relevance"));
+  assert.ok(html.includes(locale === "es-MX" ? "Relevancia sin determinar" : "Undetermined relevance"));
   assert.match(html,/>40</); assert.match(html,/>69</);
   assert.ok(html.includes(locale === "es-MX" ? "es un subconjunto" : "is a subset"));
   assert.ok(!html.includes(locale === "es-MX" ? "una decisión aprobada" : "an approved decision"));

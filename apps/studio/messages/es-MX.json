@@ -639,9 +639,9 @@
         "relevant": "Relevantes",
         "unrelated": "Ajenas",
         "spam": "Spam o bots",
-        "unknown": "Relevancia pendiente",
+        "unknown": "Relevancia sin determinar",
         "without_concept": "Relevantes sin concepto",
-        "denominatorHelp": "Relevantes, ajenas, spam y relevancia pendiente dividen el total de menciones únicas. Sin concepto es un subconjunto de relevantes y considera todos los conceptos de pertenencia, aunque no estén seleccionados. Las menciones seleccionadas y los conteos por concepto se superponen; no se suman a esas categorías.",
+        "denominatorHelp": "Relevantes, ajenas, spam y relevancia sin determinar dividen el total de menciones únicas. Sin concepto es un subconjunto de relevantes y considera todos los conceptos de pertenencia, aunque no estén seleccionados. Las menciones seleccionadas y los conteos por concepto se superponen; no se suman a esas categorías.",
         "help": {
           "denominator": "Menciones únicas del período con derechos vigentes para métricas.",
           "selected": "Menciones únicas en al menos un concepto visible seleccionado, por pertenencia o discovery.",
