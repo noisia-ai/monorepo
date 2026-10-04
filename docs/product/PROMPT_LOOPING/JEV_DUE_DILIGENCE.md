@@ -1,7 +1,7 @@
 # JEV — verificación WS3 · 2026-10-04
 
-Estado: adaptador experimental; seis pruebas sintéticas remotas reales completadas. No es
-aprobación semántica WS4, entrega UAT ni habilitación de corpus real.
+Estado: adaptador experimental; seis pruebas sintéticas y demo remota real de905 raíces
+completadas. No es aprobación semántica WS4 ni entrega UAT.
 
 ## Evidencia oficial vigente
 
@@ -42,6 +42,10 @@ retención y `llm-processing` vigentes; `retention_mode=indefinite`. Evidencia p
 `.data/dev-corpus/jev-rights-check.json`. No se identificó incompatibilidad material. El permiso de procesamiento externo no se sustituye por poseer una API key.
 No se ha identificado una prohibición de plazo fijo en esa política; no se exige
 carta del proveedor ni aprobación documental rutinaria.
+Revalidación del fixture real `voyage-real` a10:25:43Z, mediante guard MFP y
+transacción sólo lectura: una fuente, un lote aceptado, un lote autorizado para
+`llm-processing`, retención indefinida. Gate10:29:50Z: cero runs activos,
+llamadas reservadas/enviadas/inciertas, crudos sin aplicar o embeddings activos.
 
 ## Contrato implementado y pruebas
 
@@ -72,7 +76,45 @@ respondió es1.0 y state64K caracteres fue aceptado; esto no prueba el máximo n
 calidad sobre corpus. En comparación sintética de dispositivos1/2, presencia quedó
 en0.35–0.40 y0.24–0.25 frente a prominencia0.82–0.83 y0.59–0.61: discrepancia
 para evaluar en WS4. Evidencia privada `/app/.data/dev-corpus/jev-synthetic/`.
-Corpus real todavía sin ejecutar.
+Demo real ejecutada por root:905 solicitudes,905 raíces con estado (888labeled,
+7abstained,10error). Auditoría independiente sólo lectura10:56:11Z:905 respuestas
+crudas,905 recibos de almacenamiento,905 hashes SHA256 recomputados coincidentes,
+905 llamadas settled y905 resultados aplicados; cero reservas/incertidumbre.
+Uso3,636,291 tokens; coste calculado aUSD0.042/MTok:USD0.152724222; ledger
+USD0.153189 por redondeo hacia arriba a microUSD por llamada. Duración inicial
+877,936ms; latencia proveedor p50=97.257ms, p95=146.172ms (n905).
+
+Los10 errores tienen código `jev_response_invalid`, stop_reason
+`known_response_invalid` y coste conciliado conjuntoUSD0.001690. Auditoría sin
+textos10:56:50Z:7 en `voice`,3 en `act`, todos por suma de probabilidades0.99.
+Es un fallo de frontera del parser: `Math.abs(0.99-1)>0.01` por representación
+binaria, no evidencia de error semántico. No se corrigió ni reenvió durante la demo.
+El crudo conservado permite una reparación explícita posterior sin transporte.
+Corrección focal posterior en código: tolerancia inclusiva0.01 más margen de
+redondeo `Number.EPSILON * número_de_opciones`; límites0.99/1.01 pasan, valores
+realmente fuera y no finitos siguen rechazados. Cliente8/8 PASS local. Conserva
+identidad lógica porque no cambia la tolerancia documentada ni prompt/schema;
+historia original intacta. Verificación remota sólo lectura11:00:46Z con requests y
+crudos originales:10/10 válidos,0 transporte y0 mutaciones de ledger. Root ejecutará,
+si procede, nueva run explícita para diez errores; no se implementa recuperación nueva.
+
+Root confirmó replay de la misma clave:0 solicitudes nuevas,905 llamadas y
+USD0.153189 sin cambios, reservas/incertidumbre0, duración2,196ms. El replay
+sobrescribe el summary del script; duración original conservada en evidencia privada
+`.data/dev-corpus/jev-real-execution-2026-10-04.log`, replay en
+`.data/dev-corpus/jev-real-replay-2026-10-04.log`.
+
+La política se versionó1→2 para JEV y2→3 para restaurar Claude, preservando las
+cuatro acciones salvo proveedor/modelo/configuración de `mention_facets` y sin
+cambiar caps. `jev-policy.ts` inspecciona por defecto, exige `--execute`, conserva
+guardas/autoridad y bloquea el cambio mientras haya trabajo o facturación pendiente.
+
+Rendimiento: `persistRawPage` sube objetos de forma secuencial antes de un UPDATE
+por página; esto es consistente con ~190s por200 raíces pese a ~0.1s de proveedor.
+No hay medición aislada del almacenamiento, así que la atribución es una hipótesis.
+Mejora focal propuesta: uploads con concurrencia acotada (p.ej.4–8), recoger sus
+recibos y mantener la escritura DB por página antes de parsear/liquidar. Medir
+por separado proveedor, upload y DB; no cambiar esta corrida ni crear otro ledger.
 
 Límite de caché de este corte: la tarifa queda en `LabelerIdentity.params` para
 reproducir la liquidación de un replay. Cambiar la tarifa cambia `labeler_digest`

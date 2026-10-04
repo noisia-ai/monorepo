@@ -1,44 +1,50 @@
 # WS3 — Ficha JEV experimental · 4 octubre 2026
 
-**Corte actual:** cliente HTTP, mapeador genérico multi-entidad y worker por páginas
-sobre run/ledger/etiquetas WS2. Sin migración0225, pipelines antiguos ni proveedor
-predeterminado cambiado. Requiere flag `NOISIA_JEV_PROVIDER_ENABLED` y tarifa explícita
-`NOISIA_JEV_INPUT_USD_PER_MTOK`; identidad registra modelo/umbrales/precio. Asunto null,
-probabilidades completas en crudo; sin declaración de calibración. Limitación:
-cambiar tarifa cambia labeler_digest y puede recalcular fichas sin cambio semántico.
+**Entregado en dev-test:** adaptador, mapeador multi-entidad y worker por páginas
+sobre run/ledger/etiquetas WS2; demo real de **905/905 raíces con estado** y replay
+sin transporte. No aprobación semántica WS4, aceptación integral ni entrega UAT.
+Una solicitud por raíz incluye todas las entidades/prominencia; asunto null y
+probabilidades completas en crudo, sin afirmar calibración. Flag JEV apagado por
+defecto; tarifa explícita. Sin DDL JEV;0225 pertenece a WS2.
 
-**Transporte y recuperación:** una solicitud por raíz, todas entidades y prominencia,
-concurrencia configurable, timeout AbortController, sin redirect ni retry interno,
-respuesta≤2MiB. Reserva/submitting por página200; crudo antes parser; coste observado
-separado de incertidumbre; error técnico nunca es ajenidad. Replay reutiliza crudo.
-Errores quedan en ledger; caché semántica inmutable. Retry explícito admite DNC o
-respuesta inválida conocida, sin reenvío de unknown ni ciclo en la misma run.
+**Demo real:** **888 labeled** (513 relevant,30 spam,345 unrelated), **7 abstained**
+(2 relevant,4 unknown,1 unrelated), **10 error**. Uso **3,636,291 tokens** a
+USD0.042/MTok: USD0.152724222 calculados; **USD0.153189 en ledger**, por redondeo
+hacia arriba a microUSD por llamada. Reserva0, incertidumbre0. Duración inicial
+**877,936ms**; proveedor **p50=97.257ms**, **p95=146.172ms**, n905.
+Auditoría independiente sólo lectura10:56:11Z:905 llamadas settled,905 resultados
+aplicados,905 crudos/recibos privados y **905/905 SHA256 coincidentes**,905 raíces únicas.
 
-**Verificación oficial:** [due diligence](JEV_DUE_DILIGENCE.md) enlaza API, modelos,
-MCA/DPA, privacidad, idiomas, retención y límites actuales. No training con Input sin
-consentimiento; retención por finalidad, sin ZDR acreditado. Derechos de fuente WS1
-permiten procesamiento externo: verificación DB08:59:35Z confirmó fuente/binding/
-licencia/retención vigentes y `llm-processing=allowed`, retención indefinida.
+**Errores técnicos:** diez `jev_response_invalid` con factura conocida y conciliada
+(USD0.001690 conjunto). Lectura10:56:50Z identifica7 en voice y3 en act: suma0.99
+rechazada porque `Math.abs(0.99-1)>0.01` por coma flotante. Es un fallo de frontera
+del adaptador; no acredita fallo semántico. Historia conservada. Corrección focal
+posterior respeta±0.01 e incorpora sólo margen binario; cliente8/8 PASS local,
+misma identidad lógica. Reparse remoto sólo lectura11:00:46Z:10/10 válidos,0 llamadas,
+0 mutaciones. Nueva run explícita para10errores queda a cargo de root.
 
-**Prueba real sintética dev-test:**
-`node --import tsx scripts/providers/jev-synthetic-check.ts`, ejecutada por root
-con clave en memoria por SSH, sin variables de servicio cambiadas: **6HTTP200**.
-Pin `jev-1.13.0` confirmado; alias resuelve al pin. Español reconocido; state12K y64K
-caracteres aceptados; dos solicitudes concurrentes con diez entidades completas.
-16,802 input tokens; **USD0.000705684 observado**, tarifaUSD0.042/MTok, output gratis,
-incertidumbre0. p50**80.775ms**, p95**146.488ms**, n6. Evidencia privada en
-`/app/.data/dev-corpus/jev-synthetic/`. Un primer arranque no llegó al proveedor por
-CJS/top-level await; corregido, coste0. No se enviaron textos del corpus real.
+**Replay confirmado por root:** misma clave/run, **0 solicitudes nuevas**,905 llamadas
+y USD0.153189 sin cambios, reservas/incertidumbre0;2,196ms. El summary fue
+sobrescrito por el replay; evidencia inicial y replay permanecen en logs privados
+`jev-real-execution-2026-10-04.log` y `jev-real-replay-2026-10-04.log` bajo
+`.data/dev-corpus/`.
 
-**Calidad:** la comparación sintética presenta presencia de entidades inferior a0.5
-pese a prominencia superior a0.5. Se conserva para WS4; no equivale a evaluación en
-gold. Idioma/longitud soportados técnicamente no acreditan precisión semántica.
+**Datos y control:** fuentes oficiales en [due diligence](JEV_DUE_DILIGENCE.md).
+Sin training con Input sin consentimiento; no ZDR acreditado. Guard MFP remoto
+**10:25:43Z** confirmó fixture real con1 fuente/1 lote autorizado para LLM,
+retención indefinida. Gate10:29:50Z sin trabajo pendiente. Root ejecutó helper
+`jev-policy.ts`: política1→2 JEV y2→3 Claude; cuatro acciones/caps conservadas,
+excepto destino/configuración de mention_facets, caps diario y de acción null.
+Helper inspecciona por defecto; exige `--execute`, autoridad y conciliación.
 
-**Checks:** overlay remoto WS2+WS3: **15/15 JEV PASS**, 23/23 combinado; incluye
-página200, replay0, raw recuperable, factura incierta y revocación sin nuevo envío.
-Typecheck Query/DB/Worker/Studio/scripts proveedores PASS remoto; lint Studio PASS.
-Una prueba adicional de streaming PASS local (cliente6/6); pendiente CI de paquetes
-completos y ensayo PostgreSQL común. Scripts tienen tsconfig propio.
+**Verificación:**15 pruebas JEV remotas PASS; cliente8/8 local incluye streaming y
+fronteras0.99/1.01/fuera/NaN.
+Typechecks del overlay y helper PASS remoto; lógica de política verificada en PG.
+Seis probes sintéticos reales previos:16,802 tokens,USD0.000705684,p50=80.775ms,
+p95=146.488ms. No equivalen a gold. Pendientes CI propia tras integrar WS2,
+evaluación WS4. Tarifa en identidad invalida caché si cambia.
 
-**Fuera de este corte todavía:** demo de905 raíces con ledger real/replay, evaluación
-WS4, aprobación del etiquetador y entrega UAT. No se declara aceptación WS3 completa.
+**Rendimiento pendiente:** uploads crudos secuenciales son una explicación compatible
+con~190s/página200; falta instrumentación aislada. Propuesta: concurrencia acotada
+4–8 en almacenamiento, recibos completos y DB por página antes de parsear/liquidar;
+medir proveedor/upload/DB. Sin cambios a la corrida ni archivos comunes activos.
