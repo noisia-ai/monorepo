@@ -22,7 +22,7 @@ await main(async()=>{
   if(sql==='ROLLBACK'){const key=stack.pop()!;await raw.query(`ROLLBACK TO SAVEPOINT ${key}`);return raw.query(`RELEASE SAVEPOINT ${key}`);}
   return raw.query(sql,params);
  };
- const database={query:query as Pool['query'],connect:async()=>Object.assign(Object.create(raw),{query,release(){}}) as Awaited<ReturnType<Pool['connect']>>};
+ const database={query:query as Pool['query'],connect:async()=>Object.assign(Object.create(raw),{query,release(){}}) as typeof raw};
  const census=async()=>(await raw.query(`SELECT (SELECT count(*)::int FROM signal_workspace_embedding_runs WHERE workspace_id=$1) runs,
  (SELECT count(*)::int FROM signal_workspace_embedding_calls WHERE workspace_id=$1) calls,
  (SELECT count(*)::int FROM signal_workspace_chunk_embeddings WHERE workspace_id=$1) cache,
