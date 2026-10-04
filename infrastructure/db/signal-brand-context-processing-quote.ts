@@ -26,7 +26,7 @@ export type SignalBrandContextProcessingQuoteV1 = {
   policy: SignalProcessingPolicyViewV1["policy"];
   budget_date: string | null;
   exposure: SignalProcessingPolicyViewV1["exposure"];
-  remaining_micro_usd: string;
+  remaining_micro_usd: string | null;
   /** Policy ceilings, not estimates or reserved money. Neither cap is silently reduced to the daily balance. */
   maximum_total_micro_usd: string | null;
   actions: Array<Omit<SignalProcessingPolicyActionV1, "action"> & { action: Action }>;
@@ -97,9 +97,9 @@ export async function readSignalBrandContextProcessingQuoteWithQueryableV1(args:
     && prototype?.kind === "provider" && prototype.provider === "voyage" && prototype.model === "voyage-4-large"
     && prototype.automatic_allowed === true
     && selected.every(action => /^sha256:[0-9a-f]{64}$/u.test(action.configuration_digest)
-      && /^(0|[1-9][0-9]{0,14})$/u.test(action.max_execution_micro_usd))
-    && BigInt(semantic.max_execution_micro_usd) > 0n;
-  const maximum = compatible ? BigInt(semantic.max_execution_micro_usd) + BigInt(prototype.max_execution_micro_usd) : null;
+      && action.max_execution_micro_usd !== null && /^(0|[1-9][0-9]{0,14})$/u.test(action.max_execution_micro_usd))
+    && BigInt(semantic.max_execution_micro_usd!) > 0n;
+  const maximum = compatible ? BigInt(semantic.max_execution_micro_usd!) + BigInt(prototype.max_execution_micro_usd!) : null;
   let status: SignalBrandContextProcessingQuoteStatusV1;
   if (!policy.can_request_processing) status = "processing_forbidden";
   else if (!policy.policy) status = "policy_missing";
@@ -110,7 +110,7 @@ export async function readSignalBrandContextProcessingQuoteWithQueryableV1(args:
   else if (sourceBlocked) status = sourceBlocked;
   else if (!semantic || !prototype) status = "action_missing";
   else if (!compatible) status = "action_incompatible";
-  else if (maximum! > BigInt(policy.remaining_micro_usd)) status = "daily_cap_insufficient";
+  else if (policy.remaining_micro_usd !== null && maximum! > BigInt(policy.remaining_micro_usd)) status = "daily_cap_insufficient";
   else if (prototype.max_execution_micro_usd === "0") status = "cache_coverage_required";
   else if (selected.some(action => !action.available)) status = "action_unavailable";
   else status = "quoted";

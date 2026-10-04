@@ -20,7 +20,7 @@ export type SignalWorkspaceEmbeddingCountsV1={
 };
 export type SignalWorkspaceEmbeddingRunV1={
  id:string;preparation_run_id:string;input_revision:number;status:"queued"|"running"|"completed"|"failed"|"stale"|"outcome_unknown"|"canceled";
- counts:SignalWorkspaceEmbeddingCountsV1;hard_cap_micro_usd:number;estimated_upper_micro_usd:number;
+ counts:SignalWorkspaceEmbeddingCountsV1;hard_cap_micro_usd:number|null;estimated_upper_micro_usd:number;
  reserved_micro_usd:number;settled_micro_usd:number;unknown_reserved_micro_usd:number;observed_exception_micro_usd:number;
  error_code:string|null;retryable:boolean;created_at:string;updated_at:string;completed_at:string|null;
 };
@@ -73,7 +73,7 @@ type Run={id:string;workspace_id:string;preparation_run_id:string|null;actor_use
  input_contract:SignalWorkspaceEmbeddingInputContractV1;taxonomy_profile_id:string|null;topic_input_digest:string|null;cursor_input_sha256:string|null;
  input_revision:string|null;current_revision:string|null;policy_live:boolean;preparation_complete:boolean;execution_live:boolean;execution_token:string|null;
  worker_job_id:string;cursor_asset_sha256:string|null;cursor_chunk_index:number|null;processing_admission_id:string|null;
- brand_context_preparation_operation_id:string|null;hard_cap_micro_usd:string;
+ brand_context_preparation_operation_id:string|null;hard_cap_micro_usd:string|null;
  counts:SignalWorkspaceEmbeddingCountsV1|SignalWorkspaceTopicPrototypeCountsV1;observed_exception_micro_usd:string};
 function corpusCursor(run:Run):SignalWorkspaceCorpusEmbeddingCursorV1{return run.cursor_asset_sha256===null?null:{asset_sha256:run.cursor_asset_sha256,chunk_index:run.cursor_chunk_index!};}
 function prototypeCursor(run:Run):SignalWorkspacePrototypeEmbeddingCursorV1{return run.cursor_input_sha256===null?null:{input_sha256:run.cursor_input_sha256};}

@@ -59,6 +59,7 @@ export type SignalSemanticResolutionGovernedContextV1 = {
     entity_id: string;
     entity_label: string;
     aliases: string[];
+    disambiguation?: string | null;
   }>;
   brand_context: Array<{ kind: string; title: string; content: string }>;
 };
@@ -856,24 +857,30 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
     entity_id: string;
     entity_label: string;
     aliases: string[] | null;
+    disambiguation: string | null;
   }>(`
     SELECT 'primary_brand'::text AS scope, brand.id::text AS entity_id,
       COALESCE(brand.display_name, brand.name) AS entity_label,
       ARRAY(SELECT DISTINCT value FROM unnest(
         ARRAY[brand.name, brand.display_name, brand.slug] || COALESCE(brand.brand_seed_handles, ARRAY[]::text[])
-      ) value WHERE value IS NOT NULL AND btrim(value) <> '') AS aliases
+        || ARRAY(SELECT product.name FROM brand_os_products product JOIN brand_os_profiles p ON p.id=product.brand_os_profile_id WHERE p.brand_id=brand.id AND p.status='active' AND product.status='active')
+      ) value WHERE value IS NOT NULL AND btrim(value) <> '') AS aliases,
+      (SELECT left(profile.metadata->>'entity_disambiguation',300) FROM brand_os_profiles profile WHERE profile.brand_id=brand.id AND profile.status='active' ORDER BY version DESC LIMIT 1) disambiguation
     FROM brands brand WHERE brand.id = $1::uuid
     UNION ALL
     SELECT 'competitor', competitor.id::text, seed.canonical_name,
       ARRAY(SELECT DISTINCT value FROM unnest(
         ARRAY[seed.canonical_name] || COALESCE(seed.aliases, ARRAY[]::text[]) || COALESCE(seed.detection_patterns, ARRAY[]::text[])
-      ) value WHERE value IS NOT NULL AND btrim(value) <> '')
+      ) value WHERE value IS NOT NULL AND btrim(value) <> ''), left(competitor.notes,300)
     FROM competitors competitor
     JOIN brand_seeds seed ON seed.id = competitor.competitor_brand_seed_id
     WHERE competitor.brand_id = $1::uuid AND seed.active = true
+      AND competitor.status = 'current' AND competitor.effective_from <= clock_timestamp()
+      AND (competitor.effective_to IS NULL OR competitor.effective_to > clock_timestamp())
     UNION ALL
     SELECT entity.entity_type, entity.id::text, entity.canonical_name,
-      ARRAY(SELECT alias.alias FROM entity_aliases alias WHERE alias.entity_id = entity.id ORDER BY alias.alias)
+      ARRAY(SELECT alias.alias FROM entity_aliases alias WHERE alias.entity_id = entity.id ORDER BY alias.alias),
+      left(entity.metadata->>'disambiguation',300)
     FROM intelligence_entities entity
     WHERE entity.brand_id = $1::uuid
       AND entity.status = 'active'

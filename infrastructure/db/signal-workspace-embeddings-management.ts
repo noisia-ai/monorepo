@@ -1,3 +1,4 @@
+import {admitSignalProcessingWithClientV1} from './signal-processing-policy';
 import { randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, quoteSignalWorkspaceEmbeddingCostV1,
   signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
@@ -37,7 +38,7 @@ function runView(row: Record<string, unknown> | null): SignalWorkspaceEmbeddingR
   }
   return { id: String(row.id), preparation_run_id: String(row.preparation_run_id), input_revision: integer(row.input_revision),
     status: row.status as SignalWorkspaceEmbeddingRunV1["status"], counts,
-    hard_cap_micro_usd: integer(row.hard_cap_micro_usd), estimated_upper_micro_usd: integer(row.estimated_upper_micro_usd),
+    hard_cap_micro_usd: row.hard_cap_micro_usd === null ? null : integer(row.hard_cap_micro_usd), estimated_upper_micro_usd: integer(row.estimated_upper_micro_usd),
     reserved_micro_usd: integer(row.reserved_micro_usd), settled_micro_usd: integer(row.settled_micro_usd),
     unknown_reserved_micro_usd: integer(row.unknown_reserved_micro_usd), observed_exception_micro_usd: integer(row.observed_exception_micro_usd),
     error_code: row.error_code === null ? null : String(row.error_code),
@@ -158,11 +159,11 @@ export async function quoteSignalWorkspaceEmbeddingsStoreV1(args: {
 /** Durable intent only. The Worker owns provider transport and per-batch reservations. */
 export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
   database: SignalWorkspaceEmbeddingsDatabaseV1; workspace_id: string; actor_user_id: string; idempotency_key: string;
-  preparation_run_id: string; quote_digest: string; hard_cap_micro_usd: number; profile: SignalWorkspaceEmbeddingProfileV1;
+  preparation_run_id: string; quote_digest: string; hard_cap_micro_usd: number | null; profile: SignalWorkspaceEmbeddingProfileV1;
   provider_available?: boolean;
 }): Promise<{ run_id: string; replayed: boolean }> {
   if (!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)) return fail("workspace_embedding_idempotency_key_required", 400);
-  if (!Number.isSafeInteger(args.hard_cap_micro_usd) || args.hard_cap_micro_usd < 0) return fail("workspace_embedding_budget_invalid", 422);
+  if (args.hard_cap_micro_usd !== null && (!Number.isSafeInteger(args.hard_cap_micro_usd) || args.hard_cap_micro_usd < 0)) return fail("workspace_embedding_budget_invalid", 422);
   assertSignalWorkspaceEmbeddingProfileV1(args.profile);
   const requestDigest = signalWorkspaceEmbeddingDigestV1({ preparation_run_id: args.preparation_run_id,
     quote_digest: args.quote_digest, hard_cap_micro_usd: args.hard_cap_micro_usd, profile: args.profile });
@@ -181,7 +182,7 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
     }
     const current = await quote(client, args.workspace_id, args.profile, args.actor_user_id);
     if (current.preparation_run_id !== args.preparation_run_id || current.quote_digest !== args.quote_digest) return fail("workspace_embedding_quote_changed");
-    if (!current.resume_run_id && args.hard_cap_micro_usd < current.estimated_upper_micro_usd) return fail("workspace_embedding_budget_below_quote", 422);
+    if (!current.resume_run_id && args.hard_cap_micro_usd !== null && args.hard_cap_micro_usd < current.estimated_upper_micro_usd) return fail("workspace_embedding_budget_below_quote", 422);
     const active = (await client.query<{ id: string }>(`SELECT id FROM signal_workspace_embedding_runs
       WHERE workspace_id=$1::uuid AND config_digest=$2 AND status IN('queued','running') LIMIT 1`,
     [args.workspace_id, args.profile.config_digest])).rows[0];
@@ -221,17 +222,27 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
       await client.query("COMMIT"); return { run_id: current.resume_run_id, replayed: false };
     }
     const runId = randomUUID();
+    let effectiveCap=args.hard_cap_micro_usd,admissionId:string|null=null;
+    if(effectiveCap===null){
+      const policy=(await client.query<{max_execution_micro_usd:string|null}>(`SELECT a.max_execution_micro_usd::text FROM signal_processing_policy_actions a JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id
+        WHERE p.organization_id=(SELECT organization_id FROM signal_workspaces WHERE id=$1) AND p.status='active' AND p.valid_from<=now() AND p.valid_until>now() AND a.action='corpus_embeddings'`,[args.workspace_id])).rows[0];
+      if(!policy)return fail('workspace_embedding_policy_required');
+      effectiveCap=policy.max_execution_micro_usd===null?null:Number(policy.max_execution_micro_usd);
+      const admission=await admitSignalProcessingWithClientV1(client,{workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,action:'corpus_embeddings',target_id:runId,
+        idempotency_key:args.idempotency_key,request_digest:requestDigest,execution_cap_micro_usd:effectiveCap===null?null:String(effectiveCap)});
+      admissionId=admission.receipt.id;
+    }
     const counts: SignalWorkspaceEmbeddingCountsV1 = { eligible_roots: current.eligible_roots,
       completed_roots: 0, partial_roots: 0, pending_roots: current.eligible_roots,
       total_chunk_references: current.total_chunk_references, processed_chunk_references: 0,
       total_asset_chunks: current.total_asset_chunks, processed_asset_chunks: 0, cache_hits: 0, embedded_unique_chunks: 0 };
     await client.query(`INSERT INTO signal_workspace_embedding_runs(id,workspace_id,preparation_run_id,actor_user_id,input_revision,
-      policy_valid_until,profile,config_digest,quote_digest,request_keys,hard_cap_micro_usd,estimated_upper_micro_usd,counts,worker_job_id)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::timestamptz,$7::jsonb,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14)`,
+      policy_valid_until,profile,config_digest,quote_digest,request_keys,hard_cap_micro_usd,estimated_upper_micro_usd,counts,worker_job_id,processing_admission_id)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6::timestamptz,$7::jsonb,$8,$9,$10::jsonb,$11,$12,$13::jsonb,$14,$15)`,
     [runId, args.workspace_id, current.preparation_run_id, args.actor_user_id, current.input_revision, current.policy_valid_until,
       JSON.stringify(args.profile), args.profile.config_digest, current.quote_digest,
       JSON.stringify({ [args.idempotency_key]: { actor_user_id: args.actor_user_id, request_digest: requestDigest } }),
-      args.hard_cap_micro_usd, current.estimated_upper_micro_usd, JSON.stringify(counts), `workspace-embeddings-${runId}-1`]);
+      effectiveCap, current.estimated_upper_micro_usd, JSON.stringify(counts), `workspace-embeddings-${runId}-1`,admissionId]);
     await client.query("COMMIT"); return { run_id: runId, replayed: false };
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
   finally { client.release(); }
