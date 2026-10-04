@@ -408,6 +408,13 @@ export function createSignalLabelingStoreV1(options: {
     if (!found) fail("labeling_lease_lost");
   }
   async function authority(c: PoolClient, run: LabelingRunV1, amount: number) {
+    // Policy lifecycle triggers take this lock. Read only after acquiring it so a
+    // revocation committed while this call waited cannot leave stale authority.
+    await c.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||organization_id::text,0))
+       FROM signal_workspaces WHERE id=$1`,
+      [run.workspace_id],
+    );
     const policy = (
       await c.query<{
         organization_id: string;
