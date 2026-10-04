@@ -1,5 +1,7 @@
 import {
   confirmMentionFacetsV1,
+  loadMentionFacetBrowserV1,
+  overrideMentionFacetsBatchV1,
   loadMentionFacetsStatusV1,
   requestMentionFacetsV1,
 } from "@noisia/db";
@@ -36,3 +38,10 @@ export function confirmMentionFacetsForActorV1(
 ) {
   return confirmMentionFacetsV1({ ...args, database: pool });
 }
+
+export function loadMentionFacetBrowserForActorV1(args: FacetAccess & {
+  dimension?: string; value?: string; cursor?: string; root_id?: string; limit?: number;
+}) { return loadMentionFacetBrowserV1({ ...args, database: pool }); }
+export function overrideMentionFacetsForActorV1(args: FacetAccess & {
+  overrides: Array<{root_id:string;dimension:string;value:unknown}>;
+}) { return overrideMentionFacetsBatchV1({ ...args, database: pool }); }

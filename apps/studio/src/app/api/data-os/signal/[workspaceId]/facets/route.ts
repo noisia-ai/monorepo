@@ -1,6 +1,8 @@
 import { loadSignalWorkspaceContextForTopics } from "../topics/_lib";
 import {
   loadMentionFacetsStatusForActorV1,
+  loadMentionFacetBrowserForActorV1,
+  overrideMentionFacetsForActorV1,
   requestMentionFacetsForActorV1,
   confirmMentionFacetsForActorV1,
   SignalLabelingError,
@@ -67,6 +69,7 @@ const requestSchema = z
   })
   .strict();
 function errorResponse(error: unknown) {
+  if (error instanceof Error && error.message === "facets_forbidden") return Response.json({error:"facets_forbidden"},{status:403,headers});
   return Response.json(
     {
       error:
@@ -84,23 +87,29 @@ export async function GET(
   request: Request,
   context: { params: Promise<{ workspaceId: string }> },
 ) {
-  if (new URL(request.url).searchParams.get("view") !== "labeling")
+  if (!["labeling", "mentions"].includes(new URL(request.url).searchParams.get("view") ?? ""))
     return getServingFacets(request, context);
   const loaded = await loadSignalWorkspaceContextForTopics(
     (await context.params).workspaceId,
   );
   if ("response" in loaded) return loaded.response;
   try {
-    return Response.json(
-      await loadMentionFacetsStatusForActorV1({
+    const query = new URL(request.url).searchParams;
+    if (query.get("view") === "mentions") {
+      const parsed = z.object({ dimension: z.enum(["status","relevance","entities","salience","voice","act","spam_or_bot","language","asunto"]).optional(),
+        value:z.string().max(200).optional(),root_id:z.string().uuid().optional(),cursor:z.string().uuid().optional(),limit:z.coerce.number().int().min(1).max(100).optional()
+      }).safeParse(Object.fromEntries([...query].filter(([key]) => key !== "view")));
+      if (!parsed.success) return Response.json({error:"facets_filter_invalid"},{status:400,headers});
+      return Response.json(await loadMentionFacetBrowserForActorV1({workspace_id:loaded.workspace.id,
+        actor_user_id:loaded.session.appUser.id,...parsed.data}),{headers});
+    }
+    const status = await loadMentionFacetsStatusForActorV1({
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
-      }),
-      { headers },
-    );
-  } catch (error) {
-    return errorResponse(error);
-  }
+      });
+    return Response.json({...status, enabled:process.env.NOISIA_MENTION_FACETS_ENABLED === "true",
+      provider_available:process.env.NOISIA_MENTION_FACETS_ENABLED === "true" && process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED === "true"}, {headers});
+  } catch (error) { return errorResponse(error); }
 }
 export async function POST(
   request: Request,
@@ -149,6 +158,24 @@ export async function POST(
       { status: 202, headers },
     );
   } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+export async function PATCH(request: Request, context: {params:Promise<{workspaceId:string}>}) {
+  const loaded = await loadSignalWorkspaceContextForTopics((await context.params).workspaceId);
+  if ("response" in loaded) return loaded.response;
+  const body = z.object({overrides:z.array(z.object({root_id:z.string().uuid(),
+    dimension:z.enum(["entities","unrelated_reason","voice","act","spam_or_bot","language","asunto"]),value:z.unknown()}).strict()).min(1).max(500)}).strict()
+    .safeParse(await request.json().catch(()=>null));
+  if (!body.success) return Response.json({error:"facets_override_invalid"},{status:400,headers});
+  try { return Response.json(await overrideMentionFacetsForActorV1({workspace_id:loaded.workspace.id,
+    actor_user_id:loaded.session.appUser.id,overrides:body.data.overrides.map(p=>({...p,value:p.value}))}),{headers}); }
+  catch(error) {
+    const code = error instanceof Error ? error.message : "";
+    if (code === "facets_forbidden") return Response.json({error:code},{status:403,headers});
+    if (["facets_override_invalid","facets_override_contradiction","unknown_entity_id","entity_kind_mismatch","duplicate_entity_id","language_required"].includes(code)
+      || error instanceof z.ZodError) return Response.json({error:"facets_override_invalid"},{status:422,headers});
     return errorResponse(error);
   }
 }
