@@ -33,11 +33,11 @@ test("MFP self-service: nullable/strict admission, live client authority and exa
       try { await assert.rejects(run, pattern); }
       finally { await scoped.query("ROLLBACK TO SAVEPOINT rejection"); await scoped.query("RELEASE SAVEPOINT rejection"); }
     };
-    const makePolicy = async (org: string, cap: string | null, daily: string | null) => {
+    const makePolicy = async (org: string, cap: string | null, daily: string | null, version = 1) => {
       const id = randomUUID();
       await scoped.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,
-        budget_timezone,daily_cap_micro_usd,created_by_user_id) VALUES($1,$2,1,'draft',clock_timestamp()-interval '1 minute','infinity','UTC',$3,$4)`,
-      [id, org, daily, f.actors.internal]);
+        budget_timezone,daily_cap_micro_usd,created_by_user_id) VALUES($1,$2,$5,'draft',clock_timestamp()-interval '1 minute','infinity','UTC',$3,$4)`,
+      [id, org, daily, f.actors.internal, version]);
       await scoped.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,
         configuration_digest,max_execution_micro_usd,automatic_allowed) VALUES($1,'topic_interpretation','provider','anthropic',$2,$3::jsonb,
           signal_semantic_context_digest_json_v2($3::jsonb),$4,false)`, [id, configuration.model, JSON.stringify(configuration), cap]);
@@ -81,6 +81,15 @@ test("MFP self-service: nullable/strict admission, live client authority and exa
     await denied(() => admit(scoped, { ...strict, execution_cap_micro_usd: "1001" }), /processing_admission_invalid/);
     const bounded = await admit(scoped, { ...strict, execution_cap_micro_usd: "1000" });
     assert.equal(bounded.receipt.execution_cap_micro_usd, "1000");
+    await scoped.query("SAVEPOINT small_daily");
+    await scoped.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1", [policy]);
+    await makePolicy(f.first.organization_id, null, "1", 2);
+    const smallInput = { ...input, target_id: randomUUID(), idempotency_key: randomUUID() };
+    const small = await admit(scoped, smallInput);
+    assert.equal(small.receipt.execution_cap_micro_usd, null, "a small explicit daily cap is not a per-execution cap");
+    await capacity({ run: smallInput.target_id, receipt: small.receipt.id, amount: 1 });
+    await denied(() => capacity({ run: smallInput.target_id, receipt: small.receipt.id, amount: 2 }), /processing_daily_cap_exhausted/);
+    await scoped.query("ROLLBACK TO SAVEPOINT small_daily"); await scoped.query("RELEASE SAVEPOINT small_daily");
     // The helper accepts only the real MFP owner/actor, never a client legacy owner.
     const actorAllowed = async (actor: string, discovery: boolean) => (await scoped.query(`SELECT signal_workspace_engine_actor_v1(
       jsonb_populate_record(NULL::signal_topic_catalog_executions,$1::jsonb),$2::uuid) allowed`, [JSON.stringify({

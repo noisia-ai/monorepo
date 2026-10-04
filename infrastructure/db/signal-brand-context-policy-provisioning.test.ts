@@ -161,7 +161,7 @@ test("a partial action failure rolls back the draft and remains retryable", asyn
 });
 
 test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserves an explicit daily maximum",async()=>{
- for(const daily of [undefined,"2000000"]){
+ for(const daily of [undefined,"1","2000000"]){
   const f=fixture();
   const configured={...env,NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:daily};
   const response=await provisionSignalBrandContextPolicyV1({database:f.database,workspace_id:id(1),brand_id:id(4),initiator_user_id:id(2),env:configured});

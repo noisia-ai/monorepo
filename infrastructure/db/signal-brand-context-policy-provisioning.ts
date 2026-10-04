@@ -33,7 +33,7 @@ function configuredPolicy(env: Record<string, string | undefined>) {
     ?? String(SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1));
   const until = mfp ? "infinity" : env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL;
   if (!creatorUserId || !uuid.test(creatorUserId) || !semantic.available || (!mfp && !daily) || !prototype || !money(semantic.platform_hard_cap_micro_usd.toString())
-    || (!mfp && !validDeadline(until)) || daily !== null && daily < semantic.platform_hard_cap_micro_usd + prototype) return null;
+    || (!mfp && !validDeadline(until)) || !mfp && daily !== null && daily < semantic.platform_hard_cap_micro_usd + prototype) return null;
   return { creatorUserId, mfp, daily: daily?.toString() ?? null, until: until!, semanticCap: semantic.platform_hard_cap_micro_usd.toString(),
     prototypeCap: prototype.toString(), semanticConfiguration: {
       provider: semantic.provider, model: semantic.model, model_version: semantic.model_version,
