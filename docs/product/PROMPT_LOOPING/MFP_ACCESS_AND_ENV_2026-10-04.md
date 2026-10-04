@@ -38,7 +38,7 @@ Recibo privado sin valores: `/Users/brandhon_o/.config/noisia/mfp/access-check.j
 - JEV: seis inferencias **sintéticas** HTTP 200 desde el runner confirman `jev-1.13.0`; `jev-latest` devuelve esa versión. Uso total 16.802 tokens de entrada; coste calculado con tarifa oficial USD0,042/MTok: USD0,000705684, sin solicitudes de facturación incierta. La clave y el flag se cargaron sólo en memoria del proceso mediante SSH cifrado, sin habilitación persistente del runner.
 - La comprobación de derechos vigente a las 08:59:35Z confirmó la única fuente del corpus MFP activa, con licencia `llm-processing=allowed` y retención indefinida. No se enviaron menciones reales a JEV. Condiciones oficiales y límites de esta evidencia en [JEV_DUE_DILIGENCE.md](JEV_DUE_DILIGENCE.md) y [recibo WS3](DELIVERY_MFP_WS3_2026-10-04.md).
 
-Los servicios MFP siguen la rama `develop` con autodeploy desactivado. UAT conserva su configuración y runtime anteriores; una entrega allí requiere el corte coherente y la verificación del spec, no se produce al fusionar un PR MFP.
+Los servicios MFP siguen la rama `develop`. El recibo inicial indicó autodeploy desactivado, pero la revisión de las12:35UTC encontró ambos servicios activos y lo corrigió; ver actualización al cierre. UAT conserva su configuración y runtime anteriores; una entrega allí requiere el corte coherente y la verificación del spec, no se produce al fusionar un PR MFP.
 
 ## Entorno de ejecución separado
 
@@ -64,7 +64,28 @@ El bucket privado `mfp-corpus-files` pasó la comprobación de disponibilidad re
 
 - Claude: `claude-sonnet-5-5` comprobado en la cuenta; una prueba sintética real de Message Batches completó transporte, salida estructurada y parser. La prueba del corpus tiene su recibo en `DELIVERY_MFP_WS2_2026-10-04.md`.
 - Voyage: `voyage-4-large`,1024 dimensiones, transporte real confirmado sobre905 raíces.32 respuestas HTTP200,809,294 tokens y USD0.097130 registrados; replay con clave retirada y proveedor deshabilitado no hizo nuevas llamadas. La ejecución requiere explícitamente `NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED=true`; su omisión produjo un intento definitivamente no enviado, recuperado sin duplicación.
-- JEV: `jev-1.13.0` comprobado con seis solicitudes sintéticas reales. Condiciones técnicas y tratamiento de datos documentados en `JEV_DUE_DILIGENCE.md`; esa evidencia no sustituye evaluación semántica ni acredita todavía el corpus real.
+- JEV: `jev-1.13.0` completó905 raíces reales y recuperó10 errores técnicos:915 llamadas, USD0.154879,898labeled/7abstained/0error; replay sin llamadas nuevas. Condiciones técnicas y tratamiento de datos en `JEV_DUE_DILIGENCE.md`; no acredita precisión semántica humana.
 - Kinde: sesión administrativa existente comprobada. La autorización del CLI Railway no cambia callbacks de Kinde. La autenticación del Studio de desarrollo sigue pendiente de configurar su callback exacto; no usar bypass de autorización.
 
 Los resultados de proveedor prueban las capacidades indicadas, no el saldo futuro ni calidad semántica. Los recibos de corpus y gold permanecen privados bajo `.data/dev-corpus/`; no copiar textos a la documentación pública. El workspace con embeddings simulados y el de Voyage real son distintos dentro de la misma base MFP, sin clonar bases.
+
+### Ajuste verificado · 2026-10-04 12:35UTC
+
+La UI Railway confirmó **Auto deploy is disabled** en `mfp-private-runner` y
+`mfp-studio` después de desactivarlo y recargar cada página. Antes del ajuste,
+el merge de PR19 había desplegado automáticamente develop `ada9d98` en el
+runner y cortado una prueba PG; transacción revertida, volumen conservado.
+Los despliegues MFP siguientes son explícitos. No cambiar la fuente con
+`service source connect` sin verificar después que autodeploy siga desactivado.
+
+Claude completó905 estados (831labeled/74abstained/0error), replay y alias
+selectivo A→B→A con recuperación de caché sin llamadas al volver aA. Recibo
+actualizado en `DELIVERY_MFP_WS2_2026-10-04.md`. Sigue pendiente la evaluación
+humana gold y el recorrido autenticado por Kinde.
+
+Coste de proveedores liquidado conocido del programa hasta este corte:
+**USD4.872032684**, incluyendo pruebas fallidas liquidadas, recuperaciones,
+alias y probes sintéticos de pertenencia (USD0.091632). Excluye infraestructura
+y rechazos de esquema sin uso/coste observado (`settled=null`); no se anotan
+como coste cero. Los presupuestos siguen orientativos, sin máximo estricto
+configurado en estas ejecuciones.
