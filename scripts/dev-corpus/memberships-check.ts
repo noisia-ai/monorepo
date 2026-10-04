@@ -1,6 +1,6 @@
 /** Opt-in private PostgreSQL test. All DDL/data rollback; provider is simulated. */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { main, openDatabase } from "./guard.mjs";
 import {
   createSignalTopicStoreV1,
@@ -80,7 +80,9 @@ await main(async () => {
         await client.query(
           await readFile(`infrastructure/db/migrations/${file}`, "utf8"),
         );
-    let serial = 0;
+    let serial = 0,
+      planSerial = 0;
+    const planDirectory = ".data/dev-corpus/membership-query-plans";
     const stack: string[] = [];
     const query = async (sql: any, values?: any) => {
       if (typeof sql === "string" && /^BEGIN\b/iu.test(sql)) {
@@ -97,6 +99,29 @@ await main(async () => {
       }
       const began = Date.now();
       try {
+        if (
+          typeof sql === "string" &&
+          /^\s*SELECT m\.\*,CASE WHEN rights\.evidence/u.test(sql)
+        ) {
+          const plan = await client.query(
+            `EXPLAIN (FORMAT JSON) ${sql}`,
+            values,
+          );
+          await mkdir(planDirectory, { recursive: true, mode: 0o700 });
+          const file = `${planDirectory}/${started}-${++planSerial}.json`;
+          await writeFile(
+            file,
+            JSON.stringify({ phase, plan: plan.rows }, null, 2),
+            { flag: "wx", mode: 0o600 },
+          );
+          console.log(
+            JSON.stringify({
+              event: "private_plan_saved",
+              phase,
+              plan_number: planSerial,
+            }),
+          );
+        }
         const result = await client.query(sql, values);
         const elapsed_ms = Date.now() - began;
         if (elapsed_ms >= 1000)
