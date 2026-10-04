@@ -17,8 +17,8 @@ export function MfpDiscoveryAdoption({workspaceId,canAdopt,sources,onAdopted,onA
       candidate_key:conceptKey,expected_revision_digest:latest.revision_digest,scope:scope[conceptKey]}}};
     if(!intent.current)return;setBusy(true);setError(null);
     try{const response=await fetch(base,{method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":intent.current.key},body:JSON.stringify(intent.current.body)});
-      const body=await response.json();if([401,403,404].includes(response.status))onAccessDenied?.();
-      if(!response.ok){if(response.status<500)intent.current=null;throw Error(body.error??"request");}
+      if([401,403,404].includes(response.status))onAccessDenied?.();const body=await response.json().catch(()=>null);
+      if(!response.ok){if(response.status<500)intent.current=null;throw Error(body?.error??"request");}
       intent.current=null;setPending(false);await onAdopted();await resource.read();
     }catch(cause){setError(cause instanceof Error?cause.message:"request");setPending(intent.current!==null);}finally{setBusy(false);}
   };

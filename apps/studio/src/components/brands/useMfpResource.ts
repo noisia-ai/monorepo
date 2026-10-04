@@ -5,15 +5,16 @@ export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>
   const live=useRef(true),controller=useRef<AbortController|null>(null),denied=useRef(onDenied);denied.current=onDenied;
   const read=useCallback(async()=>{
     controller.current?.abort();const next=new AbortController();controller.current=next;setLoading(true);
-    try {const response=await fetch(endpoint,{cache:"no-store",signal:next.signal});const body=await response.json();
+    try {const response=await fetch(endpoint,{cache:"no-store",signal:next.signal});
       if(next.signal.aborted||!live.current)return;
       if([401,403,404].includes(response.status)){setData(null);denied.current?.();throw Error("forbidden");}
+      const body=await response.json(); if(next.signal.aborted||!live.current)return;
       if(!response.ok||body.contract_version!==contract)throw Error(body.error??"request");setData(body);setError(null);
     }catch(cause){if(!next.signal.aborted&&live.current)setError(cause instanceof Error?cause.message:"request");}
     finally{if(!next.signal.aborted&&live.current)setLoading(false);}
   },[endpoint,contract]);
   useEffect(()=>{live.current=true;setData(null);void read();return()=>{live.current=false;controller.current?.abort();};},[read]);
-  useEffect(()=>{const value=data as {latest?:{status:string}|null;run?:{status:string}}|null; if(!poll||!["queued","running"].includes(value?.latest?.status??value?.run?.status??""))return;const timer=setInterval(()=>void read(),5000);return()=>clearInterval(timer);},[read,poll,data]);
+  useEffect(()=>{const value=data as {latest?:{status:string}|null;run?:{status:string}}|null; if(!poll||loading||!["queued","running"].includes(value?.latest?.status??value?.run?.status??""))return;const timer=setTimeout(()=>void read(),5000);return()=>clearTimeout(timer);},[read,poll,data,loading]);
   return {data,error,loading,read};
 }
 /** Keep an unresolved command's body/key intact so retry cannot duplicate a paid run. */

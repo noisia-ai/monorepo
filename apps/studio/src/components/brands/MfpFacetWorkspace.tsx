@@ -78,7 +78,7 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
         <div className="admin-form-actions">
           <button className="admin-button admin-button--primary" disabled={!canStart} onClick={()=>void start()} type="button">{t("facets.start")}</button>
           <button className="admin-button" disabled={!canStart} onClick={()=>void start(true)} type="button">{t("facets.recalculate")}</button>
-          {status.data.latest?.waiting_full_confirmation?<button className="admin-button" disabled={mutation.busy||mutation.pending}
+          {status.data.latest?.waiting_full_confirmation?<button className="admin-button" disabled={mutation.busy||mutation.pending||!browser.data?.can_request_processing}
             onClick={async()=>{if(await mutation.send({confirm_run_id:status.data!.latest!.id,entity_context_digest:status.data!.entity_context_digest}))await refresh();}} type="button">{t("confirmFull")}</button>:null}
         </div><p className="admin-drawer-form__hint">{t("estimateNotice")}</p>
       </>:null}

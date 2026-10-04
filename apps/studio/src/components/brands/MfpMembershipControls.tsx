@@ -37,7 +37,7 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
           onClick={()=>void startPreview()}>{t("preview")}</button>
         <button className="admin-button admin-button--primary" type="button" disabled={disabled||dirty||!current||active}
           onClick={()=>void submit({})}>{t("membership.start")}</button>
-        {resource.data.latest?.waiting_full_confirmation?<button className="admin-button" disabled={mutation.busy||mutation.pending} type="button"
+        {resource.data.latest?.waiting_full_confirmation?<button className="admin-button" disabled={mutation.busy||mutation.pending||!resource.data.can_request_processing} type="button"
           onClick={()=>void submit({confirm_run_id:resource.data!.latest!.id,entity_context_digest:resource.data!.entity_context_digest})}>{t("confirmFull")}</button>:null}
       </div>
       <p className="admin-drawer-form__hint">{t("estimateNotice")}</p>

@@ -63,8 +63,18 @@ test("manual and previous interests default to guidance, while emergent defaults
 
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
-  const render = (data = base) => renderToStaticMarkup(createElement(NextIntlClientProvider,
-    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager, { brandId: "new-brand-id", workspaceId: "workspace-test", actorId: "00000000-0000-4000-8000-000000000001", initial: data })));
+  const render = (data = base, mfpEnabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager, { brandId: "new-brand-id", workspaceId: "workspace-test", actorId: "00000000-0000-4000-8000-000000000001", initial: data, mfpEnabled })));
+  test(`${locale}: MFP replaces legacy decision and selection controls without enabling an unloaded action`, () => {
+    const html=render({...base,topics:[savedTopic]},true);
+    assert.ok(html.includes(messages.Mfp.journey.title));
+    assert.ok(html.includes(messages.Mfp.membership.title));
+    assert.ok(html.includes(messages.Mfp.experimental));
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.definedInterestDecision.title));
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.definedInterestSelection.title));
+    assert.match(html, /<details open=""/u);
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.actions.search));
+  });
   test(`${locale}: an empty authorized brand can define interests without implying mentions or execution`, () => {
     const html = render();
     assert.match(html, /href="\/studio\/brands\/new-brand-id\/data"/u);

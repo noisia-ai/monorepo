@@ -11,6 +11,8 @@ PR draft: [#21](https://github.com/noisia-ai/monorepo/pull/21), base `develop`. 
 
 - `node --test --import tsx …mfp-ui.test.ts …signal-mention-facets-ui.test.ts`: **10 PASS**, 0.35 s local; helpers, Unicode/citas, costes, locales, atomicidad y permisos revocados con DB simulada.
 - `node --test --import tsx …MfpEvidence.test.tsx`: **6 PASS**, 0.26 s local; render SSR en ambos idiomas, cita dentro del original, negativa sin evidencia inventada, nulo distinto de máximo cero.
+- Regresión Topics/editor/flag MFP: **18 PASS**, 1.5 s local, ambos idiomas.
+- PG real opt-in preparado: `node --import tsx scripts/dev-corpus/facets-ui-check.ts --rollback-check`, sólo runner privado y transacción con rollback; pendiente de ejecución coordinada por Root tras restaurar alias.
 - Parser TypeScript de archivos tocados: sin diagnósticos. `git diff --check`: limpio. Typecheck, lint, suites completas y build: CI remoto del PR, pendiente de conclusión al escribir este recibo.
 
 ## Límites de entrega
