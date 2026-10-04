@@ -1,7 +1,6 @@
 /** Opt-in on the existing private MFP corpus. No DDL, providers or durable data changes. */
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
-import type {QueryResultRow} from "pg";
 import {main,openDatabase} from "./guard.mjs";
 import {loadMentionFacetBrowserV1,overrideMentionFacetsBatchV1,loadFacetEntityContextV1,
   type LabelingDatabaseV1} from "../../infrastructure/db/signal-mention-facets";
@@ -12,11 +11,11 @@ await main(async()=>{
   const pool=await openDatabase(),client=await pool.connect();
   let phase="preflight",transaction=false,serial=0;
   const stack:string[]=[];
-  const query=async<R extends QueryResultRow=QueryResultRow>(text:string,values?:unknown[])=>{
-    if(/^BEGIN\b/i.test(text)){const name=`facet_ui_${++serial}`;stack.push(name);return client.query<R>(`SAVEPOINT ${name}`);}
-    if(text==="COMMIT")return client.query<R>(`RELEASE SAVEPOINT ${stack.pop()!}`);
-    if(text==="ROLLBACK"){const name=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${name}`);return client.query<R>(`RELEASE SAVEPOINT ${name}`);}
-    return client.query<R>(text,values);
+  const query=async(text:string,values?:unknown[])=>{
+    if(/^BEGIN\b/i.test(text)){const name=`facet_ui_${++serial}`;stack.push(name);return client.query(`SAVEPOINT ${name}`);}
+    if(text==="COMMIT")return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
+    if(text==="ROLLBACK"){const name=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${name}`);return client.query(`RELEASE SAVEPOINT ${name}`);}
+    return client.query(text,values);
   };
   const database={query,connect:async()=>({query,release(){}})} as unknown as LabelingDatabaseV1;
   const access={database,workspace_id:identity.workspace_id,actor_user_id:identity.internal_user_id};
