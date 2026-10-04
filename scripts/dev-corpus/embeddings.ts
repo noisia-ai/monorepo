@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { openDatabase, main } from './guard.mjs';
 import { runJob } from './job';
+import { recoveryIntent } from './recovery.mjs';
 await main(async()=>{
   const mode=process.env.NOISIA_DEV_EMBEDDINGS;
   if(mode!=='fake'&&mode!=='voyage')throw new Error('mfp_embedding_mode_required');
@@ -13,6 +14,7 @@ await main(async()=>{
     const previousMode=(await pool.query("SELECT metadata->>'mfp_embedding_mode' AS mode FROM signal_workspaces WHERE id=$1",[identity.workspace_id])).rows[0]?.mode;
     if(previousMode&&previousMode!==mode)throw new Error('mfp_embedding_fixture_mode_conflict');
     const current=await loadSignalWorkspaceEmbeddingsStoreV1({queryable:pool,workspace_id:identity.workspace_id});
+    recoveryIntent('mfp-embeddings',current,'preflight',true,{preparation_run_id:'preflight'});
     if(current.is_current&&current.latest_completed){
       console.log(JSON.stringify({stage:'embeddings',mode,status:'completed',counts:current.latest_completed.counts,
         actual_provider_micro_usd:0,new_calls:0,ledger_is_simulated:mode==='fake',replayed:true}));return;
@@ -30,9 +32,13 @@ await main(async()=>{
     // execution requires an explicitly configured cap, not a fabricated maximum.
     const configuredCap=process.env.NOISIA_MFP_EXPLICIT_CAP_MICRO_USD;
     if(mode==='voyage'&&(!configuredCap||!/^\d+$/u.test(configuredCap)))throw new Error('mfp_voyage_nullable_cap_contract_pending');
-    const cap=mode==='fake'?quote.estimated_upper_micro_usd:Number(configuredCap);
-    const requested=await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quote.preparation_run_id!,quote_digest:quote.quote_digest,
-      hard_cap_micro_usd:cap,provider_available:true,idempotency_key:`mfp-embeddings-${mode}-${quote.preparation_run_id}`});
+    const retry=process.argv.includes('--retry');
+    const intent=recoveryIntent('mfp-embeddings',current,`mfp-embeddings-${mode}-${quote.preparation_run_id}`,retry,{preparation_run_id:quote.preparation_run_id,input_revision:quote.input_revision});
+    if(intent.resume_run_id&&quote.resume_run_id!==intent.resume_run_id)throw new Error('mfp_recovery_quote_changed');
+    const cap=quote.resume_run_id?quote.required_cap_micro_usd!:(mode==='fake'?quote.estimated_upper_micro_usd:Number(configuredCap));
+    if(mode==='voyage'&&quote.resume_run_id&&Number(configuredCap)!==cap)throw new Error('mfp_recovery_cap_changed');
+    const requested=intent.kind==='existing'?{run_id:intent.run_id!,replayed:true}:await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quote.preparation_run_id!,quote_digest:quote.quote_digest,
+      hard_cap_micro_usd:cap,provider_available:true,idempotency_key:intent.idempotency_key!});
     const run=(await pool.query('SELECT worker_job_id,status FROM signal_workspace_embedding_runs WHERE id=$1',[requested.run_id])).rows[0];
     if(run.status!=='completed'){
       const {signalWorkspaceEmbeddingsJobV1}=await import('../../services/workers/src/workers/signal-workspace-embeddings');
@@ -41,7 +47,7 @@ await main(async()=>{
           data:inputs.map((input,index)=>{
             const vector=Array.from({length:1024},()=>0);vector[createHash('sha256').update(input.chunk_sha256).digest().readUInt16BE()%1024]=1;
             return {index,embedding:vector};})})};}}:undefined;
-      await runJob('signal-workspace-embeddings-v1',run.worker_job_id,{run_id:requested.run_id},job=>signalWorkspaceEmbeddingsJobV1(job,{database:pool,provider}));
+      await runJob('signal-workspace-embeddings-v1',run.worker_job_id,{run_id:requested.run_id},job=>signalWorkspaceEmbeddingsJobV1(job,{database:pool,provider}),retry&&run.status==='queued');
     }
     const completed=(await pool.query('SELECT status,counts,settled_micro_usd,reserved_micro_usd FROM signal_workspace_embedding_runs WHERE id=$1',[requested.run_id])).rows[0];
     console.log(JSON.stringify({stage:'embeddings',mode,status:completed.status,counts:completed.counts,

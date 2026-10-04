@@ -1,6 +1,6 @@
 # Corpus MFP — dev-test privado
 
-Estado: harness en construcción. `up` verifica el entorno remoto; **no acredita**
+Estado: recorrido remoto y replay comprobados, embeddings simulados. `up` verifica el entorno remoto; **no acredita**
 provisión, migraciones, importación ni aceptación WS1 por sí solo. No se ejecuta
 PostgreSQL, Redis, Worker ni Docker en la Mac.
 
@@ -94,6 +94,33 @@ Git. Las 20 modificaciones son edits de desarrollo marcados y registrados; no se
 presentan como texto original del proveedor. Transferir corpus por Railway SSH
 cifrado; nunca en argumentos, logs ni un endpoint público de base.
 
-Pendiente de aceptación: ejecutar el recorrido remoto, comprobar replay/<10min,
-completar gold real y Studio autenticado. El código y los tests sin DB no acreditan
-esos resultados.
+Recorrido remoto comprobado: 1,000 filas → 977 únicas → 905 elegibles → 3,158 chunks;
+replay sin nuevos vectores ni llamadas. Plantilla privada `gold-template.csv` creada:
+150 raíces, 90 dev/60 test, 15 comparaciones verificadas por lectura, 35 enriquecidas
+más 100 aleatorias. Tres conceptos propuestos esperan confirmación del fundador;
+las etiquetas humanas quedan vacías. No existe todavía gold anotado ni aceptación WS4.
+Studio MFP responde, pero Kinde devuelve `Invalid callback URL` para el retorno MFP;
+la corrección exacta está pendiente de confirmación del operador en Kinde.
+
+## Recuperación explícita
+
+Añadir `--retry` a import, prepare o embeddings sólo cuando el estado es recuperable.
+Import sigue la cadena de sucesores y usa `retryWorkspaceImportFromStorageV1` para
+reutilizar el objeto privado validado. Preparación/embeddings recuperan el mismo run
+cuando su revisión de entrada coincide; una nueva preparación crea una intención nueva.
+Embeddings usa la cotización actual, mantiene el cap original y el costo asentado.
+`outcome_unknown` requiere reconciliación: nunca se reenvía automáticamente.
+Cada job usa su propia cola MFP determinista para que dos comandos concurrentes no
+consuman trabajo ajeno. Un job BullMQ fallido requiere recuperación explícita.
+
+Pruebas remotas opt-in (fuera de suites comunes, proveedor simulado):
+`node --import tsx scripts/dev-corpus/redis-check.ts` prueba concurrencia/reintento/replay.
+`recovery-check.ts <csv>` requiere una identidad nueva cuyo `fixture_key` termine en
+`-recovery-check`, creada con seed desde un cwd privado separado. Usa ≥129 chunks
+para fallar después del primer lote asentado y verificar recuperación con cotización
+cambiada, costo conservado y replay sin llamadas; también falla import/preparación.
+No ejecutar contra la identidad principal ni reutilizar una fixture ya completada.
+La prueba de import usa un flag exclusivo de esa fixture, `--test-fail-import`.
+`node --import tsx /app/scripts/dev-corpus/snapshot-recovery-check.ts`, desde otra
+fixture pequeña sin preparación previa, comprueba fallo anterior al snapshot:
+`input_revision=null` requiere `--retry` y crea sucesor, preservando el run fallido.

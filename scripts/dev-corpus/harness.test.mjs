@@ -46,3 +46,24 @@ test('brand route authenticates before delegating to shared service',async()=>{
   const source=await readFile(new URL('../../apps/studio/src/app/api/brands/route.ts',import.meta.url),'utf8');
   assert.match(source,/if \(!session\) return unauthorized\(\);\s*return createBrandForActorV1\(request, session.appUser\)/u);
 });
+
+test('job queues isolate concurrent work and recovery never converts unknown into retry',async()=>{
+  const {queueNameForJob,recoveryIntent}=await import('./recovery.mjs');
+  assert.notEqual(queueNameForJob('prepare-a'),queueNameForJob('embedding-b'));
+  assert.equal(queueNameForJob('prepare-a'),queueNameForJob('prepare-a'));
+  const failed={id:'run-a',status:'failed',retryable:true,updated_at:'2026-10-04T00:00:00Z',error_code:'workspace_embedding_definitely_not_sent',unknown_reserved_micro_usd:0};
+  assert.throws(()=>recoveryIntent('embedding',{latest_run:failed},'original',false),/explicit_retry/u);
+  assert.equal(recoveryIntent('embedding',{latest_run:{...failed,preparation_run_id:'old'}},'new',false,{preparation_run_id:'new'}).idempotency_key,'new');
+  assert.equal(recoveryIntent('prepare',{latest_run:{...failed,input_revision:1}},'new',false,{input_revision:2}).idempotency_key,'new');
+  assert.throws(()=>recoveryIntent('embedding',{is_current:true,latest_completed:{id:'done'},latest_run:{...failed,unknown_reserved_micro_usd:1}},'key',true),/requires_reconciliation/u);
+  const unsnapshotted={latest_run:{...failed,input_revision:null}};
+  assert.throws(()=>recoveryIntent('prepare',unsnapshotted,'original',false,{input_revision:1}),/explicit_retry/u);
+  const successor=recoveryIntent('prepare',unsnapshotted,'original',true,{input_revision:1});
+  assert.notEqual(successor.idempotency_key,'original');assert.equal(successor.resume_run_id,undefined);
+  const retry=recoveryIntent('embedding',{latest_run:failed},'original',true);
+  assert.equal(retry.resume_run_id,'run-a');assert.notEqual(retry.idempotency_key,'original');
+  assert.deepEqual(retry,recoveryIntent('embedding',{latest_run:failed},'original',true));
+  assert.throws(()=>recoveryIntent('embedding',{latest_run:{...failed,unknown_reserved_micro_usd:100}},'original',true),/requires_reconciliation/u);
+  assert.throws(()=>recoveryIntent('embedding',{latest_run:{...failed,retryable:false}},'original',true),/not_retryable/u);
+  assert.equal(recoveryIntent('prepare',{is_current:true,latest_completed:{id:'done'}},'key',true).kind,'completed');
+});

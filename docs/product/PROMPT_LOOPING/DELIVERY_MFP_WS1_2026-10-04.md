@@ -26,21 +26,34 @@ replay aplicó 0. `seed` real retornó 201 y luego replay. `import load1`:
 replay sin llamadas nuevas. Segunda ejecución de seed/import/preparación conserva
 conteos. `status` confirma ambas etapas vigentes. Las ejecuciones exitosas por
 etapa tardaron aproximadamente 4s+8s+5s+9s (incluye control SSH); el debugging de
-arranque se registra aparte, no como tiempo de procesamiento del corpus.
+arranque se registra aparte, no como tiempo de procesamiento del corpus. Medición
+única del replay `up → seed → import → prepare → fake → status`: **3 segundos**
+wallclock dentro del runner, sin incluir arranque/build ni SSH.
 
-**Pruebas:** cinco pruebas ligeras sin DB PASS; typecheck de scripts PASS en runner
-privado. CI remoto verificó typecheck/lint generales; detectó un test estructural DB
-que aún leía la ruta antigua, corregido para leer el servicio extraído. CI completo
- del candidato final sigue pendiente. Transformación TS requirió módulo ESM y
-`node --import tsx` (pnpm exec inyecta NODE_PATH, correctamente rechazado por guard).
+**Pruebas:** seis pruebas ligeras PASS; typecheck de scripts PASS remoto. CI completo
+`0d481d0` verde (typecheck/lint/test/build/Data OS/secrets); siguiente candidato de
+recuperación pendiente de CI. Redis real verificó concurrencia sin consumir trabajo
+ajeno. Fixture independiente en la misma base verificó import fallido → sucesor desde
+Storage → replay, preparación fallida → mismo run, y embeddings con primer lote
+asentado/segundo definitivamente no enviado → quote cambiada → mismo run recuperado,
+cap/costo conservados y replay sin llamadas. Otro caso real comprobó fallo previo
+al snapshot (`input_revision=null`) → `--retry` → sucesor vigente. Corpus principal
+intacto. Proveedor simulado.
 
 **Coste:** proveedor real USD0. Ledger de embeddings explícitamente sintético
-396 microUSD; nunca se acredita como Voyage. Infra Railway sin conciliación de
-factura todavía. No se copian secretos ni textos al repo.
+396 microUSD en corpus principal; nunca se acredita como Voyage. Uso Railway observado
+atribuible a runner/Studio/Redis MFP: USD0.001872661806. PG compartido USD0.205485
+del período completo no atribuible a MFP. Estimación en reposo ~USD3.11/mes, excluye
+PG compartido, egreso y picos; no es factura ni máximo. No se copian secretos ni textos al repo.
 
-**Pendientes:** gold humano y ≥15 comparaciones confirmadas (hay candidatos reales,
-no certificación); Voyage sin cap necesita adaptación nullable focal, no techo
+**Gold privado:** plantilla generada con 150 raíces, 90 dev/60 test, 15 comparaciones
+verificadas leyendo textos, 35 enriquecidas y 100 aleatorias. Tres conceptos propuestos
+pendientes del fundador; ninguna etiqueta humana ni gold anotado aún.
+
+**Pendientes:** anotación humana/confirmación de conceptos; Voyage sin cap necesita adaptación nullable focal, no techo
 inventado; acciones MFP se provisionarán con WS2. Studio dev-test
-`https://mfp-studio-dev-test.up.railway.app` y callbacks/login en verificación por root.
+`https://mfp-studio-dev-test.up.railway.app` (servicio `f87fe1ae-5f7e-45e0-9a19-7c162b315b1b`) responde; Kinde devuelve
+`Invalid callback URL` para retorno MFP. Corrección preparada, pendiente confirmación
+del operador en Kinde.
 Load2 existe privado (200 nuevas, 30 duplicadas, 20 edits de fixture marcados), aún
 sin ejecutar; no acredita aceptación WS8. Ficha/pertenencia/evaluación/UAT pendientes.
