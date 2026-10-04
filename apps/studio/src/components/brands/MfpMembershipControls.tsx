@@ -18,8 +18,12 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
   const disabled=!resource.data?.enabled||!resource.data.provider_available||!resource.data.can_request_processing||mutation.busy||mutation.pending||Boolean(resource.error);
   const active=["queued","running"].includes(resource.data?.latest?.status??"");
   const submit=async(body:Record<string,unknown>,method="POST")=>{const result=await mutation.send(body,method);if(result){setSelection([]);await resource.read();}return result;};
-  const startPreview=async()=>{const result=await preview.send({concept:{concept_key:concept.concept_key,label:concept.label,scope:concept.scope,definition:concept.definition,
-    inclusion:concept.inclusion,exclusion:concept.exclusion,positive_examples:concept.positive_examples,negative_examples:concept.negative_examples,definition_digest:concept.definition_digest}});if(result){setPreviewRun(result.run_id);setPreviewDefinition(JSON.stringify(concept));}};
+  const previewConcept={concept_key:concept.concept_key,label:concept.label,scope:concept.scope,definition:concept.definition,
+    inclusion:concept.inclusion,exclusion:concept.exclusion,positive_examples:concept.positive_examples,negative_examples:concept.negative_examples,definition_digest:concept.definition_digest};
+  const finishPreview=(result:Record<string,unknown>,submitted:Record<string,unknown>)=>{
+    if(typeof result.run_id==="string"){setPreviewRun(result.run_id);setPreviewDefinition(JSON.stringify(submitted.concept));}
+  };
+  const startPreview=()=>preview.send({concept:previewConcept},"POST",finishPreview);
   const filter=(next:string)=>{setVerdict(next);setCursor(null);setSelection([]);};
   return <section className="mfp-membership" aria-busy={resource.loading||mutation.busy}>
     <header className="admin-section__head"><div><h3>{t("membership.title")}</h3><p>{t("membership.body")}</p></div>
@@ -66,8 +70,8 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
     </>:null}
     {mutation.error||preview.error?<p className="team-msg team-msg--error" role="alert">{t(`errors.${mfpErrorKey(mutation.error??preview.error??"")}`)}</p>:null}
     {mutation.pending?<button className="admin-button" type="button" disabled={mutation.busy} onClick={async()=>{if(await mutation.send())await resource.read();}}>{t("retrySame")}</button>:null}
-    {preview.pending?<button className="admin-button" type="button" disabled={preview.busy} onClick={async()=>{const result=await preview.send();if(result){setPreviewRun(result.run_id);setPreviewDefinition(JSON.stringify(concept));}}}>{t("retrySame")}</button>:null}
-    {previewRun?<><p>{t("previewNotice")}</p>{previewDefinition!==JSON.stringify(concept)?<p role="status">{t("previewChanged")}</p>:null}
+    {preview.pending?<button className="admin-button" type="button" disabled={preview.busy} onClick={()=>void preview.send(undefined,"POST",finishPreview)}>{t("retrySame")}</button>:null}
+    {previewRun?<><p>{t("previewNotice")}</p>{previewDefinition!==JSON.stringify(previewConcept)?<p role="status">{t("previewChanged")}</p>:null}
       <MfpPreviewResults key={previewRun} endpoint={`${base}/preview?run_id=${encodeURIComponent(previewRun)}`} mentionHref={mentionHref} onAccessDenied={onAccessDenied}/></>:null}
   </section>;
 }

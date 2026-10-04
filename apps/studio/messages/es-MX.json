@@ -4663,6 +4663,7 @@
     "noMaximum": "Sin máximo estricto",
     "staleCount": "Ficha desactualizada para {count} menciones.",
     "progress": "{done} de {total} raíces con estado semántico",
+    "recoverContext": "Solicitar recálculo con el contexto actual",
     "confirmFull": "Confirmar recálculo completo",
     "estimateNotice": "La estimación es orientativa. Sólo un máximo estricto configurado limita el gasto; cada ejecución conserva su coste real.",
     "dimension": "Dimensión",

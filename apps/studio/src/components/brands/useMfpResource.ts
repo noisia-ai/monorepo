@@ -1,5 +1,6 @@
 "use client";
 import {useCallback,useEffect,useRef,useState} from "react";
+import {executeMfpIntent,mfpIntent,type MfpIntent} from "@/lib/data-os/mfp-ui-state";
 export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>void,poll=false) {
   const [data,setData]=useState<T|null>(null),[error,setError]=useState<string|null>(null),[loading,setLoading]=useState(false);
   const live=useRef(true),controller=useRef<AbortController|null>(null),denied=useRef(onDenied);denied.current=onDenied;
@@ -20,18 +21,17 @@ export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>
 /** Keep an unresolved command's body/key intact so retry cannot duplicate a paid run. */
 export function useMfpMutation(endpoint:string,onDenied?:()=>void) {
   const [busy,setBusy]=useState(false),[error,setError]=useState<string|null>(null),[pending,setPending]=useState(false);
-  const intent=useRef<{method:string;body:Record<string,unknown>}|null>(null),live=useRef(true),denied=useRef(onDenied);denied.current=onDenied;
+  const intent=useRef<MfpIntent|null>(null),live=useRef(true),denied=useRef(onDenied);denied.current=onDenied;
   useEffect(()=>{live.current=true;intent.current=null;return()=>{live.current=false;};},[endpoint]);
-  const send=async(body?:Record<string,unknown>,method="POST")=>{
+  const send=async(body?:Record<string,unknown>,method="POST",onSuccess?:(result:Record<string,unknown>,submitted:Record<string,unknown>)=>void)=>{
     if(busy)return null;
-    if(body){if(intent.current)return null;intent.current={method,body:method==="POST"&&!body.confirm_run_id?{...body,idempotency_key:crypto.randomUUID()}:body};}
+    if(body){if(intent.current)return null;intent.current=mfpIntent(body,method,crypto.randomUUID());}
     if(!intent.current)return null;
     setBusy(true);setError(null);
-    try{const response=await fetch(endpoint,{method:intent.current.method,headers:{"Content-Type":"application/json"},body:JSON.stringify(intent.current.body)});
-      const result=await response.json().catch(()=>null);if(!live.current)return null;
+    try{const {response,result,submitted}=await executeMfpIntent(endpoint,intent.current);if(!live.current)return null;
       if([401,403,404].includes(response.status)){intent.current=null;denied.current?.();}
       if(!response.ok){if(response.status<500)intent.current=null;throw Error(result?.error??"request");}
-      if(!result)throw Error("request");intent.current=null;setPending(false);return result;
+      if(!result)throw Error("request");intent.current=null;setPending(false);onSuccess?.(result,submitted);return result;
     }catch(cause){if(live.current){setError(cause instanceof Error?cause.message:"request");setPending(intent.current!==null);}return null;}
     finally{if(live.current)setBusy(false);}
   };

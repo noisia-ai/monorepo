@@ -4663,6 +4663,7 @@
     "noMaximum": "No strict maximum",
     "staleCount": "Facets are outdated for {count} mentions.",
     "progress": "{done} of {total} roots with a semantic state",
+    "recoverContext": "Request recalculation with current context",
     "confirmFull": "Confirm full recalculation",
     "estimateNotice": "The estimate is indicative. Only a configured strict maximum limits spending; each run records its actual cost.",
     "dimension": "Dimension",

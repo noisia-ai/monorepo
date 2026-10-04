@@ -5,6 +5,7 @@ import type {MentionFacetsV1} from "@noisia/query-engine";
 import {ClientCorpusPreparationStep} from "./ClientCorpusPreparationStep";
 import {useMfpMutation,useMfpResource} from "./useMfpResource";
 import {mfpMoney,mfpErrorKey,mfpSafeUrl,type MfpFacetPage,type MfpFacetStatus} from "@/lib/data-os/mfp-ui";
+import {mfpContextRecovery,mfpSelectionTransition,type MfpQuerySelection} from "@/lib/data-os/mfp-ui-state";
 const dimensions=["relevance","entities","salience","voice","act","spam_or_bot","language","asunto","status"];
 const voices=["individual","media","brand_official","retail_promo","creator","institution","unknown"];
 const acts=["experience","question_help","complaint","praise","opinion","news","promotion","other"];
@@ -15,18 +16,26 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
   const base=`/api/data-os/signal/${encodeURIComponent(workspaceId)}/facets`;
   const [rootId,setRootId]=useState<string|null>(null);
   const [dimension,setDimension]=useState("relevance"),[value,setValue]=useState(""),[cursor,setCursor]=useState<string|null>(null);
-  const [selection,setSelection]=useState<string[]>([]),[editDimension,setEditDimension]=useState("voice"),[editValue,setEditValue]=useState("individual");
+  const [querySelection,setQuerySelection]=useState<MfpQuerySelection>({query:"",ids:[]}),[editDimension,setEditDimension]=useState("voice"),[editValue,setEditValue]=useState("individual");
   const [entities,setEntities]=useState<Array<{entity_id:string;kind:"primary_brand"|"competitor"|"category";salience:"main"|"secondary"}>>([]);
   const [reason,setReason]=useState("off_topic"),[saved,setSaved]=useState(false);
   const filter=new URLSearchParams({view:"mentions",limit:"30"});if(value){filter.set("dimension",dimension);filter.set("value",value);}if(cursor)filter.set("cursor",cursor);if(rootId)filter.set("root_id",rootId);
+  const browserEndpoint=`${base}?${filter}`;
+  const visibleSelection=mfpSelectionTransition(querySelection,browserEndpoint);
+  if(querySelection.query!==browserEndpoint)setQuerySelection(visibleSelection);
+  const selection=visibleSelection.ids;
+  const setSelection=(next:string[]|((old:string[])=>string[]))=>setQuerySelection(old=>{
+    const current=mfpSelectionTransition(old,browserEndpoint);
+    return mfpSelectionTransition(current,browserEndpoint,typeof next==="function"?next(current.ids):next);
+  });
   const status=useMfpResource<MfpFacetStatus>(`${base}?view=labeling`,"mention-facets-status-v1",onAccessDenied,true);
-  const browser=useMfpResource<MfpFacetPage>(`${base}?${filter}`,"mention-facets-browser-v1",onAccessDenied);
+  const browser=useMfpResource<MfpFacetPage>(browserEndpoint,"mention-facets-browser-v1",onAccessDenied);
   const mutation=useMfpMutation(base,onAccessDenied);
   useEffect(()=>{const navigate=()=>{const id=window.location.hash.replace(/^#mention-/,"");
     if(/^[a-f0-9-]{36}$/i.test(id)){setRootId(id);setValue("");setCursor(null);}};navigate();window.addEventListener("hashchange",navigate);
     return()=>window.removeEventListener("hashchange",navigate);},[]);
   useEffect(()=>{if(rootId&&browser.data?.items.some(item=>item.root_id===rootId))document.getElementById(`mention-${rootId}`)?.scrollIntoView({block:"center"});},[rootId,browser.data]);
-  useEffect(()=>{setSelection([]);setSaved(false);},[dimension,value,cursor]);
+  useEffect(()=>{setSaved(false);},[browserEndpoint]);
   const refresh=async()=>{await Promise.all([status.read(),browser.read()]);};
   const start=async(full=false)=>{if(await mutation.send({full_recalculation:full})){await refresh();}};
   const chooseDimension=(next:string)=>{setEditDimension(next);setEditValue(next==="voice"?"individual":next==="act"?"experience":next==="spam_or_bot"?"false":next==="language"?"es":"");};
@@ -48,7 +57,9 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
   const count=status.data?.counts.reduce((sum,row)=>sum+row.count,0)??0;
   const done=status.data?.counts.filter(row=>!["pending","error"].includes(row.status)).reduce((sum,row)=>sum+row.count,0)??0;
   const active=["queued","running"].includes(status.data?.latest?.status??"");
-  const canStart=Boolean(status.data?.enabled&&status.data.provider_available&&browser.data?.can_request_processing&&!active&&!status.error&&!mutation.busy&&!mutation.pending);
+  const recovery=mfpContextRecovery(status.data?.latest);
+  const canRequest=Boolean(status.data?.enabled&&status.data.provider_available&&browser.data?.can_request_processing&&!status.error&&!mutation.busy&&!mutation.pending);
+  const canStart=canRequest&&!active;
   return <section className="admin-section mfp-workspace" id="mention-facets" aria-busy={status.loading||browser.loading}>
     <div className="admin-section__head"><div><h3>{t("journey.title")}</h3><p>{t("journey.body")}</p></div>
       <button className="admin-button" type="button" onClick={()=>void refresh()} disabled={status.loading||browser.loading}>{t("refresh")}</button></div>
@@ -78,6 +89,8 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
         <div className="admin-form-actions">
           <button className="admin-button admin-button--primary" disabled={!canStart} onClick={()=>void start()} type="button">{t("facets.start")}</button>
           <button className="admin-button" disabled={!canStart} onClick={()=>void start(true)} type="button">{t("facets.recalculate")}</button>
+          {recovery?<button className="admin-button" disabled={!canRequest} type="button"
+            onClick={async()=>{if(await mutation.send(recovery))await refresh();}}>{t("recoverContext")}</button>:null}
           {status.data.latest?.waiting_full_confirmation?<button className="admin-button" disabled={mutation.busy||mutation.pending||!browser.data?.can_request_processing}
             onClick={async()=>{if(await mutation.send({confirm_run_id:status.data!.latest!.id,entity_context_digest:status.data!.entity_context_digest}))await refresh();}} type="button">{t("confirmFull")}</button>:null}
         </div><p className="admin-drawer-form__hint">{t("estimateNotice")}</p>
