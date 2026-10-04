@@ -89,7 +89,7 @@ export async function loadSignalWorkspaceEmbeddingsStoreV1(args: {
 
 async function authorize(queryable: SignalWorkspaceEmbeddingsQueryableV1, workspace: string, actor: string, execute: boolean) {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable, workspace_id: workspace, actor_user_id: actor });
-  if (!capabilities.can_view || execute && !capabilities.can_execute_topics) return fail("workspace_embedding_forbidden", 403);
+  if (!capabilities.can_view || execute && !(process.env.NOISIA_MENTION_FACETS_ENABLED === "true" ? capabilities.can_request_processing : capabilities.can_execute_topics)) return fail("workspace_embedding_forbidden", 403);
 }
 
 async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, workspace: string,
@@ -211,6 +211,11 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
     }
     if (current.resume_run_id) {
       if (args.hard_cap_micro_usd !== current.required_cap_micro_usd) return fail("workspace_embedding_resume_budget_changed", 422);
+      if (process.env.NOISIA_MENTION_FACETS_ENABLED === "true") {
+        await client.query(`SELECT signal_processing_capacity_v1(workspace_id,actor_user_id,id,processing_admission_id,
+          ARRAY['corpus_embeddings'],profile->>'provider',profile->>'model',profile,hard_cap_micro_usd)
+          FROM signal_workspace_embedding_runs WHERE id=$1::uuid AND processing_admission_id IS NOT NULL`, [current.resume_run_id]);
+      }
       const resumed = await client.query(`UPDATE signal_workspace_embedding_runs SET status='queued',error_code=NULL,completed_at=NULL,
         request_keys=request_keys||$2::jsonb,dispatch_generation=dispatch_generation+1,
         worker_job_id='workspace-embeddings-'||id::text||'-'||(dispatch_generation+1)::text,
@@ -223,11 +228,14 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
     }
     const runId = randomUUID();
     let effectiveCap=args.hard_cap_micro_usd,admissionId:string|null=null;
-    if(effectiveCap===null){
+    if(process.env.NOISIA_MENTION_FACETS_ENABLED === "true" || effectiveCap===null){
       const policy=(await client.query<{max_execution_micro_usd:string|null}>(`SELECT a.max_execution_micro_usd::text FROM signal_processing_policy_actions a JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id
         WHERE p.organization_id=(SELECT organization_id FROM signal_workspaces WHERE id=$1) AND p.status='active' AND p.valid_from<=now() AND p.valid_until>now() AND a.action='corpus_embeddings'`,[args.workspace_id])).rows[0];
       if(!policy)return fail('workspace_embedding_policy_required');
-      effectiveCap=policy.max_execution_micro_usd===null?null:Number(policy.max_execution_micro_usd);
+      const policyCap=policy.max_execution_micro_usd===null?null:integer(policy.max_execution_micro_usd);
+      if(effectiveCap===null) effectiveCap=policyCap;
+      else if(policyCap!==null && effectiveCap>policyCap) return fail("workspace_embedding_budget_exceeds_limit",422);
+      if(effectiveCap!==null && effectiveCap<current.estimated_upper_micro_usd) return fail("workspace_embedding_budget_below_quote",422);
       const admission=await admitSignalProcessingWithClientV1(client,{workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,action:'corpus_embeddings',target_id:runId,
         idempotency_key:args.idempotency_key,request_digest:requestDigest,execution_cap_micro_usd:effectiveCap===null?null:String(effectiveCap)});
       admissionId=admission.receipt.id;

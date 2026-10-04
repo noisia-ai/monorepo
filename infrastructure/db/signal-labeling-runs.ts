@@ -191,7 +191,8 @@ export async function loadMentionFacetsStatusV1(args: {
         [args.workspace_id],
       )
     ).rows[0]?.identity;
-    const labeler = args.identity ?? facetLabelerIdentityV1();
+    const labeler = args.identity ?? selectedLabeler ?? facetLabelerIdentityV1();
+    if (labeler.provider === "anthropic") validateFacetLabelerIdentityV1(labeler);
     const estimate = await estimatePopulation(
       c,
       args.workspace_id,
@@ -259,17 +260,6 @@ export async function requestMentionFacetsV1(args: {
 }) {
   if (!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))
     fail("labeling_idempotency_key_invalid", 400);
-  const identity = args.identity ?? facetLabelerIdentityV1(),
-    ld = labelerDigestV1(identity),
-    budget = money(args.budget_micro_usd),
-    requestedCap = money(args.cap_micro_usd);
-  const requestDigest = digest({
-    labeler_digest: ld,
-    budget_micro_usd: budget,
-    cap_micro_usd: requestedCap,
-    full_recalculation: args.full_recalculation ?? false,
-    ...(args.adapter ? { adapter: args.adapter.request_identity } : {}),
-  });
   return tx(args.database, async (c) => {
     await c.query(
       "SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",
@@ -283,6 +273,22 @@ export async function requestMentionFacetsV1(args: {
       [args.workspace_id],
     );
     await authorize(c, args.workspace_id, args.actor_user_id, true);
+    const selected = args.identity ? undefined : (await c.query<{identity:LabelerIdentity}>(
+        `SELECT l.identity FROM signal_workspace_labelers w JOIN signal_labeler_versions l ON l.id=w.labeler_version_id WHERE w.workspace_id=$1 AND w.kind='facets'`,
+        [args.workspace_id])).rows[0]?.identity;
+    const identity = args.identity ?? selected ?? facetLabelerIdentityV1(),
+      ld = labelerDigestV1(identity),
+      budget = money(args.budget_micro_usd),
+      requestedCap = money(args.cap_micro_usd);
+    if (args.adapter) args.adapter.validateIdentity(identity);
+    else if (identity.provider === "anthropic") validateFacetLabelerIdentityV1(identity);
+    const requestDigest = digest({
+      labeler_digest: ld,
+      budget_micro_usd: budget,
+      cap_micro_usd: requestedCap,
+      full_recalculation: args.full_recalculation ?? false,
+      ...(args.adapter ? { adapter: args.adapter.request_identity } : {}),
+    });
     const replay = (
       await c.query<{ id: string; request_digest: string }>(
         `SELECT id,request_digest FROM signal_labeling_runs WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3`,

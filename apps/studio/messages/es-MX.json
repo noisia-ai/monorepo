@@ -3616,6 +3616,7 @@
         "changeCap": "Cambiar límite · opcional",
         "resumeBudget": "Se reanuda la misma ejecución y su avance guardado. Se conserva el límite de la solicitud original; no se añade otro presupuesto.",
         "capLabel": "Límite en USD",
+        "optionalCapHelp": "Sin máximo estricto. Puedes establecer uno; la estimación orienta el costo y no lo limita.",
         "capHelp": "Usa punto decimal, por ejemplo 0.50. El máximo permitido es {amount}.",
         "quoteExceedsLimit": "Esta preparación requiere un límite superior al máximo disponible de {amount}. Revisa el presupuesto antes de ejecutar.",
         "freeQuote": "Calcular el costo no realiza llamadas al proveedor.",
@@ -3629,7 +3630,7 @@
         "unknown": "El proveedor pudo haber procesado una parte. Conservamos la reserva y el resultado pendiente de confirmación. No se enviará de nuevo desde esta pantalla.",
         "requestUnknown": "No pudimos confirmar si se aceptó la solicitud. Consulta el estado o comprueba la misma solicitud; se conservarán su límite y cotización.",
         "states": { "queued": "En cola", "running": "Preparando para analizar", "completed": "Embeddings completos", "failed": "Preparación interrumpida", "stale": "Datos pendientes", "outcome_unknown": "Resultado por confirmar", "canceled": "Preparación detenida" },
-        "actions": { "quote": "Calcular costo", "quoting": "Calculando costo…", "prepare": "Crear vectores · máximo {amount}", "resume": "Reanudar vectores · límite original {amount}", "reuse": "Usar vectores existentes · sin costo", "requesting": "Enviando solicitud…", "refresh": "Actualizar estado", "confirm": "Comprobar la misma solicitud" },
+        "actions": { "prepareEstimated": "Crear vectores · estimación {amount}", "resumeUnlimited": "Reanudar vectores · sin máximo estricto", "quote": "Calcular costo", "quoting": "Calculando costo…", "prepare": "Crear vectores · máximo {amount}", "resume": "Reanudar vectores · límite original {amount}", "reuse": "Usar vectores existentes · sin costo", "requesting": "Enviando solicitud…", "refresh": "Actualizar estado", "confirm": "Comprobar la misma solicitud" },
         "errors": { "load": "No pudimos consultar la preparación para analizar.", "refresh": "No pudimos actualizar el estado. Conservamos el último resultado disponible.", "quote": "No pudimos calcular el costo. Vuelve a consultar la estimación.", "forbidden": "Tu acceso ya no permite consultar esta preparación.", "storage": "No pudimos conservar la solicitud en este navegador. Habilita el almacenamiento de la sesión antes de iniciar una ejecución.", "cap": "El límite debe cubrir la estimación sin superar el máximo permitido. Usa hasta seis decimales.", "stale": "Cambiaron los datos o la configuración. Calcula una nueva estimación antes de iniciar.", "failed": "La preparación se interrumpió. El avance confirmado se conserva; consulta el estado antes de continuar.", "rejected": "La solicitud no se aceptó. Actualiza el estado y calcula otra estimación.", "permissions": "Cambió el permiso de uso o acceso. Revisa los permisos de esta marca antes de continuar.", "provider": "La ejecución con el proveedor está deshabilitada. Esta solicitud no inició otra ejecución." }
       },
       "corpusReadiness": {

@@ -96,3 +96,29 @@ test('server recomputes the cache-only plan while disabled and refuses stale, mi
     else process.env.NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED = previous;
   }
 });
+
+test("MFP omits only the inherited cap, preserving explicitly configured strict maxima", () => {
+  const mfp = { NOISIA_MENTION_FACETS_ENABLED: "true" };
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp).max_run_cost_micro_usd, null);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1({...mfp, NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: "123"}).max_run_cost_micro_usd, 123);
+  assert.equal(validateWorkspaceCorpusEmbeddingRequestV1({...body, hard_cap_micro_usd: null}), true);
+});
+
+test("facet POST seals the persisted selection, preserves explicit overrides and default without selection", async () => {
+  const {requestMentionFacetsV1} = await import("../../../../../infrastructure/db/signal-labeling-runs");
+  const {facetLabelerIdentityV1,facetLabelerIdentityOrdinalV4,labelerDigestV1,signalWorkspaceEmbeddingDigestV1} = await import("@noisia/query-engine");
+  const selected = facetLabelerIdentityOrdinalV4(), fallback = facetLabelerIdentityV1();
+  for (const [selection, explicit, expected] of [[selected,undefined,selected],[selected,fallback,fallback],[undefined,undefined,fallback]] as const) {
+    let selectionReads = 0;
+    const query = async (sql:string) => {
+      if(sql.includes('workspace.status workspace_status'))return {rows:[{...granted,organization_status:'active',brand_same_organization:true}]};
+      if(sql.includes('SELECT l.identity')){selectionReads++;return {rows:selection?[{identity:selection}]:[]};}
+      if(sql.includes('SELECT id,request_digest FROM signal_labeling_runs'))return {rows:[{id:body.preparation_run_id,request_digest:signalWorkspaceEmbeddingDigestV1({labeler_digest:labelerDigestV1(expected),budget_micro_usd:null,cap_micro_usd:null,full_recalculation:false})}]};
+      if(/^(INSERT|UPDATE)/u.test(sql.trim()))throw Error('Replay must not mutate');
+      return {rows:[]};
+    };
+    const database={query,connect:async()=>({query,release(){}})} as unknown as Pick<Pool,'query'|'connect'>;
+    assert.deepEqual(await requestMentionFacetsV1({database,workspace_id:'workspace',actor_user_id:'actor',idempotency_key:'selected-labeler-request',provider_available:false,...(explicit?{identity:explicit}:{})}),{run_id:body.preparation_run_id,replayed:true});
+    assert.equal(selectionReads,explicit?0:1);
+  }
+});

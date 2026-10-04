@@ -206,3 +206,15 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.ok(!stale.includes(copy.complete));
   });
 }
+
+test("MFP unlimited quotes keep estimate separate from optional cap and survive recovery", () => {
+  const mfpQuote = {...quote, provider_available: true, optional_strict_cap: true, max_run_cost_micro_usd: null};
+  const mfpStatus = {...status, provider_available: true, optional_strict_cap: true, max_run_cost_micro_usd: null};
+  assert.equal(embeddingQuoteCanExecute(mfpQuote, mfpStatus, quote.preparation_run_id, ""), true);
+  assert.equal(embeddingQuoteCanExecute({...mfpQuote, max_run_cost_micro_usd: 5000}, mfpStatus, quote.preparation_run_id, ""), false);
+  assert.equal(embeddingQuoteCanExecute({...mfpQuote, resume_run_id: running.id}, mfpStatus, quote.preparation_run_id, ""), true);
+  assert.equal(embeddingQuoteCanExecute({...mfpQuote, resume_run_id: running.id}, mfpStatus, quote.preparation_run_id, "1"), false);
+  assert.equal(embeddingQuoteCanExecute({...mfpQuote, provider_available: false}, mfpStatus, quote.preparation_run_id, ""), false);
+  const pending = {...request, body: {...request.body, hard_cap_micro_usd: null}};
+  assert.deepEqual(parsePendingCorpusEmbeddingRequest(JSON.parse(JSON.stringify(pending)),request.workspace_id,request.request_scope),pending);
+});

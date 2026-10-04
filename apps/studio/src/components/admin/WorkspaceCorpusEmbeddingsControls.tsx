@@ -7,24 +7,39 @@ import { AdminStatus, formatAdminNumber } from "./AdminWorkspacePrimitives";
 import { embeddingCapUsdInput, embeddingRequestStorageKey, formatEmbeddingMicroUsd, latestCorpusEmbeddingSnapshot,
   parseEmbeddingCapMicroUsd, parsePendingCorpusEmbeddingRequest, type PendingCorpusEmbeddingRequest } from "../../lib/data-os/workspace-corpus-embeddings-ui";
 
-type Access = { can_execute: boolean; provider_available: boolean; max_run_cost_micro_usd: number; request_scope: string };
+type Access = { can_execute: boolean; provider_available: boolean; max_run_cost_micro_usd: number | null; optional_strict_cap?: boolean; request_scope: string };
 export type CorpusEmbeddingsStatus = SignalWorkspaceEmbeddingsStatusV1 & Access;
 export type CorpusEmbeddingsQuote = SignalWorkspaceEmbeddingsQuoteV1 & Access;
 type ErrorKey = "load" | "quote" | "forbidden" | "storage" | "cap" | "stale" | "failed" | "rejected" | "permissions" | "provider";
 
+export function embeddingSelectedCap(quote: CorpusEmbeddingsQuote, capUsd: string): number | null | undefined {
+  if (capUsd.trim() === "" && quote.optional_strict_cap && quote.max_run_cost_micro_usd === null) return null;
+  const parsed = parseEmbeddingCapMicroUsd(capUsd);
+  return parsed !== null && BigInt(parsed) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(parsed) : undefined;
+}
+function maximumCap(quote: Access, status: Access): number | null {
+  const caps = [quote.max_run_cost_micro_usd, status.max_run_cost_micro_usd].filter((v): v is number => v !== null);
+  return caps.length ? Math.min(...caps) : null;
+}
+function initialCap(quote: CorpusEmbeddingsQuote): string {
+  const value = quote.resume_run_id ? quote.required_cap_micro_usd : embeddingQuoteIsCacheOnly(quote) ? 0
+    : quote.optional_strict_cap ? quote.max_run_cost_micro_usd : quote.estimated_upper_micro_usd;
+  return value === null ? "" : embeddingCapUsdInput(String(value));
+}
 export function embeddingQuoteCanExecute(quote: CorpusEmbeddingsQuote | null, status: CorpusEmbeddingsStatus | null,
   preparationRunId: string | null, capUsd: string) {
-  const cap = parseEmbeddingCapMicroUsd(capUsd);
-  const provider = Boolean(quote?.provider_available && status?.provider_available);
-  const reuse = Boolean(quote && embeddingQuoteIsCacheOnly(quote) && cap === "0"
-    && !status?.latest_run?.reserved_micro_usd && !status?.latest_run?.observed_exception_micro_usd);
-  return Boolean(quote && validCorpusEmbeddingQuote(quote) && status && quote.can_execute && status.can_execute && (provider || reuse)
+  if (!quote || !validCorpusEmbeddingQuote(quote) || !status) return false;
+  const cap = embeddingSelectedCap(quote, capUsd), maximum = maximumCap(quote, status);
+  const provider = quote.provider_available && status.provider_available;
+  const reuse = embeddingQuoteIsCacheOnly(quote) && cap === 0
+    && !status.latest_run?.reserved_micro_usd && !status.latest_run?.observed_exception_micro_usd;
+  return Boolean(quote.can_execute && status.can_execute && (provider || reuse)
     && quote.request_scope === status.request_scope && quote.preparation_run_id === preparationRunId
     && !status.active_run && status.latest_run?.status !== "outcome_unknown" && !status.latest_run?.unknown_reserved_micro_usd
     && !(status.latest_run?.status === "failed" && !status.latest_run.retryable && status.latest_run.preparation_run_id === preparationRunId)
-    && cap !== null && BigInt(cap) >= BigInt(quote.estimated_upper_micro_usd)
-    && (quote.required_cap_micro_usd === null || BigInt(cap) === BigInt(quote.required_cap_micro_usd))
-    && BigInt(cap) <= BigInt(Math.min(quote.max_run_cost_micro_usd, status.max_run_cost_micro_usd)));
+    && cap !== undefined && (cap === null || cap >= quote.estimated_upper_micro_usd)
+    && (!quote.resume_run_id || cap === quote.required_cap_micro_usd)
+    && (maximum === null || cap !== null && cap <= maximum));
 }
 
 export function embeddingQuoteIsCacheOnly(quote: CorpusEmbeddingsQuote) {
@@ -37,7 +52,8 @@ export function embeddingQuoteIsCacheOnly(quote: CorpusEmbeddingsQuote) {
 function validAccess(value: Access) {
   return typeof value.request_scope === "string" && value.request_scope.length > 0
     && typeof value.can_execute === "boolean" && typeof value.provider_available === "boolean"
-    && Number.isSafeInteger(value.max_run_cost_micro_usd) && value.max_run_cost_micro_usd >= 0;
+    && (value.optional_strict_cap === undefined || typeof value.optional_strict_cap === "boolean")
+    && (value.max_run_cost_micro_usd === null ? value.optional_strict_cap === true : Number.isSafeInteger(value.max_run_cost_micro_usd) && value.max_run_cost_micro_usd >= 0);
 }
 
 const safeCount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
@@ -53,7 +69,7 @@ export function validCorpusEmbeddingQuote(value: unknown): value is CorpusEmbedd
     && quote.cached_asset_chunks + quote.missing_asset_chunks === quote.total_asset_chunks
     && (quote.required_cap_micro_usd === null || safeCount(quote.required_cap_micro_usd))
     && (quote.resume_run_id === null || typeof quote.resume_run_id === "string" && uuid.test(quote.resume_run_id))
-    && (quote.resume_run_id === null) === (quote.required_cap_micro_usd === null);
+    && (quote.resume_run_id === null ? quote.required_cap_micro_usd === null : quote.required_cap_micro_usd !== null || quote.optional_strict_cap === true);
 }
 
 function validStatus(value: unknown): value is CorpusEmbeddingsStatus {
@@ -67,7 +83,8 @@ function validStatus(value: unknown): value is CorpusEmbeddingsStatus {
         && typeof run.retryable === "boolean" && [run.counts.eligible_roots, run.counts.completed_roots, run.counts.partial_roots,
           run.counts.pending_roots, run.counts.total_chunk_references, run.counts.processed_chunk_references,
           run.counts.total_asset_chunks, run.counts.processed_asset_chunks, run.counts.cache_hits, run.counts.embedded_unique_chunks].every(safeCount)
-        && [run.hard_cap_micro_usd, run.estimated_upper_micro_usd, run.reserved_micro_usd, run.settled_micro_usd,
+        && (run.hard_cap_micro_usd === null || safeCount(run.hard_cap_micro_usd))
+        && [run.estimated_upper_micro_usd, run.reserved_micro_usd, run.settled_micro_usd,
           run.unknown_reserved_micro_usd, run.observed_exception_micro_usd].every(safeCount)));
 }
 
@@ -82,7 +99,7 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
   const [quoteSnapshot, setQuote] = useState(initialQuote);
   const quote = quoteSnapshot?.workspace_id === workspaceId && quoteSnapshot.request_scope === data?.request_scope
     && quoteSnapshot.preparation_run_id === preparationRunId ? quoteSnapshot : null;
-  const [cap, setCap] = useState(initialQuote ? embeddingCapUsdInput(String(initialQuote.required_cap_micro_usd ?? initialQuote.estimated_upper_micro_usd)) : "");
+  const [cap, setCap] = useState(initialQuote ? initialCap(initialQuote) : "");
   const [pendingSnapshot, setPending] = useState<PendingCorpusEmbeddingRequest | null>(null);
   const pending = pendingSnapshot?.workspace_id === workspaceId && pendingSnapshot.request_scope === data?.request_scope ? pendingSnapshot : null;
   const [reading, setReading] = useState(!initialStatus);
@@ -202,7 +219,7 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
         || next.preparation_run_id !== expectedPreparation || currentPreparation.current !== expectedPreparation) {
         setError("stale"); return;
       }
-      setQuote(next); setCap(embeddingCapUsdInput(String(next.required_cap_micro_usd ?? next.estimated_upper_micro_usd)));
+      setQuote(next); setCap(initialCap(next));
     } catch { if (!controller.signal.aborted && started === generation.current) setError("quote"); }
     finally { if (quoter.current === controller) quoter.current = null; if (!controller.signal.aborted) setQuoting(false); }
   }
@@ -219,7 +236,7 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
       if (!embeddingQuoteCanExecute(quote, data, preparationRunId, cap)) { setError("cap"); return; }
       retained = { version: 1, workspace_id: workspaceId, request_scope: data.request_scope, key: crypto.randomUUID(),
         body: { preparation_run_id: quote.preparation_run_id, quote_digest: quote.quote_digest,
-          hard_cap_micro_usd: Number(parseEmbeddingCapMicroUsd(cap)) } };
+          hard_cap_micro_usd: embeddingSelectedCap(quote, cap) ?? null } };
     }
     if (!retained) return;
     try {
@@ -267,8 +284,8 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
   const money = (value: number) => formatEmbeddingMicroUsd(String(value), locale);
   const number = (value: number) => formatAdminNumber(value, locale);
   const capMicro = parseEmbeddingCapMicroUsd(cap);
-  const availableCap = quote ? Math.min(quote.max_run_cost_micro_usd, data?.max_run_cost_micro_usd ?? quote.max_run_cost_micro_usd) : 0;
-  const quoteExceedsLimit = Boolean(quote && (quote.required_cap_micro_usd ?? quote.estimated_upper_micro_usd) > availableCap);
+  const availableCap = quote ? maximumCap(quote, data ?? quote) : 0;
+  const quoteExceedsLimit = Boolean(quote && availableCap !== null && (quote.required_cap_micro_usd ?? quote.estimated_upper_micro_usd) > availableCap);
   const canStart = !reading && !quoting && !submitting && !pending && !error && !unknown
     && embeddingQuoteCanExecute(quote, data, preparationRunId, cap);
   const displayState = run?.status === "completed" && !current ? "stale" : run?.status;
@@ -301,21 +318,21 @@ export function WorkspaceCorpusEmbeddingsControls({ workspaceId, preparationRunI
       <p className="admin-drawer-form__hint">{t("cache", { cached: number(quote.cached_asset_chunks), missing: number(quote.missing_asset_chunks) })}</p>
       <p className="admin-drawer-form__intro"><strong>{t("estimate", { amount: money(quote.estimated_upper_micro_usd) })}</strong>
         {capMicro !== null && BigInt(capMicro) <= BigInt(Number.MAX_SAFE_INTEGER) ? <> · {t("cap", { amount: money(Number(capMicro)) })}</> : null}</p>
-      {quoteExceedsLimit ? <p className="admin-drawer-form__hint" role="status">{t("quoteExceedsLimit", { amount: money(availableCap) })}</p> : null}
-      {quote.required_cap_micro_usd !== null ? <p className="admin-drawer-form__hint">{t("resumeBudget")}</p> : <details><summary>{t("changeCap")}</summary>
+      {quoteExceedsLimit && availableCap !== null ? <p className="admin-drawer-form__hint" role="status">{t("quoteExceedsLimit", { amount: money(availableCap) })}</p> : null}
+      {quote.resume_run_id !== null ? <p className="admin-drawer-form__hint">{t(quote.required_cap_micro_usd === null ? "optionalCapHelp" : "resumeBudget")}</p> : <details><summary>{t("changeCap")}</summary>
         <label className="workspace-form__field"><span>{t("capLabel")}</span>
           <input inputMode="decimal" value={cap} onChange={(event) => { setCap(event.target.value); setError((previous) => previous === "cap" ? null : previous); }} disabled={submitting} />
         </label>
-        <p className="admin-drawer-form__hint">{t("capHelp", { amount: money(Math.min(quote.max_run_cost_micro_usd, data?.max_run_cost_micro_usd ?? quote.max_run_cost_micro_usd)) })}</p>
+        <p className="admin-drawer-form__hint">{availableCap === null ? t("optionalCapHelp") : t("capHelp", { amount: money(availableCap) })}</p>
       </details>}
-      {!quoteExceedsLimit && (capMicro === null || BigInt(capMicro) < BigInt(quote.estimated_upper_micro_usd) || BigInt(capMicro) > BigInt(availableCap))
+      {!quoteExceedsLimit && (embeddingSelectedCap(quote, cap) === undefined || capMicro !== null && (BigInt(capMicro) < BigInt(quote.estimated_upper_micro_usd) || availableCap !== null && BigInt(capMicro) > BigInt(availableCap)))
         ? <p className="workspace-form__error" role="alert">{t("errors.cap")}</p> : null}
     </> : null}
     <div className="admin-form-actions">
       {preparationRunId && data && !active && !pending && !current && !unknown && !blockedFailure ? <button className="admin-button" type="button" disabled={reading || quoting || submitting}
         onClick={() => void calculateQuote()}>{t(quoting ? "actions.quoting" : "actions.quote")}</button> : null}
       {quote && !pending ? <button className="admin-button admin-button--primary" type="button" disabled={!canStart} onClick={() => void start()}>
-        {t(submitting ? "actions.requesting" : quote.resume_run_id ? "actions.resume" : quote.missing_asset_chunks === 0 && quote.estimated_upper_micro_usd === 0 ? "actions.reuse" : "actions.prepare", { amount: money(capMicro !== null && BigInt(capMicro) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(capMicro) : quote.estimated_upper_micro_usd) })}</button> : null}
+        {t(submitting ? "actions.requesting" : quote.resume_run_id ? quote.required_cap_micro_usd === null ? "actions.resumeUnlimited" : "actions.resume" : quote.missing_asset_chunks === 0 && quote.estimated_upper_micro_usd === 0 ? "actions.reuse" : embeddingSelectedCap(quote, cap) === null ? "actions.prepareEstimated" : "actions.prepare", { amount: money(capMicro !== null && BigInt(capMicro) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(capMicro) : quote.estimated_upper_micro_usd) })}</button> : null}
       {pending ? <button className="admin-button" type="button" disabled={reading || submitting || !pendingChecked.current || !data?.can_execute
         || !data?.provider_available && (pending.body.hard_cap_micro_usd !== 0
           || Boolean(data?.latest_run?.reserved_micro_usd) || Boolean(data?.latest_run?.observed_exception_micro_usd)) || Boolean(active) || unknown}

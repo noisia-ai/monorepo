@@ -141,6 +141,17 @@ function capacityError(error:unknown):never{
  throw error;
 }
 async function requireRunAuthority(client:PoolClient,run:Run,newWork:boolean){
+ // Corpus admissions are self-contained immutable authority. Keep draining an
+ // admitted run safely even if the UI feature flag changes after admission.
+ if(run.input_contract==="corpus" && run.processing_admission_id!==null){
+  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id})).can_request_processing)
+   return fail("workspace_embedding_forbidden",403);
+  if(newWork){try{await client.query(`SELECT signal_processing_capacity_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+    ARRAY['corpus_embeddings'],$5,$6,$7::jsonb,$8::bigint)`,[run.workspace_id,run.actor_user_id,run.id,
+    run.processing_admission_id,run.profile.provider,run.profile.model,JSON.stringify(run.profile),run.hard_cap_micro_usd]);}
+   catch(error){capacityError(error);}}
+  return;
+ }
  // Historical internal prototype runs have neither a composed admission nor a
  // preparation pointer. They remain governed by can_execute_topics. A client
  // composed run is recognizable only by its immutable processing admission.

@@ -33,6 +33,6 @@ export default async function ClientBrandDataPage({ params }: { params: Promise<
     <BrandMonitoringJourney brandId={entry.brandId} current="data" destinations={{
       topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref,
       brandOs: entry.canManageBrandContext ? entry.navigation.brandOsHref : null }} />
-    <ClientBrandWorkspaceData key={entry.requestScope} entry={entry} initialReadiness={readiness} corpus={corpus} />
+    <ClientBrandWorkspaceData enableCorpusEmbeddings={process.env.NOISIA_MENTION_FACETS_ENABLED === "true"} key={entry.requestScope} entry={entry} initialReadiness={readiness} corpus={corpus} />
   </div>;
 }

@@ -1,5 +1,7 @@
 "use client";
 
+import { WorkspaceCorpusEmbeddingsControls } from "@/components/admin/WorkspaceCorpusEmbeddingsControls";
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowClockwise } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
@@ -108,8 +110,8 @@ export function clientCorpusPreparationInitialSnapshotV1(initial: ClientCorpusPr
   return initial?.workspace_id === workspaceId && validClientCorpusPreparationViewV1(initial) ? initial : null;
 }
 
-export function ClientCorpusPreparationStep({ workspaceId, index, initial = null, onAccessDenied }: {
-  workspaceId: string; index: number; initial?: ClientCorpusPreparationViewV1 | null; onAccessDenied?: () => void;
+export function ClientCorpusPreparationStep({ workspaceId, index, initial = null, enableCorpusEmbeddings = false, onAccessDenied }: {
+  workspaceId: string; index: number; enableCorpusEmbeddings?: boolean; initial?: ClientCorpusPreparationViewV1 | null; onAccessDenied?: () => void;
 }) {
   const t = useTranslations("ClientProcessing.stages.prepare");
   const locale = useLocale();
@@ -230,6 +232,8 @@ export function ClientCorpusPreparationStep({ workspaceId, index, initial = null
           <ArrowClockwise aria-hidden size={15}/>{t("actions.refresh")}
         </button>
       </div>
+      {enableCorpusEmbeddings && data?.is_current && data.latest_completed ? <WorkspaceCorpusEmbeddingsControls
+        workspaceId={workspaceId} preparationRunId={data.latest_completed.id} /> : null}
     </div>
   </li>;
 }
