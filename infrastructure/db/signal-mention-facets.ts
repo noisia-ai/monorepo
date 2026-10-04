@@ -8,6 +8,7 @@ import {
   type FacetInput,
   type FacetResult,
   deriveRelevanceV1,
+  type MentionFacetsV1,
   effectiveEntitiesDigestV1,
   validateMentionFacetsV1,
 } from "@noisia/query-engine";
@@ -174,99 +175,176 @@ export async function writeFacetResultsV1(
   );
 }
 export async function overrideMentionFacetV1(args: {
-  database: LabelingDatabaseV1;
-  workspace_id: string;
-  actor_user_id: string;
-  root_id: string;
-  dimension: string;
-  value: unknown;
+  database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string;
+  root_id: string; dimension: string; value: unknown;
 }) {
+  return overrideMentionFacetsBatchV1({ ...args, overrides: [args] });
+}
+
+const emptyHumanFacets = (): MentionFacetsV1 => ({
+  entities: { value: [], confidence: "high", abstained: true }, unrelated_reason: null,
+  voice: { value: "unknown", confidence: "high", abstained: true },
+  act: { value: "other", confidence: "high", abstained: true },
+  spam_or_bot: { value: false, confidence: "high", abstained: true },
+  language: { value: null, confidence: "high", abstained: true },
+  asunto: { value: null, confidence: "high", abstained: true },
+});
+
+/** One authority check and transaction per page, including corrections of abstentions. */
+export async function overrideMentionFacetsBatchV1(args: {
+  database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string;
+  overrides: Array<{ root_id: string; dimension: string; value: unknown }>;
+}) {
+  if (!args.overrides.length || args.overrides.length > 500) throw new Error("facets_override_invalid");
   const client = await args.database.connect();
   try {
     await client.query("BEGIN");
-    await client.query(
-      "SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",
-      [args.workspace_id],
-    );
-    const caps = await loadSignalWorkspaceCapabilitiesStoreV1({
-      ...args,
-      queryable: client,
-      lock_authority: true,
-    });
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))", [args.workspace_id]);
+    const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ ...args, queryable: client, lock_authority: true });
     if (!caps.can_edit_topics) throw new Error("facets_forbidden");
-    const row = (
-      await client.query<{ facets: unknown }>(
-        `SELECT COALESCE(current.facets,CASE WHEN current.requires_context_review THEN
-          (SELECT label.facets FROM signal_mention_facet_labels label
-           JOIN signal_workspace_labelers chosen ON chosen.workspace_id=label.workspace_id AND chosen.kind='facets'
-           JOIN signal_labeler_versions version ON version.id=chosen.labeler_version_id AND version.labeler_digest=label.labeler_digest
-           WHERE label.workspace_id=current.workspace_id AND label.input_digest=current.input_digest AND label.facets IS NOT NULL
-           ORDER BY label.created_at DESC LIMIT 1)
-          || COALESCE((SELECT jsonb_object_agg(dimension,value) FROM signal_mention_facet_overrides patch
-           WHERE patch.workspace_id=current.workspace_id AND patch.root_id=current.root_id AND patch.superseded_at IS NULL),'{}'::jsonb)
-          END) facets
-         FROM signal_mention_facets_current_v1 current WHERE workspace_id=$1 AND root_id=$2`,
-        [args.workspace_id, args.root_id],
-      )
-    ).rows[0];
-    if (
-      !row?.facets ||
-      ![
-        "entities",
-        "unrelated_reason",
-        "voice",
-        "act",
-        "spam_or_bot",
-        "language",
-        "asunto",
-      ].includes(args.dimension)
-    )
-      throw new Error("facets_override_invalid");
-    const before = row.facets as ReturnType<typeof validateMentionFacetsV1>;
-    const candidate = { ...before, [args.dimension]: args.value };
-    if (args.dimension === "unrelated_reason" && args.value !== null) {
-      if (before.entities.value.length)
-        throw new Error("facets_override_contradiction");
-      candidate.entities = { ...before.entities, abstained: false };
+    const context = await loadFacetEntityContextV1(client, args.workspace_id);
+    const rows = (await client.query<{ root_id: string; facets: MentionFacetsV1 | null }>(
+      `SELECT current.root_id,COALESCE(current.facets,CASE WHEN current.requires_context_review THEN
+        (SELECT label.facets FROM signal_mention_facet_labels label
+         JOIN signal_workspace_labelers chosen ON chosen.workspace_id=label.workspace_id AND chosen.kind='facets'
+         JOIN signal_labeler_versions version ON version.id=chosen.labeler_version_id AND version.labeler_digest=label.labeler_digest
+         WHERE label.workspace_id=current.workspace_id AND label.input_digest=current.input_digest AND label.facets IS NOT NULL
+         ORDER BY label.created_at DESC LIMIT 1)
+        || COALESCE((SELECT jsonb_object_agg(dimension,value) FROM signal_mention_facet_overrides patch
+         WHERE patch.workspace_id=current.workspace_id AND patch.root_id=current.root_id AND patch.superseded_at IS NULL),'{}'::jsonb)
+        END) facets FROM signal_mention_facets_current_v1 current WHERE workspace_id=$1 AND root_id=ANY($2::uuid[])`,
+      [args.workspace_id, [...new Set(args.overrides.map(p => p.root_id))]])).rows;
+    const current = new Map(rows.map(row => [row.root_id, row.facets ?? emptyHumanFacets()]));
+    const patches = new Map<string, {root_id: string; dimension: string; value: unknown}>();
+    for (const patch of args.overrides) {
+      const before = current.get(patch.root_id);
+      if (!before || !Object.hasOwn(before, patch.dimension)) throw new Error("facets_override_invalid");
+      const candidate = { ...before, [patch.dimension]: patch.value };
+      if (patch.dimension === "unrelated_reason" && patch.value !== null) {
+        if (before.entities.value.length) throw new Error("facets_override_contradiction");
+        candidate.entities = { ...before.entities, abstained: false };
+      }
+      const normalized = validateMentionFacetsV1(candidate, context);
+      current.set(patch.root_id, normalized);
+      const dimensions = patch.dimension === "entities" || patch.dimension === "unrelated_reason"
+        ? ["entities", "unrelated_reason"] : [patch.dimension];
+      for (const dimension of dimensions) patches.set(`${patch.root_id}:${dimension}`, {
+        root_id: patch.root_id, dimension, value: normalized[dimension as keyof MentionFacetsV1],
+      });
     }
-    const normalized = validateMentionFacetsV1(
-      candidate,
-      await loadFacetEntityContextV1(client, args.workspace_id),
-    );
-    const dimensions = new Set([args.dimension as keyof typeof normalized]);
-    if (
-      args.dimension === "entities" ||
-      args.dimension === "unrelated_reason"
-    ) {
-      // A human confirmation owns the coherent decision, even when a value is
-      // identical to the provider's current value. Both must survive its expiry.
-      dimensions.add("entities");
-      dimensions.add("unrelated_reason");
-    }
-    const patches = [...dimensions].map((dimension) => ({
-      dimension,
-      value: normalized[dimension],
-    }));
-    await client.query(
-      "UPDATE signal_mention_facet_overrides SET superseded_at=now() WHERE workspace_id=$1 AND root_id=$2 AND dimension=ANY($3::text[]) AND superseded_at IS NULL",
-      [args.workspace_id, args.root_id, [...dimensions]],
-    );
-    await client.query(
-      `INSERT INTO signal_mention_facet_overrides(workspace_id,root_id,dimension,value,actor_user_id)
-       SELECT $1,$2,patch.dimension,COALESCE(patch.value,'null'::jsonb),$4
-       FROM jsonb_to_recordset($3::jsonb) patch(dimension text,value jsonb)`,
-      [
-        args.workspace_id,
-        args.root_id,
-        JSON.stringify(patches),
-        args.actor_user_id,
-      ],
-    );
+    const payload = JSON.stringify([...patches.values()]);
+    await client.query(`UPDATE signal_mention_facet_overrides old SET superseded_at=now()
+      FROM jsonb_to_recordset($2::jsonb) patch(root_id uuid,dimension text)
+      WHERE old.workspace_id=$1 AND old.root_id=patch.root_id AND old.dimension=patch.dimension AND old.superseded_at IS NULL`,
+      [args.workspace_id, payload]);
+    await client.query(`INSERT INTO signal_mention_facet_overrides(workspace_id,root_id,dimension,value,actor_user_id)
+      SELECT $1,patch.root_id,patch.dimension,COALESCE(patch.value,'null'::jsonb),$3
+      FROM jsonb_to_recordset($2::jsonb) patch(root_id uuid,dimension text,value jsonb)`,
+      [args.workspace_id, payload, args.actor_user_id]);
     await client.query("COMMIT");
-  } catch (error) {
-    await client.query("ROLLBACK");
-    throw error;
-  } finally {
-    client.release();
-  }
+    return { updated: current.size };
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
+}
+
+/** Current provenance rights, with import-specific bindings taking precedence. */
+const facetDisplayPopulation = `WITH display_roots AS MATERIALIZED (
+  SELECT DISTINCT origin.canonical_mention_id root_id
+  FROM signal_mention_import_memberships path
+  JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1
+  JOIN import_batches batch ON batch.id=path.import_batch_id AND batch.workspace_id=$1
+    AND batch.data_source_id=path.data_source_id AND batch.status='completed'
+  JOIN data_sources source ON source.id=batch.data_source_id AND source.workspace_id=$1 AND source.status='active'
+  JOIN LATERAL (SELECT b.* FROM signal_provenance_policy_bindings b
+    WHERE b.workspace_id=$1 AND b.data_source_id=source.id AND b.status='active'
+      AND b.effective_from<=now() AND (b.effective_to IS NULL OR b.effective_to>now())
+      AND (b.import_batch_id=batch.id OR b.import_batch_id IS NULL)
+    ORDER BY (b.import_batch_id IS NOT NULL) DESC,b.binding_version DESC,b.id LIMIT 1) binding ON true
+  JOIN signal_licensing_policies license ON license.id=binding.licensing_policy_id AND license.workspace_id=$1
+    AND license.status='active' AND license.effective_from<=now() AND (license.effective_to IS NULL OR license.effective_to>now())
+  JOIN signal_retention_policies retention ON retention.id=binding.retention_policy_id AND retention.workspace_id=$1
+    AND retention.status='active' AND retention.retention_state='allowed' AND retention.effective_from<=now()
+    AND (retention.effective_to IS NULL OR retention.effective_to>now())
+    AND (retention.retention_mode='indefinite' OR retention.retention_mode='until' AND retention.retain_until>now())
+  WHERE path.workspace_id=$1 AND NOT EXISTS (
+    SELECT purpose FROM unnest(ARRAY['client-derived-metrics','client-mention-list','client-text-or-excerpt']) purpose
+    WHERE NOT EXISTS (SELECT 1 FROM signal_licensing_policy_usages usage WHERE usage.workspace_id=$1
+      AND usage.licensing_policy_id=license.id AND usage.usage_purpose=purpose AND usage.decision='allowed'))
+), current_facets AS MATERIALIZED (
+  -- Keep the canonical human/context projection, but evaluate it once per workspace.
+  -- Joining the expanded view directly to underestimated rights roots caused its
+  -- entire population and correlated label lookups to run again for every root.
+  SELECT workspace_id,root_id,full_text,title,platform,status,facets,requires_context_review
+  FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+), scoped AS MATERIALIZED (
+  SELECT f.*,m.url,o.patch,
+    f.root_id=ANY($2::uuid[]) stale
+  FROM current_facets f JOIN display_roots d USING(root_id)
+  JOIN mentions m ON m.id=f.root_id AND m.workspace_id=$1
+  LEFT JOIN LATERAL (SELECT jsonb_object_agg(o.dimension,o.value) patch FROM signal_mention_facet_overrides o
+    WHERE o.workspace_id=f.workspace_id AND o.root_id=f.root_id AND o.superseded_at IS NULL) o ON true
+  WHERE f.workspace_id=$1 AND m.inclusion_status='included' AND m.canonical_mention_id=m.id
+), projected AS MATERIALIZED (
+  SELECT scoped.*,CASE WHEN stale THEN CASE WHEN patch IS NOT NULL THEN
+    '${JSON.stringify(emptyHumanFacets())}'::jsonb || patch ELSE NULL END ELSE facets END effective_facets,
+    requires_context_review OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(patch#>'{entities,value}','[]')) entity
+      WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements($3::jsonb->'entities') known
+        WHERE known->>'entity_id'=entity->>'entity_id' AND known->>'kind'=entity->>'kind')) review
+  FROM scoped
+), population AS MATERIALIZED (
+  SELECT root_id,full_text text,title,platform,url,
+    CASE WHEN review THEN 'error' WHEN stale THEN 'pending' ELSE status END status,
+    CASE WHEN review THEN 'unknown'
+      WHEN NOT COALESCE((effective_facets#>>'{spam_or_bot,abstained}')::boolean,true) AND (effective_facets#>>'{spam_or_bot,value}')::boolean THEN 'spam'
+      WHEN effective_facets IS NULL OR (effective_facets#>>'{entities,abstained}')::boolean THEN 'unknown'
+      WHEN jsonb_array_length(effective_facets#>'{entities,value}')>0 THEN 'relevant'
+      WHEN effective_facets->>'unrelated_reason' IN('homonym','off_topic') THEN 'unrelated' ELSE 'unknown' END relevance,
+    CASE WHEN review THEN NULL ELSE effective_facets END facets,review requires_context_review,
+    COALESCE((SELECT jsonb_agg(key) FROM jsonb_object_keys(patch) key),'[]') human_dimensions
+  FROM projected
+)`;
+
+export async function loadMentionFacetBrowserV1(args: {
+  database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string;
+  dimension?: string; value?: string; cursor?: string; root_id?: string; limit?: number;
+}) {
+  const dimensions = ["status", "relevance", "entities", "voice", "act", "spam_or_bot", "language", "asunto", "salience"];
+  if (args.dimension && !dimensions.includes(args.dimension)) throw new Error("facets_filter_invalid");
+  const client = await args.database.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+    const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ ...args, queryable: client });
+    if (!caps.can_view) throw new Error("facets_forbidden");
+    const change = await inspectFacetContextChangeV1(client, args.workspace_id);
+    const parameters = [args.workspace_id, change.changed ? change.affected : [], JSON.stringify(change.context)];
+    const distributions = (await client.query<{dimension: string; value: string; count: number}>(`${facetDisplayPopulation}
+      SELECT dimension,value,count(*)::int count FROM population p CROSS JOIN LATERAL (
+        SELECT 'status' dimension,p.status value UNION ALL SELECT 'relevance',p.relevance
+        UNION ALL SELECT dimension,CASE WHEN (p.facets->dimension->>'abstained')::boolean THEN 'abstained'
+          ELSE COALESCE(p.facets->dimension->>'value','abstained') END
+          FROM unnest(ARRAY['voice','act','spam_or_bot','language','asunto']) dimension
+        UNION ALL SELECT 'entities',entity->>'entity_id' FROM jsonb_array_elements(COALESCE(p.facets#>'{entities,value}','[]')) entity
+        UNION ALL SELECT 'salience',entity->>'salience' FROM jsonb_array_elements(COALESCE(p.facets#>'{entities,value}','[]')) entity
+        UNION ALL SELECT 'entities','abstained' WHERE p.facets IS NULL OR (p.facets#>>'{entities,abstained}')::boolean
+      ) dimension_values GROUP BY dimension,value ORDER BY dimension,count DESC,value`, parameters)).rows;
+    const limit = Math.max(1, Math.min(100, args.limit ?? 30));
+    const items = (await client.query<{root_id:string;text:string;title:string|null;url:string|null;platform:string|null;
+      status:string;relevance:string;facets:MentionFacetsV1|null;requires_context_review:boolean;human_dimensions:string[]}>(`${facetDisplayPopulation}
+      SELECT * FROM population p WHERE ($8::uuid IS NULL OR p.root_id=$8::uuid) AND ($4::uuid IS NULL OR p.root_id>$4::uuid) AND ($5::text IS NULL OR
+        CASE WHEN $5='status' THEN p.status=$6 WHEN $5='relevance' THEN p.relevance=$6
+          WHEN $5 IN('entities','salience') THEN CASE WHEN $6='abstained' THEN p.facets IS NULL OR (p.facets#>>'{entities,abstained}')::boolean
+            ELSE EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(p.facets#>'{entities,value}','[]')) e
+              WHERE e->>(CASE WHEN $5='entities' THEN 'entity_id' ELSE 'salience' END)=$6) END
+          WHEN $6='abstained' THEN p.facets IS NULL OR (p.facets->$5->>'abstained')::boolean
+          ELSE NOT (p.facets->$5->>'abstained')::boolean AND p.facets->$5->>'value'=$6 END)
+      ORDER BY p.root_id LIMIT $7`, [...parameters, args.cursor ?? null, args.dimension ?? null, args.value ?? null, limit + 1, args.root_id ?? null])).rows;
+    const labeler = (await client.query<{status:string}>(`SELECT l.status FROM signal_workspace_labelers w
+      JOIN signal_labeler_versions l ON l.id=w.labeler_version_id WHERE w.workspace_id=$1 AND w.kind='facets'`, [args.workspace_id])).rows[0];
+    await client.query("COMMIT");
+    return { contract_version: "mention-facets-browser-v1", workspace_id: args.workspace_id,
+      can_edit: caps.can_edit_topics, can_request_processing: caps.can_request_processing,
+      labeler_status: labeler?.status ?? null, entities: change.context.entities.map(({entity_id,name,kind})=>({entity_id,name,kind})),
+      distributions, items: items.slice(0,limit), next_cursor: items.length>limit ? items[limit-1]!.root_id : null };
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
 }

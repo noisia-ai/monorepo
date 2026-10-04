@@ -247,7 +247,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
     {drawer && term && term.evidence_available !== false ? <SignalEvidenceDrawer ariaLabel={t("evidence")} closeLabel={t("close")} eyebrow={t(term.basis === "defined_interest" ? "membershipEvidence" : "computed")} title={term.label} intro={t(term.basis === "defined_interest" ? "definedQuality" : "quality")}
       timeZone={workspaceTimezone}
       records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at,
-        platform: item.platform, originalUrl: item.url,
+        platform: item.platform, originalUrl: item.url, quote: "quote" in item && typeof item.quote === "string" ? item.quote : null,
         provenanceLabel: item.evidence_origin === "human_correction" ? t("humanCorrection")
           : item.decision_citation ? t("citedDecision") : null }))}
       loading={reading} loadingLabel={t("loading")} emptyLabel={t("noEvidence")} errorMessage={error ? t(error === "evidenceStale" ? "evidenceStale" : "evidenceError") : null}

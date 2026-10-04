@@ -26,7 +26,7 @@ export default async function ClientBrandTopicsPage({ params }: { params: Promis
     <BrandMonitoringJourney brandId={entry.brandId} current="topics" destinations={{
       topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref,
       brandOs: entry.navigation.brandOsHref }} />
-    <TopicsManager key={entry.requestScope} brandId={entry.brandId} workspaceId={entry.workspaceId} actorId={session.appUser.id} initial={initial}
+    <TopicsManager mfpEnabled={process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED === "true"} key={entry.requestScope} brandId={entry.brandId} workspaceId={entry.workspaceId} actorId={session.appUser.id} initial={initial}
       navigation={entry.navigation} requestScope={entry.requestScope} />
   </div>;
 }

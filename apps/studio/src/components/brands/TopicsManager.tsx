@@ -13,6 +13,9 @@ import { WorkspaceAnalysisControls } from "./WorkspaceAnalysisControls";
 import { TopicSignalControls } from "./TopicSignalControls";
 import { DefinedInterestSignalControls } from "./DefinedInterestSignalControls";
 import { DefinedInterestDecisionControls } from "./DefinedInterestDecisionControls";
+import { MfpFacetWorkspace } from "./MfpFacetWorkspace";
+import { MfpMembershipControls } from "./MfpMembershipControls";
+import { MfpDiscoveryAdoption } from "./MfpDiscoveryAdoption";
 import { ClientProcessingJourney } from "./ClientProcessingJourney";
 import { WorkspaceTopicConsolidationControls } from "./WorkspaceTopicConsolidationCard";
 import { WorkspaceTopicConsolidationActivationControls } from "./WorkspaceTopicConsolidationActivationCard";
@@ -31,7 +34,7 @@ type ResultItem = { canonical_root_id: string; text: string; platform: string; p
   correction_updated_at: string | null; definition_revision: number };
 
 type TopicsManagerProps = { brandId: string; initial: Management; workspaceId: string; actorId: string;
-  initialComputation?: WorkspaceTopicComputationStatus | null; requestScope?: string;
+  mfpEnabled?: boolean; initialComputation?: WorkspaceTopicComputationStatus | null; requestScope?: string;
   navigation?: { dataHref: string; signalHref: string; brandOsHref?: string | null };
 };
 function preferredTopic(topics: Topic[]) {
@@ -41,7 +44,7 @@ function preferredTopic(topics: Topic[]) {
 export function TopicsManager(props: TopicsManagerProps) {
   return <ScopedTopicsManager key={`${props.actorId}:${props.workspaceId}:${props.requestScope ?? "internal"}`} {...props} />;
 }
-function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialComputation = null, navigation }: TopicsManagerProps) {
+function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialComputation = null, navigation, mfpEnabled = false }: TopicsManagerProps) {
   const t = useTranslations("AdminWorkspace.topics");
   const tEvidence = useTranslations("AdminWorkspace.brandOs.fullEvidenceTopicCandidates");
   const locale = useLocale();
@@ -69,10 +72,10 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
   const selectedIsDiscovery = selected?.origin === "workspace_discovery";
   const processingVisible = !navigation || data.capabilities.can_execute;
   const computation = useWorkspaceTopicComputation({ workspaceId,
-    termKey: processingVisible && !selectedIsDiscovery ? selectedKey : null,
+    termKey: !mfpEnabled && processingVisible && !selectedIsDiscovery ? selectedKey : null,
     catalogVersion: `${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`, initial: initialComputation });
-  const workspaceSearch = computation.data?.mode === "workspace";
-  const legacySearch = computation.data?.mode === "legacy";
+  const workspaceSearch = !mfpEnabled && computation.data?.mode === "workspace";
+  const legacySearch = !mfpEnabled && computation.data?.mode === "legacy";
 
   const editorDirty = selected ? stableClientJson(editorPayload(editor)) !== stableClientJson(topicPayload(selected)) : creating && stableClientJson(editorPayload(editor)) !== stableClientJson(editorPayload(emptyEditor()));
   const requiresRecompute = data.requires_recompute;
@@ -327,7 +330,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
 
   if (!data.capabilities.can_view) return <p className="team-msg team-msg--error" role="alert">{t("requestErrors.forbidden")}</p>;
   return <div className="topics-manager">
-    {navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
+    {mfpEnabled ? <MfpFacetWorkspace workspaceId={workspaceId} dataHref={dataHref} signalHref={signalHref} onAccessDenied={clearAccess}/> : navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
       allowInterestPreparation={data.capabilities.can_request_processing}
       preparationDisabled={editorDirty || busy !== null}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`} /> : null}
@@ -342,6 +345,8 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
     {!canEdit ? <p role="status" className="topics-manager__cost-notice">{t("permissions.readOnly")}</p> : null}
     {data.topics.some((item) => item.origin === "manual" && item.lifecycle !== "archived")
       ? <a className="topics-manager__jump" href="#defined-interests">{t("consolidation.definedCatalogJump")}</a> : null}
+    {mfpEnabled ? <MfpDiscoveryAdoption workspaceId={workspaceId} canAdopt={data.capabilities.can_adopt}
+      sources={data.topics.map(topic=>topic.source)} onAdopted={refresh} onAccessDenied={clearAccess}/> : null}
     <WorkspaceTopicConsolidationControls disabled={editorDirty || busy !== null} workspaceId={workspaceId} actorId={actorId}
       mentionsHref={`/signal/${encodeURIComponent(data.workspace.slug)}/mentions`} onCatalogAvailable={refreshAvailableCatalog}
       onGroupCount={setConsolidationGroupCount} />
@@ -463,7 +468,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
             <label>{t(selectedIsDiscovery ? "editor.discoveredDefinition" : "fields.definition")}<textarea maxLength={1500} onChange={(event) => setEditor({ ...editor, definition: event.target.value })} rows={4} value={editor.definition} /></label>
             <label>{t(selectedIsDiscovery ? "editor.discoveredScope" : "fields.scope")}<select onChange={(event) => setEditor({ ...editor, scope: event.target.value as Topic["scope"] })} value={editor.scope}>
               {SIGNAL_TOPIC_EDITOR_SCOPES_V1.map((scope) => <option key={scope} value={scope}>{t(`scopes.${scope}`)}</option>)}</select></label>
-            <details><summary>{t("advanced.title")}</summary><div className="topics-manager__advanced">
+            <details open={mfpEnabled || undefined}><summary>{t("advanced.title")}</summary><div className="topics-manager__advanced">
               <label className="topics-manager__guidance"><input type="checkbox" checked={editor.discovery_guidance}
                 onChange={(event) => setEditor({ ...editor, discovery_guidance: event.target.checked })} />
                 <span>{t("fields.discoveryGuidance")}<small>{t("fields.discoveryGuidanceHelp")}</small></span></label>
@@ -491,7 +496,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
                     disabled={!computation.canStart || computation.submitting || busy !== null || editorDirty}
                     onClick={() => void computation.start()} type="button"><MagnifyingGlass aria-hidden size={15} />
                     {t(computation.pending && !computation.data?.active_run ? "computation.recover" : "actions.search")}</button>
-                    : processingVisible && !selectedIsDiscovery && selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current) ? <button className="admin-button admin-button--primary" disabled={!canSearch || busy !== null || Boolean(running) || editorDirty} onClick={() => void command(data.execution?.status === "failed" ? "retry" : "search")} type="button">
+                    : !mfpEnabled && processingVisible && !selectedIsDiscovery && selected.status !== "updating" && (selected.status !== "in_signal" || !data.search_is_current) ? <button className="admin-button admin-button--primary" disabled={!canSearch || busy !== null || Boolean(running) || editorDirty} onClick={() => void command(data.execution?.status === "failed" ? "retry" : "search")} type="button">
                     <MagnifyingGlass aria-hidden size={15} />{data.execution?.status === "failed" ? t("actions.retry") : t("actions.search")}</button> : null}
                   {processingVisible && legacySearch && selected.origin !== "workspace_discovery" && selected.status === "ready" && data.search_is_current ? <button className="admin-button"
                     disabled={!canExecute || busy !== null || Boolean(running) || !data.search_execution_id || editorDirty
@@ -499,22 +504,26 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
                     <Check aria-hidden size={15} />{t("actions.follow")}</button> : null}
                   <button className="admin-button admin-button--danger" disabled={!canEdit || busy !== null || editorDirty} onClick={() => void command("archive")} type="button">
                     <Archive aria-hidden size={15} />{t("actions.archive")}</button></>}</> : null}
-            {processingVisible && !creating && !selectedIsDiscovery ? <button className="admin-button" disabled={computation.reading || computation.submitting}
+            {!mfpEnabled && processingVisible && !creating && !selectedIsDiscovery ? <button className="admin-button" disabled={computation.reading || computation.submitting}
               onClick={() => void computation.read()} type="button"><ArrowClockwise aria-hidden size={15} />{t("computation.refresh")}</button> : null}
           </div>
-          {requiresRecompute ? <div className="topics-manager__cost-notice" role="status">
+          {mfpEnabled && (creating || selected?.lifecycle !== "archived") ? <MfpMembershipControls
+            key={selectedKey ?? "new-concept"} workspaceId={workspaceId} concept={{...editorPayload(editor),
+              concept_key:selected?.term_key ?? "preview-definition",definition_digest:selected?.definition_digest ?? `sha256:${"0".repeat(64)}`}}
+            dirty={Boolean(creating || editorDirty)} canEdit={canEdit} mentionHref="" signalHref={signalHref} onAccessDenied={clearAccess}/> : null}
+          {!mfpEnabled && requiresRecompute ? <div className="topics-manager__cost-notice" role="status">
             <strong>{t("editor.pendingTitle")}</strong><p>{t("editor.pendingBody")}</p>
             {signalHref ? <Link className="admin-button" href={signalHref} prefetch={false}>{t("signalSelection.openSignal")}</Link> : null}
           </div> : null}
-          {consolidatedServing === false && !creating && selected && selected.origin !== "manual"
+          {!mfpEnabled && consolidatedServing === false && !creating && selected && selected.origin !== "manual"
             && (selected.origin === "workspace_discovery" || Boolean(navigation)) && selected.lifecycle !== "archived" ? <TopicSignalControls
             workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
             definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null} refreshKey={associationReceipt}
             signalHref={signalHref} onAccessDenied={clearAccess} /> : null}
-          {!creating && selected?.origin === "manual" && selected.lifecycle !== "archived" ? <DefinedInterestDecisionControls
+          {!mfpEnabled && !creating && selected?.origin === "manual" && selected.lifecycle !== "archived" ? <DefinedInterestDecisionControls
             actorId={actorId} workspaceId={workspaceId} termKey={selected.term_key}
             dirty={editorDirty} disabled={busy !== null || !canExecute} onAccessDenied={clearAccess} /> : null}
-          {!creating && selected?.origin === "manual" && selected.lifecycle !== "archived" ? <DefinedInterestSignalControls
+          {!mfpEnabled && !creating && selected?.origin === "manual" && selected.lifecycle !== "archived" ? <DefinedInterestSignalControls
             actorId={actorId} workspaceId={workspaceId} termKey={selected.term_key} definitionDigest={selected.definition_digest}
             dirty={editorDirty} disabled={busy !== null} signalHref={signalHref} onAccessDenied={clearAccess}
             legacyControl={consolidatedServing === false && Boolean(navigation) ? <TopicSignalControls

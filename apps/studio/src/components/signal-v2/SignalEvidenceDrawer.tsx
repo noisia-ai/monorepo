@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight, SpinnerGap } from "@phosphor-icons/react";
 import { useLocale } from "next-intl";
 
+import { MfpHighlightedText } from "@/components/brands/MfpEvidence";
 import { SignalSourceIcon } from "@/components/signal-v2/SignalSourceIcon";
 import { WorkspaceDrawer } from "@/components/workspace/WorkspaceShell";
 import { formatSignalEvidenceDateV1 } from "./signal-evidence-date";
@@ -100,7 +101,7 @@ export function SignalEvidenceDrawer({
                   </strong>
                   <time>{formatSignalEvidenceDateV1(record.occurredAt, locale, timeZone)}</time>
                 </div>
-                <p>{record.body}</p>
+                <p><MfpHighlightedText text={record.body} quotes={record.quote ? [record.quote] : []}/></p>
                 {record.provenanceLabel ? <small>{record.provenanceLabel}</small> : null}
                 {quote ? <blockquote>{quote}</blockquote> : null}
                 <div className="signal-v2-tn__evidence-actions">
