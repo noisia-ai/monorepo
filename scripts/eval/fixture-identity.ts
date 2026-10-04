@@ -4,6 +4,8 @@ import { dirname, isAbsolute, relative, resolve } from 'node:path';
 export type MfpEvalIdentity = {
   fixture_key: 'rental-corpus-voyage-v1';
   workspace_id: string;
+  organization_id: string;
+  brand_id: string;
   source_id: string;
   internal_user_id: string;
   actor_user_id: string;
@@ -11,7 +13,8 @@ export type MfpEvalIdentity = {
 
 export async function loadMfpEvalIdentity(manifestFile = '.data/dev-corpus/voyage-real/fixture-manifest.json'): Promise<MfpEvalIdentity> {
   const manifestPath = resolve(manifestFile);
-  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { identity_path?: string };
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { fixture_key?: string; identity_path?: string };
+  if (manifest.fixture_key !== 'rental-corpus-voyage-v1') throw new Error('mfp_eval_fixture_manifest_invalid');
   if (!manifest.identity_path) throw new Error('mfp_eval_identity_path_invalid');
   const fixtureDirectory = dirname(manifestPath);
   const identityPath = isAbsolute(manifest.identity_path)
@@ -19,7 +22,7 @@ export async function loadMfpEvalIdentity(manifestFile = '.data/dev-corpus/voyag
   const relativePath = relative(fixtureDirectory, identityPath);
   if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) throw new Error('mfp_eval_identity_path_invalid');
   const identity = JSON.parse(await readFile(identityPath, 'utf8')) as Partial<MfpEvalIdentity>;
-  if (identity.fixture_key !== 'rental-corpus-voyage-v1' || !identity.workspace_id || !identity.source_id ||
+  if (identity.fixture_key !== manifest.fixture_key || !identity.workspace_id || !identity.organization_id || !identity.brand_id || !identity.source_id ||
       !identity.internal_user_id || !identity.actor_user_id) throw new Error('mfp_eval_fixture_identity_invalid');
   return identity as MfpEvalIdentity;
 }

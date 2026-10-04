@@ -9,6 +9,9 @@ export async function verifyMfpEvalRights(){
   const client=await pool.connect();
   try {
     await client.query('BEGIN READ ONLY');
+    const workspace=await client.query(`SELECT EXISTS(SELECT 1 FROM signal_workspaces
+      WHERE id=$1::uuid AND organization_id=$2::uuid AND brand_id=$3::uuid AND status='active') exact_workspace`,
+      [identity.workspace_id,identity.organization_id,identity.brand_id]);
     const rights=await client.query(`WITH accepted AS MATERIALIZED (
         SELECT id,data_source_id FROM import_batches WHERE workspace_id=$1 AND status='completed'
       ),authorized AS MATERIALIZED (
@@ -38,9 +41,9 @@ export async function verifyMfpEvalRights(){
     const activity=await client.query(`SELECT (SELECT count(*)::int FROM signal_labeling_runs WHERE workspace_id=$1 AND status IN('queued','running')) active_runs,
         (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$1 AND status IN('reserved','submitting','submitted','unknown')) unsettled_calls`,[identity.workspace_id]);
     const state={...rights.rows[0],...activity.rows[0]};
-    if(state.accepted_batches!==1||state.accepted_sources!==1||state.authorized_batches!==1||state.authorized_sources!==1||state.expected_source_batches!==1||state.active_runs!==0||state.unsettled_calls!==0)
+    if(workspace.rows[0]?.exact_workspace!==true||state.accepted_batches!==1||state.accepted_sources!==1||state.authorized_batches!==1||state.authorized_sources!==1||state.expected_source_batches!==1||state.active_runs!==0||state.unsettled_calls!==0)
       throw new Error('mfp_eval_rights_or_activity_invalid');
-    console.log(JSON.stringify({stage:'mfp_eval_jev_rights_verified',...state,read_only:true}));
+    console.log(JSON.stringify({stage:'mfp_eval_jev_rights_verified',...state,exact_workspace:true,read_only:true}));
     await client.query('COMMIT');
   } catch(error){await client.query('ROLLBACK');throw error;}
   finally{client.release();await pool.end();}
