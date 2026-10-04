@@ -120,11 +120,12 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
     await raw.query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
       VALUES($1,$2,'Synthetic MFP discovery client','client','client_admin',$3,'active')`, [clientActor, `${clientActor}@fixture.example.test`, scope.organization_id]);
     await raw.query("INSERT INTO user_brand_access(user_id,brand_id,access_level) VALUES($1,$2,'admin')", [clientActor, scope.brand_id]);
-    let serial = 0; const stack: string[] = [];
+    let serial = 0, failOutbox = false; const stack: string[] = [];
     const query = async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("BEGIN")) { const name = `discovery_${++serial}`; stack.push(name); return raw.query(`SAVEPOINT ${name}`); }
       if (sql === "COMMIT") return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
       if (sql === "ROLLBACK") { const name = stack.pop()!; await raw.query(`ROLLBACK TO SAVEPOINT ${name}`); return raw.query(`RELEASE SAVEPOINT ${name}`); }
+      if (failOutbox && sql.startsWith("INSERT INTO signal_topic_classification_outbox")) throw new Error("synthetic_outbox_failure");
       return raw.query(sql, values);
     };
     const client = Object.assign(Object.create(raw), { query, release() {} });
@@ -165,6 +166,12 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
         expected_catalog_digest: preflight.expected_catalog_digest, expected_context_digest: preflight.expected_context_digest,
         engine_config: { fixture: "mocked-transition-no-fit" }, parent_execution_id: null, claude_cap_micro_usd: cap,
         interpretation_config: { call_configuration: configuration, budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } };
+      const beforeAdmissions = (await raw.query("SELECT count(*)::int n FROM signal_processing_admissions WHERE actor_user_id=$1", [clientActor])).rows[0].n;
+      failOutbox = true;
+      try { await assert.rejects(engine.beginSignalWorkspaceEngineV1({ ...request, idempotency_key: randomUUID() }), /synthetic_outbox_failure/); }
+      finally { failOutbox = false; }
+      assert.equal((await raw.query("SELECT count(*)::int n FROM signal_processing_admissions WHERE actor_user_id=$1", [clientActor])).rows[0].n, beforeAdmissions);
+      assert.equal((await raw.query("SELECT count(*)::int n FROM signal_topic_catalog_executions WHERE actor_user_id=$1", [clientActor])).rows[0].n, 0);
       const started = await engine.beginSignalWorkspaceEngineV1(request);
       assert.equal((await engine.beginSignalWorkspaceEngineV1(request)).execution_id, started.execution_id);
       const receipt = (await raw.query(`SELECT e.actor_user_id,e.processing_admission_id,a.target_id,a.actor_user_id admission_actor,
