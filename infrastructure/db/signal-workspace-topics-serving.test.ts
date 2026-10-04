@@ -95,6 +95,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let consolidatedMode = false;
   let noOverlap = false;
   let membershipMode = false;
+  let facetOptIn = false;
   let membershipCollision = false;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
@@ -102,7 +103,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   const client = {
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
-      if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:membershipMode}]};
+      if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
       if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [
         {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a")},
         ...(membershipCollision ? [{topic:interestTopic,selected:false,selection_revision:2,selection_digest:sha("c")}] : [])
@@ -315,6 +316,34 @@ test("Signal keeps served semantics while applying a safe working label", async 
     const withoutOptIn = await loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
       workspace_id: workspaceId, actor_user_id: actorId, timezone: "America/Mexico_City" });
     assert.deepEqual(withoutOptIn, afterDiscovery, "workspace without MFP keeps the exact Signal response with both flags enabled");
+    facetOptIn = true;
+    process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED = "false";
+    process.env.NOISIA_MENTION_FACETS_ENABLED = "false";
+    const offStart = statements.length;
+    const killed = await loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
+      workspace_id: workspaceId, actor_user_id: actorId, timezone: "America/Mexico_City" });
+    assert.deepEqual(killed, afterDiscovery, "kill switch preserves legacy Signal even with durable opt-in");
+    const offSql = statements.slice(offStart).find(statement => statement.includes("WITH source_generation AS MATERIALIZED"))!;
+    assert.match(offSql,/FROM \(SELECT s\.id snapshot_id/su);
+    assert.doesNotMatch(offSql,/FROM signal_topic_consolidation_snapshot_roots_v1 item/u);
+    assert.doesNotMatch(offSql,/LEFT JOIN signal_mention_facets_current_v1 f/u);
+    const offDetail = await loadSignalWorkspaceTopicDetailV1({ ...args, term_key: interestTopic.term_key,
+      expected_scope_digest: killed!.scope_digest });
+    assert.equal(offDetail.generation_id,id("21"));
+    const offEvidence = await loadSignalWorkspaceTopicEvidenceV1({ ...args, term_key: interestTopic.term_key,
+      expected_scope_digest: killed!.scope_digest });
+    assert.ok(offEvidence.items.length>0);
+    for(const statement of statements.slice(offStart).filter(statement=>statement.includes("WITH source_generation AS MATERIALIZED"))) {
+      assert.doesNotMatch(statement,/FROM signal_topic_consolidation_snapshot_roots_v1 item/u);
+      assert.doesNotMatch(statement,/LEFT JOIN signal_mention_facets_current_v1 f/u);
+    }
+    process.env.NOISIA_MENTION_FACETS_ENABLED = "true";
+    const onStart = statements.length;
+    await loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
+      workspace_id: workspaceId, actor_user_id: actorId, timezone: "America/Mexico_City" });
+    const onSql = statements.slice(onStart).find(statement => statement.includes("WITH source_generation AS MATERIALIZED"))!;
+    assert.match(onSql,/FROM signal_topic_consolidation_snapshot_roots_v1 item/u);
+    facetOptIn = false;
   } finally {
     if (previousFacetsFlag === undefined) delete process.env.NOISIA_MENTION_FACETS_ENABLED;
     else process.env.NOISIA_MENTION_FACETS_ENABLED = previousFacetsFlag;
@@ -391,8 +420,9 @@ test("Signal keeps served semantics while applying a safe working label", async 
     else process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED = previousFlag;
   }
   access = false;
+  const authorizedDetailQueries=detailQueries.length;
   await assert.rejects(loadSignalWorkspaceTopicDetailV1(args), /workspace_topics_forbidden/);
-  assert.equal(detailQueries.length, 4, "scope rejection must precede another aggregate query");
+  assert.equal(detailQueries.length, authorizedDetailQueries, "scope rejection must precede another aggregate query");
 
 });
 
