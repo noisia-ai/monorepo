@@ -379,7 +379,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
       }} type="button"><Plus aria-hidden size={15} />{t("actions.create")}</button>
     </section>
 
-    {processingVisible ? <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
+    {processingVisible || (mfpEnabled && data.capabilities.can_request_processing) ? <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
       suppressLegacyActions={consolidationGroupCount === null || consolidationGroupCount > 0}
       disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog}
