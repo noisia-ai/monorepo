@@ -104,7 +104,10 @@ export function validateJevResponseV1(request: JevRequestV1, raw: JevRawResponse
         for (const key of Object.keys(question.criteria)) {
           const value = answer.probabilities[key]; if (!probability(value)) throw new Error(); sum += value;
         }
-        if (Math.abs(sum - 1) > 0.01) throw new Error();
+        // Keep the documented inclusive ±0.01 tolerance despite binary summation
+        // (1 - 0.99 is 0.010000000000000009). This only absorbs roundoff.
+        const roundoff = Number.EPSILON * Math.max(1, Object.keys(question.criteria).length);
+        if (Math.abs(sum - 1) > 0.01 + roundoff) throw new Error();
       }
     }
     return json as JevResponseV1;

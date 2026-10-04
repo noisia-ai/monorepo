@@ -62,3 +62,26 @@ test('streaming size bound works without content-length and cancels the reader',
   await assert.rejects(client.evaluate(request), (error: unknown) => error instanceof JevProviderErrorV1 && error.code === 'jev_response_too_large' && error.outcome === 'outcome_unknown');
   assert.equal(canceled, true);
 });
+test('choice sums include 0.99 and 1.01 boundaries but reject values outside tolerance', () => {
+  for (const sum of [0.99, 1, 1.01]) {
+    const json = response(); json.answers.select.probabilities = { a: 0.9, b: sum - 0.9 };
+    const parsed = validateJevResponseV1(request, { body: JSON.stringify(json), http_status: 200, latency_ms: 1 });
+    assert.equal(parsed.usage.input_tokens, 100);
+  }
+  for (const sum of [0.989999, 1.010001, 0.98, 1.02]) {
+    const json = response(); json.answers.select.probabilities = { a: 0.9, b: sum - 0.9 };
+    assert.throws(() => validateJevResponseV1(request, { body: JSON.stringify(json), http_status: 200, latency_ms: 1 }),
+      (error: unknown) => error instanceof JevProviderErrorV1 && error.outcome === 'known_response_invalid' && error.evidence.usage?.input_tokens === 100);
+  }
+});
+test('nonfinite choice probabilities remain invalid', () => {
+  for (const value of [NaN, Infinity, -Infinity]) {
+    const json = response(); json.answers.select.probabilities.b = value;
+    // JSON serializes nonfinite values as null; neither representation is accepted.
+    const encoded = JSON.stringify(json);
+    for (const body of [encoded, encoded.replace('"b":null', `"b":${String(value)}`)]) {
+      assert.throws(() => validateJevResponseV1(request, { body, http_status: 200, latency_ms: 1 }),
+        (error: unknown) => error instanceof JevProviderErrorV1 && error.outcome === 'known_response_invalid');
+    }
+  }
+});
