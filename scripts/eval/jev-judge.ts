@@ -52,7 +52,8 @@ await main(async()=>{
     let settled=0,unknown=0,attempted=0,completed=0;
     const predictions:Prediction[]=[];
     const started=Date.now();
-    for(const root of roots) {
+    for(const [index,root] of roots.entries()) {
+      if(index>0&&index%25===0)await verifyMfpEvalRights();
       const path=`${directory}/${root.root_id}`;
       const request:JevRequestV1={model,state:{mention:{text:root.full_text,title:root.title,platform:root.platform,content_type:root.content_type,author:root.author}},questions};
       const old=await readMaybe(`${path}-attempt.json`);
