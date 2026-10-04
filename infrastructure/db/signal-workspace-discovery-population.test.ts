@@ -15,7 +15,7 @@ test("one relevant population supplies snapshot roots and exact chunk count, irr
     assert.match(sql, /facet.relevance='relevant'/u);
     assert.doesNotMatch(sql, /facet.status|status='labeled'/u);
     assert.match(sql, /facet.preparation_run_id=item.run_id/u);
-    assert.match(sql, /PARTITION BY day,platform/u);
+    assert.match(sql, /PARTITION BY stratum_day,platform/u);
     assert.deepEqual(values, ["workspace", "preparation", null, "discovery-v1"]);
     return { rows: [{root_ids:["r1","r2"],total:"2",chunks:"9"}] };
   }} as unknown as Pick<PoolClient,"query">;
