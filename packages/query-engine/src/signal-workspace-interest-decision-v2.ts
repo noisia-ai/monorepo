@@ -1,3 +1,4 @@
+import { partitionLiteralSpansV1 as partition, reconstructLiteralCitationV1 } from "./signal-literal-spans-v1";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-v1";
@@ -42,24 +43,6 @@ function sealedRequest(request: SignalWorkspaceInterestDecisionRequestV1): Signa
   return rebuilt;
 }
 
-/** Lossless UTF-16 partition. Whitespace and punctuation remain in exactly one span. */
-function partition(text: string): { start: number; end: number; text: string }[] {
-  const parts: { start: number; end: number; text: string }[] = [];
-  for (let start = 0; start < text.length;) {
-    let end = Math.min(start + SIGNAL_WORKSPACE_INTEREST_DECISION_SPAN_MAX_UTF16_V2, text.length);
-    // Never cut a surrogate pair: citation offsets remain valid JS/PG UTF-16 offsets.
-    if (end < text.length && end > start + 1 && /[\uD800-\uDBFF]/u.test(text[end - 1]!)
-      && /[\uDC00-\uDFFF]/u.test(text[end]!)) end--;
-    const minEnd = Math.min(start + 64, end);
-    for (let cursor = minEnd; cursor < end; cursor++) {
-      if (/[.!?;\n]/u.test(text[cursor - 1]!)) { end = cursor; break; }
-    }
-    if (end <= start) fail("span_partition_invalid");
-    parts.push({ start, end, text: text.slice(start, end) });
-    start = end;
-  }
-  return parts;
-}
 
 export function buildSignalWorkspaceInterestDecisionProviderInputV2(request: SignalWorkspaceInterestDecisionRequestV1): {
   input: SignalWorkspaceInterestDecisionProviderInputV2; spans: SignalWorkspaceInterestDecisionSpanV2[];
@@ -107,12 +90,7 @@ export function parseSignalWorkspaceInterestDecisionProviderOutputV2(args: {
     seenRoots.add(decision.root_ordinal);
     const seenSpans = new Set<string>();
     const citations = decision.citations.map(citation => {
-      const span = spans.get(citation.span_id);
-      if (!span || span.root_ordinal !== decision.root_ordinal || seenSpans.has(citation.span_id)
-        || !span.quote.trim()) fail("span_id_invalid");
-      seenSpans.add(citation.span_id);
-      return { chunk_index: span.chunk_index, chunk_sha256: span.chunk_sha256,
-        quote_start: span.quote_start, quote_end: span.quote_end, quote: span.quote, role: citation.role };
+      return { ...reconstructLiteralCitationV1(spans, citation.span_id, decision.root_ordinal, seenSpans), role: citation.role };
     });
     return { root_id: root.root_id, root_fingerprint: root.fingerprint, asset_sha256: root.asset_sha256,
       verdict: decision.verdict, rationale: decision.rationale, citations };

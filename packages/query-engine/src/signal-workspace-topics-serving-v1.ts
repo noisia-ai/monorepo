@@ -51,13 +51,15 @@ export type SignalWorkspaceTopicsOverviewV1 = {
 export type SignalWorkspaceTopicEvidencePageV1 = {
   contract_version: "signal-workspace-topic-evidence-v1";
   workspace_id: string;
-  generation_id: string;
+  generation_id: string | null;
   kind: "topic" | "narrative";
   term_key: string;
   scope_digest: string;
   items: Array<{
     mention_id: string;
     text: string;
+    /** Exact MFP citation within the complete root text; absent for human-only evidence. */
+    quote?: string | null;
     platform: string;
     occurred_at: string | null;
     url: string | null;
