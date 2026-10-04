@@ -46,10 +46,11 @@ await main(async()=>{
   assert.equal(original?.status,'failed');assert.equal(original.error_code,'workspace_incremental_editorial_evidence_invalid');
   assert.equal(f.evidence.numeric_execution_id,f.numeric_execution_id);
   await raw.query('BEGIN');active=true;await raw.query("SET LOCAL statement_timeout='90s'");
-  const oldDefinition=(await raw.query(`SELECT pg_get_functiondef('workspace_incremental_editorial_validation_v1(uuid,jsonb,jsonb)'::regprocedure) definition`)).rows[0].definition as string;
-  // Evaluate the previous SELECT body without creating or changing another function.
-  const previousSelect=oldDefinition.slice(oldDefinition.indexOf('$function$')+10,oldDefinition.lastIndexOf('$function$'))
-   .replace(/\bcomponent_order\b/gu,'$3::jsonb').replace(/\bcensus\b/gu,'$2::jsonb').replace(/\btarget\b/gu,'$1::uuid');
+  const oldBody=(await raw.query(`SELECT prosrc body FROM pg_proc
+   WHERE oid='workspace_incremental_editorial_validation_v1(uuid,jsonb,jsonb)'::regprocedure`)).rows[0].body as string;
+  // Correlate arguments without rewriting identifiers or contract literals in the old body.
+  const previousSelect=`SELECT (${oldBody.trim().replace(/;$/u,'')}) digest
+   FROM (SELECT $1::uuid target,$2::jsonb census,$3::jsonb component_order) arguments`;
   const values=[f.numeric_execution_id,JSON.stringify(f.evidence.census),JSON.stringify(f.evidence.numeric_component_order)];
   const oldValue=(await raw.query(previousSelect,values)).rows[0];
   const nonempty=(await raw.query(`SELECT metadata->>'component_key' key FROM analysis_artifacts WHERE engine_execution_id=$1
