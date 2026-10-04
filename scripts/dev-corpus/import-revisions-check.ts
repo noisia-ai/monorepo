@@ -10,7 +10,19 @@ await main(async()=>{
  const pool=await openDatabase();const client=await pool.connect();
  try{
   await client.query('BEGIN');
-  if(process.argv.includes('--candidate-migration')) await client.query(await readFile(new URL('../../infrastructure/db/migrations/0241_signal_import_content_revisions.sql',import.meta.url),'utf8'));
+  const installed=(await client.query("SELECT to_regclass('signal_mention_content_revisions') IS NOT NULL present")).rows[0].present;
+  if(!installed){
+   if(!process.argv.includes('--candidate-migration'))throw new Error('mfp_candidate_migration_required');
+   await client.query(await readFile(new URL('../../infrastructure/db/migrations/0241_signal_import_content_revisions.sql',import.meta.url),'utf8'));
+  }
+  const signature=(await client.query(`SELECT
+   to_regprocedure('stage_signal_mention_content_revisions_v1(uuid,jsonb)') IS NOT NULL staged,
+   to_regprocedure('apply_signal_mention_content_revisions_v1(uuid)') IS NOT NULL published,
+   (SELECT count(*)::int FROM information_schema.columns WHERE table_schema='public' AND table_name='import_batches'
+     AND column_name IN('content_revision_mode','content_revision_base_batch_id')) batch_columns,
+   (SELECT count(*)::int FROM information_schema.columns WHERE table_schema='public' AND table_name='signal_mention_content_revisions'
+     AND column_name IN('previous_digest','next_digest','source_system','provider_record_id')) revision_columns`)).rows[0];
+  assert.deepEqual(signature,{staged:true,published:true,batch_columns:2,revision_columns:4});
   await client.query('SAVEPOINT synthetic_fixture');
   const query=(sql:string,values?:unknown[])=>client.query(sql,values);
   const database={query,connect:async()=>({query,release(){}})} as unknown as Parameters<typeof syntheticImportedWorkspaceFixtureV1>[0]['database'];
