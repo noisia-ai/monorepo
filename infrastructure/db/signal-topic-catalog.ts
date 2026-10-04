@@ -710,6 +710,22 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
       && item.source.candidate_key === args.input.candidate_key);
     if (duplicate) return { term_key: duplicate.term_key, semantic_changed: false };
     const candidate = await loadAdoptionCandidate({ ...args, pool: client });
+    if (candidate.origin === "workspace_discovery") {
+      const previous = definitions.filter(item => item.origin === "workspace_discovery"
+        && item.source?.run_key.startsWith("workspace-discovery:")
+        && item.source.candidate_key === args.input.candidate_key);
+      if (previous.length) {
+        const revisions = (await client.query<{ id: string }>(`
+          SELECT id::text FROM signal_topic_consolidation_revisions
+          WHERE workspace_id=$1::uuid AND id::text=ANY($2::text[])
+            AND consolidation_run_id=(SELECT consolidation_run_id FROM signal_topic_consolidation_revisions
+              WHERE id=$3::uuid AND workspace_id=$1::uuid)`, [args.workspace_id,
+          previous.map(item => item.source!.run_key.slice("workspace-discovery:".length)),
+          args.input.run_key.slice("workspace-discovery:".length)])).rows;
+        const reused = previous.find(item => revisions.some(revision => item.source!.run_key === `workspace-discovery:${revision.id}`));
+        if (reused) return { term_key: reused.term_key, semantic_changed: false };
+      }
+    }
     const termKey = uniqueSignalTopicTermKey(candidate.title, definitions);
     const semantic = {
       term_key: termKey,
@@ -722,6 +738,7 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
       negative_examples: candidate.negative_examples,
       lifecycle: "draft" as const,
       origin: candidate.origin,
+      ...(candidate.origin === "workspace_discovery" ? { discovery_guidance: false } : {}),
       source: {
         run_key: args.input.run_key,
         candidate_key: args.input.candidate_key,
@@ -742,12 +759,40 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
   return { ...result, reused: !result.semantic_changed };
 }
 
-async function loadAdoptionCandidate(args: {
+export async function loadAdoptionCandidate(args: {
   pool: Queryable;
   workspace_id: string;
   actor_user_id: string;
   input: AdoptSignalTopicCandidateInputV1;
 }) {
+  if (args.input.run_key.startsWith("workspace-discovery:")) {
+    const revisionId = args.input.run_key.slice("workspace-discovery:".length);
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(revisionId)
+      || !args.input.expected_revision_digest || !args.input.scope)
+      throw new SignalTopicCatalogError("topic_candidate_request_invalid", 422);
+    const ref = (await args.pool.query<{ consolidation_run_id: string }>(`
+      SELECT consolidation_run_id FROM signal_topic_consolidation_revisions
+      WHERE id=$1::uuid AND workspace_id=$2::uuid`, [revisionId,args.workspace_id])).rows[0];
+    if (!ref) throw new SignalTopicCatalogError("topic_candidate_not_found", 404);
+    await args.pool.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+      [`topic-consolidation:${args.workspace_id}:${ref.consolidation_run_id}:editorial`]);
+    const candidate = (await args.pool.query<{ label: string; definition: string; revision_digest: string }>(`
+      SELECT concept.label,concept.definition,revision.revision_digest
+      FROM signal_topic_editorial_concepts concept
+      JOIN signal_topic_consolidation_revisions revision ON revision.id=concept.revision_id
+      JOIN signal_topic_consolidation_runs run ON run.id=revision.consolidation_run_id
+      WHERE concept.workspace_id=$1::uuid AND revision.workspace_id=$1::uuid AND run.workspace_id=$1::uuid
+        AND revision.id=$2::uuid AND concept.concept_key=$3 AND revision.status='validated' AND run.status='validated'
+        AND NOT EXISTS(SELECT 1 FROM signal_topic_consolidation_revisions newer
+          WHERE newer.consolidation_run_id=revision.consolidation_run_id AND newer.status='validated'
+            AND newer.revision>revision.revision)
+      FOR SHARE OF concept,revision,run`, [args.workspace_id,revisionId,args.input.candidate_key])).rows[0];
+    if (!candidate || candidate.revision_digest !== args.input.expected_revision_digest)
+      throw new SignalTopicCatalogError("topic_candidate_revision_stale", 409);
+    return { title: candidate.label, description: candidate.definition, inclusion: [] as string[], exclusion: [] as string[],
+      positive_examples: [] as string[], negative_examples: [] as string[], candidate_digest: candidate.revision_digest,
+      origin: "workspace_discovery" as const, scope: args.input.scope };
+  }
   const legacyProfileId = args.input.run_key.startsWith("taxonomy-profile:")
     ? args.input.run_key.slice("taxonomy-profile:".length)
     : null;

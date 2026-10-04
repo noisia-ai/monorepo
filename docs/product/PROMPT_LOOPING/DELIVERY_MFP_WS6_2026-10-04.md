@@ -1,0 +1,14 @@
+# WS6 — Discovery relevante y adopción · 2026-10-04
+
+Código: `feat/mfp-ws6-discovery`, PR a `develop`. Sin despliegue UAT ni producción.
+
+- Con `NOISIA_MENTION_FACETS_ENABLED=true`, discovery selecciona exclusivamente preparación elegible + ficha vigente `relevance=relevant`, sin exigir `status=labeled`. Snapshot existente congela IDs, conteos y muestra; faltantes de embeddings y exportación usan esa misma población. Relevancia perdida invalida la ejecución. Flag apagado conserva el recorrido previo.
+- `discovery_sample_cap` opcional, por defecto `null`; `discovery_sample_seed` registrada (predeterminado `discovery-v1`). Muestreo reproducible por turnos de estrato día UTC/plataforma. La muestra propone conceptos; WS5 decide pertenencias del corpus completo.
+- POST `/api/data-os/signal/:workspaceId/topics`, `action=adopt`, `input={run_key:"workspace-discovery:<revision_id>",candidate_key:<concept_key>,expected_revision_digest,scope}` e `Idempotency-Key`. Copia label/definition íntegros desde revisión validada vigente, con CAS y bloqueo editorial; catálogo editable, `origin=workspace_discovery`, `discovery_guidance=false`, procedencia intacta. Reusa permisos, transacción y replay de `mutateCatalog`; no crea pertenencias ni llama proveedores. Evita doble adopción del mismo concepto entre revisiones.
+- SQL0231 redefine la vista de raíces con `unrelated`, antes de estados de agrupación. Aplicar una sola vez tras 0225 mediante Root. Recuperación: desactivar nuevas ejecuciones MFP; conservar migración aditiva y datos existentes. No requiere 0232/0233.
+
+Verificación: `node --test --import tsx packages/query-engine/src/signal-topic-catalog-v1.test.ts infrastructure/db/signal-workspace-discovery-population.test.ts infrastructure/db/signal-topic-discovery-adoption.test.ts`: **17 PASS**, 0.3 s; `git diff --check`: PASS. Son pruebas focales y mocks, no evidencia de clasificación ni entrega real. Typecheck/lint/suites/build se ejecutan en CI remoto del PR.
+
+Prueba PG preparada: `NOISIA_MFP_DISCOVERY_PG_TEST=true node --test --import tsx infrastructure/db/migrations/signal-discovery-population.integration.test.ts`, exclusivamente runner privado/base `noisia_mfp`, tablas temporales y rollback. Root serializa su ejecución y la aplicación SQL; este WS no ha modificado el runner ni aplicado DDL.
+
+Coste proveedor de WS6: **USD0**, cero llamadas. Pendiente aceptación real: discovery sobre corpus WS1 tras fichas, adopción + pertenencias citadas WS5 y recorrido UI WS7. Signal excluye herencia para adoptados en el seam de WS5, comunicado con procedencia revisión/concept_key. WS8 debe adaptar `buildSignalWorkspaceIncrementalDescriptorWithClientV1`/residuo/parent lineage; hasta entonces MFP incremental devuelve `workspace_engine_discovery_incremental_not_ready`, nunca éxito con población discrepante. No se modificaron Python, consolidación, V2/V3, finanzas ni permisos cliente.

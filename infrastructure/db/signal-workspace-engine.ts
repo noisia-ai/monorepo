@@ -1,3 +1,4 @@
+import { discoverySamplingOptionsV1, loadSignalDiscoveryPopulationV1, type SignalDiscoveryPopulationV1 } from "./signal-workspace-discovery-population";
 import type {SignalWorkspaceInterpretationAdmissionV1} from './signal-workspace-interpretation-admission';
 import type { Pool, PoolClient } from "pg";
 import { buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
@@ -52,6 +53,7 @@ export type SignalWorkspaceEngineSnapshotV1 = {
   parent_execution_id: string | null; context_refs: unknown[]; engine_config: Record<string,unknown>; claude_cap_micro_usd: number;
   interpretation_config?: SignalWorkspaceEngineAnalysisConfigV1;
   numeric_descriptor?: SignalWorkspaceIncrementalDescriptorV1;
+  discovery_population?: SignalDiscoveryPopulationV1;
 };
 export type SignalWorkspaceEngineInterpretationRevisionV1 = {
   contract_version: "workspace-engine-interpretation-revision-v1"; revision_digest: string;
@@ -241,6 +243,14 @@ async function lockedRun(client: PoolClient, id: string): Promise<Run> {
 }
 async function current(client: PoolClient, run: Run, full: boolean) {
   if (!run.revision_live || !run.policy_live) return fail("workspace_engine_inputs_stale");
+  if (full && run.input_snapshot.discovery_population) {
+    const invalid=(await client.query<{ invalid: boolean }>(`SELECT EXISTS(
+      SELECT 1 FROM unnest($2::uuid[]) selected(root_id) WHERE NOT EXISTS(
+        SELECT 1 FROM signal_mention_facets_current_v1 facet WHERE facet.workspace_id=$1::uuid
+          AND facet.root_id=selected.root_id AND facet.preparation_run_id=$3::uuid AND facet.relevance='relevant'
+      )) invalid`,[run.workspace_id,run.input_snapshot.discovery_population.root_ids,run.input_snapshot.preparation_run_id])).rows[0]?.invalid;
+    if (invalid) return fail("workspace_engine_inputs_stale");
+  }
   if (full) {
     const identity = await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id,
       taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id});
@@ -408,6 +418,7 @@ async function missingGuides(client:PoolClient,workspace:string,config:string,gu
 export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;
   idempotency_key:string;embedding_run_id:string;expected_context_digest:string;expected_catalog_digest:string;
   claude_cap_micro_usd:number;engine_config:Record<string,unknown>;parent_execution_id?:string|null;
+  discovery_sample_cap?:number|null; discovery_sample_seed?:string;
   interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1;
   incremental_options?:{close_requested:boolean;parent_execution_id?:string;taxonomy_profile_id?:string;
     automatic_admission?:import('./signal-workspace-numeric-producer').SignalWorkspaceNumericAdmissionV1}}):Promise<{execution_id:string;replayed:boolean}> {
@@ -421,7 +432,14 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       ||![p.input_micro_usd_per_million_tokens,p.output_micro_usd_per_million_tokens,p.cache_read_micro_usd_per_million_tokens,p.cache_creation_micro_usd_per_million_tokens].every(n=>Number.isSafeInteger(n)&&n>=0)
       ||typeof c.budget_timezone!=='string'||c.budget_timezone.length>100||Buffer.byteLength(JSON.stringify(c),'utf8')>16384)return fail('workspace_engine_interpretation_config_invalid',422);
   }
-  const requestDigest=signalWorkspaceEmbeddingDigestV1({embedding_run_id:args.embedding_run_id,context_digest:args.expected_context_digest,
+  const discoveryEnabled=process.env.NOISIA_MENTION_FACETS_ENABLED==='true';
+  if(discoveryEnabled&&args.incremental_options)return fail('workspace_engine_discovery_incremental_not_ready',422);
+  if(!discoveryEnabled&&(args.discovery_sample_cap!=null||args.discovery_sample_seed!==undefined))
+    return fail('workspace_engine_discovery_disabled',422);
+  let discoveryOptions;
+  try { discoveryOptions=discoverySamplingOptionsV1(args.discovery_sample_cap,args.discovery_sample_seed); }
+  catch { return fail('workspace_engine_discovery_sample_invalid',422); }
+  const requestDigest=signalWorkspaceEmbeddingDigestV1({...(discoveryEnabled?{discovery:discoveryOptions}:{}),embedding_run_id:args.embedding_run_id,context_digest:args.expected_context_digest,
     catalog_digest:args.expected_catalog_digest,claude_cap_micro_usd:args.claude_cap_micro_usd,engine_config:args.engine_config,
     ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),
     ...(args.incremental_options?{numeric_policy:'workspace-frozen-model-cohort-v1',close_requested:args.incremental_options.close_requested}:{}),
@@ -451,8 +469,6 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       await (await import('./signal-workspace-numeric-producer')).assertSignalWorkspaceNumericAdmissionWithClientV1({queryable:client,
         workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,input_revision:embedded.input_revision,
         admission:args.incremental_options.automatic_admission});
-    if(embedded.counts.eligible_roots!==embedded.counts.completed_roots||embedded.counts.total_chunk_references!==embedded.counts.processed_chunk_references)
-      return fail('workspace_engine_corpus_embeddings_incomplete');
     let taxonomy_profile_id:string|undefined,numericParentId:string|undefined;
     if(args.incremental_options){
       // Resolve the compatible parent before compiling. Automatic work stays on
@@ -477,12 +493,16 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const input=await buildInput(client,args.workspace_id,args.actor_user_id,taxonomy_profile_id);
     if(input.context_digest!==args.expected_context_digest||input.catalog_digest!==args.expected_catalog_digest)return fail('workspace_engine_inputs_stale');
     if(await missingGuides(client,args.workspace_id,embedded.profile.config_digest,input.guides))return fail('workspace_engine_guides_required');
+    if(!discoveryEnabled&&(embedded.counts.eligible_roots!==embedded.counts.completed_roots||embedded.counts.total_chunk_references!==embedded.counts.processed_chunk_references))
+      return fail('workspace_engine_corpus_embeddings_incomplete');
+    const discovery=discoveryEnabled?await loadSignalDiscoveryPopulationV1({queryable:client,workspace_id:args.workspace_id,
+      preparation_run_id:embedded.preparation_run_id,...discoveryOptions}):null;
     const missing=natural((await client.query<{missing:string}>(`SELECT count(*)::text missing FROM signal_corpus_preparation_items item
       JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=item.chunk_policy_version
       CROSS JOIN LATERAL jsonb_array_elements(asset.chunks->'chunks') chunk
       LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=item.workspace_id AND cache.config_digest=$3 AND cache.chunk_sha256=chunk->>'sha256'
-      WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible' AND cache.chunk_sha256 IS NULL`,
-      [embedded.preparation_run_id,args.workspace_id,embedded.profile.config_digest])).rows[0]!.missing);
+      WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible' AND ($4::uuid[] IS NULL OR item.root_id=ANY($4::uuid[])) AND cache.chunk_sha256 IS NULL`,
+      [embedded.preparation_run_id,args.workspace_id,embedded.profile.config_digest,discovery?.population.root_ids??null])).rows[0]!.missing);
     if(missing)return fail('workspace_engine_corpus_embeddings_incomplete');
     const numericDescriptor=args.incremental_options?await buildSignalWorkspaceIncrementalDescriptorWithClientV1({queryable:client,
       workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,embedding_config_digest:embedded.profile.config_digest,
@@ -505,7 +525,8 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const snapshot={contract_version:'workspace-topic-engine-v1',workspace_id:args.workspace_id,taxonomy_profile_id:input.plan.taxonomy_profile_id,
       preparation_run_id:embedded.preparation_run_id,embedding_run_id:embedded.id,input_revision:embedded.input_revision,embedding_profile:embedded.profile,
       context_digest:input.context_digest,catalog_digest:input.catalog_digest,prototype_plan_digest:input.plan.plan_digest,
-      expected_roots:embedded.counts.eligible_roots,expected_chunks:embedded.counts.total_chunk_references,expected_guides:input.guides.length,
+      expected_roots:discovery?.population.root_ids.length??embedded.counts.eligible_roots,expected_chunks:discovery?.expected_chunks??embedded.counts.total_chunk_references,expected_guides:input.guides.length,
+      ...(discovery?{discovery_population:discovery.population}:{}),
       parent_execution_id:parentId,context_refs:input.context_refs,guides:input.guides,engine_config:args.engine_config,claude_cap_micro_usd:args.claude_cap_micro_usd,
       ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),...(numericDescriptor?{numeric_descriptor:numericDescriptor}:{})};
     const id=randomUUID();
@@ -551,6 +572,9 @@ export async function readSignalWorkspaceEngineChunksV1(args:{database:SignalWor
     const rows=(await client.query<Omit<SignalWorkspaceEngineChunkV1,'vector'>&{vector:string|null}>(`WITH roots AS MATERIALIZED (
       SELECT item.root_id,item.fingerprint,item.asset_sha256,item.chunk_policy_version FROM signal_corpus_preparation_items item
       WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible'
+       AND ($7::uuid[] IS NULL OR (item.root_id=ANY($7::uuid[]) AND EXISTS(
+         SELECT 1 FROM signal_mention_facets_current_v1 facet WHERE facet.workspace_id=item.workspace_id
+           AND facet.preparation_run_id=item.run_id AND facet.root_id=item.root_id AND facet.relevance='relevant')))
        AND ($3::uuid IS NULL OR item.root_id>=$3::uuid) ORDER BY item.root_id
        -- The inclusive cursor root may have no remaining chunks. Preserve one
        -- extra root so a page of single-chunk mentions still has an EOF sentinel.
@@ -569,7 +593,7 @@ export async function readSignalWorkspaceEngineChunksV1(args:{database:SignalWor
       FROM chunk_page page JOIN signal_corpus_text_assets asset ON asset.workspace_id=$2::uuid
        AND asset.text_sha256=page.asset_sha256 AND asset.chunk_policy_version=page.chunk_policy_version
       LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=$2::uuid AND cache.config_digest=$6 AND cache.chunk_sha256=page.chunk_sha256
-      ORDER BY page.root_id,page.chunk_index`,[snapshot.preparation_run_id,run.workspace_id,args.after?.root_id??null,args.after?.chunk_index??-1,limit+1,snapshot.embedding_profile.config_digest])).rows;
+      ORDER BY page.root_id,page.chunk_index`,[snapshot.preparation_run_id,run.workspace_id,args.after?.root_id??null,args.after?.chunk_index??-1,limit+1,snapshot.embedding_profile.config_digest,snapshot.discovery_population?.root_ids??null])).rows;
     const items=rows.slice(0,limit).map(row=>{if(sha(row.text)!==row.chunk_sha256)return fail('workspace_engine_fragment_invalid');
       return {...row,vector:vectorOf(row.vector)};});const last=items.at(-1);
     return{items,next_cursor:last?{root_id:last.root_id,chunk_index:last.chunk_index}:args.after,done:rows.length<=limit};
