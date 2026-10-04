@@ -116,7 +116,9 @@ await main(async () => {
       try {
         if (
           typeof sql === "string" &&
-          sql.includes("/* membership-status-items */")
+          (sql.includes("/* membership-status-items */") ||
+            sql.includes("/* membership-override-targets */") ||
+            sql.includes("mfp_memberships AS MATERIALIZED"))
         ) {
           const plan = await client.query(
             `EXPLAIN (FORMAT JSON) ${sql}`,

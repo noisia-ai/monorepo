@@ -448,7 +448,14 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
     AND ($4::date IS NULL OR published_at<(($4::date+1)::timestamp AT TIME ZONE $5::text))
 ), visible_terms AS MATERIALIZED (
   SELECT * FROM jsonb_to_recordset($6::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean${definedInterest ? ",interest_generation_id uuid,interest_taxonomy_term_id uuid" : ""})
-), legacy_memberships AS MATERIALIZED (
+), ${membership ? `mfp_memberships AS MATERIALIZED (
+  SELECT root_id,concept_key,definition_digest,citations FROM signal_concept_memberships_current_v1
+  WHERE workspace_id=$1::uuid AND verdict='belongs'
+), mfp_facets AS MATERIALIZED (
+  SELECT root_id,relevance FROM signal_mention_facets_current_v1 WHERE workspace_id=$1::uuid
+), mfp_roots_with_concept AS MATERIALIZED (
+  SELECT DISTINCT root_id FROM mfp_memberships
+), ` : ""}legacy_memberships AS MATERIALIZED (
   SELECT DISTINCT ON(assignment.canonical_root_id,term.term_key) assignment.canonical_root_id root_id,term.term_key,visible.visible,
     CASE WHEN assignment.membership_basis='computed_cluster' THEN assignment.membership_metadata->'evidence_fragment' ELSE NULL END evidence_fragment
   FROM signal_classification_assignments assignment JOIN taxonomy_terms term ON term.id=assignment.taxonomy_term_id
@@ -524,16 +531,16 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
     WHERE adopted.workspace_id=$1::uuid AND EXISTS(SELECT 1 FROM jsonb_array_elements(snapshot.catalog) entry WHERE entry->>'term_key'=member.term_key AND entry->>'concept_id'=concept.id::text))` : ""}
   ${membership ? `UNION ALL SELECT current.root_id,current.concept_key,visible.visible,
     CASE WHEN jsonb_array_length(current.citations)>0 THEN jsonb_build_object('chunk_index',0,'start',(current.citations->0->>'quote_start')::int,'end',(current.citations->0->>'quote_end')::int,'chunk_sha256',current.citations->0->>'chunk_sha256') ELSE NULL::jsonb END evidence_fragment
-    FROM signal_concept_memberships_current_v1 current JOIN visible_terms visible ON visible.term_key=current.concept_key AND visible.definition_digest=current.definition_digest
+    FROM mfp_memberships current JOIN visible_terms visible ON visible.term_key=current.concept_key AND visible.definition_digest=current.definition_digest
     JOIN period_roots root ON root.root_id=current.root_id AND root.metrics
-    WHERE current.workspace_id=$1::uuid AND current.verdict='belongs'` : ""}
+    ` : ""}
   ${definedInterest ? "UNION ALL SELECT root_id,term_key,visible,evidence_fragment FROM defined_interest_memberships" : ""}
 ), memberships AS MATERIALIZED (SELECT root_id,term_key,evidence_fragment FROM all_memberships WHERE visible),
 root_membership AS MATERIALIZED (SELECT root_id,bool_or(visible) visible FROM all_memberships GROUP BY root_id),
 population AS MATERIALIZED (
-  SELECT root.*,COALESCE(member.visible,false) visible${membership ? ",facet.relevance,EXISTS(SELECT 1 FROM signal_concept_memberships_current_v1 m WHERE m.workspace_id=$1::uuid AND m.root_id=root.root_id AND m.verdict='belongs') has_concept" : ""}
+  SELECT root.*,COALESCE(member.visible,false) visible${membership ? ",facet.relevance,(has_concept.root_id IS NOT NULL) has_concept" : ""}
   FROM period_roots root LEFT JOIN root_membership member USING(root_id)
-  ${membership ? "LEFT JOIN signal_mention_facets_current_v1 facet ON facet.workspace_id=$1::uuid AND facet.root_id=root.root_id" : ""}
+  ${membership ? "LEFT JOIN mfp_facets facet ON facet.root_id=root.root_id LEFT JOIN mfp_roots_with_concept has_concept ON has_concept.root_id=root.root_id" : ""}
 )`;
 
 function displayedTopics(ctx: Context, includeUnselected = false) {

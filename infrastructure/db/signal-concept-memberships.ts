@@ -489,8 +489,15 @@ export async function overrideConceptMembershipsV1(
     await authorize(c, args.workspace_id, args.actor_user_id, true);
     const matches = (
       await c.query(
-        `SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text) JOIN signal_concept_memberships_current_v1 m ON m.workspace_id=$1 AND m.root_id=r.root_id AND m.concept_key=r.concept_key WHERE r.verdict IN('belongs','not_belongs')`,
-        [args.workspace_id, JSON.stringify(args.overrides)],
+        `/* membership-override-targets */ WITH targets AS MATERIALIZED (
+ SELECT root_id,concept_key FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=ANY($3::uuid[])
+ ) SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text)
+ JOIN targets m ON m.root_id=r.root_id AND m.concept_key=r.concept_key WHERE r.verdict IN('belongs','not_belongs')`,
+        [
+          args.workspace_id,
+          JSON.stringify(args.overrides),
+          args.overrides.map((r) => r.root_id),
+        ],
       )
     ).rows[0]!.count;
     if (matches !== args.overrides.length)
