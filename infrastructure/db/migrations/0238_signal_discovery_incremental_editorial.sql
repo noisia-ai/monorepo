@@ -554,3 +554,54 @@ BEGIN
  END IF;
  IF amount>0 AND spent+amount>p.daily_cap_micro_usd THEN RAISE EXCEPTION 'processing_daily_cap_exhausted' USING ERRCODE='23514'; END IF;
 END; $$;
+
+-- A paid MFP editorial owner retains its scoped processing authority when
+-- persisting request/checkpoint artifacts. Legacy owners retain classification authority.
+CREATE OR REPLACE FUNCTION workspace_incremental_editorial_artifact_valid_v1(a analysis_artifacts) RETURNS boolean LANGUAGE plpgsql STABLE SET search_path=public,extensions,pg_temp AS $$
+DECLARE owner signal_topic_catalog_executions%ROWTYPE; body jsonb; request jsonb; call engine_cost_events%ROWTYPE; source engine_cost_events%ROWTYPE; value jsonb; field text;
+BEGIN
+ SELECT * INTO owner FROM signal_topic_catalog_executions WHERE id=a.engine_execution_id AND workspace_id=a.workspace_id;
+ IF NOT COALESCE(owner.input_contract='workspace-incremental-editorial-v1' AND owner.status='running' AND owner.execution_expires_at>clock_timestamp()
+ AND signal_workspace_engine_actor_v1(owner,owner.actor_user_id) AND a.workspace_artifact_kind='topic_discovery' AND a.review_status='draft'
+ AND a.discovery_run_digest='sha256:'||encode(sha256(convert_to(owner.input_digest||':'||owner.id::text,'UTF8')),'hex') AND a.workspace_authority_digest=a.discovery_run_digest
+ AND a.content->>'contract_version'='workspace-engine-private-artifact-v1' AND a.content->>'sha256'~'^sha256:[0-9a-f]{64}$'
+ AND a.content->>'size_bytes'~'^[1-9][0-9]*$' AND (a.content->>'size_bytes')::numeric<=9007199254740991
+ AND a.content->>'storage_key' LIKE 'workspace-engine/'||owner.workspace_id::text||'/'||owner.id::text||'/%' AND position('..' IN a.content->>'storage_key')=0
+ AND pg_column_size(a.metadata)<=65536 AND pg_column_size(a.content)<=65536,false) THEN RETURN false; END IF;
+ body:=a.metadata;
+ IF body->>'contract_version'='workspace-incremental-editorial-request-v1' THEN
+  request:=body->'request';
+  FOREACH field IN ARRAY ARRAY['index','reserved_micro_usd','offset','size_bytes'] LOOP
+   IF jsonb_typeof(request->field) IS DISTINCT FROM 'number' OR (request->>field)!~'^(0|[1-9][0-9]*)$' OR (request->>field)::numeric>9007199254740991 THEN RETURN false; END IF;
+  END LOOP;
+  RETURN COALESCE(a.artifact_type='engine_output' AND a.artifact_key='editorial-request-'||(request->>'index') AND body->>'plan_digest'~'^sha256:[0-9a-f]{64}$'
+   AND (request->>'reserved_micro_usd')::bigint>0 AND (request->>'size_bytes')::bigint BETWEEN 1 AND 8388608
+   AND request->>'request_digest'~'^sha256:[0-9a-f]{64}$' AND request->>'sha256'~'^sha256:[0-9a-f]{64}$'
+   AND request->>'batch_key'='interpretation:'||substring(request->>'request_digest' FROM 8)
+   AND jsonb_typeof(request->'unit_keys')='array' AND jsonb_array_length(request->'unit_keys') BETWEEN 1 AND 4
+   AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(request->'unit_keys') unit(key) WHERE NOT EXISTS(SELECT 1 FROM analysis_artifacts claim WHERE claim.engine_execution_id=owner.id AND claim.metadata->>'contract_version'='workspace-incremental-editorial-unit-claim-v1' AND claim.metadata->'unit'->>'unit_key'=unit.key))
+   AND NOT owner.result_summary ? 'request_plan_artifact_id',false);
+ ELSIF body->>'contract_version'='workspace-incremental-editorial-request-plan-v1' THEN
+  FOREACH field IN ARRAY ARRAY['units','batches'] LOOP IF jsonb_typeof(body->'plan'->field) IS DISTINCT FROM 'number' OR (body->'plan'->>field)!~'^[1-9][0-9]*$' OR (body->'plan'->>field)::numeric>9007199254740991 THEN RETURN false; END IF; END LOOP;
+  RETURN a.artifact_type='engine_output' AND a.artifact_key='editorial-request-plan.jsonl' AND jsonb_typeof(body->'plan')='object' AND NOT owner.result_summary ? 'request_plan_artifact_id';
+ ELSIF body->>'contract_version'='workspace-incremental-editorial-repair-request-v1' THEN
+  request:=workspace_incremental_editorial_request_v1(owner.id,body->'editorial_repair'->>'source_request_digest');
+  SELECT * INTO source FROM engine_cost_events WHERE id=(body->'editorial_repair'->>'source_call_id')::uuid;
+  RETURN COALESCE(a.artifact_type='engine_output' AND a.artifact_key='editorial-repair-'||source.id::text AND source.catalog_execution_id=owner.id AND source.actor_user_id=owner.actor_user_id
+   AND source.call_state='settled' AND source.response_http_status=200 AND source.metadata->>'response_complete' IS DISTINCT FROM 'false' AND source.response_sha256=body->'editorial_repair'->>'source_response_sha256'
+   AND source.request_digest=request->>'request_digest' AND NOT source.metadata ? 'editorial_repair' AND NOT request ? 'editorial_repair'
+   AND body->'unit_keys'=request->'unit_keys' AND body->>'request_digest'~'^sha256:[0-9a-f]{64}$' AND body->>'request_digest'<>source.request_digest
+   AND body->'editorial_repair'->>'contract_version'='workspace-editorial-repair-v1' AND body->'editorial_repair'->>'diagnostic'='output_invalid'
+   AND body->'editorial_repair'->>'protocol_digest'='sha256:7b113e97b33c00fc94a6043ac1f1f4a6c7aa99c5e792c465a384587e9b72e3d3'
+   AND jsonb_typeof(body->'reserved_micro_usd')='number' AND body->>'reserved_micro_usd'~'^[1-9][0-9]*$' AND (body->>'reserved_micro_usd')::numeric<=9007199254740991
+   AND NOT EXISTS(SELECT 1 FROM analysis_artifacts prior WHERE prior.engine_execution_id=owner.id AND prior.metadata->>'contract_version'='workspace-incremental-editorial-checkpoint-v1' AND prior.metadata->'unit_keys' ?| ARRAY(SELECT jsonb_array_elements_text(body->'unit_keys'))),false);
+ ELSIF body->>'contract_version'='workspace-incremental-editorial-checkpoint-v1' THEN
+  SELECT * INTO call FROM engine_cost_events WHERE id=(body->>'call_id')::uuid AND catalog_execution_id=owner.id AND workspace_id=owner.workspace_id;
+  request:=workspace_incremental_editorial_request_v1(owner.id,call.request_digest);
+  RETURN COALESCE(a.artifact_type='engine_proposals' AND a.artifact_key='editorial-checkpoint-'||call.id::text AND call.call_state='settled' AND call.response_http_status=200 AND call.metadata->>'response_complete' IS DISTINCT FROM 'false'
+   AND call.response_sha256=body->>'response_sha256' AND call.request_digest=body->>'request_digest' AND body->'unit_keys'=request->'unit_keys'
+   AND body->>'numeric_execution_id'=owner.source_execution_id::text AND body->>'numeric_checkpoint_digest'=owner.input_snapshot->>'numeric_checkpoint_digest'
+   AND body->>'evidence_digest'=owner.input_snapshot->>'evidence_digest' AND body->>'target_binding_digest'=owner.input_snapshot->>'target_binding_digest'
+   AND NOT EXISTS(SELECT 1 FROM analysis_artifacts prior WHERE prior.engine_execution_id=owner.id AND prior.metadata->>'contract_version'='workspace-incremental-editorial-checkpoint-v1' AND prior.metadata->'unit_keys' ?| ARRAY(SELECT jsonb_array_elements_text(body->'unit_keys'))),false);
+ END IF; RETURN false;
+END $$;

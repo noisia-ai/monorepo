@@ -125,9 +125,9 @@ await main(async()=>{
    if(!value||typeof value!=="object")return{};
    const e=value as {name?:string;code?:string;message?:string;stack?:string;actual?:unknown;detail?:string};
    const message=e.message??"";
-   let checks:Record<string,boolean|null>|undefined;
-   if(message==="mfp_editorial_claim_predicate_failed"&&e.detail){try{const parsed=JSON.parse(e.detail);
-    if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&Object.entries(parsed).every(([key,value])=>/^[a-z_]+$/.test(key)&&(typeof value==="boolean"||value===null)))checks=parsed;
+   let checks:Record<string,boolean|string|null>|undefined;
+   if(["mfp_editorial_claim_predicate_failed","mfp_editorial_artifact_predicate_failed"].includes(message)&&e.detail){try{const parsed=JSON.parse(e.detail);
+    if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&Object.entries(parsed).every(([key,value])=>/^[a-z_]+$/.test(key)&&(typeof value==="boolean"||value===null||typeof value==="string"&&(key==="contract_version"&&/^workspace-incremental-editorial-[a-z-]+-v1$/.test(value)||key==="artifact_type"&&["engine_output","engine_proposals"].includes(value)||key==="owner_status"&&["queued","running","ready","failed"].includes(value)))))checks=parsed;
    }catch{ /* Nonboolean details are never printed. */ }}
    return{name:e.name,code:e.code,...(checks?{checks}:{}),
     ...( /^(?:workspace_|processing_|mfp_)[a-z_]+$/.test(message)||/^Engine [a-zA-Z .]+\.$/.test(message)?{message}:{}),

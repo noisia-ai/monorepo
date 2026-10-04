@@ -55,14 +55,28 @@ export async function checkMfpIncrementalEditorialV1(args:Parameters<typeof crea
  await query("UPDATE signal_topic_classification_outbox SET status='dispatched',dispatched_at=clock_timestamp() WHERE execution_id=$1",[admitted.execution_id]);
  report('editorial_claim');
  const lease=await runtime.claimSignalWorkspaceIncrementalEditorialV1({...queued,database});assert.ok(!('completed' in lease));
+ report('editorial_context');
  const context=await runtime.readSignalWorkspaceIncrementalEditorialContextV1({database,lease});
  const batch=buildBatch(context.context,groups,sonnet),jsonl=JSON.stringify({contract_version:'workspace-incremental-editorial-batch-v1',index:0,batch})+'\n';
  const request={index:0,batch_key:batch.batch_key,request_digest:batch.request_digest,unit_keys:groups.map(g=>g.cluster_id),reserved_micro_usd:batch.reserved_micro_usd,offset:0,size_bytes:Buffer.byteLength(jsonl),sha256:sha(jsonl)};
  const unsigned={contract_version:'workspace-incremental-editorial-batch-plan-v1' as const,workspace_id:access.workspace_id,editorial_execution_id:lease.execution_id,numeric_execution_id:lease.numeric_execution_id,
   evidence_digest:evidence.evidence_digest,target_unit_digest:evidence.target_unit_digest,target_binding_digest:evidence.target_binding_digest,context_digest:context.context.context_digest,
   configuration_digest:digest(sonnet),units:units.length,batches:1,requests:[request],stream:{bytes:Buffer.byteLength(jsonl),sha256:sha(jsonl)}};
- await runtime.persistSignalWorkspaceIncrementalEditorialRequestPlanV1({database,lease,plan:{...unsigned,plan_digest:digest(unsigned)},stored:{
+ const persistPlan=()=>runtime.persistSignalWorkspaceIncrementalEditorialRequestPlanV1({database,lease,plan:{...unsigned,plan_digest:digest(unsigned)},stored:{
   storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/batches.jsonl`,sha256:sha(jsonl),size_bytes:Buffer.byteLength(jsonl),media_type:'application/octet-stream'}});
+ report('editorial_artifact_authority');
+ const authority=()=>query(`SELECT signal_workspace_classification_actor_v1(e.workspace_id,e.actor_user_id) legacy,
+  signal_workspace_engine_actor_v1(e,e.actor_user_id) mfp,
+  signal_workspace_engine_actor_v1(jsonb_populate_record(NULL::signal_topic_catalog_executions,
+   to_jsonb(e)||jsonb_build_object('input_snapshot',e.input_snapshot-'discovery_population')),e.actor_user_id) legacy_shape
+  FROM signal_topic_catalog_executions e WHERE e.id=$1`,[lease.execution_id]);
+ assert.deepEqual((await authority()).rows[0],{legacy:false,mfp:true,legacy_shape:false});
+ await query('SAVEPOINT artifact_actor_revoked');
+ await query("UPDATE users SET status='inactive' WHERE id=$1",[access.actor_user_id]);
+ assert.deepEqual((await authority()).rows[0],{legacy:false,mfp:false,legacy_shape:false});
+ await assert.rejects(persistPlan,/forbidden/);
+ await query('ROLLBACK TO SAVEPOINT artifact_actor_revoked');await query('RELEASE SAVEPOINT artifact_actor_revoked');
+ report('editorial_request_plan');await persistPlan();
  const reserve={...access,execution_id:lease.execution_id,idempotency_key:batch.batch_key,request_digest:batch.request_digest,configuration:sonnet,
   reserved_micro_usd:batch.reserved_micro_usd,budget_timezone:admitted.receipt.budget_timezone,daily_cap_micro_usd:admitted.receipt.daily_cap_micro_usd,
   execution_token:lease.execution_token,admission_operation_id:admitted.receipt.operation_id};
