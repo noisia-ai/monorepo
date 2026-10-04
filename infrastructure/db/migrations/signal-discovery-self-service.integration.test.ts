@@ -165,6 +165,7 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
       const request = { ...access, embedding_run_id: preflight.embedding_run_id, idempotency_key: randomUUID(),
         expected_catalog_digest: preflight.expected_catalog_digest, expected_context_digest: preflight.expected_context_digest,
         engine_config: { fixture: "mocked-transition-no-fit" }, parent_execution_id: null, claude_cap_micro_usd: cap,
+        discovery_request_intent_digest: sha(`synthetic-client-intent-${cap}`),
         interpretation_config: { call_configuration: configuration, budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } };
       const beforeAdmissions = (await raw.query("SELECT count(*)::int n FROM signal_processing_admissions WHERE actor_user_id=$1", [clientActor])).rows[0].n;
       failOutbox = true;
@@ -179,6 +180,27 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
         FROM signal_topic_catalog_executions e JOIN signal_processing_admissions a ON a.id=e.processing_admission_id WHERE e.id=$1`, [started.execution_id])).rows[0];
       assert.equal(receipt.actor_user_id, clientActor); assert.equal(receipt.admission_actor, clientActor);
       assert.equal(receipt.target_id, started.execution_id); assert.equal(receipt.outboxes, 1); assert.equal(receipt.cap, cap === null ? null : String(cap));
+      const replayArgs = { ...access, idempotency_key: request.idempotency_key, request_intent_digest: request.discovery_request_intent_digest };
+      await raw.query("SAVEPOINT policy_replay");
+      await raw.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1", [policyId]);
+      assert.deepEqual(await engine.replaySignalWorkspaceDiscoveryRequestV1(replayArgs), { execution_id: started.execution_id, replayed: true });
+      assert.equal((await engine.beginSignalWorkspaceEngineV1(request)).execution_id, started.execution_id);
+      const changedPolicy = randomUUID();
+      await raw.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+        SELECT $1,organization_id,version+1,'draft',valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id
+        FROM signal_processing_policy_versions WHERE id=$2`, [changedPolicy, policyId]);
+      await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        SELECT $1,action,kind,provider,model,configuration,configuration_digest,
+          CASE WHEN action='topic_interpretation' THEN 500 ELSE max_execution_micro_usd END,automatic_allowed
+        FROM signal_processing_policy_actions WHERE policy_version_id=$2`, [changedPolicy, policyId]);
+      await raw.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [changedPolicy]);
+      assert.deepEqual(await engine.replaySignalWorkspaceDiscoveryRequestV1(replayArgs), { execution_id: started.execution_id, replayed: true });
+      assert.equal((await raw.query("SELECT processing_admission_id FROM signal_topic_catalog_executions WHERE id=$1", [started.execution_id])).rows[0].processing_admission_id, receipt.processing_admission_id);
+      await deny(() => engine.replaySignalWorkspaceDiscoveryRequestV1({ ...replayArgs, request_intent_digest: sha("contradictory intent") }), /idempotency_conflict/);
+      await deny(() => engine.beginSignalWorkspaceEngineV1({ ...request, claude_cap_micro_usd: cap === null ? 1 : 999 }), /idempotency_conflict/);
+      assert.equal((await raw.query("SELECT count(*)::int n FROM signal_topic_classification_outbox WHERE execution_id=$1", [started.execution_id])).rows[0].n, 1);
+      assert.equal((await raw.query("SELECT count(*)::int n FROM signal_processing_admissions WHERE actor_user_id=$1", [clientActor])).rows[0].n, beforeAdmissions + 1);
+      await raw.query("ROLLBACK TO SAVEPOINT policy_replay"); await raw.query("RELEASE SAVEPOINT policy_replay");
       const lease = await engine.claimSignalWorkspaceEngineV1({ database, ...started, worker_job_id: "synthetic-discovery-transition" }); assert.ok(lease);
       assert.ok(lease.snapshot.discovery_population); assert.ok(lease.snapshot.expected_roots > 0);
       const coverage = { roots: lease.snapshot.expected_roots, chunks: lease.snapshot.expected_chunks, guides: lease.snapshot.expected_guides };
@@ -204,6 +226,7 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
       await raw.query("SAVEPOINT revoke");
       await raw.query("UPDATE user_brand_access SET revoked_at=clock_timestamp() WHERE user_id=$1 AND brand_id=$2", [clientActor, scope.brand_id]);
       await deny(() => engine.beginSignalWorkspaceEngineV1(request), /forbidden/);
+      await deny(() => engine.replaySignalWorkspaceDiscoveryRequestV1(replayArgs), /forbidden/);
       await deny(() => money.markSignalWorkspaceEngineInterpretationSentV1(attempt), /forbidden/);
       await raw.query("ROLLBACK TO SAVEPOINT revoke"); await raw.query("RELEASE SAVEPOINT revoke");
       assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1(attempt)).send_authorized, true);

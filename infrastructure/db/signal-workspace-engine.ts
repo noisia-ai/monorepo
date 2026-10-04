@@ -57,6 +57,7 @@ export type SignalWorkspaceEngineSnapshotV1 = {
   interpretation_config?: SignalWorkspaceEngineAnalysisConfigV1;
   numeric_descriptor?: SignalWorkspaceIncrementalDescriptorV1;
   discovery_population?: SignalDiscoveryPopulationV1;
+  discovery_request_intent_digest?: string;
 };
 export type SignalWorkspaceEngineInterpretationRevisionV1 = {
   contract_version: "workspace-engine-interpretation-revision-v1"; revision_digest: string;
@@ -418,14 +419,35 @@ async function missingGuides(client:PoolClient,workspace:string,config:string,gu
    LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=$1::uuid AND cache.config_digest=$2 AND cache.chunk_sha256=guide.text_sha256
    WHERE cache.chunk_sha256 IS NULL`,[workspace,config,JSON.stringify(guides)])).rows[0]!.missing);
 }
+/** Read-only ACK recovery uses the original request intent, never a newly derived policy cap.
+ * Grant/tenant authority stays locked through the scoped receipt read. No work is queued. */
+export async function replaySignalWorkspaceDiscoveryRequestV1(args:{database:SignalWorkspaceEngineDatabaseV1;
+  workspace_id:string;actor_user_id:string;idempotency_key:string;request_intent_digest:string}):Promise<{execution_id:string;replayed:true}|null>{
+  if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!digestPattern.test(args.request_intent_digest))return fail("workspace_engine_request_invalid",422);
+  return transaction(args.database,async client=>{
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${args.workspace_id}:topic`]);
+    const capability=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,lock_authority:true});
+    if(!capability.can_request_processing)return fail("workspace_engine_forbidden",403);
+    const prior=(await client.query<{id:string;actor_user_id:string;request_intent_digest:string|null;discovery:boolean}>(`
+      SELECT id,actor_user_id,input_snapshot->>'discovery_request_intent_digest' request_intent_digest,
+        jsonb_typeof(input_snapshot->'discovery_population')='object' discovery
+      FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1'
+        AND (idempotency_key=$2 OR engine_request_keys ? $2)`,[args.workspace_id,args.idempotency_key])).rows[0];
+    if(!prior)return null;
+    if(prior.actor_user_id!==args.actor_user_id||!prior.discovery||prior.request_intent_digest!==args.request_intent_digest)
+      return fail("workspace_engine_idempotency_conflict");
+    return {execution_id:prior.id,replayed:true};
+  });
+}
 export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;
   idempotency_key:string;embedding_run_id:string;expected_context_digest:string;expected_catalog_digest:string;
   claude_cap_micro_usd:number|null;engine_config:Record<string,unknown>;parent_execution_id?:string|null;
-  discovery_sample_cap?:number|null; discovery_sample_seed?:string;
+  discovery_sample_cap?:number|null; discovery_sample_seed?:string; discovery_request_intent_digest?:string;
   interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1;
   incremental_options?:{close_requested:boolean;parent_execution_id?:string;taxonomy_profile_id?:string;
     automatic_admission?:import('./signal-workspace-numeric-producer').SignalWorkspaceNumericAdmissionV1}}):Promise<{execution_id:string;replayed:boolean}> {
   const discoveryEnabled=process.env.NOISIA_MENTION_FACETS_ENABLED==='true';
+  if(args.discovery_request_intent_digest!==undefined&&(!discoveryEnabled||!digestPattern.test(args.discovery_request_intent_digest)))return fail("workspace_engine_request_invalid",422);
   if(args.incremental_options&&(args.claude_cap_micro_usd!==0||args.interpretation_config))return fail('workspace_engine_incremental_numeric_only',422);
   if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!digestPattern.test(args.expected_context_digest)||!digestPattern.test(args.expected_catalog_digest)
     ||!(discoveryEnabled&&args.interpretation_config&&args.claude_cap_micro_usd===null)
@@ -443,7 +465,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
   let discoveryOptions;
   try { discoveryOptions=discoverySamplingOptionsV1(args.discovery_sample_cap,args.discovery_sample_seed); }
   catch { return fail('workspace_engine_discovery_sample_invalid',422); }
-  const requestDigest=signalWorkspaceEmbeddingDigestV1({...(discoveryEnabled?{discovery:discoveryOptions}:{}),embedding_run_id:args.embedding_run_id,context_digest:args.expected_context_digest,
+  const requestDigest=signalWorkspaceEmbeddingDigestV1({...(discoveryEnabled?{discovery:discoveryOptions,...(args.discovery_request_intent_digest?{discovery_request_intent_digest:args.discovery_request_intent_digest}:{})}:{}),embedding_run_id:args.embedding_run_id,context_digest:args.expected_context_digest,
     catalog_digest:args.expected_catalog_digest,claude_cap_micro_usd:args.claude_cap_micro_usd,engine_config:args.engine_config,
     ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),
     ...(args.incremental_options?{numeric_policy:'workspace-frozen-model-cohort-v1',close_requested:args.incremental_options.close_requested}:{}),
@@ -452,21 +474,24 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       args.parent_execution_id===undefined?"latest-compatible-complete-v1":args.parent_execution_id});
   return transaction(args.database,async client=>{
     await authorize(client,args.workspace_id,args.actor_user_id,true,discoveryEnabled);
+    if(discoveryEnabled)await client.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||organization_id::text,0)) FROM signal_workspaces WHERE id=$1::uuid",[args.workspace_id]);
+    if(args.interpretation_config&&!(await client.query('SELECT name FROM pg_timezone_names WHERE name=$1',[args.interpretation_config.budget_timezone])).rows[0])return fail('workspace_engine_interpretation_config_invalid',422);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${args.workspace_id}:topic`]);
+    const prior=(await client.query<{id:string;actor_user_id:string;request_digest:string;input_contract:string}>(
+      "SELECT id,actor_user_id,request_digest,input_contract FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND (idempotency_key=$2 OR engine_request_keys ? $2)",[args.workspace_id,args.idempotency_key])).rows[0];
+    if(prior){
+      if(discoveryEnabled){const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,lock_authority:true});
+        if(!caps.can_request_processing)return fail("workspace_engine_forbidden",403);}
+      if(prior.actor_user_id!==args.actor_user_id||prior.request_digest!==requestDigest||prior.input_contract!=='workspace-topic-engine-v1')return fail('workspace_engine_idempotency_conflict');
+      return{execution_id:prior.id,replayed:true};}
     if(discoveryEnabled){
       if(!args.interpretation_config)return fail('workspace_engine_interpretation_config_invalid',422);
-      await client.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||organization_id::text,0)) FROM signal_workspaces WHERE id=$1::uuid",[args.workspace_id]);
       const policy=await loadSignalDiscoveryPolicyV1(client,args.workspace_id);
       if(!policy.available)return fail('workspace_analysis_interpretation_unavailable',422);
       if(discoveryStrictCapV1(args.claude_cap_micro_usd,policy.maximum_cap_micro_usd)!==args.claude_cap_micro_usd
         ||args.interpretation_config.daily_cap_micro_usd!==policy.daily_cap_micro_usd
         ||args.interpretation_config.budget_timezone!==policy.budget_timezone)return fail('workspace_engine_interpretation_config_mismatch');
     }
-    if(args.interpretation_config&&!(await client.query('SELECT name FROM pg_timezone_names WHERE name=$1',[args.interpretation_config.budget_timezone])).rows[0])return fail('workspace_engine_interpretation_config_invalid',422);
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${args.workspace_id}:topic`]);
-    const prior=(await client.query<{id:string;actor_user_id:string;request_digest:string;input_contract:string}>(
-      "SELECT id,actor_user_id,request_digest,input_contract FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND (idempotency_key=$2 OR engine_request_keys ? $2)",[args.workspace_id,args.idempotency_key])).rows[0];
-    if(prior){if(prior.actor_user_id!==args.actor_user_id||prior.request_digest!==requestDigest||prior.input_contract!=='workspace-topic-engine-v1')return fail('workspace_engine_idempotency_conflict');
-      return{execution_id:prior.id,replayed:true};}
     if(!args.incremental_options)await ensureSignalTopicCatalogStoreV1({client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
       ...(discoveryEnabled?{processing_mode:"workspace-discovery-v1" as const}:{})});
     await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE",[args.workspace_id]);
@@ -540,7 +565,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       preparation_run_id:embedded.preparation_run_id,embedding_run_id:embedded.id,input_revision:embedded.input_revision,embedding_profile:embedded.profile,
       context_digest:input.context_digest,catalog_digest:input.catalog_digest,prototype_plan_digest:input.plan.plan_digest,
       expected_roots:discovery?.population.root_ids.length??embedded.counts.eligible_roots,expected_chunks:discovery?.expected_chunks??embedded.counts.total_chunk_references,expected_guides:input.guides.length,
-      ...(discovery?{discovery_population:discovery.population}:{}),
+      ...(discovery?{discovery_population:discovery.population,...(args.discovery_request_intent_digest?{discovery_request_intent_digest:args.discovery_request_intent_digest}:{})}:{}),
       parent_execution_id:parentId,context_refs:input.context_refs,guides:input.guides,engine_config:args.engine_config,claude_cap_micro_usd:args.claude_cap_micro_usd,
       ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),...(numericDescriptor?{numeric_descriptor:numericDescriptor}:{})};
     const id=randomUUID();

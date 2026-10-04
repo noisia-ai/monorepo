@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
+import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
   retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, retrySignalWorkspaceIncrementalDeliveryV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
@@ -12,7 +12,7 @@ import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, beginSignalWorkspace
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   SignalTopicCatalogError,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
-import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
+import { signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
@@ -165,7 +165,13 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
   const access = await authorize(args, true);
   if (args.body.action === "start") {
     const discoveryEnabled = process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
-  const policy = discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
+    const intentDigest = discoveryEnabled ? signalWorkspaceEmbeddingDigestV1({ action: "start",
+      embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
+      expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: args.body.claude_cap_micro_usd ?? null,
+      discovery_sample_cap: args.body.discovery_sample_cap ?? null, discovery_sample_seed: args.body.discovery_sample_seed ?? null }) : undefined;
+    if (intentDigest && await replaySignalWorkspaceDiscoveryRequestV1({ ...access, idempotency_key: args.idempotencyKey, request_intent_digest: intentDigest }))
+      return loadWorkspaceAnalysisForActorV1({ ...args, idempotencyKey: args.idempotencyKey });
+    const policy = discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
   policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
     if (!policy.available) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
     if (!discoveryEnabled && (args.body.claude_cap_micro_usd == null || args.body.claude_cap_micro_usd <= 0
@@ -178,6 +184,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     await beginSignalWorkspaceEngineV1({ ...access, idempotency_key: args.idempotencyKey,
       embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
       expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: effectiveCap,
+      discovery_request_intent_digest: intentDigest,
       discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
       engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
         call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
