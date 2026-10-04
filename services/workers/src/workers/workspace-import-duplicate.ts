@@ -15,6 +15,7 @@ export async function completePreviouslyAcceptedWorkspaceImport(args: {
       SELECT accepted.id::text,accepted.record_count
       FROM import_batches target JOIN import_batches accepted
         ON accepted.workspace_id=target.workspace_id AND accepted.data_source_id=target.data_source_id
+        AND accepted.content_revision_mode=target.content_revision_mode
         AND accepted.source_file_hash=$3 AND accepted.status='completed' AND accepted.id<>target.id
       WHERE target.id=$1::uuid AND target.worker_job_id=$2 AND target.status='processing'
         AND ((target.storage_source_import_batch_id IS NULL AND target.storage_content_hash IS NULL)

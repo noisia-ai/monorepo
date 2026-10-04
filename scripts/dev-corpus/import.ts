@@ -10,7 +10,10 @@ await main(async()=>{
   if(!path||!/^\d{4}-\d{2}-\d{2}$/u.test(start??'')||!/^\d{4}-\d{2}-\d{2}$/u.test(end??''))throw new Error('mfp_import_arguments_required');
   const identity=JSON.parse(await readFile('.data/dev-corpus/identity.json','utf8'));
   const digest=createHash('sha256');for await(const chunk of createReadStream(path))digest.update(chunk);
-  const key=`mfp-import-${digest.digest('hex')}`;
+  const revisionMode=process.argv.includes('--revise-existing')?'revise_existing':'append_only';
+  const intent=process.argv.find(value=>value.startsWith('--revision-intent='))?.slice('--revision-intent='.length);
+  if(intent && (revisionMode!=='revise_existing'||!/^[a-zA-Z0-9_-]{8,100}$/u.test(intent)))throw new Error('mfp_revision_intent_invalid');
+  const key=`mfp-import-${digest.digest('hex')}${revisionMode==='revise_existing'?'-revise-existing':''}${intent?`-${intent}`:''}`;
   const pool=await openDatabase();
   try {
     const {db}=await import('../../apps/studio/src/lib/db');const {users}=await import('../../infrastructure/db');
@@ -23,7 +26,7 @@ await main(async()=>{
     const {uploadWorkspaceImportMultipartStreamV1}=await import('../../apps/studio/src/lib/data-os/workspace-import-storage');
     const access={workspace,actor,access:'manual-import' as const,sourceId:identity.source_id};
     const created=await createWorkspaceImportUploadV1({...access,fileName:basename(path),fileSizeBytes:(await stat(path)).size,contentType:'text/csv',
-      idempotencyKey:key,contributedByStudyCorpusId:null,supersedesImportBatchId:null,acquisition:{sourceKey:identity.source_key,slotKey:'primary-brand',
+      idempotencyKey:key,contentRevisionMode:revisionMode,contributedByStudyCorpusId:null,supersedesImportBatchId:null,acquisition:{sourceKey:identity.source_key,slotKey:'primary-brand',
         queryEvidence:{class:'unavailable',queryVersion:null,reason:'provider_did_not_embed_query'},period:{start:start!,end:end!,timezone:identity.timezone}}});
     let batchId=created.batch.id;
     // Follow the product recovery lineage; never re-upload a sealed failed object.
@@ -45,7 +48,7 @@ await main(async()=>{
       const {ingestMentionsCsvJob}=await import('../../services/workers/src/workers/mentions-csv-ingest');
       await runJob('ingest_mentions_csv',batch.worker_job_id,{workspaceId:workspace.id,dataSourceId:identity.source_id,importBatchId:batchId,sourceFileName:basename(path),testFailAfterRecords:injectFailure?1:undefined},ingestMentionsCsvJob);
     }
-    const result=(await pool.query('SELECT status,record_count,included_count,excluded_count,duplicate_count FROM import_batches WHERE id=$1',[batchId])).rows[0];
+    const result=(await pool.query("SELECT status,record_count,included_count,excluded_count,duplicate_count,content_revision_mode,processing_metrics->'revised_count' revised_count FROM import_batches WHERE id=$1",[batchId])).rows[0];
     console.log(JSON.stringify({stage:'import',...result,replayed:created.replayed,provider_calls:0}));
   } finally {await pool.end();}
 });

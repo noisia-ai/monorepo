@@ -239,7 +239,7 @@ export function validateSignalAcquisitionImportInputV1(value: unknown) {
 export function validateSignalAcquisitionImportInputV2(value: unknown) {
   const input = strictObject(value, [
     "source_key", "slot_key", "query_evidence", "period", "file_name", "file_size_bytes",
-    "content_type", "supersedes_import_key"
+    "content_type", "supersedes_import_key", "content_revision_mode"
   ], "acquisition import v2");
   const evidence = strictObject(input.query_evidence, [
     "class", "query_version", "reason", "operator_confirmed"
@@ -276,7 +276,12 @@ export function validateSignalAcquisitionImportInputV2(value: unknown) {
       || !["text/csv","application/csv","application/vnd.ms-excel","application/octet-stream"].includes(contentType)) {
     throw new Error("acquisition import file contract is invalid");
   }
+  const revisionMode = input.content_revision_mode ?? "append_only";
+  if (revisionMode !== "append_only" && revisionMode !== "revise_existing") {
+    throw new Error("content revision mode is unsupported");
+  }
   return {
+    content_revision_mode: revisionMode,
     source_key: validateSignalAcquisitionSourceKeyV1(input.source_key),
     slot_key: validateSignalAcquisitionSlotKeyV1(input.slot_key),
     query_evidence: queryEvidence,

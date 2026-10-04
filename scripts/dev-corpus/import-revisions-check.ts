@@ -1,0 +1,101 @@
+/** Remote PostgreSQL rollback check. No provider, queue, migration or real-corpus writes. */
+import assert from 'node:assert/strict';
+import {createHash,randomUUID} from 'node:crypto';
+import type {Pool} from 'pg';
+import {openDatabase,main} from './guard.mjs';
+import {syntheticImportedWorkspaceFixtureV1} from '../../infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture';
+import {createSignalSentioneCsvIngester} from '../../infrastructure/db/sentione-csv-ingest';
+const sha=(value:string)=>createHash('sha256').update(value).digest('hex');
+await main(async()=>{
+ const pool=await openDatabase();const client=await pool.connect();
+ try{
+  await client.query('BEGIN');
+  const query=(sql:string,values?:unknown[])=>client.query(sql,values);
+  const database={query,connect:async()=>({query,release(){}})} as unknown as Pool;
+  const f=await syntheticImportedWorkspaceFixtureV1({database,query,scoped:client,cleanup:async()=>{}});
+  await query('UPDATE import_batches SET completed_at=clock_timestamp() WHERE id=$1',[f.batch_id]);
+  const root=(await query('SELECT * FROM mentions WHERE id=$1',[f.roots[0]])).rows[0];
+  // This historical typed observation is synthetic; production staging/publish guards stay enabled.
+  await query(`INSERT INTO signal_provider_mention_observations(workspace_id,data_source_id,import_batch_id,mention_id,
+   provider_key,provider_record_key_hash,provider_schema_version,provider_header_hash,observation_version,observation_hash,published_at)
+   VALUES($1,$2,$3,$4,'sentione',$5,'sentione-csv-47-v1',$6,1,$6,clock_timestamp())`,
+   [f.workspace_id,f.source_id,f.batch_id,root.id,`sha256:${sha(root.provider_record_id)}`,`sha256:${sha('synthetic header')}`]);
+  const batch=async(base:string,mode='revise_existing')=>{
+   const id=randomUUID();
+   // Construct a sealed pre-existing worker job, independent of Brand OS / UI.
+   // Replica mode is fixture setup only; all assertions execute normal triggers.
+   await query("SET LOCAL session_replication_role='replica'");
+   await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,status,
+    ingestion_phase,expected_file_size_bytes,upload_protocol,worker_job_id,imported_by_user_id,
+    content_revision_mode,content_revision_base_batch_id)
+    VALUES($1,$2,$3,'synthetic','synthetic-revision.csv','processing','processing',100,'server-stream',$1,$4,$5,$6)`,
+    [id,f.workspace_id,f.source_id,f.actor_user_id,mode,mode==='revise_existing'?base:null]);
+   await query("SET LOCAL session_replication_role='origin'");return id;
+  };
+  const makeContent=(text:string)=>({...root,text_raw:text,text_clean:text,text_hash:sha(text.toLowerCase()),text_length:text.length,text_snippet:text});
+  const payload=(content:ReturnType<typeof makeContent>)=>JSON.stringify([{mention_id:root.id,content}]);
+  const stage=(id:string,content:ReturnType<typeof makeContent>)=>query('SELECT * FROM stage_signal_mention_content_revisions_v1($1,$2::jsonb)',[id,payload(content)]);
+  const text=async()=>(await query('SELECT text_clean FROM mentions WHERE id=$1',[root.id])).rows[0].text_clean;
+  const complete=(id:string,hash=sha(id))=>query('SELECT * FROM complete_signal_workspace_import_v1($1,$1::text,$2,1,1,0,0,100)',[id,hash]);
+  let checks=0;
+  const reject=async(operation:()=>Promise<unknown>,pattern:RegExp)=>{
+   await query('SAVEPOINT rejected');await assert.rejects(operation,pattern);
+   await query('ROLLBACK TO SAVEPOINT rejected');await query('RELEASE SAVEPOINT rejected');checks++;
+  };
+  const first=await batch(f.batch_id),content=makeContent('A synthetic revised bicycle review with a delayed delivery.');
+  assert.equal((await stage(first,content)).rows.length,1);assert.equal(await text(),root.text_clean);checks++;
+  assert.equal((await stage(first,content)).rows.length,1);
+  assert.equal((await query('SELECT count(*)::int n FROM signal_mention_content_revisions WHERE import_batch_id=$1',[first])).rows[0].n,1);checks++;
+  await reject(()=>stage(first,makeContent('Competing text for the very same synthetic import and ID.')),/content_revision_conflicting_rows/);
+  await reject(()=>query("UPDATE signal_mention_content_revisions SET next_content='{}' WHERE import_batch_id=$1",[first]),/content_revision_immutable/);
+  await reject(()=>query("UPDATE import_batches SET content_revision_mode='append_only' WHERE id=$1",[first]),/content_revision_seal_immutable/);
+  const beforeRevision=(await query('SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$1',[f.workspace_id])).rows[0]?.input_revision;
+  await query('SAVEPOINT publish_failure');
+  await complete(first);assert.equal(await text(),content.text_clean);
+  await query('ROLLBACK TO SAVEPOINT publish_failure');await query('RELEASE SAVEPOINT publish_failure');
+  assert.equal(await text(),root.text_clean);assert.equal((await query('SELECT status FROM import_batches WHERE id=$1',[first])).rows[0].status,'processing');checks++;
+  await complete(first);assert.equal(await text(),content.text_clean);
+  const afterRevision=(await query('SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$1',[f.workspace_id])).rows[0]?.input_revision;
+  if(beforeRevision!==undefined)assert.ok(BigInt(afterRevision)>BigInt(beforeRevision));checks++;
+  assert.equal((await complete(first)).rows[0].accepted,true);assert.equal(await text(),content.text_clean);checks++;
+  const history=(await query('SELECT previous_content,next_content FROM signal_mention_content_revisions WHERE import_batch_id=$1',[first])).rows[0];
+  assert.equal(history.previous_content.text_clean,root.text_clean);assert.equal(history.next_content.text_clean,content.text_clean);checks++;
+  const replay=await batch(first);
+  const replayResult=(await complete(replay,sha(first))).rows[0];assert.equal(replayResult.accepted,false);assert.equal(replayResult.accepted_batch_id,first);checks++;
+  const stale=await batch(f.batch_id);
+  await stage(stale,makeContent('A synthetic stale edit must never overwrite a newer source.'));
+  await reject(()=>complete(stale),/content_revision_base_stale/);assert.equal(await text(),content.text_clean);
+  const next=await batch(first);await stage(next,makeContent('A further synthetic edit for the current source and ID.'));
+  await query('SAVEPOINT revoke');await query("UPDATE users SET status='inactive' WHERE id=$1",[f.actor_user_id]);
+  await reject(()=>complete(next),/processing_forbidden|content_revision_forbidden/);
+  await query('ROLLBACK TO SAVEPOINT revoke');await query('RELEASE SAVEPOINT revoke');
+  await query('SAVEPOINT rights');await query("UPDATE signal_provenance_policy_bindings SET effective_to=clock_timestamp() WHERE workspace_id=$1 AND data_source_id=$2",[f.workspace_id,f.source_id]);
+  await reject(()=>complete(next),/content_revision_rights_unavailable/);
+  await query('ROLLBACK TO SAVEPOINT rights');await query('RELEASE SAVEPOINT rights');
+  await query('SAVEPOINT shared');
+  await query(`INSERT INTO signal_provider_mention_observations(workspace_id,data_source_id,import_batch_id,mention_id,
+    provider_key,provider_record_key_hash,provider_schema_version,provider_header_hash,observation_version,observation_hash,published_at)
+    VALUES($1,$2,$3,$4,'sentione',$5,'sentione-csv-47-v1',$6,1,$6,clock_timestamp())`,
+    [f.workspace_id,f.source_id,f.batch_id,root.id,`sha256:${sha('different provider record')}`,`sha256:${sha('synthetic header')}`]);
+  await reject(()=>complete(next),/content_revision_conflict/);
+  await query('ROLLBACK TO SAVEPOINT shared');await query('RELEASE SAVEPOINT shared');
+  // Same bytes previously accepted in append-only must reach the explicit revision path.
+  const append=await batch(first,'append_only');await complete(append,sha('same file new mode'));
+  const explicit=await batch(append);await stage(explicit,makeContent('The explicit revision accepts a file already accepted append-only.'));
+  assert.equal((await complete(explicit,sha('same file new mode'))).rows[0].accepted,true);checks++;
+  // Real parser + SQL persistence exercises source-local IDs and legacy defaults.
+  const secondSource=randomUUID();
+  await query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key,status)
+   VALUES($1,$2,$3,$4,'social_listening','synthetic','manual','Second synthetic source',$5,'active')`,
+   [secondSource,f.workspace_id,f.organization_id,f.brand_id,`source-sha256-${sha(secondSource)}`]);
+  const sourceBatch=randomUUID();await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,status)
+   VALUES($1,$2,$3,'synthetic','processing')`,[sourceBatch,f.workspace_id,secondSource]);
+  const csv=`id,text,date\n${root.provider_record_id},An independent synthetic provider uses this ID for different content.,2026-09-01T12:00:00Z\n`;
+  const parsed=await createSignalSentioneCsvIngester(database).ingestSentioneCsvStream({workspaceId:f.workspace_id,dataSourceId:secondSource,
+   importBatchId:sourceBatch,sourceFileName:'synthetic.csv',stream:new Blob([csv]).stream()});
+  assert.equal(parsed.stats.included_count,1);assert.equal(parsed.stats.duplicate_count,0);checks++;
+  await query('ROLLBACK');
+  console.log(JSON.stringify({stage:'import_content_revisions',status:'passed',real_postgres:true,synthetic_fixture:true,
+   checks,rolled_back:true,provider_calls:0,production_acceptance:false}));
+ }finally{await client.query('ROLLBACK').catch(()=>{});client.release();await pool.end();}
+});

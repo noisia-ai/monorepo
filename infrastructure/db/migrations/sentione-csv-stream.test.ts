@@ -5,7 +5,7 @@ import { createSignalSentioneCsvIngester, SENTIONE_CSV_47_HEADERS_V1 } from "../
 
 type SavedRow = Record<string, unknown>;
 
-async function ingest(bytes: Uint8Array, chunkSize: number) {
+async function ingest(bytes: Uint8Array, chunkSize: number,contentRevisionMode?:"append_only"|"revise_existing") {
   const saved: SavedRow[] = [];
   const observations: Array<Record<string, unknown>> = [];
   // A local sink captures the SQL boundary; no database or provider is involved.
@@ -22,7 +22,7 @@ async function ingest(bytes: Uint8Array, chunkSize: number) {
     }
     if (sql.includes("FROM mentions mention")) {
       const hashes = new Set(params[2] as string[]), ids = new Set(params[3] as string[]);
-      return { rows: saved.filter((row) => hashes.has(row.text_hash as string) || ids.has(row.provider_record_id as string)) };
+      return { rows: saved.filter((row) => hashes.has(row.text_hash as string) || (row.data_source_id===params[5] && ids.has(row.provider_record_id as string))) };
     }
     if (sql.includes("WITH input AS")) {
       observations.push(...JSON.parse(params[3] as string) as Array<Record<string, unknown>>);
@@ -34,7 +34,7 @@ async function ingest(bytes: Uint8Array, chunkSize: number) {
   let offset = 0;
   const result = await createSignalSentioneCsvIngester(pool as never).ingestSentioneCsvStream({
     workspaceId: crypto.randomUUID(), dataSourceId: crypto.randomUUID(), importBatchId: crypto.randomUUID(),
-    sourceFileName: "synthetic.csv", tuning: { chunkSize: 2, insertConcurrency: 1 },
+    sourceFileName: "synthetic.csv",contentRevisionMode, tuning: { chunkSize: 2, insertConcurrency: 1 },
     stream: new ReadableStream<Uint8Array>({ pull(controller) {
       if (offset >= bytes.length) { controller.close(); return; }
       controller.enqueue(bytes.slice(offset, offset + chunkSize));
@@ -96,4 +96,16 @@ test("SentiOne empty content falls back to its title before text deduplication",
     assert.equal(result.saved[0]?.text_raw, text);
     assert.equal(result.saved[0]?.text_hash, crypto.createHash("sha256").update(text.toLowerCase()).digest("hex"));
   }
+});
+
+
+test("explicit revisions reject competing contents for one ID across CSV chunks; legacy dedup remains",async()=>{
+  const rows=[
+    {Created:"2026-08-01T12:00:00Z",id:"same", "Content of posts":"The original synthetic review has enough length for inclusion."},
+    {Created:"2026-08-01T12:00:00Z",id:"other", "Content of posts":"A different synthetic record separates the competing revisions."},
+    {Created:"2026-08-01T12:00:00Z",id:"same", "Content of posts":"The changed synthetic review arrives with conflicting content."}
+  ];
+  const bytes=fixture(rows,",",true);
+  assert.equal((await ingest(bytes,7)).stats.duplicate_count,1);
+  await assert.rejects(ingest(bytes,7,"revise_existing"),/content_revision_conflicting_rows/);
 });

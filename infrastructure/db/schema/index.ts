@@ -1293,6 +1293,9 @@ export const importBatches = pgTable(
     storageSourceImportBatchId: uuid("storage_source_import_batch_id")
       .references((): AnyPgColumn => importBatches.id, { onDelete: "restrict" }),
     storageContentHash: text("storage_content_hash"),
+    contentRevisionMode: text("content_revision_mode").notNull().default("append_only"),
+    contentRevisionBaseBatchId: uuid("content_revision_base_batch_id")
+      .references((): AnyPgColumn => importBatches.id, { onDelete: "restrict" }),
     processingMetrics: jsonb("processing_metrics").notNull().default({}),
     productIdempotencyKey: text("product_idempotency_key"),
     productRequestDigest: text("product_request_digest"),
@@ -1604,7 +1607,7 @@ export const mentions = pgTable(
       .on(table.workspaceId, table.textHash)
       .where(sql`${table.canonicalMentionId} = ${table.id}`),
     uniqueIndex("uq_mentions_workspace_provider_canonical")
-      .on(table.workspaceId, table.sourceSystem, table.providerRecordId)
+      .on(table.workspaceId, table.dataSourceId, table.sourceSystem, table.providerRecordId)
       .where(sql`${table.canonicalMentionId} = ${table.id}`),
     index("idx_mentions_workspace_acceptance").on(table.workspaceId, table.inclusionStatus, table.publishedAt, table.id),
     index("idx_mentions_semantic_review_accepted_roots")

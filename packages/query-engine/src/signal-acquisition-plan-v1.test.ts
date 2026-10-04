@@ -176,3 +176,12 @@ test("typed provider observation validator is strict and operator-safe",()=>{
   assert.throws(()=>validateSignalProviderMentionObservationV1({ ...observation,text:"secret" }),/unknown fields/u);
   assert.throws(()=>validateSignalProviderMentionObservationV1({ ...observation,provider_schema_version:"unknown" }),/unsupported/u);
 });
+
+
+test("content revisions require an explicit supported mode and default to append-only",()=>{
+  const base={source_key:sourceKey,slot_key:slotKey,query_evidence:{class:"unavailable",query_version:null,reason:"historical_export",operator_confirmed:true},
+    period:{start:"2026-03-01",end:"2026-03-31",timezone:"UTC"},file_name:"changed.csv",file_size_bytes:100,content_type:"text/csv"};
+  assert.equal(validateSignalAcquisitionImportInputV2(base).content_revision_mode,"append_only");
+  assert.equal(validateSignalAcquisitionImportInputV2({...base,content_revision_mode:"revise_existing"}).content_revision_mode,"revise_existing");
+  for(const invalid of [true,"overwrite",{},1]) assert.throws(()=>validateSignalAcquisitionImportInputV2({...base,content_revision_mode:invalid}),/revision mode/);
+});

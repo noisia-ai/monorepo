@@ -64,6 +64,7 @@ export async function createWorkspaceImportUploadV1(args: {
   contentType: string;
   contributedByStudyCorpusId: string | null;
   supersedesImportBatchId: string | null;
+  contentRevisionMode?: "append_only" | "revise_existing";
   idempotencyKey: string;
   acquisition?: {
     sourceKey: string;slotKey: string;
@@ -77,6 +78,12 @@ export async function createWorkspaceImportUploadV1(args: {
   storage?:WorkspaceImportCreationStorageV1;
 }) {
   validateFile(args.fileName,args.fileSizeBytes,args.contentType);
+  const revisionMode = args.contentRevisionMode ?? "append_only";
+  if (!["append_only","revise_existing"].includes(revisionMode)) throw new WorkspaceAsyncImportError("content_revision_mode_invalid",422);
+  if (revisionMode === "revise_existing" && (process.env.NOISIA_MFP_ENABLED !== "true"
+      || args.access !== "manual-import" || !args.acquisition || args.supersedesImportBatchId)) {
+    throw new WorkspaceAsyncImportError("content_revision_unavailable",409);
+  }
   const idempotencyHash = hashValue(args.idempotencyKey);
   const batchId = randomUUID();
   const objectKey = workspaceImportObjectKeyV1({
@@ -91,7 +98,8 @@ export async function createWorkspaceImportUploadV1(args: {
     content_type: args.contentType,
     contributed_by_study_corpus_id: args.contributedByStudyCorpusId,
     supersedes_import_batch_id: args.supersedesImportBatchId,
-    acquisition: args.acquisition ?? null
+    acquisition: args.acquisition ?? null,
+    ...(revisionMode === "revise_existing" ? {content_revision_mode:revisionMode} : {})
   }));
   // Resolve only the server-owned bucket before the transaction. The signed
   // upload authority is minted after the workspace/source/idempotency row is
@@ -264,7 +272,7 @@ export async function createWorkspaceImportUploadV1(args: {
           acquisition_query_evidence_class,acquisition_query_evidence_reason,
           acquisition_query_evidence_actor_user_id,acquisition_query_evidence_attested_at,
           provider_execution_reference_hash,provider_execution_adapter_key,
-          provider_execution_verified_at,acquisition_import_seal_digest
+          provider_execution_verified_at,acquisition_import_seal_digest,content_revision_mode
         ) VALUES(
           $1::uuid,$2::uuid,$3::uuid,$3::uuid,$4::uuid,$5,
           CASE WHEN $6='competitor' THEN $7::uuid ELSE NULL END,
@@ -276,7 +284,7 @@ export async function createWorkspaceImportUploadV1(args: {
           CASE WHEN $20::text IS NULL THEN NULL ELSE 0 END,
           CASE WHEN $20::text IS NULL THEN NULL ELSE $33::timestamptz END,
           $34,$35,$36::uuid,$33::timestamptz,$37,$38,
-          CASE WHEN $34='provider_verified' THEN $33::timestamptz ELSE NULL END,$39
+          CASE WHEN $34='provider_verified' THEN $33::timestamptz ELSE NULL END,$39,$40
         )
       `,[batchId,args.workspace.id,args.contributedByStudyCorpusId,args.sourceId,
         legacy.mentionType,legacy.entityKind,source.governed_entity_id,
@@ -297,7 +305,7 @@ export async function createWorkspaceImportUploadV1(args: {
           ? targetAcquisition.queryEvidence.providerExecutionReferenceHash:null,
         targetAcquisition?.queryEvidence.class==="provider_verified"
           ? targetAcquisition.queryEvidence.providerExecutionAdapterKey:null,
-        importSealDigest]);
+        importSealDigest,revisionMode]);
       await client.query(`
         INSERT INTO signal_workspace_import_events(
           workspace_id,import_batch_id,event_type,actor_user_id,detail
@@ -886,7 +894,8 @@ function safeFailure(code: string | null) {
   const normalized = code || "processing_failed";
   const recoverable = !["content_already_accepted","cross_workspace",
     "source_timezone_required","source_timezone_invalid","source_timestamp_required",
-    "source_timestamp_invalid","source_timestamp_ambiguous","source_timestamp_nonexistent"].includes(normalized);
+    "source_timestamp_invalid","source_timestamp_ambiguous","source_timestamp_nonexistent"].includes(normalized)
+    && !normalized.startsWith("content_revision_");
   return { code: normalized,recoverable };
 }
 

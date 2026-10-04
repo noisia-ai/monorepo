@@ -11,9 +11,9 @@ type Props = ComponentProps<typeof ImportForm>;
 
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
-  function Fixture({ result = null, busy = false, canRegisterQuery = true }: { result?: Props["result"]; busy?: boolean; canRegisterQuery?: boolean }) {
+  function Fixture({ result = null, busy = false, canRegisterQuery = true,allowContentRevisions=false }: { allowContentRevisions?:boolean;result?: Props["result"]; busy?: boolean; canRegisterQuery?: boolean }) {
     const t = useTranslations("AdminWorkspace.data.acquisition");
-    return createElement(ImportForm, { locale, t, result, busy, timezone: "Europe/Madrid", simple: true,
+    return createElement(ImportForm, { locale, t, result, busy,allowContentRevisions, timezone: "Europe/Madrid", simple: true,
       readyForImport: true, queries: [], connectors: [], error: null, canCancelUpload: false,
       onCancelUpload() {}, onRefreshStatus() {}, onRegisterQuery: canRegisterQuery ? () => {} : undefined, onSubmit() {} });
   }
@@ -26,6 +26,13 @@ for (const locale of ["es-MX", "en-US"]) {
       assert.ok(html.includes(`name="${name}"`), name);
     assert.ok(render().includes(messages.AdminWorkspace.data.acquisition.queryEvidence.registerExecuted),
       "internal query registration remains available when its callback is supplied");
+  });
+  test(`${locale}: content revisions are a server-enabled, unchecked explicit choice`,()=>{
+    assert.doesNotMatch(render(),/name="content_revision_mode"/);
+    const html=render({allowContentRevisions:true});
+    const checkbox=html.match(/<input[^>]*name="content_revision_mode"[^>]*>/u)?.[0];
+    assert.ok(checkbox);assert.match(checkbox,/type="checkbox"/);assert.doesNotMatch(checkbox,/checked/);
+    assert.ok(html.includes(messages.AdminWorkspace.data.acquisition.contentRevisions.help));
   });
   test(`${locale}: the file zone uses the searchable IANA catalog and initializes from its workspace`, () => {
     const html = render();
