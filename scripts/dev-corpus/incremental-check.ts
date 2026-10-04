@@ -129,7 +129,7 @@ await main(async()=>{
   }
   report("rollback");await raw.query("ROLLBACK");transaction=false;assert.deepEqual(await census(),baseline);
   console.log(JSON.stringify({stage:"mfp_incremental_pg",status:"passed",policy_cases:policyCases,rollback:true,reused_real_parent:true,selected_roots:totalRoots,
-   selected_chunks:totalChunks,residual_tamper_rejected:true,finite_expiry_preserved:true,infinity_transport_only:true,revocation_enforced:true,provider_calls:0,cost_micro_usd:0}));
+   selected_chunks:totalChunks,residual_tamper_rejected:true,finite_expiry_preserved:policyCases.includes("finite")?true:null,infinity_transport_only:policyCases.includes("unlimited")?true:null,revocation_enforced:true,provider_calls:0,cost_micro_usd:0}));
  }catch(error){const diagnostic=(value:unknown):Record<string,unknown>=>{
    if(!value||typeof value!=="object")return{};
    const e=value as {name?:string;code?:string;message?:string;stack?:string;actual?:unknown;detail?:string};
