@@ -4452,6 +4452,7 @@
       "provider_unavailable": "Las acciones externas están pausadas. No se crearán llamadas ni reservas mientras continúen así."
     },
     "budget": {
+      "noStrictMaximum": "Sin máximo estricto",
       "routeMaximum": "Tope máximo del recorrido",
       "availableToday": "Disponible hoy",
       "usedToday": "Uso y reservas de hoy",
