@@ -8,4 +8,4 @@ RUNNER="$(node -e 'const t=require(process.argv[1]); if(!t.runner_service_id)pro
   echo 'MFP runner is not registered; complete the private dev-test provisioning in README.md.' >&2
   exit 2
 }
-exec pnpm dlx @railway/cli@5.45.5 ssh --environment 5bad359d-cfa4-4e8f-aa41-98e6f075375a --service "$RUNNER" -- node /app/scripts/dev-corpus/up.mjs
+exec pnpm dlx @railway/cli@5.63.1 ssh --project b7b7b325-f273-4eb6-80e0-d66e266159b2 --environment 5bad359d-cfa4-4e8f-aa41-98e6f075375a --service "$RUNNER" -- node /app/scripts/dev-corpus/up.mjs

@@ -11,13 +11,14 @@ runner `mfp-private-runner`. Sus IDs revisados están en `target.json`. No modif
 ## Provisión única
 
 1. Comprobar entorno, PostgreSQL17, system identifier, conexiones y ocupación.
-2. En el servicio pgvector privado, configurar temporalmente
-   `NOISIA_MFP_DATABASE_PASSWORD` como variable privada y ejecutar `provision.sql`
-   con psql administrador. Rechaza recursos existentes; no borra ni sobrescribe.
-   Retirar después la variable temporal. La contraseña permanece sólo en las
+2. En el servicio pgvector privado, pasar `NOISIA_MFP_DATABASE_PASSWORD` sólo por stdin SSH al shell remoto
+   y ejecutar `provision.sql` con psql administrador. Rechaza recursos existentes; no borra ni sobrescribe.
+   No persistir esa variable en pgvector. La contraseña permanece sólo en las
    variables privadas del runner/Studio MFP. No imprimir valores ni URLs.
 3. Desplegar Redis privado, autenticado, sin dominio/proxy, con volumen persistente.
-4. Desplegar el runner con `scripts/dev-corpus/railway.json` y su Dockerfile, sin
+4. Configurar en Railway el Dockerfile `scripts/dev-corpus/Dockerfile`, reinicio NEVER,
+   una réplica us-west2 y volumen `/app/.data/dev-corpus`; el JSON es referencia
+   declarativa y las opciones de servicio deben verificarse en Railway. Desplegar sin
    autodeploy, dominio ni proxy. Configurar `DATABASE_URL` privada al rol/base MFP,
    `REDIS_URL` privada MFP, `NOISIA_MFP_ENABLED=true`, `DATABASE_SSL=false`.
    El runner permanece disponible para SSH, sin trabajo automático ni proveedor.
@@ -31,11 +32,11 @@ Studio. No se habilitan destinos remotos genéricos ni se retiran guardas histó
 ## Gold humano
 
 Los datos viven exclusivamente en `.data/dev-corpus/` (ignorado por Git, permisos
-0700/0600). Ejecutar los scripts TypeScript con `pnpm exec tsx`.
+0700/0600). Ejecutar los scripts TypeScript con `node --import tsx`.
 
 ```
-pnpm exec tsx scripts/dev-corpus/gold-template.ts roots.jsonl entity-context.json comparisons.json concepts.json
-pnpm exec tsx scripts/dev-corpus/gold-import.ts annotated.csv .data/dev-corpus/gold-selection.json
+node --import tsx scripts/dev-corpus/gold-template.ts roots.jsonl entity-context.json comparisons.json concepts.json
+node --import tsx scripts/dev-corpus/gold-import.ts annotated.csv .data/dev-corpus/gold-selection.json
 ```
 
 `roots.jsonl` contiene raíces reales con `root_id`, `input_digest`, `text` y `title`.
@@ -60,11 +61,12 @@ Desde Railway SSH, dentro de `/app` (`TSX_TSCONFIG_PATH` ya definido en imagen):
 ```
 node scripts/dev-corpus/up.mjs
 node scripts/dev-corpus/migrate.mjs
-pnpm exec tsx scripts/dev-corpus/seed.ts .data/dev-corpus/brand.json
-pnpm exec tsx scripts/dev-corpus/import.ts .data/dev-corpus/load1.csv 2026-01-01 2026-12-31
-pnpm exec tsx scripts/dev-corpus/prepare.ts
-NOISIA_DEV_EMBEDDINGS=fake pnpm exec tsx scripts/dev-corpus/embeddings.ts
-pnpm exec tsx scripts/dev-corpus/status.ts
+node --import tsx scripts/dev-corpus/seed.ts .data/dev-corpus/brand.json
+node --import tsx scripts/dev-corpus/import.ts .data/dev-corpus/load1.csv 2026-01-01 2026-12-31
+node --import tsx scripts/dev-corpus/prepare.ts
+NOISIA_DEV_EMBEDDINGS=fake node --import tsx scripts/dev-corpus/embeddings.ts
+node --import tsx scripts/dev-corpus/status.ts
+node --import tsx scripts/dev-corpus/export-roots.ts
 ```
 
 Las fechas son argumentos del rango real del CSV. El importador usa Storage privado,

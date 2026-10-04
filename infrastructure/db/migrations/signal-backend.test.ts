@@ -388,7 +388,7 @@ test("Signal workspace data plane separates ownership, provenance, population an
   const [migration, applyScript, brandRoute, csvRoute, csvWorker, csvIngest, populationResolver] = await Promise.all([
     readFile(resolve(process.cwd(), "migrations/0059_signal_workspace_owned_data_plane.sql"), "utf8"),
     readFile(resolve(process.cwd(), "scripts/apply-signal-workspace-data-plane-migration.ts"), "utf8"),
-    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/brands/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/brand-creation-service.ts"), "utf8"),
     readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/corpora/[id]/mentions/csv-upload/route.ts"), "utf8"),
     readFile(resolve(process.cwd(), "../../services/workers/src/workers/mentions-csv-ingest.ts"), "utf8"),
     readFile(resolve(process.cwd(), "sentione-csv-ingest.ts"), "utf8"),

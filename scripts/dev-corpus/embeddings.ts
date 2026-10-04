@@ -8,8 +8,15 @@ await main(async()=>{
   const identity=JSON.parse(await readFile('.data/dev-corpus/identity.json','utf8'));const pool=await openDatabase();
   try {
     const {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1:profile}=await import('../../packages/query-engine/src/signal-workspace-embeddings-v1');
-    const {quoteSignalWorkspaceEmbeddingsStoreV1,requestSignalWorkspaceEmbeddingsStoreV1}=await import('../../infrastructure/db/signal-workspace-embeddings-management');
+    const {quoteSignalWorkspaceEmbeddingsStoreV1,requestSignalWorkspaceEmbeddingsStoreV1,loadSignalWorkspaceEmbeddingsStoreV1}=await import('../../infrastructure/db/signal-workspace-embeddings-management');
     const access={database:pool,workspace_id:identity.workspace_id,actor_user_id:identity.internal_user_id};
+    const previousMode=(await pool.query("SELECT metadata->>'mfp_embedding_mode' AS mode FROM signal_workspaces WHERE id=$1",[identity.workspace_id])).rows[0]?.mode;
+    if(previousMode&&previousMode!==mode)throw new Error('mfp_embedding_fixture_mode_conflict');
+    const current=await loadSignalWorkspaceEmbeddingsStoreV1({queryable:pool,workspace_id:identity.workspace_id});
+    if(current.is_current&&current.latest_completed){
+      console.log(JSON.stringify({stage:'embeddings',mode,status:'completed',counts:current.latest_completed.counts,
+        actual_provider_micro_usd:0,new_calls:0,ledger_is_simulated:mode==='fake',replayed:true}));return;
+    }
     const quote=await quoteSignalWorkspaceEmbeddingsStoreV1({...access,profile});
     console.log(JSON.stringify({stage:'embedding_quote',mode,estimated_micro_usd:mode==='fake'?0:quote.estimated_upper_micro_usd,
       missing_asset_chunks:quote.missing_asset_chunks}));
