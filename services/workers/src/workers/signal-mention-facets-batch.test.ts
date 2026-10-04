@@ -181,8 +181,7 @@ function harness() {
               type: "text",
               text: JSON.stringify({
                 roots:
-                  run.identity.params.request_format ===
-                  "required-ordinal-fields-v2"
+                  run.identity.params.request_format !== undefined
                     ? Object.fromEntries(
                         call.inputs.map((_, ordinal) => [
                           `r${ordinal}`,

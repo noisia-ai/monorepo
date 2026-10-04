@@ -241,7 +241,7 @@ export function mentionFacetsOrdinalJsonSchemaV2(rootCount: number) {
     definitions: { facet: ordinalFacetSchemaV2 },
   };
 }
-export function facetLabelerIdentityV1(): LabelerIdentity {
+export function facetLabelerIdentityOrdinalV2(): LabelerIdentity {
   const legacy = facetLabelerIdentityLegacyV1();
   return {
     ...legacy,
@@ -253,8 +253,41 @@ export function facetLabelerIdentityV1(): LabelerIdentity {
     },
   };
 }
+// V2 remains reproducible after the provider rejected its repeated-group regex.
+// V3 changes only that grammar constraint; prompt and Zod still reject >12 words.
+const ordinalFacetSchemaV3 = structuredClone(ordinalFacetSchemaV2);
+(
+  ordinalFacetSchemaV3.properties.asunto as ReturnType<typeof objectJson>
+).properties.value = {
+  anyOf: [{ type: "string" }, { type: "null" }],
+};
+export const MENTION_FACETS_ORDINAL_FORMAT_V3 =
+  "required-ordinal-fields-v3" as const;
+export const mentionFacetsOrdinalSchemaTemplateV3 = {
+  ...mentionFacetsOrdinalSchemaTemplateV2,
+  contract: MENTION_FACETS_ORDINAL_FORMAT_V3,
+  definitions: { facet: ordinalFacetSchemaV3 },
+};
+export function mentionFacetsOrdinalJsonSchemaV3(rootCount: number) {
+  return {
+    ...mentionFacetsOrdinalJsonSchemaV2(rootCount),
+    definitions: { facet: ordinalFacetSchemaV3 },
+  };
+}
+export function facetLabelerIdentityV1(): LabelerIdentity {
+  const previous = facetLabelerIdentityOrdinalV2();
+  return {
+    ...previous,
+    schema_digest: digest(mentionFacetsOrdinalSchemaTemplateV3),
+    params: {
+      ...previous.params,
+      request_format: MENTION_FACETS_ORDINAL_FORMAT_V3,
+    },
+  };
+}
 function facetRequestFormatV1(identity: LabelerIdentity) {
   const legacy = facetLabelerIdentityLegacyV1(),
+    previous = facetLabelerIdentityOrdinalV2(),
     current = facetLabelerIdentityV1();
   if (
     identity.kind !== "facets" ||
@@ -269,11 +302,17 @@ function facetRequestFormatV1(identity: LabelerIdentity) {
   )
     return "legacy-array-v1" as const;
   if (
-    identity.prompt_digest === current.prompt_digest &&
-    identity.schema_digest === current.schema_digest &&
+    identity.prompt_digest === previous.prompt_digest &&
+    identity.schema_digest === previous.schema_digest &&
     identity.params.request_format === MENTION_FACETS_ORDINAL_FORMAT_V2
   )
     return MENTION_FACETS_ORDINAL_FORMAT_V2;
+  if (
+    identity.prompt_digest === current.prompt_digest &&
+    identity.schema_digest === current.schema_digest &&
+    identity.params.request_format === MENTION_FACETS_ORDINAL_FORMAT_V3
+  )
+    return MENTION_FACETS_ORDINAL_FORMAT_V3;
   throw new Error("facet_labeler_identity_unsupported");
 }
 export function validateFacetLabelerIdentityV1(identity: LabelerIdentity) {
@@ -316,7 +355,9 @@ export function buildFacetRequestV1(
         schema:
           format === "legacy-array-v1"
             ? mentionFacetsJsonSchemaV1
-            : mentionFacetsOrdinalJsonSchemaV2(inputs.length),
+            : format === MENTION_FACETS_ORDINAL_FORMAT_V2
+              ? mentionFacetsOrdinalJsonSchemaV2(inputs.length)
+              : mentionFacetsOrdinalJsonSchemaV3(inputs.length),
       },
     },
     system: [
@@ -386,7 +427,7 @@ export function parseFacetGroupV1(
   } catch {
     return { split: true, results: [] };
   }
-  if (facetRequestFormatV1(identity) === MENTION_FACETS_ORDINAL_FORMAT_V2) {
+  if (facetRequestFormatV1(identity) !== "legacy-array-v1") {
     const envelope = z
       .object({ roots: z.record(z.unknown()) })
       .strict()

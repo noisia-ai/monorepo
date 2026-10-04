@@ -247,9 +247,11 @@ test("ordinal grammar preserves legacy identities and requires every input key",
     buildFacetRequestV1,
     facetLabelerIdentityV1,
     facetLabelerIdentityLegacyV1,
+    facetLabelerIdentityOrdinalV2,
     validateFacetLabelerIdentityV1,
   } = await import("./signal-mention-facets-v1");
   const legacy = facetLabelerIdentityLegacyV1(),
+    previous = facetLabelerIdentityOrdinalV2(),
     current = facetLabelerIdentityV1();
   assert.equal(
     legacy.prompt_digest,
@@ -259,6 +261,18 @@ test("ordinal grammar preserves legacy identities and requires every input key",
     legacy.schema_digest,
     "sha256:6bc8a3548169c8de1a54785c0fc75bd8e16ab9053fe8f49cca4edf3a868f41aa",
   );
+  assert.equal(
+    previous.prompt_digest,
+    "sha256:592728b28d0ea8f3721ce33804e2545ad04c93a72fe8ce03bf97a43fd2f327ca",
+  );
+  assert.equal(
+    previous.schema_digest,
+    "sha256:53a371b67816339162cb852a3eb1f31d1a4aff479e14cedb1210f9be09cbc64e",
+  );
+  assert.equal(current.prompt_digest, previous.prompt_digest);
+  assert.notEqual(current.schema_digest, previous.schema_digest);
+  assert.equal(current.params.request_format, "required-ordinal-fields-v3");
+  assert.doesNotThrow(() => validateFacetLabelerIdentityV1(previous));
   assert.doesNotThrow(() => validateFacetLabelerIdentityV1(current));
   assert.throws(
     () => buildFacetRequestV1([], ce, current),
@@ -340,16 +354,28 @@ test("ordinal grammar preserves legacy identities and requires every input key",
       ),
       false,
     );
-    const topicPattern = new RegExp(
-      fields.asunto.properties.value.anyOf[0].pattern,
+    assert.equal(fields.asunto.properties.value.anyOf[0].pattern, undefined);
+    const previousSchema = buildFacetRequestV1(inputs, ce, previous)
+      .output_config.format.schema as any;
+    const expectedSchema = structuredClone(previousSchema);
+    delete expectedSchema.definitions.facet.properties.asunto.properties.value
+      .anyOf[0].pattern;
+    assert.deepEqual(schema, expectedSchema);
+    assert.equal(
+      previousSchema.definitions.facet.properties.asunto.properties.value
+        .anyOf[0].pattern,
+      "^\\S+(?:\\s+\\S+){0,11}$",
     );
     assert.equal(
-      topicPattern.test(Array.from({ length: 12 }, () => "tema").join(" ")),
-      true,
-    );
-    assert.equal(
-      topicPattern.test(Array.from({ length: 13 }, () => "tema").join(" ")),
-      false,
+      parseFacetGroupV1(
+        JSON.stringify({
+          roots: Object.fromEntries(expectedKeys.map((key) => [key, facets()])),
+        }),
+        inputs,
+        ce,
+        previous,
+      ).results.length,
+      count,
     );
     const tooLong = {
       roots: Object.fromEntries(

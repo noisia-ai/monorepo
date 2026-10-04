@@ -6,6 +6,7 @@ import {
   buildFacetRequestV1,
   facetInputDigestV1,
   facetLabelerIdentityV1,
+  facetLabelerIdentityOrdinalV2,
   parseFacetGroupV1,
 } from "../../packages/query-engine/src/signal-mention-facets-v1";
 import {
@@ -24,6 +25,12 @@ import {
 } from "../../services/workers/src/providers/anthropic-message-batches";
 
 const variant = "ordinal";
+// Default pins the existing V2 journals; V3 must use a separate opt-in journal.
+const version = Number(
+  process.argv.find((arg) => arg.startsWith("--version="))?.slice(10) ?? "2",
+);
+if (![2, 3].includes(version))
+  throw new Error("mfp_ordinal_probe_version_invalid");
 const rootCount = Number(
   process.argv.find((arg) => arg.startsWith("--roots="))?.slice(8),
 );
@@ -121,10 +128,11 @@ const inputs = examples.slice(0, rootCount).map((example, index) => {
     language: index % 2 === 0 ? "es" : "en",
   };
 });
-const identity = facetLabelerIdentityV1();
+const identity =
+  version === 2 ? facetLabelerIdentityOrdinalV2() : facetLabelerIdentityV1();
 const params = buildFacetRequestV1(inputs, context, identity);
 const request = {
-  custom_id: `mfp-sonnet-required-ordinals-${rootCount}-v2`,
+  custom_id: `mfp-sonnet-required-ordinals-${rootCount}-v${version}`,
   params,
 };
 const requestDigest = sha(JSON.stringify(request));
@@ -138,7 +146,7 @@ const estimate = {
   reserved_micro_usd: estimatedInput * 2 + request.params.max_tokens * 5,
   cap_micro_usd: null,
 };
-const directory = `.data/dev-corpus/sonnet-required-ordinals-probe-${rootCount}-v2`;
+const directory = `.data/dev-corpus/sonnet-required-ordinals-probe-${rootCount}-v${version}`;
 type Event = {
   state: string;
   at: string;
