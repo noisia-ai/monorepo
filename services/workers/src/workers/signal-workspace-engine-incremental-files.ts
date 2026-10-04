@@ -420,7 +420,7 @@ async function publish(path: string, temporary: string) {
 }
 export async function prepareSignalWorkspaceIncrementalInputFilesV1(args: {
   storage_root: string; input_directory: string; input_manifest_ref: WorkspaceIncrementalFileRefV1; execution_id: string;
-  descriptor: WorkspaceIncrementalNumericDescriptorV1; roots: AsyncIterable<ReadonlyArray<Root>>; parent: WorkspaceIncrementalParentFilesV1;
+  descriptor: WorkspaceIncrementalNumericDescriptorV1; roots: AsyncIterable<ReadonlyArray<Root>>; root_page_size?: 128 | 200; parent: WorkspaceIncrementalParentFilesV1;
 }) {
   descriptorCheck(args.descriptor); uuid.parse(args.execution_id);
   const directory = await assertWorkspaceEngineDirectoryV1(args.input_directory, args.storage_root);
@@ -429,7 +429,7 @@ export async function prepareSignalWorkspaceIncrementalInputFilesV1(args: {
   const file = await open(temporaryRoots, "wx", 0o600); let count = 0, previous = "";
   try {
     for await (const page of args.roots) {
-      if (!page.length || page.length > 128) fail("root_page_invalid");
+      if (!page.length || page.length > (args.root_page_size === 200 ? 200 : 128)) fail("root_page_invalid");
       for (const raw of page) {
         const root = signalWorkspaceIncrementalRootSchemaV1.parse(raw);
         if (root.root_id <= previous) fail("root_order_invalid"); previous = root.root_id;

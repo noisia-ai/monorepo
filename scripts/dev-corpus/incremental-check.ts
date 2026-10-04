@@ -4,6 +4,7 @@ import {randomUUID} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import type {SignalWorkspaceEngineDatabaseV1} from "../../infrastructure/db/signal-workspace-engine";
 type Pool=SignalWorkspaceEngineDatabaseV1 & {end():Promise<void>};
+import {installMfpClaimDiagnosticV1} from "./incremental-claim-diagnostic";
 import {main,openDatabase} from "./guard.mjs";
 import {beginSignalWorkspaceIncrementalEngineV1,readSignalWorkspaceIncrementalRootsV1} from "../../infrastructure/db/signal-workspace-engine-incremental";
 import {claimSignalWorkspaceEngineV1,loadSignalWorkspaceEnginePreflightV1} from "../../infrastructure/db/signal-workspace-engine";
@@ -51,6 +52,7 @@ await main(async()=>{
    ["0237_signal_discovery_incremental.sql","SELECT position('residual_root_ids' IN pg_get_functiondef('guard_signal_workspace_engine_v1()'::regprocedure))>0 present"],
    ["0238_signal_discovery_incremental_editorial.sql","SELECT to_regprocedure('signal_workspace_incremental_editorial_actor_v1(uuid,uuid,uuid)') IS NOT NULL present"]
   ])if(!(await raw.query(probe!)).rows[0].present)await raw.query(await readFile(new URL(`../../infrastructure/db/migrations/${file}`,import.meta.url),"utf8"));
+  if(process.argv.includes("--editorial-check"))await installMfpClaimDiagnosticV1(sql=>raw.query(sql));
   const scope=(await raw.query<{organization_id:string;brand_id:string}>("SELECT organization_id,brand_id FROM signal_workspaces WHERE id=$1",[identity.workspace_id])).rows[0]!;
   assert.equal(scope.brand_id,identity.brand_id);
   const parent=(await raw.query<{id:string;config:Record<string,unknown>;roots:number;chunks:number}>(`SELECT id,input_snapshot->'engine_config' config,
@@ -121,9 +123,13 @@ await main(async()=>{
    selected_chunks:totalChunks,residual_tamper_rejected:true,finite_expiry_preserved:true,infinity_transport_only:true,revocation_enforced:true,provider_calls:0,cost_micro_usd:0}));
  }catch(error){const diagnostic=(value:unknown):Record<string,unknown>=>{
    if(!value||typeof value!=="object")return{};
-   const e=value as {name?:string;code?:string;message?:string;stack?:string;actual?:unknown};
+   const e=value as {name?:string;code?:string;message?:string;stack?:string;actual?:unknown;detail?:string};
    const message=e.message??"";
-   return{name:e.name,code:e.code,
+   let checks:Record<string,boolean|null>|undefined;
+   if(message==="mfp_editorial_claim_predicate_failed"&&e.detail){try{const parsed=JSON.parse(e.detail);
+    if(parsed&&typeof parsed==="object"&&!Array.isArray(parsed)&&Object.entries(parsed).every(([key,value])=>/^[a-z_]+$/.test(key)&&(typeof value==="boolean"||value===null)))checks=parsed;
+   }catch{ /* Nonboolean details are never printed. */ }}
+   return{name:e.name,code:e.code,...(checks?{checks}:{}),
     ...( /^(?:workspace_|processing_|mfp_)[a-z_]+$/.test(message)||/^Engine [a-zA-Z .]+\.$/.test(message)?{message}:{}),
     frame:e.stack?.split("\n").find(line=>line.trim().startsWith("at "))?.replace(/\([^)]*\//,"("),
     ...(e.actual instanceof Error?{actual:diagnostic(e.actual)}:{})};

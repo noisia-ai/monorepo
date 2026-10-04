@@ -40,16 +40,20 @@ export async function checkMfpIncrementalEditorialV1(args:Parameters<typeof crea
   target_unit_digest:unitDigest(units.map(unit=>unit.unit_key)),target_binding_digest:digest(units.map(({component_key,local_label,unit_key,birth_membership_digest,model_origin})=>({component_key,unit:{local_label,unit_key,birth_membership_digest},model_origin}))),
   stream:{contract_version:'workspace-incremental-editorial-evidence-jsonl-v1' as const,rows:units.length,bytes:Buffer.byteLength(stream),sha256:sha(stream)}};
  const evidence={...body,evidence_digest:digest(body)},stored={storage_key:`workspace-engine/${access.workspace_id}/${f.lease.execution_id}/editorial/${digest(body).slice(7)}.jsonl`,sha256:sha(stream),size_bytes:Buffer.byteLength(stream),media_type:'application/octet-stream'};
- report('editorial_admission');
+ report('editorial_evidence');
  const plan=await editorial.persistSignalWorkspaceIncrementalEditorialEvidenceV1({...scope,evidence,stored});
+ report('editorial_preview');
  const preview=await editorial.loadSignalWorkspaceIncrementalEditorialAdmissionV1(scope);assert.equal(preview.can_authorize,true);assert.ok(preview.target_unit_digest);
  const begin={...scope,expected_evidence_plan_artifact_id:plan.artifact_id,expected_numeric_checkpoint_digest:preview.numeric_checkpoint_digest,
   expected_target_unit_digest:preview.target_unit_digest,expected_history_cut_digest:preview.history_cut_digest,idempotency_key:randomUUID(),
   cap_micro_usd:args.cap,admission_not_after:preview.maximum_admission_not_after};
+ report('editorial_begin');
  const admitted=await editorial.beginSignalWorkspaceIncrementalEditorialV1(begin);assert.equal(admitted.receipt.grant_cap_micro_usd,args.cap);
  assert.deepEqual(await editorial.beginSignalWorkspaceIncrementalEditorialV1(begin),{...admitted,replayed:true});
+ report('editorial_enqueue');
  const queued=await runtime.enqueueSignalWorkspaceIncrementalEditorialV1({...access,execution_id:admitted.execution_id});
  await query("UPDATE signal_topic_classification_outbox SET status='dispatched',dispatched_at=clock_timestamp() WHERE execution_id=$1",[admitted.execution_id]);
+ report('editorial_claim');
  const lease=await runtime.claimSignalWorkspaceIncrementalEditorialV1({...queued,database});assert.ok(!('completed' in lease));
  const context=await runtime.readSignalWorkspaceIncrementalEditorialContextV1({database,lease});
  const batch=buildBatch(context.context,groups,sonnet),jsonl=JSON.stringify({contract_version:'workspace-incremental-editorial-batch-v1',index:0,batch})+'\n';
