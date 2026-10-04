@@ -1,6 +1,6 @@
 /** Read-only preflight for the private MFP fixture before sending any text to JEV. */
 import { loadMfpEvalIdentity } from './fixture-identity';
-// @ts-expect-error guarded private runner JavaScript
+// @ts-ignore -- eval and provider tsconfigs type the guarded JavaScript entrypoint differently.
 import { main,openDatabase } from '../dev-corpus/guard.mjs';
 type RightsCensus={accepted_batches:number;accepted_sources:number;authorized_batches:number;authorized_sources:number;
   expected_source_batches:number;active_runs:number;unsettled_calls:number};
