@@ -1,6 +1,6 @@
 # WS2 — Ficha por mención v1
 
-Estado: código experimental en revisión en PR18; PostgreSQL compuesto y probe real pasaron; demo Claude inicial cerrada con fallo estructural de cobertura; todavía sin aceptación WS2 integral. Rama `feat/mfp-ws2-facets`, base `7833fed`; SQL0221–0224 aplicadas una vez en MFP privado a las 09:46:57UTC. SQL0225 conserva correcciones humanas sobre una base de abstenciones cuando el etiquetador actual no aporta ficha; aplicada una vez en MFP tras la revisión focal y las22 aserciones con rollback. HashSHA256 `2b2f69ce5c264a7c06011fef6e688f5ac57e21aab5208214c38b38f28c7dac4f`;218 migraciones totales. No entrega UAT ni aprobación semántica de un etiquetador.
+Estado actualizado a las 12:35UTC: PR18 integrado en develop (`fb1503c`), CI final `37198352403` completo; corpus Claude y ensayo selectivo de alias completados en dev-test remoto. La calidad semántica requiere WS4 y no se acredita UAT. La evidencia cronológica que sigue conserva los fallos y correcciones previos. Rama `feat/mfp-ws2-facets`, base `7833fed`; SQL0221–0224 aplicadas una vez en MFP privado a las 09:46:57UTC. SQL0225 conserva correcciones humanas sobre una base de abstenciones cuando el etiquetador actual no aporta ficha; aplicada una vez en MFP tras la revisión focal y las22 aserciones con rollback. HashSHA256 `2b2f69ce5c264a7c06011fef6e688f5ac57e21aab5208214c38b38f28c7dac4f`;218 migraciones totales. No entrega UAT ni aprobación semántica de un etiquetador.
 
 Contrato entregado: `signal-entity-context-v1`, `signal-mention-labeler-v1`, `signal-mention-facets-v1`, parser Anthropic y precios compartidos. Sonnet5.5 usa Batches, adaptive/low, salida estructurada y caché de contexto de una hora. El prompt recibe entidades como datos; no contiene marcas. Los tipos admiten abstención por dimensión y separan error técnico, refusal, abstención y decisión.
 
@@ -22,7 +22,7 @@ Validación posterior: `facets-postinstall-check.ts` **22 aserciones PASS**, rol
 
 Voyage real:905/905 raíces completas,3,144 chunks nuevos y14 hits de caché; costeUSD0.097130 frente a estimaciónUSD1.321393. El primer intento quedó definitely_not_sent con coste0 por un flag omitido en el launcher; el reintento explícito recuperó sin duplicar. 32 respuestas HTTP200,809,294 tokens y32 hashes de crudo verificados; reservas, incertidumbre y excepciones0. Replay con proveedor deshabilitado y clave retirada:0 llamadas y ledger intacto. La fixture fake permanece separada.
 
-Ensayo de alias preparado y typecheck remoto PASS: `facets-alias-check.ts` usa el cwd privado real. Secuencia `prepare` → `replay` → `add` → harness `facets.ts --real --key=<next_run_key>` → `check-b` → `restore` → harness con la nueva clave de retorno → `verify` → `replay`. Cada fase se pasa como `--phase=...`. El alias temporal modifica sólo la marca real con operación gobernada/CAS; no toca seeds compartidos. El snapshot privado permite restaurar aliases exactos y conserva historia CE. Las anotaciones del gold nunca bloquean restore ni se escriben; selección/context exportado se verifican por hash. No se ha ejecutado todavía.
+Ensayo de alias preparado y typecheck remoto PASS: `facets-alias-check.ts` usa el cwd privado real. Secuencia `prepare` → `replay` → `add` → harness `facets.ts --real --key=<next_run_key>` → `check-b` → `restore` → harness con la nueva clave de retorno → `verify` → `replay`. Cada fase se pasa como `--phase=...`. El alias temporal modifica sólo la marca real con operación gobernada/CAS; no toca seeds compartidos. El snapshot privado permite restaurar aliases exactos y conserva historia CE. Las anotaciones del gold nunca bloquean restore ni se escriben; selección/context exportado se verifican por hash. Se ejecutó después de integrar PR18; el resultado final figura al cierre de este recibo.
 
 Claude real inicial: el primer contrato multiraíz devolvió con frecuencia sólo ordinal0. El run se cerró con código diagnóstico tras conciliar todo lo enviado, sin nuevas reservas ni reintento automático:188 fichas semánticas(158labeled/30abstained),12 errores técnicos y705pending; costeUSD1.130527, reserva0, duración979,316ms. La evidencia distingue cobertura de serialización de calidad semántica. Los cuatro probes cortos(8/25 raíces, baseline/envelope) pasaron porUSD0.092116 y no demostraron una mejora causal del envelope. El diagnóstico de requests confirmó50/74 fallos multiraíz incluso con2 raíces/692 caracteres;24 grupos de hasta69,366 caracteres sí pasaron y los requests coincidían con sus inputs. No se calibró semántica con gold.
 
@@ -36,4 +36,29 @@ Particionado técnico adoptado: el default usa el mismo prompt/esquema v3 demost
 
 La estimación usa el tamaño técnico y distingue textos largos. GET estima el etiquetador que solicitaría la siguiente ejecución (default o identidad interna explícita), conserva los estados del seleccionado y no escribe. Si las identidades difieren, muestra `all_eligible_for_new_labeler` como estimación conservadora; la admisión calcula después de seleccionar. El harness muestra la estimación de su identidad prevista. Validación remota: typechecks DB/Query/Worker/dev-corpus PASS,16 pruebas focales PASS y27 aserciones PostgreSQL PASS con rollback/proveedor0. La regresión verifica seleccionado completo→nueva identidad con estimación positiva, misma identidad con caché→cero, estados vigentes conservados y selector sin cambios. Revisión focal sin hallazgos. Root inicia el corpus905 con v3 y grupos8; no requiere otro probe porque el request de8 es idéntico al que ya pasó con proveedor.
 
-Pendiente: validar cobertura multiraíz con proveedor bajo la identidad nueva; completar demo Anthropic del corpus + replay0 + alias selectivo y retornoA, recibo de costes Claude y CI final actualizado. El workspace WS1 con embeddings fake se conserva separado del destino real que coordina root; no acredita semántica ni se convierte en Voyage. La interfaz y calificación gold corresponden a WS7/WS4. No activar interest decision V2/V3 ni reutilizar sus guardas/tablas.
+Pendiente: calificación semántica humana y aceptación del recorrido UI; cobertura, replay y alias ya quedaron comprobados técnicamente según el cierre siguiente. El workspace WS1 con embeddings fake se conserva separado del destino real que coordina root; no acredita semántica ni se convierte en Voyage. La interfaz y calificación gold corresponden a WS7/WS4. No activar interest decision V2/V3 ni reutilizar sus guardas/tablas.
+
+## Cierre técnico real, 4 octubre 2026 12:35UTC
+
+La identidad v3 con grupos de ocho completó las905 raíces en1,543,216ms de
+tiempo total, incluida recuperación de conexión. CosteUSD2.774990 frente a
+estimaciónUSD2.770782, reserva0. No hubo fallos de cobertura ordinal. Cinco
+respuestas excedieron el contrato de12 palabras en asunto: se conservaron como
+errores técnicos, sin truncar ni cambiar el etiquetador. Dos solicitudes explícitas
+de recuperación costaronUSD0.021954 yUSD0.001912. Estado final:831labeled
+(374relevant,35spam,422unrelated),74abstained (5spam,69unknown),0error.
+
+El ensayo A→B→A modificó un alias mediante la operación Brand OS con CAS.
+B afectó58 raíces y dejó847 fichas intactas; costóUSD0.455576 frente a
+estimaciónUSD0.395798, másUSD0.010963 de recuperación explícita de un error.
+Al restaurar exactamente los aliases originales se identificaron63 raíces
+afectadas por el cambio de entidades. Volver aA reutilizó la caché:0 llamadas
+yUSD0. La versión CE aumentó de forma monotónica aunque volvió al digest
+anterior. Verificación final y replay confirmaron el ledger intacto,0 llamadas
+nuevas, selección/contexto gold sin cambios y plantilla de anotación conservada.
+
+Los diarios y crudos están en el volumen privado MFP y los logs de ejecución
+en `.data/dev-corpus/` del checkout principal. Las recuperaciones mantienen
+las ejecuciones fallidas y sus costes; no reinterpretan errores como abstenciones.
+La marca del ensayo se creó por el servicio de producto con un actor interno:
+esta prueba no acredita alta self-service por navegador ni precisión semántica.

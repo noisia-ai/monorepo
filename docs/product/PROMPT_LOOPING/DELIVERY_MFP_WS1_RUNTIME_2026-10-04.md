@@ -30,3 +30,12 @@ identidad del runtime. Activar una única réplica con las colas privadas de Stu
 credenciales mínimas; verificar heartbeat y un trabajo del recorrido. La recuperación
 es volver al modo inactivo después de reconciliar el trabajo aceptado, conservando
 base, volumen y recibos. UAT/producción no forman parte de este cambio de runtime.
+
+Incidente y corrección de configuración (12:35UTC): la UI de Railway mostró
+autodeploy activo en Studio y runner MFP, contrario al recibo anterior. Un merge
+de develop creó el deployment `04c9b32e-7819-4068-95c9-16813ff37078`
+(`ada9d98`,12:28:05UTC), interrumpiendo un ensayo PG y retirando sus overlays.
+No fue OOM; el contador del contenedor era0. La base confirmó cierre de conexiones
+y ausencia de la tabla0226 tras rollback. Root desactivó autodeploy en ambos
+servicios; ambos confirmados después de recargar la UI. El volumen y sus recibos
+permanecieron intactos. Las siguientes entregas requieren despliegue explícito.
