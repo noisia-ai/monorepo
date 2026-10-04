@@ -441,13 +441,21 @@ export async function loadConceptMembershipPreviewV1(
     if (!run) fail("membership_preview_not_found", 404);
     const rows = (
       await c.query(
-        `SELECT DISTINCT ON(result->>'root_id',result->>'concept_key') result,
-   CASE WHEN rights.evidence THEN f.full_text ELSE NULL END text,CASE WHEN rights.evidence THEN f.title ELSE NULL END title,
-   CASE WHEN rights.evidence THEN mention.url ELSE NULL END url,f.platform,NOT COALESCE(rights.evidence,false) evidence_withheld
+        `/* membership-preview-items */ WITH latest_results AS MATERIALIZED (
+   SELECT DISTINCT ON(result->>'root_id',result->>'concept_key') result
    FROM signal_labeling_calls call CROSS JOIN LATERAL jsonb_array_elements(call.results) result
-   JOIN signal_mention_facets_current_v1 f ON f.workspace_id=call.workspace_id AND f.root_id=(result->>'root_id')::uuid
-   JOIN mentions mention ON mention.id=f.root_id LEFT JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id
-   WHERE call.run_id=$1 AND call.workspace_id=$2 AND rights.metrics AND call.results_applied ORDER BY result->>'root_id',result->>'concept_key',call.created_at DESC`,
+   WHERE call.run_id=$1 AND call.workspace_id=$2 AND call.results_applied
+   ORDER BY result->>'root_id',result->>'concept_key',call.created_at DESC
+   ), current_roots AS MATERIALIZED (
+   SELECT root_id,full_text,title,platform FROM signal_mention_facets_current_v1 WHERE workspace_id=$2
+   ), current_rights AS MATERIALIZED (
+   SELECT root_id,evidence FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$2 AND metrics
+   ) SELECT result,
+   CASE WHEN rights.evidence THEN f.full_text ELSE NULL END text,CASE WHEN rights.evidence THEN f.title ELSE NULL END title,
+   CASE WHEN rights.evidence THEN mention.url ELSE NULL END url,f.platform,NOT rights.evidence evidence_withheld
+   FROM latest_results JOIN current_roots f ON f.root_id=(result->>'root_id')::uuid
+   JOIN mentions mention ON mention.id=f.root_id JOIN current_rights rights ON rights.root_id=f.root_id
+   ORDER BY result->>'root_id',result->>'concept_key'`,
         [args.run_id, args.workspace_id],
       )
     ).rows;

@@ -1,5 +1,6 @@
 /** Opt-in private PostgreSQL test. All DDL/data rollback; provider is simulated. */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { main, openDatabase } from "./guard.mjs";
 import {
@@ -118,6 +119,7 @@ await main(async () => {
           typeof sql === "string" &&
           (sql.includes("/* membership-status-items */") ||
             sql.includes("/* membership-override-targets */") ||
+            sql.includes("/* membership-preview-items */") ||
             sql.includes("mfp_memberships AS MATERIALIZED"))
         ) {
           const plan = await client.query(
@@ -571,10 +573,64 @@ await main(async () => {
     // Permissions are current data, independent of paid/model authority.
     enter("license_revocation");
     await client.query("SAVEPOINT deny_metrics");
-    await client.query(
-      "UPDATE signal_licensing_policies SET status='retired' WHERE workspace_id=$1 AND status='active'",
-      [access.workspace_id],
+    const {
+      ensureSignalLicensingPolicyDraftV1,
+      activateSignalDataGovernanceObjectV1,
+    } = await import(
+      "../../apps/studio/src/lib/data-os/signal-data-governance"
     );
+    const actor = {
+      id: access.actor_user_id,
+      userType: "noisia_internal" as const,
+      organizationId: null,
+    };
+    const fixtureHash = (seed: string) =>
+      `sha256:${createHash("sha256").update(seed).digest("hex")}`;
+    const licenses = (
+      await client.query(
+        `SELECT p.organization_id,p.policy_key,
+      (SELECT max(version.policy_version)+1 FROM signal_licensing_policies version WHERE version.workspace_id=p.workspace_id AND version.policy_key=p.policy_key) next_version
+      FROM signal_licensing_policies p WHERE p.workspace_id=$1 AND p.status='active'`,
+        [access.workspace_id],
+      )
+    ).rows;
+    check(
+      licenses.length > 0,
+      "active license required for revocation fixture",
+    );
+    for (const license of licenses) {
+      // Activating the successor retires the bound predecessor through the real
+      // governance function, with effective_to and its append-only audit event.
+      const draft = await ensureSignalLicensingPolicyDraftV1({
+        queryable: client,
+        organizationId: license.organization_id,
+        actor,
+        definition: {
+          workspace_id: access.workspace_id,
+          policy_key: license.policy_key,
+          policy_version: license.next_version,
+          approval_evidence_hash: fixtureHash(
+            "membership-rights-rollback-evidence",
+          ),
+          usages: [
+            { usage_purpose: "client-derived-metrics", decision: "prohibited" },
+          ],
+        },
+        idempotencyKey: fixtureHash(
+          `membership-rights-draft:${license.policy_key}`,
+        ),
+      });
+      await activateSignalDataGovernanceObjectV1({
+        queryable: client,
+        workspaceId: access.workspace_id,
+        actor,
+        objectKind: "licensing-policy",
+        objectId: draft.policy_id,
+        idempotencyKey: fixtureHash(
+          `membership-rights-activate:${license.policy_key}`,
+        ),
+      });
+    }
     status = await loadConceptMembershipsStatusV1(access);
     check(
       status.items.length === 0 && status.counts.length === 0,
