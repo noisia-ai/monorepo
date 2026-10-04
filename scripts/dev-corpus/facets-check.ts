@@ -23,7 +23,7 @@ import {
   facetCallProposalV1,
 } from "../../services/workers/src/workers/signal-mention-facets-batch";
 import {
-  facetLabelerIdentityV1,
+  facetLabelerIdentityLegacyV1,
   facetInputDigestV1,
 } from "../../packages/query-engine/src/signal-mention-facets-v1";
 import { entityContextDigestV1 } from "../../packages/query-engine/src/signal-entity-context-v1";
@@ -103,7 +103,7 @@ await main(async () => {
     const context = (
       await inspectFacetContextChangeV1(client, identity.workspace_id)
     ).context;
-    const labeler = facetLabelerIdentityV1();
+    const labeler = facetLabelerIdentityLegacyV1();
     labeler.params = { ...labeler.params, simulation: "postgres-rollback" };
     const run = await requestMentionFacetsV1({
       ...access,

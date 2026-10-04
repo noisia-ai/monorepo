@@ -6,7 +6,7 @@ import { signalWorkspaceEmbeddingDigestV1 as digest } from "../../packages/query
 import {
   buildFacetRequestV1,
   facetInputDigestV1,
-  facetLabelerIdentityV1,
+  facetLabelerIdentityLegacyV1,
   parseFacetGroupV1,
   MENTION_FACETS_PROMPT_V1,
 } from "../../packages/query-engine/src/signal-mention-facets-v1";
@@ -93,7 +93,7 @@ const inputs = examples.slice(0, rootCount).map((text, index) => ({
   published_at: "2026-10-04T00:00:00Z",
   language: "en",
 }));
-const identity = facetLabelerIdentityV1();
+const identity = facetLabelerIdentityLegacyV1();
 const params = buildFacetRequestV1(inputs, context, identity);
 // Experimental serialization only. The current production identity/builder are unchanged.
 if (variant === "envelope") {

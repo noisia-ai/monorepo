@@ -26,6 +26,9 @@ await main(async () => {
     const { inspectFacetContextChangeV1 } = await import(
       "../../infrastructure/db/signal-mention-facets"
     );
+    const { labelerDigestV1 } = await import(
+      "../../packages/query-engine/src/signal-mention-labeler-v1"
+    );
     const { facetLabelerIdentityV1 } = await import(
       "../../packages/query-engine/src/signal-mention-facets-v1"
     );
@@ -81,7 +84,8 @@ await main(async () => {
       ...access,
       identity: labeler,
       idempotency_key:
-        keyArg ?? `mfp-facets-${mode}-${change.digest.slice(7, 23)}`,
+        keyArg ??
+        `mfp-facets-${mode}-${labelerDigestV1(labeler).slice(7, 23)}-${change.digest.slice(7, 23)}`,
       provider_available: true,
       full_recalculation: process.argv.includes("--full"),
     });
@@ -96,7 +100,8 @@ await main(async () => {
         responses.set(
           id,
           requests.map((request) => {
-            const inputs = JSON.parse(request.params.messages[0].content),
+            const body = JSON.parse(request.params.messages[0].content);
+            const inputs = Array.isArray(body) ? body : body.roots,
               dim = (value: any) => ({
                 value,
                 confidence: "low",
@@ -114,18 +119,20 @@ await main(async () => {
                     {
                       type: "text",
                       text: JSON.stringify({
-                        roots: inputs.map((_: any, root_ordinal: number) => ({
-                          root_ordinal,
-                          facets: {
-                            entities: dim([]),
-                            unrelated_reason: "off_topic",
-                            voice: dim("unknown"),
-                            act: dim("other"),
-                            spam_or_bot: dim(false),
-                            language: dim("es"),
-                            asunto: dim(null),
-                          },
-                        })),
+                        roots: Object.fromEntries(
+                          inputs.map((_: any, ordinal: number) => [
+                            `r${ordinal}`,
+                            {
+                              entities: dim([]),
+                              unrelated_reason: "off_topic",
+                              voice: dim("unknown"),
+                              act: dim("other"),
+                              spam_or_bot: dim(false),
+                              language: dim("es"),
+                              asunto: dim(null),
+                            },
+                          ]),
+                        ),
                       }),
                     },
                   ],
