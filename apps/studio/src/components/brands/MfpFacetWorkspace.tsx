@@ -30,7 +30,12 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
   const refresh=async()=>{await Promise.all([status.read(),browser.read()]);};
   const start=async(full=false)=>{if(await mutation.send({full_recalculation:full})){await refresh();}};
   const chooseDimension=(next:string)=>{setEditDimension(next);setEditValue(next==="voice"?"individual":next==="act"?"experience":next==="spam_or_bot"?"false":next==="language"?"es":"");};
-  const beginEdit=(item:MfpFacetPage["items"][number])=>{setSelection([item.root_id]);setEntities(item.facets?.entities.value??[]);setReason(item.facets?.unrelated_reason??"off_topic");};
+  const beginEdit=(item:MfpFacetPage["items"][number])=>{setSelection([item.root_id]);setEntities(item.facets?.entities.value??[]);setReason(item.facets?.unrelated_reason??"off_topic");
+    if(editDimension!=="entities") {
+      const dimension=item.facets?.[editDimension as "voice"|"act"|"spam_or_bot"|"language"|"asunto"];
+      if(dimension&&!dimension.abstained)setEditValue(String(dimension.value??""));
+    }
+  };
   const save=async()=>{
     const resolved=editDimension==="entities"?entities:editDimension==="spam_or_bot"?editValue==="true":editValue.trim();
     const overrides=selection.flatMap(root_id=>[
