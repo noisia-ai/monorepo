@@ -9,7 +9,7 @@ export type ClientProcessingPolicyStatusV1 = SignalProcessingPolicyStatusV1;
 export const CLIENT_PROCESSING_ACTIONS_V1 = [
   "brand_context_proposal", "topic_prototype_embeddings", "corpus_preparation", "corpus_embeddings",
   "topic_fit", "topic_interpretation", "topic_fit_incremental", "topic_interpretation_incremental",
-  "topic_consolidation_numeric", "topic_consolidation", "interest_decision"
+  "topic_consolidation_numeric", "topic_consolidation", "interest_decision", "mention_facets", "concept_membership"
 ] as const;
 export type ClientProcessingActionV1 = SignalProcessingActionV1;
 
@@ -28,7 +28,7 @@ const object = (value: unknown): value is Record<string, unknown> => Boolean(val
   && typeof value === "object" && !Array.isArray(value));
 const micros = (value: unknown): value is string => typeof value === "string" && /^(?:0|[1-9][0-9]*)$/u.test(value);
 const digest = (value: unknown): value is string => typeof value === "string" && /^sha256:[0-9a-f]{64}$/u.test(value);
-const timestamp = (value: unknown): value is string => typeof value === "string" && !Number.isNaN(Date.parse(value));
+const timestamp = (value: unknown): value is string => typeof value === "string" && (value === "infinity" || !Number.isNaN(Date.parse(value)));
 const date = (value: unknown): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(value);
 
 export function validClientProcessingPolicyViewV1(value: unknown): value is ClientProcessingPolicyViewV1 {
@@ -38,7 +38,8 @@ export function validClientProcessingPolicyViewV1(value: unknown): value is Clie
     || !CLIENT_PROCESSING_POLICY_STATUSES_V1.includes(value.status as ClientProcessingPolicyStatusV1)
     || !(value.budget_date === null || date(value.budget_date)) || !object(value.exposure)
     || ![value.exposure.confirmed_micro_usd, value.exposure.reserved_micro_usd,
-      value.exposure.ambiguous_micro_usd, value.exposure.total_micro_usd, value.remaining_micro_usd].every(micros)
+      value.exposure.ambiguous_micro_usd, value.exposure.total_micro_usd].every(micros)
+    || !(value.remaining_micro_usd === null || micros(value.remaining_micro_usd))
     || !Array.isArray(value.actions)) return false;
   const exposure = BigInt(value.exposure.confirmed_micro_usd as string)
     + BigInt(value.exposure.reserved_micro_usd as string)
@@ -49,24 +50,25 @@ export function validClientProcessingPolicyViewV1(value: unknown): value is Clie
     || !digest(value.policy.digest) || !timestamp(value.policy.valid_from)
     || !timestamp(value.policy.valid_until)
     || typeof value.policy.budget_timezone !== "string" || value.policy.budget_timezone.length === 0
-    || !micros(value.policy.daily_cap_micro_usd))) return false;
+    || !(value.policy.daily_cap_micro_usd === null || micros(value.policy.daily_cap_micro_usd)))) return false;
   if ((value.policy === null) !== (value.status === "missing")) return false;
   if (value.policy === null && (value.budget_date !== null || value.actions.length !== 0
     || BigInt(value.exposure.total_micro_usd as string) !== 0n
     || BigInt(value.remaining_micro_usd as string) !== 0n)) return false;
-  if (value.policy) {
+  if (value.policy && value.policy.daily_cap_micro_usd !== null) {
     if (value.budget_date === null) return false;
     const cap = BigInt(value.policy.daily_cap_micro_usd as string);
     const expectedRemaining = cap > exposure ? cap - exposure : 0n;
     if (BigInt(value.remaining_micro_usd as string) !== expectedRemaining) return false;
   }
+  if (value.policy?.daily_cap_micro_usd === null && value.remaining_micro_usd !== null) return false;
   const seen = new Set<string>();
   for (const entry of value.actions) {
     if (!object(entry) || !CLIENT_PROCESSING_ACTIONS_V1.includes(entry.action as ClientProcessingActionV1)
       || seen.has(String(entry.action)) || !["free", "provider"].includes(String(entry.kind))
-      || !(entry.provider === null || entry.provider === "anthropic" || entry.provider === "voyage")
+      || !(entry.provider === null || entry.provider === "anthropic" || entry.provider === "voyage" || entry.provider === "typesafe")
       || !(entry.model === null || typeof entry.model === "string") || !digest(entry.configuration_digest)
-      || !micros(entry.max_execution_micro_usd) || typeof entry.automatic_allowed !== "boolean"
+      || !(entry.max_execution_micro_usd === null || micros(entry.max_execution_micro_usd)) || typeof entry.automatic_allowed !== "boolean"
       || typeof entry.available !== "boolean") return false;
     if (entry.kind === "free" && (entry.provider !== null || entry.model !== null
       || BigInt(entry.max_execution_micro_usd as string) !== 0n)) return false;
@@ -97,8 +99,9 @@ export function clientProcessingRouteMaximumMicroUsdV1(view: ClientProcessingPol
   const included = new Set<ClientProcessingActionV1>([
     "topic_prototype_embeddings", "corpus_embeddings", "topic_interpretation"
   ]);
+  if (view.actions.some(entry => included.has(entry.action) && entry.max_execution_micro_usd === null)) return null;
   return view.actions.reduce((sum, entry) => included.has(entry.action)
-    ? sum + BigInt(entry.max_execution_micro_usd) : sum, 0n).toString();
+    ? sum + BigInt(entry.max_execution_micro_usd!) : sum, 0n).toString();
 }
 
 export function formatClientProcessingMicroUsdV1(value: string, locale: string) {

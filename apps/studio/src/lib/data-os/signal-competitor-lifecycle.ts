@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
-import type { PoolClient } from "pg";
+import type { Pool, PoolClient } from "pg";
 import type { ResolvedSignalWorkspace,SignalWorkspaceUser } from "@/lib/data-os/signal-workspace";
-import { beginSignalProductOperationV1,completeSignalProductOperationV1 } from "@/lib/data-os/signal-product-operation";
-import { pool } from "@/lib/db";
+import { beginSignalProductOperationV1,completeSignalProductOperationV1 } from "./signal-product-operation";
+import { pool } from "../db";
 
 type WorkspaceRow={id:string;organization_id:string;slug:string;name:string;timezone:string;status:string;brand_id:string};
 
 export async function createOrReactivateSignalCompetitorsV1(args:{
   brandId:string;actor:SignalWorkspaceUser;idempotencyKey:string;names:string[];
   vertical:string|null;subVertical:string|null;country:string;
-}){
+},dependencies:{database?:Pick<Pool,"connect">}={}){
  return transaction(async(client)=>{
   const workspace=await resolveWorkspace(client,args.brandId,args.actor);
   const operation=await beginSignalProductOperationV1<{created_count:number;reactivated_count:number}>({
@@ -59,12 +59,12 @@ export async function createOrReactivateSignalCompetitorsV1(args:{
   const result={created_count:created,reactivated_count:reactivated};
   await completeSignalProductOperationV1({queryable:client,workspaceId:workspace.id,key:operation.key,result});
   return result;
- });
+ },dependencies.database);
 }
 
 export async function retireSignalCompetitorsV1(args:{
  brandId:string;actor:SignalWorkspaceUser;idempotencyKey:string;competitorIds:string[]|null;evidence:string;
-}){
+},dependencies:{database?:Pick<Pool,"connect">}={}){
  return transaction(async(client)=>{
   const workspace=await resolveWorkspace(client,args.brandId,args.actor);
   const operation=await beginSignalProductOperationV1<{retired_count:number}>({queryable:client,workspace,actor:args.actor,
@@ -91,7 +91,7 @@ export async function retireSignalCompetitorsV1(args:{
   }
   const result={retired_count:selected.rows.length};await completeSignalProductOperationV1({queryable:client,
     workspaceId:workspace.id,key:operation.key,result});return result;
- });
+ },dependencies.database);
 }
 
 async function resolveWorkspace(queryable:{query:<T=Record<string,unknown>>(text:string,values?:unknown[])=>Promise<{rows:T[];rowCount?:number|null}>},brandId:string,actor:SignalWorkspaceUser):Promise<ResolvedSignalWorkspace>{
@@ -119,7 +119,7 @@ async function resolveWorkspace(queryable:{query:<T=Record<string,unknown>>(text
  return{contractVersion:"signal-backend-v1",id:row.id,organizationId:row.organization_id,slug:row.slug,name:row.name,
    subject:{type:"brand",id:row.brand_id},timezone:row.timezone,status:row.status,corpora:[]};
 }
-async function transaction<T>(fn:(client:PoolClient)=>Promise<T>){const client=await pool.connect();try{
+async function transaction<T>(fn:(client:PoolClient)=>Promise<T>,database:Pick<Pool,"connect">=pool){const client=await database.connect();try{
  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");const result=await fn(client);await client.query("COMMIT");return result;
  }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}finally{client.release();}}
 function sha256(value:string){return`sha256:${createHash("sha256").update(value).digest("hex")}`;}

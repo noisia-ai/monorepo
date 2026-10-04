@@ -20,7 +20,7 @@ Variables disponibles:
 
 No copiar todas las credenciales a cada proceso: cargar las necesarias para el servicio o proveedor correspondiente. No pasar claves de servicio al navegador ni a variables NEXT_PUBLIC.
 
-## Resultado de comprobación
+## Comprobación inicial (antes de WS1)
 
 - Claude: `GET https://api.anthropic.com/v1/models` respondió HTTP 200 con JSON.
 - JEV: `GET https://api.typesafe.ai/v1/models` respondió HTTP 200 con JSON.
@@ -42,3 +42,18 @@ Las sesiones de GitHub/Railway/navegador y los permisos de herramientas pertenec
 ## Instrucción para el nuevo orquestador
 
 Lee este documento junto al spec. Ya hay credenciales compartidas, incluidas Claude, Voyage y JEV. No vuelvas a pedirlas sin comprobar primero su disponibilidad y el error real de la operación necesaria. Enlaza su carga selectiva al harness remoto de WS1, usando exclusivamente su destino dev-test verificado, sin heredar la base/cola de los .env históricos. No publiques claves, no leas secretos históricos y no actives el loop anterior. Si una credencial falla, registra sólo servicio y código saneado; continúa el trabajo independiente.
+
+## Verificación operativa del programa — 4 de octubre de 2026
+
+El CLI oficial de Railway y SSH ya tienen acceso autorizado por el fundador. Proyecto `noisia-signal-v02-uat`, entorno `dev-test`; los identificadores exactos y controles de destino están versionados en `scripts/dev-corpus/target.json`. No repetir recuperación de conexión ni reconstrucción histórica del esquema.
+
+MFP usa la base/rol exclusivos `noisia_mfp`, Redis privado y `mfp-private-runner` en la misma región remota. El runner mantiene el corpus en `/app/.data/dev-corpus`; Studio de desarrollo está en `https://mfp-studio-dev-test.up.railway.app`. Autodeploy desactivado. Estos recursos no son UAT ni producción. Las claves de proveedores se cargan selectivamente en memoria para cada ejecución autorizada; no están instaladas de forma permanente en el runner. La configuración privada de conexiones permanece fuera de Git.
+
+El bucket privado `mfp-corpus-files` pasó la comprobación de disponibilidad requerida por el runtime. Usar los nombres de entorno `SUPABASE_STORAGE_BUCKET_IMPORTS` y `SUPABASE_STORAGE_BUCKET_CORPUS_FILES` que consume el código; no inventar una variable genérica de bucket.
+
+- Claude: `claude-sonnet-5-5` comprobado en la cuenta; una prueba sintética real de Message Batches completó transporte, salida estructurada y parser. La prueba del corpus tiene su recibo en `DELIVERY_MFP_WS2_2026-10-04.md`.
+- Voyage: `voyage-4-large`,1024 dimensiones, transporte real confirmado sobre905 raíces.32 respuestas HTTP200,809,294 tokens y USD0.097130 registrados; replay con clave retirada y proveedor deshabilitado no hizo nuevas llamadas. La ejecución requiere explícitamente `NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED=true`; su omisión produjo un intento definitivamente no enviado, recuperado sin duplicación.
+- JEV: `jev-1.13.0` comprobado con seis solicitudes sintéticas reales. Condiciones técnicas y tratamiento de datos documentados en `JEV_DUE_DILIGENCE.md`; esa evidencia no sustituye evaluación semántica ni acredita todavía el corpus real.
+- Kinde: sesión administrativa existente comprobada. La autorización del CLI Railway no cambia callbacks de Kinde. La autenticación del Studio de desarrollo sigue pendiente de configurar su callback exacto; no usar bypass de autorización.
+
+Los resultados de proveedor prueban las capacidades indicadas, no el saldo futuro ni calidad semántica. Los recibos de corpus y gold permanecen privados bajo `.data/dev-corpus/`; no copiar textos a la documentación pública. El workspace con embeddings simulados y el de Voyage real son distintos dentro de la misma base MFP, sin clonar bases.

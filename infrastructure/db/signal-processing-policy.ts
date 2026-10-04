@@ -2,20 +2,20 @@ import type { Pool, PoolClient } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 
 export const SIGNAL_PROCESSING_ACTIONS_V1 = ["brand_context_proposal", "topic_prototype_embeddings", "corpus_preparation",
-  "corpus_embeddings", "topic_fit", "topic_interpretation", "topic_fit_incremental", "topic_interpretation_incremental", "topic_consolidation", "topic_consolidation_numeric", "interest_decision"] as const;
+  "corpus_embeddings", "topic_fit", "topic_interpretation", "topic_fit_incremental", "topic_interpretation_incremental", "topic_consolidation", "topic_consolidation_numeric", "interest_decision", "mention_facets", "concept_membership"] as const;
 export type SignalProcessingActionV1 = typeof SIGNAL_PROCESSING_ACTIONS_V1[number];
 export type SignalProcessingExposureV1 = { confirmed_micro_usd: string; reserved_micro_usd: string;
   ambiguous_micro_usd: string; total_micro_usd: string };
 export type SignalProcessingPolicyStatusV1 = "ready" | "missing" | "expired" | "revoked" | "daily_cap_exhausted" | "provider_unavailable";
 export type SignalProcessingPolicyActionV1 = { action: SignalProcessingActionV1; kind: "free" | "provider";
-  provider: "anthropic" | "voyage" | null; model: string | null; configuration_digest: string;
-  max_execution_micro_usd: string; automatic_allowed: boolean; available: boolean };
+  provider: "anthropic" | "voyage" | "typesafe" | null; model: string | null; configuration_digest: string;
+  max_execution_micro_usd: string | null; automatic_allowed: boolean; available: boolean };
 export type SignalProcessingPolicyViewV1 = {
   contract_version: "signal-processing-policy-view-v1"; workspace_id: string; can_request_processing: boolean;
   status: SignalProcessingPolicyStatusV1;
   policy: null | { id: string; version: string; digest: string; valid_from: string; valid_until: string;
-    budget_timezone: string; daily_cap_micro_usd: string };
-  budget_date: string | null; exposure: SignalProcessingExposureV1; remaining_micro_usd: string;
+    budget_timezone: string; daily_cap_micro_usd: string | null };
+  budget_date: string | null; exposure: SignalProcessingExposureV1; remaining_micro_usd: string | null;
   actions: SignalProcessingPolicyActionV1[];
 };
 export class SignalProcessingPolicyError extends Error {
@@ -37,7 +37,7 @@ export async function readSignalProcessingPolicyWithQueryableV1(args: { queryabl
   const capability = await loadSignalWorkspaceCapabilitiesStoreV1(args);
   if (!capability.can_view) throw new SignalProcessingPolicyError("processing_forbidden", 403);
   type Row = { id: string; version: string; status: "draft" | "active" | "revoked"; policy_digest: string;
-    valid_from: string; valid_until: string; budget_timezone: string; daily_cap_micro_usd: string;
+    valid_from: string; valid_until: string; budget_timezone: string; daily_cap_micro_usd: string | null;
     budget_date: string; current: boolean; exposure: SignalProcessingExposureV1;
     actions: Omit<SignalProcessingPolicyActionV1, "available">[] };
   const row = (await args.queryable.query<Row>(`
@@ -60,21 +60,21 @@ export async function readSignalProcessingPolicyWithQueryableV1(args: { queryabl
   if (!row) return { contract_version: "signal-processing-policy-view-v1", workspace_id: args.workspace_id,
     can_request_processing: capability.can_request_processing, status: "missing", policy: null, budget_date: null,
     exposure: zero(), remaining_micro_usd: "0", actions: [] };
-  const remaining = BigInt(row.daily_cap_micro_usd) > BigInt(row.exposure.total_micro_usd)
+  const remaining = row.daily_cap_micro_usd === null ? null : BigInt(row.daily_cap_micro_usd) > BigInt(row.exposure.total_micro_usd)
     ? BigInt(row.daily_cap_micro_usd) - BigInt(row.exposure.total_micro_usd) : 0n;
   const availability = args.action_availability ?? {};
   const actions = row.actions.map(action => ({ ...action, available: capability.can_request_processing && row.current
     && (action.kind === "free" || availability[action.action] === true
-      && (remaining > 0n || BigInt(action.max_execution_micro_usd) === 0n)) }));
+      && (remaining === null || remaining > 0n || action.max_execution_micro_usd === "0")) }));
   const providerActions = row.actions.filter(action => action.kind === "provider");
   const status: SignalProcessingPolicyStatusV1 = row.status === "revoked" ? "revoked" : !row.current ? "expired"
-    : remaining === 0n && providerActions.some(action => BigInt(action.max_execution_micro_usd) > 0n) ? "daily_cap_exhausted"
+    : remaining === 0n && providerActions.some(action => (action.max_execution_micro_usd === null || BigInt(action.max_execution_micro_usd) > 0n)) ? "daily_cap_exhausted"
     : providerActions.length > 0 && providerActions.every(action => availability[action.action] !== true) ? "provider_unavailable" : "ready";
   return { contract_version: "signal-processing-policy-view-v1", workspace_id: args.workspace_id,
     can_request_processing: capability.can_request_processing, status,
     policy: { id: row.id, version: row.version, digest: row.policy_digest, valid_from: row.valid_from, valid_until: row.valid_until,
       budget_timezone: row.budget_timezone, daily_cap_micro_usd: row.daily_cap_micro_usd }, budget_date: row.budget_date,
-    exposure: row.exposure, remaining_micro_usd: remaining.toString(), actions };
+    exposure: row.exposure, remaining_micro_usd: remaining?.toString() ?? null, actions };
 }
 export async function loadSignalProcessingPolicyV1(args: { database: Pick<Pool, "connect">; workspace_id: string;
   actor_user_id: string; action_availability?: SignalProcessingActionAvailabilityV1 }): Promise<SignalProcessingPolicyViewV1> {
@@ -90,13 +90,13 @@ export type SignalProcessingAdmissionV1 = {
   id: string; organization_id: string; workspace_id: string; brand_id: string; actor_user_id: string;
   policy_version_id: string; action: SignalProcessingActionV1; target_id: string; idempotency_key: string;
   request_digest: string; provider: string | null; model: string | null; configuration: Record<string, unknown>;
-  configuration_digest: string; execution_cap_micro_usd: string; budget_date: string; budget_timezone: string;
+  configuration_digest: string; execution_cap_micro_usd: string | null; budget_date: string; budget_timezone: string;
   admission_not_after: string; automatic: boolean; receipt_digest: string; created_at: string;
 };
 export type SignalProcessingAdmitArgsV1 = { workspace_id: string; actor_user_id: string; action: SignalProcessingActionV1;
   target_id: string; idempotency_key: string; request_digest: string;
   /** Server quote only; never copy this field from an unverified request body. */
-  execution_cap_micro_usd: string; automatic?: boolean };
+  execution_cap_micro_usd: string | null; automatic?: boolean };
 export type SignalProcessingAdmitResultV1 = { replayed: boolean; receipt: SignalProcessingAdmissionV1 };
 
 /** Caller owns BEGIN/COMMIT and creates the run/outbox in that SAME transaction.
@@ -106,7 +106,7 @@ export async function admitSignalProcessingWithClientV1(client: Pick<PoolClient,
   scope(args.workspace_id, args.actor_user_id);
   if (!uuid.test(args.target_id) || !(SIGNAL_PROCESSING_ACTIONS_V1 as readonly string[]).includes(args.action)
     || !/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key) || !/^sha256:[0-9a-f]{64}$/u.test(args.request_digest)
-    || !/^(0|[1-9][0-9]{0,14})$/u.test(args.execution_cap_micro_usd))
+    || args.execution_cap_micro_usd !== null && !/^(0|[1-9][0-9]{0,14})$/u.test(args.execution_cap_micro_usd))
     throw new SignalProcessingPolicyError("processing_request_invalid", 400);
   try {
     const result = (await client.query<{ result: SignalProcessingAdmitResultV1 }>(
@@ -114,7 +114,7 @@ export async function admitSignalProcessingWithClientV1(client: Pick<PoolClient,
       [args.workspace_id, args.actor_user_id, args.action, args.target_id, args.idempotency_key, args.request_digest,
         args.execution_cap_micro_usd, args.automatic ?? false])).rows[0]?.result;
     if (!result) throw new SignalProcessingPolicyError("processing_admission_missing");
-    return { ...result, receipt: { ...result.receipt, execution_cap_micro_usd: String(result.receipt.execution_cap_micro_usd) } };
+    return { ...result, receipt: { ...result.receipt, execution_cap_micro_usd: result.receipt.execution_cap_micro_usd === null ? null : String(result.receipt.execution_cap_micro_usd) } };
   } catch (error) {
     if (error && typeof error === "object" && "message" in error && typeof error.message === "string"
       && /^processing_[a-z_]+$/u.test(error.message))

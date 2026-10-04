@@ -91,7 +91,7 @@ Principios:
 - **Etiquetar hechos genéricos, no conceptos de negocio, en la ficha.** Lo específico de una marca vive en los conceptos (intereses), que el usuario edita.
 - **Caché por contenido**: toda etiqueta se indexa por `input_digest` + versión del esquema + identidad del etiquetador + versión del contexto de entidades (§4.2b). Recalcular sólo lo que falta o lo que un cambio afectó.
 - **Etiquetador intercambiable** detrás de una interfaz (Claude Batches, JEV, reglas, humano). El contrato es la pregunta y su esquema.
-- **Corrección humana como capa aparte que siempre gana** y sobrevive a recálculos.
+- **Corrección humana como capa aparte que siempre gana** y sobrevive a recálculos. Una corrección válida sigue visible aunque falte una ficha vigente del proveedor; las dimensiones ausentes se representan como abstenciones y se conserva el estado técnico pendiente/error/rechazo, sin inventar una etiqueta vigente.
 - **Abstención explícita**: nunca forzar una respuesta; una negativa del proveedor o un error técnico **nunca** es «no pertenece».
 - **Todo el corpus contabilizado**: cada raíz elegible termina con un estado (relevante/ajena/spam/indeterminada y, si relevante, pertenencias o «sin concepto»).
 
@@ -169,7 +169,9 @@ Se construye desde el contexto gobernado existente (`loadSignalSemanticResolutio
 
 **Regla de vigencia:** para cada raíz *r*, `v_min(r)` es la versión de CE más reciente en la que *r* quedó afectada (o la primera versión). La ficha vigente de *r* es la más reciente cuyo `entity_context_digest` pertenece a una versión **≥ `v_min(r)`**, con el mismo `input_digest` y `labeler_digest`. Si no existe, la raíz queda en estado `pending` (contabilizada, nunca se usa una ficha obsoleta). El run siguiente re-etiqueta sólo las raíces `pending` y las nuevas.
 
-**Límite aceptado:** la regla léxica no detecta referencias indirectas a una entidad recién agregada (pronombres, errores de escritura). La UI ofrece «Recalcular ficha completa» con coste estimado. El recibo de WS2 reporta el tamaño de los conjuntos afectados en las pruebas.
+**Aclaración de implementación v1.3 (2026-10-04):** una reversión `A → B → A` registra tres versiones monotónicas aunque la primera y la tercera compartan digest. Por ello, `(workspace_id, digest)` se indexa sin unicidad. La etiqueta inmutable conserva su clave por contenido y la procedencia `call_id → run → version_no`: una etiqueta de A puede reutilizarse cuando A reaparece en una versión que cumple `v_min`, con el mismo input y etiquetador; para una raíz afectada por el retorno a A, una etiqueta de B queda excluida por `v_min`. Esto corrige la restricción de unicidad contradictoria del esquema inicial sin añadir otra tabla ni invalidación indiscriminada.
+
+**Límite aceptado:** la regla léxica no detecta referencias indirectas a una entidad recién agregada (pronombres, errores de escritura). La UI ofrece «Recalcular ficha completa» con coste estimado. Esa solicitud registra una nueva versión de observación con `affected_mode = full`, aunque el digest del CE no cambie: deja pendientes las raíces que aún conservaban fichas de otro CE tras un cambio selectivo. Reutiliza las fichas con el mismo input, etiquetador y CE; no altera la identidad del etiquetador ni borra la caché por contenido. El recibo de WS2 reporta el tamaño de los conjuntos afectados en las pruebas.
 
 **Pertenencia:** una decisión del motor (§9.5) también depende del CE y de las entidades de la ficha. Cada decisión guarda el `entity_context_digest` y el `effective_entities_digest` (digest del conjunto `entities` efectivo, overrides incluidos) con que se tomó. Deja de estar vigente cuando la ficha efectiva de esa raíz cambia, ya sea por re-etiquetado o por una corrección humana. Así un cambio de alias recalcula pertenencias sólo de las raíces afectadas.
 
@@ -231,8 +233,8 @@ Convención del repo: SQL escrito a mano, sólo hacia adelante, `NNNN_snake_case
 
 | WS | Rango |
 |---|---|
-| WS2 ficha + ledger común | 0221–0224 |
-| WS3 JEV | 0225 |
+| WS2 ficha + ledger común | 0221–0225 |
+| WS3 JEV | Sin DDL adicional: el ledger común ya admite el proveedor |
 | WS5 pertenencia | 0226–0230 |
 | WS6 discovery | 0231–0233 |
 | WS7 UI | 0234–0236 |
@@ -244,9 +246,9 @@ Tablas (nombres definitivos; columnas mínimas, Codex puede añadir índices):
 - `signal_labeler_versions` — `id, kind (facets|membership), provider, model, prompt_digest, schema_digest, labeler_digest UNIQUE, identity jsonb, status (experimental|approved|retired), eval_report_ref text, approved_by_user_id, approved_at, created_at`. Registro ligero de etiquetadores; **no** reutiliza la cadena `tagging_model_versions`/benchmarks/guardas de V2.
 - `signal_labeling_runs` — `id, workspace_id, kind, labeler_version_id, preparation_run_id, concept_set_digest NULL, status (queued|running|completed|failed|canceled), counts jsonb, estimated_micro_usd, budget_micro_usd NULL, cap_micro_usd NULL, idempotency_key, actor_user_id, timestamps`. Un run por ejecución de ficha o de pertenencia.
 - `signal_labeling_calls` — **ledger común** de ficha, pertenencia y JEV: `id, run_id, workspace_id, provider, model, transport (batch|sync), provider_batch_id, custom_id UNIQUE, request_digest, request_storage_key, status (reserved|submitting|submitted|settled|failed|unknown), reserved_micro_usd, settled_micro_usd, usage jsonb (incluye cache tokens), raw_sha256, raw_storage_key, stop_reason, refusal_category, timestamps`.
-- `signal_entity_context_versions` — `workspace_id, version_no, digest, parent_digest, context jsonb, diff jsonb, affected_mode (targeted|full), affected_count, created_at`. UNIQUE `(workspace_id, digest)` y `(workspace_id, version_no)`.
+- `signal_entity_context_versions` — `workspace_id, version_no, digest, parent_digest, context jsonb, diff jsonb, affected_mode (targeted|full), affected_count, created_at`. UNIQUE `(workspace_id, version_no)` e índice no único `(workspace_id, digest)` para permitir reversiones de contenido (§4.2b).
 - `signal_entity_context_affected_roots` — `workspace_id, version_no, root_id`. PK `(workspace_id, version_no, root_id)`. Vacía cuando `affected_mode = full` (la vigencia lo trata como «todas»).
-- `signal_mention_facet_labels` — PK `(workspace_id, input_digest, labeler_digest, entity_context_digest)`; `root_id, facet_schema_version, status, facets jsonb, relevance (derivada, guardada), effective_entities_digest, call_id, created_at`. Inmutable.
+- `signal_mention_facet_labels` — PK `(workspace_id, input_digest, labeler_digest, entity_context_digest)`; `root_id, facet_schema_version, status, facets jsonb, relevance (derivada, guardada), effective_entities_digest, call_id, created_at`. Inmutable. Conserva resultados semánticos (`labeled`, `abstained`, `refused`); los errores técnicos se registran en `signal_labeling_calls.results`, sin ocupar de forma irreversible esa clave de caché. La vista proyecta el error técnico vigente cuando no hay etiqueta válida. Una nueva solicitud explícita puede recuperar errores conocidos; llamadas `submitting` o `unknown` siguen cercadas y no se reenvían a ciegas, tampoco desde otro run.
 - `signal_mention_facet_overrides` — `workspace_id, root_id, dimension, value jsonb, actor_user_id, created_at, superseded_at`. La última vigente gana.
 - Vista `signal_mention_facets_current_v1` — por raíz elegible de la preparación vigente: etiqueta vigente según la regla de §4.2b, del etiquetador **aprobado o seleccionado para el workspace**, con overrides aplicados, y su `effective_entities_digest`. Las raíces sin ficha vigente salen como `pending`.
 
@@ -370,6 +372,7 @@ Comportamiento:
 0. **Contexto de entidades:** calcular el CE vigente; si cambió, registrar la versión y su conjunto afectado (§4.2b) en la misma transacción que crea el run. Si `affected_mode = full` y el run no trae confirmación explícita, el run queda `queued` esperando confirmación del alcance de recálculo completo, no de gasto. Una solicitud explícita de recálculo completo ya satisface esa intención; no pedir confirmación repetida ni por superar la estimación.
 1. **Selección:** raíces `disposition='eligible'` de la preparación vigente que estén `pending` en `signal_mention_facets_current_v1`, es decir, sin ficha vigente para el `labeler_digest` activo según §4.2b (nuevas, con texto cambiado o afectadas por un cambio de CE). Nada más.
 2. **Agrupación:** 15–25 menciones por solicitud según presupuesto de tokens estimado (~20K de entrada por solicitud); textos > 12K caracteres van solos. Instrucciones + contexto de marca en el sistema con caché 1h.
+   - **Ajuste técnico observado, 2026-10-04:** Sonnet 5.5 rechazó por complejidad de compilación dos representaciones con 25 ordinales obligatorios; sí procesó correctamente ocho menciones y 60,000 caracteres con el contrato completo. La ejecución usa temporalmente grupos de hasta ocho, con ese parámetro registrado en la identidad del etiquetador y en la estimación. Ocho es el tamaño comprobado, no un máximo universal demostrado del proveedor ni un límite de producto o gasto. Se conservan todas las raíces, textos, entidades y dimensiones; no se reduce cobertura ni se truncan datos. Los recibos de los formatos rechazados permanecen separados y reproducibles.
 3. **Envío:** cliente existente `createAnthropicMessageBatchesClient` (`services/workers/src/providers/anthropic-message-batches.ts:53`). `custom_id = "mf1_" + hex(60)` del digest de la solicitud. Reservar coste en `signal_labeling_calls` antes de crear el batch; `submission_unknown` nunca se reenvía a ciegas (mismo criterio que `AnthropicBatchTransportError`).
 4. **Resultados:** guardar crudo (almacenamiento de objetos, como V2) antes de parsear; liquidar coste desde `usage` (incluidos tokens de caché); parsear con `anthropic-response-v1`; validar que cada mención del grupo aparece una vez; `max_tokens` o faltantes → dividir y reintentar.
 5. **Escritura:** inserts multi-fila en `signal_mention_facet_labels` con `ON CONFLICT DO NOTHING`, por página.
@@ -380,7 +383,7 @@ Pruebas: unitarias con `fetch` falso y stores falsos (patrón `services/workers/
 
 Aceptación (demo): sobre el corpus WS1, con proveedor real y coste estimado/real visible conforme a §6.5, 100% de raíces elegibles con estado (`labeled|abstained|refused|error`), coste liquidado visible, segunda ejecución no envía nada. Después, agregar un alias a un competidor y relanzar: sólo se envían las raíces del conjunto afectado (conteo en el recibo) y ninguna ficha obsoleta queda como vigente.
 
-> **Prompt del sub-chat WS2:** «Lee el spec §1–§7 y §9.2. Rama `feat/mfp-ws2-facets` desde `develop`; migraciones 0221–0224. Implementa la ficha v1 con Sonnet 5.5 por Batches según §4.1, §4.2, §4.2b, §4.5 y §5; el contexto de entidades y su regla de vigencia son parte del alcance, no un extra. Reutiliza el cliente de Batches, el patrón de drainer de `data-os.ts` y la receta de acciones de política; no reutilices tablas ni guardas de interest decision V2. Prompts genéricos sin ninguna marca. Escritura por lotes. Demo sobre el corpus de WS1 con presupuesto orientativo y coste registrado (§6.5), sin detenerla al superar la estimación.»
+> **Prompt del sub-chat WS2:** «Lee el spec §1–§7 y §9.2. Rama `feat/mfp-ws2-facets` desde `develop`; migraciones 0221–0225. Implementa la ficha v1 con Sonnet 5.5 por Batches según §4.1, §4.2, §4.2b, §4.5 y §5; el contexto de entidades y su regla de vigencia son parte del alcance, no un extra. Reutiliza el cliente de Batches, el patrón de drainer de `data-os.ts` y la receta de acciones de política; no reutilices tablas ni guardas de interest decision V2. Prompts genéricos sin ninguna marca. Escritura por lotes. Demo sobre el corpus de WS1 con presupuesto orientativo y coste registrado (§6.5), sin detenerla al superar la estimación.»
 
 ---
 
@@ -398,7 +401,7 @@ Archivos:
   - `choice` para voice y act; `noul` para spam_or_bot.
   - `asunto = null`. Probabilidades a `confidence`. Los umbrales de pertenencia de entidad y de prominencia se fijan en el split dev de WS4, nunca en test.
 - Worker `services/workers/src/workers/signal-mention-facets-jev.ts`: mismo run/ledger/tabla de etiquetas que WS2 (`provider='typesafe'`, `transport='sync'`), escritura por lotes.
-- `0225` sólo si hace falta ampliar CHECKs de proveedor.
+- Sin migración adicional: los CHECKs del ledger común ya admiten JEV. `0225` queda asignada a WS2 para preservar la proyección de correcciones humanas mediante una migración hacia adelante; no modificar `0221`–`0224` ya instaladas en dev-test.
 
 Aceptación: sobre el corpus WS1, 100% de raíces con estado, coste registrado con el precio configurado, probabilidades guardadas. Reporte de latencia p50/p95 por solicitud.
 

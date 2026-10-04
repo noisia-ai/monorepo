@@ -66,7 +66,7 @@ export function ClientProcessingJourney({ workspaceId, initial = null, initialPr
   }, [initial, refresh, workspaceId]);
 
   const currentView = clientProcessingPolicyForWorkspaceV1(view, workspaceId);
-  const money = (value: string) => formatClientProcessingMicroUsdV1(value, locale);
+  const money = (value: string | null) => value === null ? t("budget.noStrictMaximum") : formatClientProcessingMicroUsdV1(value, locale);
   const status = currentView?.status ?? null;
   const canRequest = currentView?.can_request_processing === true;
   const routeMaximum = currentView ? clientProcessingRouteMaximumMicroUsdV1(currentView) : "0";

@@ -27,16 +27,13 @@ await main(async()=>{
     const modeRow=(await pool.query(`UPDATE signal_workspaces SET metadata=jsonb_set(coalesce(metadata,'{}'::jsonb),'{mfp_embedding_mode}',to_jsonb($2::text))
       WHERE id=$1 AND (metadata->>'mfp_embedding_mode' IS NULL OR metadata->>'mfp_embedding_mode'=$2) RETURNING id`,[identity.workspace_id,mode])).rows[0];
     if(!modeRow)throw new Error('mfp_embedding_fixture_mode_conflict');
-    // Legacy real embeddings require a strict numeric cap. Never turn the MFP
-    // estimate into that cap: until the shared nullable-cap change lands, real
-    // execution requires an explicitly configured cap, not a fabricated maximum.
     const configuredCap=process.env.NOISIA_MFP_EXPLICIT_CAP_MICRO_USD;
-    if(mode==='voyage'&&(!configuredCap||!/^\d+$/u.test(configuredCap)))throw new Error('mfp_voyage_nullable_cap_contract_pending');
+    if(configuredCap!==undefined&&!/^\d+$/u.test(configuredCap))throw new Error('mfp_explicit_cap_invalid');
     const retry=process.argv.includes('--retry');
     const intent=recoveryIntent('mfp-embeddings',current,`mfp-embeddings-${mode}-${quote.preparation_run_id}`,retry,{preparation_run_id:quote.preparation_run_id,input_revision:quote.input_revision});
     if(intent.resume_run_id&&quote.resume_run_id!==intent.resume_run_id)throw new Error('mfp_recovery_quote_changed');
-    const cap=quote.resume_run_id?quote.required_cap_micro_usd!:(mode==='fake'?quote.estimated_upper_micro_usd:Number(configuredCap));
-    if(mode==='voyage'&&quote.resume_run_id&&Number(configuredCap)!==cap)throw new Error('mfp_recovery_cap_changed');
+    const cap=quote.resume_run_id?quote.required_cap_micro_usd:(mode==='fake'?quote.estimated_upper_micro_usd:configuredCap===undefined?null:Number(configuredCap));
+    if(mode==='voyage'&&quote.resume_run_id&&(configuredCap===undefined?null:Number(configuredCap))!==cap)throw new Error('mfp_recovery_cap_changed');
     const requested=intent.kind==='existing'?{run_id:intent.run_id!,replayed:true}:await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quote.preparation_run_id!,quote_digest:quote.quote_digest,
       hard_cap_micro_usd:cap,provider_available:true,idempotency_key:intent.idempotency_key!});
     const run=(await pool.query('SELECT worker_job_id,status FROM signal_workspace_embedding_runs WHERE id=$1',[requested.run_id])).rows[0];
