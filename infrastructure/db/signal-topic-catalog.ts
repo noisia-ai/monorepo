@@ -1,4 +1,5 @@
 import { loadSignalDiscoveryPolicyV1 } from "./signal-workspace-discovery-policy";
+import { signalWorkspaceFeatureEnabledV1 } from "./signal-workspace-features";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
@@ -1409,7 +1410,8 @@ export async function ensureSignalTopicCatalogStoreV1(args: {
 }): Promise<{ taxonomy_profile_id: string; created: boolean }> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: args.client,
     workspace_id: args.workspace_id, actor_user_id: args.actor_user_id });
-  const discovery = args.processing_mode === "workspace-discovery-v1" && process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
+  const discovery = args.processing_mode === "workspace-discovery-v1" &&
+    await signalWorkspaceFeatureEnabledV1({queryable:args.client,workspace_id:args.workspace_id,feature:"mfp_discovery"});
   if (discovery ? !capabilities.can_request_processing || !(await loadSignalDiscoveryPolicyV1(args.client,args.workspace_id)).available
     : !capabilities.can_execute_topics) throw new SignalTopicCatalogError("topic_processing_permissions_required", 403);
   await args.client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`signal-taxonomy:${args.workspace_id}:topic`]);

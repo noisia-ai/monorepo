@@ -16,7 +16,7 @@ const env = {
 };
 type Options = { role?: string; userType?: string; actorActive?: boolean; scopeValid?: boolean; sameOrganization?: boolean; sealedCreatorMatches?: boolean;
   grantLevel?: string; grantRevoked?: boolean; creatorType?: string; creatorRole?: string; creatorActive?: boolean; creatorMissing?: boolean;
-  history?: string[]; deadlineValid?: boolean; timezoneValid?: boolean; configurationValid?: boolean; failActions?: boolean };
+  history?: string[]; deadlineValid?: boolean; timezoneValid?: boolean; configurationValid?: boolean; failActions?: boolean; mfpEnabled?: boolean };
 function fixture(options: Options = {}) {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   let state = [...(options.history ?? [])], previous = [...state], releases = 0;
@@ -56,6 +56,7 @@ function fixture(options: Options = {}) {
       return { rows: valid ? [{ id: id(6) }] : [] };
     }
     if (sql.includes("SELECT status FROM signal_processing_policy_versions")) return { rows: state.map(status => ({ status })) };
+    if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:options.mfpEnabled===true}]};
     if (sql.includes("pg_timezone_names")) return { rows: [{ deadline_valid: options.deadlineValid ?? true,
       timezone_valid: options.timezoneValid ?? true, configuration_valid: options.configurationValid ?? true }] };
     if (sql.startsWith("INSERT INTO signal_processing_policy_versions")) { state.push("draft"); return { rows: [{ id: id(5) }] }; }
@@ -88,6 +89,16 @@ test("client-admin creation provisions exact policy with the configured system c
   assert.equal(semantic.model, "claude-sonnet-4-6");
   assert.deepEqual(JSON.parse(actions[1]!.values[4] as string), SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1);
   assert.equal(f.calls.at(-1)?.sql, "COMMIT"); assert.equal(f.releases, 1);
+});
+
+test("brand without MFP opt-in provisions the same legacy actions with both MFP flags enabled",async()=>{
+  const off=fixture(),on=fixture();
+  assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:off.database})).status,"provisioned");
+  assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:on.database,env:{...env,
+    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_CONCEPT_MEMBERSHIP_ENABLED:"true"}})).status,"provisioned");
+  const actions=(f:ReturnType<typeof fixture>)=>f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_actions"))
+    .map(call=>[call.values[1],call.values[5],call.values[6]]);
+  assert.deepEqual(actions(on),actions(off));
 });
 
 test("same creation replay can recover a missing policy, and subsequent calls preserve every existing policy", async () => {
@@ -162,7 +173,7 @@ test("a partial action failure rolls back the draft and remains retryable", asyn
 
 test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserves an explicit daily maximum",async()=>{
  for(const daily of [undefined,"1","2000000"]){
-  const f=fixture();
+  const f=fixture({mfpEnabled:true});
   const configured={...env,NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:daily};
   const response=await provisionSignalBrandContextPolicyV1({database:f.database,workspace_id:id(1),brand_id:id(4),initiator_user_id:id(2),env:configured});
   assert.equal(response.status,"provisioned");
@@ -181,7 +192,7 @@ test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserve
 
 test("MFP brand creation needs only a server-owned creator, not a legacy semantic pack or default prototype budget",async()=>{
  for(const cap of [undefined,"123"]){
-  const f=fixture();
+  const f=fixture({mfpEnabled:true});
   const response=await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{
    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:id(6),
    NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:cap
@@ -197,7 +208,7 @@ test("MFP brand creation needs only a server-owned creator, not a legacy semanti
  }
  for(const patch of [{NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:undefined},
   {NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"0"},{NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:"garbage"}]){
-  const f=fixture();
+  const f=fixture({mfpEnabled:true});
   assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{
    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:id(6),...patch
   }})).status,"configuration_required");

@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { signalSemanticContextProposalRuntimeConfigurationFromEnvV1 } from "./signal-semantic-context-proposal";
+import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 
 export type SignalBrandContextPolicyProvisioningV1 = {
   contract_version: "brand-context-policy-provisioning-v1";
@@ -98,7 +99,10 @@ export async function provisionSignalBrandContextPolicyV1(args: {
     if (history.some(policy => policy.status === "active")) return await commit("existing_policy");
     // A creation retry must never revoke/replace a policy or undo a previous stop.
     if (history.length) return await commit("configuration_required");
-    const configuration = configuredPolicy(args.env ?? process.env);
+    const mfpEnabled=await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,
+      feature:"mention_facets",env:args.env});
+    const configuration = configuredPolicy({...args.env ?? process.env,
+      NOISIA_MENTION_FACETS_ENABLED:mfpEnabled ? "true" : "false"});
     if (!configuration) return await commit("configuration_required");
     const creator = (await client.query(`SELECT id FROM users WHERE id=$1::uuid
       AND status='active' AND user_type='noisia_internal' AND primary_role IN('noisia_admin','founder','admin')

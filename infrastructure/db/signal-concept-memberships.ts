@@ -12,6 +12,7 @@ import {
   type EntityContextV1,
 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
+import { signalWorkspaceFeatureEnabledV1 } from "./signal-workspace-features";
 import {
   inspectFacetContextChangeV1,
   type LabelingDatabaseV1,
@@ -63,6 +64,8 @@ async function authorize(
   });
   if (edit ? !caps.can_edit_topics : !caps.can_view)
     fail("membership_forbidden", 403);
+  if (!await signalWorkspaceFeatureEnabledV1({queryable:c,workspace_id,feature:"concept_membership"}))
+    fail("membership_not_enabled", 404);
   return caps;
 }
 export async function loadMembershipConceptsV1(
@@ -617,10 +620,11 @@ export async function selectConceptMembershipV1(
     if (!term) fail("membership_concept_not_found", 404);
     const prior = (
       await c.query(
-        "SELECT selection_revision::int FROM signal_defined_interest_selections WHERE workspace_id=$1 AND term_key=$2 FOR UPDATE",
+        "SELECT selection_revision::int,generation_id FROM signal_defined_interest_selections WHERE workspace_id=$1 AND term_key=$2 FOR UPDATE",
         [args.workspace_id, args.selection.concept_key],
       )
     ).rows[0];
+    if (prior?.generation_id) fail("membership_selection_legacy_conflict", 409);
     if (
       (prior?.selection_revision ?? 0) !==
       args.selection.expected_selection_revision

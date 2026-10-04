@@ -3,7 +3,7 @@ import { signalWorkspaceEmbeddingDigestV1 as digest } from '@noisia/query-engine
 import { buildJevFacetRequestV1, mapJevFacetResponseV1, validateJevThresholdsV1, type JevFacetThresholdsV1, type JevRequestV1, type JevResponseV1 } from '@noisia/query-engine/src/signal-mention-facets-jev-v1';
 import { llmPriceV1, llmCostMicroUsdV1, type LlmUsageV1 } from '@noisia/query-engine/src/llm-pricing-v1';
 import type { FacetResult } from '@noisia/query-engine/src/signal-mention-labeler-v1';
-import type { SignalLabelingStoreV1, LabelingCallV1, LabelingCallProposalV1 } from '@noisia/db';
+import { signalWorkspaceFeatureEnabledV1, type SignalLabelingStoreV1, type LabelingCallV1, type LabelingCallProposalV1 } from '@noisia/db';
 import { validateJevResponseV1, jevProviderErrorV1, type JevProviderV1, type JevRawResponseV1 } from '../providers/typesafe-jev';
 export const jevUsageV1 = (usage: JevResponseV1['usage']): LlmUsageV1 => ({ ...usage, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 0 } });
 /** One page lease, >=200 roots per page (the final page may be smaller). The provider owns
@@ -112,6 +112,10 @@ let runtimeProvider: JevProviderV1 | undefined;
 export async function signalMentionFacetsJevJobV1(job: { data: { run_id: string } }) {
   if (process.env.NOISIA_MENTION_FACETS_ENABLED !== 'true' || process.env.NOISIA_JEV_PROVIDER_ENABLED !== 'true') throw new Error('jev_disabled');
   const { pool } = await import('../db/client');
+  const workspace = (await pool.query<{workspace_id:string}>(
+    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='facets'",[job.data.run_id])).rows[0];
+  if (!workspace || !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.workspace_id,feature:'mention_facets'}))
+    throw new Error('jev_workspace_not_enabled');
   const { createMentionFacetsRuntimeStoreV1 } = await import('./signal-mention-facets-batch');
   const { createTypesafeJevClientV1 } = await import('../providers/typesafe-jev');
   runtimeProvider ??= createTypesafeJevClientV1();

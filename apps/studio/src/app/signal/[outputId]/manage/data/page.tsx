@@ -2,7 +2,7 @@ import Link from "next/link";
 import { ArrowRight, Database } from "@phosphor-icons/react/dist/ssr";
 import { getTranslations } from "next-intl/server";
 import { notFound } from "next/navigation";
-import { loadAdminWorkspaceCorpusSummariesV1 } from "@noisia/db";
+import { loadAdminWorkspaceCorpusSummariesV1, signalWorkspaceFeatureEnabledV1 } from "@noisia/db";
 import { BrandMonitoringJourney } from "@/components/brands/BrandMonitoringJourney";
 import { ClientBrandWorkspaceData } from "@/components/brands/ClientBrandWorkspaceData";
 import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
@@ -26,6 +26,7 @@ export default async function ClientBrandDataPage({ params }: { params: Promise<
   ]);
   const corpus = summaries.get(entry.workspaceId);
   if (!corpus) notFound();
+  const enableCorpusEmbeddings = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:entry.workspaceId,feature:"mention_facets"});
   return <div className="topics-workspace-page">
     <SignalV2ModuleHeader title={t("data.title")} subtitle={t("data.subtitle")} icon={<Database aria-hidden size={21} weight="fill" />}
       aside={<Link className="admin-button" href={`${entry.navigation.signalHref}/mentions`} prefetch={false}>
@@ -33,6 +34,6 @@ export default async function ClientBrandDataPage({ params }: { params: Promise<
     <BrandMonitoringJourney brandId={entry.brandId} current="data" destinations={{
       topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref,
       brandOs: entry.canManageBrandContext ? entry.navigation.brandOsHref : null }} />
-    <ClientBrandWorkspaceData enableCorpusEmbeddings={process.env.NOISIA_MENTION_FACETS_ENABLED === "true"} key={entry.requestScope} entry={entry} initialReadiness={readiness} corpus={corpus} />
+    <ClientBrandWorkspaceData enableCorpusEmbeddings={enableCorpusEmbeddings} key={entry.requestScope} entry={entry} initialReadiness={readiness} corpus={corpus} />
   </div>;
 }

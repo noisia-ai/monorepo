@@ -29,6 +29,7 @@ test("discovery catalog bootstrap needs live client authority, active action and
  const authority={workspace_status:"active",brand_status:"active",actor_status:"active",user_type:"client",primary_role:"client_admin",
   same_organization:true,brand_access_level:"admin",organization_status:"active",brand_same_organization:true};
  const clientFor=(overrides:Record<string,unknown>={},policy=true)=>({query:async(sql:string)=>{
+  if(sql.includes("FROM signal_workspace_features"))return {rows:[{enabled:true}]};
   if(sql.includes("actor.primary_role"))return {rows:[{...authority,...overrides}]};
   if(sql.includes("action.action='topic_interpretation'"))return{rows:policy?[{id:"policy",cap:null,daily:null,budget_timezone:"UTC"}]:[]};
   if(sql.includes("SELECT id::text,taxonomy_id::text,version,status"))return{rows:[{id:"existing-profile"}]};
