@@ -23,7 +23,10 @@ CREATE DATABASE noisia_mfp OWNER noisia_mfp TEMPLATE template0;
 REVOKE CONNECT ON DATABASE noisia_mfp FROM PUBLIC;
 GRANT CONNECT ON DATABASE noisia_mfp TO noisia_mfp;
 \connect noisia_mfp
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE SCHEMA extensions AUTHORIZATION noisia_mfp;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+GRANT USAGE ON SCHEMA extensions TO noisia_mfp;
+ALTER DATABASE noisia_mfp SET search_path=public,extensions,pg_temp;
 CREATE EXTENSION IF NOT EXISTS vector;
 GRANT EXECUTE ON FUNCTION pg_control_system() TO noisia_mfp;
 -- Existing migrations reference these Supabase no-login roles. Preserve existing roles.

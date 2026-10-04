@@ -53,5 +53,45 @@ build se ejecutan en CI remoto. Las pruebas de proveedor se lanzan aparte; no fo
 parte de `pnpm test`. Los presupuestos son orientativos, sólo un cap configurado
 explícitamente es estricto. No transformar requisitos de cap legacy en máximos MFP.
 
-Pendiente del corte inicial: migraciones dedicadas verificadas, seed/importación/
-preparación/embeddings, corpus real, Studio autenticado, demo y replay remoto.
+## Ejecución explícita en el runner
+
+Desde Railway SSH, dentro de `/app` (`TSX_TSCONFIG_PATH` ya definido en imagen):
+
+```
+node scripts/dev-corpus/up.mjs
+node scripts/dev-corpus/migrate.mjs
+pnpm exec tsx scripts/dev-corpus/seed.ts .data/dev-corpus/brand.json
+pnpm exec tsx scripts/dev-corpus/import.ts .data/dev-corpus/load1.csv 2026-01-01 2026-12-31
+pnpm exec tsx scripts/dev-corpus/prepare.ts
+NOISIA_DEV_EMBEDDINGS=fake pnpm exec tsx scripts/dev-corpus/embeddings.ts
+pnpm exec tsx scripts/dev-corpus/status.ts
+```
+
+Las fechas son argumentos del rango real del CSV. El importador usa Storage privado,
+la admisión real y el job real mediante BullMQ en Redis MFP. Preparación usa páginas
+de 500 y el mismo handler de producto. Repetir las órdenes conserva claves estables.
+`migrate` serializa el entorno, verifica hashes ya aplicados y sólo ejecuta pendientes;
+rechaza una base existente sin historial. No aplica SQL histórico a otra base.
+
+`brand.json` incluye `fixture_key`, `organization_name`, `category`, `brand` con campos
+del alta UI, `aliases` y ≥2 `competitors`; opcionalmente `client_email` para el login
+autenticado posterior. No configura atajos de Kinde ni override local. Derechos de
+la fuente incluyen texto, métricas y procesamiento LLM. Las nuevas acciones de
+política MFP se incorporarán con WS2; el seed muestra ese pendiente expresamente.
+
+Fake produce vectores sintéticos y recibos marcados como simulados, costo proveedor
+real cero. No puede reutilizarse después como Voyage: usar otra identidad de fixture
+en la misma base, nunca un clon. Voyage requiere flag y clave selectiva; mientras el
+contrato compartido de embeddings exija un cap no nullable, el script devuelve
+`mfp_voyage_nullable_cap_contract_pending` si no hay cap explícito del operador.
+No convierte el presupuesto orientativo en techo. Éste es un pendiente de código,
+no una solicitud de aprobación de gasto.
+
+`sample.mjs <directorio CSV> <entity-context.json>` genera 1,000 + 250 filas fuera de
+Git. Las 20 modificaciones son edits de desarrollo marcados y registrados; no se
+presentan como texto original del proveedor. Transferir corpus por Railway SSH
+cifrado; nunca en argumentos, logs ni un endpoint público de base.
+
+Pendiente de aceptación: ejecutar el recorrido remoto, comprobar replay/<10min,
+completar gold real y Studio autenticado. El código y los tests sin DB no acreditan
+esos resultados.

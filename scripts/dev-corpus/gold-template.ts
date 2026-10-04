@@ -11,7 +11,7 @@ await main(async () => {
   const concepts = JSON.parse(await readFile(conceptPath, 'utf8'));
   if (concepts.length < 2 || concepts.length > 3) throw new Error('mfp_gold_concepts_required');
   const selected = selectGold(roots, context.entities, 'mfp-gold-v1', comparisons);
-  const fields = ['root_id','input_digest','partition','stratum','text','entities','entities_abstained','unrelated_reason','voice','act','spam_or_bot','language','asunto',...concepts.map(concept => `concept:${concept.concept_key}`)];
+  const fields = ['root_id','input_digest','partition','stratum','text','entities','entities_abstained','unrelated_reason','voice','act','spam_or_bot','language','asunto',...concepts.map((concept: {concept_key:string}) => `concept:${concept.concept_key}`)];
   await mkdir(output, { recursive: true, mode: 0o700 });
   await writeFile(`${output}/gold-template.csv`, csv(fields, selected), { mode: 0o600, flag: 'wx' });
   await writeFile(`${output}/gold-selection.json`, JSON.stringify({ seed:'mfp-gold-v1', context, concepts, selected }), { mode:0o600, flag:'wx' });

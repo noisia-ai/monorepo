@@ -38,6 +38,8 @@ export async function openDatabase() {
     if (!rows.length) fail('pgvector_required');
     // Studio stores must reuse the verified, privately pinned pool.
     globalThis.noisiaStudioPgPool = pool;
+    globalThis.noisiaWorkerPgPool = pool;
+    globalThis.noisiaWorkerNumericPgPool = pool;
     return pool;
   } catch (error) { await pool.end(); throw error; }
 }

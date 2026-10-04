@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM node:20.20.1-bookworm-slim@sha256:17281e8d1dc4d671976c6b89a12f47a44c2f390b63a989e2e327631041f544fd
 WORKDIR /app
+ENV TSX_TSCONFIG_PATH=/app/apps/studio/tsconfig.json
 RUN corepack enable pnpm && corepack prepare pnpm@10.33.2 --activate
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/studio/package.json apps/studio/package.json
