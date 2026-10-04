@@ -67,7 +67,8 @@ CREATE VIEW signal_concept_memberships_current_v1 AS
  LEFT JOIN LATERAL (
  SELECT result FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
  JOIN signal_labeler_versions l ON l.id=run.labeler_version_id CROSS JOIN LATERAL jsonb_array_elements(call.results) result
- WHERE call.workspace_id=p.workspace_id AND (m.call_id IS NULL OR call.id=m.call_id) AND run.kind='membership' AND NOT COALESCE((run.membership_snapshot->>'preview')::boolean,false)
+ WHERE o.id IS NULL AND (m.call_id IS NULL OR m.verdict='refused')
+ AND call.workspace_id=p.workspace_id AND (m.call_id IS NULL OR call.id=m.call_id) AND run.kind='membership' AND NOT COALESCE((run.membership_snapshot->>'preview')::boolean,false)
  AND call.results_applied AND l.labeler_digest=p.labeler_digest AND result->>'root_id'=p.root_id::text
  AND result->>'root_fingerprint'=p.root_fingerprint AND result->>'concept_key'=p.concept_key
  AND result->>'definition_digest'=p.definition_digest AND result->>'entity_context_digest'=p.entity_context_digest
