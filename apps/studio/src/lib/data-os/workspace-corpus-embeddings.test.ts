@@ -106,8 +106,8 @@ test("MFP omits only the inherited cap, preserving explicitly configured strict 
 
 test("facet replay uses its original identity despite a changed workspace selection", async () => {
   const {requestMentionFacetsV1} = await import("../../../../../infrastructure/db/signal-labeling-runs");
-  const {facetLabelerIdentityV1,facetLabelerIdentityOrdinalV4,labelerDigestV1,signalWorkspaceEmbeddingDigestV1} = await import("@noisia/query-engine");
-  const selected = facetLabelerIdentityOrdinalV4(), fallback = facetLabelerIdentityV1();
+  const {facetLabelerIdentityV1,facetLabelerIdentityOrdinalV3,labelerDigestV1,signalWorkspaceEmbeddingDigestV1} = await import("@noisia/query-engine");
+  const selected = facetLabelerIdentityOrdinalV3(), fallback = facetLabelerIdentityV1();
   for (const [selection, explicit, expected] of [[fallback,undefined,selected],[selected,fallback,fallback],[undefined,undefined,fallback]] as const) {
     let selectionReads = 0;
     const query = async (sql:string) => {

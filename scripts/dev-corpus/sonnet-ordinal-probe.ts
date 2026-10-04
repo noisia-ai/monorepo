@@ -5,7 +5,6 @@ import { main, openDatabase } from "./guard.mjs";
 import {
   buildFacetRequestV1,
   facetInputDigestV1,
-  facetLabelerIdentityOrdinalV4,
   facetLabelerIdentityOrdinalV2,
   facetLabelerIdentityOrdinalV3,
   parseFacetGroupV1,
@@ -30,7 +29,7 @@ const variant = "ordinal";
 const version = Number(
   process.argv.find((arg) => arg.startsWith("--version="))?.slice(10) ?? "2",
 );
-if (![2, 3, 4].includes(version))
+if (![2, 3].includes(version))
   throw new Error("mfp_ordinal_probe_version_invalid");
 const rootCount = Number(
   process.argv.find((arg) => arg.startsWith("--roots="))?.slice(8),
@@ -132,9 +131,7 @@ const inputs = examples.slice(0, rootCount).map((example, index) => {
 const identity =
   version === 2
     ? facetLabelerIdentityOrdinalV2()
-    : version === 3
-      ? facetLabelerIdentityOrdinalV3()
-      : facetLabelerIdentityOrdinalV4();
+    : facetLabelerIdentityOrdinalV3();
 const params = buildFacetRequestV1(inputs, context, identity);
 const request = {
   custom_id: `mfp-sonnet-required-ordinals-${rootCount}-v${version}`,

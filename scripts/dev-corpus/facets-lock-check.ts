@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { main, openDatabase } from "./guard.mjs";
+import { assertDisposableFixture, main, openDatabase } from "./guard.mjs";
 import {
   createSignalLabelingStoreV1,
   requestMentionFacetsV1,
@@ -18,6 +18,7 @@ await main(async () => {
   const identity = JSON.parse(
     await readFile(".data/dev-corpus/identity.json", "utf8"),
   );
+  assertDisposableFixture(identity, "facets-lock-check");
   const prior =
     (
       await database.query(

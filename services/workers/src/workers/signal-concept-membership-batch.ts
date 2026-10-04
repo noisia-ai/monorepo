@@ -29,6 +29,7 @@ import {
   type AnthropicBatchRequest,
 } from "../providers/anthropic-message-batches";
 import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
+import { readSignalLabelingReceiptV1 } from "./signal-labeling-receipt-storage";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -373,6 +374,8 @@ export function createConceptMembershipRuntimeStoreV1(
         await rm(directory, { recursive: true, force: true });
       }
     },
+    loadRaw: async (args) => readSignalLabelingReceiptV1({ storage, workspace_id: args.workspace_id,
+      run_id: args.run_id, storage_key: args.storage_key, raw_sha256: args.raw_sha256, size_bytes: args.size_bytes }),
   });
 }
 export async function signalConceptMembershipJobV1(

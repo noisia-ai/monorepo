@@ -59,7 +59,6 @@ function harness() {
     cursor_root_id: null,
     cap_micro_usd: null,
     processing_admission_id: "admission",
-    selection_complete: false,
     status: "running",
     entity_context_version_no: 1,
   } as MembershipRunV1;

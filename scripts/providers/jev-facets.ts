@@ -40,8 +40,15 @@ void main(async () => {
     const billing = (await pool.query(`SELECT count(*)::int requests,COALESCE(sum(settled_micro_usd) FILTER(WHERE status='settled'),0)::text settled_micro_usd,
       COALESCE(sum(reserved_micro_usd) FILTER(WHERE status IN('reserved','submitting','submitted','unknown')),0)::text reserved_micro_usd,
       count(*) FILTER(WHERE status IN('submitting','submitted','unknown'))::int unresolved_billing_requests FROM signal_labeling_calls WHERE run_id=$1`, [run.run_id])).rows[0];
-    const rawRows = (await pool.query(`SELECT raw_body FROM signal_labeling_calls WHERE run_id=$1 AND raw_body IS NOT NULL`, [run.run_id])).rows;
-    const latencies = rawRows.map((row: { raw_body: string }) => JSON.parse(row.raw_body).latency_ms).filter((value: unknown) => typeof value === 'number' && Number.isFinite(value)).sort((a: number, b: number) => a - b);
+    const rawRows = (await pool.query(`SELECT workspace_id,run_id,id,raw_storage_key,raw_sha256,raw_size_bytes::int size_bytes
+      FROM signal_labeling_calls WHERE run_id=$1 AND raw_storage_key IS NOT NULL`, [run.run_id])).rows;
+    const { createWorkspaceEngineStorageV1 } = await import('../../services/workers/src/workers/signal-workspace-engine-storage');
+    const { readSignalLabelingReceiptV1 } = await import('../../services/workers/src/workers/signal-labeling-receipt-storage');
+    const storage = createWorkspaceEngineStorageV1();
+    const rawBodies = await Promise.all(rawRows.map((row: any) => readSignalLabelingReceiptV1({ storage,
+      workspace_id: row.workspace_id, run_id: row.run_id, storage_key: row.raw_storage_key,
+      raw_sha256: row.raw_sha256, size_bytes: row.size_bytes })));
+    const latencies = rawBodies.map(raw => JSON.parse(raw).latency_ms).filter((value: unknown) => typeof value === 'number' && Number.isFinite(value)).sort((a: number, b: number) => a - b);
     const summary = { stage: 'jev_result', run_id: run.run_id, status: state, counts, billing, price_usd_per_mtok: price, model: labeler.model,
       provider_requests_this_execution: providerRequests, elapsed_ms: Date.now() - started, latency_samples: latencies.length, p50_ms: latencies[Math.ceil(latencies.length * 0.5) - 1] ?? null, p95_ms: latencies[Math.ceil(latencies.length * 0.95) - 1] ?? null, semantics: 'experimental_unvalidated' };
     await mkdir('.data/dev-corpus/jev-facets', { recursive: true, mode: 0o700 });
