@@ -43,7 +43,8 @@ void main(async()=>{
     }
     const after=await loadSignalTopicCatalogStoreV1({queryable:pool,workspace_id:identity.workspace_id});
     if(plannedConceptUpdates(proposed,after.topics,keys).some(c=>!c.unchanged))throw new Error('mfp_eval_concepts_not_current');
-    if(after.topics.length!==before.topics.length+created||before.topics.some(old=>{
+    const unrelatedBefore=before.topics.filter(topic=>!keys.includes(topic.term_key));
+    if(unrelatedBefore.length!==13||after.topics.length!==before.topics.length+created||unrelatedBefore.some(old=>{
       const current=after.topics.find(topic=>topic.term_key===old.term_key);
       return !current||current.definition_digest!==old.definition_digest||current.definition_revision!==old.definition_revision;
     }))throw new Error('mfp_eval_unrelated_catalog_changed');

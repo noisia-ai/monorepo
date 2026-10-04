@@ -13,4 +13,6 @@ test('v2 installation fixes any-rental scope and requires exact fixed selection'
   assert.match(plan[0].input.definition,/Use insufficient for ambiguous text/);
   assert.throws(()=>plannedConceptUpdates(input.slice(1),catalog,keys),/selection_mismatch/);
   assert.throws(()=>plannedConceptUpdates(input,catalog.slice(1),keys),/catalog_concept_missing/);
+  const matching=catalog.map((item,index)=>({...item,...plan[index].input}));
+  assert.ok(plannedConceptUpdates(input,matching,keys).every(item=>item.unchanged));
 });
