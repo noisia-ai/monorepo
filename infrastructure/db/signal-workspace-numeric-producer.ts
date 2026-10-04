@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import { inspectFacetContextChangeV1 } from './signal-mention-facets';
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from './signal-workspace-capabilities';
+import { signalWorkspaceFeatureEnabledV1 } from './signal-workspace-features';
 import { beginSignalWorkspaceIncrementalEngineV1, loadSignalWorkspaceIncrementalParentV1 } from './signal-workspace-engine-incremental';
 import { loadSignalWorkspaceEnginePreflightV1, SignalWorkspaceEngineError, isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,
   type SignalWorkspaceEngineDatabaseV1 } from './signal-workspace-engine';
@@ -60,7 +61,8 @@ async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: str
   if (BigInt(state.input_revision) <= BigInt(opted.input_revision)) return change('not_enabled', 'new_input_revision_required');
   const capability = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database, workspace_id, actor_user_id: opted.actor_user_id });
   const discovery=Boolean(opted.input_snapshot.discovery_population);
-  if (!(discovery && process.env.NOISIA_MENTION_FACETS_ENABLED==='true' ? capability.can_request_processing : !discovery && capability.can_execute_topics)) return change('blocked', 'numeric_actor_forbidden');
+  if (!(discovery && await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id,feature:"mfp_discovery"})
+    ? capability.can_request_processing : !discovery && capability.can_execute_topics)) return change('blocked', 'numeric_actor_forbidden');
   const prep = (await database.query<{ id: string; status: string; policy_current: boolean }>(`SELECT id,status,
     (policy_valid_until IS NULL OR policy_valid_until>clock_timestamp()) policy_current
     FROM signal_corpus_preparation_runs WHERE workspace_id=$1::uuid AND (input_revision=$2::bigint

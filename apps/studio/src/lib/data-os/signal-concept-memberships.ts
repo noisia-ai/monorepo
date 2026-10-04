@@ -5,12 +5,13 @@ import {
   overrideConceptMembershipsV1,
   selectConceptMembershipV1,
   confirmMentionFacetsV1,
+  signalWorkspaceFeatureEnabledV1,
 } from "@noisia/db";
 import { pool } from "@/lib/db";
 export { SignalLabelingError } from "@noisia/db";
-const enabled = () => process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED === "true";
-const providerAvailable = () =>
-  enabled() &&
+const enabled = (workspace_id:string) => signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id,feature:"concept_membership"});
+const providerAvailable = async (workspace_id:string) =>
+  await enabled(workspace_id) &&
   process.env.NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED === "true";
 type WithoutDatabase<T> = Omit<T, "database">;
 export async function loadMembershipStatusForActorV1(
@@ -18,11 +19,11 @@ export async function loadMembershipStatusForActorV1(
 ) {
   return {
     ...(await loadConceptMembershipsStatusV1({ ...args, database: pool })),
-    enabled: enabled(),
-    provider_available: providerAvailable(),
+    enabled: await enabled(args.workspace_id),
+    provider_available: await providerAvailable(args.workspace_id),
   };
 }
-export function requestMembershipsForActorV1(
+export async function requestMembershipsForActorV1(
   args: Omit<
     Parameters<typeof requestConceptMembershipsV1>[0],
     "database" | "provider_available"
@@ -31,7 +32,7 @@ export function requestMembershipsForActorV1(
   return requestConceptMembershipsV1({
     ...args,
     database: pool,
-    provider_available: providerAvailable(),
+    provider_available: await providerAvailable(args.workspace_id),
   });
 }
 export function loadMembershipPreviewForActorV1(

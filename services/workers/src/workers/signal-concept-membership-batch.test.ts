@@ -15,7 +15,8 @@ import {
   type MembershipResultV1,
   type MembershipInputV1,
 } from "@noisia/query-engine";
-import { AnthropicBatchTransportError } from "../providers/anthropic-message-batches";
+import { AnthropicBatchTransportError, type AnthropicBatchRequest } from "../providers/anthropic-message-batches";
+import { readMfpInFlightPages } from "./signal-labeling-parallelism";
 const dim = <T>(value: T) => ({ value, confidence: "high", abstained: false });
 function harness() {
   const context = {
@@ -173,7 +174,7 @@ function harness() {
     results_url: null,
   };
   const provider = {
-    async create() {
+    async create(_requests?: readonly AnthropicBatchRequest[]) {
       submitted++;
       return state;
     },
@@ -248,6 +249,59 @@ test("batch persists raw before settlement and labels; replay has zero new provi
   });
   assert.equal(h.submitted(), 1);
   assert.equal(h.labels.length, 2);
+});
+test("configurable in-flight pages submit multiple root pages in one provider batch", async () => {
+  assert.equal(readMfpInFlightPages("4"), 4);
+  assert.equal(readMfpInFlightPages("100"), 1);
+  const previous = process.env.NOISIA_MFP_IN_FLIGHT_PAGES;
+  process.env.NOISIA_MFP_IN_FLIGHT_PAGES = "2";
+  try {
+    const h = harness();
+    const second = h.inputs.map((input, i) => ({...input, root_id:`next-${i}`, root_fingerprint:`next-${i}`}));
+    let page = 0;
+    h.store.inputs = async () => page === 0 ? h.inputs : page === 1 ? second : [];
+    const reserve = h.store.reserve;
+    h.store.reserve = async (run, proposals, advance) => {
+      const calls = await reserve(run, proposals, advance);
+      if (advance !== false) page++;
+      return calls;
+    };
+    const create = h.provider.create;
+    let requestCount = 0;
+    h.provider.create = async (requests) => { requestCount = requests?.length ?? 0; return create(requests); };
+    await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+    assert.equal(page, 2);
+    assert.equal(requestCount, 2);
+    assert.equal(h.labels.length, 4);
+  } finally {
+    if (previous === undefined) delete process.env.NOISIA_MFP_IN_FLIGHT_PAGES;
+    else process.env.NOISIA_MFP_IN_FLIGHT_PAGES = previous;
+  }
+});
+test("one malformed membership is retried alone and its final error is not billed again", async () => {
+  const h = harness();
+  const originalResults = h.provider.results;
+  h.provider.results = async function* () {
+    for await (const result of originalResults()) {
+      const call = h.calls().find((c) => c.custom_id === result.item.custom_id)!;
+      const roots = call.inputs.map((_, root_ordinal) => ({
+        root_ordinal,
+        memberships: root_ordinal === 0 && call.inputs.length > 1 ? [] : [{
+          concept_key:"experience",verdict:"insufficient",span_ids:[],rationale:"Missing evidence",
+        }],
+      }));
+      result.item.result.message.content = [{type:"text",text:JSON.stringify({contract_version:"concept-membership-judge-v1",roots})}];
+      yield {...result,rawText:JSON.stringify(result.item)};
+    }
+  };
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.labels.length, 1);
+  assert.equal(h.labels[0]?.verdict, "not_belongs");
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.labels.length, 2);
+  assert.equal(h.labels[1]?.error_code, "membership_schema_invalid");
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.submitted(), 2);
 });
 test("ambiguous POST is never replayed blindly", async () => {
   const h = harness();

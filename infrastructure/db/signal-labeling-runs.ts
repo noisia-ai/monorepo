@@ -13,6 +13,7 @@ import {
   type LlmUsageV1,
 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
+import { signalWorkspaceFeatureEnabledV1, type SignalWorkspaceFeatureV1 } from "./signal-workspace-features";
 import { admitSignalProcessingWithClientV1 } from "./signal-processing-policy";
 import {
   inspectFacetContextChangeV1,
@@ -94,7 +95,7 @@ async function tx<T>(
     c.release();
   }
 }
-async function authorize(c: PoolClient, w: string, a: string, write: boolean) {
+async function authorize(c: PoolClient, w: string, a: string, write: boolean, feature: SignalWorkspaceFeatureV1 = "mention_facets") {
   const caps = await loadSignalWorkspaceCapabilitiesStoreV1({
     queryable: c,
     workspace_id: w,
@@ -103,6 +104,7 @@ async function authorize(c: PoolClient, w: string, a: string, write: boolean) {
   });
   if (write ? !caps.can_request_processing : !caps.can_view)
     fail("labeling_forbidden", 403);
+  if (!await signalWorkspaceFeatureEnabledV1({queryable:c,workspace_id:w,feature})) fail("labeling_not_enabled",404);
 }
 async function estimatePopulation(
   c: PoolClient,
@@ -539,7 +541,7 @@ export function createSignalLabelingStoreV1<
       policy.organization_id,
       policy.budget_date,
     ]);
-    await authorize(c, run.workspace_id, run.actor_user_id, true);
+    await authorize(c, run.workspace_id, run.actor_user_id, true, run.kind === "membership" ? "concept_membership" : "mention_facets");
     const current = await inspectFacetContextChangeV1(c, run.workspace_id);
     if (current.digest !== run.entity_context_digest)
       fail("labeling_context_changed");
