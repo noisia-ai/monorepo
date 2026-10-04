@@ -18,6 +18,9 @@ await main(async()=>{
  const file=process.argv.find(arg=>arg.startsWith('--fixture='))?.slice('--fixture='.length);
  if(!file)throw Error('mfp_evidence_fixture_required');
  const f=JSON.parse(await readFile(file,'utf8')) as Fixture;
+ assert.equal(f.evidence?.contract_version,'workspace-incremental-editorial-evidence-stream-v1','mfp_evidence_fixture_invalid');
+ assert.ok(Array.isArray(f.evidence.numeric_component_order)&&f.evidence.numeric_component_order.length>0,'mfp_evidence_fixture_invalid');
+ assert.ok(f.evidence.census&&Array.isArray(f.evidence.units)&&f.stored?.storage_key,'mfp_evidence_fixture_invalid');
  const identity=JSON.parse(await readFile(process.env.NOISIA_MFP_IDENTITY_FILE??'.data/dev-corpus/identity.json','utf8')) as {workspace_id:string;internal_user_id:string};
  const pool:Pool=await openDatabase(),raw=await pool.connect();let active=false,serial=0,phase='preflight';
  const flag=process.env.NOISIA_MENTION_FACETS_ENABLED,stack:string[]=[];
@@ -95,6 +98,6 @@ await main(async()=>{
   const after=await census();assert.deepEqual(after.engines,before.engines);assert.deepEqual(after.calls,before.calls);
   await raw.query('ROLLBACK');active=false;assert.deepEqual(await census(),before);report('physical_rollback_census_pass');
   console.log(JSON.stringify({status:'passed',provider_calls:0,storage_writes:0,fit_runs:0,units:f.evidence.units.length,targets:f.evidence.stream.rows,checkpoint_unchanged:true,negative_condition:'simulated false predicate; all remaining SQL real'}));
- }catch(error){const e=error as Error&{code?:string};console.error(JSON.stringify({phase,name:e.name,code:e.code,message:/^[a-z_]+$/u.test(e.message)?e.message:undefined,frame:e.stack?.split('\n').find(line=>line.includes('incremental-empty-component-check'))?.trim()}));throw error;}
+ }catch(error){const e=error as Error&{code?:string};console.error(JSON.stringify({phase,name:e.name,code:e.code,message:e instanceof TypeError?'type_error':/^[a-z_]+$/u.test(e.message)?e.message:undefined,frame:e.stack?.split('\n').find(line=>line.includes('incremental-empty-component-check'))?.trim()}));throw error;}
  finally{if(active)await raw.query('ROLLBACK');raw.release();await pool.end();if(flag===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;else process.env.NOISIA_MENTION_FACETS_ENABLED=flag;}
 });
