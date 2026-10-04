@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   conceptCompatibleV1,
+  membershipOutputSchemaV1,
   parseMembershipGroupV1,
   groupMembershipInputsV1,
   membershipSpansV1,
@@ -185,4 +186,28 @@ test("provider required ordinal keys normalize to the canonical response", () =>
   );
   assert.equal(parsed.results.length, 2);
   assert.ok(parsed.results.every((result) => result.verdict === "not_belongs"));
+});
+
+test("provider grammar shares definitions while requiring every ordinal at 8 and 16 roots", () => {
+  for (const count of [8, 16]) {
+    const schema = membershipOutputSchemaV1(count);
+    assert.equal(schema.properties.roots.required.length, count);
+    assert.equal(Object.keys(schema.properties.roots.properties).length, count);
+    for (let ordinal = 0; ordinal < count; ordinal++) {
+      assert.ok(schema.properties.roots.required.includes(`r${ordinal}`));
+      assert.deepEqual(schema.properties.roots.properties[`r${ordinal}`], {
+        $ref: "#/definitions/root",
+      });
+    }
+    assert.deepEqual(schema.definitions.root.properties.memberships.items, {
+      $ref: "#/definitions/membership",
+    });
+    assert.deepEqual(schema.definitions.membership.properties.span_ids.items, {
+      $ref: "#/definitions/citation",
+    });
+    assert.deepEqual(schema.definitions.membership.properties.verdict.enum, [
+      "belongs",
+      "insufficient",
+    ]);
+  }
 });

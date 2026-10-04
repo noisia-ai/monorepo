@@ -30,7 +30,7 @@ const rootCount = Number(
 );
 if (![8, 16].includes(rootCount))
   throw new Error("mfp_membership_probe_roots_required");
-const version = 1;
+const version = 2;
 const sha = (value: string) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const context = {

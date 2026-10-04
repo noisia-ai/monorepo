@@ -114,7 +114,9 @@ const membershipArrayOutputSchemaV1 = {
 // The provider grammar requires each ordinal as an object key. The public parser
 // normalizes it to the canonical roots[] contract, with identical coverage checks.
 export function membershipOutputSchemaV1(rootCount: number) {
-  const root = membershipArrayOutputSchemaV1.properties.roots.items;
+  const membership =
+    membershipArrayOutputSchemaV1.properties.roots.items.properties.memberships
+      .items;
   return {
     type: "object",
     additionalProperties: false,
@@ -129,15 +131,35 @@ export function membershipOutputSchemaV1(rootCount: number) {
         properties: Object.fromEntries(
           Array.from({ length: rootCount }, (_, i) => [
             `r${i}`,
-            {
-              type: "object",
-              additionalProperties: false,
-              required: ["memberships"],
-              properties: { memberships: root.properties.memberships },
-            },
+            { $ref: "#/definitions/root" },
           ]),
         ),
       },
+    },
+    // Share the grammar instead of expanding nested arrays for every ordinal.
+    definitions: {
+      root: {
+        type: "object",
+        additionalProperties: false,
+        required: ["memberships"],
+        properties: {
+          memberships: {
+            type: "array",
+            items: { $ref: "#/definitions/membership" },
+          },
+        },
+      },
+      membership: {
+        ...membership,
+        properties: {
+          ...membership.properties,
+          span_ids: {
+            type: "array",
+            items: { $ref: "#/definitions/citation" },
+          },
+        },
+      },
+      citation: { type: "string" },
     },
   };
 }
@@ -149,7 +171,7 @@ export function membershipLabelerIdentityV1(): LabelerIdentity {
     model: "claude-sonnet-5-5",
     prompt_digest: digest(MEMBERSHIP_PROMPT_V1),
     schema_digest: digest({
-      format: "membership-required-ordinals-v1",
+      format: "membership-required-ordinals-refs-v2",
       schema: membershipOutputSchemaV1(16),
     }),
     params: {
@@ -193,7 +215,10 @@ export function buildMembershipRequestV1(
     thinking: { type: "adaptive" },
     output_config: {
       effort: "medium",
-      format: { type: "json_schema", schema: membershipOutputSchemaV1(inputs.length) },
+      format: {
+        type: "json_schema",
+        schema: membershipOutputSchemaV1(inputs.length),
+      },
     },
     system: [
       {
