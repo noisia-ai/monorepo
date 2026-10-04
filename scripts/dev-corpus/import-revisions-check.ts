@@ -1,4 +1,4 @@
-/** Remote PostgreSQL rollback check. No provider, queue, migration or real-corpus writes. */
+/** Remote PostgreSQL rollback check. Optional candidate DDL, synthetic changes and labeled-root edits all roll back. */
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
@@ -10,6 +10,8 @@ await main(async()=>{
  const pool=await openDatabase();const client=await pool.connect();
  try{
   await client.query('BEGIN');
+  if(process.argv.includes('--candidate-migration')) await client.query(await readFile(new URL('../../infrastructure/db/migrations/0241_signal_import_content_revisions.sql',import.meta.url),'utf8'));
+  await client.query('SAVEPOINT synthetic_fixture');
   const query=(sql:string,values?:unknown[])=>client.query(sql,values);
   const database={query,connect:async()=>({query,release(){}})} as unknown as Parameters<typeof syntheticImportedWorkspaceFixtureV1>[0]['database'];
   const f=await syntheticImportedWorkspaceFixtureV1({database,query,scoped:client,cleanup:async()=>{}});
@@ -100,13 +102,12 @@ await main(async()=>{
   const independent=await createSignalSentioneCsvIngester(database).ingestSentioneCsvStream({workspaceId:f.workspace_id,dataSourceId:f.source_id,
    importBatchId:sameSourceBatch,sourceFileName:'synthetic-system.csv',stream:new Blob([csvSameSystem]).stream()});
   assert.equal(independent.stats.included_count,1);assert.equal(independent.stats.duplicate_count,0);checks++;
-  await query('ROLLBACK');
+  await query('ROLLBACK TO SAVEPOINT synthetic_fixture');await query('RELEASE SAVEPOINT synthetic_fixture');
   // Existing private labels are observed and edited only inside this rollback.
   // No label fabrication: the fixture must already have a current model verdict.
   const identityPath=process.argv.find(value=>value.startsWith('--identity='))?.slice('--identity='.length);
   if(!identityPath)throw new Error('mfp_labeled_fixture_identity_required');
   const identity=JSON.parse(await readFile(identityPath,'utf8'));
-  await query('BEGIN');
   const labeled=(await query(`SELECT m.*,c.concept_key,c.verdict,f.facets,f.input_digest
    FROM signal_concept_memberships_current_v1 c JOIN signal_mention_facets_current_v1 f USING(workspace_id,root_id)
    JOIN mentions m ON m.id=c.root_id WHERE c.workspace_id=$1 AND c.source='model' AND c.verdict='belongs'
