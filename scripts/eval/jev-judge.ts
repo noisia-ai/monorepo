@@ -15,7 +15,7 @@ const sha=(value:string)=>`sha256:${createHash('sha256').update(value).digest('h
 const writePrivate=(path:string,value:unknown)=>writeFile(path,JSON.stringify(value),{flag:'wx',mode:0o600});
 const readMaybe=async(path:string)=>readFile(path,'utf8').then(JSON.parse).catch(error=>{if(error?.code==='ENOENT')return null;throw error;});
 
-await main(async()=>{
+void main(async()=>{
   if(process.env.NOISIA_JEV_PROVIDER_ENABLED!=='true'||!process.argv.includes('--real'))throw new Error('mfp_eval_jev_disabled');
   const priceText=process.env.NOISIA_JEV_INPUT_USD_PER_MTOK;
   const price=Number(priceText);

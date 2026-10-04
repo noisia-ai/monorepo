@@ -7,7 +7,7 @@ import { loadSignalTopicCatalogStoreV1, updateSignalTopicStoreV1 } from '../../i
 import { plannedConceptUpdates, sha256, type ProposedConcept } from './concepts-v2';
 import { loadMfpEvalIdentity } from './fixture-identity';
 
-await main(async()=>{
+void main(async()=>{
   const path=process.env.NOISIA_MFP_CONCEPTS_V2_FILE ?? '.data/dev-corpus/voyage-real/concepts-proposed-v2.json';
   const bytes=await readFile(path);
   const proposed=JSON.parse(bytes.toString('utf8')) as ProposedConcept[];

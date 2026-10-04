@@ -14,7 +14,7 @@ type Manifest={variants:Array<{variant:Variant['variant'];run_ids:string[];thres
 type RunRow={id:string;kind:string;status:string;created_at:string;completed_at:string|null;
   provider:string;model:string;labeler_digest:string;identity:{params:Record<string,any>}};
 const path='.data/dev-corpus/voyage-real/';
-await main(async()=>{
+void main(async()=>{
   const selection=JSON.parse(await readFile(`${path}gold-selection.json`,'utf8')) as Selection;
   validateSelection(selection);
   const manifest=JSON.parse(await readFile(`${path}eval-run-manifest.json`,'utf8')) as Manifest;

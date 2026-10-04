@@ -1,5 +1,4 @@
 /** Read-only preflight for the private MFP fixture before sending any text to JEV. */
-import { pathToFileURL } from 'node:url';
 import { loadMfpEvalIdentity } from './fixture-identity';
 // @ts-expect-error guarded private runner JavaScript
 import { main,openDatabase } from '../dev-corpus/guard.mjs';
@@ -48,4 +47,4 @@ export async function verifyMfpEvalRights(){
   } catch(error){await client.query('ROLLBACK');throw error;}
   finally{client.release();await pool.end();}
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href)await main(verifyMfpEvalRights);
+if(process.argv[1]?.endsWith('/scripts/eval/rights-check.ts'))void main(verifyMfpEvalRights);
