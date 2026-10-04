@@ -42,7 +42,6 @@ function harness() {
     cursor_root_id: null,
     cap_micro_usd: null,
     processing_admission_id: "admission",
-    selection_complete: false,
     status: "running",
     entity_context_version_no: 1,
   } as LabelingRunV1;
@@ -185,14 +184,7 @@ function harness() {
                     ? Object.fromEntries(
                         call.inputs.map((_, ordinal) => [
                           `r${ordinal}`,
-                          run.identity.params.request_format ===
-                          "required-ordinal-fields-v4"
-                            ? {
-                                ...facets,
-                                unrelated_reason: "none",
-                                asunto: dim(""),
-                              }
-                            : facets,
+                          facets,
                         ]),
                       )
                     : call.inputs.map((_, root_ordinal) => ({

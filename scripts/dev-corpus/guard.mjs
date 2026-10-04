@@ -2,6 +2,11 @@ import { lookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
 import { privateAddress } from '../../infrastructure/db/scripts/noi19-dev-test/target-guard.mjs';
 export const fail = code => { throw new Error(`mfp_${code}`); };
+export function assertDisposableFixture(identity, suite) {
+  if (!/^[a-z0-9-]+$/u.test(suite) || !new RegExp(`^${suite}-[a-z0-9]{6,}$`, 'u').test(identity?.fixture_key ?? ''))
+    fail('disposable_fixture_required');
+  return identity;
+}
 export async function readTarget() { return JSON.parse(await readFile(new URL('./target.json', import.meta.url), 'utf8')); }
 export function checkTarget(env, target) {
   if (target.environment_id !== '5bad359d-cfa4-4e8f-aa41-98e6f075375a'
