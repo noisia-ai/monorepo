@@ -91,6 +91,15 @@ async function lockSource(c: Queryable, args: Target) {
   await c.query('SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE', [args.workspace_id]);
 }
 function retryable(row: Dispatch) { return row.error_code === transport && ['failed', 'dead_letter'].includes(row.status); }
+/** Technical repair is explicit; it must never mark a failed job as pending automatically. */
+async function emptyComponentRepair(c: Queryable, target: string, row: Dispatch) {
+  if (row.error_code !== 'workspace_incremental_editorial_evidence_invalid'
+    || !['failed', 'dead_letter'].includes(row.status) || row.preparation_plan_artifact_id
+    || row.preparation_token && row.lease_live) return false;
+  return (await c.query<{ valid: boolean }>(
+    'SELECT workspace_incremental_editorial_empty_component_v1($1::uuid) valid', [target])).rows[0]?.valid === true;
+}
+
 
 async function readTransaction<T>(database:Database,work:(c:PoolClient)=>Promise<T>):Promise<T>{
   const c=await database.connect();try{await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -110,9 +119,10 @@ export async function loadSignalWorkspaceIncrementalEditorialPreparationV1(args:
     const currentDigest = digest(run.seal), same = row?.receipt.source_digest === currentDigest;
     const active = same && (['pending', 'dispatching', 'dispatched'].includes(row.status) || row.status === 'failed' && retryable(row) && row.attempt_count < maximumAttempts);
     const authorized = (await c.query<{ valid: boolean }>('SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid', [args.workspace_id, args.actor_user_id, 'numeric_execution_id' in args ? args.numeric_execution_id : target])).rows[0]?.valid === true;
-    const can = authorized && run.valid && !active && (!same || row.status !== 'completed' && retryable(row));
+    const repair = Boolean(authorized && run.valid && same && !active && await emptyComponentRepair(c, run.id, row));
+    const can = authorized && run.valid && !active && (!same || row.status !== 'completed' && (retryable(row) || repair));
     return { numeric_execution_id: run.id, numeric_checkpoint_digest: run.checkpoint.checkpoint_digest, source_digest: currentDigest,
-      is_current: run.valid, can_prepare: can, blocked_reason: !run.valid ? 'source_stale' : !authorized ? 'forbidden' : active ? 'preparation_pending' : same && row.status === 'completed' ? 'already_prepared' : same && !retryable(row) ? 'preparation_failed' : null,
+      is_current: run.valid, can_prepare: can, blocked_reason: !run.valid ? 'source_stale' : !authorized ? 'forbidden' : active ? 'preparation_pending' : same && row.status === 'completed' ? 'already_prepared' : same && !retryable(row) && !repair ? 'preparation_failed' : null,
       has_pending_work: run.valid && Boolean(active), preparation: same ? { status: row.status === 'completed' ? 'ready' : row.preparation_token && row.lease_live ? 'running' : active ? 'pending' : 'failed', attempt_count: row.attempt_count, error_code: row.error_code, plan_artifact_id: row.preparation_plan_artifact_id } : null,
       request: accepted && args.idempotency_key ? { idempotency_key: args.idempotency_key, receipt: accepted.result } : null };
   });
@@ -128,7 +138,8 @@ export async function requestSignalWorkspaceIncrementalEditorialPreparationV1(in
     const run = await source(c, args); if (!run.valid || digest(run.seal) !== args.expected_source_digest) return fail('source_stale');
     const old = await dispatch(c, args, true), same = old?.receipt.source_digest === args.expected_source_digest;
     if (old?.preparation_token && old.lease_live && !same) return fail('preparation_busy');
-    if (same && ['failed', 'dead_letter'].includes(old.status) && !retryable(old)) return fail('retry_unavailable');
+    if (same && ['failed', 'dead_letter'].includes(old.status) && !retryable(old)
+      && !await emptyComponentRepair(c, run.id, old)) return fail('retry_unavailable');
     const worker_job_id = `workspace-incremental-editorial-evidence-${run.id}-${args.expected_source_digest.slice(7)}`;
     const accepted: SignalWorkspaceIncrementalEditorialPreparationReceiptV1 = { contract_version: 'workspace-incremental-editorial-preparation-request-v1',
       operation_id: randomUUID(), workspace_id: args.workspace_id, actor_user_id: args.actor_user_id, numeric_execution_id: run.id,

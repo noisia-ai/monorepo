@@ -10,7 +10,7 @@ test('free evidence preparation accepts durable intents, CAS IO and exact receip
  await assert.rejects(workspaceProjectionFixtureV1({migrations:['0141_signal_workspace_editorial_repair.sql','0142_signal_workspace_terminal_transport.sql','0143_signal_workspace_editorial_revision.sql','0144_signal_workspace_engine_progress.sql','0145_signal_workspace_incremental_numeric.sql','0146_signal_workspace_incremental_projection.sql','0147_signal_workspace_interpretation_admission.sql'],
   cluster_ids:clusterIds,model_configuration:{fixture:true,versions:{python:'local-incremental-projection'}},onCheckpoint:async base=>{
    const f=await incrementalProjectionFixtureV1(base,clusterIds,{emerging_component:true,migrations_applied:true}),{query,database,access}=f;
-   for(const migration of ['0148_signal_workspace_incremental_editorial.sql','0149_signal_workspace_incremental_editorial_ledger.sql','0150_signal_workspace_incremental_editorial_preparation.sql','0151_signal_workspace_incremental_editorial_serving.sql'])await query(await readFile(new URL(migration,import.meta.url),'utf8'));
+   for(const migration of ['0148_signal_workspace_incremental_editorial.sql','0149_signal_workspace_incremental_editorial_ledger.sql','0150_signal_workspace_incremental_editorial_preparation.sql','0151_signal_workspace_incremental_editorial_serving.sql','0242_signal_workspace_incremental_empty_component.sql'])await query(await readFile(new URL(migration,import.meta.url),'utf8'));
    const scope={...access,numeric_execution_id:f.lease.execution_id};
    const rollback=async(work:()=>Promise<void>)=>{await query('BEGIN');try{await work();}finally{await query('ROLLBACK');}};
    const baseline=async()=>({artifacts:(await query("SELECT to_jsonb(artifact) body FROM analysis_artifacts artifact WHERE engine_execution_id=ANY($1::uuid[]) AND metadata->>'contract_version' IS DISTINCT FROM 'workspace-incremental-unit-census-v1' ORDER BY id",[[base.lease.execution_id,f.lease.execution_id]])).rows,engine:(await query('SELECT to_jsonb(run) body FROM signal_topic_catalog_executions run WHERE id=ANY($1::uuid[]) ORDER BY id',[[base.lease.execution_id,f.lease.execution_id]])).rows,
@@ -97,6 +97,13 @@ test('free evidence preparation accepts durable intents, CAS IO and exact receip
    });
    await rollback(async()=>{await preparation.failSignalWorkspaceIncrementalEditorialPreparationV1({...read,error_code:'workspace_incremental_editorial_preparation_fragment_invalid'});
     assert.equal((await preparation.loadSignalWorkspaceIncrementalEditorialPreparationV1(scope))?.has_pending_work,false);
+    await assert.rejects(preparation.requestSignalWorkspaceIncrementalEditorialPreparationV1({...request,idempotency_key:randomUUID()}),/retry_unavailable/u);
+   });
+   await rollback(async()=>{await preparation.failSignalWorkspaceIncrementalEditorialPreparationV1({...read,error_code:'workspace_incremental_editorial_evidence_invalid'});
+    // A unit with no current members is not an empty numeric component.
+    assert.equal((await query('SELECT workspace_incremental_editorial_empty_component_v1($1) valid',[f.lease.execution_id])).rows[0]!.valid,false);
+    const failed=await preparation.loadSignalWorkspaceIncrementalEditorialPreparationV1(scope);
+    assert.equal(failed?.has_pending_work,false);assert.equal(failed?.can_prepare,false);assert.equal(failed?.blocked_reason,'preparation_failed');
     await assert.rejects(preparation.requestSignalWorkspaceIncrementalEditorialPreparationV1({...request,idempotency_key:randomUUID()}),/retry_unavailable/u);
    });
    await rollback(async()=>{await preparation.failSignalWorkspaceIncrementalEditorialPreparationV1({...read,error_code:'workspace_incremental_editorial_preparation_transport_unavailable'});
