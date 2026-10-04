@@ -10,6 +10,7 @@ import {
   deriveRelevanceV1,
   effectiveEntitiesDigestV1,
   validateMentionFacetsV1,
+  signalWorkspaceEmbeddingDigestV1 as digest,
 } from "@noisia/query-engine";
 import { loadSignalSemanticResolutionGovernedContextV1 } from "./signal-semantic-resolution";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
@@ -222,21 +223,46 @@ export async function overrideMentionFacetV1(args: {
       ].includes(args.dimension)
     )
       throw new Error("facets_override_invalid");
-    validateMentionFacetsV1(
-      { ...(row.facets as object), [args.dimension]: args.value },
+    const before = row.facets as ReturnType<typeof validateMentionFacetsV1>;
+    const candidate = { ...before, [args.dimension]: args.value };
+    if (args.dimension === "unrelated_reason" && args.value !== null) {
+      if (before.entities.value.length)
+        throw new Error("facets_override_contradiction");
+      candidate.entities = { ...before.entities, abstained: false };
+    }
+    const normalized = validateMentionFacetsV1(
+      candidate,
       await loadFacetEntityContextV1(client, args.workspace_id),
     );
+    const dimensions = new Set([args.dimension as keyof typeof normalized]);
+    if (
+      args.dimension === "entities" ||
+      args.dimension === "unrelated_reason"
+    ) {
+      for (const dimension of ["entities", "unrelated_reason"] as const) {
+        if (
+          digest(normalized[dimension]) !==
+          digest((row.facets as typeof normalized)[dimension])
+        )
+          dimensions.add(dimension);
+      }
+    }
+    const patches = [...dimensions].map((dimension) => ({
+      dimension,
+      value: normalized[dimension],
+    }));
     await client.query(
-      "UPDATE signal_mention_facet_overrides SET superseded_at=now() WHERE workspace_id=$1 AND root_id=$2 AND dimension=$3 AND superseded_at IS NULL",
-      [args.workspace_id, args.root_id, args.dimension],
+      "UPDATE signal_mention_facet_overrides SET superseded_at=now() WHERE workspace_id=$1 AND root_id=$2 AND dimension=ANY($3::text[]) AND superseded_at IS NULL",
+      [args.workspace_id, args.root_id, [...dimensions]],
     );
     await client.query(
-      "INSERT INTO signal_mention_facet_overrides(workspace_id,root_id,dimension,value,actor_user_id) VALUES($1,$2,$3,$4::jsonb,$5)",
+      `INSERT INTO signal_mention_facet_overrides(workspace_id,root_id,dimension,value,actor_user_id)
+       SELECT $1,$2,patch.dimension,COALESCE(patch.value,'null'::jsonb),$4
+       FROM jsonb_to_recordset($3::jsonb) patch(dimension text,value jsonb)`,
       [
         args.workspace_id,
         args.root_id,
-        args.dimension,
-        JSON.stringify(args.value),
+        JSON.stringify(patches),
         args.actor_user_id,
       ],
     );
