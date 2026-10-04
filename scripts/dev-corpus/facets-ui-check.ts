@@ -9,6 +9,7 @@ await main(async()=>{
   if(!process.argv.includes("--rollback-check"))throw Error("mfp_rollback_check_required");
   const identity=JSON.parse(await readFile(".data/dev-corpus/identity.json","utf8"));
   const pool=await openDatabase(),client=await pool.connect();
+  const {retireSignalCompetitorsV1}=await import("../../apps/studio/src/lib/data-os/signal-competitor-lifecycle");
   let phase="preflight",transaction=false,serial=0;
   const explainOnly=process.argv.includes("--explain-only");
   const plans:Record<string,unknown>={};
@@ -46,6 +47,8 @@ await main(async()=>{
     (SELECT COALESCE(sum(settled_micro_usd),0)::text FROM signal_labeling_calls WHERE workspace_id=$1) settled,
     (SELECT count(*)::int FROM signal_mention_facet_overrides WHERE workspace_id=$1) overrides,
     (SELECT count(*)::int FROM signal_entity_context_versions WHERE workspace_id=$1) versions,
+    (SELECT count(*)::int FROM signal_governance_control_operations WHERE workspace_id=$1) operations,
+    (SELECT count(*)::int FROM signal_competitor_lifecycle_events WHERE workspace_id=$1) lifecycle_events,
     (SELECT count(*)::int FROM mentions WHERE workspace_id=$1) mentions,
     (SELECT md5(COALESCE(jsonb_agg(to_jsonb(u) ORDER BY u.id)::text,'')) FROM signal_licensing_policy_usages u WHERE workspace_id=$1) rights,
     (SELECT md5(COALESCE(brand_seed_handles::text,'')) FROM brands WHERE id=$2) aliases,
@@ -85,9 +88,16 @@ await main(async()=>{
     const competitor=ce.entities.find(item=>item.kind==="competitor");assert.ok(competitor,"fixture_competitor_required");
     await overrideMentionFacetsBatchV1({...access,overrides:[{root_id:roots[0]!,dimension:"entities",value:{value:[{entity_id:competitor.entity_id,kind:"competitor",salience:"secondary"}],confidence:"high",abstained:false}}]});
     await client.query("SAVEPOINT retire_entity");
-    await client.query("UPDATE competitors SET status='retired',effective_to=clock_timestamp() WHERE id=$1 AND brand_id=$2",[competitor.entity_id,identity.brand_id]);
+    reportPhase("context_review_retire");
+    const retired=await retireSignalCompetitorsV1({brandId:identity.brand_id,
+      actor:{id:identity.internal_user_id,userType:"noisia_internal",organizationId:null},
+      idempotencyKey:"pg-facets-ui-retire",competitorIds:[competitor.entity_id],
+      evidence:"MFP facet UI rollback lifecycle contract"},{database});
+    assert.equal(retired.retired_count,1);
+    reportPhase("context_review_read");
     const review=await loadMentionFacetBrowserV1({...access,root_id:roots[0]});
     assert.equal(review.items[0]!.requires_context_review,true);assert.equal(review.items[0]!.status,"error");assert.equal(review.items[0]!.facets,null);
+    reportPhase("context_review_repair");
     await overrideMentionFacetsBatchV1({...access,overrides:[
       {root_id:roots[0]!,dimension:"entities",value:{value:[],confidence:"high",abstained:false}},
       {root_id:roots[0]!,dimension:"unrelated_reason",value:"off_topic"}]});
