@@ -677,3 +677,24 @@ for (const locale of ["es-MX", "en-US"]) {
     }
   });
 }
+
+
+test("MFP nullable estimate and strict cap stay distinct; blank input cannot raise an explicit maximum", () => {
+  const discovery: WorkspaceAnalysisStatus = { ...status, discovery_enabled: true, preflight: { ...status.preflight,
+    cost: { ...status.preflight.cost, claude: { ...status.preflight.cost.claude, maximum_cap_micro_usd: null } } } };
+  assert.equal(validWorkspaceAnalysisStatus(discovery), true);
+  assert.equal(workspaceAnalysisDefaultCap(discovery), "");
+  assert.equal(workspaceAnalysisCanStart(discovery, ""), true);
+  assert.equal(workspaceAnalysisCanStart(discovery, "0"), false);
+  assert.equal(workspaceAnalysisCanStart(discovery, "0.000001"), true, "estimate is not an authorization floor");
+  const bounded = { ...discovery, preflight: { ...discovery.preflight, cost: { ...discovery.preflight.cost,
+    claude: { ...discovery.preflight.cost.claude, maximum_cap_micro_usd: 1000 } } } };
+  assert.equal(workspaceAnalysisCanStart(bounded, ""), true, "server retains the configured maximum");
+  assert.equal(workspaceAnalysisCanStart(bounded, "0.001001"), false);
+  assert.equal(workspaceAnalysisCanStart({ ...discovery, can_execute: false }, ""), false);
+  assert.equal(workspaceAnalysisCanStart(status, ""), false, "legacy still requires an explicit cap");
+  assert.equal(validWorkspaceAnalysisStatus({ ...discovery, latest_run: { ...ready, claude_cap_micro_usd: null,
+    claude_cost: { ...ready.claude_cost, hard_cap_micro_usd: null } } }), true);
+  const saved = { ...pending, body: { ...pending.body, claude_cap_micro_usd: null } };
+  assert.deepEqual(parsePendingWorkspaceAnalysis(saved, id, status.request_scope), saved);
+});
