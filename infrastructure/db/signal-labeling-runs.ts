@@ -61,6 +61,8 @@ export type LabelingCallV1<Input extends FacetInput = FacetInput> =
     results_applied: boolean;
     provider_batch_id: string | null;
     retry_depth: number;
+    created_at?: Date | string;
+    updated_at?: Date | string;
   };
 export class SignalLabelingError extends Error {
   constructor(
@@ -401,6 +403,11 @@ export async function requestMentionFacetsV1(args: {
           change.context,
         )
       : null;
+    const waiting =
+      !!change.previous &&
+      change.changed &&
+      change.diff.affected_mode === "full" &&
+      !args.full_recalculation;
     const estimate =
       prepared ??
       (await estimatePopulation(
@@ -408,14 +415,11 @@ export async function requestMentionFacetsV1(args: {
         args.workspace_id,
         identity,
         change.context,
+        change.changed ? change.affected : [],
+        change.diff.affected_mode === "full",
       ));
     const pending = estimate.roots,
       estimated = estimate.estimated_micro_usd;
-    const waiting =
-      !!change.previous &&
-      change.changed &&
-      change.diff.affected_mode === "full" &&
-      !args.full_recalculation;
     const admission = await admitSignalProcessingWithClientV1(c, {
       workspace_id: args.workspace_id,
       actor_user_id: args.actor_user_id,
@@ -589,7 +593,11 @@ export function createSignalLabelingStoreV1<
         const row = (
           await c.query(
             `UPDATE signal_labeling_runs SET lease_token=$2,lease_until=now()+interval '10 minutes',status='running',updated_at=now()
-   WHERE id=$1 AND kind=$3 AND status IN('queued','running') AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
+   WHERE id=$1 AND kind=$3 AND (status IN('queued','running') OR status='failed' AND error_code='labeling_outcome_unknown'
+   AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.status='unknown')
+   AND NOT EXISTS(SELECT 1 FROM signal_labeling_runs active WHERE active.workspace_id=signal_labeling_runs.workspace_id
+     AND active.kind=signal_labeling_runs.kind AND active.id<>signal_labeling_runs.id AND active.status IN('queued','running')))
+   AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
             [runId, token, options.adapter?.kind ?? "facets"],
           )
         ).rows[0];
@@ -747,6 +755,41 @@ export function createSignalLabelingStoreV1<
         `UPDATE signal_labeling_calls SET status='submitted',provider_batch_id=$3,updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='submitting'`,
         [run.id, calls.map((x) => x.id), batchId],
       );
+    },
+    async recoverUnknownBatch(run: LabelingRunV1, calls: LabelingCallV1<Input>[], batchId: string) {
+      await tx(db, async (c) => {
+        await lock(c, run);
+        const changed = await c.query(
+          `UPDATE signal_labeling_calls SET status='submitted',provider_batch_id=$3,updated_at=now()
+           WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='unknown'
+           AND (provider_batch_id IS NULL OR provider_batch_id=$3) RETURNING id`,
+          [run.id, calls.map((call) => call.id), batchId],
+        );
+        if (changed.rows.length !== calls.length) fail("labeling_reconciliation_conflict");
+      });
+    },
+    async releaseUnknown(run: LabelingRunV1, calls: LabelingCallV1<Input>[], reason: string) {
+      await tx(db, async (c) => {
+        await lock(c, run);
+        const changed = await c.query(
+          `UPDATE signal_labeling_calls SET status='failed',results_applied=true,
+           results='[]'::jsonb,stop_reason=$3,updated_at=now()
+           WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='unknown' AND provider_batch_id IS NULL RETURNING id`,
+          [run.id, calls.map((call) => call.id), reason],
+        );
+        if (changed.rows.length !== calls.length) fail("labeling_reconciliation_conflict");
+      });
+    },
+    async clearUnknownFailure(run: LabelingRunV1) {
+      await tx(db, async (c) => {
+        await lock(c, run);
+        await c.query(
+          `UPDATE signal_labeling_runs SET error_code=NULL,updated_at=now()
+           WHERE id=$1 AND error_code='labeling_outcome_unknown'
+           AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown')`,
+          [run.id],
+        );
+      });
     },
     async markFailed(
       run: LabelingRunV1,

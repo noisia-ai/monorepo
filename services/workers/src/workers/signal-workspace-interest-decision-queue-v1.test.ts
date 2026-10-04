@@ -90,6 +90,7 @@ function fakeProvider(manifest = one, options: { entries?: ReturnType<typeof ite
   const events: string[] = [];
   const entries = options.entries ?? manifest.requests.map(itemFor);
   const provider: Provider = {
+    async list() { return { data: [], has_more: false, last_id: null }; },
     async create(requests) { events.push("create"); assert.deepEqual(requests,
       manifest.requests.map(request => request.provider_request)); return options.create?.() ?? state(manifest.requests.length, false); },
     async get() { events.push("get"); return options.poll_state ?? state(manifest.requests.length, true); },

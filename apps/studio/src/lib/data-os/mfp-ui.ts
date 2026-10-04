@@ -11,7 +11,7 @@ export type MfpFacetPage = {contract_version:"mention-facets-browser-v1";workspa
   entities:Array<{entity_id:string;name:string;kind:"primary_brand"|"competitor"|"category"}>;
   distributions:Array<{dimension:string;value:string;count:number}>;
   items:Array<{root_id:string;text:string;title:string|null;url:string|null;platform:string|null;status:string;
-    relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];requires_context_review:boolean}>;next_cursor:string|null};
+    relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];requires_context_review:boolean;pending_context_review:boolean}>;next_cursor:string|null};
 export type MfpEvidence = {root_id:string;concept_key:string;definition_digest:string;verdict:string;
   citations:Array<{quote:string;quote_start:number;quote_end:number;chunk_index:number;chunk_sha256:string}>;
   rationale:string|null;source:"human"|"model"|"pending";text:string|null;title:string|null;url:string|null;platform:string|null;evidence_withheld?:boolean;requires_override_review?:boolean};

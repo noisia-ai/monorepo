@@ -87,6 +87,7 @@ test("V2 provider item error stores raw before semantic status and remains recov
   const item: AnthropicBatchItem = { custom_id: manifest.requests[0]!.provider_request.custom_id,
     result: { type: "errored", error: { type: "api_error" } } };
   const provider: ReturnType<typeof createAnthropicMessageBatchesClient> = {
+    async list() { return { data: [], has_more: false, last_id: null }; },
     async create() { h.events.push("create"); return state(false); },
     async get() { return state(true, true); },
     async cancel() { throw new Error("unexpected cancel"); },

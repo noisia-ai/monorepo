@@ -4715,6 +4715,7 @@
     "nextPage": "Next page",
     "contextReview": "Entities changed. Review this correction against the current context.",
     "overrideReview": "The previous correction belongs to another definition or text version. Review it before applying it again.",
+    "pendingContextReview": "Full context review pending. This facet remains visible until recalculation is confirmed.",
     "openMention": "Open mention",
     "openOriginal": "Open original source",
     "withheld": "Text is unavailable under the current source permissions.",

@@ -15,7 +15,7 @@ import {
   type MembershipResultV1,
   type MembershipInputV1,
 } from "@noisia/query-engine";
-import { AnthropicBatchTransportError, type AnthropicBatchRequest } from "../providers/anthropic-message-batches";
+import { AnthropicBatchTransportError, type AnthropicBatchRequest, type AnthropicBatchPage } from "../providers/anthropic-message-batches";
 import { readMfpInFlightPages } from "./signal-labeling-parallelism";
 const dim = <T>(value: T) => ({ value, confidence: "high", abstained: false });
 function harness() {
@@ -108,6 +108,8 @@ function harness() {
             results_applied: false,
             provider_batch_id: null,
             retry_depth: p.retry_depth ?? 0,
+            created_at: new Date(),
+            updated_at: new Date(),
           });
       if (advance) run.cursor_root_id = "1";
       return calls.filter((c) =>
@@ -129,6 +131,13 @@ function harness() {
     async markFailed(_r, c, u) {
       c.forEach((x) => (x.status = u ? "unknown" : "failed"));
     },
+    async recoverUnknownBatch(_r, c, id) {
+      c.forEach((x) => { x.status = "submitted"; x.provider_batch_id = id; });
+    },
+    async releaseUnknown(_r, c) {
+      c.forEach((x) => { x.status = "failed"; x.results_applied = true; });
+    },
+    async clearUnknownFailure() { run.error_code = null; },
     async persistRaw(_r, call, raw) {
       call.raw_body = raw;
       events.push("raw");
@@ -171,6 +180,7 @@ function harness() {
       expired: 0,
     },
     ended_at: "now",
+    created_at: new Date().toISOString(),
     results_url: null,
   };
   const provider = {
@@ -184,6 +194,7 @@ function harness() {
     async cancel() {
       return state;
     },
+    async list(): Promise<AnthropicBatchPage> { return {data:[],has_more:false,last_id:null}; },
     async *results() {
       for (const call of calls.filter((c) => c.status === "submitted")) {
         const message = {
@@ -327,6 +338,43 @@ test("ambiguous POST is never replayed blindly", async () => {
     "failed",
   );
   assert.equal(h.labels.length, 0);
+});
+test("membership recovers an unknown POST by custom_id without resubmitting", async () => {
+  const h=harness();
+  h.provider.create=async()=>{throw new AnthropicBatchTransportError("transport","submission_unknown");};
+  await assert.rejects(runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider}));
+  const originalResults=h.provider.results;
+  h.provider.results=async function*(){
+    const unknown=h.calls().filter((call)=>call.status==="unknown");
+    unknown.forEach((call)=>{call.status="submitted";});
+    const items=[];
+    for await(const item of originalResults())items.push(item);
+    unknown.forEach((call)=>{call.status="unknown";});
+    yield* items;
+  };
+  h.provider.list=async()=>({data:[{...await h.provider.get(),created_at:new Date().toISOString()}],has_more:false,last_id:null});
+  assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"completed");
+  assert.equal(h.submitted(),0);
+  assert.equal(h.calls()[0]?.status,"settled");
+  assert.equal(h.labels.length,2);
+});
+test("a group refusal isolates one membership root and preserves the other result", async () => {
+  const h = harness(), originalResults = h.provider.results;
+  h.provider.results = async function* () {
+    for await (const result of originalResults()) {
+      const call = h.calls().find((candidate) => candidate.custom_id === result.item.custom_id)!;
+      if (call.inputs.some((input) => input.root_id === "1")) {
+        result.item.result.message.stop_reason = "refusal";
+      }
+      yield { ...result, rawText: JSON.stringify(result.item) };
+    }
+  };
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.labels.length,0);
+  assert.equal(h.calls().length,3);
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.deepEqual(h.labels.map((label) => [label.root_id,label.verdict]),[["0","belongs"],["1","refused"]]);
+  assert.equal(h.submitted(),2);
 });
 test("custom identity is deterministic but split attempts are distinct", () => {
   const h = harness(),

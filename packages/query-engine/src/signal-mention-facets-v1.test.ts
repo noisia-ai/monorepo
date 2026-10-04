@@ -120,6 +120,13 @@ test("CE deleted aliases/entities, kind, disambiguation, short names and categor
     true,
   );
 });
+test("CE only demands full recalculation for a newly introduced short term", () => {
+  const withShort: EntityContextV1 = {entities:[{...ce.entities[0]!,aliases:["xy","Product One"]}]};
+  const longAlias: EntityContextV1 = {entities:[{...withShort.entities[0]!,aliases:["xy","Product One","Long new alias"]}]};
+  assert.equal(diffEntityContextV1(withShort,longAlias).affected_mode,"targeted");
+  assert.equal(diffEntityContextV1(longAlias,withShort).affected_mode,"targeted");
+  assert.equal(diffEntityContextV1(ce,withShort).affected_mode,"full");
+});
 test("facets distinguish entity failures from abstention and preserve multi-entities", () => {
   assert.equal(
     deriveRelevanceV1(validateMentionFacetsV1(facets(), ce)),
