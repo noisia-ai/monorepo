@@ -3,7 +3,9 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import type {Pool,PoolClient} from 'pg';
+import type {SignalWorkspaceEngineDatabaseV1} from '../../infrastructure/db/signal-workspace-engine';
+type Pool=SignalWorkspaceEngineDatabaseV1 & {end():Promise<void>};
+type PoolClient=Awaited<ReturnType<Pool['connect']>>;
 import {main,openDatabase} from './guard.mjs';
 import * as preparation from '../../infrastructure/db/signal-workspace-incremental-editorial-preparation';
 import type {SignalWorkspaceIncrementalEditorialEvidenceArgsV1} from '../../infrastructure/db/signal-workspace-incremental-editorial';
