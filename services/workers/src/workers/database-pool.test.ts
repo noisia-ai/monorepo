@@ -2,6 +2,35 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
+test("an injected shared Worker pool handles idle errors and closes once", () => {
+  const first = new URL("../db/client.ts?injected-first", import.meta.url).href;
+  const second = new URL("../db/client.ts?injected-second", import.meta.url).href;
+  const script = `
+    import assert from 'node:assert/strict';
+    import { EventEmitter } from 'node:events';
+    const injected = new EventEmitter();
+    let closes = 0;
+    injected.end = async () => { assert.equal(++closes, 1, 'shared pool must close only once'); };
+    globalThis.noisiaWorkerPgPool = injected;
+    globalThis.noisiaWorkerNumericPgPool = injected;
+    const first = await import(${JSON.stringify(first)});
+    const second = await import(${JSON.stringify(second)});
+    assert.equal(first.pool, injected);
+    assert.equal(second.numericPool, injected);
+    assert.equal(injected.listenerCount('error'), 1, 'module reevaluation must not duplicate observers');
+    assert.doesNotThrow(() => injected.emit('error', new Error('private injected database URL')));
+    await first.closeWorkerDatabasePoolsV1();
+    assert.equal(closes, 1);
+  `;
+  const result = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", script], {
+    encoding: "utf8", timeout: 30_000,
+    env: { ...process.env, NODE_ENV: "production", DATABASE_URL: "postgres://fixture:fixture@127.0.0.1:1/noisia_test", DATABASE_SSL: "false" }
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /idle_connection_error/u);
+  assert.doesNotMatch(result.stderr, /private injected database URL/u);
+});
+
 test("production Worker evaluations reserve numeric capacity within the same total connection bound", () => {
   const first = new URL("../db/client.ts?production-pool-first", import.meta.url).href;
   const second = new URL("../db/client.ts?production-pool-second", import.meta.url).href;

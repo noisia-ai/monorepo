@@ -3,6 +3,7 @@ import pg from "pg";
 declare global {
   var noisiaWorkerPgPool: pg.Pool | undefined;
   var noisiaWorkerNumericPgPool: pg.Pool | undefined;
+  var noisiaWorkerObservedPgPools: WeakSet<pg.Pool> | undefined;
 }
 
 if (!process.env.DATABASE_URL) {
@@ -27,26 +28,33 @@ function databaseSslConfig() {
 // pool.query() — no connect-event race needed. NOTE: this option is silently
 // dropped by the Supabase POOLER (pooler.supabase.com), so it only works because
 // the worker uses the direct host.
-function createWorkerPool(max: number, lane: "control" | "numeric") {
-  const database = new pg.Pool({
+function createWorkerPool(max: number) {
+  return new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: databaseSslConfig(), max,
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 10_000,
     statement_timeout: 600_000,
   });
+}
+
+function observeWorkerPool(database: pg.Pool, lane: "control" | "numeric") {
+  const observed = globalThis.noisiaWorkerObservedPgPools ??= new WeakSet<pg.Pool>();
+  if (observed.has(database)) return;
   // pg removes broken idle clients itself. Handle its EventEmitter error so a
   // transient socket failure does not terminate unrelated durable jobs. Query
   // and transaction failures still reject to their callers; no retry is added.
   database.on("error", () => console.warn(`[worker-db:${lane}] idle_connection_error`));
-  return database;
+  observed.add(database);
 }
 
 // Preserve the existing total budget of three sessions. A long numeric
 // transaction and its waiting heartbeat leave one shared session for drainers.
-export const pool = globalThis.noisiaWorkerPgPool ??= createWorkerPool(2, "control");
-export const numericPool = globalThis.noisiaWorkerNumericPgPool ??= createWorkerPool(1, "numeric");
+export const pool = globalThis.noisiaWorkerPgPool ??= createWorkerPool(2);
+export const numericPool = globalThis.noisiaWorkerNumericPgPool ??= createWorkerPool(1);
+observeWorkerPool(pool, "control");
+observeWorkerPool(numericPool, "numeric");
 
 export async function closeWorkerDatabasePoolsV1() {
-  await Promise.all([pool.end(), numericPool.end()]);
+  await Promise.all([...new Set([pool, numericPool])].map((database) => database.end()));
 }
