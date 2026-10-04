@@ -296,19 +296,6 @@ export async function loadConceptMembershipsStatusV1(
     const caps = await authorize(c, args.workspace_id, args.actor_user_id);
     const change = await inspectFacetContextChangeV1(c, args.workspace_id);
     const concepts = await loadMembershipConceptsV1(c, args.workspace_id);
-    const population = (
-      await c.query(
-        `SELECT count(*) FILTER(WHERE relevance='relevant')::int relevant,count(*) FILTER(WHERE relevance='unrelated')::int unrelated,count(*) FILTER(WHERE relevance='unknown')::int unknown,count(*) FILTER(WHERE relevance='spam')::int spam,
-   count(*) FILTER(WHERE relevance='relevant' AND NOT EXISTS(SELECT 1 FROM signal_concept_memberships_current_v1 m WHERE m.workspace_id=f.workspace_id AND m.root_id=f.root_id AND m.verdict='belongs'))::int without_concept,COALESCE(sum(length(full_text)) FILTER(WHERE relevance='relevant'),0)::text characters FROM signal_mention_facets_current_v1 f WHERE workspace_id=$1 AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 rights WHERE rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id AND rights.metrics)`,
-        [args.workspace_id],
-      )
-    ).rows[0]!;
-    const counts = (
-      await c.query(
-        "SELECT verdict,count(*)::int count FROM signal_concept_memberships_current_v1 m WHERE workspace_id=$1 AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 rights WHERE rights.workspace_id=m.workspace_id AND rights.root_id=m.root_id AND rights.metrics) GROUP BY verdict",
-        [args.workspace_id],
-      )
-    ).rows;
     const latest =
       (
         await c.query(
@@ -335,25 +322,76 @@ export async function loadConceptMembershipsStatusV1(
         fail("membership_cursor_invalid", 400);
       [cursorRoot, cursorConcept] = parts as [string, string];
     }
-    const rows = (
-      await c.query(
-        // Materialize the two facet-derived graphs independently. A real plan
-        // estimated one row on both sides and reevaluated the inner graph per pair.
+    const result = (
+      await c.query<{
+        population: {
+          relevant: number;
+          unrelated: number;
+          unknown: number;
+          spam: number;
+          without_concept: number;
+          characters: string;
+        };
+        counts: Array<{ verdict: string; count: number }>;
+        items: Array<Record<string, any>>;
+      }>(
+        // Project lazy CE invalidation before filtering, aggregation or paging.
+        // Each expensive current view is evaluated once for this workspace.
         `/* membership-status-items */ WITH current_pairs AS MATERIALIZED (
    SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
-   AND ($2::text IS NULL OR concept_key=$2) AND ($3::text IS NULL OR verdict=$3)
-   AND ($4::uuid IS NULL OR (root_id,concept_key)>($4::uuid,$5::text))
    ), current_roots AS MATERIALIZED (
-   SELECT root_id,full_text,title,platform FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+   SELECT root_id,full_text,title,platform,relevance,facets,requires_context_review
+   FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
    ), current_rights AS MATERIALIZED (
    SELECT root_id,evidence FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$1 AND metrics
-   ) SELECT m.*,CASE WHEN rights.evidence THEN f.full_text ELSE NULL END text,CASE WHEN rights.evidence THEN f.title ELSE NULL END title,
-   CASE WHEN rights.evidence THEN mention.url ELSE NULL END url, f.platform,NOT rights.evidence evidence_withheld,
-   CASE WHEN rights.evidence THEN m.citations ELSE '[]'::jsonb END visible_citations,
-   CASE WHEN rights.evidence THEN m.rationale ELSE NULL END visible_rationale
-   FROM current_pairs m JOIN current_roots f ON f.root_id=m.root_id
-   JOIN mentions mention ON mention.id=m.root_id JOIN current_rights rights ON rights.root_id=m.root_id
-   ORDER BY m.root_id,m.concept_key LIMIT $6`,
+   ), pair_context AS MATERIALIZED (
+   SELECT m.*,m.root_id=ANY($7::uuid[]) stale,
+     f.requires_context_review OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(COALESCE(f.facets#>'{entities,value}','[]'::jsonb)) entity
+       WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements($8::jsonb->'entities') known
+         WHERE known->>'entity_id'=entity->>'entity_id' AND known->>'kind'=entity->>'kind')) context_invalid
+   FROM current_pairs m JOIN current_roots f USING(root_id) JOIN current_rights rights USING(root_id)
+   ), invalidated AS MATERIALIZED (
+   SELECT p.*,context_invalid OR (stale AND source<>'human') invalid FROM pair_context p
+   ), display_pairs AS MATERIALIZED (
+   SELECT workspace_id,root_id,root_fingerprint,input_digest,entity_context_digest,effective_entities_digest,
+     concept_key,definition_digest,labeler_digest,
+     CASE WHEN invalid THEN 'pending' ELSE verdict END verdict,
+     CASE WHEN invalid THEN '[]'::jsonb ELSE citations END citations,
+     CASE WHEN invalid THEN NULL ELSE rationale END rationale,
+     CASE WHEN invalid THEN 'pending' ELSE source END source,
+     CASE WHEN invalid THEN NULL ELSE call_id END call_id,CASE WHEN invalid THEN NULL ELSE run_id END run_id,
+     CASE WHEN invalid THEN NULL ELSE updated_at END updated_at,
+     CASE WHEN invalid THEN NULL ELSE error_code END error_code,
+     CASE WHEN invalid THEN NULL ELSE refusal_category END refusal_category,
+     context_invalid requires_context_review
+   FROM invalidated
+   ), population AS (
+   SELECT count(*) FILTER(WHERE relevance='relevant')::int relevant,
+     count(*) FILTER(WHERE relevance='unrelated')::int unrelated,count(*) FILTER(WHERE relevance='unknown')::int unknown,
+     count(*) FILTER(WHERE relevance='spam')::int spam,
+     count(*) FILTER(WHERE relevance='relevant' AND NOT EXISTS(SELECT 1 FROM display_pairs m WHERE m.root_id=f.root_id AND m.verdict='belongs'))::int without_concept,
+     COALESCE(sum(length(full_text)) FILTER(WHERE relevance='relevant'),0)::text characters
+   FROM current_roots f JOIN current_rights rights USING(root_id)
+   ), counts AS (
+   SELECT verdict,count(*)::int count FROM display_pairs WHERE ($2::text IS NULL OR concept_key=$2) GROUP BY verdict
+   ), page AS (
+   SELECT m.root_id,m.concept_key,
+     (to_jsonb(m) - 'citations' - 'rationale') || jsonb_build_object(
+       'text',CASE WHEN rights.evidence THEN f.full_text ELSE NULL END,
+       'title',CASE WHEN rights.evidence THEN f.title ELSE NULL END,
+       'url',CASE WHEN rights.evidence THEN mention.url ELSE NULL END,'platform',f.platform,
+       'evidence_withheld',NOT rights.evidence,
+       'citations',CASE WHEN rights.evidence THEN m.citations ELSE '[]'::jsonb END,
+       'rationale',CASE WHEN rights.evidence THEN m.rationale ELSE NULL END) item
+   FROM display_pairs m JOIN current_roots f USING(root_id) JOIN current_rights rights USING(root_id)
+   JOIN mentions mention ON mention.id=m.root_id
+   WHERE ($2::text IS NULL OR m.concept_key=$2) AND ($3::text IS NULL OR m.verdict=$3)
+     AND ($4::uuid IS NULL OR (m.root_id,m.concept_key)>($4::uuid,$5::text))
+   ORDER BY m.root_id,m.concept_key LIMIT $6
+   ) SELECT (SELECT to_jsonb(population) FROM population) population,
+     COALESCE((SELECT jsonb_agg(counts ORDER BY verdict) FROM counts),'[]'::jsonb) counts,
+     COALESCE((SELECT jsonb_agg(item ORDER BY root_id,concept_key) FROM page),'[]'::jsonb) items`,
         [
           args.workspace_id,
           args.concept_key ?? null,
@@ -361,24 +399,14 @@ export async function loadConceptMembershipsStatusV1(
           cursorRoot,
           cursorConcept,
           limit + 1,
+          change.changed ? change.affected : [],
+          JSON.stringify(change.context),
         ],
       )
-    ).rows;
-    const items = rows
-      .slice(0, limit)
-      .map(
-        ({
-          citations: _c,
-          rationale: _r,
-          visible_citations,
-          visible_rationale,
-          ...row
-        }) => ({
-          ...row,
-          citations: visible_citations,
-          rationale: visible_rationale,
-        }),
-      );
+    ).rows[0]!;
+    const { population, counts } = result;
+    const rows = result.items;
+    const items = rows.slice(0, limit);
     return {
       contract_version: "concept-membership-status-v1",
       can_request_processing: caps.can_request_processing,

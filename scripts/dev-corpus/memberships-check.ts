@@ -331,6 +331,34 @@ await main(async () => {
       status.counts.every((r: any) => r.verdict !== "pending"),
       "all compatible pairs have a state",
     );
+    enter("concept_scoped_counts");
+    const perConcept = (
+      await client.query(
+        `SELECT m.concept_key,count(*)::int total FROM signal_concept_memberships_current_v1 m
+      WHERE m.workspace_id=$1 AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 r WHERE r.workspace_id=m.workspace_id AND r.root_id=m.root_id AND r.metrics)
+      GROUP BY m.concept_key ORDER BY m.concept_key`,
+        [access.workspace_id],
+      )
+    ).rows;
+    check(
+      perConcept.length >= 2 && perConcept.every((r: any) => r.total > 0),
+      "two nonempty concepts required for scoped counts",
+    );
+    for (const expected of perConcept.slice(0, 2)) {
+      const scoped = await loadConceptMembershipsStatusV1({
+        ...access,
+        concept_key: expected.concept_key,
+      });
+      check(
+        scoped.counts.reduce((total, row) => total + row.count, 0) ===
+          expected.total,
+        "concept counts exclude other concepts",
+      );
+      check(
+        scoped.items.every((row) => row.concept_key === expected.concept_key),
+        "counts and items share concept scope",
+      );
+    }
     const pairs = (
       await client.query(
         "SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2",
@@ -420,6 +448,124 @@ await main(async () => {
       corrected!.scope_digest !== overview!.scope_digest,
       "human correction invalidates evidence cursor",
     );
+    enter("lazy_context_invalidation");
+    await client.query("SAVEPOINT lazy_context");
+    const readCensus = async () =>
+      (
+        await client.query(
+          `SELECT
+      (SELECT count(*)::int FROM signal_entity_context_versions WHERE workspace_id=$1) versions,
+      (SELECT count(*)::int FROM signal_labeling_runs WHERE workspace_id=$1) runs,
+      (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$1) calls,
+      (SELECT count(*)::int FROM signal_concept_memberships WHERE workspace_id=$1) memberships`,
+          [access.workspace_id],
+        )
+      ).rows[0];
+    const beforeLazyRead = await readCensus();
+    // A real Brand OS edit, intentionally without registerFacetContextV1 or a new run.
+    // This short alias requests the normal full affected-set path.
+    await client.query(
+      "UPDATE brands SET brand_seed_handles=COALESCE(brand_seed_handles,ARRAY[]::text[])||ARRAY['x'] WHERE id=$1",
+      [identity.brand_id],
+    );
+    const staleHuman = await loadConceptMembershipsStatusV1({
+      ...access,
+      concept_key: target.concept_key,
+      limit: 100,
+    });
+    check(
+      staleHuman.stale_count > 0,
+      "GET detects a live Brand OS alias change before CE registration",
+    );
+    const preserved = staleHuman.items.find(
+      (row) => row.root_id === root.root_id,
+    );
+    check(
+      preserved?.source === "human" &&
+        preserved.verdict === "not_belongs" &&
+        preserved.requires_context_review === false,
+      "valid human membership survives lazy CE invalidation",
+    );
+    const otherConcept = concepts.find(
+      (c) => c.concept_key !== target.concept_key,
+    )!;
+    const staleModel = await loadConceptMembershipsStatusV1({
+      ...access,
+      concept_key: otherConcept.concept_key,
+      verdict: "pending",
+      limit: 100,
+    });
+    check(
+      staleModel.items.length > 0 &&
+        staleModel.items.every(
+          (row) =>
+            row.verdict === "pending" &&
+            row.source === "pending" &&
+            Array.isArray(row.citations) &&
+            row.citations.length === 0 &&
+            row.rationale === null &&
+            row.call_id === null,
+        ),
+      "affected model memberships are pending with no old evidence before a new run",
+    );
+    check(
+      staleModel.counts.every((row) => row.verdict === "pending"),
+      "counts use the same lazy pending projection",
+    );
+    const staleBelongs = await loadConceptMembershipsStatusV1({
+      ...access,
+      concept_key: otherConcept.concept_key,
+      verdict: "belongs",
+    });
+    check(
+      staleBelongs.items.length === 0,
+      "verdict filter cannot recover stale belongs",
+    );
+    check(
+      JSON.stringify(await readCensus()) === JSON.stringify(beforeLazyRead),
+      "lazy status GET never registers CE or creates processing writes",
+    );
+    const { retireSignalCompetitorsV1 } = await import(
+      "../../apps/studio/src/lib/data-os/signal-competitor-lifecycle"
+    );
+    const competitorEntity = entities.find(
+      (entity: any) => entity.kind === "competitor",
+    );
+    check(
+      competitorEntity,
+      "competitor fixture required for human CE revalidation",
+    );
+    await retireSignalCompetitorsV1(
+      {
+        brandId: identity.brand_id,
+        actor: {
+          id: access.actor_user_id,
+          userType: "noisia_internal",
+          organizationId: null,
+        },
+        idempotencyKey: "mfp-membership-lazy-retire",
+        competitorIds: [competitorEntity.entity_id],
+        evidence: "Membership lazy context rollback regression",
+      },
+      { database },
+    );
+    const staleRetired = await loadConceptMembershipsStatusV1({
+      ...access,
+      concept_key: target.concept_key,
+      limit: 100,
+    });
+    const invalidHuman = staleRetired.items.find(
+      (row) => row.root_id === root.root_id,
+    );
+    check(
+      invalidHuman?.verdict === "pending" &&
+        invalidHuman.requires_context_review === true &&
+        Array.isArray(invalidHuman.citations) &&
+        invalidHuman.citations.length === 0,
+      "human membership cannot display against a retired effective entity",
+    );
+    await client.query("ROLLBACK TO SAVEPOINT lazy_context");
+    await client.query("RELEASE SAVEPOINT lazy_context");
     const term = (
       await client.query(
         "SELECT topic FROM signal_membership_concepts_v1 WHERE workspace_id=$1 AND concept_key=$2",
