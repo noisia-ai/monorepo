@@ -1,7 +1,6 @@
 import { loadSignalWorkspaceContextForTopics } from "../topics/_lib";
-import { signalWorkspaceFeatureEnabledV1 } from "@noisia/db";
-import { pool } from "@/lib/db";
 import {
+  loadMentionFacetsAvailabilityV1,
   loadMentionFacetsStatusForActorV1,
   loadMentionFacetBrowserForActorV1,
   overrideMentionFacetsForActorV1,
@@ -109,9 +108,8 @@ export async function GET(
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
       });
-    const enabled = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:loaded.workspace.id,feature:"mention_facets"});
-    return Response.json({...status, enabled,
-      provider_available:enabled && process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED === "true"}, {headers});
+    const availability = await loadMentionFacetsAvailabilityV1(loaded.workspace.id);
+    return Response.json({...status, ...availability}, {headers});
   } catch (error) { return errorResponse(error); }
 }
 export async function POST(
