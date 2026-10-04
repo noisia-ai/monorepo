@@ -88,7 +88,13 @@ inputs antiguos. Una fila gold con digest distinto provoca error de exportación
 
 ## Ejecución privada WS4
 
-En el runner MFP, `install-concepts-v2.ts` instala los tres conceptos confirmados
+En el runner MFP, los comandos WS4 toman la identidad de `identity_path` en
+`.data/dev-corpus/voyage-real/fixture-manifest.json`. El manifest y la identidad
+deben declarar `rental-corpus-voyage-v1`; el gate JEV comprueba workspace,
+organización y marca exactos en DB. La identidad del fixture distinto en la raíz
+del volumen no interviene.
+
+`install-concepts-v2.ts` instala los tres conceptos confirmados
 en el catálogo dev-test mediante CAS e idempotencia. Conserva el ámbito del
 catálogo y añade al campo de definición las seis reglas de etiquetado del JSON
 v2, además de inclusiones, exclusiones y ejemplos. Verifica que el catálogo
@@ -107,7 +113,8 @@ Las variantes A se piden con `scripts/dev-corpus/facets.ts --real
 confirmación de recálculo siguen siendo obligatorios. `export-bundle.ts` toma
 un `eval-run-manifest.json` privado con los IDs explícitos de cada run, exige
 identidad/modelo/estado final congruentes, extrae predicciones y costes del ledger
-y escribe `eval-variants.json` sin textos. Sólo se fija el umbral JEV con las 90
+y recupera probabilidades JEV de recibos privados con SHA256/tamaño verificados
+según 0255. Escribe `eval-variants.json` sin textos. Sólo se fija el umbral JEV con las 90
 raíces dev; el reporte test usa ese umbral congelado y no ajusta prompts.
 
 ## Denominadores y límites
