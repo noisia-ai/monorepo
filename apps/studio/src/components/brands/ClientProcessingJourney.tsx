@@ -14,10 +14,11 @@ import { clientProcessingPolicyForWorkspaceV1, clientProcessingRouteMaximumMicro
 const paidStages: ClientProcessingStageV1[] = ["vectors", "analyze"];
 
 export function ClientProcessingJourney({ workspaceId, initial = null, initialPreparation = null,
-  allowInterestPreparation = false, preparationDisabled = false, catalogVersion, onAccessDenied }: {
+  enableCorpusEmbeddings = false, allowInterestPreparation = false, preparationDisabled = false, catalogVersion, onAccessDenied }: {
   workspaceId: string;
   initial?: ClientProcessingPolicyViewV1 | null;
   initialPreparation?: ClientCorpusPreparationViewV1 | null;
+  enableCorpusEmbeddings?: boolean;
   allowInterestPreparation?: boolean;
   preparationDisabled?: boolean;
   catalogVersion?: string;
@@ -102,9 +103,9 @@ export function ClientProcessingJourney({ workspaceId, initial = null, initialPr
         prototypeOnly authorizeFromEndpoint={allowInterestPreparation} disabled={preparationDisabled}
         refreshSignal={`${catalogVersion ?? ""}:${quoteRefreshSignal}`} onAccessDenied={onAccessDenied}/>
       <ol className="client-processing-journey__steps">
-        <ClientCorpusPreparationStep workspaceId={workspaceId} index={0} initial={initialPreparation}
+        <ClientCorpusPreparationStep enableCorpusEmbeddings={enableCorpusEmbeddings} workspaceId={workspaceId} index={0} initial={initialPreparation}
           onAccessDenied={onAccessDenied}/>
-        {paidStages.map((stage, index) => {
+        {paidStages.filter(stage => !enableCorpusEmbeddings || stage !== "vectors").map((stage, index) => {
           const stageState = currentView ? clientProcessingStageStateV1(currentView, stage) : "unavailable";
           return <li key={stage} data-processing-stage={stage} data-processing-stage-state={stageState}>
             <span className="client-processing-journey__number" aria-hidden>{index + 2}</span>

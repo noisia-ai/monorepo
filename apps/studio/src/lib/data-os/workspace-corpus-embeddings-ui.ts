@@ -1,7 +1,7 @@
 export type CorpusEmbeddingRequest = {
   preparation_run_id: string;
   quote_digest: string;
-  hard_cap_micro_usd: number;
+  hard_cap_micro_usd: number | null;
 };
 
 export type PendingCorpusEmbeddingRequest = {
@@ -54,7 +54,7 @@ export function parsePendingCorpusEmbeddingRequest(value: unknown, workspaceId: 
     || Object.keys(body).sort().join(",") !== "hard_cap_micro_usd,preparation_run_id,quote_digest"
     || typeof body.preparation_run_id !== "string" || !uuid.test(body.preparation_run_id)
     || typeof body.quote_digest !== "string" || !digest.test(body.quote_digest)
-    || !Number.isSafeInteger(body.hard_cap_micro_usd) || body.hard_cap_micro_usd < 0) {
+    || body.hard_cap_micro_usd !== null && (!Number.isSafeInteger(body.hard_cap_micro_usd) || body.hard_cap_micro_usd < 0)) {
     throw new Error("embedding_request_invalid");
   }
   return pending as PendingCorpusEmbeddingRequest;

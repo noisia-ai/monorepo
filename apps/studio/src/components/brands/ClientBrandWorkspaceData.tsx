@@ -10,11 +10,11 @@ import { WorkspaceCorpusReadinessPanel } from "@/components/admin/WorkspaceCorpu
 import { SelfServiceImportManager } from "@/components/admin/SelfServiceImportManager";
 import { ClientProcessingJourney } from "@/components/brands/ClientProcessingJourney";
 
-type Props = { entry: ClientBrandWorkspaceEntryV1; initialReadiness: SignalWorkspaceCorpusReadinessV1 | null; corpus: AdminCorpusSummary | null };
+type Props = { enableCorpusEmbeddings?: boolean; entry: ClientBrandWorkspaceEntryV1; initialReadiness: SignalWorkspaceCorpusReadinessV1 | null; corpus: AdminCorpusSummary | null };
 export function ClientBrandWorkspaceData(props: Props) {
   return <ScopedBrandData key={`${props.entry.workspaceId}:${props.entry.requestScope}`} {...props} />;
 }
-function ScopedBrandData({ entry, initialReadiness, corpus }: Props) {
+function ScopedBrandData({ entry, initialReadiness, corpus, enableCorpusEmbeddings = false }: Props) {
   const t = useTranslations("ClientWorkspaceEntry");
   const [denied, setDenied] = useState(false);
   const revoke = useCallback(() => setDenied(true), []);
@@ -27,6 +27,6 @@ function ScopedBrandData({ entry, initialReadiness, corpus }: Props) {
       timezone={entry.timezone} requestScope={entry.requestScope} canImport canProcess={false}
       topicsHref={entry.navigation.topicsHref} onAccessDenied={revoke} />
       : <p role="status">{t("dataReadOnly")}</p>}
-    <ClientProcessingJourney workspaceId={entry.workspaceId} onAccessDenied={revoke} />
+    <ClientProcessingJourney workspaceId={entry.workspaceId} enableCorpusEmbeddings={enableCorpusEmbeddings} onAccessDenied={revoke} />
   </div>;
 }
