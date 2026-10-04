@@ -1,3 +1,11 @@
+import { loadSignalWorkspaceContextForTopics } from "../topics/_lib";
+import {
+  loadMentionFacetsStatusForActorV1,
+  requestMentionFacetsForActorV1,
+  confirmMentionFacetsForActorV1,
+  SignalLabelingError,
+} from "@/lib/data-os/signal-mention-facets";
+import { z } from "zod";
 import { loadSignalWorkspaceModuleContext } from "../../../_lib/load";
 import { signalModuleServingEtagSeedV1 } from "@/lib/data-os/signal-module-serving-scope";
 import {
@@ -47,15 +55,6 @@ async function getServingFacets(
   }
 }
 
-import { loadSignalWorkspaceContextForTopics } from "../topics/_lib";
-import {
-  loadMentionFacetsStatusV1,
-  requestMentionFacetsV1,
-  confirmMentionFacetsV1,
-  SignalLabelingError,
-} from "@noisia/db";
-import { pool } from "@/lib/db";
-import { z } from "zod";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const headers = { "Cache-Control": "private, no-store" };
@@ -93,8 +92,7 @@ export async function GET(
   if ("response" in loaded) return loaded.response;
   try {
     return Response.json(
-      await loadMentionFacetsStatusV1({
-        database: pool,
+      await loadMentionFacetsStatusForActorV1({
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
       }),
@@ -123,8 +121,7 @@ export async function POST(
   if (confirmation.success) {
     try {
       return Response.json(
-        await confirmMentionFacetsV1({
-          database: pool,
+        await confirmMentionFacetsForActorV1({
           workspace_id: loaded.workspace.id,
           actor_user_id: loaded.session.appUser.id,
           run_id: confirmation.data.confirm_run_id,
@@ -144,14 +141,10 @@ export async function POST(
     );
   try {
     return Response.json(
-      await requestMentionFacetsV1({
-        database: pool,
+      await requestMentionFacetsForActorV1({
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
         ...body.data,
-        provider_available:
-          process.env.NOISIA_MENTION_FACETS_ENABLED === "true" &&
-          process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED === "true",
       }),
       { status: 202, headers },
     );
