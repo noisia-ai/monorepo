@@ -38,7 +38,7 @@ test("only an active client admin with a DB organization can start self-service 
   ]) assert.deepEqual(clientBrandCreationDecisionV1(actor), { allowed: false });
 });
 
-test("the new brand creator can request a policy-bound quote without receiving execution or adoption rights", () => {
+test("the new brand creator can request processing and adopt editorial topics without internal execution rights", () => {
   const creation = clientBrandCreationDecisionV1(clientAdmin);
   assert.equal(creation.allowed, true);
   if (!creation.allowed) throw new Error("expected creation authority");
@@ -51,7 +51,7 @@ test("the new brand creator can request a policy-bound quote without receiving e
   const capability = resolveSignalWorkspaceCapabilitiesV1(authority);
   assert.equal(capability.can_request_processing, true);
   assert.equal(capability.can_execute_topics, false);
-  assert.equal(capability.can_adopt_topics, false);
+  assert.equal(capability.can_adopt_topics, true);
   for (const changed of [
     { ...authority, brand_access_level: null }, // revoked grant is absent from the live reader
     { ...authority, brand_access_level: "comment" }, // existing grants are not upgraded

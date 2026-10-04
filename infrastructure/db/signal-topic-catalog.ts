@@ -759,6 +759,13 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
   return { ...result, reused: !result.semantic_changed };
 }
 
+async function requireInternalAdoptionActor(queryable: Queryable, actorUserId: string) {
+  const actor = (await queryable.query<{ user_type: string }>(
+    "SELECT user_type FROM users WHERE id=$1::uuid AND status='active'", [actorUserId])).rows[0];
+  if (actor?.user_type !== "noisia_internal") throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
+  return actor;
+}
+
 export async function loadAdoptionCandidate(args: {
   pool: Queryable;
   workspace_id: string;
@@ -795,9 +802,7 @@ export async function loadAdoptionCandidate(args: {
   }
   // Client adoption is limited to the governed workspace discovery path above.
   // Historical evidence evaluation remains internal and must never receive a fabricated role.
-  const actor = (await args.pool.query<{ user_type: string }>(
-    "SELECT user_type FROM users WHERE id=$1::uuid AND status='active'", [args.actor_user_id])).rows[0];
-  if (actor?.user_type !== "noisia_internal") throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
+  const actor = await requireInternalAdoptionActor(args.pool, args.actor_user_id);
   const legacyProfileId = args.input.run_key.startsWith("taxonomy-profile:")
     ? args.input.run_key.slice("taxonomy-profile:".length)
     : null;
@@ -1281,6 +1286,11 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string; client: P
       workspace_id: args.workspace_id, actor_user_id: args.actor_user_id, lock_authority: true });
     if (!capabilities.can_edit_topics || (operation.action === "adopt" && !capabilities.can_adopt_topics)) {
       throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
+    }
+    // Replays and duplicate adoption must retain the source's authority boundary.
+    if (operation.action === "adopt"
+      && !String(objectValue(operation.payload).run_key ?? "").startsWith("workspace-discovery:")) {
+      await requireInternalAdoptionActor(client, args.actor_user_id);
     }
     const operationDigest = sha256(stableJson({ action: operation.action, payload: operation.payload }));
     const replay = (await client.query<{ actor_user_id: string; action: string; request_digest: string;
