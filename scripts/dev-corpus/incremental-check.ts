@@ -80,16 +80,16 @@ await main(async()=>{
     VALUES($1,'topic_fit_incremental','free','{}',signal_semantic_context_digest_json_v2('{}'),0,true)`,[policy]);
    await raw.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[current.id]);
    await raw.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy]);
-   const preflight=await loadSignalWorkspaceEnginePreflightV1(access);assert.ok(preflight.embedding_run_id);
+   report("preflight_numeric");const preflight=await loadSignalWorkspaceEnginePreflightV1(access);assert.ok(preflight.embedding_run_id);
    const request:Parameters<typeof beginSignalWorkspaceIncrementalEngineV1>[0]={...access,embedding_run_id:preflight.embedding_run_id,idempotency_key:randomUUID(),engine_config:parent.config,
     expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,
     parent_execution_id:parent.id,close_requested:true};
-   tamper=true;try{await assert.rejects(beginSignalWorkspaceIncrementalEngineV1({...request,idempotency_key:randomUUID()}),/discovery residual is stale/);}
+   report("tampered_residual");tamper=true;try{await assert.rejects(beginSignalWorkspaceIncrementalEngineV1({...request,idempotency_key:randomUUID()}),/discovery residual is stale/);}
    finally{tamper=false;}
-   const started=await beginSignalWorkspaceIncrementalEngineV1(request);
-   assert.deepEqual(await beginSignalWorkspaceIncrementalEngineV1(request),{...started,replayed:true});
+   report("begin_numeric");const started=await beginSignalWorkspaceIncrementalEngineV1(request);
+   report("replay_numeric");assert.deepEqual(await beginSignalWorkspaceIncrementalEngineV1(request),{...started,replayed:true});
    const readPolicy=async()=>(await raw.query("SELECT workspace_incremental_editorial_policy_v1($1) value",[started.execution_id])).rows[0].value;
-   const editorial=await readPolicy();assert.equal(editorial.daily_cap_micro_usd,null);assert.equal(editorial.maximum_cap_micro_usd,scenario.cap);
+   report("editorial_policy");const editorial=await readPolicy();assert.equal(editorial.daily_cap_micro_usd,null);assert.equal(editorial.maximum_cap_micro_usd,scenario.cap);
    assert.equal(editorial.valid_until,scenario.until==="infinity"?"9999-12-31T23:59:59.999Z":scenario.until);
    assert.equal((await raw.query("SELECT valid_until::text value FROM signal_processing_policy_versions WHERE id=$1",[policy])).rows[0].value==="infinity",scenario.until==="infinity");
    const money={queryable:raw,workspace_id:identity.workspace_id,actor_user_id:actor,action:"topic_interpretation" as const,
@@ -104,7 +104,7 @@ await main(async()=>{
    assert.equal((await raw.query("SELECT signal_workspace_incremental_editorial_actor_v1($1,$2,$3) allowed",[identity.workspace_id,actor,started.execution_id])).rows[0].allowed,false);
    await deny(()=>beginSignalWorkspaceIncrementalEngineV1(request),/forbidden/);
    await raw.query("ROLLBACK TO SAVEPOINT revoked_actor");await raw.query("RELEASE SAVEPOINT revoked_actor");
-   const lease=await claimSignalWorkspaceEngineV1({database,execution_id:started.execution_id,worker_job_id:`mfp-rollback-${started.execution_id}`});assert.ok(lease);
+   report("claim_numeric");const lease=await claimSignalWorkspaceEngineV1({database,execution_id:started.execution_id,worker_job_id:`mfp-rollback-${started.execution_id}`});assert.ok(lease);
    let cursor:string|null=null;totalRoots=0;totalChunks=0;
    for(;;){const page=await readSignalWorkspaceIncrementalRootsV1({database,lease,after_root_id:cursor,limit:200});
     totalRoots+=page.items.length;totalChunks+=page.items.reduce((sum,row)=>sum+row.expected_chunks,0);cursor=page.next_cursor;if(page.done)break;}
@@ -115,6 +115,14 @@ await main(async()=>{
   report("rollback");await raw.query("ROLLBACK");transaction=false;assert.deepEqual(await census(),baseline);
   console.log(JSON.stringify({stage:"mfp_incremental_pg",status:"passed",rollback:true,reused_real_parent:true,selected_roots:totalRoots,
    selected_chunks:totalChunks,residual_tamper_rejected:true,finite_expiry_preserved:true,infinity_transport_only:true,revocation_enforced:true,provider_calls:0,cost_micro_usd:0}));
- }catch(error){console.error(JSON.stringify({stage:"mfp_incremental_pg",status:"failed",phase}));throw error;}
+ }catch(error){const diagnostic=(value:unknown):Record<string,unknown>=>{
+   if(!value||typeof value!=="object")return{};
+   const e=value as {name?:string;code?:string;message?:string;stack?:string;actual?:unknown};
+   const message=e.message??"";
+   return{name:e.name,code:e.code,
+    ...( /^(?:workspace_|processing_|mfp_)[a-z_]+$/.test(message)||/^Engine [a-zA-Z .]+\.$/.test(message)?{message}:{}),
+    frame:e.stack?.split("\n").find(line=>line.trim().startsWith("at "))?.replace(/\([^)]*\//,"("),
+    ...(e.actual instanceof Error?{actual:diagnostic(e.actual)}:{})};
+  };console.error(JSON.stringify({stage:"mfp_incremental_pg",status:"failed",phase,...diagnostic(error)}));throw error;}
  finally{if(transaction)await raw.query("ROLLBACK");if(priorFlag===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;else process.env.NOISIA_MENTION_FACETS_ENABLED=priorFlag;raw.release();await pool.end();}
 });
