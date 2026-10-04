@@ -26,6 +26,10 @@ LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
 DECLARE prior import_batches%ROWTYPE;
 BEGIN
  IF TG_OP='UPDATE' THEN
+  IF NEW.status='completed' AND OLD.status IS DISTINCT FROM 'completed' THEN
+   PERFORM pg_advisory_xact_lock(hashtextextended('workspace-import-source:'||NEW.data_source_id::text,0));
+   NEW.completed_at:=clock_timestamp();
+  END IF;
   IF ROW(NEW.content_revision_mode,NEW.content_revision_base_batch_id) IS DISTINCT FROM
      ROW(OLD.content_revision_mode,OLD.content_revision_base_batch_id) THEN
    RAISE EXCEPTION 'content_revision_seal_immutable' USING ERRCODE='23514';
