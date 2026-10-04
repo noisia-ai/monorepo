@@ -338,7 +338,8 @@ BEGIN
   IF NOT COALESCE(operation.operation_kind='authorize-interpretation' AND body->>'action'='authorize_interpretation'
    AND (renewal->>'eligible')::boolean
    AND ((owner.input_snapshot ? 'discovery_population' AND body->'grant_cap_micro_usd'='null'::jsonb AND renewal->'maximum_grant_micro_usd'='null'::jsonb)
-    OR body->>'grant_cap_micro_usd'~'^[1-9][0-9]*
+    OR body->>'grant_cap_micro_usd'~'^[1-9][0-9]*$' AND (body->>'grant_cap_micro_usd')::numeric<=9007199254740991
+    AND (renewal->'maximum_grant_micro_usd'='null'::jsonb OR (body->>'grant_cap_micro_usd')::numeric<=(renewal->>'maximum_grant_micro_usd')::numeric))
    AND body->>'budget_date'=renewal->>'budget_date'
    AND body->>'admission_not_after'~'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'
    AND (body->>'admission_not_after')::timestamptz>clock_timestamp()
@@ -347,131 +348,6 @@ BEGIN
   PERFORM pg_advisory_xact_lock(hashtextextended('workspace-interpretation-budget:'||owner.actor_user_id::text,0));
   renewal:=workspace_incremental_editorial_renewal_state_v1(owner.id);
   IF NOT COALESCE((renewal->>'eligible')::boolean AND (renewal->'maximum_grant_micro_usd'='null'::jsonb OR (body->>'grant_cap_micro_usd')::numeric<=(renewal->>'maximum_grant_micro_usd')::numeric),false) THEN
-   RAISE EXCEPTION 'workspace_incremental_editorial_cap_exceeded' USING ERRCODE='23514'; END IF;
- ELSE
-  -- Initial permission only: a new key never renews or reacquires a unit.
-  IF NOT COALESCE(owner.interpretation_admission_operation_id IS NULL AND body->>'action'='authorize_interpretation'
-   AND body->'grant_cap_micro_usd' IS NOT DISTINCT FROM owner.input_snapshot->'claude_cap_micro_usd'
-   AND workspace_incremental_editorial_source_v1(owner.source_execution_id) AND workspace_incremental_editorial_claims_complete_v1(owner.id)
-   AND body->>'budget_date'=(clock_timestamp() AT TIME ZONE (policy->>'budget_timezone'))::date::text
-   AND body->>'admission_not_after'~'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'
-   AND (body->>'admission_not_after')::timestamptz>clock_timestamp()
-   AND (body->>'admission_not_after')::timestamptz<=CASE WHEN owner.input_snapshot ? 'discovery_population' AND policy->>'daily_cap_micro_usd' IS NULL THEN (policy->>'valid_until')::timestamptz ELSE (((body->>'budget_date')::date+1)::timestamp AT TIME ZONE (policy->>'budget_timezone')) END,false) THEN
-   RAISE EXCEPTION 'workspace_incremental_editorial_permission_unavailable' USING ERRCODE='23514'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('workspace-interpretation-budget:'||owner.actor_user_id::text,0));
-  SELECT COALESCE(sum(workspace_engine_interpretation_effective_cost_v1(engine_cost_events)),0)
-   INTO spent FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1' AND actor_user_id=owner.actor_user_id AND budget_date=(body->>'budget_date')::date;
-  IF (body->>'grant_cap_micro_usd')::bigint<=0 OR (body->>'grant_cap_micro_usd')::bigint>(policy->>'daily_cap_micro_usd')::bigint-spent THEN
-   RAISE EXCEPTION 'workspace_incremental_editorial_cap_exceeded' USING ERRCODE='23514'; END IF;
- END IF;
-END $$;
-CREATE OR REPLACE FUNCTION guard_workspace_interpretation_call_admission_v1() RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
-DECLARE execution signal_topic_catalog_executions%ROWTYPE; receipt jsonb; grant_spent bigint;
-BEGIN
- IF NEW.workspace_contract IS DISTINCT FROM 'workspace-engine-interpretation-v1' THEN RETURN NEW; END IF;
- IF TG_OP='UPDATE' AND NEW.metadata->'interpretation_admission' IS DISTINCT FROM OLD.metadata->'interpretation_admission' THEN
-  RAISE EXCEPTION 'Call admission is immutable.' USING ERRCODE='23514'; END IF;
- IF TG_OP='INSERT' OR (TG_OP='UPDATE' AND OLD.call_state='reserved' AND NEW.call_state='in_flight') THEN
-  SELECT * INTO execution FROM signal_topic_catalog_executions WHERE id=NEW.catalog_execution_id FOR UPDATE;
-  IF execution.interpretation_admission_operation_id IS NULL THEN
-   IF NEW.metadata ? 'interpretation_admission' THEN RAISE EXCEPTION 'Unexpected admission.' USING ERRCODE='23514'; END IF;
-   RETURN NEW;
-  END IF;
-  receipt:=workspace_interpretation_admission_receipt_v1(execution.id);
-  IF NOT COALESCE(receipt->>'action'='authorize_interpretation'
-   AND NEW.metadata->'interpretation_admission'=jsonb_build_object('operation_id',receipt->>'operation_id','grant_digest',receipt->>'grant_digest')
-   AND receipt->>'budget_actor_user_id'=NEW.actor_user_id::text
-   AND receipt->>'budget_date'=NEW.budget_date::text
-   AND clock_timestamp()<(receipt->>'admission_not_after')::timestamptz
-   AND signal_workspace_incremental_editorial_actor_v1(execution.workspace_id,(receipt->>'authorized_by_user_id')::uuid,execution.id)
-   AND signal_workspace_engine_actor_v1(execution,execution.actor_user_id)
-   AND CASE WHEN execution.input_contract='workspace-incremental-editorial-v1' THEN workspace_incremental_editorial_execution_current_v1(execution.id) ELSE signal_workspace_incremental_parent_current_v1(execution.id,execution.workspace_id,execution.actor_user_id) END,false) THEN
-   RAISE EXCEPTION 'Call admission unavailable.' USING ERRCODE='23514'; END IF;
-  SELECT COALESCE(sum(workspace_engine_interpretation_effective_cost_v1(engine_cost_events)),0)
-   INTO grant_spent FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1' AND id<>NEW.id
-    AND catalog_execution_id=NEW.catalog_execution_id AND metadata->'interpretation_admission'->>'operation_id'=receipt->>'operation_id';
-  IF grant_spent+NEW.reserved_micro_usd>(receipt->>'grant_cap_micro_usd')::bigint THEN
-   RAISE EXCEPTION 'Interpretation grant cap exceeded.' USING ERRCODE='23514'; END IF;
- END IF;
- RETURN NEW;
-END $$;
-CREATE OR REPLACE FUNCTION signal_workspace_incremental_binding_scope_v1(artifact analysis_artifacts)
-RETURNS boolean LANGUAGE sql STABLE SET search_path=public,extensions,pg_temp AS $$
- SELECT COALESCE(EXISTS(SELECT 1 FROM signal_topic_catalog_executions engine
-  JOIN signal_topic_classification_outbox dispatch ON dispatch.execution_id=engine.id AND dispatch.workspace_id=engine.workspace_id
-   AND dispatch.dispatch_kind='incremental_projection' AND dispatch.status IN('dispatching','dispatched')
-  WHERE engine.id=artifact.engine_execution_id AND engine.workspace_id=artifact.workspace_id AND engine.status='ready'
-   AND engine.input_snapshot ? 'numeric_descriptor' AND engine.result_summary ? 'numeric_checkpoint'
-   AND engine.input_revision=(SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=engine.workspace_id)
-   AND (engine.policy_valid_until IS NULL OR engine.policy_valid_until>clock_timestamp())
-   AND signal_workspace_incremental_execution_current_v1(engine.id) AND signal_workspace_incremental_serving_current_v1(engine.id)
-   AND signal_workspace_engine_actor_v1(engine,engine.actor_user_id)
-   AND artifact.metadata->>'actor_user_id'=engine.actor_user_id::text
-   AND artifact.metadata->>'worker_job_id'=dispatch.worker_job_id
-   AND dispatch.worker_job_id='workspace-incremental-projection-'||engine.id::text||'-'||substring(workspace_incremental_editorial_digest_v1(jsonb_build_array(
-    engine.result_summary->'numeric_checkpoint'->>'checkpoint_digest',signal_workspace_incremental_operational_profile_v1(engine.id)::text,
-    signal_workspace_incremental_correction_epoch_v1(engine.workspace_id),signal_workspace_incremental_serving_digest_v1(engine.id))) FROM 8)
-   AND artifact.metadata->>'numeric_checkpoint_digest'=engine.result_summary->'numeric_checkpoint'->>'checkpoint_digest'
-   AND artifact.metadata->>'derivation_digest'~'^sha256:[0-9a-f]{64}$'),false)
-$$;
-CREATE OR REPLACE FUNCTION workspace_incremental_editorial_renewal_state_v1(target uuid) RETURNS jsonb
-LANGUAGE sql VOLATILE SET search_path=public,extensions,pg_temp AS $$
- WITH source AS MATERIALIZED (SELECT owner.*,workspace_interpretation_admission_receipt_v1(owner.id) receipt,
-  workspace_incremental_editorial_execution_current_v1(owner.id) is_current,
-  workspace_incremental_editorial_output_complete_v1(owner.id) output_complete,
-  clock_timestamp() now FROM signal_topic_catalog_executions owner WHERE owner.id=target AND owner.input_contract='workspace-incremental-editorial-v1'),
- policy AS MATERIALIZED (SELECT source.*,(input_snapshot->>'claude_cap_micro_usd')::bigint run_cap,
-  (input_snapshot->'budget_policy'->>'daily_cap_micro_usd')::bigint daily_cap,
-  input_snapshot->'budget_policy'->>'budget_timezone' zone,
-  (now AT TIME ZONE (input_snapshot->'budget_policy'->>'budget_timezone'))::date AS budget_day FROM source),
- calls AS MATERIALIZED (SELECT call.*,workspace_incremental_editorial_renewal_releasable_v1(call) releasable,
-  workspace_engine_interpretation_effective_cost_v1(call) exposure,
-  workspace_engine_interpretation_terminal_billed_v1(call) terminal_billed
-  FROM engine_cost_events call JOIN policy ON call.actor_user_id=policy.actor_user_id
-  WHERE call.workspace_contract='workspace-engine-interpretation-v1' AND (call.catalog_execution_id=target OR call.budget_date=policy.budget_day)),
- money AS (SELECT
-  COALESCE(sum(exposure) FILTER(WHERE catalog_execution_id=target AND NOT releasable),0) run_spent,
-  COALESCE(sum(exposure) FILTER(WHERE budget_date=(SELECT budget_day FROM policy) AND NOT (catalog_execution_id=target AND releasable)),0) day_spent,
-  COALESCE(sum(settled_micro_usd) FILTER(WHERE catalog_execution_id=target AND (call_state='settled' OR terminal_billed)),0) confirmed,
-  COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=target AND call_state NOT IN('settled','definitely_not_sent') AND NOT terminal_billed),0) reserved,
-  COALESCE(sum(reserved_micro_usd) FILTER(WHERE catalog_execution_id=target AND call_state='terminal_confirmed' AND NOT terminal_billed),0) terminal,
-  COALESCE(bool_or(catalog_execution_id=target AND (call_state IN('in_flight','outcome_unknown')
-   OR call_state='reserved' AND NOT releasable OR call_state='response_persisted' AND (response_storage_key IS NULL OR NOT COALESCE((metadata->>'response_complete')::boolean,true)))),false) uncertain
-  FROM calls),
- prepared AS (SELECT policy.*,money.*,CASE WHEN run_cap IS NULL AND daily_cap IS NULL AND input_snapshot ? 'discovery_population' THEN NULL ELSE greatest(0,least(run_cap-run_spent,daily_cap-day_spent)) END maximum,
-  (SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=target AND workspace_id=policy.workspace_id AND dispatch_kind='execution') job
-  FROM policy CROSS JOIN money),
- checked AS (SELECT prepared.*,CASE
-  WHEN NOT is_current THEN 'workspace_incremental_editorial_source_stale'
-  WHEN status<>'failed' OR execution_token IS NOT NULL OR execution_expires_at IS NOT NULL THEN 'workspace_incremental_editorial_renewal_not_failed'
-  WHEN uncertain THEN 'workspace_incremental_editorial_renewal_uncertain'
-  WHEN output_complete THEN 'workspace_incremental_editorial_renewal_output_complete'
-  WHEN receipt IS NULL OR NOT COALESCE(receipt->>'action'='revoke_interpretation' OR (receipt->>'admission_not_after')::timestamptz<=now,false) THEN 'workspace_incremental_editorial_renewal_not_expired'
-  WHEN error_code IS NULL OR error_code NOT IN('workspace_engine_interpretation_daily_authority_expired','workspace_engine_interpretation_admission_revoked','workspace_engine_interpretation_admission_changed',
-   'workspace_incremental_editorial_transport_unavailable','workspace_engine_storage_transport_failed','workspace_engine_storage_unavailable','workspace_engine_interpretation_receipt_recovery_required','workspace_engine_interpretation_transport_terminal_confirmed') THEN 'workspace_incremental_editorial_renewal_failure_blocked'
-  WHEN error_code='workspace_engine_interpretation_receipt_recovery_required' AND NOT EXISTS(SELECT 1 FROM calls WHERE catalog_execution_id=target AND call_state='response_persisted' AND response_storage_key IS NOT NULL AND COALESCE((metadata->>'response_complete')::boolean,true)) THEN 'workspace_incremental_editorial_renewal_failure_blocked'
-  WHEN error_code='workspace_engine_interpretation_transport_terminal_confirmed' AND (NOT EXISTS(SELECT 1 FROM calls WHERE catalog_execution_id=target AND call_state='terminal_confirmed' AND metadata ? 'provider_terminal_receipt') OR EXISTS(SELECT 1 FROM calls WHERE catalog_execution_id=target AND call_state='terminal_confirmed' GROUP BY request_digest HAVING count(*)>1)) THEN 'workspace_incremental_editorial_renewal_failure_blocked'
-  WHEN job IS DISTINCT FROM 'signal-workspace-incremental-editorial-'||target::text||'-1'
-   OR (result_summary->>'worker_job_id' IS NOT NULL AND result_summary->>'worker_job_id'<>job) THEN 'workspace_incremental_editorial_dispatch_unavailable'
-  WHEN maximum<=0 THEN 'workspace_incremental_editorial_cap_exceeded'
-  ELSE NULL END blocked FROM prepared)
- SELECT jsonb_build_object('execution_id',id,'is_current',is_current,'eligible',blocked IS NULL,'can_renew',blocked IS NULL,'blocked_reason',blocked,
-  'expected_admission_operation_id',interpretation_admission_operation_id,'budget_actor_user_id',actor_user_id,'budget_timezone',zone,'budget_date',budget_day::text,
-  'now',to_char(now AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  'maximum_admission_not_after',to_char((CASE WHEN input_snapshot ? 'discovery_population' AND daily_cap IS NULL THEN (input_snapshot->'budget_policy'->>'valid_until')::timestamptz ELSE ((budget_day+1)::timestamp AT TIME ZONE zone) END) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-  'run_cap_micro_usd',run_cap,'daily_cap_micro_usd',daily_cap,'confirmed_micro_usd',confirmed,'reserved_micro_usd',reserved,'terminal_reserved_micro_usd',terminal,
-  'maximum_grant_micro_usd',maximum,'receipt',receipt,'context_digest',input_snapshot->>'context_digest','catalog_digest',input_snapshot->>'catalog_input_digest','worker_job_id',job)
- FROM checked
-$$;
- AND (body->>'grant_cap_micro_usd')::numeric<=9007199254740991 AND (renewal->'maximum_grant_micro_usd'='null'::jsonb OR (body->>'grant_cap_micro_usd')::numeric<=(renewal->>'maximum_grant_micro_usd')::numeric))
-   AND body->>'budget_date'=renewal->>'budget_date'
-   AND body->>'admission_not_after'~'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$'
-   AND (body->>'admission_not_after')::timestamptz>clock_timestamp()
-   AND (body->>'admission_not_after')::timestamptz<=(renewal->>'maximum_admission_not_after')::timestamptz,false) THEN
-   RAISE EXCEPTION 'workspace_incremental_editorial_renewal_unavailable' USING ERRCODE='23514'; END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('workspace-interpretation-budget:'||owner.actor_user_id::text,0));
-  renewal:=workspace_incremental_editorial_renewal_state_v1(owner.id);
-  IF NOT COALESCE((renewal->>'eligible')::boolean AND (body->>'grant_cap_micro_usd')::numeric<=(renewal->>'maximum_grant_micro_usd')::numeric,false) THEN
    RAISE EXCEPTION 'workspace_incremental_editorial_cap_exceeded' USING ERRCODE='23514'; END IF;
  ELSE
   -- Initial permission only: a new key never renews or reacquires a unit.

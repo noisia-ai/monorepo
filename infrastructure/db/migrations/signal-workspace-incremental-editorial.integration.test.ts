@@ -63,7 +63,7 @@ test('incremental editorial admission seals evidence, exclusive emerging ownersh
    const plan=await editorial.persistSignalWorkspaceIncrementalEditorialEvidenceV1({...scope,evidence,stored});
    assert.equal((await editorial.persistSignalWorkspaceIncrementalEditorialEvidenceV1({...scope,evidence,stored})).artifact_id,plan.artifact_id);
    const preview=await editorial.loadSignalWorkspaceIncrementalEditorialAdmissionV1(scope);assert.equal(preview.expected_units,3);assert.equal(preview.target_units,1);assert.equal(preview.legacy_units,1);assert.equal(preview.can_authorize,true);assert.equal(preview.adapter_available,false);
-   assert.ok(preview.target_unit_digest);assert.ok(preview.target_binding_digest);
+   assert.ok(preview.maximum_grant_micro_usd!==null);assert.ok(preview.target_unit_digest);assert.ok(preview.target_binding_digest);
    const begin={...scope,expected_evidence_plan_artifact_id:plan.artifact_id,expected_numeric_checkpoint_digest:preview.numeric_checkpoint_digest,expected_target_unit_digest:preview.target_unit_digest,
     expected_history_cut_digest:preview.history_cut_digest,idempotency_key:randomUUID(),cap_micro_usd:1000,admission_not_after:preview.maximum_admission_not_after};
    await assert.rejects(editorial.beginSignalWorkspaceIncrementalEditorialV1({...begin,actor_user_id:randomUUID()}),/forbidden/u);

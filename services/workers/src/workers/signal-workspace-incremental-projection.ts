@@ -96,7 +96,8 @@ export async function signalWorkspaceIncrementalProjectionJobV1(
     // using a preceding cursor must not race those commits.
     clearInterval(timer); await pending;
     pageProjectionStarted = true;
-    return await projectWorkspaceClassificationPagesV1({ job, database, lease, stores: pageStores, engine: {
+    return await projectWorkspaceClassificationPagesV1({ job, database, lease, stores: pageStores,
+      root_page_size: discoveryRoots ? 200 : undefined, chunk_page_size: discoveryRoots ? 200 : undefined, engine: {
       ...lease.identity,
       classifyRoot: async ({ identity, root: current, chunks }) => {
         await skip(current.root_id);
