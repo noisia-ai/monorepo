@@ -39,28 +39,29 @@ export type LabelingRunV1 = {
   status: string;
   error_code?: string | null;
 };
-export type LabelingCallProposalV1 = {
+export type LabelingCallProposalV1<Input extends FacetInput = FacetInput> = {
   custom_id: string;
   request_digest: string;
   request: Record<string, unknown>;
-  inputs: FacetInput[];
+  inputs: Input[];
   reserved_micro_usd: number;
   retry_depth?: number;
 };
-export type LabelingCallV1 = LabelingCallProposalV1 & {
-  id: string;
-  status:
-    | "reserved"
-    | "submitting"
-    | "submitted"
-    | "settled"
-    | "failed"
-    | "unknown";
-  raw_body: string | null;
-  results_applied: boolean;
-  provider_batch_id: string | null;
-  retry_depth: number;
-};
+export type LabelingCallV1<Input extends FacetInput = FacetInput> =
+  LabelingCallProposalV1<Input> & {
+    id: string;
+    status:
+      | "reserved"
+      | "submitting"
+      | "submitted"
+      | "settled"
+      | "failed"
+      | "unknown";
+    raw_body: string | null;
+    results_applied: boolean;
+    provider_batch_id: string | null;
+    retry_depth: number;
+  };
 export class SignalLabelingError extends Error {
   constructor(
     readonly code: string,
@@ -209,6 +210,16 @@ export async function loadMentionFacetsStatusV1(args: {
       affected_mode: change.diff.affected_mode,
       pending,
       estimated_micro_usd: estimate.estimated_micro_usd,
+      estimated_full_micro_usd: (
+        await estimatePopulation(
+          c,
+          args.workspace_id,
+          labeler,
+          change.context,
+          [],
+          true,
+        )
+      ).estimated_micro_usd,
       estimate,
     };
   });
@@ -223,6 +234,28 @@ export async function requestMentionFacetsV1(args: {
   full_recalculation?: boolean;
   provider_available: boolean;
   identity?: LabelerIdentity;
+  adapter?: {
+    request_identity: unknown;
+    validateIdentity: (identity: LabelerIdentity) => void;
+    prepare: (
+      client: PoolClient,
+      workspace: string,
+      runId: string,
+      labeler: string,
+      context: EntityContextV1,
+    ) => Promise<{
+      roots: number;
+      estimated_micro_usd: number;
+      snapshot: unknown;
+      concept_set_digest: string;
+    }>;
+    persist: (
+      client: PoolClient,
+      runId: string,
+      prepared: { snapshot: unknown; concept_set_digest: string },
+    ) => Promise<void>;
+    select_labeler?: boolean;
+  };
 }) {
   if (!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key))
     fail("labeling_idempotency_key_invalid", 400);
@@ -235,6 +268,7 @@ export async function requestMentionFacetsV1(args: {
     budget_micro_usd: budget,
     cap_micro_usd: requestedCap,
     full_recalculation: args.full_recalculation ?? false,
+    ...(args.adapter ? { adapter: args.adapter.request_identity } : {}),
   });
   return tx(args.database, async (c) => {
     await c.query(
@@ -325,7 +359,8 @@ export async function requestMentionFacetsV1(args: {
       args.workspace_id,
       (args.full_recalculation ?? false) || supersededFull,
     );
-    if (identity.provider === "anthropic")
+    if (args.adapter) args.adapter.validateIdentity(identity);
+    else if (identity.provider === "anthropic")
       validateFacetLabelerIdentityV1(identity);
     const labeler = (
       await c.query<{ id: string }>(
@@ -342,24 +377,36 @@ export async function requestMentionFacetsV1(args: {
         ],
       )
     ).rows[0]!;
-    await c.query(
-      `INSERT INTO signal_workspace_labelers(workspace_id,kind,labeler_version_id) VALUES($1,$2,$3) ON CONFLICT(workspace_id,kind) DO UPDATE SET labeler_version_id=excluded.labeler_version_id`,
-      [args.workspace_id, identity.kind, labeler.id],
-    );
-    const estimate = await estimatePopulation(
-      c,
-      args.workspace_id,
-      identity,
-      change.context,
-    );
+    if (args.adapter?.select_labeler !== false)
+      await c.query(
+        `INSERT INTO signal_workspace_labelers(workspace_id,kind,labeler_version_id) VALUES($1,$2,$3) ON CONFLICT(workspace_id,kind) DO UPDATE SET labeler_version_id=excluded.labeler_version_id`,
+        [args.workspace_id, identity.kind, labeler.id],
+      );
+    const runId = randomUUID();
+    const prepared = args.adapter
+      ? await args.adapter.prepare(
+          c,
+          args.workspace_id,
+          runId,
+          ld,
+          change.context,
+        )
+      : null;
+    const estimate =
+      prepared ??
+      (await estimatePopulation(
+        c,
+        args.workspace_id,
+        identity,
+        change.context,
+      ));
     const pending = estimate.roots,
       estimated = estimate.estimated_micro_usd;
-    const runId = randomUUID(),
-      waiting =
-        !!change.previous &&
-        change.changed &&
-        change.diff.affected_mode === "full" &&
-        !args.full_recalculation;
+    const waiting =
+      !!change.previous &&
+      change.changed &&
+      change.diff.affected_mode === "full" &&
+      !args.full_recalculation;
     const admission = await admitSignalProcessingWithClientV1(c, {
       workspace_id: args.workspace_id,
       actor_user_id: args.actor_user_id,
@@ -392,6 +439,8 @@ export async function requestMentionFacetsV1(args: {
         JSON.stringify({ pending, selected: 0 }),
       ],
     );
+    if (args.adapter && prepared)
+      await args.adapter.persist(c, runId, prepared);
     return {
       run_id: runId,
       replayed: false,
@@ -401,7 +450,24 @@ export async function requestMentionFacetsV1(args: {
     };
   });
 }
-export function createSignalLabelingStoreV1(options: {
+export function createSignalLabelingStoreV1<
+  Input extends FacetInput = FacetInput,
+  Result = FacetResult,
+>(options: {
+  adapter?: {
+    kind: "facets" | "membership";
+    inputs: (
+      client: LabelingDatabaseV1 | PoolClient,
+      run: LabelingRunV1,
+    ) => Promise<Input[]>;
+    write: (
+      client: PoolClient,
+      run: LabelingRunV1,
+      pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
+    ) => Promise<void>;
+    pending: (client: PoolClient, run: LabelingRunV1) => Promise<number>;
+    authority?: (client: PoolClient, run: LabelingRunV1) => Promise<void>;
+  };
   database: LabelingDatabaseV1;
   /** Runtime preflight, cached by the existing private storage adapter. */
   assertRawReady?: () => Promise<void>;
@@ -469,6 +535,7 @@ export function createSignalLabelingStoreV1(options: {
       )
     ).rows[0];
     if (!prepared) fail("labeling_preparation_changed");
+    await options.adapter?.authority?.(c, run);
     const exposure = (
       await c.query<{ total_micro_usd: string }>(
         `SELECT total_micro_usd::text FROM signal_processing_org_exposure_v1($1,$2::date,$3)`,
@@ -505,8 +572,8 @@ export function createSignalLabelingStoreV1(options: {
         const row = (
           await c.query(
             `UPDATE signal_labeling_runs SET lease_token=$2,lease_until=now()+interval '10 minutes',status='running',updated_at=now()
-   WHERE id=$1 AND status IN('queued','running') AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
-            [runId, token],
+   WHERE id=$1 AND kind=$3 AND status IN('queued','running') AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
+            [runId, token, options.adapter?.kind ?? "facets"],
           )
         ).rows[0];
         if (!row) return null;
@@ -553,17 +620,23 @@ export function createSignalLabelingStoreV1(options: {
       );
     },
     async inputs(run: LabelingRunV1) {
-      return selectFacetInputsV1(db, run.workspace_id, run.cursor_root_id, 200);
+      if (options.adapter) return options.adapter.inputs(db, run);
+      return selectFacetInputsV1(
+        db,
+        run.workspace_id,
+        run.cursor_root_id,
+        200,
+      ) as Promise<Input[]>;
     },
     async reserve(
       run: LabelingRunV1,
-      proposals: LabelingCallProposalV1[],
+      proposals: LabelingCallProposalV1<Input>[],
       advanceCursor = true,
-    ): Promise<LabelingCallV1[]> {
+    ): Promise<LabelingCallV1<Input>[]> {
       return tx(db, async (c) => {
         await lock(c, run);
         const existing = (
-          await c.query<LabelingCallV1>(
+          await c.query<LabelingCallV1<Input>>(
             "SELECT * FROM signal_labeling_calls WHERE custom_id=ANY($1::text[])",
             [proposals.map((p) => p.custom_id)],
           )
@@ -602,22 +675,22 @@ export function createSignalLabelingStoreV1(options: {
           }
         }
         return (
-          await c.query<LabelingCallV1>(
+          await c.query<LabelingCallV1<Input>>(
             "SELECT * FROM signal_labeling_calls WHERE run_id=$1 AND custom_id=ANY($2::text[]) ORDER BY custom_id",
             [run.id, proposals.map((p) => p.custom_id)],
           )
         ).rows;
       });
     },
-    async calls(run: LabelingRunV1): Promise<LabelingCallV1[]> {
+    async calls(run: LabelingRunV1): Promise<LabelingCallV1<Input>[]> {
       return (
-        await db.query<LabelingCallV1>(
+        await db.query<LabelingCallV1<Input>>(
           "SELECT * FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id",
           [run.id],
         )
       ).rows;
     },
-    async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1[]) {
+    async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
       await tx(db, async (c) => {
         await lock(c, run);
@@ -632,7 +705,7 @@ export function createSignalLabelingStoreV1(options: {
     },
     async markSubmitted(
       run: LabelingRunV1,
-      calls: LabelingCallV1[],
+      calls: LabelingCallV1<Input>[],
       batchId: string | null,
     ) {
       await db.query(
@@ -642,7 +715,7 @@ export function createSignalLabelingStoreV1(options: {
     },
     async markFailed(
       run: LabelingRunV1,
-      calls: LabelingCallV1[],
+      calls: LabelingCallV1<Input>[],
       unknown: boolean,
     ) {
       await db.query(
@@ -650,7 +723,11 @@ export function createSignalLabelingStoreV1(options: {
         [run.id, calls.map((x) => x.id), unknown ? "unknown" : "failed"],
       );
     },
-    async persistRaw(run: LabelingRunV1, call: LabelingCallV1, raw: string) {
+    async persistRaw(
+      run: LabelingRunV1,
+      call: LabelingCallV1<Input>,
+      raw: string,
+    ) {
       const sha = `sha256:${createHash("sha256").update(raw).digest("hex")}`;
       const key = await options.storeRaw({
         workspace_id: run.workspace_id,
@@ -668,7 +745,7 @@ export function createSignalLabelingStoreV1(options: {
     },
     async settle(
       run: LabelingRunV1,
-      call: LabelingCallV1,
+      call: LabelingCallV1<Input>,
       result: {
         usage: LlmUsageV1;
         settled_micro_usd: number;
@@ -692,7 +769,7 @@ export function createSignalLabelingStoreV1(options: {
     },
     async persistRawPage(
       run: LabelingRunV1,
-      pages: Array<{ call: LabelingCallV1; raw: string }>,
+      pages: Array<{ call: LabelingCallV1<Input>; raw: string }>,
     ) {
       const receipts = [];
       for (const page of pages) {
@@ -717,7 +794,7 @@ export function createSignalLabelingStoreV1(options: {
     async settlePage(
       run: LabelingRunV1,
       pages: Array<{
-        call: LabelingCallV1;
+        call: LabelingCallV1<Input>;
         usage: LlmUsageV1;
         settled_micro_usd: number;
         stop_reason?: string | null;
@@ -746,18 +823,23 @@ export function createSignalLabelingStoreV1(options: {
     },
     async apply(
       run: LabelingRunV1,
-      pages: Array<{ call: LabelingCallV1; results: FacetResult[] }>,
+      pages: Array<{ call: LabelingCallV1<Input>; results: Result[] }>,
     ) {
       await tx(db, async (c) => {
         await lock(c, run);
-        await writeFacetResultsV1(c, {
-          workspace_id: run.workspace_id,
-          labeler_digest: run.labeler_digest,
-          call_id: pages[0]?.call.id ?? "",
-          results: pages.flatMap((page) =>
-            page.results.map((r) => ({ ...r, call_id: page.call.id })),
-          ),
-        });
+        if (options.adapter) await options.adapter.write(c, run, pages);
+        else
+          await writeFacetResultsV1(c, {
+            workspace_id: run.workspace_id,
+            labeler_digest: run.labeler_digest,
+            call_id: pages[0]?.call.id ?? "",
+            results: pages.flatMap((page) =>
+              (page.results as FacetResult[]).map((r) => ({
+                ...r,
+                call_id: page.call.id,
+              })),
+            ),
+          });
         await c.query(
           `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results
            FROM jsonb_to_recordset($2::jsonb) page(id uuid,results jsonb)
@@ -780,21 +862,25 @@ export function createSignalLabelingStoreV1(options: {
             [run.id],
           )
         ).rows[0]!;
-        const pending = Number(
-          (
-            await c.query(
-              `SELECT count(*) count FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND status='pending'`,
-              [run.workspace_id],
-            )
-          ).rows[0]!.count,
-        );
+        const pending = options.adapter
+          ? await options.adapter.pending(c, run)
+          : Number(
+              (
+                await c.query(
+                  `SELECT count(*) count FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND status='pending'`,
+                  [run.workspace_id],
+                )
+              ).rows[0]!.count,
+            );
         const available = (
-          await selectFacetInputsV1(
-            c,
-            run.workspace_id,
-            run.cursor_root_id,
-            200,
-          )
+          options.adapter
+            ? await options.adapter.inputs(c, run)
+            : await selectFacetInputsV1(
+                c,
+                run.workspace_id,
+                run.cursor_root_id,
+                200,
+              )
         ).length;
         const blocked = pending > 0 && available === 0 && !calls.active;
         const priorError = (
@@ -820,7 +906,7 @@ export function createSignalLabelingStoreV1(options: {
   };
 }
 export type SignalLabelingStoreV1 = ReturnType<
-  typeof createSignalLabelingStoreV1
+  typeof createSignalLabelingStoreV1<FacetInput, FacetResult>
 >;
 /** Confirms the already-admitted full CE transition, without changing its request or budget. */
 export async function confirmMentionFacetsV1(args: {

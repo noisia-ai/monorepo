@@ -105,3 +105,5 @@ export * from "./signal-topic-editorial-batch-start-v2";
 export * from './signal-labeling-runs';
 export * from './signal-mention-facets';
 export * from './signal-labeling-policy-provisioning';
+
+export * from "./signal-concept-memberships";
