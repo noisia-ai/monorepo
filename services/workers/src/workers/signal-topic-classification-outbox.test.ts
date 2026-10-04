@@ -234,3 +234,38 @@ test("incremental exhausted dispatch preserves proven transport cause without gr
     assert.ok(queries.some(row=>row.sql.includes("dispatch_kind<>'incremental_projection' OR status<>'failed' OR error_code IN")));
   }
 });
+
+
+test('explicit evidence recovery refreshes a terminal job actor from its current receipt before retry', async () => {
+  const actorA='50000000-0000-4000-8000-000000000005',actorB='60000000-0000-4000-8000-000000000006';
+  for(const state of ['failed','completed','active','waiting']) {
+    const events:string[]=[],updates:unknown[]=[];
+    let data:unknown={execution_id:claimed.execution_id,workspace_id:claimed.workspace_id,actor_user_id:actorA};
+    const database={query:async(sql:string)=>({rows:sql.includes('RETURNING outbox.id::text')?[{
+      ...claimed,input_contract:'workspace-topic-engine-v1',dispatch_kind:'incremental_editorial_evidence',actor_user_id:actorB,
+    }]:[],rowCount:1})};
+    const queue={getJob:async(id:string)=>{assert.equal(id,claimed.worker_job_id);return{
+      name:'signal_workspace_incremental_editorial_evidence_v1',getState:async()=>state,
+      updateData:async(next:unknown)=>{events.push('update');updates.push(next);data=next;},
+      retry:async(actual:string)=>{events.push('retry');assert.equal(actual,state);assert.deepEqual(data,{
+        execution_id:claimed.execution_id,workspace_id:claimed.workspace_id,actor_user_id:actorB});},
+    };},add:async()=>assert.fail('same job must be retained')};
+    assert.equal((await drainSignalTopicClassificationOutboxV1({database:database as never,queue,schedule})).dispatched,1);
+    assert.deepEqual(events,['failed','completed'].includes(state)?['update','retry']:[]);
+    assert.equal(updates.length,['failed','completed'].includes(state)?1:0);
+    if(state==='active'||state==='waiting')assert.equal((data as {actor_user_id:string}).actor_user_id,actorA);
+  }
+});
+
+test('evidence recovery cannot retry when the terminal payload cannot be refreshed', async () => {
+  for(const available of [true,false]) {
+    const database={query:async(sql:string)=>({rows:sql.includes('RETURNING outbox.id::text')?[{
+      ...claimed,input_contract:'workspace-topic-engine-v1',dispatch_kind:'incremental_editorial_evidence',actor_user_id:'60000000-0000-4000-8000-000000000006',
+    }]:[],rowCount:1})};
+    const queue={getJob:async()=>({name:'signal_workspace_incremental_editorial_evidence_v1',getState:async()=>'failed',
+      ...(available?{updateData:async()=>{throw Object.assign(Error('unavailable'),{code:'ECONNRESET'});}}:{}),
+      retry:async()=>assert.fail('must preserve failed job until payload refresh succeeds')}),add:async()=>assert.fail('must not replace durable job')};
+    const result=await drainSignalTopicClassificationOutboxV1({database:database as never,queue,schedule});
+    assert.equal(result.dispatched,0);assert.equal(result.failed,1);
+  }
+});
