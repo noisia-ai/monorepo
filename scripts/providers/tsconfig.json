@@ -1,0 +1,5 @@
+{
+  "extends": "../dev-corpus/tsconfig.json",
+  "include": ["./jev-synthetic-check.ts", "./jev-facets.ts"],
+  "exclude": []
+}

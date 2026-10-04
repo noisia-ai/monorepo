@@ -29,6 +29,17 @@ No copiar todas las credenciales a cada proceso: cargar las necesarias para el s
 
 Recibo privado sin valores: `/Users/brandhon_o/.config/noisia/mfp/access-check.json`.
 
+### Actualización verificada · 2026-10-04 09:00 UTC
+
+- CLI oficial Railway autenticado tras la concesión expresa del fundador. Se reutiliza la clave SSH registrada; no se extraen cookies ni claves privadas.
+- WS1 integrado en `develop` por PR #16 (`7833fed`). Base lógica `noisia_mfp`, Redis `mfp-redis`, runner `mfp-private-runner` y Studio `mfp-studio` separados de UAT. Conexiones de datos privadas y runner próximo a PostgreSQL; replay remoto idempotente de 905 raíces elegibles con embeddings **simulados**. Esto no acredita aceptación semántica.
+- Studio MFP responde a salud en `https://mfp-studio-dev-test.up.railway.app`; el recorrido autenticado sigue pendiente de registrar el callback de este destino en Kinde. No se elude autenticación ni autorización.
+- Lectura autenticada de Anthropic confirma `claude-sonnet-5-5`; todavía sin inferencia Claude de MFP en este corte.
+- JEV: seis inferencias **sintéticas** HTTP 200 desde el runner confirman `jev-1.13.0`; `jev-latest` devuelve esa versión. Uso total 16.802 tokens de entrada; coste calculado con tarifa oficial USD0,042/MTok: USD0,000705684, sin solicitudes de facturación incierta. La clave y el flag se cargaron sólo en memoria del proceso mediante SSH cifrado, sin habilitación persistente del runner.
+- La comprobación de derechos vigente a las 08:59:35Z confirmó la única fuente del corpus MFP activa, con licencia `llm-processing=allowed` y retención indefinida. No se enviaron menciones reales a JEV. Condiciones oficiales y límites de esta evidencia en [JEV_DUE_DILIGENCE.md](JEV_DUE_DILIGENCE.md) y [recibo WS3](DELIVERY_MFP_WS3_2026-10-04.md).
+
+Los servicios MFP siguen la rama `develop` con autodeploy desactivado. UAT conserva su configuración y runtime anteriores; una entrega allí requiere el corte coherente y la verificación del spec, no se produce al fusionar un PR MFP.
+
 ## Entorno de ejecución separado
 
 Los archivos existentes `apps/studio/.env.local` y `services/workers/.env` contienen una conexión de DB remota y conservan configuración histórica. No copiarlos completos ni enlazarlos a WS1.
