@@ -281,7 +281,7 @@ export function validateSignalAcquisitionImportInputV2(value: unknown) {
     throw new Error("content revision mode is unsupported");
   }
   return {
-    content_revision_mode: revisionMode,
+    content_revision_mode: revisionMode as "append_only" | "revise_existing",
     source_key: validateSignalAcquisitionSourceKeyV1(input.source_key),
     slot_key: validateSignalAcquisitionSlotKeyV1(input.slot_key),
     query_evidence: queryEvidence,
