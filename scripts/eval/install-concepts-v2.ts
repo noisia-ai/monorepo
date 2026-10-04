@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { main, openDatabase } from '../dev-corpus/guard.mjs';
 import { createSignalTopicStoreV1,loadSignalTopicCatalogStoreV1,updateSignalTopicStoreV1 } from '../../infrastructure/db/signal-topic-catalog';
 import { signalTopicTermKeyV1 } from '../../packages/query-engine/src/signal-topic-catalog-v1';
-import { plannedConceptUpdates,proposedConceptInput,validateProposedConceptSelection,sha256,type ProposedConcept } from './concepts-v2';
+import { MFP_EVAL_CONCEPT_SCOPE,plannedConceptUpdates,proposedConceptInput,validateProposedConceptSelection,sha256,type ProposedConcept } from './concepts-v2';
 import { loadMfpEvalIdentity } from './fixture-identity';
 
 void main(async()=>{
@@ -25,7 +25,7 @@ void main(async()=>{
     let created=0;
     for(const [index,item] of proposed.entries()){
       if(before.topics.some(topic=>topic.term_key===item.concept_key))continue;
-      const finalInput=proposedConceptInput(item,'primary_brand');
+      const finalInput=proposedConceptInput(item,MFP_EVAL_CONCEPT_SCOPE);
       const result=await createSignalTopicStoreV1({pool,workspace_id:identity.workspace_id,actor_user_id:identity.internal_user_id,
         idempotency_key:`mfp-eval-concepts-v2-${digest.slice(0,20)}-create-${index}`,
         input:{...finalInput,label:item.concept_key}});
@@ -37,7 +37,7 @@ void main(async()=>{
     for(const [index,update] of planned.entries()) {
       if(update.unchanged)continue;
       await updateSignalTopicStoreV1({pool,workspace_id:identity.workspace_id,actor_user_id:identity.internal_user_id,
-        term_key:update.concept_key,idempotency_key:`mfp-eval-concepts-v2-${digest.slice(0,20)}-${index}`,
+        term_key:update.concept_key,idempotency_key:`mfp-eval-concepts-v2-${digest.slice(0,20)}-${index}-any-rental-scope-v1`,
         input:{...update.input,expected_definition_revision:update.expected_definition_revision,
           expected_definition_digest:update.expected_definition_digest}});
     }

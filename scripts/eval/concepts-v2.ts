@@ -6,6 +6,8 @@ export type ProposedConcept = { concept_key:string; label:string; definition:str
 export type CurrentConcept = {term_key:string;scope:'primary_brand'|'competitor'|'category'|'all_conversations';
   definition_revision:number;definition_digest:string;label:string;definition:string;inclusion:string[];exclusion:string[];
   positive_examples:string[];negative_examples:string[]};
+// Founder rule: each test concept applies to any car-rental provider, not only the primary brand.
+export const MFP_EVAL_CONCEPT_SCOPE:CurrentConcept['scope']='all_conversations';
 
 export function validateProposedConceptSelection(proposed:ProposedConcept[],selectedKeys:string[]) {
   if (proposed.length!==3 || new Set(proposed.map(c=>c.concept_key)).size!==3 ||
@@ -27,7 +29,7 @@ export function plannedConceptUpdates(proposed:ProposedConcept[],current:Current
   return proposed.map(item=>{
     const existing=current.find(c=>c.term_key===item.concept_key);
     if(!existing)throw new Error('mfp_eval_catalog_concept_missing');
-    const input=proposedConceptInput(item,existing.scope);
+    const input=proposedConceptInput(item,MFP_EVAL_CONCEPT_SCOPE);
     const unchanged=['label','definition','scope','inclusion','exclusion','positive_examples','negative_examples']
       .every(key=>JSON.stringify(existing[key as keyof CurrentConcept])===JSON.stringify(input[key as keyof typeof input]));
     return {concept_key:item.concept_key,input,unchanged,expected_definition_revision:existing.definition_revision,
