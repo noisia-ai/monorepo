@@ -759,11 +759,11 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
   return { ...result, reused: !result.semantic_changed };
 }
 
-async function requireInternalAdoptionActor(queryable: Queryable, actorUserId: string) {
+async function requireInternalAdoptionActor(queryable: Queryable, actorUserId: string): Promise<{ user_type: "noisia_internal" }> {
   const actor = (await queryable.query<{ user_type: string }>(
     "SELECT user_type FROM users WHERE id=$1::uuid AND status='active'", [actorUserId])).rows[0];
   if (actor?.user_type !== "noisia_internal") throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
-  return actor;
+  return { user_type: actor.user_type };
 }
 
 export async function loadAdoptionCandidate(args: {
