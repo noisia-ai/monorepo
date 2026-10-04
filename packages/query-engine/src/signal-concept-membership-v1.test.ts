@@ -164,3 +164,25 @@ test("request contains full catalog, entity hints, adaptive reasoning and cache"
   assert.ok(req.messages[0]?.content.includes("secondary"));
   assert.equal("temperature" in req, false);
 });
+
+test("provider required ordinal keys normalize to the canonical response", () => {
+  const r = root();
+  const request = buildMembershipRequestV1(
+    [r],
+    { entities: [] },
+    r.evaluated_concepts,
+  );
+  assert.deepEqual(
+    request.output_config.format.schema.properties.roots.required,
+    ["r0"],
+  );
+  const parsed = parseMembershipGroupV1(
+    JSON.stringify({
+      contract_version: "concept-membership-judge-v1",
+      roots: { r0: { memberships: [] } },
+    }),
+    [r],
+  );
+  assert.equal(parsed.results.length, 2);
+  assert.ok(parsed.results.every((result) => result.verdict === "not_belongs"));
+});

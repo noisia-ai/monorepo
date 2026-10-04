@@ -115,11 +115,31 @@ const membershipArrayOutputSchemaV1 = {
 // normalizes it to the canonical roots[] contract, with identical coverage checks.
 export function membershipOutputSchemaV1(rootCount: number) {
   const root = membershipArrayOutputSchemaV1.properties.roots.items;
-  return {type:"object",additionalProperties:false,required:["contract_version","roots"],properties:{
-    contract_version:membershipArrayOutputSchemaV1.properties.contract_version,
-    roots:{type:"object",additionalProperties:false,required:Array.from({length:rootCount},(_,i)=>`r${i}`),
-      properties:Object.fromEntries(Array.from({length:rootCount},(_,i)=>[`r${i}`,{type:"object",additionalProperties:false,required:["memberships"],properties:{memberships:root.properties.memberships}}]))}
-  }};
+  return {
+    type: "object",
+    additionalProperties: false,
+    required: ["contract_version", "roots"],
+    properties: {
+      contract_version:
+        membershipArrayOutputSchemaV1.properties.contract_version,
+      roots: {
+        type: "object",
+        additionalProperties: false,
+        required: Array.from({ length: rootCount }, (_, i) => `r${i}`),
+        properties: Object.fromEntries(
+          Array.from({ length: rootCount }, (_, i) => [
+            `r${i}`,
+            {
+              type: "object",
+              additionalProperties: false,
+              required: ["memberships"],
+              properties: { memberships: root.properties.memberships },
+            },
+          ]),
+        ),
+      },
+    },
+  };
 }
 
 export function membershipLabelerIdentityV1(): LabelerIdentity {
@@ -128,7 +148,10 @@ export function membershipLabelerIdentityV1(): LabelerIdentity {
     provider: "anthropic",
     model: "claude-sonnet-5-5",
     prompt_digest: digest(MEMBERSHIP_PROMPT_V1),
-    schema_digest: digest({format:"membership-required-ordinals-v1",schema:membershipOutputSchemaV1(16)}),
+    schema_digest: digest({
+      format: "membership-required-ordinals-v1",
+      schema: membershipOutputSchemaV1(16),
+    }),
     params: {
       thinking: { type: "adaptive" },
       effort: "medium",
@@ -295,10 +318,31 @@ export function parseMembershipGroupV1(
       ),
     };
   }
-  if(value && typeof value==="object" && "roots" in value && value.roots && !Array.isArray(value.roots) && typeof value.roots==="object") {
-    const entries=Object.entries(value.roots);
-    if(entries.some(([key])=>!/^r(?:0|[1-9][0-9]*)$/u.test(key))) return {split:false,results:membershipResultsForV1(inputs,"error","membership_ordinal_key_invalid")};
-    value={...value,roots:entries.map(([key,item])=>({...item,root_ordinal:Number(key.slice(1))}))};
+  if (
+    value &&
+    typeof value === "object" &&
+    "roots" in value &&
+    value.roots &&
+    !Array.isArray(value.roots) &&
+    typeof value.roots === "object"
+  ) {
+    const entries = Object.entries(value.roots);
+    if (entries.some(([key]) => !/^r(?:0|[1-9][0-9]*)$/u.test(key)))
+      return {
+        split: false,
+        results: membershipResultsForV1(
+          inputs,
+          "error",
+          "membership_ordinal_key_invalid",
+        ),
+      };
+    value = {
+      ...value,
+      roots: entries.map(([key, item]) => ({
+        ...item,
+        root_ordinal: Number(key.slice(1)),
+      })),
+    };
   }
   const parsed = output.safeParse(value);
   if (!parsed.success)
