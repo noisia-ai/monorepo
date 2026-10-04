@@ -21262,3 +21262,32 @@ body:has(.signal-report)::before { display: none; }
 @media (max-width: 720px) { .semantic-context-review__advanced { grid-column: 1 / -1; } .semantic-context-review__advanced-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 
 .workspace-select__popover.workspace-select__popover--searchable { min-width: 0; max-width: calc(100vw - 16px); }
+
+/* Mention facets and concept membership reuse the Admin controls and evidence pattern. */
+.mfp-workspace > .admin-section__body, .mfp-membership, .mfp-preview { display: grid; gap: 1rem; }
+.mfp-workspace progress { width: 100%; accent-color: var(--color-accent, #34745c); }
+.mfp-journey { margin: 0; }
+.mfp-journey a { color: inherit; }
+.mfp-notice { padding: .75rem 1rem; border-left: 3px solid #b58b35; background: #fbf7ee; color: #62532f; font-size: .875rem; }
+.mfp-filters, .mfp-entity, .mfp-signal-selection { display: flex; align-items: end; flex-wrap: wrap; gap: 1rem; }
+.mfp-filters label, .mfp-correction > label, .mfp-entity > label { display: grid; gap: .35rem; font-size: .875rem; }
+.mfp-filters select, .mfp-correction select, .mfp-correction input:not([type=checkbox]) { min-height: 2.5rem; border: 1px solid #c9ceca; border-radius: .5rem; background: white; padding: .4rem .6rem; max-width: 100%; }
+.mfp-distribution { display: flex; flex-wrap: wrap; gap: .5rem; }
+.mfp-distribution button { display: inline-flex; gap: .5rem; align-items: center; border: 1px solid #dde2de; background: white; padding: .5rem .75rem; border-radius: .5rem; cursor: pointer; }
+.mfp-distribution button[aria-pressed=true] { border-color: #34745c; background: #edf4ef; }
+.mfp-select-all { display: flex; gap: .5rem; align-items: center; font-size: .875rem; }
+.mfp-select-all input, .mfp-signal-selection input { accent-color: #34745c; width: 1rem; height: 1rem; }
+.mfp-mentions { display: grid; gap: .75rem; }
+.mfp-evidence { padding: 1rem; border: 1px solid #dfe4e0; border-radius: .65rem; min-width: 0; scroll-margin-top: 6rem; }
+.mfp-evidence__meta { display: flex; flex-wrap: wrap; gap: .75rem; margin: .5rem 0; font-size: .8rem; color: #526158; }
+.mfp-evidence__text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; line-height: 1.65; }
+.mfp-evidence mark, .signal-v2-tn__evidence-list mark { background: #fff0a6; color: inherit; padding: .05rem .1rem; }
+.mfp-facet-values { display: grid; grid-template-columns: repeat(auto-fit,minmax(10rem,1fr)); gap: .5rem 1rem; font-size: .825rem; margin: 1rem 0; }
+.mfp-facet-values dt { color: #66756c; }.mfp-facet-values dd { margin: .15rem 0; overflow-wrap: anywhere; }
+.mfp-correction { display: grid; gap: .75rem; border: 1px solid #a7bdae; border-radius: .65rem; padding: 1rem; }
+.mfp-correction legend { padding: 0 .35rem; font-weight: 600; }
+.mfp-membership { padding: 1rem; border-top: 1px solid #dfe4e0; }
+.mfp-membership .admin-section__head { padding: 0; }
+.mfp-signal-selection { align-items: center; justify-content: space-between; padding: .75rem; background: #f2f6f3; border-radius: .5rem; }
+.mfp-signal-selection label { display: flex; gap: .5rem; align-items: center; }
+@media (max-width: 640px) { .mfp-filters { align-items: stretch; }.mfp-filters label { flex: 1 1 100%; }.mfp-membership { padding: .75rem; }.mfp-evidence { padding: .75rem; } }
