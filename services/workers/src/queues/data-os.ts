@@ -1,3 +1,4 @@
+import { SIGNAL_MENTION_FACETS_JOB_V1, signalMentionFacetsJobV1, startMentionFacetsDrainerV1 } from '../workers/signal-mention-facets-batch';
 import { SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_EVIDENCE_JOB_V1 } from '@noisia/db';
 import { signalWorkspaceIncrementalEditorialEvidenceJobV1 } from '../workers/signal-workspace-incremental-editorial-evidence-job';
 import { Queue, Worker } from "bullmq";
@@ -105,6 +106,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_TOPIC_EDITORIAL_BATCH_START_JOB_V2) return signalTopicEditorialBatchStartJobV2(job);
       if (job.name === SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_JOB_V2) return signalTopicEditorialGlobalStageJobV2(job);
       if (job.name === SIGNAL_TOPIC_EDITORIAL_GLOBAL_ADVANCE_JOB_V2) return signalTopicEditorialGlobalAdvanceJobV2(job);
+      if (job.name === SIGNAL_MENTION_FACETS_JOB_V1) return signalMentionFacetsJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V1) return signalWorkspaceInterestDecisionBatchJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V1) return signalWorkspaceInterestDecisionPreparationJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_MATERIALIZATION_JOB_V1) return signalWorkspaceInterestDecisionMaterializationJobV1(job);
@@ -140,6 +142,7 @@ export function startDataOsWorker() {
   );
   // Feature flag defaults off. The drainer only wakes batches after SQL0211
   // has been installed; PostgreSQL still owns each lease and paid reservation.
+  const facetsDrainer = startMentionFacetsDrainerV1();
   const batchDrainer = startSignalWorkspaceInterestDecisionBatchDrainerV1();
   const preparationDrainer = startSignalWorkspaceInterestDecisionPreparationDrainerV1();
   const materializationDrainer = startSignalWorkspaceInterestDecisionMaterializationDrainerV1();
@@ -148,6 +151,7 @@ export function startDataOsWorker() {
   const materializationDrainerV2 = startSignalWorkspaceInterestDecisionMaterializationDrainerV2();
   const retryDrainerV2 = startSignalWorkspaceInterestDecisionRetryDrainerV2();
   worker.on("closed", () => {
+    void facetsDrainer.close();
     void batchDrainer.close();
     void preparationDrainer.close();
     void materializationDrainer.close();
