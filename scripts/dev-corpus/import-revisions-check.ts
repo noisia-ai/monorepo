@@ -28,6 +28,7 @@ await main(async()=>{
   const database={query,connect:async()=>({query,release(){}})} as unknown as Parameters<typeof syntheticImportedWorkspaceFixtureV1>[0]['database'];
   const f=await syntheticImportedWorkspaceFixtureV1({database,query,scoped:client,cleanup:async()=>{}});
   await query('UPDATE import_batches SET completed_at=clock_timestamp() WHERE id=$1',[f.batch_id]);
+  await query("UPDATE mentions SET raw_metadata=jsonb_build_object('author','Synthetic original author') WHERE id=$1",[f.roots[0]]);
   const root=(await query('SELECT * FROM mentions WHERE id=$1',[f.roots[0]])).rows[0];
   // This historical typed observation is synthetic; production staging/publish guards stay enabled.
   await query(`INSERT INTO signal_provider_mention_observations(workspace_id,data_source_id,import_batch_id,mention_id,
@@ -56,6 +57,24 @@ await main(async()=>{
    await query('SAVEPOINT rejected');await assert.rejects(operation,pattern);
    await query('ROLLBACK TO SAVEPOINT rejected');await query('RELEASE SAVEPOINT rejected');checks++;
   };
+  await query('SAVEPOINT metadata_only');
+  const unchanged=await batch(f.batch_id);
+  const sameAuthor={...root,source_author_label:'Synthetic original author',source_author_label_recorded:true,
+   raw_metadata:{...root.raw_metadata,source_file_name:'different-file.csv'},engagement:{likes:99}};
+  assert.equal((await stage(unchanged,sameAuthor)).rows.length,0);checks++;
+  const platformBatch=await batch(f.batch_id);
+  assert.equal((await stage(platformBatch,{...sameAuthor,platform:'synthetic-other'})).rows.length,1);checks++;
+  const authorBatch=await batch(f.batch_id);
+  const authorChanged={...sameAuthor,source_author_label:'Synthetic changed author',raw_metadata:{author:'Synthetic changed author'}};
+  assert.equal((await stage(authorBatch,authorChanged)).rows.length,1);
+  await complete(authorBatch);
+  assert.equal((await query('SELECT source_author_label FROM mentions WHERE id=$1',[root.id])).rows[0].source_author_label,'Synthetic changed author');checks++;
+  const removedBatch=await batch(authorBatch);
+  assert.equal((await stage(removedBatch,{...authorChanged,source_author_label:null,raw_metadata:{author:null}})).rows.length,1);
+  await complete(removedBatch);
+  const removed=(await query('SELECT source_author_label,source_author_label_recorded FROM mentions WHERE id=$1',[root.id])).rows[0];
+  assert.deepEqual(removed,{source_author_label:null,source_author_label_recorded:true});checks++;
+  await query('ROLLBACK TO SAVEPOINT metadata_only');await query('RELEASE SAVEPOINT metadata_only');
   const first=await batch(f.batch_id),content=makeContent('A synthetic revised bicycle review with a delayed delivery.');
   assert.equal((await stage(first,content)).rows.length,1);assert.equal(await text(),root.text_clean);checks++;
   assert.equal((await stage(first,content)).rows.length,1);
@@ -104,10 +123,11 @@ await main(async()=>{
    [secondSource,f.workspace_id,f.organization_id,f.brand_id,`source-sha256-${sha(secondSource)}`]);
   const sourceBatch=randomUUID();await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,status)
    VALUES($1,$2,$3,'synthetic','processing')`,[sourceBatch,f.workspace_id,secondSource]);
-  const csv=`id,text,date\n${root.provider_record_id},An independent synthetic provider uses this ID for different content.,2026-09-01T12:00:00Z\n`;
+  const csv=`id,text,date,author\n${root.provider_record_id},An independent synthetic provider uses this ID for different content.,2026-09-01T12:00:00Z,New synthetic author\n`;
   const parsed=await createSignalSentioneCsvIngester(database).ingestSentioneCsvStream({workspaceId:f.workspace_id,dataSourceId:secondSource,
    importBatchId:sourceBatch,sourceFileName:'synthetic.csv',stream:new Blob([csv]).stream()});
-  assert.equal(parsed.stats.included_count,1);assert.equal(parsed.stats.duplicate_count,0);checks++;
+  assert.equal(parsed.stats.included_count,1);assert.equal(parsed.stats.duplicate_count,0);
+  assert.equal((await query('SELECT source_author_label FROM mentions WHERE source_file_id=$1',[sourceBatch])).rows[0].source_author_label,'New synthetic author');checks++;
   const sameSourceBatch=randomUUID();await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,status)
    VALUES($1,$2,$3,'listening_csv','processing')`,[sameSourceBatch,f.workspace_id,f.source_id]);
   const csvSameSystem=`id,text,date\n${root.provider_record_id},A second source system may reuse an ID in the same connector.,2026-09-01T12:00:00Z\n`;

@@ -330,7 +330,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
       }
       const mention = normalizeMention(rowObj, ingestion.sourceFileName,providerHeaderContract,timestamps!);
       if (ingestion.contentRevisionMode === "revise_existing") {
-        const content = JSON.stringify([mention.textRaw,mention.textClean,mention.title,mention.contentType]);
+        const content = JSON.stringify([mention.textRaw,mention.textClean,mention.title,mention.platform,mention.contentType,mention.rawMetadata.author]);
         const prior = revisionContents.get(mention.externalId);
         if (prior !== undefined && prior !== content) throw new Error("content_revision_conflicting_rows");
         revisionContents.set(mention.externalId,content);
@@ -510,6 +510,8 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
       textClean: m.textClean,
       textSnippet: m.textSnippet,
       title: m.title,
+      sourceAuthorLabel: m.rawMetadata.author as string | null,
+      sourceAuthorLabelRecorded: true,
       textLength: m.textLength,
       language: m.language,
       publishedAt: m.publishedAt,
@@ -1073,6 +1075,8 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     ["text_clean", "textClean"],
     ["text_snippet", "textSnippet"],
     ["title", "title"],
+    ["source_author_label", "sourceAuthorLabel"],
+    ["source_author_label_recorded", "sourceAuthorLabelRecorded"],
     ["text_length", "textLength"],
     ["language", "language"],
     ["published_at", "publishedAt"],

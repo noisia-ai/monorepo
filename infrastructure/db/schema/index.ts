@@ -1586,6 +1586,8 @@ export const mentions = pgTable(
     batchEntityLabel: text("batch_entity_label"),
     url: text("url"),
     authorId: uuid("author_id").references(() => authors.id),
+    sourceAuthorLabel: text("source_author_label"),
+    sourceAuthorLabelRecorded: boolean("source_author_label_recorded").notNull().default(false),
     country: char("country", { length: 2 }),
     engagement: jsonb("engagement"),
     sentimentSource: text("sentiment_source"),
