@@ -26,6 +26,8 @@ export async function assertIncrementalEditorialRenewalV1(args:Args){
  const before=await baseline();
  const preview=await readSignalWorkspaceIncrementalEditorialRenewalWithQueryableV1(c,scoped);assert.ok(preview?.can_renew);
  assert.equal(preview.expected_admission_operation_id,args.receipt.operation_id);assert.equal(preview.budget_actor_user_id,args.receipt.budget_actor_user_id);
+ assert.ok(preview.maximum_grant_micro_usd!==null&&preview.run_cap_micro_usd!==null);
+ const maximumGrant=preview.maximum_grant_micro_usd;
  assert.ok(preview.maximum_grant_micro_usd>0&&preview.maximum_grant_micro_usd<=preview.run_cap_micro_usd-preview.confirmed_micro_usd);
  const reject=async(input:Partial<SignalWorkspaceIncrementalEditorialRenewArgsV1>,error:RegExp,provider=true)=>{
   await assert.rejects(renewAndEnqueueSignalWorkspaceIncrementalEditorialV1({...renewArgs,...input,idempotency_key:randomUUID(),provider_available:provider}),error);
@@ -37,7 +39,7 @@ export async function assertIncrementalEditorialRenewalV1(args:Args){
  await reject({expected_admission_operation_id:randomUUID()},/admission_changed/u);
  await reject({grant_cap_micro_usd:0},/request_invalid/u);
  await reject({grant_cap_micro_usd:1.5},/request_invalid/u);
- await reject({grant_cap_micro_usd:preview.maximum_grant_micro_usd+1},/cap_or_deadline_invalid/u);
+ await reject({grant_cap_micro_usd:maximumGrant+1},/cap_or_deadline_invalid/u);
  await reject({admission_not_after:new Date(Date.parse(preview.maximum_admission_not_after)+1).toISOString()},/cap_or_deadline_invalid/u);
  await reject({},/interpretation_unavailable/u,false);
  const rollback=async(work:()=>Promise<void>)=>{await query('BEGIN');try{await work();}finally{await query('ROLLBACK');}assert.deepEqual(await baseline(),before);};
@@ -59,7 +61,7 @@ export async function assertIncrementalEditorialRenewalV1(args:Args){
   assert.equal(replay.replayed,true);assert.deepEqual(replay.receipt,accepted.receipt);assert.deepEqual(await baseline(),after);
   const historical=await loadSignalWorkspaceIncrementalEditorialAdmissionV1({...access,database,idempotency_key:input.idempotency_key});
   assert.deepEqual(historical?.request?.receipt,accepted.receipt);
-  await assert.rejects(renewAndEnqueueSignalWorkspaceIncrementalEditorialV1({...input,grant_cap_micro_usd:input.grant_cap_micro_usd+1}),/idempotency_conflict/u);
+  await assert.rejects(renewAndEnqueueSignalWorkspaceIncrementalEditorialV1({...input,grant_cap_micro_usd:maximumGrant+1}),/idempotency_conflict/u);
   assert.deepEqual(await baseline(),after);
   await query("UPDATE signal_taxonomy_profiles SET status='retired' WHERE workspace_id=$1::uuid AND kind='topic' AND status IN('draft','activating','active')",[access.workspace_id]);
   const stale=await loadSignalWorkspaceIncrementalEditorialAdmissionV1({...access,database,numeric_execution_id:randomUUID(),idempotency_key:input.idempotency_key});
@@ -100,6 +102,7 @@ export async function assertIncrementalEditorialRenewalV1(args:Args){
    const terminal=prior.calls.find(row=>row.body.id===call.call_id)!;
    assert.deepEqual((await query('SELECT to_jsonb(call) body FROM engine_cost_events call WHERE id=$1::uuid',[call.call_id])).rows[0],terminal);
    assert.equal(view.terminal_reserved_micro_usd,call.reserved_micro_usd);
+   assert.ok(view.maximum_grant_micro_usd!==null&&view.run_cap_micro_usd!==null);
    assert.ok(view.maximum_grant_micro_usd<=view.run_cap_micro_usd-view.confirmed_micro_usd-call.reserved_micro_usd);
    const successor=await args.setupPendingCall(call.call_id);
    assert.equal((await markSent({database,call_id:successor.call.call_id,attempt_token:successor.call.attempt_token,execution_token:successor.lease.execution_token})).send_authorized,true);

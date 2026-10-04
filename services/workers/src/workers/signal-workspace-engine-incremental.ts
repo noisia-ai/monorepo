@@ -127,7 +127,7 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
       const input = await spoolSignalWorkspaceEngineInputV1({ storage_root: storageRoot, directory: inputDir,
         snapshot: { workspace_id: s.workspace_id, input_revision: Number(s.input_revision), preparation_run_id: s.preparation_run_id,
           embedding_run_id: s.embedding_run_id, embedding_config_digest: s.embedding_profile.config_digest,
-          context_digest: s.context_digest, catalog_digest: s.catalog_digest, chunk_policy_version: "corpus-text-chunks-v1",
+          context_digest: descriptor.compatibility.context_digest, catalog_digest: descriptor.compatibility.input_interest_catalog_digest, chunk_policy_version: "corpus-text-chunks-v1",
           roots: s.expected_roots, chunks: s.expected_chunks, guides: s.expected_guides, dimensions: 1024, config: s.engine_config },
         chunks: allChunks(), guides: allGuides(), onProgress: async counts => {
           if (heartbeatError) throw heartbeatError;
@@ -135,7 +135,7 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
         } });
       const prepared = await prepareSignalWorkspaceIncrementalInputFilesV1({ storage_root: storageRoot, input_directory: inputDir,
         input_manifest_ref: await reference(inputDir, "manifest.json"), execution_id: lease.execution_id,
-        descriptor, roots: allRoots(), parent: parent() });
+        descriptor, roots: allRoots(), root_page_size: lease.snapshot.discovery_population ? 200 : 128, parent: parent() });
       inputRef = prepared.input_ref;
       const refs: Stored[] = [];
       for (const name of inputNames) refs.push(await upload(inputDir, name));
@@ -245,8 +245,9 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
   }
   async function* allChunks(): AsyncGenerator<SignalWorkspaceEngineChunkV1[]> {
     let after: Parameters<typeof store.chunks>[0]["after"] = null;
-    for (;;) { const page = await store.chunks({ database, lease, after, limit: 128 });
-      if (page.items.length > 128 || !page.done && (!page.items.length || digest(page.next_cursor) === digest(after))) fail("page_stalled");
+    const limit = lease.snapshot.discovery_population ? 200 : 128;
+    for (;;) { const page = await store.chunks({ database, lease, after, limit });
+      if (page.items.length > limit || !page.done && (!page.items.length || digest(page.next_cursor) === digest(after))) fail("page_stalled");
       if (page.items.length) yield page.items.map(row => ({ ...row, expected_chunks: row.expected_root_chunks }));
       if (page.done) break; after = page.next_cursor;
     }
@@ -260,8 +261,9 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
   }
   async function* allRoots() {
     let after: string | null = null;
-    for (;;) { const page = await store.roots({ database, lease, after_root_id: after, limit: 128 });
-      if (page.items.length > 128 || !page.done && (!page.items.length || page.next_cursor === after)) fail("page_stalled");
+    const limit = lease.snapshot.discovery_population ? 200 : 128;
+    for (;;) { const page = await store.roots({ database, lease, after_root_id: after, limit });
+      if (page.items.length > limit || !page.done && (!page.items.length || page.next_cursor === after)) fail("page_stalled");
       if (page.items.length) yield page.items; if (page.done) break; after = page.next_cursor;
     }
   }

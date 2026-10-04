@@ -79,6 +79,7 @@ export async function signalWorkspaceIncrementalProjectionJobV1(
       while (!next.done && (next.value.root.root_id < rootId || inclusive && next.value.root.root_id === rootId)) next = await rows!.next();
     };
     let corrections = new Map<string, SignalWorkspaceClassificationDecisionV1[]>();
+    const discoveryRoots = derivation.snapshot.discovery_population ? new Set(derivation.snapshot.discovery_population.root_ids) : null;
     const pageStores: WorkspaceProjectionPageStoresV1<SignalWorkspaceEngineDatabaseV1> = { ...store,
       readPage: async args => {
         const page = await store.readPage(args);
@@ -95,11 +96,26 @@ export async function signalWorkspaceIncrementalProjectionJobV1(
     // using a preceding cursor must not race those commits.
     clearInterval(timer); await pending;
     pageProjectionStarted = true;
-    return await projectWorkspaceClassificationPagesV1({ job, database, lease, stores: pageStores, engine: {
+    return await projectWorkspaceClassificationPagesV1({ job, database, lease, stores: pageStores,
+      root_page_size: discoveryRoots ? 200 : undefined, chunk_page_size: discoveryRoots ? 200 : undefined, engine: {
       ...lease.identity,
       classifyRoot: async ({ identity, root: current, chunks }) => {
         await skip(current.root_id);
-        if (next.done || next.value.root.root_id !== current.root_id) invalid("population_changed");
+        const outsideDiscovery = Boolean(discoveryRoots && !discoveryRoots.has(current.root_id));
+        if ((next.done || next.value.root.root_id !== current.root_id) && !outsideDiscovery) invalid("population_changed");
+        if (outsideDiscovery) {
+          const currentChunks = [];
+          for await (const page of chunks) for (const chunk of page) currentChunks.push({chunk_index:chunk.chunk_index,
+            start:chunk.start,end:chunk.end,chunk_sha256:chunk.chunk_sha256});
+          const outcome=projectSignalWorkspaceIncrementalRootV1({ source, identity, bindings,
+            root:{root_id:current.root_id,root_fingerprint:current.fingerprint,asset_sha256:current.asset_sha256,
+              expected_chunks:current.expected_chunks,chunk_coverage_digest:current.chunk_coverage_digest,
+              correction_digest:current.correction_digest,unit_keys:[],state:"outlier",discovery_pending:false},
+            chunks:currentChunks,memberships:[],corrections:(corrections.get(current.root_id)??[]).map(decision=>({decision,
+              context_digest:identity.context_digest,root:{root_id:current.root_id,fingerprint:current.fingerprint,correction_digest:current.correction_digest}})) });
+          return {...outcome,reason_code:"computed_cluster_outside_discovery_population"};
+        }
+        if(next.done) invalid("population_changed");
         const packet = next.value;
         if (packet.root.root_fingerprint !== current.fingerprint || packet.root.correction_digest !== current.correction_digest
           || packet.root.asset_sha256 !== current.asset_sha256 || packet.root.expected_chunks !== current.expected_chunks

@@ -2913,6 +2913,9 @@
           "incrementalPreparationFailed": "Evidence for new topics could not be prepared. Refresh the status to check available recovery."
         },
         "incrementalEditorial": {
+          "uncapped": "No configured maximum",
+          "optionalCap": "Optional maximum (USD)",
+          "noDeadline": "no operational expiry",
           "title": "Interpret new topics",
           "body": "Prepare evidence for new groups before confirming interpretation. Existing Topics and your Signal selection are preserved.",
           "prepare": "Prepare evidence · no Claude cost",

@@ -169,11 +169,38 @@ test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserve
   const policy=f.calls.find(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))!;
   assert.equal(policy.values[1],"infinity");assert.equal(policy.values[3],daily??null);
   const actions=f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_actions"));
-  assert.equal(actions.length,5);
-  assert.match(actions[2]!.sql,/'topic_consolidation_numeric','free'/u);
-  assert.match(actions[2]!.sql,/signal_topic_consolidation_numeric_configuration_v1/u);
-  assert.match(actions[2]!.sql,/,0,false/u);
-  assert.match(actions[3]!.sql,/'topic_interpretation'/u);
-  assert.match(actions[4]!.sql,/'topic_consolidation'/u);assert.match(actions[4]!.sql,/NULL,false/u);
+  assert.equal(actions.length,7);
+  assert.match(actions[4]!.sql,/'topic_consolidation_numeric','free'/u);
+  assert.match(actions[4]!.sql,/signal_topic_consolidation_numeric_configuration_v1/u);
+  assert.match(actions[4]!.sql,/,0,false/u);
+  assert.match(actions[5]!.sql,/'topic_interpretation'/u);
+  assert.match(actions[6]!.sql,/'topic_consolidation'/u);assert.match(actions[6]!.sql,/NULL,false/u);
+ }
+});
+
+
+test("MFP brand creation needs only a server-owned creator, not a legacy semantic pack or default prototype budget",async()=>{
+ for(const cap of [undefined,"123"]){
+  const f=fixture();
+  const response=await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{
+   NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:id(6),
+   NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:cap
+  }});
+  assert.equal(response.status,"provisioned");
+  const actions=f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_actions"));
+  assert.deepEqual(actions.slice(0,3).map(call=>[call.values[1],call.values[5]]),[
+   ["corpus_embeddings",cap??null],["mention_facets",null],["concept_membership",null]
+  ]);
+  assert.match(actions[3]!.sql,/corpus_preparation/u);
+  assert.match(actions[3]!.sql,/topic_fit_incremental/u);
+  assert.ok(!actions.some(call=>["brand_context_proposal","topic_prototype_embeddings"].includes(String(call.values[1]))));
+ }
+ for(const patch of [{NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:undefined},
+  {NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"0"},{NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:"garbage"}]){
+  const f=fixture();
+  assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{
+   NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:id(6),...patch
+  }})).status,"configuration_required");
+  assert.deepEqual(f.state,[]);
  }
 });

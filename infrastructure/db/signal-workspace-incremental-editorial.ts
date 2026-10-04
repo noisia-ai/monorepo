@@ -2,6 +2,8 @@ import {randomUUID,createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
 import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
 import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,type SignalWorkspaceEngineDatabaseV1} from './signal-workspace-engine';
+import {admitSignalProcessingWithClientV1} from './signal-processing-policy';
+import {discoveryStrictCapV1} from './signal-workspace-discovery-policy';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
 
 /** Admission only. No full-fit lease, provider route or dispatch is created. */
@@ -11,20 +13,20 @@ export type SignalWorkspaceIncrementalEditorialReceiptV1={
  action:'authorize_interpretation'|'revoke_interpretation';grant_digest:string;prior_admission_operation_id:string|null;
  authorized_by_user_id:string;budget_actor_user_id:string;input_digest:string;numeric_execution_id:string;numeric_checkpoint_digest:string;
  target_unit_digest:string;target_binding_digest:string;evidence_plan_artifact_id:string;configuration_digest:string;budget_timezone:string;budget_date:string;authorized_at:string;admission_not_after:string;
- grant_cap_micro_usd:number;run_cap_micro_usd:number;daily_cap_micro_usd:number;
+ grant_cap_micro_usd:number|null;run_cap_micro_usd:number|null;daily_cap_micro_usd:number|null;
 };
 export type SignalWorkspaceIncrementalEditorialAdmissionV1={
  numeric_execution_id:string;numeric_checkpoint_digest:string;history_cut_digest:string;target_unit_digest:string|null;target_binding_digest:string|null;evidence_plan_artifact_id:string|null;
  expected_units:number;target_units:number;legacy_units:number;claimed_units:number;is_current:boolean;can_authorize:boolean;blocked_reason:string|null;
- budget_actor_user_id:string;budget_timezone:string;budget_date:string;maximum_admission_not_after:string;daily_cap_micro_usd:number;
- confirmed_micro_usd:number;reserved_micro_usd:number;terminal_reserved_micro_usd:number;maximum_grant_micro_usd:number;
+ budget_actor_user_id:string;budget_timezone:string;budget_date:string;maximum_admission_not_after:string;daily_cap_micro_usd:number|null;
+ confirmed_micro_usd:number;reserved_micro_usd:number;terminal_reserved_micro_usd:number;maximum_grant_micro_usd:number|null;
  model:'claude-sonnet-4-6';adapter_available:false;
  operation:{execution_id:string;status:string;is_current:boolean;can_revoke:boolean;requires_authorization:boolean;receipt:SignalWorkspaceIncrementalEditorialReceiptV1}|null;
  request:{idempotency_key:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1}|null;
 };
 export type SignalWorkspaceIncrementalEditorialBeginArgsV1=SignalWorkspaceIncrementalEditorialScopeV1&{
  expected_evidence_plan_artifact_id:string;expected_numeric_checkpoint_digest:string;expected_target_unit_digest:string;expected_history_cut_digest:string;
- idempotency_key:string;cap_micro_usd:number;admission_not_after:string;
+ idempotency_key:string;cap_micro_usd:number|null;admission_not_after:string;
 };
 export type SignalWorkspaceIncrementalEditorialResultV1={execution_id:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1;replayed:boolean};
 export type SignalWorkspaceIncrementalEditorialRevokeArgsV1=Omit<SignalWorkspaceIncrementalEditorialScopeV1,'numeric_execution_id'>&{
@@ -37,7 +39,7 @@ const uuid=(value:string)=>{if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 const canonicalDate=(value:string)=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
 const hash=/^sha256:[0-9a-f]{64}$/u;
 const billedTerminal=`COALESCE(call_state='terminal_confirmed' AND metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1',false)`;
-async function admin(client:Queryable,scope:{workspace_id:string;actor_user_id:string}){if(!(await client.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[scope.workspace_id,scope.actor_user_id])).rows[0]?.valid)return fail('forbidden',403);}
+async function admin(client:Queryable,scope:{workspace_id:string;actor_user_id:string;numeric_execution_id?:string;execution_id?:string}){if(!(await client.query<{valid:boolean}>('SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid',[scope.workspace_id,scope.actor_user_id,scope.numeric_execution_id??scope.execution_id])).rows[0]?.valid)return fail('forbidden',403);}
 async function request(client:Queryable,scope:{workspace_id:string;actor_user_id:string},idempotency_key?:string){
  if(idempotency_key===undefined)return null;
  return(await client.query<{request_digest:string;result:SignalWorkspaceIncrementalEditorialReceiptV1}>(`SELECT request_digest,result FROM signal_classification_operations
@@ -49,8 +51,8 @@ export async function readSignalWorkspaceIncrementalEditorialRequestWithQueryabl
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...scope})).can_view)return fail('forbidden',403);
  return request(client,scope,idempotency_key);
 }
-type Source={id:string;actor_user_id:string;input_snapshot:{taxonomy_profile_id:string;context_digest:string;catalog_digest:string};checkpoint:{checkpoint_digest:string;population_digest:string;model_bank_artifact_id:string};bank_sha256:string;
- policy:{source_execution_id:string;budget_actor_user_id:string;budget_timezone:string;daily_cap_micro_usd:number}|null;targets:{expected_units:number;unique_units:number;target_units:number;target_unit_digest:string;legacy_units:number;claimed_units:number};
+type Source={id:string;actor_user_id:string;input_snapshot:{taxonomy_profile_id:string;context_digest:string;catalog_digest:string;discovery_population?:unknown};checkpoint:{checkpoint_digest:string;population_digest:string;model_bank_artifact_id:string};bank_sha256:string;
+ policy:{source_execution_id:string;budget_actor_user_id:string;budget_timezone:string;daily_cap_micro_usd:number|null;maximum_cap_micro_usd?:number|null;valid_until?:string}|null;targets:{expected_units:number;unique_units:number;target_units:number;target_unit_digest:string;legacy_units:number;claimed_units:number};
  census:string|null;history:string;valid:boolean;profile_id:string|null;input_revision:string};
 async function source(client:Queryable,args:SignalWorkspaceIncrementalEditorialScopeV1):Promise<Source>{
  const row=(await client.query<Source>(`SELECT engine.id,engine.actor_user_id,engine.input_snapshot-'guides' input_snapshot,engine.input_revision::text,
@@ -67,11 +69,11 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  if(!(await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,...args})).can_view)return fail('forbidden',403);
  const accepted=options.accepted??await request(client,args,args.idempotency_key),row=await source(client,args);
  let identity:{context_digest:string;catalog_digest:string}|null=null;
- try{if(!options.historical||row.valid)identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,actor_user_id:options.historical?row.actor_user_id:args.actor_user_id,taxonomy_profile_id:row.input_snapshot.taxonomy_profile_id});}
+ try{if(!options.historical||row.valid)identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,actor_user_id:options.historical?row.actor_user_id:args.actor_user_id,execution_id:row.id,taxonomy_profile_id:row.input_snapshot.taxonomy_profile_id});}
  catch(error){if(!options.historical||!(error instanceof Error)||!(isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)||error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
    ||['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}
  const is_current=row.profile_id!==null&&row.valid&&identity!==null&&identity.context_digest===row.input_snapshot.context_digest&&identity.catalog_digest===row.input_snapshot.catalog_digest;
- const isAdmin=(await client.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id])).rows[0]!.valid;
+ const isAdmin=(await client.query<{valid:boolean}>('SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid',[args.workspace_id,args.actor_user_id,row.id])).rows[0]!.valid;
  const policy=row.policy;
  const clock=(await client.query<{now:string;date:string;maximum:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') now,
   (clock_timestamp() AT TIME ZONE $1)::date::text date,to_char((((clock_timestamp() AT TIME ZONE $1)::date+1)::timestamp AT TIME ZONE $1) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') maximum`,[policy?.budget_timezone??'UTC'])).rows[0]!;
@@ -80,16 +82,19 @@ async function view(client:Queryable,args:SignalWorkspaceIncrementalEditorialSco
  COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state NOT IN('settled','definitely_not_sent') AND NOT (${billedTerminal})),0)::text reserved,
  COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state='terminal_confirmed' AND NOT (${billedTerminal})),0)::text terminal
  FROM engine_cost_events WHERE actor_user_id=$1::uuid AND workspace_contract='workspace-engine-interpretation-v1' AND budget_date=$2::date`,[row.actor_user_id,clock.date])).rows[0]!;
- const maximum=Math.max(0,Number(policy?.daily_cap_micro_usd??0)-Number(money.confirmed)-Number(money.reserved));
+ const discovery=Boolean(row.input_snapshot.discovery_population);
+ const remaining=policy?.daily_cap_micro_usd==null&&discovery?null:Math.max(0,Number(policy?.daily_cap_micro_usd??0)-Number(money.confirmed)-Number(money.reserved));
+ const maximum=discovery?policy?.maximum_cap_micro_usd??null:remaining;
+ if(discovery&&policy?.valid_until){clock.maximum=remaining===null?policy.valid_until:new Date(Math.min(Date.parse(clock.maximum),Date.parse(policy.valid_until))).toISOString();}
  const plan=(await client.query<{id:string;metadata:{descriptor:Omit<SignalWorkspaceIncrementalEditorialEvidenceV1,'units'>};valid:boolean}>(`SELECT id,metadata,workspace_incremental_editorial_plan_valid_v1(id) valid FROM analysis_artifacts
  WHERE workspace_id=$1::uuid AND metadata->>'numeric_execution_id'=$2::text AND metadata->>'contract_version'='workspace-incremental-editorial-plan-v1' ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,row.id])).rows[0];
  const operation=(await client.query<{execution_id:string;status:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1}>(`SELECT id execution_id,status,workspace_interpretation_admission_receipt_v1(id) receipt FROM signal_topic_catalog_executions
  WHERE workspace_id=$1::uuid AND source_execution_id=$2::uuid AND input_contract='workspace-incremental-editorial-v1'
   AND ($3::uuid IS NULL OR id=$3::uuid) ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,row.id,options.historical?accepted?.result.execution_id??null:null])).rows[0];
- const blocked_reason=!isAdmin?'workspace_incremental_editorial_forbidden':!row.profile_id?'workspace_incremental_editorial_operational_profile_required':!is_current?'workspace_incremental_editorial_source_stale':!policy?'workspace_incremental_editorial_budget_policy_missing':!row.census||row.targets.expected_units!==row.targets.unique_units?'workspace_incremental_editorial_census_incomplete':operation?'workspace_incremental_editorial_already_owned':!plan?.valid?'workspace_incremental_editorial_evidence_required':plan.metadata.descriptor.stream.rows===0?'workspace_incremental_editorial_no_new_units':maximum<=0?'workspace_incremental_editorial_cap_exceeded':null;
+ const blocked_reason=!isAdmin?'workspace_incremental_editorial_forbidden':!row.profile_id?'workspace_incremental_editorial_operational_profile_required':!is_current?'workspace_incremental_editorial_source_stale':!policy?'workspace_incremental_editorial_budget_policy_missing':!row.census||row.targets.expected_units!==row.targets.unique_units?'workspace_incremental_editorial_census_incomplete':operation?'workspace_incremental_editorial_already_owned':!plan?.valid?'workspace_incremental_editorial_evidence_required':plan.metadata.descriptor.stream.rows===0?'workspace_incremental_editorial_no_new_units':(remaining!==null&&remaining<=0||maximum!==null&&maximum<=0)?'workspace_incremental_editorial_cap_exceeded':null;
  return{numeric_execution_id:row.id,numeric_checkpoint_digest:row.checkpoint.checkpoint_digest,history_cut_digest:row.history,target_unit_digest:plan?.metadata.descriptor.target_unit_digest??null,target_binding_digest:plan?.metadata.descriptor.target_binding_digest??null,evidence_plan_artifact_id:plan?.id??null,
  expected_units:row.targets.expected_units,target_units:plan?.metadata.descriptor.stream.rows??0,legacy_units:row.targets.legacy_units,claimed_units:row.targets.claimed_units,is_current,can_authorize:blocked_reason===null,blocked_reason,
- budget_actor_user_id:row.actor_user_id,budget_timezone:policy?.budget_timezone??'UTC',budget_date:clock.date,maximum_admission_not_after:clock.maximum,daily_cap_micro_usd:Number(policy?.daily_cap_micro_usd??0),
+ budget_actor_user_id:row.actor_user_id,budget_timezone:policy?.budget_timezone??'UTC',budget_date:clock.date,maximum_admission_not_after:clock.maximum,daily_cap_micro_usd:discovery&&policy?.daily_cap_micro_usd==null?null:Number(policy?.daily_cap_micro_usd??0),
  confirmed_micro_usd:Number(money.confirmed),reserved_micro_usd:Number(money.reserved),terminal_reserved_micro_usd:Number(money.terminal),maximum_grant_micro_usd:maximum,model:'claude-sonnet-4-6',adapter_available:false,
  operation:operation?.receipt?{...operation,is_current,can_revoke:isAdmin&&operation.receipt.action==='authorize_interpretation',requires_authorization:operation.receipt.action==='revoke_interpretation'||Date.parse(operation.receipt.admission_not_after)<=Date.parse(clock.now)}:null,
  request:accepted?{idempotency_key:args.idempotency_key!,receipt:accepted.result}:null};
@@ -127,7 +132,7 @@ export async function beginSignalWorkspaceIncrementalEditorialV1(args:SignalWork
 /** Existing admission body, composed with an enqueue in the same transaction. */
 export async function beginSignalWorkspaceIncrementalEditorialWithClientV1(client:PoolClient,args:SignalWorkspaceIncrementalEditorialBeginArgsV1):Promise<SignalWorkspaceIncrementalEditorialResultV1>{
  const numeric_execution_id=uuid(args.numeric_execution_id),expected_evidence_plan_artifact_id=uuid(args.expected_evidence_plan_artifact_id);key(args.idempotency_key);
- if(!Number.isSafeInteger(args.cap_micro_usd)||args.cap_micro_usd<=0||!canonicalDate(args.admission_not_after)
+ if(args.cap_micro_usd!==null&&(!Number.isSafeInteger(args.cap_micro_usd)||args.cap_micro_usd<=0)||!canonicalDate(args.admission_not_after)
   ||![args.expected_numeric_checkpoint_digest,args.expected_target_unit_digest,args.expected_history_cut_digest].every(value=>hash.test(value)))return fail('request_invalid',422);
  const request_digest=digest({action:'begin_incremental_editorial',numeric_execution_id,expected_evidence_plan_artifact_id,expected_numeric_checkpoint_digest:args.expected_numeric_checkpoint_digest,
  expected_target_unit_digest:args.expected_target_unit_digest,expected_history_cut_digest:args.expected_history_cut_digest,cap_micro_usd:args.cap_micro_usd,admission_not_after:args.admission_not_after});
@@ -142,24 +147,29 @@ export async function beginSignalWorkspaceIncrementalEditorialWithClientV1(clien
   const preview=await view(client,{...args,numeric_execution_id});if(!preview.target_unit_digest||!preview.target_binding_digest)return fail('evidence_required');if(!preview.can_authorize)return fail(preview.blocked_reason?.replace('workspace_incremental_editorial_','')??'unavailable');
   if(preview.evidence_plan_artifact_id!==expected_evidence_plan_artifact_id||preview.numeric_checkpoint_digest!==args.expected_numeric_checkpoint_digest||preview.target_unit_digest!==args.expected_target_unit_digest||preview.history_cut_digest!==args.expected_history_cut_digest)return fail('source_changed');
   const now=(await client.query<{now:string}>(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') now`)).rows[0]!.now;
-  if(args.cap_micro_usd>preview.maximum_grant_micro_usd||Date.parse(args.admission_not_after)<=Date.parse(now)||Date.parse(args.admission_not_after)>Date.parse(preview.maximum_admission_not_after))return fail('cap_or_deadline_invalid');
+  if(preview.maximum_grant_micro_usd!==null&&(args.cap_micro_usd===null||args.cap_micro_usd>preview.maximum_grant_micro_usd)||Date.parse(args.admission_not_after)<=Date.parse(now)||Date.parse(args.admission_not_after)>Date.parse(preview.maximum_admission_not_after))return fail('cap_or_deadline_invalid');
   const numeric=await source(client,{...args,numeric_execution_id});const execution_id=randomUUID();
-  const snapshot={contract_version:'workspace-incremental-editorial-v1',execution_id,workspace_id:args.workspace_id,numeric_execution_id,
+  const discovery=Boolean(numeric.input_snapshot.discovery_population);
+  if(!discovery&&args.cap_micro_usd===null)return fail('request_invalid',422);
+  const strictCap=discovery?discoveryStrictCapV1(args.cap_micro_usd,numeric.policy?.maximum_cap_micro_usd??null):args.cap_micro_usd;
+  const processingAdmission=discovery?await admitSignalProcessingWithClientV1(client,{workspace_id:args.workspace_id,actor_user_id:numeric.actor_user_id,
+   action:'topic_interpretation',target_id:execution_id,idempotency_key:args.idempotency_key,request_digest,execution_cap_micro_usd:strictCap===null?null:String(strictCap)}):null;
+  const snapshot={...(discovery?{discovery_population:{numeric_execution_id}}:{}),contract_version:'workspace-incremental-editorial-v1',execution_id,workspace_id:args.workspace_id,numeric_execution_id,
    numeric_checkpoint_digest:preview.numeric_checkpoint_digest,population_digest:numeric.checkpoint.population_digest,input_revision:numeric.input_revision,
    context_digest:numeric.input_snapshot.context_digest,catalog_input_digest:numeric.input_snapshot.catalog_digest,
    model_bank_artifact_id:numeric.checkpoint.model_bank_artifact_id,model_bank_sha256:numeric.bank_sha256,census_derivation_digest:numeric.census,
    expected_units:preview.expected_units,target_units:preview.target_units,target_unit_digest:preview.target_unit_digest,history_cut_digest:preview.history_cut_digest,
    interpretation_configuration:SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,budget_policy:numeric.policy,
-   budget_actor_user_id:numeric.actor_user_id,authorized_by_user_id:args.actor_user_id,claude_cap_micro_usd:args.cap_micro_usd};
+   budget_actor_user_id:numeric.actor_user_id,authorized_by_user_id:args.actor_user_id,claude_cap_micro_usd:strictCap};
   const plan=(await client.query<{metadata:{evidence_digest:string}}>('SELECT metadata FROM analysis_artifacts WHERE id=$1::uuid',[expected_evidence_plan_artifact_id])).rows[0]!;
   const sealedSnapshot={...snapshot,evidence_plan_artifact_id:expected_evidence_plan_artifact_id,evidence_digest:plan.metadata.evidence_digest,target_binding_digest:preview.target_binding_digest};
   const input_digest=digest(sealedSnapshot);
   await client.query(`INSERT INTO signal_topic_catalog_executions(id,workspace_id,taxonomy_profile_id,actor_user_id,intent,idempotency_key,request_digest,
    population_digest,identity_catalog_digest,definition_digest,denominator,embedding_model,input_contract,source_execution_id,
-   embedding_run_id,preparation_run_id,input_revision,embedding_config_digest,input_snapshot,input_digest,policy_valid_until,expected_chunks,result_summary)
+   embedding_run_id,preparation_run_id,input_revision,embedding_config_digest,input_snapshot,input_digest,policy_valid_until,expected_chunks,result_summary,processing_admission_id)
   SELECT $1::uuid,workspace_id,$2::uuid,actor_user_id,'search',$3,$4,$5,identity_catalog_digest,definition_digest,denominator,embedding_model,'workspace-incremental-editorial-v1',id,
-   embedding_run_id,preparation_run_id,input_revision,embedding_config_digest,$6::jsonb,$7,policy_valid_until,expected_chunks,'{"phase":"admitted","analysis_complete":false,"provider_enabled":false}'::jsonb
-  FROM signal_topic_catalog_executions WHERE id=$8::uuid`,[execution_id,numeric.profile_id,key(args.idempotency_key),request_digest,numeric.checkpoint.population_digest,JSON.stringify(sealedSnapshot),input_digest,numeric_execution_id]);
+   embedding_run_id,preparation_run_id,input_revision,embedding_config_digest,$6::jsonb,$7,policy_valid_until,expected_chunks,'{"phase":"admitted","analysis_complete":false,"provider_enabled":false}'::jsonb,$9::uuid
+  FROM signal_topic_catalog_executions WHERE id=$8::uuid`,[execution_id,numeric.profile_id,key(args.idempotency_key),request_digest,numeric.checkpoint.population_digest,JSON.stringify(sealedSnapshot),input_digest,numeric_execution_id,processingAdmission?.receipt.id??null]);
   const authority=`sha256:${createHash('sha256').update(`${input_digest}:${execution_id}`).digest('hex')}`;
   const claims=await client.query(`INSERT INTO analysis_artifacts(workspace_id,engine_execution_id,artifact_key,artifact_type,title,content,metadata,workspace_artifact_kind,discovery_run_digest,workspace_authority_digest)
    SELECT $1::uuid,$2::uuid,'incremental-editorial-claim-'||substring(workspace_incremental_editorial_digest_v1(jsonb_build_array(units.identity->>'component_key',units.identity->'unit'->>'unit_key')) FROM 8),
@@ -173,7 +183,7 @@ export async function beginSignalWorkspaceIncrementalEditorialWithClientV1(clien
    action:'authorize_interpretation',prior_admission_operation_id:null,authorized_by_user_id:args.actor_user_id,budget_actor_user_id:numeric.actor_user_id,input_digest,numeric_execution_id,
    numeric_checkpoint_digest:preview.numeric_checkpoint_digest,target_unit_digest:preview.target_unit_digest,target_binding_digest:preview.target_binding_digest,evidence_plan_artifact_id:expected_evidence_plan_artifact_id,configuration_digest:digest(snapshot.interpretation_configuration),
    budget_timezone:preview.budget_timezone,budget_date:preview.budget_date,authorized_at:now,admission_not_after:args.admission_not_after,
-   grant_cap_micro_usd:args.cap_micro_usd,run_cap_micro_usd:args.cap_micro_usd,daily_cap_micro_usd:preview.daily_cap_micro_usd});
+   grant_cap_micro_usd:strictCap,run_cap_micro_usd:strictCap,daily_cap_micro_usd:preview.daily_cap_micro_usd});
   return{execution_id,receipt,replayed:false};
 
 }
@@ -224,7 +234,7 @@ export async function persistSignalWorkspaceIncrementalEditorialEvidenceWithClie
 
   await admin(client,args);await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`signal-taxonomy:${args.workspace_id}:topic`]);
   await client.query('SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE',[args.workspace_id]);
-  const numeric=await source(client,args),identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,taxonomy_profile_id:numeric.input_snapshot.taxonomy_profile_id});
+  const numeric=await source(client,args),identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,execution_id:numeric.id,taxonomy_profile_id:numeric.input_snapshot.taxonomy_profile_id});
   if(!numeric.valid||numeric.checkpoint.checkpoint_digest!==evidence.numeric_checkpoint_digest||identity.context_digest!==numeric.input_snapshot.context_digest||identity.catalog_digest!==numeric.input_snapshot.catalog_digest)return fail('source_stale');
   const content={contract_version:'workspace-engine-private-artifact-v1',...args.stored};
   const prior=(await client.query<{id:string;content:unknown}>(`SELECT id,content FROM analysis_artifacts WHERE workspace_id=$1::uuid AND metadata->>'numeric_execution_id'=$2::text

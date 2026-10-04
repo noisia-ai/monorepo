@@ -26,7 +26,8 @@ export const signalWorkspaceIncrementalInputSchemaV1 = z.object({
   mode: z.literal("frozen-model-delta"), policy_version: z.literal(SIGNAL_WORKSPACE_INCREMENTAL_POLICY_V1),
   current_input_manifest: file, current_roots: file,
   parent: z.object({ execution_id: uuid, manifest_sha256: hash }).strict(), compatibility,
-  discovery: z.object({ cohort_key: hash, close_requested: z.boolean() }).strict()
+  discovery: z.object({ cohort_key: hash, close_requested: z.boolean(),
+    residual_root_ids: z.array(uuid).refine(ids => ids.every((id,index) => index === 0 || id > ids[index-1]!)).optional() }).strict()
 }).strict();
 export type SignalWorkspaceIncrementalInputV1 = z.infer<typeof signalWorkspaceIncrementalInputSchemaV1>;
 export type SignalWorkspaceIncrementalTransitionV1 = { root_id: string;
@@ -127,7 +128,7 @@ export const signalWorkspaceIncrementalOutputSchemaV1 = z.object({
   const n = value.counts;
   if (n.roots !== n.added_roots + n.content_changed_roots + n.metadata_changed_roots + n.unchanged_roots
     || n.roots > n.occurrences || (n.roots === 0) !== (n.occurrences === 0)
-    || n.delta_occurrences > n.cohort_occurrences || n.cohort_occurrences > n.occurrences
+    || n.delta_occurrences > n.occurrences || n.cohort_occurrences > n.occurrences
     || n.pending_occurrences > n.cohort_occurrences
     || (value.discovery_status === "complete") !== (n.pending_occurrences === 0)
     || n.components !== value.components.length || value.coverage.length !== n.components

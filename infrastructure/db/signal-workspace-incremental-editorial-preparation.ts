@@ -62,7 +62,7 @@ function canonical<T extends Target>(args: T): T { return { ...args, workspace_i
 function key(value: string) { if (!/^[A-Za-z0-9._:-]{8,200}$/u.test(value)) return fail('request_invalid', 422); return digest({ contract: 'workspace-incremental-editorial-preparation-key-v1', key: value }); }
 function limitOf(value = 128) { if (!Number.isSafeInteger(value) || value < 1 || value > 128) return fail('page_invalid', 422); return value; }
 const names = ['manifest.json', 'roots.jsonl', 'population.jsonl', 'memberships.jsonl', 'pending-cohort.jsonl', 'model-components.json'];
-async function admin(c: Queryable, args: Scope) { if (!(await c.query<{ valid: boolean }>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid', [args.workspace_id, args.actor_user_id])).rows[0]?.valid) return fail('forbidden', 403); }
+async function admin(c: Queryable, args: Target) { if (!(await c.query<{ valid: boolean }>('SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid', [args.workspace_id, args.actor_user_id, args.numeric_execution_id])).rows[0]?.valid) return fail('forbidden', 403); }
 async function source(c: PoolClient, args: Target, historical = false): Promise<Run> {
   const run = (await c.query<Run>(`SELECT id,actor_user_id,input_snapshot-'guides' input_snapshot,result_summary->'numeric_checkpoint' checkpoint,
     workspace_incremental_editorial_preparation_source_v1(id) seal,workspace_incremental_editorial_source_v1(id) valid
@@ -109,7 +109,7 @@ export async function loadSignalWorkspaceIncrementalEditorialPreparationV1(args:
     const scoped = canonical({ ...args, numeric_execution_id: target }), run = await source(c, scoped, true), row = await dispatch(c, scoped);
     const currentDigest = digest(run.seal), same = row?.receipt.source_digest === currentDigest;
     const active = same && (['pending', 'dispatching', 'dispatched'].includes(row.status) || row.status === 'failed' && retryable(row) && row.attempt_count < maximumAttempts);
-    const authorized = (await c.query<{ valid: boolean }>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid', [args.workspace_id, args.actor_user_id])).rows[0]?.valid === true;
+    const authorized = (await c.query<{ valid: boolean }>('SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid', [args.workspace_id, args.actor_user_id, 'numeric_execution_id' in args ? args.numeric_execution_id : target])).rows[0]?.valid === true;
     const can = authorized && run.valid && !active && (!same || row.status !== 'completed' && retryable(row));
     return { numeric_execution_id: run.id, numeric_checkpoint_digest: run.checkpoint.checkpoint_digest, source_digest: currentDigest,
       is_current: run.valid, can_prepare: can, blocked_reason: !run.valid ? 'source_stale' : !authorized ? 'forbidden' : active ? 'preparation_pending' : same && row.status === 'completed' ? 'already_prepared' : same && !retryable(row) ? 'preparation_failed' : null,
@@ -223,8 +223,8 @@ export async function readSignalWorkspaceIncrementalEditorialPreparationRootsV1(
         AND correction.origin_input_contract='workspace-topic-classification-v1' AND correction.root_fingerprint=item.fingerprint
         AND correction.context_digest=$4),''),'UTF8')),'hex') correction_digest
       FROM signal_corpus_preparation_items item JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=item.chunk_policy_version
-      WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible' AND ($3::uuid IS NULL OR item.root_id>$3::uuid)
-      ORDER BY item.root_id LIMIT $5`,[run.input_snapshot.preparation_run_id,args.lease.workspace_id,args.after_root_id?uuid(args.after_root_id):null,run.input_snapshot.context_digest,limit+1])).rows;
+      WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible' AND ($6::uuid[] IS NULL OR item.root_id=ANY($6::uuid[])) AND ($3::uuid IS NULL OR item.root_id>$3::uuid)
+      ORDER BY item.root_id LIMIT $5`,[run.input_snapshot.preparation_run_id,args.lease.workspace_id,args.after_root_id?uuid(args.after_root_id):null,run.input_snapshot.context_digest,limit+1,run.input_snapshot.discovery_population?.root_ids??null])).rows;
     const items=rows.slice(0,limit);return{items,next_cursor:items.at(-1)?.root_id??null,done:rows.length<=limit};});
 }
 export async function readSignalWorkspaceIncrementalEditorialPreparationFragmentsV1(args: Read & { references: readonly SignalWorkspaceIncrementalEditorialPreparationFragmentV1[] }) {

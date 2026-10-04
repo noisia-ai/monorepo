@@ -18,7 +18,7 @@ export type SignalWorkspaceIncrementalDescriptorV1 = {
   parent:{execution_id:string;output_artifact_id:string;manifest_sha256:string;
     manifest_contract:'workspace-topic-engine-output-v1'|'workspace-topic-incremental-output-v1';
     checkpoint_digest:string;model_version_id:string|null;model_bank_artifact_id:string|null};
-  root_correction_epoch:string;compatibility:SignalWorkspaceIncrementalCompatibilityV1;discovery:{close_requested:boolean};
+  root_correction_epoch:string;compatibility:SignalWorkspaceIncrementalCompatibilityV1;discovery:{close_requested:boolean;residual_root_ids?:string[]};
   editorial_cut:{unit_count:number;unit_digest:string};
 };
 export type SignalWorkspaceIncrementalArtifactRefV1 = {artifact_id:string;owner_execution_id:string;
@@ -44,7 +44,7 @@ export type SignalWorkspaceIncrementalCheckpointV1 = {
 type Queryable=Pick<PoolClient,'query'>;
 const hash=/^sha256:[0-9a-f]{64}$/u;
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_engine_incremental_${code}`,status);};
-const limitOf=(limit=128)=>{if(!Number.isSafeInteger(limit)||limit<1||limit>128)return fail('page_invalid',422);return limit;};
+const limitOf=(limit=128)=>{if(!Number.isSafeInteger(limit)||limit<1||limit>200)return fail('page_invalid',422);return limit;};
 const count=(value:unknown)=>{const n=Number(value);if(!Number.isSafeInteger(n)||n<0)return fail('count_invalid');return n;};
 export const SIGNAL_WORKSPACE_NUMERIC_RETRY_ERRORS_V1=[
  'workspace_engine_incremental_transport_unavailable','workspace_engine_storage_transport_failed',
@@ -60,7 +60,7 @@ export async function readSignalWorkspaceNumericRecoveryWithQueryableV1(args:{qu
    AND execution.input_snapshot->>'claude_cap_micro_usd'='0'
    AND execution.input_snapshot->'interpretation_config' IS NULL AND execution.interpretation_revision IS NULL
    AND execution.input_revision=state.input_revision AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp())
-   AND signal_workspace_classification_actor_v1(execution.workspace_id,$3::uuid)
+   AND signal_workspace_engine_actor_v1(execution,$3::uuid)
    AND signal_workspace_incremental_execution_current_v1(execution.id)
    AND signal_workspace_incremental_projection_history_current_v1(execution.id)
    AND NOT EXISTS(SELECT 1 FROM engine_cost_events call WHERE call.catalog_execution_id=execution.id)
@@ -86,20 +86,28 @@ const publicRefs=(rows:SignalWorkspaceIncrementalArtifactRefV1[])=>rows.map(row=
 function descriptorOf(lease:SignalWorkspaceEngineLeaseV1){const descriptor=lease.snapshot.numeric_descriptor;
  if(!descriptor)return fail('descriptor_required');return descriptor;}
 
+export async function loadSignalDiscoveryResidualRootsV1(queryable:Queryable,workspaceId:string,rootIds:string[]):Promise<string[]>{
+ const row=(await queryable.query<{roots:string[]}>(`SELECT COALESCE(array_agg(root_id ORDER BY root_id),'{}'::uuid[]) roots
+  FROM unnest($2::uuid[]) selected(root_id) WHERE NOT EXISTS(SELECT 1 FROM signal_concept_memberships_current_v1 membership
+   WHERE membership.workspace_id=$1::uuid AND membership.root_id=selected.root_id AND membership.verdict='belongs')`,[workspaceId,rootIds])).rows[0]!;
+ return row.roots;
+}
+
 /** Numeric authority is distinct from editorial completion and current population. */
 export async function loadSignalWorkspaceIncrementalParentV1(args:{queryable:Queryable;workspace_id:string;actor_user_id:string;
   embedding_config_digest:string;context_digest:string;catalog_digest:string;engine_config:Record<string,unknown>;
-  parent_execution_id?:string;guides:Array<{guide_key:string;role:string;input_digest:string}>}){
- const capability=await loadSignalWorkspaceCapabilitiesStoreV1(args);if(!capability.can_execute_topics)return fail('forbidden',403);
+  parent_execution_id?:string;discovery?:boolean;guides:Array<{guide_key:string;role:string;input_digest:string}>}){
+ const capability=await loadSignalWorkspaceCapabilitiesStoreV1(args);if(!(args.discovery?capability.can_request_processing:capability.can_execute_topics))return fail('forbidden',403);
  const parent=(await args.queryable.query<{id:string;input_snapshot:Record<string,unknown>;result_summary:Record<string,unknown>}>(`
   SELECT id,input_snapshot,result_summary FROM signal_topic_catalog_executions
   WHERE workspace_id=$1::uuid AND input_contract='workspace-topic-engine-v1' AND status IN('running','failed','ready')
    AND (result_summary ? 'fit_checkpoint' OR result_summary ? 'numeric_checkpoint')
    AND (NOT input_snapshot ? 'numeric_descriptor' OR status='ready')
    AND ($2::uuid IS NULL OR id=$2::uuid)
-   AND embedding_config_digest=$3 AND input_snapshot->>'context_digest'=$4 AND input_snapshot->>'catalog_digest'=$5
+   AND embedding_config_digest=$3 AND (($7::boolean AND jsonb_typeof(input_snapshot->'discovery_population')='object' AND input_snapshot->'guides'='[]'::jsonb)
+    OR (NOT $7::boolean AND NOT input_snapshot ? 'discovery_population' AND input_snapshot->>'context_digest'=$4 AND input_snapshot->>'catalog_digest'=$5))
    AND input_snapshot->'engine_config'=$6::jsonb
-  ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,args.parent_execution_id??null,args.embedding_config_digest,args.context_digest,args.catalog_digest,JSON.stringify(args.engine_config)])).rows[0];
+  ORDER BY created_at DESC,id DESC LIMIT 1`,[args.workspace_id,args.parent_execution_id??null,args.embedding_config_digest,args.context_digest,args.catalog_digest,JSON.stringify(args.engine_config),args.discovery===true])).rows[0];
  if(!parent)return {available:false as const,reason:'no_compatible_numeric_parent' as const};
  if((await args.queryable.query<{valid:boolean}>('SELECT signal_workspace_incremental_parent_current_v1($1::uuid,$2::uuid,$3::uuid) valid',
   [parent.id,args.workspace_id,args.actor_user_id])).rows[0]?.valid!==true)return fail('parent_invalid');
@@ -118,7 +126,8 @@ export async function loadSignalWorkspaceIncrementalParentV1(args:{queryable:Que
   const versions=model?.configuration.versions;
   if(!versions||typeof versions!=='object')return fail('parent_runtime_missing');
   compatibility={embedding_config_digest:args.embedding_config_digest,chunk_policy_version:'corpus-text-chunks-v1',
-   context_digest:args.context_digest,input_interest_catalog_digest:args.catalog_digest,
+   context_digest:args.discovery?String(parent.input_snapshot.context_digest):args.context_digest,
+   input_interest_catalog_digest:args.discovery?String(parent.input_snapshot.catalog_digest):args.catalog_digest,
    guides_digest:digest({rows:args.guides.map((guide,ordinal)=>({ordinal,guide_key:guide.guide_key,role:guide.role,input_digest:guide.input_digest})),vectors:vectors.sha256}),
    fit_config_digest:digest(args.engine_config),runtime_digest:digest(versions)};
  }
@@ -128,14 +137,14 @@ export async function loadSignalWorkspaceIncrementalParentV1(args:{queryable:Que
   model_bank_artifact_id:checkpoint.model_bank_artifact_id??checkpoint.model_artifact_id??null};
  return{available:true as const,parent:selected,compatibility};
 }
-export async function buildSignalWorkspaceIncrementalDescriptorWithClientV1(args:Parameters<typeof loadSignalWorkspaceIncrementalParentV1>[0]&{close_requested:boolean}){
+export async function buildSignalWorkspaceIncrementalDescriptorWithClientV1(args:Parameters<typeof loadSignalWorkspaceIncrementalParentV1>[0]&{close_requested:boolean;residual_root_ids?:string[]}){
  if(typeof args.close_requested!=='boolean')return fail('request_invalid',422);
  const selected=await loadSignalWorkspaceIncrementalParentV1(args);if(!selected.available)return fail('parent_unavailable');
  const coverage=(await args.queryable.query<{unit_count:string;unit_digest:string}>(
   'SELECT unit_count::text,unit_digest FROM signal_workspace_incremental_editorial_at_v1($1::uuid,$2::uuid,transaction_timestamp())',
   [selected.parent.execution_id,args.workspace_id])).rows[0]!;
  const body={contract_version:'workspace-incremental-numeric-descriptor-v1' as const,policy_version:'workspace-frozen-model-cohort-v1' as const,
-  mode:'frozen-model-delta' as const,parent:selected.parent,compatibility:selected.compatibility,discovery:{close_requested:args.close_requested},
+  mode:'frozen-model-delta' as const,parent:selected.parent,compatibility:selected.compatibility,discovery:{close_requested:args.close_requested,...(args.discovery?{residual_root_ids:args.residual_root_ids??[]}: {})},
   editorial_cut:{unit_count:count(coverage.unit_count),unit_digest:coverage.unit_digest},
   root_correction_epoch:(await args.queryable.query<{digest:string}>('SELECT signal_workspace_incremental_correction_epoch_v1($1::uuid) digest',[args.workspace_id])).rows[0]!.digest};
  return{...body,descriptor_digest:digest(body)};
@@ -164,8 +173,9 @@ export async function readSignalWorkspaceIncrementalRootsV1(args:{database:Signa
    FROM signal_corpus_preparation_items item JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id
     AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=item.chunk_policy_version
    WHERE item.run_id=$1::uuid AND item.workspace_id=$2::uuid AND item.disposition='eligible'
+    AND ($6::uuid[] IS NULL OR item.root_id=ANY($6::uuid[]))
     AND ($3::uuid IS NULL OR item.root_id>$3::uuid) ORDER BY item.root_id LIMIT $5`,
-  [run.input_snapshot.preparation_run_id,run.workspace_id,args.after_root_id,run.input_snapshot.context_digest,limit+1])).rows;
+  [run.input_snapshot.preparation_run_id,run.workspace_id,args.after_root_id,run.input_snapshot.context_digest,limit+1,run.input_snapshot.discovery_population?.root_ids??null])).rows;
   const items=rows.slice(0,limit);return{items,next_cursor:items.at(-1)?.root_id??args.after_root_id,done:rows.length<=limit};
  });
 }
@@ -201,6 +211,7 @@ export async function persistSignalWorkspaceIncrementalInputV1(args:{database:Si
  if(input.workspace_id!==args.lease.workspace_id||input.execution_id!==args.lease.execution_id
   ||input.parent.execution_id!==descriptor.parent.execution_id||input.parent.manifest_sha256!==descriptor.parent.manifest_sha256
   ||digest(input.compatibility)!==digest(descriptor.compatibility)||input.discovery.close_requested!==descriptor.discovery.close_requested
+  ||digest(input.discovery.residual_root_ids??null)!==digest(descriptor.discovery.residual_root_ids??null)
   ||args.artifact.artifact_key!=='incremental-input.json'||args.artifact.artifact_type!=='engine_output')return fail('input_invalid',422);
  return withSignalWorkspaceEngineLeaseV1({...args,full:true},async(client,run)=>{
   if(args.roots_count!==run.input_snapshot.expected_roots||args.chunks_count!==run.input_snapshot.expected_chunks)return fail('coverage_invalid');
@@ -425,7 +436,7 @@ export async function loadSignalWorkspaceIncrementalStatusV1(args:{database:Sign
      AND input_snapshot ? 'numeric_descriptor'`,[args.workspace_id,args.execution_id])).rows[0];
   if(!row)return null;
   const {context_digest,catalog_digest,taxonomy_profile_id,...view}=row;
-  if(view.is_current){try{const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,taxonomy_profile_id});
+  if(view.is_current){try{const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,...args,taxonomy_profile_id,execution_id:args.execution_id});
    view.is_current=identity.context_digest===context_digest&&identity.catalog_digest===catalog_digest;
   }catch(error){if(error instanceof Error&&['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message))view.is_current=false;else throw error;}}
   return{...view,numeric_complete:!!row.numeric_checkpoint,analysis_complete:false as const};

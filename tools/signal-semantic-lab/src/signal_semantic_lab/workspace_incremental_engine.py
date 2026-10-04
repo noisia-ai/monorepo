@@ -585,7 +585,17 @@ def run_workspace_incremental_engine(
     ):
         fail("input_contract_invalid")
     exact(config["parent"], {"execution_id", "manifest_sha256"})
-    exact(config["discovery"], {"cohort_key", "close_requested"})
+    residual_ids = config["discovery"].get("residual_root_ids")
+    exact(config["discovery"], {"cohort_key", "close_requested"} | (
+        {"residual_root_ids"} if "residual_root_ids" in config["discovery"] else set()
+    ))
+    if "residual_root_ids" in config["discovery"]:
+        if not isinstance(residual_ids, list) or any(not isinstance(root, str) for root in residual_ids):
+            fail("residual_population_invalid")
+        for root in residual_ids:
+            base._uuid(root)
+        if residual_ids != sorted(set(residual_ids)):
+            fail("residual_population_invalid")
     for value in (config["workspace_id"], config["execution_id"], config["parent"]["execution_id"]):
         base._uuid(value)
     if (
@@ -628,9 +638,15 @@ def run_workspace_incremental_engine(
     # Pending entries are root-version references. Replaced/removed versions are
     # dropped only through this complete snapshot join, never hidden sampling.
     pending_roots = {row["root_id"] for row in pending}
+    residual = set(residual_ids) if residual_ids is not None else None
+    if residual is not None and not residual.issubset({row["root_id"] for row in current_roots}):
+        fail("residual_population_invalid")
     cohort_indexes = [
-        i for i, row in enumerate(records) if row["root_id"] in delta_roots | pending_roots
+        i for i, row in enumerate(records)
+        if row["root_id"] in delta_roots | pending_roots
+        and (residual is None or row["root_id"] in residual)
     ]
+    cohort_index_set = set(cohort_indexes)
     cohort_pop = [current_pop[i] for i in cohort_indexes]
     cohort_digest = digest(cohort_pop)
     cohort_key = digest({"policy_version": POLICY, "population": cohort_pop})
@@ -714,7 +730,7 @@ def run_workspace_incremental_engine(
                 outside = [
                     i
                     for i, row in enumerate(records)
-                    if row["root_id"] not in delta_roots | pending_roots
+                    if i not in cohort_index_set
                 ]
                 lanes = (
                     ["open", "guided"]

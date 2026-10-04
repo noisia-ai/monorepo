@@ -368,14 +368,14 @@ test("editorial recovery reaches its dedicated store while provider is disabled,
       queries.push(sql);
       if (sql.includes("workspace.status workspace_status")) return { rows: [{ ...granted, user_type: "noisia_internal", primary_role: "noisia_admin" }] };
       if (sql.startsWith("BEGIN") || sql.startsWith("SET LOCAL") || sql === "ROLLBACK") return { rows: [] };
-      if (sql.includes("workspace_interpretation_admission_admin_v1")) return { rows: [{ valid: false }] };
+      if (sql.includes("signal_workspace_incremental_editorial_actor_v1")) return { rows: [{ valid: false }] };
       throw new Error("Unexpected operation outside editorial recovery authority");
     };
     const database = { query, connect: async () => ({ query, release() {} }) } as unknown as Pick<Pool, "query" | "connect">;
     await assert.rejects(requestWorkspaceAnalysisForActorV1({ database, workspaceId: id, actorUserId: "actor", idempotencyKey: "editorial-retry-test",
       body: { action: "retry_incremental_editorial", run_id: id, expected_worker_job_id: "editorial-owner-job" } }),
     (error: unknown) => error instanceof SignalWorkspaceEngineError && error.code === "workspace_incremental_editorial_forbidden" && error.status === 403);
-    assert.ok(queries.some(sql => sql.includes("workspace_interpretation_admission_admin_v1")));
+    assert.ok(queries.some(sql => sql.includes("signal_workspace_incremental_editorial_actor_v1")));
     assert.ok(!queries.some(sql => /^(INSERT|UPDATE)/u.test(sql)));
   } finally { if (prior === undefined) delete process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED; else process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED = prior; }
 });

@@ -337,3 +337,13 @@ for (const locale of ["es-MX", "en-US"]) test(`${locale}: unavailable renewal ex
   const saved = render(withRenewal({ can_renew: false, blocked_reason: "workspace_incremental_editorial_cap_exceeded" }, { recorded_recovery_available: true, can_retry: true }));
   assert.ok(!saved.includes(copy.budgetUnavailable));
 });
+
+test("MFP may omit an execution maximum; a configured maximum and legacy finite grants remain strict",()=>{
+ const open={...status,incremental_editorial:{...state,admission:{...state.admission!,maximum_grant_micro_usd:null,daily_cap_micro_usd:null}}};
+ const uncapped={...begin,cap_micro_usd:null} as WorkspaceIncrementalEditorialRequest;
+ assert.equal(validWorkspaceIncrementalEditorialRequest(uncapped),true);
+ assert.equal(workspaceIncrementalEditorialCanSubmit(open,uncapped),true);
+ assert.equal(workspaceIncrementalEditorialCanSubmit(status,uncapped),false);
+ assert.equal(workspaceIncrementalEditorialCanSubmit(open,{...begin,cap_micro_usd:100_000_000}),true);
+ assert.equal(workspaceIncrementalEditorialCanSubmit(status,{...begin,cap_micro_usd:100_000_000}),false);
+});

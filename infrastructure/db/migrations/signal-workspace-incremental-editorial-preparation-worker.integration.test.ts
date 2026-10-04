@@ -68,7 +68,7 @@ test('free preparation Worker composes real PG authority, all origin streams and
    t.diagnostic(JSON.stringify({roots:f.roots.length,chunks:f.chunks.length,units:unitRows.length,evidence_rows:lines.length,downloads:io.get,uploads:io.put,replay_io:0}));
    await t.test('begin/revoke receipts remain actor-scoped before fallback/current/catalog lookups',async()=>{
     await query('BEGIN');try{
-     const preview=await editorial.loadSignalWorkspaceIncrementalEditorialAdmissionV1(access);assert.ok(preview?.can_authorize);
+     const preview=await editorial.loadSignalWorkspaceIncrementalEditorialAdmissionV1(access);assert.ok(preview?.can_authorize);assert.ok(preview.maximum_grant_micro_usd!==null);
      const key=randomUUID();const acceptedGrant=await beginAndEnqueueSignalWorkspaceIncrementalEditorialV1({...scope,
       expected_evidence_plan_artifact_id:preview.evidence_plan_artifact_id!,expected_numeric_checkpoint_digest:preview.numeric_checkpoint_digest,
       expected_target_unit_digest:preview.target_unit_digest!,expected_history_cut_digest:preview.history_cut_digest,

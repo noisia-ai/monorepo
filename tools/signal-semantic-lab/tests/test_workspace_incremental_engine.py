@@ -564,3 +564,31 @@ def test_membership_digest_preserves_score_bits_across_json_spellings():
     assert inc.membership_digest({**row, "strength": 0.0}) != inc.membership_digest(
         {**row, "strength": -0.0}
     )
+
+
+def test_mfp_residual_keeps_prediction_for_new_belonging_roots_and_fits_only_uncovered(waves):
+    # Two new roots, same frozen parent. The first already belongs to a concept;
+    # the second is the only eligible emerging-concept cohort. No old model refit.
+    parent = waves["outputs"][0]
+    directory, output = waves["storage"] / "mfp-input", waves["storage"] / "mfp-output"
+    source = copy.deepcopy(waves["sources"][0])
+    source.update({key: copy.deepcopy(waves["sources"][1][key]) for key in (root_id(458), root_id(459))})
+    execution = str(uuid.uuid4())
+    config = prepare(directory, source, parent, root_id(9001), execution)
+    records = read_lines(directory / "chunks.jsonl")
+    prior_ids = {row["root_id"] for row in read_lines(parent / "population.jsonl")}
+    new_ids = sorted({row["root_id"] for row in records} - prior_ids)
+    assert len(new_ids) == 2
+    config["discovery"]["residual_root_ids"] = [new_ids[1]]
+    residual_pop = [row for row in inc.population(records) if row["root_id"] == new_ids[1]]
+    config["discovery"]["cohort_key"] = inc.digest({"policy_version": inc.POLICY, "population": residual_pop})
+    base._write_json(directory / "incremental.json", config)
+    receipt = inc.run_workspace_incremental_engine(directory, output, waves["storage"], parent, file_sha(parent / "manifest.json"))
+    assert receipt["counts"]["added_roots"] == 2
+    assert receipt["counts"]["cohort_occurrences"] == len(residual_pop)
+    delta_count = sum(row["root_id"] in new_ids for row in records)
+    assert receipt["counts"]["delta_occurrences"] == delta_count
+    assert all(row["occurrences"] == delta_count for row in receipt["operations"]["transform"])
+    assert receipt["operations"]["fit"] == []  # one-root residue is below the real fit minimum
+    assert {row["root_id"] for row in read_lines(output / "pending-cohort.jsonl")} == {new_ids[1]}
+    assert receipt["counts"]["roots"] == len(prior_ids) + 2

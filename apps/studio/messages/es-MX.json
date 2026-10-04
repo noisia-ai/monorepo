@@ -2913,6 +2913,9 @@
           "incrementalPreparationFailed": "No se pudo preparar la evidencia de los temas nuevos. Actualiza el estado para consultar la recuperación disponible."
         },
         "incrementalEditorial": {
+          "uncapped": "Sin máximo configurado",
+          "optionalCap": "Máximo opcional (USD)",
+          "noDeadline": "sin vencimiento operativo",
           "title": "Interpretar temas nuevos",
           "body": "Prepara la evidencia de los grupos nuevos antes de confirmar la interpretación. Los Topics existentes y tu selección en Signal se conservan.",
           "prepare": "Preparar evidencia · sin costo Claude",
