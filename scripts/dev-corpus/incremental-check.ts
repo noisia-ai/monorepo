@@ -8,11 +8,14 @@ import {installMfpClaimDiagnosticV1} from "./incremental-claim-diagnostic";
 import {main,openDatabase} from "./guard.mjs";
 import {beginSignalWorkspaceIncrementalEngineV1,readSignalWorkspaceIncrementalRootsV1} from "../../infrastructure/db/signal-workspace-engine-incremental";
 import {claimSignalWorkspaceEngineV1,loadSignalWorkspaceEnginePreflightV1} from "../../infrastructure/db/signal-workspace-engine";
-import {admitSignalProcessingWithClientV1} from "../../infrastructure/db/signal-processing-policy";
+import {admitSignalProcessingWithClientV1,SignalProcessingPolicyError} from "../../infrastructure/db/signal-processing-policy";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "../../infrastructure/db/signal-workspace-capabilities";
 
 await main(async()=>{
  if(!process.argv.includes("--rollback-check"))throw Error("mfp_rollback_check_required");
+ const policyOption=process.argv.find(value=>value.startsWith("--policy-case="));
+ if(policyOption!==undefined&&policyOption!=="--policy-case=finite")throw Error("mfp_policy_case_invalid");
+ const policyCases=policyOption?["finite"]:["unlimited","finite"];
  const identity=JSON.parse(await readFile(process.env.NOISIA_MFP_IDENTITY_FILE??".data/dev-corpus/identity.json","utf8")) as {
   workspace_id:string;brand_id:string;internal_user_id:string};
  const pool:Pool=await openDatabase(),raw=await pool.connect();
@@ -37,7 +40,7 @@ await main(async()=>{
   (SELECT COALESCE(sum(settled_micro_usd),0)::text FROM engine_cost_events WHERE workspace_id=$1) settled,
   (SELECT count(*)::int FROM signal_processing_admissions WHERE workspace_id=$1) admissions,
   (SELECT count(*)::int FROM signal_processing_policy_versions WHERE organization_id=(SELECT organization_id FROM signal_workspaces WHERE id=$1)) policies`,[identity.workspace_id])).rows[0];
- const deny=async(run:()=>Promise<unknown>,pattern:RegExp)=>{
+ const deny=async(run:()=>Promise<unknown>,pattern:RegExp|((error:unknown)=>boolean))=>{
   await raw.query("SAVEPOINT rejection");try{await assert.rejects(run,pattern);}
   finally{await raw.query("ROLLBACK TO SAVEPOINT rejection");await raw.query("RELEASE SAVEPOINT rejection");}
  };
@@ -70,6 +73,7 @@ await main(async()=>{
   assert.ok(current,"mfp_active_policy_required");
   let totalRoots=0,totalChunks=0;
   for(const scenario of [{until:"infinity",cap:null,daily:null},{until:"2030-01-02T03:04:05.000Z",cap:2_000_000,daily:20_000_000}] as const){
+   if(scenario.cap===null&&!policyCases.includes("unlimited"))continue;
    await raw.query("SAVEPOINT scenario");report(scenario.cap===null?"unlimited_numeric_admission":"explicit_finite_policy");
    const policy=randomUUID();
    await raw.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
@@ -96,7 +100,12 @@ await main(async()=>{
    assert.equal((await raw.query("SELECT valid_until::text value FROM signal_processing_policy_versions WHERE id=$1",[policy])).rows[0].value==="infinity",scenario.until==="infinity");
    const money={queryable:raw,workspace_id:identity.workspace_id,actor_user_id:actor,action:"topic_interpretation" as const,
     target_id:randomUUID(),idempotency_key:randomUUID(),request_digest:`sha256:${"a".repeat(64)}`,execution_cap_micro_usd:null};
-   if(scenario.cap!==null)await deny(()=>admitSignalProcessingWithClientV1(raw,money),/cap/);
+   if(scenario.cap!==null){
+    const admissionCount=async()=>(await raw.query<{n:number}>("SELECT count(*)::int n FROM signal_processing_admissions WHERE workspace_id=$1 AND target_id=$2",[money.workspace_id,money.target_id])).rows[0]!.n;
+    assert.equal(await admissionCount(),0);
+    await deny(()=>admitSignalProcessingWithClientV1(raw,money),error=>error instanceof SignalProcessingPolicyError&&error.code==="processing_admission_invalid"&&error.status===409);
+    assert.equal(await admissionCount(),0,"mfp_rejected_null_cap_created_admission");
+   }
    else await admitSignalProcessingWithClientV1(raw,money);
    await raw.query("SAVEPOINT revoked_policy");await raw.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[policy]);
    assert.equal(await readPolicy(),null);
@@ -119,7 +128,7 @@ await main(async()=>{
    await raw.query("ROLLBACK TO SAVEPOINT scenario");await raw.query("RELEASE SAVEPOINT scenario");
   }
   report("rollback");await raw.query("ROLLBACK");transaction=false;assert.deepEqual(await census(),baseline);
-  console.log(JSON.stringify({stage:"mfp_incremental_pg",status:"passed",rollback:true,reused_real_parent:true,selected_roots:totalRoots,
+  console.log(JSON.stringify({stage:"mfp_incremental_pg",status:"passed",policy_cases:policyCases,rollback:true,reused_real_parent:true,selected_roots:totalRoots,
    selected_chunks:totalChunks,residual_tamper_rejected:true,finite_expiry_preserved:true,infinity_transport_only:true,revocation_enforced:true,provider_calls:0,cost_micro_usd:0}));
  }catch(error){const diagnostic=(value:unknown):Record<string,unknown>=>{
    if(!value||typeof value!=="object")return{};
