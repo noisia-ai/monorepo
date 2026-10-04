@@ -83,6 +83,11 @@ export async function checkMfpIncrementalEditorialV1(args:Parameters<typeof crea
  report('editorial_reserve_and_revocation');
  const call=await money.reserveSignalWorkspaceEngineInterpretationV1(reserve);
  assert.equal((await money.reserveSignalWorkspaceEngineInterpretationV1(reserve)).call_id,call.call_id);
+ const ledgerBinding=(await query(`SELECT workspace_incremental_editorial_ledger_request_v1(call) current,
+  workspace_incremental_editorial_ledger_request_v1(jsonb_populate_record(NULL::engine_cost_events,
+   to_jsonb(call)||jsonb_build_object('budget_daily_cap_micro_usd',CASE WHEN call.budget_daily_cap_micro_usd IS NULL THEN 1 ELSE NULL END))) mismatched
+  FROM engine_cost_events call WHERE call.id=$1`,[call.call_id])).rows[0];
+ assert.deepEqual(ledgerBinding,{current:true,mismatched:false});
  // Exercise the actual SQL capacity function with a prior-day reservation stamp.
  // No row, clock or admission history is rewritten; transport below uses the real current day.
  report('editorial_prior_day_capacity');

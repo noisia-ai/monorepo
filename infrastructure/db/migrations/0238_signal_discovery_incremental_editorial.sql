@@ -605,3 +605,20 @@ BEGIN
    AND NOT EXISTS(SELECT 1 FROM analysis_artifacts prior WHERE prior.engine_execution_id=owner.id AND prior.metadata->>'contract_version'='workspace-incremental-editorial-checkpoint-v1' AND prior.metadata->'unit_keys' ?| ARRAY(SELECT jsonb_array_elements_text(body->'unit_keys'))),false);
  END IF; RETURN false;
 END $$;
+
+-- Unlimited MFP policy matches unlimited ledger rows; an explicit mismatch
+-- remains invalid and the legacy positive-cap comparison is unchanged.
+CREATE OR REPLACE FUNCTION workspace_incremental_editorial_ledger_request_v1(call engine_cost_events) RETURNS boolean LANGUAGE sql STABLE SET search_path=public,extensions,pg_temp AS $$
+ SELECT COALESCE(EXISTS(SELECT 1 FROM signal_topic_catalog_executions owner WHERE owner.id=call.catalog_execution_id AND owner.workspace_id=call.workspace_id AND owner.actor_user_id=call.actor_user_id
+ AND owner.input_contract='workspace-incremental-editorial-v1' AND owner.status='running' AND owner.execution_expires_at>clock_timestamp()
+ AND workspace_incremental_editorial_execution_current_v1(owner.id)
+ AND workspace_incremental_editorial_request_plan_valid_v1((owner.result_summary->>'request_plan_artifact_id')::uuid)
+ AND call.call_configuration=owner.input_snapshot->'interpretation_configuration'
+ AND call.budget_timezone=owner.input_snapshot->'budget_policy'->>'budget_timezone'
+ AND CASE WHEN jsonb_typeof(owner.input_snapshot->'discovery_population')='object'
+  THEN call.budget_daily_cap_micro_usd IS NOT DISTINCT FROM (owner.input_snapshot->'budget_policy'->>'daily_cap_micro_usd')::bigint
+  ELSE call.budget_daily_cap_micro_usd=(owner.input_snapshot->'budget_policy'->>'daily_cap_micro_usd')::bigint END
+ AND call.reserved_micro_usd=(workspace_incremental_editorial_request_v1(owner.id,call.request_digest)->>'reserved_micro_usd')::bigint
+ AND call.metadata->'editorial_repair' IS NOT DISTINCT FROM workspace_incremental_editorial_request_v1(owner.id,call.request_digest)->'editorial_repair'
+ AND NOT EXISTS(SELECT 1 FROM engine_cost_events other WHERE other.catalog_execution_id=owner.id AND other.id<>call.id AND other.call_state IN('in_flight','response_persisted','outcome_unknown'))),false)
+$$;
