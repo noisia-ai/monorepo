@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import { checkTarget } from './guard.mjs';
 import { parseCsv, csv } from './csv.mjs';
 import { matchingEntities, selectGold, importGold } from './gold.mjs';
 const target = JSON.parse(await readFile(new URL('./target.json', import.meta.url),'utf8'));
+test('runtime stays idle by default and rejects worker startup outside the verified target', () => {
+  const script = fileURLToPath(new URL('./runtime.mjs', import.meta.url));
+  const idle = spawnSync(process.execPath, [script], { env: {}, encoding: 'utf8', timeout: 1000 });
+  assert.deepEqual(JSON.parse(idle.stdout.trim()), { status: 'ready', execution: 'remote_private', automatic_work: false });
+  assert.equal(idle.error?.code, 'ETIMEDOUT');
+  const active = spawnSync(process.execPath, [script], { env: { NOISIA_MFP_WORKER_ENABLED: 'true' }, encoding: 'utf8', timeout: 5000 });
+  assert.equal(active.status, 1);
+  assert.equal(JSON.parse(active.stderr.trim()).code, 'mfp_remote_execution_required');
+});
 const env = { RAILWAY_ENVIRONMENT_ID:target.environment_id, RAILWAY_ENVIRONMENT_NAME:'dev-test',
   RAILWAY_SERVICE_ID:target.runner_service_id, NOISIA_MFP_ENABLED:'true',
   DATABASE_URL:'postgresql://noisia_mfp:invented@pgvector.railway.internal:5432/noisia_mfp',
