@@ -1,0 +1,33 @@
+name: MFP runtime
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '.github/workflows/mfp-runtime.yml'
+      - 'scripts/dev-corpus/Dockerfile*'
+      - 'scripts/dev-corpus/runtime.mjs'
+      - 'services/workers/requirements-workspace-engine.txt'
+      - 'tools/signal-semantic-lab/src/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mfp-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build dedicated remote runtime
+        run: docker build --tag noisia-mfp:ci --file scripts/dev-corpus/Dockerfile .
+      - name: Verify Python modules without providers
+        run: >-
+          docker run --rm --entrypoint /opt/noisia-engine/bin/python
+          --env PYTHONPATH=/app/tools/signal-semantic-lab/src noisia-mfp:ci
+          -c "from bertopic import BERTopic; from signal_semantic_lab import workspace_engine, workspace_incremental_engine"
+      - name: Verify idle startup and target rejection
+        run: docker run --rm --entrypoint node noisia-mfp:ci --test scripts/dev-corpus/harness.test.mjs

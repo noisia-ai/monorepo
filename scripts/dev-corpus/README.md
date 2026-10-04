@@ -29,6 +29,21 @@ Las conexiones se validan por IDs revisados, host/base/rol exactos, DNS privado,
 PG17 y system identifier. El pool verificado se reutiliza por las funciones de
 Studio. No se habilitan destinos remotos genéricos ni se retiran guardas históricas.
 
+## Runtime del recorrido UI
+
+La imagen incluye el mismo Python CPU-only y dependencias fijadas del Worker,
+con embeddings precalculados; no descarga modelos ni incorpora encoders. Incluye
+los módulos de fit e incremental y los scripts de proveedores, sin corpus ni claves.
+El arranque sigue inactivo por defecto. `NOISIA_MFP_WORKER_ENABLED=true` verifica
+primero el destino remoto exacto y arranca el Worker existente con sus pools fijados.
+Se configura únicamente después de instalar las migraciones del corte, reconciliar
+las ejecuciones manuales y configurar las colas privadas compartidas con Studio.
+Los flags de etapa y proveedor conservan su significado: iniciar el proceso no
+concede autoridad ni activa por sí solo llamadas pagadas. Mantener una sola réplica.
+Para recuperar el modo de pruebas explícitas, desactivar ese flag y redesplegar
+después de cerrar/reconciliar el trabajo aceptado. No interrumpir un batch para
+repetirlo; sus recibos permanecen en la base y el volumen remoto.
+
 ## Gold humano
 
 Los datos viven exclusivamente en `.data/dev-corpus/` (ignorado por Git, permisos
