@@ -6,12 +6,12 @@ import type {SignalWorkspaceInterpretationAdmissionV1} from './signal-workspace-
 import type { Pool, PoolClient } from "pg";
 import { buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
-import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1,
+import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceTopicPrototypePlanV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
   signalTopicDefinitionSchemaV1, signalTopicGuidesDiscoveryV1, signalWorkspaceInterpretationUniverseDigestV1,
   type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
-import { ensureSignalTopicCatalogStoreV1, loadSignalTopicInheritedContextStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
+import { ensureSignalTopicCatalogStoreV1, loadSignalTopicWorkingProfileWithQueryableV1, loadSignalTopicInheritedContextStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
 import { loadSignalWorkspaceTopicPrototypePlanV1, loadSignalWorkspaceAutonomousContextInputsV1 } from "./signal-workspace-topic-prototype-inputs";
 import { loadSignalWorkspaceTopicInputSnapshotWithQueryableV1 } from "./signal-workspace-topic-computation";
 import type { SignalWorkspaceEngineInterpretationConfigurationV1 } from "./signal-workspace-engine-interpretation";
@@ -257,7 +257,7 @@ async function current(client: PoolClient, run: Run, full: boolean) {
   }
   if (full) {
     const identity = await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id,
-      taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id});
+      taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id,discovery:!!run.input_snapshot.discovery_population});
     if (identity.context_digest !== run.input_snapshot.context_digest || identity.catalog_digest !== run.input_snapshot.catalog_digest) return fail("workspace_engine_inputs_stale");
     if(run.input_snapshot.numeric_descriptor&&(await client.query<{valid:boolean}>(
       'SELECT signal_workspace_incremental_execution_current_v1($1::uuid) valid',[run.id])).rows[0]?.valid!==true)
@@ -281,7 +281,21 @@ const leaseView = (run: Run, token: string): SignalWorkspaceEngineLeaseV1 => ({e
   effective_interpretation_config:run.interpretation_revision?.configuration??run.input_snapshot.interpretation_config,
   interpretation_revision_digest:run.interpretation_revision?.revision_digest??null});
 function publicSnapshot(snapshot: Run["input_snapshot"]): SignalWorkspaceEngineSnapshotV1 { const {guides:_guides,...rest}=snapshot; return rest; }
-async function buildInput(client: Pick<PoolClient,'query'>, workspace: string, actor: string, taxonomy_profile_id?: string) {
+async function buildInput(client: Pick<PoolClient,'query'>, workspace: string, actor: string, taxonomy_profile_id?: string, discovery=false) {
+  if(discovery){
+    const context=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:workspace,complete_context:true,context_mode:"workspace-discovery-v1"});
+    const profile=taxonomy_profile_id?(await client.query<{id:string;taxonomy_id:string}>(`SELECT id,taxonomy_id FROM signal_taxonomy_profiles
+      WHERE id=$2::uuid AND workspace_id=$1::uuid AND kind='topic'`,[workspace,taxonomy_profile_id])).rows[0]
+      :await loadSignalTopicWorkingProfileWithQueryableV1({queryable:client,workspace_id:workspace});
+    if(!profile)throw new SignalTopicCatalogError("workspace_topic_catalog_required");
+    const terms=(await client.query<{topic:unknown}>("SELECT metadata->'topic' topic FROM taxonomy_terms WHERE taxonomy_id=$1::uuid ORDER BY term_key",[profile.taxonomy_id])).rows;
+    const topics=terms.map(row=>signalTopicDefinitionSchemaV1.parse(row.topic)).filter(topic=>topic.lifecycle!=="archived"&&signalTopicGuidesDiscoveryV1(topic));
+    const catalog_digest=signalWorkspaceEmbeddingDigestV1(topics.map(topic=>({term_key:topic.term_key,definition_digest:topic.definition_digest})));
+    const plan=buildSignalWorkspaceTopicPrototypePlanV1({taxonomy_profile_id:profile.id,embedding_profile:SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
+      context_digest:context.context_digest,topics:[],texts:{},context_inputs:[]});
+    const context_revision=(await client.query<{revision:string}>("SELECT signal_workspace_discovery_context_revision_v1($1::uuid) revision",[workspace])).rows[0]!.revision;
+    return {plan,guides:[] as Array<Omit<SignalWorkspaceEngineGuideV1,"vector">>,catalog_digest,context_digest:context.context_digest,context_refs:context.context_refs,context_revision};
+  }
   const interestOptions={input_interests_only:true,taxonomy_profile_id};
   const plan = await loadSignalWorkspaceTopicPrototypePlanV1({queryable:client,workspace_id:workspace,actor_user_id:actor,...interestOptions});
   const source = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({queryable:client,workspace_id:workspace,actor_user_id:actor,allow_empty:true,...interestOptions});
@@ -295,18 +309,18 @@ async function buildInput(client: Pick<PoolClient,'query'>, workspace: string, a
   const context=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:workspace,complete_context:true});
   return {plan,guides,catalog_digest,context_digest:plan.context_digest,context_refs:context.context_refs};
 }
-export async function loadSignalWorkspaceEngineInputIdentityV1(args:{queryable:Pick<PoolClient,'query'>;workspace_id:string;actor_user_id:string;taxonomy_profile_id?:string;execution_id?:string}) {
-  let taxonomy_profile_id=args.taxonomy_profile_id;
+export async function loadSignalWorkspaceEngineInputIdentityV1(args:{queryable:Pick<PoolClient,'query'>;workspace_id:string;actor_user_id:string;taxonomy_profile_id?:string;execution_id?:string;discovery?:boolean}) {
+  let taxonomy_profile_id=args.taxonomy_profile_id,discovery=args.discovery===true;
   if(args.execution_id){
-    const row=(await args.queryable.query<{profile_id:string|null}>(`SELECT CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'
+    const row=(await args.queryable.query<{profile_id:string|null;discovery:boolean}>(`SELECT jsonb_typeof(execution.input_snapshot->'discovery_population')='object' discovery,CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'
       THEN source.input_snapshot->>'taxonomy_profile_id' ELSE execution.input_snapshot->>'taxonomy_profile_id' END profile_id
       FROM signal_topic_catalog_executions execution LEFT JOIN signal_topic_catalog_executions source
        ON source.id=execution.source_execution_id AND source.workspace_id=execution.workspace_id
       WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid`,[args.execution_id,args.workspace_id])).rows[0];
     if(!row?.profile_id||taxonomy_profile_id&&taxonomy_profile_id!==row.profile_id)return fail('workspace_engine_operational_profile_required');
-    taxonomy_profile_id=row.profile_id;
+    taxonomy_profile_id=row.profile_id;discovery=row.discovery===true;
   }
-  const input=await buildInput(args.queryable,args.workspace_id,args.actor_user_id,taxonomy_profile_id);
+  const input=await buildInput(args.queryable,args.workspace_id,args.actor_user_id,taxonomy_profile_id,discovery);
   return {context_digest:input.context_digest,catalog_digest:input.catalog_digest};
 }
 /** Historical readers may retain receipts when semantic authority is unavailable.
@@ -345,7 +359,7 @@ export async function readSignalWorkspaceEngineInterpretationContextV1(args:{dat
     // authority used by the numerical guides. The complete serving object has
     // four near-duplicate text views and every source reference; repeating it
     // in every editorial batch can exceed the request envelope before send.
-    const inherited=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:run.workspace_id,complete_context:true});
+    const inherited=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:run.workspace_id,complete_context:true,...(run.input_snapshot.discovery_population?{context_mode:"workspace-discovery-v1" as const}:{})});
     if(inherited.context_digest!==run.input_snapshot.context_digest)return fail('workspace_engine_inputs_stale');
     let contextContract=run.result_summary.interpretation_context_contract;
     if(contextContract===undefined||contextContract==='legacy-full-v1'){
@@ -400,9 +414,11 @@ export async function readSignalWorkspaceEngineInterpretationContextV1(args:{dat
 export async function loadSignalWorkspaceEnginePreflightV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;taxonomy_profile_id?:string}) {
   return transaction(args.database,async client=>{await authorize(client,args.workspace_id,args.actor_user_id,false);
     let context_digest:string,catalog_digest:string,guides:Array<Omit<SignalWorkspaceEngineGuideV1,'vector'>>,total_interests:number;
-    try{const input=await buildInput(client,args.workspace_id,args.actor_user_id,args.taxonomy_profile_id);context_digest=input.context_digest;catalog_digest=input.catalog_digest;guides=input.guides;total_interests=input.plan.topics.length;}
+    try{const input=await buildInput(client,args.workspace_id,args.actor_user_id,args.taxonomy_profile_id,process.env.NOISIA_MENTION_FACETS_ENABLED==='true');context_digest=input.context_digest;catalog_digest=input.catalog_digest;guides=input.guides;total_interests=input.plan.topics.length;}
     catch(error){if(args.taxonomy_profile_id||!(error instanceof Error)||error.message!=='workspace_topic_catalog_required')throw error;
-      const input=await loadSignalWorkspaceAutonomousContextInputsV1({queryable:client,workspace_id:args.workspace_id});
+      const input=process.env.NOISIA_MENTION_FACETS_ENABLED==='true'
+        ?{context:await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true,context_mode:"workspace-discovery-v1"}),context_inputs:[]}
+        :await loadSignalWorkspaceAutonomousContextInputsV1({queryable:client,workspace_id:args.workspace_id});
       context_digest=input.context.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=input.context_inputs;total_interests=0;}
     const embedded=(await client.query<{id:string}>(`SELECT run.id FROM signal_workspace_embedding_runs run
       JOIN signal_corpus_preparation_input_state state USING(workspace_id)
@@ -529,7 +545,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       if(args.incremental_options.taxonomy_profile_id&&args.incremental_options.taxonomy_profile_id!==taxonomy_profile_id)
         return fail('workspace_engine_operational_profile_changed');
     }
-    const input=await buildInput(client,args.workspace_id,args.actor_user_id,taxonomy_profile_id);
+    const input=await buildInput(client,args.workspace_id,args.actor_user_id,taxonomy_profile_id,discoveryEnabled);
     if(input.context_digest!==args.expected_context_digest||input.catalog_digest!==args.expected_catalog_digest)return fail('workspace_engine_inputs_stale');
     if(await missingGuides(client,args.workspace_id,embedded.profile.config_digest,input.guides))return fail('workspace_engine_guides_required');
     if(!discoveryEnabled&&(embedded.counts.eligible_roots!==embedded.counts.completed_roots||embedded.counts.total_chunk_references!==embedded.counts.processed_chunk_references))
@@ -566,7 +582,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       context_digest:input.context_digest,catalog_digest:input.catalog_digest,prototype_plan_digest:input.plan.plan_digest,
       expected_roots:discovery?.population.root_ids.length??embedded.counts.eligible_roots,expected_chunks:discovery?.expected_chunks??embedded.counts.total_chunk_references,expected_guides:input.guides.length,
       ...(discovery?{discovery_population:discovery.population,...(args.discovery_request_intent_digest?{discovery_request_intent_digest:args.discovery_request_intent_digest}:{})}:{}),
-      parent_execution_id:parentId,context_refs:input.context_refs,guides:input.guides,engine_config:args.engine_config,claude_cap_micro_usd:args.claude_cap_micro_usd,
+      parent_execution_id:parentId,context_refs:input.context_refs,...(discoveryEnabled?{discovery_context_revision:input.context_revision}:{}),guides:input.guides,engine_config:args.engine_config,claude_cap_micro_usd:args.claude_cap_micro_usd,
       ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),...(numericDescriptor?{numeric_descriptor:numericDescriptor}:{})};
     const id=randomUUID();
     const processingAdmission=discoveryEnabled?await admitSignalProcessingWithClientV1(client,{
@@ -1061,7 +1077,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
       [args.workspace_id,args.actor_user_id,args.idempotency_key??null])).rows;
     const view=async(row:typeof rows[number]):Promise<NonNullable<SignalWorkspaceEngineStatusV1['latest_run']>>=>{
       let inputIdentity:{context_digest:string;catalog_digest:string}|null=null;
-      try{inputIdentity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,taxonomy_profile_id:row.input_snapshot.taxonomy_profile_id});}
+      try{inputIdentity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,taxonomy_profile_id:row.input_snapshot.taxonomy_profile_id,discovery:!!row.input_snapshot.discovery_population});}
       catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
         && (!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}
       const actorCapability=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:row.actor_user_id});

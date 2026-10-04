@@ -61,10 +61,15 @@ async function requireRead(client: PoolClient, workspace: string, actor: string)
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, workspace_id: workspace, actor_user_id: actor });
   if (!capabilities.can_view) fail('processing_forbidden', 403);
 }
-async function currentContext(client: PoolClient, workspace: string, expected: string) {
+async function currentContext(client: PoolClient, workspace: string, expected: string, numericRunId: string) {
+  const discovery = (await client.query<{discovery:boolean}>(`SELECT EXISTS(SELECT 1 FROM signal_topic_consolidation_runs run
+    JOIN signal_topic_catalog_executions execution ON execution.id=run.source_engine_execution_id AND execution.workspace_id=run.workspace_id
+    WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid AND execution.input_contract='workspace-topic-engine-v1'
+      AND jsonb_typeof(execution.input_snapshot->'discovery_population')='object') discovery`, [numericRunId,workspace])).rows[0]?.discovery === true;
   const current = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: workspace,
-    complete_context: true, require_current_semantic_authority: true, semantic_authority_check: "database" });
+    complete_context: true, require_current_semantic_authority: true, semantic_authority_check: "database", ...(discovery ? {context_mode:"workspace-discovery-v1" as const} : {}) });
   if (current.context_digest !== expected) fail('topic_editorial_source_stale');
+  return discovery;
 }
 
 /** Private server input. The browser never supplies this plan or evidence text. */
@@ -96,7 +101,7 @@ export async function quoteSignalTopicConsolidationEditorialV1(args: {
   scope(args.workspace_id, args.actor_user_id); validateSignalTopicEditorialPlanV1(args.plan);
   return tx(args.database, async client => {
     await requireRead(client, args.workspace_id, args.actor_user_id);
-    await currentContext(client, args.workspace_id, args.plan.source_context_digest);
+    await currentContext(client, args.workspace_id, args.plan.source_context_digest, args.numeric_run_id);
     const row = await value<Record<string, unknown>>(client, 'SELECT signal_topic_editorial_quote_v1($1,$2,$3,$4::jsonb,$5::bigint) value',
       [args.workspace_id, args.actor_user_id, args.numeric_run_id, JSON.stringify(args.plan), args.deadline ?? null]);
     return { contract_version: 'signal-topic-editorial-quote-v1', workspace_id: args.workspace_id, status: String(row.status),
@@ -119,7 +124,7 @@ export async function requestSignalTopicConsolidationEditorialV1(args: {
       WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3`, [args.workspace_id, args.actor_user_id, args.idempotency_key])).rowCount;
     if (!replay) {
       validateSignalTopicEditorialPlanV1(args.plan);
-      await currentContext(client, args.workspace_id, args.plan.source_context_digest);
+      await currentContext(client, args.workspace_id, args.plan.source_context_digest, args.numeric_run_id);
     }
     return value(client, 'SELECT request_signal_topic_editorial_v1($1,$2,$3,$4::jsonb,$5,$6) value',
       [args.workspace_id, args.actor_user_id, args.numeric_run_id, JSON.stringify(args.plan), args.idempotency_key, args.quote_reference]);
@@ -153,7 +158,7 @@ export async function loadSignalTopicConsolidationEditorialStatusV1(args: {
 export async function loadSignalTopicConsolidationEditorialSourceV1(args: {
   database: SignalTopicEditorialDatabaseV1; workspace_id: string; actor_user_id: string; numeric_run_id: string;
 }): Promise<{ numeric_run_id: string; source_binding: Record<string, unknown>; census: SignalTopicAtomicCensusV1;
-  census_snapshot_digest: string; community_plan: SignalTopicConsolidationCommunityPlanV1 }> {
+  discovery?: boolean; census_snapshot_digest: string; community_plan: SignalTopicConsolidationCommunityPlanV1 }> {
   return tx(args.database, client => readSignalTopicConsolidationEditorialSourceWithQueryableV1({ ...args, queryable: client }), true);
 }
 
@@ -161,12 +166,12 @@ export async function loadSignalTopicConsolidationEditorialSourceV1(args: {
 export async function readSignalTopicConsolidationEditorialSourceWithQueryableV1(args: {
   queryable: PoolClient; workspace_id: string; actor_user_id: string; numeric_run_id: string;
 }): Promise<{ numeric_run_id: string; source_binding: Record<string, unknown>; census: SignalTopicAtomicCensusV1;
-  census_snapshot_digest: string; community_plan: SignalTopicConsolidationCommunityPlanV1 }> {
+  discovery?: boolean; census_snapshot_digest: string; community_plan: SignalTopicConsolidationCommunityPlanV1 }> {
     const client = args.queryable;
     await requireRead(client, args.workspace_id, args.actor_user_id);
     const binding = await value<Record<string, unknown> | null>(client, 'SELECT signal_topic_editorial_source_v1($1) value', [args.numeric_run_id]);
     if (!binding || binding.workspace_id !== args.workspace_id) return fail('topic_editorial_source_stale');
-    await currentContext(client, args.workspace_id, String(binding.context_digest));
+    const discovery = await currentContext(client, args.workspace_id, String(binding.context_digest), args.numeric_run_id);
     const run = (await client.query<Record<string, unknown>>(`SELECT workspace_id,source_engine_execution_id AS source_execution_id,source_checkpoint_digest,
       output_artifact_id,output_artifact_sha256,model_artifact_id,model_artifact_sha256,centroid_artifact_id,centroid_artifact_sha256,
       context_digest,configuration,configuration_digest,expected_group_count FROM signal_topic_consolidation_runs WHERE id=$1 AND workspace_id=$2`,
@@ -192,7 +197,7 @@ export async function readSignalTopicConsolidationEditorialSourceWithQueryableV1
     const community_plan = parseSignalTopicCommunityPlanV1({ contract_version: 'signal-topic-centroid-community-plan-v1',
       configuration_digest: census.configuration_digest, communities }, census.groups.map(group => group.group_key));
     if (signalTopicEditorialDigestV1(community_plan) !== binding.community_plan_digest) fail('topic_editorial_community_changed');
-    return { numeric_run_id: args.numeric_run_id, source_binding: binding, census,
+    return { numeric_run_id: args.numeric_run_id, source_binding: binding, discovery, census,
       census_snapshot_digest: signalTopicEditorialDigestV1(census), community_plan };
 }
 
@@ -239,7 +244,7 @@ async function currentOwnedContext(database: SignalTopicEditorialDatabaseV1, cli
     await verifySignalTopicEditorialContextRevisionV1({ database,
       key: canonical([lease.execution_id, lease.execution_token, lease.workspace_id, lease.actor_user_id,
         lease.numeric_run_id, lease.source_execution_id, row.context_digest]), revision: row.revision,
-      validate: () => currentContext(client, lease.workspace_id, row.context_digest),
+      validate: () => currentContext(client, lease.workspace_id, row.context_digest, lease.numeric_run_id).then(() => undefined),
       reread: () => value<string>(client, 'SELECT signal_topic_editorial_context_revision_v1($1) value', [lease.workspace_id]) });
   } catch (error) { clearSignalTopicEditorialPlanCacheV1(database, leaseIdentity(lease)); throw error; }
 }

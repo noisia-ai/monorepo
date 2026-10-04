@@ -162,10 +162,13 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
       oldPolicy?.valid_until ?? "infinity", oldPolicy?.budget_timezone ?? "UTC", oldPolicy?.daily_cap_micro_usd ?? null, identity.internal_user_id]);
       if (oldPolicy) await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
-        FROM signal_processing_policy_actions WHERE policy_version_id=$2 AND action<>'topic_interpretation'`, [policyId, oldPolicy.id]);
+        FROM signal_processing_policy_actions WHERE policy_version_id=$2 AND action NOT IN('topic_interpretation','topic_consolidation_numeric')`, [policyId, oldPolicy.id]);
       await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1,'topic_interpretation','provider','anthropic',$2,$3::jsonb,signal_semantic_context_digest_json_v2($3::jsonb),$4,false)`,
       [policyId, configuration.model, JSON.stringify(configuration), cap]);
+      await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        SELECT $1,'topic_consolidation_numeric','free',config,signal_semantic_context_digest_json_v2(config),0,false
+        FROM (SELECT signal_topic_consolidation_numeric_configuration_v1() config) configuration`, [policyId]);
       if (oldPolicy) await raw.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1", [oldPolicy.id]);
       await raw.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [policyId]);
       const policy = await loadSignalDiscoveryPolicyV1(database, identity.workspace_id);
@@ -217,8 +220,8 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
       const artifact = (key: string, artifact_type: SignalWorkspaceEngineArtifactV1["artifact_type"]) => ({
         artifact_key: key, artifact_type, title: "Synthetic transition; no fit or provider", storage_key: `workspace-engine/${identity.workspace_id}/${started.execution_id}/${key}`,
         sha256: sha(key), size_bytes: 10, media_type: "application/json", metadata: { fixture: true } });
-      const model = await engine.persistSignalWorkspaceEngineArtifactV1({ database, lease, artifact: artifact("fixture-model.json", "engine_model") });
-      const output = await engine.persistSignalWorkspaceEngineArtifactV1({ database, lease, artifact: artifact("fixture-output.json", "engine_output") });
+      const model = await engine.persistSignalWorkspaceEngineArtifactV1({ database, lease, artifact: artifact("model-manifest.json", "engine_model") });
+      const output = await engine.persistSignalWorkspaceEngineArtifactV1({ database, lease, artifact: artifact("manifest.json", "engine_output") });
       const fit = { database, lease, model_artifact_id: model.artifact_id, output_artifact_id: output.artifact_id,
         result_kind: "computational_grouping" as const, coverage, model_configuration: { fixture: true }, runtime_kind: "python",
         artifact_format: "workspace-model-bundle-v1", license_key: "synthetic-test-only",
@@ -239,6 +242,9 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
       await deny(() => money.markSignalWorkspaceEngineInterpretationSentV1(attempt), /forbidden/);
       await raw.query("ROLLBACK TO SAVEPOINT revoke"); await raw.query("RELEASE SAVEPOINT revoke");
       assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1(attempt)).send_authorized, true);
+      if(cap===null)await (await import('./signal-discovery-editorial.synthetic.fixture')).exerciseDiscoveryEditorialV1({
+        database,raw,...access,internal_user_id:identity.internal_user_id,organization_id:scope.organization_id,brand_id:scope.brand_id,
+        source_execution_id:started.execution_id,root_id:lease.snapshot.discovery_population.root_ids[0]!});
       await raw.query("SET CONSTRAINTS ALL IMMEDIATE");
       await raw.query("ROLLBACK TO SAVEPOINT scenario"); await raw.query("RELEASE SAVEPOINT scenario");
     }

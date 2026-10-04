@@ -138,6 +138,8 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   include_editorial_context?: boolean;
   /** Server-only alternative to rebuilding the same mutable authority in JS. */
   semantic_authority_check?: "database";
+  /** Internal mode derived from a native MFP discovery owner, never browser input. */
+  context_mode?: "workspace-discovery-v1";
 }): Promise<SignalTopicInheritedContextStoreV1> {
   if (args.include_editorial_context && (!args.complete_context || !args.require_current_semantic_authority)) {
     throw new SignalTopicCatalogError("topic_editorial_complete_context_required");
@@ -206,7 +208,7 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   `, [args.workspace_id, args.complete_context === true])).rows;
   const refs = contextItems.map((item) => ({ source_type: item.source_type, source_id: item.source_id,
     version: item.version, content_hash: item.content_hash }));
-  const semanticRows = (await args.queryable.query<{
+  const semanticRows = args.context_mode === "workspace-discovery-v1" ? [] : (await args.queryable.query<{
     generation_id: string; generation_key: string; generation_version: number; generation_status: string;
     pack_digest: string | null; draft_digest: string; primary_locale: string | null;
     brand_os_digest: string; knowledge_digest: string; locale_context_digest: string;
@@ -241,10 +243,18 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   // successor cannot remove that serving authority.
   const explicitPlan = acquisition?.acquisition_brief != null;
   const published = semanticRows[0];
+  if (args.context_mode === "workspace-discovery-v1" && (!acquisition?.organization_id || !acquisition.brand_id || !acquisition.timezone))
+    throw new SignalTopicCatalogError("brand_context_source_stale");
+  const discoveryAuthority = args.context_mode === "workspace-discovery-v1" ? await resolveSignalBrandContextAuthorityV1({
+    queryable: { async query<Row extends Record<string,unknown>>(sql:string,params?:unknown[]){
+      const result=await args.queryable.query<Row>(sql,params);return {rows:result.rows,rowCount:null};
+    } }, workspace:{id:args.workspace_id,organizationId:acquisition!.organization_id,
+      subject:{type:"brand",id:acquisition!.brand_id},timezone:acquisition!.timezone!}
+  }) : null;
   // Historical serving may retain this published pack while its successor is
   // unfinished. New embedding work must not mix that pack with changed live KB
   // or Brand OS. Reuse the same authority resolver as semantic preparation.
-  if (args.require_current_semantic_authority) {
+  if (args.require_current_semantic_authority && !discoveryAuthority) {
     if (!published) throw new SignalTopicCatalogError("brand_context_semantic_context_required");
     if (!acquisition?.organization_id || !acquisition.brand_id || !acquisition.timezone) {
       throw new SignalTopicCatalogError("brand_context_source_stale");
@@ -278,14 +288,14 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   }
 
   const brief = objectValue(acquisition?.acquisition_brief);
-  const languages = Array.from(new Set(stringArray(explicitPlan ? brief.languages : published?.locale_variants)
+  const languages = Array.from(new Set(stringArray(discoveryAuthority?.localeVariants ?? (explicitPlan ? brief.languages : published?.locale_variants))
     .map(canonicalSignalWorkspaceTopicLocaleV1))).sort();
-  const markets = Array.from(new Set(explicitPlan ? (stringArray(brief.countries).length
-    ? stringArray(brief.countries) : governed.workspace.countries) : published ? stringArray(published.markets) : governed.workspace.countries)).sort();
-  const primary = explicitPlan ? (typeof brief.primary_locale === "string" && brief.primary_locale.trim()
-    ? brief.primary_locale.trim() : languages[0]) : published?.primary_locale;
+  const markets = Array.from(new Set(discoveryAuthority?.markets ?? (explicitPlan ? (stringArray(brief.countries).length
+    ? stringArray(brief.countries) : governed.workspace.countries) : published ? stringArray(published.markets) : governed.workspace.countries))).sort();
+  const primary = discoveryAuthority?.primaryLocale ?? (explicitPlan ? (typeof brief.primary_locale === "string" && brief.primary_locale.trim()
+    ? brief.primary_locale.trim() : languages[0]) : published?.primary_locale);
   const primaryLocale = primary == null ? null : canonicalSignalWorkspaceTopicLocaleV1(primary);
-  const timezone = explicitPlan ? acquisition?.timezone ?? null : published?.timezone ?? acquisition?.timezone ?? null;
+  const timezone = discoveryAuthority?.timezone ?? (explicitPlan ? acquisition?.timezone ?? null : published?.timezone ?? acquisition?.timezone ?? null);
   const semanticGeneration = semanticRows[0] ? {
     id: semanticRows[0].generation_id,
     key: semanticRows[0].generation_key,
@@ -323,6 +333,7 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   const brand = { ...governed.workspace, brand_handles: [...governed.workspace.brand_handles].sort(),
     countries: [...governed.workspace.countries].sort() };
   const context = {
+    ...(discoveryAuthority ? {context_mode:"workspace-discovery-v1", source_authority_digest:discoveryAuthority.sourceAuthorityDigest} : {}),
     brand,
     identities,
     brand_context: brandContext,
@@ -1595,7 +1606,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
     const fit = run.result_summary.fit_checkpoint as import("./signal-workspace-engine").SignalWorkspaceEngineFitCheckpointV1|undefined;
     if (!fit || !run.input_snapshot.interpretation_config) throw new SignalTopicCatalogError("workspace_engine_fit_checkpoint_required");
     const { loadSignalWorkspaceEngineInputIdentityV1 } = await import("./signal-workspace-engine");
-    const current = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: client, workspace_id: lease.workspace_id, actor_user_id: run.actor_user_id,taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id });
+    const current = await loadSignalWorkspaceEngineInputIdentityV1({ queryable: client, workspace_id: lease.workspace_id, actor_user_id: run.actor_user_id,taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id,discovery:!!run.input_snapshot.discovery_population });
     if (current.catalog_digest !== run.input_snapshot.catalog_digest || current.context_digest !== run.input_snapshot.context_digest) {
       throw new SignalTopicCatalogError("workspace_engine_inputs_stale");
     }
@@ -1658,7 +1669,8 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
     if(!prior)throw new SignalTopicCatalogError("workspace_engine_operational_profile_required");
     if(progress&&prior?.id!==args.expected_catalog_profile_id)throw new SignalTopicCatalogError("workspace_engine_progress_catalog_changed");
     const priorDefinitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
-    const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true });
+    const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true,
+      ...(run.input_snapshot.discovery_population ? {context_mode:"workspace-discovery-v1" as const} : {}) });
     const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: priorDefinitions, interpretations: proposals,
       execution_id: lease.execution_id, now: new Date().toISOString(), locale: canonicalSignalWorkspaceTopicLocaleV1(inherited.locale.primary_locale) });
     const mappingDigest = sha256(stableJson(merged.mapping));

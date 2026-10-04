@@ -11,6 +11,70 @@ CREATE FUNCTION signal_topic_discovery_run_v1(target_run uuid) RETURNS boolean L
 $$;
 REVOKE ALL ON FUNCTION signal_topic_discovery_run_v1(uuid) FROM PUBLIC;
 
+-- Source revision reuses the existing context families without a midnight expiry
+-- or the unrelated legacy semantic-publication history.
+CREATE FUNCTION signal_workspace_discovery_context_revision_v1(target_workspace uuid) RETURNS text LANGUAGE sql STABLE
+ SET search_path=public,extensions,pg_temp AS $$
+ WITH scope AS MATERIALIZED (SELECT id,brand_id FROM signal_workspaces WHERE id=target_workspace),
+ profiles AS MATERIALIZED (SELECT p.* FROM brand_os_profiles p JOIN scope s ON p.brand_id=s.brand_id),
+ sources AS MATERIALIZED (SELECT k.* FROM brand_knowledge_sources k JOIN scope s ON k.brand_id=s.brand_id),
+ entities AS MATERIALIZED (SELECT e.* FROM intelligence_entities e JOIN scope s ON e.brand_id=s.brand_id),
+ members AS (
+  SELECT 'workspace' kind,w.id::text id,signal_semantic_context_digest_v1(to_jsonb(w)::text) hash FROM signal_workspaces w JOIN scope s ON w.id=s.id
+  UNION ALL SELECT 'brand',b.id::text,signal_semantic_context_digest_v1(to_jsonb(b)::text) FROM brands b JOIN scope s ON b.id=s.brand_id
+  UNION ALL SELECT 'profile',p.id::text,signal_semantic_context_digest_v1(to_jsonb(p)::text) FROM profiles p
+  UNION ALL SELECT 'objective',o.id::text,signal_semantic_context_digest_v1(to_jsonb(o)::text) FROM brand_os_objectives o JOIN profiles p ON o.brand_os_profile_id=p.id
+  UNION ALL SELECT 'brief',b.id::text,signal_semantic_context_digest_v1(to_jsonb(b)::text) FROM brand_os_briefs b JOIN profiles p ON b.brand_os_profile_id=p.id
+  UNION ALL SELECT 'audience',a.id::text,signal_semantic_context_digest_v1(to_jsonb(a)::text) FROM brand_os_audiences a JOIN profiles p ON a.brand_os_profile_id=p.id
+  UNION ALL SELECT 'product',p.id::text,signal_semantic_context_digest_v1(to_jsonb(p)::text) FROM brand_os_products p JOIN profiles profile ON p.brand_os_profile_id=profile.id
+  UNION ALL SELECT 'claim',c.id::text,signal_semantic_context_digest_v1(to_jsonb(c)::text) FROM brand_os_claims c JOIN profiles p ON c.brand_os_profile_id=p.id
+  UNION ALL SELECT 'knowledge_source',k.id::text,signal_semantic_context_digest_v1(to_jsonb(k)::text) FROM sources k
+  UNION ALL SELECT 'knowledge_chunk',c.id::text,signal_semantic_context_digest_v1(to_jsonb(c)::text) FROM knowledge_chunks c JOIN sources k ON c.knowledge_source_id=k.id
+  UNION ALL SELECT 'knowledge_assertion',a.id::text,signal_semantic_context_digest_v1(to_jsonb(a)::text||
+    ((a.valid_from IS NULL OR a.valid_from<=(statement_timestamp() AT TIME ZONE 'UTC')::date)
+      AND (a.valid_to IS NULL OR a.valid_to>=(statement_timestamp() AT TIME ZONE 'UTC')::date))::text) FROM knowledge_assertions a JOIN sources k ON a.knowledge_source_id=k.id
+  UNION ALL SELECT 'competitor',c.id::text,signal_semantic_context_digest_v1(to_jsonb(c)::text) FROM competitors c JOIN scope s ON c.brand_id=s.brand_id
+  UNION ALL SELECT 'competitor_seed',b.id::text,signal_semantic_context_digest_v1(to_jsonb(b)::text) FROM brand_seeds b
+   WHERE EXISTS(SELECT 1 FROM competitors c JOIN scope s ON c.brand_id=s.brand_id WHERE c.competitor_brand_seed_id=b.id)
+  UNION ALL SELECT 'entity',e.id::text,signal_semantic_context_digest_v1(to_jsonb(e)::text) FROM entities e
+  UNION ALL SELECT 'entity_alias',a.id::text,signal_semantic_context_digest_v1(to_jsonb(a)::text) FROM entity_aliases a JOIN entities e ON a.entity_id=e.id
+  UNION ALL SELECT 'acquisition',p.id::text,signal_semantic_context_digest_v1(to_jsonb(p)::text) FROM signal_acquisition_plans p JOIN scope s ON p.workspace_id=s.id
+
+ )
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM scope) THEN signal_semantic_context_digest_v1(
+  COALESCE(string_agg(kind||':'||id||':'||hash,',' ORDER BY kind COLLATE "C",id COLLATE "C"),'')) END
+ FROM members
+$$;
+REVOKE ALL ON FUNCTION signal_workspace_discovery_context_revision_v1(uuid) FROM PUBLIC;
+
+
+-- Native MFP binds the current Brand OS/KB/locale revision directly.
+-- The legacy source retains its published semantic-generation requirement.
+CREATE OR REPLACE FUNCTION signal_topic_editorial_source_v1(target_run uuid) RETURNS jsonb LANGUAGE sql STABLE
+ SET search_path=public,extensions,pg_temp AS $$
+ SELECT jsonb_build_object('numeric_run_id',r.id,'workspace_id',r.workspace_id,'source_engine_execution_id',r.source_engine_execution_id,
+  'census_digest',r.census_digest,'configuration_digest',r.configuration_digest,'community_plan_digest',r.community_plan_digest,
+  'source_checkpoint_digest',r.source_checkpoint_digest,'context_digest',r.context_digest,'expected_group_count',r.expected_group_count,
+  'centroid_artifact_id',r.centroid_artifact_id,'centroid_artifact_sha256',r.centroid_artifact_sha256,
+  'numeric_source_binding',c.source_binding,'semantic_generation_id',g.id,'semantic_pack_digest',g.pack_digest)
+ FROM signal_topic_consolidation_runs r JOIN signal_topic_consolidation_executions c ON c.consolidation_run_id=r.id
+  AND c.workspace_id=r.workspace_id AND c.status='ready' AND c.census_digest=r.census_digest
+ JOIN signal_topic_catalog_executions engine ON engine.id=r.source_engine_execution_id AND engine.workspace_id=r.workspace_id
+ LEFT JOIN LATERAL(SELECT candidate.id,candidate.pack_digest FROM signal_semantic_context_generations candidate
+  WHERE candidate.workspace_id=r.workspace_id AND candidate.status='published'
+    AND NOT signal_topic_discovery_run_v1(r.id)
+  ORDER BY candidate.generation_version DESC LIMIT 1) g ON true
+ WHERE r.id=target_run AND r.status IN('ready_for_review','reviewing','validated')
+  AND CASE WHEN signal_topic_discovery_run_v1(r.id) THEN
+    engine.input_snapshot->>'discovery_context_revision'=signal_workspace_discovery_context_revision_v1(r.workspace_id)
+    ELSE signal_brand_context_processing_source_current_v1(g.id) END
+  AND c.source_binding=signal_topic_consolidation_source_binding_v1(r.source_engine_execution_id)
+  AND r.expected_group_count BETWEEN 1 AND 5000 AND r.community_plan_digest IS NOT NULL
+  AND r.expected_group_count=(SELECT count(*) FROM signal_topic_atomic_groups WHERE consolidation_run_id=r.id)
+  AND r.expected_group_count=(SELECT count(*) FROM signal_topic_consolidation_community_members WHERE consolidation_run_id=r.id)
+ $$;
+
+
 
 CREATE OR REPLACE FUNCTION signal_topic_editorial_quote_fast_v2(target_workspace uuid,target_actor uuid,target_run uuid,
  target_plan_digest text,target_group_count integer,expected_deadline bigint DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql STABLE

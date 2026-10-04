@@ -258,3 +258,26 @@ test('database authority check preserves exact context and rejects stale sources
   await assert.rejects(loadSignalTopicInheritedContextStoreV1({...stale,...args,semantic_authority_check:'database'}),/brand_context_source_stale/u);
  }
 });
+
+
+test('MFP context uses current Brand OS/KB/locale without semantic publication and fences live drift',async()=>{
+  const f=source(null),args={...f,workspace_id:workspaceId,complete_context:true,require_current_semantic_authority:true,
+    include_editorial_context:true,context_mode:'workspace-discovery-v1' as const};
+  const initial=await loadSignalTopicInheritedContextStoreV1(args);
+  assert.equal(initial.locale.primary_locale,'es-MX');
+  assert.equal(initial.editorial_context?.default_locale,'es-MX');
+  assert.equal(initial.context_refs.some(ref=>ref.source_type==='semantic_context_element'),false);
+  assert.equal(f.queries.some(sql=>sql.includes('WITH generation AS(')),false);
+  f.drift('knowledge');
+  const knowledge=await loadSignalTopicInheritedContextStoreV1(args);
+  assert.notEqual(knowledge.context_digest,initial.context_digest);
+  f.drift('brand_os');
+  const brand=await loadSignalTopicInheritedContextStoreV1(args);
+  assert.notEqual(brand.context_digest,knowledge.context_digest);
+  f.drift('locale');
+  assert.notEqual((await loadSignalTopicInheritedContextStoreV1(args)).context_digest,brand.context_digest);
+  const stale=source(null);stale.drift('unreconciled');
+  await assert.rejects(loadSignalTopicInheritedContextStoreV1({...args,queryable:stale.queryable}),/brand_os_snapshot_stale/);
+  await assert.rejects(loadSignalTopicInheritedContextStoreV1({...source(null),workspace_id:workspaceId,
+    complete_context:true,require_current_semantic_authority:true}),/brand_context_semantic_context_required/);
+});

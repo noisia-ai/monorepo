@@ -111,10 +111,15 @@ export function scopeSignalWorkspaceClassificationTopicsV1(topics:CompiledTopic[
 }
 /** Semantic identities deliberately omit profile/term row IDs and ingestion run IDs. */
 export async function loadSignalWorkspaceClassificationInputV1(args: {queryable: Queryable; workspace_id: string; actor_user_id: string;
-  taxonomy_profile_id?: string; interest_term_key?: string}) {
+  taxonomy_profile_id?: string; interest_term_key?: string; source_engine_execution_id?: string}) {
   if(args.interest_term_key!==undefined&&!interestTermKey.test(args.interest_term_key))return fail("workspace_classification_interest_invalid",422);
   if (!(await loadSignalWorkspaceCapabilitiesStoreV1(args)).can_view) return fail("workspace_classification_forbidden",403);
+  const discovery = args.source_engine_execution_id && (await args.queryable.query<{discovery:boolean}>(`SELECT EXISTS(SELECT 1
+    FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract='workspace-topic-engine-v1'
+      AND jsonb_typeof(input_snapshot->'discovery_population')='object') discovery`,
+    [args.source_engine_execution_id,args.workspace_id])).rows[0]?.discovery === true;
   const built = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,allow_empty:true,
+    ...(discovery ? {context_mode:"workspace-discovery-v1" as const} : {}),
     input_interests_only:args.interest_term_key!==undefined}).catch(error=>{
     if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_required","workspace_topic_catalog_empty"].includes(error.code))
       return fail("workspace_classification_catalog_unavailable");
@@ -168,6 +173,7 @@ async function current(client: PoolClient, run: Run, full = true) {
   if(run.interest_term_key!=null&&!interestTermKey.test(run.interest_term_key))return fail("workspace_classification_context_changed");
   const latest = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: run.workspace_id, actor_user_id: run.actor_user_id,
     ...(run.incremental_projection?{taxonomy_profile_id:run.taxonomy_profile_id}:{}),
+    ...(run.source_projection?.contract_version==='workspace-topic-projection-v1'?{source_engine_execution_id:run.source_projection.engine_execution_id}:{}),
     ...(run.interest_term_key?{interest_term_key:run.interest_term_key}:{})});
   if ((run.interest_term_key==null&&latest.taxonomy_profile_id !== run.taxonomy_profile_id)
     || latest.catalog_digest !== run.identity.catalog_digest

@@ -56,7 +56,7 @@ export async function requestSignalWorkspaceTopicProjectionWithClientV1(client:P
     AND execution.input_revision=state.input_revision AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) FOR UPDATE OF execution`,
    [args.engine_execution_id,args.workspace_id,args.materialization_artifact_id??null])).rows[0];
   if(!engine?.result_summary.fit_checkpoint||!engine.result_summary.analysis_checkpoint&&!args.materialization_artifact_id)return fail('workspace_projection_analysis_required');
-  const current=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,taxonomy_profile_id:engine.input_snapshot.taxonomy_profile_id});
+  const current=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,taxonomy_profile_id:engine.input_snapshot.taxonomy_profile_id,discovery:!!engine.input_snapshot.discovery_population});
   if(current.context_digest!==engine.input_snapshot.context_digest||current.catalog_digest!==engine.input_snapshot.catalog_digest)return fail('workspace_projection_inputs_stale');
   const fit=engine.result_summary.fit_checkpoint;
   const progress=args.materialization_artifact_id ? (await client.query<SignalWorkspaceTopicProjectionArtifactV1>(`${artifactSQL}
@@ -64,7 +64,7 @@ export async function requestSignalWorkspaceTopicProjectionWithClientV1(client:P
     AND metadata->>'contract_version'='workspace-topic-materialization-progress-v1'`,[args.materialization_artifact_id,args.workspace_id,engine.id])).rows[0] : null;
   if(args.materialization_artifact_id&&!progress)return fail('workspace_projection_artifacts_required');
   const analysis=progress ? {materialization_artifact_id:progress.artifact_id,output_catalog_profile_id:String(progress.metadata.output_catalog_profile_id),mapping_digest:String(progress.metadata.mapping_digest)} : engine.result_summary.analysis_checkpoint;
-  const input=await loadSignalWorkspaceClassificationInputV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,taxonomy_profile_id:analysis.output_catalog_profile_id});
+  const input=await loadSignalWorkspaceClassificationInputV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,taxonomy_profile_id:analysis.output_catalog_profile_id,source_engine_execution_id:engine.id});
   if(input.taxonomy_profile_id!==analysis.output_catalog_profile_id)return fail('workspace_projection_catalog_changed');
   const refs=(await client.query<SignalWorkspaceTopicProjectionArtifactV1>(`${artifactSQL} WHERE workspace_id=$1::uuid AND engine_execution_id=$2::uuid
    AND id=ANY($3::uuid[])`,[args.workspace_id,engine.id,[fit.output_artifact_id,analysis.materialization_artifact_id,...(fit.model_artifact_id?[fit.model_artifact_id]:[])]] )).rows;
@@ -172,7 +172,7 @@ export async function loadSignalWorkspaceTopicProjectionStatusWithQueryableV1(ar
  const views=[];
  for(const {identity,correction_digest,generation_version:_version,source_current,...row} of rows){
   let current:Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>>|null=null;
-  try{current=await loadSignalWorkspaceClassificationInputV1({...args,taxonomy_profile_id:row.taxonomy_profile_id});}catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
+  try{current=await loadSignalWorkspaceClassificationInputV1({...args,taxonomy_profile_id:row.taxonomy_profile_id,source_engine_execution_id:row.source_engine_execution_id});}catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
    &&(!(error instanceof SignalWorkspaceClassificationError)||error.code!=='workspace_classification_catalog_unavailable'))throw error;}
   views.push({...row,is_current:Boolean(source_current&&current
    &&current.catalog_digest===identity.catalog_digest&&current.compiler_digest===identity.compiler_digest
