@@ -49,7 +49,7 @@ export const signalTopicDefinitionSchemaV1 = z.object({
   discovery_guidance: z.boolean().optional(),
   source: z.object({
     run_key: z.string().min(1).max(200),
-    candidate_key: z.string().min(1).max(200),
+    candidate_key: z.string().min(1).max(256),
     candidate_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/u).nullable().default(null)
   }).strict().nullable().default(null),
   definition_revision: z.number().int().positive(),
@@ -93,7 +93,8 @@ export const updateSignalTopicInputSchemaV1 = createSignalTopicInputSchemaV1.par
 
 export const adoptSignalTopicCandidateInputSchemaV1 = z.object({
   run_key: z.string().trim().min(1).max(200),
-  candidate_key: z.string().trim().min(1).max(200),
+  candidate_key: z.string().trim().min(1).max(256),
+  expected_revision_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/u).optional(),
   scope: signalTopicScopeSchemaV1.optional()
 }).strict();
 

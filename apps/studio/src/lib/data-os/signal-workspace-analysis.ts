@@ -170,6 +170,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     await beginSignalWorkspaceEngineV1({ ...access, idempotency_key: args.idempotencyKey,
       embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
       expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: args.body.claude_cap_micro_usd,
+      discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
       engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
         call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });

@@ -189,3 +189,14 @@ test("human corrections override model scores and multilabel item state remains 
   assert.equal(decideSignalTopicCandidateV1({ score: 0.99, lexical_match: true,
     excluded_by_rule: false, correction: "excluded" }).disposition, "none");
 });
+
+
+test("workspace discovery adoption preserves 256-character provenance keys", async () => {
+  const { adoptSignalTopicCandidateInputSchemaV1 } = await import("./signal-topic-catalog-v1");
+  const candidate_key = "c".repeat(256);
+  const input = adoptSignalTopicCandidateInputSchemaV1.parse({run_key:"workspace-discovery:revision",candidate_key,
+    expected_revision_digest:`sha256:${"a".repeat(64)}`,scope:"all_conversations"});
+  assert.equal(input.candidate_key,candidate_key);
+  assert.equal(input.scope,"all_conversations");
+  assert.equal(adoptSignalTopicCandidateInputSchemaV1.safeParse({...input,candidate_key:candidate_key+"x"}).success,false);
+});

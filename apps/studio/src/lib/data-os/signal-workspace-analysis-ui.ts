@@ -27,7 +27,8 @@ export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "lates
   latest_complete: WorkspaceAnalysisRun | null; request_run: WorkspaceAnalysisRun | null;
 };
 export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: string;
-  expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd: number }
+  expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd: number;
+  discovery_sample_cap?: number | null; discovery_sample_seed?: string }
   | { action: "retry"; run_id: string }
   | { action: "retry_progress"; run_id: string }
   | { action: "retry_numeric"; run_id: string }
@@ -132,7 +133,9 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
     return validWorkspaceIncrementalEditorialRequest(body) ? value as PendingWorkspaceAnalysis : null;
   if (body.action === "authorize_interpretation" || body.action === "revoke_interpretation")
     return validWorkspaceAdmissionRequest(body) ? value as PendingWorkspaceAnalysis : null;
-  if (body.action === "start" ? Object.keys(body).sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
+  if (body.action === "start" ? Object.keys(body).filter(key => key !== "discovery_sample_cap" && key !== "discovery_sample_seed").sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
+    || body.discovery_sample_cap != null && (!integer(body.discovery_sample_cap) || Number(body.discovery_sample_cap) < 1)
+    || body.discovery_sample_seed !== undefined && (typeof body.discovery_sample_seed !== "string" || body.discovery_sample_seed.length < 1 || body.discovery_sample_seed.length > 120)
     || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || !integer(body.claude_cap_micro_usd)
     : !["retry", "retry_progress", "retry_numeric", "retry_incremental_delivery"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
   return value as PendingWorkspaceAnalysis;

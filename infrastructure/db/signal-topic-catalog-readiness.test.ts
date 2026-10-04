@@ -104,6 +104,7 @@ function emptyBrandDraftStore() {
     let rows: Array<Record<string, unknown>> = [];
     if (q.includes("workspace.status workspace_status")) rows = [{ ...authority }];
     else if (q.startsWith("SELECT pg_advisory_xact_lock")) controls.afterLock();
+    else if (q.startsWith("SELECT user_type FROM users")) rows = [{ user_type: authority.user_type }];
     else if (q.startsWith("SELECT actor_user_id::text,action,request_digest")) rows = operations
       .filter((item) => item.key === values[1]);
     else if (q.startsWith("SELECT id::text,taxonomy_id::text,version,status")) rows = values[1]
@@ -329,6 +330,8 @@ test("adoption duplicate and receipt replay both stay under the live capability 
   store.controls.afterLock = () => Object.assign(store.authority, { user_type: "client", primary_role: "client_admin" });
   const start = store.queries.length;
   await assert.rejects(adoptSignalTopicCandidateStoreV1({ ...args, idempotency_key: "adopt-duplicate" }),
+    { code: "topic_catalog_forbidden", status: 403 });
+  await assert.rejects(adoptSignalTopicCandidateStoreV1(args),
     { code: "topic_catalog_forbidden", status: 403 });
   assert.equal(store.queries.slice(start).some(q => q.startsWith("SELECT term.label title,")), false);
   assert.equal(store.operations.length, 2);
