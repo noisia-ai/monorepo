@@ -4,6 +4,16 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
+> **ESTADO ACTUAL (2026-10-04) — Noisia V02 / MFP.**
+> Rige [el spec canónico v1.3](docs/product/PROMPT_LOOPING/SPEC_FICHA_Y_PERTENENCIA_2026-10-04.md), especialmente §§6–9.
+> Política de ramas y worktrees: §7; cada WS usa `feat/mfp-ws<N>-<slug>` y PR a `develop`.
+> PostgreSQL, Redis, Worker, integración y suites pesadas corren remotos; no Docker en la Mac.
+> Presupuestos orientativos superables con coste registrado; máximo estricto sólo si se configura explícitamente.
+> JEV requiere verificación técnica y de datos; UAT admite cortes coherentes verificados y recuperables.
+> Producción exige aceptación integral y revisión. V2/V3 de interest decision permanecen congelados.
+> Accesos: [MFP_ACCESS_AND_ENV](docs/product/PROMPT_LOOPING/MFP_ACCESS_AND_ENV_2026-10-04.md).
+> Todos los banners anteriores de septiembre/octubre que siguen son historia, no tareas, pausas ni autorizaciones actuales.
+
 > **Integración de producción en curso — 3 octubre 2026.** Esta rama de release
 > integra `main` con el producto UAT, pero aún no está publicada ni acreditada
 > como self-service completo. La ejecución de interés Alexa+ y sus recibos viven
