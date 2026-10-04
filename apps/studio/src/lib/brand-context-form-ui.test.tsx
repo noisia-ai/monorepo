@@ -201,7 +201,7 @@ test("brand creation replay seals competitors and knowledge that create durable 
 });
 
 test("brand creation API requires the same UUID for the durable write and its preparation", async () => {
-  const source = await readFile(new URL("../app/api/brands/route.ts", import.meta.url), "utf8");
+  const source = await readFile(new URL("./data-os/brand-creation-service.ts", import.meta.url), "utf8");
   assert.match(source, /if \(!mutationId\)[\s\S]{0,220}idempotency_key_required/u);
   assert.match(source, /if \(!UUID_PATTERN\.test\(mutationId\)\)[\s\S]{0,220}idempotency_key_invalid/u);
   assert.match(source, /parsed\.data\.preparation\?\.idempotency_key !== mutationId/u);

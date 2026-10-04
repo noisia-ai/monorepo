@@ -171,10 +171,10 @@ test("session and team updates never grant every brand in an organization", asyn
 });
 
 test("brand creation grant and workspace are committed by the same transaction and replay never restores access", async () => {
-  const route = await readFile(new URL("../../app/api/brands/route.ts", import.meta.url), "utf8");
+  const route = await readFile(new URL("../data-os/brand-creation-service.ts", import.meta.url), "utf8");
   assert.match(route, /db\.transaction\(async \(tx\) =>/u);
   assert.match(route, /tx\s*\.insert\(userBrandAccess\)/u);
-  assert.match(route, /createdByUserId:\s*session\.appUser\.id/u);
+  assert.match(route, /createdByUserId:\s*actor\.id/u);
   assert.match(route, /verifyClientBrandCreationReplayV1/u);
   assert.doesNotMatch(route, /insert\(userBrandAccess\)[\s\S]{0,500}onConflictDoUpdate/u);
   assert.match(route, /primary_role = 'client_admin'[\s\S]*organization\.status = 'active'[\s\S]*FOR UPDATE OF app_user, organization/u);

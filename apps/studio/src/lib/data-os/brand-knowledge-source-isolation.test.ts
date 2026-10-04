@@ -100,7 +100,7 @@ test('Brand PATCH bulk updates and both automatic source inserts remain scoped a
  assert.match(update,/where\(and\(eq\(brandKnowledgeSources\.brandId, current\.id\), isNull\(brandKnowledgeSources\.studyCorpusId\)\)\)/u);
  assert.match(update,/eq\(brandKnowledgeSources\.sourceKind, "brand_os_context"\)/u);
  assert.equal((update.match(/isNull\(brandKnowledgeSources\.studyCorpusId\)/gu)??[]).length,3);
- for(const path of ['../../app/api/brands/route.ts','../../app/api/brands/[id]/knowledge/route.ts']){
+ for(const path of ['./brand-creation-service.ts','../../app/api/brands/[id]/knowledge/route.ts']){
    const create=await readFile(new URL(path,import.meta.url),'utf8');assert.match(create,/studyCorpusId: null/u);
  }
 });

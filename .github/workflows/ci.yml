@@ -3,9 +3,9 @@ name: ci
 # Required status check for merging into `main` (enforce via branch protection).
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
   push:
-    branches: [main]
+    branches: [main, develop]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -52,6 +52,8 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - run: pnpm dev:corpus:check
+      - run: pnpm exec tsc --project scripts/dev-corpus/tsconfig.json
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test
