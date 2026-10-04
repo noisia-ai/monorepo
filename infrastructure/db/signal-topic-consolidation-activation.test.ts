@@ -37,6 +37,7 @@ test('active consolidation uses common rights/population reader with exact selec
  const queries:string[]=[];
  const client={async query(sql:string){queries.push(sql);
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{binding,snapshot}]};
   if(sql.includes('FROM signal_defined_interest_selections selected'))return{rows:[]};
@@ -60,6 +61,7 @@ test('narrative detail and evidence preserve editorial kind through the same rig
  const queries:string[]=[];
  const client={async query(sql:string){queries.push(sql);
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{binding,snapshot}]};
   if(sql.includes('FROM signal_defined_interest_selections selected'))return{rows:[]};
@@ -103,6 +105,7 @@ test('activation service checks actor before mutation and preserves committed re
  const client={async query(sql:string){
   if(sql.startsWith('COMMIT'))commits++;
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[{...authority,actor_status:allowed?'active':'suspended'}]};
   if(sql.includes('mutate_signal_topic_consolidation_binding_v1')){mutations++;return{rows:[{value:{operation_id:id(8),binding,replayed:true}}]};}
   throw Error('Unexpected SQL');
@@ -122,6 +125,7 @@ test('existing selector replays durable successor commands and rejects cross-cat
  let phase='replay',mutations=0;
  const client={async query(sql:string){
   if(/^(BEGIN|SET|COMMIT|ROLLBACK)/u.test(sql)||sql.includes('pg_advisory_xact_lock'))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('FROM signal_topic_consolidation_activation_operations'))return{rows:phase==='replay'?[{
    id:id(8),actor_user_id:id(2),command:{source_request_digest,term_key:term},result_binding:binding}]:[]};
@@ -136,6 +140,7 @@ test('existing selector replays durable successor commands and rejects cross-cat
 test('activation status returns a runtime-validated catalog, source state, capability and active revision',async()=>{
  const client={async query(sql:string){
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{value:binding}]};
   if(sql.includes('FROM signal_topic_consolidation_revisions')){

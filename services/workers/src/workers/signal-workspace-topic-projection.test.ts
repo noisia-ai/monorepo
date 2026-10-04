@@ -22,7 +22,7 @@ type Row = { ordinal: number; root_id: string; chunk_index: number; start: numbe
 const rowIdentity = (row: Pick<Row, "ordinal" | "root_id" | "chunk_index" | "start" | "end" | "chunk_sha256">) => ({ ordinal: row.ordinal, root_id: row.root_id, chunk_index: row.chunk_index,
   start: row.start, end: row.end, chunk_sha256: row.chunk_sha256 });
 
-async function fixture(options: { topic_count?: number; no_groups?: boolean; stale_topic?: boolean; insufficient?: boolean; archived?: boolean; partial?: boolean } = {}) {
+async function fixture(options: { topic_count?: number; no_groups?: boolean; stale_topic?: boolean; insufficient?: boolean; archived?: boolean; partial?: boolean; discovery?: boolean } = {}) {
   const scratch = await mkdtemp(join(tmpdir(), "projection-test-"));
   const topicCount = options.topic_count ?? 67;
   const engine = id(900), execution = id(901), workspace = id(902), materializationId = id(903);
@@ -39,9 +39,10 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
     expected_chunks: items.length,
     chunk_coverage_digest: sha(items.map(item => JSON.stringify([item.chunk_index, item.start, item.end, item.chunk_sha256]) + "\n").join("")),
     reuse_item_id: null as string | null }));
+  const selected = options.discovery ? roots.slice(0,1) : roots;
   const assignments = Object.fromEntries((["open", "guided"] as const).map(lane => {
     let ordinal = 0;
-    return [lane, chunks.flatMap((items, rootIndex) => items.map(item => {
+    return [lane, chunks.flatMap((items, rootIndex) => !selected.includes(roots[rootIndex]!) ? [] : items.map(item => {
       const local_label = rootIndex || options.no_groups ? -1 : item.chunk_index % (lane === "open" ? topicCount : 3);
       return { ...rowIdentity({ ...item, ordinal: ordinal++, root_id: id(rootIndex + 1) }),
         local_label, stable_cluster_id: local_label < 0 ? null : `group_${local_label}`, strength: local_label < 0 ? 0 : 0.8 };
@@ -82,16 +83,16 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
       sha256: sha(bytes), size_bytes: bytes.length, media_type: "application/json" }, metadata: {} };
     refs.set(name, ref); return ref;
   };
-  const rootsBody = () => roots.map(root => ({ root_id: root.root_id, root_fingerprint: root.fingerprint,
+  const rootsBody = () => selected.map(root => ({ root_id: root.root_id, root_fingerprint: root.fingerprint,
     chunk_count: root.expected_chunks, ...Object.fromEntries((["open", "guided"] as const).map(lane => [lane,
       [...new Set(assignments[lane].filter(row => row.root_id === root.root_id).flatMap(row => row.stable_cluster_id === null ? [] : [row.stable_cluster_id]))]])) }));
   put("roots.jsonl", rootsBody().map(row => JSON.stringify(row) + "\n").join(""), id(1000));
   put("assignments.open.jsonl", assignments.open.map(row => JSON.stringify(row) + "\n").join(""), id(1001));
   put("assignments.guided.jsonl", assignments.guided.map(row => JSON.stringify(row) + "\n").join(""), id(1002));
   const manifest = { contract_version: "workspace-topic-engine-output-v1", workspace_id: workspace,
-    quality: "uncalibrated", approval_policy: "none", counts: { occurrences: 134, roots: 2 },
+    quality: "uncalibrated", approval_policy: "none", counts: { occurrences: assignments.open.length, roots: selected.length },
     lanes: (["open", "guided"] as const).map(lane => ({ lane, assignments_file: `assignments.${lane}.jsonl`,
-      occurrences: 134, roots: 2, clusters: [...membership.keys()].filter(key => key.startsWith(`${lane}:`)).length,
+      occurrences: assignments.open.length, roots: selected.length, clusters: [...membership.keys()].filter(key => key.startsWith(`${lane}:`)).length,
       outlier_occurrences: assignments[lane].filter(row => row.stable_cluster_id === null).length })),
     artifacts: [...refs.values()].map(ref => ({ file: ref.artifact_key, sha256: ref.content.sha256, bytes: ref.content.size_bytes })) };
   put("manifest.json", JSON.stringify(manifest), id(1003));
@@ -115,12 +116,13 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
   let cursor: string | null = null, finished = false, failCommit = false, forbidden = false, reuseRoot = false;
   let commits = 0, finishCalls = 0, storageReads = 0, corrections: SignalWorkspaceClassificationDecisionV1[] = [];
   const persisted = new Map<string, SignalWorkspaceClassificationOutcomeV1>(), failures: string[] = [], chunkReads: number[] = [];
+  const discoveryPopulation=options.discovery?{root_ids:selected.map(root=>root.root_id),expected_chunks:assignments.open.length}:undefined;
   const lease = (): Lease => ({ execution_id: execution, workspace_id: workspace, execution_token: id(999), cursor_root_id: cursor,
     input_digest: sha("input"), identity });
   const guard = () => { if (forbidden) throw new Error("workspace_classification_forbidden"); };
   const stores: Stores<object> = {
     claim: async () => { guard(); return finished ? null : { lease: lease(), source: { engine_execution_id: engine,
-      materialization_artifact_id: materializationId, mapping_digest: digest(materialized.mapping), model_artifact_id: id(1005), artifacts: primary, interpretation_coverage: coverage }, model_version_id: id(1006) }; },
+      materialization_artifact_id: materializationId, mapping_digest: digest(materialized.mapping), model_artifact_id: id(1005), artifacts: primary, interpretation_coverage: coverage, discovery_population:discoveryPopulation }, model_version_id: id(1006) }; },
     heartbeat: async () => { guard(); },
     readTopics: async ({ after_term_key, limit }) => { guard(); const remaining = topics.filter(item => after_term_key === null || item.term_key > after_term_key), items = remaining.slice(0, limit);
       return { items, next_term_key: items.at(-1)?.term_key ?? after_term_key, done: remaining.length <= limit }; },
@@ -142,7 +144,7 @@ async function fixture(options: { topic_count?: number; no_groups?: boolean; sta
     finish: async () => { guard(); finishCalls++; finished = true; return { status: "ready" }; },
     fail: async args => { failures.push(args.error_code); }
   };
-  return { scratch, roots, chunks, assignments, topics, materialized, refs, files, manifest, persisted, failures, chunkReads, coverage, materializationKey,
+  return { scratch, roots, chunks, assignments, discoveryPopulation, topics, materialized, refs, files, manifest, persisted, failures, chunkReads, coverage, materializationKey,
     options: { database: {}, stores, scratch_root: scratch, storage: {
       put: async () => { throw new Error("Projection must never upload/recompute"); },
       get: async (args: { workspace_id: string; execution_id: string; stored: Artifact["content"]; destination: string }) => {
@@ -320,4 +322,60 @@ test("partial projections reject a forged unit universe, missing mapped evidence
       assert.equal(f.counters().commits, 0); assert.equal(f.counters().finishCalls, 0);
     } finally { await f.close(); }
   }
+});
+
+
+test("MFP sealed subset projects all corpus roots, with no inheritance outside the fit and unchanged human precedence",async()=>{
+ for(const partial of [false,true]){
+  const f=await fixture({discovery:true,partial});try{
+   const topic=f.topics[0]!;
+   const correction:SignalWorkspaceClassificationDecisionV1={taxonomy_term_id:topic.taxonomy_term_id,term_key:topic.term_key,
+    definition_digest:topic.definition_digest,definition_revision:topic.definition_revision,disposition:"approved",resolution_method:"human",
+    model_version_id:null,labeling_function_version_id:null,approval_policy_id:null,decided_by_user_id:id(888),correction_operation_id:id(889),
+    score:null,evidence_digest:sha("human evidence"),lineage_digest:sha("human lineage")};
+   f.corrections([correction]);await run(f.job,f.options);
+   assert.equal(f.persisted.size,2);assert.deepEqual(f.chunkReads,[128,6]);
+   const outside=f.persisted.get(f.roots[1]!.root_id)!;
+   assert.equal(outside.reason_code,"computed_cluster_outside_discovery_population");
+   assert.equal(outside.coverage.processed_chunks,1);assert.deepEqual(outside.decisions,[correction]);
+   assert.equal(outside.has_unresolved_topics,false);
+   assert.equal(f.persisted.get(f.roots[0]!.root_id)!.decisions.find(x=>x.term_key===topic.term_key)?.resolution_method,"human");
+  }finally{await f.close();}
+ }
+});
+test("MFP outside roots remain abstentions and still require authentic complete DB chunks",async()=>{
+ for(const corrupt of [false,true]){
+  const f=await fixture({discovery:true});try{
+   if(corrupt)f.chunks[1]![0]!.text="changed";
+   if(corrupt){await assert.rejects(run(f.job,f.options),/chunk_integrity_failed/);assert.equal(f.counters().commits,0);}
+   else{await run(f.job,f.options);const outside=f.persisted.get(f.roots[1]!.root_id)!;
+    assert.deepEqual(outside.decisions,[]);assert.equal(outside.resolution_state,"abstained");}
+  }finally{await f.close();}
+ }
+});
+test("MFP rejects substituted, duplicate, omitted roots and wrong chunk counts against the sealed population before writing",async()=>{
+ for(const mode of ["substitute","duplicate","missing","chunks"]){
+  const f=await fixture({discovery:true});try{
+   if(mode==="substitute")f.discoveryPopulation!.root_ids[0]=f.roots[1]!.root_id;
+   if(mode==="duplicate")f.discoveryPopulation!.root_ids.push(f.discoveryPopulation!.root_ids[0]!);
+   if(mode==="missing")f.discoveryPopulation!.root_ids=[];
+   if(mode==="chunks")f.discoveryPopulation!.expected_chunks++;
+   await assert.rejects(run(f.job,f.options),/projection_integrity_invalid/);
+   assert.equal(f.counters().commits,0);assert.equal(f.counters().finishCalls,0);
+  }finally{await f.close();}
+ }
+});
+test("MFP subset recovery rechecks the complete fit and skips an already committed outside root without a second write",async()=>{
+ const f=await fixture({discovery:true});try{f.failAfterCommit();await assert.rejects(run(f.job,f.options),/worker_failed/);
+  await run(f.job,f.options);assert.equal(f.counters().commits,1);assert.equal(f.persisted.size,2);
+ }finally{await f.close();}
+});
+
+test("an outside root before the first fitted root never advances its assignment stream",async()=>{
+ const f=await fixture({discovery:true});try{
+  f.roots.reverse();f.chunks.reverse();f.roots[0]!.root_id=id(0);
+  await run(f.job,f.options);
+  assert.equal(f.persisted.get(id(0))!.reason_code,"computed_cluster_outside_discovery_population");
+  assert.equal(f.persisted.get(id(1))!.decisions.length,70);
+ }finally{await f.close();}
 });

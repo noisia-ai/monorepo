@@ -1,3 +1,4 @@
+import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import type { Pool, PoolClient } from 'pg';
 import { signalTopicConsolidationActivationCommandV1, signalTopicConsolidationActivationStatusSchemaV1, signalTopicConsolidationBindingSchemaV1, signalTopicConsolidationSnapshotReceiptSchemaV1, signalTopicConsolidationMutationReceiptSchemaV1, signalTopicConsolidationServingSnapshotSchemaV1, type SignalTopicConsolidationBindingV1 } from '@noisia/query-engine';
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,digest=/^sha256:[a-f0-9]{64}$/u;
@@ -68,6 +69,7 @@ export async function readSignalTopicConsolidationServingBindingV1(client:PoolCl
  if(binding.snapshot_id&&!row.snapshot)fail('topic_consolidation_activation_binding_invalid',503);
  const snapshot=row.snapshot?signalTopicConsolidationServingSnapshotSchemaV1.parse(row.snapshot):null;
  if(snapshot&&snapshot.id!==binding.snapshot_id)fail('topic_consolidation_activation_binding_invalid',503);
+ if(snapshot?.source_valid && !await signalDiscoveryProjectionContextCurrentV1(client,workspace,snapshot.source_engine_execution_id))snapshot.source_valid=false;
  return{binding,snapshot:snapshot?{...snapshot,binding}:null};
 }
 

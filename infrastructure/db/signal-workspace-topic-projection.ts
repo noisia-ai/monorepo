@@ -12,7 +12,7 @@ export const SIGNAL_WORKSPACE_TOPIC_PROJECTION_POLICY_V1={contract_version:'work
 export type SignalWorkspaceProjectionQueryableV1={query<R extends Record<string,unknown>>(sql:string,params?:unknown[]):Promise<{rows:R[]}>};
 export type SignalWorkspaceTopicProjectionArtifactV1={artifact_id:string;artifact_key:string;artifact_type:string;
  content:{storage_key:string;sha256:string;size_bytes:number;media_type:string};metadata:Record<string,unknown>};
-export type SignalWorkspaceTopicProjectionSourceV1=SignalWorkspaceClassificationProjectionV1&{artifacts:SignalWorkspaceTopicProjectionArtifactV1[]};
+export type SignalWorkspaceTopicProjectionSourceV1=SignalWorkspaceClassificationProjectionV1&{artifacts:SignalWorkspaceTopicProjectionArtifactV1[];discovery_population?:{root_ids:string[];expected_chunks:number}};
 export type SignalWorkspaceTopicProjectionRunV1={execution_id:string;generation_id:string;source_engine_execution_id:string;
  status:'queued'|'running'|'ready'|'failed';is_current:boolean;complete:boolean;denominator:number;processed_roots:number;expected_chunks:number;processed_chunks:number;
  error_code:string|null;computed_at:string|null;taxonomy_profile_id:string;mapping_digest:string;model_version_id:string|null};
@@ -122,7 +122,16 @@ export async function claimSignalWorkspaceTopicProjectionV1(args:{database:Signa
    AND (artifact_type IN('engine_output','engine_model') OR id=$3::uuid) ORDER BY artifact_key LIMIT 35`,
    [lease.workspace_id,source.engine_execution_id,source.materialization_artifact_id])).rows;
   if(artifacts.length>34)return fail('workspace_projection_artifact_capacity');
-  return{lease,source:{...source,artifacts},model_version_id:source.model_version_id};
+  // Read only from the immutable native engine snapshot, never from worker or
+  // browser input. Existing projection receipts recover without rewriting them.
+  const engine=(await client.query<{population:SignalWorkspaceEngineSnapshotV1['discovery_population'];expected_roots:number;expected_chunks:number}>(`
+   SELECT input_snapshot->'discovery_population' population,(input_snapshot->>'expected_roots')::int expected_roots,
+    (input_snapshot->>'expected_chunks')::int expected_chunks FROM signal_topic_catalog_executions
+   WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract='workspace-topic-engine-v1'`,[source.engine_execution_id,lease.workspace_id])).rows[0];
+  if(!engine)return fail('workspace_projection_source_invalid');
+  if(engine.population && (!Array.isArray(engine.population.root_ids)||engine.population.root_ids.length!==engine.expected_roots))
+   return fail('workspace_projection_source_invalid');
+  return{lease,source:{...source,artifacts,...(engine.population?{discovery_population:{root_ids:engine.population.root_ids,expected_chunks:engine.expected_chunks}}:{})},model_version_id:source.model_version_id};
  });}catch(error){throw error;}
 }
 export const heartbeatSignalWorkspaceTopicProjectionV1=heartbeatSignalWorkspaceClassificationV1;

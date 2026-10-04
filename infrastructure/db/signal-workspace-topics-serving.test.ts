@@ -100,6 +100,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
   const client = {
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
+      if (sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids")) return { rows: [] };
+      if (sql.includes("jsonb_typeof(input_snapshot->'discovery_population')='object') discovery")) return { rows: [{ discovery: false }] };
       if (/^(BEGIN|COMMIT|ROLLBACK|SET LOCAL)/u.test(sql)) return { rows: [] };
       if (sql.includes("signal_topic_consolidation_binding_v1")) return { rows: consolidatedMode
         ? [{ binding: consolidatedBinding, snapshot: consolidatedSnapshot }] : [] };

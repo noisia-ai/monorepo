@@ -1,3 +1,4 @@
+import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
 import { createHash } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
@@ -315,11 +316,12 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
   let isCurrent = false;
   if (generation?.taxonomy_profile_id && generation.identity) {
     const input = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
-      taxonomy_profile_id: generation.taxonomy_profile_id }).catch(error => {
+      taxonomy_profile_id: generation.taxonomy_profile_id, source_engine_execution_id: generation.source_engine_execution_id }).catch(error => {
       if (error instanceof SignalWorkspaceClassificationError && error.code === "workspace_classification_catalog_unavailable") return null;
       throw error;
     });
     isCurrent = input !== null && generation.source_valid && generation.policy_live
+      && await signalDiscoveryProjectionContextCurrentV1(client,args.workspace_id,generation.source_engine_execution_id)
       && generation.input_revision === generation.current_revision
       && generation.correction_digest === input.correction_digest
       && generation.identity.catalog_digest === input.catalog_digest && generation.identity.compiler_digest === input.compiler_digest
@@ -372,6 +374,7 @@ async function mentionsContext(client: PoolClient, args: Args): Promise<Pick<Con
     LEFT JOIN signal_corpus_preparation_input_state state ON state.workspace_id=workspace.id
     WHERE workspace.id=$1::uuid`, [args.workspace_id, binding?.binding.legacy_generation_id ?? null, binding !== null])).rows[0];
   const generation = row?.id ? row : null;
+  if(generation?.source_valid && !await signalDiscoveryProjectionContextCurrentV1(client,args.workspace_id,generation.source_engine_execution_id))generation.source_valid=false;
   const imported = !generation && !binding ? await importedPopulation(client, args) : undefined;
   return { generation, imported, is_processing: row?.is_processing ?? false, native: Boolean(imported) || (row?.native ?? false), filters,
     is_current: Boolean(imported) || Boolean(generation?.source_valid && generation.policy_live

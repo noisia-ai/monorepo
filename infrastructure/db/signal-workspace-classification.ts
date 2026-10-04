@@ -1,3 +1,4 @@
+import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import type { Pool, PoolClient } from "pg";
 import type {
   SignalWorkspaceClassificationIdentityV1, SignalWorkspaceClassificationRootIdentityV1,
@@ -170,6 +171,8 @@ async function current(client: PoolClient, run: Run, full = true) {
   await authorize(client, run.workspace_id, run.actor_user_id, run.interest_term_key, run.identity, run.source_projection);
   if (run.current_revision !== run.input_revision || !run.policy_live || !run.sources_complete || !run.projection_current) return fail("workspace_classification_inputs_changed");
   if (!full) return;
+  if (run.source_projection && !await signalDiscoveryProjectionContextCurrentV1(client,run.workspace_id,run.source_projection.engine_execution_id))
+    return fail("workspace_classification_inputs_changed");
   if(run.interest_term_key!=null&&!interestTermKey.test(run.interest_term_key))return fail("workspace_classification_context_changed");
   const latest = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: run.workspace_id, actor_user_id: run.actor_user_id,
     ...(run.incremental_projection?{taxonomy_profile_id:run.taxonomy_profile_id}:{}),

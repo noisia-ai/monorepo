@@ -33,6 +33,7 @@ export type WorkspaceTopicProjectionArtifactV1 = { artifact_id: string; artifact
   content: { storage_key: string; sha256: string; size_bytes: number; media_type: string }; metadata: unknown };
 export type WorkspaceTopicProjectionSourceV1 = { engine_execution_id: string; materialization_artifact_id: string;
   mapping_digest: string; model_artifact_id: string | null; artifacts: WorkspaceTopicProjectionArtifactV1[];
+  discovery_population?: { root_ids: string[]; expected_chunks: number };
   interpretation_coverage?: { interpreted_unit_count: number; expected_unit_count: number;
     unit_digest: string; expected_unit_digest: string; complete: boolean } };
 export type WorkspaceTopicProjectionStoresV1<Database> = WorkspaceProjectionPageStoresV1<Database> & {
@@ -116,6 +117,12 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
       || manifest.quality !== "uncalibrated" || manifest.approval_policy !== "none") invalid();
     const counts = z.object({ occurrences: z.number().int().nonnegative(), roots: z.number().int().nonnegative() })
       .passthrough().parse(manifest.counts);
+    const discovery = source.discovery_population === undefined ? undefined : z.object({
+      root_ids: z.array(uuid), expected_chunks: z.number().int().nonnegative()
+    }).strict().parse(source.discovery_population);
+    if (discovery && (discovery.root_ids.length !== counts.roots || discovery.expected_chunks !== counts.occurrences
+      || discovery.root_ids.some((root, index) => index > 0 && root <= discovery.root_ids[index - 1]!))) invalid();
+    const selectedRoots = discovery ? new Set(discovery.root_ids) : undefined;
     const lanes = z.array(z.object({ lane: z.enum(["open", "guided"]), assignments_file: z.string(),
       occurrences: z.number().int().nonnegative(), roots: z.number().int().nonnegative(),
       clusters: z.number().int().nonnegative(), outlier_occurrences: z.number().int().nonnegative().optional() }).passthrough())
@@ -219,7 +226,7 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
     // Reconcile ALL assignment identities, clusters, root fingerprints and EOF
     // before writing the first item. This also validates the already committed
     // prefix during recovery; no old checkpoint can conceal a truncated file.
-    await verifyCensus(rootsPath, assignments, lanes, counts, mapped, heartbeat, coverage);
+    await verifyCensus(rootsPath, assignments, lanes, counts, mapped, heartbeat, coverage, discovery?.root_ids);
     const rootRows = records(rootsPath, rootSchema); readers.push(rootRows);
     const laneRows = new Map([...assignments].map(([lane, entry]) => {
       const stream = records(entry.path, occurrenceSchema); readers.push(stream); return [lane, stream] as const;
@@ -232,6 +239,15 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
       }
     };
     const readMemberships = async (root: Root, chunks: AsyncIterable<ReadonlyArray<{ chunk_index: number; start: number; end: number; chunk_sha256: string }>>) => {
+      // The classification ledger counts the entire eligible corpus. A sampled
+      // or non-relevant root outside the sealed fit has no computed membership,
+      // but its DB chunks still pass the normal complete-coverage validation.
+      if (selectedRoots && !selectedRoots.has(root.root_id)) {
+        let processed = 0;
+        for await (const page of chunks) processed += page.length;
+        return { membership: new Map<string, { count: number; evidence: ReturnType<typeof createHash>;
+          first: { chunk_index: number; start: number; end: number; chunk_sha256: string } }>(), processed, outside: true };
+      }
       await skipTo(root.root_id);
       if (nextRoot.done || nextRoot.value.root_id !== root.root_id || nextRoot.value.root_fingerprint !== root.fingerprint
         || nextRoot.value.chunk_count !== root.expected_chunks) invalid();
@@ -252,7 +268,7 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
         processed++;
       }
       nextRoot = await rootRows.next();
-      return { membership, processed };
+      return { membership, processed, outside: false };
     };
     const advance = async (promise: Promise<Lease>) => { const next = await promise; activeLease = next; return next; };
     let pageCorrections = new Map<string, SignalWorkspaceClassificationDecisionV1[]>();
@@ -279,7 +295,7 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
     return await projectWorkspaceClassificationPagesV1({ job, database, lease: activeLease, stores: classification, engine: {
       ...activeLease.identity,
       classifyRoot: async ({ identity, root, chunks }) => {
-        const { membership, processed } = await readMemberships(root, chunks);
+        const { membership, processed, outside } = await readMemberships(root, chunks);
         const decisions = new Map<string, SignalWorkspaceClassificationDecisionV1>();
         const computedEvidence: Array<{ unit_key: string; evidence_digest: string; matched_chunks: number; semantic_current: boolean; archived: boolean }> = [];
         let unresolved = false, interpretationPending = false;
@@ -321,7 +337,7 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
         return { contract_version: "signal-workspace-classification-v1", root: rootIdentity,
           reuse_key: signalWorkspaceClassificationReuseKeyV1(identity, rootIdentity),
           resolution_state: signalWorkspaceClassificationResolutionV1(values, unresolved), has_unresolved_topics: unresolved,
-          reason_code: interpretationPending ? "computed_cluster_interpretation_pending"
+          reason_code: outside ? "computed_cluster_outside_discovery_population" : interpretationPending ? "computed_cluster_interpretation_pending"
             : unresolved ? "computed_cluster_semantics_stale" : membership.size ? "computed_cluster_membership" : "computed_cluster_outlier",
           technical_error_code: null, evidence_digest: digest({ root: rootIdentity, membership: computedEvidence,
             corrections: values.filter(value => value.resolution_method === "human").map(value => value.evidence_digest) }),
@@ -354,13 +370,13 @@ async function* records<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unkn
 async function verifyCensus(rootsPath: string, assignments: Map<Lane, { path: string; ref: WorkspaceTopicProjectionArtifactV1 }>,
   lanes: Array<{ lane: Lane; clusters: number; outlier_occurrences?: number }>,
   counts: { roots: number; occurrences: number }, mapped: Map<string, Mapped>, heartbeat: () => Promise<unknown>,
-  coverage?: WorkspaceTopicProjectionSourceV1['interpretation_coverage']) {
+  coverage?: WorkspaceTopicProjectionSourceV1['interpretation_coverage'], selectedRoots?: string[]) {
   const streams = new Map([...assignments].map(([lane, item]) => [lane, records(item.path, occurrenceSchema)] as const));
   const census = new Map<string, { hash: ReturnType<typeof createHash>; label: number }>();
   const outliers = { open: 0, guided: 0 }; let roots = 0, occurrences = 0, lastRoot = "";
   try {
     for await (const root of records(rootsPath, rootSchema)) {
-      if (root.root_id <= lastRoot) invalid(); lastRoot = root.root_id; roots++;
+      if (root.root_id <= lastRoot || selectedRoots && selectedRoots[roots] !== root.root_id) invalid(); lastRoot = root.root_id; roots++;
       const memberships = { open: new Set<string>(), guided: new Set<string>() }; let end = 0;
       for (let index = 0; index < root.chunk_count; index++) {
         let first: Occurrence | undefined;
