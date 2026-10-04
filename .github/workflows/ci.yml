@@ -54,6 +54,7 @@ jobs:
 
       - run: pnpm dev:corpus:check
       - run: pnpm exec tsc --project scripts/dev-corpus/tsconfig.json
+      - run: pnpm exec tsc --project scripts/providers/tsconfig.json
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm test

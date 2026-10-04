@@ -48,8 +48,10 @@ y `jev-recovery-policy-restore-2026-10-04.log`, bajo `.data/dev-corpus/`.
 fronteras0.99/1.01/fuera/NaN.
 Typechecks del overlay y helper PASS remoto; lógica de política verificada en PG.
 Seis probes sintéticos reales previos:16,802 tokens,USD0.000705684,p50=80.775ms,
-p95=146.488ms. No equivalen a gold. Pendientes CI propia tras integrar WS2,
-evaluación WS4. Tarifa en identidad invalida caché si cambia.
+p95=146.488ms. No equivalen a gold. Pendientes CI propia y evaluación WS4.
+Tarifa en identidad invalida caché si cambia. WS3 rebasado sobre
+WS2 integrado (`fb1503c`); job/drainer JEV registrado con inicio/cierre en Data OS y
+typecheck de scripts proveedores añadido a CI. CI propia pendiente en PR17.
 
 **Rendimiento pendiente:** uploads crudos secuenciales son una explicación compatible
 con~190s/página200; falta instrumentación aislada. Propuesta: concurrencia acotada
