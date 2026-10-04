@@ -6,6 +6,7 @@ import {readFile} from 'node:fs/promises';
 import type {SignalWorkspaceEngineDatabaseV1} from '../../infrastructure/db/signal-workspace-engine';
 type Pool=SignalWorkspaceEngineDatabaseV1 & {end():Promise<void>};
 import {main,openDatabase} from './guard.mjs';
+import {signalWorkspaceEmbeddingDigestV1 as digest} from '../../packages/query-engine/src/index';
 import * as preparation from '../../infrastructure/db/signal-workspace-incremental-editorial-preparation';
 import type {SignalWorkspaceIncrementalEditorialEvidenceArgsV1} from '../../infrastructure/db/signal-workspace-incremental-editorial';
 
@@ -59,6 +60,29 @@ await main(async()=>{
   assert.notEqual(oldValue,checkpoint.validation_digest);
   assert.equal(await validation(values),checkpoint.validation_digest);assert.equal(await validation(controlValues),oldControl);
   assert.equal((await raw.query('SELECT workspace_incremental_editorial_empty_component_v1($1) valid',[f.numeric_execution_id])).rows[0].valid,true);
+  report('origin_and_empty_component_contract');
+  const originFlags=(await raw.query(`SELECT
+   bool_and(EXISTS(SELECT 1 FROM workspace_incremental_editorial_units_v1($1) unit
+    WHERE unit.emergent AND unit.identity->'model_origin'->>'execution_id'=origin->>'execution_id')) original_unit_scope,
+   bool_and(workspace_incremental_editorial_empty_component_v1($1,(origin->>'execution_id')::uuid)) sealed_empty_scope,
+   bool_and(EXISTS(SELECT 1 FROM signal_topic_catalog_executions source
+    JOIN analysis_artifacts manifest ON manifest.id::text=source.result_summary->'numeric_checkpoint'->>'output_artifact_id'
+    JOIN analysis_artifacts candidate ON candidate.engine_execution_id=source.id AND candidate.workspace_id=source.workspace_id AND candidate.artifact_key='candidate-groups.json'
+    WHERE source.id::text=origin->>'execution_id' AND source.workspace_id=$3
+     AND manifest.content->>'sha256'=origin->>'manifest_sha256' AND candidate.content->>'sha256'=origin->>'candidate_sha256'
+     AND signal_workspace_incremental_parent_current_v1(source.id,$3,$4))) origin_files_current
+   FROM jsonb_array_elements($2::jsonb) origin`,[f.numeric_execution_id,JSON.stringify(f.evidence.origins),scope.workspace_id,scope.actor_user_id])).rows[0];
+  console.log(JSON.stringify({phase, ...originFlags}));
+  assert.deepEqual(originFlags,{original_unit_scope:false,sealed_empty_scope:true,origin_files_current:true});
+  assert.equal((await raw.query('SELECT workspace_incremental_editorial_empty_component_v1($1,$2) valid',[f.numeric_execution_id,randomUUID()])).rows[0].valid,false);
+  const negatives=(await raw.query(`SELECT
+   bool_and(NOT workspace_incremental_editorial_component_empty_v1(component)) FILTER(WHERE (metadata->>'unit_count')::bigint>0) nonempty_rejected,
+   bool_and(NOT workspace_incremental_editorial_component_empty_v1(jsonb_populate_record(NULL::analysis_artifacts,
+    to_jsonb(component)||jsonb_build_object('metadata',metadata||jsonb_build_object('unit_digest',$2::text)))))
+    FILTER(WHERE metadata->>'unit_count'='0') corrupt_empty_digest_rejected
+   FROM analysis_artifacts component WHERE engine_execution_id=$1 AND metadata->>'contract_version'='workspace-incremental-component-v1'`,
+   [f.numeric_execution_id,`sha256:${'0'.repeat(64)}`])).rows[0];
+  assert.deepEqual(negatives,{nonempty_rejected:true,corrupt_empty_digest_rejected:true});
   report('explicit_repair_available');const state=await preparation.loadSignalWorkspaceIncrementalEditorialPreparationV1(scope);
   assert.ok(state?.is_current);assert.equal(state.can_prepare,true);assert.equal(state.has_pending_work,false);assert.equal(state.preparation?.status,'failed');
   const request={...scope,expected_source_digest:state.source_digest,idempotency_key:randomUUID()};
@@ -86,6 +110,10 @@ await main(async()=>{
    WHERE execution_id=$1 AND dispatch_kind='incremental_editorial_evidence'`,[f.numeric_execution_id]);
   const claim=await preparation.claimSignalWorkspaceIncrementalEditorialPreparationV1({...scope,worker_job_id:accepted.receipt.worker_job_id});
   assert.equal(claim.completed,false);if(claim.completed)throw Error('mfp_unexpected_completed');
+  report('foreign_origin_rejected');
+  const {evidence_digest:_originalDigest,...foreignBody}={...f.evidence,origins:f.evidence.origins.map(origin=>({...origin,execution_id:randomUUID()}))};
+  await deny(()=>preparation.completeSignalWorkspaceIncrementalEditorialPreparationV1({database,lease:claim.lease,
+   evidence:{...foreignBody,evidence_digest:digest(foreignBody)},stored:f.stored}),/evidence_invalid/u);
   report('publish_existing_evidence');const completed=await preparation.completeSignalWorkspaceIncrementalEditorialPreparationV1({database,lease:claim.lease,evidence:f.evidence,stored:f.stored});
   assert.equal((await preparation.loadSignalWorkspaceIncrementalEditorialPreparationV1(scope))?.preparation?.status,'ready');
   assert.equal((await raw.query('SELECT workspace_incremental_editorial_plan_valid_v1($1) valid',[completed.artifact_id])).rows[0].valid,true);
