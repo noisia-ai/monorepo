@@ -40,12 +40,12 @@ await main(async()=>{
   const actor=(await query('SELECT id,user_type AS "userType",organization_id AS "organizationId" FROM users WHERE id=$1',[identity.actor_user_id])).rows[0];
   const workspace=await resolveSignalWorkspaceForUser(actor,{workspaceId:identity.workspace_id});assert.ok(workspace);
   const jobs=new Map<string,string>();
-  const batch=async(expectedBase?:string,mode:'append_only'|'revise_existing'='revise_existing',size=100,key=randomUUID())=>{
-   const args={workspace,actor,access:'manual-import' as const,sourceId:identity.source_id,
+  const batch=async(expectedBase?:string,mode:'append_only'|'revise_existing'='revise_existing',size=100,key=randomUUID(),sourceId=identity.source_id)=>{
+   const args={workspace,actor,access:'manual-import' as const,sourceId,
     fileName:'synthetic-revision.csv',fileSizeBytes:size,contentType:'text/csv',idempotencyKey:key,
     contentRevisionMode:mode,contributedByStudyCorpusId:null,supersedesImportBatchId:null,
-    acquisition:{sourceKey:identity.source_key,slotKey:'primary-brand',queryEvidence:{class:'unavailable' as const,queryVersion:null,reason:'source_context_unavailable' as const},
-      period:{start:'2026-01-01',end:'2026-12-31',timezone:identity.timezone}},
+    acquisition:sourceId===identity.source_id?{sourceKey:identity.source_key,slotKey:'primary-brand',queryEvidence:{class:'unavailable' as const,queryVersion:null,reason:'source_context_unavailable' as const},
+      period:{start:'2026-01-01',end:'2026-12-31',timezone:identity.timezone}}:undefined,
     storage:{resolve:()=>({bucket:'synthetic-no-object'}),createSignedUploads:async({objectPrefix}:{objectPrefix:string})=>({
       bucket:'synthetic-no-object',objectPrefix,expiresInSeconds:1,partSizeBytes:48*1024*1024,parts:[]})}};
    const created=await createWorkspaceImportUploadV1(args);const id=created.batch.id;
@@ -56,7 +56,7 @@ await main(async()=>{
    const job=(await query('SELECT worker_job_id FROM enqueue_signal_workspace_import_v1($1,$2)',[id,identity.actor_user_id])).rows[0].worker_job_id;
    jobs.set(id,job);assert.equal((await query('SELECT begin_signal_workspace_import_processing_v1($1,$2) started',[id,job])).rows[0].started,true);
    // Storage transport is simulated; acquisition admission, sealed base, queue receipt and SQL are real.
-   await query("UPDATE import_batches SET provider_observation_projection_state='not_available',provider_observation_header_hash=$2,provider_observation_count=0 WHERE id=$1",[id,`sha256:${sha('synthetic header')}`]);
+   if(args.acquisition)await query("UPDATE import_batches SET provider_observation_projection_state='not_available',provider_observation_header_hash=$2,provider_observation_count=0 WHERE id=$1",[id,`sha256:${sha('synthetic header')}`]);
    return id;
   };
   const externalId=`synthetic-revision-${randomUUID()}`;
@@ -148,18 +148,16 @@ await main(async()=>{
   assert.equal((await complete(explicit,sha('same file new mode'))).rows[0].accepted,true);checks++;
   // Real parser + SQL persistence exercises source-local IDs and legacy defaults.
   const secondSource=randomUUID();
-  await query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key,status)
-   VALUES($1,$2,$3,$4,'social_listening','synthetic','manual','Second synthetic source',$5,'active')`,
+  await query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key,status,governed_scope,scope_review_status,governed_entity_type,governed_entity_id,scope_approval_source,scope_approved_at)
+   VALUES($1,$2,$3,$4,'social_listening','synthetic','manual','Second synthetic source',$5,'active','primary_brand','approved','brand',$4,'synthetic rollback fixture',clock_timestamp())`,
    [secondSource,f.workspace_id,f.organization_id,f.brand_id,`source-sha256-${sha(secondSource)}`]);
-  const sourceBatch=randomUUID();await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,status)
-   VALUES($1,$2,$3,'synthetic','processing')`,[sourceBatch,f.workspace_id,secondSource]);
+  const sourceBatch=await batch(undefined,'append_only',100,randomUUID(),secondSource);
   const csv=`id,text,date,author\n${root.provider_record_id},An independent synthetic provider uses this ID for different content.,2026-09-01T12:00:00Z,New synthetic author\n`;
   const parsed=await createSignalSentioneCsvIngester(database).ingestSentioneCsvStream({workspaceId:f.workspace_id,dataSourceId:secondSource,
    importBatchId:sourceBatch,sourceFileName:'synthetic.csv',stream:new Blob([csv]).stream()});
   assert.equal(parsed.stats.included_count,1);assert.equal(parsed.stats.duplicate_count,0);
   assert.equal((await query('SELECT source_author_label FROM mentions WHERE source_file_id=$1',[sourceBatch])).rows[0].source_author_label,'New synthetic author');checks++;
-  const sameSourceBatch=randomUUID();await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,status)
-   VALUES($1,$2,$3,'listening_csv','processing')`,[sameSourceBatch,f.workspace_id,f.source_id]);
+  const sameSourceBatch=await batch(undefined,'append_only');
   const otherSystemId=randomUUID(),collisionId=`synthetic-system-${randomUUID()}`;
   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,inclusion_status)
