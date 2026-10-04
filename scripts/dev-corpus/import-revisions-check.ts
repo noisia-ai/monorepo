@@ -1,5 +1,6 @@
 /** Remote PostgreSQL rollback check. No provider, queue, migration or real-corpus writes. */
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
 import type {Pool} from 'pg';
 import {openDatabase,main} from './guard.mjs';
@@ -94,7 +95,57 @@ await main(async()=>{
   const parsed=await createSignalSentioneCsvIngester(database).ingestSentioneCsvStream({workspaceId:f.workspace_id,dataSourceId:secondSource,
    importBatchId:sourceBatch,sourceFileName:'synthetic.csv',stream:new Blob([csv]).stream()});
   assert.equal(parsed.stats.included_count,1);assert.equal(parsed.stats.duplicate_count,0);checks++;
+  const sameSourceBatch=randomUUID();await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,status)
+   VALUES($1,$2,$3,'listening_csv','processing')`,[sameSourceBatch,f.workspace_id,f.source_id]);
+  const csvSameSystem=`id,text,date\n${root.provider_record_id},A second source system may reuse an ID in the same connector.,2026-09-01T12:00:00Z\n`;
+  const independent=await createSignalSentioneCsvIngester(database).ingestSentioneCsvStream({workspaceId:f.workspace_id,dataSourceId:f.source_id,
+   importBatchId:sameSourceBatch,sourceFileName:'synthetic-system.csv',stream:new Blob([csvSameSystem]).stream()});
+  assert.equal(independent.stats.included_count,1);assert.equal(independent.stats.duplicate_count,0);checks++;
   await query('ROLLBACK');
+  // Existing private labels are observed and edited only inside this rollback.
+  // No label fabrication: the fixture must already have a current model verdict.
+  const identityPath=process.argv.find(value=>value.startsWith('--identity='))?.slice('--identity='.length);
+  if(!identityPath)throw new Error('mfp_labeled_fixture_identity_required');
+  const identity=JSON.parse(await readFile(identityPath,'utf8'));
+  await query('BEGIN');
+  const labeled=(await query(`SELECT m.*,c.concept_key,c.verdict,f.facets,f.input_digest
+   FROM signal_concept_memberships_current_v1 c JOIN signal_mention_facets_current_v1 f USING(workspace_id,root_id)
+   JOIN mentions m ON m.id=c.root_id WHERE c.workspace_id=$1 AND c.source='model' AND c.verdict='belongs'
+    AND m.data_source_id=$2 AND f.status='labeled'
+    AND NOT EXISTS(SELECT 1 FROM signal_mention_facet_overrides o WHERE o.root_id=m.id AND o.superseded_at IS NULL)
+    AND NOT EXISTS(SELECT 1 FROM signal_concept_membership_overrides o WHERE o.root_id=m.id AND o.superseded_at IS NULL)
+   LIMIT 1`,[identity.workspace_id,identity.source_id])).rows[0];
+  assert.ok(labeled,'The private fixture must have a current model membership and facet before this check');
+  const labelCounts=async()=>(await query(`SELECT
+   (SELECT count(*)::int FROM signal_mention_facet_labels WHERE workspace_id=$1 AND root_id=$2) facets,
+   (SELECT count(*)::int FROM signal_concept_memberships WHERE workspace_id=$1 AND root_id=$2) memberships,
+   (SELECT count(*)::int FROM signal_mention_facet_overrides WHERE workspace_id=$1 AND root_id=$2) facet_overrides,
+   (SELECT count(*)::int FROM signal_concept_membership_overrides WHERE workspace_id=$1 AND root_id=$2) membership_overrides`,[identity.workspace_id,labeled.id])).rows[0];
+  await query(`INSERT INTO signal_mention_facet_overrides(workspace_id,root_id,dimension,value,actor_user_id)
+   VALUES($1,$2,'voice',$3::jsonb,$4)`,[identity.workspace_id,labeled.id,JSON.stringify(labeled.facets.voice),identity.actor_user_id]);
+  await query(`INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,verdict,actor_user_id)
+   VALUES($1,$2,$3,'belongs',$4)`,[identity.workspace_id,labeled.id,labeled.concept_key,identity.actor_user_id]);
+  const retained=await labelCounts();assert.ok(retained.facets>0&&retained.memberships>0);
+  assert.equal((await query('SELECT source FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3',
+   [identity.workspace_id,labeled.id,labeled.concept_key])).rows[0].source,'human');checks++;
+  const liveBatch=randomUUID();
+  const base=(await query("SELECT id FROM import_batches WHERE workspace_id=$1 AND data_source_id=$2 AND status='completed' ORDER BY completed_at DESC,id DESC LIMIT 1",[identity.workspace_id,identity.source_id])).rows[0].id;
+  await query("SET LOCAL session_replication_role='replica'");
+  await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,status,
+    ingestion_phase,expected_file_size_bytes,upload_protocol,worker_job_id,imported_by_user_id,content_revision_mode,content_revision_base_batch_id)
+    VALUES($1,$2,$3,'listening_csv','rollback-only.csv','processing','processing',100,'server-stream',$1,$4,'revise_existing',$5)`,
+   [liveBatch,identity.workspace_id,identity.source_id,identity.actor_user_id,base]);
+  await query("SET LOCAL session_replication_role='origin'");
+  const changedText=labeled.text_clean+' [Synthetic rollback revision: previous content retained.]';
+  const nextContent={...labeled,text_raw:changedText,text_clean:changedText,text_hash:sha(changedText.toLowerCase()),text_length:changedText.length,text_snippet:changedText.slice(0,300)};
+  await query('SELECT * FROM stage_signal_mention_content_revisions_v1($1,$2::jsonb)',[liveBatch,JSON.stringify([{mention_id:labeled.id,content:nextContent}])]);
+  await complete(liveBatch);
+  // No new preparation is run: neither old citations nor human projection can be served as current.
+  assert.equal((await query('SELECT count(*)::int n FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND root_id=$2',[identity.workspace_id,labeled.id])).rows[0].n,0);
+  assert.equal((await query('SELECT count(*)::int n FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2',[identity.workspace_id,labeled.id])).rows[0].n,0);
+  assert.deepEqual(await labelCounts(),retained);checks++;
+  await query('ROLLBACK');
+  assert.equal((await query('SELECT text_clean FROM mentions WHERE id=$1',[labeled.id])).rows[0].text_clean,labeled.text_clean);checks++;
   console.log(JSON.stringify({stage:'import_content_revisions',status:'passed',real_postgres:true,synthetic_fixture:true,
    checks,rolled_back:true,provider_calls:0,production_acceptance:false}));
  }finally{await client.query('ROLLBACK').catch(()=>{});client.release();await pool.end();}

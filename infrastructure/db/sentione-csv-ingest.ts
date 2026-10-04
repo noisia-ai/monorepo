@@ -77,6 +77,7 @@ type InsertedMentionRow = {
   text_hash: string;
   provider_record_id: string | null;
   data_source_id?: string;
+  source_system?: string;
   inclusion_status: string | null;
   already_in_batch: boolean;
   ingestion_disposition: "included" | "excluded" | "duplicate" | null;
@@ -627,7 +628,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     if (hashes.length === 0 && providerRecordIds.length === 0) return [];
     const result = await pool.query<InsertedMentionRow>(
       `
-        SELECT mention.id,mention.text_hash,mention.provider_record_id,mention.data_source_id,
+        SELECT mention.id,mention.text_hash,mention.provider_record_id,mention.data_source_id,mention.source_system,
           mention.inclusion_status,
           EXISTS (
             SELECT 1
@@ -655,7 +656,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
           AND mention.canonical_mention_id = mention.id
           AND (
             mention.text_hash = ANY($3::text[])
-            OR (mention.data_source_id=$6::uuid AND mention.provider_record_id = ANY($4::text[]))
+            OR (mention.data_source_id=$6::uuid AND mention.source_system='listening_csv' AND mention.provider_record_id = ANY($4::text[]))
           )
       `,
       [workspaceId,importBatchId,hashes,providerRecordIds,supersedesImportBatchId,values[0].dataSourceId]
@@ -671,7 +672,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     const mapped=new Map<string,InsertedMentionRow>();
     for (const value of values) {
       const matches=rows.filter((row)=>row.text_hash===value.textHash
-        || (row.data_source_id===value.dataSourceId && row.provider_record_id===value.providerRecordId));
+        || (row.data_source_id===value.dataSourceId && row.source_system==="listening_csv" && row.provider_record_id===value.providerRecordId));
       const identities=new Map(matches.map((row)=>[row.id,row]));
       if (identities.size>1) {
         throw new Error(revisionMode === "revise_existing" ? "content_revision_conflict" : "Workspace import canonical keys resolve to different roots.");

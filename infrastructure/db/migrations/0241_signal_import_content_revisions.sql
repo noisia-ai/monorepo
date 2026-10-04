@@ -61,6 +61,7 @@ CREATE TABLE signal_mention_content_revisions(
  data_source_id uuid NOT NULL REFERENCES data_sources(id) ON DELETE RESTRICT,
  import_batch_id uuid NOT NULL REFERENCES import_batches(id) ON DELETE RESTRICT,
  mention_id uuid NOT NULL REFERENCES mentions(id) ON DELETE RESTRICT,
+ source_system text NOT NULL,provider_record_id text NOT NULL,
  previous_content jsonb NOT NULL CHECK(jsonb_typeof(previous_content)='object'),
  next_content jsonb NOT NULL CHECK(jsonb_typeof(next_content)='object'),
  previous_digest text NOT NULL,
@@ -97,6 +98,7 @@ BEGIN
  IF batch.content_revision_mode IS DISTINCT FROM 'revise_existing' OR batch.status<>'processing'
     OR batch.workspace_id IS DISTINCT FROM NEW.workspace_id OR batch.data_source_id IS DISTINCT FROM NEW.data_source_id
     OR root.workspace_id IS DISTINCT FROM NEW.workspace_id OR root.data_source_id IS DISTINCT FROM NEW.data_source_id
+    OR root.source_system IS DISTINCT FROM NEW.source_system OR root.provider_record_id IS DISTINCT FROM NEW.provider_record_id
     OR root.canonical_mention_id IS DISTINCT FROM root.id
     OR NEW.previous_content IS DISTINCT FROM signal_mention_revision_snapshot_v1(root)
     OR NEW.previous_digest IS DISTINCT FROM signal_mention_revision_digest_v1(NEW.previous_content)
@@ -137,7 +139,7 @@ BEGIN
    JOIN mentions m ON m.id=p.mention_id
    WHERE ROW(m.text_raw,m.text_clean,m.title,m.content_type) IS DISTINCT FROM
      ROW(p.content->>'text_raw',p.content->>'text_clean',p.content->>'title',p.content->>'content_type')
-   AND (m.data_source_id<>batch.data_source_id OR m.provider_record_id IS DISTINCT FROM p.content->>'provider_record_id'
+   AND (m.data_source_id<>batch.data_source_id OR m.source_system IS DISTINCT FROM p.content->>'source_system' OR m.provider_record_id IS DISTINCT FROM p.content->>'provider_record_id'
      OR EXISTS(SELECT 1 FROM signal_mention_import_memberships x WHERE x.mention_id=m.id AND x.data_source_id<>batch.data_source_id)
      OR EXISTS(SELECT 1 FROM signal_provider_mention_observations o WHERE o.mention_id=m.id
        AND (o.data_source_id<>batch.data_source_id OR o.provider_record_key_hash<>
@@ -147,9 +149,9 @@ BEGIN
        AND o.provider_record_key_hash='sha256:'||encode(digest(m.provider_record_id,'sha256'),'hex')))) THEN
   RAISE EXCEPTION 'content_revision_identity_ambiguous' USING ERRCODE='23514';
  END IF;
- INSERT INTO signal_mention_content_revisions(workspace_id,data_source_id,import_batch_id,mention_id,
+ INSERT INTO signal_mention_content_revisions(workspace_id,data_source_id,import_batch_id,mention_id,source_system,provider_record_id,
    previous_content,next_content,previous_digest,next_digest)
- SELECT batch.workspace_id,batch.data_source_id,batch.id,m.id,
+ SELECT batch.workspace_id,batch.data_source_id,batch.id,m.id,m.source_system,m.provider_record_id,
    signal_mention_revision_snapshot_v1(m),signal_mention_revision_snapshot_v1(n),
    signal_mention_revision_digest_v1(signal_mention_revision_snapshot_v1(m)),
    signal_mention_revision_digest_v1(signal_mention_revision_snapshot_v1(n))
@@ -203,7 +205,9 @@ BEGIN
  PERFORM m.id FROM mentions m JOIN signal_mention_content_revisions r ON r.mention_id=m.id
   WHERE r.import_batch_id=batch.id ORDER BY m.id FOR UPDATE OF m;
  IF EXISTS(SELECT 1 FROM signal_mention_content_revisions r JOIN mentions m ON m.id=r.mention_id
-   WHERE r.import_batch_id=batch.id AND (r.previous_digest<>signal_mention_revision_digest_v1(signal_mention_revision_snapshot_v1(m))
+   WHERE r.import_batch_id=batch.id AND (m.workspace_id<>r.workspace_id OR m.data_source_id<>r.data_source_id
+     OR m.source_system<>r.source_system OR m.provider_record_id<>r.provider_record_id OR m.canonical_mention_id<>m.id
+     OR r.previous_digest<>signal_mention_revision_digest_v1(signal_mention_revision_snapshot_v1(m))
      OR EXISTS(SELECT 1 FROM signal_mention_import_memberships x WHERE x.mention_id=m.id AND x.data_source_id<>batch.data_source_id)
      OR EXISTS(SELECT 1 FROM signal_provider_mention_observations o WHERE o.mention_id=m.id AND
        (o.data_source_id<>batch.data_source_id OR o.provider_record_key_hash<>'sha256:'||encode(digest(m.provider_record_id,'sha256'),'hex')))
