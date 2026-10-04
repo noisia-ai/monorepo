@@ -1,5 +1,6 @@
 /** Opt-in on the existing private MFP corpus. No DDL, providers or durable data changes. */
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
 import {readFile,writeFile} from "node:fs/promises";
 import {main,openDatabase} from "./guard.mjs";
 import {loadMentionFacetBrowserV1,overrideMentionFacetsBatchV1,loadFacetEntityContextV1,
@@ -51,6 +52,7 @@ await main(async()=>{
     (SELECT count(*)::int FROM signal_competitor_lifecycle_events WHERE workspace_id=$1) lifecycle_events,
     (SELECT count(*)::int FROM mentions WHERE workspace_id=$1) mentions,
     (SELECT md5(COALESCE(jsonb_agg(to_jsonb(u) ORDER BY u.id)::text,'')) FROM signal_licensing_policy_usages u WHERE workspace_id=$1) rights,
+    (SELECT md5(COALESCE(jsonb_agg(to_jsonb(p) ORDER BY p.id)::text,'')) FROM signal_licensing_policies p WHERE workspace_id=$1) licenses,
     (SELECT md5(COALESCE(brand_seed_handles::text,'')) FROM brands WHERE id=$2) aliases,
     (SELECT md5(COALESCE(jsonb_agg(to_jsonb(c) ORDER BY c.id)::text,'')) FROM competitors c WHERE brand_id=$2) competitors`,
     [identity.workspace_id,identity.brand_id])).rows[0];
@@ -105,7 +107,23 @@ await main(async()=>{
     assert.equal(repaired.items[0]!.relevance,"unrelated");assert.equal(repaired.items[0]!.facets?.voice.value,"institution");
     await client.query("ROLLBACK TO SAVEPOINT retire_entity");await client.query("RELEASE SAVEPOINT retire_entity");
     reportPhase("revoked_text_rights");
-    await client.query("UPDATE signal_licensing_policy_usages SET decision='prohibited' WHERE workspace_id=$1 AND usage_purpose='client-text-or-excerpt'",[identity.workspace_id]);
+    const {ensureSignalLicensingPolicyDraftV1,activateSignalDataGovernanceObjectV1}=await import("../../apps/studio/src/lib/data-os/signal-data-governance");
+    const actor={id:identity.internal_user_id,userType:"noisia_internal",organizationId:null};
+    const hash=(value:string)=>`sha256:${createHash("sha256").update(value).digest("hex")}`;
+    const licenses=(await client.query(`SELECT p.organization_id,p.policy_key,
+      (SELECT max(v.policy_version)+1 FROM signal_licensing_policies v WHERE v.workspace_id=p.workspace_id AND v.policy_key=p.policy_key) next_version
+      FROM signal_licensing_policies p WHERE p.workspace_id=$1 AND p.status='active'`,[identity.workspace_id])).rows;
+    assert.ok(licenses.length>0,"fixture_active_license_required");
+    for(const license of licenses){
+      // Active usages are immutable. Activate a denied successor through the real
+      // writer, retiring the bound predecessor and retaining its audit history.
+      const draft=await ensureSignalLicensingPolicyDraftV1({queryable:client,organizationId:license.organization_id,actor,
+        definition:{workspace_id:identity.workspace_id,policy_key:license.policy_key,policy_version:license.next_version,
+          approval_evidence_hash:hash("facet-ui-rights-rollback"),usages:[{usage_purpose:"client-text-or-excerpt",decision:"prohibited"}]},
+        idempotencyKey:hash(`facet-ui-rights-draft:${license.policy_key}`)});
+      await activateSignalDataGovernanceObjectV1({queryable:client,workspaceId:identity.workspace_id,actor,
+        objectKind:"licensing-policy",objectId:draft.policy_id,idempotencyKey:hash(`facet-ui-rights-activate:${license.policy_key}`)});
+    }
     const withheld=await loadMentionFacetBrowserV1({...access,limit:3});assert.equal(withheld.items.length,0);assert.equal(withheld.distributions.length,0);
     reportPhase("rollback");
     await client.query("ROLLBACK");transaction=false;
