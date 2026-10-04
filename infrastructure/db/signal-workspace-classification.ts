@@ -396,7 +396,7 @@ async function pageCorrections(client: PoolClient, run: Run, items: SignalWorksp
 /** A contiguous metadata/correction page. No cursor is advanced until commitPage. */
 export async function readSignalWorkspaceClassificationPageV1(args: {database: SignalWorkspaceClassificationDatabaseV1;
   lease: SignalWorkspaceClassificationLeaseV1; limit?: number}): Promise<SignalWorkspaceClassificationPageV1> {
-  const limit=limitValue(args.limit,128);
+  const limit=limitValue(args.limit ?? 128,200);
   return tx(args.database,async client=>{
     const run=await requireLease(client,args.lease),rows=await roots(client,run,limit+1);
     const candidates=rows.slice(0,limit),corrections=await pageCorrections(client,run,candidates);
@@ -421,8 +421,8 @@ export async function readSignalWorkspaceClassificationPageV1(args: {database: S
 export async function readSignalWorkspaceClassificationChunksPageV1(args: {database: SignalWorkspaceClassificationDatabaseV1;
   lease: SignalWorkspaceClassificationLeaseV1; root_ids: string[]; after: SignalWorkspaceClassificationChunksCursorV1|null;
   limit?: number}): Promise<SignalWorkspaceClassificationChunksPageV1> {
-  const limit=limitValue(args.limit,128);
-  if (!args.root_ids.length||args.root_ids.length>128||args.root_ids.some((id,index)=>
+  const limit=limitValue(args.limit ?? 128,200);
+  if (!args.root_ids.length||args.root_ids.length>200||args.root_ids.some((id,index)=>
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(id)||index>0&&id<=args.root_ids[index-1]!))
     return fail("workspace_classification_root_sequence_invalid",422);
   return tx(args.database,async client=>{
@@ -531,7 +531,7 @@ export async function commitSignalWorkspaceClassificationRootV1(args:{database:S
  * still passes the existing per-row authority/evidence triggers. */
 export async function commitSignalWorkspaceClassificationPageV1(args:{database:SignalWorkspaceClassificationDatabaseV1;
   lease:SignalWorkspaceClassificationLeaseV1;outcomes:SignalWorkspaceClassificationOutcomeV1[]}):Promise<SignalWorkspaceClassificationLeaseV1> {
-  if (!args.outcomes.length||args.outcomes.length>128) return fail("workspace_classification_page_invalid",422);
+  if (!args.outcomes.length||args.outcomes.length>200) return fail("workspace_classification_page_invalid",422);
   if (Buffer.byteLength(JSON.stringify(args.outcomes))>classificationPageBytes) return fail("workspace_classification_page_capacity_exceeded",422);
   return tx(args.database,async client=>{
     const run=await requireLease(client,args.lease,true),expected=await roots(client,run,args.outcomes.length);
@@ -689,6 +689,7 @@ export async function loadSignalWorkspaceClassificationStatusV1(args:{database:S
       (generation.status='ready' AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item
        WHERE item.generation_id=generation.id AND item.resolution_state='error')) complete,
       (generation.input_revision=state.input_revision AND (generation.policy_valid_until IS NULL OR generation.policy_valid_until>now())
+       AND (generation.input_snapshot->'source_projection' IS NULL OR signal_workspace_projection_source_current_v1(generation))
        AND NOT EXISTS(SELECT 1 FROM signal_classification_assignments assignment WHERE assignment.generation_id=generation.id
         AND NOT signal_workspace_classification_assignment_current_v1(assignment,generation))) sources_current
      FROM signal_topic_catalog_executions execution JOIN signal_classification_generations generation ON generation.id=execution.generation_id

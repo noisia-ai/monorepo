@@ -279,7 +279,7 @@ test("changed checkpoint identity or actor authority prevents completion", async
 });
 
 test("invalid page bounds and mismatched engine identities cannot enter a store read", async () => {
-  for (const option of [{root_page_size:129},{chunk_page_size:129},{page_bytes:WORKSPACE_PROJECTION_PAGE_BYTES_V1+1},
+  for (const option of [{root_page_size:201},{chunk_page_size:201},{page_bytes:WORKSPACE_PROJECTION_PAGE_BYTES_V1+1},
     {root_page_size:0},{chunk_page_size:NaN},{page_bytes:1.5}]) {
     const f = fixture([1]); await assert.rejects(f.execute(option), /workspace_classification_page_size_invalid/);
     assert.deepEqual(f.rootRequests, []); assert.deepEqual(f.commits, []);
@@ -287,4 +287,18 @@ test("invalid page bounds and mismatched engine identities cannot enter a store 
   const f = fixture([1]); await assert.rejects(f.execute({engine:{ ...f.engine, engine_artifact_digest:sha("different") }}),
     /workspace_classification_engine_identity_mismatch/);
   assert.deepEqual(f.rootRequests, []);
+});
+
+
+test("MFP 200-root pages commit bounded prefixes while legacy retains128",async()=>{
+ const f=fixture(Array(405).fill(1));
+ await f.execute({root_page_size:200,chunk_page_size:200});
+ assert.deepEqual(f.commits.map(page=>page.length),[200,200,5]);
+ assert.deepEqual(f.rootRequests.map(row=>row.limit),[200,200,200]);
+ assert.equal(f.writes.size,405);
+ const bounded=fixture(Array(201).fill(1));
+ const bytes=Buffer.byteLength(JSON.stringify(bounded.outcome(bounded.inputs[0]!.root)))+4;
+ await bounded.execute({root_page_size:200,chunk_page_size:200,page_bytes:bytes});
+ assert.equal(bounded.writes.size,201);
+ assert.ok(bounded.commits.every(page=>page.length===1));
 });

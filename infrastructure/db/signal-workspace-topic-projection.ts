@@ -1,3 +1,4 @@
+import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import type {PoolClient} from 'pg';
 import {signalWorkspaceEmbeddingDigestV1 as digest,type SignalTopicDefinitionV1,type SignalWorkspaceClassificationIdentityV1} from '@noisia/query-engine';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from './signal-workspace-capabilities';
@@ -184,6 +185,7 @@ export async function loadSignalWorkspaceTopicProjectionStatusWithQueryableV1(ar
   try{current=await loadSignalWorkspaceClassificationInputV1({...args,taxonomy_profile_id:row.taxonomy_profile_id,source_engine_execution_id:row.source_engine_execution_id});}catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
    &&(!(error instanceof SignalWorkspaceClassificationError)||error.code!=='workspace_classification_catalog_unavailable'))throw error;}
   views.push({...row,is_current:Boolean(source_current&&current
+   &&await signalDiscoveryProjectionContextCurrentV1(args.queryable as Pick<PoolClient,"query">,args.workspace_id,row.source_engine_execution_id)
    &&current.catalog_digest===identity.catalog_digest&&current.compiler_digest===identity.compiler_digest
    &&current.context_digest===identity.context_digest&&current.embedding_config_digest===identity.embedding_config_digest&&current.correction_digest===correction_digest)});
  }

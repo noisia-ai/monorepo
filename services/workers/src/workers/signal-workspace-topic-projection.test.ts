@@ -334,7 +334,7 @@ test("MFP sealed subset projects all corpus roots, with no inheritance outside t
     model_version_id:null,labeling_function_version_id:null,approval_policy_id:null,decided_by_user_id:id(888),correction_operation_id:id(889),
     score:null,evidence_digest:sha("human evidence"),lineage_digest:sha("human lineage")};
    f.corrections([correction]);await run(f.job,f.options);
-   assert.equal(f.persisted.size,2);assert.deepEqual(f.chunkReads,[128,6]);
+   assert.equal(f.persisted.size,2);assert.deepEqual(f.chunkReads,[134]);
    const outside=f.persisted.get(f.roots[1]!.root_id)!;
    assert.equal(outside.reason_code,"computed_cluster_outside_discovery_population");
    assert.equal(outside.coverage.processed_chunks,1);assert.deepEqual(outside.decisions,[correction]);

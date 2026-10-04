@@ -292,7 +292,8 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
     // Root/chunk stores renew the lease themselves. A concurrent preparation
     // heartbeat must not race an atomic root commit with its preceding cursor.
     clearInterval(timer); await heartbeatPending;
-    return await projectWorkspaceClassificationPagesV1({ job, database, lease: activeLease, stores: classification, engine: {
+    return await projectWorkspaceClassificationPagesV1({ job, database, lease: activeLease, stores: classification,
+      root_page_size: selectedRoots ? 200 : undefined, chunk_page_size: selectedRoots ? 200 : undefined, engine: {
       ...activeLease.identity,
       classifyRoot: async ({ identity, root, chunks }) => {
         const { membership, processed, outside } = await readMemberships(root, chunks);

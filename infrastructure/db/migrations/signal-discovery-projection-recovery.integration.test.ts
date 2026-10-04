@@ -31,11 +31,14 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
     AND p.input_snapshot->'source_projection'->>'contract_version'='workspace-topic-projection-v1'
     AND jsonb_typeof(e.input_snapshot->'discovery_population')='object' ORDER BY p.created_at DESC LIMIT 1`,[identity.workspace_id])).rows[0];
   assert.ok(owner,'requires an actual failed native projection; never creates or repeats fit/provider work');
-  let serial=0;const stack:string[]=[];
+  let serial=0;const stack:string[]=[];let injectAssignmentDrift:(()=>Promise<void>)|null=null;
   const query=async(sql:string,values?:unknown[])=>{
    if(sql.startsWith('BEGIN')){const name=`projection_${++serial}`;stack.push(name);return raw.query(`SAVEPOINT ${name}`);}
    if(sql==='COMMIT')return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
    if(sql==='ROLLBACK'){const name=stack.pop()!;await raw.query(`ROLLBACK TO SAVEPOINT ${name}`);return raw.query(`RELEASE SAVEPOINT ${name}`);}
+   if(sql.startsWith('INSERT INTO signal_classification_assignments')&&injectAssignmentDrift){
+    const inject=injectAssignmentDrift;injectAssignmentDrift=null;await inject();
+   }
    return raw.query(sql,values);
   };
   const client=Object.assign(Object.create(raw),{query,release(){}});
@@ -80,7 +83,7 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
     request=await projection.requestSignalWorkspaceTopicProjectionV1({database,workspace_id:identity.workspace_id,actor_user_id:owner.actor_user_id,
      engine_execution_id:owner.engine_id,idempotency_key:randomUUID()});
    }
-   let checked=false;const pageDurations:number[]=[];const scenarioStarted=Date.now();
+   let checked=false;const pageDurations:number[]=[],pageSizes:number[]=[];const scenarioStarted=Date.now();
    await signalWorkspaceTopicProjectionJobV1({id:request.worker_job_id,data:{execution_id:request.execution_id},updateProgress:async()=>{}},
     {database,storage:{...storage,put:async()=>{throw new Error('projection must never upload');}},stores:{...stores,
      commitPage:async args=>{
@@ -88,9 +91,17 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
        await makeUnrelated();
        assert.equal((await raw.query('SELECT signal_workspace_projection_source_current_v1(g) current FROM signal_classification_generations g WHERE id=$1',[request.generation_id])).rows[0].current,false);
        await assert.rejects(classification.commitSignalWorkspaceClassificationPageV1(args),/inputs_changed/);
-      }finally{await raw.query('ROLLBACK TO SAVEPOINT relevance_change');await raw.query('RELEASE SAVEPOINT relevance_change');}}
+      }finally{await raw.query('ROLLBACK TO SAVEPOINT relevance_change');await raw.query('RELEASE SAVEPOINT relevance_change');}
+       // Change relevance after the application/page fence, immediately before
+       // INSERT: the statement trigger independently rejects the whole write.
+       await raw.query('SAVEPOINT assignment_drift');try{
+        injectAssignmentDrift=makeUnrelated;
+        await assert.rejects(classification.commitSignalWorkspaceClassificationPageV1(args),/workspace_projection_source_invalid/);
+        assert.equal(injectAssignmentDrift,null,'fixture reached the real assignment INSERT');
+       }finally{injectAssignmentDrift=null;await raw.query('ROLLBACK TO SAVEPOINT assignment_drift');await raw.query('RELEASE SAVEPOINT assignment_drift');}
+      }
       const started=Date.now();const committed=await classification.commitSignalWorkspaceClassificationPageV1(args);
-      pageDurations.push(Date.now()-started);return committed;
+      pageDurations.push(Date.now()-started);pageSizes.push(args.outcomes.length);return committed;
      }}});
    const completed=(await raw.query('SELECT status,denominator,processed_roots,processed_chunks::int FROM signal_topic_catalog_executions WHERE id=$1',[request.execution_id])).rows[0];
    assert.equal(completed.status,'ready');assert.equal(completed.denominator,counts.roots);assert.equal(completed.processed_roots,counts.roots);assert.equal(completed.processed_chunks,counts.chunks);
@@ -99,6 +110,9 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
    assert.equal(new Set(outside.map(r=>r.canonical_root_id)).size,counts.roots-selected.size);
    assert.ok(outside.every(r=>r.reason_code==='computed_cluster_outside_discovery_population'&&(!r.membership_basis||r.resolution_method==='human'&&r.membership_basis==='decision')));
    if(human)assert.ok(outside.some(r=>r.canonical_root_id===humanRoot&&r.resolution_method==='human'));
+   await raw.query('SAVEPOINT immutable_assignment');
+   await assert.rejects(raw.query('UPDATE signal_classification_assignments SET score=score WHERE generation_id=$1',[request.generation_id]),/append-only/);
+   await raw.query('ROLLBACK TO SAVEPOINT immutable_assignment');await raw.query('RELEASE SAVEPOINT immutable_assignment');
    const servingStarted=Date.now();
    assert.equal((await raw.query('SELECT signal_workspace_projection_source_current_v1(g) current FROM signal_classification_generations g WHERE id=$1',[request.generation_id])).rows[0].current,true);
    const servingMilliseconds=Date.now()-servingStarted;
@@ -106,7 +120,7 @@ test('real discovery artifacts recover full-corpus projection, fence post-claim 
    assert.equal((await raw.query('SELECT signal_workspace_projection_source_current_v1(g) current FROM signal_classification_generations g WHERE id=$1',[request.generation_id])).rows[0].current,false);
    await raw.query('ROLLBACK TO SAVEPOINT serving_change');await raw.query('RELEASE SAVEPOINT serving_change');
    assert.deepEqual((await raw.query("SELECT count(*)::int n,COALESCE(sum(settled_micro_usd),0)::text cost FROM engine_cost_events WHERE workspace_id=$1",[identity.workspace_id])).rows[0],before);
-   console.info(JSON.stringify({synthetic_human:human,eligible_roots:counts.roots,sealed_roots:selected.size,outside_roots:counts.roots-selected.size,scenario_ms:Date.now()-scenarioStarted,page_ms:pageDurations,serving_source_ms:servingMilliseconds}));
+   console.info(JSON.stringify({synthetic_human:human,eligible_roots:counts.roots,sealed_roots:selected.size,outside_roots:counts.roots-selected.size,scenario_ms:Date.now()-scenarioStarted,page_ms:pageDurations,page_sizes:pageSizes,serving_source_ms:servingMilliseconds}));
    await raw.query('SET CONSTRAINTS ALL IMMEDIATE');await raw.query('ROLLBACK TO SAVEPOINT scenario');await raw.query('RELEASE SAVEPOINT scenario');
   }
  }finally{await raw.query('ROLLBACK');raw.release();await pool.end();}
