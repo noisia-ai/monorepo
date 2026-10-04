@@ -42,9 +42,10 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   const viewer = ["client_viewer", "agency_insights"].includes(authority.primary_role);
   const hasGrant = ["read", "comment", "admin"].includes(authority.brand_access_level ?? "");
   const canEdit = administrator && ["comment", "admin"].includes(authority.brand_access_level ?? "");
+  const canManageTopics = canEdit && authority.primary_role === "client_admin"
+    && authority.organization_status === "active" && authority.brand_same_organization === true;
   return { ...denied, can_view: (administrator || viewer) && hasGrant,
-    can_edit_topics: canEdit && authority.primary_role === "client_admin"
-      && authority.organization_status === "active" && authority.brand_same_organization === true,
+    can_edit_topics: canManageTopics, can_adopt_topics: canManageTopics,
     can_import_mentions: canEdit, can_select_signal: canEdit,
     can_request_processing: authority.primary_role === "client_admin" && authority.brand_access_level === "admin"
       && authority.organization_status === "active" && authority.brand_same_organization === true };

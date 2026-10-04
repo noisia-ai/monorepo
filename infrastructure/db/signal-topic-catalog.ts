@@ -793,6 +793,11 @@ export async function loadAdoptionCandidate(args: {
       positive_examples: [] as string[], negative_examples: [] as string[], candidate_digest: candidate.revision_digest,
       origin: "workspace_discovery" as const, scope: args.input.scope };
   }
+  // Client adoption is limited to the governed workspace discovery path above.
+  // Historical evidence evaluation remains internal and must never receive a fabricated role.
+  const actor = (await args.pool.query<{ user_type: string }>(
+    "SELECT user_type FROM users WHERE id=$1::uuid AND status='active'", [args.actor_user_id])).rows[0];
+  if (actor?.user_type !== "noisia_internal") throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);
   const legacyProfileId = args.input.run_key.startsWith("taxonomy-profile:")
     ? args.input.run_key.slice("taxonomy-profile:".length)
     : null;
@@ -826,7 +831,7 @@ export async function loadAdoptionCandidate(args: {
   const detail = await loadSignalTopicEvaluationV2CandidateDetail({
     queryable: args.pool,
     workspace_id: args.workspace_id,
-    actor: { id: args.actor_user_id, user_type: "noisia_internal" },
+    actor: { id: args.actor_user_id, user_type: actor.user_type },
     run_key: args.input.run_key,
     candidate_key: args.input.candidate_key
   });

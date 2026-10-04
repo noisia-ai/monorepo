@@ -31,3 +31,10 @@ test("discovery adoption rejects cross-workspace/missing candidates and revision
  const f=fixture(); await assert.rejects(loadAdoptionCandidate({...f,input:{...f.input,expected_revision_digest:undefined}}),/topic_candidate_request_invalid/u);
  assert.equal(f.queries.length,0);
 });
+
+
+test("client discovery permission cannot enter the historical internal evidence adapter",async()=>{
+ const f=fixture();const pool={async query(sql:string){assert.match(sql,/SELECT user_type FROM users/u);return {rows:[{user_type:"client"}]};}} as unknown as Pool;
+ for(const run_key of ["historical-evidence",`taxonomy-profile:${revision}`])
+  await assert.rejects(loadAdoptionCandidate({...f,pool,input:{...f.input,run_key}}),/topic_catalog_forbidden/u);
+});

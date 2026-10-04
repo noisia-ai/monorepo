@@ -433,7 +433,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       ||typeof c.budget_timezone!=='string'||c.budget_timezone.length>100||Buffer.byteLength(JSON.stringify(c),'utf8')>16384)return fail('workspace_engine_interpretation_config_invalid',422);
   }
   const discoveryEnabled=process.env.NOISIA_MENTION_FACETS_ENABLED==='true';
-  if(discoveryEnabled&&args.incremental_options)return fail('workspace_engine_discovery_incremental_not_ready',422);
+  if(discoveryEnabled&&(args.incremental_options||args.parent_execution_id))return fail('workspace_engine_discovery_incremental_not_ready',422);
   if(!discoveryEnabled&&(args.discovery_sample_cap!=null||args.discovery_sample_seed!==undefined))
     return fail('workspace_engine_discovery_disabled',422);
   let discoveryOptions;
@@ -508,7 +508,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,embedding_config_digest:embedded.profile.config_digest,
       context_digest:input.context_digest,catalog_digest:input.catalog_digest,engine_config:args.engine_config,guides:input.guides,
       ...args.incremental_options,parent_execution_id:numericParentId}):undefined;
-    const parentId=numericDescriptor?numericDescriptor.parent.execution_id:args.parent_execution_id===undefined?(await client.query<{id:string}>(`SELECT prior.id FROM signal_topic_catalog_executions prior
+    const parentId=discoveryEnabled?null:numericDescriptor?numericDescriptor.parent.execution_id:args.parent_execution_id===undefined?(await client.query<{id:string}>(`SELECT prior.id FROM signal_topic_catalog_executions prior
       WHERE prior.workspace_id=$1::uuid AND prior.input_contract='workspace-topic-engine-v1' AND prior.status='ready'
        AND prior.embedding_config_digest=$2 AND prior.input_snapshot->>'context_digest'=$3
        AND prior.result_summary->>'model_version_id' IS NOT NULL
