@@ -1,15 +1,15 @@
 /** Guarded MFP operator wrapper. The product API owns policy authority and transition. */
-import { readFile } from "node:fs/promises";
 import type { Pool } from "pg";
 import { switchMfpMentionFacetsProviderV1 } from "../../infrastructure/db/signal-labeling-policy-action-switch";
-import { assertDisposableFixture, main, openDatabase } from "../dev-corpus/guard.mjs";
+import { main, openDatabase } from "../dev-corpus/guard.mjs";
+import { loadMfpEvalIdentity } from "../eval/fixture-identity";
 
 void main(async () => {
   const args = process.argv.slice(2);
   if (args.some(arg => arg !== "--execute" && !/^--provider=(anthropic|typesafe)$/u.test(arg))
     || args.filter(arg => arg.startsWith("--provider=")).length > 1) throw new Error("mfp_jev_policy_arguments_invalid");
   const provider = (args.find(arg => arg.startsWith("--provider="))?.slice(11) ?? "typesafe") as "anthropic" | "typesafe";
-  const identity = assertDisposableFixture(JSON.parse(await readFile(".data/dev-corpus/identity.json", "utf8")), "jev-policy");
+  const identity = await loadMfpEvalIdentity();
   const pool = await openDatabase();
   try {
     const receipt = await switchMfpMentionFacetsProviderV1({ database: pool as Pick<Pool, "connect">,

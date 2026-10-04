@@ -26,6 +26,7 @@ test("MFP provider switch changes only mention_facets and preserves every other 
 
 test("MFP switch fixture key is bound to the disposable organization slug", () => {
   assert.doesNotThrow(() => assertMfpJevPolicyFixtureV1("jev-policy-abc123", "mfp-jev-policy-abc123"));
+  assert.doesNotThrow(() => assertMfpJevPolicyFixtureV1("rental-corpus-voyage-v1", "mfp-rental-corpus-voyage-v1"));
   assert.throws(() => assertMfpJevPolicyFixtureV1("voyage-real", "mfp-voyage-real"), /mfp_jev_policy_fixture_required/u);
   assert.throws(() => assertMfpJevPolicyFixtureV1("jev-policy-abc123", "customer-real"), /mfp_jev_policy_fixture_required/u);
 });

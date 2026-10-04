@@ -11,7 +11,7 @@ import {
   createConceptMembershipRuntimeStoreV1,
 } from "../../services/workers/src/workers/signal-concept-membership-batch";
 import { createAnthropicMessageBatchesClient } from "../../services/workers/src/providers/anthropic-message-batches";
-await main(async () => {
+void main(async () => {
   if (
     !process.argv.includes("--real") ||
     process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED !== "true" ||

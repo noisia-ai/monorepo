@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 
 const fixtureKeyPattern = /^jev-policy-[a-z0-9]{6,}$/u;
+const ws4FixtureKey = "rental-corpus-voyage-v1";
 const providers = { anthropic: "claude-sonnet-5-5", typesafe: "jev-1.13.0" } as const;
 
 type PolicyActionSnapshot = { action: string; kind: string; provider: string | null; model: string | null;
@@ -33,7 +34,8 @@ export function assertOnlyMentionFacetsChangedV1(before: PolicyActionSnapshot[],
 }
 
 export function assertMfpJevPolicyFixtureV1(fixture_key: string, organization_slug: string) {
-  if (!fixtureKeyPattern.test(fixture_key) || organization_slug !== `mfp-${fixture_key}`)
+  if (!(fixtureKeyPattern.test(fixture_key) || fixture_key === ws4FixtureKey)
+    || organization_slug !== `mfp-${fixture_key}`)
     throw new Error("mfp_jev_policy_fixture_required");
 }
 

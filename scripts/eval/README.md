@@ -102,7 +102,8 @@ resultante coincide antes de ejecutar jueces.
 
 `rights-check.ts` es la comprobación previa a JEV: transacción de sólo lectura,
 binding efectivo import/source, retención y licencia `llm-processing` vigentes,
-una fuente y un lote del fixture `voyage-real`, cero trabajo o facturación en vuelo.
+una fuente y las dos cargas completadas del fixture `voyage-real` (excluye la
+carga fallida), cero trabajo o facturación en vuelo.
 `jev-judge.ts --real` repite ese gate antes de enviar texto y conserva solicitudes,
 respuestas crudas y resultados en un journal privado de creación exclusiva. Un
 intento sin respuesta durable queda `pending` y nunca se reenvía a ciegas.
