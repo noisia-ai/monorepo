@@ -81,7 +81,7 @@ await main(async()=>{
    await raw.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[current.id]);
    await raw.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy]);
    const preflight=await loadSignalWorkspaceEnginePreflightV1(access);assert.ok(preflight.embedding_run_id);
-   const request={...access,embedding_run_id:preflight.embedding_run_id,idempotency_key:randomUUID(),engine_config:parent.config,
+   const request:Parameters<typeof beginSignalWorkspaceIncrementalEngineV1>[0]={...access,embedding_run_id:preflight.embedding_run_id,idempotency_key:randomUUID(),engine_config:parent.config,
     expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,
     parent_execution_id:parent.id,close_requested:true};
    tamper=true;try{await assert.rejects(beginSignalWorkspaceIncrementalEngineV1({...request,idempotency_key:randomUUID()}),/discovery residual is stale/);}
