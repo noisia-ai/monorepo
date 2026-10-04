@@ -1,0 +1,12 @@
+{
+  "environment_id": "5bad359d-cfa4-4e8f-aa41-98e6f075375a",
+  "environment_name": "dev-test",
+  "database_service_id": "8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0",
+  "database_host": "pgvector.railway.internal",
+  "database_name": "noisia_mfp",
+  "database_user": "noisia_mfp",
+  "system_identifier": "7683766906362679330",
+  "runner_service_id": "a5706eaa-7d67-4d63-8e7e-2b9fc7424508",
+  "redis_service_id": "4cef4bb5-cf97-476c-952c-af575b0399bf",
+  "redis_host": "mfp-redis.railway.internal"
+}

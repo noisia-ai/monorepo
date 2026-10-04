@@ -49,7 +49,9 @@
     "db:seed": "corepack pnpm --filter @noisia/db db:seed",
     "dev:studio": "corepack pnpm --filter @noisia/studio dev",
     "dev:website": "corepack pnpm --filter @noisia/website dev",
-    "dev:workers": "corepack pnpm --filter @noisia/workers dev"
+    "dev:workers": "corepack pnpm --filter @noisia/workers dev",
+    "dev:corpus:up": "bash scripts/dev-corpus/up.sh",
+    "dev:corpus:check": "node --test scripts/dev-corpus/*.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

@@ -47,13 +47,13 @@ test("provisioning failure is sanitized and cannot turn committed brand creation
 });
 
 test("POST brands provisions after creation commit, preserves 201/replay and never takes policy fields from the browser", async () => {
-  const route = await readFile(new URL("../../app/api/brands/route.ts", import.meta.url), "utf8");
+  const route = await readFile(new URL("./brand-creation-service.ts", import.meta.url), "utf8");
   const boundary = route.indexOf("const processingPolicy = await provisionBrandContextPolicyAfterCreationV1(");
   assert.ok(boundary > route.indexOf("return { brand: createdBrand, signalWorkspace, replayed: false };"));
   const hook = route.slice(boundary, route.indexOf("const preparation =", boundary));
   assert.match(hook, /brandId: created\.brand\.id/u);
   assert.match(hook, /workspaceId: created\.signalWorkspace\.id/u);
-  assert.match(hook, /actor: session\.appUser/u);
+  assert.match(hook, /actor: actor/u);
   assert.doesNotMatch(hook, /rawInput|parsed\.data|replayed|env|cap|policy_version/u);
   assert.match(route.slice(boundary), /brand_context_policy: processingPolicy/u);
   assert.match(route.slice(boundary), /replayed: created\.replayed[\s\S]{0,50}status: 201/u);

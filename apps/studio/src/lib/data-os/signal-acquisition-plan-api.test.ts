@@ -57,7 +57,7 @@ test("Admin acquisition UI uses plan slots and typed import routes end to end",a
     "src/components/admin/AcquisitionPlanManager.tsx"),"utf8");
   const service=await readFile(join(process.cwd(),
     "src/lib/data-os/signal-acquisition-plan.ts"),"utf8");
-  const brandRoute=await readFile(join(process.cwd(),"src/app/api/brands/route.ts"),"utf8");
+  const brandRoute=await readFile(join(process.cwd(),"src/lib/data-os/brand-creation-service.ts"),"utf8");
   const page=await readFile(join(process.cwd(),
     "src/app/studio/brands/[id]/data/page.tsx"),"utf8");
   const imports=await readFile(join(root,"imports/route.ts"),"utf8");
