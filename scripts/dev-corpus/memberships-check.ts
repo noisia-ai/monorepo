@@ -27,6 +27,27 @@ await main(async () => {
     client = await pool.connect();
   let assertions = 0,
     sends = 0;
+  const started = Date.now();
+  let phase = "setup",
+    phaseStarted = started;
+  const enter = (next: string) => {
+    console.log(
+      JSON.stringify({
+        event: "phase",
+        phase,
+        elapsed_ms: Date.now() - phaseStarted,
+        next,
+      }),
+    );
+    phase = next;
+    phaseStarted = Date.now();
+  };
+  const sqlCode = (error: unknown) => {
+    const code = (error as { code?: unknown })?.code;
+    return typeof code === "string" && /^[A-Z0-9]{5}$/u.test(code)
+      ? code
+      : null;
+  };
   const check = (value: unknown, message: string) => {
     assert.ok(value, message);
     assertions++;
@@ -42,6 +63,8 @@ await main(async () => {
   ).rows[0].calls;
   try {
     await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout='60s'");
+    enter("migrations");
     if (
       !(
         await client.query(
@@ -72,7 +95,26 @@ await main(async () => {
         await client.query(`ROLLBACK TO SAVEPOINT ${s}`);
         return client.query(`RELEASE SAVEPOINT ${s}`);
       }
-      return client.query(sql, values);
+      const began = Date.now();
+      try {
+        const result = await client.query(sql, values);
+        const elapsed_ms = Date.now() - began;
+        if (elapsed_ms >= 1000)
+          console.log(
+            JSON.stringify({ event: "slow_query", phase, elapsed_ms }),
+          );
+        return result;
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "query_failed",
+            phase,
+            elapsed_ms: Date.now() - began,
+            sql_code: sqlCode(error),
+          }),
+        );
+        throw error;
+      }
     };
     const database = {
       query,
@@ -85,6 +127,7 @@ await main(async () => {
       workspace_id: identity.workspace_id,
       actor_user_id: identity.internal_user_id,
     };
+    enter("policy");
     await provisionSignalLabelingPolicyV1({
       ...access,
       initiator_user_id: access.actor_user_id,
@@ -93,6 +136,7 @@ await main(async () => {
       daily_cap_micro_usd: null,
       cap_micro_usd: null,
     });
+    enter("catalog");
     for (const [index, scope] of ["primary_brand", "competitor"].entries())
       await createSignalTopicStoreV1({
         pool: database,
@@ -113,6 +157,7 @@ await main(async () => {
       access.workspace_id,
     );
     check(concepts.length >= 2, "real working catalog contains both concepts");
+    enter("facet_fixture");
     const root = (
       await client.query(
         "SELECT * FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND relevance='relevant' ORDER BY root_id LIMIT 1",
@@ -227,13 +272,16 @@ await main(async () => {
       }
       throw new Error("mfp_membership_fixture_no_progress");
     };
+    enter("initial_request");
     const initial = await requestConceptMembershipsV1({
       ...access,
       idempotency_key: "mfp-membership-check-first",
       provider_available: true,
     });
     check(initial.cap_micro_usd === null, "strict cap remains absent");
+    enter("initial_batch");
     await finish(initial.run_id);
+    enter("initial_status");
     let status = await loadConceptMembershipsStatusV1(access);
     check(
       status.counts.every((r: any) => r.verdict !== "pending"),
@@ -246,6 +294,7 @@ await main(async () => {
       )
     ).rows;
     check(pairs.length >= 2, "secondary competitor is evaluated");
+    enter("replay_and_reuse");
     const callsBefore = sends;
     const replay = await requestConceptMembershipsV1({
       ...access,
@@ -263,6 +312,7 @@ await main(async () => {
     });
     await finish(reused.run_id);
     check(sends === callsBefore, "fresh run reuses every current pair");
+    enter("selection");
     const target = concepts[0]!;
     const selection = await selectConceptMembershipV1({
       ...access,
@@ -278,6 +328,7 @@ await main(async () => {
       "new selection never requires a V2 generation",
     );
     process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED = "true";
+    enter("signal_overview");
     const overview = await loadSignalWorkspaceTopicsOverviewV1({
       ...access,
       imported_fallback: true,
@@ -288,6 +339,7 @@ await main(async () => {
       ),
       "Signal contains selected concept",
     );
+    enter("signal_evidence");
     const evidence = await loadSignalWorkspaceTopicEvidenceV1({
       ...access,
       term_key: target.concept_key,
@@ -305,6 +357,7 @@ await main(async () => {
       ),
       "Signal quotes match original root offsets",
     );
+    enter("human_override");
     await overrideConceptMembershipsV1({
       ...access,
       overrides: [
@@ -329,6 +382,7 @@ await main(async () => {
         [access.workspace_id, target.concept_key],
       )
     ).rows[0].topic;
+    enter("definition_edit");
     await updateSignalTopicStoreV1({
       pool: database,
       ...access,
@@ -352,7 +406,7 @@ await main(async () => {
         [edited.run_id],
       )
     ).rows
-      .flatMap((r: {inputs: unknown[]}) => r.inputs)
+      .flatMap((r: { inputs: unknown[] }) => r.inputs)
       .flatMap((r: any) => r.evaluated_concepts);
     check(
       evaluated.length > 0 &&
@@ -368,6 +422,7 @@ await main(async () => {
       ).rows[0].source === "human",
       "human correction survives model recalculation",
     );
+    enter("preview");
     const membershipsBefore = (
       await client.query(
         "SELECT count(*)::int n FROM signal_concept_memberships",
@@ -393,6 +448,7 @@ await main(async () => {
       run_id: preview.run_id,
     });
     check(previewRead.items.length <= 30, "preview is bounded by roots");
+    enter("entity_correction");
     const beforeEntities = (
       await client.query(
         "SELECT count(*)::int n FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id<>$2 AND verdict='belongs'",
@@ -432,6 +488,7 @@ await main(async () => {
       ).rows[0].n === beforeEntities,
       "entity correction preserves other roots",
     );
+    enter("ce_fence");
     await client.query("SAVEPOINT ce_fence");
     const version = (
       await client.query(
@@ -470,6 +527,7 @@ await main(async () => {
     );
     await client.query("ROLLBACK TO SAVEPOINT ce_fence");
     // Permissions are current data, independent of paid/model authority.
+    enter("license_revocation");
     await client.query("SAVEPOINT deny_metrics");
     await client.query(
       "UPDATE signal_licensing_policies SET status='retired' WHERE workspace_id=$1 AND status='active'",
@@ -490,6 +548,7 @@ await main(async () => {
       "preview respects revoked metric rights",
     );
     await client.query("ROLLBACK TO SAVEPOINT deny_metrics");
+    enter("final_rollback");
     await client.query("ROLLBACK");
     check(
       (
@@ -507,9 +566,19 @@ await main(async () => {
         provider_calls: 0,
         actual_micro_usd: 0,
         rolled_back: true,
+        elapsed_ms: Date.now() - started,
       }),
     );
   } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "fixture_failed",
+        phase,
+        elapsed_ms: Date.now() - phaseStarted,
+        total_elapsed_ms: Date.now() - started,
+        sql_code: sqlCode(error),
+      }),
+    );
     await client.query("ROLLBACK").catch(() => undefined);
     throw error;
   } finally {
