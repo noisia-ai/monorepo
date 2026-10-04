@@ -1,0 +1,5 @@
+name = "mfp_critico"
+description = "Cambios de riesgo alto: aislamiento por workspace, Signal, permisos, importación, migraciones, reconciliación de llamadas, vigencia de fichas, división de grupos."
+developer_instructions = "Sigue docs/product/PROMPT_LOOPING/AUDIT_MFP_2026-10-04.md y el spec v1.3. Escribe primero la prueba de aceptación, haz el cambio mínimo y entrega un recibo de una página."
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"

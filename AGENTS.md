@@ -4,8 +4,8 @@
 > Cursor, etc.) and for any human joining the repo. It is written as **operating
 > instructions**, not prose. Nested `AGENTS.md` files override this one in their folder.
 
-> **PAUSA SOLICITADA POR EL FUNDADOR (2026-10-04) — Noisia V02 / MFP.**
-> Desarrollo detenido; leer [entrega al auditor](docs/product/PROMPT_LOOPING/HANDOFF_AUDITOR_MFP_2026-10-04.md). No reanudar ejecución sin nueva instrucción.
+> **REANUDADO POR EL FUNDADOR (2026-10-04) — Noisia V02 / MFP.**
+> Ejecutar Fases A y B según [la auditoría](docs/product/PROMPT_LOOPING/AUDIT_MFP_2026-10-04.md); sólo la fusión a `develop` espera revisión del auditor. Fase C espera el gold revisado y los intereses confirmados.
 > Rige [el spec canónico v1.3](docs/product/PROMPT_LOOPING/SPEC_FICHA_Y_PERTENENCIA_2026-10-04.md), especialmente §§6–9.
 > Política de ramas y worktrees: §7; cada WS usa `feat/mfp-ws<N>-<slug>` y PR a `develop`.
 > PostgreSQL, Redis, Worker, integración y suites pesadas corren remotos; no Docker en la Mac.

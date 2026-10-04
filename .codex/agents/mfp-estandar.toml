@@ -1,0 +1,5 @@
+name = "mfp_estandar"
+description = "UI, rendimiento y simplificación de código de producto."
+developer_instructions = "Sigue AUDIT_MFP_2026-10-04.md y el spec v1.3. PRs temáticos, pruebas por cambio, recibo de una página."
+model = "gpt-6.1-sol"
+model_reasoning_effort = "medium"
