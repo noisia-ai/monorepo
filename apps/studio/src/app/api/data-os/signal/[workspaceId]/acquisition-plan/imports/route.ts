@@ -79,6 +79,7 @@ export async function POST(
     if (!source) return operatorError("connector_not_found",404);
     const created = await createWorkspaceImportUploadV1({
       workspace: loaded.workspace,actor: loaded.session.appUser,access:"manual-import",sourceId: source.id,
+      contentRevisionMode: input.content_revision_mode,
       fileName: input.file_name,fileSizeBytes: input.file_size_bytes,contentType: input.content_type,
       contributedByStudyCorpusId: null,supersedesImportBatchId: null,idempotencyKey,
       acquisition: {

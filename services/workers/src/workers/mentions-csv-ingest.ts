@@ -52,6 +52,7 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
     processed_bytes: string | number;
     worker_job_id: string | null;
     supersedes_import_batch_id: string | null;
+    content_revision_mode: "append_only" | "revise_existing";
     storage_source_import_batch_id: string | null;
     storage_content_hash: string | null;
     capture_timezone: string | null;
@@ -62,7 +63,7 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
         status, record_count, included_count, excluded_count, duplicate_count,
         ingestion_phase,storage_bucket,storage_object_key,expected_file_size_bytes,
         storage_part_count,storage_part_size_bytes,processed_bytes,worker_job_id,
-        supersedes_import_batch_id,storage_source_import_batch_id,storage_content_hash,
+        supersedes_import_batch_id,content_revision_mode,storage_source_import_batch_id,storage_content_hash,
         capture_timezone,processing_metrics
       FROM import_batches
       WHERE id = $1::uuid
@@ -237,6 +238,7 @@ async function ingestWorkspaceAsyncImportJob(
     storage_part_count: number | null;storage_part_size_bytes: string | number | null;
     worker_job_id: string | null;
     supersedes_import_batch_id: string | null;
+    content_revision_mode: "append_only" | "revise_existing";
     storage_source_import_batch_id: string | null;
     storage_content_hash: string | null;
     capture_timezone: string | null;
@@ -302,6 +304,7 @@ async function ingestWorkspaceAsyncImportJob(
       ...ingestion,
       importBatchId: job.data.importBatchId,
       supersedesImportBatchId: existing.supersedes_import_batch_id,
+      contentRevisionMode: existing.content_revision_mode,
       sourceFileName: job.data.sourceFileName,
       sourceTimezone: existing.capture_timezone,
       entityLabel: job.data.entityLabel ?? null,
@@ -450,6 +453,7 @@ function openWorkspaceImportObjects(args: {
 }
 
 function classifyImportFailure(error: unknown) {
+  if (error instanceof Error && /^content_revision_[a-z_]+$/.test(error.message)) return error.message;
   if (error instanceof SentioneTimestampError) return error.code;
   if (error instanceof Error && /storage|object unavailable/iu.test(error.message)) {
     return "storage_read_failed";
@@ -463,7 +467,7 @@ function classifyImportFailure(error: unknown) {
 function importFailureDetail(error: unknown) {
   return error instanceof SentioneTimestampError
     ? { kind: error.code,recoverable: false,field: error.field ?? null }
-    : { kind: classifyImportFailure(error),recoverable: true };
+    : { kind: classifyImportFailure(error),recoverable: !classifyImportFailure(error).startsWith("content_revision_") };
 }
 
 // Legacy imports have no acquisition seal. Their explicit source declaration is

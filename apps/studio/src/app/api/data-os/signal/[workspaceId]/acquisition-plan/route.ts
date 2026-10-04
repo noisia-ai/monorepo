@@ -23,7 +23,7 @@ export async function GET(_request: Request,context: { params: Promise<{ workspa
     const result = await loadSignalAcquisitionPlanProductV1({
       workspace: loaded.workspace,actor: loaded.session.appUser,access: "manual-import"
     });
-    return Response.json(result,{ headers: privateHeaders() });
+    return Response.json({...result,content_revisions_enabled:process.env.NOISIA_MFP_ENABLED === "true"},{ headers: privateHeaders() });
   } catch { return rejected("acquisition_plan_unavailable"); }
 }
 
