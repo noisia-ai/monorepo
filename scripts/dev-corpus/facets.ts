@@ -175,6 +175,24 @@ await main(async () => {
       async cancel() {
         throw new Error("unsupported");
       },
+      async list(afterId?: string) {
+        const ids = [...responses.keys()];
+        const start = afterId ? ids.indexOf(afterId) + 1 : 0;
+        const page = ids.slice(start).map((id) => ({
+          id,
+          processing_status: "ended" as const,
+          request_counts: {
+            processing: 0,
+            succeeded: responses.get(id)!.length,
+            errored: 0,
+            canceled: 0,
+            expired: 0,
+          },
+          ended_at: new Date().toISOString(),
+          results_url: null,
+        }));
+        return { data: page, has_more: false, last_id: page.at(-1)?.id ?? null };
+      },
       async *results(batch: any) {
         for (const item of responses.get(batch.id) ?? [])
           yield { item, rawText: JSON.stringify(item) };

@@ -5,10 +5,15 @@ import { readFile } from "node:fs/promises";
 import { main, openDatabase } from "./guard.mjs";
 import { canonicalEntityContextV1, diffEntityContextV1, entityContextDigestV1 } from "../../packages/query-engine/src/signal-entity-context-v1";
 
+type CheckClient = {
+  query<Row extends Record<string, unknown> = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: Row[] }>;
+  release(): void;
+};
+
 await main(async () => {
   const identity = JSON.parse(await readFile(".data/dev-corpus/identity.json", "utf8"));
   const pool = await openDatabase();
-  const client = await pool.connect();
+  const client: CheckClient = await pool.connect();
   let assertions = 0;
   let passed = false;
   let step = "preflight";
