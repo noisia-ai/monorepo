@@ -88,7 +88,7 @@ await main(async () => {
       if (typeof sql === "string" && /^BEGIN\b/iu.test(sql)) {
         const savepoint = {
           name: `membership_${++serial}`,
-          readOnly: /\bREAD ONLY\b/iu.test(sql.split(";")[0]),
+          readOnly: /\bREAD ONLY\b/iu.test(sql.split(";")[0] ?? ""),
         };
         stack.push(savepoint);
         const result = await client.query(`SAVEPOINT ${savepoint.name}`);
