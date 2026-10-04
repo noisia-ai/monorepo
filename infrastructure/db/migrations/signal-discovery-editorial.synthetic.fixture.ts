@@ -20,6 +20,8 @@ export async function exerciseDiscoveryEditorialV1(args:{database:Pool;raw:PoolC
  assert.equal(status.status,'ready_to_prepare');assert.ok(status.quote_reference);
  const requested=await control.requestSignalTopicConsolidationV1({...access,source_execution_id,idempotency_key:randomUUID(),quote_reference:status.quote_reference});
  await raw.query('SET CONSTRAINTS ALL IMMEDIATE');await raw.query('SET CONSTRAINTS ALL DEFERRED');
+ const dispatched=await control.claimSignalTopicConsolidationDispatchV1({database,worker_id:'synthetic-discovery-editorial',limit:1});
+ assert.equal(dispatched.length,1);assert.equal(dispatched[0]!.execution_id,requested.execution_id);
  const lease=await control.claimSignalTopicConsolidationExecutionV1({database,...requested});
  assert.ok(lease&&!('completed' in lease));
  const chunk=(await raw.query(`SELECT item.root_id,asset.chunks->'chunks'->0 chunk FROM signal_topic_catalog_executions execution
@@ -54,10 +56,15 @@ export async function exerciseDiscoveryEditorialV1(args:{database:Pool;raw:PoolC
   finally{await raw.query('ROLLBACK TO SAVEPOINT editorial_negative');await raw.query('RELEASE SAVEPOINT editorial_negative');}};
  for(const [cap,daily] of [[null,null],['100000000',null],['1',null],[null,'1']] as const){
   await raw.query('SAVEPOINT editorial_scenario');
+  const previous=(await raw.query("SELECT id,budget_timezone,valid_until::text FROM signal_processing_policy_versions WHERE organization_id=$1 AND status='active'",[args.organization_id])).rows[0];
+  assert.ok(previous);
   const policyId=randomUUID();
   await raw.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-   SELECT $1,$2,COALESCE(max(version),0)+1,'draft',clock_timestamp()-interval '1 second','infinity','UTC',$3,$4
-   FROM signal_processing_policy_versions WHERE organization_id=$2`,[policyId,args.organization_id,daily,args.internal_user_id]);
+   SELECT $1,$2,COALESCE(max(version),0)+1,'draft',clock_timestamp()-interval '1 second',$5::timestamptz,$6,$3,$4
+   FROM signal_processing_policy_versions WHERE organization_id=$2`,[policyId,args.organization_id,daily,args.internal_user_id,previous.valid_until,previous.budget_timezone]);
+  await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+   SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
+   FROM signal_processing_policy_actions WHERE policy_version_id=$2 AND action<>'topic_consolidation'`,[policyId,previous.id]);
   await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
    SELECT $1,'topic_consolidation','provider','anthropic','claude-sonnet-4-6',config,signal_semantic_context_digest_json_v2(config),$2,false
    FROM (SELECT signal_topic_editorial_configuration_v2() config) configuration`,[policyId,cap]);

@@ -167,7 +167,9 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         {run.claude_cost.terminal_reserved_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("terminalAmount", { amount: money(run.claude_cost.terminal_reserved_micro_usd) })}</p> : null}
       </div> : null}
       {!hideLegacyActions && !usesIncremental && preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure && !update?.has_pending_work ? <>
-        <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
+        <p className="admin-drawer-form__hint">{preflight.cost.claude.advisory_estimate
+          ? t("estimateAdvisory", { amount: money(preflight.cost.claude.advisory_estimate.estimated_micro_usd), roots: preflight.cost.claude.advisory_estimate.roots, groups: preflight.cost.claude.advisory_estimate.assumed_groups })
+          : preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
           : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
           {status?.discovery_enabled && preflight.cost.claude.maximum_cap_micro_usd !== null ? <> {t("spendingLimit", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</> : null}

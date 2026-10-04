@@ -1,3 +1,4 @@
+import { loadSignalDiscoveryEstimateV1 } from "./signal-workspace-discovery-estimate";
 export { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1 } from "./signal-workspace-discovery-policy";
 import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1 } from "./signal-workspace-discovery-policy";
 import { admitSignalProcessingWithClientV1 } from "./signal-processing-policy";
@@ -420,14 +421,16 @@ export async function loadSignalWorkspaceEnginePreflightV1(args:{database:Signal
         ?{context:await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true,context_mode:"workspace-discovery-v1"}),context_inputs:[]}
         :await loadSignalWorkspaceAutonomousContextInputsV1({queryable:client,workspace_id:args.workspace_id});
       context_digest=input.context.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=input.context_inputs;total_interests=0;}
-    const embedded=(await client.query<{id:string}>(`SELECT run.id FROM signal_workspace_embedding_runs run
+    const embedded=(await client.query<{id:string;preparation_run_id:string}>(`SELECT run.id,run.preparation_run_id FROM signal_workspace_embedding_runs run
       JOIN signal_corpus_preparation_input_state state USING(workspace_id)
       WHERE run.workspace_id=$1::uuid AND run.input_contract='corpus' AND run.status='completed'
        AND run.input_revision=state.input_revision AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())
       ORDER BY run.completed_at DESC,run.id DESC LIMIT 1`,[args.workspace_id])).rows[0];
     const missing = await missingGuides(client,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1.config_digest,guides);
     return {embedding_run_id:embedded?.id??null,expected_context_digest:context_digest,expected_catalog_digest:catalog_digest,
-      expected_guides:guides.length,missing_guides:missing,total_interests};
+      expected_guides:guides.length,missing_guides:missing,total_interests,
+      advisory_estimate:process.env.NOISIA_MENTION_FACETS_ENABLED==='true'&&embedded
+        ?await loadSignalDiscoveryEstimateV1({queryable:client,workspace_id:args.workspace_id,preparation_run_id:embedded.preparation_run_id}):null};
   });
 }
 async function missingGuides(client:PoolClient,workspace:string,config:string,guides:Array<Omit<SignalWorkspaceEngineGuideV1,"vector">>) {

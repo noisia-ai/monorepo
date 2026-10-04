@@ -21,7 +21,7 @@ export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "lates
   incremental_editorial?: WorkspaceIncrementalEditorial | null;
   preflight: { state: "ready" | "awaiting_import" | "needs_preparation" | "missing_embeddings" | "missing_context";
     embedding_run_id: string | null; context_digest: string | null; catalog_digest: string | null;
-    cost: { claude: { estimated_upper_micro_usd: number | null; maximum_cap_micro_usd: number | null; provider_available: boolean };
+    cost: { claude: { estimated_upper_micro_usd: number | null; advisory_estimate?: { method: "population-text-heuristic-v1"; estimated_micro_usd: number; roots: number; chunks: number; text_bytes: number; assumed_groups: number; assumed_input_tokens: number; assumed_output_tokens: number; pricing_version: string } | null; maximum_cap_micro_usd: number | null; provider_available: boolean };
       voyage: { estimated_upper_micro_usd: number } } };
   active_run: WorkspaceAnalysisRun | null; latest_run: WorkspaceAnalysisRun | null;
   latest_complete: WorkspaceAnalysisRun | null; request_run: WorkspaceAnalysisRun | null;
@@ -110,6 +110,11 @@ export function validWorkspaceAnalysisStatus(value: unknown): value is Workspace
     && nullable(preflight.embedding_run_id, uuid) && nullable(preflight.context_digest, digest) && nullable(preflight.catalog_digest, digest)
     && (preflight.state !== "ready" || uuid(preflight.embedding_run_id) && digest(preflight.context_digest) && digest(preflight.catalog_digest))
     && nullable(claude.estimated_upper_micro_usd, integer) && nullable(claude.maximum_cap_micro_usd,integer)
+    && (claude.advisory_estimate == null || object(claude.advisory_estimate)
+      && claude.advisory_estimate.method === "population-text-heuristic-v1"
+      && typeof claude.advisory_estimate.pricing_version === "string"
+      && ["estimated_micro_usd","roots","chunks","text_bytes","assumed_groups","assumed_input_tokens","assumed_output_tokens"]
+        .every(key => integer((claude.advisory_estimate as Record<string,unknown>)[key])))
     && typeof claude.provider_available === "boolean" && integer(voyage.estimated_upper_micro_usd)
     && ["active_run", "latest_run", "latest_complete", "request_run"].every((key) => validWorkspaceAnalysisRun(value[key]))
     && (!value.active_run || ["queued", "running"].includes((value.active_run as WorkspaceAnalysisRun).status))

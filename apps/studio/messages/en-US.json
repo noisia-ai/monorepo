@@ -2860,6 +2860,7 @@
         "fitCompleteProgressSaved": "Grouping complete. Saved progress is available.",
 
         "spendingLimit": "Spending limit for this execution: {amount}.",
+        "estimateAdvisory": "Indicative interpretation cost: {amount}, based on {roots} mentions and approximately {groups} groups. Grouping, length and corrections may change it. Excludes consolidation and does not set a limit.",
         "estimateUnknown": "The interpretation cost will be known after discovering the groups.",
         "noGroups": "No stable groups found",
         "noGroupsBody": "This run did not create new Topics. Your existing Topics are preserved.",

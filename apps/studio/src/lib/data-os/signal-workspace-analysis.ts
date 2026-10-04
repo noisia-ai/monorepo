@@ -154,7 +154,7 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
         embeddingRunId: preflight?.embedding_run_id ?? null, missingGuides: preflight?.missing_guides ?? 0 }),
       embedding_run_id: preflight?.embedding_run_id ?? null, context_digest: preflight?.expected_context_digest ?? null,
       catalog_digest: preflight?.expected_catalog_digest ?? null,
-      cost: { claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: policy.maximum_cap_micro_usd, provider_available: policy.available },
+      cost: { claude: { estimated_upper_micro_usd: null, advisory_estimate: preflight?.advisory_estimate ?? null, maximum_cap_micro_usd: policy.maximum_cap_micro_usd, provider_available: policy.available },
         voyage: { estimated_upper_micro_usd: 0 } }
     } };
   if (!validWorkspaceAnalysisStatus(result)) throw new SignalWorkspaceEngineError("workspace_analysis_status_invalid", 503);

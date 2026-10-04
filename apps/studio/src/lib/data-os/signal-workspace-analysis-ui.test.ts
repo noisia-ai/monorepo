@@ -682,7 +682,13 @@ for (const locale of ["es-MX", "en-US"]) {
 test("MFP nullable estimate and strict cap stay distinct; blank input cannot raise an explicit maximum", () => {
   const discovery: WorkspaceAnalysisStatus = { ...status, discovery_enabled: true, preflight: { ...status.preflight,
     cost: { ...status.preflight.cost, claude: { ...status.preflight.cost.claude, maximum_cap_micro_usd: null } } } };
+  discovery.preflight.cost.claude.advisory_estimate = { method: "population-text-heuristic-v1", estimated_micro_usd: 69792,
+    roots: 80, chunks: 80, text_bytes: 80000, assumed_groups: 2, assumed_input_tokens: 13024,
+    assumed_output_tokens: 2048, pricing_version: "claude-sonnet-4-6-standard-global-usd-2026-09-09" };
   assert.equal(validWorkspaceAnalysisStatus(discovery), true);
+  assert.equal(validWorkspaceAnalysisStatus({ ...discovery, preflight: { ...discovery.preflight, cost: {
+    ...discovery.preflight.cost, claude: { ...discovery.preflight.cost.claude, advisory_estimate: {
+      ...discovery.preflight.cost.claude.advisory_estimate, estimated_micro_usd: -1 } } } } }), false);
   assert.equal(workspaceAnalysisDefaultCap(discovery), "");
   assert.equal(workspaceAnalysisCanStart(discovery, ""), true);
   assert.equal(workspaceAnalysisCanStart(discovery, "0"), false);

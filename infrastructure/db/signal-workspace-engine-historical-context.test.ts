@@ -40,7 +40,8 @@ function fixture(identityError:Error,denied=false){
       ||sql.startsWith('SELECT workspace_id FROM signal_corpus_preparation_input_state'))return{rows:[],rowCount:0};
     if(sql.includes('workspace.status workspace_status'))return{rows:[{workspace_status:'active',brand_status:'active',actor_status:denied?'inactive':'active',
       user_type:'noisia_internal',primary_role:'noisia_admin',same_organization:true,brand_access_level:null}]};
-    if(sql.includes("SELECT CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'"))return{rows:[{profile_id:operation}]};
+    if(sql.includes("CASE WHEN execution.input_contract='workspace-incremental-editorial-v1'"))return{rows:[{profile_id:operation,discovery:false}]};
+    if(sql.includes("SELECT EXISTS(SELECT 1\n    FROM signal_topic_catalog_executions")&&sql.includes("'discovery_population'"))return{rows:[{discovery:false}]};
     if(sql.includes('SELECT id,taxonomy_id FROM signal_taxonomy_profiles')||sql.includes('SELECT id::text,taxonomy_id::text,version,status,context_hash')){identities++;throw identityError;}
     if(sql.includes('transaction_timestamp()'))return{rows:[{observed_at:stamp}]};
     if(sql.includes('SELECT input_revision::text'))return{rows:[{input_revision:'2'}]};

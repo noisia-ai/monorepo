@@ -255,6 +255,13 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
         artifact_format: "workspace-model-bundle-v1", license_key: "synthetic-test-only",
         interpretation_manifest: { unit_count: 1, unit_digest: sha(JSON.stringify("open:fixture") + "\n") } };
       await engine.checkpointSignalWorkspaceEngineFitV1(fit);
+      if(cap===null){
+        await raw.query('SAVEPOINT projection_fixture');
+        await (await import('./signal-discovery-projection.synthetic.fixture')).exerciseDiscoveryProjectionV1({database,lease,
+          actor_user_id:clientActor,budget_timezone:policy.budget_timezone,daily_cap_micro_usd:policy.daily_cap_micro_usd});
+        await raw.query('SET CONSTRAINTS ALL IMMEDIATE');
+        await raw.query('ROLLBACK TO SAVEPOINT projection_fixture');await raw.query('RELEASE SAVEPOINT projection_fixture');
+      }
       const reserve = (amount: number) => money.reserveSignalWorkspaceEngineInterpretationV1({ ...access, ...started,
         execution_token: lease.execution_token, idempotency_key: randomUUID(), request_digest: sha(randomUUID()), configuration,
         reserved_micro_usd: amount, budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd });

@@ -169,7 +169,11 @@ test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserve
   const policy=f.calls.find(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))!;
   assert.equal(policy.values[1],"infinity");assert.equal(policy.values[3],daily??null);
   const actions=f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_actions"));
-  assert.equal(actions.length,4);assert.match(actions[2]!.sql,/'topic_interpretation'/u);
-  assert.match(actions[3]!.sql,/'topic_consolidation'/u);assert.match(actions[3]!.sql,/NULL,false/u);
+  assert.equal(actions.length,5);
+  assert.match(actions[2]!.sql,/'topic_consolidation_numeric','free'/u);
+  assert.match(actions[2]!.sql,/signal_topic_consolidation_numeric_configuration_v1/u);
+  assert.match(actions[2]!.sql,/,0,false/u);
+  assert.match(actions[3]!.sql,/'topic_interpretation'/u);
+  assert.match(actions[4]!.sql,/'topic_consolidation'/u);assert.match(actions[4]!.sql,/NULL,false/u);
  }
 });

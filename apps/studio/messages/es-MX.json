@@ -2860,6 +2860,7 @@
         "fitCompleteProgressSaved": "Agrupamiento terminado. Los avances guardados están disponibles.",
 
         "spendingLimit": "Límite de gasto para esta ejecución: {amount}.",
+        "estimateAdvisory": "Interpretación orientativa: {amount}, sobre {roots} menciones y aproximadamente {groups} grupos. Puede variar por agrupamiento, longitud y correcciones. No incluye consolidación ni fija un límite.",
         "estimateUnknown": "El costo de interpretación se conocerá después de descubrir los grupos.",
         "noGroups": "No se encontraron grupos estables",
         "noGroupsBody": "Esta ejecución no generó Topics nuevos. Tus Topics existentes se conservan.",

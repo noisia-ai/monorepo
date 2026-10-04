@@ -117,6 +117,11 @@ export async function provisionSignalBrandContextPolicyV1(args: {
       [policy.id, action, provider, model, JSON.stringify(policyConfiguration), cap, automatic]);
     }
     if(configuration.mfp){
+      await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
+        configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        SELECT $1::uuid,'topic_consolidation_numeric','free',config,
+          signal_semantic_context_digest_json_v2(config),0,false
+        FROM (SELECT signal_topic_consolidation_numeric_configuration_v1() config) configuration`,[policy.id]);
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1::uuid,'topic_interpretation','provider','anthropic',$2,$3::jsonb,
