@@ -273,10 +273,17 @@ export async function requestMentionFacetsV1(args: {
       [args.workspace_id],
     );
     await authorize(c, args.workspace_id, args.actor_user_id, true);
-    const selected = args.identity ? undefined : (await c.query<{identity:LabelerIdentity}>(
-        `SELECT l.identity FROM signal_workspace_labelers w JOIN signal_labeler_versions l ON l.id=w.labeler_version_id WHERE w.workspace_id=$1 AND w.kind='facets'`,
-        [args.workspace_id])).rows[0]?.identity;
-    const identity = args.identity ?? selected ?? facetLabelerIdentityV1(),
+    // A replay belongs to its sealed labeler, even if the workspace later selects
+    // another version. Explicit request identities still participate in the seal.
+    const replay = (await c.query<{id:string;request_digest:string;identity:LabelerIdentity}>(
+      `SELECT r.id,r.request_digest,l.identity FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id
+       WHERE r.workspace_id=$1 AND r.actor_user_id=$2 AND r.idempotency_key=$3`,
+      [args.workspace_id,args.actor_user_id,args.idempotency_key])).rows[0];
+    const selected = args.identity || replay ? undefined : (await c.query<{identity:LabelerIdentity;status:string}>(
+      `SELECT l.identity,l.status FROM signal_workspace_labelers w JOIN signal_labeler_versions l ON l.id=w.labeler_version_id WHERE w.workspace_id=$1 AND w.kind='facets'`,
+      [args.workspace_id])).rows[0];
+    if (selected?.status === "retired") fail("labeling_labeler_retired");
+    const identity = args.identity ?? replay?.identity ?? selected?.identity ?? facetLabelerIdentityV1(),
       ld = labelerDigestV1(identity),
       budget = money(args.budget_micro_usd),
       requestedCap = money(args.cap_micro_usd);
@@ -289,12 +296,6 @@ export async function requestMentionFacetsV1(args: {
       full_recalculation: args.full_recalculation ?? false,
       ...(args.adapter ? { adapter: args.adapter.request_identity } : {}),
     });
-    const replay = (
-      await c.query<{ id: string; request_digest: string }>(
-        `SELECT id,request_digest FROM signal_labeling_runs WHERE workspace_id=$1 AND actor_user_id=$2 AND idempotency_key=$3`,
-        [args.workspace_id, args.actor_user_id, args.idempotency_key],
-      )
-    ).rows[0];
     if (replay) {
       if (replay.request_digest !== requestDigest)
         fail("labeling_idempotency_conflict");
@@ -369,9 +370,9 @@ export async function requestMentionFacetsV1(args: {
     else if (identity.provider === "anthropic")
       validateFacetLabelerIdentityV1(identity);
     const labeler = (
-      await c.query<{ id: string }>(
+      await c.query<{ id: string; status: string }>(
         `INSERT INTO signal_labeler_versions(kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb)
-    ON CONFLICT(labeler_digest) DO UPDATE SET labeler_digest=excluded.labeler_digest RETURNING id`,
+    ON CONFLICT(labeler_digest) DO UPDATE SET labeler_digest=excluded.labeler_digest RETURNING id,status`,
         [
           identity.kind,
           identity.provider,
@@ -383,6 +384,7 @@ export async function requestMentionFacetsV1(args: {
         ],
       )
     ).rows[0]!;
+    if (labeler.status === "retired") fail("labeling_labeler_retired");
     if (args.adapter?.select_labeler !== false)
       await c.query(
         `INSERT INTO signal_workspace_labelers(workspace_id,kind,labeler_version_id) VALUES($1,$2,$3) ON CONFLICT(workspace_id,kind) DO UPDATE SET labeler_version_id=excluded.labeler_version_id`,
