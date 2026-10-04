@@ -95,7 +95,7 @@ await main(async () => {
       `INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,preparation_run_id,entity_context_digest,
        entity_context_version_no,status,estimated_micro_usd,idempotency_key,request_digest,actor_user_id,
        processing_admission_id,waiting_full_confirmation,full_recalculation_confirmed)
-       SELECT $1,workspace_id,kind,labeler_version_id,preparation_run_id,$2,$3,'queued',0,$1::text,$1::text,
+       SELECT $1::uuid,workspace_id,kind,labeler_version_id,preparation_run_id,$2,$3,'queued',0,$1::text,$1::text,
        actor_user_id,processing_admission_id,true,false FROM signal_labeling_runs WHERE id=$4`,
       [runId,digest,version,baseRun.id],
     );
