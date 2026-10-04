@@ -76,12 +76,13 @@ export function facetPredictions(calls:LedgerCall[],jev=false):Prediction[] {
   return [...latest.values()];
 }
 
-export function membershipPredictions(calls:LedgerCall[]):Prediction[] {
+export function membershipPredictions(calls:LedgerCall[],selectedConcepts?:ReadonlySet<string>):Prediction[] {
   const latest=new Map<string,Prediction>();
   for(const call of [...calls].sort((a,b)=>Date.parse(a.updated_at)-Date.parse(b.updated_at))) {
     for(const result of rows(call.results)) {
       const root_id=str(result.root_id),input_digest=str(result.input_digest),concept_key=str(result.concept_key),verdict=str(result.verdict);
-      if(!root_id||!input_digest||!concept_key||!['belongs','not_belongs','insufficient','refused','error','pending'].includes(verdict))continue;
+      if(!root_id||!input_digest||!concept_key||(selectedConcepts&&!selectedConcepts.has(concept_key))||
+        !['belongs','not_belongs','insufficient','refused','error','pending'].includes(verdict))continue;
       const prior=latest.get(root_id);
       const row:Prediction=prior?.input_digest===input_digest?prior:{root_id,input_digest,status:'labeled',memberships:{}};
       row.memberships![concept_key]=verdict as NonNullable<Prediction['memberships']>[string];

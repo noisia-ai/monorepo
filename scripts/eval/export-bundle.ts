@@ -54,7 +54,8 @@ void main(async()=>{
         await loadJevReceiptBodies(hydratedCalls,call=>readSignalLabelingReceiptV1({storage,workspace_id:identity.workspace_id,
           run_id:call.run_id!,storage_key:call.raw_storage_key!,raw_sha256:call.raw_sha256!,size_bytes:call.raw_size_bytes!}));
       }
-      const predictions=facet?facetPredictions(hydratedCalls,item.variant==='B_facets_jev'):membershipPredictions(hydratedCalls);
+      const predictions=facet?facetPredictions(hydratedCalls,item.variant==='B_facets_jev'):
+        membershipPredictions(hydratedCalls,new Set(selection.concepts.map(concept=>concept.concept_key)));
       const costs=ledgerCosts(hydratedCalls,new Set(hydratedCalls.flatMap(c=>Array.isArray(c.inputs)?c.inputs.map((r:any)=>r.root_id):[])).size);
       const started=Math.min(...runs.map(r=>Date.parse(r.created_at))),ended=Math.max(...runs.map(r=>Date.parse(r.completed_at??'')));
       costs.wall_ms=Number.isFinite(started)&&Number.isFinite(ended)?ended-started:null;

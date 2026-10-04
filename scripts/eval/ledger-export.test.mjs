@@ -25,3 +25,10 @@ test('missing membership remains missing, never inferred negative',()=>{
  assert.deepEqual(prediction.memberships,{concept_a:'belongs'});
  assert.equal(prediction.memberships.concept_b,undefined);
 });
+test('membership export projects only the three preregistered gold concepts',()=>{
+ const call={...base,results:[
+  {root_id:'root-1',input_digest:'sha256:a',concept_key:'concept_a',verdict:'belongs'},
+  {root_id:'root-1',input_digest:'sha256:a',concept_key:'unrelated_catalog_topic',verdict:'not_belongs'}]};
+ const [prediction]=membershipPredictions([call],new Set(['concept_a','concept_b','concept_c']));
+ assert.deepEqual(prediction.memberships,{concept_a:'belongs'});
+});
