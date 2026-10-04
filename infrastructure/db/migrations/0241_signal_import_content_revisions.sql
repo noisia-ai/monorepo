@@ -29,6 +29,12 @@ BEGIN
   IF NEW.status='completed' AND OLD.status IS DISTINCT FROM 'completed' THEN
    PERFORM pg_advisory_xact_lock(hashtextextended('workspace-import-source:'||NEW.data_source_id::text,0));
    NEW.completed_at:=clock_timestamp();
+   IF NEW.content_revision_mode='revise_existing' AND EXISTS(
+    SELECT 1 FROM signal_mention_content_revisions r JOIN mentions m ON m.id=r.mention_id
+    WHERE r.import_batch_id=NEW.id AND r.next_digest<>
+      signal_mention_revision_digest_v1(signal_mention_revision_snapshot_v1(m))) THEN
+    RAISE EXCEPTION 'content_revision_not_applied' USING ERRCODE='23514';
+   END IF;
   END IF;
   IF ROW(NEW.content_revision_mode,NEW.content_revision_base_batch_id) IS DISTINCT FROM
      ROW(OLD.content_revision_mode,OLD.content_revision_base_batch_id) THEN

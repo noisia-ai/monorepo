@@ -111,6 +111,7 @@ await main(async()=>{
   await reject(()=>stage(first,makeContent('Competing text for the very same synthetic import and ID.')),/content_revision_conflicting_rows/);
   await reject(()=>query("UPDATE signal_mention_content_revisions SET next_content='{}' WHERE import_batch_id=$1",[first]),/content_revision_immutable/);
   await reject(()=>query("UPDATE import_batches SET content_revision_mode='append_only' WHERE id=$1",[first]),/content_revision_seal_immutable/);
+  await reject(()=>query("UPDATE import_batches SET status='completed' WHERE id=$1",[first]),/content_revision_not_applied/);
   const beforeRevision=(await query('SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$1',[f.workspace_id])).rows[0]?.input_revision;
   await query('SAVEPOINT publish_failure');
   await complete(first);assert.equal(await text(),content.text_clean);
