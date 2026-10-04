@@ -1,20 +1,32 @@
 # MFP · Recibo del programa · 4 octubre 2026
 
-Corte observado: **15:28 UTC**. Canon: `SPEC_FICHA_Y_PERTENENCIA_2026-10-04.md` **v1.3**, preservado con los accesos antes de delegar. Este recibo actualiza los resultados posteriores a los recibos iniciales de cada WS; no acredita producción ni sustituye la evaluación humana.
+Corte observado: **17:00 UTC**. Canon: `SPEC_FICHA_Y_PERTENENCIA_2026-10-04.md` **v1.3**, preservado con los accesos antes de delegar. Este recibo distingue código integrado, ejecución real remota y aceptación pendiente. No acredita producción ni sustituye la evaluación humana.
 
 ## Resultado demostrable
 
-El corpus privado de desarrollo recibió 1,000 filas: 977 únicas, 905 elegibles, 72 excluidas y 23 duplicados; 3,158 fragmentos. Alta/importación se hicieron mediante funciones reales del producto desde el runner; **todavía no por UI autenticada**. Cada raíz elegible tiene estado de ficha Claude y JEV; los resultados crudos y costes están conservados. La segunda carga preparada contiene 200 nuevas, 30 duplicadas y 20 ediciones y aún no se ha importado.
+Las funciones reales de producto permiten importar dos cargas, generar fichas, descubrir propuestas, adoptar dos conceptos editables y consultar pertenencias con citas en Signal. La segunda carga conserva lo ya procesado y recalcula los pares afectados por una edición de concepto. Estas operaciones se ejecutaron en el runner privado: **todavía no se ha acreditado el recorrido por UI autenticada**.
 
-- **WS0:** 110 documentos históricos preservados e inventariados, con copias verificadas; originales intactos. Spec y accesos versionados. No se reactivaron planes ni automatizaciones históricas.
-- **WS1:** PostgreSQL lógico `noisia_mfp`, Redis, runner y Studio dedicados en Railway dev-test; conexiones de datos privadas. Mac sólo edición/navegador/comandos ligeros. Studio dev-test responde HTTP200; falta autorizar su callback exacto en Kinde para el recorrido de navegador.
-- **WS2:** Claude completó 905 estados: 831 `labeled`, 74 `abstained`, cero errores pendientes; población actual374 relevantes. Alias de competidor afectó58 raíces y dejó847 intactas; restauración posterior63 raíces desde caché, cero proveedor. Etiquetador experimental, no aprobado.
-- **WS3:** JEV completó905 estados:898 `labeled`,7 `abstained`, cero errores pendientes;915 llamadas incluyendo recuperación de10 redondeos. Derechos y condiciones técnicas/de datos revisados con fuentes oficiales en `JEV_DUE_DILIGENCE.md`. Acuerdo de relevancia Claude–JEV686/905(75.8%): monitor sin gold, **no precisión ni prueba de superioridad**.
-- **WS4:** pendiente gold humano150 raíces (partición fija90 dev/60 test) y aprobación de evaluación; no iniciado ni etiquetador aprobado.
-- **WS5:** código integrado, CI y PG compuesto44 comprobaciones con transporte simulado aprobados. Las pruebas acotadas de proveedor no sustituyen la demo de pertenencia sobre conceptos ni el gold.
-- **WS6:** discovery real sobre374 relevantes/1,259 fragmentos,11 grupos interpretados; consolidación propone2 Topics,7 Noise y2 insufficient. Proyección real recuperada y snapshot preparado; detalle abajo. Aún falta adoptar y acreditar pertenencias citadas.
-- **WS7:** UI y contratos integrados; PG real sobre905 raíces, filtros, derechos y correcciones revertidas aprobado. Falta recorrido autenticado bilingüe y QA del fundador.
-- **WS8:** PR25, incremental y bootstrap en revisión. Python remoto12PASS; regresión de la función Worker con páginas129/200+1 y rechazo201 aprobada con stores/bytes simulados. PG remoto completó política ilimitada (admisión/replay/plan/reserva/revocación/renovación); caso finito pendiente tras corregir expectativa del código de rechazo. No segunda carga real ni aceptación E2E.
+- **WS0:** 110 documentos históricos preservados e inventariados, con copias verificadas; originales intactos. Spec y accesos versionados. Sin reactivar planes ni automatizaciones históricas.
+- **WS1:** PostgreSQL lógico `noisia_mfp`, Redis, runner y Studio dedicados en Railway dev-test; datos por conexiones privadas. PR28 añade revisión explícita de contenido por identidad de fuente, con historia y publicación atómica; sigue en prueba, SQL0241 no instalada.
+- **WS2:** primera carga con 905 estados Claude: 831 `labeled`, 74 `abstained`. Cambio de alias afectó 58 raíces y dejó 847 intactas; restauración posterior de 63 desde caché, sin proveedor. En la segunda carga se procesaron 181 raíces nuevas y se recuperaron selectivamente dos errores de formato. La admisión numérica posterior verificó que no quedaban fichas pendientes. Etiquetador experimental, no aprobado.
+- **WS3:** JEV completó 905 estados: 898 `labeled`, 7 `abstained`, cero errores pendientes; 915 llamadas contando recuperación. Condiciones oficiales y restricciones documentadas en `JEV_DUE_DILIGENCE.md`. Acuerdo de relevancia Claude–JEV: 686/905 (75.8%); monitor sin gold, no precisión ni prueba de superioridad.
+- **WS4:** evaluador offline integrado por PR29, `fccc2fc23daed4135465ec1e0ebada852b7c6c8a`. CI completo 37217875023 y 14 pruebas focales aprobados. CLI con la selección privada fija produjo `no_evaluado`; gold humano de 150 raíces, split 90 dev/60 test, todavía pendiente. No hay evaluación semántica aprobada.
+- **WS5:** pertenencia real inicial de 122 pares: 4 `belongs`, 118 `not_belongs`, sin errores pendientes. Replay completo desde caché, cero llamadas. Edición de un concepto invalidó sólo sus 61 pares; el otro concepto y 905 fichas permanecieron intactos. Detalle de segunda carga abajo.
+- **WS6:** discovery real inicial sobre 374 relevantes y 1,259 fragmentos; 11 grupos interpretados, consolidados en 2 Topics, 7 Noise y 2 insufficient. Dos propuestas adoptadas como conceptos; la pertenencia se calculó por separado con evidencia, no por similitud vectorial.
+- **WS7:** UI y contratos integrados; consulta real de Signal con denominador 1,086 y 4 menciones asignadas, base `concept_membership`, evidencia navegable. Falta QA de navegador bilingüe y del fundador.
+- **WS8:** segunda carga y cálculo incremental numérico reales completados. La preparación editorial posterior informa `source_stale`; diagnóstico focal en curso, sin repetir el fit. No se declara terminado el análisis incremental ni E2E.
+
+## Segunda carga y vigencia
+
+Primera carga: 1,000 filas recibidas, 977 únicas, 905 elegibles, 72 excluidas, 23 duplicados; 3,158 fragmentos. Segunda carga: 250 filas recibidas, 181 incluidas nuevas, 18 excluidas nuevas y 51 duplicadas. Preparación acumulada: 1,176 raíces, 1,086 elegibles, 90 excluidas y 3,634 fragmentos. Reutilizó 931 raíces, incorporó 199 y detectó 46 cambios de procedencia; estos últimos no eran cambios de texto. Voyage generó 475 fragmentos nuevos y reutilizó 3,159, coste USD0.013297.
+
+El CSV contiene 20 ediciones de identidades existentes que el comportamiento append-only conservó como duplicados. **Esas ediciones aún no están publicadas.** PR28 introduce la opción explícita para corregir contenido sin borrar historia ni servir etiquetas obsoletas. Sus pruebas usan PostgreSQL real y rollback; no se debilitaron permisos ni triggers para hacer pasar las fixtures.
+
+Antes de la segunda carga se editó la inclusión del concepto de upsell. La corrida `38f3f7f2-eea3-48cc-9637-162ae263c17c` terminó a las **16:20:34 UTC**: 73 pares procesados (61 por edición y 12 de raíces nuevas), USD0.419499 liquidados, cero reservas, errores o pendientes. Estado acumulado: 134 decisiones, 4 `belongs`, 1 `insufficient`, 129 `not_belongs`. La estimación para repetir sin cambios es cero. El concepto editado fue seleccionado en su revisión 2.
+
+Signal observado a las **16:25 UTC**: fuente vigente, denominador 1,086, cuatro menciones únicas asignadas; una en el concepto de viajes y tres en el de upsell, ambas con base `concept_membership`. Calidad `not_calibrated`. Selección y evidencia verificadas por funciones de producto, no mediante sesión UI.
+
+Incremental numérico `29495512-9517-4a9b-b9fc-a119ff93ca11`: admitido a las 16:47:06 UTC, **READY a las 16:50:16 UTC**, 456 raíces relevantes, 1,449 fragmentos y dos componentes. Modo `frozen-model-delta`, reutilizando el modelo del fit original `7033cd67-8b6d-482c-ac37-085aefd0cfe1`. `numeric_complete=true`, `analysis_complete=false`, outbox de ejecución completado; sin nuevo fit completo ni llamadas de proveedor. El estado editorial a las 16:57 UTC rechaza su fuente como obsoleta; se conserva el resultado para diagnosticar la comparación exacta y continuar de forma recuperable.
 
 ## Recuperación WS6 integrada
 
@@ -24,12 +36,20 @@ SQL0240 aplicada **una sola vez** en MFP a15:20:47.794Z, historial224→225; SHA
 
 Ejecución original de proyección `e85a236c-3080-4f12-821e-c1d8263d101e` quedó **READY15:22:50.033Z**,905/905 raíces,3,158 fragmentos,343 asignaciones,118.976s. Reutilizó fit y artifacts; cero proveedor. Snapshot `957fb789-a587-4aa0-a676-47f9bc127f5f` preparado15:23:18.502Z,denominador905,fuente vigente,dos candidatos,activación pendiente. No confundir snapshot preparado, adopción y selección. El checkout WS6 fue archivado conservando Git y sus ramas se retiraron conforme§7.
 
-## Coste y límites
+## Código, infraestructura y coste
 
-Coste conocido acumulado de proveedores: **USD5.282476684**, incluida interpretación discoveryUSD0.260631 y consolidaciónUSD0.149813, ambas liquidadas. No hay reservas ni resultados inciertos en esas corridas. Uso de algunas solicitudes históricas rechazadas de formato no fue informado por el proveedor y no se inventa como cero. Costes/pruebas detallados permanecen en sus recibos privados; presupuestos orientativos, sin máximo estricto configurado para MFP.
+PR25 integrado en `00b6e3f9`, PR27 en `61006bca`, PR26 en `18f2b0ae` y PR29 en `fccc2fc2`, todos con CI completo. Las pruebas de proveedor y PostgreSQL están identificadas por separado en sus recibos. PR28 permanece abierto.
 
-Railway observado15:10 UTC: servicios dedicados MFPUSD0.069597942 (runner0.044080049,Studio0.022465134,Redis0.003052759); PostgreSQL compartidoUSD0.257477397 sin atribución exclusiva. No sumar gasto UAT al programa. Estimaciones se actualizan con nuevos resultados, sin imponer caps históricos.
+Studio y runner dev-test ejecutan imágenes **18f2b0ae** verificadas; Studio devuelve HTTP200. Runner general desactivado y trabajos finitos ya terminados. Se prepararon variables privadas mínimas de Claude/Voyage y flags por servicio con `--skip-deploys`, sin reiniciar: esa configuración todavía no está activa en las imágenes existentes. La activación persistente queda posterior a las pruebas y al censo de trabajos. UAT y producción no se modificaron.
 
-Datos/pruebas pesadas siguen remotos. SQL0237–0238 **no aplicadas permanentemente** en este corte; sus ensayos usan rollback. Runner general detenido y sin claves de proveedor persistentes; operaciones pagadas usan únicamente la clave necesaria en memoria. Imagen base dev-test4e06712 con fuente verificada posterior para pruebas; pendiente imagen final conjunta, no afirmar despliegue UAT. UAT/producción no modificados.
+SQL0237 y SQL0238 se instalaron una sola vez a las **15:47:57 UTC**, historial 225→227, después de los ensayos con rollback. SQL0240 ya estaba instalada según el recibo anterior. SQL0241 sólo se ha ensayado dentro de transacciones revertidas; no figura instalada. No repetir las migraciones cerradas.
 
-Pendientes humanos concretos: callback/logout exactos de Studio dev-test en Kinde (confirmación de ampliación de acceso del navegador), gold150 y conceptos de evaluación, QA de UI. No hacen falta nuevas claves ni permiso genérico. La aceptación integral requiere marca nueva por UI, ambas cargas, vigencia selectiva, pertenencias con evidencia y Signal; este corte no demuestra todavía ese recorrido.
+Coste conocido acumulado de proveedores: **USD6.928751684**. Incluye discovery USD0.410444; pertenencia inicial/preview USD0.607159; segunda carga de fichas USD0.584245, recuperaciones USD0.022075, Voyage USD0.013297 y pertenencia USD0.419499. Uso de algunas solicitudes históricas rechazadas de formato no fue informado por el proveedor: se conserva como desconocido, no como cero. No quedan reservas en las corridas aquí cerradas. Presupuestos orientativos, sin máximo estricto configurado para MFP; se actualizan las estimaciones al admitir cada ejecución.
+
+Railway observado a las 15:10 UTC: servicios dedicados MFP USD0.069597942 (runner 0.044080049, Studio 0.022465134, Redis 0.003052759); PostgreSQL compartido USD0.257477397 sin atribución exclusiva. Es una observación anterior, no el coste final del corte. No sumar gasto UAT al programa.
+
+## Pendientes concretos
+
+Finalizar y verificar revisión de texto por identidad de fuente; resolver el rechazo editorial incremental; activar y comprobar el Worker persistente; completar la entrada autenticada de una marca nueva, cambios de Brand OS, ambas cargas y Signal. El callback/logout exacto de Studio dev-test en Kinde sigue pendiente de la confirmación específica solicitada por el control del navegador; a las 16:39 UTC seguía devolviendo `Invalid callback URL`. No faltan claves ni autorización genérica para el programa.
+
+Gold humano, conceptos de evaluación y QA del fundador siguen pendientes. Las fechas de ingeniería del spec son estimaciones de alcance; estas pruebas no permiten prometer una fecha de aceptación integral. Las entregas parciales coherentes en UAT están permitidas cuando sean verificadas y recuperables; este recibo no acredita aún una entrega UAT del recorrido completo.
