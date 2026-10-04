@@ -83,17 +83,32 @@ await main(async () => {
     let serial = 0,
       planSerial = 0;
     const planDirectory = ".data/dev-corpus/membership-query-plans";
-    const stack: string[] = [];
+    const stack: Array<{ name: string; readOnly: boolean }> = [];
     const query = async (sql: any, values?: any) => {
       if (typeof sql === "string" && /^BEGIN\b/iu.test(sql)) {
-        const savepoint = `membership_${++serial}`;
+        const savepoint = {
+          name: `membership_${++serial}`,
+          readOnly: /\bREAD ONLY\b/iu.test(sql.split(";")[0]),
+        };
         stack.push(savepoint);
-        return client.query(`SAVEPOINT ${savepoint}`);
+        const result = await client.query(`SAVEPOINT ${savepoint.name}`);
+        // Keep transaction-local settings used by the real serving wrapper.
+        // Only the BEGIN itself is replaced by a fixture savepoint.
+        const separator = sql.indexOf(";");
+        const settings = separator >= 0 ? sql.slice(separator + 1).trim() : "";
+        if (settings) await client.query(settings);
+        return result;
       }
-      if (sql === "COMMIT")
-        return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
+      if (sql === "COMMIT") {
+        const savepoint = stack.pop()!;
+        // A real read-only transaction ends its SET LOCAL settings at COMMIT.
+        // Restore them here so later fixture calls cannot inherit planner knobs.
+        if (savepoint.readOnly)
+          await client.query(`ROLLBACK TO SAVEPOINT ${savepoint.name}`);
+        return client.query(`RELEASE SAVEPOINT ${savepoint.name}`);
+      }
       if (sql === "ROLLBACK") {
-        const s = stack.pop()!;
+        const s = stack.pop()!.name;
         await client.query(`ROLLBACK TO SAVEPOINT ${s}`);
         return client.query(`RELEASE SAVEPOINT ${s}`);
       }
