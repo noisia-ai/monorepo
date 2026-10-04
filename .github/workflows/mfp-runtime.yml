@@ -9,6 +9,8 @@ on:
       - 'scripts/dev-corpus/runtime.mjs'
       - 'services/workers/requirements-workspace-engine.txt'
       - 'tools/signal-semantic-lab/src/**'
+      - 'tools/signal-semantic-lab/tests/test_workspace_incremental_engine.py'
+      - 'tools/signal-semantic-lab/tests/test_workspace_engine.py'
 
 permissions:
   contents: read
@@ -29,5 +31,12 @@ jobs:
           docker run --rm --entrypoint /opt/noisia-engine/bin/python
           --env PYTHONPATH=/app/tools/signal-semantic-lab/src noisia-mfp:ci
           -c "from bertopic import BERTopic; from signal_semantic_lab import workspace_engine, workspace_incremental_engine"
+      - name: Verify frozen-model incremental contract without providers
+        run: >-
+          docker run --rm --entrypoint sh
+          --volume "$PWD/tools/signal-semantic-lab/tests:/tests:ro"
+          --env PYTHONPATH=/app/tools/signal-semantic-lab/src noisia-mfp:ci
+          -c "/opt/noisia-engine/bin/pip install --no-cache-dir pytest==8.3.5 &&
+          /opt/noisia-engine/bin/python -m pytest -q -p no:cacheprovider /tests/test_workspace_incremental_engine.py"
       - name: Verify idle startup and target rejection
         run: docker run --rm --entrypoint node noisia-mfp:ci --test scripts/dev-corpus/harness.test.mjs
