@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 // The guarded remote harness is JavaScript and intentionally has no public TS package.
 // @ts-expect-error private runner JS entrypoint
 import { main, openDatabase } from '../dev-corpus/guard.mjs';
-import { loadSignalTopicCatalogStoreV1, updateSignalTopicStoreV1 } from '../../infrastructure/db/signal-topic-catalog';
-import { plannedConceptUpdates, sha256, type ProposedConcept } from './concepts-v2';
+import { createSignalTopicStoreV1,loadSignalTopicCatalogStoreV1,updateSignalTopicStoreV1 } from '../../infrastructure/db/signal-topic-catalog';
+import { signalTopicTermKeyV1 } from '../../packages/query-engine/src/signal-topic-catalog-v1';
+import { plannedConceptUpdates,proposedConceptInput,validateProposedConceptSelection,sha256,type ProposedConcept } from './concepts-v2';
 import { loadMfpEvalIdentity } from './fixture-identity';
 
 void main(async()=>{
@@ -18,8 +19,21 @@ void main(async()=>{
   try {
     const keys=selection.concepts.map(c=>c.concept_key);
     const before=await loadSignalTopicCatalogStoreV1({queryable:pool,workspace_id:identity.workspace_id});
-    const planned=plannedConceptUpdates(proposed,before.topics,keys);
+    validateProposedConceptSelection(proposed,keys);
+    if(proposed.some(item=>signalTopicTermKeyV1(item.concept_key)!==item.concept_key))throw new Error('mfp_eval_concept_key_not_slug_stable');
     const digest=sha256(bytes);
+    let created=0;
+    for(const [index,item] of proposed.entries()){
+      if(before.topics.some(topic=>topic.term_key===item.concept_key))continue;
+      const finalInput=proposedConceptInput(item,'primary_brand');
+      const result=await createSignalTopicStoreV1({pool,workspace_id:identity.workspace_id,actor_user_id:identity.internal_user_id,
+        idempotency_key:`mfp-eval-concepts-v2-${digest.slice(0,20)}-create-${index}`,
+        input:{...finalInput,label:item.concept_key}});
+      if(result.term_key!==item.concept_key)throw new Error('mfp_eval_created_concept_key_mismatch');
+      created++;
+    }
+    const withCreated=await loadSignalTopicCatalogStoreV1({queryable:pool,workspace_id:identity.workspace_id});
+    const planned=plannedConceptUpdates(proposed,withCreated.topics,keys);
     for(const [index,update] of planned.entries()) {
       if(update.unchanged)continue;
       await updateSignalTopicStoreV1({pool,workspace_id:identity.workspace_id,actor_user_id:identity.internal_user_id,
@@ -29,7 +43,13 @@ void main(async()=>{
     }
     const after=await loadSignalTopicCatalogStoreV1({queryable:pool,workspace_id:identity.workspace_id});
     if(plannedConceptUpdates(proposed,after.topics,keys).some(c=>!c.unchanged))throw new Error('mfp_eval_concepts_not_current');
-    console.log(JSON.stringify({stage:'eval_concepts_v2_installed',concepts:planned.length,updated:planned.filter(c=>!c.unchanged).length,
+    if(after.topics.length!==before.topics.length+created||before.topics.some(old=>{
+      const current=after.topics.find(topic=>topic.term_key===old.term_key);
+      return !current||current.definition_digest!==old.definition_digest||current.definition_revision!==old.definition_revision;
+    }))throw new Error('mfp_eval_unrelated_catalog_changed');
+    console.log(JSON.stringify({stage:'eval_concepts_v2_installed',concepts:planned.length,created,
+      updated:planned.filter(c=>!c.unchanged).length,catalog_before:before.topics.length,catalog_after:after.topics.length,
+      definition_digests:keys.map(key=>after.topics.find(topic=>topic.term_key===key)!.definition_digest),
       input_sha256:digest,workspace_scoped:true,provider_calls:0}));
   } finally {await pool.end();}
 });
