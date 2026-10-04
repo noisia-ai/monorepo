@@ -35,6 +35,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readMfpInFlightPages } from "./signal-labeling-parallelism";
+import { reconcileUnknownBatchCallsV1 } from "./signal-batch-unknown-reconciliation";
 export const SIGNAL_CONCEPT_MEMBERSHIP_JOB_V1 = "signal-concept-membership-v1";
 type Provider = ReturnType<typeof createAnthropicMessageBatchesClient>;
 const zeroUsage = (): LlmUsageV1 => ({
@@ -115,6 +116,9 @@ export async function runConceptMembershipTickV1(args: {
     if (calls.some((c) => c.status === "unknown") && !run.error_code) {
       await store.fail(run, "labeling_outcome_unknown");
       run.error_code = "labeling_outcome_unknown";
+    }
+    if (calls.some((c) => c.status === "unknown")) {
+      await reconcileUnknownBatchCallsV1(run, calls, store, provider);
       calls = await store.calls(run);
     }
     if (!run.error_code && !calls.some((c) =>
@@ -260,15 +264,16 @@ export async function runConceptMembershipTickV1(args: {
         refusal_category: parsed.refusal_category,
       });
       if (parsed.status === "refused") {
-        apply.push({
+        if (call.inputs.length > 1 && !run.error_code && call.retry_depth < 8) {
+          const half = Math.ceil(call.inputs.length / 2);
+          for (const split of [call.inputs.slice(0, half), call.inputs.slice(half)])
+            retry.push(membershipCallProposalV1(run, split, call.retry_depth + 1, call.id));
+          apply.push({ call, results: [] });
+        } else apply.push({
           call,
-          results: resultsFor(
-            call,
-            run,
-            "refused",
-            undefined,
-            parsed.refusal_category,
-          ),
+          results: call.inputs.length === 1
+            ? resultsFor(call, run, "refused", undefined, parsed.refusal_category)
+            : resultsFor(call, run, "error", "refusal_requires_authority"),
         });
         continue;
       }
@@ -430,7 +435,7 @@ export function startConceptMembershipDrainerV1() {
       if (!exists) return;
       const rows = (
         await pool.query(
-          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='membership' AND l.provider='anthropic' AND r.status IN('queued','running') AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
+          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='membership' AND l.provider='anthropic' AND (r.status IN('queued','running') OR r.status='failed' AND r.error_code='labeling_outcome_unknown' AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id AND c.status='unknown')) AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
         )
       ).rows;
       for (const row of rows)

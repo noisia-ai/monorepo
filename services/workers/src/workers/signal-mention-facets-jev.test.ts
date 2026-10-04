@@ -17,6 +17,7 @@ function fixture(count: number) {
     async reserve(_run, proposals) { events.push(`reserve:${proposals.length}`); const added = proposals.map((p, i) => ({ ...p, id: `call-${i}`, status: 'reserved' as const, raw_body: null, results_applied: false, provider_batch_id: null, retry_depth: 0 })); calls.push(...added); return added; },
     async markSubmitting(_run, page) { events.push(`submitting:${page.length}`); page.forEach(call => { call.status = 'submitting'; }); },
     async markSubmitted() {},
+    async recoverUnknownBatch() {}, async releaseUnknown() {}, async clearUnknownFailure() {},
     async markFailed(_run, page, unknown) { page.forEach(call => { call.status = unknown ? 'unknown' : 'failed'; }); },
     async persistRaw(_run, call, raw) { call.raw_body = raw; },
     async persistRawPage(_run, page) { events.push(`raw:${page.length}`); page.forEach(row => { row.call.raw_body = row.raw; }); },

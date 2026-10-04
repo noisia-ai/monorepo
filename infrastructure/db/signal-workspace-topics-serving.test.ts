@@ -109,7 +109,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
         ...(membershipCollision ? [{topic:interestTopic,selected:false,selection_revision:2,selection_digest:sha("c")}] : [])
       ]};
       if (membershipMode && sql.includes("SELECT context,digest,version_no")) return {rows: []};
-      if (membershipMode && sql.includes("SELECT root_id,title,full_text,facets")) return {rows: []};
+      if (membershipMode && sql.includes("WITH labeled_entities AS (")) return {rows: []};
       if (membershipMode && sql.includes("string_agg(jsonb_build_array(root_id,concept_key")) return {rows:[{digest:sha("b")}]};
       if (membershipMode && sql.includes("SELECT s.input_revision::text")) return {rows:[{input_revision:"7",run_id:id("70"),processing:false}]};
       if (sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids")) return { rows: [] };

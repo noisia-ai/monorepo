@@ -117,6 +117,7 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
         <dl className="mfp-facet-values">{correctable.map(dim=><div key={dim}><dt>{t(`dimensions.${dim}`)}</dt>
           <dd>{facetLabel(item.facets,dim,label)}</dd></div>)}</dl>
         {item.requires_context_review?<p role="status">{t("contextReview")}</p>:null}
+        {item.pending_context_review?<p role="status">{t("pendingContextReview")}</p>:null}
         <div className="admin-form-actions"><button type="button" className="admin-button" disabled={!browser.data?.can_edit||mutation.busy}
           onClick={()=>beginEdit(item)}>{t("correct")}</button>
           {mfpSafeUrl(item.url)?<a href={mfpSafeUrl(item.url)!} target="_blank" rel="noreferrer">{t("openOriginal")}</a>:null}</div>
