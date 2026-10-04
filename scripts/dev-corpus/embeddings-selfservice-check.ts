@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
-import type {Pool,PoolClient} from 'pg';
+import type {SignalWorkspaceEmbeddingsDatabaseV1} from '../../infrastructure/db/signal-workspace-embeddings';
+type Pool=SignalWorkspaceEmbeddingsDatabaseV1 & {end():Promise<void>};
 import {main,openDatabase} from './guard.mjs';
 import {quoteWorkspaceCorpusEmbeddingsForActorV1 as quote,requestWorkspaceCorpusEmbeddingsForActorV1 as request} from '../../apps/studio/src/lib/data-os/workspace-corpus-embeddings';
 import {claimSignalWorkspaceEmbeddingRunV1 as claim,markSignalWorkspaceEmbeddingCallSentV1 as markSent,persistSignalWorkspaceEmbeddingResponseV1 as persist,failSignalWorkspaceEmbeddingCallV1 as failCall} from '../../infrastructure/db/signal-workspace-embeddings';
@@ -21,7 +22,7 @@ await main(async()=>{
   if(sql==='ROLLBACK'){const key=stack.pop()!;await raw.query(`ROLLBACK TO SAVEPOINT ${key}`);return raw.query(`RELEASE SAVEPOINT ${key}`);}
   return raw.query(sql,params);
  };
- const database={query:query as Pool['query'],connect:async()=>Object.assign(Object.create(raw),{query,release(){}}) as PoolClient};
+ const database={query:query as Pool['query'],connect:async()=>Object.assign(Object.create(raw),{query,release(){}}) as Awaited<ReturnType<Pool['connect']>>};
  const census=async()=>(await raw.query(`SELECT (SELECT count(*)::int FROM signal_workspace_embedding_runs WHERE workspace_id=$1) runs,
  (SELECT count(*)::int FROM signal_workspace_embedding_calls WHERE workspace_id=$1) calls,
  (SELECT count(*)::int FROM signal_workspace_chunk_embeddings WHERE workspace_id=$1) cache,
