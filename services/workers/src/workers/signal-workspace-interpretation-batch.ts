@@ -70,7 +70,7 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
         provider_enabled: args.provider_enabled ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
         // A prior reservation keeps its own admission receipt. The current
         // lease authorizes new reservations, never changes an old call's date.
-        authorization_expires_at: execution.snapshot?.discovery_population ? undefined : call.admission?.admission_not_after
+        authorization_expires_at: lease.snapshot?.discovery_population ? undefined : call.admission?.admission_not_after
           ?? args.authorization_expires_at ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL,
         authorize_send: async (): Promise<WorkspaceInterpretationSendDecisionV1> => {
           try { return (await store.sent({ ...attempt, execution_token: lease.execution_token })).send_authorized; }
