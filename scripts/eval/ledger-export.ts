@@ -1,7 +1,27 @@
 import type { Prediction, Variant } from './contract';
 
 export type LedgerCall = { status:string; settled_micro_usd:string|null; reserved_micro_usd:string;
-  created_at:string; updated_at:string; request:unknown; inputs:unknown; results:unknown; raw_body:string|null };
+  created_at:string; updated_at:string; request:unknown; inputs:unknown; results:unknown; raw_body:string|null;
+  run_id?:string; raw_storage_key?:string|null; raw_sha256?:string|null; raw_size_bytes?:number|null };
+
+/** Hydrate JEV probabilities only from verified private receipts; never return raw bodies in the bundle. */
+export async function loadJevReceiptBodies(calls:LedgerCall[], load:(call:LedgerCall)=>Promise<string>, width=8):Promise<void> {
+  if(!Number.isInteger(width)||width<1||width>16)throw new Error('mfp_eval_receipt_width_invalid');
+  for(let start=0;start<calls.length;start+=width){
+    await Promise.all(calls.slice(start,start+width).map(async call=>{
+      const reference=[call.raw_storage_key,call.raw_sha256,call.raw_size_bytes];
+      if(reference.every(value=>value==null)){
+        if(call.status==='settled'&&rows(call.results).some(result=>['labeled','abstained'].includes(str(result.status))))
+          throw new Error('mfp_eval_jev_receipt_missing');
+        return;
+      }
+      if(!call.run_id||!call.raw_storage_key||!call.raw_sha256||typeof call.raw_size_bytes!=='number'||
+        !Number.isInteger(call.raw_size_bytes)||call.raw_size_bytes<0)
+        throw new Error('mfp_eval_jev_receipt_reference_invalid');
+      call.raw_body=await load(call);
+    }));
+  }
+}
 
 const object=(value:unknown):Record<string,unknown>|null=>value!==null&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null;
 const rows=(value:unknown):Record<string,unknown>[]=>Array.isArray(value)?value.map(object).filter((v):v is Record<string,unknown>=>!!v):[];

@@ -1,7 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {facetPredictions,membershipPredictions,ledgerCosts} from './ledger-export.ts';
+import {facetPredictions,membershipPredictions,ledgerCosts,loadJevReceiptBodies} from './ledger-export.ts';
 const base={status:'settled',settled_micro_usd:'123',reserved_micro_usd:'200',created_at:'2026-10-04T00:00:00Z',updated_at:'2026-10-04T00:00:01Z',inputs:[],request:{},raw_body:null};
+test('JEV export loads verified storage receipts and fails closed when a settled receipt is absent',async()=>{
+ const call={...base,run_id:'run',raw_storage_key:'private/key',raw_sha256:'sha256:'+'a'.repeat(64),raw_size_bytes:7,
+  results:[{root_id:'root',input_digest:'sha256:a',status:'labeled'}]};
+ let loaded=0;
+ await loadJevReceiptBodies([call],async()=>{loaded++;return '{"body":"{}"}';},1);
+ assert.equal(loaded,1);assert.equal(call.raw_body,'{"body":"{}"}');
+ await assert.rejects(loadJevReceiptBodies([{...call,raw_body:null,raw_storage_key:null,raw_sha256:null,raw_size_bytes:null}],async()=>''),/mfp_eval_jev_receipt_missing/);
+ await assert.rejects(loadJevReceiptBodies([{...call,raw_body:null,raw_sha256:null}],async()=>''),/mfp_eval_jev_receipt_reference_invalid/);
+});
 test('JEV calibration uses independent persisted noul and choice probabilities',()=>{
  const call={...base,request:{state:{entity_context:{entities:[{entity_id:'entity-1'}]}}},
  raw_body:JSON.stringify({body:JSON.stringify({answers:{entity_0:{type:'noul',noul:0.7},main_0:{type:'noul',noul:0.8},spam_or_bot:{type:'noul',noul:0.2},voice:{type:'choice',choice:'individual',confidence:0.9},act:{type:'choice',choice:'opinion',confidence:0.6}}})}),
