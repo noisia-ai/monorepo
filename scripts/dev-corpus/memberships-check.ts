@@ -116,7 +116,7 @@ await main(async () => {
       try {
         if (
           typeof sql === "string" &&
-          /^\s*SELECT m\.\*,CASE WHEN rights\.evidence/u.test(sql)
+          sql.includes("/* membership-status-items */")
         ) {
           const plan = await client.query(
             `EXPLAIN (FORMAT JSON) ${sql}`,

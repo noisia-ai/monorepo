@@ -337,14 +337,23 @@ export async function loadConceptMembershipsStatusV1(
     }
     const rows = (
       await c.query(
-        `SELECT m.*,CASE WHEN rights.evidence THEN f.full_text ELSE NULL END text,CASE WHEN rights.evidence THEN f.title ELSE NULL END title,
-   CASE WHEN rights.evidence THEN mention.url ELSE NULL END url, f.platform,NOT COALESCE(rights.evidence,false) evidence_withheld,
+        // Materialize the two facet-derived graphs independently. A real plan
+        // estimated one row on both sides and reevaluated the inner graph per pair.
+        `/* membership-status-items */ WITH current_pairs AS MATERIALIZED (
+   SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
+   AND ($2::text IS NULL OR concept_key=$2) AND ($3::text IS NULL OR verdict=$3)
+   AND ($4::uuid IS NULL OR (root_id,concept_key)>($4::uuid,$5::text))
+   ), current_roots AS MATERIALIZED (
+   SELECT root_id,full_text,title,platform FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+   ), current_rights AS MATERIALIZED (
+   SELECT root_id,evidence FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$1 AND metrics
+   ) SELECT m.*,CASE WHEN rights.evidence THEN f.full_text ELSE NULL END text,CASE WHEN rights.evidence THEN f.title ELSE NULL END title,
+   CASE WHEN rights.evidence THEN mention.url ELSE NULL END url, f.platform,NOT rights.evidence evidence_withheld,
    CASE WHEN rights.evidence THEN m.citations ELSE '[]'::jsonb END visible_citations,
    CASE WHEN rights.evidence THEN m.rationale ELSE NULL END visible_rationale
-   FROM signal_concept_memberships_current_v1 m JOIN signal_mention_facets_current_v1 f ON f.workspace_id=m.workspace_id AND f.root_id=m.root_id
-   JOIN mentions mention ON mention.id=m.root_id LEFT JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=m.workspace_id AND rights.root_id=m.root_id
-   WHERE m.workspace_id=$1 AND rights.metrics AND ($2::text IS NULL OR m.concept_key=$2) AND ($3::text IS NULL OR m.verdict=$3)
-   AND ($4::uuid IS NULL OR (m.root_id,m.concept_key)>($4::uuid,$5::text)) ORDER BY m.root_id,m.concept_key LIMIT $6`,
+   FROM current_pairs m JOIN current_roots f ON f.root_id=m.root_id
+   JOIN mentions mention ON mention.id=m.root_id JOIN current_rights rights ON rights.root_id=m.root_id
+   ORDER BY m.root_id,m.concept_key LIMIT $6`,
         [
           args.workspace_id,
           args.concept_key ?? null,
