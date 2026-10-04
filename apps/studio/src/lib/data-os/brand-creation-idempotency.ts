@@ -14,6 +14,7 @@ export type BrandCreationRequestV1 = {
   timezone: string;
   status: string;
   primary_brand_manager_user_id?: string | null;
+  mfp_opt_in?: boolean;
 };
 
 /** Seals fields that create child rows as well as the brand row. A lost-response
@@ -34,7 +35,8 @@ export function brandCreationRequestDigestV1(organizationId: string, input: Bran
     knowledge_notes: input.knowledge_notes ?? null,
     timezone: input.timezone,
     status: input.status,
-    primary_brand_manager_user_id: input.primary_brand_manager_user_id ?? null
+    primary_brand_manager_user_id: input.primary_brand_manager_user_id ?? null,
+    ...(input.mfp_opt_in ? {mfp_opt_in:true} : {})
   });
 }
 

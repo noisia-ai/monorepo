@@ -95,13 +95,18 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let consolidatedMode = false;
   let noOverlap = false;
   let membershipMode = false;
+  let membershipCollision = false;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   let interestIdentity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   const client = {
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
-      if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [{topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a")}]};
+      if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:membershipMode}]};
+      if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [
+        {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a")},
+        ...(membershipCollision ? [{topic:interestTopic,selected:false,selection_revision:2,selection_digest:sha("c")}] : [])
+      ]};
       if (membershipMode && sql.includes("SELECT context,digest,version_no")) return {rows: []};
       if (membershipMode && sql.includes("SELECT root_id,title,full_text,facets")) return {rows: []};
       if (membershipMode && sql.includes("string_agg(jsonb_build_array(root_id,concept_key")) return {rows:[{digest:sha("b")}]};
@@ -302,6 +307,20 @@ test("Signal keeps served semantics while applying a safe working label", async 
   consolidatedMode = true;
   const afterDiscovery = await loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
     workspace_id: workspaceId, actor_user_id: actorId, timezone: "America/Mexico_City" });
+  const previousFacetsFlag = process.env.NOISIA_MENTION_FACETS_ENABLED;
+  const previousMembershipFlag = process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;
+  try {
+    process.env.NOISIA_MENTION_FACETS_ENABLED = "true";
+    process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED = "true";
+    const withoutOptIn = await loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
+      workspace_id: workspaceId, actor_user_id: actorId, timezone: "America/Mexico_City" });
+    assert.deepEqual(withoutOptIn, afterDiscovery, "workspace without MFP keeps the exact Signal response with both flags enabled");
+  } finally {
+    if (previousFacetsFlag === undefined) delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+    else process.env.NOISIA_MENTION_FACETS_ENABLED = previousFacetsFlag;
+    if (previousMembershipFlag === undefined) delete process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;
+    else process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED = previousMembershipFlag;
+  }
   assert.equal(afterDiscovery?.generation_id, consolidatedSnapshotId);
   assert.equal(afterDiscovery?.terms.find(term => term.term_key === interestTopic.term_key)?.basis, "defined_interest");
   assert.equal(afterDiscovery?.terms.find(term => term.term_key === consolidatedKey)?.basis, "computed_cluster");
@@ -338,11 +357,34 @@ test("Signal keeps served semantics while applying a safe working label", async 
     assert.equal(mfp?.terms.find(t => t.term_key === "service")?.basis, "concept_membership");
     assert.equal(mfp?.terms.find(t => t.term_key === consolidatedKey)?.basis, "computed_cluster");
     assert.deepEqual(mfp?.membership_population, {relevant:6,unrelated:3,spam:1,unknown:2,without_concept:4});
-    assert.equal(mfp?.coverage.noise, null, "unrelated is not an editorial Noise disposition");
+    assert.equal(mfp?.coverage.noise, 0, "editorial Noise remains visible independently of unrelated facets");
+    selectedInterest = true; membershipCollision = true;
+    const additiveStart = statements.length;
+    const additive = await loadSignalWorkspaceTopicsOverviewV1({database:args.database,workspace_id:workspaceId,actor_user_id:actorId});
+    assert.equal(additive?.terms.find(t=>t.term_key===interestTopic.term_key)?.basis,"defined_interest");
+    assert.equal(additive?.terms.find(t=>t.term_key===interestTopic.term_key)?.mention_count,3);
+    assert.equal(additive?.terms.find(t=>t.term_key===interestTopic.term_key)?.selected,true,
+      "an MFP selection cannot displace an existing defined-interest selection");
+    const additiveSql = statements.slice(additiveStart).find(statement=>statement.includes("WITH source_generation AS MATERIALIZED"))!;
+    assert.match(additiveSql,/UNION ALL SELECT root_id,term_key,visible,evidence_fragment FROM defined_interest_memberships/u);
+    assert.match(additiveSql,/UNION ALL SELECT current.root_id,current.concept_key/u);
+    assert.match(additiveSql,/AND visible.membership_concept/u);
+    assert.doesNotMatch(additiveSql,/signal_membership_concepts_v1 adopted/u,
+      "adoption must not remove the published consolidated memberships");
+    membershipCollision = false;
+    selectedInterest = false;
     consolidatedMode = false;
     const noDiscovery = await loadSignalWorkspaceTopicsOverviewV1({database:args.database,workspace_id:workspaceId,actor_user_id:actorId});
-    assert.equal(noDiscovery?.generation_id, null);
-    assert.equal(noDiscovery?.terms[0]?.basis, "concept_membership");
+    assert.equal(noDiscovery?.generation_id, generationId, "MFP preserves the existing generation without consolidation");
+    assert.equal(noDiscovery?.terms.find(t=>t.term_key==="service")?.basis, "computed_cluster");
+    assert.equal(noDiscovery?.terms.find(t=>t.term_key==="service")?.selected, true);
+    importedMode = true; selectedInterest = true;
+    const importOnly = await loadSignalWorkspaceTopicsOverviewV1({database:args.database,workspace_id:workspaceId,actor_user_id:actorId});
+    assert.equal(importOnly?.generation_id, null);
+    assert.equal(importOnly?.terms.find(t=>t.term_key==="service")?.basis, "concept_membership");
+    assert.equal(importOnly?.terms.find(t=>t.term_key===interestTopic.term_key)?.basis, "defined_interest");
+    assert.equal(importOnly?.coverage.noise, null);
+    importedMode = false; selectedInterest = false;
   } finally {
     membershipMode = false; consolidatedMode = false;
     if (previousFlag === undefined) delete process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;

@@ -51,7 +51,8 @@ test("the new brand creator can request processing and adopt editorial topics wi
   const capability = resolveSignalWorkspaceCapabilitiesV1(authority);
   assert.equal(capability.can_request_processing, true);
   assert.equal(capability.can_execute_topics, false);
-  assert.equal(capability.can_adopt_topics, true);
+  assert.equal(capability.can_adopt_topics, false);
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1(authority,true).can_adopt_topics, true);
   for (const changed of [
     { ...authority, brand_access_level: null }, // revoked grant is absent from the live reader
     { ...authority, brand_access_level: "comment" }, // existing grants are not upgraded

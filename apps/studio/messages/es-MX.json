@@ -121,6 +121,7 @@
       "subindustryPlaceholder": "Agrega una o más: Pet Food, Marketplace, Accessories...",
       "subindustryDisabled": "Primero selecciona una industria",
       "timezone": "Zona horaria de la marca",
+      "mfpOptIn": "Activar ficha por mención, descubrimiento y pertenencia para este workspace",
       "timezoneHelp": "Busca una ciudad o región. Esta zona se usa para los periodos de Signal y reportes.",
       "timezoneSearch": "Buscar ciudad o zona horaria",
       "timezoneEmpty": "No hay zonas que coincidan con la búsqueda.",

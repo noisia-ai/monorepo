@@ -15,6 +15,7 @@ import {
 } from "@noisia/query-engine";
 import {
   createSignalLabelingStoreV1,
+  signalWorkspaceFeatureEnabledV1,
   type SignalLabelingStoreV1,
   type LabelingRunV1,
   type LabelingCallV1,
@@ -359,6 +360,10 @@ export async function signalMentionFacetsJobV1(
   )
     throw new Error("labeling_provider_disabled");
   const { pool } = await import("../db/client");
+  const workspace = (await pool.query<{workspace_id:string}>(
+    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='facets'",[job.data.run_id])).rows[0];
+  if (!workspace || !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.workspace_id,feature:"mention_facets"}))
+    throw new Error("labeling_workspace_not_enabled");
   const store = options.store ?? createMentionFacetsRuntimeStoreV1(pool);
   return runMentionFacetsTickV1({
     run_id: job.data.run_id,
