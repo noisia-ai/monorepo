@@ -99,6 +99,26 @@ test("MFP self-service: nullable/strict admission, live client authority and exa
     assert.equal(await actorAllowed(f.actors.firstAdmin, false), false);
     assert.equal(await actorAllowed(f.actors.internal, true), false);
     assert.equal((await scoped.query("SELECT count(*)::int n FROM engine_cost_events WHERE actor_user_id=$1", [f.actors.firstAdmin])).rows[0].n, 0);
+    // Test the actual revision expression in isolated temporary context families.
+    // Crossing a competitor window changes authority without rewriting the row.
+    const families:Record<string,string[]>={signal_workspaces:['brand_id'],brands:[],brand_os_profiles:['brand_id'],
+      brand_os_objectives:['brand_os_profile_id'],brand_os_briefs:['brand_os_profile_id'],brand_os_audiences:['brand_os_profile_id'],
+      brand_os_products:['brand_os_profile_id'],brand_os_claims:['brand_os_profile_id'],brand_knowledge_sources:['brand_id'],
+      knowledge_chunks:['knowledge_source_id'],knowledge_assertions:['knowledge_source_id'],competitors:['brand_id','competitor_brand_seed_id'],
+      brand_seeds:[],intelligence_entities:['brand_id'],entity_aliases:['entity_id'],signal_acquisition_plans:['workspace_id']};
+    for(const [table,columns] of Object.entries(families))await scoped.query(`CREATE TEMP TABLE ${table}(id uuid,
+      ${columns.map(column=>`${column} uuid,`).join('')}valid_from date,valid_to date,effective_from timestamptz,effective_to timestamptz)`);
+    const migration=await readFile(new URL('0233_signal_discovery_editorial_optional_caps.sql',import.meta.url),'utf8');
+    const start=migration.indexOf('CREATE FUNCTION signal_workspace_discovery_context_revision_v1');
+    const end=migration.indexOf('REVOKE ALL ON FUNCTION signal_workspace_discovery_context_revision_v1',start);
+    await scoped.query(migration.slice(start,end).replace('CREATE FUNCTION signal_workspace_discovery_context_revision_v1',
+      'CREATE FUNCTION pg_temp.discovery_context_revision_fixture').replace('SET search_path=public,extensions,pg_temp','SET search_path=pg_temp,public,extensions'));
+    await scoped.query('INSERT INTO pg_temp.signal_workspaces(id,brand_id) VALUES($1,$1)',[f.first.workspace_id]);
+    await scoped.query(`INSERT INTO pg_temp.competitors(id,brand_id,effective_to) VALUES($1,$1,clock_timestamp()+interval '500 milliseconds')`,[f.first.workspace_id]);
+    const revision=async()=>(await scoped.query('SELECT pg_temp.discovery_context_revision_fixture($1) value',[f.first.workspace_id])).rows[0].value;
+    const beforeWindow=await revision();
+    await scoped.query("SELECT pg_sleep(greatest(0,extract(epoch FROM (effective_to-clock_timestamp())))+0.02) FROM pg_temp.competitors");
+    assert.notEqual(await revision(),beforeWindow,'expiry must invalidate a source even without row mutation');
     await scoped.query("SET CONSTRAINTS ALL IMMEDIATE");
   } finally { await scoped.query("ROLLBACK"); scoped.release(); await database.end(); }
 });
@@ -129,12 +149,17 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
     await raw.query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
       VALUES($1,$2,'Synthetic MFP discovery client','client','client_admin',$3,'active')`, [clientActor, `${clientActor}@fixture.example.test`, scope.organization_id]);
     await raw.query("INSERT INTO user_brand_access(user_id,brand_id,access_level) VALUES($1,$2,'admin')", [clientActor, scope.brand_id]);
-    let serial = 0, failOutbox = false; const stack: string[] = [];
+    let serial = 0, failOutbox = false, tamperPopulation = false; const stack: string[] = [];
     const query = async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("BEGIN")) { const name = `discovery_${++serial}`; stack.push(name); return raw.query(`SAVEPOINT ${name}`); }
       if (sql === "COMMIT") return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
       if (sql === "ROLLBACK") { const name = stack.pop()!; await raw.query(`ROLLBACK TO SAVEPOINT ${name}`); return raw.query(`RELEASE SAVEPOINT ${name}`); }
       if (failOutbox && sql.startsWith("INSERT INTO signal_topic_classification_outbox")) throw new Error("synthetic_outbox_failure");
+      if(tamperPopulation&&sql.startsWith('INSERT INTO signal_topic_catalog_executions(')){
+        const altered=[...values!],snapshot=JSON.parse(String(altered[14]));
+        snapshot.discovery_population.root_ids[0]=randomUUID();altered[14]=JSON.stringify(snapshot);
+        return raw.query(sql,altered);
+      }
       return raw.query(sql, values);
     };
     const client = Object.assign(Object.create(raw), { query, release() {} });
@@ -180,6 +205,9 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
         discovery_request_intent_digest: sha(`synthetic-client-intent-${cap}`),
         interpretation_config: { call_configuration: configuration, budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } };
       const beforeAdmissions = (await raw.query("SELECT count(*)::int n FROM signal_processing_admissions WHERE actor_user_id=$1", [clientActor])).rows[0].n;
+      tamperPopulation=true;
+      try { await assert.rejects(engine.beginSignalWorkspaceEngineV1({...request,idempotency_key:randomUUID()}),/Engine discovery population is stale/); }
+      finally { tamperPopulation=false; }
       failOutbox = true;
       try { await assert.rejects(engine.beginSignalWorkspaceEngineV1({ ...request, idempotency_key: randomUUID() }), /synthetic_outbox_failure/); }
       finally { failOutbox = false; }
@@ -243,7 +271,7 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
       await raw.query("ROLLBACK TO SAVEPOINT revoke"); await raw.query("RELEASE SAVEPOINT revoke");
       assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1(attempt)).send_authorized, true);
       if(cap===null)await (await import('./signal-discovery-editorial.synthetic.fixture')).exerciseDiscoveryEditorialV1({
-        database,raw,...access,internal_user_id:identity.internal_user_id,organization_id:scope.organization_id,brand_id:scope.brand_id,
+        raw,...access,internal_user_id:identity.internal_user_id,organization_id:scope.organization_id,brand_id:scope.brand_id,
         source_execution_id:started.execution_id,root_id:lease.snapshot.discovery_population.root_ids[0]!});
       await raw.query("SET CONSTRAINTS ALL IMMEDIATE");
       await raw.query("ROLLBACK TO SAVEPOINT scenario"); await raw.query("RELEASE SAVEPOINT scenario");

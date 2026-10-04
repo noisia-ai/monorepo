@@ -235,7 +235,8 @@ export async function beginSignalWorkspaceClassificationWithClientV1(client:Pool
       taxonomy_profile_id=operational;
     }
     const inputs = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: args.workspace_id,
-      actor_user_id: args.actor_user_id,taxonomy_profile_id,interest_term_key:args.interest_term_key});
+      actor_user_id: args.actor_user_id,taxonomy_profile_id,interest_term_key:args.interest_term_key,
+      ...(args.source_projection?.contract_version==='workspace-topic-projection-v1'?{source_engine_execution_id:args.source_projection.engine_execution_id}:{})});
     for (const key of ["catalog_digest","compiler_digest","context_digest","embedding_config_digest"] as const) {
       if (identity[key] !== inputs[key]) return fail("workspace_classification_identity_invalid");
     }

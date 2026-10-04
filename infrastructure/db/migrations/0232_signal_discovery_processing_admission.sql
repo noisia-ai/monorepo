@@ -737,3 +737,88 @@ BEGIN
  END IF;
  RETURN NEW;
 END; $$;
+
+-- Preserve full-corpus legacy coverage while validating the exact MFP selection.
+CREATE OR REPLACE FUNCTION guard_signal_workspace_engine_v1() RETURNS trigger LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+DECLARE embedded signal_workspace_embedding_runs%ROWTYPE; discovery jsonb; population record; sample_cap bigint; seed text;
+BEGIN
+ IF TG_OP='DELETE' THEN
+  IF OLD.input_contract='workspace-topic-engine-v1' THEN RAISE EXCEPTION 'Engine history is retained.' USING ERRCODE='55000'; END IF;
+  RETURN OLD;
+ END IF;
+ IF NEW.input_contract<>'workspace-topic-engine-v1' THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' THEN
+  IF ROW(NEW.id,NEW.workspace_id,NEW.actor_user_id,NEW.taxonomy_profile_id,NEW.embedding_run_id,NEW.preparation_run_id,
+    NEW.input_revision,NEW.embedding_config_digest,NEW.input_snapshot,NEW.input_digest,NEW.policy_valid_until,
+    NEW.request_digest,NEW.idempotency_key,NEW.population_digest,NEW.identity_catalog_digest,NEW.definition_digest,
+    NEW.denominator,NEW.expected_chunks,NEW.created_at)
+   IS DISTINCT FROM ROW(OLD.id,OLD.workspace_id,OLD.actor_user_id,OLD.taxonomy_profile_id,OLD.embedding_run_id,OLD.preparation_run_id,
+    OLD.input_revision,OLD.embedding_config_digest,OLD.input_snapshot,OLD.input_digest,OLD.policy_valid_until,
+    OLD.request_digest,OLD.idempotency_key,OLD.population_digest,OLD.identity_catalog_digest,OLD.definition_digest,
+    OLD.denominator,OLD.expected_chunks,OLD.created_at) THEN
+   RAISE EXCEPTION 'Engine snapshot is immutable.' USING ERRCODE='23514'; END IF;
+  IF NOT OLD.engine_request_keys <@ NEW.engine_request_keys THEN
+   RAISE EXCEPTION 'Engine request keys are append-only.' USING ERRCODE='23514'; END IF;
+  IF OLD.status='ready' AND (to_jsonb(NEW)-'engine_request_keys') IS DISTINCT FROM (to_jsonb(OLD)-'engine_request_keys') THEN
+   RAISE EXCEPTION 'Complete engine evidence is immutable.' USING ERRCODE='55000'; END IF;
+ ELSE
+  SELECT * INTO embedded FROM signal_workspace_embedding_runs WHERE workspace_id=NEW.workspace_id AND id=NEW.embedding_run_id;
+  discovery:=NEW.input_snapshot->'discovery_population';
+  IF discovery IS NOT NULL THEN
+   IF NOT COALESCE(jsonb_typeof(discovery)='object' AND jsonb_typeof(discovery->'root_ids')='array'
+     AND discovery->>'stratification'='utc_day_platform' AND length(discovery->>'seed') BETWEEN 1 AND 120
+     AND (discovery->'sample_cap'='null'::jsonb OR discovery->>'sample_cap' ~ '^[1-9][0-9]{0,15}$')
+     AND discovery->>'eligible_relevant_roots' ~ '^[0-9]+$',false) THEN
+    RAISE EXCEPTION 'Engine discovery population is invalid.' USING ERRCODE='23514'; END IF;
+   sample_cap:=(discovery->>'sample_cap')::bigint;seed:=discovery->>'seed';
+   WITH relevant AS MATERIALIZED (
+    SELECT item.root_id,jsonb_array_length(asset.chunks->'chunks') chunk_count,
+      (facet.published_at AT TIME ZONE 'UTC')::date AS stratum_day,COALESCE(facet.platform,'') platform
+    FROM signal_corpus_preparation_items item
+    JOIN signal_corpus_text_assets asset ON asset.workspace_id=item.workspace_id
+      AND asset.text_sha256=item.asset_sha256 AND asset.chunk_policy_version=item.chunk_policy_version
+    JOIN signal_mention_facets_current_v1 facet ON facet.workspace_id=item.workspace_id
+      AND facet.preparation_run_id=item.run_id AND facet.root_id=item.root_id
+    WHERE item.workspace_id=NEW.workspace_id AND item.run_id=NEW.preparation_run_id
+      AND item.disposition='eligible' AND facet.relevance='relevant'
+   ), ranked AS (
+    SELECT *,row_number() OVER (PARTITION BY stratum_day,platform ORDER BY md5(seed||root_id::text),root_id) stratum_rank FROM relevant
+   ), selected AS (
+    SELECT * FROM ranked ORDER BY stratum_rank,md5(seed||COALESCE(stratum_day::text,'')||platform),root_id LIMIT sample_cap
+   ) SELECT COALESCE(jsonb_agg(root_id ORDER BY root_id),'[]'::jsonb) root_ids,count(*) roots,
+      (SELECT count(*) FROM relevant) total,COALESCE(sum(chunk_count),0) chunks INTO population FROM selected;
+   IF discovery->'root_ids' IS DISTINCT FROM population.root_ids
+     OR (discovery->>'eligible_relevant_roots')::bigint IS DISTINCT FROM population.total
+     OR NEW.denominator IS DISTINCT FROM population.roots OR NEW.expected_chunks IS DISTINCT FROM population.chunks
+     OR (NEW.input_snapshot->>'expected_roots')::bigint IS DISTINCT FROM population.roots
+     OR (NEW.input_snapshot->>'expected_chunks')::bigint IS DISTINCT FROM population.chunks
+     OR NEW.input_snapshot ? 'numeric_descriptor' THEN
+    RAISE EXCEPTION 'Engine discovery population is stale.' USING ERRCODE='23514'; END IF;
+  END IF;
+  IF embedded.id IS NULL OR embedded.input_contract<>'corpus' OR embedded.status<>'completed'
+   OR embedded.preparation_run_id<>NEW.preparation_run_id OR embedded.input_revision<>NEW.input_revision
+   OR embedded.config_digest<>NEW.embedding_config_digest OR embedded.policy_valid_until IS DISTINCT FROM NEW.policy_valid_until
+   OR (discovery IS NULL AND (NEW.denominator<>(embedded.counts->>'eligible_roots')::bigint
+     OR NEW.expected_chunks<>(embedded.counts->>'total_chunk_references')::bigint))
+   OR NEW.status<>'queued' OR NEW.processed_roots<>0 OR NEW.processed_chunks<>0
+   OR NEW.input_digest<>'sha256:'||encode(sha256(convert_to(NEW.input_snapshot::text,'UTF8')),'hex')
+   OR NOT COALESCE(NEW.input_snapshot->>'contract_version'='workspace-topic-engine-v1'
+     AND NEW.input_snapshot->>'workspace_id'=NEW.workspace_id::text
+     AND NEW.input_snapshot->>'taxonomy_profile_id'=NEW.taxonomy_profile_id::text
+     AND NEW.input_snapshot->'embedding_profile'=embedded.profile
+     AND jsonb_typeof(NEW.input_snapshot->'guides')='array'
+     AND jsonb_typeof(NEW.engine_request_keys)='object',false) THEN
+   RAISE EXCEPTION 'Engine input authority is invalid.' USING ERRCODE='23514'; END IF;
+ END IF;
+ IF NEW.status='ready' AND NOT NEW.input_snapshot ? 'numeric_descriptor' AND (NEW.processed_roots<>NEW.denominator OR NEW.processed_chunks<>NEW.expected_chunks
+  OR NEW.completed_at IS NULL OR NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact
+    WHERE artifact.engine_execution_id=NEW.id AND artifact.artifact_type='engine_output')
+  OR NOT COALESCE((NEW.result_summary->>'result_kind'='insufficient_population' AND NEW.result_summary->>'model_version_id' IS NULL)
+    OR (NEW.result_summary->>'result_kind'='computational_grouping' AND EXISTS(
+      SELECT 1 FROM tagging_model_versions model JOIN analysis_artifacts artifact ON artifact.engine_execution_id=NEW.id
+       AND artifact.artifact_type='engine_model' AND artifact.content->>'sha256'=model.artifact_digest
+      WHERE model.id::text=NEW.result_summary->>'model_version_id'
+       AND model.configuration->>'execution_id'=NEW.id::text AND model.configuration->>'contract_version'='workspace-topic-engine-v1')),false)) THEN
+  RAISE EXCEPTION 'Engine coverage or fitted model is incomplete.' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END; $$;

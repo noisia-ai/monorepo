@@ -33,7 +33,9 @@ CREATE FUNCTION signal_workspace_discovery_context_revision_v1(target_workspace 
   UNION ALL SELECT 'knowledge_assertion',a.id::text,signal_semantic_context_digest_v1(to_jsonb(a)::text||
     ((a.valid_from IS NULL OR a.valid_from<=(statement_timestamp() AT TIME ZONE 'UTC')::date)
       AND (a.valid_to IS NULL OR a.valid_to>=(statement_timestamp() AT TIME ZONE 'UTC')::date))::text) FROM knowledge_assertions a JOIN sources k ON a.knowledge_source_id=k.id
-  UNION ALL SELECT 'competitor',c.id::text,signal_semantic_context_digest_v1(to_jsonb(c)::text) FROM competitors c JOIN scope s ON c.brand_id=s.brand_id
+  UNION ALL SELECT 'competitor',c.id::text,signal_semantic_context_digest_v1(to_jsonb(c)::text||
+    ((c.effective_from IS NULL OR c.effective_from<=clock_timestamp())
+      AND (c.effective_to IS NULL OR c.effective_to>clock_timestamp()))::text) FROM competitors c JOIN scope s ON c.brand_id=s.brand_id
   UNION ALL SELECT 'competitor_seed',b.id::text,signal_semantic_context_digest_v1(to_jsonb(b)::text) FROM brand_seeds b
    WHERE EXISTS(SELECT 1 FROM competitors c JOIN scope s ON c.brand_id=s.brand_id WHERE c.competitor_brand_seed_id=b.id)
   UNION ALL SELECT 'entity',e.id::text,signal_semantic_context_digest_v1(to_jsonb(e)::text) FROM entities e
