@@ -185,7 +185,7 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     && (verifiedVersion === catalogVersion || isWorkspaceAdmissionAction(pending.body) || isWorkspaceIncrementalEditorialAction(pending.body)) && workspaceAnalysisCanReplay(data, pending));
   const start = useCallback(async () => {
     if (!canStart || !data) return;
-    const amount = Number(parseEmbeddingCapMicroUsd(cap));
+    const amount = data.discovery_enabled && cap.trim() === "" ? null : Number(parseEmbeddingCapMicroUsd(cap));
     await submit({ action: "start", embedding_run_id: data.preflight.embedding_run_id!,
       expected_context_digest: data.preflight.context_digest!, expected_catalog_digest: data.preflight.catalog_digest!, claude_cap_micro_usd: amount });
   }, [canStart, cap, data, submit]);

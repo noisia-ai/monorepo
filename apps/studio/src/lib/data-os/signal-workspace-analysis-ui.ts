@@ -9,25 +9,25 @@ import { isWorkspaceIncrementalEditorialAction, validWorkspaceIncrementalEditori
 
 export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["latest_run"]> & {
   retryable: boolean; outcome_unknown: boolean; transport_recovery_eligible: boolean;
-  claude_cost: { hard_cap_micro_usd: number; settled_micro_usd: number;
+  claude_cost: { hard_cap_micro_usd: number | null; settled_micro_usd: number;
     reserved_micro_usd: number; unknown_reserved_micro_usd: number; terminal_reserved_micro_usd: number };
 };
 export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "latest_run" | "latest_complete"> & {
   contract_version: "signal-workspace-analysis-v1";
-  request_scope: string; can_execute: boolean;
+  request_scope: string; can_execute: boolean; discovery_enabled?: boolean;
   update?: WorkspaceAnalysisUpdate | null;
   numeric_readiness?: WorkspaceNumericReadiness | null;
   admission?: WorkspaceInterpretationAdmission | null;
   incremental_editorial?: WorkspaceIncrementalEditorial | null;
   preflight: { state: "ready" | "awaiting_import" | "needs_preparation" | "missing_embeddings" | "missing_context";
     embedding_run_id: string | null; context_digest: string | null; catalog_digest: string | null;
-    cost: { claude: { estimated_upper_micro_usd: number | null; maximum_cap_micro_usd: number; provider_available: boolean };
+    cost: { claude: { estimated_upper_micro_usd: number | null; maximum_cap_micro_usd: number | null; provider_available: boolean };
       voyage: { estimated_upper_micro_usd: number } } };
   active_run: WorkspaceAnalysisRun | null; latest_run: WorkspaceAnalysisRun | null;
   latest_complete: WorkspaceAnalysisRun | null; request_run: WorkspaceAnalysisRun | null;
 };
 export type WorkspaceAnalysisRequest = { action: "start"; embedding_run_id: string;
-  expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd: number;
+  expected_context_digest: string; expected_catalog_digest: string; claude_cap_micro_usd?: number | null;
   discovery_sample_cap?: number | null; discovery_sample_seed?: string }
   | { action: "retry"; run_id: string }
   | { action: "retry_progress"; run_id: string }
@@ -84,9 +84,9 @@ export function validWorkspaceAnalysisRun(value: unknown): value is WorkspaceAna
     && (value.materialization_pending === undefined || typeof value.materialization_pending === "boolean")
     && (value.materialization_error_code === undefined || nullable(value.materialization_error_code, (code) => typeof code === "string"))
     && (value.materialization_retry_available === undefined || typeof value.materialization_retry_available === "boolean")
-    && integer(value.claude_cap_micro_usd) && [null, "computational_grouping", "insufficient_population"].includes(value.result_kind as null | string)
+    && nullable(value.claude_cap_micro_usd,integer) && [null, "computational_grouping", "insufficient_population"].includes(value.result_kind as null | string)
     && nullable(value.error_code, (code) => typeof code === "string") && nullable(value.model_version_id, uuid)
-    && object(value.claude_cost) && ["hard_cap_micro_usd", "settled_micro_usd", "reserved_micro_usd", "unknown_reserved_micro_usd", "terminal_reserved_micro_usd"]
+    && object(value.claude_cost) && nullable(value.claude_cost.hard_cap_micro_usd,integer) && [ "settled_micro_usd", "reserved_micro_usd", "unknown_reserved_micro_usd", "terminal_reserved_micro_usd"]
       .every((key) => integer((value.claude_cost as Record<string, unknown>)[key]))
     && Number(value.claude_cost.terminal_reserved_micro_usd) <= Number(value.claude_cost.reserved_micro_usd);
 }
@@ -108,7 +108,7 @@ export function validWorkspaceAnalysisStatus(value: unknown): value is Workspace
   return ["ready", "awaiting_import", "needs_preparation", "missing_embeddings", "missing_context"].includes(String(preflight.state))
     && nullable(preflight.embedding_run_id, uuid) && nullable(preflight.context_digest, digest) && nullable(preflight.catalog_digest, digest)
     && (preflight.state !== "ready" || uuid(preflight.embedding_run_id) && digest(preflight.context_digest) && digest(preflight.catalog_digest))
-    && nullable(claude.estimated_upper_micro_usd, integer) && integer(claude.maximum_cap_micro_usd)
+    && nullable(claude.estimated_upper_micro_usd, integer) && nullable(claude.maximum_cap_micro_usd,integer)
     && typeof claude.provider_available === "boolean" && integer(voyage.estimated_upper_micro_usd)
     && ["active_run", "latest_run", "latest_complete", "request_run"].every((key) => validWorkspaceAnalysisRun(value[key]))
     && (!value.active_run || ["queued", "running"].includes((value.active_run as WorkspaceAnalysisRun).status))
@@ -133,10 +133,10 @@ export function parsePendingWorkspaceAnalysis(value: unknown, workspaceId: strin
     return validWorkspaceIncrementalEditorialRequest(body) ? value as PendingWorkspaceAnalysis : null;
   if (body.action === "authorize_interpretation" || body.action === "revoke_interpretation")
     return validWorkspaceAdmissionRequest(body) ? value as PendingWorkspaceAnalysis : null;
-  if (body.action === "start" ? Object.keys(body).filter(key => key !== "discovery_sample_cap" && key !== "discovery_sample_seed").sort().join(",") !== "action,claude_cap_micro_usd,embedding_run_id,expected_catalog_digest,expected_context_digest"
+  if (body.action === "start" ? Object.keys(body).filter(key => key !== "discovery_sample_cap" && key !== "discovery_sample_seed" && key !== "claude_cap_micro_usd").sort().join(",") !== "action,embedding_run_id,expected_catalog_digest,expected_context_digest"
     || body.discovery_sample_cap != null && (!integer(body.discovery_sample_cap) || Number(body.discovery_sample_cap) < 1)
     || body.discovery_sample_seed !== undefined && (typeof body.discovery_sample_seed !== "string" || body.discovery_sample_seed.length < 1 || body.discovery_sample_seed.length > 120)
-    || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || !integer(body.claude_cap_micro_usd)
+    || !uuid(body.embedding_run_id) || !digest(body.expected_catalog_digest) || !digest(body.expected_context_digest) || body.claude_cap_micro_usd !== undefined && !nullable(body.claude_cap_micro_usd,integer)
     : !["retry", "retry_progress", "retry_numeric", "retry_incremental_delivery"].includes(String(body.action)) || Object.keys(body).sort().join(",") !== "action,run_id" || !uuid(body.run_id)) return null;
   return value as PendingWorkspaceAnalysis;
 }
@@ -146,6 +146,7 @@ export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null)
 }
 export function workspaceAnalysisDefaultCap(status: WorkspaceAnalysisStatus | null) {
   const cost = status?.preflight.cost.claude;
+  if(status?.discovery_enabled)return "";
   return embeddingCapUsdInput(String(cost?.estimated_upper_micro_usd ?? cost?.maximum_cap_micro_usd ?? 0));
 }
 const recoveryFailureCodes = ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid",
@@ -167,10 +168,12 @@ export function workspaceAnalysisUsesIncremental(status: WorkspaceAnalysisStatus
 }
 export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null, capInput: string) {
   const cap = parseEmbeddingCapMicroUsd(capInput);
-  if (!status || !cap || !status.can_execute || status.active_run || status.update?.has_pending_work || workspaceIncrementalEditorialPending(status.incremental_editorial) || workspaceAnalysisUnknown(status)
+  if (!status || (!status.discovery_enabled && !cap) || !status.can_execute || status.active_run || status.update?.has_pending_work || workspaceIncrementalEditorialPending(status.incremental_editorial) || workspaceAnalysisUnknown(status)
     || workspaceAnalysisUsesIncremental(status) || workspaceAnalysisRecoveryFailure(status) || status.preflight.state !== "ready") return false;
   const cost = status.preflight.cost.claude;
-  return cost.provider_available && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n
+  if(status.discovery_enabled)return cost.provider_available && (capInput.trim()==="" || cap!==null && BigInt(cap)>0n
+    && (cost.maximum_cap_micro_usd===null||BigInt(cap)<=BigInt(cost.maximum_cap_micro_usd)));
+  return cost.provider_available && cap!==null && cost.maximum_cap_micro_usd!==null && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n
     && (cost.estimated_upper_micro_usd === null || BigInt(cap) >= BigInt(cost.estimated_upper_micro_usd))
     && BigInt(cap) <= BigInt(cost.maximum_cap_micro_usd);
 }

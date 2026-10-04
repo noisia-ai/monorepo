@@ -19,7 +19,7 @@ const sha=(bytes:Uint8Array|string)=>`sha256:${createHash("sha256").update(bytes
 const fail=(code:string):never=>{throw new Error(code);};
 export type WorkspaceInterpretationBatchExecutionV1={
  database:SignalWorkspaceEngineDatabaseV1;
- execution:Pick<SignalWorkspaceEngineLeaseV1,"execution_id"|"workspace_id"|"execution_token"|"interpretation_revision_digest"> & {interpretation_admission?:{operation_id:string}|null};
+ execution:Pick<SignalWorkspaceEngineLeaseV1,"execution_id"|"workspace_id"|"execution_token"|"interpretation_revision_digest"> & {interpretation_admission?:{operation_id:string}|null;snapshot?:Pick<SignalWorkspaceEngineLeaseV1["snapshot"],"discovery_population">};
  actor_user_id:string;
  config:NonNullable<SignalWorkspaceEngineLeaseV1["snapshot"]["interpretation_config"]>;
  batch:SignalWorkspaceInterpretationBatchV1; directory:string; storage:WorkspaceEngineStorageV1;
@@ -70,7 +70,7 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
         provider_enabled: args.provider_enabled ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
         // A prior reservation keeps its own admission receipt. The current
         // lease authorizes new reservations, never changes an old call's date.
-        authorization_expires_at: call.admission?.admission_not_after
+        authorization_expires_at: execution.snapshot?.discovery_population ? undefined : call.admission?.admission_not_after
           ?? args.authorization_expires_at ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_AUTHORIZED_UNTIL,
         authorize_send: async (): Promise<WorkspaceInterpretationSendDecisionV1> => {
           try { return (await store.sent({ ...attempt, execution_token: lease.execution_token })).send_authorized; }

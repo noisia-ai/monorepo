@@ -5,14 +5,14 @@ export const editorialMoney = (v: unknown): v is string => typeof v === "string"
 const POSTGRES_BIGINT_MAX = 9_223_372_036_854_775_807n;
 /** The authorized amount is policy-owned; only PostgreSQL's storage range bounds it. */
 export const editorialCap = (v: unknown): v is string => editorialMoney(v) && BigInt(v) > 0n && BigInt(v) <= POSTGRES_BIGINT_MAX;
-const editorialQuoteCap = (reference: string, value: unknown): value is string => editorialCap(value)
+const editorialQuoteCap = (reference: string, value: unknown): value is string | null => reference.startsWith("v2.") && value === null || editorialCap(value)
   && (reference.startsWith("v2.") || BigInt(value) <= 30_000_000n);
 export const editorialKey = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9._:-]{8,200}$/u.test(v);
 const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, expected: string[]) => Object.keys(v).sort().join() === expected.sort().join();
 export type WorkspaceTopicEditorialCommandV1 =
   | { action: "start_editorial"; numeric_execution_id: string }
-  | { action: "authorize_editorial"; numeric_execution_id: string; quote_reference: string; confirmed_maximum_micro_usd: string }
+  | { action: "authorize_editorial"; numeric_execution_id: string; quote_reference: string; confirmed_maximum_micro_usd: string | null }
   | { action: "retry_editorial"; numeric_execution_id: string; execution_id: string }
   | { action: "complete_catalog"; numeric_execution_id: string; execution_id: string };
 export function parseWorkspaceTopicEditorialCommandV1(v: unknown): WorkspaceTopicEditorialCommandV1 | null {
@@ -34,9 +34,9 @@ export type WorkspaceTopicEditorialViewV1 = {
   /** A failed, quiescent V1 owner can be superseded by the durable Message Batches path. */
   replaces_failed_v1?: boolean;
   start_error_code?: string;
-  quote: null | { reference: string; expires_at: string; maximum_micro_usd: string; group_count: number; screening_count: number; global_count: 0 | 1 };
+  quote: null | { reference: string; expires_at: string; maximum_micro_usd: string | null; group_count: number; screening_count: number; global_count: 0 | 1 };
   execution: null | { execution_id: string; status: "queued" | "running" | "failed" | "review_ready" | "consolidation_pending" | "completed";
-    completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string;
+    completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string | null;
     confirmed_micro_usd: string; reserved_micro_usd: string; ambiguous_micro_usd: string };
   batch_progress?: { topics:number;narratives:number;noise:number;insufficient_evidence:number;technical_errors:number;pending:number;
     /** Grammar-rate-limit decisions waiting for same-execution retry; never a terminal outcome. */
@@ -69,7 +69,7 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
       || !editorialUuid(e.execution_id) || !["queued", "running", "failed", "review_ready", "consolidation_pending", "completed"].includes(String(e.status))
       || e.status !== v.status || !natural(e.completed_screening_count) || !natural(e.expected_screening_count)
       || e.expected_screening_count > 5000 || e.completed_screening_count > e.expected_screening_count
-      || !editorialCap(e.maximum_micro_usd) || !editorialMoney(e.confirmed_micro_usd) || !editorialMoney(e.reserved_micro_usd)
+      || e.maximum_micro_usd !== null && !editorialCap(e.maximum_micro_usd) || !editorialMoney(e.confirmed_micro_usd) || !editorialMoney(e.reserved_micro_usd)
       || !editorialMoney(e.ambiguous_micro_usd) || v.can_quote || v.quote !== null) return false;
   } else if (["queued", "running", "failed", "review_ready", "consolidation_pending", "completed"].includes(String(v.status))) return false;
   if ("batch_progress" in v) {

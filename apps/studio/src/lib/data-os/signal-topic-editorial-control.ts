@@ -14,7 +14,7 @@ type DbAccess = { database: Pick<Pool, "connect">; workspace_id: string; actor_u
 type Inspection = { numeric_run_id: string | null; execution_id: string | null; can_request: boolean; retry_available: boolean; source_current: boolean;
   replacement_available?: boolean;
   completion: null | { available: boolean; completed: boolean };
-  replay: null | { plan: SignalTopicEditorialScreeningPlanV1; quote_reference: string; maximum_micro_usd: string } };
+  replay: null | { plan: SignalTopicEditorialScreeningPlanV1; quote_reference: string; maximum_micro_usd: string | null } };
 function fail(code: string, status = 409): never { throw new SignalTopicEditorialStoreError(code, status); }
 /** Read-only scoped metadata. SQL mutators still revalidate live authority under their locks. */
 async function inspect(args: DbAccess, requestKey?: string): Promise<Inspection> {
@@ -27,7 +27,7 @@ async function inspect(args: DbAccess, requestKey?: string): Promise<Inspection>
     const row = (await client.query<{ numeric_run_id: string; execution_id: string | null; source_current: boolean; retry_available: boolean;
       replacement_available: boolean;
       completion_owner: boolean; completion_available: boolean; completed: boolean;
-      replay_plan: SignalTopicEditorialScreeningPlanV1 | null; quote_reference: string; maximum_micro_usd: string }>(`
+      replay_plan: SignalTopicEditorialScreeningPlanV1 | null; quote_reference: string; maximum_micro_usd: string | null }>(`
       SELECT n.consolidation_run_id AS numeric_run_id,COALESCE(replay_e.id,e.id) AS execution_id,
         CASE WHEN e.id IS NULL THEN signal_topic_editorial_source_v1(n.consolidation_run_id) IS NOT NULL
           ELSE signal_topic_editorial_source_v1(n.consolidation_run_id) IS NOT DISTINCT FROM e.source_binding END AS source_current,
@@ -87,7 +87,7 @@ export async function loadWorkspaceTopicEditorialForActorV1(args: Access & { wit
     view.status = status.status as WorkspaceTopicEditorialViewV1["status"];
     view.execution = { execution_id: status.execution_id, status: status.status as NonNullable<WorkspaceTopicEditorialViewV1["execution"]>["status"],
       completed_screening_count: status.completed_screening_count, expected_screening_count: status.expected_screening_count,
-      maximum_micro_usd: status.maximum_micro_usd ?? "0", confirmed_micro_usd: status.confirmed_micro_usd,
+      maximum_micro_usd: status.maximum_micro_usd, confirmed_micro_usd: status.confirmed_micro_usd,
       reserved_micro_usd: status.reserved_micro_usd, ambiguous_micro_usd: status.ambiguous_micro_usd };
     view.can_complete = scope.can_request && scope.completion?.available === true && status.status === "review_ready";
     view.can_retry = scope.can_request && scope.retry_available && dependencies.recoverable()
@@ -107,7 +107,7 @@ export async function loadWorkspaceTopicEditorialForActorV1(args: Access & { wit
         ? quote.status as WorkspaceTopicEditorialViewV1["status"] : "source_stale";
       view.can_quote = false; return clean(view);
     }
-    if (!quote.quote_reference || !quote.quote_expires_at || !editorialCap(quote.maximum_micro_usd)
+    if (!quote.quote_reference || !quote.quote_expires_at || quote.maximum_micro_usd !== null && !editorialCap(quote.maximum_micro_usd)
       || Date.parse(quote.quote_expires_at) <= dependencies.now()) fail("topic_editorial_quote_expired");
     view.status = "ready_to_authorize";
     view.quote = { reference: quote.quote_reference, expires_at: quote.quote_expires_at, maximum_micro_usd: quote.maximum_micro_usd,

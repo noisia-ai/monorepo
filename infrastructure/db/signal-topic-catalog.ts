@@ -1588,7 +1588,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
         AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) FOR UPDATE OF execution`,
     [lease.execution_id,lease.workspace_id,lease.input_digest,lease.execution_token])).rows[0];
     if (!run) throw new SignalTopicCatalogError("workspace_engine_lease_conflict");
-    await assertActor(client, lease.workspace_id, run.actor_user_id, "can_execute_topics");
+    await assertActor(client, lease.workspace_id, run.actor_user_id, run.input_snapshot.discovery_population ? "can_request_processing" : "can_execute_topics");
     const fit = run.result_summary.fit_checkpoint as import("./signal-workspace-engine").SignalWorkspaceEngineFitCheckpointV1|undefined;
     if (!fit || !run.input_snapshot.interpretation_config) throw new SignalTopicCatalogError("workspace_engine_fit_checkpoint_required");
     const { loadSignalWorkspaceEngineInputIdentityV1 } = await import("./signal-workspace-engine");
@@ -1904,7 +1904,7 @@ async function loadLatestReadySearch(queryable: Queryable, workspaceId: string, 
 }
 
 async function assertActor(queryable: Queryable, workspaceId: string, actorUserId: string,
-  capability: "can_edit_topics" | "can_execute_topics" | "can_adopt_topics" = "can_edit_topics") {
+  capability: "can_edit_topics" | "can_execute_topics" | "can_adopt_topics" | "can_request_processing" = "can_edit_topics") {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable,
     workspace_id: workspaceId, actor_user_id: actorUserId });
   if (!capabilities[capability]) throw new SignalTopicCatalogError("topic_catalog_forbidden", 403);

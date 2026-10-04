@@ -51,7 +51,7 @@ async function receiptByKey(c:Queryable,workspace:string,actor:string,key?:strin
 }
 async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string;execution_id?:string;idempotency_key?:string},historical=false):Promise<SignalWorkspaceInterpretationAdmissionStatusV1|null>{
  const capability=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,...args});if(!capability.can_view)return fail('admission_forbidden',403);
- const row=(await c.query<{id:string;actor_user_id:string;input_digest:string;input_snapshot:{context_digest:string;catalog_digest:string;claude_cap_micro_usd:number;interpretation_config?:{budget_timezone:string;daily_cap_micro_usd:number;call_configuration:{model:string}}};
+ const row=(await c.query<{id:string;actor_user_id:string;input_digest:string;input_snapshot:{context_digest:string;catalog_digest:string;claude_cap_micro_usd:number|null;discovery_population?:unknown;interpretation_config?:{budget_timezone:string;daily_cap_micro_usd:number;call_configuration:{model:string}}};
   config:{budget_timezone:string;daily_cap_micro_usd:number;call_configuration:{model:string}};eligible:boolean;requires_authorization:boolean;is_current:boolean;is_admin:boolean;receipt:SignalWorkspaceInterpretationAdmissionV1|null}>(`
  SELECT execution.id,execution.actor_user_id,execution.input_digest,execution.input_snapshot-'guides' input_snapshot,
   COALESCE(execution.interpretation_revision->'configuration',execution.input_snapshot->'interpretation_config') config,
@@ -62,7 +62,7 @@ async function status(c:Queryable,args:{workspace_id:string;actor_user_id:string
  FROM signal_topic_catalog_executions execution JOIN signal_corpus_preparation_input_state state USING(workspace_id)
  WHERE execution.workspace_id=$1::uuid AND execution.input_contract='workspace-topic-engine-v1' AND NOT execution.input_snapshot ? 'numeric_descriptor'
   AND ($3::uuid IS NULL OR execution.id=$3::uuid) ORDER BY execution.created_at DESC,execution.id DESC LIMIT 1`,[args.workspace_id,args.actor_user_id,args.execution_id??null])).rows[0];
- if(!row)return null;
+ if(!row||row.input_snapshot.discovery_population)return null;
  const accepted=await receiptByKey(c,args.workspace_id,args.actor_user_id,args.idempotency_key);
  const timezone=row.config?.budget_timezone??'UTC';
  const clock=(await c.query<{date:string;maximum:string}>(`SELECT (clock_timestamp() AT TIME ZONE $1)::date::text date,

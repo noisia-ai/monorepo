@@ -33,7 +33,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
     && run.claude_cost.settled_micro_usd === status.admission.confirmed_micro_usd
     && run.claude_cost.reserved_micro_usd === status.admission.reserved_micro_usd
     && run.claude_cost.terminal_reserved_micro_usd === status.admission.terminal_reserved_micro_usd
-    && (run.claude_cost.hard_cap_micro_usd > 0 || run.claude_cost.settled_micro_usd > 0
+    && ((run.claude_cost.hard_cap_micro_usd ?? 0) > 0 || run.claude_cost.settled_micro_usd > 0
       || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0));
   const update = status?.update;
   const admission = status?.numeric_readiness;
@@ -156,9 +156,9 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         {status?.active_run ? <> {t("previous")}</> : !complete.is_current ? <> {t("outdated")}</> : null}
       </p> : null}
       {analysis.error === "load" && status ? <p role="status">{t("unverified")}</p> : null}
-      {run && (run.claude_cost.hard_cap_micro_usd > 0 || run.claude_cost.settled_micro_usd > 0 || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0) ? <div data-analysis-receipt>
+      {run && ((run.claude_cost.hard_cap_micro_usd ?? 0) > 0 || run.claude_cost.settled_micro_usd > 0 || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0) ? <div data-analysis-receipt>
         <dl className="admin-summary-strip admin-summary-strip--compact" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}>
-          <div><dt>{t("receiptLabels.cap")}</dt><dd>{money(run.claude_cost.hard_cap_micro_usd)}</dd></div>
+          {run.claude_cost.hard_cap_micro_usd !== null ? <div><dt>{t("receiptLabels.cap")}</dt><dd>{money(run.claude_cost.hard_cap_micro_usd)}</dd></div> : null}
           <div><dt>{t("receiptLabels.confirmed")}</dt><dd>{money(run.claude_cost.settled_micro_usd)}</dd></div>
           <div><dt>{t("receiptLabels.reserved")}</dt><dd>{money(run.claude_cost.reserved_micro_usd)}</dd></div>
         </dl>
@@ -169,15 +169,16 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
           : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
+          {status?.discovery_enabled && preflight.cost.claude.maximum_cap_micro_usd !== null ? <> {t("spendingLimit", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</> : null}
           {!preflight.cost.claude.provider_available ? <> {t("noInterpretation")}</> : null}
         </p>
         {preflight.cost.voyage.estimated_upper_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("voyageEstimate", {
           amount: money(preflight.cost.voyage.estimated_upper_micro_usd)
         })}</p> : null}
-        {preflight.cost.claude.provider_available ? <details><summary>{t("changeCap")}</summary>
-          <label className="workspace-form__field"><span>{t("cap", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</span>
+        {preflight.cost.claude.provider_available && !status?.discovery_enabled ? <details><summary>{t("changeCap")}</summary>
+          {!status?.discovery_enabled ? <label className="workspace-form__field"><span>{t("cap", { amount: money(preflight.cost.claude.maximum_cap_micro_usd ?? 0) })}</span>
             <input inputMode="decimal" value={analysis.cap} disabled={disabled || analysis.submitting}
-              onChange={(event) => analysis.setCap(event.target.value)} /></label>
+              onChange={(event) => analysis.setCap(event.target.value)} /></label> : null}
         </details> : null}
       </> : null}
       {unknown ? <p role="status">{t("unknown")}</p> : run?.status === "failed" ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(run.error_code ?? "failed")}`)}</p> : null}

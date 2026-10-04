@@ -119,8 +119,8 @@ export async function requestQuotedSignalTopicEditorialBatchPlanV2(args:Db&{work
 }
 /** Durable same-key recovery is source-independent but still matches the original sealed quote/cap. */
 export async function replaySignalTopicEditorialBatchV2(args:Db&{workspace_id:string;actor_user_id:string;
-  numeric_execution_id:string;idempotency_key:string;quote_reference:string;confirmed_cap_micro_usd:string}){
-  if(!/^v2\.[0-9]{10}\.[a-f0-9]{64}$/u.test(args.quote_reference)||!/^\d{1,19}$/u.test(args.confirmed_cap_micro_usd))
+  numeric_execution_id:string;idempotency_key:string;quote_reference:string;confirmed_cap_micro_usd:string|null}){
+  if(!/^v2\.[0-9]{10}\.[a-f0-9]{64}$/u.test(args.quote_reference)||args.confirmed_cap_micro_usd!==null&&!/^\d{1,19}$/u.test(args.confirmed_cap_micro_usd))
     throw new Error('topic_editorial_v2_request_invalid');
   return invoke<{replayed:boolean;execution_id?:string;expected_items?:number;stage?:'screening';batch_id?:string|null;manifest_digest?:string|null}>(args.database,
     'SELECT replay_signal_topic_editorial_batch_v2_unprepared($1,$2,$3::uuid,$4,$5,$6::bigint) value',

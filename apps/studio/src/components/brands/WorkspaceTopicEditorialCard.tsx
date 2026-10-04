@@ -68,7 +68,7 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
           ? <WorkspaceTopicEditorialOutcomes workspaceId={workspaceId} numericExecutionId={numericExecutionId}
             executionId={execution.execution_id} mentionsHref={mentionsHref} /> : null}
         {!stale ? <dl className="admin-summary-strip admin-summary-strip--compact" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}>
-          <div><dt>{t("maximum")}</dt><dd>{money(execution.maximum_micro_usd)}</dd></div>
+          {execution.maximum_micro_usd !== null ? <div><dt>{t("maximum")}</dt><dd>{money(execution.maximum_micro_usd)}</dd></div> : null}
           <div><dt>{t("confirmed")}</dt><dd>{money(execution.confirmed_micro_usd)}</dd></div>
           <div><dt>{t("reserved")}</dt><dd>{money(execution.reserved_micro_usd)}</dd></div>
           <div><dt>{t("ambiguous")}</dt><dd>{money(execution.ambiguous_micro_usd)}</dd></div>

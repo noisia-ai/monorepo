@@ -137,7 +137,7 @@ export async function scheduleSignalWorkspaceEngineProgressV1(args:{database:Sig
    WHERE execution.input_contract='workspace-topic-engine-v1' AND execution.status IN('running','failed','ready')
     AND execution.result_summary ? 'fit_checkpoint' AND (${signalWorkspaceEngineProgressOwnerPredicateV1})
     AND coverage.unit_count>0 AND coverage.unit_count=coverage.unique_count
-    AND signal_workspace_classification_actor_v1(execution.workspace_id,execution.actor_user_id)
+    AND signal_workspace_engine_actor_v1(execution,execution.actor_user_id)
     AND execution.input_revision=(SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=execution.workspace_id)
     AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp())
     AND NOT EXISTS(SELECT 1 FROM analysis_artifacts materialization WHERE materialization.engine_execution_id=execution.id
@@ -191,7 +191,7 @@ export async function heartbeatSignalWorkspaceEngineProgressDispatchV1(args:Sign
    AND dispatch.worker_job_id=$3 AND dispatch.status IN('dispatching','dispatched')
    AND execution.actor_user_id=$4::uuid AND execution.input_contract='workspace-topic-engine-v1'
    AND execution.status IN('running','failed','ready') AND execution.result_summary ? 'fit_checkpoint'
-   AND signal_workspace_classification_actor_v1(execution.workspace_id,execution.actor_user_id)
+   AND signal_workspace_engine_actor_v1(execution,execution.actor_user_id)
    AND execution.input_revision=(SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=execution.workspace_id)
    AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) RETURNING dispatch.id`,
  [args.execution_id,args.workspace_id,args.worker_job_id,args.actor_user_id]);

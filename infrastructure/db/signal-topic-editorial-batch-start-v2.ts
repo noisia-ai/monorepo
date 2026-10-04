@@ -17,7 +17,7 @@ const fail=(code:string,status=409):never=>{throw new SignalTopicEditorialStoreE
 export async function performSignalTopicEditorialBatchStartV2(args:Args):Promise<{execution_id:string;replayed:boolean}>{
   const client=await args.database.connect();
   let runId:string;
-  let existing:{quote_reference:string;hard_cap_micro_usd:string;contract_version:string}|undefined;
+  let existing:{quote_reference:string;hard_cap_micro_usd:string|null;contract_version:string}|undefined;
   try{
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     await client.query('SET LOCAL search_path=public,extensions,pg_temp');
@@ -29,7 +29,7 @@ export async function performSignalTopicEditorialBatchStartV2(args:Args):Promise
       [args.workspace_id,args.numeric_execution_id])).rows[0];
     if(!row)fail('topic_editorial_source_stale');
     runId=row!.run_id;
-    existing=(await client.query<{quote_reference:string;hard_cap_micro_usd:string;contract_version:string}>(`SELECT e.quote_reference,e.hard_cap_micro_usd::text,
+    existing=(await client.query<{quote_reference:string;hard_cap_micro_usd:string|null;contract_version:string}>(`SELECT e.quote_reference,e.hard_cap_micro_usd::text,
       e.plan->>'contract_version' contract_version
       FROM signal_topic_editorial_request_keys k JOIN signal_topic_editorial_executions e
         ON e.id=k.execution_id AND e.workspace_id=k.workspace_id
@@ -63,7 +63,7 @@ export async function performSignalTopicEditorialBatchStartV2(args:Args):Promise
   const quote=await quoteSignalTopicEditorialChunkedAdmissionV3({database:args.database,workspace_id:args.workspace_id,
     actor_user_id:args.actor_user_id,plan,deadline:Math.floor(Date.now()/1000)+3300});
   if(quote.status!=='ready_to_authorize')fail(quote.status,quote.status==='access_required'?403:409);
-  if(!quote.quote_reference||!quote.maximum_micro_usd)fail('topic_editorial_policy_limit_unavailable');
+  if(!quote.quote_reference)fail('topic_editorial_policy_limit_unavailable');
   const latest=await args.database.connect();let previous:string|null=null;
   try{
     previous=(await latest.query<{id:string}>(`SELECT id::text FROM signal_topic_editorial_executions
