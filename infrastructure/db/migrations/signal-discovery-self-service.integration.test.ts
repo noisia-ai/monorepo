@@ -149,6 +149,15 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
     await raw.query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
       VALUES($1,$2,'Synthetic MFP discovery client','client','client_admin',$3,'active')`, [clientActor, `${clientActor}@fixture.example.test`, scope.organization_id]);
     await raw.query("INSERT INTO user_brand_access(user_id,brand_id,access_level) VALUES($1,$2,'admin')", [clientActor, scope.brand_id]);
+    const { loadSignalWorkspaceCapabilitiesStoreV1 } = await import("../signal-workspace-capabilities");
+    const capabilityArgs = { queryable: raw, workspace_id: identity.workspace_id, actor_user_id: clientActor };
+    await raw.query("DELETE FROM signal_workspace_features WHERE workspace_id=$1 AND feature='mfp_discovery'", [identity.workspace_id]);
+    assert.equal((await loadSignalWorkspaceCapabilitiesStoreV1(capabilityArgs)).can_adopt_topics, false,
+      "environment flag alone must not grant adoption");
+    await raw.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
+      VALUES($1::uuid,'mfp_discovery',$2::uuid) ON CONFLICT(workspace_id,feature) DO NOTHING`,
+      [identity.workspace_id,identity.internal_user_id]);
+    assert.equal((await loadSignalWorkspaceCapabilitiesStoreV1(capabilityArgs)).can_adopt_topics, true);
     let serial = 0, failOutbox = false, tamperPopulation = false; const stack: string[] = [];
     const query = async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("BEGIN")) { const name = `discovery_${++serial}`; stack.push(name); return raw.query(`SAVEPOINT ${name}`); }
@@ -168,7 +177,6 @@ test("MFP real corpus: client begin/outbox/claim, synthetic fit and ledger remai
     const { createHash } = await import("node:crypto");
     const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
     const access = { database, workspace_id: identity.workspace_id, actor_user_id: clientActor };
-    const { loadSignalWorkspaceCapabilitiesStoreV1 } = await import("../signal-workspace-capabilities");
     const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database, ...access });
     assert.equal(capabilities.can_request_processing, true); assert.equal(capabilities.can_execute_topics, false);
     const deny = async (work: () => Promise<unknown>, pattern: RegExp) => {

@@ -1,3 +1,4 @@
+import { signalWorkspaceFeatureEnabledV1 } from "./signal-workspace-features";
 export type SignalWorkspaceCapabilitiesV1 = {
   can_view: boolean;
   can_edit_topics: boolean;
@@ -23,7 +24,8 @@ export type SignalWorkspaceCapabilityAuthorityV1 = {
 
 /** Roles and grants come from our database, never from the request body or identity token. */
 export function resolveSignalWorkspaceCapabilitiesV1(
-  authority: SignalWorkspaceCapabilityAuthorityV1 | null
+  authority: SignalWorkspaceCapabilityAuthorityV1 | null,
+  mfpDiscoveryEnabled = false,
 ): SignalWorkspaceCapabilitiesV1 {
   const denied: SignalWorkspaceCapabilitiesV1 = { can_view: false, can_edit_topics: false,
     can_import_mentions: false, can_execute_topics: false, can_adopt_topics: false, can_select_signal: false, can_request_processing: false };
@@ -45,7 +47,7 @@ export function resolveSignalWorkspaceCapabilitiesV1(
   const canManageTopics = canEdit && authority.primary_role === "client_admin"
     && authority.organization_status === "active" && authority.brand_same_organization === true;
   return { ...denied, can_view: (administrator || viewer) && hasGrant,
-    can_edit_topics: canManageTopics, can_adopt_topics: canManageTopics,
+    can_edit_topics: canManageTopics, can_adopt_topics: canManageTopics && mfpDiscoveryEnabled,
     can_import_mentions: canEdit, can_select_signal: canEdit,
     can_request_processing: authority.primary_role === "client_admin" && authority.brand_access_level === "admin"
       && authority.organization_status === "active" && authority.brand_same_organization === true };
@@ -96,7 +98,9 @@ export async function loadSignalWorkspaceCapabilitiesStoreV1(args: {
     ) grant_access ON true
     WHERE workspace.id=$1::uuid
   `, [args.workspace_id, args.actor_user_id])).rows[0] ?? null;
-  return resolveSignalWorkspaceCapabilitiesV1(authority);
+  const mfpDiscoveryEnabled = authority?.user_type === "client" && await signalWorkspaceFeatureEnabledV1({
+    queryable: args.queryable, workspace_id: args.workspace_id, feature: "mfp_discovery" });
+  return resolveSignalWorkspaceCapabilitiesV1(authority, mfpDiscoveryEnabled);
 }
 
 export type SignalBrandWorkspaceEntryV1 = {
@@ -144,10 +148,13 @@ export async function listSignalBrandWorkspaceEntriesStoreV1(args: {
         actor.user_type='client' AND actor.organization_id=workspace.organization_id AND grant_access.access_level IS NOT NULL)
     ORDER BY lower(COALESCE(brand.display_name,brand.name,workspace.slug)),workspace.id
   `, [args.actor_user_id, args.workspace_slug ?? null])).rows;
-  return rows.flatMap(row => {
-    const capabilities = resolveSignalWorkspaceCapabilitiesV1(row);
+  const entries = await Promise.all(rows.map(async row => {
+    const mfpDiscoveryEnabled = row.user_type === "client" && await signalWorkspaceFeatureEnabledV1({
+      queryable: args.queryable, workspace_id: row.workspace_id, feature: "mfp_discovery" });
+    const capabilities = resolveSignalWorkspaceCapabilitiesV1(row, mfpDiscoveryEnabled);
     if (!capabilities.can_view) return [];
     return [{ workspace_id: row.workspace_id, workspace_slug: row.workspace_slug, name: row.name,
       brand_id: row.brand_id, organization_id: row.organization_id, timezone: row.timezone, capabilities }];
-  });
+  }));
+  return entries.flat();
 }

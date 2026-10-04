@@ -4,6 +4,7 @@ import type { Pool } from "pg";
 
 import { loadSignalWorkspaceCapabilitiesStoreV1, listSignalBrandWorkspaceEntriesStoreV1, resolveSignalWorkspaceCapabilitiesV1,
   type SignalWorkspaceCapabilityAuthorityV1 } from "./signal-workspace-capabilities";
+import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 
 const client: SignalWorkspaceCapabilityAuthorityV1 = {
   workspace_status: "active", brand_status: "active", actor_status: "active", user_type: "client",
@@ -11,10 +12,22 @@ const client: SignalWorkspaceCapabilityAuthorityV1 = {
   organization_status: "active", brand_same_organization: true
 };
 
+test("environment switches cannot enable MFP for a workspace without durable opt-in",async()=>{
+  const queryable={async query<Row extends Record<string, unknown>>(_sql:string,_params?:unknown[]){
+    return {rows:[{enabled:false}] as unknown as Row[]};
+  }};
+  const off={NOISIA_MENTION_FACETS_ENABLED:"false",NOISIA_CONCEPT_MEMBERSHIP_ENABLED:"false"};
+  const on={NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_CONCEPT_MEMBERSHIP_ENABLED:"true"};
+  for(const feature of ["mention_facets","concept_membership","mfp_discovery"] as const){
+    assert.equal(await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:"workspace-id",feature,env:off}),false);
+    assert.equal(await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:"workspace-id",feature,env:on}),false);
+  }
+});
+
 test("a scoped client administrator can prepare interests and imports without processing authority", () => {
   assert.deepEqual(resolveSignalWorkspaceCapabilitiesV1(client), {
     can_view: true, can_edit_topics: true, can_import_mentions: true,
-    can_execute_topics: false, can_adopt_topics: true, can_select_signal: true, can_request_processing: false
+    can_execute_topics: false, can_adopt_topics: false, can_select_signal: true, can_request_processing: false
   });
   for (const alias of ["brand_manager", "client_owner"]) assert.equal(
     resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role: alias }).can_edit_topics, false);
@@ -97,7 +110,9 @@ test("selection does not grant execution and adoption requires the exact editori
       const caps = resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role, brand_access_level });
       assert.equal(caps.can_select_signal, true);
       assert.equal(caps.can_execute_topics, false);
-      assert.equal(caps.can_adopt_topics, primary_role === "client_admin");
+      assert.equal(caps.can_adopt_topics, false);
+      assert.equal(resolveSignalWorkspaceCapabilitiesV1({ ...client, primary_role, brand_access_level },true).can_adopt_topics,
+        primary_role === "client_admin");
     }
   const internal = resolveSignalWorkspaceCapabilitiesV1({ ...client, user_type: "noisia_internal", primary_role: "analyst" });
   assert.equal(internal.can_select_signal, true);
@@ -144,7 +159,8 @@ test("processing requests require exact client admin grant or a financial intern
   const admitted = { ...client, brand_access_level: "admin" };
   assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_request_processing, true);
   assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_execute_topics, false);
-  assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_adopt_topics, true);
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted).can_adopt_topics, false);
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1(admitted,true).can_adopt_topics, true);
   for (const override of [{ brand_access_level: "comment" }, { brand_access_level: null },
     { primary_role: "brand_manager" }, { primary_role: "client_owner" }, { primary_role: "client_viewer" },
     { organization_status: "suspended" }, { brand_same_organization: false }, { same_organization: false },
@@ -157,11 +173,11 @@ test("processing requests require exact client admin grant or a financial intern
 
 
 test("discovery adoption has exactly the tenant-scoped manual editing authority",()=>{
- for(const brand_access_level of ["comment","admin"])assert.equal(resolveSignalWorkspaceCapabilitiesV1({...client,brand_access_level}).can_adopt_topics,true);
+ for(const brand_access_level of ["comment","admin"])assert.equal(resolveSignalWorkspaceCapabilitiesV1({...client,brand_access_level},true).can_adopt_topics,true);
  for(const overrides of [{organization_status:"inactive"},{organization_status:undefined},{brand_same_organization:false},
   {same_organization:false},{actor_status:"suspended"},{brand_access_level:null},{brand_access_level:"read"},
   {primary_role:"brand_manager"},{primary_role:"client_owner"},{primary_role:"client_viewer"}]) {
-  const caps=resolveSignalWorkspaceCapabilitiesV1({...client,...overrides});
+  const caps=resolveSignalWorkspaceCapabilitiesV1({...client,...overrides},true);
   assert.equal(caps.can_adopt_topics,false,JSON.stringify(overrides));
   assert.equal(caps.can_adopt_topics,caps.can_edit_topics);
  }

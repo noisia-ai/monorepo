@@ -15,6 +15,7 @@ import {
 } from "@noisia/query-engine";
 import {
   createSignalLabelingStoreV1,
+  signalWorkspaceFeatureEnabledV1,
   type SignalLabelingStoreV1,
   type LabelingRunV1,
   type LabelingCallV1,
@@ -30,6 +31,7 @@ import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storag
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readMfpInFlightPages } from "./signal-labeling-parallelism";
 export const SIGNAL_MENTION_FACETS_JOB_V1 = "signal-mention-facets-v1";
 type Provider = ReturnType<typeof createAnthropicMessageBatchesClient>;
 const zeroUsage = (): LlmUsageV1 => ({
@@ -94,24 +96,16 @@ export async function runMentionFacetsTickV1(args: {
       run.error_code = "labeling_outcome_unknown";
       calls = await store.calls(run);
     }
-    if (
-      !run.error_code &&
-      !calls.some((c) =>
-        ["reserved", "submitting", "submitted"].includes(c.status),
-      )
-    ) {
-      const inputs = await store.inputs(run);
-      if (inputs.length) {
-        await store.reserve(
-          run,
-          groupFacetInputsV1(
-            inputs,
-            JSON.stringify(run.context).length,
-            run.identity,
-          ).map((group) => facetCallProposalV1(run, group)),
-        );
-        calls = await store.calls(run);
+    if (!run.error_code && !calls.some((c) =>
+      ["reserved", "submitting", "submitted"].includes(c.status))) {
+      for (let page = 0; page < readMfpInFlightPages(); page++) {
+        const inputs = await store.inputs(run);
+        if (!inputs.length) break;
+        await store.reserve(run, groupFacetInputsV1(
+          inputs, JSON.stringify(run.context).length, run.identity,
+        ).map((group) => facetCallProposalV1(run, group)));
       }
+      calls = await store.calls(run);
     }
     const reserved = run.error_code
       ? []
@@ -359,6 +353,10 @@ export async function signalMentionFacetsJobV1(
   )
     throw new Error("labeling_provider_disabled");
   const { pool } = await import("../db/client");
+  const workspace = (await pool.query<{workspace_id:string}>(
+    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='facets'",[job.data.run_id])).rows[0];
+  if (!workspace || !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.workspace_id,feature:"mention_facets"}))
+    throw new Error("labeling_workspace_not_enabled");
   const store = options.store ?? createMentionFacetsRuntimeStoreV1(pool);
   return runMentionFacetsTickV1({
     run_id: job.data.run_id,

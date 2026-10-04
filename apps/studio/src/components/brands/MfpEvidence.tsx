@@ -9,6 +9,7 @@ export function MfpEvidence({item,mentionHref}:{item:Evidence;mentionHref:string
   return <article className="mfp-evidence">
     <div className="mfp-evidence__meta"><strong>{t(`verdicts.${item.verdict}`)}</strong><span>{item.platform}</span>
       <span>{t(`sources.${item.source}`)}</span></div>
+    {item.requires_override_review?<p role="status">{t("overrideReview")}</p>:null}
     {item.title?<h4>{item.title}</h4>:null}
     {item.text?<p className="mfp-evidence__text"><MfpHighlightedText text={item.text} quotes={item.citations.map(c=>c.quote)}/></p>:<p>{t("withheld")}</p>}
     {item.rationale?<p>{item.rationale}</p>:null}

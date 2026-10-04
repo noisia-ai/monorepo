@@ -10,6 +10,8 @@ import { requireStudioUser } from "@/lib/auth/guards";
 import { getAdminBrandWorkspaceIdentity } from "@/lib/data/admin-workspace";
 import { resolveSignalWorkspaceForUser } from "@/lib/data-os/signal-workspace";
 import { loadSignalTopicsManagementProductV1 } from "@/lib/data-os/signal-topics-management";
+import { signalWorkspaceFeatureEnabledV1 } from "@noisia/db";
+import { pool } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,7 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
     { workspaceId: identity.workspaceId });
   if (!workspace) notFound();
   const initial = await loadSignalTopicsManagementProductV1({ workspace, actor: session.appUser });
+  const mfpEnabled = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.id,feature:"concept_membership"});
   return (
     <div className="admin-workspace-page topics-workspace-page">
       <AdminWorkspaceHeader
@@ -37,7 +40,7 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
         title={t("title")}
       />
       <BrandMonitoringJourney brandId={id} current="topics" />
-      <TopicsManager mfpEnabled={process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED === "true"} brandId={id} initial={initial} workspaceId={workspace.id} actorId={session.appUser.id} />
+      <TopicsManager mfpEnabled={mfpEnabled} brandId={id} initial={initial} workspaceId={workspace.id} actorId={session.appUser.id} />
     </div>
   );
 }
