@@ -245,7 +245,7 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
   }
   async function* allChunks(): AsyncGenerator<SignalWorkspaceEngineChunkV1[]> {
     let after: Parameters<typeof store.chunks>[0]["after"] = null;
-    for (;;) { const page = await store.chunks({ database, lease, after, limit: 128 });
+    for (;;) { const page = await store.chunks({ database, lease, after, limit: lease.snapshot.discovery_population ? 200 : 128 });
       if (page.items.length > 128 || !page.done && (!page.items.length || digest(page.next_cursor) === digest(after))) fail("page_stalled");
       if (page.items.length) yield page.items.map(row => ({ ...row, expected_chunks: row.expected_root_chunks }));
       if (page.done) break; after = page.next_cursor;
@@ -260,7 +260,7 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
   }
   async function* allRoots() {
     let after: string | null = null;
-    for (;;) { const page = await store.roots({ database, lease, after_root_id: after, limit: 128 });
+    for (;;) { const page = await store.roots({ database, lease, after_root_id: after, limit: lease.snapshot.discovery_population ? 200 : 128 });
       if (page.items.length > 128 || !page.done && (!page.items.length || page.next_cursor === after)) fail("page_stalled");
       if (page.items.length) yield page.items; if (page.done) break; after = page.next_cursor;
     }

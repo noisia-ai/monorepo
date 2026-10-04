@@ -124,7 +124,7 @@ const fail = (code: string, status = 409): never => { throw new SignalWorkspaceE
 const sha = (value: string) => `sha256:${createHash("sha256").update(value, "utf8").digest("hex")}`;
 const digestPattern = /^sha256:[0-9a-f]{64}$/u;
 const natural = (value: unknown): number => { const n = Number(value); if (!Number.isSafeInteger(n) || n < 0) return fail("workspace_engine_count_invalid", 503); return n; };
-const limitOf = (value?: number) => { const n = value ?? 128; if (!Number.isInteger(n) || n < 1 || n > 128) return fail("workspace_engine_page_invalid", 422); return n; };
+const limitOf = (value?: number) => { const n = value ?? 128; if (!Number.isInteger(n) || n < 1 || n > 200) return fail("workspace_engine_page_invalid", 422); return n; };
 // An explicit retry may rerun numerical fit after repairing storage only before
 // any durable fit/model/provider evidence exists. Every upload/hash is verified
 // again; a verification error never enters the unconditional retry allowlist.

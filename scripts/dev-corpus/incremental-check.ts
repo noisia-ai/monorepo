@@ -67,12 +67,12 @@ await main(async()=>{
   const current=(await raw.query<{id:string;budget_timezone:string;created_by_user_id:string}>("SELECT id,budget_timezone,created_by_user_id FROM signal_processing_policy_versions WHERE organization_id=$1 AND status='active'",[scope.organization_id])).rows[0]!;
   assert.ok(current,"mfp_active_policy_required");
   let totalRoots=0,totalChunks=0;
-  for(const scenario of [{until:"infinity",cap:null},{until:"2030-01-02T03:04:05.000Z",cap:1000}] as const){
+  for(const scenario of [{until:"infinity",cap:null,daily:null},{until:"2030-01-02T03:04:05.000Z",cap:2_000_000,daily:20_000_000}] as const){
    await raw.query("SAVEPOINT scenario");report(scenario.cap===null?"unlimited_numeric_admission":"explicit_finite_policy");
    const policy=randomUUID();
    await raw.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-    SELECT $1,$2,max(version)+1,'draft',clock_timestamp()-interval '1 second',$3::timestamptz,$4,NULL,$5 FROM signal_processing_policy_versions WHERE organization_id=$2`,
-    [policy,scope.organization_id,scenario.until,current.budget_timezone,current.created_by_user_id]);
+    SELECT $1,$2,max(version)+1,'draft',clock_timestamp()-interval '1 second',$3::timestamptz,$4,$6::bigint,$5 FROM signal_processing_policy_versions WHERE organization_id=$2`,
+    [policy,scope.organization_id,scenario.until,current.budget_timezone,current.created_by_user_id,scenario.daily]);
    await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
     SELECT $1,action,kind,provider,model,configuration,configuration_digest,CASE WHEN action='topic_interpretation' THEN $3::bigint ELSE max_execution_micro_usd END,automatic_allowed
     FROM signal_processing_policy_actions WHERE policy_version_id=$2 AND action<>'topic_fit_incremental'`,[policy,current.id,scenario.cap]);
@@ -89,7 +89,7 @@ await main(async()=>{
    report("begin_numeric");const started=await beginSignalWorkspaceIncrementalEngineV1(request);
    report("replay_numeric");assert.deepEqual(await beginSignalWorkspaceIncrementalEngineV1(request),{...started,replayed:true});
    const readPolicy=async()=>(await raw.query("SELECT workspace_incremental_editorial_policy_v1($1) value",[started.execution_id])).rows[0].value;
-   report("editorial_policy");const editorial=await readPolicy();assert.equal(editorial.daily_cap_micro_usd,null);assert.equal(editorial.maximum_cap_micro_usd,scenario.cap);
+   report("editorial_policy");const editorial=await readPolicy();assert.equal(editorial.daily_cap_micro_usd,scenario.daily);assert.equal(editorial.maximum_cap_micro_usd,scenario.cap);
    assert.equal(editorial.valid_until,scenario.until==="infinity"?"9999-12-31T23:59:59.999Z":scenario.until);
    assert.equal((await raw.query("SELECT valid_until::text value FROM signal_processing_policy_versions WHERE id=$1",[policy])).rows[0].value==="infinity",scenario.until==="infinity");
    const money={queryable:raw,workspace_id:identity.workspace_id,actor_user_id:actor,action:"topic_interpretation" as const,
@@ -109,6 +109,10 @@ await main(async()=>{
    for(;;){const page=await readSignalWorkspaceIncrementalRootsV1({database,lease,after_root_id:cursor,limit:200});
     totalRoots+=page.items.length;totalChunks+=page.items.reduce((sum,row)=>sum+row.expected_chunks,0);cursor=page.next_cursor;if(page.done)break;}
    assert.equal(totalRoots,lease.snapshot.expected_roots);assert.equal(totalChunks,lease.snapshot.expected_chunks);
+   if(process.argv.includes("--editorial-check")){
+    const {checkMfpIncrementalEditorialV1}=await import("./incremental-editorial-check");
+    await checkMfpIncrementalEditorialV1({database,query,lease,report,cap:scenario.cap,policy_id:policy});
+   }
    await raw.query("SET CONSTRAINTS ALL IMMEDIATE");
    await raw.query("ROLLBACK TO SAVEPOINT scenario");await raw.query("RELEASE SAVEPOINT scenario");
   }

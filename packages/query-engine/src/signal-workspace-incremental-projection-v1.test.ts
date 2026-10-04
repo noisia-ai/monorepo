@@ -475,3 +475,19 @@ test("multi-unit claim order is canonical but missing or repeated units cannot c
   const foreign = structuredClone(proposal); foreign.source.claims[1]!.unit.unit_key = `guided:${id(999)}`;
   assert.throws(() => resolveSignalWorkspaceIncrementalBindingsV1({ ...input, proposals: [foreign] }), /editorial_claim_coverage_invalid/);
 });
+
+test("a root outside the MFP numeric population retains complete chunk coverage and a current human correction",()=>{
+ const known=scenario({chunks:201}),original=projectSignalWorkspaceIncrementalRootV1(known).decisions[0]!;
+ const human={...original};delete human.membership_basis;delete human.membership_metadata;
+ const outside={...known,root:{...known.root,unit_keys:[],state:"outlier" as const,discovery_pending:false},memberships:[]};
+ const correction:SignalWorkspaceIncrementalProjectionCorrectionV1={
+  root:{root_id:known.root.root_id,fingerprint:known.root.root_fingerprint,correction_digest:known.root.correction_digest},
+  context_digest:known.identity.context_digest,decision:{...human,disposition:"approved",resolution_method:"human",
+   model_version_id:null,decided_by_user_id:id(5000),correction_operation_id:id(5001)}};
+ const empty=projectSignalWorkspaceIncrementalRootV1(outside);
+ assert.equal(empty.resolution_state,"abstained");assert.equal(empty.decisions.length,0);assert.equal(empty.coverage.processed_chunks,201);
+ const corrected=projectSignalWorkspaceIncrementalRootV1({...outside,corrections:[correction]});
+ assert.equal(corrected.decisions.length,1);assert.equal(corrected.decisions[0]!.resolution_method,"human");
+ assert.equal(corrected.decisions[0]!.disposition,"approved");assert.equal(corrected.coverage.processed_chunks,201);
+ assert.throws(()=>projectSignalWorkspaceIncrementalRootV1({...outside,chunks:outside.chunks.slice(0,200)}),/root_census_invalid/);
+});

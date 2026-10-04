@@ -44,7 +44,7 @@ export type SignalWorkspaceIncrementalCheckpointV1 = {
 type Queryable=Pick<PoolClient,'query'>;
 const hash=/^sha256:[0-9a-f]{64}$/u;
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_engine_incremental_${code}`,status);};
-const limitOf=(limit=128)=>{if(!Number.isSafeInteger(limit)||limit<1||limit>128)return fail('page_invalid',422);return limit;};
+const limitOf=(limit=128)=>{if(!Number.isSafeInteger(limit)||limit<1||limit>200)return fail('page_invalid',422);return limit;};
 const count=(value:unknown)=>{const n=Number(value);if(!Number.isSafeInteger(n)||n<0)return fail('count_invalid');return n;};
 export const SIGNAL_WORKSPACE_NUMERIC_RETRY_ERRORS_V1=[
  'workspace_engine_incremental_transport_unavailable','workspace_engine_storage_transport_failed',
