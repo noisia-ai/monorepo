@@ -60,7 +60,7 @@ export async function quoteWorkspaceTopicEditorialBatchV2ForActor(args:Args){
   const quote=await quoteSignalTopicEditorialChunkedAdmissionV3({database:source.database,workspace_id:args.workspaceId,
     actor_user_id:args.actorUserId,plan,deadline});
   if(quote.status!=="ready_to_authorize")return {status:quote.status,quote:null};
-  if(!quote.quote_reference||!quote.quote_expires_at||!editorialCap(quote.maximum_micro_usd))fail("topic_editorial_quote_expired");
+  if(!quote.quote_reference||!quote.quote_expires_at||(quote.maximum_micro_usd!==null&&!editorialCap(quote.maximum_micro_usd)))fail("topic_editorial_quote_expired");
   return {status:"ready_to_authorize",quote:{reference:quote.quote_reference,expires_at:quote.quote_expires_at,
     maximum_micro_usd:quote.maximum_micro_usd,group_count:quote.expected_group_count,
     screening_count:quote.expected_group_count,global_count:0 as const}};
@@ -78,13 +78,13 @@ export async function startWorkspaceTopicEditorialBatchV2ForActor(args:Args&{ide
   // lost HTTP response or later source drift.
   const {prior}=await withTopicEditorialStartPhase("idempotency_lookup",async()=>{
     const client=await database.connect();
-    let existing:{quote_reference:string;hard_cap_micro_usd:string;contract_version:string}|undefined;
+    let existing:{quote_reference:string;hard_cap_micro_usd:string|null;contract_version:string}|undefined;
     try{
       await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
       await client.query("SET LOCAL search_path=public,extensions,pg_temp");
       const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
       if(!caps.can_view)fail("processing_forbidden",403);
-      const row=(await client.query<{quote_reference:string;hard_cap_micro_usd:string;contract_version:string}>(`SELECT e.quote_reference,e.hard_cap_micro_usd::text,e.plan->>'contract_version' contract_version
+      const row=(await client.query<{quote_reference:string;hard_cap_micro_usd:string|null;contract_version:string}>(`SELECT e.quote_reference,e.hard_cap_micro_usd::text,e.plan->>'contract_version' contract_version
         FROM signal_topic_editorial_request_keys k
         JOIN signal_topic_editorial_executions e ON e.workspace_id=k.workspace_id AND e.id=k.execution_id
         JOIN signal_topic_consolidation_executions n ON n.workspace_id=e.workspace_id
@@ -126,7 +126,7 @@ export async function startWorkspaceTopicEditorialBatchV2ForActor(args:Args&{ide
     workspace_id:args.workspaceId,actor_user_id:args.actorUserId,plan,deadline:Math.floor(Date.now()/1000)+240}),
     {request_fingerprint:requestFingerprint,group_count:plan.expected_group_count,request_count:plan.requests.length});
   if(quote.status!=="ready_to_authorize")fail(quote.status,quote.status==="access_required"?403:409);
-  if(!quote.quote_reference||!editorialCap(quote.maximum_micro_usd))fail("topic_editorial_policy_limit_unavailable");
+  if(!quote.quote_reference||(quote.maximum_micro_usd!==null&&!editorialCap(quote.maximum_micro_usd)))fail("topic_editorial_policy_limit_unavailable");
   const latest=await database.connect();let previous:string|null=null;
   try{
     const row=await withTopicEditorialStartPhase("find_previous_execution",async()=>
@@ -153,7 +153,7 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
     await client.query("SET LOCAL search_path=public,extensions,pg_temp");
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
     if(!caps.can_view)fail("processing_forbidden",403);
-    const row=(await client.query<{execution_id:string;status:string;owner_stage:string;contract_version:string;expected:number;done:number;reused_results:number;maximum:string;confirmed:string;reserved:string;ambiguous:string;materialized:boolean;
+    const row=(await client.query<{execution_id:string;status:string;owner_stage:string;contract_version:string;expected:number;done:number;reused_results:number;maximum:string|null;confirmed:string;reserved:string;ambiguous:string;materialized:boolean;
       topic:number;narrative:number;noise:number;insufficient:number;technical:number;pending:number;recovering:number;batch_states:Record<string,number>;error_codes:string[]}>(`
       WITH numeric AS (
         SELECT consolidation_run_id FROM signal_topic_consolidation_executions
@@ -327,10 +327,10 @@ export async function canSupersedeFailedLegacyEditorialWithBatchV2ForActor(args:
   }catch(error){await client.query("ROLLBACK").catch(()=>undefined);throw error;}
   finally{client.release();}
 }
-export async function authorizeWorkspaceTopicEditorialBatchV2ForActor(args:Args&{quoteReference:string;confirmedMaximumMicroUsd:string;
+export async function authorizeWorkspaceTopicEditorialBatchV2ForActor(args:Args&{quoteReference:string;confirmedMaximumMicroUsd:string|null;
   idempotencyKey:string;runtimeEnabled?:boolean}){
   if(![args.workspaceId,args.actorUserId,args.numericExecutionId].every(editorialUuid)
-    ||!editorialKey(args.idempotencyKey)||!editorialCap(args.confirmedMaximumMicroUsd))fail("topic_editorial_request_invalid",422);
+    ||!editorialKey(args.idempotencyKey)||(args.confirmedMaximumMicroUsd!==null&&!editorialCap(args.confirmedMaximumMicroUsd)))fail("topic_editorial_request_invalid",422);
   const database=args.database??(await import("@/lib/db")).pool;
   const replay=await replaySignalTopicEditorialBatchV2({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
     numeric_execution_id:args.numericExecutionId,idempotency_key:args.idempotencyKey,quote_reference:args.quoteReference,

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
+import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
   retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, retrySignalWorkspaceIncrementalDeliveryV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
@@ -12,7 +12,7 @@ import { beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   SignalTopicCatalogError,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
-import { SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
+import { signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
@@ -30,7 +30,7 @@ async function authorize(args: Access, execute: boolean) {
   const database = args.database ?? (await import("@/lib/db")).pool;
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database,
     workspace_id: args.workspaceId, actor_user_id: args.actorUserId });
-  if (!capabilities.can_view || execute && !capabilities.can_execute_topics) throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
+  if (!capabilities.can_view || execute && !(process.env.NOISIA_MENTION_FACETS_ENABLED === "true" ? capabilities.can_request_processing : capabilities.can_execute_topics)) throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
   return { database, capabilities, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
 }
 export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env, nowMilliseconds = Date.now()) {
@@ -81,7 +81,7 @@ export async function loadWorkspaceIncrementalEditorialForActorV1(args: {
 }
 export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["latest_run"], budget?: SignalWorkspaceEngineInterpretationBudgetV1): WorkspaceAnalysisRun | null {
   if (!run) return null;
-  if (run.claude_cap_micro_usd > 0 && !budget) throw new SignalWorkspaceEngineError("workspace_analysis_budget_unavailable", 503);
+  if (run.claude_cap_micro_usd !== 0 && !budget) throw new SignalWorkspaceEngineError("workspace_analysis_budget_unavailable", 503);
   const unknown = Boolean(run.error_code && /outcome_unknown/u.test(run.error_code)) || (budget?.unknown_reserved_micro_usd ?? 0) > 0;
   return { ...run, outcome_unknown: unknown, transport_recovery_eligible: run.transport_recovery_eligible === true,
     retryable: run.status === "failed" && !unknown && run.is_current
@@ -132,9 +132,11 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
     WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId])).rows[0]?.received === true;
   const preflightRead = await loadWorkspaceAnalysisPreflightForReadV1(() => loadSignalWorkspaceEnginePreflightV1(access));
   const preflight = preflightRead.value;
-  const policy = workspaceAnalysisInterpretationPolicyV1();
+  const discoveryEnabled = process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
+  const policy = discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
+  policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
   const budgets = new Map<string, SignalWorkspaceEngineInterpretationBudgetV1>();
-  const runs = [raw.latest_run, raw.latest_complete, raw.request_run].filter((run) => run && run.claude_cap_micro_usd > 0);
+  const runs = [raw.latest_run, raw.latest_complete, raw.request_run].filter((run) => run && run.claude_cap_micro_usd !== 0);
   await Promise.all([...new Set(runs.map(run => run!.execution_id))].map(async execution_id => {
     budgets.set(execution_id, await loadSignalWorkspaceEngineInterpretationBudgetV1({ ...access, execution_id }));
   }));
@@ -144,7 +146,7 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   const incremental_editorial = await loadWorkspaceIncrementalEditorialForActorV1({ ...access, idempotency_key: args.idempotencyKey });
   const latest = view(raw.latest_run);
   const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
-    request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.capabilities.can_execute_topics,
+    request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: discoveryEnabled ? access.capabilities.can_request_processing : access.capabilities.can_execute_topics, discovery_enabled: discoveryEnabled,
     latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
     preflight: {
@@ -152,7 +154,7 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
         embeddingRunId: preflight?.embedding_run_id ?? null, missingGuides: preflight?.missing_guides ?? 0 }),
       embedding_run_id: preflight?.embedding_run_id ?? null, context_digest: preflight?.expected_context_digest ?? null,
       catalog_digest: preflight?.expected_catalog_digest ?? null,
-      cost: { claude: { estimated_upper_micro_usd: null, maximum_cap_micro_usd: policy.maximum_cap_micro_usd, provider_available: policy.available },
+      cost: { claude: { estimated_upper_micro_usd: null, advisory_estimate: preflight?.advisory_estimate ?? null, maximum_cap_micro_usd: policy.maximum_cap_micro_usd, provider_available: policy.available },
         voyage: { estimated_upper_micro_usd: 0 } }
     } };
   if (!validWorkspaceAnalysisStatus(result)) throw new SignalWorkspaceEngineError("workspace_analysis_status_invalid", 503);
@@ -162,14 +164,27 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
   if (!requestKeyPattern.test(args.idempotencyKey) || !validateWorkspaceAnalysisRequestV1(args.body)) throw new SignalWorkspaceEngineError("workspace_analysis_request_invalid", 422);
   const access = await authorize(args, true);
   if (args.body.action === "start") {
-    const policy = workspaceAnalysisInterpretationPolicyV1();
+    const discoveryEnabled = process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
+    const intentDigest = discoveryEnabled ? signalWorkspaceEmbeddingDigestV1({ action: "start",
+      embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
+      expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: args.body.claude_cap_micro_usd ?? null,
+      discovery_sample_cap: args.body.discovery_sample_cap ?? null, discovery_sample_seed: args.body.discovery_sample_seed ?? null }) : undefined;
+    if (intentDigest && await replaySignalWorkspaceDiscoveryRequestV1({ ...access, idempotency_key: args.idempotencyKey, request_intent_digest: intentDigest }))
+      return loadWorkspaceAnalysisForActorV1({ ...args, idempotencyKey: args.idempotencyKey });
+    const policy = discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
+  policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
     if (!policy.available) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
-    if (args.body.claude_cap_micro_usd <= 0 || args.body.claude_cap_micro_usd > policy.maximum_cap_micro_usd) {
+    if (!discoveryEnabled && (args.body.claude_cap_micro_usd == null || args.body.claude_cap_micro_usd <= 0
+      || policy.maximum_cap_micro_usd === null || args.body.claude_cap_micro_usd > policy.maximum_cap_micro_usd)) {
       throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid", 422);
     }
+    let effectiveCap: number | null;
+    try { effectiveCap = discoveryStrictCapV1(args.body.claude_cap_micro_usd,policy.maximum_cap_micro_usd); }
+    catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid",422); }
     await beginSignalWorkspaceEngineV1({ ...access, idempotency_key: args.idempotencyKey,
       embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
-      expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: args.body.claude_cap_micro_usd,
+      expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: effectiveCap,
+      discovery_request_intent_digest: intentDigest,
       discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
       engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
         call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,

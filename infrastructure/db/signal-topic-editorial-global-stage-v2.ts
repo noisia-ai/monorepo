@@ -82,7 +82,7 @@ export async function prepareSignalTopicEditorialGlobalStageV2(args:{database:Si
     let execution=(await client.query<{organization_id:string;processing_admission_id:string;budget_date:string;budget_timezone:string;
       policy_version_id:string;hard_cap_micro_usd:string;stage:string;send_not_after:string;expected_group_count:number}>(`
       SELECT e.organization_id,e.processing_admission_id,
-        CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END budget_date,
+        CASE WHEN grant_row.execution_id IS NULL AND NOT signal_topic_discovery_run_v1(e.numeric_run_id) THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END budget_date,
         a.budget_timezone,a.policy_version_id,
         e.hard_cap_micro_usd::text,o.stage,o.send_not_after::text,run.expected_group_count
       FROM signal_topic_editorial_executions e JOIN signal_processing_admissions a ON a.id=e.processing_admission_id
@@ -96,7 +96,7 @@ export async function prepareSignalTopicEditorialGlobalStageV2(args:{database:Si
     await client.query('SELECT signal_brand_context_processing_lock_actor_v1($1::uuid,$2::uuid)',[args.workspace_id,args.actor_user_id]);
     execution=(await client.query<{organization_id:string;processing_admission_id:string;budget_date:string;budget_timezone:string;
       policy_version_id:string;hard_cap_micro_usd:string;stage:string;send_not_after:string;expected_group_count:number}>(`SELECT e.organization_id,e.processing_admission_id,
-        CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END budget_date,
+        CASE WHEN grant_row.execution_id IS NULL AND NOT signal_topic_discovery_run_v1(e.numeric_run_id) THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END budget_date,
         a.budget_timezone,a.policy_version_id,
         e.hard_cap_micro_usd::text,o.stage,o.send_not_after::text,run.expected_group_count
       FROM signal_topic_editorial_executions e JOIN signal_processing_admissions a ON a.id=e.processing_admission_id
@@ -440,7 +440,7 @@ export function createSignalTopicEditorialGlobalStageRuntimeStoresV2(args:{datab
         // the same durable stage while the call trigger waits on execution.
         const scope=(await client.query<{execution_id:string;workspace_id:string;actor_user_id:string;organization_id:string;budget_date:string}>(`
           SELECT e.id::text execution_id,e.workspace_id::text,e.actor_user_id::text,e.organization_id::text,
-            CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END::text budget_date
+            CASE WHEN grant_row.execution_id IS NULL AND NOT signal_topic_discovery_run_v1(e.numeric_run_id) THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END::text budget_date
           FROM signal_topic_editorial_global_stage_batches_v2 b
           JOIN signal_topic_editorial_global_stages_v2 s ON s.stage_id=b.stage_id
           JOIN signal_topic_editorial_executions e ON e.id=s.execution_id
@@ -725,7 +725,7 @@ export async function prepareSignalTopicEditorialGlobalStageGrammarRetryV2(args:
         ORDER BY c.request_id,c.reserved_at DESC,c.id DESC)
       SELECT s.stage_id::text,s.execution_id::text,s.workspace_id::text,s.organization_id::text,r.id::text request_id,
         c.id::text previous_call_id,r.stage_kind,r.custom_id,r.call_identity,r.stage_contract_body,r.request_body,r.input_digest,r.request_digest,
-        CASE WHEN grant_row.execution_id IS NULL THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END::text reserved_date,
+        CASE WHEN grant_row.execution_id IS NULL AND NOT signal_topic_discovery_run_v1(e.numeric_run_id) THEN a.budget_date ELSE (clock_timestamp() AT TIME ZONE a.budget_timezone)::date END::text reserved_date,
         a.budget_timezone,e.hard_cap_micro_usd::text hard_cap,s.screening_review_digest
       FROM signal_topic_editorial_global_stages_v2 s
       JOIN signal_topic_editorial_executions e ON e.id=s.execution_id

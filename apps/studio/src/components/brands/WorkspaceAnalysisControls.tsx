@@ -23,6 +23,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   const t = useTranslations("AdminWorkspace.topics.analysis"), locale = useLocale();
   const analysis = useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled, initial });
   const status = analysis.data;
+  const hideLegacyActions = suppressLegacyActions && !status?.discovery_enabled;
   const usesIncremental = workspaceAnalysisUsesIncremental(status);
   const run = status?.request_run ?? status?.active_run ?? status?.latest_run ?? null;
   const complete = status?.latest_complete ?? null;
@@ -33,7 +34,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
     && run.claude_cost.settled_micro_usd === status.admission.confirmed_micro_usd
     && run.claude_cost.reserved_micro_usd === status.admission.reserved_micro_usd
     && run.claude_cost.terminal_reserved_micro_usd === status.admission.terminal_reserved_micro_usd
-    && (run.claude_cost.hard_cap_micro_usd > 0 || run.claude_cost.settled_micro_usd > 0
+    && ((run.claude_cost.hard_cap_micro_usd ?? 0) > 0 || run.claude_cost.settled_micro_usd > 0
       || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0));
   const update = status?.update;
   const admission = status?.numeric_readiness;
@@ -86,8 +87,8 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
   }, [catalogReceipt, complete, disabled, analysis.error, analysis.verified, status?.observed_at]);
 
   return <div className="admin-section" aria-label={t("title")}>
-    <div className="admin-section__head"><div><h3>{t(suppressLegacyActions ? "legacyTitle" : "title")}</h3>
-      <p>{t(suppressLegacyActions ? "legacyBody" : "body")}</p></div></div>
+    <div className="admin-section__head"><div><h3>{t(hideLegacyActions ? "legacyTitle" : "title")}</h3>
+      <p>{t(hideLegacyActions ? "legacyBody" : "body")}</p></div></div>
     <div className="admin-section__body admin-drawer-form">
       {!status && analysis.reading ? <p role="status">{t("loading")}</p> : null}
       {admission && admissionMessage ? <div role="status" data-numeric-readiness={admission.state}>
@@ -156,28 +157,31 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         {status?.active_run ? <> {t("previous")}</> : !complete.is_current ? <> {t("outdated")}</> : null}
       </p> : null}
       {analysis.error === "load" && status ? <p role="status">{t("unverified")}</p> : null}
-      {run && (run.claude_cost.hard_cap_micro_usd > 0 || run.claude_cost.settled_micro_usd > 0 || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0) ? <div data-analysis-receipt>
+      {run && ((run.claude_cost.hard_cap_micro_usd ?? 0) > 0 || run.claude_cost.settled_micro_usd > 0 || run.claude_cost.reserved_micro_usd > 0 || run.claude_cost.unknown_reserved_micro_usd > 0) ? <div data-analysis-receipt>
         <dl className="admin-summary-strip admin-summary-strip--compact" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))" }}>
-          <div><dt>{t("receiptLabels.cap")}</dt><dd>{money(run.claude_cost.hard_cap_micro_usd)}</dd></div>
+          {run.claude_cost.hard_cap_micro_usd !== null ? <div><dt>{t("receiptLabels.cap")}</dt><dd>{money(run.claude_cost.hard_cap_micro_usd)}</dd></div> : null}
           <div><dt>{t("receiptLabels.confirmed")}</dt><dd>{money(run.claude_cost.settled_micro_usd)}</dd></div>
           <div><dt>{t("receiptLabels.reserved")}</dt><dd>{money(run.claude_cost.reserved_micro_usd)}</dd></div>
         </dl>
         {run.claude_cost.unknown_reserved_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("unknownAmount", { amount: money(run.claude_cost.unknown_reserved_micro_usd) })}</p> : null}
         {run.claude_cost.terminal_reserved_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("terminalAmount", { amount: money(run.claude_cost.terminal_reserved_micro_usd) })}</p> : null}
       </div> : null}
-      {!suppressLegacyActions && !usesIncremental && preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure && !update?.has_pending_work ? <>
-        <p className="admin-drawer-form__hint">{preflight.cost.claude.estimated_upper_micro_usd === null
+      {!hideLegacyActions && !usesIncremental && preflight?.state === "ready" && !analysis.pending && !status?.active_run && !unknown && !recoveryFailure && !update?.has_pending_work ? <>
+        <p className="admin-drawer-form__hint">{preflight.cost.claude.advisory_estimate
+          ? t("estimateAdvisory", { amount: money(preflight.cost.claude.advisory_estimate.estimated_micro_usd), roots: preflight.cost.claude.advisory_estimate.roots, groups: preflight.cost.claude.advisory_estimate.assumed_groups })
+          : preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
           : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
+          {status?.discovery_enabled && preflight.cost.claude.maximum_cap_micro_usd !== null ? <> {t("spendingLimit", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</> : null}
           {!preflight.cost.claude.provider_available ? <> {t("noInterpretation")}</> : null}
         </p>
         {preflight.cost.voyage.estimated_upper_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("voyageEstimate", {
           amount: money(preflight.cost.voyage.estimated_upper_micro_usd)
         })}</p> : null}
-        {preflight.cost.claude.provider_available ? <details><summary>{t("changeCap")}</summary>
-          <label className="workspace-form__field"><span>{t("cap", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</span>
+        {preflight.cost.claude.provider_available && !status?.discovery_enabled ? <details><summary>{t("changeCap")}</summary>
+          {!status?.discovery_enabled ? <label className="workspace-form__field"><span>{t("cap", { amount: money(preflight.cost.claude.maximum_cap_micro_usd ?? 0) })}</span>
             <input inputMode="decimal" value={analysis.cap} disabled={disabled || analysis.submitting}
-              onChange={(event) => analysis.setCap(event.target.value)} /></label>
+              onChange={(event) => analysis.setCap(event.target.value)} /></label> : null}
         </details> : null}
       </> : null}
       {unknown ? <p role="status">{t("unknown")}</p> : run?.status === "failed" ? <p role="alert" className="team-msg team-msg--error">{t(`errors.${workspaceAnalysisErrorKey(run.error_code ?? "failed")}`)}</p> : null}
@@ -192,21 +196,21 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
           <ArrowClockwise aria-hidden size={15} />{t("update.retry")}</button> : null}
         {analysis.canRetryProgress ? <button className="admin-button" type="button" onClick={() => void analysis.retryProgress()}>
           <ArrowClockwise aria-hidden size={15} />{t("retryCatalogSave")}</button> : null}
-        {analysis.canRetry && !suppressLegacyActions ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.retry()}>
+        {analysis.canRetry && !hideLegacyActions ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.retry()}>
           <ArrowClockwise aria-hidden size={15} />{t("retry")}</button>
           : analysis.canReplay && !deliveryReplay && !incrementalIntent ? <button className="admin-button admin-button--primary" type="button" onClick={() => void analysis.replay()}>
             <ArrowClockwise aria-hidden size={15} />{t(analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? "admissionGrant.replay" : analysis.pending?.body.action === "retry_incremental_delivery" ? "update.retryDelivery" : analysis.pending?.body.action === "retry_numeric" ? "update.retry" : analysis.pending?.body.action === "retry_progress" ? "retryCatalogSave" : "resend")}</button>
-            : !usesIncremental && !suppressLegacyActions ? <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
+            : !usesIncremental && !hideLegacyActions ? <button className="admin-button admin-button--primary" type="button" disabled={!analysis.canStart} onClick={() => void analysis.start()}>
               <MagnifyingGlass aria-hidden size={15} />{analysis.submitting ? t("submitting")
                 : !unknown && !recoveryFailure && preflight?.state === "ready" && capNumber !== null && capNumber > 0 ? t("startWithCap", { amount: money(capNumber) }) : t("start")}</button> : null}
         <button className="admin-button" type="button" disabled={analysis.reading || analysis.submitting} onClick={() => void analysis.read()}>
           <ArrowClockwise aria-hidden size={15} />{t(analysis.pending ? "recover" : "refresh")}</button>
       </div>
-      {status?.admission && (!suppressLegacyActions || status.admission.current?.action === "authorize_interpretation"
+      {status?.admission && (!hideLegacyActions || status.admission.current?.action === "authorize_interpretation"
         || analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body)) ? <WorkspaceInterpretationAdmissionControls
-        status={status} canAuthorize={analysis.canAuthorizeAdmission && !suppressLegacyActions}
+        status={status} canAuthorize={analysis.canAuthorizeAdmission && !hideLegacyActions}
         canRevoke={analysis.canRevokeAdmission} submitting={analysis.submitting} receiptsAlreadyVisible={admissionReceiptAlreadyVisible}
-        showAuthorization={!suppressLegacyActions}
+        showAuthorization={!hideLegacyActions}
         pendingRequest={analysis.pending && isWorkspaceAdmissionAction(analysis.pending.body) ? analysis.pending.body : null} onSubmit={analysis.submitAdmission} /> : null}
       {status && preflight?.state === "missing_context" ? <ClientBrandContextProcessingQuote workspaceId={workspaceId}
         variant="full" prototypeOnly authorizeFromEndpoint disabled={disabled || analysis.submitting}

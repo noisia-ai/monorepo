@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1,
-  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 } from "@noisia/query-engine";
+  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { signalSemanticContextProposalRuntimeConfigurationFromEnvV1 } from "./signal-semantic-context-proposal";
 
 export type SignalBrandContextPolicyProvisioningV1 = {
@@ -26,13 +26,15 @@ function validDeadline(value: string | undefined): value is string {
 function configuredPolicy(env: Record<string, string | undefined>) {
   const creatorUserId = env.NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID;
   const semantic = signalSemanticContextProposalRuntimeConfigurationFromEnvV1(env);
-  const daily = money(env.NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD);
+  const mfp=env.NOISIA_MENTION_FACETS_ENABLED === "true";
+  const daily = money(mfp ? env.NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD : env.NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD);
+  if(mfp && env.NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD !== undefined && daily === null)return null;
   const prototype = money(env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD
     ?? String(SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1));
-  const until = env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL;
-  if (!creatorUserId || !uuid.test(creatorUserId) || !semantic.available || !daily || !prototype || !money(semantic.platform_hard_cap_micro_usd.toString())
-    || !validDeadline(until) || daily < semantic.platform_hard_cap_micro_usd + prototype) return null;
-  return { creatorUserId, daily: daily.toString(), until, semanticCap: semantic.platform_hard_cap_micro_usd.toString(),
+  const until = mfp ? "infinity" : env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL;
+  if (!creatorUserId || !uuid.test(creatorUserId) || !semantic.available || (!mfp && !daily) || !prototype || !money(semantic.platform_hard_cap_micro_usd.toString())
+    || (!mfp && !validDeadline(until)) || !mfp && daily !== null && daily < semantic.platform_hard_cap_micro_usd + prototype) return null;
+  return { creatorUserId, mfp, daily: daily?.toString() ?? null, until: until!, semanticCap: semantic.platform_hard_cap_micro_usd.toString(),
     prototypeCap: prototype.toString(), semanticConfiguration: {
       provider: semantic.provider, model: semantic.model, model_version: semantic.model_version,
       pricing_version: semantic.pricing_version, max_input_tokens: semantic.max_input_tokens,
@@ -113,6 +115,22 @@ export async function provisionSignalBrandContextPolicyV1(args: {
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1::uuid,$2,'provider',$3,$4,$5::jsonb,signal_semantic_context_digest_json_v2($5::jsonb),$6::bigint,$7::boolean)`,
       [policy.id, action, provider, model, JSON.stringify(policyConfiguration), cap, automatic]);
+    }
+    if(configuration.mfp){
+      await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
+        configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        SELECT $1::uuid,'topic_consolidation_numeric','free',config,
+          signal_semantic_context_digest_json_v2(config),0,false
+        FROM (SELECT signal_topic_consolidation_numeric_configuration_v1() config) configuration`,[policy.id]);
+      await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
+        configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        VALUES($1::uuid,'topic_interpretation','provider','anthropic',$2,$3::jsonb,
+          signal_semantic_context_digest_json_v2($3::jsonb),NULL,false)`,
+        [policy.id,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1.model,JSON.stringify(SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1)]);
+      await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
+        configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        VALUES($1::uuid,'topic_consolidation','provider','anthropic','claude-sonnet-4-6',signal_topic_editorial_configuration_v2(),
+          signal_semantic_context_digest_json_v2(signal_topic_editorial_configuration_v2()),NULL,false)`,[policy.id]);
     }
     const active = await client.query(`UPDATE signal_processing_policy_versions SET status='active'
       WHERE id=$1::uuid AND status='draft' RETURNING id`, [policy.id]);

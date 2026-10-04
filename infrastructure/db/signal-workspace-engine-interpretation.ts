@@ -33,7 +33,7 @@ export type SignalWorkspaceEngineInterpretationUsageV1={
  * already audited provider usage against the sealed price configuration. */
 export type SignalWorkspaceEngineInterpretationBudgetV1={
  confirmed_micro_usd:number;reserved_micro_usd:number;unknown_reserved_micro_usd:number;terminal_reserved_micro_usd:number;
- observed_exception_micro_usd:number;hard_cap_micro_usd:number;
+ observed_exception_micro_usd:number;hard_cap_micro_usd:number|null;
 };
 const fail=(code:string,status=409):never=>{throw new SignalWorkspaceEngineInterpretationError(code,status);};
 const digest=/^sha256:[0-9a-f]{64}$/u;
@@ -46,13 +46,14 @@ async function tx<T>(database:SignalWorkspaceEngineInterpretationDatabaseV1,work
 type Row={admission:SignalWorkspaceEngineInterpretationCallAdmissionV1|null;id:string;workspace_id:string;catalog_execution_id:string;actor_user_id:string;request_digest:string;request_seal:string;
  call_state:SignalWorkspaceEngineInterpretationCallV1['state'];attempt_token:string;retry_of_call_id:string|null;reserved_micro_usd:string;settled_micro_usd:string|null;
  call_configuration:SignalWorkspaceEngineInterpretationConfigurationV1;response_storage_key:string|null;response_sha256:string|null;response_size_bytes:string|null;
- response_http_status:number|null;provider_request_id:string|null;response_complete:boolean;budget_date:string;budget_timezone:string;budget_daily_cap_micro_usd:string;failure_code:string|null;
+ response_http_status:number|null;provider_request_id:string|null;response_complete:boolean;budget_date:string;budget_timezone:string;budget_daily_cap_micro_usd:string|null;failure_code:string|null;
  interpretation_revision_digest:string|null;editorial_repair:SignalWorkspaceEngineEditorialRepairV1|null};
 const view=(r:Row):SignalWorkspaceEngineInterpretationCallV1=>({admission:r.admission?{...r.admission,admission_not_after:new Date(r.admission.admission_not_after).toISOString()}:null,call_id:r.id,execution_id:r.catalog_execution_id,workspace_id:r.workspace_id,attempt_token:r.attempt_token,retry_of_call_id:r.retry_of_call_id,
  state:r.call_state,reserved_micro_usd:natural(r.reserved_micro_usd),settled_micro_usd:r.settled_micro_usd===null?null:natural(r.settled_micro_usd),request_digest:r.request_digest,interpretation_revision_digest:r.interpretation_revision_digest??null,editorial_repair:r.editorial_repair,
  response:r.response_storage_key?{storage_key:r.response_storage_key,sha256:r.response_sha256!,size_bytes:natural(r.response_size_bytes),http_status:r.response_http_status!,provider_request_id:r.provider_request_id,complete:r.response_complete}:null});
-async function authorize(c:PoolClient,workspace:string,actor:string,execute=true){const cap=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,workspace_id:workspace,actor_user_id:actor});
- if(!(execute?cap.can_execute_topics:cap.can_view))return fail('workspace_engine_interpretation_forbidden',403);}
+async function authorize(c:PoolClient,workspace:string,actor:string,execute=true,executionId?:string){const cap=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,workspace_id:workspace,actor_user_id:actor});
+ const discovery=execute&&!cap.can_execute_topics&&executionId&&(await c.query<{discovery:boolean}>("SELECT input_snapshot ? 'discovery_population' discovery FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract='workspace-topic-engine-v1'",[executionId,workspace])).rows[0]?.discovery===true;
+ if(!(execute?(discovery?cap.can_request_processing:cap.can_execute_topics):cap.can_view))return fail('workspace_engine_interpretation_forbidden',403);}
 async function actorLock(c:PoolClient,actor:string){await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`workspace-interpretation-budget:${actor}`]);}
 async function execution(c:PoolClient,workspace:string,id:string,actor:string,checkCurrent=true,executionToken?:string){
  // New editorial owners require their own sealed request plan, never a fitted/numeric lease.
@@ -69,7 +70,7 @@ async function execution(c:PoolClient,workspace:string,id:string,actor:string,ch
  }
 
  const row=(await c.query<{id:string;actor_user_id:string;status:string;execution_token:string|null;lease_live:boolean;fit_checkpoint:unknown;
-  interpretation_revision:SignalWorkspaceEngineInterpretationRevisionV1|null;input_snapshot:{context_digest:string;catalog_digest:string;claude_cap_micro_usd:number;interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1};current:boolean}>(`
+  interpretation_revision:SignalWorkspaceEngineInterpretationRevisionV1|null;input_snapshot:{context_digest:string;catalog_digest:string;discovery_population?:unknown;claude_cap_micro_usd:number|null;interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1};current:boolean}>(`
  SELECT execution.id,execution.actor_user_id,execution.status,execution.input_snapshot-'guides' input_snapshot,execution.interpretation_revision,
   execution.execution_token,execution.execution_expires_at>clock_timestamp() lease_live,execution.result_summary->'fit_checkpoint' fit_checkpoint,
   execution.input_revision=state.input_revision AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) current
@@ -116,14 +117,14 @@ const exposureSQL=`CASE WHEN call_state='settled' OR call_state='terminal_confir
  THEN settled_micro_usd WHEN call_state='definitely_not_sent' THEN 0 ELSE reserved_micro_usd END`;
 export async function reserveSignalWorkspaceEngineInterpretationV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;
  workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string;request_digest:string;
- configuration:SignalWorkspaceEngineInterpretationConfigurationV1;reserved_micro_usd:number;budget_timezone:string;daily_cap_micro_usd:number;
+ configuration:SignalWorkspaceEngineInterpretationConfigurationV1;reserved_micro_usd:number;budget_timezone:string;daily_cap_micro_usd:number|null;
  retry_of_call_id?:string;execution_token?:string;interpretation_revision_digest?:string;admission_operation_id?:string;editorial_repair?:SignalWorkspaceEngineEditorialRepairV1}):Promise<SignalWorkspaceEngineInterpretationCallV1>{
  const config=args.configuration;
  if(!validKey(args.idempotency_key)||!digest.test(args.request_digest)||!digest.test(config.prompt_digest)||!digest.test(config.schema_digest)
   ||config.provider!=='anthropic'||!config.model||config.model.length>120||!config.pricing_version||config.pricing_version.length>200
   ||![config.input_micro_usd_per_million_tokens,config.output_micro_usd_per_million_tokens,config.cache_read_micro_usd_per_million_tokens,config.cache_creation_micro_usd_per_million_tokens]
    .every(n=>Number.isSafeInteger(n)&&n>=0)||!Number.isSafeInteger(args.reserved_micro_usd)||args.reserved_micro_usd<=0
-  ||!Number.isSafeInteger(args.daily_cap_micro_usd)||args.daily_cap_micro_usd<=0||args.budget_timezone.length>100)return fail('workspace_engine_interpretation_request_invalid',422);
+  ||args.daily_cap_micro_usd!==null&&(!Number.isSafeInteger(args.daily_cap_micro_usd)||args.daily_cap_micro_usd<=0)||args.budget_timezone.length>100)return fail('workspace_engine_interpretation_request_invalid',422);
  const repair=args.editorial_repair;
  if(repair&&(Object.keys(repair).sort().join(',')!=='contract_version,diagnostic,protocol_digest,source_call_id,source_request_digest,source_response_sha256'
   ||repair.contract_version!=='workspace-editorial-repair-v1'||repair.diagnostic!=='output_invalid'
@@ -135,7 +136,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   budget_timezone:args.budget_timezone,daily_cap_micro_usd:args.daily_cap_micro_usd,execution_id:args.execution_id,retry_of_call_id:args.retry_of_call_id??null,
   ...(admissionId?{admission_operation_id:admissionId}:{}),...(repair?{editorial_repair:repair}:{}),...(args.interpretation_revision_digest?{interpretation_revision_digest:args.interpretation_revision_digest}:{})});
  const seal=sealFor(args.admission_operation_id);
- return tx(args.database,async c=>{await authorize(c,args.workspace_id,args.actor_user_id);await actorLock(c,args.actor_user_id);
+ return tx(args.database,async c=>{await authorize(c,args.workspace_id,args.actor_user_id,true,args.execution_id);await actorLock(c,args.actor_user_id);
   const byKey=(await c.query<Row>(`${rowSQL} AND workspace_id=$1::uuid AND idempotency_key=$2 FOR UPDATE`,[args.workspace_id,args.idempotency_key])).rows[0];
   if(byKey){if(byKey.actor_user_id!==args.actor_user_id||byKey.request_seal!==sealFor(byKey.admission?.operation_id))return fail('workspace_engine_interpretation_idempotency_conflict');return view(byKey);}
   const attempts=(await c.query<Row>(`${rowSQL} AND workspace_id=$1::uuid AND catalog_execution_id=$2::uuid AND request_digest=$3 ORDER BY created_at DESC,id DESC FOR UPDATE`,
@@ -152,6 +153,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   }else if(attempts.length){const prior=attempts[0]!;
    if(prior.actor_user_id!==args.actor_user_id||prior.request_seal!==sealFor(prior.admission?.operation_id))return fail('workspace_engine_interpretation_idempotency_conflict');return view(prior);}
   const run=await execution(c,args.workspace_id,args.execution_id,args.actor_user_id,true,args.execution_token);
+  if(args.daily_cap_micro_usd===null&&!('discovery_population' in run.input_snapshot))return fail('workspace_engine_interpretation_request_invalid',422);
   const sealed=run.interpretation_revision?.configuration??run.input_snapshot.interpretation_config;
   if((run.interpretation_revision?.revision_digest??null)!==(args.interpretation_revision_digest??null))return fail('workspace_engine_interpretation_revision_mismatch');
   if(sealed&&(signalWorkspaceEmbeddingDigestV1(config)!==signalWorkspaceEmbeddingDigestV1(sealed.call_configuration)
@@ -183,8 +185,8 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
     COALESCE(sum(${exposureSQL}) FILTER(WHERE catalog_execution_id=$1::uuid),0)::text run_spent,
     COALESCE(sum(${exposureSQL}) FILTER(WHERE budget_date=$3::date),0)::text day_spent
     FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1' AND actor_user_id=$2::uuid`,[args.execution_id,args.actor_user_id,date])).rows[0]!;
-  if(natural(spent.run_spent)+args.reserved_micro_usd>natural(run.input_snapshot.claude_cap_micro_usd))return fail('workspace_engine_interpretation_run_cap_exceeded');
-  if(natural(spent.day_spent)+args.reserved_micro_usd>args.daily_cap_micro_usd)return fail('workspace_engine_interpretation_daily_cap_exceeded');
+  if(run.input_snapshot.claude_cap_micro_usd!==null&&natural(spent.run_spent)+args.reserved_micro_usd>natural(run.input_snapshot.claude_cap_micro_usd))return fail('workspace_engine_interpretation_run_cap_exceeded');
+  if(args.daily_cap_micro_usd!==null&&natural(spent.day_spent)+args.reserved_micro_usd>args.daily_cap_micro_usd)return fail('workspace_engine_interpretation_daily_cap_exceeded');
   if(admission){const used=(await c.query<{used:string}>(`SELECT COALESCE(sum(${exposureSQL}),0)::text used FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND metadata->'interpretation_admission'->>'operation_id'=$2`,[args.execution_id,admission.operation_id])).rows[0]!.used;
    if(natural(used)+args.reserved_micro_usd>admission.grant_cap_micro_usd)return fail('workspace_engine_interpretation_admission_cap_exceeded');}
   const id=randomUUID(),token=randomUUID();await c.query(`INSERT INTO engine_cost_events(id,workspace_contract,workspace_id,catalog_execution_id,actor_user_id,
@@ -198,19 +200,19 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
 export async function markSignalWorkspaceEngineInterpretationSentV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;call_id:string;attempt_token:string;execution_token?:string}):Promise<{call:SignalWorkspaceEngineInterpretationCallV1;send_authorized:boolean}>{
  return tx(args.database,async c=>{const row=await lockedCall(c,args.call_id,args.attempt_token);
   if(row.call_state!=='reserved')return{call:view(row),send_authorized:false};
-  await authorize(c,row.workspace_id,row.actor_user_id);const run=await execution(c,row.workspace_id,row.catalog_execution_id,row.actor_user_id,true,args.execution_token);
+  await authorize(c,row.workspace_id,row.actor_user_id,true,row.catalog_execution_id);const run=await execution(c,row.workspace_id,row.catalog_execution_id,row.actor_user_id,true,args.execution_token);
   if(row.editorial_repair&&(await c.query("SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND id<>$2::uuid AND call_state IN('in_flight','response_persisted','outcome_unknown') LIMIT 1",[row.catalog_execution_id,row.id])).rows.length)
     return fail('workspace_engine_interpretation_outcome_unknown');
   const admission=await assertSignalWorkspaceInterpretationAdmissionWithClientV1(c,{execution_id:row.catalog_execution_id,admission_operation_id:row.admission?.operation_id});
   if(!admission)await assertEditorialAdmission(c,run.interpretation_revision);
   const today=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[row.budget_timezone])).rows[0]!.date;
-  if(today!==row.budget_date)return fail('workspace_engine_interpretation_daily_authority_expired');
+  if(today!==row.budget_date&&(!('discovery_population' in run.input_snapshot)||row.budget_daily_cap_micro_usd!==null))return fail('workspace_engine_interpretation_daily_authority_expired');
   const spent=(await c.query<{run_spent:string;day_spent:string}>(`SELECT
    COALESCE(sum(${exposureSQL}) FILTER(WHERE catalog_execution_id=$1::uuid),0)::text run_spent,
    COALESCE(sum(${exposureSQL}) FILTER(WHERE budget_date=$3::date),0)::text day_spent
    FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1' AND actor_user_id=$2::uuid`,[row.catalog_execution_id,row.actor_user_id,today])).rows[0]!;
-  if(natural(spent.run_spent)>natural(run.input_snapshot.claude_cap_micro_usd))return fail('workspace_engine_interpretation_run_cap_exceeded');
-  if(natural(spent.day_spent)>natural(row.budget_daily_cap_micro_usd))return fail('workspace_engine_interpretation_daily_cap_exceeded');
+  if(run.input_snapshot.claude_cap_micro_usd!==null&&natural(spent.run_spent)>natural(run.input_snapshot.claude_cap_micro_usd))return fail('workspace_engine_interpretation_run_cap_exceeded');
+  if(row.budget_daily_cap_micro_usd!==null&&natural(spent.day_spent)>natural(row.budget_daily_cap_micro_usd))return fail('workspace_engine_interpretation_daily_cap_exceeded');
   await c.query("UPDATE engine_cost_events SET call_state='in_flight',sent_at=clock_timestamp() WHERE id=$1::uuid",[row.id]);
   return{call:view({...row,call_state:'in_flight'}),send_authorized:true};
  });
@@ -266,7 +268,7 @@ export async function failSignalWorkspaceEngineInterpretationV1(args:{database:S
 }
 export async function loadSignalWorkspaceEngineInterpretationBudgetV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;workspace_id:string;actor_user_id:string;execution_id:string}):Promise<SignalWorkspaceEngineInterpretationBudgetV1>{
  return tx(args.database,async c=>{await authorize(c,args.workspace_id,args.actor_user_id,false);
-  const result=(await c.query<{hard_cap_micro_usd:string;confirmed_micro_usd:string;reserved_micro_usd:string;unknown_reserved_micro_usd:string;terminal_reserved_micro_usd:string;observed_exception_micro_usd:string}>(`
+  const result=(await c.query<{hard_cap_micro_usd:string|null;confirmed_micro_usd:string;reserved_micro_usd:string;unknown_reserved_micro_usd:string;terminal_reserved_micro_usd:string;observed_exception_micro_usd:string}>(`
    SELECT execution.input_snapshot->>'claude_cap_micro_usd' hard_cap_micro_usd,
     COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.call_state='settled' OR call.call_state='terminal_confirmed'
       AND call.metadata->'provider_terminal_billing_reconciliation'->>'contract_version'='workspace-provider-terminal-billing-v1'),0)::text confirmed_micro_usd,
@@ -282,7 +284,7 @@ export async function loadSignalWorkspaceEngineInterpretationBudgetV1(args:{data
    WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid AND execution.input_contract IN('workspace-topic-engine-v1','workspace-incremental-editorial-v1')
    GROUP BY execution.id`,[args.execution_id,args.workspace_id])).rows[0];
   if(!result)return fail('workspace_engine_interpretation_not_found',404);
-  return Object.fromEntries(Object.entries(result).map(([key,value])=>[key,natural(value)])) as SignalWorkspaceEngineInterpretationBudgetV1;
+  return Object.fromEntries(Object.entries(result).map(([key,value])=>[key,key==='hard_cap_micro_usd'&&value===null?null:natural(value)])) as SignalWorkspaceEngineInterpretationBudgetV1;
  });
 }
 

@@ -35,8 +35,8 @@ export async function quoteSignalTopicEditorialChunkedAdmissionV3(args:{database
 
 export async function replaySignalTopicEditorialChunkedAdmissionV3(args:{database:SignalTopicEditorialBatchDatabaseV2;
   workspace_id:string;actor_user_id:string;numeric_execution_id:string;idempotency_key:string;
-  quote_reference:string;confirmed_cap_micro_usd:string}){
-  if(!key.test(args.idempotency_key)||!quote.test(args.quote_reference)||!/^\d{1,19}$/u.test(args.confirmed_cap_micro_usd))
+  quote_reference:string;confirmed_cap_micro_usd:string|null}){
+  if(!key.test(args.idempotency_key)||!quote.test(args.quote_reference)||args.confirmed_cap_micro_usd!==null&&!/^\d{1,19}$/u.test(args.confirmed_cap_micro_usd))
     throw new Error('topic_editorial_v3_request_invalid');
   const client=await args.database.connect();
   try{return await value<Admission>(client,

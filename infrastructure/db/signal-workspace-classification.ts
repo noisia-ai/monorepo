@@ -72,9 +72,12 @@ async function tx<T>(database: SignalWorkspaceClassificationDatabaseV1, work: (c
   catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; } finally { client.release(); }
 }
 async function authorize(queryable: Queryable, workspace_id: string, actor_user_id: string,
-  interest_term_key?: string | null, identity?: SignalWorkspaceClassificationIdentityV1) {
+  interest_term_key?: string | null, identity?: SignalWorkspaceClassificationIdentityV1, source?: SignalWorkspaceClassificationProjectionV1 | null) {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({queryable, workspace_id, actor_user_id});
   if (capabilities.can_execute_topics) return;
+  if (capabilities.can_request_processing && source?.contract_version === "workspace-topic-projection-v1"
+    && (await queryable.query<{allowed:boolean}>("SELECT signal_workspace_discovery_projection_actor_v1($1::uuid,$2::uuid,$3::jsonb) allowed",
+      [workspace_id,actor_user_id,JSON.stringify(source)])).rows[0]?.allowed === true) return;
   // Client processing authority is limited to the separately governed interest
   // decision. The generation trigger checks its exact registered model/policy;
   // this does not authorize general classification or human corrections.
@@ -108,10 +111,15 @@ export function scopeSignalWorkspaceClassificationTopicsV1(topics:CompiledTopic[
 }
 /** Semantic identities deliberately omit profile/term row IDs and ingestion run IDs. */
 export async function loadSignalWorkspaceClassificationInputV1(args: {queryable: Queryable; workspace_id: string; actor_user_id: string;
-  taxonomy_profile_id?: string; interest_term_key?: string}) {
+  taxonomy_profile_id?: string; interest_term_key?: string; source_engine_execution_id?: string}) {
   if(args.interest_term_key!==undefined&&!interestTermKey.test(args.interest_term_key))return fail("workspace_classification_interest_invalid",422);
   if (!(await loadSignalWorkspaceCapabilitiesStoreV1(args)).can_view) return fail("workspace_classification_forbidden",403);
+  const discovery = args.source_engine_execution_id && (await args.queryable.query<{discovery:boolean}>(`SELECT EXISTS(SELECT 1
+    FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract='workspace-topic-engine-v1'
+      AND jsonb_typeof(input_snapshot->'discovery_population')='object') discovery`,
+    [args.source_engine_execution_id,args.workspace_id])).rows[0]?.discovery === true;
   const built = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,allow_empty:true,
+    ...(discovery ? {context_mode:"workspace-discovery-v1" as const} : {}),
     input_interests_only:args.interest_term_key!==undefined}).catch(error=>{
     if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_required","workspace_topic_catalog_empty"].includes(error.code))
       return fail("workspace_classification_catalog_unavailable");
@@ -129,7 +137,7 @@ type Run = {
   status: string; execution_token: string | null; execution_live: boolean; cursor_root_id: string | null;
   current_revision: string; policy_live: boolean; sources_complete: boolean; projection_current:boolean; identity: SignalWorkspaceClassificationIdentityV1;
   context_digest: string; correction_digest: string; denominator: number; expected_chunks: string; processed_roots: number;
-  worker_job_id:string; incremental_projection:boolean; interest_term_key:string|null;
+  worker_job_id:string; source_projection:SignalWorkspaceClassificationProjectionV1|null; incremental_projection:boolean; interest_term_key:string|null;
 };
 async function lockRun(client: PoolClient, id: string): Promise<Run> {
   const scope = (await client.query<{workspace_id: string}>("SELECT workspace_id FROM signal_topic_catalog_executions WHERE id=$1::uuid AND input_contract=$2", [id, contract])).rows[0];
@@ -143,7 +151,7 @@ async function lockRun(client: PoolClient, id: string): Promise<Run> {
    (execution.input_snapshot->'source_projection' IS NULL OR (SELECT signal_workspace_projection_source_current_v1(generation)
     FROM signal_classification_generations generation WHERE generation.id=execution.generation_id)) projection_current,
    (execution.input_snapshot->'source_projection'->>'contract_version' IN('workspace-topic-projection-v1','workspace-topic-incremental-projection-v1')) incremental_projection,
-   execution.input_snapshot->>'interest_term_key' interest_term_key,
+   execution.input_snapshot->'source_projection' source_projection,execution.input_snapshot->>'interest_term_key' interest_term_key,
    execution.input_snapshot->'identity' identity,execution.input_snapshot->>'context_digest' context_digest,
    execution.input_snapshot->>'correction_digest' correction_digest,execution.denominator,execution.expected_chunks::text,execution.processed_roots,
    COALESCE(outbox.worker_job_id,'workspace-classification-'||execution.id::text) worker_job_id
@@ -159,12 +167,13 @@ function view(run: Run, token = run.execution_token!): SignalWorkspaceClassifica
     input_digest: run.input_digest, identity: run.identity};
 }
 async function current(client: PoolClient, run: Run, full = true) {
-  await authorize(client, run.workspace_id, run.actor_user_id, run.interest_term_key, run.identity);
+  await authorize(client, run.workspace_id, run.actor_user_id, run.interest_term_key, run.identity, run.source_projection);
   if (run.current_revision !== run.input_revision || !run.policy_live || !run.sources_complete || !run.projection_current) return fail("workspace_classification_inputs_changed");
   if (!full) return;
   if(run.interest_term_key!=null&&!interestTermKey.test(run.interest_term_key))return fail("workspace_classification_context_changed");
   const latest = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: run.workspace_id, actor_user_id: run.actor_user_id,
     ...(run.incremental_projection?{taxonomy_profile_id:run.taxonomy_profile_id}:{}),
+    ...(run.source_projection?.contract_version==='workspace-topic-projection-v1'?{source_engine_execution_id:run.source_projection.engine_execution_id}:{}),
     ...(run.interest_term_key?{interest_term_key:run.interest_term_key}:{})});
   if ((run.interest_term_key==null&&latest.taxonomy_profile_id !== run.taxonomy_profile_id)
     || latest.catalog_digest !== run.identity.catalog_digest
@@ -209,7 +218,7 @@ export async function beginSignalWorkspaceClassificationWithClientV1(client:Pool
   const requestDigest = digest({embedding_run_id: args.embedding_run_id, identity,
     ...(args.interest_term_key?{interest_term_key:args.interest_term_key}:{}),
     ...(args.source_projection?{source_projection:args.source_projection}:{})});
-    await authorize(client, args.workspace_id, args.actor_user_id, args.interest_term_key, identity);
+    await authorize(client, args.workspace_id, args.actor_user_id, args.interest_term_key, identity, args.source_projection);
     await lockInputs(client, args.workspace_id);
     const prior = (await client.query<{id: string; generation_id: string; input_contract: string; actor_user_id: string; request_digest: string}>(
       "SELECT id,generation_id,input_contract,actor_user_id,request_digest FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND idempotency_key=$2", [args.workspace_id, args.idempotency_key])).rows[0];
@@ -226,7 +235,8 @@ export async function beginSignalWorkspaceClassificationWithClientV1(client:Pool
       taxonomy_profile_id=operational;
     }
     const inputs = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: args.workspace_id,
-      actor_user_id: args.actor_user_id,taxonomy_profile_id,interest_term_key:args.interest_term_key});
+      actor_user_id: args.actor_user_id,taxonomy_profile_id,interest_term_key:args.interest_term_key,
+      ...(args.source_projection?.contract_version==='workspace-topic-projection-v1'?{source_engine_execution_id:args.source_projection.engine_execution_id}:{})});
     for (const key of ["catalog_digest","compiler_digest","context_digest","embedding_config_digest"] as const) {
       if (identity[key] !== inputs[key]) return fail("workspace_classification_identity_invalid");
     }

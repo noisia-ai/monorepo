@@ -159,3 +159,21 @@ test("a partial action failure rolls back the draft and remains retryable", asyn
   await assert.rejects(provisionSignalBrandContextPolicyV1({ ...request, database: f.database }), /synthetic_action_failure/u);
   assert.deepEqual(f.state, []); assert.equal(f.calls.at(-1)?.sql, "ROLLBACK"); assert.equal(f.releases, 1);
 });
+
+test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserves an explicit daily maximum",async()=>{
+ for(const daily of [undefined,"1","2000000"]){
+  const f=fixture();
+  const configured={...env,NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:daily};
+  const response=await provisionSignalBrandContextPolicyV1({database:f.database,workspace_id:id(1),brand_id:id(4),initiator_user_id:id(2),env:configured});
+  assert.equal(response.status,"provisioned");
+  const policy=f.calls.find(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))!;
+  assert.equal(policy.values[1],"infinity");assert.equal(policy.values[3],daily??null);
+  const actions=f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_actions"));
+  assert.equal(actions.length,5);
+  assert.match(actions[2]!.sql,/'topic_consolidation_numeric','free'/u);
+  assert.match(actions[2]!.sql,/signal_topic_consolidation_numeric_configuration_v1/u);
+  assert.match(actions[2]!.sql,/,0,false/u);
+  assert.match(actions[3]!.sql,/'topic_interpretation'/u);
+  assert.match(actions[4]!.sql,/'topic_consolidation'/u);assert.match(actions[4]!.sql,/NULL,false/u);
+ }
+});

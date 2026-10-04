@@ -25,7 +25,8 @@ export async function loadSignalTopicConsolidationEditorialInputV1(args: Scope &
     await client.query('SET LOCAL search_path=public,extensions,pg_temp');
     const source = await dependencies.source({ ...args, queryable: client });
     const inherited = await dependencies.context({ queryable: client, workspace_id: args.workspace_id,
-      complete_context: true, require_current_semantic_authority: true, include_editorial_context: true });
+      complete_context: true, require_current_semantic_authority: true, include_editorial_context: true,
+      ...(source.discovery ? {context_mode:"workspace-discovery-v1" as const} : {}) });
     if (inherited.context_digest !== source.census.context_digest || !inherited.editorial_context)
       fail('topic_editorial_source_stale');
     const context = inherited.editorial_context ?? fail('topic_editorial_source_stale');
