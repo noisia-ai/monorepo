@@ -233,7 +233,7 @@ async function withDefinedInterests(client: PoolClient, args: Args, base: Contex
 /** MFP consumes current per-root decisions independently of frozen V2 generations. */
 async function membershipContext(client: PoolClient, args: Args, filters: CivilFilters): Promise<Context> {
   const binding = await readSignalTopicConsolidationServingBindingV1(client, args.workspace_id);
-  const base = binding?.snapshot ? consolidatedContext(binding.snapshot, filters) : null;
+  const base = binding?.snapshot?.source_valid && binding.snapshot.input_revision===binding.snapshot.current_revision ? consolidatedContext(binding.snapshot, filters) : null;
   const rows = (await client.query<{topic:unknown; selected:boolean; selection_revision:number; selection_digest:string|null}>(`
     SELECT c.topic,COALESCE(s.selected AND s.definition_digest=c.definition_digest,false) selected,
       COALESCE(s.selection_revision,0)::int selection_revision,s.selection_digest

@@ -193,7 +193,7 @@ export function buildMembershipRequestV1(
     thinking: { type: "adaptive" },
     output_config: {
       effort: "medium",
-      format: { type: "json_schema", schema: membershipOutputSchemaV1 },
+      format: { type: "json_schema", schema: membershipOutputSchemaV1(inputs.length) },
     },
     system: [
       {

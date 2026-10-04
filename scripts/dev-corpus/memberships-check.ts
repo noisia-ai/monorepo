@@ -396,7 +396,7 @@ await main(async () => {
     // Permissions are current data, independent of paid/model authority.
     await client.query("SAVEPOINT deny_metrics");
     await client.query(
-      "UPDATE signal_licensing_policy_usages SET decision='denied' WHERE workspace_id=$1 AND usage_purpose='client-derived-metrics'",
+      "UPDATE signal_licensing_policy_usages SET decision='prohibited' WHERE workspace_id=$1 AND usage_purpose='client-derived-metrics'",
       [access.workspace_id],
     );
     status = await loadConceptMembershipsStatusV1(access);

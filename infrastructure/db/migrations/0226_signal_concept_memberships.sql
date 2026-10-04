@@ -55,7 +55,7 @@ CREATE VIEW signal_concept_memberships_current_v1 AS
  WHERE f.relevance='relevant' AND NOT f.requires_context_review
  AND (c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))
  ) SELECT p.*,COALESCE(o.verdict,m.verdict,technical.result->>'verdict','pending') verdict,
- CASE WHEN o.verdict='not_belongs' THEN '[]'::jsonb ELSE COALESCE(m.citations,technical.result->'citations','[]'::jsonb) END citations,
+ CASE WHEN o.id IS NOT NULL THEN '[]'::jsonb ELSE COALESCE(m.citations,technical.result->'citations','[]'::jsonb) END citations,
  CASE WHEN o.id IS NOT NULL THEN NULL ELSE COALESCE(m.rationale,technical.result->>'rationale') END rationale,
  CASE WHEN o.id IS NOT NULL THEN 'human' WHEN m.call_id IS NOT NULL OR technical.result IS NOT NULL THEN 'model' ELSE 'pending' END source,
  m.call_id,m.run_id,COALESCE(o.created_at,m.created_at) updated_at,
