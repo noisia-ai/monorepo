@@ -2,6 +2,14 @@
 import { loadMfpEvalIdentity } from './fixture-identity';
 // @ts-expect-error guarded private runner JavaScript
 import { main,openDatabase } from '../dev-corpus/guard.mjs';
+type RightsCensus={accepted_batches:number;accepted_sources:number;authorized_batches:number;authorized_sources:number;
+  expected_source_batches:number;active_runs:number;unsettled_calls:number};
+/** This fixed fixture has two completed loads from one source; failed imports are excluded by the SQL CTE. */
+export function mfpEvalRightsCensusValid(state:RightsCensus,exactWorkspace:boolean){
+  return exactWorkspace&&state.accepted_batches===2&&state.accepted_sources===1&&
+    state.authorized_batches===2&&state.authorized_sources===1&&state.expected_source_batches===2&&
+    state.active_runs===0&&state.unsettled_calls===0;
+}
 export async function verifyMfpEvalRights(){
   const identity=await loadMfpEvalIdentity();
   const pool=await openDatabase();
@@ -40,7 +48,7 @@ export async function verifyMfpEvalRights(){
     const activity=await client.query(`SELECT (SELECT count(*)::int FROM signal_labeling_runs WHERE workspace_id=$1 AND status IN('queued','running')) active_runs,
         (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$1 AND status IN('reserved','submitting','submitted','unknown')) unsettled_calls`,[identity.workspace_id]);
     const state={...rights.rows[0],...activity.rows[0]};
-    if(workspace.rows[0]?.exact_workspace!==true||state.accepted_batches!==1||state.accepted_sources!==1||state.authorized_batches!==1||state.authorized_sources!==1||state.expected_source_batches!==1||state.active_runs!==0||state.unsettled_calls!==0)
+    if(!mfpEvalRightsCensusValid(state,workspace.rows[0]?.exact_workspace===true))
       throw new Error('mfp_eval_rights_or_activity_invalid');
     console.log(JSON.stringify({stage:'mfp_eval_jev_rights_verified',...state,exact_workspace:true,read_only:true}));
     await client.query('COMMIT');
