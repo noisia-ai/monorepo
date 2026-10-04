@@ -111,7 +111,7 @@ await main(async()=>{
    assert.equal(totalRoots,lease.snapshot.expected_roots);assert.equal(totalChunks,lease.snapshot.expected_chunks);
    if(process.argv.includes("--editorial-check")){
     const {checkMfpIncrementalEditorialV1}=await import("./incremental-editorial-check");
-    await checkMfpIncrementalEditorialV1({database,query,lease,report,cap:scenario.cap,policy_id:policy});
+    await checkMfpIncrementalEditorialV1({database,query,lease,report,cap:scenario.cap,policy_id:policy,actor_user_id:actor});
    }
    await raw.query("SET CONSTRAINTS ALL IMMEDIATE");
    await raw.query("ROLLBACK TO SAVEPOINT scenario");await raw.query("RELEASE SAVEPOINT scenario");

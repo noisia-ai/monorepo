@@ -14,9 +14,9 @@ import {createMfpSyntheticNumericCheckpointV1} from './incremental-editorial-fix
 const sha=(s:string)=>`sha256:${createHash('sha256').update(s).digest('hex')}`;
 export async function checkMfpIncrementalEditorialV1(args:Parameters<typeof createMfpSyntheticNumericCheckpointV1>[0]&{
  query:(sql:string,values?:unknown[])=>Promise<{rows:Array<Record<string,unknown>>}>;
- report:(phase:string)=>void;cap:number|null;policy_id:string;
+ report:(phase:string)=>void;cap:number|null;policy_id:string;actor_user_id:string;
 }){
- const {database,query,report}=args,access={database,workspace_id:args.lease.workspace_id,actor_user_id:args.lease.actor_user_id};
+ const {database,query,report}=args,access={database,workspace_id:args.lease.workspace_id,actor_user_id:args.actor_user_id};
  report('simulated_numeric_checkpoint');const f=await createMfpSyntheticNumericCheckpointV1(args);
  const scope={...access,numeric_execution_id:f.lease.execution_id};
  await projection.scheduleSignalWorkspaceIncrementalProjectionsV1({database});
