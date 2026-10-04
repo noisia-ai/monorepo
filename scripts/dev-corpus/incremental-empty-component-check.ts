@@ -5,7 +5,6 @@ import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import type {SignalWorkspaceEngineDatabaseV1} from '../../infrastructure/db/signal-workspace-engine';
 type Pool=SignalWorkspaceEngineDatabaseV1 & {end():Promise<void>};
-type PoolClient=Awaited<ReturnType<Pool['connect']>>;
 import {main,openDatabase} from './guard.mjs';
 import * as preparation from '../../infrastructure/db/signal-workspace-incremental-editorial-preparation';
 import type {SignalWorkspaceIncrementalEditorialEvidenceArgsV1} from '../../infrastructure/db/signal-workspace-incremental-editorial';
@@ -31,7 +30,7 @@ await main(async()=>{
   if(sql==='ROLLBACK'){const key=stack.pop()!;await raw.query(`ROLLBACK TO SAVEPOINT ${key}`);return raw.query(`RELEASE SAVEPOINT ${key}`);}
   return raw.query(sql,params);
  };
- const database={query:query as Pool['query'],connect:async()=>Object.assign(Object.create(raw),{query,release(){}}) as PoolClient};
+ const database={query:query as Pool['query'],connect:async()=>Object.assign(Object.create(raw),{query,release(){}}) as typeof raw};
  const scope={database,workspace_id:identity.workspace_id,actor_user_id:identity.internal_user_id,numeric_execution_id:f.numeric_execution_id};
  const census=async()=>(await raw.query(`SELECT
   (SELECT COALESCE(jsonb_agg(to_jsonb(x) ORDER BY id),'[]') FROM signal_topic_catalog_executions x WHERE workspace_id=$1) engines,
@@ -70,7 +69,7 @@ await main(async()=>{
   if(f.original_idempotency_key){const replay=await preparation.requestSignalWorkspaceIncrementalEditorialPreparationV1({...request,idempotency_key:f.original_idempotency_key});assert.equal(replay.replayed,true);assert.deepEqual(await outbox(),original);}
   report('negative_condition_and_authority');
   // Same error without the SQL condition must remain terminal. Only this predicate is simulated.
-  const noEmptyDatabase={...database,connect:async()=>{const c=await database.connect();return Object.assign(Object.create(c),{query:async(sql:string,params?:unknown[])=>sql.includes('SELECT workspace_incremental_editorial_empty_component_v1')?{rows:[{valid:false}]}:c.query(sql,params),release(){}}) as PoolClient;}};
+  const noEmptyDatabase={...database,connect:async()=>{const c=await database.connect();return Object.assign(Object.create(c),{query:async(sql:string,params?:unknown[])=>sql.includes('SELECT workspace_incremental_editorial_empty_component_v1')?{rows:[{valid:false}]}:c.query(sql,params),release(){}}) as typeof raw;}};
   assert.equal((await preparation.loadSignalWorkspaceIncrementalEditorialPreparationV1({...scope,database:noEmptyDatabase}))?.can_prepare,false);
   await deny(()=>preparation.requestSignalWorkspaceIncrementalEditorialPreparationV1({...request,database:noEmptyDatabase}),/retry_unavailable/u);
   await deny(()=>preparation.requestSignalWorkspaceIncrementalEditorialPreparationV1({...request,expected_source_digest:`sha256:${'0'.repeat(64)}`}),/source_stale/u);
