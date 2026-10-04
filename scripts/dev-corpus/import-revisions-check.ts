@@ -2,7 +2,6 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {createHash,randomUUID} from 'node:crypto';
-import type {Pool} from 'pg';
 import {openDatabase,main} from './guard.mjs';
 import {syntheticImportedWorkspaceFixtureV1} from '../../infrastructure/db/migrations/signal-client-workspace-entry.synthetic.fixture';
 import {createSignalSentioneCsvIngester} from '../../infrastructure/db/sentione-csv-ingest';
@@ -12,7 +11,7 @@ await main(async()=>{
  try{
   await client.query('BEGIN');
   const query=(sql:string,values?:unknown[])=>client.query(sql,values);
-  const database={query,connect:async()=>({query,release(){}})} as unknown as Pool;
+  const database={query,connect:async()=>({query,release(){}})} as unknown as Parameters<typeof syntheticImportedWorkspaceFixtureV1>[0]['database'];
   const f=await syntheticImportedWorkspaceFixtureV1({database,query,scoped:client,cleanup:async()=>{}});
   await query('UPDATE import_batches SET completed_at=clock_timestamp() WHERE id=$1',[f.batch_id]);
   const root=(await query('SELECT * FROM mentions WHERE id=$1',[f.roots[0]])).rows[0];

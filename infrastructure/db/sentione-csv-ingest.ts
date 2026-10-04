@@ -659,7 +659,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
             OR (mention.data_source_id=$6::uuid AND mention.source_system='listening_csv' AND mention.provider_record_id = ANY($4::text[]))
           )
       `,
-      [workspaceId,importBatchId,hashes,providerRecordIds,supersedesImportBatchId,values[0].dataSourceId]
+      [workspaceId,importBatchId,hashes,providerRecordIds,supersedesImportBatchId,values[0]!.dataSourceId]
     );
     return result.rows;
   }
