@@ -20,7 +20,7 @@ ya conservada al fijar la selección, no una huella nueva de un archivo modifica
 El script comprueba sus bytes exactos. Reutiliza la selección y el JSONL de
 `scripts/dev-corpus/gold-template.ts` / `gold-import.ts`; no reestratifica.
 
-Al recibir anotaciones humanas válidas, añadir:
+Con el gold asistido por Opus y revisado por el fundador, añadir:
 
 ```sh
 --gold .data/dev-corpus/gold.jsonl \
@@ -37,9 +37,11 @@ la salida usa creación exclusiva, no sobreescribe recibos previos.
 Los tipos exactos y validaciones están en `contract.ts`. El bundle JSON tiene:
 
 - `contract_version: "mfp-eval-v1"`.
-- `human_gold: { origin: "human", reviewer_confirmed: true }` cuando se aporta gold;
-  `null` mientras no exista. Es declaración del operador, no certificación técnica
-  de quién anotó los datos.
+- `human_gold` declara procedencia real: `{ origin: "human", reviewer_confirmed: true }`
+  para anotación humana, o `{ origin: "ai_assisted_founder_reviewed", reviewer_confirmed: true,
+  assistant_model, reviewed_rows, corrected_rows }` para anotación asistida y revisión
+  del fundador. `null` mientras no exista. Es declaración del operador, no certificación
+  técnica de quién anotó los datos.
 - `variants[]`: una entrada por variante, con `variant`, `labeler_digest`,
   `prediction_rows`, `costs` y, en JEV final, `thresholds`.
 - Variantes A: `A_facets_adaptive_low`, `A_facets_between_tools`, `A_judge_low`,
@@ -83,6 +85,30 @@ por raíz e input_digest. Exportar el corpus completo (~1000 raíces), incluyend
 estados técnicos. El informe muestra el tamaño realmente exportado; no afirma
 que sea una población completa verificada contra DB. No mezcla etiquetas de
 inputs antiguos. Una fila gold con digest distinto provoca error de exportación.
+
+## Ejecución privada WS4
+
+En el runner MFP, `install-concepts-v2.ts` instala los tres conceptos confirmados
+en el catálogo dev-test mediante CAS e idempotencia. Conserva el ámbito del
+catálogo y añade al campo de definición las seis reglas de etiquetado del JSON
+v2, además de inclusiones, exclusiones y ejemplos. Verifica que el catálogo
+resultante coincide antes de ejecutar jueces.
+
+`rights-check.ts` es la comprobación previa a JEV: transacción de sólo lectura,
+binding efectivo import/source, retención y licencia `llm-processing` vigentes,
+una fuente y un lote del fixture `voyage-real`, cero trabajo o facturación en vuelo.
+`jev-judge.ts --real` repite ese gate antes de enviar texto y conserva solicitudes,
+respuestas crudas y resultados en un journal privado de creación exclusiva. Un
+intento sin respuesta durable queda `pending` y nunca se reenvía a ciegas.
+
+Las variantes A se piden con `scripts/dev-corpus/facets.ts --real
+--thinking=adaptive|between_tools` y `scripts/dev-corpus/memberships.ts --real
+--effort=low|medium`; los flags de producto/proveedor, política financiera y
+confirmación de recálculo siguen siendo obligatorios. `export-bundle.ts` toma
+un `eval-run-manifest.json` privado con los IDs explícitos de cada run, exige
+identidad/modelo/estado final congruentes, extrae predicciones y costes del ledger
+y escribe `eval-variants.json` sin textos. Sólo se fija el umbral JEV con las 90
+raíces dev; el reporte test usa ese umbral congelado y no ajusta prompts.
 
 ## Denominadores y límites
 

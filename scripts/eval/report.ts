@@ -145,6 +145,7 @@ export function buildReport(selection: Selection, gold: Gold[] | null, bundle: B
   };
   const comparisons = gold?.filter(g => !g.entities_abstained && g.entities.length >= 2).length ?? null;
   return { contract_version: 'mfp-eval-report-v1', status: gold && variants.length ? 'evaluado_sin_aprobacion' : 'no_evaluado', partition,
+    gold_provenance: gold ? bundle.human_gold : null,
     approval: 'requires_founder_confirmation', selection: { roots: 150, dev: 90, test: 60, strata: Object.fromEntries(['random', 'enriched', 'comparison'].map(s => [s, selection.selected.filter(r => r.stratum === s).length])),
       comparison_candidates: selection.selected.filter(r => r.stratum === 'comparison').length, human_multi_entity: comparisons, comparison_target_met: comparisons === null ? null : comparisons >= 15 },
     candidates: (['voice', 'act', 'spam', 'entities'] as const).map(candidate),
@@ -153,7 +154,7 @@ export function buildReport(selection: Selection, gold: Gold[] | null, bundle: B
     variants, missing_variants: VARIANTS.filter(id => !bundle.variants.some(v => v.variant === id)), agreement: agreement(bundle),
     limitations: ['No aprueba ni cambia el etiquetador.', 'Una sola ronda y una corrección focal en dev; test sólo final.',
       'Sin texto del corpus; entity_N y concept_N son ordinales de la selección privada.',
-      'La procedencia humana y la congelación de umbrales son declaraciones del operador; el script no certifica su veracidad.',
+      'La procedencia del gold y la congelación de umbrales son declaraciones del operador; el script no certifica su veracidad.',
       'Sin evidencia literal JEV sólo compara detección de pertenencia.', 'Asunto requiere revisión humana de utilidad; no hay exactitud automática para texto libre.',
       ...(comparisons !== null && comparisons < 15 ? ['Faltan comparaciones humanas para el objetivo de al menos 15; no se eliminó ningún gold válido.'] : [])] };
 }
@@ -162,6 +163,9 @@ const value = (v: unknown) => v === null || v === undefined ? 'N/D' : typeof v =
 const table = (headers: string[], rows: unknown[][]) => [headers.join(' | '), headers.map(() => '---').join(' | '), ...rows.map(r => r.map(value).join(' | '))].map(s => `| ${s} |`).join('\n');
 export function renderMarkdown(report: Report) {
   const lines = ['# Evaluación MFP', '', `Estado: **${report.status}**. Partición: **${report.partition}**. Aprobación: pendiente del fundador.`, '',
+    report.gold_provenance?.origin === 'ai_assisted_founder_reviewed'
+      ? `Gold asistido por ${report.gold_provenance.assistant_model}; fundador revisó ${report.gold_provenance.reviewed_rows} filas inciertas y corrigió ${report.gold_provenance.corrected_rows}. No es etiquetado humano independiente.`
+      : report.gold_provenance?.origin === 'human' ? 'Gold declarado como anotación humana confirmada.' : 'Gold pendiente.', '',
     'Selección fija: 150 raíces, 90 dev y 60 test. No se recalcula ni cambia la partición.', '',
     table(['Estrato', 'Raíces'], Object.entries(report.selection.strata)), '',
     `Comparaciones candidatas: ${report.selection.comparison_candidates}; multi-entidad humanas: ${value(report.selection.human_multi_entity)}.`, '',

@@ -16,7 +16,7 @@ function fixture() {
   const dim = value => ({ value, confidence: 'high', abstained: false });
   const prediction_rows = gold.map(g => ({ root_id: g.root_id, input_digest: g.input_digest, status: 'labeled', facets: { entities: dim(g.entities), unrelated_reason: null, voice: dim(g.voice), act: dim(g.act), spam_or_bot: dim(false), language: dim('es'), asunto: dim(g.asunto) }, memberships: g.memberships }));
   const variant = { variant: 'A_facets_adaptive_low', labeler_digest: 'private-labeler', prediction_rows, costs: { settled_usd: 0.15, reserved_usd: 0, unknown_calls: 0, mentions_attempted: 150, wall_ms: 1000 } };
-  const bundle = { contract_version: 'mfp-eval-v1', human_gold: { origin: 'human', reviewer_confirmed: true }, variants: [variant] };
+  const bundle = { contract_version: 'mfp-eval-v1', human_gold: { origin: 'ai_assisted_founder_reviewed', reviewer_confirmed: true, assistant_model: 'independent-opus', reviewed_rows: 15, corrected_rows: 2 }, variants: [variant] };
   return { selection, gold, bundle, variant };
 }
 test('independent binary counts and Wilson examples, including zero denominators', () => {
@@ -41,11 +41,13 @@ test('no human gold gives no evaluated metrics, winner, or approval', () => {
   assert.equal(r.status, 'no_evaluado'); assert.equal(r.variants[0].dimensions, null); assert.equal(r.variants[0].entities, null);
   assert.equal(r.approval, 'requires_founder_confirmation');
 });
-test('fixed source/split and human origin reject substitute gold; scarce comparisons remain usable', () => {
+test('fixed source/split and truthful assisted gold provenance reject substitutes', () => {
   const f = fixture();
   assert.equal(buildReport(f.selection, f.gold, f.bundle, 'dev').selection.comparison_target_met, false);
   f.gold[0].partition = 'test'; assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_gold_selection_changed/);
-  f.gold[0].partition = 'dev'; f.bundle.human_gold.origin = 'model'; assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_human_gold_confirmation_required/);
+  f.gold[0].partition = 'dev'; f.bundle.human_gold.origin = 'model'; assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_gold_provenance_required/);
+  f.bundle.human_gold.origin = 'ai_assisted_founder_reviewed'; f.bundle.human_gold.reviewed_rows = 1; f.bundle.human_gold.corrected_rows = 2;
+  assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_gold_provenance_required/);
 });
 test('entity multi-label counts, kind/salience, and missing prediction retain FN', () => {
   const f = fixture(); f.gold[0].entities = [entity(), entity('private-competitor')];

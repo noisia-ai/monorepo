@@ -11,7 +11,7 @@ await main(async () => {
   )
     throw new Error("mfp_facets_provider_disabled");
   const identity = JSON.parse(
-      await readFile(".data/dev-corpus/identity.json", "utf8"),
+      await readFile(process.env.NOISIA_MFP_IDENTITY_FILE ?? ".data/dev-corpus/voyage-real/identity.json", "utf8"),
     ),
     pool = await openDatabase();
   try {
@@ -57,6 +57,11 @@ await main(async () => {
         identity.workspace_id,
       ),
       labeler = facetLabelerIdentityV1();
+    const thinking = process.argv.find((x) => x.startsWith("--thinking="))?.slice(11);
+    if (thinking && thinking !== "adaptive" && thinking !== "between_tools")
+      throw new Error("mfp_facets_thinking_invalid");
+    if (thinking === "between_tools")
+      labeler.params = { ...labeler.params, thinking: { type: "between_tools" } };
     if (mode === "fake")
       labeler.params = { ...labeler.params, simulated_transport: true };
     const count = (

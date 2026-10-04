@@ -20,7 +20,7 @@ await main(async () => {
   const identity = JSON.parse(
       await readFile(
         process.env.NOISIA_MFP_IDENTITY_FILE ??
-          ".data/dev-corpus/identity.json",
+          ".data/dev-corpus/voyage-real/identity.json",
         "utf8",
       ),
     ),
@@ -42,6 +42,8 @@ await main(async () => {
     );
     const given = process.argv.find((a) => a.startsWith("--run-id="))?.slice(9),
       key = process.argv.find((a) => a.startsWith("--key="))?.slice(6);
+    const effort = process.argv.find((a) => a.startsWith("--effort="))?.slice(9);
+    if (effort && effort !== "low" && effort !== "medium") throw new Error("mfp_membership_effort_invalid");
     if (!given && !key) throw new Error("mfp_membership_key_required");
     const run = given
       ? { run_id: given }
@@ -49,6 +51,7 @@ await main(async () => {
           ...access,
           idempotency_key: key!,
           provider_available: true,
+          evaluation_effort: effort as "low" | "medium" | undefined,
           full_recalculation: process.argv.includes("--full"),
         });
     const result = await runConceptMembershipTickV1({
