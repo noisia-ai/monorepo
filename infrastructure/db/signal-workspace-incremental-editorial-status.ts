@@ -22,7 +22,7 @@ export type SignalWorkspaceIncrementalEditorialStatusV1={
  request:{idempotency_key:string;receipt:SignalWorkspaceIncrementalEditorialRetryReceiptV1}|null;
  renewal?:SignalWorkspaceIncrementalEditorialRenewalV1|null;
 };
-type Run={id:string;actor_user_id:string;status:string;error_code:string|null;current:boolean;expected_units:number;
+type Run={discovery:boolean;id:string;actor_user_id:string;status:string;error_code:string|null;current:boolean;expected_units:number;
  context_digest:string;catalog_digest:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1;
  request:SignalWorkspaceIncrementalEditorialRetryReceiptV1|null;now:string};
 const fail=(suffix:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_incremental_editorial_${suffix}`,status);};
@@ -30,10 +30,10 @@ const billedTerminal=`COALESCE(call_state='terminal_confirmed' AND metadata->'pr
 function validId(value:string){if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(value))return fail('request_invalid',422);return value.toLowerCase();}
 function key(value:string){if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(value))return fail('request_invalid',422);return digest({contract:'workspace-incremental-editorial-retry-key-v1',key:value});}
 async function admin(c:Queryable,args:Scope){if(!(await c.query<{valid:boolean}>(
- 'SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id],
+ 'SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid',[args.workspace_id,args.actor_user_id,args.execution_id],
  )).rows[0]?.valid)return fail('forbidden',403);}
 async function readRun(c:Queryable,args:Scope,idempotency_key?:string):Promise<Run|null>{
- return(await c.query<Run>(`SELECT id,actor_user_id,status,error_code,workspace_incremental_editorial_execution_current_v1(id) current,
+ return(await c.query<Run>(`SELECT input_snapshot ? 'discovery_population' discovery,id,actor_user_id,status,error_code,workspace_incremental_editorial_execution_current_v1(id) current,
   (input_snapshot->>'target_units')::int expected_units,input_snapshot->>'context_digest' context_digest,input_snapshot->>'catalog_input_digest' catalog_digest,
   workspace_interpretation_admission_receipt_v1(id) receipt,result_summary->'editorial_retry_requests'->$3 request,
   to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') now
@@ -46,10 +46,10 @@ async function status(c:Queryable,args:Scope,idempotency_key?:string):Promise<Si
  const run=await readRun(c,args,idempotency_key);if(!run)return null;
  const ownerCapabilities=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id});
  let identity:{context_digest:string;catalog_digest:string}|null=null;
- if(run.current&&ownerCapabilities.can_execute_topics){try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id,execution_id:run.id});}
+ if(run.current&&(run.discovery?ownerCapabilities.can_request_processing:ownerCapabilities.can_execute_topics)){try{identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:c,workspace_id:args.workspace_id,actor_user_id:run.actor_user_id,execution_id:run.id});}
   catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
    &&(!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}}
- const is_current=run.current&&ownerCapabilities.can_execute_topics&&identity?.context_digest===run.context_digest&&identity?.catalog_digest===run.catalog_digest;
+ const is_current=run.current&&(run.discovery?ownerCapabilities.can_request_processing:ownerCapabilities.can_execute_topics)&&identity?.context_digest===run.context_digest&&identity?.catalog_digest===run.catalog_digest;
  const dispatch=(await c.query<Dispatch>(`SELECT worker_job_id,status FROM signal_topic_classification_outbox
   WHERE execution_id=$1::uuid AND workspace_id=$2::uuid AND dispatch_kind='execution'`,[run.id,args.workspace_id])).rows[0]??null;
  const counts=(await c.query<{interpreted:number;confirmed:string;reserved:string;terminal:string;checkpoint_complete:boolean}>(`SELECT
@@ -61,8 +61,8 @@ async function status(c:Queryable,args:Scope,idempotency_key?:string):Promise<Si
   COALESCE(sum(reserved_micro_usd) FILTER(WHERE call_state='terminal_confirmed' AND NOT (${billedTerminal})),0)::text terminal
   FROM engine_cost_events WHERE catalog_execution_id=$1::uuid`,[run.id])).rows[0]!;
  const recovery=await readSignalWorkspaceIncrementalEditorialRetryWithQueryableV1(c,run.id);
- const isAdmin=capabilities.can_execute_topics&&(await c.query<{valid:boolean}>(
-  'SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id],
+ const isAdmin=(await c.query<{valid:boolean}>(
+  'SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid',[args.workspace_id,args.actor_user_id,args.execution_id],
  )).rows[0]?.valid===true;
  const requires_authorization=!run.receipt||run.receipt.action!=='authorize_interpretation'||Date.parse(run.receipt.admission_not_after)<=Date.parse(run.now);
  const recorded_recovery_available=counts.checkpoint_complete||run.error_code==='workspace_engine_interpretation_receipt_recovery_required'&&recovery.persisted_response;

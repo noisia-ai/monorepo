@@ -76,7 +76,7 @@ async function authorize(queryable: Queryable, workspace_id: string, actor_user_
   interest_term_key?: string | null, identity?: SignalWorkspaceClassificationIdentityV1, source?: SignalWorkspaceClassificationProjectionV1 | null) {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({queryable, workspace_id, actor_user_id});
   if (capabilities.can_execute_topics) return;
-  if (capabilities.can_request_processing && source?.contract_version === "workspace-topic-projection-v1"
+  if (capabilities.can_request_processing && (source?.contract_version === "workspace-topic-projection-v1" || source?.contract_version === "workspace-topic-incremental-projection-v1")
     && (await queryable.query<{allowed:boolean}>("SELECT signal_workspace_discovery_projection_actor_v1($1::uuid,$2::uuid,$3::jsonb) allowed",
       [workspace_id,actor_user_id,JSON.stringify(source)])).rows[0]?.allowed === true) return;
   // Client processing authority is limited to the separately governed interest
@@ -176,7 +176,7 @@ async function current(client: PoolClient, run: Run, full = true) {
   if(run.interest_term_key!=null&&!interestTermKey.test(run.interest_term_key))return fail("workspace_classification_context_changed");
   const latest = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: run.workspace_id, actor_user_id: run.actor_user_id,
     ...(run.incremental_projection?{taxonomy_profile_id:run.taxonomy_profile_id}:{}),
-    ...(run.source_projection?.contract_version==='workspace-topic-projection-v1'?{source_engine_execution_id:run.source_projection.engine_execution_id}:{}),
+    ...((run.source_projection?.contract_version==='workspace-topic-projection-v1'||run.source_projection?.contract_version==='workspace-topic-incremental-projection-v1')?{source_engine_execution_id:run.source_projection.engine_execution_id}:{}),
     ...(run.interest_term_key?{interest_term_key:run.interest_term_key}:{})});
   if ((run.interest_term_key==null&&latest.taxonomy_profile_id !== run.taxonomy_profile_id)
     || latest.catalog_digest !== run.identity.catalog_digest
@@ -239,7 +239,7 @@ export async function beginSignalWorkspaceClassificationWithClientV1(client:Pool
     }
     const inputs = await loadSignalWorkspaceClassificationInputV1({queryable: client, workspace_id: args.workspace_id,
       actor_user_id: args.actor_user_id,taxonomy_profile_id,interest_term_key:args.interest_term_key,
-      ...(args.source_projection?.contract_version==='workspace-topic-projection-v1'?{source_engine_execution_id:args.source_projection.engine_execution_id}:{})});
+      ...((args.source_projection?.contract_version==='workspace-topic-projection-v1'||args.source_projection?.contract_version==='workspace-topic-incremental-projection-v1')?{source_engine_execution_id:args.source_projection.engine_execution_id}:{})});
     for (const key of ["catalog_digest","compiler_digest","context_digest","embedding_config_digest"] as const) {
       if (identity[key] !== inputs[key]) return fail("workspace_classification_identity_invalid");
     }

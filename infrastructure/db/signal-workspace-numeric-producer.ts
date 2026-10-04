@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { inspectFacetContextChangeV1 } from './signal-mention-facets';
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from './signal-workspace-capabilities';
 import { beginSignalWorkspaceIncrementalEngineV1, loadSignalWorkspaceIncrementalParentV1 } from './signal-workspace-engine-incremental';
 import { loadSignalWorkspaceEnginePreflightV1, SignalWorkspaceEngineError, isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,
@@ -13,6 +14,7 @@ export type SignalWorkspaceNumericReadinessV1 = {
 };
 type Seed = { id: string; actor_user_id: string; input_revision: string;
   input_snapshot: { taxonomy_profile_id: string; context_digest: string; catalog_digest: string; engine_config: Record<string, unknown>;
+    discovery_population?: {root_ids:string[]};
     guides: Array<{guide_key: string; role: string; input_digest: string}> } };
 const fail = (code: string, status = 409): never => { throw new SignalWorkspaceEngineError(code, status); };
 
@@ -57,7 +59,8 @@ async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: str
   if (handled) { view.execution_id = handled.id; return change('already_handled', null); }
   if (BigInt(state.input_revision) <= BigInt(opted.input_revision)) return change('not_enabled', 'new_input_revision_required');
   const capability = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database, workspace_id, actor_user_id: opted.actor_user_id });
-  if (!capability.can_execute_topics) return change('blocked', 'numeric_actor_forbidden');
+  const discovery=Boolean(opted.input_snapshot.discovery_population);
+  if (!(discovery && process.env.NOISIA_MENTION_FACETS_ENABLED==='true' ? capability.can_request_processing : !discovery && capability.can_execute_topics)) return change('blocked', 'numeric_actor_forbidden');
   const prep = (await database.query<{ id: string; status: string; policy_current: boolean }>(`SELECT id,status,
     (policy_valid_until IS NULL OR policy_valid_until>clock_timestamp()) policy_current
     FROM signal_corpus_preparation_runs WHERE workspace_id=$1::uuid AND (input_revision=$2::bigint
@@ -76,17 +79,24 @@ async function plan(database: SignalWorkspaceEngineDatabaseV1, workspace_id: str
   if (embedding.status === 'queued' || embedding.status === 'running') return change('waiting_embeddings', null, true);
   if (embedding.status !== 'completed' || !embedding.policy_current) return change('blocked', 'corpus_embeddings_not_current');
   try {
+    if(discovery){
+      const context=await inspectFacetContextChangeV1(database,workspace_id);
+      if(context.changed&&context.affected.length)return change('blocked','workspace_engine_facets_context_pending');
+      const incomplete=(await database.query<{pending:boolean}>(`SELECT EXISTS(SELECT 1 FROM signal_mention_facets_current_v1
+        WHERE workspace_id=$1::uuid AND (status IN('pending','error') OR requires_context_review)) pending`,[workspace_id])).rows[0]?.pending;
+      if(incomplete)return change('blocked','workspace_engine_facets_pending');
+    }
     if(!opted.input_snapshot.taxonomy_profile_id)return change('blocked','workspace_engine_operational_profile_required');
     const preflight = await loadSignalWorkspaceEnginePreflightV1({ database, workspace_id, actor_user_id: opted.actor_user_id,
       taxonomy_profile_id:opted.input_snapshot.taxonomy_profile_id });
-    if (preflight.expected_context_digest !== opted.input_snapshot.context_digest
-      || preflight.expected_catalog_digest !== opted.input_snapshot.catalog_digest) return change('blocked', 'numeric_parent_context_changed');
+    if (!discovery && (preflight.expected_context_digest !== opted.input_snapshot.context_digest
+      || preflight.expected_catalog_digest !== opted.input_snapshot.catalog_digest)) return change('blocked', 'numeric_parent_context_changed');
     if (preflight.missing_guides) return change('blocked', 'workspace_engine_guides_required');
     const parent = await loadSignalWorkspaceIncrementalParentV1({ queryable: database, workspace_id,
       actor_user_id: opted.actor_user_id, embedding_config_digest: (await database.query<{ config_digest: string }>(
         'SELECT config_digest FROM signal_workspace_embedding_runs WHERE id=$1::uuid', [embedding.id])).rows[0]!.config_digest,
       context_digest: preflight.expected_context_digest, catalog_digest: preflight.expected_catalog_digest,
-      engine_config: opted.input_snapshot.engine_config, guides: opted.input_snapshot.guides });
+      engine_config: opted.input_snapshot.engine_config, guides: opted.input_snapshot.guides, discovery });
     if (!parent.available) return change('blocked', 'workspace_engine_incremental_parent_unavailable');
     view.state = 'ready_to_schedule'; view.reason_code = null; view.has_pending_work = true;
     return { view, start: { database, workspace_id, actor_user_id: opted.actor_user_id,

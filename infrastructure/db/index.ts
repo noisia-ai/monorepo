@@ -107,3 +107,5 @@ export * from './signal-mention-facets';
 export * from './signal-labeling-policy-provisioning';
 
 export * from "./signal-concept-memberships";
+
+export * from "./signal-workspace-incremental-candidates";

@@ -11,13 +11,13 @@ type Scope={workspace_id:string;actor_user_id:string;execution_id:string};
 type Queryable=Pick<PoolClient,'query'>;
 export type SignalWorkspaceIncrementalEditorialRenewArgsV1=Scope&{
  database:SignalWorkspaceEngineDatabaseV1;expected_admission_operation_id:string;idempotency_key:string;
- grant_cap_micro_usd:number;admission_not_after:string;
+ grant_cap_micro_usd:number|null;admission_not_after:string;
 };
 export type SignalWorkspaceIncrementalEditorialRenewalV1={
  execution_id:string;is_current:boolean;can_renew:boolean;blocked_reason:string|null;
  expected_admission_operation_id:string;budget_actor_user_id:string;budget_timezone:string;budget_date:string;
- maximum_admission_not_after:string;run_cap_micro_usd:number;daily_cap_micro_usd:number;
- confirmed_micro_usd:number;reserved_micro_usd:number;terminal_reserved_micro_usd:number;maximum_grant_micro_usd:number;
+ maximum_admission_not_after:string;run_cap_micro_usd:number|null;daily_cap_micro_usd:number|null;
+ confirmed_micro_usd:number;reserved_micro_usd:number;terminal_reserved_micro_usd:number;maximum_grant_micro_usd:number|null;
 };
 type State=SignalWorkspaceIncrementalEditorialRenewalV1&{
  eligible:boolean;now:string;receipt:SignalWorkspaceIncrementalEditorialReceiptV1;
@@ -41,7 +41,7 @@ export async function readSignalWorkspaceIncrementalEditorialRenewalWithQueryabl
   current=identity.context_digest===row.context_digest&&identity.catalog_digest===row.catalog_digest;
  }catch(error){if(!(error instanceof Error)||!(isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)||error instanceof SignalWorkspaceEngineError&&[403,404,409].includes(error.status)
   ||['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;current=false;}}
- const admin=(await c.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id])).rows[0]?.valid===true;
+ const admin=(await c.query<{valid:boolean}>('SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid',[args.workspace_id,args.actor_user_id,args.execution_id])).rows[0]?.valid===true;
  const blocked_reason=!admin?'workspace_incremental_editorial_forbidden':!current?'workspace_incremental_editorial_source_stale':row.blocked_reason;
  return{execution_id:row.execution_id,is_current:current,can_renew:admin&&current&&row.eligible,blocked_reason,
   expected_admission_operation_id:row.expected_admission_operation_id,budget_actor_user_id:row.budget_actor_user_id,
@@ -54,10 +54,10 @@ export async function readSignalWorkspaceIncrementalEditorialRenewalWithQueryabl
 export async function renewSignalWorkspaceIncrementalEditorialWithClientV1(c:PoolClient,input:SignalWorkspaceIncrementalEditorialRenewArgsV1):Promise<SignalWorkspaceIncrementalEditorialResultV1>{
  const args={...input,execution_id:uuid(input.execution_id),expected_admission_operation_id:uuid(input.expected_admission_operation_id)};
  const operationKey=key(args.idempotency_key);
- if(!Number.isSafeInteger(args.grant_cap_micro_usd)||args.grant_cap_micro_usd<=0||!date(args.admission_not_after))return fail('request_invalid',422);
+ if(args.grant_cap_micro_usd!==null&&(!Number.isSafeInteger(args.grant_cap_micro_usd)||args.grant_cap_micro_usd<=0)||!date(args.admission_not_after))return fail('request_invalid',422);
  const request_digest=digest({action:'renew_incremental_editorial',execution_id:args.execution_id,expected_admission_operation_id:args.expected_admission_operation_id,
   grant_cap_micro_usd:args.grant_cap_micro_usd,admission_not_after:args.admission_not_after});
- if(!(await c.query<{valid:boolean}>('SELECT workspace_interpretation_admission_admin_v1($1::uuid,$2::uuid) valid',[args.workspace_id,args.actor_user_id])).rows[0]?.valid)return fail('forbidden',403);
+ if(!(await c.query<{valid:boolean}>('SELECT signal_workspace_incremental_editorial_actor_v1($1::uuid,$2::uuid,$3::uuid) valid',[args.workspace_id,args.actor_user_id,args.execution_id])).rows[0]?.valid)return fail('forbidden',403);
  const replay=async()=>{const prior=await readSignalWorkspaceIncrementalEditorialRequestWithQueryableV1(c,args,args.idempotency_key);if(!prior)return null;
   if(prior.request_digest!==request_digest||prior.result.execution_id!==args.execution_id)return fail('idempotency_conflict');
   return{execution_id:args.execution_id,receipt:prior.result,replayed:true};};
@@ -73,7 +73,7 @@ export async function renewSignalWorkspaceIncrementalEditorialWithClientV1(c:Poo
  if(row.expected_admission_operation_id!==args.expected_admission_operation_id)return fail('admission_changed');
  const preview=await readSignalWorkspaceIncrementalEditorialRenewalWithQueryableV1(c,args);
  if(!preview?.can_renew)return fail('renewal_unavailable');
- if(args.grant_cap_micro_usd>preview.maximum_grant_micro_usd||Date.parse(args.admission_not_after)<=Date.parse(row.now)
+ if(preview.maximum_grant_micro_usd!==null&&(args.grant_cap_micro_usd===null||args.grant_cap_micro_usd>preview.maximum_grant_micro_usd)||Date.parse(args.admission_not_after)<=Date.parse(row.now)
   ||Date.parse(args.admission_not_after)>Date.parse(preview.maximum_admission_not_after))return fail('cap_or_deadline_invalid');
  // Only a reservation proven never sent can be retired. Its amount and own grant remain immutable.
  await c.query(`UPDATE engine_cost_events SET call_state='definitely_not_sent',failure_code='workspace_engine_interpretation_admission_changed'

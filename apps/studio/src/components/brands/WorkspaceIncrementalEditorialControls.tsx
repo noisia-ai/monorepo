@@ -27,17 +27,19 @@ export function WorkspaceIncrementalEditorialControls({ status, canSubmit, canRe
     admission?.evidence_plan_artifact_id, admission?.history_cut_digest, admission?.target_unit_digest,
     authorization?.maximum_grant_micro_usd, authorization?.maximum_admission_not_after,
     renewal?.execution_id, renewal?.expected_admission_operation_id]);
-  const cap = edited?.identity === identity ? edited.value : embeddingCapUsdInput(String(authorization?.maximum_grant_micro_usd ?? 0));
+  const cap = edited?.identity === identity ? edited.value : (authorization?.maximum_grant_micro_usd===null?"":embeddingCapUsdInput(String(authorization?.maximum_grant_micro_usd ?? 0)));
   const parsed = parseEmbeddingCapMicroUsd(cap), amount = parsed !== null && BigInt(parsed) <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(parsed) : null;
-  const money = (value: number) => formatEmbeddingMicroUsd(String(value), locale);
-  const expiry = (value: string, zone: string) => formatWorkspaceAdmissionExpiry(value, zone, locale);
-  const begin: WorkspaceIncrementalEditorialRequest | null = admission?.evidence_plan_artifact_id && admission.target_unit_digest && amount !== null ? {
+  const optionalCap=authorization?.maximum_grant_micro_usd===null && cap.trim()==="";
+  const validCap=optionalCap || amount!==null && amount>0 && (authorization?.maximum_grant_micro_usd==null || amount<=authorization.maximum_grant_micro_usd);
+  const money = (value: number|null) => value===null?t("uncapped"):formatEmbeddingMicroUsd(String(value), locale);
+  const expiry = (value: string, zone: string) => value.startsWith("9999-")?t("noDeadline"):formatWorkspaceAdmissionExpiry(value, zone, locale);
+  const begin: WorkspaceIncrementalEditorialRequest | null = admission?.evidence_plan_artifact_id && admission.target_unit_digest && validCap ? {
     action: "begin_incremental_editorial", run_id: admission.numeric_execution_id,
     expected_evidence_plan_artifact_id: admission.evidence_plan_artifact_id, expected_numeric_checkpoint_digest: admission.numeric_checkpoint_digest,
     expected_target_unit_digest: admission.target_unit_digest, expected_history_cut_digest: admission.history_cut_digest,
     cap_micro_usd: amount, admission_not_after: admission.maximum_admission_not_after
   } : null;
-  const confirmation: WorkspaceIncrementalEditorialRequest | null = renewal && amount !== null ? {
+  const confirmation: WorkspaceIncrementalEditorialRequest | null = renewal && validCap ? {
     action: "renew_incremental_editorial", run_id: renewal.execution_id,
     expected_admission_operation_id: renewal.expected_admission_operation_id, grant_cap_micro_usd: amount,
     admission_not_after: renewal.maximum_admission_not_after
@@ -87,11 +89,11 @@ export function WorkspaceIncrementalEditorialControls({ status, canSubmit, canRe
     </div> : null}
       {authorization && !pendingRequest ? <>
         <p>{t(renewal ? "renewBody" : "confirmBody", { count: renewal ? remaining : admission?.target_units ?? 0, model: "Claude Sonnet 4.6" })}</p>
-        <label className="admin-field" style={{ maxWidth: 360 }}><span>{t(renewal ? "renewCap" : "cap", { amount: money(authorization.maximum_grant_micro_usd) })}</span>
+        <label className="admin-field" style={{ maxWidth: 360 }}><span>{t(authorization.maximum_grant_micro_usd===null?"optionalCap":renewal ? "renewCap" : "cap", { amount: money(authorization.maximum_grant_micro_usd) })}</span>
           <input inputMode="decimal" value={cap} disabled={!canSubmit || submitting} onChange={event => setEdited({ identity, value: event.target.value })} /></label>
         <p>{t("expiry", { expiry: expiry(authorization.maximum_admission_not_after, authorization.budget_timezone), zone: authorization.budget_timezone })}</p>
         {!admission?.provider_available || !admission.adapter_available ? <p role="status">{t("providerUnavailable")}</p> : null}
-        {amount === null || amount <= 0 || amount > authorization.maximum_grant_micro_usd ? <p role="alert" className="workspace-form__error">{t("invalidCap")}</p> : null}
+        {!validCap ? <p role="alert" className="workspace-form__error">{t("invalidCap")}</p> : null}
         <div className="admin-form-actions"><button type="button" className="admin-button admin-button--primary"
           disabled={!canSubmit || submitting || !confirmation || !workspaceIncrementalEditorialCanSubmit(status, confirmation)}
           onClick={() => { if (confirmation) void onSubmit(confirmation); }}>{t(renewal ? "renew" : "authorize")}</button></div>

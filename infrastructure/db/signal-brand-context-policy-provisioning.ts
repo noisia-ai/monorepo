@@ -21,21 +21,30 @@ function validDeadline(value: string | undefined): value is string {
     && Number(hour) < 24 && Number(minute) < 60 && Number(second) < 60;
 }
 
-/** Server configuration only. Neither credentials nor provider/queue health creates policy authority.
- * A missing explicit system creator, organization ceiling or expiry never creates an allowance. */
+/** Bootstrap is server-owned. MFP has no legacy semantic-pack prerequisite or
+ * default monetary ceiling; a configured strict maximum remains binding. */
 function configuredPolicy(env: Record<string, string | undefined>) {
   const creatorUserId = env.NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID;
+  if (!creatorUserId || !uuid.test(creatorUserId)) return null;
+  const mfp = env.NOISIA_MENTION_FACETS_ENABLED === "true";
+  if (mfp) {
+    const caps = [env.NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD,
+      env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD].map(value => value === undefined ? null : money(value));
+    if ([env.NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD, env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD]
+      .some((value, index) => value !== undefined && caps[index] === null)) return null;
+    return { creatorUserId, mfp: true as const, daily: caps[0]?.toString() ?? null,
+      until: "infinity", prototypeCap: caps[1]?.toString() ?? null,
+      semanticCap: null, semanticConfiguration: null };
+  }
   const semantic = signalSemanticContextProposalRuntimeConfigurationFromEnvV1(env);
-  const mfp=env.NOISIA_MENTION_FACETS_ENABLED === "true";
-  const daily = money(mfp ? env.NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD : env.NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD);
-  if(mfp && env.NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD !== undefined && daily === null)return null;
+  const daily = money(env.NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD);
   const prototype = money(env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD
     ?? String(SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1));
-  const until = mfp ? "infinity" : env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL;
-  if (!creatorUserId || !uuid.test(creatorUserId) || !semantic.available || (!mfp && !daily) || !prototype || !money(semantic.platform_hard_cap_micro_usd.toString())
-    || (!mfp && !validDeadline(until)) || !mfp && daily !== null && daily < semantic.platform_hard_cap_micro_usd + prototype) return null;
-  return { creatorUserId, mfp, daily: daily?.toString() ?? null, until: until!, semanticCap: semantic.platform_hard_cap_micro_usd.toString(),
-    prototypeCap: prototype.toString(), semanticConfiguration: {
+  const until = env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL;
+  if (!semantic.available || !daily || !prototype || !money(semantic.platform_hard_cap_micro_usd.toString())
+    || !validDeadline(until) || daily < semantic.platform_hard_cap_micro_usd + prototype) return null;
+  return { creatorUserId, mfp: false as const, daily: daily.toString(), until,
+    semanticCap: semantic.platform_hard_cap_micro_usd.toString(), prototypeCap: prototype.toString(), semanticConfiguration: {
       provider: semantic.provider, model: semantic.model, model_version: semantic.model_version,
       pricing_version: semantic.pricing_version, max_input_tokens: semantic.max_input_tokens,
       max_output_tokens: semantic.max_output_tokens, input_usd_per_million_tokens: semantic.input_usd_per_million_tokens,
@@ -48,7 +57,7 @@ function configuredPolicy(env: Record<string, string | undefined>) {
  * Only the separately configured internal system actor owns the policy; neither identity comes
  * from browser input. Both actors and the tenant are checked under row locks. The policy lock serializes all
  * brands in the organization; existing active, draft or revoked history is never rewritten.
- * Draft + both actions + activation commit together. This creates no admission, work or spend.
+ * Draft, required actions and activation commit together. This creates no admission, work or spend.
  * Keep this server-owned seam out of generic client policy routes. */
 export async function provisionSignalBrandContextPolicyV1(args: {
   database: Pick<Pool, "connect">; workspace_id: string; brand_id: string; initiator_user_id: string;
@@ -98,25 +107,33 @@ export async function provisionSignalBrandContextPolicyV1(args: {
     const compatible = (await client.query<{ deadline_valid: boolean; timezone_valid: boolean; configuration_valid: boolean }>(`SELECT
       $1::timestamptz>clock_timestamp() deadline_valid,
       EXISTS(SELECT 1 FROM pg_timezone_names WHERE name=$2) timezone_valid,
-      (signal_processing_configuration_allows_v1('brand_context_proposal',$3::jsonb,$3::jsonb)
+      (($5::boolean OR signal_processing_configuration_allows_v1('brand_context_proposal',$3::jsonb,$3::jsonb))
         AND signal_brand_context_prototype_configuration_v1($4::jsonb)) configuration_valid`,
-    [configuration.until, authority.timezone, JSON.stringify(configuration.semanticConfiguration), JSON.stringify(SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1)])).rows[0];
+    [configuration.until, authority.timezone, JSON.stringify(configuration.semanticConfiguration), JSON.stringify(SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1), configuration.mfp])).rows[0];
     if (!compatible?.deadline_valid || !compatible.timezone_valid || !compatible.configuration_valid) return await commit("configuration_required");
     const policy = (await client.query<{ id: string }>(`INSERT INTO signal_processing_policy_versions(
       organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
       VALUES($1::uuid,1,'draft',clock_timestamp(),$2::timestamptz,$3,$4::bigint,$5::uuid) RETURNING id::text`,
     [scope.organization_id, configuration.until, authority.timezone, configuration.daily, configuration.creatorUserId])).rows[0];
     if (!policy) throw new Error("brand_context_policy_provisioning_incomplete");
-    for (const [action, provider, model, policyConfiguration, cap, automatic] of [
+    for (const [action, provider, model, policyConfiguration, cap, automatic] of (configuration.mfp ? [
+      ["corpus_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, false],
+      ["mention_facets", "anthropic", "claude-sonnet-5-5", {}, null, false],
+      ["concept_membership", "anthropic", "claude-sonnet-5-5", {}, null, false]
+    ] : [
       ["brand_context_proposal", "anthropic", "claude-sonnet-4-6", configuration.semanticConfiguration, configuration.semanticCap, false],
       ["topic_prototype_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, true]
-    ] as const) {
+    ]) as ReadonlyArray<readonly [string, string, string, unknown, string | null, boolean]>) {
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1::uuid,$2,'provider',$3,$4,$5::jsonb,signal_semantic_context_digest_json_v2($5::jsonb),$6::bigint,$7::boolean)`,
       [policy.id, action, provider, model, JSON.stringify(policyConfiguration), cap, automatic]);
     }
     if(configuration.mfp){
+      await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
+        configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        SELECT $1::uuid,action,'free','{}'::jsonb,signal_semantic_context_digest_json_v2('{}'::jsonb),0,automatic
+        FROM (VALUES ('corpus_preparation',false),('topic_fit_incremental',true)) actions(action,automatic)`,[policy.id]);
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         SELECT $1::uuid,'topic_consolidation_numeric','free',config,

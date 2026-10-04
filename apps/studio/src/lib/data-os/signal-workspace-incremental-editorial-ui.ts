@@ -12,10 +12,10 @@ export type WorkspaceIncrementalEditorialRequest =
   | { action: "prepare_incremental_editorial"; run_id: string; expected_source_digest: string }
   | { action: "begin_incremental_editorial"; run_id: string; expected_evidence_plan_artifact_id: string;
     expected_numeric_checkpoint_digest: string; expected_target_unit_digest: string; expected_history_cut_digest: string;
-    cap_micro_usd: number; admission_not_after: string }
+    cap_micro_usd: number|null; admission_not_after: string }
   | { action: "revoke_incremental_editorial"; run_id: string; expected_admission_operation_id: string }
   | { action: "renew_incremental_editorial"; run_id: string; expected_admission_operation_id: string;
-    grant_cap_micro_usd: number; admission_not_after: string }
+    grant_cap_micro_usd: number|null; admission_not_after: string }
   | { action: "retry_incremental_editorial"; run_id: string; expected_worker_job_id: string };
 type Scope = { workspace_id: string; request_scope: string; observed_at: string; can_execute: boolean;
   incremental_editorial?: WorkspaceIncrementalEditorial | null };
@@ -42,13 +42,13 @@ export function validWorkspaceIncrementalEditorialRequest(value: unknown): value
   if (value.action === "revoke_incremental_editorial") return keys === "action,expected_admission_operation_id,run_id" && uuid(value.expected_admission_operation_id);
   if (value.action === "retry_incremental_editorial") return keys === "action,expected_worker_job_id,run_id" && workerJob(value.expected_worker_job_id);
   if (value.action === "renew_incremental_editorial") return keys === "action,admission_not_after,expected_admission_operation_id,grant_cap_micro_usd,run_id"
-    && uuid(value.expected_admission_operation_id) && integer(value.grant_cap_micro_usd) && value.grant_cap_micro_usd > 0
+    && uuid(value.expected_admission_operation_id) && (value.grant_cap_micro_usd===null || integer(value.grant_cap_micro_usd) && value.grant_cap_micro_usd > 0)
     && timestamp(value.admission_not_after) && value.admission_not_after.length === 24;
   return value.action === "begin_incremental_editorial"
     && keys === "action,admission_not_after,cap_micro_usd,expected_evidence_plan_artifact_id,expected_history_cut_digest,expected_numeric_checkpoint_digest,expected_target_unit_digest,run_id"
     && uuid(value.expected_evidence_plan_artifact_id)
     && ["expected_history_cut_digest", "expected_numeric_checkpoint_digest", "expected_target_unit_digest"].every(field => digest(value[field]))
-    && integer(value.cap_micro_usd) && value.cap_micro_usd > 0 && timestamp(value.admission_not_after) && value.admission_not_after.length === 24;
+    && (value.cap_micro_usd===null || integer(value.cap_micro_usd) && value.cap_micro_usd > 0) && timestamp(value.admission_not_after) && value.admission_not_after.length === 24;
 }
 function validAdmissionReceipt(value: unknown, workspaceId: string) {
   return object(value) && value.contract_version === "workspace-incremental-editorial-admission-v1" && value.workspace_id === workspaceId
@@ -56,7 +56,7 @@ function validAdmissionReceipt(value: unknown, workspaceId: string) {
     && ["operation_id", "execution_id", "numeric_execution_id", "evidence_plan_artifact_id", "authorized_by_user_id", "budget_actor_user_id"].every(field => uuid(value[field]))
     && nullable(value.prior_admission_operation_id, uuid)
     && ["grant_digest", "input_digest", "numeric_checkpoint_digest", "target_unit_digest", "target_binding_digest", "configuration_digest"].every(field => digest(value[field]))
-    && ["grant_cap_micro_usd", "run_cap_micro_usd", "daily_cap_micro_usd"].every(field => integer(value[field]))
+    && ["grant_cap_micro_usd", "run_cap_micro_usd", "daily_cap_micro_usd"].every(field => nullable(value[field],integer))
     && timestamp(value.authorized_at) && timestamp(value.admission_not_after) && timezone(value.budget_timezone)
     && typeof value.budget_date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(value.budget_date);
 }
@@ -80,7 +80,8 @@ export function validWorkspaceIncrementalEditorial(value: unknown, workspaceId: 
     && nullable(admission.blocked_reason, v => typeof v === "string") && admission.model === "claude-sonnet-4-6" && uuid(admission.budget_actor_user_id)
     && timezone(admission.budget_timezone) && timestamp(admission.maximum_admission_not_after)
     && typeof admission.budget_date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(admission.budget_date)
-    && ["expected_units", "target_units", "legacy_units", "claimed_units", "daily_cap_micro_usd", "confirmed_micro_usd", "reserved_micro_usd", "terminal_reserved_micro_usd", "maximum_grant_micro_usd"].every(field => integer(admission[field]))
+    && ["expected_units", "target_units", "legacy_units", "claimed_units", "confirmed_micro_usd", "reserved_micro_usd", "terminal_reserved_micro_usd"].every(field => integer(admission[field]))
+    && ["daily_cap_micro_usd","maximum_grant_micro_usd"].every(field => nullable(admission[field],integer))
     && Number(admission.target_units) <= Number(admission.expected_units) && Number(admission.terminal_reserved_micro_usd) <= Number(admission.reserved_micro_usd)
     && (admission.operation === null || object(admission.operation) && uuid(admission.operation.execution_id)
       && ["queued", "running", "ready", "failed"].includes(String(admission.operation.status))
@@ -102,7 +103,8 @@ export function validWorkspaceIncrementalEditorialExecution(value: unknown, work
       && typeof value.renewal.is_current === "boolean" && typeof value.renewal.can_renew === "boolean" && nullable(value.renewal.blocked_reason, v => typeof v === "string")
       && timezone(value.renewal.budget_timezone) && timestamp(value.renewal.maximum_admission_not_after)
       && typeof value.renewal.budget_date === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(value.renewal.budget_date)
-      && ["run_cap_micro_usd", "daily_cap_micro_usd", "confirmed_micro_usd", "reserved_micro_usd", "terminal_reserved_micro_usd", "maximum_grant_micro_usd"].every(field => integer((value.renewal as Record<string, unknown>)[field]))
+      && ["confirmed_micro_usd", "reserved_micro_usd", "terminal_reserved_micro_usd"].every(field => integer((value.renewal as Record<string, unknown>)[field]))
+      && ["run_cap_micro_usd","daily_cap_micro_usd","maximum_grant_micro_usd"].every(field => nullable((value.renewal as Record<string, unknown>)[field],integer))
       && Number(value.renewal.terminal_reserved_micro_usd) <= Number(value.renewal.reserved_micro_usd))
     && (value.request === null || object(value.request) && key(value.request.idempotency_key) && object(value.request.receipt)
       && value.request.receipt.contract_version === "workspace-incremental-editorial-retry-v1" && value.request.receipt.workspace_id === workspaceId
@@ -151,7 +153,7 @@ export function workspaceIncrementalEditorialCanSubmit(status: Scope, body: Work
       && sameId(run.execution_id, body.run_id) && sameId(renewal.execution_id, body.run_id)
       && sameId(renewal.expected_admission_operation_id, body.expected_admission_operation_id)
       && admission?.adapter_available && admission.provider_available
-      && body.grant_cap_micro_usd <= renewal.maximum_grant_micro_usd && Date.parse(body.admission_not_after) > Date.parse(status.observed_at)
+      && (renewal.maximum_grant_micro_usd===null || body.grant_cap_micro_usd!==null && body.grant_cap_micro_usd <= renewal.maximum_grant_micro_usd) && Date.parse(body.admission_not_after) > Date.parse(status.observed_at)
       && Date.parse(body.admission_not_after) <= Date.parse(renewal.maximum_admission_not_after));
   }
   if (body.action === "retry_incremental_editorial") {
@@ -170,7 +172,7 @@ export function workspaceIncrementalEditorialCanSubmit(status: Scope, body: Work
     && sameId(admission.evidence_plan_artifact_id, body.expected_evidence_plan_artifact_id)
     && admission.numeric_checkpoint_digest === body.expected_numeric_checkpoint_digest && admission.history_cut_digest === body.expected_history_cut_digest
     && admission.target_unit_digest === body.expected_target_unit_digest && admission.target_units > 0
-    && body.cap_micro_usd <= admission.maximum_grant_micro_usd && Date.parse(body.admission_not_after) > Date.parse(status.observed_at)
+    && (admission.maximum_grant_micro_usd===null || body.cap_micro_usd!==null && body.cap_micro_usd <= admission.maximum_grant_micro_usd) && Date.parse(body.admission_not_after) > Date.parse(status.observed_at)
     && Date.parse(body.admission_not_after) <= Date.parse(admission.maximum_admission_not_after);
 }
 /** Only durable work is polled. A prepared plan never authorizes or sends Claude. */

@@ -30,7 +30,7 @@ export type WorkspaceIncrementalNumericDescriptorV1 = {
   policy_version: typeof SIGNAL_WORKSPACE_INCREMENTAL_POLICY_V1;
   parent: { execution_id: string; output_artifact_id: string; manifest_sha256: string;
     manifest_contract: "workspace-topic-engine-output-v1" | "workspace-topic-incremental-output-v1" };
-  compatibility: Input["compatibility"]; discovery: { close_requested: boolean };
+  compatibility: Input["compatibility"]; discovery: { close_requested: boolean; residual_root_ids?: string[] };
 };
 export type WorkspaceIncrementalParentFilesV1 = { directory: string;
   files: AsyncIterable<ReadonlyArray<WorkspaceIncrementalFileRefV1>> };
@@ -370,31 +370,33 @@ async function* transitions(parent: Parent, rootsFile: string) {
     }
   } finally { await before.close(); await after.close(); }
 }
-async function* walkCurrent(parent: Parent, directory: string, rootsFile: string) {
+async function* walkCurrent(parent: Parent, directory: string, rootsFile: string, residualIds?: string[]) {
   const changes = cursor(transitions(parent, rootsFile)), pending = cursor(pendingRoots(parent));
+  const residual = residualIds === undefined ? null : new Set(residualIds);
   try {
     for await (const { row } of populationRows(join(directory, "chunks.jsonl"), true)) {
       while (await changes.peek() && (await changes.peek())!.root_id < row.root_id) await changes.take();
       const change = await changes.peek(); if (!change || change.root_id !== row.root_id || !change.current) fail("root_coverage_invalid");
       while (await pending.peek() !== null && (await pending.peek())! < row.root_id) await pending.take();
       const isDelta = change.transition === "added" || change.transition === "content_changed";
-      yield { row, root: change.current, change, isDelta, cohort: isDelta || await pending.peek() === row.root_id };
+      yield { row, root: change.current, change, isDelta, cohort: (!residual || residual.has(row.root_id)) && (isDelta || await pending.peek() === row.root_id) };
     }
   } finally { await changes.close(); await pending.close(); }
 }
-async function analyze(parent: Parent, directory: string, rootsFile: string) {
+async function analyze(parent: Parent, directory: string, rootsFile: string, residualIds?: string[]) {
   const counts = { added_roots: 0, content_changed_roots: 0, metadata_changed_roots: 0, unchanged_roots: 0,
     removed_roots: 0, roots: 0, occurrences: 0, delta_occurrences: 0, cohort_occurrences: 0 };
   for await (const change of transitions(parent, rootsFile)) {
     if (change.transition === "removed_or_ineligible") counts.removed_roots++;
     else { counts.roots++; counts[`${change.transition}_roots`]++; }
   }
-  const population = arrayDigest(), cohort = arrayDigest();
+  const population = arrayDigest(), cohort = arrayDigest(), remaining = new Set(residualIds);
   const cohortKey = arrayDigest(`{"policy_version":${JSON.stringify(SIGNAL_WORKSPACE_INCREMENTAL_POLICY_V1)},"population":[`, "]}");
-  for await (const { row, isDelta, cohort: included } of walkCurrent(parent, directory, rootsFile)) {
-    population.add(row); counts.occurrences++; if (isDelta) counts.delta_occurrences++;
+  for await (const { row, isDelta, cohort: included } of walkCurrent(parent, directory, rootsFile, residualIds)) {
+    remaining.delete(row.root_id); population.add(row); counts.occurrences++; if (isDelta) counts.delta_occurrences++;
     if (included) { cohort.add(row); cohortKey.add(row); counts.cohort_occurrences++; }
   }
+  if (remaining.size) fail("residual_population_invalid");
   return { counts, population_digest: population.finish(), cohort_digest: cohort.finish(), cohort_key: cohortKey.finish() };
 }
 function descriptorCheck(descriptor: WorkspaceIncrementalNumericDescriptorV1) {
@@ -437,13 +439,13 @@ export async function prepareSignalWorkspaceIncrementalInputFilesV1(args: {
     await file.sync(); await file.close();
     const input = await checkCurrent(directory, args.input_manifest_ref, args.descriptor.compatibility, temporaryRoots);
     if (input.workspace_id !== parent.raw.workspace_id || args.execution_id === parent.execution_id) fail("input_identity_invalid");
-    const analyzed = await analyze(parent, directory, temporaryRoots);
+    const analyzed = await analyze(parent, directory, temporaryRoots, args.descriptor.discovery.residual_root_ids);
     const descriptor = parseSignalWorkspaceIncrementalInputV1({ contract_version: SIGNAL_WORKSPACE_INCREMENTAL_INPUT_V1,
       workspace_id: input.workspace_id, execution_id: args.execution_id, mode: "frozen-model-delta",
       policy_version: SIGNAL_WORKSPACE_INCREMENTAL_POLICY_V1, current_input_manifest: args.input_manifest_ref,
       current_roots: await reference(temporaryRoots, "current-roots.jsonl", count),
       parent: { execution_id: parent.execution_id, manifest_sha256: parent.manifest_sha256 }, compatibility: args.descriptor.compatibility,
-      discovery: { cohort_key: analyzed.cohort_key, close_requested: args.descriptor.discovery.close_requested } });
+      discovery: { ...args.descriptor.discovery, cohort_key: analyzed.cohort_key } });
     const output = await open(temporaryInput, "wx", 0o600);
     try { await output.writeFile(canonical(descriptor) + "\n"); await output.sync(); } finally { await output.close(); }
     // incremental.json is the publication marker; a partial roots file cannot run.
@@ -483,11 +485,12 @@ export async function validateSignalWorkspaceIncrementalOutputFilesV1(args: {
   const parent = await openParent(args.storage_root, args.parent, args.descriptor);
   if (!same(input.parent, { execution_id: parent.execution_id, manifest_sha256: parent.manifest_sha256 })
     || !same(input.compatibility, args.descriptor.compatibility)
-    || input.discovery.close_requested !== args.descriptor.discovery.close_requested) fail("input_identity_invalid");
+    || input.discovery.close_requested !== args.descriptor.discovery.close_requested
+    || !same(input.discovery.residual_root_ids ?? null, args.descriptor.discovery.residual_root_ids ?? null)) fail("input_identity_invalid");
   const rootsFile = await checked(directory, input.current_roots);
   const spool = await checkCurrent(directory, input.current_input_manifest, input.compatibility, rootsFile);
   if (input.workspace_id !== spool.workspace_id || input.workspace_id !== parent.raw.workspace_id || input.execution_id === parent.execution_id) fail("input_identity_invalid");
-  const analyzed = await analyze(parent, directory, rootsFile);
+  const analyzed = await analyze(parent, directory, rootsFile, input.discovery.residual_root_ids);
   if (analyzed.cohort_key !== input.discovery.cohort_key || input.current_roots.rows !== analyzed.counts.roots) fail("cohort_invalid");
   const manifestRef = args.output_manifest_ref ?? await reference(join(outputDirectory, "manifest.json"), "manifest.json");
   if (manifestRef.file !== "manifest.json") fail("output_manifest_invalid");
@@ -556,7 +559,7 @@ export async function validateSignalWorkspaceIncrementalOutputFilesV1(args: {
   const unitRoots = new Map<string, number>(), overlaps = new Map<string, Map<string, number>>();
   let memberCount = 0, currentRoot = "", rootUnits = new Set<string>(), priorMemberKey = "", relationBytes = 0;
   try {
-    for await (const { row, root, isDelta, cohort } of walkCurrent(parent, directory, rootsFile)) {
+    for await (const { row, root, isDelta, cohort } of walkCurrent(parent, directory, rootsFile, input.discovery.residual_root_ids)) {
       if (!same(await population.take(), row)) fail("population_invalid");
       if (row.root_id !== currentRoot) { currentRoot = row.root_id; rootUnits = new Set(); }
       if (!fit && cohort && !same(await pending.take(), row)) fail("pending_cohort_invalid");

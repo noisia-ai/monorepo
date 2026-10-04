@@ -127,7 +127,7 @@ export async function runSignalWorkspaceIncrementalJobV1(args: {
       const input = await spoolSignalWorkspaceEngineInputV1({ storage_root: storageRoot, directory: inputDir,
         snapshot: { workspace_id: s.workspace_id, input_revision: Number(s.input_revision), preparation_run_id: s.preparation_run_id,
           embedding_run_id: s.embedding_run_id, embedding_config_digest: s.embedding_profile.config_digest,
-          context_digest: s.context_digest, catalog_digest: s.catalog_digest, chunk_policy_version: "corpus-text-chunks-v1",
+          context_digest: descriptor.compatibility.context_digest, catalog_digest: descriptor.compatibility.input_interest_catalog_digest, chunk_policy_version: "corpus-text-chunks-v1",
           roots: s.expected_roots, chunks: s.expected_chunks, guides: s.expected_guides, dimensions: 1024, config: s.engine_config },
         chunks: allChunks(), guides: allGuides(), onProgress: async counts => {
           if (heartbeatError) throw heartbeatError;

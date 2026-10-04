@@ -722,9 +722,9 @@ export async function adoptSignalTopicCandidateStoreV1(args: {
       && item.source.candidate_key === args.input.candidate_key);
     if (duplicate) return { term_key: duplicate.term_key, semantic_changed: false };
     const candidate = await loadAdoptionCandidate({ ...args, pool: client });
-    if (candidate.origin === "workspace_discovery") {
+    if (candidate.origin === "workspace_discovery" && !args.input.run_key.startsWith("workspace-discovery:incremental:")) {
       const previous = definitions.filter(item => item.origin === "workspace_discovery"
-        && item.source?.run_key.startsWith("workspace-discovery:")
+        && item.source?.run_key.startsWith("workspace-discovery:") && !item.source.run_key.startsWith("workspace-discovery:incremental:")
         && item.source.candidate_key === args.input.candidate_key);
       if (previous.length) {
         const revisions = (await client.query<{ id: string }>(`
@@ -784,6 +784,17 @@ export async function loadAdoptionCandidate(args: {
   actor_user_id: string;
   input: AdoptSignalTopicCandidateInputV1;
 }) {
+  if(args.input.run_key.startsWith("workspace-discovery:incremental:")){
+    const execution_id=args.input.run_key.slice("workspace-discovery:incremental:".length);
+    if(!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(execution_id)||!args.input.scope||!args.input.expected_revision_digest)
+      throw new SignalTopicCatalogError("topic_candidate_request_invalid",422);
+    const {readSignalIncrementalDiscoveryCandidatesWithClientV1}=await import("./signal-workspace-incremental-candidates");
+    const result=await readSignalIncrementalDiscoveryCandidatesWithClientV1(args.pool,{...args,execution_id});
+    const candidate=result.candidates.find(row=>row.candidate_key===args.input.candidate_key);
+    if(!candidate||candidate.candidate_digest!==args.input.expected_revision_digest)throw new SignalTopicCatalogError("topic_candidate_revision_stale",409);
+    return{title:candidate.label,description:candidate.definition,inclusion:candidate.inclusion,exclusion:candidate.exclusion,
+      positive_examples:[] as string[],negative_examples:[] as string[],candidate_digest:candidate.candidate_digest,origin:"workspace_discovery" as const,scope:args.input.scope};
+  }
   if (args.input.run_key.startsWith("workspace-discovery:")) {
     const revisionId = args.input.run_key.slice("workspace-discovery:".length);
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(revisionId)
@@ -1546,7 +1557,7 @@ export async function materializeSignalWorkspaceIncrementalEditorialTopicsV1(arg
     let receipt:SignalWorkspaceIncrementalCatalogReceiptV1;
     if (replay) receipt=replay.result_summary;
     else {
-      const inherited=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true});
+      const inherited=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true,...(current.snapshot.discovery_population?{context_mode:"workspace-discovery-v1" as const}:{})});
       const priorDefinitions=(await loadProfileTerms(client,prior.id)).map(readDefinition);let definitions=priorDefinitions;
       const mapping:Array<import("@noisia/query-engine").SignalWorkspaceTopicMaterializationMappingV1>=[];
       for (const [owner,interpretations] of [...byOwner].sort(([a],[b])=>a<b?-1:1)) {

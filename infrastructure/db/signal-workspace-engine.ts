@@ -1,3 +1,4 @@
+import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
 import { loadSignalDiscoveryEstimateV1 } from "./signal-workspace-discovery-estimate";
 export { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1 } from "./signal-workspace-discovery-policy";
 import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1 } from "./signal-workspace-discovery-policy";
@@ -5,7 +6,7 @@ import { admitSignalProcessingWithClientV1 } from "./signal-processing-policy";
 import { discoverySamplingOptionsV1, loadSignalDiscoveryPopulationV1, type SignalDiscoveryPopulationV1 } from "./signal-workspace-discovery-population";
 import type {SignalWorkspaceInterpretationAdmissionV1} from './signal-workspace-interpretation-admission';
 import type { Pool, PoolClient } from "pg";
-import { buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
+import { loadSignalDiscoveryResidualRootsV1, buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceTopicPrototypePlanV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
@@ -478,7 +479,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       ||![p.input_micro_usd_per_million_tokens,p.output_micro_usd_per_million_tokens,p.cache_read_micro_usd_per_million_tokens,p.cache_creation_micro_usd_per_million_tokens].every(n=>Number.isSafeInteger(n)&&n>=0)
       ||typeof c.budget_timezone!=='string'||c.budget_timezone.length>100||Buffer.byteLength(JSON.stringify(c),'utf8')>16384)return fail('workspace_engine_interpretation_config_invalid',422);
   }
-  if(discoveryEnabled&&(args.incremental_options||args.parent_execution_id))return fail('workspace_engine_discovery_incremental_not_ready',422);
+  if(discoveryEnabled&&args.parent_execution_id&&!args.incremental_options)return fail('workspace_engine_discovery_incremental_required',422);
   if(!discoveryEnabled&&(args.discovery_sample_cap!=null||args.discovery_sample_seed!==undefined))
     return fail('workspace_engine_discovery_disabled',422);
   let discoveryOptions;
@@ -503,7 +504,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
         if(!caps.can_request_processing)return fail("workspace_engine_forbidden",403);}
       if(prior.actor_user_id!==args.actor_user_id||prior.request_digest!==requestDigest||prior.input_contract!=='workspace-topic-engine-v1')return fail('workspace_engine_idempotency_conflict');
       return{execution_id:prior.id,replayed:true};}
-    if(discoveryEnabled){
+    if(discoveryEnabled&&!args.incremental_options){
       if(!args.interpretation_config)return fail('workspace_engine_interpretation_config_invalid',422);
       const policy=await loadSignalDiscoveryPolicyV1(client,args.workspace_id);
       if(!policy.available)return fail('workspace_analysis_interpretation_unavailable',422);
@@ -538,11 +539,12 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
          AND (NOT execution.input_snapshot ? 'numeric_descriptor' OR execution.status='ready')
          AND execution.taxonomy_profile_id::text=execution.input_snapshot->>'taxonomy_profile_id'
          AND ($2::uuid IS NULL OR execution.id=$2::uuid) AND execution.embedding_config_digest=$3
-         AND execution.input_snapshot->>'context_digest'=$4 AND execution.input_snapshot->>'catalog_digest'=$5
+         AND (($8::boolean AND jsonb_typeof(execution.input_snapshot->'discovery_population')='object' AND execution.input_snapshot->'guides'='[]'::jsonb)
+          OR (NOT $8::boolean AND NOT execution.input_snapshot ? 'discovery_population' AND execution.input_snapshot->>'context_digest'=$4 AND execution.input_snapshot->>'catalog_digest'=$5))
          AND execution.input_snapshot->'engine_config'=$6::jsonb
          AND ($7::uuid IS NULL OR execution.id=$7::uuid OR EXISTS(SELECT 1 FROM signal_workspace_incremental_projection_lineage_v1(execution.id) lineage WHERE lineage.parent_id=$7::uuid))
         ORDER BY execution.created_at DESC,execution.id DESC LIMIT 1`,[args.workspace_id,args.incremental_options.parent_execution_id??null,
-        embedded.profile.config_digest,args.expected_context_digest,args.expected_catalog_digest,JSON.stringify(args.engine_config),args.incremental_options.automatic_admission?.opt_in_execution_id??null])).rows[0];
+        embedded.profile.config_digest,args.expected_context_digest,args.expected_catalog_digest,JSON.stringify(args.engine_config),args.incremental_options.automatic_admission?.opt_in_execution_id??null,discoveryEnabled])).rows[0];
       if(!parent)return fail('workspace_engine_operational_profile_required');
       taxonomy_profile_id=parent.taxonomy_profile_id;numericParentId=parent.id;
       if(args.incremental_options.taxonomy_profile_id&&args.incremental_options.taxonomy_profile_id!==taxonomy_profile_id)
@@ -553,6 +555,11 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     if(await missingGuides(client,args.workspace_id,embedded.profile.config_digest,input.guides))return fail('workspace_engine_guides_required');
     if(!discoveryEnabled&&(embedded.counts.eligible_roots!==embedded.counts.completed_roots||embedded.counts.total_chunk_references!==embedded.counts.processed_chunk_references))
       return fail('workspace_engine_corpus_embeddings_incomplete');
+    if(discoveryEnabled&&args.incremental_options){
+      const change=await inspectFacetContextChangeV1(client,args.workspace_id);
+      if(change.affected.length)return fail('workspace_engine_facets_context_pending');
+      if((await client.query<{pending:boolean}>(`SELECT EXISTS(SELECT 1 FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND (status IN('pending','error') OR requires_context_review)) pending`,[args.workspace_id])).rows[0]?.pending)return fail('workspace_engine_facets_pending');
+    }
     const discovery=discoveryEnabled?await loadSignalDiscoveryPopulationV1({queryable:client,workspace_id:args.workspace_id,
       preparation_run_id:embedded.preparation_run_id,...discoveryOptions}):null;
     const missing=natural((await client.query<{missing:string}>(`SELECT count(*)::text missing FROM signal_corpus_preparation_items item
@@ -565,8 +572,9 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const numericDescriptor=args.incremental_options?await buildSignalWorkspaceIncrementalDescriptorWithClientV1({queryable:client,
       workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,embedding_config_digest:embedded.profile.config_digest,
       context_digest:input.context_digest,catalog_digest:input.catalog_digest,engine_config:args.engine_config,guides:input.guides,
-      ...args.incremental_options,parent_execution_id:numericParentId}):undefined;
-    const parentId=discoveryEnabled?null:numericDescriptor?numericDescriptor.parent.execution_id:args.parent_execution_id===undefined?(await client.query<{id:string}>(`SELECT prior.id FROM signal_topic_catalog_executions prior
+      ...args.incremental_options,parent_execution_id:numericParentId,discovery:discoveryEnabled,
+      residual_root_ids:discovery?await loadSignalDiscoveryResidualRootsV1(client,args.workspace_id,discovery.population.root_ids):undefined}):undefined;
+    const parentId=numericDescriptor?numericDescriptor.parent.execution_id:discoveryEnabled?null:args.parent_execution_id===undefined?(await client.query<{id:string}>(`SELECT prior.id FROM signal_topic_catalog_executions prior
       WHERE prior.workspace_id=$1::uuid AND prior.input_contract='workspace-topic-engine-v1' AND prior.status='ready'
        AND prior.embedding_config_digest=$2 AND prior.input_snapshot->>'context_digest'=$3
        AND prior.result_summary->>'model_version_id' IS NOT NULL
@@ -589,9 +597,10 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),...(numericDescriptor?{numeric_descriptor:numericDescriptor}:{})};
     const id=randomUUID();
     const processingAdmission=discoveryEnabled?await admitSignalProcessingWithClientV1(client,{
-      workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,action:'topic_interpretation',target_id:id,
+      workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,action:numericDescriptor?'topic_fit_incremental':'topic_interpretation',target_id:id,
       idempotency_key:args.idempotency_key,request_digest:requestDigest,
-      execution_cap_micro_usd:args.claude_cap_micro_usd===null?null:String(args.claude_cap_micro_usd)}):null;
+      execution_cap_micro_usd:args.claude_cap_micro_usd===null?null:String(args.claude_cap_micro_usd),
+      automatic:!!args.incremental_options?.automatic_admission}):null;
     await client.query(`INSERT INTO signal_topic_catalog_executions(id,workspace_id,taxonomy_profile_id,actor_user_id,intent,idempotency_key,request_digest,
       population_digest,watermark_digest,identity_catalog_digest,definition_digest,denominator,embedding_model,input_contract,
       embedding_run_id,preparation_run_id,input_revision,embedding_config_digest,input_snapshot,input_digest,policy_valid_until,expected_chunks,result_summary,engine_request_keys,created_at,updated_at,processing_admission_id)

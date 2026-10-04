@@ -41,7 +41,7 @@ const population = (rows: Chunk[]) => rows.map((row, ordinal) => ({ ordinal, roo
   asset_sha256: row.asset_sha256, expected_chunks: row.expected_chunks, chunk_index: row.chunk_index, start: row.start, end: row.end, chunk_sha256: row.chunk_sha256 }));
 function occurrence(row: ReturnType<typeof population>[number]) { return { ordinal: row.ordinal, root_id: row.root_id,
   chunk_index: row.chunk_index, start: row.start, end: row.end, chunk_sha256: row.chunk_sha256 }; }
-async function fixture() {
+async function fixture(residualIds?: string[]) {
   const storage = await mkdtemp(join(tmpdir(), "noisia-incremental-files-")), parent = join(storage, "parent"), input1 = join(storage, "input1"), input2 = join(storage, "input2"), output = join(storage, "output");
   await mkdir(parent); await mkdir(output);
   const previousChunks = [...chunks(1, 133), ...chunks(2, 1)];
@@ -73,7 +73,7 @@ async function fixture() {
     parent: { execution_id: uuid(201), output_artifact_id: uuid(900), manifest_sha256: (await ref(parent, "manifest.json")).sha256, manifest_contract: "workspace-topic-engine-output-v1" },
     compatibility: { embedding_config_digest: before.embedding_config_digest, chunk_policy_version: before.chunk_policy_version, context_digest: before.context_digest,
       input_interest_catalog_digest: before.catalog_digest, guides_digest: digest({ rows: [], vectors: (await ref(parent, "guide-vectors.npy")).sha256 }),
-      fit_config_digest: digest(config), runtime_digest: digest(parentManifest.versions) }, discovery: { close_requested: false } };
+      fit_config_digest: digest(config), runtime_digest: digest(parentManifest.versions) }, discovery: { close_requested: false, ...(residualIds===undefined?{}:{residual_root_ids:residualIds}) } };
   const parentFiles = await Promise.all(["manifest.json", ...names].map(file => ref(parent, file)));
   const prepareArgs = () => ({ storage_root: storage, input_directory: input2, input_manifest_ref: undefined as unknown as Ref,
     execution_id: uuid(202), descriptor, roots: pages(currentRoots), parent: { directory: parent, files: pages(parentFiles) } });
@@ -231,4 +231,19 @@ test("already-computed real Python waves validate bootstrap-to-delta, further de
       }
     }
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test("MFP residual only changes the discovery cohort, never the full population or numeric delta",async()=>{
+ for(const residual of [[],[uuid(3)]]){
+  const f=await fixture(residual);
+  try{
+   assert.equal(f.prepared.counts.roots,2);
+   assert.equal(f.prepared.counts.occurrences,135);
+   assert.equal(f.prepared.counts.delta_occurrences,2);
+   assert.equal(f.prepared.counts.cohort_occurrences,residual.length?2:0);
+   assert.deepEqual(f.prepared.input.discovery.residual_root_ids,residual);
+   assert.equal(f.prepared.counts.metadata_changed_roots,1);
+  } finally {await f.cleanup();}
+ }
 });
