@@ -30,6 +30,7 @@ import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storag
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readMfpInFlightPages } from "./signal-labeling-parallelism";
 export const SIGNAL_MENTION_FACETS_JOB_V1 = "signal-mention-facets-v1";
 type Provider = ReturnType<typeof createAnthropicMessageBatchesClient>;
 const zeroUsage = (): LlmUsageV1 => ({
@@ -94,24 +95,16 @@ export async function runMentionFacetsTickV1(args: {
       run.error_code = "labeling_outcome_unknown";
       calls = await store.calls(run);
     }
-    if (
-      !run.error_code &&
-      !calls.some((c) =>
-        ["reserved", "submitting", "submitted"].includes(c.status),
-      )
-    ) {
-      const inputs = await store.inputs(run);
-      if (inputs.length) {
-        await store.reserve(
-          run,
-          groupFacetInputsV1(
-            inputs,
-            JSON.stringify(run.context).length,
-            run.identity,
-          ).map((group) => facetCallProposalV1(run, group)),
-        );
-        calls = await store.calls(run);
+    if (!run.error_code && !calls.some((c) =>
+      ["reserved", "submitting", "submitted"].includes(c.status))) {
+      for (let page = 0; page < readMfpInFlightPages(); page++) {
+        const inputs = await store.inputs(run);
+        if (!inputs.length) break;
+        await store.reserve(run, groupFacetInputsV1(
+          inputs, JSON.stringify(run.context).length, run.identity,
+        ).map((group) => facetCallProposalV1(run, group)));
       }
+      calls = await store.calls(run);
     }
     const reserved = run.error_code
       ? []

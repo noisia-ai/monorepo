@@ -4713,6 +4713,7 @@
     "firstPage": "First page",
     "nextPage": "Next page",
     "contextReview": "Entities changed. Review this correction against the current context.",
+    "overrideReview": "The previous correction belongs to another definition or text version. Review it before applying it again.",
     "openMention": "Open mention",
     "openOriginal": "Open original source",
     "withheld": "Text is unavailable under the current source permissions.",
