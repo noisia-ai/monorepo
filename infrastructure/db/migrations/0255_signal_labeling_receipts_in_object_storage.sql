@@ -17,6 +17,9 @@ BEGIN
    AND (raw_storage_key IS NULL OR raw_size_bytes IS NULL OR raw_size_bytes<>octet_length(raw_body))) THEN
    RAISE EXCEPTION 'signal_labeling_receipt_reference_incomplete';
  END IF;
+ IF EXISTS (SELECT 1 FROM signal_labeling_calls WHERE raw_body IS NOT NULL AND octet_length(raw_body)>8388608) THEN
+   RAISE EXCEPTION 'signal_labeling_receipt_too_large';
+ END IF;
 END $$;
 ALTER TABLE signal_labeling_calls DROP COLUMN raw_body;
 ALTER TABLE signal_labeling_runs DROP COLUMN selection_complete;
