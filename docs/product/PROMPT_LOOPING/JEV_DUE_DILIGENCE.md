@@ -95,8 +95,12 @@ redondeo `Number.EPSILON * número_de_opciones`; límites0.99/1.01 pasan, valore
 realmente fuera y no finitos siguen rechazados. Cliente8/8 PASS local. Conserva
 identidad lógica porque no cambia la tolerancia documentada ni prompt/schema;
 historia original intacta. Verificación remota sólo lectura11:00:46Z con requests y
-crudos originales:10/10 válidos,0 transporte y0 mutaciones de ledger. Root ejecutará,
-si procede, nueva run explícita para diez errores; no se implementa recuperación nueva.
+crudos originales:10/10 válidos,0 transporte y0 mutaciones de ledger. Root verificó
+cliente8/8 PASS remoto y ejecutó una nueva run explícita sólo para los diez errores:
+10 solicitudes,10 labeled,USD0.001690, reservas/incertidumbre0 y17,755ms.
+Estado final:898 labeled (519 relevant,33 spam,346 unrelated),7 abstained
+(2 relevant,4 unknown,1 unrelated),0 error. Ambas runs suman915 solicitudes y
+USD0.154879 en ledger. Historia original intacta; sin subsistema nuevo de recuperación.
 
 Root confirmó replay de la misma clave:0 solicitudes nuevas,905 llamadas y
 USD0.153189 sin cambios, reservas/incertidumbre0, duración2,196ms. El replay
@@ -108,6 +112,9 @@ La política se versionó1→2 para JEV y2→3 para restaurar Claude, preservand
 cuatro acciones salvo proveedor/modelo/configuración de `mention_facets` y sin
 cambiar caps. `jev-policy.ts` inspecciona por defecto, exige `--execute`, conserva
 guardas/autoridad y bloquea el cambio mientras haya trabajo o facturación pendiente.
+La recuperación volvió a versionar3→4 JEV y4→5 Claude, blockers0 y cuatro acciones
+preservadas. Evidencia privada `.data/dev-corpus/jev-real-recovery-2026-10-04.log`,
+`jev-recovery-policy-2026-10-04.log` y `jev-recovery-policy-restore-2026-10-04.log`.
 
 Rendimiento: `persistRawPage` sube objetos de forma secuencial antes de un UPDATE
 por página; esto es consistente con ~190s por200 raíces pese a ~0.1s de proveedor.
