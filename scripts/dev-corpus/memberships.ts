@@ -1,6 +1,7 @@
 /** Real-provider demo tick. Root serializes execution on the verified private MFP runner. */
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { main, openDatabase } from "./guard.mjs";
+import { loadMfpEvalIdentity } from "../eval/fixture-identity";
 import {
   loadConceptMembershipsStatusV1,
   requestConceptMembershipsV1,
@@ -17,13 +18,7 @@ await main(async () => {
     process.env.NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED !== "true"
   )
     throw new Error("mfp_membership_provider_disabled");
-  const identity = JSON.parse(
-      await readFile(
-        process.env.NOISIA_MFP_IDENTITY_FILE ??
-          ".data/dev-corpus/voyage-real/identity.json",
-        "utf8",
-      ),
-    ),
+  const identity = await loadMfpEvalIdentity(),
     pool = await openDatabase();
   try {
     const access = {

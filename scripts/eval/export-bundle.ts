@@ -4,6 +4,7 @@ import { readFile,writeFile } from 'node:fs/promises';
 import { main,openDatabase } from '../dev-corpus/guard.mjs';
 import { validateBundle,validateSelection,type Bundle,type Selection,type Variant } from './contract';
 import { facetPredictions,membershipPredictions,ledgerCosts,type LedgerCall } from './ledger-export';
+import { loadMfpEvalIdentity } from './fixture-identity';
 
 type Manifest={variants:Array<{variant:Variant['variant'];run_ids:string[];thresholds?:Variant['thresholds']}>,
   jev_judge?:{predictions_file:string;summary_file:string;thresholds:Variant['thresholds']}};
@@ -16,8 +17,7 @@ await main(async()=>{
   const manifest=JSON.parse(await readFile(`${path}eval-run-manifest.json`,'utf8')) as Manifest;
   if(!manifest.variants?.length||new Set(manifest.variants.map(v=>v.variant)).size!==manifest.variants.length)
     throw new Error('mfp_eval_manifest_invalid');
-  const identity=JSON.parse(await readFile(`${path}identity.json`,'utf8')) as {fixture_key:string;workspace_id:string};
-  if(identity.fixture_key!=='rental-corpus-voyage-v1')throw new Error('mfp_eval_fixture_identity_invalid');
+  const identity=await loadMfpEvalIdentity();
   const pool=await openDatabase();
   try {
     const variants:Variant[]=[];

@@ -1,11 +1,10 @@
 /** Read-only preflight for the private MFP fixture before sending any text to JEV. */
-import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { loadMfpEvalIdentity } from './fixture-identity';
 // @ts-expect-error guarded private runner JavaScript
 import { main,openDatabase } from '../dev-corpus/guard.mjs';
 export async function verifyMfpEvalRights(){
-  const identity=JSON.parse(await readFile('.data/dev-corpus/voyage-real/identity.json','utf8')) as {fixture_key:string;workspace_id:string;source_id:string};
-  if(identity.fixture_key!=='rental-corpus-voyage-v1'||!identity.workspace_id||!identity.source_id)throw new Error('mfp_eval_fixture_identity_invalid');
+  const identity=await loadMfpEvalIdentity();
   const pool=await openDatabase();
   const client=await pool.connect();
   try {

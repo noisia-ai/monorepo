@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { main, openDatabase } from '../dev-corpus/guard.mjs';
 import { loadSignalTopicCatalogStoreV1, updateSignalTopicStoreV1 } from '../../infrastructure/db/signal-topic-catalog';
 import { plannedConceptUpdates, sha256, type ProposedConcept } from './concepts-v2';
+import { loadMfpEvalIdentity } from './fixture-identity';
 
 await main(async()=>{
   const path=process.env.NOISIA_MFP_CONCEPTS_V2_FILE ?? '.data/dev-corpus/voyage-real/concepts-proposed-v2.json';
@@ -12,8 +13,7 @@ await main(async()=>{
   const proposed=JSON.parse(bytes.toString('utf8')) as ProposedConcept[];
   const selection=JSON.parse(await readFile(process.env.NOISIA_MFP_SELECTION_FILE ?? '.data/dev-corpus/voyage-real/gold-selection.json','utf8')) as
     {concepts:Array<{concept_key:string}>};
-  const identity=JSON.parse(await readFile('.data/dev-corpus/voyage-real/identity.json','utf8')) as {fixture_key:string;workspace_id:string;internal_user_id:string};
-  if(identity.fixture_key!=='rental-corpus-voyage-v1')throw new Error('mfp_eval_fixture_identity_invalid');
+  const identity=await loadMfpEvalIdentity();
   const pool=await openDatabase();
   try {
     const keys=selection.concepts.map(c=>c.concept_key);

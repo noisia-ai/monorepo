@@ -8,6 +8,7 @@ import { validateSelection,type Selection,type Prediction } from './contract';
 import { plannedConceptUpdates,type CurrentConcept,type ProposedConcept } from './concepts-v2';
 import { loadSignalTopicCatalogStoreV1 } from '../../infrastructure/db/signal-topic-catalog';
 import { verifyMfpEvalRights } from './rights-check';
+import { loadMfpEvalIdentity } from './fixture-identity';
 
 const directory='.data/dev-corpus/voyage-real/eval-jev-judge-v1';
 const sha=(value:string)=>`sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -20,10 +21,9 @@ await main(async()=>{
   const price=Number(priceText);
   if(priceText===undefined||!Number.isFinite(price)||price<=0)throw new Error('mfp_eval_jev_price_invalid');
   await verifyMfpEvalRights();
-  const identity=JSON.parse(await readFile('.data/dev-corpus/voyage-real/identity.json','utf8')) as {fixture_key:string;workspace_id:string};
+  const identity=await loadMfpEvalIdentity();
   const selection=JSON.parse(await readFile('.data/dev-corpus/voyage-real/gold-selection.json','utf8')) as Selection;
   validateSelection(selection);
-  if(identity.fixture_key!=='rental-corpus-voyage-v1')throw new Error('mfp_eval_fixture_identity_invalid');
   const proposed=JSON.parse(await readFile('.data/dev-corpus/voyage-real/concepts-proposed-v2.json','utf8')) as ProposedConcept[];
   const pool=await openDatabase();
   try {

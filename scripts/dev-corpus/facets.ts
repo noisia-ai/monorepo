@@ -1,6 +1,7 @@
 /** Opt-in provider demo. Never imported by unit suites. Run only through guarded MFP runner. */
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { loadMfpEvalIdentity } from "../eval/fixture-identity";
 import { main, openDatabase } from "./guard.mjs";
 await main(async () => {
   const mode = process.argv.includes("--real") ? "real" : "fake";
@@ -10,9 +11,7 @@ await main(async () => {
       process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED !== "true")
   )
     throw new Error("mfp_facets_provider_disabled");
-  const identity = JSON.parse(
-      await readFile(process.env.NOISIA_MFP_IDENTITY_FILE ?? ".data/dev-corpus/voyage-real/identity.json", "utf8"),
-    ),
+  const identity = await loadMfpEvalIdentity(),
     pool = await openDatabase();
   try {
     const { provisionSignalLabelingPolicyV1 } = await import(
