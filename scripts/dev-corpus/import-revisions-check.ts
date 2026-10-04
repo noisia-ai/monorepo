@@ -27,11 +27,13 @@ await main(async()=>{
   if(!identityPath)throw new Error('mfp_labeled_fixture_identity_required');
   const identity=JSON.parse(await readFile(identityPath,'utf8'));
   let serial=0;const stack:string[]=[];
+  let phase='admission';
+  const step=(name:string)=>{phase=name;console.log(JSON.stringify({stage:'import_revision_check',phase}));};
   const query=async(sql:string,values?:unknown[])=>{
    if(/^BEGIN\b/iu.test(sql)){const name=`revision_store_${++serial}`;stack.push(name);return client.query(`SAVEPOINT ${name}`);}
    if(/^COMMIT$/iu.test(sql))return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
    if(/^ROLLBACK$/iu.test(sql)){const name=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${name}`);return client.query(`RELEASE SAVEPOINT ${name}`);}
-   return client.query(sql,values);
+   try{return await client.query(sql,values);}catch(error){console.error(JSON.stringify({stage:'import_revision_check',phase,sqlstate:(error as {code?:string}).code??null}));throw error;}
   };
   const database={query,connect:async()=>({query,release(){}})} as unknown as typeof pool;
   globalThis.noisiaStudioPgPool=database;
@@ -85,6 +87,7 @@ await main(async()=>{
    await query('SAVEPOINT rejected');await assert.rejects(operation,pattern);
    await query('ROLLBACK TO SAVEPOINT rejected');await query('RELEASE SAVEPOINT rejected');checks++;
   };
+  step('metadata');
   await query('SAVEPOINT metadata_only');
   const unchanged=await batch(f.batch_id);
   const sameAuthor={...root,source_author_label:'Synthetic original author',source_author_label_recorded:true,
@@ -103,6 +106,7 @@ await main(async()=>{
   const removed=(await query('SELECT source_author_label,source_author_label_recorded FROM mentions WHERE id=$1',[root.id])).rows[0];
   assert.deepEqual(removed,{source_author_label:null,source_author_label_recorded:true});checks++;
   await query('ROLLBACK TO SAVEPOINT metadata_only');await query('RELEASE SAVEPOINT metadata_only');
+  step('revision_publication');
   const stale=await batch(f.batch_id);
   const first=await batch(f.batch_id),content=makeContent('A synthetic revised bicycle review with a delayed delivery.');
   assert.equal((await stage(first,content)).rows.length,1);assert.equal(await text(),root.text_clean);checks++;
@@ -128,12 +132,15 @@ await main(async()=>{
   await stage(stale,makeContent('A synthetic stale edit must never overwrite a newer source.'));
   await reject(()=>complete(stale),/content_revision_base_stale/);assert.equal(await text(),content.text_clean);
   const next=await batch(first);await stage(next,makeContent('A further synthetic edit for the current source and ID.'));
+  step('actor_revocation');
   await query('SAVEPOINT revoke');await query("UPDATE users SET status='inactive' WHERE id=$1",[f.actor_user_id]);
   await reject(()=>complete(next),/processing_forbidden|content_revision_forbidden/);
   await query('ROLLBACK TO SAVEPOINT revoke');await query('RELEASE SAVEPOINT revoke');
+  step('rights_revocation');
   await query('SAVEPOINT rights');await query("UPDATE signal_provenance_policy_bindings SET status='retired',effective_to=clock_timestamp() WHERE workspace_id=$1 AND data_source_id=$2 AND status='active'",[f.workspace_id,f.source_id]);
   await reject(()=>complete(next),/content_revision_rights_unavailable/);
   await query('ROLLBACK TO SAVEPOINT rights');await query('RELEASE SAVEPOINT rights');
+  step('shared_identity');
   await query('SAVEPOINT shared');
   const ambiguous=await batch(undefined,'append_only');
   const ambiguousRow:Record<string,string>={...seedRow,id:`synthetic-other-id-${randomUUID()}`,'Content of posts':content.text_clean};
@@ -143,10 +150,12 @@ await main(async()=>{
   await reject(()=>complete(next),/content_revision_conflict/);
   await query('ROLLBACK TO SAVEPOINT shared');await query('RELEASE SAVEPOINT shared');
   // Same bytes previously accepted in append-only must reach the explicit revision path.
+  step('accepted_file_mode');
   const append=await batch(first,'append_only');await complete(append,sha('same file new mode'));
   const explicit=await batch(append);await stage(explicit,makeContent('The explicit revision accepts a file already accepted append-only.'));
   assert.equal((await complete(explicit,sha('same file new mode'))).rows[0].accepted,true);checks++;
   // Real parser + SQL persistence exercises source-local IDs and legacy defaults.
+  step('second_connector');
   const secondSource=randomUUID();
   await query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key,status,governed_scope,scope_review_status,governed_entity_type,governed_entity_id,scope_approval_source,scope_approved_at)
    VALUES($1,$2,$3,$4,'social_listening','synthetic','manual','Second synthetic source',$5,'active','primary_brand','approved','brand',$4,'synthetic rollback fixture',clock_timestamp())`,
@@ -157,6 +166,7 @@ await main(async()=>{
    importBatchId:sourceBatch,sourceFileName:'synthetic.csv',stream:new Blob([csv]).stream()});
   assert.equal(parsed.stats.included_count,1);assert.equal(parsed.stats.duplicate_count,0);
   assert.equal((await query('SELECT source_author_label FROM mentions WHERE source_file_id=$1',[sourceBatch])).rows[0].source_author_label,'New synthetic author');checks++;
+  step('second_provider_system');
   const sameSourceBatch=await batch(undefined,'append_only');
   const otherSystemId=randomUUID(),collisionId=`synthetic-system-${randomUUID()}`;
   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
@@ -167,17 +177,23 @@ await main(async()=>{
   const independent=await createSignalSentioneCsvIngester(database).ingestSentioneCsvStream({workspaceId:f.workspace_id,dataSourceId:f.source_id,
    importBatchId:sameSourceBatch,sourceFileName:'synthetic-system.csv',stream:new Blob([csvSameSystem]).stream()});
   assert.equal(independent.stats.included_count,1);assert.equal(independent.stats.duplicate_count,0);checks++;
-  // A legacy direct completion must acquire the same source lock as asynchronous closure.
+  // A separate legacy batch represents the older writer, not the async parser admission.
+  // Its zero-row closure must acquire the same source lock; no provenance is fabricated.
+  const legacyBatch=randomUUID();
+  await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,status,ingestion_phase,imported_by_user_id)
+   VALUES($1,$2,$3,'synthetic','processing','legacy',$4)`,[legacyBatch,f.workspace_id,secondSource,f.actor_user_id]);
+  step('legacy_completion_lock');
   const competitor=await pool.connect();
   try{
    const canLock=async()=>{await competitor.query('BEGIN');try{return (await competitor.query("SELECT pg_try_advisory_xact_lock(hashtextextended('workspace-import-source:'||$1::text,0)) acquired",[secondSource])).rows[0].acquired;}finally{await competitor.query('ROLLBACK');}};
    assert.equal(await canLock(),true);
-   await query("UPDATE import_batches SET status='completed',completed_at=now() WHERE id=$1",[sourceBatch]);
+   await query("UPDATE import_batches SET status='completed',completed_at=now(),record_count=0,included_count=0,excluded_count=0,duplicate_count=0 WHERE id=$1",[legacyBatch]);
    assert.equal(await canLock(),false);checks++;
   }finally{competitor.release();}
   await query('ROLLBACK TO SAVEPOINT synthetic_fixture');await query('RELEASE SAVEPOINT synthetic_fixture');
   // Existing private labels are observed and edited only inside this rollback.
   // No label fabrication: the fixture must already have a current model verdict.
+  step('existing_labels');
   const labeled=(await query(`SELECT m.*,c.concept_key,c.verdict,f.facets,f.input_digest
    FROM signal_concept_memberships_current_v1 c JOIN signal_mention_facets_current_v1 f USING(workspace_id,root_id)
    JOIN mentions m ON m.id=c.root_id WHERE c.workspace_id=$1 AND c.source='model' AND c.verdict='belongs'
@@ -198,11 +214,13 @@ await main(async()=>{
   const retained=await labelCounts();assert.ok(retained.facets>0&&retained.memberships>0);
   assert.equal((await query('SELECT source FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3',
    [identity.workspace_id,labeled.id,labeled.concept_key])).rows[0].source,'human');checks++;
+  step('existing_label_revision');
   const liveBatch=await batch();
   const changedText=labeled.text_clean+' [Synthetic rollback revision: previous content retained.]';
   const nextContent={...labeled,text_raw:changedText,text_clean:changedText,text_hash:sha(changedText.toLowerCase()),text_length:changedText.length,text_snippet:changedText.slice(0,300)};
   await query('SELECT * FROM stage_signal_mention_content_revisions_v1($1,$2::jsonb)',[liveBatch,JSON.stringify([{mention_id:labeled.id,content:nextContent}])]);
   await query('SELECT record_signal_workspace_import_provenance_set_v1($1,$2::uuid[],$3::text[])',[liveBatch,[labeled.id],['included']]);
+  step('existing_label_publication');
   await complete(liveBatch);
   // No new preparation is run: neither old citations nor human projection can be served as current.
   assert.equal((await query('SELECT count(*)::int n FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND root_id=$2',[identity.workspace_id,labeled.id])).rows[0].n,0);
