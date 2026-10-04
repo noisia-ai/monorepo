@@ -91,7 +91,7 @@ Principios:
 - **Etiquetar hechos genéricos, no conceptos de negocio, en la ficha.** Lo específico de una marca vive en los conceptos (intereses), que el usuario edita.
 - **Caché por contenido**: toda etiqueta se indexa por `input_digest` + versión del esquema + identidad del etiquetador + versión del contexto de entidades (§4.2b). Recalcular sólo lo que falta o lo que un cambio afectó.
 - **Etiquetador intercambiable** detrás de una interfaz (Claude Batches, JEV, reglas, humano). El contrato es la pregunta y su esquema.
-- **Corrección humana como capa aparte que siempre gana** y sobrevive a recálculos.
+- **Corrección humana como capa aparte que siempre gana** y sobrevive a recálculos. Una corrección válida sigue visible aunque falte una ficha vigente del proveedor; las dimensiones ausentes se representan como abstenciones y se conserva el estado técnico pendiente/error/rechazo, sin inventar una etiqueta vigente.
 - **Abstención explícita**: nunca forzar una respuesta; una negativa del proveedor o un error técnico **nunca** es «no pertenece».
 - **Todo el corpus contabilizado**: cada raíz elegible termina con un estado (relevante/ajena/spam/indeterminada y, si relevante, pertenencias o «sin concepto»).
 
@@ -233,8 +233,8 @@ Convención del repo: SQL escrito a mano, sólo hacia adelante, `NNNN_snake_case
 
 | WS | Rango |
 |---|---|
-| WS2 ficha + ledger común | 0221–0224 |
-| WS3 JEV | 0225 |
+| WS2 ficha + ledger común | 0221–0225 |
+| WS3 JEV | Sin DDL adicional: el ledger común ya admite el proveedor |
 | WS5 pertenencia | 0226–0230 |
 | WS6 discovery | 0231–0233 |
 | WS7 UI | 0234–0236 |
@@ -382,7 +382,7 @@ Pruebas: unitarias con `fetch` falso y stores falsos (patrón `services/workers/
 
 Aceptación (demo): sobre el corpus WS1, con proveedor real y coste estimado/real visible conforme a §6.5, 100% de raíces elegibles con estado (`labeled|abstained|refused|error`), coste liquidado visible, segunda ejecución no envía nada. Después, agregar un alias a un competidor y relanzar: sólo se envían las raíces del conjunto afectado (conteo en el recibo) y ninguna ficha obsoleta queda como vigente.
 
-> **Prompt del sub-chat WS2:** «Lee el spec §1–§7 y §9.2. Rama `feat/mfp-ws2-facets` desde `develop`; migraciones 0221–0224. Implementa la ficha v1 con Sonnet 5.5 por Batches según §4.1, §4.2, §4.2b, §4.5 y §5; el contexto de entidades y su regla de vigencia son parte del alcance, no un extra. Reutiliza el cliente de Batches, el patrón de drainer de `data-os.ts` y la receta de acciones de política; no reutilices tablas ni guardas de interest decision V2. Prompts genéricos sin ninguna marca. Escritura por lotes. Demo sobre el corpus de WS1 con presupuesto orientativo y coste registrado (§6.5), sin detenerla al superar la estimación.»
+> **Prompt del sub-chat WS2:** «Lee el spec §1–§7 y §9.2. Rama `feat/mfp-ws2-facets` desde `develop`; migraciones 0221–0225. Implementa la ficha v1 con Sonnet 5.5 por Batches según §4.1, §4.2, §4.2b, §4.5 y §5; el contexto de entidades y su regla de vigencia son parte del alcance, no un extra. Reutiliza el cliente de Batches, el patrón de drainer de `data-os.ts` y la receta de acciones de política; no reutilices tablas ni guardas de interest decision V2. Prompts genéricos sin ninguna marca. Escritura por lotes. Demo sobre el corpus de WS1 con presupuesto orientativo y coste registrado (§6.5), sin detenerla al superar la estimación.»
 
 ---
 
@@ -400,7 +400,7 @@ Archivos:
   - `choice` para voice y act; `noul` para spam_or_bot.
   - `asunto = null`. Probabilidades a `confidence`. Los umbrales de pertenencia de entidad y de prominencia se fijan en el split dev de WS4, nunca en test.
 - Worker `services/workers/src/workers/signal-mention-facets-jev.ts`: mismo run/ledger/tabla de etiquetas que WS2 (`provider='typesafe'`, `transport='sync'`), escritura por lotes.
-- `0225` sólo si hace falta ampliar CHECKs de proveedor.
+- Sin migración adicional: los CHECKs del ledger común ya admiten JEV. `0225` queda asignada a WS2 para preservar la proyección de correcciones humanas mediante una migración hacia adelante; no modificar `0221`–`0224` ya instaladas en dev-test.
 
 Aceptación: sobre el corpus WS1, 100% de raíces con estado, coste registrado con el precio configurado, probabilidades guardadas. Reporte de latencia p50/p95 por solicitud.
 
