@@ -1,3 +1,4 @@
+import { loadSignalDiscoveryPolicyV1 } from "./signal-workspace-discovery-policy";
 import { createHash, randomUUID } from "node:crypto";
 
 import type { Pool, PoolClient } from "pg";
@@ -1382,11 +1383,13 @@ mutate: (state: { definitions: SignalTopicDefinitionV1[]; now: string; client: P
 /** Explicit, authorized catalog creation. Zero interests is a genuine empty draft;
  * read-only loaders never call this helper. Caller owns the transaction. */
 export async function ensureSignalTopicCatalogStoreV1(args: {
-  client: PoolClient; workspace_id: string; actor_user_id: string;
+  client: PoolClient; workspace_id: string; actor_user_id: string; processing_mode?: "workspace-discovery-v1";
 }): Promise<{ taxonomy_profile_id: string; created: boolean }> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: args.client,
     workspace_id: args.workspace_id, actor_user_id: args.actor_user_id });
-  if (!capabilities.can_execute_topics) throw new SignalTopicCatalogError("topic_processing_permissions_required", 403);
+  const discovery = args.processing_mode === "workspace-discovery-v1" && process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
+  if (discovery ? !capabilities.can_request_processing || !(await loadSignalDiscoveryPolicyV1(args.client,args.workspace_id)).available
+    : !capabilities.can_execute_topics) throw new SignalTopicCatalogError("topic_processing_permissions_required", 403);
   await args.client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`signal-taxonomy:${args.workspace_id}:topic`]);
   const prior = await loadLatestProfile(args.client, args.workspace_id);
   if (prior) return { taxonomy_profile_id: prior.id, created: false };

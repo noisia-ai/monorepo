@@ -101,6 +101,7 @@ export function workspaceAnalysisHasRecoverablePartialCatalog(run: WorkspaceAnal
 }
 export function validWorkspaceAnalysisStatus(value: unknown): value is WorkspaceAnalysisStatus {
   if (!object(value) || value.contract_version !== "signal-workspace-analysis-v1" || typeof value.workspace_id !== "string"
+    || value.discovery_enabled !== undefined && typeof value.discovery_enabled !== "boolean"
     || typeof value.request_scope !== "string" || !value.request_scope || typeof value.can_execute !== "boolean"
     || typeof value.observed_at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u.test(value.observed_at)
     || !object(value.preflight) || !object(value.preflight.cost) || !object(value.preflight.cost.claude) || !object(value.preflight.cost.voyage)) return false;

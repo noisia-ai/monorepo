@@ -467,7 +467,8 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       "SELECT id,actor_user_id,request_digest,input_contract FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid AND (idempotency_key=$2 OR engine_request_keys ? $2)",[args.workspace_id,args.idempotency_key])).rows[0];
     if(prior){if(prior.actor_user_id!==args.actor_user_id||prior.request_digest!==requestDigest||prior.input_contract!=='workspace-topic-engine-v1')return fail('workspace_engine_idempotency_conflict');
       return{execution_id:prior.id,replayed:true};}
-    if(!args.incremental_options)await ensureSignalTopicCatalogStoreV1({client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id});
+    if(!args.incremental_options)await ensureSignalTopicCatalogStoreV1({client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
+      ...(discoveryEnabled?{processing_mode:"workspace-discovery-v1" as const}:{})});
     await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE",[args.workspace_id]);
     const embedded=(await client.query<{id:string;preparation_run_id:string;input_revision:string;profile:SignalWorkspaceEmbeddingProfileV1;
       policy_valid_until:string|null;counts:{eligible_roots:number;completed_roots:number;total_chunk_references:number;processed_chunk_references:number}}>(`
