@@ -21,7 +21,10 @@ import {
   loadSignalWorkspaceTopicEvidenceV1,
 } from "../../infrastructure/db/signal-workspace-topics-serving";
 import { runConceptMembershipTickV1 } from "../../services/workers/src/workers/signal-concept-membership-batch";
-import { overrideMentionFacetV1 } from "../../infrastructure/db/signal-mention-facets";
+import {
+  overrideMentionFacetV1,
+  loadMentionFacetBrowserV1,
+} from "../../infrastructure/db/signal-mention-facets";
 import { provisionSignalLabelingPolicyV1 } from "../../infrastructure/db/signal-labeling-policy-provisioning";
 await main(async () => {
   const pool = await openDatabase(),
@@ -477,6 +480,29 @@ await main(async () => {
       staleHuman.stale_count > 0,
       "GET detects a live Brand OS alias change before CE registration",
     );
+    const facetPopulation = await loadMentionFacetBrowserV1({
+      ...access,
+      limit: 1,
+    });
+    for (const relevance of [
+      "relevant",
+      "unrelated",
+      "unknown",
+      "spam",
+    ] as const) {
+      const expected =
+        facetPopulation.distributions.find(
+          (row) => row.dimension === "relevance" && row.value === relevance,
+        )?.count ?? 0;
+      check(
+        staleHuman.population[relevance] === expected,
+        "membership population matches live lazy facet relevance",
+      );
+    }
+    check(
+      staleHuman.population.without_concept === staleHuman.population.relevant,
+      "without-concept counts only currently relevant roots and no stale model belongs",
+    );
     const preserved = staleHuman.items.find(
       (row) => row.root_id === root.root_id,
     );
@@ -554,6 +580,16 @@ await main(async () => {
       concept_key: target.concept_key,
       limit: 100,
     });
+    check(
+      staleRetired.population.relevant < staleHuman.population.relevant &&
+        staleRetired.population.unknown > staleHuman.population.unknown,
+      "retired effective entity moves human root from relevant to unknown aggregates",
+    );
+    check(
+      staleRetired.population.without_concept ===
+        staleRetired.population.relevant,
+      "retired review root no longer inflates without-concept aggregate",
+    );
     const invalidHuman = staleRetired.items.find(
       (row) => row.root_id === root.root_id,
     );

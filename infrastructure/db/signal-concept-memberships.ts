@@ -342,6 +342,29 @@ export async function loadConceptMembershipsStatusV1(
    ), current_roots AS MATERIALIZED (
    SELECT root_id,full_text,title,platform,relevance,facets,requires_context_review
    FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+   ), human_patches AS MATERIALIZED (
+   SELECT root_id,jsonb_object_agg(dimension,value) patch FROM signal_mention_facet_overrides
+   WHERE workspace_id=$1 AND superseded_at IS NULL GROUP BY root_id
+   ), root_context AS MATERIALIZED (
+   SELECT f.*,human.patch,f.root_id=ANY($7::uuid[]) stale,
+     f.requires_context_review OR EXISTS (
+       SELECT 1 FROM jsonb_array_elements(COALESCE(human.patch#>'{entities,value}','[]'::jsonb)) entity
+       WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements($8::jsonb->'entities') known
+         WHERE known->>'entity_id'=entity->>'entity_id' AND known->>'kind'=entity->>'kind')) review
+   FROM current_roots f LEFT JOIN human_patches human USING(root_id)
+   ), effective_roots AS MATERIALIZED (
+   SELECT r.*,CASE WHEN stale THEN CASE WHEN patch IS NOT NULL THEN
+     '{"spam_or_bot":{"value":null,"abstained":true},"entities":{"value":[],"abstained":true},"unrelated_reason":null}'::jsonb || patch
+     ELSE NULL END ELSE facets END effective_facets FROM root_context r
+   ), display_roots AS MATERIALIZED (
+   SELECT root_id,full_text,title,platform,facets,review requires_context_review,
+     CASE WHEN review THEN 'unknown'
+       WHEN NOT COALESCE((effective_facets#>>'{spam_or_bot,abstained}')::boolean,true)
+         AND (effective_facets#>>'{spam_or_bot,value}')::boolean THEN 'spam'
+       WHEN effective_facets IS NULL OR (effective_facets#>>'{entities,abstained}')::boolean THEN 'unknown'
+       WHEN jsonb_array_length(effective_facets#>'{entities,value}')>0 THEN 'relevant'
+       WHEN effective_facets->>'unrelated_reason' IN('homonym','off_topic') THEN 'unrelated' ELSE 'unknown' END relevance
+   FROM effective_roots
    ), current_rights AS MATERIALIZED (
    SELECT root_id,evidence FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$1 AND metrics
    ), pair_context AS MATERIALIZED (
@@ -350,7 +373,7 @@ export async function loadConceptMembershipsStatusV1(
        SELECT 1 FROM jsonb_array_elements(COALESCE(f.facets#>'{entities,value}','[]'::jsonb)) entity
        WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements($8::jsonb->'entities') known
          WHERE known->>'entity_id'=entity->>'entity_id' AND known->>'kind'=entity->>'kind')) context_invalid
-   FROM current_pairs m JOIN current_roots f USING(root_id) JOIN current_rights rights USING(root_id)
+   FROM current_pairs m JOIN display_roots f USING(root_id) JOIN current_rights rights USING(root_id)
    ), invalidated AS MATERIALIZED (
    SELECT p.*,context_invalid OR (stale AND source<>'human') invalid FROM pair_context p
    ), display_pairs AS MATERIALIZED (
@@ -372,7 +395,7 @@ export async function loadConceptMembershipsStatusV1(
      count(*) FILTER(WHERE relevance='spam')::int spam,
      count(*) FILTER(WHERE relevance='relevant' AND NOT EXISTS(SELECT 1 FROM display_pairs m WHERE m.root_id=f.root_id AND m.verdict='belongs'))::int without_concept,
      COALESCE(sum(length(full_text)) FILTER(WHERE relevance='relevant'),0)::text characters
-   FROM current_roots f JOIN current_rights rights USING(root_id)
+   FROM display_roots f JOIN current_rights rights USING(root_id)
    ), counts AS (
    SELECT verdict,count(*)::int count FROM display_pairs WHERE ($2::text IS NULL OR concept_key=$2) GROUP BY verdict
    ), page AS (
@@ -384,7 +407,7 @@ export async function loadConceptMembershipsStatusV1(
        'evidence_withheld',NOT rights.evidence,
        'citations',CASE WHEN rights.evidence THEN m.citations ELSE '[]'::jsonb END,
        'rationale',CASE WHEN rights.evidence THEN m.rationale ELSE NULL END) item
-   FROM display_pairs m JOIN current_roots f USING(root_id) JOIN current_rights rights USING(root_id)
+   FROM display_pairs m JOIN display_roots f USING(root_id) JOIN current_rights rights USING(root_id)
    JOIN mentions mention ON mention.id=m.root_id
    WHERE ($2::text IS NULL OR m.concept_key=$2) AND ($3::text IS NULL OR m.verdict=$3)
      AND ($4::uuid IS NULL OR (m.root_id,m.concept_key)>($4::uuid,$5::text))
