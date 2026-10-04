@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFile} from 'node:fs/promises';
-import {signalWorkspaceEmbeddingDigestV1,signalTopicConsolidationActivationCommandV1,signalTopicConsolidationServingSnapshotSchemaV1} from '@noisia/query-engine';
+import {canonicalEntityContextV1,entityContextDigestV1,signalWorkspaceEmbeddingDigestV1,signalTopicConsolidationActivationCommandV1,signalTopicConsolidationServingSnapshotSchemaV1} from '@noisia/query-engine';
 import {selectSignalWorkspaceTopicV1} from './signal-workspace-topic-selection';
 import {loadSignalWorkspaceTopicDetailV1,loadSignalWorkspaceTopicEvidenceV1,loadSignalWorkspaceTopicsOverviewV1} from './signal-workspace-topics-serving';
 import {loadSignalTopicConsolidationActivationStatusV1,readSignalTopicConsolidationServingBindingV1,mutateSignalTopicConsolidationBindingV1} from './signal-topic-consolidation-activation';
@@ -37,6 +37,7 @@ test('active consolidation uses common rights/population reader with exact selec
  const queries:string[]=[];
  const client={async query(sql:string){queries.push(sql);
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{binding,snapshot}]};
   if(sql.includes('FROM signal_defined_interest_selections selected'))return{rows:[]};
@@ -60,6 +61,7 @@ test('narrative detail and evidence preserve editorial kind through the same rig
  const queries:string[]=[];
  const client={async query(sql:string){queries.push(sql);
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{binding,snapshot}]};
   if(sql.includes('FROM signal_defined_interest_selections selected'))return{rows:[]};
@@ -103,6 +105,7 @@ test('activation service checks actor before mutation and preserves committed re
  const client={async query(sql:string){
   if(sql.startsWith('COMMIT'))commits++;
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[{...authority,actor_status:allowed?'active':'suspended'}]};
   if(sql.includes('mutate_signal_topic_consolidation_binding_v1')){mutations++;return{rows:[{value:{operation_id:id(8),binding,replayed:true}}]};}
   throw Error('Unexpected SQL');
@@ -122,6 +125,7 @@ test('existing selector replays durable successor commands and rejects cross-cat
  let phase='replay',mutations=0;
  const client={async query(sql:string){
   if(/^(BEGIN|SET|COMMIT|ROLLBACK)/u.test(sql)||sql.includes('pg_advisory_xact_lock'))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('FROM signal_topic_consolidation_activation_operations'))return{rows:phase==='replay'?[{
    id:id(8),actor_user_id:id(2),command:{source_request_digest,term_key:term},result_binding:binding}]:[]};
@@ -136,6 +140,7 @@ test('existing selector replays durable successor commands and rejects cross-cat
 test('activation status returns a runtime-validated catalog, source state, capability and active revision',async()=>{
  const client={async query(sql:string){
   if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids"))return{rows:[]};
   if(sql.includes('brand_access_level'))return{rows:[authority]};
   if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{value:binding}]};
   if(sql.includes('FROM signal_topic_consolidation_revisions')){
@@ -149,4 +154,41 @@ test('activation status returns a runtime-validated catalog, source state, capab
  const result=await loadSignalTopicConsolidationActivationStatusV1({database:{connect:async()=>client as never},workspace_id:id(1),actor_user_id:id(2)});
  assert.equal(result.can_activate,true);assert.equal(result.active_revision,2);assert.equal(result.revisions[0]?.source_valid,true);
  assert.equal(result.revisions[0]?.catalog?.[0]?.concept_key,'topic-real');
+});
+
+
+test('lazy entity drift marks activation stale and rolls back new mutations, while preserving receipts',async()=>{
+ const previous=canonicalEntityContextV1({entities:[{entity_id:'brand',kind:'primary_brand',name:'Example',aliases:['Example'],disambiguation:null}]});
+ let replayed=false,affected=true,commits=0,rollbacks=0;
+ const client={async query(sql:string){
+  if(sql==='COMMIT')commits++;
+  if(sql==='ROLLBACK')rollbacks++;
+  if(/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql))return{rows:[]};
+  if(sql.includes('brand_access_level'))return{rows:[authority]};
+  if(sql.includes('mutate_signal_topic_consolidation_binding_v1'))return{rows:[{value:{operation_id:id(8),binding,replayed}}]};
+  if(sql.includes('SELECT source_engine_execution_id'))return{rows:[{source_engine_execution_id:id(5)}]};
+  if(sql.includes('signal_topic_consolidation_binding_v1'))return{rows:[{value:binding}]};
+  if(sql.includes('FROM signal_topic_consolidation_revisions'))return{rows:[{revision_id:id(4),revision:2,revision_digest:sha('b'),
+   validated_at:'2026-09-12T12:00:00.000000Z',snapshot_id:id(3),snapshot_digest:sha('c'),source_engine_execution_id:id(5),source_valid:true,catalog:snapshot.catalog}]};
+  if(sql.includes('SELECT r.revision FROM signal_topic_consolidation_snapshots'))return{rows:[{revision:2}]};
+  if(sql.includes("SELECT input_snapshot->'discovery_population'"))return{rows:[{root_ids:['selected']}]};
+  if(sql.includes('AS brand_name'))return{rows:[{workspace_id:id(1),brand_id:'brand',brand_name:'Example'}]};
+  if(sql.includes("SELECT 'primary_brand'::text AS scope"))return{rows:[{scope:'primary_brand',entity_id:'brand',entity_label:'Example',aliases:['Example','New Alias'],disambiguation:null}]};
+  if(sql.includes("SELECT 'brand_objective' AS kind"))return{rows:[]};
+  if(sql.includes('SELECT context,digest,version_no'))return{rows:[{context:previous,digest:entityContextDigestV1(previous),version_no:1}]};
+  if(sql.includes('SELECT root_id,title,full_text,facets'))return{rows:[{root_id:affected?'selected':'outside',title:null,full_text:'New Alias discussion',facets:{entities:{value:[{entity_id:'brand'}]}}}]};
+  throw Error(`Unexpected SQL ${sql.slice(0,80)}`);
+ },release(){}};
+ const scope={database:{connect:async()=>client as never},workspace_id:id(1),actor_user_id:id(2)};
+ const status=await loadSignalTopicConsolidationActivationStatusV1(scope);
+ assert.equal(status.revisions[0]?.source_valid,false);
+ assert.equal('source_engine_execution_id' in status.revisions[0]!,false);
+ const command={action:'activate',snapshot_id:id(3),snapshot_digest:sha('c'),revision_digest:sha('b'),selected_concept_keys:[],
+  expected_binding_revision:0,expected_selection_revision:7,expected_snapshot_id:null,expected_legacy_generation_id:id(9)};
+ const args={...scope,idempotency_key:'lazy-ce-activation',command};
+ await assert.rejects(mutateSignalTopicConsolidationBindingV1(args),/source_stale/);
+ assert.equal(rollbacks,1);assert.equal(commits,1);
+ replayed=true;assert.equal((await mutateSignalTopicConsolidationBindingV1(args)).replayed,true);
+ replayed=false;affected=false;assert.equal((await mutateSignalTopicConsolidationBindingV1(args)).replayed,false);
+ assert.equal(commits,3);
 });

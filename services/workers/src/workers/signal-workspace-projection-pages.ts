@@ -40,7 +40,7 @@ export async function projectWorkspaceClassificationPagesV1<Database>(args: {
 }) {
   const { database, stores: store, job, engine } = args;
   let lease = args.lease, processed = 0;
-  const rootLimit = limit(args.root_page_size, 128), chunkLimit = limit(args.chunk_page_size, 128);
+  const rootLimit = limit(args.root_page_size ?? 128, 200), chunkLimit = limit(args.chunk_page_size ?? 128, 200);
   const byteLimit = limit(args.page_bytes, WORKSPACE_PROJECTION_PAGE_BYTES_V1);
   try {
     const identity = signalWorkspaceClassificationIdentitySchemaV1.parse(lease.identity);

@@ -1,3 +1,4 @@
+import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import type { Pool, PoolClient } from 'pg';
 import { signalTopicConsolidationActivationCommandV1, signalTopicConsolidationActivationStatusSchemaV1, signalTopicConsolidationBindingSchemaV1, signalTopicConsolidationSnapshotReceiptSchemaV1, signalTopicConsolidationMutationReceiptSchemaV1, signalTopicConsolidationServingSnapshotSchemaV1, type SignalTopicConsolidationBindingV1 } from '@noisia/query-engine';
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu,digest=/^sha256:[a-f0-9]{64}$/u;
@@ -42,7 +43,17 @@ export async function mutateSignalTopicConsolidationBindingV1(args:Scope&{idempo
  return tx(args,false,async client=>{
   const row=(await client.query<{value:unknown}>('SELECT mutate_signal_topic_consolidation_binding_v1($1::uuid,$2::uuid,$3,$4::jsonb) value',
    [args.workspace_id,args.actor_user_id,args.idempotency_key,JSON.stringify(parsed.data)])).rows[0];
-  return signalTopicConsolidationMutationReceiptSchemaV1.parse(row?.value);
+  const receipt=signalTopicConsolidationMutationReceiptSchemaV1.parse(row?.value);
+  // A replay acknowledges the original receipt. New activation, selection or
+  // rollback must not commit a binding whose lazy entity context is obsolete.
+  if(!receipt.replayed&&receipt.binding.snapshot_id){
+   const source=(await client.query<{source_engine_execution_id:string}>(`SELECT source_engine_execution_id
+    FROM signal_topic_consolidation_snapshots WHERE workspace_id=$1::uuid AND id=$2::uuid`,
+    [args.workspace_id,receipt.binding.snapshot_id])).rows[0];
+   if(!source||!await signalDiscoveryProjectionContextCurrentV1(client,args.workspace_id,source.source_engine_execution_id))
+    fail('topic_consolidation_activation_source_stale');
+  }
+  return receipt;
  });
 }
 
@@ -68,6 +79,7 @@ export async function readSignalTopicConsolidationServingBindingV1(client:PoolCl
  if(binding.snapshot_id&&!row.snapshot)fail('topic_consolidation_activation_binding_invalid',503);
  const snapshot=row.snapshot?signalTopicConsolidationServingSnapshotSchemaV1.parse(row.snapshot):null;
  if(snapshot&&snapshot.id!==binding.snapshot_id)fail('topic_consolidation_activation_binding_invalid',503);
+ if(snapshot?.source_valid && !await signalDiscoveryProjectionContextCurrentV1(client,workspace,snapshot.source_engine_execution_id))snapshot.source_valid=false;
  return{binding,snapshot:snapshot?{...snapshot,binding}:null};
 }
 
@@ -76,17 +88,22 @@ export async function loadSignalTopicConsolidationActivationStatusV1(args:Scope)
  return tx(args,true,async(client,capabilities)=>{
   const binding=signalTopicConsolidationBindingSchemaV1.parse((await client.query<{value:unknown}>(
    'SELECT signal_topic_consolidation_binding_v1($1::uuid) value',[args.workspace_id])).rows[0]?.value);
-  const revisions=(await client.query<{revision_id:string;revision:number;revision_digest:string;validated_at:string;snapshot_id:string|null;snapshot_digest:string|null;source_valid:boolean|null;catalog:unknown}>(`
+  const revisions=(await client.query<{revision_id:string;revision:number;revision_digest:string;validated_at:string;snapshot_id:string|null;snapshot_digest:string|null;source_valid:boolean|null;source_engine_execution_id:string|null;catalog:unknown}>(`
    SELECT r.id revision_id,r.revision,r.revision_digest,
     to_char(r.validated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') validated_at,
-    s.id snapshot_id,s.snapshot_digest,
+    s.id snapshot_id,s.snapshot_digest,s.source_engine_execution_id,
     CASE WHEN s.id IS NULL THEN NULL ELSE signal_topic_consolidation_snapshot_current_v1(s.id) END source_valid,s.catalog
    FROM signal_topic_consolidation_revisions r LEFT JOIN signal_topic_consolidation_snapshots s ON s.revision_id=r.id AND s.workspace_id=r.workspace_id
     WHERE r.workspace_id=$1::uuid AND r.status='validated' ORDER BY r.validated_at DESC,r.id LIMIT 10`,[args.workspace_id])).rows;
+  const currentRevisions=await Promise.all(revisions.map(async({source_engine_execution_id,...revision})=>{
+   if(revision.source_valid&&source_engine_execution_id&&
+    !await signalDiscoveryProjectionContextCurrentV1(client,args.workspace_id,source_engine_execution_id))revision.source_valid=false;
+   return revision;
+  }));
   const activeRevision=binding.snapshot_id?(await client.query<{revision:number}>(`
    SELECT r.revision FROM signal_topic_consolidation_snapshots s JOIN signal_topic_consolidation_revisions r ON r.id=s.revision_id
    WHERE s.workspace_id=$1::uuid AND s.id=$2::uuid`,[args.workspace_id,binding.snapshot_id])).rows[0]?.revision??null:null;
   return signalTopicConsolidationActivationStatusSchemaV1.parse({contract_version:'signal-topic-consolidation-activation-status-v1',
-   workspace_id:args.workspace_id,can_activate:capabilities.can_request_processing,active_revision:activeRevision,binding,revisions});
+   workspace_id:args.workspace_id,can_activate:capabilities.can_request_processing,active_revision:activeRevision,binding,revisions:currentRevisions});
  });
 }

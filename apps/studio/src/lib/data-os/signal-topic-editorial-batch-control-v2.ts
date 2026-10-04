@@ -374,7 +374,7 @@ export async function completeWorkspaceTopicEditorialBatchV2ForActor(args:Args&{
     await client.query("SET LOCAL search_path=public,extensions,pg_temp");
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspaceId,actor_user_id:args.actorUserId});
     if(!caps.can_view)fail("processing_forbidden",403);
-    const row=(await client.query<{run_id:string;is_v2:boolean}>(`SELECT r.consolidation_run_id::text run_id,
+    const row=(await client.query<{run_id:string;is_v2:boolean}>(`SELECT r.id::text run_id,
       e.plan->>'contract_version' IN ('signal-topic-editorial-screening-plan-v2','signal-topic-editorial-admission-header-v3') is_v2
       FROM signal_topic_consolidation_executions n JOIN signal_topic_consolidation_runs r
         ON r.id=n.consolidation_run_id AND r.workspace_id=n.workspace_id

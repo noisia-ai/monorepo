@@ -16,6 +16,7 @@ function fixture() {
     if (sql.includes("brand_access_level")) return { rows: [{ workspace_status: "active", brand_status: "active",
       organization_status: "active", brand_same_organization: true, actor_status: state.allowed ? "active" : "suspended",
       user_type: "noisia_internal", primary_role: "noisia_admin", same_organization: false, brand_access_level: null }] };
+    if (sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids")) return { rows: [] };
     if (sql.includes("signal_topic_consolidation_binding_v1")) return { rows: [] };
     if (sql.includes("FROM signal_defined_interest_selections selected")) return { rows: [] };
     if (sql.includes("topic_signal_selection selection")) return { rows: [{ selection: null, native: false, is_processing: false }] };
