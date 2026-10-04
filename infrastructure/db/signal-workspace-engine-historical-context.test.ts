@@ -80,6 +80,10 @@ function fixture(identityError:Error,denied=false){
       expected_admission_operation_id:operation,budget_actor_user_id:actor,budget_timezone:'UTC',budget_date:'2026-09-11',
       maximum_admission_not_after:'2026-09-12T00:00:00.000Z',run_cap_micro_usd:900,daily_cap_micro_usd:2000,
       confirmed_micro_usd:300,reserved_micro_usd:100,terminal_reserved_micro_usd:50,maximum_grant_micro_usd:500,context_digest:sha,catalog_digest:sha}}]};
+    if(sql.includes('signal_workspace_incremental_editorial_actor_v1')){
+      assert.equal(params[0],workspace);assert.equal(params[1],actor);assert.ok([numeric,owner].includes(String(params[2])));
+      return{rows:[{valid:true}]};
+    }
     if(sql.includes('workspace_interpretation_admission_admin_v1'))return{rows:[{valid:true}]};
     if(sql.startsWith('SELECT request_digest,result FROM signal_classification_operations')){
       assert.equal(params[0],workspace);assert.equal(params[1],actor);
