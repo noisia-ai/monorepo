@@ -28,6 +28,9 @@ test('independent binary counts and Wilson examples, including zero denominators
 test('categorical macro includes prediction-only classes and keeps technical failures', () => {
   const m = categorical([{ truth: 'a', predicted: 'a' }, { truth: 'a', predicted: 'b' }, { truth: 'a', predicted: 'error' }, { truth: 'a', predicted: 'abstained' }], ['a', 'b', 'absent']);
   close(m.accuracy, 0.25); close(m.macro_f1, 0.2); close(m.abstention_rate, 0.25);
+  close(m.accuracy_wilson.low,wilson(1,4).low);
+  close(m.per_class.a.recall_wilson.high,wilson(1,4).high);
+  assert.equal(m.per_class.absent.precision_wilson,null);
   assert.equal(m.confusion.a.error, 1); assert.equal(m.per_class.absent.f1, null);
 });
 test('ECE known example and p=1 boundary', () => {

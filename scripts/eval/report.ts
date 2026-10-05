@@ -38,7 +38,7 @@ function entityMetrics(gold: Gold[], predictions: Map<string, Prediction>, selec
   }
   return { roots: gold.length, evaluable_roots: known.length, gold_abstained: gold.length - known.length,
     unavailable_predictions: known.filter(g => predictedEntities(predictions.get(g.root_id)) === null).length,
-    micro: binary(tp, fp, fn), macro_precision: mean(perEntity.map(v => v.precision)), macro_recall: mean(perEntity.map(v => v.recall)), macro_f1: mean(perEntity.map(v => v.f1)),
+    micro: {...binary(tp, fp, fn),precision_wilson:wilson(tp,tp+fp),recall_wilson:wilson(tp,tp+fn)}, macro_precision: mean(perEntity.map(v => v.precision)), macro_recall: mean(perEntity.map(v => v.recall)), macro_f1: mean(perEntity.map(v => v.f1)),
     exact_set_accuracy: divide(exact, known.length), correct_pair_denominator: tp, kind_accuracy: divide(kind, tp), salience_accuracy: divide(salience, tp), per_entity: perEntity };
 }
 function membershipMetrics(gold: Gold[], predictions: Map<string, Prediction>, selection: Selection) {
@@ -49,7 +49,7 @@ function membershipMetrics(gold: Gold[], predictions: Map<string, Prediction>, s
     const fp = resolvedGold.filter(r => r.truth === 'not_belongs' && r.predicted === 'belongs').length;
     const fn = resolvedGold.filter(r => r.truth === 'belongs' && r.predicted !== 'belongs').length;
     return { concept: `concept_${ordinal + 1}`, denominator: rows.length, binary_gold_denominator: resolvedGold.length,
-      gold_insufficient: rows.length - resolvedGold.length, ...binary(tp, fp, fn), recall_wilson: wilson(tp, tp + fn),
+      gold_insufficient: rows.length - resolvedGold.length, ...binary(tp, fp, fn), precision_wilson:wilson(tp,tp+fp),recall_wilson: wilson(tp, tp + fn),
       insufficient_rate: divide(rows.filter(r => r.predicted === 'insufficient').length, rows.length),
       errors: { false_positive: fp, false_negative_semantic: resolvedGold.filter(r => r.truth === 'belongs' && r.predicted === 'not_belongs').length,
         insufficient: rows.filter(r => r.predicted === 'insufficient').length, refused: rows.filter(r => r.predicted === 'refused').length, error: rows.filter(r => r.predicted === 'error').length, pending: rows.filter(r => r.predicted === 'pending').length } };
@@ -178,15 +178,15 @@ export function renderMarkdown(report: Report) {
       `Coste completo: ${v.costs.complete ? 'sí' : 'no; el total liquidado conocido no equivale al total final'}.`, '');
     if (v.thresholds) lines.push(`Umbrales: seleccionados en dev, ronda ${v.thresholds.development_round}; congelados antes de test: ${v.thresholds.frozen_before_test}.`, '', table(['Parámetro', 'Valor'], Object.entries(v.thresholds.values)), '');
     if (v.dimensions) for (const [name, m] of Object.entries(v.dimensions)) {
-      lines.push(`### ${name}`, '', table(['N', 'Exactitud', 'F1 macro', 'Abstención', 'Error', 'Rechazo', 'Pendiente'], [[m.denominator, m.accuracy, m.macro_f1, m.abstention_rate, m.status_counts.error, m.status_counts.refused, m.status_counts.pending]]), '',
+      lines.push(`### ${name}`, '', table(['N', 'Exactitud', 'Wilson exactitud inf.', 'Wilson exactitud sup.', 'F1 macro', 'Abstención', 'Error', 'Rechazo', 'Pendiente'], [[m.denominator, m.accuracy, m.accuracy_wilson?.low, m.accuracy_wilson?.high, m.macro_f1, m.abstention_rate, m.status_counts.error, m.status_counts.refused, m.status_counts.pending]]), '',
         'Matriz: filas gold, columnas predicción.', '', table(['Gold / predicción', ...Object.keys(Object.values(m.confusion)[0] ?? {})], Object.entries(m.confusion).map(([k, counts]) => [k, ...Object.values(counts)])), '');
     }
     for (const [name, m] of [['Entidades', v.entities], ['Comparaciones humanas ≥2 entidades', v.comparisons]] as const) if (m) {
-      lines.push(`### ${name}`, '', table(['Raíces', 'Evaluables', 'Gold abstuvo', 'Predicción ausente', 'P micro', 'R micro', 'F1 micro', 'P macro', 'R macro', 'F1 macro', 'Conjunto exacto', 'Kind', 'Prominencia'], [[m.roots, m.evaluable_roots, m.gold_abstained, m.unavailable_predictions, m.micro.precision, m.micro.recall, m.micro.f1, m.macro_precision, m.macro_recall, m.macro_f1, m.exact_set_accuracy, m.kind_accuracy, m.salience_accuracy]]), '',
+      lines.push(`### ${name}`, '', table(['Raíces', 'Evaluables', 'Gold abstuvo', 'Predicción ausente', 'P micro', 'Wilson P inf.', 'Wilson P sup.', 'R micro', 'Wilson R inf.', 'Wilson R sup.', 'F1 micro', 'P macro', 'R macro', 'F1 macro', 'Conjunto exacto', 'Kind', 'Prominencia'], [[m.roots, m.evaluable_roots, m.gold_abstained, m.unavailable_predictions, m.micro.precision, m.micro.precision_wilson?.low, m.micro.precision_wilson?.high, m.micro.recall, m.micro.recall_wilson?.low, m.micro.recall_wilson?.high, m.micro.f1, m.macro_precision, m.macro_recall, m.macro_f1, m.exact_set_accuracy, m.kind_accuracy, m.salience_accuracy]]), '',
         table(['Entidad', 'TP', 'FP', 'FN', 'P', 'R', 'F1'], m.per_entity.map(e => [e.entity, e.tp, e.fp, e.fn, e.precision, e.recall, e.f1])), '');
     }
-    if (v.relevance) lines.push('### Relevancia', '', table(['Clase', 'TP', 'FP', 'FN', 'Precisión', 'Recall'], ['relevant', 'unrelated'].map(k => { const m = v.relevance!.per_class[k]; return [k, m.tp, m.fp, m.fn, m.precision, m.recall]; })), '');
-    if (v.memberships) lines.push('### Pertenencia por concepto', '', table(['Concepto', 'N', 'Gold binario', 'Gold insuficiente', 'P', 'R', 'Wilson inferior', 'Wilson superior', 'Insufficient', 'FP', 'FN semántico', 'Error', 'Rechazo', 'Pendiente'], v.memberships.map(m => [m.concept, m.denominator, m.binary_gold_denominator, m.gold_insufficient, m.precision, m.recall, m.recall_wilson?.low, m.recall_wilson?.high, m.insufficient_rate, m.errors.false_positive, m.errors.false_negative_semantic, m.errors.error, m.errors.refused, m.errors.pending])), '');
+    if (v.relevance) lines.push('### Relevancia', '', table(['Clase', 'TP', 'FP', 'FN', 'Precisión', 'Wilson P inf.', 'Wilson P sup.', 'Recall', 'Wilson R inf.', 'Wilson R sup.'], ['relevant', 'unrelated'].map(k => { const m = v.relevance!.per_class[k]; return [k, m.tp, m.fp, m.fn, m.precision, m.precision_wilson?.low, m.precision_wilson?.high, m.recall, m.recall_wilson?.low, m.recall_wilson?.high]; })), '');
+    if (v.memberships) lines.push('### Pertenencia por concepto', '', table(['Concepto', 'N', 'Gold binario', 'Gold insuficiente', 'P', 'Wilson P inf.', 'Wilson P sup.', 'R', 'Wilson R inf.', 'Wilson R sup.', 'Insufficient', 'FP', 'FN semántico', 'Error', 'Rechazo', 'Pendiente'], v.memberships.map(m => [m.concept, m.denominator, m.binary_gold_denominator, m.gold_insufficient, m.precision, m.precision_wilson?.low, m.precision_wilson?.high, m.recall, m.recall_wilson?.low, m.recall_wilson?.high, m.insufficient_rate, m.errors.false_positive, m.errors.false_negative_semantic, m.errors.error, m.errors.refused, m.errors.pending])), '');
     if (v.reliability) for (const [name, m] of Object.entries(v.reliability)) {
       lines.push(`### Fiabilidad ${name}`, '', `Probabilidades disponibles: ${m.denominator}. ECE: ${value(m.ece)}. No se afirma calibración.`, '',
         table(['Intervalo (último incluye 1)', 'N', 'Probabilidad media', 'Frecuencia real', 'Diagrama (probabilidad / frecuencia, 10 bloques)'], m.bins.map(b => [`${b.lower.toFixed(1)}–${b.upper.toFixed(1)}`, b.count, b.mean_probability, b.observed_frequency, b.count ? `${'█'.repeat(Math.round((b.mean_probability ?? 0) * 10))} / ${'█'.repeat(Math.round((b.observed_frequency ?? 0) * 10))}` : 'N/D'])), '');
