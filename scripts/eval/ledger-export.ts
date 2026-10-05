@@ -14,6 +14,21 @@ export function currentFacetCalls(calls:LedgerCall[],currentCallIds:ReadonlySet<
   return selected;
 }
 
+/** One dev-selected threshold can remap persisted JEV probabilities without
+ * making another provider request or interpreting missing responses as false. */
+export function thresholdMembershipPredictions(rows:Prediction[],conceptKeys:string[],threshold:number):Prediction[] {
+  if(!Number.isFinite(threshold)||threshold<0||threshold>1||conceptKeys.length!==3||new Set(conceptKeys).size!==3)
+    throw new Error('mfp_eval_membership_threshold_invalid');
+  return rows.map(row=>{
+    if(row.status!=='labeled')return row;
+    const probabilities=conceptKeys.map(key=>row.probabilities?.filter(p=>p.task==='membership'&&p.key===key));
+    if(probabilities.some(p=>p?.length!==1||!Number.isFinite(p[0].probability)||p[0].probability<0||p[0].probability>1))
+      throw new Error('mfp_eval_membership_probability_missing');
+    return {...row,memberships:Object.fromEntries(conceptKeys.map((key,index)=>
+      [key,probabilities[index]![0].probability>threshold?'belongs':'not_belongs']))};
+  });
+}
+
 /** Hydrate JEV probabilities only from verified private receipts; never return raw bodies in the bundle. */
 export async function loadJevReceiptBodies(calls:LedgerCall[], load:(call:LedgerCall)=>Promise<string>, width=8):Promise<void> {
   if(!Number.isInteger(width)||width<1||width>16)throw new Error('mfp_eval_receipt_width_invalid');

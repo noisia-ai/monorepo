@@ -3,7 +3,7 @@ import { readFile,writeFile } from 'node:fs/promises';
 // @ts-expect-error guarded private runner JavaScript
 import { main,openDatabase } from '../dev-corpus/guard.mjs';
 import { validateBundle,validateSelection,type Bundle,type Selection,type Variant } from './contract';
-import { facetPredictions,membershipPredictions,ledgerCosts,currentFacetCalls,type LedgerCall } from './ledger-export';
+import { facetPredictions,membershipPredictions,ledgerCosts,currentFacetCalls,thresholdMembershipPredictions,type LedgerCall } from './ledger-export';
 import { loadJevReceiptBodies } from './ledger-export';
 import { loadMfpEvalIdentity } from './fixture-identity';
 import { createWorkspaceEngineStorageV1 } from '../../services/workers/src/workers/signal-workspace-engine-storage';
@@ -77,10 +77,13 @@ void main(async()=>{
         ...(item.thresholds?{thresholds:item.thresholds}:{})});
     }
     if(manifest.jev_judge){
+      if(!manifest.jev_judge.thresholds)throw new Error('mfp_eval_jev_judge_threshold_missing');
       const saved=JSON.parse(await readFile(manifest.jev_judge.predictions_file,'utf8')) as {labeler_digest:string;prediction_rows:Variant['prediction_rows']};
       const summary=JSON.parse(await readFile(manifest.jev_judge.summary_file,'utf8')) as {unknown_calls:number;settled_usd:number|null;selected_roots:number;wall_ms:number};
       if(summary.selected_roots!==150||saved.prediction_rows.length!==150||summary.unknown_calls!==0)throw new Error('mfp_eval_jev_judge_incomplete');
-      variants.push({variant:'B_judge_jev',labeler_digest:saved.labeler_digest,prediction_rows:saved.prediction_rows,
+      const threshold=manifest.jev_judge.thresholds.values.membership;
+      const predictions=thresholdMembershipPredictions(saved.prediction_rows,selection.concepts.map(concept=>concept.concept_key),threshold);
+      variants.push({variant:'B_judge_jev',labeler_digest:saved.labeler_digest,prediction_rows:predictions,
         costs:{settled_usd:summary.settled_usd,unknown_calls:summary.unknown_calls,reserved_usd:0,mentions_attempted:150,wall_ms:summary.wall_ms},
         thresholds:manifest.jev_judge.thresholds});
     }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {facetPredictions,membershipPredictions,ledgerCosts,loadJevReceiptBodies,currentFacetCalls} from './ledger-export.ts';
+import {facetPredictions,membershipPredictions,ledgerCosts,loadJevReceiptBodies,currentFacetCalls,thresholdMembershipPredictions} from './ledger-export.ts';
 const base={status:'settled',settled_micro_usd:'123',reserved_micro_usd:'200',created_at:'2026-10-04T00:00:00Z',updated_at:'2026-10-04T00:00:01Z',inputs:[],request:{},raw_body:null};
 test('JEV export loads verified storage receipts and fails closed when a settled receipt is absent',async()=>{
  const call={...base,run_id:'run',raw_storage_key:'private/key',raw_sha256:'sha256:'+'a'.repeat(64),raw_size_bytes:7,
@@ -39,4 +39,13 @@ test('reused JEV receipts retain full cost while predictions exclude superseded 
  assert.deepEqual(facetPredictions(currentFacetCalls(calls,new Set(['new'])),false).map(row=>row.input_digest),['current']);
  assert.equal(ledgerCosts(calls,1).settled_usd,0.0003);
  assert.throws(()=>currentFacetCalls(calls,new Set(['missing'])),/mfp_eval_current_facets_incomplete/);
+});
+test('dev-selected JEV membership threshold remaps probabilities without inventing negatives',()=>{
+ const keys=['one','two','three'];
+ const row={root_id:'root',input_digest:'digest',status:'labeled',memberships:{one:'not_belongs',two:'not_belongs',three:'belongs'},
+  probabilities:keys.map((key,index)=>({task:'membership',key,probability:[0.45,0.1,0.8][index]}))};
+ assert.deepEqual(thresholdMembershipPredictions([row],keys,0.4)[0].memberships,{one:'belongs',two:'not_belongs',three:'belongs'});
+ assert.deepEqual(row.memberships,{one:'not_belongs',two:'not_belongs',three:'belongs'});
+ assert.deepEqual(thresholdMembershipPredictions([{root_id:'missing',input_digest:'digest',status:'pending'}],keys,0.4)[0].memberships,undefined);
+ assert.throws(()=>thresholdMembershipPredictions([{...row,probabilities:row.probabilities.slice(1)}],keys,0.4),/mfp_eval_membership_probability_missing/);
 });
