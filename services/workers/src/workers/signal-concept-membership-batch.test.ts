@@ -310,7 +310,7 @@ test("one malformed membership is retried alone and its final error is not bille
   assert.equal(h.labels[0]?.verdict, "not_belongs");
   await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
   assert.equal(h.labels.length, 2);
-  assert.equal(h.labels[1]?.error_code, "membership_schema_invalid");
+  assert.equal(h.labels[1]?.error_code, "membership_item_schema_invalid");
   await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
   assert.equal(h.submitted(), 2);
 });

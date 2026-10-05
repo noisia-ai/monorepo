@@ -31,7 +31,12 @@ test("estimate and dispatch share scope, human/cache and uncertain-call fences; 
   assert.equal(queries[0]!.params[4],true);
   const sql=queries[0]!.sql;
   assert.match(sql,/current.source='human' OR current.labeler_digest=\$6/);
-  assert.match(sql,/current.verdict NOT IN\('pending','error'\)/);
+  assert.match(sql,/current.verdict IN\('belongs','not_belongs','insufficient','refused'\)/);
+  assert.match(sql,/current.verdict='error' AND current.error_code IN\('membership_item_schema_invalid','membership_evidence_invalid'\)/);
+  assert.doesNotMatch(sql,/current.verdict<>'pending'/);
+  for (const retryable of ['definitely_not_sent','retry_requires_authority','provider_errored','expired','result_missing','membership_json_invalid']) {
+    assert.ok(!sql.includes(`'${retryable}'`), `${retryable} must stay pending`);
+  }
   assert.match(sql,/uncertain.status IN\('submitting','unknown'\)/);
   assert.match(sql,/c.scope='all_conversations' OR EXISTS/);
   assert.doesNotMatch(sql,/LIMIT 200/);

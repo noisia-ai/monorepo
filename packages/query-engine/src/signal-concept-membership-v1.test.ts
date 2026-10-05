@@ -77,7 +77,9 @@ test("an invalid item retries alone while valid roots keep their decisions; isol
   assert.deepEqual(grouped.retry_ordinals, [1]);
   assert.ok(grouped.results.every((r) => r.root_id === "first" && r.verdict === "not_belongs"));
   const isolated = parseMembershipGroupV1(response([{...bad,root_ordinal:0}]), [root("second")]);
-  assert.ok(isolated.results.every((r) => r.verdict === "error" && r.error_code === "membership_schema_invalid"));
+  assert.ok(isolated.results.every((r) => r.verdict === "error" && r.error_code === "membership_item_schema_invalid"));
+  const malformedGroup = parseMembershipGroupV1("{", [root("second")]);
+  assert.ok(malformedGroup.results.every((r) => r.error_code === "membership_json_invalid"));
 });
 test("missing/duplicate/out-of-range ordinals and max_tokens never create negatives", () => {
   for (const roots of [

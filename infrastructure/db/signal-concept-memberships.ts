@@ -114,7 +114,10 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  SELECT array_agg(c.concept_key) keys FROM concepts c
  WHERE (c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))
  AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM current_pairs current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
- AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest AND current.verdict<>'pending' AND (current.source='human' OR current.labeler_digest=$6)))
+ AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest
+ AND (current.verdict IN('belongs','not_belongs','insufficient','refused')
+ OR (current.verdict='error' AND current.error_code IN('membership_item_schema_invalid','membership_evidence_invalid')))
+ AND (current.source='human' OR current.labeler_digest=$6)))
  AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls uncertain JOIN signal_labeling_runs r ON r.id=uncertain.run_id
  WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND uncertain.status IN('submitting','unknown')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest
