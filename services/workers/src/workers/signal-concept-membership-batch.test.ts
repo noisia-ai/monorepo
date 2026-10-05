@@ -271,12 +271,14 @@ test("invalid provider usage in membership is applied once and never resent",asy
     }
   };
   h.store.finish=async()=>{
-    const invalid=h.calls().find(call=>call.results_applied&&call.status==="unknown");
+    const invalid=h.calls().find(call=>call.results_applied&&["unknown","submitted"].includes(call.status));
     if(invalid){invalid.status="failed";h.run.error_code="labeling_provider_usage_invalid";}
     return h.run.error_code?"failed":"running";
   };
   assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
   assert.ok(h.labels.every(label=>label.error_code==="provider_usage_invalid"));
+  h.calls()[0]!.status="submitted";
+  h.run.error_code=null;
   h.provider.get=async()=>{throw new Error("applied receipt must not be fetched again");};
   assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
   assert.equal(h.submitted(),1);

@@ -340,6 +340,18 @@ test("a receipt outside the provider window terminates without another provider 
   assert.equal(call.results_applied,true);
   assert.equal(h.run.error_code,"labeling_unresolvable_after_window");
 });
+test("an already applied submitted facet receipt does not refetch the provider batch",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="submitted";
+  call.provider_batch_id="historical-batch";
+  call.results_applied=true;
+  h.provider.get=async()=>{throw new Error("applied receipt must not be fetched again");};
+  h.store.finish=async()=>"failed";
+  assert.equal((await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.equal(h.submitted(),0);
+});
 test("incomplete scans retain recoverable uncertainty but expire without a perpetual drainer",async()=>{
   const h=harness();
   await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
