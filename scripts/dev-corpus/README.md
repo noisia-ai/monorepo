@@ -108,11 +108,12 @@ no una solicitud de aprobación de gasto.
 Git. La identidad para deduplicar es el `id` de proveedor: dos menciones con texto
 idéntico permanecen como dos registros distintos. Las 20 modificaciones son edits
 de desarrollo marcados y registrados; no se presentan como texto original del proveedor.
-`facets-lock-check.ts` sólo acepta una identidad cuyo `fixture_key` tenga el formato
-`facets-lock-check-<sufijo-aleatorio>`; crea esa marca/org en el seed como fixture
-desechable dedicado antes de correr la prueba de revocación concurrente. No apuntar esa
-comprobación a la identidad habitual del corpus. Transferir corpus por Railway SSH
-cifrado; nunca en argumentos, logs ni un endpoint público de base.
+`facets-lock-check.ts` exige una identidad cuyo `fixture_key` tenga el formato
+`facets-lock-check-<sufijo-aleatorio>` y verifica en PostgreSQL que organización, marca,
+workspace, operadores y fuente estén ligados a ese fixture desechable antes de crear
+datos de prueba. El probe se limita al orden de locks de reserva/renovación y no cambia
+políticas. No apuntar esa comprobación a la identidad habitual del corpus. Transferir
+corpus por Railway SSH cifrado; nunca en argumentos, logs ni un endpoint público de base.
 
 Recorrido remoto comprobado: 1,000 filas → 977 únicas → 905 elegibles → 3,158 chunks;
 replay sin nuevos vectores ni llamadas. Plantilla privada `gold-template.csv` creada:
