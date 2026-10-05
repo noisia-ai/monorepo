@@ -609,6 +609,10 @@ export function createSignalLabelingStoreV1<
     async fail(run: LabelingRunV1, code: string) {
       await tx(db, async (c) => {
         await lock(c, run);
+        if(code==="labeling_raw_receipt_invalid"){
+          await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
+          return;
+        }
         await c.query(
           `UPDATE signal_labeling_calls SET status='failed',updated_at=now() WHERE run_id=$1 AND status='reserved'`,
           [run.id],
@@ -715,12 +719,13 @@ export function createSignalLabelingStoreV1<
         if (stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
           if (!options.loadRaw) fail("labeling_raw_loader_unavailable", 503);
           const size = Number(stored.raw_size_bytes);
-          if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_size_invalid", 503);
-          call.raw_body = await options.loadRaw({ workspace_id: run.workspace_id, run_id: run.id,
+          if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_receipt_invalid", 503);
+          try{call.raw_body = await options.loadRaw({ workspace_id: run.workspace_id, run_id: run.id,
             call_id: call.id, storage_key: stored.raw_storage_key, raw_sha256: stored.raw_sha256,
-            size_bytes: size });
+            size_bytes: size });}
+          catch{fail("labeling_raw_receipt_invalid",503);}
           if (`sha256:${createHash("sha256").update(call.raw_body).digest("hex")}` !== stored.raw_sha256)
-            fail("labeling_raw_integrity_invalid", 503);
+            fail("labeling_raw_receipt_invalid", 503);
         }
       }
       return calls;

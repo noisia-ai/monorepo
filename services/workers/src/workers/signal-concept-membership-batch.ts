@@ -344,7 +344,7 @@ export async function runConceptMembershipTickV1(args: {
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     if (
-      /^labeling_(concepts_changed|context_changed|preparation_changed|policy_changed|forbidden|cap_exhausted|daily_cap_exhausted)$/u.test(
+      /^labeling_(concepts_changed|context_changed|preparation_changed|policy_changed|forbidden|cap_exhausted|daily_cap_exhausted|raw_receipt_invalid)$/u.test(
         code,
       )
     )

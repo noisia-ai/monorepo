@@ -406,6 +406,14 @@ test("one unknown call does not block reconciliation of a separate durable respo
   assert.equal(h.submitted(), 0);
 });
 
+test("corrupt stored receipt makes the membership run fail explicitly before provider work",async()=>{
+  const h=harness();
+  h.store.calls=async()=>{throw new Error("labeling_raw_receipt_invalid");};
+  await assert.rejects(runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider}),/labeling_raw_receipt_invalid/u);
+  assert.equal(h.run.error_code,"labeling_raw_receipt_invalid");
+  assert.equal(h.submitted(),0);
+});
+
 test("missing ended-batch result preserves unknown exposure and emits no semantic negative", async () => {
   const h = harness();
   h.provider.results = async function* () {};

@@ -338,6 +338,14 @@ test("one unknown call does not block reconciliation of a separate durable respo
   assert.equal(h.submitted(), 0);
 });
 
+test("corrupt stored receipt makes the facets run fail explicitly before provider work",async()=>{
+  const h=harness();
+  h.store.calls=async()=>{throw new Error("labeling_raw_receipt_invalid");};
+  await assert.rejects(runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider}),/labeling_raw_receipt_invalid/u);
+  assert.equal(h.run.error_code,"labeling_raw_receipt_invalid");
+  assert.equal(h.submitted(),0);
+});
+
 test("the persisted labeler identity controls semantic request parameters", () => {
   const h = harness();
   h.run.identity = {
