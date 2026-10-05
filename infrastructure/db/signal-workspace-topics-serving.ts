@@ -240,9 +240,14 @@ async function membershipContext(client: PoolClient, args: Args, filters: CivilF
       COALESCE(s.selection_revision,0)::int selection_revision,s.selection_digest
     FROM signal_membership_concepts_v1 c LEFT JOIN signal_defined_interest_selections s ON s.workspace_id=c.workspace_id
       AND s.term_key=c.concept_key AND s.generation_id IS NULL WHERE c.workspace_id=$1 ORDER BY c.concept_key`,[args.workspace_id])).rows;
-  const protectedKeys=new Set(base.topics.map(topic => topic.term_key));
-  const conceptRows=rows.filter(row=>!protectedKeys.has(signalTopicDefinitionSchemaV1.parse(row.topic).term_key));
-  const topics=conceptRows.map(r=>({...signalTopicDefinitionSchemaV1.parse(r.topic),kind:"topic" as const}));
+  const concepts=rows.map(row=>({...row,definition:signalTopicDefinitionSchemaV1.parse(row.topic)}));
+  const adoptedCandidates=new Set(concepts.filter(({definition})=>definition.origin==="workspace_discovery"
+    && definition.source?.run_key.startsWith("workspace-discovery:")).map(({definition})=>definition.source!.candidate_key));
+  const published=base.consolidated ? base.topics.filter(topic=>topic.source?.run_key.startsWith("consolidation:")
+    ? !adoptedCandidates.has(topic.source.candidate_key) : true) : base.topics;
+  const protectedKeys=new Set(published.map(topic => topic.term_key));
+  const conceptRows=concepts.filter(row=>!protectedKeys.has(row.definition.term_key));
+  const topics=conceptRows.map(r=>({...r.definition,kind:"topic" as const}));
   const keys=new Set(topics.map(t=>t.term_key));
   const change=await inspectFacetContextChangeV1(client,args.workspace_id);
   const membershipState=(await client.query<{digest:string}>(`SELECT 'sha256:'||encode(sha256(convert_to(COALESCE(string_agg(jsonb_build_array(root_id,concept_key,root_fingerprint,definition_digest,labeler_digest,entity_context_digest,effective_entities_digest,verdict,source,call_id,updated_at)::text,'' ORDER BY root_id,concept_key),''),'UTF8')),'hex') digest FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1`,[args.workspace_id])).rows[0]!.digest;
@@ -252,7 +257,7 @@ async function membershipContext(client: PoolClient, args: Args, filters: CivilF
     EXISTS(SELECT 1 FROM signal_labeling_runs WHERE workspace_id=s.workspace_id AND kind='membership' AND status IN('queued','running')) processing
     FROM signal_corpus_preparation_input_state s WHERE s.workspace_id=$1`,[args.workspace_id])).rows[0];
   const selected=Object.fromEntries(topics.map((t,i)=>[t.term_key,{selected:conceptRows[i]!.selected,definition_digest:t.definition_digest,definition_revision:t.definition_revision,generation_id:null}]));
-  return {...base,topics:[...base.topics,...topics],
+  return {...base,topics:[...published,...topics],
     selection:{revision:Math.max(base.selection.revision,...conceptRows.map(r=>r.selection_revision)),items:{...base.selection.items,...selected}},
     is_current:(!base.generation || base.is_current) && (!change.changed || change.affected.length===0),
     is_processing:base.is_processing || (state?.processing??false),filters,native:true,consolidated:base.consolidated,

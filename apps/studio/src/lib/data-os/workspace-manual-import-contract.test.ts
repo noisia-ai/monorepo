@@ -5,6 +5,7 @@ import {
   manualImportUsageDecisionsV1,
   validateWorkspaceManualImportSetupInputV1
 } from "./workspace-manual-import-contract";
+import {resolveWorkspaceImportRevisionModeV1} from "./workspace-import-revision-mode";
 
 const input = {
   contract_version: WORKSPACE_MANUAL_IMPORT_SETUP_VERSION, provider: "sentione",
@@ -31,4 +32,16 @@ test("storage permission does not imply external AI or strategic use", () => {
   const allowed = validateWorkspaceManualImportSetupInputV1({ ...input,
     rights: { ...input.rights, external_ai_processing: true } });
   assert.equal(manualImportUsageDecisionsV1(allowed).find(item => item.usage_purpose === "llm-processing")?.decision, "allowed");
+});
+
+test("append-only import remains the same with MFP flags on or off",()=>{
+  const manual={access:"manual-import" as const,acquisition:{slotKey:"synthetic"},supersedesImportBatchId:null};
+  for(const flag of ["false","true"]){
+    const env={NOISIA_MFP_ENABLED:flag,NOISIA_MENTION_FACETS_ENABLED:flag};
+    assert.equal(resolveWorkspaceImportRevisionModeV1(manual,env),"append_only");
+    assert.equal(resolveWorkspaceImportRevisionModeV1({...manual,contentRevisionMode:"append_only"},env),"append_only");
+    if(flag==="true")assert.equal(resolveWorkspaceImportRevisionModeV1({...manual,contentRevisionMode:"revise_existing"},env),"revise_existing");
+    else assert.throws(()=>resolveWorkspaceImportRevisionModeV1({...manual,contentRevisionMode:"revise_existing"},env),
+      /content_revision_unavailable/u);
+  }
 });
