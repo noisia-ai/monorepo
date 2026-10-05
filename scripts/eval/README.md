@@ -32,6 +32,16 @@ en esas 90 raíces. `--partition test` evalúa las 60 retenidas para el reporte 
 el script no busca ni ajusta umbrales. Conserva un reporte distinto por partición:
 la salida usa creación exclusiva, no sobreescribe recibos previos.
 
+La revisión 2 añade tres vistas de juez por concepto: A sobre raíces en las que
+emitió decisión o insufficient frente a B sobre exactamente esas raíces; pipelines
+completos A y B, cada uno con su propia puerta de ficha; y la intersección donde
+ambos emitieron juicio binario. Pending, error e insufficient sobre gold positivo
+cuentan como FN operativos del pipeline, separados de not_belongs explícito.
+La intersección es calidad condicional y siempre muestra su cobertura. No existe
+comparador preregistrado de jueces ni ganador automático. El coste B juez proviene
+del journal privado (input_tokens × precio configurado), no del ledger común;
+frozen_before_test es una declaración del operador, no prueba temporal.
+
 ## Contrato de exportación
 
 Los tipos exactos y validaciones están en `contract.ts`. El bundle JSON tiene:

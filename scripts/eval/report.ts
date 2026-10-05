@@ -41,9 +41,11 @@ function entityMetrics(gold: Gold[], predictions: Map<string, Prediction>, selec
     micro: {...binary(tp, fp, fn),precision_wilson:wilson(tp,tp+fp),recall_wilson:wilson(tp,tp+fn)}, macro_precision: mean(perEntity.map(v => v.precision)), macro_recall: mean(perEntity.map(v => v.recall)), macro_f1: mean(perEntity.map(v => v.f1)),
     exact_set_accuracy: divide(exact, known.length), correct_pair_denominator: tp, kind_accuracy: divide(kind, tp), salience_accuracy: divide(salience, tp), per_entity: perEntity };
 }
-function membershipMetrics(gold: Gold[], predictions: Map<string, Prediction>, selection: Selection) {
-  return selection.concepts.map((c, ordinal) => {
-    const rows = gold.map(g => ({ truth: g.memberships[c.concept_key], predicted: terminal(predictions.get(g.root_id)) ?? predictions.get(g.root_id)?.memberships?.[c.concept_key] ?? 'pending' }));
+function membershipVerdict(p: Prediction | undefined, conceptKey: string) {
+  return terminal(p) ?? p?.memberships?.[conceptKey] ?? 'pending';
+}
+function membershipMetric(gold: Gold[], predictions: Map<string, Prediction>, conceptKey: string, ordinal: number) {
+    const rows = gold.map(g => ({ truth: g.memberships[conceptKey], predicted: membershipVerdict(predictions.get(g.root_id), conceptKey) }));
     const resolvedGold = rows.filter(r => r.truth !== 'insufficient');
     const tp = resolvedGold.filter(r => r.truth === 'belongs' && r.predicted === 'belongs').length;
     const fp = resolvedGold.filter(r => r.truth === 'not_belongs' && r.predicted === 'belongs').length;
@@ -52,8 +54,11 @@ function membershipMetrics(gold: Gold[], predictions: Map<string, Prediction>, s
       gold_insufficient: rows.length - resolvedGold.length, ...binary(tp, fp, fn), precision_wilson:wilson(tp,tp+fp),recall_wilson: wilson(tp, tp + fn),
       insufficient_rate: divide(rows.filter(r => r.predicted === 'insufficient').length, rows.length),
       errors: { false_positive: fp, false_negative_semantic: resolvedGold.filter(r => r.truth === 'belongs' && r.predicted === 'not_belongs').length,
+        false_negative_without_positive_judgment: resolvedGold.filter(r => r.truth === 'belongs' && !['belongs','not_belongs'].includes(r.predicted)).length,
         insufficient: rows.filter(r => r.predicted === 'insufficient').length, refused: rows.filter(r => r.predicted === 'refused').length, error: rows.filter(r => r.predicted === 'error').length, pending: rows.filter(r => r.predicted === 'pending').length } };
-  });
+}
+function membershipMetrics(gold: Gold[], predictions: Map<string, Prediction>, selection: Selection) {
+  return selection.concepts.map((c, ordinal) => membershipMetric(gold,predictions,c.concept_key,ordinal));
 }
 function calibration(gold: Gold[], predictions: Map<string, Prediction>, selection: Selection) {
   const groups = new Map<string, { probability: number; outcome: boolean }[]>();
@@ -106,6 +111,34 @@ function agreement(bundle: Bundle) {
   });
   return { scope: 'exported_corpus_without_gold', union_roots: roots.size, missing_claude: roots.size - left.size, missing_jev: roots.size - right.size, metrics: result, accuracy_claim: false };
 }
+function judgeComparisons(gold: Gold[], bundle: Bundle, selection: Selection) {
+  const bJudge = bundle.variants.find(v => v.variant === 'B_judge_jev');
+  const bFacets = bundle.variants.find(v => v.variant === 'B_facets_jev');
+  if (!bJudge || !bFacets) return null;
+  const bPredictions = new Map(bJudge.prediction_rows.map(r => [r.root_id,r]));
+  const bFacetPredictions = new Map(bFacets.prediction_rows.map(r => [r.root_id,r]));
+  const bPipeline = new Map(bJudge.prediction_rows.filter(r =>
+    relevance(bFacetPredictions.get(r.root_id)) === 'relevant').map(r => [r.root_id,r]));
+  const binaryVerdict = (p: Prediction | undefined, key: string) =>
+    ['belongs','not_belongs'].includes(membershipVerdict(p,key));
+  return (['A_judge_low','A_judge_medium'] as const).flatMap(name => {
+    const aJudge = bundle.variants.find(v => v.variant === name);
+    if (!aJudge) return [];
+    const aPredictions = new Map(aJudge.prediction_rows.map(r => [r.root_id,r]));
+    return selection.concepts.map((concept,ordinal) => {
+      const key = concept.concept_key;
+      const evaluated = gold.filter(g => ['belongs','not_belongs','insufficient'].includes(membershipVerdict(aPredictions.get(g.root_id),key)));
+      const commonEmitted = evaluated.filter(g => binaryVerdict(aPredictions.get(g.root_id),key) && binaryVerdict(bPredictions.get(g.root_id),key));
+      return { a_variant:name, concept:`concept_${ordinal + 1}`,
+        a_evaluated_vs_b_same_roots:{roots:evaluated.length,
+          a:membershipMetric(evaluated,aPredictions,key,ordinal), b:membershipMetric(evaluated,bPredictions,key,ordinal)},
+        full_pipeline:{roots:gold.length, b_gate_relevant_roots:gold.filter(g=>bPipeline.has(g.root_id)).length,
+          a:membershipMetric(gold,aPredictions,key,ordinal), b:membershipMetric(gold,bPipeline,key,ordinal)},
+        common_emitted:{roots:commonEmitted.length,
+          a:membershipMetric(commonEmitted,aPredictions,key,ordinal), b:membershipMetric(commonEmitted,bPredictions,key,ordinal)} };
+    });
+  });
+}
 export function buildReport(selection: Selection, gold: Gold[] | null, bundle: Bundle, partition: Partition) {
   validateSelection(selection);
   if (gold) validateGold(gold, selection);
@@ -122,6 +155,7 @@ export function buildReport(selection: Selection, gold: Gold[] | null, bundle: B
         [...new Set([...selectedGold.map(g => g.language), ...selectedGold.map(g => dimension(predictions.get(g.root_id), 'language')).filter(v => /^[a-z]{2}$/u.test(v))])].sort()),
     };
     return { variant: v.variant, status: gold ? 'evaluado_sin_aprobacion' : 'no_evaluado', costs: costs(v),
+      cost_basis: v.variant === 'B_judge_jev' ? 'private_journal_input_tokens_times_configured_usd_per_mtok_not_labeling_ledger' : 'labeling_ledger',
       thresholds: v.thresholds ?? null, dimensions,
       entities: gold && facet ? entityMetrics(selectedGold, predictions, selection) : null,
       comparisons: gold && facet ? entityMetrics(selectedGold.filter(g => g.entities.length >= 2), predictions, selection) : null,
@@ -149,12 +183,15 @@ export function buildReport(selection: Selection, gold: Gold[] | null, bundle: B
     approval: 'requires_founder_confirmation', selection: { roots: 150, dev: 90, test: 60, strata: Object.fromEntries(['random', 'enriched', 'comparison'].map(s => [s, selection.selected.filter(r => r.stratum === s).length])),
       comparison_candidates: selection.selected.filter(r => r.stratum === 'comparison').length, human_multi_entity: comparisons, comparison_target_met: comparisons === null ? null : comparisons >= 15 },
     candidates: (['voice', 'act', 'spam', 'entities'] as const).map(candidate),
+    judge_comparisons: gold ? judgeComparisons(selectedGold,bundle,selection) : null,
     total_known_settled_usd: variants.reduce((n, v) => n + (v.costs.settled_usd ?? 0), 0),
     total_cost_complete: variants.length > 0 && variants.every(v => v.costs.complete),
     variants, missing_variants: VARIANTS.filter(id => !bundle.variants.some(v => v.variant === id)), agreement: agreement(bundle),
     limitations: ['No aprueba ni cambia el etiquetador.', 'Una sola ronda y una corrección focal en dev; test sólo final.',
       'Sin texto del corpus; entity_N y concept_N son ordinales de la selección privada.',
-      'La procedencia del gold y la congelación de umbrales son declaraciones del operador; el script no certifica su veracidad.',
+      'La congelación antes de test es declarativa; el script verifica el campo, no una barrera técnica temporal.',
+      'El gold asistido por Opus de la familia Claude comparte posible vocabulario con A y puede sesgar la comparación a su favor.',
+      'La regla preregistrada de candidatos cubre fichas, no jueces; ninguna superioridad del juez B se infiere sin comparar sus rutas.',
       'Sin evidencia literal JEV sólo compara detección de pertenencia.', 'Asunto requiere revisión humana de utilidad; no hay exactitud automática para texto libre.',
       ...(comparisons !== null && comparisons < 15 ? ['Faltan comparaciones humanas para el objetivo de al menos 15; no se eliminó ningún gold válido.'] : [])] };
 }
@@ -171,12 +208,12 @@ export function renderMarkdown(report: Report) {
     `Comparaciones candidatas: ${report.selection.comparison_candidates}; multi-entidad humanas: ${value(report.selection.human_multi_entity)}.`, '',
     'Precisión = TP/(TP+FP), recall = TP/(TP+FN), F1 = 2TP/(2TP+FP+FN). N/D significa denominador cero, no cero calidad. Macro omite clases sin soporte ni predicción. Exactitud incluye pendientes, rechazos, errores y abstenciones como fallos; se conservan sus tasas separadas.', '',
     'Para entidades, gold con abstención no define verdad del conjunto: se excluye de esa métrica y se cuenta aparte. Predicción no disponible conserva los FN y no acierta un conjunto vacío. Kind/prominencia se miden sólo sobre pares verdaderos positivos.', '',
-    'Pertenencia excluye gold insufficient del denominador binario y lo reporta; una salida técnica/insufficient no se convierte en not_belongs. Wilson 95% corresponde a recall sobre todos los positivos gold.', ''];
+    'Pertenencia excluye gold insufficient del denominador binario y lo reporta. En pipeline completo, pending/error/insufficient sobre gold positivo sí cuentan como FN operativos de recall, pero no como not_belongs ni como FN semánticos; se separan ambos tipos. Wilson 95% corresponde a recall sobre todos los positivos gold.', ''];
   for (const v of report.variants) {
     lines.push(`## Prueba ${v.variant.startsWith('A_') ? 'A — Sonnet' : 'B — JEV'} / ${v.variant}`, '', `Estado: ${v.status}.`, '',
       table(['Liquidado USD', 'Reservado USD', 'Llamadas inciertas', 'Menciones intentadas', 'USD/1000', 'Pared ms'], [[v.costs.settled_usd, v.costs.reserved_usd, v.costs.unknown_calls, v.costs.mentions_attempted, v.costs.settled_usd_per_1000, v.costs.wall_ms]]), '',
-      `Coste completo: ${v.costs.complete ? 'sí' : 'no; el total liquidado conocido no equivale al total final'}.`, '');
-    if (v.thresholds) lines.push(`Umbrales: seleccionados en dev, ronda ${v.thresholds.development_round}; congelados antes de test: ${v.thresholds.frozen_before_test}.`, '', table(['Parámetro', 'Valor'], Object.entries(v.thresholds.values)), '');
+      `Coste completo: ${v.costs.complete ? 'sí' : 'no; el total conocido no equivale al total final'}. Base: ${v.cost_basis === 'labeling_ledger' ? 'ledger de etiquetado' : 'journal privado, input_tokens × precio configurado por MTok; no ledger de etiquetado'}.`, '');
+    if (v.thresholds) lines.push(`Umbrales: seleccionados en dev, ronda ${v.thresholds.development_round}; frozen_before_test=${v.thresholds.frozen_before_test} es una declaración del operador, no una barrera temporal comprobada por el script.`, '', table(['Parámetro', 'Valor'], Object.entries(v.thresholds.values)), '');
     if (v.dimensions) for (const [name, m] of Object.entries(v.dimensions)) {
       lines.push(`### ${name}`, '', table(['N', 'Exactitud', 'Wilson exactitud inf.', 'Wilson exactitud sup.', 'F1 macro', 'Abstención', 'Error', 'Rechazo', 'Pendiente'], [[m.denominator, m.accuracy, m.accuracy_wilson?.low, m.accuracy_wilson?.high, m.macro_f1, m.abstention_rate, m.status_counts.error, m.status_counts.refused, m.status_counts.pending]]), '',
         'Matriz: filas gold, columnas predicción.', '', table(['Gold / predicción', ...Object.keys(Object.values(m.confusion)[0] ?? {})], Object.entries(m.confusion).map(([k, counts]) => [k, ...Object.values(counts)])), '');
@@ -186,15 +223,34 @@ export function renderMarkdown(report: Report) {
         table(['Entidad', 'TP', 'FP', 'FN', 'P', 'R', 'F1'], m.per_entity.map(e => [e.entity, e.tp, e.fp, e.fn, e.precision, e.recall, e.f1])), '');
     }
     if (v.relevance) lines.push('### Relevancia', '', table(['Clase', 'TP', 'FP', 'FN', 'Precisión', 'Wilson P inf.', 'Wilson P sup.', 'Recall', 'Wilson R inf.', 'Wilson R sup.'], ['relevant', 'unrelated'].map(k => { const m = v.relevance!.per_class[k]; return [k, m.tp, m.fp, m.fn, m.precision, m.precision_wilson?.low, m.precision_wilson?.high, m.recall, m.recall_wilson?.low, m.recall_wilson?.high]; })), '');
-    if (v.memberships) lines.push('### Pertenencia por concepto', '', table(['Concepto', 'N', 'Gold binario', 'Gold insuficiente', 'P', 'Wilson P inf.', 'Wilson P sup.', 'R', 'Wilson R inf.', 'Wilson R sup.', 'Insufficient', 'FP', 'FN semántico', 'Error', 'Rechazo', 'Pendiente'], v.memberships.map(m => [m.concept, m.denominator, m.binary_gold_denominator, m.gold_insufficient, m.precision, m.precision_wilson?.low, m.precision_wilson?.high, m.recall, m.recall_wilson?.low, m.recall_wilson?.high, m.insufficient_rate, m.errors.false_positive, m.errors.false_negative_semantic, m.errors.error, m.errors.refused, m.errors.pending])), '');
+    if (v.memberships) lines.push('### Pertenencia por concepto · A incluye puerta de ficha; B directo no la usa', '', table(['Concepto', 'N', 'Gold binario', 'Gold insuficiente', 'P', 'Wilson P inf.', 'Wilson P sup.', 'R', 'Wilson R inf.', 'Wilson R sup.', 'Insufficient', 'FP', 'FN semántico', 'FN sin juicio positivo', 'Error', 'Rechazo', 'Pendiente'], v.memberships.map(m => [m.concept, m.denominator, m.binary_gold_denominator, m.gold_insufficient, m.precision, m.precision_wilson?.low, m.precision_wilson?.high, m.recall, m.recall_wilson?.low, m.recall_wilson?.high, m.insufficient_rate, m.errors.false_positive, m.errors.false_negative_semantic, m.errors.false_negative_without_positive_judgment, m.errors.error, m.errors.refused, m.errors.pending])), '');
     if (v.reliability) for (const [name, m] of Object.entries(v.reliability)) {
       lines.push(`### Fiabilidad ${name}`, '', `Probabilidades disponibles: ${m.denominator}. ECE: ${value(m.ece)}. No se afirma calibración.`, '',
         table(['Intervalo (último incluye 1)', 'N', 'Probabilidad media', 'Frecuencia real', 'Diagrama (probabilidad / frecuencia, 10 bloques)'], m.bins.map(b => [`${b.lower.toFixed(1)}–${b.upper.toFixed(1)}`, b.count, b.mean_probability, b.observed_frequency, b.count ? `${'█'.repeat(Math.round((b.mean_probability ?? 0) * 10))} / ${'█'.repeat(Math.round((b.observed_frequency ?? 0) * 10))}` : 'N/D'])), '');
     }
   }
+  lines.push('## Comparación de jueces en tres vistas', '',
+    'Vista 1 condiciona ambas cifras a las mismas raíces donde A emitió belongs, not_belongs o insufficient. Vista 2 mide los pipelines completos: A con su propia puerta y B con la relevancia de su ficha JEV. Vista 3 condiciona a raíces donde ambos jueces emitieron belongs o not_belongs; no mide cobertura. No hay comparador preregistrado ni ganador de jueces.', '');
+  if (report.judge_comparisons?.length) {
+    const ratio = (m: ReturnType<typeof membershipMetric>) =>
+      `${value(m.precision)} [${value(m.precision_wilson?.low)},${value(m.precision_wilson?.high)}] / ${value(m.recall)} [${value(m.recall_wilson?.low)},${value(m.recall_wilson?.high)}]`;
+    const failures = (m: ReturnType<typeof membershipMetric>) =>
+      `${m.errors.false_negative_semantic}/${m.errors.false_negative_without_positive_judgment}; ${m.errors.insufficient}/${m.errors.refused}/${m.errors.error}/${m.errors.pending}`;
+    for (const [heading,key] of [
+      ['1 · A evaluó; B sobre esas mismas raíces','a_evaluated_vs_b_same_roots'],
+      ['2 · Pipeline completo con puerta propia','full_pipeline'],
+      ['3 · Ambos emitieron juicio binario','common_emitted'],
+    ] as const) {
+      lines.push(`### Vista ${heading}`, '', table(['A variante', 'Concepto', 'Raíces', 'Gold binario', 'Puerta B relevante', 'A P [IC] / R [IC]', 'B P [IC] / R [IC]', 'A FN sem/sin juicio; I/R/E/P', 'B FN sem/sin juicio; I/R/E/P'],
+        report.judge_comparisons.map(c => {
+          const view=c[key]; return [c.a_variant,c.concept,view.roots,view.a.binary_gold_denominator,
+            'b_gate_relevant_roots' in view ? view.b_gate_relevant_roots : 'N/A',ratio(view.a),ratio(view.b),failures(view.a),failures(view.b)];
+        })), '');
+    }
+  } else lines.push('No evaluado: faltan las dos fichas/jueces B y al menos un juez A.', '');
   lines.push('## Comparación preregistrada', '', table(['Dimensión', 'Candidato sin aprobación', 'Motivo'], report.candidates.map(c => [c.dimension, c.candidate, c.reason])), '',
     `Suma liquidada conocida de variantes exportadas: USD ${report.total_known_settled_usd.toFixed(6)}. Costes completos: ${report.total_cost_complete ? 'sí' : 'no'}. No incluye variantes ausentes ni infraestructura.`, '',
-    'Los candidatos sólo comparan variantes presentes y no acreditan umbrales, variantes ausentes ni aceptación del programa.', '');
+    'Los candidatos sólo comparan fichas presentes y no acreditan umbrales, jueces, variantes ausentes ni aceptación del programa.', '');
   lines.push('## Acuerdo sin gold', '');
   if (report.agreement) lines.push(`Unión de raíces exportadas: ${report.agreement.union_roots}. No mide exactitud. Se excluyen pares ausentes, no vigentes o abstenciones; no cuentan como acuerdos.`, '', table(['Dimensión', 'Comparables', 'Excluidas', 'Acuerdo'], report.agreement.metrics.map(m => [m.dimension, m.comparable, m.excluded, m.agreement])), '');
   else lines.push('No evaluado: faltan exportaciones emparejadas de Claude y JEV.', '');

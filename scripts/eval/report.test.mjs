@@ -69,6 +69,54 @@ test('membership never interprets absent/error/insufficient as semantic negative
   const m = buildReport(f.selection, f.gold, f.bundle, 'dev').variants[0].memberships[0];
   assert.equal(m.tp, 87); assert.equal(m.fn, 3); assert.equal(m.errors.false_negative_semantic, 0);
   assert.equal(m.errors.error, 1); assert.equal(m.errors.pending, 1); close(m.insufficient_rate, 1 / 90);
+  assert.equal(m.errors.false_negative_without_positive_judgment, 3);
+});
+test('judge comparison separates A-evaluated, own-gate pipelines, and common-emitted roots', () => {
+  const f = fixture();
+  const a = structuredClone(f.variant); a.variant = 'A_judge_low';
+  const bFacet = structuredClone(f.variant); bFacet.variant = 'B_facets_jev';
+  bFacet.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1,
+    values: { entity: 0.5, salience: 0.5, spam: 0.5, minimum_choice_confidence: 0 } };
+  const b = structuredClone(f.variant); b.variant = 'B_judge_jev';
+  b.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1, values: { membership: 0.4 } };
+  const key = 'private-concept-one';
+  a.prediction_rows[91].memberships[key] = 'pending';
+  a.prediction_rows[92].memberships[key] = 'error';
+  a.prediction_rows[93].memberships[key] = 'insufficient';
+  a.prediction_rows[94].memberships[key] = 'not_belongs';
+  b.prediction_rows[94].memberships[key] = 'not_belongs';
+  for (const index of [92,94]) {
+    bFacet.prediction_rows[index].facets.entities.value = [];
+    bFacet.prediction_rows[index].facets.unrelated_reason = 'off_topic';
+  }
+  f.bundle.variants = [a,bFacet,b];
+  const report = buildReport(f.selection,f.gold,f.bundle,'test');
+  const row = report.judge_comparisons.find(r => r.a_variant === 'A_judge_low' && r.concept === 'concept_1');
+  assert.equal(row.a_evaluated_vs_b_same_roots.roots,58);
+  assert.equal(row.a_evaluated_vs_b_same_roots.a.tp,56);
+  assert.equal(row.a_evaluated_vs_b_same_roots.b.tp,57);
+  assert.equal(row.full_pipeline.roots,60);
+  assert.equal(row.full_pipeline.b_gate_relevant_roots,58);
+  assert.equal(row.full_pipeline.a.tp,56);
+  assert.equal(row.full_pipeline.a.errors.false_negative_semantic,1);
+  assert.equal(row.full_pipeline.a.errors.false_negative_without_positive_judgment,3);
+  assert.equal(row.full_pipeline.b.tp,58);
+  assert.equal(row.full_pipeline.b.errors.pending,2);
+  assert.equal(row.common_emitted.roots,57);
+  assert.equal(row.common_emitted.a.tp,56);
+  assert.equal(row.common_emitted.b.tp,56);
+  assert.match(renderMarkdown(report),/Comparación de jueces en tres vistas/);
+});
+test('JEV judge cost and freeze provenance are explicit without claiming a judge winner', () => {
+  const f = fixture(); f.variant.variant = 'B_judge_jev';
+  f.variant.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1, values: { membership: 0.4 } };
+  const report = buildReport(f.selection,f.gold,f.bundle,'test');
+  assert.equal(report.variants[0].cost_basis,'private_journal_input_tokens_times_configured_usd_per_mtok_not_labeling_ledger');
+  const md = renderMarkdown(report);
+  assert.match(md,/input_tokens × precio configurado por MTok; no ledger/);
+  assert.match(md,/declaración del operador, no una barrera temporal/);
+  assert.match(md,/puede sesgar la comparación a su favor/);
+  assert.match(md,/No hay comparador preregistrado ni ganador de jueces/);
 });
 test('dev statistics invariant to held-out test predictions; B/test requires dev threshold provenance', () => {
   const f = fixture(), before = buildReport(f.selection, f.gold, f.bundle, 'dev');
