@@ -261,6 +261,26 @@ test("batch persists raw before settlement and labels; replay has zero new provi
   assert.equal(h.submitted(), 1);
   assert.equal(h.labels.length, 2);
 });
+test("invalid provider usage in membership is applied once and never resent",async()=>{
+  const h=harness(),originalResults=h.provider.results;
+  h.provider.results=async function*(){
+    for await(const row of originalResults()){
+      const item=structuredClone(row.item) as typeof row.item;
+      if(item.result.type==="succeeded")item.result.message.usage={input_tokens:-1,output_tokens:0};
+      yield{item,rawText:JSON.stringify(item)};
+    }
+  };
+  h.store.finish=async()=>{
+    const invalid=h.calls().find(call=>call.results_applied&&call.status==="unknown");
+    if(invalid){invalid.status="failed";h.run.error_code="labeling_provider_usage_invalid";}
+    return h.run.error_code?"failed":"running";
+  };
+  assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.ok(h.labels.every(label=>label.error_code==="provider_usage_invalid"));
+  h.provider.get=async()=>{throw new Error("applied receipt must not be fetched again");};
+  assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.equal(h.submitted(),1);
+});
 test("configurable in-flight pages submit multiple root pages in one provider batch", async () => {
   assert.equal(readMfpInFlightPages("4"), 4);
   assert.equal(readMfpInFlightPages("100"), 1);

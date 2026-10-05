@@ -27,3 +27,29 @@ test("a corrupt object records a terminal run error even when a settled call sti
   assert.ok(!statements.some(sql=>sql.includes("raw_storage_key IS NOT NULL AND NOT results_applied")),
     "a known corrupt object must not keep the run running");
 });
+
+test("applied invalid usage is terminalized before run completion",async()=>{
+  const statements:string[]=[];
+  const query=async(sql:string,params?:unknown[])=>{
+    statements.push(sql);
+    if(sql.includes("SELECT id FROM signal_labeling_runs"))return{rows:[{id:"run"}]};
+    if(sql.includes("FILTER(WHERE status='unknown')"))return{rows:[{unknown:0,active:0}]};
+    if(sql.includes("count(*) count FROM signal_mention_facets_current_v1"))return{rows:[{count:0}]};
+    if(sql.includes("SELECT CASE WHEN EXISTS"))return{rows:[{error_code:"labeling_provider_usage_invalid"}]};
+    if(sql.includes("SET status=$2,error_code"))assert.equal(params?.[1],"failed");
+    return{rows:[]};
+  };
+  const database={connect:async()=>({query,release(){}}),query};
+  const store=createSignalLabelingStoreV1({database:database as never,storeRaw:async()=>"unused"});
+  assert.equal(await store.finish({id:"run",lease_token:"lease",workspace_id:"workspace"} as LabelingRunV1),"failed");
+  assert.ok(statements.some(sql=>sql.includes("call.results_applied")&&sql.includes("provider_usage_invalid")));
+});
+
+test("uncertain calls back off instead of being reclaimed every 30 seconds",async()=>{
+  let releaseSql="";
+  const query=async(sql:string)=>{releaseSql=sql;return{rows:[]};};
+  const database={connect:async()=>({query,release(){}}),query};
+  const store=createSignalLabelingStoreV1({database:database as never,storeRaw:async()=>"unused"});
+  await store.release({id:"run",lease_token:"lease"} as LabelingRunV1);
+  assert.match(releaseSql,/status='unknown'[\s\S]*interval '1 hour'/u);
+});

@@ -1,9 +1,10 @@
-/** Transactional MFP PostgreSQL check: provisional full CE keeps serving old labels. No provider. */
+/** Transactional MFP PostgreSQL check: a membership CE request keeps old facets visible until confirmation. No provider. */
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { main, openDatabase } from "./guard.mjs";
-import { canonicalEntityContextV1, diffEntityContextV1, entityContextDigestV1 } from "../../packages/query-engine/src/signal-entity-context-v1";
+import { requestConceptMembershipsV1 } from "../../infrastructure/db/signal-concept-memberships";
+import type { LabelingDatabaseV1 } from "../../infrastructure/db/signal-mention-facets";
 
 type CheckClient = {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: Row[] }>;
@@ -17,10 +18,23 @@ await main(async () => {
   let assertions = 0;
   let passed = false;
   let step = "preflight";
+  const previousMembershipFlag=process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;
+  const previousFacetsFlag=process.env.NOISIA_MENTION_FACETS_ENABLED;
   try {
+    process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED="true";
+    process.env.NOISIA_MENTION_FACETS_ENABLED="true";
     await client.query("BEGIN");
+    const viewBefore=(await client.query<{reloptions:string[]|null;relacl:string[]|null}>(
+      "SELECT reloptions,relacl FROM pg_class WHERE oid='signal_mention_facets_current_v1'::regclass")).rows[0]!;
+    await client.query(await readFile("infrastructure/db/migrations/0258_signal_membership_context_review.sql","utf8"));
+    const viewAfter=(await client.query<{reloptions:string[]|null;relacl:string[]|null}>(
+      "SELECT reloptions,relacl FROM pg_class WHERE oid='signal_mention_facets_current_v1'::regclass")).rows[0]!;
+    assert.deepEqual(viewAfter,viewBefore,"0258 preserves view options and grants"); assertions++;
+    await client.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
+      VALUES($1,'concept_membership',$2),($1,'mention_facets',$2) ON CONFLICT(workspace_id,feature) DO NOTHING`,
+      [identity.workspace_id,identity.internal_user_id]);
     const active = (await client.query<{ n: number }>(
-      "SELECT count(*)::int n FROM signal_labeling_runs WHERE workspace_id=$1 AND kind='facets' AND status IN('queued','running')",
+      "SELECT count(*)::int n FROM signal_labeling_runs WHERE workspace_id=$1 AND kind IN ('facets','membership') AND status IN('queued','running')",
       [identity.workspace_id],
     )).rows[0]!.n;
     assert.equal(active, 0, "the check requires a quiescent fixture"); assertions++;
@@ -84,26 +98,28 @@ await main(async () => {
     const currentTerms = new Set([primary.name,...primary.aliases]);
     const shortAlias = [..."0123456789abcdef"].map((suffix) => `q${suffix}`).find((term) => !currentTerms.has(term));
     assert.ok(shortAlias,"a free two-character alias is required"); assertions++;
-    const context = canonicalEntityContextV1({entities:latest.context.entities.map((entity) => entity.entity_id === primary.entity_id
-      ? {...entity,aliases:[...entity.aliases,shortAlias]} : entity)});
-    const diff = diffEntityContextV1(latest.context,context);
-    assert.equal(diff.affected_mode,"full"); assertions++;
-    const digest = entityContextDigestV1(context), version = latest.version_no + 1, runId = randomUUID();
     step = "new_context";
     await client.query(
-      `INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,parent_digest,context,diff,affected_mode,affected_count)
-       VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,'full',0)`,
-      [identity.workspace_id,version,digest,latest.digest,JSON.stringify(context),JSON.stringify(diff)],
+      "UPDATE brands SET brand_seed_handles=array_append(COALESCE(brand_seed_handles,ARRAY[]::text[]),$2) WHERE id=$1",
+      [identity.brand_id,shortAlias],
     );
-    step = "waiting_run";
-    await client.query(
-      `INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,preparation_run_id,entity_context_digest,
-       entity_context_version_no,status,estimated_micro_usd,idempotency_key,request_digest,actor_user_id,
-       processing_admission_id,waiting_full_confirmation,full_recalculation_confirmed)
-       SELECT $1::uuid,workspace_id,kind,labeler_version_id,preparation_run_id,$2,$3,'queued',0,$1::text,$1::text,
-       actor_user_id,processing_admission_id,true,false FROM signal_labeling_runs WHERE id=$4`,
-      [runId,digest,version,baseRun.id],
-    );
+    // Keep the real product request inside the outer fixture rollback.
+    const nested = {query:<Row extends Record<string,unknown>>(sql:string,values?:unknown[])=>client.query<Row>(sql,values),
+      connect:async()=>({query:<Row extends Record<string,unknown>>(sql:string,values?:unknown[])=>
+        client.query<Row>(sql==="BEGIN"?"SAVEPOINT membership_request":sql==="COMMIT"?"RELEASE SAVEPOINT membership_request":
+          sql==="ROLLBACK"?"ROLLBACK TO SAVEPOINT membership_request":sql,values),release:()=>{}})} as unknown as LabelingDatabaseV1;
+    step = "membership_request";
+    const request = await requestConceptMembershipsV1({database:nested,workspace_id:identity.workspace_id,
+      actor_user_id:identity.internal_user_id,idempotency_key:`pg-membership-context-${randomUUID()}`,
+      provider_available:true,concept:{concept_key:"review_fixture",label:"Review fixture",scope:"all_conversations",
+        definition:"Synthetic membership check only",inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],
+        definition_digest:`sha256:${"0".repeat(64)}`}});
+    const runId=request.run_id;
+    const waiting=(await client.query<{kind:string;waiting_full_confirmation:boolean;entity_context_version_no:number}>(
+      "SELECT kind,waiting_full_confirmation,entity_context_version_no FROM signal_labeling_runs WHERE id=$1",[runId])).rows[0]!;
+    assert.equal(waiting.kind,"membership"); assertions++;
+    assert.equal(waiting.waiting_full_confirmation,true); assertions++;
+    assert.equal(waiting.entity_context_version_no,latest.version_no+1); assertions++;
     step = "pending_view";
     const pending = (await client.query<{root_id:string;status:string;facets:unknown;entity_context_digest:string;pending_context_review:boolean}>(
       `SELECT root_id,status,facets,entity_context_digest,pending_context_review FROM signal_mention_facets_current_v1
@@ -135,8 +151,12 @@ await main(async () => {
     console.error(JSON.stringify({fixture_step:step,pg_code:typeof error === "object" && error !== null && "code" in error ? error.code : null}));
     throw error;
   } finally {
+    if(previousMembershipFlag===undefined)delete process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;
+    else process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED=previousMembershipFlag;
+    if(previousFacetsFlag===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+    else process.env.NOISIA_MENTION_FACETS_ENABLED=previousFacetsFlag;
     try { await client.query("ROLLBACK"); }
     finally { client.release(); await pool.end(); }
   }
-  if (passed) console.log(JSON.stringify({status:"pass",check:"facets_context_review",assertions,provider_calls:0,rollback:true}));
+  if (passed) console.log(JSON.stringify({status:"pass",check:"membership_context_review",assertions,provider_calls:0,rollback:true}));
 });

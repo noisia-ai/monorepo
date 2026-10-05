@@ -109,10 +109,11 @@ function harness() {
     async recoverUnknownBatch(_r, c, id) {
       c.forEach((x) => { x.status = "submitted"; x.provider_batch_id = id; });
     },
-    async releaseUnknown(_r, c) {
+    async releaseUnknown(_r, c, reason) {
       c.forEach((x) => { x.status = "failed"; x.results_applied = true; });
+      if(reason==="unresolvable_after_window"||reason==="unresolvable_timestamp")run.error_code=`labeling_${reason}`;
     },
-    async clearUnknownFailure() { run.error_code = null; },
+    async clearUnknownFailure() { if(run.error_code==="labeling_outcome_unknown")run.error_code = null; },
     async persistRaw(_r, call, raw) {
       call.raw_body = raw;
       events.push("raw");
@@ -137,7 +138,7 @@ function harness() {
       });
     },
     async finish() {
-      return labels.length === inputs.length
+      return run.error_code ? "failed" : labels.length === inputs.length
         ? "completed"
         : calls.some((c) => c.status === "unknown")
           ? "failed"
@@ -323,6 +324,64 @@ test("an old reservation with a recent unknown outcome retains its exposure", as
   assert.equal(call.status,"unknown");
   assert.equal(h.run.error_code,"labeling_outcome_unknown");
   assert.equal(h.submitted(),0);
+});
+test("a receipt outside the provider window terminates without another provider scan",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.provider_batch_id="expired-batch";
+  call.created_at=new Date(Date.now()-30*24*60*60*1000);
+  call.updated_at=new Date();
+  h.provider.get=async()=>{throw new Error("expired batch must not be fetched");};
+  h.provider.list=async()=>{throw new Error("expired ledger must not be scanned");};
+  assert.equal((await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.equal(call.status,"failed");
+  assert.equal(call.results_applied,true);
+  assert.equal(h.run.error_code,"labeling_unresolvable_after_window");
+});
+test("incomplete scans retain recoverable uncertainty but expire without a perpetual drainer",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-28*24*60*60*1000);
+  call.updated_at=new Date();
+  let pages=0;
+  h.provider.list=async()=>({data:[],has_more:true,last_id:`page-${++pages}`});
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(pages,100);
+  assert.equal(call.status,"unknown","incomplete evidence must retain exposure inside the window");
+  call.created_at=new Date(Date.now()-30*24*60*60*1000);
+  h.provider.list=async()=>{throw new Error("expired uncertainty must not rescan");};
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.run.error_code,"labeling_unresolvable_after_window");
+});
+test("invalid call timestamps use the run clock for a bounded terminal decision",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(NaN);
+  call.updated_at=new Date(NaN);
+  h.run.created_at=new Date(Date.now()-30*24*60*60*1000);
+  h.provider.list=async()=>{throw new Error("expired uncertainty must not rescan");};
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.run.error_code,"labeling_unresolvable_after_window");
+});
+test("missing call and run clocks terminate as unresolvable timestamp",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(NaN);
+  call.updated_at=new Date(NaN);
+  h.provider.list=async()=>{throw new Error("unbounded uncertainty must not spin");};
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.run.error_code,"labeling_unresolvable_timestamp");
 });
 test("a group refusal splits until only the responsible facet root is refused", async () => {
   const h = harness(), originalResults = h.provider.results;
