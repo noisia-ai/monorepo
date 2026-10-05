@@ -6,7 +6,7 @@ import { users } from "@noisia/db";
 import { db } from "@/lib/db";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
 import { requirePortalUser } from "@/lib/auth/guards";
-import { revokeAllClientBrandAccess } from "@/lib/auth/org-sync";
+import { applyTeamUserAccessChange } from "@/lib/auth/team-access";
 import {
   founderRecoveryAllowed,
   founderRecoveryConfigFromEnvironment
@@ -46,12 +46,11 @@ async function activateFounderAccess() {
       kindeId: subject.kindeId
     }, config)) throw new Error("Founder access recovery state changed");
 
-    await tx.update(users).set({
+    const updated = await applyTeamUserAccessChange(tx, current, {
       primaryRole: "noisia_admin",
-      userType: "noisia_internal",
       organizationId: null
-    }).where(eq(users.id, current.id));
-    await revokeAllClientBrandAccess(current.id, tx);
+    });
+    if (!updated) throw new Error("Founder access recovery target disappeared");
   });
 
   redirect("/studio");
