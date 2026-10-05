@@ -165,7 +165,7 @@ export async function runConceptMembershipTickV1(args: {
         calls
           .filter(
             (c) =>
-              c.status === "submitted" && c.provider_batch_id && !c.raw_body,
+              c.status === "submitted" && c.provider_batch_id && !c.raw_body && !c.results_applied,
           )
           .map((c) => c.provider_batch_id!),
       ),
