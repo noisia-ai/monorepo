@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {facetPredictions,membershipPredictions,ledgerCosts,loadJevReceiptBodies} from './ledger-export.ts';
+import {facetPredictions,membershipPredictions,ledgerCosts,loadJevReceiptBodies,currentFacetCalls} from './ledger-export.ts';
 const base={status:'settled',settled_micro_usd:'123',reserved_micro_usd:'200',created_at:'2026-10-04T00:00:00Z',updated_at:'2026-10-04T00:00:01Z',inputs:[],request:{},raw_body:null};
 test('JEV export loads verified storage receipts and fails closed when a settled receipt is absent',async()=>{
  const call={...base,run_id:'run',raw_storage_key:'private/key',raw_sha256:'sha256:'+'a'.repeat(64),raw_size_bytes:7,
@@ -31,4 +31,12 @@ test('membership export projects only the three preregistered gold concepts',()=
   {root_id:'root-1',input_digest:'sha256:a',concept_key:'unrelated_catalog_topic',verdict:'not_belongs'}]};
  const [prediction]=membershipPredictions([call],new Set(['concept_a','concept_b','concept_c']));
  assert.deepEqual(prediction.memberships,{concept_a:'belongs'});
+});
+test('reused JEV receipts retain full cost while predictions exclude superseded calls',()=>{
+ const stale={...base,id:'old',settled_micro_usd:'100',results:[{root_id:'same',input_digest:'old',status:'labeled'}]};
+ const current={...base,id:'new',settled_micro_usd:'200',results:[{root_id:'same',input_digest:'current',status:'labeled'}]};
+ const calls=[stale,current];
+ assert.deepEqual(facetPredictions(currentFacetCalls(calls,new Set(['new'])),false).map(row=>row.input_digest),['current']);
+ assert.equal(ledgerCosts(calls,1).settled_usd,0.0003);
+ assert.throws(()=>currentFacetCalls(calls,new Set(['missing'])),/mfp_eval_current_facets_incomplete/);
 });

@@ -3,7 +3,7 @@ import { readFile,writeFile } from 'node:fs/promises';
 // @ts-expect-error guarded private runner JavaScript
 import { main,openDatabase } from '../dev-corpus/guard.mjs';
 import { validateBundle,validateSelection,type Bundle,type Selection,type Variant } from './contract';
-import { facetPredictions,membershipPredictions,ledgerCosts,type LedgerCall } from './ledger-export';
+import { facetPredictions,membershipPredictions,ledgerCosts,currentFacetCalls,type LedgerCall } from './ledger-export';
 import { loadJevReceiptBodies } from './ledger-export';
 import { loadMfpEvalIdentity } from './fixture-identity';
 import { createWorkspaceEngineStorageV1 } from '../../services/workers/src/workers/signal-workspace-engine-storage';
@@ -45,7 +45,7 @@ void main(async()=>{
         if(!item.thresholds||Object.entries(item.thresholds.values).some(([key,value])=>runs.some(r=>r.identity.params?.[key]!==value)))
           throw new Error('mfp_eval_threshold_identity_mismatch');
       }
-      const calls=(await pool.query(`SELECT run_id,status,settled_micro_usd::text,reserved_micro_usd::text,created_at,updated_at,
+      const calls=(await pool.query(`SELECT id,run_id,status,settled_micro_usd::text,reserved_micro_usd::text,created_at,updated_at,
         request,inputs,results,raw_storage_key,raw_sha256,raw_size_bytes::int FROM signal_labeling_calls WHERE workspace_id=$1 AND run_id=ANY($2::uuid[]) ORDER BY created_at,id`,
         [identity.workspace_id,item.run_ids])).rows as Array<Omit<LedgerCall,'raw_body'>>;
       const hydratedCalls:LedgerCall[]=calls.map(row=>({...row,raw_body:null}));
@@ -54,7 +54,21 @@ void main(async()=>{
         await loadJevReceiptBodies(hydratedCalls,call=>readSignalLabelingReceiptV1({storage,workspace_id:identity.workspace_id,
           run_id:call.run_id!,storage_key:call.raw_storage_key!,raw_sha256:call.raw_sha256!,size_bytes:call.raw_size_bytes!}));
       }
-      const predictions=facet?facetPredictions(hydratedCalls,item.variant==='B_facets_jev'):
+      let predictionCalls=hydratedCalls;
+      if(item.variant==='B_facets_jev'){
+        const current=(await pool.query<{call_id:string}>(`SELECT label.call_id FROM signal_mention_facets_current_v1 current
+          JOIN signal_mention_facet_labels label ON label.workspace_id=current.workspace_id AND label.root_id=current.root_id
+          AND label.input_digest=current.input_digest AND label.labeler_digest=current.labeler_digest
+          AND label.entity_context_digest=current.entity_context_digest
+          WHERE current.workspace_id=$1 AND current.labeler_digest=$2 AND current.status IN('labeled','abstained')`,
+          [identity.workspace_id,runs[0].labeler_digest])).rows;
+        const population=(await pool.query<{roots:number}>(`SELECT count(*)::int roots FROM signal_mention_facets_current_v1 WHERE workspace_id=$1`,
+          [identity.workspace_id])).rows[0]!.roots;
+        if(current.length!==population||new Set(current.map((row:{call_id:string})=>row.call_id)).size!==population)
+          throw new Error('mfp_eval_jev_current_population_incomplete');
+        predictionCalls=currentFacetCalls(hydratedCalls,new Set(current.map((row:{call_id:string})=>row.call_id)));
+      }
+      const predictions=facet?facetPredictions(predictionCalls,item.variant==='B_facets_jev'):
         membershipPredictions(hydratedCalls,new Set(selection.concepts.map(concept=>concept.concept_key)));
       const costs=ledgerCosts(hydratedCalls,new Set(hydratedCalls.flatMap(c=>Array.isArray(c.inputs)?c.inputs.map((r:any)=>r.root_id):[])).size);
       const started=Math.min(...runs.map(r=>Date.parse(r.created_at))),ended=Math.max(...runs.map(r=>Date.parse(r.completed_at??'')));

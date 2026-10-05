@@ -2,7 +2,17 @@ import type { Prediction, Variant } from './contract';
 
 export type LedgerCall = { status:string; settled_micro_usd:string|null; reserved_micro_usd:string;
   created_at:string; updated_at:string; request:unknown; inputs:unknown; results:unknown; raw_body:string|null;
-  run_id?:string; raw_storage_key?:string|null; raw_sha256?:string|null; raw_size_bytes?:number|null };
+  id?:string; run_id?:string; raw_storage_key?:string|null; raw_sha256?:string|null; raw_size_bytes?:number|null };
+
+/** Reused runs may contain superseded receipts. Keep their cost, but only current
+ * call IDs can contribute a prediction for the frozen input/context. */
+export function currentFacetCalls(calls:LedgerCall[],currentCallIds:ReadonlySet<string>):LedgerCall[] {
+  if(!currentCallIds.size)throw new Error('mfp_eval_current_facets_missing');
+  const selected=calls.filter(call=>call.id&&currentCallIds.has(call.id));
+  if(selected.length!==currentCallIds.size||new Set(selected.map(call=>call.id)).size!==selected.length)
+    throw new Error('mfp_eval_current_facets_incomplete');
+  return selected;
+}
 
 /** Hydrate JEV probabilities only from verified private receipts; never return raw bodies in the bundle. */
 export async function loadJevReceiptBodies(calls:LedgerCall[], load:(call:LedgerCall)=>Promise<string>, width=8):Promise<void> {
