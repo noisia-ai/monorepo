@@ -387,7 +387,7 @@ export function parseMembershipGroupV1(
     const parsedRoot = outputRoot.safeParse(candidate);
     if (!parsedRoot.success) {
       if (inputs.length > 1) retry_ordinals.push(ordinal);
-      else results.push(...membershipResultsForV1([input], "error", "membership_schema_invalid"));
+      else results.push(...membershipResultsForV1([input], "error", "membership_item_schema_invalid"));
       continue;
     }
     const root = parsedRoot.data;
