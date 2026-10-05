@@ -37,6 +37,7 @@ export type LabelingRunV1 = {
   cap_micro_usd: string | null;
   processing_admission_id: string;
   status: string;
+  created_at?: Date | string;
   error_code?: string | null;
 };
 export type LabelingCallProposalV1<Input extends FacetInput = FacetInput> = {
@@ -617,6 +618,10 @@ export function createSignalLabelingStoreV1<
     async fail(run: LabelingRunV1, code: string) {
       await tx(db, async (c) => {
         await lock(c, run);
+        if(code==="labeling_raw_receipt_invalid"){
+          await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
+          return;
+        }
         await c.query(
           `UPDATE signal_labeling_calls SET status='failed',updated_at=now() WHERE run_id=$1 AND status='reserved'`,
           [run.id],
@@ -640,7 +645,9 @@ export function createSignalLabelingStoreV1<
     },
     async release(run: LabelingRunV1) {
       await db.query(
-        `UPDATE signal_labeling_runs SET lease_token=NULL,lease_until=NULL,next_poll_at=now()+interval '30 seconds' WHERE id=$1 AND lease_token=$2`,
+        `UPDATE signal_labeling_runs SET lease_token=NULL,lease_until=NULL,
+         next_poll_at=CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown')
+           THEN now()+interval '1 hour' ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
         [run.id, run.lease_token],
       );
     },
@@ -723,12 +730,13 @@ export function createSignalLabelingStoreV1<
         if (stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
           if (!options.loadRaw) fail("labeling_raw_loader_unavailable", 503);
           const size = Number(stored.raw_size_bytes);
-          if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_size_invalid", 503);
-          call.raw_body = await options.loadRaw({ workspace_id: run.workspace_id, run_id: run.id,
+          if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_receipt_invalid", 503);
+          try{call.raw_body = await options.loadRaw({ workspace_id: run.workspace_id, run_id: run.id,
             call_id: call.id, storage_key: stored.raw_storage_key, raw_sha256: stored.raw_sha256,
-            size_bytes: size });
+            size_bytes: size });}
+          catch{fail("labeling_raw_receipt_invalid",503);}
           if (`sha256:${createHash("sha256").update(call.raw_body).digest("hex")}` !== stored.raw_sha256)
-            fail("labeling_raw_integrity_invalid", 503);
+            fail("labeling_raw_receipt_invalid", 503);
         }
       }
       return calls;
@@ -774,10 +782,13 @@ export function createSignalLabelingStoreV1<
         const changed = await c.query(
           `UPDATE signal_labeling_calls SET status='failed',results_applied=true,
            results='[]'::jsonb,stop_reason=$3,updated_at=now()
-           WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='unknown' AND provider_batch_id IS NULL RETURNING id`,
+           WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='unknown'
+             AND (provider_batch_id IS NULL OR $3 IN ('unresolvable_after_window','unresolvable_timestamp')) RETURNING id`,
           [run.id, calls.map((call) => call.id), reason],
         );
         if (changed.rows.length !== calls.length) fail("labeling_reconciliation_conflict");
+        if (reason === "unresolvable_after_window" || reason === "unresolvable_timestamp")
+          await c.query(`UPDATE signal_labeling_runs SET error_code=$2,updated_at=now() WHERE id=$1`,[run.id,`labeling_${reason}`]);
       });
     },
     async clearUnknownFailure(run: LabelingRunV1) {
@@ -934,6 +945,10 @@ export function createSignalLabelingStoreV1<
     async finish(run: LabelingRunV1) {
       return tx(db, async (c) => {
         await lock(c, run);
+        await c.query(`UPDATE signal_labeling_calls call SET status='failed',stop_reason='provider_usage_invalid',updated_at=now()
+          WHERE call.run_id=$1 AND call.status IN ('submitted','unknown') AND call.results_applied
+          AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
+            WHERE result->>'error_code'='provider_usage_invalid')`,[run.id]);
         const calls = (
           await c.query(
             `SELECT count(*) FILTER(WHERE status='unknown')::int unknown,count(*) FILTER(WHERE status IN('reserved','submitting','submitted') OR raw_storage_key IS NOT NULL AND NOT results_applied)::int active FROM signal_labeling_calls WHERE run_id=$1`,
@@ -963,7 +978,11 @@ export function createSignalLabelingStoreV1<
         const blocked = pending > 0 && available === 0 && !calls.active;
         const priorError = (
           await c.query<{ error_code: string | null }>(
-            "SELECT error_code FROM signal_labeling_runs WHERE id=$1",
+            `SELECT CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND stop_reason='provider_usage_invalid')
+              THEN 'labeling_provider_usage_invalid'
+              WHEN error_code='labeling_outcome_unknown' AND NOT EXISTS(
+                SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown') THEN NULL
+              ELSE error_code END error_code FROM signal_labeling_runs WHERE id=$1`,
             [run.id],
           )
         ).rows[0]?.error_code;
@@ -975,8 +994,8 @@ export function createSignalLabelingStoreV1<
               ? "completed"
               : "running";
         await c.query(
-          `UPDATE signal_labeling_runs SET status=$2,error_code=CASE WHEN $3>0 THEN 'labeling_outcome_unknown' ELSE error_code END,counts=jsonb_build_object('pending',$4::int),completed_at=CASE WHEN $2='completed' THEN now() ELSE NULL END,updated_at=now() WHERE id=$1`,
-          [run.id, state, calls.unknown, pending],
+          `UPDATE signal_labeling_runs SET status=$2,error_code=CASE WHEN $3>0 THEN 'labeling_outcome_unknown' ELSE $5 END,counts=jsonb_build_object('pending',$4::int),completed_at=CASE WHEN $2='completed' THEN now() ELSE NULL END,updated_at=now() WHERE id=$1`,
+          [run.id, state, calls.unknown, pending, priorError],
         );
         return state;
       });

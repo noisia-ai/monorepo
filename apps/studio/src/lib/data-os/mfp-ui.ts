@@ -44,6 +44,8 @@ export function mfpQuoteParts(text:string,quotes:string[]) {
   if(start<text.length)parts.push({text:text.slice(start),highlight:false});return parts;
 }
 export function mfpErrorKey(code:string) {
+  if (/unresolvable/.test(code)) return "unresolvable";
+  if (/provider_usage_invalid/.test(code)) return "usageInvalid";
   if (/forbidden|unauthorized/.test(code)) return "forbidden";
   if (/preparation/.test(code)) return "preparation";
   if (/policy|cap_exceeded/.test(code)) return "policy";

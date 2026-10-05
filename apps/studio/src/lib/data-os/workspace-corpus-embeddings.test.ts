@@ -106,6 +106,36 @@ test("MFP omits only the inherited cap, preserving explicitly configured strict 
   assert.equal(validateWorkspaceCorpusEmbeddingRequestV1({...body, hard_cap_micro_usd: null}), true);
 });
 
+test("without workspace opt-in, embedding authority and cap stay legacy with the switch on or off",async()=>{
+  const previous=process.env.NOISIA_MENTION_FACETS_ENABLED;
+  try {
+    for(const flag of ["false","true"]){
+      process.env.NOISIA_MENTION_FACETS_ENABLED=flag;
+      let featureReads=0,writes=0;
+      let authority:Record<string,unknown>={...granted,organization_status:"active",brand_same_organization:true};
+      const query=async(sql:string)=>{
+        if(sql.includes("workspace.status workspace_status"))return {rows:[authority]};
+        if(sql.includes("FROM signal_workspace_features")){featureReads++;return {rows:[{enabled:false}]};}
+        if(/^(INSERT|UPDATE|DELETE)/u.test(sql.trim()))writes++;
+        return {rows:[]};
+      };
+      const database={query,connect:async()=>({query,release(){}})} as unknown as Pick<Pool,"query"|"connect">;
+      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"workspace",actorUserId:"actor",
+        idempotencyKey:"legacy-request",body:{...body,hard_cap_micro_usd:null}}),
+      (error:unknown)=>error instanceof WorkspaceCorpusEmbeddingsError&&error.code==="workspace_embedding_forbidden");
+      authority={...authority,user_type:"noisia_internal",primary_role:"noisia_admin"};
+      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"workspace",actorUserId:"actor",
+        idempotencyKey:"legacy-request",body:{...body,hard_cap_micro_usd:null}}),
+      (error:unknown)=>error instanceof WorkspaceCorpusEmbeddingsError&&error.code==="workspace_embedding_budget_exceeds_limit");
+      assert.equal(featureReads,flag==="true"?3:0);
+      assert.equal(writes,0);
+    }
+  }finally{
+    if(previous===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+    else process.env.NOISIA_MENTION_FACETS_ENABLED=previous;
+  }
+});
+
 test("facet replay uses its original identity despite a changed workspace selection", async () => {
   process.env.NOISIA_MENTION_FACETS_ENABLED = "true";
   const {requestMentionFacetsV1} = await import("../../../../../infrastructure/db/signal-labeling-runs");

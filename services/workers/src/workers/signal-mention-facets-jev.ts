@@ -100,7 +100,7 @@ export async function processMentionFacetsJevV1(args: { run_id: string; store: S
       p50_ms: latencies[Math.ceil(latencies.length * 0.5) - 1] ?? null, p95_ms: latencies[Math.ceil(latencies.length * 0.95) - 1] ?? null };
   } catch (error) {
     const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : '';
-    if (['labeling_forbidden', 'labeling_policy_changed', 'labeling_preparation_changed', 'labeling_context_changed', 'labeling_cap_exhausted', 'labeling_daily_cap_exhausted'].includes(code)) {
+    if (['labeling_forbidden', 'labeling_policy_changed', 'labeling_preparation_changed', 'labeling_context_changed', 'labeling_cap_exhausted', 'labeling_daily_cap_exhausted','labeling_raw_receipt_invalid'].includes(code)) {
       await store.fail(run, code);
     }
     throw error;

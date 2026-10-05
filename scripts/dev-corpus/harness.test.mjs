@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertDisposableFixture, checkTarget } from './guard.mjs';
+import { assertDisposableFixture, checkTarget, verifyDisposableFixtureInDatabase } from './guard.mjs';
 import { parseCsv, csv } from './csv.mjs';
 import { matchingEntities, selectGold, importGold } from './gold.mjs';
 const target = JSON.parse(await readFile(new URL('./target.json', import.meta.url),'utf8'));
@@ -34,6 +34,29 @@ test('mutating concurrency probes require their own disposable fixture identity'
   assert.equal(assertDisposableFixture({fixture_key:'facets-lock-check-abc123'},'facets-lock-check').fixture_key,
     'facets-lock-check-abc123');
   assert.throws(()=>assertDisposableFixture({fixture_key:'voyage-real'},'facets-lock-check'),/disposable_fixture_required/u);
+});
+test('facets lock harness requires its fixture workspace to match database ownership',async()=>{
+  const identity={fixture_key:'facets-lock-check-abc123',organization_id:'org',workspace_id:'workspace',brand_id:'brand',
+    internal_user_id:'internal',actor_user_id:'actor',source_id:'source'};
+  let called=false;
+  const database={query:async(sql,values)=>{
+    called=true;
+    assert.match(sql,/JOIN signal_workspaces w ON w.organization_id=o.id/u);
+    assert.match(sql,/JOIN data_sources source ON source.id=\$6 AND source.workspace_id=w.id/u);
+    assert.deepEqual(values,['org','workspace','brand','internal','actor','source','mfp-facets-lock-check-abc123']);
+    return {rows:[{}]};
+  }};
+  assert.equal(await verifyDisposableFixtureInDatabase(database,identity,'facets-lock-check'),identity);
+  assert.equal(called,true);
+  await assert.rejects(verifyDisposableFixtureInDatabase({query:async()=>({rows:[]})},identity,'facets-lock-check'),
+    /fixture_database_identity_mismatch/u);
+  const source=await readFile(new URL('./facets-lock-check.ts',import.meta.url),'utf8');
+  assert.match(source,/verifyDisposableFixtureInDatabase\(database, identity, "facets-lock-check"\)/u);
+});
+test('facets lock harness leaves policy transitions to product code',async()=>{
+  const source=await readFile(new URL('./facets-lock-check.ts',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/\b(?:INSERT|UPDATE|DELETE)\s+INTO?\s+signal_processing_policy_(?:versions|actions)/iu);
+  assert.doesNotMatch(source,/revocation_during_wait|restored_policy_successor/u);
 });
 test('CSV round-trips quotes, accents and multiline text', () => {
   const data=[{a:'Descripción; uno',b:'Line 1\n"Line 2"'}];
