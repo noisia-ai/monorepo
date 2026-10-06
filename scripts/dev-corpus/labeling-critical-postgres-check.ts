@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { createSignalLabelingStoreV1, type LabelingRunV1, type LabelingCallV1 } from "../../infrastructure/db/signal-labeling-runs";
+import type {FacetInput} from "../../packages/query-engine/src/signal-mention-labeler-v1";
 import {runMentionFacetsTickV1} from "../../services/workers/src/workers/signal-mention-facets-batch";
 import {runConceptMembershipTickV1} from "../../services/workers/src/workers/signal-concept-membership-batch";
 import { main, openDatabase } from "./guard.mjs";
@@ -27,7 +28,7 @@ await main(async()=>{
     const {rows:[fixture]}=await client.query(`SELECT 'signal_labeling_calls'::regclass='pg_temp.signal_labeling_calls'::regclass isolated`);
     assert.equal(fixture.isolated,true);
     const database={connect:async()=>({query:client.query.bind(client),release(){}}),query:client.query.bind(client)};
-    const store=createSignalLabelingStoreV1({database:database as never,storeRaw:async()=>"unused",
+    const store=createSignalLabelingStoreV1<FacetInput>({database:database as never,storeRaw:async()=>"unused",
       adapter:{kind:"membership",inputs:async()=>[],pending:async()=>0,write:async()=>{}}});
     for(const error of ["provider_usage_invalid","provider_result_missing"]){
       stage=`finish_${error}`;
