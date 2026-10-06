@@ -610,6 +610,11 @@ export function createSignalLabelingStoreV1<
       await tx(db, async (c) => {
         await lock(c, run);
         if(code==="labeling_raw_receipt_invalid"){
+          await c.query(`UPDATE signal_labeling_calls
+            SET status='failed',settled_micro_usd=CASE WHEN status='reserved' THEN settled_micro_usd
+              ELSE COALESCE(settled_micro_usd,reserved_micro_usd) END,updated_at=now()
+            WHERE run_id=$1 AND (status IN('reserved','submitting','submitted','unknown')
+              OR status='settled' AND NOT results_applied)`,[run.id]);
           await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
           return;
         }
@@ -723,8 +728,16 @@ export function createSignalLabelingStoreV1<
           try{call.raw_body = await options.loadRaw({ workspace_id: run.workspace_id, run_id: run.id,
             call_id: call.id, storage_key: stored.raw_storage_key, raw_sha256: stored.raw_sha256,
             size_bytes: size });}
-          catch{fail("labeling_raw_receipt_invalid",503);}
-          if (`sha256:${createHash("sha256").update(call.raw_body).digest("hex")}` !== stored.raw_sha256)
+          catch(error){
+            if(error instanceof Error && ["workspace_engine_storage_object_missing",
+              "workspace_engine_storage_digest_invalid","workspace_engine_storage_part_invalid",
+              "workspace_engine_storage_manifest_invalid","workspace_engine_storage_response_too_large",
+              "labeling_raw_receipt_invalid"].includes(error.message))
+              fail("labeling_raw_receipt_invalid",503);
+            fail("labeling_raw_storage_unavailable",503);
+          }
+          if (Buffer.byteLength(call.raw_body)!==size ||
+            `sha256:${createHash("sha256").update(call.raw_body).digest("hex")}` !== stored.raw_sha256)
             fail("labeling_raw_receipt_invalid", 503);
         }
       }
