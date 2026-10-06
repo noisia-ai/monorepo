@@ -4728,10 +4728,5 @@
     "previewResults": "Definition preview · {count} roots",
     "scope": "Scope",
     "chooseScope": "Choose a scope"
-  },
-  "FounderRecovery": {
-    "title": "Activate founder access",
-    "description": "This grants internal administrator access to your authenticated account in the development environment and revokes earlier client grants.",
-    "activate": "Activate internal access"
   }
 }

@@ -33,7 +33,7 @@ const interestTopic = { ...interestContent, definition_revision: 1,
 const consolidatedKey = `consolidated_${"c".repeat(64)}`, consolidatedSnapshotId = id("30");
 const adoptedContent = { ...topicAContent, term_key: "service_adopted", label: "Servicio adoptado",
   origin: "workspace_discovery" as const, discovery_guidance: false,
-  source: { run_key: `workspace-discovery:${id("31")}`, candidate_key: id("34"), candidate_digest: sha("c") } };
+  source: { run_key: `workspace-discovery:${id("31")}`, candidate_key: "consolidated_service", candidate_digest: sha("c") } };
 const adoptedTopic = { ...adoptedContent, definition_revision: 1,
   definition_digest: signalTopicDefinitionDigestV1(adoptedContent), created_at: topicA.created_at, updated_at: topicA.updated_at };
 const consolidatedSnapshot = { id: consolidatedSnapshotId, revision_id: id("31"), revision_digest: sha("a"),
@@ -114,6 +114,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
         ...(membershipAdopted ? [{topic:adoptedTopic,selected:true,selection_revision:3,selection_digest:sha("d")}] : []),
         ...(membershipCollision ? [{topic:interestTopic,selected:false,selection_revision:2,selection_digest:sha("c")}] : [])
       ]};
+      if (membershipMode && sql.includes("FROM signal_topic_consolidation_revisions WHERE consolidation_run_id="))
+        return {rows:[{id:id("31")}]};
       if (membershipMode && sql.includes("SELECT context,digest,version_no")) return {rows: []};
       if (membershipMode && sql.includes("SELECT root_id,title,full_text,facets")) return {rows: []};
       if (membershipMode && sql.includes("string_agg(jsonb_build_array(root_id,concept_key")) return {rows:[{digest:sha("b")}]};
