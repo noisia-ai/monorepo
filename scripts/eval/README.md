@@ -42,6 +42,17 @@ comparador preregistrado de jueces ni ganador automático. El coste B juez provi
 del journal privado (input_tokens × precio configurado), no del ledger común;
 frozen_before_test es una declaración del operador, no prueba temporal.
 
+C2 se calcula sin red ni base con `node --import tsx scripts/eval/hybrid-c2.ts
+--selection <selección> --gold <gold.jsonl> --bundle <eval-variants.json>
+--output <resumen-privado.json>`. La salida se crea de forma exclusiva y contiene
+sólo agregados e identidades ordinales de conceptos. Compara en dev y test la
+puerta+juez JEV, esa ruta con confirmación Claude sólo de positivos y puerta JEV
+con juez Claude para todos los elegibles. Las tres vistas son raíces con juicio
+Claude, pipeline completo e intersección binaria. Una predicción guardada de Claude
+es un sustituto del veredicto de confirmación; el bundle no prueba que haya una
+cita para la solicitud híbrida. El coste híbrido es una proyección con tasas
+observadas de componentes, nunca gasto liquidado de un recorrido híbrido.
+
 ## Contrato de exportación
 
 Los tipos exactos y validaciones están en `contract.ts`. El bundle JSON tiene:

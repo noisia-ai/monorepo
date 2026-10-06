@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { binary, categorical, reliability, wilson } from './metrics.ts';
 import { buildReport, renderMarkdown } from './report.ts';
+import { buildHybridC2 } from './hybrid-c2.ts';
 import { main } from './facets-report.ts';
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 const entity = (entity_id = 'private-entity', salience = 'main') => ({ entity_id, kind: entity_id === 'private-entity' ? 'primary_brand' : 'competitor', salience });
@@ -106,6 +107,33 @@ test('judge comparison separates A-evaluated, own-gate pipelines, and common-emi
   assert.equal(row.common_emitted.a.tp,56);
   assert.equal(row.common_emitted.b.tp,56);
   assert.match(renderMarkdown(report),/Comparación de jueces en tres vistas/);
+});
+test('C2 hybrids preserve missing Claude judgment and separate positive confirmation from gate-wide judging', () => {
+  const f = fixture();
+  const a = structuredClone(f.variant); a.variant = 'A_judge_low';
+  const bFacet = structuredClone(f.variant); bFacet.variant = 'B_facets_jev';
+  bFacet.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1,
+    values: { entity: 0.5, salience: 0.5, spam: 0.5, minimum_choice_confidence: 0 } };
+  const b = structuredClone(f.variant); b.variant = 'B_judge_jev';
+  b.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1, values: { membership: 0.4 } };
+  const key = 'private-concept-one';
+  // A JEV positive without a saved Claude call stays pending; a negative needs no confirmation.
+  a.prediction_rows.splice(90,1);
+  b.prediction_rows[91].memberships[key] = 'not_belongs';
+  a.prediction_rows.find(r => r.root_id === 'private-root-92').memberships[key] = 'not_belongs';
+  bFacet.prediction_rows[93].facets.entities.value = [];
+  bFacet.prediction_rows[93].facets.unrelated_reason = 'off_topic';
+  const medium = structuredClone(a); medium.variant = 'A_judge_medium';
+  f.bundle.variants = [a,medium,bFacet,b];
+  const row = buildHybridC2(f.selection,f.gold,f.bundle).rows.find(r => r.partition === 'test' && r.claude === 'A_judge_low' && r.concept === 'concept_1');
+  assert.equal(row.gate_passed,59);
+  assert.equal(row.missing_claude_saved.among_jev_positive,1);
+  assert.equal(row.views.full_pipeline.jev_then_claude_positive.fn_without_judgment,2);
+  assert.equal(row.views.full_pipeline.jev_then_claude_positive.fn_explicit,2);
+  assert.equal(row.views.full_pipeline.jev_gate_claude_judge.fn_without_judgment,2);
+  assert.equal(row.views.claude_evaluated_same_roots.roots,58);
+  assert.equal(row.views.common_binary.roots,58);
+  assert.equal(buildHybridC2(f.selection,f.gold,f.bundle).status,'counterfactual_no_labeler_approval');
 });
 test('JEV judge cost and freeze provenance are explicit without claiming a judge winner', () => {
   const f = fixture(); f.variant.variant = 'B_judge_jev';
