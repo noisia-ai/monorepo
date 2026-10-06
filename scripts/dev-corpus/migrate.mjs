@@ -25,7 +25,8 @@ await main(async () => {
     for (const { file, sql, digest } of sources) {
       if (applied.has(file)) continue;
       stage=file;
-      if (file === '0255_signal_labeling_receipts_in_object_storage.sql') {
+      if (file === '0254_signal_labeling_receipt_verified_gate.sql' && !applied.has('0255_signal_labeling_receipts_in_object_storage.sql')
+        || file === '0255_signal_labeling_receipts_in_object_storage.sql') {
         const {rows:[inventory]}=await client.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE raw_body IS NOT NULL');
         if(inventory.n>0){
           const gate=spawnSync(process.execPath,['--import','tsx',fileURLToPath(new URL('./verify-labeling-receipts-before-0255.ts',import.meta.url))],

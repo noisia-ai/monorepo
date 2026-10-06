@@ -180,7 +180,7 @@ export async function loadMentionFacetsStatusV1(args: {
       (
         await c.query(
           `SELECT r.id,r.status,r.counts,r.estimated_micro_usd::text,r.budget_micro_usd::text,r.cap_micro_usd::text,r.waiting_full_confirmation,r.error_code,
-    COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled'),0)::text settled_micro_usd,
+    COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled' OR c.status='failed' AND c.settled_micro_usd IS NOT NULL),0)::text settled_micro_usd,
     COALESCE(sum(c.reserved_micro_usd) FILTER(WHERE c.status IN('reserved','submitting','submitted','unknown')),0)::text reserved_micro_usd
     FROM signal_labeling_runs r LEFT JOIN signal_labeling_calls c ON c.run_id=r.id WHERE r.id=(SELECT id FROM signal_labeling_runs WHERE workspace_id=$1 AND kind='facets' ORDER BY created_at DESC LIMIT 1) GROUP BY r.id`,
           [args.workspace_id],
@@ -464,6 +464,15 @@ export async function requestMentionFacetsV1(args: {
     };
   });
 }
+export async function readSignalLabelingRunExposureV1(client: PoolClient, runId: string): Promise<string> {
+  const row=(await client.query<{total:string}>(
+    `SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)
+      ELSE reserved_micro_usd END),0)::text total FROM signal_labeling_calls WHERE run_id=$1`,
+    [runId],
+  )).rows[0];
+  return row?.total??"0";
+}
+
 export function createSignalLabelingStoreV1<
   Input extends FacetInput = FacetInput,
   Result = FacetResult,
@@ -564,14 +573,7 @@ export function createSignalLabelingStoreV1<
         [policy.organization_id, policy.budget_date, policy.budget_timezone],
       )
     ).rows[0]!;
-    const spent = Number(
-      (
-        await c.query(
-          `SELECT COALESCE(sum(CASE WHEN status='settled' THEN settled_micro_usd WHEN status='failed' THEN 0 ELSE reserved_micro_usd END),0) total FROM signal_labeling_calls WHERE run_id=$1`,
-          [run.id],
-        )
-      ).rows[0]!.total,
-    );
+    const spent = Number(await readSignalLabelingRunExposureV1(c,run.id));
     if (
       (run.cap_micro_usd !== null &&
         spent + amount > Number(run.cap_micro_usd)) ||
@@ -619,6 +621,11 @@ export function createSignalLabelingStoreV1<
       await tx(db, async (c) => {
         await lock(c, run);
         if(code==="labeling_raw_receipt_invalid"){
+          await c.query(`UPDATE signal_labeling_calls
+            SET status='failed',settled_micro_usd=CASE WHEN status='reserved' THEN settled_micro_usd
+              ELSE COALESCE(settled_micro_usd,reserved_micro_usd) END,updated_at=now()
+            WHERE run_id=$1 AND (status IN('reserved','submitting','submitted','unknown')
+              OR status='settled' AND NOT results_applied)`,[run.id]);
           await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
           return;
         }
@@ -734,8 +741,16 @@ export function createSignalLabelingStoreV1<
           try{call.raw_body = await options.loadRaw({ workspace_id: run.workspace_id, run_id: run.id,
             call_id: call.id, storage_key: stored.raw_storage_key, raw_sha256: stored.raw_sha256,
             size_bytes: size });}
-          catch{fail("labeling_raw_receipt_invalid",503);}
-          if (`sha256:${createHash("sha256").update(call.raw_body).digest("hex")}` !== stored.raw_sha256)
+          catch(error){
+            if(error instanceof Error && ["workspace_engine_storage_object_missing",
+              "workspace_engine_storage_digest_invalid","workspace_engine_storage_part_invalid",
+              "workspace_engine_storage_manifest_invalid","workspace_engine_storage_response_too_large",
+              "labeling_raw_receipt_invalid"].includes(error.message))
+              fail("labeling_raw_receipt_invalid",503);
+            fail("labeling_raw_storage_unavailable",503);
+          }
+          if (Buffer.byteLength(call.raw_body)!==size ||
+            `sha256:${createHash("sha256").update(call.raw_body).digest("hex")}` !== stored.raw_sha256)
             fail("labeling_raw_receipt_invalid", 503);
         }
       }
