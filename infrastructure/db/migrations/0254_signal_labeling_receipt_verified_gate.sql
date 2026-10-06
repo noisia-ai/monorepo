@@ -12,9 +12,9 @@ BEGIN
   END IF;
   IF EXISTS (
     SELECT 1 FROM signal_labeling_calls
-    WHERE raw_body IS NOT NULL AND (
-      raw_storage_verified_at IS NULL OR raw_storage_key IS NULL
-      OR raw_storage_verified_key IS DISTINCT FROM raw_storage_key
+    WHERE raw_storage_verified_at IS NULL OR (
+      raw_body IS NOT NULL AND (raw_storage_key IS NULL
+        OR raw_storage_verified_key IS DISTINCT FROM raw_storage_key)
     )
   ) THEN
     RAISE EXCEPTION 'signal_labeling_receipt_unverified';
