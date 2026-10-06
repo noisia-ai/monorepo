@@ -6,7 +6,9 @@ import { main, openDatabase } from "./guard.mjs";
 
 await main(async()=>{
   const pool=await openDatabase(),client=await pool.connect();
+  let stage="setup";
   try{
+    await client.query("SET search_path TO pg_temp,public");
     await client.query(`CREATE TEMP TABLE signal_labeling_runs (
       id uuid PRIMARY KEY,lease_token uuid,lease_until timestamptz,status text,error_code text,
       counts jsonb DEFAULT '{}'::jsonb,completed_at timestamptz,updated_at timestamptz DEFAULT now())`);
@@ -15,10 +17,13 @@ await main(async()=>{
       results jsonb,raw_storage_key text,stop_reason text,reserved_micro_usd bigint NOT NULL,
       settled_micro_usd bigint,provider_batch_id text,custom_id text,created_at timestamptz DEFAULT now(),
       updated_at timestamptz DEFAULT now())`);
+    const {rows:[fixture]}=await client.query(`SELECT 'signal_labeling_calls'::regclass='pg_temp.signal_labeling_calls'::regclass isolated`);
+    assert.equal(fixture.isolated,true);
     const database={connect:async()=>({query:client.query.bind(client),release(){}}),query:client.query.bind(client)};
     const store=createSignalLabelingStoreV1({database:database as never,storeRaw:async()=>"unused",
       adapter:{kind:"membership",inputs:async()=>[],pending:async()=>0,write:async()=>{}}});
     for(const error of ["provider_usage_invalid","provider_result_missing"]){
+      stage=`finish_${error}`;
       const id=randomUUID(),lease=randomUUID(),callId=randomUUID();
       await client.query(`INSERT INTO signal_labeling_runs(id,lease_token,lease_until,status,error_code)
         VALUES($1,$2,now()+interval '5 minutes','running','labeling_outcome_unknown')`,[id,lease]);
@@ -32,6 +37,7 @@ await main(async()=>{
       assert.deepEqual(state,{status:"failed",error_code:`labeling_${error}`});
     }
     const id=randomUUID(),lease=randomUUID(),callId=randomUUID();
+    stage="release_unknown";
     await client.query(`INSERT INTO signal_labeling_runs(id,lease_token,lease_until,status,error_code)
       VALUES($1,$2,now()+interval '5 minutes','running','labeling_outcome_unknown')`,[id,lease]);
     await client.query(`INSERT INTO signal_labeling_calls(id,run_id,status,reserved_micro_usd,custom_id)
@@ -43,5 +49,9 @@ await main(async()=>{
     const {rows:[released]}=await client.query(`SELECT status,results_applied FROM signal_labeling_calls WHERE id=$1`,[callId]);
     assert.deepEqual(released,{status:"failed",results_applied:true});
     console.log(JSON.stringify({status:"passed",cases:3,provider_calls:0,cost_micro_usd:0}));
+  }catch(error){
+    console.error(JSON.stringify({status:"check_failed",stage,code:(error as {code?:string}).code??null,
+      message:error instanceof Error?error.message.slice(0,180):"unknown"}));
+    throw error;
   }finally{client.release();await pool.end();}
 });
