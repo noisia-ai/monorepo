@@ -1,0 +1,47 @@
+/** Runner-only acceptance: real labeling store SQL on disposable PostgreSQL temp tables. */
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { createSignalLabelingStoreV1, type LabelingRunV1, type LabelingCallV1 } from "../../infrastructure/db/signal-labeling-runs";
+import { main, openDatabase } from "./guard.mjs";
+
+await main(async()=>{
+  const pool=await openDatabase(),client=await pool.connect();
+  try{
+    await client.query(`CREATE TEMP TABLE signal_labeling_runs (
+      id uuid PRIMARY KEY,lease_token uuid,lease_until timestamptz,status text,error_code text,
+      counts jsonb DEFAULT '{}'::jsonb,completed_at timestamptz,updated_at timestamptz DEFAULT now())`);
+    await client.query(`CREATE TEMP TABLE signal_labeling_calls (
+      id uuid PRIMARY KEY,run_id uuid,status text NOT NULL,results_applied boolean NOT NULL DEFAULT false,
+      results jsonb,raw_storage_key text,stop_reason text,reserved_micro_usd bigint NOT NULL,
+      settled_micro_usd bigint,provider_batch_id text,custom_id text,created_at timestamptz DEFAULT now(),
+      updated_at timestamptz DEFAULT now())`);
+    const database={connect:async()=>({query:client.query.bind(client),release(){}}),query:client.query.bind(client)};
+    const store=createSignalLabelingStoreV1({database:database as never,storeRaw:async()=>"unused",
+      adapter:{kind:"membership",inputs:async()=>[],pending:async()=>0,write:async()=>{}}});
+    for(const error of ["provider_usage_invalid","provider_result_missing"]){
+      const id=randomUUID(),lease=randomUUID(),callId=randomUUID();
+      await client.query(`INSERT INTO signal_labeling_runs(id,lease_token,lease_until,status,error_code)
+        VALUES($1,$2,now()+interval '5 minutes','running','labeling_outcome_unknown')`,[id,lease]);
+      await client.query(`INSERT INTO signal_labeling_calls(id,run_id,status,results_applied,results,reserved_micro_usd,custom_id)
+        VALUES($1,$2,'unknown',true,$3::jsonb,83,$4)`,[callId,id,JSON.stringify([{error_code:error}]),`fixture-${callId}`]);
+      const run={id,lease_token:lease,workspace_id:randomUUID()} as LabelingRunV1;
+      assert.equal(await store.finish(run),"failed");
+      const {rows:[call]}=await client.query(`SELECT status,stop_reason,settled_micro_usd::text FROM signal_labeling_calls WHERE id=$1`,[callId]);
+      assert.deepEqual(call,{status:"failed",stop_reason:error,settled_micro_usd:"83"});
+      const {rows:[state]}=await client.query(`SELECT status,error_code FROM signal_labeling_runs WHERE id=$1`,[id]);
+      assert.deepEqual(state,{status:"failed",error_code:`labeling_${error}`});
+    }
+    const id=randomUUID(),lease=randomUUID(),callId=randomUUID();
+    await client.query(`INSERT INTO signal_labeling_runs(id,lease_token,lease_until,status,error_code)
+      VALUES($1,$2,now()+interval '5 minutes','running','labeling_outcome_unknown')`,[id,lease]);
+    await client.query(`INSERT INTO signal_labeling_calls(id,run_id,status,reserved_micro_usd,custom_id)
+      VALUES($1,$2,'unknown',17,$3)`,[callId,id,`fixture-${callId}`]);
+    const run={id,lease_token:lease} as LabelingRunV1,call={id:callId} as LabelingCallV1;
+    await store.releaseUnknown(run,[call],"unresolvable_after_window");
+    const refreshed=await store.refresh(run);
+    assert.deepEqual(refreshed,{status:"running",error_code:"labeling_unresolvable_after_window"});
+    const {rows:[released]}=await client.query(`SELECT status,results_applied FROM signal_labeling_calls WHERE id=$1`,[callId]);
+    assert.deepEqual(released,{status:"failed",results_applied:true});
+    console.log(JSON.stringify({status:"passed",cases:3,provider_calls:0,cost_micro_usd:0}));
+  }finally{client.release();await pool.end();}
+});

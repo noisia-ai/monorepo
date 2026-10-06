@@ -741,6 +741,14 @@ export function createSignalLabelingStoreV1<
       }
       return calls;
     },
+    async refresh(run: LabelingRunV1): Promise<{status:string;error_code:string|null}> {
+      const row=(await db.query<{status:string;error_code:string|null}>(
+        "SELECT status,error_code FROM signal_labeling_runs WHERE id=$1 AND lease_token=$2",
+        [run.id,run.lease_token],
+      )).rows[0];
+      if(!row)fail("labeling_lease_lost");
+      return row;
+    },
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
       await tx(db, async (c) => {
@@ -945,10 +953,14 @@ export function createSignalLabelingStoreV1<
     async finish(run: LabelingRunV1) {
       return tx(db, async (c) => {
         await lock(c, run);
-        await c.query(`UPDATE signal_labeling_calls call SET status='failed',stop_reason='provider_usage_invalid',updated_at=now()
+        await c.query(`UPDATE signal_labeling_calls call SET status='failed',
+          settled_micro_usd=COALESCE(call.settled_micro_usd,call.reserved_micro_usd),
+          stop_reason=CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
+            WHERE result->>'error_code'='provider_usage_invalid') THEN 'provider_usage_invalid'
+            ELSE 'provider_result_missing' END,updated_at=now()
           WHERE call.run_id=$1 AND call.status IN ('submitted','unknown') AND call.results_applied
           AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
-            WHERE result->>'error_code'='provider_usage_invalid')`,[run.id]);
+            WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id]);
         const calls = (
           await c.query(
             `SELECT count(*) FILTER(WHERE status='unknown')::int unknown,count(*) FILTER(WHERE status IN('reserved','submitting','submitted') OR raw_storage_key IS NOT NULL AND NOT results_applied)::int active FROM signal_labeling_calls WHERE run_id=$1`,
@@ -980,6 +992,8 @@ export function createSignalLabelingStoreV1<
           await c.query<{ error_code: string | null }>(
             `SELECT CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND stop_reason='provider_usage_invalid')
               THEN 'labeling_provider_usage_invalid'
+              WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND stop_reason='provider_result_missing')
+              THEN 'labeling_provider_result_missing'
               WHEN error_code='labeling_outcome_unknown' AND NOT EXISTS(
                 SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown') THEN NULL
               ELSE error_code END error_code FROM signal_labeling_runs WHERE id=$1`,

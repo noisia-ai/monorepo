@@ -25,17 +25,18 @@ export async function reconcileUnknownBatchCallsV1<Input extends FacetInput>(
 ) {
   // Durable raw is handled by the normal replay path, even after provider retention.
   const unknown = current.filter((call) => call.status === "unknown" && !call.results_applied && !call.raw_body);
-  if (!unknown.length) return;
+  if (!unknown.length) return {released:false};
+  let released=false;
   const now = Date.now();
   const started = (call: LabelingCallV1<Input>) => {
     const callTime=time(call.created_at),runTime=time(run.created_at);
     return Number.isFinite(callTime)?callTime:runTime;
   };
   const unbounded=unknown.filter(call=>!Number.isFinite(started(call)));
-  if(unbounded.length)await store.releaseUnknown(run,unbounded,"unresolvable_timestamp");
+  if(unbounded.length){await store.releaseUnknown(run,unbounded,"unresolvable_timestamp");released=true;}
   const bounded=unknown.filter(call=>!unbounded.includes(call));
   const expired = bounded.filter((call) => now - started(call) >= RETENTION_MS);
-  if (expired.length) await store.releaseUnknown(run, expired, "unresolvable_after_window");
+  if (expired.length){await store.releaseUnknown(run, expired, "unresolvable_after_window");released=true;}
   const recoverable = bounded.filter((call) => !expired.includes(call));
   for (const call of recoverable.filter((item) => item.provider_batch_id)) {
     const batch = await provider.get(call.provider_batch_id!);
@@ -90,12 +91,14 @@ export async function reconcileUnknownBatchCallsV1<Input extends FacetInput>(
         now - (Number.isFinite(time(call.updated_at)) ? time(call.updated_at) : now) >= SETTLEMENT_GRACE_MS
         && !inProgressDates.some((date) => date >= started(call) - CLOCK_SKEW_MS
           && date <= (Number.isFinite(time(call.updated_at)) ? time(call.updated_at) : now) + CLOCK_SKEW_MS));
-      if (releasable.length)
+      if (releasable.length){
         await store.releaseUnknown(run, releasable, "batch_not_found_after_complete_scan");
+        released=true;
+      }
     }
   }
   if (!(await store.calls(run)).some((call) => call.status === "unknown")) {
     await store.clearUnknownFailure(run);
-    if (run.error_code === "labeling_outcome_unknown") run.error_code = null;
   }
+  return {released};
 }
