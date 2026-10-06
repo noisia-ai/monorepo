@@ -4732,10 +4732,5 @@
     "previewResults": "Prueba de definición · {count} raíces",
     "scope": "Ámbito",
     "chooseScope": "Elige el ámbito"
-  },
-  "FounderRecovery": {
-    "title": "Activar acceso interno de fundador",
-    "description": "Esta operación concede acceso administrativo interno a tu cuenta autenticada en el entorno de desarrollo y revoca concesiones anteriores de cliente.",
-    "activate": "Activar acceso interno"
   }
 }

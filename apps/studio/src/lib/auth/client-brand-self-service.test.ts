@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {existsSync} from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
@@ -155,17 +156,17 @@ test("client update keeps organization, slug and lifecycle immutable and removes
 });
 
 test("session and team updates never grant every brand in an organization", async () => {
-  const [session, teamRoute, teamAccess, founderRecovery, orgSync] = await Promise.all([
+  assert.equal(existsSync(new URL("../../app/founder-recovery/page.tsx",import.meta.url)),false,
+    "the temporary founder self-promotion route must not ship");
+  const [session, teamRoute, teamAccess, orgSync] = await Promise.all([
     readFile(new URL("./session.ts", import.meta.url), "utf8"),
     readFile(new URL("../../app/api/team/users/[id]/route.ts", import.meta.url), "utf8"),
     readFile(new URL("./team-access.ts", import.meta.url), "utf8"),
-    readFile(new URL("../../app/founder-recovery/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("./org-sync.ts", import.meta.url), "utf8")
   ]);
   assert.doesNotMatch(session, /syncClientBrandAccessForOrganization/u);
   assert.doesNotMatch(teamRoute, /syncClientBrandAccessForOrganization/u);
   assert.match(teamRoute, /db\.transaction\(\(tx\) => applyTeamUserAccessChange/u);
-  assert.match(founderRecovery, /applyTeamUserAccessChange\(tx, current/u);
   assert.match(teamAccess, /revokeAllClientBrandAccess\(row\.id, tx\)/u);
   assert.match(teamAccess, /revokeClientBrandAccessOutsideOrganization\([\s\S]*?, tx\)/u);
   assert.doesNotMatch(orgSync, /onConflictDoUpdate[\s\S]*revokedAt:\s*null/u);
