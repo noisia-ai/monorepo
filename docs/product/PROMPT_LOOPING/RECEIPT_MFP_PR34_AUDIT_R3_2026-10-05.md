@@ -1,0 +1,12 @@
+# PR #34 — recibos MFP tras auditoría §9.3
+
+Rama `fix/mfp-phase-b-harness`, HEAD `4d1a6497`; PR a `develop`, sin fusión. Depende de la revisión de #35 para entrar en `develop`; #36 incorpora esta cabeza para contabilizar también sus errores de proveedor. Modelo/esfuerzo de esta corrección: **gpt-6-sol / high**. La aceptación focal de 0254 se escaló a **gpt-6-astra / medium** tras dos fallos del fixture; la causa fue `search_path` del runner, que resolvía la tabla pública en vez de la temporal. El SQL de 0254 no cambió durante la escalación.
+
+| Hallazgo | Corrección | Evidencia |
+|---|---|---|
+| Recibo ausente/corrupto deja llamadas abiertas | El fallo terminal cierra reservadas y enviadas bajo el lock del run. Las enviadas conservan el importe reservado como coste confirmado conservador; el run termina `failed`. | PostgreSQL real: 0254/recibo/cierre **10 PASS**, sólo tablas temporales. |
+| Timeout/5xx se trataba como corrupción | Storage distingue 404 de transporte/5xx; el loader verifica bytes y SHA, y mantiene el run/call reclamables ante fallo transitorio. | PG anterior comprueba `running`/`submitted` tras 5xx; pruebas locales de storage y batches. |
+| La puerta de 0255 sólo vivía en el runner | 0254 aborta si cualquier fila existente carece de `raw_storage_verified_at`, y exige clave verificada para cuerpos. Tabla vacía pasa; una base con 0255 ya aplicada no relee la columna retirada. `migrate.mjs` hace verificación antes de 0254 en instalaciones nuevas. | PG real: tabla vacía, cuerpo sin marca/clave, clave distinta, fila reserved sin marca, y esquema ya migrado. SHA de 0255 intacto: `d8a5bc65ae631fc6f33bc28535ce26d12b8c98b490cef82e2a91f6e5a839fdf5`. |
+| Un terminal cobrado quedaba invisible al presupuesto | 0252 incluye `failed` con `settled_micro_usd` en exposición diaria; el mismo criterio rige el tope del run y el estado visible. | PG real, `BEGIN`/`ROLLBACK`: función 0252 real, delta **+83 µUSD** tanto en exposición como en run cap; **4 PASS**, cero filas persistidas. |
+
+Validación local: DB **624 PASS / 102 SKIP**, Worker **791 PASS / 42 SKIP**, harness **12/12**, typecheck DB/Worker y `git diff --check` verdes. El runner usó exclusivamente la base `noisia_mfp` verificada por `guard.mjs`; 0252 sólo se ejecutó dentro de rollback. **Cero llamadas a proveedores y coste externo USD 0.** Las migraciones 0252/0254 no se aplicaron de forma persistente a dev-test; su instalación exige el gate normal de hash/orden y revisión. No se modificó ni reaplicó 0255.
