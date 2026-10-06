@@ -10,6 +10,9 @@ await main(async () => {
   const client = await pool.connect();
   let stage = "setup";
   try {
+    // The runner role can explicitly put public before pg_temp. Keep all fixture
+    // queries, including the unmodified production migration, on temporary tables.
+    await client.query(`SET search_path TO pg_temp, public`);
     await client.query(`CREATE TEMP TABLE signal_labeling_calls (
       id uuid PRIMARY KEY,run_id uuid NOT NULL,status text NOT NULL,
       raw_body text,raw_storage_key text,raw_sha256 text,
@@ -18,12 +21,21 @@ await main(async () => {
       settled_micro_usd bigint,reserved_micro_usd bigint NOT NULL,updated_at timestamptz DEFAULT now()
     )`);
     const migration = await readFile(new URL("../../infrastructure/db/migrations/0254_signal_labeling_receipt_verified_gate.sql", import.meta.url), "utf8");
+    const {rows:[fixture]}=await client.query(`SELECT 'signal_labeling_calls'::regclass = 'pg_temp.signal_labeling_calls'::regclass AS isolated`);
+    assert.equal(fixture.isolated,true);
     stage="empty_gate";
     await client.query(migration); // Empty table is safe.
+    stage="insert_legacy_body";
     const callId = randomUUID(), runId = randomUUID(), lease = randomUUID();
     await client.query(`INSERT INTO signal_labeling_calls(id,run_id,status,raw_body,reserved_micro_usd)
       VALUES($1,$2,'submitted','receipt',47)`, [callId,runId]);
     stage="unverified_body";
+    await assert.rejects(client.query(migration), /signal_labeling_receipt_unverified/u);
+    await client.query(`UPDATE signal_labeling_calls SET raw_storage_verified_at=now() WHERE id=$1`,[callId]);
+    stage="verified_body_missing_key";
+    await assert.rejects(client.query(migration), /signal_labeling_receipt_unverified/u);
+    await client.query(`UPDATE signal_labeling_calls SET raw_storage_key='private/key',raw_storage_verified_key='private/other' WHERE id=$1`,[callId]);
+    stage="verified_body_mismatched_key";
     await assert.rejects(client.query(migration), /signal_labeling_receipt_unverified/u);
     await client.query(`UPDATE signal_labeling_calls SET raw_storage_key='private/key',
       raw_storage_verified_key='private/key',raw_storage_verified_at=now() WHERE id=$1`,[callId]);
@@ -63,7 +75,10 @@ await main(async () => {
     assert.deepEqual(calls,[{status:"failed",settled_micro_usd:null},{status:"failed",settled_micro_usd:"47"}]);
     const {rows:[run]}=await client.query(`SELECT status,error_code FROM signal_labeling_runs WHERE id=$1`,[runId]);
     assert.deepEqual(run,{status:"failed",error_code:"labeling_raw_receipt_invalid"});
-    console.log(JSON.stringify({status:"passed",gate:"0254",cases:5,provider_calls:0,cost_micro_usd:0}));
+    stage="already_migrated_gate";
+    await client.query(`ALTER TABLE pg_temp.signal_labeling_calls DROP COLUMN raw_body`);
+    await client.query(migration);
+    console.log(JSON.stringify({status:"passed",gate:"0254",cases:10,provider_calls:0,cost_micro_usd:0}));
   } catch(error) {
     console.error(JSON.stringify({status:"check_failed",stage,code:(error as {code?:string}).code??null,
       message:error instanceof Error?error.message.slice(0,180):"unknown"}));

@@ -177,7 +177,7 @@ export async function loadMentionFacetsStatusV1(args: {
       (
         await c.query(
           `SELECT r.id,r.status,r.counts,r.estimated_micro_usd::text,r.budget_micro_usd::text,r.cap_micro_usd::text,r.waiting_full_confirmation,r.error_code,
-    COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled'),0)::text settled_micro_usd,
+    COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled' OR c.status='failed' AND c.settled_micro_usd IS NOT NULL),0)::text settled_micro_usd,
     COALESCE(sum(c.reserved_micro_usd) FILTER(WHERE c.status IN('reserved','submitting','submitted','unknown')),0)::text reserved_micro_usd
     FROM signal_labeling_runs r LEFT JOIN signal_labeling_calls c ON c.run_id=r.id WHERE r.id=(SELECT id FROM signal_labeling_runs WHERE workspace_id=$1 AND kind='facets' ORDER BY created_at DESC LIMIT 1) GROUP BY r.id`,
           [args.workspace_id],
@@ -459,6 +459,15 @@ export async function requestMentionFacetsV1(args: {
     };
   });
 }
+export async function readSignalLabelingRunExposureV1(client: PoolClient, runId: string): Promise<string> {
+  const row=(await client.query<{total:string}>(
+    `SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)
+      ELSE reserved_micro_usd END),0)::text total FROM signal_labeling_calls WHERE run_id=$1`,
+    [runId],
+  )).rows[0];
+  return row?.total??"0";
+}
+
 export function createSignalLabelingStoreV1<
   Input extends FacetInput = FacetInput,
   Result = FacetResult,
@@ -559,14 +568,7 @@ export function createSignalLabelingStoreV1<
         [policy.organization_id, policy.budget_date, policy.budget_timezone],
       )
     ).rows[0]!;
-    const spent = Number(
-      (
-        await c.query(
-          `SELECT COALESCE(sum(CASE WHEN status='settled' THEN settled_micro_usd WHEN status='failed' THEN 0 ELSE reserved_micro_usd END),0) total FROM signal_labeling_calls WHERE run_id=$1`,
-          [run.id],
-        )
-      ).rows[0]!.total,
-    );
+    const spent = Number(await readSignalLabelingRunExposureV1(c,run.id));
     if (
       (run.cap_micro_usd !== null &&
         spent + amount > Number(run.cap_micro_usd)) ||
