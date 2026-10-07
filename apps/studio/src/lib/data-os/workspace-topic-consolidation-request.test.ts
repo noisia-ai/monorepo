@@ -9,6 +9,25 @@ const body = { action: "retry_numeric" as const, execution_id: execution };
 const receipt: WorkspaceTopicConsolidationReceiptV1 = { contract_version: "signal-topic-consolidation-request-receipt-v1",
   workspace_id: workspace, action: "retry_numeric", execution_id: execution, idempotency_key: "same-intent-request", replayed: false };
 
+test("native browser fetch receives its global receiver and the sealed request", async () => {
+  const intent = workspaceTopicConsolidationIntentV1({ workspace_id: workspace, body, previous: null,
+    createKey: () => receipt.idempotency_key });
+  const controller = new AbortController();
+  let calls = 0;
+  const fetcher: typeof fetch = async function (this: unknown, url, options) {
+    assert.equal(this === globalThis, true, "native Window.fetch rejects an arbitrary object receiver");
+    calls++;
+    assert.equal(url, `/api/data-os/signal/${workspace}/topics/consolidation`);
+    assert.equal(options?.method, "POST");
+    assert.equal(options?.signal, controller.signal);
+    assert.equal(new Headers(options?.headers).get("Idempotency-Key"), intent.key);
+    assert.deepEqual(JSON.parse(String(options?.body)), intent.body);
+    return Response.json(receipt, { status: 202 });
+  };
+  assert.deepEqual(await submitWorkspaceTopicConsolidationIntentV1({ intent, fetcher, signal: controller.signal }), receipt);
+  assert.equal(calls, 1);
+});
+
 test("lost HTTP response after retry COMMIT replays the same key without a second mutation or status read", async () => {
   const keys: string[] = []; let writes = 0, requests = 0, allocated = 0;
   const database = { connect: async () => ({ query: async (sql: string, values?: unknown[]) => {
