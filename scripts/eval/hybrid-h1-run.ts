@@ -37,8 +37,10 @@ void main(async()=>{
   if (strictCap!==null&&(!Number.isSafeInteger(strictCap)||strictCap<0)) fail("mfp_hybrid_cap_invalid");
   const resumeOne=process.argv.includes("--resume-after-unknown");
   const resumeTwo=process.argv.includes("--resume-after-two-unknown");
-  if (resumeOne && resumeTwo) fail("mfp_hybrid_quarantine_mode_invalid");
-  const expectedUnknowns=resumeTwo?2:resumeOne?1:0;
+  const resumeDuplicate=process.argv.includes("--resume-after-duplicate-receipt");
+  if ([resumeOne,resumeTwo,resumeDuplicate].filter(Boolean).length>1)
+    fail("mfp_hybrid_quarantine_mode_invalid");
+  const expectedUnknowns=resumeTwo||resumeDuplicate?2:resumeOne?1:0;
   const identity=await loadMfpEvalIdentity();
   const selection=JSON.parse(await readFile(".data/dev-corpus/voyage-real/gold-selection.json","utf8")) as Selection;
   validateSelection(selection);
@@ -144,12 +146,41 @@ void main(async()=>{
     if (facetCost.unknown) fail("mfp_hybrid_facet_billing_unsettled");
     const totalFacet=Number(facetCost.micro);
     if (strictCap!==null&&totalFacet>strictCap) fail("mfp_hybrid_strict_cap_exhausted");
+    let duplicateMicro=0;
+    if(resumeDuplicate){
+      const duplicate=(await pool.query<{error_code:string;failed:number;settled:number;
+        settled_micro:string;raw_verified:number;applied:number}>(`SELECT run.error_code,
+        count(*) FILTER(WHERE call.status='failed' AND call.raw_storage_key IS NULL
+          AND NOT call.results_applied)::int failed,
+        count(*) FILTER(WHERE call.status='settled')::int settled,
+        COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.status='settled'),0)::text settled_micro,
+        count(*) FILTER(WHERE call.status='settled' AND call.raw_storage_verified_at IS NOT NULL
+          AND call.raw_storage_verified_key=call.raw_storage_key)::int raw_verified,
+        count(*) FILTER(WHERE call.status='settled' AND call.results_applied
+          AND jsonb_array_length(call.results)=1)::int applied
+        FROM signal_labeling_runs run JOIN signal_labeling_calls call ON call.run_id=run.id
+        WHERE run.workspace_id=$1 AND run.idempotency_key='mfp-hybrid-h1-r4-jev-resume-two-unknown'
+          AND run.kind='membership' AND run.status='failed' AND
+          run.membership_snapshot->>'route_digest'=$2 GROUP BY run.id`,
+        [identity.workspace_id,route_digest])).rows[0];
+      if(!duplicate||duplicate.error_code!=="hybrid_duplicate_receipt_reconciled"||
+        duplicate.failed!==662||duplicate.settled!==1||duplicate.raw_verified!==1||
+        duplicate.applied!==1||Number(duplicate.settled_micro)!==344)
+        fail("mfp_hybrid_duplicate_repair_missing");
+      duplicateMicro=344;
+    }
+    const priorJevMicro=Number((await pool.query<{micro:string}>(`SELECT
+      COALESCE(sum(settled_micro_usd) FILTER(WHERE status='settled'),0)::text micro
+      FROM signal_labeling_calls WHERE run_id=ANY($1::uuid[])`,[quarantineRunIds])).rows[0]!.micro);
+    if(!Number.isSafeInteger(priorJevMicro)||priorJevMicro<0)
+      fail("mfp_hybrid_prior_jev_cost_invalid");
     const runStage=async(stage:HybridMembershipStageV1,priorCost:number)=>{
       await verifyMfpEvalRights(undefined,pool,quarantineRunIds);
       const cap=strictCap===null?null:strictCap-totalFacet-priorCost;
       if (cap!==null&&cap<0) fail("mfp_hybrid_strict_cap_exhausted");
       const receipt=await requestHybridMembershipStageV1({...access,stage,route_digest,
-        idempotency_key:resumeTwo&&stage==="jev"?"mfp-hybrid-h1-r4-jev-resume-two-unknown":
+        idempotency_key:resumeDuplicate&&stage==="jev"?"mfp-hybrid-h1-r4-jev-resume-after-duplicate-receipt":
+          resumeTwo&&stage==="jev"?"mfp-hybrid-h1-r4-jev-resume-two-unknown":
           resumeOne&&stage==="jev"?"mfp-hybrid-h1-r4-jev-resume-one-unknown":
           `mfp-hybrid-h1-r4-${stage}`,provider_available:true,cap_micro_usd:cap});
       const store=createHybridMembershipRuntimeStoreV1(stage,pool);
@@ -163,7 +194,7 @@ void main(async()=>{
       }
       return fail(`mfp_hybrid_${stage}_tick_limit`);
     };
-    const jevRun=await runStage("jev",0);
+    const jevRun=await runStage("jev",priorJevMicro+duplicateMicro);
     const stageCalls=async(runId:string):Promise<StageCall[]>=>{
       const calls:StageCall[]=(await pool.query("SELECT status,results,settled_micro_usd::text FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id",
         [runId])).rows;
@@ -175,7 +206,8 @@ void main(async()=>{
       ORDER BY call.created_at,call.id`,[[...quarantineRunIds,jevRun]])).rows;
     if (jevCalls.some(call=>!call.results||call.settled_micro_usd===null))
       fail("mfp_hybrid_jev_ledger_incomplete");
-    const jevMicro=jevCalls.reduce((sum,call)=>sum+Number(call.settled_micro_usd),0);
+    const jevUniqueMicro=jevCalls.reduce((sum,call)=>sum+Number(call.settled_micro_usd),0);
+    const jevMicro=jevUniqueMicro+duplicateMicro;
     const claudeRun=await runStage("claude",jevMicro);
     const claudeCalls=await stageCalls(claudeRun),claudeMicro=claudeCalls.reduce((sum,call)=>sum+Number(call.settled_micro_usd),0);
     const jev=new Map<string,HybridStageResultV1>(),claude=new Map<string,HybridStageResultV1>();
@@ -205,6 +237,7 @@ void main(async()=>{
         unresolved_concepts};
     });
     const ledger={facets_settled_usd:totalFacet/1e6,jev_settled_usd:jevMicro/1e6,
+      jev_duplicate_paid_usd:duplicateMicro/1e6,
       claude_settled_usd:claudeMicro/1e6,unknown_calls:quarantined.length,
       unknown_provider_usd_upper_bound:quarantined.length*0.002688};
     const report=measureHybridH1V1(gold,output,frozen.map(concept=>concept.concept_key),ledger);

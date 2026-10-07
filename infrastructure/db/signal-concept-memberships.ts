@@ -28,6 +28,7 @@ type Snapshot = {
   preview: boolean;
   concepts: ConceptForJudgeV1[];
   sample_root_ids: string[] | null;
+  route_digest?: string;
 };
 export type MembershipRunV1 = LabelingRunV1 & { membership_snapshot: Snapshot };
 const fail = (code: string, status = 409): never => {
@@ -144,12 +145,15 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
 /** Select by full-text fingerprint, effective entities and per-concept definition. No vectors or V2 classifications. */
 export async function selectMembershipInputsV1(c: Queryable, run: LabelingRunV1, hybrid = false): Promise<MembershipInputV1[]> {
   const s = snapshot(run);
+  // The current H1 view is keyed by the route digest, while the run itself is
+  // keyed by its provider-stage labeler. Reuse the route to fence served pairs.
+  const servingDigest = hybrid ? s.route_digest ?? fail("hybrid_route_missing") : run.labeler_digest;
   return (await c.query<MembershipInputV1>(`${membershipWorkSql}
  SELECT f.root_id,f.input_digest,signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest)) root_fingerprint,f.full_text text,f.title,f.platform,f.content_type,f.author,f.published_at::text,f.language,
  f.effective_ce entity_context_digest,f.effective_entities_digest,f.facets#>'{entities,value}' entities,f.facets#>>'{voice,value}' voice,f.facets#>>'{act,value}' act,
  (SELECT jsonb_agg(concept) FROM jsonb_array_elements($4::jsonb) concept WHERE concept->>'concept_key'=ANY(f.keys)) evaluated_concepts
  FROM work f ORDER BY f.root_id LIMIT 200`,
-    [run.workspace_id, run.cursor_root_id, s.sample_root_ids, JSON.stringify(s.concepts), s.preview, run.labeler_digest, [], hybrid])).rows;
+    [run.workspace_id, run.cursor_root_id, s.sample_root_ids, JSON.stringify(s.concepts), s.preview, servingDigest, [], hybrid])).rows;
 }
 export async function estimateMembershipWorkV1(c: Queryable, args: {
   workspace_id: string; concepts: ConceptForJudgeV1[]; context: EntityContextV1;

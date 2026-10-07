@@ -7,7 +7,7 @@ import {
   parseHybridClaudeAnswerV1, signalWorkspaceEmbeddingDigestV1,
   type HybridClaudeDecisionV1, type HybridJevDecisionV1, type LlmUsageV1,
 } from "@noisia/query-engine";
-import { createHybridMembershipStageStoreV1, type HybridStageInputV1,
+import { createHybridMembershipStageStoreV1, reconcileHybridDuplicateJevReceiptV1, type HybridStageInputV1,
   type HybridStageResultV1, type HybridMembershipStageV1, type LabelingRunV1,
   type LabelingCallV1 } from "@noisia/db";
 import { createTypesafeJevClientV1, validateJevResponseV1, jevProviderErrorV1 } from "../providers/typesafe-jev";
@@ -95,6 +95,42 @@ async function applyRaw(stage:HybridMembershipStageV1,store:HybridStore,run:Labe
     :llmPriceV1("anthropic","claude-sonnet-5-5","sync");
   await store.settle(run,call,{usage,settled_micro_usd:llmCostMicroUsdV1(usage,price)});
   await store.apply(run,[{call,results:[stageResult(stage,call,jev,stage==="claude"?claude:null)]}]);
+}
+
+/** Verify the private raw object, then account for an already served duplicate without another provider call. */
+export async function reconcileHybridDuplicateRawReceiptV1(args:{
+  database:Parameters<typeof createHybridMembershipRuntimeStoreV1>[1];
+  workspace_id:string;idempotency_key:string;jevPrice:number;
+}) {
+  if(!Number.isFinite(args.jevPrice)||args.jevPrice<=0) throw new Error("hybrid_jev_price_required");
+  const matches=(await args.database.query<{run_id:string;id:string;request:unknown;
+    inputs:HybridStageInputV1[];raw_storage_key:string;raw_sha256:string;raw_size_bytes:number}>(`
+    SELECT call.run_id,call.id,call.request,call.inputs,call.raw_storage_key,call.raw_sha256,
+      call.raw_size_bytes FROM signal_labeling_calls call
+    JOIN signal_labeling_runs run ON run.id=call.run_id AND run.workspace_id=call.workspace_id
+    WHERE run.workspace_id=$1 AND run.idempotency_key=$2 AND run.kind='membership'
+      AND run.status='failed' AND run.error_code='hybrid_raw_receipt_needs_review'
+      AND run.membership_snapshot->>'hybrid_stage'='jev' AND call.status='failed'
+      AND call.raw_storage_key IS NOT NULL AND call.raw_sha256 IS NOT NULL
+      AND call.raw_size_bytes IS NOT NULL AND NOT call.results_applied`,
+    [args.workspace_id,args.idempotency_key])).rows;
+  if(matches.length!==1) throw new Error("hybrid_duplicate_raw_receipt_count_invalid");
+  const call=matches[0]!;
+  if(call.inputs.length!==1||call.inputs[0]?.evaluated_concepts.length!==1)
+    throw new Error("hybrid_duplicate_raw_input_invalid");
+  const rawText=await readSignalLabelingReceiptV1({storage:createWorkspaceEngineStorageV1(),
+    workspace_id:args.workspace_id,run_id:call.run_id,storage_key:call.raw_storage_key,
+    raw_sha256:call.raw_sha256,size_bytes:call.raw_size_bytes});
+  const raw=JSON.parse(rawText) as Raw;
+  const parsed=validateJevResponseV1(call.request as ReturnType<typeof buildHybridJevQuestionV1>,raw);
+  const usage={...zeroUsage(),...parsed.usage};
+  const jev=mapHybridJevAnswerV1(call.inputs[0]!,parsed);
+  if(jev.verdict!=="not_belongs") throw new Error("hybrid_duplicate_raw_verdict_invalid");
+  const result=stageResult("jev",{id:call.id,inputs:call.inputs} as LabelingCallV1<HybridStageInputV1>,jev,null);
+  return reconcileHybridDuplicateJevReceiptV1({database:args.database,workspace_id:args.workspace_id,
+    idempotency_key:args.idempotency_key,call_id:call.id,raw_sha256:call.raw_sha256,usage,
+    settled_micro_usd:llmCostMicroUsdV1(usage,llmPriceV1("typesafe","jev-1.13.0","sync",args.jevPrice)),
+    result});
 }
 
 /** One sequential, leased sync tick; ambiguous submissions are never resent. */
