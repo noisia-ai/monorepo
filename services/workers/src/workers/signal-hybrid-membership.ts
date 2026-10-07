@@ -104,7 +104,7 @@ export async function reconcileHybridDuplicateRawReceiptV1(args:{
 }) {
   if(!Number.isFinite(args.jevPrice)||args.jevPrice<=0) throw new Error("hybrid_jev_price_required");
   const matches=(await args.database.query<{run_id:string;id:string;request:unknown;
-    inputs:HybridStageInputV1[];raw_storage_key:string;raw_sha256:string;raw_size_bytes:number}>(`
+    inputs:HybridStageInputV1[];raw_storage_key:string;raw_sha256:string;raw_size_bytes:string}>(`
     SELECT call.run_id,call.id,call.request,call.inputs,call.raw_storage_key,call.raw_sha256,
       call.raw_size_bytes FROM signal_labeling_calls call
     JOIN signal_labeling_runs run ON run.id=call.run_id AND run.workspace_id=call.workspace_id
@@ -118,9 +118,11 @@ export async function reconcileHybridDuplicateRawReceiptV1(args:{
   const call=matches[0]!;
   if(call.inputs.length!==1||call.inputs[0]?.evaluated_concepts.length!==1)
     throw new Error("hybrid_duplicate_raw_input_invalid");
+  const rawSize=Number(call.raw_size_bytes);
+  if(!Number.isSafeInteger(rawSize)||rawSize<0) throw new Error("hybrid_duplicate_raw_size_invalid");
   const rawText=await readSignalLabelingReceiptV1({storage:createWorkspaceEngineStorageV1(),
     workspace_id:args.workspace_id,run_id:call.run_id,storage_key:call.raw_storage_key,
-    raw_sha256:call.raw_sha256,size_bytes:call.raw_size_bytes});
+    raw_sha256:call.raw_sha256,size_bytes:rawSize});
   const raw=JSON.parse(rawText) as Raw;
   const parsed=validateJevResponseV1(call.request as ReturnType<typeof buildHybridJevQuestionV1>,raw);
   const usage={...zeroUsage(),...parsed.usage};
