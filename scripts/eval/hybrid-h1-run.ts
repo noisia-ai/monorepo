@@ -110,11 +110,18 @@ void main(async()=>{
       !policy.some(row=>row.action==="concept_membership_claude"&&row.provider==="anthropic"&&row.model==="claude-sonnet-5-5"))
       fail("mfp_hybrid_two_provider_policy_missing");
     await createWorkspaceEngineStorageV1().assertReady?.();
-    const route=await configureHybridMembershipRouteV1({...access,route:"hybrid_h1",provider_available:true});
+    // A quarantined unknown intentionally blocks route reconfiguration. The original
+    // route remains selected, so a successor can only reuse that exact sealed route.
+    const route=unknown
+      ? (await pool.query<{route:string;route_digest:string}>(
+        "SELECT route,route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
+        [identity.workspace_id])).rows[0]
+      : await configureHybridMembershipRouteV1({...access,route:"hybrid_h1",provider_available:true});
+    if (route?.route!=="hybrid_h1") fail("mfp_hybrid_route_missing");
     const route_digest:string=route.route_digest??fail("mfp_hybrid_route_missing");
     const selected=(await pool.query<{jev_facets_labeler_version_id:string}>(
-      "SELECT jev_facets_labeler_version_id FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
-      [identity.workspace_id])).rows[0];
+      "SELECT jev_facets_labeler_version_id FROM signal_hybrid_membership_routes WHERE workspace_id=$1 AND route_digest=$2",
+      [identity.workspace_id,route_digest])).rows[0];
     if (!selected || selected.jev_facets_labeler_version_id!==facetsLabeler.id)
       fail("mfp_hybrid_facets_labeler_changed");
     const facetCost=(await pool.query<{micro:string;unknown:number}>(`SELECT
