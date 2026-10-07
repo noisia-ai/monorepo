@@ -1,9 +1,11 @@
 import {randomUUID} from "node:crypto";
-import type {Pool,PoolClient} from "pg";
 import {createProcessingPolicyIdentitiesV1} from "../../infrastructure/db/migrations/signal-processing-policy.fixture";
 
 /** Caller starts a transaction and rolls it back. All rows use production tables. */
-export async function createMigratedLabelingFixture(pool:Pool,client:PoolClient,kind:"facets"|"membership"="facets"){
+export async function createMigratedLabelingFixture(
+ pool:Parameters<typeof createProcessingPolicyIdentitiesV1>[0]["database"],
+ client:Parameters<typeof createProcessingPolicyIdentitiesV1>[0]["scoped"],
+ kind:"facets"|"membership"="facets"){
  const identity=await createProcessingPolicyIdentitiesV1({database:pool,scoped:client});
  const workspaceId=identity.first.workspace_id,organizationId=identity.first.organization_id;
  const actorId=identity.actors.firstAdmin,preparationId=randomUUID(),labelerId=randomUUID(),runId=randomUUID(),lease=randomUUID();

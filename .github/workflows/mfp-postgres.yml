@@ -54,12 +54,18 @@ jobs:
         run: pnpm --filter @noisia/db db:smoke:migrations
       - name: Run MFP integration tests on migrated schema
         run: |
+          set -o pipefail
           shopt -s nullglob
           tests=(infrastructure/db/migrations/signal-mfp-*.integration.test.ts)
           if (( ${#tests[@]} == 0 )); then
-            echo 'No MFP integration tests in this checkout'
+            echo '::error::No MFP integration tests in this checkout'
+            exit 1
           else
-            pnpm exec node --test --test-concurrency=1 --import tsx "${tests[@]}"
+            pnpm exec node --test --test-concurrency=1 --import tsx "${tests[@]}" | tee mfp-pg-tests.tap
+            if ! rg '^# skipped 0$' mfp-pg-tests.tap; then
+              echo '::error::MFP integration tests were skipped'
+              exit 1
+            fi
           fi
       - name: Run MFP PostgreSQL checks on migrated schema
         run: |

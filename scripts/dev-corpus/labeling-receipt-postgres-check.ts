@@ -60,8 +60,8 @@ await main(async()=>{
   stage="invalid";await assert.rejects(invalid.calls(run),/labeling_raw_receipt_invalid/u);
   stage="terminal";await invalid.fail(run,"labeling_raw_receipt_invalid");
   const calls=(await client.query("SELECT id,status,settled_micro_usd::text FROM signal_labeling_calls WHERE run_id=$1",[runId])).rows;
-  assert.deepEqual(calls.find(row=>row.id===reserved),{id:reserved,status:"failed",settled_micro_usd:null});
-  assert.deepEqual(calls.find(row=>row.id===submitted),{id:submitted,status:"failed",settled_micro_usd:"47"});
+  assert.deepEqual(calls.find((row:{id:string})=>row.id===reserved),{id:reserved,status:"failed",settled_micro_usd:null});
+  assert.deepEqual(calls.find((row:{id:string})=>row.id===submitted),{id:submitted,status:"failed",settled_micro_usd:"47"});
   assert.deepEqual((await client.query("SELECT status,error_code FROM signal_labeling_runs WHERE id=$1",[runId])).rows[0],
    {status:"failed",error_code:"labeling_raw_receipt_invalid"});
   await client.query("ROLLBACK");

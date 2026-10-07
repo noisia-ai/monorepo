@@ -1,7 +1,7 @@
 /** Terminal provider errors and unknown release against migrated public tables. */
 import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
-import {createSignalLabelingStoreV1,type LabelingRunV1,type LabelingCallV1} from "../../infrastructure/db/signal-labeling-runs";
+import {createSignalLabelingStoreV1,type LabelingRunV1} from "../../infrastructure/db/signal-labeling-runs";
 import {createMigratedLabelingFixture} from "./migrated-labeling-fixture";
 import {main,openDatabase} from "./guard.mjs";
 
@@ -34,7 +34,7 @@ await main(async()=>{
   assert.equal(await store.finish(run),"failed");
   const calls=(await client.query("SELECT id,status,stop_reason,settled_micro_usd::text FROM signal_labeling_calls WHERE run_id=$1",[f.runId])).rows;
   for(const [index,error] of ["provider_usage_invalid","provider_result_missing"].entries())
-   assert.deepEqual(calls.find(row=>row.id===ids[index]),
+   assert.deepEqual(calls.find((row:{id:string})=>row.id===ids[index]),
     {id:ids[index],status:"failed",stop_reason:error,settled_micro_usd:"83"});
   assert.equal((await client.query("SELECT error_code FROM signal_labeling_runs WHERE id=$1",[f.runId])).rows[0].error_code,
    "labeling_provider_usage_invalid");
@@ -54,7 +54,7 @@ await main(async()=>{
     'unknown',17,current_date,'UTC')`,
    [callId,secondRun,f.workspaceId,`ci-${callId}`,`sha256:${"8".repeat(64)}`]);
   await store.releaseUnknown({id:secondRun,workspace_id:f.workspaceId,lease_token:secondLease} as LabelingRunV1,
-   [{id:callId} as LabelingCallV1],"unresolvable_after_window");
+   [{id:callId} as never],"unresolvable_after_window");
   assert.deepEqual((await client.query("SELECT status,results_applied FROM signal_labeling_calls WHERE id=$1",[callId])).rows[0],
    {status:"failed",results_applied:true});
   assert.equal((await client.query("SELECT error_code FROM signal_labeling_runs WHERE id=$1",[secondRun])).rows[0].error_code,
