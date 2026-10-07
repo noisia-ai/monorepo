@@ -43,6 +43,10 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,configuration,
       configuration_digest,max_execution_micro_usd,automatic_allowed)
       VALUES($1,'corpus_preparation','free','{}',signal_semantic_context_digest_json_v2('{}'::jsonb),0,false)`,[fixture.policy_id]);
+    await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
+      configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+      VALUES($1,'mention_facets','provider','anthropic','claude-sonnet-5-5','{}',
+        signal_semantic_context_digest_json_v2('{}'::jsonb),NULL,false)`,[fixture.policy_id]);
     await raw.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[fixture.policy_id]);
     const before=(await raw.query<{action:string}>("SELECT action FROM signal_processing_policy_actions WHERE policy_version_id=$1 ORDER BY action",[fixture.policy_id])).rows.map(r=>r.action);
     const policyCount=(await raw.query("SELECT count(*)::int n FROM signal_processing_policy_versions WHERE organization_id=(SELECT organization_id FROM signal_processing_policy_versions WHERE id=$1)",[fixture.policy_id])).rows[0].n;
@@ -67,6 +71,15 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     assert.deepEqual((await raw.query(policySnapshotSql,[fixture.policy_id])).rows,policyBefore);
     await raw.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
       VALUES($1::uuid,'mention_facets',$2::uuid)`,[fixture.workspace_id,fixture.creator_id]);
+    const infiniteAdmission=(await raw.query<{result:{receipt:{id:string}}}>(`SELECT admit_signal_processing_v1(
+      $1::uuid,$2::uuid,'mention_facets',$3::uuid,$4,'sha256:'||repeat('b',64),NULL,false) result`,
+      [fixture.workspace_id,fixture.initiator_id,randomUUID(),randomUUID()])).rows[0]!.result.receipt;
+    assert.equal((await raw.query("SELECT admission_not_after::text deadline FROM signal_processing_admissions WHERE id=$1",[infiniteAdmission.id])).rows[0].deadline,
+      "infinity","a real MFP admission inherits an unlimited policy window");
+    await raw.query("SAVEPOINT ownerless_receipt");
+    assert.equal((await invoke({})).status,"provisioned","an ownerless infinite receipt does not block a successor");
+    await raw.query("ROLLBACK TO SAVEPOINT ownerless_receipt");
+    await raw.query("RELEASE SAVEPOINT ownerless_receipt");
     // Use the real provider-free admission path. Prototype embeddings require a
     // composed Brand Context receipt and are not a standalone admission action.
     // The in-flight work belongs to a sibling brand without MFP opt-in.
@@ -77,12 +90,8 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     const admitted=admissionResult.receipt;
     assert.equal(admitted.policy_version_id,fixture.policy_id);
     assert.equal(admitted.target_id,runId);
-    assert.equal((await raw.query("SELECT admission_not_after::text deadline FROM signal_processing_admissions WHERE id=$1",[admitted.id])).rows[0].deadline,
-      "infinity","the real MFP admission inherits an unlimited policy window");
-    await raw.query("SAVEPOINT ownerless_receipt");
-    assert.equal((await invoke({})).status,"provisioned","an ownerless receipt does not block a successor");
-    await raw.query("ROLLBACK TO SAVEPOINT ownerless_receipt");
-    await raw.query("RELEASE SAVEPOINT ownerless_receipt");
+    assert.notEqual((await raw.query("SELECT admission_not_after::text deadline FROM signal_processing_admissions WHERE id=$1",[admitted.id])).rows[0].deadline,
+      "infinity","corpus preparation receipts stop at the budget-day boundary");
     assert.deepEqual((await raw.query(policySnapshotSql,[fixture.policy_id])).rows,policyBefore);
     // A real owner exercises its admission/actor/capacity triggers too; no table
     // shadowing or synthetic owner bypasses the production contract.
