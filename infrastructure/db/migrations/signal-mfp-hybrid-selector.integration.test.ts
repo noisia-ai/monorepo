@@ -68,7 +68,8 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       VALUES($1,$2,'client-derived-metrics','allowed'),($1,$2,'client-mention-list','allowed'),
       ($1,$2,'client-text-or-excerpt','allowed')`, [workspace, license]);
     await client.query(`UPDATE signal_licensing_policies SET
-      definition_hash=signal_licensing_policy_definition_hash(id), status='active',
+      definition_hash=signal_licensing_policy_definition_hash(id) WHERE id=$1`, [license]);
+    await client.query(`UPDATE signal_licensing_policies SET status='active',
       approved_by_user_id=$2, approved_at=now() WHERE id=$1`, [license, actor]);
     await client.query(`INSERT INTO signal_provenance_policy_bindings(workspace_id,data_source_id,binding_version,
       status,quality_policy_id,retention_policy_id,licensing_policy_id,definition_hash,created_by_user_id,
