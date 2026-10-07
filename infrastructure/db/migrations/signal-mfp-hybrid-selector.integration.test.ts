@@ -8,7 +8,7 @@ import {
   signalProvenancePolicyBindingDefinitionHashV1,
 } from "@noisia/query-engine";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
-import { selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
+import { assertHybridEvidenceRightsBeforeSubmitV1, selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import { writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
@@ -208,6 +208,14 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       'settled',2,2,$9,$7,$10,true,$8::jsonb,current_date,'UTC')`,
       [jevCall, jevRun, workspace, `jev-${jevCall}`, digest, JSON.stringify([input]),
         `private/${jevCall}`, rawJev, sha(rawJev), Buffer.byteLength(rawJev)]);
+    const beforeSubmit = () => assertHybridEvidenceRightsBeforeSubmitV1(client,
+      { id: jevRun, workspace_id: workspace } as LabelingRunV1, [{ id: jevCall }]);
+    await beforeSubmit();
+    await client.query("UPDATE data_sources SET status='inactive' WHERE id=$1", [source]);
+    await assert.rejects(beforeSubmit(), /hybrid_evidence_rights_changed/u,
+      "a persisted call cannot be submitted after source rights disappear");
+    await client.query("UPDATE data_sources SET status='active' WHERE id=$1", [source]);
+    await beforeSubmit();
     const current = (await client.query<{ verdict: string }>(`SELECT verdict FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`, [workspace, root, concept.concept_key])).rows[0];
     assert.equal(current?.verdict, "pending", "Claude has not confirmed this JEV positive");

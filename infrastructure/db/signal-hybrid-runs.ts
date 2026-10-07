@@ -25,6 +25,22 @@ function snapshot(run: LabelingRunV1): Snapshot {
     return fail("hybrid_snapshot_invalid");
   return value;
 }
+/** Recheck each persisted call's source rights immediately before provider dispatch. */
+export async function assertHybridEvidenceRightsBeforeSubmitV1(client: PoolClient, run: LabelingRunV1,
+  calls: {id:string}[]) {
+  if (!calls.length) return;
+  const counts = (await client.query<{found:number;allowed:number;one_input:boolean|null}>(`
+    SELECT count(*)::int found,count(*) FILTER(WHERE rights.metrics AND rights.evidence)::int allowed,
+      bool_and(jsonb_array_length(call.inputs)=1) one_input
+    FROM signal_labeling_calls call
+    LEFT JOIN LATERAL jsonb_array_elements(call.inputs) input ON true
+    LEFT JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=call.workspace_id
+      AND rights.root_id::text=input->>'root_id'
+    WHERE call.run_id=$1 AND call.workspace_id=$2 AND call.id=ANY($3::uuid[])`,
+    [run.id,run.workspace_id,calls.map(call=>call.id)])).rows[0]!;
+  if (counts.found!==calls.length || counts.allowed!==calls.length || !counts.one_input)
+    fail("hybrid_evidence_rights_changed");
+}
 export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | PoolClient, run: LabelingRunV1): Promise<HybridStageInputV1[]> {
   const prior = snapshot(run).jev_run_id;
   if (!prior) return fail("hybrid_jev_run_missing");
@@ -85,6 +101,7 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
         if (conceptSetDigestV1(await loadMembershipConceptsV1(client,run.workspace_id)) !== conceptSetDigestV1(s.concepts))
           return fail("hybrid_concepts_changed");
       },
+      beforeSubmit:assertHybridEvidenceRightsBeforeSubmitV1,
       pending:async (client,run) => (await inputs(client,run)).length,
       write:async (client,run,pages) => {
         const decisions = pages.flatMap(page => page.results

@@ -498,6 +498,7 @@ export function createSignalLabelingStoreV1<
     ) => Promise<void>;
     pending: (client: PoolClient, run: LabelingRunV1) => Promise<number>;
     authority?: (client: PoolClient, run: LabelingRunV1) => Promise<void>;
+    beforeSubmit?: (client: PoolClient, run: LabelingRunV1, calls: LabelingCallV1<Input>[]) => Promise<void>;
   };
   database: LabelingDatabaseV1;
   /** Runtime preflight, cached by the existing private storage adapter. */
@@ -782,6 +783,7 @@ export function createSignalLabelingStoreV1<
       await tx(db, async (c) => {
         await lock(c, run);
         await authority(c, run, 0);
+        await options.adapter?.beforeSubmit?.(c, run, calls);
         const changed = await c.query(
           `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
           [run.id, calls.map((x) => x.id)],
