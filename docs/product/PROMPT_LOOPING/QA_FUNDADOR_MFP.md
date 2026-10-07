@@ -269,11 +269,37 @@ El arreglo de #40 devuelve un catálogo vacío con contrato válido HTTP 200 des
 del guard existente cuando la función opcional está apagada. No lee candidatos ni
 modifica grants. Los 401/403/404 reales conservan su respuesta; un error técnico de
 bandera sigue siendo 503. Cuatro pruebas focales pasan; sobre el código anterior
-fallan los casos de bandera apagada y error técnico. Falta validar la recarga en el
-despliegue combinado que integre este arreglo; no atribuirlo a `320993fc`.
+fallan los casos de bandera apagada y error técnico. Código `7cbde266` acreditado
+con CI `37685865411` y PG17 `37685865378` SUCCESS (typecheck/lint/test/build y
+Data OS remotos post-push según coordinación).
 
 El 503 observado en `topics/computation` corresponde a la lectura del panel de
 cómputo anterior. Su hook conserva un error local, no ejecuta `clearAccess` por 503,
 y no impidió las tres correcciones ni su persistencia DB. Se conserva como incidencia
 técnica sin resolver, fuera del cierre de las excepciones H1. No se modifica esa ruta.
 Evidencia privada: respuestas antes/después y capturas 24–26 en `.data/front5-qa/`.
+
+
+### Cierre de recarga y persistencia visible
+
+Deployment combinado **`bde7ef96-3b41-4a6a-bc65-ffded88d2701`**, HEAD **`7b1394fb`**,
+SUCCESS en dev-test; coordinador verificó hashes de rutas F5-12/H1 y health200.
+CI combinado `37687316950` y PG17 `37687317055` verdes. Esta evidencia corresponde
+a ese despliegue, no al anterior `320993fc`.
+
+Recarga autenticada real: **catálogo de 16 conceptos conservado** e
+`incremental-candidates` **HTTP200** con contrato
+`signal-incremental-discovery-candidates-v1` y `candidates: []`.
+Se abrieron ambos intereses y se localizaron **los tres overrides renderizados**:
+Atención/Jericho «No pertenece · Corrección humana»; Cobros/puerto «Pertenece ·
+Corrección humana»; Cobros/tarifas por canal «No pertenece · Corrección humana».
+La tercera decisión requirió llegar a la página 13: la lista no ofrece búsqueda
+por raíz. La persistencia está verificada en UI y DB; no hubo recálculo,
+nuevos PATCH ni llamadas de proveedor durante esta comprobación.
+
+Network conservó `analysis`503, `computation`503 y `consolidation/editorial`500,
+con avisos locales y sin desmontar catálogo o Pertenencia. Quedan documentados,
+sin atribuir al cierre H1 una disponibilidad integral de los paneles anteriores.
+Evidencia privada: `h1-visible-persistence.json` y captura 30; la captura final
+muestra el tercero con su veredicto y atribución. F5-12 cerrado en código y UI;
+la aceptación semántica del etiquetador sigue pendiente.

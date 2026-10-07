@@ -3,7 +3,7 @@
 **EN CURSO; sin aceptación integral.** Entorno exclusivo **dev-test**, marca y
 organización QA nuevas. Carga 2, corrección de contenido y consolidación cerradas;
 pertenencia del segundo adoptado terminal; tres excepciones H1 persistidas;
-recarga pendiente de desplegar F5-12.
+recarga F5-12 verificada en despliegue combinado.
 Guía reproducible y evidencia: [QA_FUNDADOR_MFP.md](QA_FUNDADOR_MFP.md).
 
 **Código:** base #38 `9bc7ff9d`; rama `feat/mfp-front5-qa-r4`.
@@ -102,8 +102,9 @@ existente intacto, catálogo vacío HTTP200 sólo para feature apagada; fallos d
 4/4; regresión contra HEAD anterior reproduce 404 y excepción técnica sin sanear.
 No se modifican grants, hooks de autorización ni ruta H1 de #39. El 503 de computation
 se maneja como error local y no bloqueó las tres escrituras; queda documentado sin
-corregir. **Pendiente:** CI del nuevo corte y recarga real tras integración/despliegue
-coordinados. No atribuir el arreglo a `320993fc`. Coste y aceptación H1 los cierra #39.
+corregir. **Cerrado:** CI del código `7cbde266` y recarga real sobre el despliegue
+combinado posterior, según recibo final siguiente. No atribuir el arreglo a
+`320993fc`. Coste y aceptación H1 los cierra #39.
 
 Guard PG17/rol/base/DNS privados verificado. Migraciones 0252/0254/0257/0258
 aplicadas una vez (239 totales); no repetir. Editorial ejecutado por IDs con
@@ -111,8 +112,24 @@ huella histórica intacta y drainers apagados. Datos/IDs operativos y capturas
 sólo en evidencia privada ignorada. Toda infraestructura y suites pesadas remotas.
 Modelo/esfuerzo del agente no expuestos; no se acredita variante efectiva.
 
-Por instrucción del coordinador, los gates completos typecheck/lint/test se ejecutan
-en CI remoto después del push de este fix, por el reparto remoto MFP. El commit
-se apoya en las cuatro pruebas focales y el control de regresión contra el código
-anterior. No se acredita F5-12 hasta CI verde y se mantiene aparte el gate UI del
-despliegue combinado. No se ocupa Runner H1 ni se ejecutan suites pesadas en la Mac.
+Por instrucción del coordinador, los gates completos se ejecutaron en CI remoto
+post-push por el reparto MFP. Código `7cbde266`: CI `37685865411` y PG17
+`37685865378` SUCCESS; incluye typecheck/lint/test/build y Data OS. Las cuatro
+pruebas focales detectan la regresión sobre el código anterior. No se ocupó Runner
+H1 ni se ejecutaron suites pesadas en la Mac.
+
+**Gate UI final cerrado:** deployment combinado `bde7ef96-3b41-4a6a-bc65-ffded88d2701`,
+HEAD `7b1394fb`, SUCCESS; CI `37687316950` y PG17 `37687317055` verdes según
+coordinador, con hashes F5-12/H1 y health200 comprobados. Recarga autenticada
+conserva catálogo16; incremental-candidates200, contrato válido/candidates[].
+Los **tres overrides visibles** tras paginar: Atención/Jericho No pertenece;
+Cobros/puerto Pertenece; Cobros/tarifas No pertenece; todos «Corrección humana».
+El tercero requirió página13 por ausencia de búsqueda por raíz. Persistencia DB
+más UI, sin recálculo, nuevas escrituras ni proveedor. JSON de evidencia DOM y
+captura30 privados. La etiqueta human conserva la limitación de revisión asistida.
+
+Paneles auxiliares analysis503, computation503 y editorial500 siguen como errores
+locales documentados, sin ocultar catálogo/Pertenencia. F5-12 queda cerrado en
+código y UI; esto no acredita aceptación semántica ni disponibilidad integral.
+Este cierre modifica sólo documentación; reutiliza gates verdes del código según
+instrucción del coordinador y verifica diff/Markdown antes del push a #40.
