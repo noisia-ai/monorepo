@@ -4,7 +4,7 @@ import { buildHybridJevQuestionV1, type ConceptForJudgeV1,
   type MembershipInputV1 } from "@noisia/query-engine";
 import type { LabelingRunV1 } from "@noisia/db";
 import { JevProviderErrorV1 } from "../providers/typesafe-jev";
-import { hybridStageCallProposalV1, runHybridMembershipTickV1 } from "./signal-hybrid-membership";
+import { hybridReceiptFilenameV1, hybridStageCallProposalV1, runHybridMembershipTickV1 } from "./signal-hybrid-membership";
 
 const concept={concept_key:"theme",label:"Theme",scope:"all_conversations",definition:"Explicit theme",
   inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],definition_digest:"sha256:"+"a".repeat(64)} as unknown as ConceptForJudgeV1;
@@ -16,7 +16,7 @@ const input={root_id:"00000000-0000-4000-8000-000000000001",input_digest:"sha256
 const run={id:"00000000-0000-4000-8000-000000000002",workspace_id:"00000000-0000-4000-8000-000000000003",
   context:{},lease_token:"00000000-0000-4000-8000-000000000004"} as unknown as LabelingRunV1;
 
-function fixture(outcome:"ok"|"unknown") {
+function fixture(outcome:"ok"|"unknown"|"storage_failed") {
   const events:string[]=[],calls:Record<string,unknown>[]=[];
   const store={
     claim:async()=>run,calls:async()=>calls,inputs:async()=>[input],
@@ -26,7 +26,8 @@ function fixture(outcome:"ok"|"unknown") {
     renew:async()=>events.push("renew"),markSubmitting:async()=>events.push("submitting"),
     markFailed:async(_run:unknown,_calls:unknown,unknown:boolean)=>events.push(`failed:${unknown}`),
     fail:async()=>events.push("run_failed"),
-    persistRaw:async()=>events.push("raw"),settle:async()=>events.push("settle"),
+    persistRaw:async()=>{events.push("raw");if(outcome==="storage_failed")throw new Error("storage_rejected");},
+    settle:async()=>events.push("settle"),
     apply:async()=>events.push("apply"),finish:async()=>({status:"completed"}),release:async()=>events.push("release"),
   };
   const provider={evaluate:async(request:ReturnType<typeof buildHybridJevQuestionV1>)=>{
@@ -52,4 +53,14 @@ test("H1 unknown JEV send is never settled or applied",async()=>{
   await assert.rejects(runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider}),
     /network_unknown/u);
   assert.deepEqual(f.events,["reserve","renew","submitting","provider","failed:true","run_failed","release"]);
+});
+test("H1 receipt filename starts with a letter even when the call UUID starts with a digit",()=>{
+  assert.equal(hybridReceiptFilenameV1("00000000-0000-4000-8000-000000000005"),
+    "hybrid-00000000-0000-4000-8000-000000000005.json");
+});
+test("H1 quarantines a returned provider response when durable raw storage fails",async()=>{
+  const f=fixture("storage_failed");
+  await assert.rejects(runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider}),
+    /storage_rejected/u);
+  assert.deepEqual(f.events,["reserve","renew","submitting","provider","raw","failed:true","run_failed","release"]);
 });

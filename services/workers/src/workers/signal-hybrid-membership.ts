@@ -19,6 +19,7 @@ const zeroUsage = ():LlmUsageV1 => ({input_tokens:0,output_tokens:0,cache_read_i
   cache_creation_input_tokens:0,cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}});
 const errorJev = ():HybridJevDecisionV1 => ({verdict:"error",probability:null,citation:null});
 const errorClaude = ():HybridClaudeDecisionV1 => ({verdict:"error",citation:null});
+export const hybridReceiptFilenameV1 = (callId:string) => `hybrid-${callId}.json`;
 
 export function createHybridMembershipRuntimeStoreV1(stage:HybridMembershipStageV1,
   database:Parameters<typeof createHybridMembershipStageStoreV1>[1]["database"]) {
@@ -28,7 +29,7 @@ export function createHybridMembershipRuntimeStoreV1(stage:HybridMembershipStage
     storeRaw:async args=>{
       const directory=await mkdtemp(join(tmpdir(),"noisia-hybrid-"));
       try {
-        const file=join(directory,`${args.call_id}.json`);
+        const file=join(directory,hybridReceiptFilenameV1(args.call_id));
         await writeFile(file,args.raw_text,{mode:0o600});
         const stored=await storage.put({workspace_id:args.workspace_id,execution_id:args.run_id,file,
           sha256:args.raw_sha256,size_bytes:Buffer.byteLength(args.raw_text),media_type:"application/json"});
@@ -135,7 +136,13 @@ export async function runHybridMembershipTickV1(args:{run_id:string;stage:Hybrid
         await store.fail(run,outcome==="definitely_not_sent"?"hybrid_not_sent":"labeling_outcome_unknown");
         throw error;
       }
-      await store.persistRaw(run,call,JSON.stringify(raw));
+      try { await store.persistRaw(run,call,JSON.stringify(raw)); }
+      catch (error) {
+        // The provider may already have billed this response. No raw receipt means no resend.
+        await store.markFailed(run,[call],true);
+        await store.fail(run,"labeling_outcome_unknown");
+        throw error;
+      }
       try { await applyRaw(stage,store,run,call,raw,args.jevPrice); }
       catch (error) { await store.fail(run,"hybrid_raw_receipt_needs_review"); throw error; }
     }
