@@ -232,6 +232,48 @@ insuficientes conservados como tales. El censo remoto acredita 1086 fichas
 actuales y cero discrepancias de CE, entidades efectivas o fingerprint en los
 612 pares. Todos los jobs del recorrido están terminales. Signal final ES/EN
 tiene las mismas fechas y conteos (capturas privadas 21–23).
-Ventana H1 abierta al coordinador tras liberar Runner; falta #39 y revisión humana.
-Este recibo precede al despliegue H1; no acredita todavía tres excepciones reales
-ni sus overrides.
+Ventana H1 abierta al coordinador tras liberar Runner; el suplemento siguiente registra
+el despliegue posterior y las tres excepciones, con atribución separada.
+
+
+## Suplemento H1: tres excepciones y recarga
+
+Studio dev-test `320993fc` sirvió el corte combinado #39 `5eae0ef1` con #40.
+Este tramo usa el workspace National de la fixture H1 coordinada; es distinto de
+la marca nueva del recorrido anterior. No se inició procesamiento desde este frente.
+
+En **Pertenencia al concepto → Filtrar → Revisión necesaria**, se leyó el texto
+completo y la definición antes de aplicar cada decisión por UI. Tres PATCH respondieron
+HTTP 200 con `updated: 1`:
+
+| Concepto | Evidencia revisada | Decisión y motivo |
+|---|---|---|
+| Atención y resolución de reclamaciones | Comentario sobre los tuits creativos de Jericho contra varias empresas. | No pertenece: no relata una atención o reclamación concreta de renta de autos. |
+| Cobros, depósitos y devoluciones | Comparación de tarifas National.com.mx y National.com para el mismo itinerario. | No pertenece: la definición excluye comparar precios/canales sin cargo adicional. |
+| Cobros, depósitos y devoluciones | Comparación de rentadoras en un puerto; Auro Ice Rental cobra EUR 50 por recoger/entregar en crucero. | Pertenece: práctica concreta de cargo adicional atribuida a un proveedor. |
+
+Dos ejemplos ambiguos de queja sin detalle quedaron sin corregir; no se forzó una
+respuesta binaria para alcanzar tres. Frente 4 verificó por lectura DB **una fila
+activa por par** y la vista vigente `source=human` con los tres veredictos anteriores.
+Esto acredita persistencia después de las escrituras; no se ejecutó otro cálculo.
+La revisión fue **asistida por agente bajo la sesión del operador**. La etiqueta
+`human` del producto no acredita una nueva adjudicación manual del fundador ni la
+aceptación de calidad del etiquetador. El censo H1 comunicado por frente 4 registra
+32 `review_required` y 260/260 citas válidas; coste/cierre global H1 pertenecen a #39.
+
+**F5-12, bloqueo de recarga:** el catálogo aparece y luego desaparece con “Tu usuario
+no puede gestionar tópicos en este workspace”. Network registra
+`incremental-candidates` 404. La ruta devuelve ese estado cuando `mfp_discovery`
+está deshabilitado y el hook compartido dispara la revocación de toda la pantalla.
+El arreglo de #40 devuelve un catálogo vacío con contrato válido HTTP 200 después
+del guard existente cuando la función opcional está apagada. No lee candidatos ni
+modifica grants. Los 401/403/404 reales conservan su respuesta; un error técnico de
+bandera sigue siendo 503. Cuatro pruebas focales pasan; sobre el código anterior
+fallan los casos de bandera apagada y error técnico. Falta validar la recarga en el
+despliegue combinado que integre este arreglo; no atribuirlo a `320993fc`.
+
+El 503 observado en `topics/computation` corresponde a la lectura del panel de
+cómputo anterior. Su hook conserva un error local, no ejecuta `clearAccess` por 503,
+y no impidió las tres correcciones ni su persistencia DB. Se conserva como incidencia
+técnica sin resolver, fuera del cierre de las excepciones H1. No se modifica esa ruta.
+Evidencia privada: respuestas antes/después y capturas 24–26 en `.data/front5-qa/`.

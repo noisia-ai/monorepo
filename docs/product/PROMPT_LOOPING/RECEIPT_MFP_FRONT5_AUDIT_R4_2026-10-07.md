@@ -2,7 +2,8 @@
 
 **EN CURSO; sin aceptación integral.** Entorno exclusivo **dev-test**, marca y
 organización QA nuevas. Carga 2, corrección de contenido y consolidación cerradas;
-pertenencia del segundo adoptado terminal; H1 pendiente.
+pertenencia del segundo adoptado terminal; tres excepciones H1 persistidas;
+recarga pendiente de desplegar F5-12.
 Guía reproducible y evidencia: [QA_FUNDADOR_MFP.md](QA_FUNDADOR_MFP.md).
 
 **Código:** base #38 `9bc7ff9d`; rama `feat/mfp-front5-qa-r4`.
@@ -84,12 +85,34 @@ Signal ES/EN final: cuatro conceptos (5/2/24/18), 45 únicas seleccionadas y
 423 sin concepto, badge F5-04 en 134. Evidencia del segundo adoptado HTTP 200,
 24 ítems/24 citas resaltadas. Capturas privadas 21–23.
 
-**Pendiente:** ventana H1 #39 y tres excepciones reales.
-Ventana abierta al coordinador tras censo terminal y Runner libre; no se iniciarán
-más proveedores desde este frente antes del despliegue coordinado.
+**Suplemento H1:** Studio combinado #39/#40 `320993fc`, corte #39 `5eae0ef1`.
+Fixture National coordinada distinta de la marca nueva del recorrido principal.
+Tres decisiones UI sobre desacuerdos reales: atención/Jericho → not_belongs;
+cobros/comparación de tarifas por canal → not_belongs; cobros/recogida y entrega
+portuaria Auro Ice Rental EUR 50 → belongs. Cada PATCH200/updated1. Frente 4
+verificó una fila activa por par y vista vigente source=human con esos veredictos.
+No hubo recálculo ni proveedor nuevo desde este frente. Revisión asistida por agente
+bajo sesión del operador; no adjudicación manual nueva del fundador ni aceptación
+semántica. Dos quejas ambiguas quedaron sin forzar a veredicto binario.
+
+F5-12: recarga borra catálogo por incremental-candidates404 cuando discovery está
+deshabilitado; el hook lo confunde con pérdida de acceso. Fix focal #40: guard
+existente intacto, catálogo vacío HTTP200 sólo para feature apagada; fallos de acceso
+401/403/404 se conservan y error técnico de bandera devuelve503. Prueba de ruta
+4/4; regresión contra HEAD anterior reproduce 404 y excepción técnica sin sanear.
+No se modifican grants, hooks de autorización ni ruta H1 de #39. El 503 de computation
+se maneja como error local y no bloqueó las tres escrituras; queda documentado sin
+corregir. **Pendiente:** CI del nuevo corte y recarga real tras integración/despliegue
+coordinados. No atribuir el arreglo a `320993fc`. Coste y aceptación H1 los cierra #39.
 
 Guard PG17/rol/base/DNS privados verificado. Migraciones 0252/0254/0257/0258
 aplicadas una vez (239 totales); no repetir. Editorial ejecutado por IDs con
 huella histórica intacta y drainers apagados. Datos/IDs operativos y capturas
 sólo en evidencia privada ignorada. Toda infraestructura y suites pesadas remotas.
 Modelo/esfuerzo del agente no expuestos; no se acredita variante efectiva.
+
+Por instrucción del coordinador, los gates completos typecheck/lint/test se ejecutan
+en CI remoto después del push de este fix, por el reparto remoto MFP. El commit
+se apoya en las cuatro pruebas focales y el control de regresión contra el código
+anterior. No se acredita F5-12 hasta CI verde y se mantiene aparte el gate UI del
+despliegue combinado. No se ocupa Runner H1 ni se ejecutan suites pesadas en la Mac.
