@@ -211,10 +211,11 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     const beforeSubmit = () => assertHybridEvidenceRightsBeforeSubmitV1(client,
       { id: jevRun, workspace_id: workspace } as LabelingRunV1, [{ id: jevCall }]);
     await beforeSubmit();
+    await client.query("SAVEPOINT rights_revoked");
     await client.query("UPDATE data_sources SET status='inactive' WHERE id=$1", [source]);
     await assert.rejects(beforeSubmit(), /hybrid_evidence_rights_changed/u,
       "a persisted call cannot be submitted after source rights disappear");
-    await client.query("UPDATE data_sources SET status='active' WHERE id=$1", [source]);
+    await client.query("ROLLBACK TO SAVEPOINT rights_revoked");
     await beforeSubmit();
     const current = (await client.query<{ verdict: string }>(`SELECT verdict FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`, [workspace, root, concept.concept_key])).rows[0];
