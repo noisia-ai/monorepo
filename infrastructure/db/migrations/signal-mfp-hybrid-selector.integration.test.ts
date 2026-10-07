@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Pool } from "pg";
+import {
+  signalQualityPolicyDefinitionHashV1,
+  signalRetentionPolicyDefinitionHashV1,
+  signalProvenancePolicyBindingDefinitionHashV1,
+} from "@noisia/query-engine";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
 import { selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
@@ -36,27 +41,40 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       [root, workspace, source, sha(text), text, text.length]);
     await client.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id)
       VALUES($1,$2,$3,$4)`, [workspace, root, batch, source]);
+    const qualityHash = signalQualityPolicyDefinitionHashV1({ workspace_id: workspace,
+      policy_key: "h1-quality", policy_version: 1, min_quality_score: null,
+      required_quality_flags: [], forbidden_quality_flags: [], canonical_root_disposition: "evaluate" });
+    const retentionHash = signalRetentionPolicyDefinitionHashV1({ workspace_id: workspace,
+      policy_key: "h1-retention", policy_version: 1, retention_state: "allowed",
+      retention_mode: "indefinite", retain_until: null, expiry_action: "block_use",
+      approval_evidence_hash: sha("retention approval") });
+    const bindingHash = signalProvenancePolicyBindingDefinitionHashV1({ workspace_id: workspace,
+      data_source_id: source, import_batch_id: null, binding_version: 1,
+      quality_policy_id: quality, retention_policy_id: retention, licensing_policy_id: license });
     await client.query(`INSERT INTO signal_quality_policies(id,organization_id,workspace_id,policy_key,policy_version,
       status,definition_hash,created_by_user_id,activated_by_user_id,activated_at,creation_idempotency_key)
-      VALUES($1,$2,$3,'h1-quality',1,'active',$4,$5,$5,now(),$4)`, [quality, organization, workspace, sha("quality"), actor]);
+      VALUES($1,$2,$3,'h1-quality',1,'active',$4,$5,$5,now(),$4)`, [quality, organization, workspace, qualityHash, actor]);
     await client.query(`INSERT INTO signal_retention_policies(id,organization_id,workspace_id,policy_key,
       policy_version,status,retention_state,retention_mode,expiry_action,approval_evidence_hash,
       definition_hash,created_by_user_id,approved_by_user_id,approved_at,creation_idempotency_key)
       VALUES($1,$2,$3,'h1-retention',1,'active','allowed','indefinite','block_use',$4,$5,$6,$6,now(),$5)`,
-      [retention, organization, workspace, sha("retention approval"), sha("retention"), actor]);
+      [retention, organization, workspace, sha("retention approval"), retentionHash, actor]);
     await client.query(`INSERT INTO signal_licensing_policies(id,organization_id,workspace_id,policy_key,
       policy_version,status,approval_evidence_hash,definition_hash,created_by_user_id,
       approved_by_user_id,approved_at,creation_idempotency_key)
-      VALUES($1,$2,$3,'h1-license',1,'active',$4,$5,$6,$6,now(),$5)`,
+      VALUES($1,$2,$3,'h1-license',1,'draft',$4,$5,$6,NULL,NULL,$5)`,
       [license, organization, workspace, sha("license approval"), sha("license"), actor]);
     await client.query(`INSERT INTO signal_licensing_policy_usages(workspace_id,licensing_policy_id,usage_purpose,decision)
       VALUES($1,$2,'client-derived-metrics','allowed'),($1,$2,'client-mention-list','allowed'),
       ($1,$2,'client-text-or-excerpt','allowed')`, [workspace, license]);
+    await client.query(`UPDATE signal_licensing_policies SET
+      definition_hash=signal_licensing_policy_definition_hash(id), status='active',
+      approved_by_user_id=$2, approved_at=now() WHERE id=$1`, [license, actor]);
     await client.query(`INSERT INTO signal_provenance_policy_bindings(workspace_id,data_source_id,binding_version,
       status,quality_policy_id,retention_policy_id,licensing_policy_id,definition_hash,created_by_user_id,
       activated_by_user_id,activated_at,creation_idempotency_key)
       VALUES($1,$2,1,'active',$3,$4,$5,$6,$7,$7,now(),$6)`,
-      [workspace, source, quality, retention, license, sha("binding"), actor]);
+      [workspace, source, quality, retention, license, bindingHash, actor]);
     assert.deepEqual((await client.query(`SELECT metrics,evidence FROM signal_membership_evidence_rights_v1
       WHERE workspace_id=$1 AND root_id=$2`, [workspace, root])).rows[0], { metrics: true, evidence: true });
 
