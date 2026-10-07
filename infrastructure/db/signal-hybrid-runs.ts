@@ -75,31 +75,36 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
     WITH candidates AS MATERIALIZED (
       SELECT call.id jev_call_id,call.inputs->0 input,result,
         (result->>'root_id')::uuid root_id
-      FROM signal_labeling_calls call CROSS JOIN LATERAL jsonb_array_elements(call.results) result
-      JOIN signal_concept_memberships_current_v1 current ON current.workspace_id=$3
+      FROM signal_labeling_calls call JOIN signal_labeling_runs prior ON prior.id=call.run_id
+      CROSS JOIN LATERAL jsonb_array_elements(call.results) result
+      JOIN signal_concept_memberships_current_v1 current ON current.workspace_id=$2
         AND current.root_id=(result->>'root_id')::uuid AND current.root_fingerprint=result->>'root_fingerprint'
         AND current.concept_key=result->>'concept_key'
         AND current.definition_digest=result->>'definition_digest'
         AND current.entity_context_digest=result->>'entity_context_digest'
         AND current.effective_entities_digest=result->>'effective_entities_digest'
-        AND current.labeler_digest=$4 AND current.verdict='pending'
+        AND current.labeler_digest=$3 AND current.verdict='pending'
       JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=current.workspace_id
         AND rights.root_id=current.root_id AND rights.metrics AND rights.evidence
-      WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
+      WHERE prior.workspace_id=$2 AND prior.kind='membership' AND prior.status IN('completed','failed')
+        AND prior.membership_snapshot->>'hybrid_stage'='jev'
+        AND prior.membership_snapshot->>'route_digest'=$3
+        AND call.status='settled' AND call.results_applied
         AND result#>>'{jev,verdict}'='belongs'
-        AND ($2::uuid IS NULL OR (result->>'root_id')::uuid>$2::uuid)
+        AND ($1::uuid IS NULL OR (result->>'root_id')::uuid>$1::uuid)
     ), selected_roots AS (
       SELECT DISTINCT root_id FROM candidates ORDER BY root_id LIMIT 200
     ) SELECT candidate.input,candidate.result,candidate.jev_call_id FROM candidates candidate
       JOIN selected_roots selected ON selected.root_id=candidate.root_id
     ORDER BY candidate.root_id,candidate.result->>'concept_key'`,
-    [prior,run.cursor_root_id,run.workspace_id,snapshot(run).route_digest])).rows;
+    [run.cursor_root_id,run.workspace_id,snapshot(run).route_digest])).rows;
   const grouped = new Map<string,HybridStageInputV1>();
   for (const row of rows) {
     const concept = snapshot(run).concepts.find(item => item.concept_key === row.result.concept_key &&
       item.definition_digest === row.result.definition_digest);
     if (!concept || row.result.jev.verdict !== "belongs") return fail("hybrid_jev_result_invalid");
     const input = grouped.get(row.input.root_id) ?? { ...row.input,evaluated_concepts:[],jev_by_concept:{} };
+    if (input.jev_by_concept?.[concept.concept_key]) return fail("hybrid_duplicate_jev_result");
     input.evaluated_concepts.push(concept);
     // Claude calls are one concept at a time; the value is read in the provider proposal.
     input.jev_by_concept ??= {};

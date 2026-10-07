@@ -9,6 +9,7 @@ import {
 } from "@noisia/query-engine";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
 import { assertHybridProviderRightsBeforeSubmitV1, selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
+import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationSqlV1 } from "../signal-hybrid-admission-population";
 import { writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
@@ -232,12 +233,56 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       "an interrupted JEV run cannot reserve the settled pair again");
     assert.deepEqual(await selectMembershipInputsV1(client, work(randomUUID()), true), [],
       "a new JEV run with the same route cannot charge the pair again");
+    const unknownConcepts = [1, 2].map(number => ({ ...concept,
+      concept_key: `uncertain_brakes_${number}`, label: `Uncertain brakes ${number}`,
+      definition_digest: sha(`uncertain definition ${number}`) }));
+    for (const uncertain of unknownConcepts) await client.query(`INSERT INTO taxonomy_terms(taxonomy_id,term_key,label,metadata)
+      VALUES($1,$2,$3,$4::jsonb)`, [taxonomy, uncertain.concept_key, uncertain.label,
+      JSON.stringify({ topic: { ...uncertain, origin: "manual", lifecycle: "active" } })]);
+    const allConcepts = [concept, ...unknownConcepts];
+    const allWork = (id: string) => ({ ...work(id), membership_snapshot: {
+      concepts: allConcepts, preview: false, sample_root_ids: null, hybrid_stage: "jev", route_digest: route,
+    } }) as unknown as LabelingRunV1;
+    const pendingUnknown = await selectMembershipInputsV1(client, allWork(randomUUID()), true);
+    assert.deepEqual(pendingUnknown[0]?.evaluated_concepts.map(item => item.concept_key),
+      unknownConcepts.map(item => item.concept_key));
+    for (const uncertain of unknownConcepts) {
+      const failedRun = randomUUID(), uncertainCall = randomUUID();
+      await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
+        preparation_run_id,entity_context_digest,entity_context_version_no,status,error_code,estimated_micro_usd,
+        idempotency_key,request_digest,actor_user_id,membership_snapshot)
+        VALUES($1,$2,'membership',$3,$4,$5,1,'failed','labeling_outcome_unknown',1,$6,$7,$8,$9::jsonb)`,
+      [failedRun, workspace, jevVersion, prep, context, `uncertain-${failedRun}`, digest, actor,
+        JSON.stringify({ hybrid_stage: "jev", route_digest: route, concepts: allConcepts, preview: false })]);
+      const uncertainInput = { ...pendingUnknown[0]!, evaluated_concepts: [uncertain] };
+      await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,
+        custom_id,request_digest,request,inputs,status,reserved_micro_usd,budget_date,budget_timezone)
+        VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}',$6::jsonb,'unknown',1,current_date,'UTC')`,
+      [uncertainCall, failedRun, workspace, `unknown-${uncertainCall}`, digest, JSON.stringify([uncertainInput])]);
+    }
+    assert.deepEqual(await selectMembershipInputsV1(client, allWork(randomUUID()), true), [],
+      "two uncertain pairs and one settled pair stay excluded from a successor run");
+    const remaining = (await client.query<{pairs:number}>(hybridH1JevAdmissionPopulationSqlV1,
+      [workspace, route])).rows[0]!;
+    assert.equal(remaining.pairs, 0, "admission excludes both quarantined pairs as well as settled work");
+    await client.query("UPDATE signal_labeling_runs SET status='failed',error_code='labeling_outcome_unknown' WHERE id=$1", [jevRun]);
+    const jevAnchor = randomUUID();
+    await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
+      preparation_run_id,entity_context_digest,entity_context_version_no,status,estimated_micro_usd,
+      idempotency_key,request_digest,actor_user_id,membership_snapshot)
+      VALUES($1,$2,'membership',$3,$4,$5,1,'completed',1,$6,$7,$8,$9::jsonb)`,
+    [jevAnchor, workspace, jevVersion, prep, context, `anchor-${jevAnchor}`, digest, actor,
+      JSON.stringify({ hybrid_stage: "jev", route_digest: route, concepts: allConcepts, preview: false })]);
+    const positivePopulation = (await client.query<{pairs:number}>(hybridH1ClaudeAdmissionPopulationSqlV1,
+      [workspace, route])).rows[0]!;
+    assert.equal(positivePopulation.pairs, 1,
+      "Claude admission includes a settled positive from a failed predecessor run");
     const claude = await selectHybridClaudeInputsV1(client, { ...work(randomUUID()),
-      membership_snapshot: { concepts: [concept], hybrid_stage: "claude", route_digest: route, jev_run_id: jevRun } } as unknown as LabelingRunV1);
+      membership_snapshot: { concepts: allConcepts, hybrid_stage: "claude", route_digest: route, jev_run_id: jevAnchor } } as unknown as LabelingRunV1);
     assert.equal(claude.length, 1, "Claude alone inherits the positive pair");
     assert.equal(claude[0]!.jev_by_concept?.[concept.concept_key]?.call_id, jevCall);
     assert.deepEqual(await selectHybridClaudeInputsV1(client, { ...work(randomUUID()),
-      membership_snapshot: { concepts: [concept], hybrid_stage: "claude", route_digest: route, jev_run_id: jevRun } } as unknown as LabelingRunV1), claude,
+      membership_snapshot: { concepts: allConcepts, hybrid_stage: "claude", route_digest: route, jev_run_id: jevAnchor } } as unknown as LabelingRunV1), claude,
     "a restarted Claude read retains the same JEV receipt without a new JEV call");
 
     const claudeVersion = randomUUID(), claudeRun = randomUUID(), claudeCall = randomUUID();

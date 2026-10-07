@@ -69,12 +69,20 @@ export async function requestHybridMembershipStageV1(args: {
           [workspace, args.route_digest])).rows[0];
         if (!prior || prior.unknown) return fail("hybrid_jev_stage_incomplete");
         jev_run_id = prior.id;
+        const active = (await client.query<{count:number}>(`SELECT count(*)::int count
+          FROM signal_labeling_runs run WHERE run.workspace_id=$1 AND run.kind='membership'
+            AND run.membership_snapshot->>'hybrid_stage'='jev'
+            AND run.membership_snapshot->>'route_digest'=$2 AND run.status IN('queued','running')`,
+          [workspace,args.route_digest])).rows[0]!.count;
+        const remaining = (await client.query<{pairs:number}>(hybridH1JevAdmissionPopulationSqlV1,
+          [workspace,args.route_digest])).rows[0]!.pairs;
+        if (active || remaining) return fail("hybrid_jev_stage_incomplete");
       }
       const population = args.stage === "jev"
         ? (await client.query<{roots:number;pairs:number;characters:string}>(
           hybridH1JevAdmissionPopulationSqlV1, [workspace,args.route_digest])).rows[0]!
         : (await client.query<{roots:number;pairs:number;characters:string}>(
-          hybridH1ClaudeAdmissionPopulationSqlV1, [jev_run_id,workspace])).rows[0]!;
+          hybridH1ClaudeAdmissionPopulationSqlV1, [workspace,args.route_digest])).rows[0]!;
       const jevPrice=Number(process.env.NOISIA_JEV_INPUT_USD_PER_MTOK);
       if (args.stage === "jev" && (!Number.isFinite(jevPrice) || jevPrice <= 0))
         return fail("hybrid_jev_price_required");
