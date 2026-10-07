@@ -134,7 +134,7 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
      AND result->>'root_fingerprint'=signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest))
      AND result->>'concept_key'=c.concept_key AND result->>'definition_digest'=c.definition_digest
      AND result->>'entity_context_digest'=f.effective_ce
-     AND result->>'effective_entities_digest'=f.effective_entities_digest)))
+     AND result->>'effective_entities_digest'=f.effective_entities_digest))
  AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls uncertain JOIN signal_labeling_runs r ON r.id=uncertain.run_id
  WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND uncertain.status IN('submitting','unknown')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest

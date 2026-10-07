@@ -26,7 +26,8 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     await client.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
       connection_method,name,status,source_contract_version,source_key)
       VALUES($1,$2,$3,$4,'social-listening','fixture','csv','H1 selector','active',
-      'signal-data-source-connector-v1',$5)`, [source, workspace, organization, brand, `source-${sha(source)}`]);
+      'signal-data-source-connector-v1',$5)`, [source, workspace, organization, brand,
+      `source-sha256-${createHash("sha256").update(source).digest("hex")}`]);
     await client.query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,status)
       VALUES($1,$2,$3,'fixture','h1-selector.csv','completed')`, [batch, workspace, source]);
     await client.query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,
