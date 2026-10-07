@@ -4,6 +4,7 @@ import {
   overrideMentionFacetsBatchV1,
   loadMentionFacetsStatusV1,
   requestMentionFacetsV1,
+  signalWorkspaceFeatureEnabledV1,
 } from "@noisia/db";
 import { pool } from "@/lib/db";
 
@@ -23,12 +24,18 @@ export function loadMentionFacetsStatusForActorV1(args: FacetAccess) {
   return loadMentionFacetsStatusV1({ ...args, database: pool });
 }
 
-export function requestMentionFacetsForActorV1(args: FacetRequest) {
+export async function loadMentionFacetsAvailabilityV1(workspace_id: string) {
+  const enabled = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id,feature:"mention_facets"});
+  return {enabled,provider_available:enabled && process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED === "true"};
+}
+
+export async function requestMentionFacetsForActorV1(args: FacetRequest) {
+  const enabled = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:args.workspace_id,feature:"mention_facets"});
   return requestMentionFacetsV1({
     ...args,
     database: pool,
     provider_available:
-      process.env.NOISIA_MENTION_FACETS_ENABLED === "true" &&
+      enabled &&
       process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED === "true",
   });
 }

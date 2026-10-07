@@ -2,6 +2,7 @@ import type { Pool } from "pg";
 import { SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { signalSemanticContextProposalRuntimeConfigurationFromEnvV1 } from "./signal-semantic-context-proposal";
+import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 
 export type SignalBrandContextPolicyProvisioningV1 = {
   contract_version: "brand-context-policy-provisioning-v1";
@@ -56,7 +57,8 @@ function configuredPolicy(env: Record<string, string | undefined>) {
  * The authenticated initiator must still match the sealed brand creation and live authority.
  * Only the separately configured internal system actor owns the policy; neither identity comes
  * from browser input. Both actors and the tenant are checked under row locks. The policy lock serializes all
- * brands in the organization; existing active, draft or revoked history is never rewritten.
+ * brands in the organization. Only an opted-in MFP workspace may gain missing actions
+ * through a successor; unexpired admissions postpone replacement. Draft or revoked history is never reactivated.
  * Draft, required actions and activation commit together. This creates no admission, work or spend.
  * Keep this server-owned seam out of generic client policy routes. */
 export async function provisionSignalBrandContextPolicyV1(args: {
@@ -93,29 +95,86 @@ export async function provisionSignalBrandContextPolicyV1(args: {
         ORDER BY id FOR SHARE NOWAIT`, [args.initiator_user_id, args.brand_id])).rows[0];
       if (!grant) return await commit("not_eligible");
     }
-    const history = (await client.query<{ status: string }>(
-      "SELECT status FROM signal_processing_policy_versions WHERE organization_id=$1::uuid", [scope.organization_id])).rows;
-    if (history.some(policy => policy.status === "active")) return await commit("existing_policy");
-    // A creation retry must never revoke/replace a policy or undo a previous stop.
-    if (history.length) return await commit("configuration_required");
-    const configuration = configuredPolicy(args.env ?? process.env);
+    const prior = (await client.query<{ id: string; status: string; version: number; valid_until: string;
+      budget_timezone: string; daily_cap_micro_usd: string | null }>(
+      `SELECT id::text,status,version::int,valid_until::text,budget_timezone,daily_cap_micro_usd::text
+       FROM signal_processing_policy_versions WHERE organization_id=$1::uuid ORDER BY version DESC LIMIT 1`,
+      [scope.organization_id])).rows[0];
+    // A creation retry must never reactivate a stopped policy or amend a draft.
+    if (prior && prior.status !== "active") return await commit("configuration_required");
+    const mfpEnabled=await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,
+      feature:"mention_facets",env:args.env});
+    if (prior && !mfpEnabled) return await commit("existing_policy");
+    const required=mfpEnabled ? ["corpus_preparation","corpus_embeddings","topic_fit_incremental",
+      "topic_interpretation","topic_consolidation_numeric","topic_consolidation","mention_facets","concept_membership"]
+      : ["brand_context_proposal","topic_prototype_embeddings"];
+    const requestedCap=mfpEnabled ? (args.env??process.env).NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD : undefined;
+    if(requestedCap!==undefined && money(requestedCap)===null) return await commit("configuration_required");
+    if (prior) {
+      const existing = (await client.query<{action:string}>(
+        "SELECT action FROM signal_processing_policy_actions WHERE policy_version_id=$1::uuid",[prior.id])).rows;
+      const actions=new Set(existing.map(row=>row.action));
+      const capAlreadyBinding=requestedCap===undefined || prior.daily_cap_micro_usd!==null
+        && BigInt(prior.daily_cap_micro_usd)<=BigInt(requestedCap);
+      if (required.every(action=>actions.has(action)) && capAlreadyBinding) return await commit("existing_policy");
+      // Admissions have no mutable status. Keep the old policy while a receipt can
+      // still start work, or while its owner is active after the receipt deadline.
+      // A completed owner no longer needs capacity from that policy.
+      const pending=(await client.query<{pending:boolean}>(`SELECT EXISTS(
+        SELECT 1 FROM signal_processing_admissions admission WHERE admission.policy_version_id=$1::uuid
+          AND (
+            EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
+            EXISTS(SELECT 1 FROM signal_workspace_embedding_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
+            EXISTS(SELECT 1 FROM signal_corpus_preparation_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
+            EXISTS(SELECT 1 FROM signal_topic_catalog_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
+            EXISTS(SELECT 1 FROM signal_topic_consolidation_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
+            EXISTS(SELECT 1 FROM signal_topic_editorial_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','review_ready')) OR
+            EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('open','ready','blocked')) OR
+            EXISTS(SELECT 1 FROM signal_labeling_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running'))
+            OR (admission.admission_not_after>clock_timestamp() AND NOT (
+            EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
+            EXISTS(SELECT 1 FROM signal_workspace_embedding_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
+            EXISTS(SELECT 1 FROM signal_corpus_preparation_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
+            EXISTS(SELECT 1 FROM signal_topic_catalog_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status='ready') OR
+            EXISTS(SELECT 1 FROM signal_topic_consolidation_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status='ready') OR
+            EXISTS(SELECT 1 FROM signal_topic_editorial_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
+            EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
+            EXISTS(SELECT 1 FROM signal_labeling_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed')))
+          )
+      ) pending`,[prior.id])).rows[0];
+      if(pending?.pending) return await commit("configuration_required");
+    }
+    const configuration = configuredPolicy({...args.env ?? process.env,
+      NOISIA_MENTION_FACETS_ENABLED:mfpEnabled ? "true" : "false"});
     if (!configuration) return await commit("configuration_required");
+    if (prior?.daily_cap_micro_usd !== null && prior && !mfpEnabled && configuration.semanticCap && configuration.prototypeCap
+      && BigInt(prior.daily_cap_micro_usd) < BigInt(configuration.semanticCap)+BigInt(configuration.prototypeCap))
+      return await commit("configuration_required");
     const creator = (await client.query(`SELECT id FROM users WHERE id=$1::uuid
       AND status='active' AND user_type='noisia_internal' AND primary_role IN('noisia_admin','founder','admin')
       FOR SHARE NOWAIT`, [configuration.creatorUserId])).rows[0];
     if (!creator) return await commit("configuration_required");
     const compatible = (await client.query<{ deadline_valid: boolean; timezone_valid: boolean; configuration_valid: boolean }>(`SELECT
-      $1::timestamptz>clock_timestamp() deadline_valid,
+      LEAST($1::timestamptz,$6::timestamptz)>clock_timestamp() deadline_valid,
       EXISTS(SELECT 1 FROM pg_timezone_names WHERE name=$2) timezone_valid,
       (($5::boolean OR signal_processing_configuration_allows_v1('brand_context_proposal',$3::jsonb,$3::jsonb))
         AND signal_brand_context_prototype_configuration_v1($4::jsonb)) configuration_valid`,
-    [configuration.until, authority.timezone, JSON.stringify(configuration.semanticConfiguration), JSON.stringify(SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1), configuration.mfp])).rows[0];
+    [configuration.until, authority.timezone, JSON.stringify(configuration.semanticConfiguration), JSON.stringify(SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1), configuration.mfp,prior?.valid_until??"infinity"])).rows[0];
     if (!compatible?.deadline_valid || !compatible.timezone_valid || !compatible.configuration_valid) return await commit("configuration_required");
     const policy = (await client.query<{ id: string }>(`INSERT INTO signal_processing_policy_versions(
       organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-      VALUES($1::uuid,1,'draft',clock_timestamp(),$2::timestamptz,$3,$4::bigint,$5::uuid) RETURNING id::text`,
-    [scope.organization_id, configuration.until, authority.timezone, configuration.daily, configuration.creatorUserId])).rows[0];
+      VALUES($1::uuid,$6::bigint,'draft',clock_timestamp(),LEAST($2::timestamptz,$7::timestamptz),
+        $3,$4::bigint,$5::uuid) RETURNING id::text`,
+    [scope.organization_id, configuration.until, prior?.budget_timezone??authority.timezone,
+      prior?.daily_cap_micro_usd && configuration.daily
+        ? (BigInt(prior.daily_cap_micro_usd)<BigInt(configuration.daily)?prior.daily_cap_micro_usd:configuration.daily)
+        : prior?.daily_cap_micro_usd??configuration.daily, configuration.creatorUserId, (prior?.version??0)+1,
+      prior?.valid_until??"infinity"])).rows[0];
     if (!policy) throw new Error("brand_context_policy_provisioning_incomplete");
+    if (prior) await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
+      configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+      SELECT $1::uuid,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
+      FROM signal_processing_policy_actions WHERE policy_version_id=$2::uuid`,[policy.id,prior.id]);
     for (const [action, provider, model, policyConfiguration, cap, automatic] of (configuration.mfp ? [
       ["corpus_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, false],
       ["mention_facets", "anthropic", "claude-sonnet-5-5", {}, null, false],
@@ -126,29 +185,35 @@ export async function provisionSignalBrandContextPolicyV1(args: {
     ]) as ReadonlyArray<readonly [string, string, string, unknown, string | null, boolean]>) {
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-        VALUES($1::uuid,$2,'provider',$3,$4,$5::jsonb,signal_semantic_context_digest_json_v2($5::jsonb),$6::bigint,$7::boolean)`,
+        VALUES($1::uuid,$2,'provider',$3,$4,$5::jsonb,signal_semantic_context_digest_json_v2($5::jsonb),$6::bigint,$7::boolean)
+        ON CONFLICT(policy_version_id,action) DO NOTHING`,
       [policy.id, action, provider, model, JSON.stringify(policyConfiguration), cap, automatic]);
     }
     if(configuration.mfp){
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         SELECT $1::uuid,action,'free','{}'::jsonb,signal_semantic_context_digest_json_v2('{}'::jsonb),0,automatic
-        FROM (VALUES ('corpus_preparation',false),('topic_fit_incremental',true)) actions(action,automatic)`,[policy.id]);
+        FROM (VALUES ('corpus_preparation',false),('topic_fit_incremental',true)) actions(action,automatic)
+        ON CONFLICT(policy_version_id,action) DO NOTHING`,[policy.id]);
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         SELECT $1::uuid,'topic_consolidation_numeric','free',config,
           signal_semantic_context_digest_json_v2(config),0,false
-        FROM (SELECT signal_topic_consolidation_numeric_configuration_v1() config) configuration`,[policy.id]);
+        FROM (SELECT signal_topic_consolidation_numeric_configuration_v1() config) configuration
+        ON CONFLICT(policy_version_id,action) DO NOTHING`,[policy.id]);
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1::uuid,'topic_interpretation','provider','anthropic',$2,$3::jsonb,
-          signal_semantic_context_digest_json_v2($3::jsonb),NULL,false)`,
+          signal_semantic_context_digest_json_v2($3::jsonb),NULL,false)
+        ON CONFLICT(policy_version_id,action) DO NOTHING`,
         [policy.id,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1.model,JSON.stringify(SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1)]);
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1::uuid,'topic_consolidation','provider','anthropic','claude-sonnet-4-6',signal_topic_editorial_configuration_v2(),
-          signal_semantic_context_digest_json_v2(signal_topic_editorial_configuration_v2()),NULL,false)`,[policy.id]);
+          signal_semantic_context_digest_json_v2(signal_topic_editorial_configuration_v2()),NULL,false)
+        ON CONFLICT(policy_version_id,action) DO NOTHING`,[policy.id]);
     }
+    if (prior) await client.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1::uuid AND status='active'",[prior.id]);
     const active = await client.query(`UPDATE signal_processing_policy_versions SET status='active'
       WHERE id=$1::uuid AND status='draft' RETURNING id`, [policy.id]);
     if (active.rows.length !== 1) throw new Error("brand_context_policy_provisioning_incomplete");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import {existsSync} from "node:fs";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
@@ -51,7 +52,8 @@ test("the new brand creator can request processing and adopt editorial topics wi
   const capability = resolveSignalWorkspaceCapabilitiesV1(authority);
   assert.equal(capability.can_request_processing, true);
   assert.equal(capability.can_execute_topics, false);
-  assert.equal(capability.can_adopt_topics, true);
+  assert.equal(capability.can_adopt_topics, false);
+  assert.equal(resolveSignalWorkspaceCapabilitiesV1(authority,true).can_adopt_topics, true);
   for (const changed of [
     { ...authority, brand_access_level: null }, // revoked grant is absent from the live reader
     { ...authority, brand_access_level: "comment" }, // existing grants are not upgraded
@@ -154,16 +156,19 @@ test("client update keeps organization, slug and lifecycle immutable and removes
 });
 
 test("session and team updates never grant every brand in an organization", async () => {
-  const [session, teamRoute, orgSync] = await Promise.all([
+  assert.equal(existsSync(new URL("../../app/founder-recovery/page.tsx",import.meta.url)),false,
+    "the temporary founder self-promotion route must not ship");
+  const [session, teamRoute, teamAccess, orgSync] = await Promise.all([
     readFile(new URL("./session.ts", import.meta.url), "utf8"),
     readFile(new URL("../../app/api/team/users/[id]/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("./team-access.ts", import.meta.url), "utf8"),
     readFile(new URL("./org-sync.ts", import.meta.url), "utf8")
   ]);
   assert.doesNotMatch(session, /syncClientBrandAccessForOrganization/u);
   assert.doesNotMatch(teamRoute, /syncClientBrandAccessForOrganization/u);
-  assert.match(teamRoute, /db\.transaction\(async \(tx\)/u);
-  assert.match(teamRoute, /revokeAllClientBrandAccess\(row\.id, tx\)/u);
-  assert.match(teamRoute, /revokeClientBrandAccessOutsideOrganization\([\s\S]*?, tx\)/u);
+  assert.match(teamRoute, /db\.transaction\(\(tx\) => applyTeamUserAccessChange/u);
+  assert.match(teamAccess, /revokeAllClientBrandAccess\(row\.id, tx\)/u);
+  assert.match(teamAccess, /revokeClientBrandAccessOutsideOrganization\([\s\S]*?, tx\)/u);
   assert.doesNotMatch(orgSync, /onConflictDoUpdate[\s\S]*revokedAt:\s*null/u);
   assert.doesNotMatch(orgSync, /SET access_level/u);
   assert.doesNotMatch(orgSync, /\.from\(brands\)[\s\S]*eq\(brands\.organizationId/u);

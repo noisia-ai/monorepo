@@ -1,6 +1,5 @@
 /** Opt-in provider demo. Never imported by unit suites. Run only through guarded MFP runner. */
 import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { main, openDatabase } from "./guard.mjs";
 await main(async () => {
   const mode = process.argv.includes("--real") ? "real" : "fake";
@@ -132,12 +131,7 @@ await main(async () => {
                               act: dim("other"),
                               spam_or_bot: dim(false),
                               language: dim("es"),
-                              asunto: dim(
-                                labeler.params.request_format ===
-                                  "required-ordinal-fields-v4"
-                                  ? ""
-                                  : null,
-                              ),
+                              asunto: dim(null),
                             },
                           ]),
                         ),
@@ -181,6 +175,24 @@ await main(async () => {
       async cancel() {
         throw new Error("unsupported");
       },
+      async list(afterId?: string) {
+        const ids = [...responses.keys()];
+        const start = afterId ? ids.indexOf(afterId) + 1 : 0;
+        const page = ids.slice(start).map((id) => ({
+          id,
+          processing_status: "ended" as const,
+          request_counts: {
+            processing: 0,
+            succeeded: responses.get(id)!.length,
+            errored: 0,
+            canceled: 0,
+            expired: 0,
+          },
+          ended_at: new Date().toISOString(),
+          results_url: null,
+        }));
+        return { data: page, has_more: false, last_id: page.at(-1)?.id ?? null };
+      },
       async *results(batch: any) {
         for (const item of responses.get(batch.id) ?? [])
           yield { item, rawText: JSON.stringify(item) };
@@ -200,6 +212,7 @@ await main(async () => {
               await writeFile(key, args.raw_text, { mode: 0o600 });
               return key;
             },
+            loadRaw: async (args) => readFile(args.storage_key, "utf8"),
           });
     const provider =
       mode === "real"

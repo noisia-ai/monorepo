@@ -68,6 +68,18 @@ test("complete ordinal coverage emits explicit negative for only evaluated conce
   assert.equal(parsed.results.length, 2);
   assert.ok(parsed.results.every((r) => r.verdict === "not_belongs"));
 });
+test("an invalid item retries alone while valid roots keep their decisions; isolated error is durable", () => {
+  const bad = {root_ordinal: 1, memberships: [{concept_key:"example",verdict:"insufficient",span_ids:[],rationale:"Missing evidence"}]};
+  const good = {root_ordinal: 0, memberships: []};
+  const grouped = parseMembershipGroupV1(response([good,bad]), [root("first"),root("second")]);
+  assert.equal(grouped.split, false);
+  assert.deepEqual(grouped.retry_ordinals, [1]);
+  assert.ok(grouped.results.every((r) => r.root_id === "first" && r.verdict === "not_belongs"));
+  const isolated = parseMembershipGroupV1(response([{...bad,root_ordinal:0}]), [root("second")]);
+  assert.ok(isolated.results.every((r) => r.verdict === "error" && r.error_code === "membership_item_schema_invalid"));
+  const malformedGroup = parseMembershipGroupV1("{", [root("second")]);
+  assert.ok(malformedGroup.results.every((r) => r.error_code === "membership_json_invalid"));
+});
 test("missing/duplicate/out-of-range ordinals and max_tokens never create negatives", () => {
   for (const roots of [
     [],

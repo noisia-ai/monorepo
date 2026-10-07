@@ -15,7 +15,8 @@ import {
   type MembershipResultV1,
   type MembershipInputV1,
 } from "@noisia/query-engine";
-import { AnthropicBatchTransportError } from "../providers/anthropic-message-batches";
+import { AnthropicBatchTransportError, type AnthropicBatchRequest, type AnthropicBatchPage } from "../providers/anthropic-message-batches";
+import { readMfpInFlightPages } from "./signal-labeling-parallelism";
 const dim = <T>(value: T) => ({ value, confidence: "high", abstained: false });
 function harness() {
   const context = {
@@ -59,7 +60,6 @@ function harness() {
     cursor_root_id: null,
     cap_micro_usd: null,
     processing_admission_id: "admission",
-    selection_complete: false,
     status: "running",
     entity_context_version_no: 1,
   } as MembershipRunV1;
@@ -108,6 +108,8 @@ function harness() {
             results_applied: false,
             provider_batch_id: null,
             retry_depth: p.retry_depth ?? 0,
+            created_at: new Date(),
+            updated_at: new Date(),
           });
       if (advance) run.cursor_root_id = "1";
       return calls.filter((c) =>
@@ -117,6 +119,7 @@ function harness() {
     async calls() {
       return calls;
     },
+    async refresh() { return {status:run.status,error_code:run.error_code??null}; },
     async markSubmitting(_r, c) {
       c.forEach((x) => (x.status = "submitting"));
     },
@@ -129,6 +132,13 @@ function harness() {
     async markFailed(_r, c, u) {
       c.forEach((x) => (x.status = u ? "unknown" : "failed"));
     },
+    async recoverUnknownBatch(_r, c, id) {
+      c.forEach((x) => { x.status = "submitted"; x.provider_batch_id = id; });
+    },
+    async releaseUnknown(_r, c) {
+      c.forEach((x) => { x.status = "failed"; x.results_applied = true; });
+    },
+    async clearUnknownFailure() { run.error_code = null; },
     async persistRaw(_r, call, raw) {
       call.raw_body = raw;
       events.push("raw");
@@ -171,10 +181,11 @@ function harness() {
       expired: 0,
     },
     ended_at: "now",
+    created_at: new Date().toISOString(),
     results_url: null,
   };
   const provider = {
-    async create() {
+    async create(_requests?: readonly AnthropicBatchRequest[]) {
       submitted++;
       return state;
     },
@@ -184,6 +195,7 @@ function harness() {
     async cancel() {
       return state;
     },
+    async list(): Promise<AnthropicBatchPage> { return {data:[],has_more:false,last_id:null}; },
     async *results() {
       for (const call of calls.filter((c) => c.status === "submitted")) {
         const message = {
@@ -250,6 +262,81 @@ test("batch persists raw before settlement and labels; replay has zero new provi
   assert.equal(h.submitted(), 1);
   assert.equal(h.labels.length, 2);
 });
+test("invalid provider usage in membership is applied once and never resent",async()=>{
+  const h=harness(),originalResults=h.provider.results;
+  h.provider.results=async function*(){
+    for await(const row of originalResults()){
+      const item=structuredClone(row.item) as typeof row.item;
+      if(item.result.type==="succeeded")item.result.message.usage={input_tokens:-1,output_tokens:0};
+      yield{item,rawText:JSON.stringify(item)};
+    }
+  };
+  h.store.finish=async()=>{
+    const invalid=h.calls().find(call=>call.results_applied&&["unknown","submitted"].includes(call.status));
+    if(invalid){invalid.status="failed";h.run.error_code="labeling_provider_usage_invalid";}
+    return h.run.error_code?"failed":"running";
+  };
+  assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.ok(h.labels.every(label=>label.error_code==="provider_usage_invalid"));
+  h.calls()[0]!.status="submitted";
+  h.run.error_code=null;
+  h.provider.get=async()=>{throw new Error("applied receipt must not be fetched again");};
+  assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.equal(h.submitted(),1);
+});
+test("configurable in-flight pages submit multiple root pages in one provider batch", async () => {
+  assert.equal(readMfpInFlightPages("4"), 4);
+  assert.equal(readMfpInFlightPages("100"), 1);
+  const previous = process.env.NOISIA_MFP_IN_FLIGHT_PAGES;
+  process.env.NOISIA_MFP_IN_FLIGHT_PAGES = "2";
+  try {
+    const h = harness();
+    const second = h.inputs.map((input, i) => ({...input, root_id:`next-${i}`, root_fingerprint:`next-${i}`}));
+    let page = 0;
+    h.store.inputs = async () => page === 0 ? h.inputs : page === 1 ? second : [];
+    const reserve = h.store.reserve;
+    h.store.reserve = async (run, proposals, advance) => {
+      const calls = await reserve(run, proposals, advance);
+      if (advance !== false) page++;
+      return calls;
+    };
+    const create = h.provider.create;
+    let requestCount = 0;
+    h.provider.create = async (requests) => { requestCount = requests?.length ?? 0; return create(requests); };
+    await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+    assert.equal(page, 2);
+    assert.equal(requestCount, 2);
+    assert.equal(h.labels.length, 4);
+  } finally {
+    if (previous === undefined) delete process.env.NOISIA_MFP_IN_FLIGHT_PAGES;
+    else process.env.NOISIA_MFP_IN_FLIGHT_PAGES = previous;
+  }
+});
+test("one malformed membership is retried alone and its final error is not billed again", async () => {
+  const h = harness();
+  const originalResults = h.provider.results;
+  h.provider.results = async function* () {
+    for await (const result of originalResults()) {
+      const call = h.calls().find((c) => c.custom_id === result.item.custom_id)!;
+      const roots = call.inputs.map((_, root_ordinal) => ({
+        root_ordinal,
+        memberships: root_ordinal === 0 && call.inputs.length > 1 ? [] : [{
+          concept_key:"experience",verdict:"insufficient",span_ids:[],rationale:"Missing evidence",
+        }],
+      }));
+      result.item.result.message.content = [{type:"text",text:JSON.stringify({contract_version:"concept-membership-judge-v1",roots})}];
+      yield {...result,rawText:JSON.stringify(result.item)};
+    }
+  };
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.labels.length, 1);
+  assert.equal(h.labels[0]?.verdict, "not_belongs");
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.labels.length, 2);
+  assert.equal(h.labels[1]?.error_code, "membership_item_schema_invalid");
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.submitted(), 2);
+});
 test("ambiguous POST is never replayed blindly", async () => {
   const h = harness();
   h.provider.create = async () => {
@@ -274,6 +361,56 @@ test("ambiguous POST is never replayed blindly", async () => {
     "failed",
   );
   assert.equal(h.labels.length, 0);
+});
+test("membership recovers an unknown POST by custom_id without resubmitting", async () => {
+  const h=harness();
+  h.provider.create=async()=>{throw new AnthropicBatchTransportError("transport","submission_unknown");};
+  await assert.rejects(runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider}));
+  const originalResults=h.provider.results;
+  h.provider.results=async function*(){
+    const unknown=h.calls().filter((call)=>call.status==="unknown");
+    unknown.forEach((call)=>{call.status="submitted";});
+    const items=[];
+    for await(const item of originalResults())items.push(item);
+    unknown.forEach((call)=>{call.status="unknown";});
+    yield* items;
+  };
+  h.provider.list=async()=>({data:[{...await h.provider.get(),created_at:new Date().toISOString()}],has_more:false,last_id:null});
+  assert.equal((await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"completed");
+  assert.equal(h.submitted(),0);
+  assert.equal(h.calls()[0]?.status,"settled");
+  assert.equal(h.labels.length,2);
+});
+test("membership does not send a new page in the tick that releases unknown calls",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[membershipCallProposalV1(h.run,[h.inputs[0]!])],false);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-27*60*60*1000);
+  call.updated_at=new Date(Date.now()-26*60*60*1000);
+  h.provider.list=async()=>({data:[],has_more:false,last_id:null});
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.calls().length,1);
+  assert.equal(h.submitted(),0);
+});
+test("a group refusal isolates one membership root and preserves the other result", async () => {
+  const h = harness(), originalResults = h.provider.results;
+  h.provider.results = async function* () {
+    for await (const result of originalResults()) {
+      const call = h.calls().find((candidate) => candidate.custom_id === result.item.custom_id)!;
+      if (call.inputs.some((input) => input.root_id === "1")) {
+        result.item.result.message.stop_reason = "refusal";
+      }
+      yield { ...result, rawText: JSON.stringify(result.item) };
+    }
+  };
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.labels.length,0);
+  assert.equal(h.calls().length,3);
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.deepEqual(h.labels.map((label) => [label.root_id,label.verdict]),[["0","belongs"],["1","refused"]]);
+  assert.equal(h.submitted(),2);
 });
 test("custom identity is deterministic but split attempts are distinct", () => {
   const h = harness(),
@@ -353,15 +490,29 @@ test("one unknown call does not block reconciliation of a separate durable respo
   assert.equal(h.submitted(), 0);
 });
 
-test("missing ended-batch result preserves unknown exposure and emits no semantic negative", async () => {
+test("corrupt stored receipt makes the membership run fail explicitly before provider work",async()=>{
+  const h=harness();
+  h.store.calls=async()=>{throw new Error("labeling_raw_receipt_invalid");};
+  await assert.rejects(runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider}),/labeling_raw_receipt_invalid/u);
+  assert.equal(h.run.error_code,"labeling_raw_receipt_invalid");
+  assert.equal(h.submitted(),0);
+});
+
+test("missing ended-batch result ends in a technical error without a semantic negative", async () => {
   const h = harness();
   h.provider.results = async function* () {};
+  h.store.finish=async()=>{
+    const call=h.calls()[0]!;
+    if(call.results_applied){call.status="failed";h.run.error_code="labeling_provider_result_missing";}
+    return "failed";
+  };
   const result = await runConceptMembershipTickV1({
     run_id: h.run.id,
     store: h.store,
     provider: h.provider,
   });
-  assert.equal(h.calls()[0]?.status, "unknown");
+  assert.equal(result.status,"failed");
+  assert.equal(h.calls()[0]?.status, "failed");
   assert.ok(h.labels.every((r) => r.verdict === "error"));
   assert.equal(h.submitted(), 1);
 });

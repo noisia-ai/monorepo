@@ -42,6 +42,16 @@ test("create sends full output allowance once, with no provider retry", async ()
   assert.equal(calls, 1);
 });
 
+test("list pages recent batches using a validated cursor without a POST", async () => {
+  const client = createAnthropicMessageBatchesClient({ apiKey: "test-secret", fetch: async (url, init) => {
+    assert.equal(url, "https://api.anthropic.com/v1/messages/batches?limit=100&after_id=msgbatch_cursor");
+    assert.equal(init?.method, "GET");
+    return Response.json({ data:[{...state,created_at:"2026-09-25T00:00:00Z"}],has_more:false,last_id:"msgbatch_test" });
+  } });
+  assert.equal((await client.list("msgbatch_cursor")).data[0]?.id,"msgbatch_test");
+  await assert.rejects(client.list("bad/path"), matches("batch_provider_id_invalid","read_failed"));
+});
+
 test("input rejection is known not submitted; it does not call fetch", async () => {
   const client = createAnthropicMessageBatchesClient({ apiKey: "test-secret", fetch: async () => {
     assert.fail("invalid input must not send");

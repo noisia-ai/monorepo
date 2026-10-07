@@ -15,6 +15,7 @@ import {
 } from "@noisia/query-engine";
 import {
   createSignalLabelingStoreV1,
+  signalWorkspaceFeatureEnabledV1,
   type SignalLabelingStoreV1,
   type LabelingRunV1,
   type LabelingCallV1,
@@ -27,9 +28,12 @@ import {
   type AnthropicBatchRequest,
 } from "../providers/anthropic-message-batches";
 import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
+import { readSignalLabelingReceiptV1 } from "./signal-labeling-receipt-storage";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readMfpInFlightPages } from "./signal-labeling-parallelism";
+import { reconcileUnknownBatchCallsV1 } from "./signal-batch-unknown-reconciliation";
 export const SIGNAL_MENTION_FACETS_JOB_V1 = "signal-mention-facets-v1";
 type Provider = ReturnType<typeof createAnthropicMessageBatchesClient>;
 const zeroUsage = (): LlmUsageV1 => ({
@@ -92,26 +96,24 @@ export async function runMentionFacetsTickV1(args: {
     if (calls.some((c) => c.status === "unknown") && !run.error_code) {
       await store.fail(run, "labeling_outcome_unknown");
       run.error_code = "labeling_outcome_unknown";
-      calls = await store.calls(run);
     }
-    if (
-      !run.error_code &&
-      !calls.some((c) =>
-        ["reserved", "submitting", "submitted"].includes(c.status),
-      )
-    ) {
-      const inputs = await store.inputs(run);
-      if (inputs.length) {
-        await store.reserve(
-          run,
-          groupFacetInputsV1(
-            inputs,
-            JSON.stringify(run.context).length,
-            run.identity,
-          ).map((group) => facetCallProposalV1(run, group)),
-        );
-        calls = await store.calls(run);
+    if (calls.some((c) => c.status === "unknown")) {
+      const reconciliation=await reconcileUnknownBatchCallsV1(run, calls, store, provider);
+      calls = await store.calls(run);
+      const current=await store.refresh(run);
+      run.error_code=current.error_code;
+      if(reconciliation.released)return {status:await store.finish(run)};
+    }
+    if (!run.error_code && !calls.some((c) =>
+      ["reserved", "submitting", "submitted"].includes(c.status))) {
+      for (let page = 0; page < readMfpInFlightPages(); page++) {
+        const inputs = await store.inputs(run);
+        if (!inputs.length) break;
+        await store.reserve(run, groupFacetInputsV1(
+          inputs, JSON.stringify(run.context).length, run.identity,
+        ).map((group) => facetCallProposalV1(run, group)));
       }
+      calls = await store.calls(run);
     }
     const reserved = run.error_code
       ? []
@@ -147,7 +149,7 @@ export async function runMentionFacetsTickV1(args: {
         calls
           .filter(
             (c) =>
-              c.status === "submitted" && c.provider_batch_id && !c.raw_body,
+              c.status === "submitted" && c.provider_batch_id && !c.raw_body && !c.results_applied,
           )
           .map((c) => c.provider_batch_id!),
       ),
@@ -221,15 +223,16 @@ export async function runMentionFacetsTickV1(args: {
         refusal_category: parsed.refusal_category,
       });
       if (parsed.status === "refused") {
-        apply.push({
+        if (call.inputs.length > 1 && !run.error_code && call.retry_depth < 8) {
+          const half = Math.ceil(call.inputs.length / 2);
+          for (const split of [call.inputs.slice(0, half), call.inputs.slice(half)])
+            retry.push(facetCallProposalV1(run, split, call.retry_depth + 1, call.id));
+          apply.push({ call, results: [] });
+        } else apply.push({
           call,
-          results: resultsFor(
-            call,
-            run,
-            "refused",
-            undefined,
-            parsed.refusal_category,
-          ),
+          results: call.inputs.length === 1
+            ? resultsFor(call, run, "refused", undefined, parsed.refusal_category)
+            : resultsFor(call, run, "error", "refusal_requires_authority"),
         });
         continue;
       }
@@ -310,7 +313,7 @@ export async function runMentionFacetsTickV1(args: {
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     if (
-      /^labeling_(context_changed|preparation_changed|policy_changed|forbidden|cap_exhausted|daily_cap_exhausted)$/u.test(
+      /^labeling_(context_changed|preparation_changed|policy_changed|forbidden|cap_exhausted|daily_cap_exhausted|raw_receipt_invalid)$/u.test(
         code,
       )
     )
@@ -347,6 +350,8 @@ export function createMentionFacetsRuntimeStoreV1(
         await rm(directory, { recursive: true, force: true });
       }
     },
+    loadRaw: async (args) => readSignalLabelingReceiptV1({ storage, workspace_id: args.workspace_id,
+      run_id: args.run_id, storage_key: args.storage_key, raw_sha256: args.raw_sha256, size_bytes: args.size_bytes }),
   });
 }
 export async function signalMentionFacetsJobV1(
@@ -359,6 +364,10 @@ export async function signalMentionFacetsJobV1(
   )
     throw new Error("labeling_provider_disabled");
   const { pool } = await import("../db/client");
+  const workspace = (await pool.query<{workspace_id:string}>(
+    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='facets'",[job.data.run_id])).rows[0];
+  if (!workspace || !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.workspace_id,feature:"mention_facets"}))
+    throw new Error("labeling_workspace_not_enabled");
   const store = options.store ?? createMentionFacetsRuntimeStoreV1(pool);
   return runMentionFacetsTickV1({
     run_id: job.data.run_id,
@@ -390,7 +399,7 @@ export function startMentionFacetsDrainerV1() {
       if (!exists) return;
       const rows = (
         await pool.query(
-          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='facets' AND l.provider='anthropic' AND r.status IN('queued','running') AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
+          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='facets' AND l.provider='anthropic' AND (r.status IN('queued','running') OR r.status='failed' AND r.error_code='labeling_outcome_unknown' AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id AND c.status='unknown')) AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
         )
       ).rows;
       for (const row of rows)
