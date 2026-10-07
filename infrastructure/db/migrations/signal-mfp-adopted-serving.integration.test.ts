@@ -5,9 +5,11 @@ import type {Pool} from "pg";
 import {signalTopicDefinitionSchemaV1} from "@noisia/query-engine";
 import {adoptSignalTopicCandidateStoreV1} from "../signal-topic-catalog";
 import {adoptedConsolidationConceptKeysV1} from "../signal-workspace-topics-serving";
+import {seedSignalTopicEditorialRenewalSourceV1} from "./signal-topic-editorial-renewal.synthetic.fixture";
+import {signalTopicConsolidationDigestV1} from "../signal-topic-consolidation";
 
 test("MFP Signal replaces a consolidated concept after real adoption by key and run",{
-  skip:process.env.NOISIA_MFP_ADOPTED_SERVING_PG_TEST!=="true",timeout:120_000
+  skip:process.env.NOISIA_MFP_ADOPTED_SERVING_PG_TEST!=="true",timeout:300_000
 },async()=>{
   const {openDatabase}=await import(new URL("../../../scripts/dev-corpus/guard.mjs",import.meta.url).href);
   const pool:Pool=await openDatabase(),raw=await pool.connect();
@@ -17,6 +19,46 @@ test("MFP Signal replaces a consolidated concept after real adoption by key and 
   process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED="true";
   try{
     await raw.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    let sequence=0;const stack:string[]=[];
+    const query=async(sql:string,params?:unknown[])=>{
+      if(sql.startsWith("BEGIN")){const key=`mfp_adoption_${++sequence}`;stack.push(key);return raw.query(`SAVEPOINT ${key}`);}
+      if(sql==="COMMIT")return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
+      if(sql==="ROLLBACK"){const key=stack.pop()!;await raw.query(`ROLLBACK TO SAVEPOINT ${key}`);
+        return raw.query(`RELEASE SAVEPOINT ${key}`);}
+      return raw.query(sql,params);
+    };
+    const database={connect:async()=>({query,release(){}}),query} as unknown as Pool;
+    const seed=await seedSignalTopicEditorialRenewalSourceV1({database,scoped:raw,
+      query:query as never,cleanup:async()=>{}});
+    const workspace=seed.scope.workspace_id,runId=seed.scope.numeric_run_id,actor=seed.scope.actor_user_id;
+    const run=(await raw.query<{source_engine_execution_id:string}>(
+      "SELECT source_engine_execution_id FROM signal_topic_consolidation_runs WHERE id=$1",[runId])).rows[0]!;
+    const revision=randomUUID(),digest=`sha256:${"a".repeat(64)}`,conceptKey="synthetic-bicycle-brakes";
+    await raw.query(`INSERT INTO signal_topic_consolidation_revisions
+      (id,consolidation_run_id,workspace_id,source_engine_execution_id,revision,status,created_by_user_id)
+      VALUES($1,$2,$3,$4,1,'draft',$5)`,
+      [revision,runId,workspace,run.source_engine_execution_id,actor]);
+    const groups=(await raw.query<{id:string;group_key:string}>(`SELECT id,group_key FROM signal_topic_atomic_groups
+      WHERE consolidation_run_id=$1 ORDER BY group_key`,[runId])).rows;
+    assert.ok(groups.length>0);
+    for(const [index,group] of groups.entries()){
+      const concept=randomUUID(),key=index===0?conceptKey:`synthetic-bicycle-${index}`;
+      await raw.query(`INSERT INTO signal_topic_editorial_concepts
+        (id,revision_id,consolidation_run_id,workspace_id,concept_key,kind,label,definition,locale,source)
+        VALUES($1,$2,$3,$4,$5,'topic',$6,'Conversaciones sobre bicicletas','es-MX','human')`,
+        [concept,revision,runId,workspace,key,`Tema ${index+1}`]);
+      const decision={group_key:group.group_key,disposition:"topic",concept_key:key,
+        source:"human",confidence:1,rationale:"Grupo sintético"};
+      await raw.query(`INSERT INTO signal_topic_consolidation_decisions
+        (revision_id,atomic_group_id,consolidation_run_id,workspace_id,disposition,concept_id,source,confidence,rationale,decision_digest)
+        VALUES($1,$2,$3,$4,'topic',$5,'human',1,'Grupo sintético',$6)`,
+        [revision,group.id,runId,workspace,concept,signalTopicConsolidationDigestV1(decision)]);
+    }
+    const validation=(await raw.query("SELECT validate_signal_topic_consolidation_revision_v1($1::uuid) value",[revision])).rows[0]?.value;
+    assert.equal(validation?.complete,true);
+    await raw.query(`UPDATE signal_topic_consolidation_revisions
+      SET status='validated',revision_digest=$2,validated_at=now() WHERE id=$1`,[revision,digest]);
+    await raw.query("UPDATE signal_topic_consolidation_runs SET status='validated',completed_at=now() WHERE id=$1",[runId]);
     const f=(await raw.query<{workspace_id:string;revision_id:string;revision_digest:string;concept_key:string;actor_id:string}>(`
       SELECT revision.workspace_id::text,revision.id::text revision_id,revision.revision_digest,
         concept.concept_key,actor.id::text actor_id
@@ -30,19 +72,10 @@ test("MFP Signal replaces a consolidated concept after real adoption by key and 
           WHERE newer.consolidation_run_id=revision.consolidation_run_id AND newer.status='validated'
             AND newer.revision>revision.revision)
       ORDER BY revision.validated_at DESC LIMIT 1`)).rows[0];
-    assert.ok(f,"requires a validated MFP editorial revision and internal admin");
+    assert.ok(f,"synthetic fixture must create a validated MFP editorial revision");
     await raw.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
       VALUES($1,'mfp_discovery',$2),($1,'concept_membership',$2)
       ON CONFLICT(workspace_id,feature) DO NOTHING`,[f.workspace_id,f.actor_id]);
-    let sequence=0;const stack:string[]=[];
-    const query=async(sql:string,params?:unknown[])=>{
-      if(sql.startsWith("BEGIN")){const key=`mfp_adoption_${++sequence}`;stack.push(key);return raw.query(`SAVEPOINT ${key}`);}
-      if(sql==="COMMIT")return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
-      if(sql==="ROLLBACK"){const key=stack.pop()!;await raw.query(`ROLLBACK TO SAVEPOINT ${key}`);
-        return raw.query(`RELEASE SAVEPOINT ${key}`);}
-      return raw.query(sql,params);
-    };
-    const database={connect:async()=>({query,release(){}})} as unknown as Pool;
     const before=await adoptedConsolidationConceptKeysV1(raw,f.workspace_id,f.revision_id,[]);
     assert.equal(before.size,0);
     const adopted=await adoptSignalTopicCandidateStoreV1({pool:database,workspace_id:f.workspace_id,
