@@ -8,7 +8,7 @@ import {
   signalProvenancePolicyBindingDefinitionHashV1,
 } from "@noisia/query-engine";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
-import { assertHybridEvidenceRightsBeforeSubmitV1, selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
+import { assertHybridProviderRightsBeforeSubmitV1, selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import { writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
@@ -67,7 +67,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       [license, organization, workspace, sha("license approval"), sha("license"), actor]);
     await client.query(`INSERT INTO signal_licensing_policy_usages(workspace_id,licensing_policy_id,usage_purpose,decision)
       VALUES($1,$2,'client-derived-metrics','allowed'),($1,$2,'client-mention-list','allowed'),
-      ($1,$2,'client-text-or-excerpt','allowed')`, [workspace, license]);
+      ($1,$2,'client-text-or-excerpt','allowed'),($1,$2,'llm-processing','allowed')`, [workspace, license]);
     await client.query(`UPDATE signal_licensing_policies SET
       definition_hash=signal_licensing_policy_definition_hash(id) WHERE id=$1`, [license]);
     await client.query(`UPDATE signal_licensing_policies SET status='active',
@@ -208,12 +208,12 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       'settled',2,2,$9,$7,$10,true,$8::jsonb,current_date,'UTC')`,
       [jevCall, jevRun, workspace, `jev-${jevCall}`, digest, JSON.stringify([input]),
         `private/${jevCall}`, rawJev, sha(rawJev), Buffer.byteLength(rawJev)]);
-    const beforeSubmit = () => assertHybridEvidenceRightsBeforeSubmitV1(client,
+    const beforeSubmit = () => assertHybridProviderRightsBeforeSubmitV1(client,
       { id: jevRun, workspace_id: workspace } as LabelingRunV1, [{ id: jevCall }]);
     await beforeSubmit();
     await client.query("SAVEPOINT rights_revoked");
     await client.query("UPDATE data_sources SET status='inactive' WHERE id=$1", [source]);
-    await assert.rejects(beforeSubmit(), /hybrid_evidence_rights_changed/u,
+    await assert.rejects(beforeSubmit(), /hybrid_provider_rights_changed/u,
       "a persisted call cannot be submitted after source rights disappear");
     await client.query("ROLLBACK TO SAVEPOINT rights_revoked");
     await beforeSubmit();
