@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { measureHybridH1V1, type HybridMeasuredRootV1 } from "./hybrid-h1-measure";
+import { decideHybridMembershipV1 } from "../../packages/query-engine/src/signal-hybrid-membership-v1";
 import type { Gold } from "./contract";
 
 test("H1 reports review_required outside binary accuracy and uses settled cost only", () => {
@@ -42,4 +43,26 @@ test("H1 reports review_required outside binary accuracy and uses settled cost o
   assert.throws(() => measureHybridH1V1(gold, rows, ["x"],
     { facets_settled_usd: -1, jev_settled_usd: 0, claude_settled_usd: 0, unknown_calls: 0 }, 2),
     /hybrid_ledger_invalid/u);
+});
+
+test("H1 comparable views exclude missing Claude judgments only from the evaluated view", () => {
+  const gold = ["a", "b", "c"].map(root_id => ({ root_id, input_digest: root_id,
+    partition: "test", entities: [], memberships: { x: "belongs" } })) as unknown as Gold[];
+  const jev = { verdict: "belongs" as const, probability: 0.7,
+    citation: { quote: "Example", start: 0, end: 7 } };
+  const rows = [
+    { root_id: "a", claude: { verdict: "belongs" as const,
+      citation: { quote: "Example", start: 0, end: 7 } } },
+    { root_id: "b", claude: { verdict: "insufficient" as const,
+      citation: { quote: "Example", start: 0, end: 7 } } },
+    { root_id: "c", claude: null },
+  ].map(({ root_id, claude }) => ({ root_id, input_digest: root_id, text: "Example",
+    gate_passed: true, decisions: { x: decideHybridMembershipV1("Example", jev, claude) } }));
+  const result = measureHybridH1V1(gold, rows, ["x"], { facets_settled_usd: 0,
+    jev_settled_usd: 0, claude_settled_usd: 0, unknown_calls: 0 }, 3);
+  const views = result.gold.find(item => item.partition === "test")!.views;
+  assert.equal(views.claude_evaluated_same_roots.roots, 2);
+  assert.equal(views.full_pipeline.roots, 3);
+  assert.equal(views.common_binary.roots, 1);
+  assert.equal(views.full_pipeline.hybrid.operational_unpublished_gold_positive, 2);
 });

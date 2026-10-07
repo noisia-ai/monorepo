@@ -84,6 +84,8 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
     .map(partition => {
       const all = gold.filter(g => g.partition === partition);
       const positive = all.filter(g => indexed.get(g.root_id)?.decisions[key]?.jev.verdict === "belongs");
+      const evaluated = positive.filter(g => ["belongs", "not_belongs", "insufficient"].includes(
+        indexed.get(g.root_id)?.decisions[key]?.claude?.verdict ?? ""));
       const common = positive.filter(g => emitted(indexed.get(g.root_id)?.decisions[key]?.claude?.verdict ?? ""));
       const verdict = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.verdict ?? "pending";
       const jev = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.jev.verdict ?? "pending";
@@ -93,7 +95,7 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
         review_required: subset.filter(g => verdict(indexed.get(g.root_id)) === "review_required").length,
       });
       return { concept: `concept_${index + 1}`, partition,
-        views: { claude_evaluated_same_roots: view(positive), full_pipeline: view(all), common_binary: view(common) } };
+        views: { claude_evaluated_same_roots: view(evaluated), full_pipeline: view(all), common_binary: view(common) } };
     }));
   const total = costs.reduce((a,b) => a+b, 0);
   return { contract_version: "mfp-hybrid-h1-measure-v1", status: "experimental_not_approved",
