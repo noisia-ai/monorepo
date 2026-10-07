@@ -120,12 +120,12 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
       run_id uuid,results jsonb,status text,results_applied boolean) ON COMMIT DROP`);
     const jevRun = randomUUID();
     await scoped.query(`INSERT INTO signal_labeling_runs VALUES
-      ($1,$2,'membership',jsonb_build_object('hybrid_stage','jev','route_digest',$3))`,
+      ($1,$2,'membership',jsonb_build_object('hybrid_stage','jev','route_digest',$3::text))`,
       [jevRun,fixture.first.workspace_id,digest]);
     await scoped.query(`INSERT INTO signal_labeling_calls VALUES
-      ($1,jsonb_build_array(jsonb_build_object('root_id',$2::text,'root_fingerprint',$3,
-        'concept_key','h1','definition_digest',$3,'entity_context_digest',$3,
-        'effective_entities_digest',$3,'jev',jsonb_build_object('verdict','belongs'))),'settled',true)`,
+      ($1,jsonb_build_array(jsonb_build_object('root_id',$2::text,'root_fingerprint',$3::text,
+        'concept_key','h1','definition_digest',$3::text,'entity_context_digest',$3::text,
+        'effective_entities_digest',$3::text,'jev',jsonb_build_object('verdict','belongs'))),'settled',true)`,
       [jevRun,root,digest]);
     assert.deepEqual((await scoped.query(hybridH1JevAdmissionPopulationSqlV1,
       [fixture.first.workspace_id,digest])).rows[0],{roots:0,pairs:0,characters:"0"},
