@@ -95,6 +95,44 @@ async function applyMigration(client: pg.Client, migrationPath: string) {
   }
 }
 
+async function verifyMfpReceiptGateBeforeDrop(client: pg.Client, migrationPath: string) {
+  if (process.env.NOISIA_MFP_PG_CI !== "true") return;
+  const {randomUUID}=await import("node:crypto");
+  const {createMigratedLabelingFixture}=await import("../../../scripts/dev-corpus/migrated-labeling-fixture.js");
+  const sql=await readFile(migrationPath,"utf8");
+  await client.query("BEGIN");
+  try {
+    const f=await createMigratedLabelingFixture(client as unknown as pg.Pool,client as unknown as pg.PoolClient);
+    const reserved=randomUUID();
+    await client.query(`INSERT INTO signal_labeling_calls
+      (id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,
+       status,reserved_micro_usd,budget_date,budget_timezone)
+      VALUES($1,$2,$3,'anthropic','claude-sonnet-5-5','batch',$4,$5,'{}'::jsonb,'[]'::jsonb,
+       'reserved',13,current_date,'UTC')`,
+      [reserved,f.runId,f.workspaceId,`ci-${reserved}`,`sha256:${"6".repeat(64)}`]);
+    await client.query("SAVEPOINT receipt_gate");
+    // The reserved call has no raw body or verification mark and must not block 0254.
+    await client.query(sql);
+    await client.query("ROLLBACK TO SAVEPOINT receipt_gate");
+    const submitted=randomUUID();
+    await client.query(`INSERT INTO signal_labeling_calls
+      (id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,
+       status,reserved_micro_usd,budget_date,budget_timezone,raw_body,raw_sha256,raw_storage_key)
+      VALUES($1,$2,$3,'anthropic','claude-sonnet-5-5','batch',$4,$5,'{}'::jsonb,'[]'::jsonb,
+       'submitted',47,current_date,'UTC','receipt',$6,$7)`,
+      [submitted,f.runId,f.workspaceId,`ci-${submitted}`,`sha256:${"7".repeat(64)}`,
+       `sha256:${"8".repeat(64)}`,`ci/${submitted}`]);
+    await client.query("SAVEPOINT receipt_unverified");
+    let rejected=false;
+    try { await client.query(sql); } catch(error) {
+      rejected=error instanceof Error && error.message.includes("signal_labeling_receipt_unverified");
+    }
+    await client.query("ROLLBACK TO SAVEPOINT receipt_unverified");
+    if(!rejected) throw new Error("Unverified provider receipt passed 0254 gate");
+    console.log("verified 0254: reserved without body passes; unverified body fails");
+  } finally { await client.query("ROLLBACK"); }
+}
+
 async function verifySchema(client: pg.Client) {
   const requiredTables = [
     "engine_analyses",
@@ -313,6 +351,9 @@ async function main() {
     await client.query(`alter database ${pg.escapeIdentifier(databaseName)} set search_path = public, extensions, pg_temp`);
 
     for (const file of migrationFiles) {
+      if (file === "0254_signal_labeling_receipt_verified_gate.sql") {
+        await verifyMfpReceiptGateBeforeDrop(client, join(migrationsDir, file));
+      }
       await applyMigration(client, join(migrationsDir, file));
       console.log(`applied ${file}`);
     }
