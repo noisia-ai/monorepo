@@ -482,6 +482,7 @@ export function createSignalLabelingStoreV1<
 >(options: {
   adapter?: {
     kind: "facets" | "membership";
+    hybrid_stage?: "jev" | "claude";
     policy_action?: "concept_membership_jev" | "concept_membership_claude";
     transport?: "sync" | "batch";
     inputs: (
@@ -604,12 +605,13 @@ export function createSignalLabelingStoreV1<
         const row = (
           await c.query(
             `UPDATE signal_labeling_runs SET lease_token=$2,lease_until=now()+interval '10 minutes',status='running',updated_at=now()
-   WHERE id=$1 AND kind=$3 AND (status IN('queued','running') OR status='failed' AND error_code='labeling_outcome_unknown'
+   WHERE id=$1 AND kind=$3 AND ($4::text IS NULL OR membership_snapshot->>'hybrid_stage'=$4)
+   AND (status IN('queued','running') OR status='failed' AND error_code='labeling_outcome_unknown'
    AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.status='unknown')
    AND NOT EXISTS(SELECT 1 FROM signal_labeling_runs active WHERE active.workspace_id=signal_labeling_runs.workspace_id
      AND active.kind=signal_labeling_runs.kind AND active.id<>signal_labeling_runs.id AND active.status IN('queued','running')))
    AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
-            [runId, token, options.adapter?.kind ?? "facets"],
+            [runId, token, options.adapter?.kind ?? "facets", options.adapter?.hybrid_stage ?? null],
           )
         ).rows[0];
         if (!row) return null;
@@ -628,7 +630,7 @@ export function createSignalLabelingStoreV1<
     async fail(run: LabelingRunV1, code: string) {
       await tx(db, async (c) => {
         await lock(c, run);
-        if(code==="labeling_raw_receipt_invalid"){
+        if(code==="labeling_raw_receipt_invalid" || code==="hybrid_raw_receipt_needs_review"){
           await c.query(`UPDATE signal_labeling_calls
             SET status='failed',settled_micro_usd=CASE WHEN status='reserved' THEN settled_micro_usd
               ELSE COALESCE(settled_micro_usd,reserved_micro_usd) END,updated_at=now()

@@ -109,5 +109,6 @@ export * from './signal-labeling-policy-provisioning';
 
 export * from "./signal-concept-memberships";
 export * from "./signal-hybrid-membership";
+export * from "./signal-hybrid-runs";
 
 export * from "./signal-workspace-incremental-candidates";

@@ -15,7 +15,8 @@ export function MfpEvidence({item,mentionHref}:{item:Evidence;mentionHref:string
     {item.rationale?<p>{item.rationale}</p>:null}
     {item.hybrid_review?<dl className="mfp-hybrid-review">
       <div><dt>{t("membership.jevVerdict")}</dt><dd>{t(`verdicts.${item.hybrid_review.jev.verdict}`)}
-        {item.hybrid_review.jev.citation?.quote?<q>{item.hybrid_review.jev.citation.quote}</q>:null}</dd></div>
+        {item.hybrid_review.jev.citation?.quote?<details><summary>{t("membership.jevSourceReference")}</summary>
+          <q>{item.hybrid_review.jev.citation.quote}</q></details>:null}</dd></div>
       <div><dt>{t("membership.claudeVerdict")}</dt><dd>{t(`verdicts.${item.hybrid_review.claude.verdict}`)}
         {item.hybrid_review.claude.citation?.quote?<q>{item.hybrid_review.claude.citation.quote}</q>:null}</dd></div>
     </dl>:null}

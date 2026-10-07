@@ -46,6 +46,8 @@ CREATE TABLE signal_hybrid_membership_decisions (
   effective_entities_digest text NOT NULL,
   route_digest text NOT NULL,
   result_digest text NOT NULL CHECK (result_digest ~ '^sha256:[a-f0-9]{64}$'),
+  jev_call_id uuid REFERENCES signal_labeling_calls(id),
+  claude_call_id uuid REFERENCES signal_labeling_calls(id),
   verdict text NOT NULL CHECK (verdict IN ('belongs','not_belongs','review_required','error','refused')),
   jev jsonb NOT NULL CHECK (jsonb_typeof(jev)='object'),
   claude jsonb CHECK (claude IS NULL OR jsonb_typeof(claude)='object'),

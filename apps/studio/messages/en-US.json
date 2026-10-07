@@ -4593,6 +4593,7 @@
       "start": "Calculate full membership",
       "hybridRoute": "Experimental H1 route selected. Execution is controlled in the test environment; disagreements require review.",
       "jevVerdict": "JEV",
+      "jevSourceReference": "Full mention reference (JEV does not select a quote)",
       "claudeVerdict": "Claude"
     },
     "exceptions": {

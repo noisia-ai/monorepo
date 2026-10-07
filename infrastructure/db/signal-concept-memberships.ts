@@ -108,6 +108,10 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
 ), roots AS MATERIALIZED (
  SELECT f.*,COALESCE(f.entity_context_digest,(SELECT digest FROM signal_entity_context_versions ce WHERE ce.workspace_id=f.workspace_id ORDER BY version_no DESC LIMIT 1)) effective_ce
  FROM signal_mention_facets_current_v1 f WHERE f.workspace_id=$1 AND f.relevance='relevant' AND NOT f.requires_context_review
+ AND (NOT $8::boolean OR f.status='labeled' AND f.facets#>>'{spam_or_bot,value}'='false'
+   AND jsonb_array_length(COALESCE(f.facets#>'{entities,value}','[]'::jsonb))>0
+   AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 rights
+     WHERE rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id AND rights.metrics AND rights.evidence))
  AND NOT (f.root_id=ANY($7::uuid[])) AND ($2::uuid IS NULL OR f.root_id>$2) AND ($3::uuid[] IS NULL OR f.root_id=ANY($3))), work AS (
  SELECT f.*,pending.keys
  FROM roots f JOIN LATERAL (
@@ -125,14 +129,14 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  AND i->'evaluated_concepts' @> jsonb_build_array(jsonb_build_object('concept_key',c.concept_key,'definition_digest',c.definition_digest))))
  ) pending ON cardinality(pending.keys)>0)`;
 /** Select by full-text fingerprint, effective entities and per-concept definition. No vectors or V2 classifications. */
-export async function selectMembershipInputsV1(c: Queryable, run: LabelingRunV1): Promise<MembershipInputV1[]> {
+export async function selectMembershipInputsV1(c: Queryable, run: LabelingRunV1, hybrid = false): Promise<MembershipInputV1[]> {
   const s = snapshot(run);
   return (await c.query<MembershipInputV1>(`${membershipWorkSql}
  SELECT f.root_id,f.input_digest,signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest)) root_fingerprint,f.full_text text,f.title,f.platform,f.content_type,f.author,f.published_at::text,f.language,
  f.effective_ce entity_context_digest,f.effective_entities_digest,f.facets#>'{entities,value}' entities,f.facets#>>'{voice,value}' voice,f.facets#>>'{act,value}' act,
  (SELECT jsonb_agg(concept) FROM jsonb_array_elements($4::jsonb) concept WHERE concept->>'concept_key'=ANY(f.keys)) evaluated_concepts
  FROM work f ORDER BY f.root_id LIMIT 200`,
-    [run.workspace_id, run.cursor_root_id, s.sample_root_ids, JSON.stringify(s.concepts), s.preview, run.labeler_digest, []])).rows;
+    [run.workspace_id, run.cursor_root_id, s.sample_root_ids, JSON.stringify(s.concepts), s.preview, run.labeler_digest, [], hybrid])).rows;
 }
 export async function estimateMembershipWorkV1(c: Queryable, args: {
   workspace_id: string; concepts: ConceptForJudgeV1[]; context: EntityContextV1;
@@ -141,7 +145,7 @@ export async function estimateMembershipWorkV1(c: Queryable, args: {
   const pop = (await c.query<{ roots: number; characters: string; pairs: string }>(`${membershipWorkSql}
  SELECT count(*)::int roots,COALESCE(sum(length(full_text)),0)::text characters,
  COALESCE(sum(cardinality(keys)),0)::text pairs FROM work`,
-    [args.workspace_id, null, args.sample, JSON.stringify(args.concepts), args.preview, args.labeler_digest, args.stale_roots ?? []])).rows[0]!;
+    [args.workspace_id, null, args.sample, JSON.stringify(args.concepts), args.preview, args.labeler_digest, args.stale_roots ?? [], false])).rows[0]!;
   return estimate(pop.roots, Number(pop.characters), args.concepts, args.context, Number(pop.pairs));
 }
 function estimate(

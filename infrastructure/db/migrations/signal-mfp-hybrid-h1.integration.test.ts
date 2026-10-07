@@ -3,6 +3,9 @@ import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Pool } from "pg";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
+import { selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
+import type { LabelingRunV1 } from "../signal-labeling-runs";
+import { selectMembershipInputsV1 } from "../signal-concept-memberships";
 
 test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
@@ -24,6 +27,14 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
       [fixture.first.workspace_id, digest, version, fixture.actors.firstAdmin]);
     assert.equal((await scoped.query("SELECT count(*)::int n FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
       [fixture.second.workspace_id])).rows[0].n, 0, "sibling workspace remains on standard route");
+    assert.deepEqual(await selectHybridClaudeInputsV1(scoped, {workspace_id:fixture.first.workspace_id,
+      cursor_root_id:null,membership_snapshot:{hybrid_stage:"claude",route_digest:digest,
+        jev_run_id:randomUUID(),concepts:[]}} as unknown as LabelingRunV1),[],
+      "the Claude stage query is valid on the migrated schema and has no unsolicited work");
+    const emptyRun = {workspace_id:fixture.first.workspace_id,cursor_root_id:null,labeler_digest:digest,
+      membership_snapshot:{concepts:[],preview:false,sample_root_ids:null}} as unknown as LabelingRunV1;
+    assert.deepEqual(await selectMembershipInputsV1(scoped,emptyRun,true),[],
+      "the JEV rights-gated selector is valid on migrated schema");
     const source = randomUUID(), root = randomUUID();
     await scoped.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
       connection_method,name,status,source_contract_version,source_key)
