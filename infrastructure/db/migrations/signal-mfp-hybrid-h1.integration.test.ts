@@ -7,6 +7,7 @@ import { selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
 import { hybridH1PopulationSqlV1 } from "../../../scripts/eval/hybrid-h1-population";
+import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationSqlV1 } from "../signal-hybrid-admission-population";
 
 test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
@@ -96,6 +97,42 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
       [fixture.first.workspace_id, version])).rows[0]["QUERY PLAN"]);
     for (const cte of ["current_facets", "authorized_roots", "jev_labels"]) assert.match(plan,
       new RegExp(`"CTE Name":"${cte}"`, "u"), `the governed ${cte} input is materialized once`);
+    await scoped.query(`CREATE TEMP TABLE signal_concept_memberships_current_v1 (
+      workspace_id uuid,root_id uuid,root_fingerprint text,concept_key text,definition_digest text,
+      entity_context_digest text,effective_entities_digest text,labeler_digest text,verdict text) ON COMMIT DROP`);
+    await scoped.query(`INSERT INTO signal_concept_memberships_current_v1 VALUES
+      ($1,$2,$4,'h1',$4,$4,$4,$4,'pending'),
+      ($1,$3,$4,'denied',$4,$4,$4,$4,'pending'),
+      ($5,$6,$4,'sibling',$4,$4,$4,$4,'pending'),
+      ($1,$2,$4,'completed',$4,$4,$4,$4,'belongs')`,
+      [fixture.first.workspace_id, root, deniedRoot, digest, fixture.second.workspace_id, siblingRoot]);
+    const admission = (await scoped.query<{roots:number;pairs:number;characters:string}>(
+      hybridH1JevAdmissionPopulationSqlV1,[fixture.first.workspace_id,digest])).rows[0];
+    assert.deepEqual(admission,{roots:1,pairs:1,characters:String("Synthetic mention".length)},
+      "JEV admission estimates only pending pairs with evidence rights in the selected workspace");
+    const admissionPlan = JSON.stringify((await scoped.query(`EXPLAIN (FORMAT JSON) ${hybridH1JevAdmissionPopulationSqlV1}`,
+      [fixture.first.workspace_id,digest])).rows[0]["QUERY PLAN"]);
+    for (const cte of ["current_memberships", "current_facets", "authorized_roots", "applied_results"])
+      assert.match(admissionPlan,new RegExp(`"CTE Name":"${cte}"`,"u"),`materialized H1 admission ${cte}`);
+    await scoped.query(`CREATE TEMP TABLE signal_labeling_runs (
+      id uuid,workspace_id uuid,kind text,membership_snapshot jsonb) ON COMMIT DROP`);
+    await scoped.query(`CREATE TEMP TABLE signal_labeling_calls (
+      run_id uuid,results jsonb,status text,results_applied boolean) ON COMMIT DROP`);
+    const jevRun = randomUUID();
+    await scoped.query(`INSERT INTO signal_labeling_runs VALUES
+      ($1,$2,'membership',jsonb_build_object('hybrid_stage','jev','route_digest',$3))`,
+      [jevRun,fixture.first.workspace_id,digest]);
+    await scoped.query(`INSERT INTO signal_labeling_calls VALUES
+      ($1,jsonb_build_array(jsonb_build_object('root_id',$2::text,'root_fingerprint',$3,
+        'concept_key','h1','definition_digest',$3,'entity_context_digest',$3,
+        'effective_entities_digest',$3,'jev',jsonb_build_object('verdict','belongs'))),'settled',true)`,
+      [jevRun,root,digest]);
+    assert.deepEqual((await scoped.query(hybridH1JevAdmissionPopulationSqlV1,
+      [fixture.first.workspace_id,digest])).rows[0],{roots:0,pairs:0,characters:"0"},
+      "the exact settled JEV pair is excluded from another admission");
+    assert.deepEqual((await scoped.query(hybridH1ClaudeAdmissionPopulationSqlV1,
+      [jevRun,fixture.first.workspace_id])).rows[0],{roots:1,pairs:1,characters:String("Synthetic mention".length)},
+      "Claude admission counts the settled JEV positive with evidence rights");
     await scoped.query("ROLLBACK");
     assert.equal((await database.query("SELECT count(*)::int n FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
       [fixture.first.workspace_id])).rows[0].n, 0);

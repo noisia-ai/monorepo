@@ -16,6 +16,7 @@ import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capab
 import { signalWorkspaceFeatureEnabledV1 } from "./signal-workspace-features";
 import { requestMentionFacetsV1, SignalLabelingError } from "./signal-labeling-runs";
 import type { LabelingDatabaseV1 } from "./signal-mention-facets";
+import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationSqlV1 } from "./signal-hybrid-admission-population";
 
 const fail = (code: string, status = 409): never => { throw new SignalLabelingError(code, status); };
 const jevDigest = signalWorkspaceEmbeddingDigestV1({ contract_version: "mfp-hybrid-h1-jev-v1", model: "jev-1.13.0", question: "noul", threshold: 0.4 });
@@ -70,35 +71,10 @@ export async function requestHybridMembershipStageV1(args: {
         jev_run_id = prior.id;
       }
       const population = args.stage === "jev"
-        ? (await client.query<{roots:number;pairs:number;characters:string}>(`SELECT count(DISTINCT current.root_id)::int roots,
-            count(*)::int pairs,COALESCE(sum(length(f.full_text)),0)::text characters
-            FROM signal_concept_memberships_current_v1 current
-            JOIN signal_mention_facets_current_v1 f ON f.workspace_id=current.workspace_id AND f.root_id=current.root_id
-            JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id
-              AND rights.metrics AND rights.evidence
-            WHERE current.workspace_id=$1 AND current.labeler_digest=$2 AND current.verdict='pending'
-              AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls applied
-                JOIN signal_labeling_runs prior ON prior.id=applied.run_id
-                CROSS JOIN LATERAL jsonb_array_elements(applied.results) result
-                WHERE prior.workspace_id=current.workspace_id AND prior.kind='membership'
-                  AND prior.membership_snapshot->>'hybrid_stage'='jev'
-                  AND prior.membership_snapshot->>'route_digest'=$2
-                  AND applied.status='settled' AND applied.results_applied
-                  AND result->>'root_id'=current.root_id::text
-                  AND result->>'root_fingerprint'=current.root_fingerprint
-                  AND result->>'concept_key'=current.concept_key
-                  AND result->>'definition_digest'=current.definition_digest
-                  AND result->>'entity_context_digest'=current.entity_context_digest
-                  AND result->>'effective_entities_digest'=current.effective_entities_digest)`,
-          [workspace,args.route_digest])).rows[0]!
-        : (await client.query<{roots:number;pairs:number;characters:string}>(`SELECT count(DISTINCT result->>'root_id')::int roots,
-            count(*)::int pairs,COALESCE(sum(length(f.full_text)),0)::text characters
-            FROM signal_labeling_calls call CROSS JOIN LATERAL jsonb_array_elements(call.results) result
-            JOIN signal_mention_facets_current_v1 f ON f.workspace_id=call.workspace_id AND f.root_id=(result->>'root_id')::uuid
-            JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id
-              AND rights.metrics AND rights.evidence
-            WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
-              AND result#>>'{jev,verdict}'='belongs'`, [jev_run_id])).rows[0]!;
+        ? (await client.query<{roots:number;pairs:number;characters:string}>(
+          hybridH1JevAdmissionPopulationSqlV1, [workspace,args.route_digest])).rows[0]!
+        : (await client.query<{roots:number;pairs:number;characters:string}>(
+          hybridH1ClaudeAdmissionPopulationSqlV1, [jev_run_id,workspace])).rows[0]!;
       const jevPrice=Number(process.env.NOISIA_JEV_INPUT_USD_PER_MTOK);
       if (args.stage === "jev" && (!Number.isFinite(jevPrice) || jevPrice <= 0))
         return fail("hybrid_jev_price_required");
