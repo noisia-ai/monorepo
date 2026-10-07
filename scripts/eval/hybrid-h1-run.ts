@@ -59,18 +59,30 @@ void main(async()=>{
       definition:concept!.definition,inclusion:concept!.inclusion,exclusion:concept!.exclusion,
       positive_examples:concept!.positive_examples,negative_examples:concept!.negative_examples,
       definition_digest:concept!.definition_digest}));
+    const facetsLabeler=(await pool.query<{id:string}>(`SELECT version.id
+      FROM signal_labeler_versions version JOIN signal_mention_facet_labels label
+        ON label.labeler_digest=version.labeler_digest
+      JOIN signal_mention_facets_current_v1 current ON current.workspace_id=label.workspace_id
+        AND current.root_id=label.root_id AND current.input_digest=label.input_digest
+        AND NOT current.requires_context_review AND current.entity_context_digest=label.entity_context_digest
+      WHERE label.workspace_id=$1 AND version.kind='facets' AND version.provider='typesafe'
+        AND version.model='jev-1.13.0' AND version.status<>'retired'
+        AND label.status IN('labeled','abstained')
+      GROUP BY version.id HAVING count(DISTINCT label.root_id)=1086
+      ORDER BY version.id LIMIT 1`,[identity.workspace_id])).rows[0];
+    if (!facetsLabeler) fail("mfp_hybrid_complete_jev_facets_missing");
     const rows:RootRow[]=(await pool.query(`WITH jev_labels AS MATERIALIZED (
       SELECT DISTINCT ON(label.root_id) label.root_id,label.input_digest,label.facets,label.relevance,label.status,
         label.entity_context_digest
       FROM signal_mention_facet_labels label JOIN signal_labeler_versions version ON version.labeler_digest=label.labeler_digest
-      WHERE label.workspace_id=$1 AND version.kind='facets' AND version.provider='typesafe' AND version.model='jev-1.13.0'
+      WHERE label.workspace_id=$1 AND version.id=$2
       ORDER BY label.root_id,label.created_at DESC)
       SELECT f.root_id,f.input_digest,f.full_text text,f.requires_context_review,
         jev.facets,jev.relevance,jev.status,jev.entity_context_digest
       FROM signal_mention_facets_current_v1 f JOIN jev_labels jev ON jev.root_id=f.root_id AND jev.input_digest=f.input_digest
       JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id
         AND rights.metrics AND rights.evidence
-      WHERE f.workspace_id=$1 ORDER BY f.root_id`,[identity.workspace_id])).rows;
+      WHERE f.workspace_id=$1 ORDER BY f.root_id`,[identity.workspace_id,facetsLabeler.id])).rows;
     if (rows.length!==1086||rows.some(row=>row.requires_context_review||row.entity_context_digest!==context.digest))
       fail("mfp_hybrid_full_corpus_or_context_missing");
     const policy=(await pool.query(`SELECT action,provider,model FROM signal_processing_policy_actions action
@@ -87,7 +99,8 @@ void main(async()=>{
     const selected=(await pool.query<{jev_facets_labeler_version_id:string}>(
       "SELECT jev_facets_labeler_version_id FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
       [identity.workspace_id])).rows[0];
-    if (!selected) fail("mfp_hybrid_route_missing");
+    if (!selected || selected.jev_facets_labeler_version_id!==facetsLabeler.id)
+      fail("mfp_hybrid_facets_labeler_changed");
     const facetCost=(await pool.query<{micro:string;unknown:number}>(`SELECT
       COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.status='settled'),0)::text micro,
       count(*) FILTER(WHERE call.status IN('reserved','submitting','submitted','unknown')
