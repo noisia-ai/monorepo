@@ -1,0 +1,183 @@
+import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
+import test from "node:test";
+import { Pool } from "pg";
+import { selectMembershipInputsV1 } from "../signal-concept-memberships";
+import { selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
+import type { LabelingRunV1 } from "../signal-labeling-runs";
+import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
+
+const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
+
+test("settled JEV positive is not reselected after restart; Claude alone inherits it", {
+  skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
+}, async () => {
+  const database = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === "true" });
+  const client = await database.connect();
+  try {
+    assert.equal((await client.query("SELECT current_database() name")).rows[0].name, "noisia_mfp_ci");
+    await client.query("BEGIN");
+    const fixture = await createProcessingPolicyIdentitiesV1({ database, scoped: client });
+    const { workspace_id: workspace, organization_id: organization, brand_id: brand } = fixture.first;
+    const actor = fixture.actors.internal;
+    const source = randomUUID(), batch = randomUUID(), root = randomUUID();
+    const quality = randomUUID(), retention = randomUUID(), license = randomUUID();
+    const digest = sha("fixture-digest"), text = "Synthetic discussion about bicycle brakes";
+    await client.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
+      connection_method,name,status,source_contract_version,source_key)
+      VALUES($1,$2,$3,$4,'social-listening','fixture','csv','H1 selector','active',
+      'signal-data-source-connector-v1',$5)`, [source, workspace, organization, brand, `source-${sha(source)}`]);
+    await client.query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,status)
+      VALUES($1,$2,$3,'fixture','h1-selector.csv','completed')`, [batch, workspace, source]);
+    await client.query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,
+      external_id,source_system,text_hash,text_clean,text_length,published_at,platform,inclusion_status)
+      VALUES($1,$2,$3,$1,'h1-selector',$1::text,'fixture',$4,$5,$6,now(),'web','included')`,
+      [root, workspace, source, sha(text), text, text.length]);
+    await client.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id)
+      VALUES($1,$2,$3,$4)`, [workspace, root, batch, source]);
+    await client.query(`INSERT INTO signal_quality_policies(id,organization_id,workspace_id,policy_key,policy_version,
+      status,definition_hash,created_by_user_id,activated_by_user_id,activated_at,creation_idempotency_key)
+      VALUES($1,$2,$3,'h1-quality',1,'active',$4,$5,$5,now(),$4)`, [quality, organization, workspace, sha("quality"), actor]);
+    await client.query(`INSERT INTO signal_retention_policies(id,organization_id,workspace_id,policy_key,
+      policy_version,status,retention_state,retention_mode,expiry_action,approval_evidence_hash,
+      definition_hash,created_by_user_id,approved_by_user_id,approved_at,creation_idempotency_key)
+      VALUES($1,$2,$3,'h1-retention',1,'active','allowed','indefinite','block_use',$4,$5,$6,$6,now(),$5)`,
+      [retention, organization, workspace, sha("retention approval"), sha("retention"), actor]);
+    await client.query(`INSERT INTO signal_licensing_policies(id,organization_id,workspace_id,policy_key,
+      policy_version,status,approval_evidence_hash,definition_hash,created_by_user_id,
+      approved_by_user_id,approved_at,creation_idempotency_key)
+      VALUES($1,$2,$3,'h1-license',1,'active',$4,$5,$6,$6,now(),$5)`,
+      [license, organization, workspace, sha("license approval"), sha("license"), actor]);
+    await client.query(`INSERT INTO signal_licensing_policy_usages(workspace_id,licensing_policy_id,usage_purpose,decision)
+      VALUES($1,$2,'client-derived-metrics','allowed'),($1,$2,'client-mention-list','allowed'),
+      ($1,$2,'client-text-or-excerpt','allowed')`, [workspace, license]);
+    await client.query(`INSERT INTO signal_provenance_policy_bindings(workspace_id,data_source_id,binding_version,
+      status,quality_policy_id,retention_policy_id,licensing_policy_id,definition_hash,created_by_user_id,
+      activated_by_user_id,activated_at,creation_idempotency_key)
+      VALUES($1,$2,1,'active',$3,$4,$5,$6,$7,$7,now(),$6)`,
+      [workspace, source, quality, retention, license, sha("binding"), actor]);
+    assert.deepEqual((await client.query(`SELECT metrics,evidence FROM signal_membership_evidence_rights_v1
+      WHERE workspace_id=$1 AND root_id=$2`, [workspace, root])).rows[0], { metrics: true, evidence: true });
+
+    const prep = randomUUID(), asset = sha(text);
+    const revision = (await client.query<{ input_revision: string }>(
+      "SELECT input_revision::text FROM signal_corpus_preparation_input_state WHERE workspace_id=$1", [workspace])).rows[0]!.input_revision;
+    await client.query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,status,phase,
+      input_revision,completed_at,worker_job_id) VALUES($1,$2,$3,'completed','complete',$4,now(),$5)`,
+      [prep, workspace, actor, revision, `h1-selector-${prep}`]);
+    await client.query(`INSERT INTO signal_corpus_text_assets(workspace_id,text_sha256,chunk_policy_version,full_text)
+      VALUES($1,$2,'corpus-text-chunks-v1',$3)`, [workspace, asset, text]);
+    await client.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,
+      disposition,root_metadata,provenance,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',$5)`,
+      [workspace, prep, root, digest]);
+    const entity = { kind: "primary_brand", entity_id: brand, label: "Synthetic brand" };
+    const context = sha("entity-context");
+    await client.query(`INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,context,
+      diff,affected_mode,affected_count) VALUES($1,1,$2,$3::jsonb,'{}','targeted',0)`,
+      [workspace, context, JSON.stringify({ entities: [entity] })]);
+    const facetVersion = randomUUID(), facetRun = randomUUID(), facetCall = randomUUID();
+    await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,schema_digest,
+      labeler_digest,identity) VALUES($1,'facets','typesafe','jev-1.13.0',$2,$2,$3,'{}')`,
+      [facetVersion, digest, sha("facet-labeler")]);
+    await client.query(`INSERT INTO signal_workspace_labelers(workspace_id,kind,labeler_version_id)
+      VALUES($1,'facets',$2)`, [workspace, facetVersion]);
+    const pendingFacet = (await client.query<{ input_digest: string }>(`SELECT input_digest FROM signal_mention_facets_current_v1
+      WHERE workspace_id=$1 AND root_id=$2`, [workspace, root])).rows[0];
+    assert.ok(pendingFacet, "the real prepared facet view exposes the root");
+    await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
+      preparation_run_id,entity_context_digest,entity_context_version_no,status,estimated_micro_usd,
+      idempotency_key,request_digest,actor_user_id)
+      VALUES($1,$2,'facets',$3,$4,$5,1,'completed',0,$6,$7,$8)`,
+      [facetRun, workspace, facetVersion, prep, context, `facet-${facetRun}`, digest, actor]);
+    await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,
+      custom_id,request_digest,request,inputs,status,reserved_micro_usd,settled_micro_usd,
+      raw_sha256,raw_storage_key,results_applied,budget_date,budget_timezone)
+      VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}','[]','settled',1,1,$5,
+      $6,true,current_date,'UTC')`, [facetCall, facetRun, workspace, `facet-${facetCall}`, digest, `private/${facetCall}`]);
+    const facets = { entities: { value: [entity], abstained: false },
+      spam_or_bot: { value: false, abstained: false }, voice: { value: "unknown", abstained: false },
+      act: { value: "other", abstained: false } };
+    await client.query(`INSERT INTO signal_mention_facet_labels(workspace_id,root_id,input_digest,
+      labeler_digest,entity_context_digest,facet_schema_version,status,facets,relevance,
+      effective_entities_digest,call_id) VALUES($1,$2,$3,$4,$5,'mention-facets-v1','labeled',
+      $6::jsonb,'relevant',signal_labeling_digest_v1($7::jsonb),$8)`,
+      [workspace, root, pendingFacet.input_digest, sha("facet-labeler"), context,
+        JSON.stringify(facets), JSON.stringify([entity]), facetCall]);
+    const currentFacet = (await client.query<{ relevance: string; status: string }>(`SELECT relevance,status
+      FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND root_id=$2`, [workspace, root])).rows[0];
+    assert.equal(currentFacet?.relevance, "relevant");
+    assert.equal(currentFacet.status, "labeled");
+
+    const taxonomy = randomUUID(), rules = randomUUID(), model = randomUUID();
+    await client.query("INSERT INTO taxonomies(id,taxonomy_key,name,scope) VALUES($1,$2,'H1 synthetic','workspace')",
+      [taxonomy, `h1-${taxonomy}`]);
+    await client.query(`INSERT INTO tagging_rule_sets(id,rule_set_key,taxonomy_id,rules)
+      VALUES($1,$2,$3,'{}')`, [rules, `h1-${rules}`, taxonomy]);
+    await client.query(`INSERT INTO tagging_model_versions(id,model_key,version,tagging_rule_set_id)
+      VALUES($1,$2,'v1',$3)`, [model, `h1-${model}`, rules]);
+    await client.query(`INSERT INTO signal_taxonomy_profiles(workspace_id,taxonomy_id,kind,version,status,
+      context_hash,rule_set_id,model_version_id,metadata)
+      VALUES($1,$2,'topic',1,'draft',$3,$4,$5,$6::jsonb)`,
+      [workspace, taxonomy, digest, rules, model, JSON.stringify({ contract_version: "signal-topic-catalog-v1", catalog_role: "working" })]);
+    const concept = { concept_key: "bicycle_brakes", label: "Bicycle brakes", scope: "all_conversations",
+      definition: "Mentions of bicycle brakes", inclusion: [], exclusion: [], positive_examples: [],
+      negative_examples: [], definition_digest: sha("bicycle definition") };
+    await client.query(`INSERT INTO taxonomy_terms(taxonomy_id,term_key,label,metadata)
+      VALUES($1,$2,$3,$4::jsonb)`, [taxonomy, concept.concept_key, concept.label,
+      JSON.stringify({ topic: { ...concept, origin: "manual", lifecycle: "active" } })]);
+    const route = sha("hybrid-route"), jevVersion = randomUUID();
+    await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,
+      schema_digest,labeler_digest,identity) VALUES($1,'membership','typesafe','jev-1.13.0',
+      $2,$2,$3,'{}')`, [jevVersion, digest, sha("jev-stage")]);
+    await client.query(`INSERT INTO signal_hybrid_membership_routes(workspace_id,route,route_digest,
+      jev_labeler_digest,claude_labeler_digest,jev_facets_labeler_version_id,configured_by_user_id)
+      VALUES($1,'hybrid_h1',$2,$3,$4,$5,$6)`, [workspace, route, sha("jev-judge"), sha("claude-confirm"), facetVersion, actor]);
+    const work = (id: string) => ({ id, workspace_id: workspace, cursor_root_id: null, labeler_digest: route,
+      membership_snapshot: { concepts: [concept], preview: false, sample_root_ids: null,
+        hybrid_stage: "jev", route_digest: route } }) as unknown as LabelingRunV1;
+    const first = await selectMembershipInputsV1(client, work(randomUUID()), true);
+    assert.equal(first.length, 1, "the real JEV selector initially finds the pair");
+    assert.equal(first[0]!.evaluated_concepts[0]!.concept_key, concept.concept_key);
+
+    const jevRun = randomUUID(), jevCall = randomUUID();
+    await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
+      preparation_run_id,entity_context_digest,entity_context_version_no,status,estimated_micro_usd,
+      idempotency_key,request_digest,actor_user_id,membership_snapshot)
+      VALUES($1,$2,'membership',$3,$4,$5,1,'completed',1,$6,$7,$8,$9::jsonb)`,
+      [jevRun, workspace, jevVersion, prep, context, `jev-${jevRun}`, digest, actor,
+        JSON.stringify({ hybrid_stage: "jev", route_digest: route, concepts: [concept], preview: false })]);
+    const input = first[0]!;
+    const result = { root_id: root, root_fingerprint: input.root_fingerprint,
+      concept_key: concept.concept_key, definition_digest: concept.definition_digest,
+      entity_context_digest: input.entity_context_digest,
+      effective_entities_digest: input.effective_entities_digest,
+      jev: { verdict: "belongs", probability: 0.8, citation: { quote: text, start: 0, end: text.length } },
+      jev_call_id: jevCall, claude: null, claude_call_id: null, rationale: null };
+    await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,
+      transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,
+      settled_micro_usd,raw_sha256,raw_storage_key,results_applied,results,budget_date,budget_timezone)
+      VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}',$6::jsonb,
+      'settled',2,2,$5,$7,true,$8::jsonb,current_date,'UTC')`,
+      [jevCall, jevRun, workspace, `jev-${jevCall}`, digest, JSON.stringify([input]),
+        `private/${jevCall}`, JSON.stringify([result])]);
+    const current = (await client.query<{ verdict: string }>(`SELECT verdict FROM signal_concept_memberships_current_v1
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`, [workspace, root, concept.concept_key])).rows[0];
+    assert.equal(current?.verdict, "pending", "Claude has not confirmed this JEV positive");
+    assert.deepEqual(await selectMembershipInputsV1(client, work(jevRun), true), [],
+      "an interrupted JEV run cannot reserve the settled pair again");
+    assert.deepEqual(await selectMembershipInputsV1(client, work(randomUUID()), true), [],
+      "a new JEV run with the same route cannot charge the pair again");
+    const claude = await selectHybridClaudeInputsV1(client, { ...work(randomUUID()),
+      membership_snapshot: { concepts: [concept], hybrid_stage: "claude", route_digest: route, jev_run_id: jevRun } } as unknown as LabelingRunV1);
+    assert.equal(claude.length, 1, "Claude alone inherits the positive pair");
+    assert.equal(claude[0]!.jev_by_concept?.[concept.concept_key]?.call_id, jevCall);
+    assert.deepEqual(await selectHybridClaudeInputsV1(client, { ...work(randomUUID()),
+      membership_snapshot: { concepts: [concept], hybrid_stage: "claude", route_digest: route, jev_run_id: jevRun } } as unknown as LabelingRunV1), claude,
+    "a restarted Claude read retains the same JEV receipt without a new JEV call");
+    await client.query("ROLLBACK");
+  } finally {
+    await client.query("ROLLBACK").catch(() => undefined);
+    client.release();
+    await database.end();
+  }
+});

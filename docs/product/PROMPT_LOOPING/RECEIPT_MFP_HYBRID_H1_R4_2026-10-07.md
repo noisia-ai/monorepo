@@ -9,13 +9,13 @@ The route is **not ready to enable**. Sequential JEV and Claude stage code now u
 ## Verified locally
 
 - Query engine: 586/586 tests passed, including H1 reducer and citation integrity.
-- DB typecheck passed; DB suite after #37 merge: 633 passed, 107 PostgreSQL skips locally. Fresh migrated `noisia_mfp_ci` passed H1 integration and all inherited PG checks in [run 37587345115](https://github.com/noisia-ai/monorepo/actions/runs/37587345115), with zero skips. The new policy successor PG test is awaiting the next CI run.
+- DB typecheck passed; DB suite after #37 merge: 633 passed, 108 PostgreSQL skips locally. Fresh migrated `noisia_mfp_ci` passed H1 integration, MFP policy succession with an active sibling admission, and inherited PG checks in [run 37588269704](https://github.com/noisia-ai/monorepo/actions/runs/37588269704), with zero skips.
 - Studio and Workers typechecks passed; Studio lint: zero errors, 13 existing warnings.
 - H1 read-only scoring test passed. It rejects a missing root, stale gold input, invalid decision and invalid ledger values. It never treats `review_required` as a binary false negative, but reports the operational unpublished positive count separately. Worker ordering and ambiguous-send tests passed (2/2).
 
 ## Evidence still required
 
-1. Keep CI green after the stage worker is wired. #39 extends only the inherited #38 PostgreSQL workflow's PR trigger and general `ci.yml` PR trigger to the #37 base branch; existing production/develop triggers, jobs, permissions and guards are unchanged.
+1. Keep CI green after the stage worker is wired. #39 extends only the inherited #38 PostgreSQL workflow's PR trigger and general `ci.yml` PR trigger to the #37 base branch; existing production/develop triggers, jobs, permissions and guards are unchanged. A later fix also excludes JEV pairs with applied receipts from a new JEV admission or selection, preventing repeat spend while Claude confirmation is pending.
 2. Verify the MFP-only policy successor and sequential JEV and Claude stage handoff against migrated PostgreSQL with settled receipts, rights changes, replay and human override. Enable only an explicit workspace policy with both provider actions and rights checks.
 3. Execute the real 1,086-root corpus on the remote MFP runner, reconcile unknown calls, and compute the 150-gold three-view readout plus settled USD per 1,000 roots. No simulated price is reported as observed.
 

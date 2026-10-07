@@ -122,6 +122,19 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  AND (current.verdict IN('belongs','not_belongs','insufficient','refused')
  OR (current.verdict='error' AND current.error_code IN('membership_item_schema_invalid','membership_evidence_invalid')))
  AND (current.source='human' OR current.labeler_digest=$6)))
+ AND (NOT $8::boolean OR NOT EXISTS(
+   SELECT 1 FROM signal_labeling_calls applied
+   JOIN signal_labeling_runs prior ON prior.id=applied.run_id
+   CROSS JOIN LATERAL jsonb_array_elements(applied.results) result
+   WHERE prior.workspace_id=f.workspace_id AND prior.kind='membership'
+     AND prior.membership_snapshot->>'hybrid_stage'='jev'
+     AND prior.membership_snapshot->>'route_digest'=$6
+     AND applied.status='settled' AND applied.results_applied
+     AND result->>'root_id'=f.root_id::text
+     AND result->>'root_fingerprint'=signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest))
+     AND result->>'concept_key'=c.concept_key AND result->>'definition_digest'=c.definition_digest
+     AND result->>'entity_context_digest'=f.effective_ce
+     AND result->>'effective_entities_digest'=f.effective_entities_digest)))
  AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls uncertain JOIN signal_labeling_runs r ON r.id=uncertain.run_id
  WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND uncertain.status IN('submitting','unknown')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest

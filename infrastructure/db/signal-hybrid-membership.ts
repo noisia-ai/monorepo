@@ -76,7 +76,20 @@ export async function requestHybridMembershipStageV1(args: {
             JOIN signal_mention_facets_current_v1 f ON f.workspace_id=current.workspace_id AND f.root_id=current.root_id
             JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id
               AND rights.metrics AND rights.evidence
-            WHERE current.workspace_id=$1 AND current.labeler_digest=$2 AND current.verdict='pending'`,
+            WHERE current.workspace_id=$1 AND current.labeler_digest=$2 AND current.verdict='pending'
+              AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls applied
+                JOIN signal_labeling_runs prior ON prior.id=applied.run_id
+                CROSS JOIN LATERAL jsonb_array_elements(applied.results) result
+                WHERE prior.workspace_id=current.workspace_id AND prior.kind='membership'
+                  AND prior.membership_snapshot->>'hybrid_stage'='jev'
+                  AND prior.membership_snapshot->>'route_digest'=$2
+                  AND applied.status='settled' AND applied.results_applied
+                  AND result->>'root_id'=current.root_id::text
+                  AND result->>'root_fingerprint'=current.root_fingerprint
+                  AND result->>'concept_key'=current.concept_key
+                  AND result->>'definition_digest'=current.definition_digest
+                  AND result->>'entity_context_digest'=current.entity_context_digest
+                  AND result->>'effective_entities_digest'=current.effective_entities_digest)`,
           [workspace,args.route_digest])).rows[0]!
         : (await client.query<{roots:number;pairs:number;characters:string}>(`SELECT count(DISTINCT result->>'root_id')::int roots,
             count(*)::int pairs,COALESCE(sum(length(f.full_text)),0)::text characters
