@@ -1,4 +1,5 @@
 import type { SignalBrandPolicyQueryable } from "./signal-governed-brand-policy";
+import {signalWorkspaceFeatureEnabledV1} from "@noisia/db";
 import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 import { createHash,randomUUID } from "node:crypto";
 import {resolveWorkspaceImportRevisionModeV1,WorkspaceAsyncImportError} from "./workspace-import-revision-mode";
@@ -81,7 +82,9 @@ export async function createWorkspaceImportUploadV1(args: {
   storage?:WorkspaceImportCreationStorageV1;
 }) {
   validateFile(args.fileName,args.fileSizeBytes,args.contentType);
-  const revisionMode=resolveWorkspaceImportRevisionModeV1(args);
+  const mfpWorkspaceEnabled=args.contentRevisionMode==="revise_existing"
+    ? await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:args.workspace.id,feature:"mention_facets"}) : false;
+  const revisionMode=resolveWorkspaceImportRevisionModeV1({...args,mfpWorkspaceEnabled});
   const idempotencyHash = hashValue(args.idempotencyKey);
   const batchId = randomUUID();
   const objectKey = workspaceImportObjectKeyV1({
@@ -110,6 +113,11 @@ export async function createWorkspaceImportUploadV1(args: {
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
     if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1({ ...args, queryable: client });
+    if(revisionMode==="revise_existing"){
+      const feature=await client.query(`SELECT feature FROM signal_workspace_features
+        WHERE workspace_id=$1::uuid AND feature='mention_facets' FOR SHARE`,[args.workspace.id]);
+      if(feature.rows.length===0)throw new WorkspaceAsyncImportError("content_revision_unavailable",409);
+    }
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[
       `workspace-import:${args.workspace.id}:${idempotencyHash}`
     ]);

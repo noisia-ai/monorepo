@@ -27,7 +27,7 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     const identities=await createProcessingPolicyIdentitiesV1({database:pool,scoped:raw});
     const fixture={workspace_id:identities.first.workspace_id,brand_id:identities.first.brand_id,
       initiator_id:identities.actors.firstAdmin,creator_id:identities.actors.internal,
-      policy_id:randomUUID(),version:"1",valid_until:"2099-01-01 00:00:00+00",budget_timezone:"UTC",daily_cap_micro_usd:"1100000"};
+      policy_id:randomUUID(),version:"1",valid_until:"infinity",budget_timezone:"UTC",daily_cap_micro_usd:"1100000"};
     await raw.query(`UPDATE signal_workspaces SET metadata=metadata||jsonb_build_object(
       'created_by_user_id',$2::text,'creation_request_digest','sha256:'||repeat('a',64)) WHERE id=$1::uuid`,
       [fixture.workspace_id,fixture.initiator_id]);
@@ -77,7 +77,12 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     const admitted=admissionResult.receipt;
     assert.equal(admitted.policy_version_id,fixture.policy_id);
     assert.equal(admitted.target_id,runId);
-    assert.equal((await invoke({})).status,"configuration_required","an unexpired admission postpones replacement");
+    assert.equal((await raw.query("SELECT admission_not_after::text deadline FROM signal_processing_admissions WHERE id=$1",[admitted.id])).rows[0].deadline,
+      "infinity","the real MFP admission inherits an unlimited policy window");
+    await raw.query("SAVEPOINT ownerless_receipt");
+    assert.equal((await invoke({})).status,"provisioned","an ownerless receipt does not block a successor");
+    await raw.query("ROLLBACK TO SAVEPOINT ownerless_receipt");
+    await raw.query("RELEASE SAVEPOINT ownerless_receipt");
     assert.deepEqual((await raw.query(policySnapshotSql,[fixture.policy_id])).rows,policyBefore);
     // A real owner exercises its admission/actor/capacity triggers too; no table
     // shadowing or synthetic owner bypasses the production contract.
@@ -87,10 +92,21 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     assert.equal((await invoke({})).status,"configuration_required",
       "an active owner keeps the admitted policy in force");
     assert.deepEqual((await raw.query(policySnapshotSql,[fixture.policy_id])).rows,policyBefore);
+    for(const terminal of ["failed","canceled"]){
+      await raw.query(`SAVEPOINT terminal_owner_case`);
+      await raw.query("UPDATE signal_corpus_preparation_runs SET status=$2 WHERE id=$1",[runId,terminal]);
+      assert.equal((await invoke({})).status,"provisioned",
+        `${terminal} work must not keep an infinite admission pending`);
+      await raw.query("ROLLBACK TO SAVEPOINT terminal_owner_case");
+      await raw.query("RELEASE SAVEPOINT terminal_owner_case");
+      assert.deepEqual((await raw.query(policySnapshotSql,[fixture.policy_id])).rows,policyBefore);
+    }
     await raw.query(`UPDATE signal_corpus_preparation_runs SET status='completed',phase='complete',
       input_revision=1,completed_at=clock_timestamp() WHERE id=$1`,[runId]);
     // The immutable receipt is unexpired, but its terminal owner permits a successor.
-    assert.equal((await invoke({NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"1"})).status,"provisioned");
+    assert.equal((await invoke({NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"1"})).status,"configuration_required",
+      "a lower organization cap cannot strand the sibling's inherited prototype action");
+    assert.equal((await invoke({NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"100000"})).status,"provisioned");
     const successor=(await raw.query<{id:string;version:string;valid_until:string;budget_timezone:string;daily_cap_micro_usd:string|null}>(`
       SELECT id::text,version::text,valid_until::text,budget_timezone,daily_cap_micro_usd::text
       FROM signal_processing_policy_versions WHERE id<>$1 AND organization_id=(SELECT organization_id FROM signal_processing_policy_versions WHERE id=$1)
@@ -99,7 +115,7 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     assert.equal(Number(successor.version),Number(fixture.version)+1);
     assert.equal(successor.valid_until,fixture.valid_until);
     assert.equal(successor.budget_timezone,fixture.budget_timezone);
-    assert.equal(successor.daily_cap_micro_usd,"1","explicit strict cap applies without raising an existing cap");
+    assert.equal(successor.daily_cap_micro_usd,"100000","explicit strict cap applies without stranding an inherited action");
     const after=(await raw.query<{action:string}>("SELECT action FROM signal_processing_policy_actions WHERE policy_version_id=$1 ORDER BY action",[successor.id])).rows.map(r=>r.action);
     for(const action of before)assert.ok(after.includes(action),`prior action removed: ${action}`);
     for(const action of ["corpus_preparation","corpus_embeddings","topic_fit_incremental","topic_interpretation",
@@ -110,6 +126,7 @@ test("MFP policy successor keeps existing actions and caps inside a rolled-back 
     assert.deepEqual((await pool.query(censusSql)).rows[0].census,censusBefore,"rollback restores the database census");
     assert.equal((await pool.query("SELECT count(*)::int n FROM signal_processing_policy_versions WHERE id=$1",[fixture.policy_id])).rows[0].n,0);
     assert.equal((await pool.query("SELECT count(*)::int n FROM signal_workspace_features WHERE workspace_id=$1 AND feature='mention_facets'",[fixture.workspace_id])).rows[0].n,0);
-    console.log(JSON.stringify({status:"passed",gate:"mfp_policy_successor",real_admission:true,real_owner:true,rollback_census:"unchanged",provider_calls:0}));
+    console.log(JSON.stringify({status:"passed",gate:"mfp_policy_successor",real_admission:true,admission_deadline:"infinity",
+      terminal_owners:["failed","canceled","completed"],rollback_census:"unchanged",provider_calls:0}));
   }finally{await raw.query("ROLLBACK").catch(()=>undefined);raw.release();await pool.end();}
 });

@@ -58,7 +58,7 @@ function configuredPolicy(env: Record<string, string | undefined>) {
  * Only the separately configured internal system actor owns the policy; neither identity comes
  * from browser input. Both actors and the tenant are checked under row locks. The policy lock serializes all
  * brands in the organization. Only an opted-in MFP workspace may gain missing actions
- * through a successor; unexpired admissions postpone replacement. Draft or revoked history is never reactivated.
+ * through a successor; active owners postpone replacement. Draft or revoked history is never reactivated.
  * Draft, required actions and activation commit together. This creates no admission, work or spend.
  * Keep this server-owned seam out of generic client policy routes. */
 export async function provisionSignalBrandContextPolicyV1(args: {
@@ -111,15 +111,20 @@ export async function provisionSignalBrandContextPolicyV1(args: {
     const requestedCap=mfpEnabled ? (args.env??process.env).NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD : undefined;
     if(requestedCap!==undefined && money(requestedCap)===null) return await commit("configuration_required");
     if (prior) {
-      const existing = (await client.query<{action:string}>(
-        "SELECT action FROM signal_processing_policy_actions WHERE policy_version_id=$1::uuid",[prior.id])).rows;
+      const existing = (await client.query<{action:string;max_execution_micro_usd:string|null}>(
+        "SELECT action,max_execution_micro_usd::text FROM signal_processing_policy_actions WHERE policy_version_id=$1::uuid",[prior.id])).rows;
       const actions=new Set(existing.map(row=>row.action));
+      // The daily ceiling is organization-wide. A lower MFP ceiling must still
+      // cover the legacy Brand Context pair used by sibling workspaces.
+      const legacyMinimum=existing.filter(row=>["brand_context_proposal","topic_prototype_embeddings"].includes(row.action))
+        .reduce((sum,row)=>sum+BigInt(row.max_execution_micro_usd??"0"),0n);
+      if(requestedCap!==undefined && BigInt(requestedCap)<legacyMinimum)
+        return await commit("configuration_required");
       const capAlreadyBinding=requestedCap===undefined || prior.daily_cap_micro_usd!==null
         && BigInt(prior.daily_cap_micro_usd)<=BigInt(requestedCap);
       if (required.every(action=>actions.has(action)) && capAlreadyBinding) return await commit("existing_policy");
-      // Admissions have no mutable status. Keep the old policy while a receipt can
-      // still start work, or while its owner is active after the receipt deadline.
-      // A completed owner no longer needs capacity from that policy.
+      // Admissions have no mutable status. Only an active owner still needs
+      // capacity from the old policy; terminal runs and ownerless receipts do not.
       const pending=(await client.query<{pending:boolean}>(`SELECT EXISTS(
         SELECT 1 FROM signal_processing_admissions admission WHERE admission.policy_version_id=$1::uuid
           AND (
@@ -131,15 +136,6 @@ export async function provisionSignalBrandContextPolicyV1(args: {
             EXISTS(SELECT 1 FROM signal_topic_editorial_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','review_ready')) OR
             EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('open','ready','blocked')) OR
             EXISTS(SELECT 1 FROM signal_labeling_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running'))
-            OR (admission.admission_not_after>clock_timestamp() AND NOT (
-            EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
-            EXISTS(SELECT 1 FROM signal_workspace_embedding_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
-            EXISTS(SELECT 1 FROM signal_corpus_preparation_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
-            EXISTS(SELECT 1 FROM signal_topic_catalog_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status='ready') OR
-            EXISTS(SELECT 1 FROM signal_topic_consolidation_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status='ready') OR
-            EXISTS(SELECT 1 FROM signal_topic_editorial_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
-            EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed') OR
-            EXISTS(SELECT 1 FROM signal_labeling_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status='completed')))
           )
       ) pending`,[prior.id])).rows[0];
       if(pending?.pending) return await commit("configuration_required");
@@ -147,9 +143,6 @@ export async function provisionSignalBrandContextPolicyV1(args: {
     const configuration = configuredPolicy({...args.env ?? process.env,
       NOISIA_MENTION_FACETS_ENABLED:mfpEnabled ? "true" : "false"});
     if (!configuration) return await commit("configuration_required");
-    if (prior?.daily_cap_micro_usd !== null && prior && !mfpEnabled && configuration.semanticCap && configuration.prototypeCap
-      && BigInt(prior.daily_cap_micro_usd) < BigInt(configuration.semanticCap)+BigInt(configuration.prototypeCap))
-      return await commit("configuration_required");
     const creator = (await client.query(`SELECT id FROM users WHERE id=$1::uuid
       AND status='active' AND user_type='noisia_internal' AND primary_role IN('noisia_admin','founder','admin')
       FOR SHARE NOWAIT`, [configuration.creatorUserId])).rows[0];
