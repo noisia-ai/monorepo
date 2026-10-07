@@ -37,7 +37,7 @@ void main(async()=>{
   const identity=await loadMfpEvalIdentity();
   const selection=JSON.parse(await readFile(".data/dev-corpus/voyage-real/gold-selection.json","utf8")) as Selection;
   validateSelection(selection);
-  const gold=(await readFile(".data/dev-corpus/gold.jsonl","utf8")).trim().split("\n").map(line=>JSON.parse(line)) as Gold[];
+  const gold=(await readFile(".data/dev-corpus/voyage-real/gold.jsonl","utf8")).trim().split("\n").map(line=>JSON.parse(line)) as Gold[];
   validateGold(gold,selection);
   const pool=await openDatabase();
   try {
