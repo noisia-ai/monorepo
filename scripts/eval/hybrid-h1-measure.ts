@@ -11,9 +11,18 @@ export type HybridMeasuredRootV1 = { root_id: string; input_digest: string; text
 export type HybridObservedLedgerV1 = { facets_settled_usd: number; jev_settled_usd: number;
   claude_settled_usd: number; unknown_calls: number };
 const emitted = (v: string) => v === "belongs" || v === "not_belongs";
+function goldEntityMix(row: Gold) {
+  const kinds = new Set(row.entities.map(entity => entity.kind));
+  if (kinds.has("primary_brand") && kinds.has("competitor")) return "primary_and_competitor";
+  if (kinds.has("primary_brand")) return "primary_present";
+  if (kinds.has("competitor")) return "competitor_without_primary";
+  if (kinds.has("category")) return "category_without_brand";
+  return "no_gold_entity";
+}
 function score(gold: Gold[], rows: Map<string, HybridMeasuredRootV1>, key: string,
   prediction: (row: HybridMeasuredRootV1 | undefined) => string) {
-  const evaluated = gold.map(g => ({ truth: g.memberships[key], predicted: prediction(rows.get(g.root_id)) }));
+  const evaluated = gold.map(g => ({ truth: g.memberships[key], predicted: prediction(rows.get(g.root_id)),
+    entity_mix: goldEntityMix(g) }));
   const binaryRows = evaluated.filter(r => r.truth !== "insufficient" && emitted(r.predicted));
   const tp = binaryRows.filter(r => r.truth === "belongs" && r.predicted === "belongs").length;
   const fp = binaryRows.filter(r => r.truth === "not_belongs" && r.predicted === "belongs").length;
@@ -22,6 +31,10 @@ function score(gold: Gold[], rows: Map<string, HybridMeasuredRootV1>, key: strin
     review_required: evaluated.filter(r => r.predicted === "review_required").length,
     states: Object.fromEntries(["belongs", "not_belongs", "review_required", "insufficient", "refused", "error", "pending"]
       .map(v => [v, evaluated.filter(r => r.predicted === v).length])),
+    false_positives_by_gold_entity_mix: Object.fromEntries(["primary_and_competitor", "primary_present",
+      "competitor_without_primary", "category_without_brand", "no_gold_entity"]
+      .map(mix => [mix, evaluated.filter(r => r.truth === "not_belongs" && r.predicted === "belongs" &&
+        r.entity_mix === mix).length])),
     ...binary(tp, fp, fn), precision_wilson: wilson(tp, tp + fp), recall_wilson: wilson(tp, tp + fn),
     operational_unpublished_gold_positive: evaluated.filter(r => r.truth === "belongs" && r.predicted !== "belongs").length,
   };
