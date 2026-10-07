@@ -115,23 +115,23 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
     for (const cte of ["current_memberships", "current_facets", "authorized_roots", "applied_results"])
       assert.match(admissionPlan,new RegExp(`"CTE Name":"${cte}"`,"u"),`materialized H1 admission ${cte}`);
     await scoped.query(`CREATE TEMP TABLE signal_labeling_runs (
-      id uuid,workspace_id uuid,kind text,membership_snapshot jsonb) ON COMMIT DROP`);
+      id uuid,workspace_id uuid,kind text,status text,membership_snapshot jsonb) ON COMMIT DROP`);
     await scoped.query(`CREATE TEMP TABLE signal_labeling_calls (
-      run_id uuid,results jsonb,status text,results_applied boolean) ON COMMIT DROP`);
+      run_id uuid,results jsonb,inputs jsonb,status text,results_applied boolean) ON COMMIT DROP`);
     const jevRun = randomUUID();
     await scoped.query(`INSERT INTO signal_labeling_runs VALUES
-      ($1,$2,'membership',jsonb_build_object('hybrid_stage','jev','route_digest',$3::text))`,
+      ($1,$2,'membership','completed',jsonb_build_object('hybrid_stage','jev','route_digest',$3::text))`,
       [jevRun,fixture.first.workspace_id,digest]);
     await scoped.query(`INSERT INTO signal_labeling_calls VALUES
       ($1,jsonb_build_array(jsonb_build_object('root_id',$2::text,'root_fingerprint',$3::text,
         'concept_key','h1','definition_digest',$3::text,'entity_context_digest',$3::text,
-        'effective_entities_digest',$3::text,'jev',jsonb_build_object('verdict','belongs'))),'settled',true)`,
+        'effective_entities_digest',$3::text,'jev',jsonb_build_object('verdict','belongs'))),'[]'::jsonb,'settled',true)`,
       [jevRun,root,digest]);
     assert.deepEqual((await scoped.query(hybridH1JevAdmissionPopulationSqlV1,
       [fixture.first.workspace_id,digest])).rows[0],{roots:0,pairs:0,characters:"0"},
       "the exact settled JEV pair is excluded from another admission");
     assert.deepEqual((await scoped.query(hybridH1ClaudeAdmissionPopulationSqlV1,
-      [jevRun,fixture.first.workspace_id])).rows[0],{roots:1,pairs:1,characters:String("Synthetic mention".length)},
+      [fixture.first.workspace_id,digest])).rows[0],{roots:1,pairs:1,characters:String("Synthetic mention".length)},
       "Claude admission counts the settled JEV positive with evidence rights");
     await scoped.query("ROLLBACK");
     assert.equal((await database.query("SELECT count(*)::int n FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
