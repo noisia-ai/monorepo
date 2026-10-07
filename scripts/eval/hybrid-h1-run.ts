@@ -106,7 +106,7 @@ void main(async()=>{
         idempotency_key:`mfp-hybrid-h1-r4-${stage}`,provider_available:true,cap_micro_usd:cap});
       const store=createHybridMembershipRuntimeStoreV1(stage,pool);
       for (let tick=0;tick<10000;tick++) {
-        if (tick%25===0) await verifyMfpEvalRights();
+        if (tick%25===0) await verifyMfpEvalRights(receipt.run_id);
         const status=await runHybridMembershipTickV1({run_id:receipt.run_id,stage,store,jevPrice});
         if (status==="completed") return receipt.run_id;
         if (typeof status==="object"&&(status.status==="outcome_unknown"||status.status==="not_claimed"))

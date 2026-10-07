@@ -10,7 +10,9 @@ export function mfpEvalRightsCensusValid(state:RightsCensus,exactWorkspace:boole
     state.authorized_batches===2&&state.authorized_sources===1&&state.expected_source_batches===2&&
     state.active_runs===0&&state.unsettled_calls===0;
 }
-export async function verifyMfpEvalRights(){
+export async function verifyMfpEvalRights(allowedRunId?:string){
+  if(allowedRunId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(allowedRunId))
+    throw new Error('mfp_eval_allowed_run_invalid');
   const identity=await loadMfpEvalIdentity();
   const pool=await openDatabase();
   const client=await pool.connect();
@@ -45,12 +47,16 @@ export async function verifyMfpEvalRights(){
         (SELECT count(*)::int FROM authorized) authorized_batches,
         (SELECT count(DISTINCT data_source_id)::int FROM authorized) authorized_sources,
         (SELECT count(*)::int FROM authorized WHERE data_source_id=$2::uuid) expected_source_batches`,[identity.workspace_id,identity.source_id]);
-    const activity=await client.query(`SELECT (SELECT count(*)::int FROM signal_labeling_runs WHERE workspace_id=$1 AND status IN('queued','running')) active_runs,
-        (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$1 AND status IN('reserved','submitting','submitted','unknown')) unsettled_calls`,[identity.workspace_id]);
+    const activity=await client.query(`SELECT (SELECT count(*)::int FROM signal_labeling_runs WHERE workspace_id=$1
+          AND status IN('queued','running') AND ($2::uuid IS NULL OR id<>$2::uuid)) active_runs,
+        (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$1
+          AND status IN('reserved','submitting','submitted','unknown')
+          AND ($2::uuid IS NULL OR run_id<>$2::uuid)) unsettled_calls`,[identity.workspace_id,allowedRunId??null]);
     const state={...rights.rows[0],...activity.rows[0]};
     if(!mfpEvalRightsCensusValid(state,workspace.rows[0]?.exact_workspace===true))
       throw new Error('mfp_eval_rights_or_activity_invalid');
-    console.log(JSON.stringify({stage:'mfp_eval_jev_rights_verified',...state,exact_workspace:true,read_only:true}));
+    console.log(JSON.stringify({stage:'mfp_eval_jev_rights_verified',...state,
+      active_run_excluded:Boolean(allowedRunId),exact_workspace:true,read_only:true}));
     await client.query('COMMIT');
   } catch(error){await client.query('ROLLBACK');throw error;}
   finally{client.release();await pool.end();}
