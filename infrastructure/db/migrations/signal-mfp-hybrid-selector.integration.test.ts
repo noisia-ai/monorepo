@@ -111,9 +111,9 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       [facetRun, workspace, facetVersion, prep, context, `facet-${facetRun}`, digest, actor]);
     await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,
       custom_id,request_digest,request,inputs,status,reserved_micro_usd,settled_micro_usd,
-      raw_sha256,raw_storage_key,results_applied,budget_date,budget_timezone)
-      VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}','[]','settled',1,1,$5,
-      $6,true,current_date,'UTC')`, [facetCall, facetRun, workspace, `facet-${facetCall}`, digest, `private/${facetCall}`]);
+      raw_sha256,raw_storage_key,raw_size_bytes,results_applied,budget_date,budget_timezone)
+      VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}','[]','settled',1,1,$7,
+      $6,2,true,current_date,'UTC')`, [facetCall, facetRun, workspace, `facet-${facetCall}`, digest, `private/${facetCall}`, sha("[]")]);
     const facets = { entities: { value: [entity], abstained: false },
       spam_or_bot: { value: false, abstained: false }, voice: { value: "unknown", abstained: false },
       act: { value: "other", abstained: false } };
@@ -173,13 +173,14 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       effective_entities_digest: input.effective_entities_digest,
       jev: { verdict: "belongs", probability: 0.8, citation: { quote: text, start: 0, end: text.length } },
       jev_call_id: jevCall, claude: null, claude_call_id: null, rationale: null };
+    const rawJev = JSON.stringify([result]);
     await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,
       transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,
-      settled_micro_usd,raw_sha256,raw_storage_key,results_applied,results,budget_date,budget_timezone)
+      settled_micro_usd,raw_sha256,raw_storage_key,raw_size_bytes,results_applied,results,budget_date,budget_timezone)
       VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}',$6::jsonb,
-      'settled',2,2,$5,$7,true,$8::jsonb,current_date,'UTC')`,
+      'settled',2,2,$9,$7,$10,true,$8::jsonb,current_date,'UTC')`,
       [jevCall, jevRun, workspace, `jev-${jevCall}`, digest, JSON.stringify([input]),
-        `private/${jevCall}`, JSON.stringify([result])]);
+        `private/${jevCall}`, rawJev, sha(rawJev), Buffer.byteLength(rawJev)]);
     const current = (await client.query<{ verdict: string }>(`SELECT verdict FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`, [workspace, root, concept.concept_key])).rows[0];
     assert.equal(current?.verdict, "pending", "Claude has not confirmed this JEV positive");
