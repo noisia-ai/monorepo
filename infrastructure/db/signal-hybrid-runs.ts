@@ -158,20 +158,26 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
   const prior = snapshot(run).jev_run_id;
   if (!prior) return fail("hybrid_jev_run_missing");
   const rows = (await client.query<{input:MembershipInputV1;result:HybridStageResultV1;jev_call_id:string}>(`
-    WITH candidates AS MATERIALIZED (
+    WITH current_pairs AS MATERIALIZED (
+      SELECT root_id,root_fingerprint,concept_key,definition_digest,
+        entity_context_digest,effective_entities_digest
+      FROM signal_concept_memberships_current_v1
+      WHERE workspace_id=$2 AND labeler_digest=$3 AND verdict='pending'
+    ), authorized_roots AS MATERIALIZED (
+      SELECT root_id FROM signal_membership_evidence_rights_v1
+      WHERE workspace_id=$2 AND metrics AND evidence
+    ), candidates AS MATERIALIZED (
       SELECT call.id jev_call_id,call.inputs->0 input,result,
         (result->>'root_id')::uuid root_id
       FROM signal_labeling_calls call JOIN signal_labeling_runs prior ON prior.id=call.run_id
       CROSS JOIN LATERAL jsonb_array_elements(call.results) result
-      JOIN signal_concept_memberships_current_v1 current ON current.workspace_id=$2
-        AND current.root_id=(result->>'root_id')::uuid AND current.root_fingerprint=result->>'root_fingerprint'
+      JOIN current_pairs current ON current.root_id=(result->>'root_id')::uuid
+        AND current.root_fingerprint=result->>'root_fingerprint'
         AND current.concept_key=result->>'concept_key'
         AND current.definition_digest=result->>'definition_digest'
         AND current.entity_context_digest=result->>'entity_context_digest'
         AND current.effective_entities_digest=result->>'effective_entities_digest'
-        AND current.labeler_digest=$3 AND current.verdict='pending'
-      JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=current.workspace_id
-        AND rights.root_id=current.root_id AND rights.metrics AND rights.evidence
+      JOIN authorized_roots rights ON rights.root_id=current.root_id
       WHERE prior.workspace_id=$2 AND prior.kind='membership' AND prior.status IN('completed','failed')
         AND prior.membership_snapshot->>'hybrid_stage'='jev'
         AND prior.membership_snapshot->>'route_digest'=$3
