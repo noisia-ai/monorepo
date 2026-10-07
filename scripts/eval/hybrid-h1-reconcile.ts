@@ -20,7 +20,7 @@ void main(async()=>{
         AND call.raw_storage_key IS NULL AND NOT call.results_applied
       ORDER BY run.created_at`,[identity.workspace_id])).rows;
     if(unknowns.length!==2) throw new Error("mfp_hybrid_unknown_count_changed");
-    await verifyMfpEvalRights(undefined,pool,unknowns.map(row=>row.run_id));
+    await verifyMfpEvalRights(undefined,pool,unknowns.map((row:{run_id:string})=>row.run_id));
     const receipt=await reconcileHybridDuplicateRawReceiptV1({database:pool,
       workspace_id:identity.workspace_id,idempotency_key:"mfp-hybrid-h1-r4-jev-resume-two-unknown",jevPrice});
     console.log(JSON.stringify({stage:"hybrid_duplicate_receipt_reconciled",

@@ -34,7 +34,7 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
         jev_run_id:randomUUID(),concepts:[]}} as unknown as LabelingRunV1),[],
       "the Claude stage query is valid on the migrated schema and has no unsolicited work");
     const emptyRun = {workspace_id:fixture.first.workspace_id,cursor_root_id:null,labeler_digest:digest,
-      membership_snapshot:{concepts:[],preview:false,sample_root_ids:null}} as unknown as LabelingRunV1;
+      membership_snapshot:{concepts:[],preview:false,sample_root_ids:null,route_digest:digest}} as unknown as LabelingRunV1;
     assert.deepEqual(await selectMembershipInputsV1(scoped,emptyRun,true),[],
       "the JEV rights-gated selector is valid on migrated schema");
     const source = randomUUID(), root = randomUUID();
