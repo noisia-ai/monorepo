@@ -72,7 +72,9 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
     assert.match((await scoped.query("SELECT pg_get_viewdef('signal_concept_memberships_current_v1'::regclass) definition")).rows[0].definition,
       /signal_hybrid_membership_decisions/u);
     await scoped.query(`CREATE TEMP TABLE signal_mention_facets_current_v1 (
-      workspace_id uuid,root_id uuid,input_digest text,full_text text,requires_context_review boolean) ON COMMIT DROP`);
+      workspace_id uuid,root_id uuid,input_digest text,full_text text,requires_context_review boolean,
+      status text DEFAULT 'labeled',relevance text DEFAULT 'relevant',
+      facets jsonb DEFAULT '{"spam_or_bot":{"value":false},"entities":{"value":[{}]}}'::jsonb) ON COMMIT DROP`);
     await scoped.query(`CREATE TEMP TABLE signal_membership_evidence_rights_v1 (
       workspace_id uuid,root_id uuid,metrics boolean,evidence boolean) ON COMMIT DROP`);
     await scoped.query(`CREATE TEMP TABLE signal_mention_facet_labels (
@@ -80,7 +82,8 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
       entity_context_digest text,labeler_digest text,created_at timestamptz) ON COMMIT DROP`);
     await scoped.query("SET LOCAL search_path=pg_temp,public,extensions");
     const deniedRoot = randomUUID(), siblingRoot = randomUUID();
-    await scoped.query(`INSERT INTO signal_mention_facets_current_v1 VALUES
+    await scoped.query(`INSERT INTO signal_mention_facets_current_v1
+      (workspace_id,root_id,input_digest,full_text,requires_context_review) VALUES
       ($1,$2,$4,$5,false),($1,$3,$4,$5,false),($6,$7,$4,$5,false)`,
       [fixture.first.workspace_id, root, deniedRoot, digest, "Synthetic mention", fixture.second.workspace_id, siblingRoot]);
     await scoped.query(`INSERT INTO signal_membership_evidence_rights_v1 VALUES
