@@ -148,7 +148,7 @@ parcial; no se presenta ese censo como terminal ni como verificación de #40.
 Censo comprobado: **1086 fichas actuales**, 468 relevantes, 481 ajenas, 30 spam y
 107 indeterminadas; cero pendientes técnicos/error. Las 19 revisiones sirven
 texto nuevo 19/19; cero `input_digest` anteriores servidos; todas usan CE v2.
-Los 207 pares de pertenencia (incluidos pendientes) coinciden con su ficha en
+Los 612 pares de pertenencia finales coinciden con su ficha en
 `entity_context_digest`, `effective_entities_digest` y fingerprint. El CE v1
 sigue siendo válido para raíces no afectadas. Una consulta diagnóstica propia
 lenta fue cancelada; la comparación separada terminó con timeout de 25 segundos.
@@ -190,9 +190,14 @@ readoptar ni reescribir. Cobertura de adopción: **2/2**. La pertenencia evalúa
 su definición por mención; no hereda las 15 raíces del grupo de origen.
 
 Solicitud UI única para completar pertenencia: 405 raíces compatibles con
-Categoría, estimación USD 1.177746. 53 llamadas enviadas sobre esos 405 pares; los tres errores anteriores se
-conservan. Lote en curso; este texto todavía no acredita
-su resultado ni selección en Signal. La ruta de outcomes fallida no se usó
+Categoría, estimación USD 1.177746. 58/58 llamadas settled (53 iniciales +
+5 reparaciones), USD 0.996055. Resultado
+terminal: 24 pertenecen, 378 no pertenecen, 1 insuficiente y 2 errores;
+pendiente 0. Los tres errores anteriores se conservan. Selección guardada por UI.
+Signal ES/EN final muestra cuatro conceptos (5/2/24/18), 45 raíces únicas seleccionadas
+y 423 relevantes sin concepto; evidencia HTTP 200 con 24 ítems y 24 citas
+resaltadas. El badge F5-04 sigue en 134 frente al KPI de 423.
+La ruta de outcomes fallida no se usó
 para mutar/adoptar por SQL: la evidencia y adopción se verificaron por UI.
 
 ### Defectos reproducidos y recuperación
@@ -217,11 +222,16 @@ El botón pudo quedar temporalmente deshabilitado por polling; se comprobó un
 
 ### Costes y trabajo restante
 
-Acumulado settled antes de pertenencia del segundo adoptado: **USD 5.488460**.
+Acumulado settled antes de H1: **USD 6.484515**.
 Vectores 0.110855; fichas 3.581149; preview 0.051516; interpretación 0.551190;
-editorial 0.336952; pertenencia 0.856798. Railway/CI no cuantificados. Presupuesto
+editorial 0.336952; pertenencia 1.852853. Railway/CI no cuantificados. Presupuesto
 orientativo sin máximo estricto. Reservas de nuevas ejecuciones no son coste settled.
 
-Falta completar pertenencia del segundo adoptado, Signal final ES/EN y
-ventana H1 coordinada con #39.
-H1 sigue inactivo; no se acreditan todavía tres excepciones reales ni sus overrides.
+Pertenencia final cerrada: 612 pares sin pendientes, cinco errores y dos
+insuficientes conservados como tales. El censo remoto acredita 1086 fichas
+actuales y cero discrepancias de CE, entidades efectivas o fingerprint en los
+612 pares. Todos los jobs del recorrido están terminales. Signal final ES/EN
+tiene las mismas fechas y conteos (capturas privadas 21–23).
+Ventana H1 abierta al coordinador tras liberar Runner; falta #39 y revisión humana.
+Este recibo precede al despliegue H1; no acredita todavía tres excepciones reales
+ni sus overrides.
