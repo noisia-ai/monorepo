@@ -76,7 +76,7 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
   return createSignalLabelingStoreV1<HybridStageInputV1,HybridStageResultV1>({ ...options,
     adapter: { kind:"membership",hybrid_stage:stage,
       policy_action:stage === "jev" ? "concept_membership_jev" : "concept_membership_claude",
-      transport:"sync",inputs,
+      transport:"sync",persist_results_before_write:true,inputs,
       authority:async (client,run) => {
         const s = snapshot(run);
         const route = (await client.query<{route_digest:string}>(

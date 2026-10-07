@@ -267,18 +267,35 @@ export async function writeHybridMembershipDecisionPageV1(args: {
       AND rights.metrics AND rights.evidence`, [args.workspace_id, JSON.stringify(rows)])).rows[0]!.count;
   if (matched !== rows.length) fail("hybrid_population_or_rights_changed");
   const receipts = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb)
-    r(jev_call_id uuid,claude_call_id uuid)
+    r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,
+      entity_context_digest text,effective_entities_digest text,jev jsonb,claude jsonb,
+      jev_call_id uuid,claude_call_id uuid)
     JOIN signal_labeling_calls j ON j.id=r.jev_call_id AND j.workspace_id=$1 AND j.status='settled'
-      AND j.provider='typesafe' AND j.model='jev-1.13.0' AND j.raw_sha256 IS NOT NULL AND j.raw_storage_key IS NOT NULL
+      AND j.provider='typesafe' AND j.model='jev-1.13.0' AND j.results_applied
+      AND j.raw_sha256 IS NOT NULL AND j.raw_storage_key IS NOT NULL AND j.raw_size_bytes IS NOT NULL
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(j.results) result
+        WHERE result->>'root_id'=r.root_id::text AND result->>'root_fingerprint'=r.root_fingerprint
+          AND result->>'concept_key'=r.concept_key AND result->>'definition_digest'=r.definition_digest
+          AND result->>'entity_context_digest'=r.entity_context_digest
+          AND result->>'effective_entities_digest'=r.effective_entities_digest
+          AND result->>'jev_call_id'=j.id::text AND result->'jev'=r.jev)
     JOIN signal_labeling_runs jr ON jr.id=j.run_id AND jr.workspace_id=$1
       AND jr.membership_snapshot->>'hybrid_stage'='jev' AND jr.membership_snapshot->>'route_digest'=$3
     JOIN signal_processing_admissions ja ON ja.id=jr.processing_admission_id AND ja.action='concept_membership_jev'
     LEFT JOIN signal_labeling_calls c ON c.id=r.claude_call_id AND c.workspace_id=$1 AND c.status='settled'
-      AND c.provider='anthropic' AND c.model='claude-sonnet-5-5' AND c.raw_sha256 IS NOT NULL AND c.raw_storage_key IS NOT NULL
+      AND c.provider='anthropic' AND c.model='claude-sonnet-5-5' AND c.results_applied
+      AND c.raw_sha256 IS NOT NULL AND c.raw_storage_key IS NOT NULL AND c.raw_size_bytes IS NOT NULL
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(c.results) result
+        WHERE result->>'root_id'=r.root_id::text AND result->>'root_fingerprint'=r.root_fingerprint
+          AND result->>'concept_key'=r.concept_key AND result->>'definition_digest'=r.definition_digest
+          AND result->>'entity_context_digest'=r.entity_context_digest
+          AND result->>'effective_entities_digest'=r.effective_entities_digest
+          AND result->>'jev_call_id'=j.id::text AND result->>'claude_call_id'=c.id::text
+          AND result->'jev'=r.jev AND result->'claude'=r.claude)
     LEFT JOIN signal_labeling_runs cr ON cr.id=c.run_id AND cr.workspace_id=$1
       AND cr.membership_snapshot->>'hybrid_stage'='claude' AND cr.membership_snapshot->>'route_digest'=$3
     LEFT JOIN signal_processing_admissions ca ON ca.id=cr.processing_admission_id AND ca.action='concept_membership_claude'
-    WHERE r.claude_call_id IS NULL OR ca.id IS NOT NULL`,
+    WHERE (r.claude_call_id IS NULL AND r.claude IS NULL) OR ca.id IS NOT NULL`,
     [args.workspace_id,JSON.stringify(rows),args.route_digest])).rows[0]!.count;
   if (receipts !== rows.length) fail("hybrid_settled_receipt_required");
   await args.client.query(`INSERT INTO signal_hybrid_membership_decisions(workspace_id,root_id,root_fingerprint,concept_key,definition_digest,

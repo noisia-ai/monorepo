@@ -9,6 +9,7 @@ import {
 } from "@noisia/query-engine";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
 import { selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
+import { writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
 
@@ -159,15 +160,41 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     assert.equal(first.length, 1, "the real JEV selector initially finds the pair");
     assert.equal(first[0]!.evaluated_concepts[0]!.concept_key, concept.concept_key);
 
+    const policy = randomUUID();
+    await client.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
+      VALUES($1,'mention_facets',$2),($1,'concept_membership',$2)`, [workspace, actor]);
+    await client.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,
+      valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+      VALUES($1,$2,1,'draft',now()-interval '1 minute','infinity','UTC',1100000,$3)`, [policy, organization, actor]);
+    for (const [action, provider, modelName] of [
+      ["concept_membership_jev", "typesafe", "jev-1.13.0"],
+      ["concept_membership_claude", "anthropic", "claude-sonnet-5-5"],
+    ]) {
+      const config = JSON.stringify({ provider, model: modelName });
+      await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
+        provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        VALUES($1,$2,'provider',$3,$4,$5::jsonb,signal_semantic_context_digest_json_v2($5::jsonb),NULL,false)`,
+      [policy, action, provider, modelName, config]);
+    }
+    await client.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [policy]);
+    const admit = async (action: string, target: string) => {
+      const receipt = (await client.query<{result:{receipt:{id:string}}}>(`SELECT admit_signal_processing_v1(
+        $1::uuid,$2::uuid,$3,$4::uuid,$5,$6,NULL,false) result`,
+      [workspace, actor, action, target, randomUUID(), digest])).rows[0]!.result.receipt;
+      return receipt.id;
+    };
+
     const jevRun = randomUUID(), jevCall = randomUUID();
+    const jevAdmission = await admit("concept_membership_jev", jevRun);
     await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
       preparation_run_id,entity_context_digest,entity_context_version_no,status,estimated_micro_usd,
-      idempotency_key,request_digest,actor_user_id,membership_snapshot)
-      VALUES($1,$2,'membership',$3,$4,$5,1,'completed',1,$6,$7,$8,$9::jsonb)`,
+      idempotency_key,request_digest,actor_user_id,membership_snapshot,processing_admission_id)
+      VALUES($1,$2,'membership',$3,$4,$5,1,'completed',1,$6,$7,$8,$9::jsonb,$10)`,
       [jevRun, workspace, jevVersion, prep, context, `jev-${jevRun}`, digest, actor,
-        JSON.stringify({ hybrid_stage: "jev", route_digest: route, concepts: [concept], preview: false })]);
+        JSON.stringify({ hybrid_stage: "jev", route_digest: route, concepts: [concept], preview: false }),
+        jevAdmission]);
     const input = first[0]!;
-    const result = { root_id: root, root_fingerprint: input.root_fingerprint,
+    const result: Omit<HybridDecisionInputV1,"text"> = { root_id: root, root_fingerprint: input.root_fingerprint,
       concept_key: concept.concept_key, definition_digest: concept.definition_digest,
       entity_context_digest: input.entity_context_digest,
       effective_entities_digest: input.effective_entities_digest,
@@ -195,6 +222,62 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     assert.deepEqual(await selectHybridClaudeInputsV1(client, { ...work(randomUUID()),
       membership_snapshot: { concepts: [concept], hybrid_stage: "claude", route_digest: route, jev_run_id: jevRun } } as unknown as LabelingRunV1), claude,
     "a restarted Claude read retains the same JEV receipt without a new JEV call");
+
+    const claudeVersion = randomUUID(), claudeRun = randomUUID(), claudeCall = randomUUID();
+    await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,
+      schema_digest,labeler_digest,identity) VALUES($1,'membership','anthropic','claude-sonnet-5-5',
+      $2,$2,$3,'{}')`, [claudeVersion, digest, sha("claude-stage")]);
+    const claudeAdmission = await admit("concept_membership_claude", claudeRun);
+    await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
+      preparation_run_id,entity_context_digest,entity_context_version_no,status,estimated_micro_usd,
+      idempotency_key,request_digest,actor_user_id,membership_snapshot,processing_admission_id)
+      VALUES($1,$2,'membership',$3,$4,$5,1,'completed',1,$6,$7,$8,$9::jsonb,$10)`,
+      [claudeRun, workspace, claudeVersion, prep, context, `claude-${claudeRun}`, digest, actor,
+        JSON.stringify({ hybrid_stage: "claude", route_digest: route, jev_run_id: jevRun,
+          concepts: [concept], preview: false }), claudeAdmission]);
+    const excerpt = "bicycle brakes", start = text.indexOf(excerpt);
+    const claudeDecision = { verdict: "not_belongs", citation: { quote: excerpt, start, end: start + excerpt.length } } as const;
+    const confirmed = { ...result, claude: claudeDecision, claude_call_id: claudeCall };
+    const insertCall = async (args: { id: string; run: string; provider: string; model: string;
+      inputs: unknown[]; result: unknown }) => {
+      const raw = JSON.stringify([args.result]);
+      await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,
+        transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,
+        settled_micro_usd,raw_sha256,raw_storage_key,raw_size_bytes,results_applied,results,
+        budget_date,budget_timezone)
+        VALUES($1,$2,$3,$4,$5,'sync',$6,$7,'{}',$8::jsonb,'settled',2,2,$9,$10,$11,
+        true,$12::jsonb,current_date,'UTC')`,
+      [args.id, args.run, workspace, args.provider, args.model, `h1-${args.id}`, digest,
+        JSON.stringify(args.inputs), sha(raw), `private/${args.id}`, Buffer.byteLength(raw), raw]);
+    };
+    await insertCall({ id: claudeCall, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
+      inputs: claude, result: confirmed });
+    const wrongJev = randomUUID(), wrongClaude = randomUUID();
+    await insertCall({ id: wrongJev, run: jevRun, provider: "typesafe", model: "jev-1.13.0", inputs: [input],
+      result: { ...result, concept_key: "wrong_concept", jev_call_id: wrongJev } });
+    await insertCall({ id: wrongClaude, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
+      inputs: claude, result: { ...confirmed, concept_key: "wrong_concept", claude_call_id: wrongClaude } });
+    const decision = { ...confirmed, text };
+    const write = (candidate: typeof decision) => writeHybridMembershipDecisionPageV1({
+      client, workspace_id: workspace, route_digest: route, decisions: [candidate],
+    });
+    await assert.rejects(write({ ...decision, jev_call_id: wrongJev }), /hybrid_settled_receipt_required/u,
+      "a settled JEV call for another pair cannot support this decision");
+    await assert.rejects(write({ ...decision, claude_call_id: wrongClaude }), /hybrid_settled_receipt_required/u,
+      "a settled Claude call for another pair cannot support this decision");
+    assert.equal((await write(decision)).persisted, 1);
+    assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
+      SELECT verdict,source FROM signal_concept_memberships_current_v1
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
+      [workspace, root, concept.concept_key])).rows[0], { verdict: "review_required", source: "model" });
+    await client.query(`INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,
+      definition_digest,root_fingerprint,verdict,actor_user_id)
+      VALUES($1,$2,$3,$4,$5,'belongs',$6)`,
+      [workspace, root, concept.concept_key, concept.definition_digest, input.root_fingerprint, actor]);
+    assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
+      SELECT verdict,source FROM signal_concept_memberships_current_v1
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
+      [workspace, root, concept.concept_key])).rows[0], { verdict: "belongs", source: "human" });
     await client.query("ROLLBACK");
   } finally {
     await client.query("ROLLBACK").catch(() => undefined);

@@ -485,6 +485,8 @@ export function createSignalLabelingStoreV1<
     hybrid_stage?: "jev" | "claude";
     policy_action?: "concept_membership_jev" | "concept_membership_claude";
     transport?: "sync" | "batch";
+    /** H1 verifies each decision against this call's results in the same transaction. */
+    persist_results_before_write?: boolean;
     inputs: (
       client: LabelingDatabaseV1 | PoolClient,
       run: LabelingRunV1,
@@ -950,6 +952,16 @@ export function createSignalLabelingStoreV1<
     ) {
       await tx(db, async (c) => {
         await lock(c, run);
+        const persistResults = async () => {
+          const changed = await c.query(
+          `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results
+           FROM jsonb_to_recordset($2::jsonb) page(id uuid,results jsonb)
+           WHERE call.run_id=$1 AND call.id=page.id`,
+          [run.id, JSON.stringify(pages.map((p) => ({ id: p.call.id, results: p.results })))],
+          );
+          if (changed.rowCount !== pages.length) fail("labeling_result_call_conflict");
+        };
+        if (options.adapter?.persist_results_before_write) await persistResults();
         if (options.adapter) await options.adapter.write(c, run, pages);
         else
           await writeFacetResultsV1(c, {
@@ -963,17 +975,7 @@ export function createSignalLabelingStoreV1<
               })),
             ),
           });
-        await c.query(
-          `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results
-           FROM jsonb_to_recordset($2::jsonb) page(id uuid,results jsonb)
-           WHERE call.run_id=$1 AND call.id=page.id`,
-          [
-            run.id,
-            JSON.stringify(
-              pages.map((p) => ({ id: p.call.id, results: p.results })),
-            ),
-          ],
-        );
+        if (!options.adapter?.persist_results_before_write) await persistResults();
       });
     },
     async finish(run: LabelingRunV1) {
