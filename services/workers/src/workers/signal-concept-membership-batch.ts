@@ -118,8 +118,11 @@ export async function runConceptMembershipTickV1(args: {
       run.error_code = "labeling_outcome_unknown";
     }
     if (calls.some((c) => c.status === "unknown")) {
-      await reconcileUnknownBatchCallsV1(run, calls, store, provider);
+      const reconciliation=await reconcileUnknownBatchCallsV1(run, calls, store, provider);
       calls = await store.calls(run);
+      const current=await store.refresh(run);
+      run.error_code=current.error_code;
+      if(reconciliation.released)return {status:await store.finish(run)};
     }
     if (!run.error_code && !calls.some((c) =>
       ["reserved", "submitting", "submitted"].includes(c.status))) {

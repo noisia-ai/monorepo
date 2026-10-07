@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 
 const fixtureKeyPattern = /^jev-policy-[a-z0-9]{6,}$/u;
@@ -37,6 +37,21 @@ export function assertMfpJevPolicyFixtureV1(fixture_key: string, organization_sl
   if (!(fixtureKeyPattern.test(fixture_key) || fixture_key === ws4FixtureKey)
     || organization_slug !== `mfp-${fixture_key}`)
     throw new Error("mfp_jev_policy_fixture_required");
+}
+
+/** Keep a corrupt, terminal receipt available for audit without treating it as pending work. */
+export async function readMfpPolicySwitchBlockersV1(client: Pick<PoolClient, "query">, organizationId: string) {
+  return (await client.query<Record<string, number>>(`SELECT
+      (SELECT count(*)::int FROM signal_labeling_runs r JOIN signal_workspaces w ON w.id=r.workspace_id
+        WHERE w.organization_id=$1 AND r.status IN('queued','running')) labeling_runs,
+      (SELECT count(*)::int FROM signal_labeling_calls call JOIN signal_workspaces w ON w.id=call.workspace_id
+        WHERE w.organization_id=$1 AND call.status IN('reserved','submitting','submitted','unknown')) labeling_calls,
+      (SELECT count(*)::int FROM signal_labeling_calls call JOIN signal_workspaces w ON w.id=call.workspace_id
+        JOIN signal_labeling_runs r ON r.id=call.run_id
+        WHERE w.organization_id=$1 AND call.raw_storage_key IS NOT NULL AND NOT call.results_applied
+          AND NOT (call.status='failed' AND r.status='failed' AND r.error_code='labeling_raw_receipt_invalid')) unapplied_raw,
+      (SELECT count(*)::int FROM signal_workspace_embedding_runs r JOIN signal_workspaces w ON w.id=r.workspace_id
+        WHERE w.organization_id=$1 AND r.status IN('queued','running','outcome_unknown')) embedding_runs`, [organizationId])).rows[0]!;
 }
 
 /** Change only mention_facets in an MFP disposable fixture. Planning is read-only and
@@ -88,15 +103,7 @@ export async function switchMfpMentionFacetsProviderV1(args: {
     if (!actor) throw new Error("mfp_jev_policy_creator_forbidden");
 
     phase = "blockers";
-    const blockers = (await client.query<Record<string, number>>(`SELECT
-      (SELECT count(*)::int FROM signal_labeling_runs r JOIN signal_workspaces w ON w.id=r.workspace_id
-        WHERE w.organization_id=$1 AND r.status IN('queued','running')) labeling_runs,
-      (SELECT count(*)::int FROM signal_labeling_calls call JOIN signal_workspaces w ON w.id=call.workspace_id
-        WHERE w.organization_id=$1 AND call.status IN('reserved','submitting','submitted','unknown')) labeling_calls,
-      (SELECT count(*)::int FROM signal_labeling_calls call JOIN signal_workspaces w ON w.id=call.workspace_id
-        WHERE w.organization_id=$1 AND call.raw_storage_key IS NOT NULL AND NOT call.results_applied) unapplied_raw,
-      (SELECT count(*)::int FROM signal_workspace_embedding_runs r JOIN signal_workspaces w ON w.id=r.workspace_id
-        WHERE w.organization_id=$1 AND r.status IN('queued','running','outcome_unknown')) embedding_runs`, [scope.organization_id])).rows[0]!;
+    const blockers = await readMfpPolicySwitchBlockersV1(client, scope.organization_id);
     phase = "actions";
     const actions = (await client.query<{ action: string; provider: string | null; model: string | null;
       max_execution_micro_usd: string | null; matches: boolean }>(`SELECT action,provider,model,max_execution_micro_usd::text,
