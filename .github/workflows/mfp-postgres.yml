@@ -1,0 +1,73 @@
+name: MFP PostgreSQL
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mfp-postgres-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  migrated-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: noisia_mfp_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d noisia_mfp_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/noisia_mfp_ci
+      NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
+      NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
+      NOISIA_MFP_PG_CI: 'true'
+      NOISIA_MFP_POLICY_SUCCESSOR_PG_TEST: 'true'
+      NOISIA_MFP_FOUNDER_ACCESS_PG_TEST: 'true'
+      NOISIA_MFP_ADOPTED_SERVING_PG_TEST: 'true'
+      NOISIA_MFP_POLICY_ACTION_SWITCH_PG_TEST: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Apply every numbered migration to disposable PostgreSQL 17
+        run: pnpm --filter @noisia/db db:smoke:migrations
+      - name: Run MFP integration tests on migrated schema
+        run: |
+          shopt -s nullglob
+          tests=(infrastructure/db/migrations/signal-mfp-*.integration.test.ts)
+          if (( ${#tests[@]} == 0 )); then
+            echo 'No MFP integration tests in this checkout'
+          else
+            pnpm exec node --test --import tsx "${tests[@]}"
+          fi
+      - name: Run MFP PostgreSQL checks on migrated schema
+        run: |
+          shopt -s nullglob
+          checks=(scripts/dev-corpus/*-postgres-check.ts)
+          if (( ${#checks[@]} == 0 )); then
+            echo 'No MFP PostgreSQL checks in this checkout'
+          else
+            for check in "${checks[@]}"; do
+              pnpm exec node --import tsx "$check"
+            done
+          fi
