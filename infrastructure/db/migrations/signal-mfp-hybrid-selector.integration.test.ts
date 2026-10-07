@@ -89,7 +89,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       VALUES($1,$2,'corpus-text-chunks-v1',$3)`, [workspace, asset, text]);
     await client.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,
       disposition,root_metadata,provenance,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',$5)`,
-      [workspace, prep, root, digest]);
+      [workspace, prep, root, asset, digest]);
     const entity = { kind: "primary_brand", entity_id: brand, label: "Synthetic brand" };
     const context = sha("entity-context");
     await client.query(`INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,context,
