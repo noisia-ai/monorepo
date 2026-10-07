@@ -241,6 +241,9 @@ export async function requestMentionFacetsV1(args: {
   identity?: LabelerIdentity;
   adapter?: {
     request_identity: unknown;
+    /** A provider-specific membership stage must use its own governed action. */
+    policy_action?: "concept_membership_jev" | "concept_membership_claude";
+    feature?: SignalWorkspaceFeatureV1;
     validateIdentity: (identity: LabelerIdentity) => void;
     prepare: (
       client: PoolClient,
@@ -276,7 +279,7 @@ export async function requestMentionFacetsV1(args: {
        WHERE w.id=$1`,
       [args.workspace_id],
     );
-    await authorize(c, args.workspace_id, args.actor_user_id, true);
+    await authorize(c, args.workspace_id, args.actor_user_id, true, args.adapter?.feature);
     // A replay belongs to its sealed labeler, even if the workspace later selects
     // another version. Explicit request identities still participate in the seal.
     const replay = (await c.query<{id:string;request_digest:string;identity:LabelerIdentity}>(
@@ -338,8 +341,8 @@ export async function requestMentionFacetsV1(args: {
       )
     ).rows[0];
     if (!prep) fail("labeling_preparation_required");
-    const action =
-      identity.kind === "facets" ? "mention_facets" : "concept_membership";
+    const action = args.adapter?.policy_action ??
+      (identity.kind === "facets" ? "mention_facets" : "concept_membership");
     const policy = (
       await c.query<{
         max_execution_micro_usd: string | null;
@@ -470,6 +473,8 @@ export function createSignalLabelingStoreV1<
 >(options: {
   adapter?: {
     kind: "facets" | "membership";
+    policy_action?: "concept_membership_jev" | "concept_membership_claude";
+    transport?: "sync" | "batch";
     inputs: (
       client: LabelingDatabaseV1 | PoolClient,
       run: LabelingRunV1,
@@ -528,8 +533,9 @@ export function createSignalLabelingStoreV1<
         max_execution_micro_usd: string | null;
         provider: string;
         model: string;
+        action: string;
       }>(
-        `SELECT w.organization_id,p.budget_timezone,(now() AT TIME ZONE p.budget_timezone)::date::text budget_date,p.daily_cap_micro_usd::text,a.max_execution_micro_usd::text,a.provider,a.model
+        `SELECT w.organization_id,p.budget_timezone,(now() AT TIME ZONE p.budget_timezone)::date::text budget_date,p.daily_cap_micro_usd::text,a.max_execution_micro_usd::text,a.provider,a.model,a.action
    FROM signal_workspaces w JOIN signal_processing_admissions admission ON admission.id=$2 AND admission.workspace_id=w.id AND admission.target_id=$3
    JOIN signal_processing_policy_versions p ON p.id=admission.policy_version_id JOIN signal_processing_policy_actions a ON a.policy_version_id=p.id AND a.action=admission.action
    WHERE w.id=$1 AND p.status='active' AND p.valid_from<=now() AND p.valid_until>now()`,
@@ -539,14 +545,16 @@ export function createSignalLabelingStoreV1<
     if (
       !policy ||
       policy.provider !== run.identity.provider ||
-      policy.model !== run.identity.model
+      policy.model !== run.identity.model ||
+      policy.action !== (options.adapter?.policy_action ?? (run.kind === "membership" ? "concept_membership" : "mention_facets"))
     )
       fail("labeling_policy_changed");
     await c.query("SELECT signal_processing_lock_v1($1,$2::date)", [
       policy.organization_id,
       policy.budget_date,
     ]);
-    await authorize(c, run.workspace_id, run.actor_user_id, true, run.kind === "membership" ? "concept_membership" : "mention_facets");
+    await authorize(c, run.workspace_id, run.actor_user_id, true,
+      run.kind === "membership" ? "concept_membership" : "mention_facets");
     const current = await inspectFacetContextChangeV1(c, run.workspace_id);
     if (current.digest !== run.entity_context_digest)
       fail("labeling_context_changed");
@@ -688,7 +696,7 @@ export function createSignalLabelingStoreV1<
               run.workspace_id,
               run.identity.provider,
               run.identity.model,
-              run.identity.provider === "typesafe" ? "sync" : "batch",
+              options.adapter?.transport ?? (run.identity.provider === "typesafe" ? "sync" : "batch"),
               JSON.stringify(fresh),
               policy.budget_date,
               policy.budget_timezone,

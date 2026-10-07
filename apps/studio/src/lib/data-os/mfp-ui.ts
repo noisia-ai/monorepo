@@ -13,13 +13,15 @@ export type MfpFacetPage = {contract_version:"mention-facets-browser-v1";workspa
   items:Array<{root_id:string;text:string;title:string|null;url:string|null;platform:string|null;status:string;
     relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];requires_context_review:boolean;pending_context_review:boolean}>;next_cursor:string|null};
 export type MfpEvidence = {root_id:string;concept_key:string;definition_digest:string;verdict:string;
-  citations:Array<{quote:string;quote_start:number;quote_end:number;chunk_index:number;chunk_sha256:string}>;
+  citations:Array<{quote:string;quote_start?:number;quote_end?:number;chunk_index?:number;chunk_sha256?:string}>;
+  hybrid_review?:{jev:{verdict:string;probability:number|null;citation?:{quote:string}|null};claude:{verdict:string;citation?:{quote:string}|null}}|null;
   rationale:string|null;source:"human"|"model"|"pending";text:string|null;title:string|null;url:string|null;platform:string|null;evidence_withheld?:boolean;requires_override_review?:boolean};
 export type MfpMembershipStatus = {contract_version:"concept-membership-status-v1";enabled:boolean;provider_available:boolean;
+  route?:"standard"|"hybrid_h1";
   can_request_processing:boolean;can_edit_topics:boolean;entity_context_digest:string;
   counts:Array<{verdict:string;count:number}>;population:{relevant:number;unrelated:number;unknown:number;spam:number;without_concept:number};
   concepts:Array<{concept_key:string;label:string;definition_digest:string;selected:boolean;selection_revision:number}>;
-  estimated_micro_usd:string|number;preview_estimated_micro_usd:string|number;latest:MfpRun|null;items:MfpEvidence[];next_cursor:string|null};
+  estimated_micro_usd:string|number|null;preview_estimated_micro_usd:string|number|null;latest:MfpRun|null;items:MfpEvidence[];next_cursor:string|null};
 export type MfpPreview = {contract_version:"concept-membership-preview-v1";run:MfpRun;items:MfpEvidence[];sample_size:number};
 
 export function mfpMoney(value:string|number|null|undefined,locale:string) {

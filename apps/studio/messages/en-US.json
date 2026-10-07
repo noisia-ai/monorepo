@@ -4590,7 +4590,10 @@
       "body": "Evaluate the complete definition and keep citations from the original text.",
       "relevant": "Relevant roots",
       "withoutConcept": "Without a concept",
-      "start": "Calculate full membership"
+      "start": "Calculate full membership",
+      "hybridRoute": "Experimental H1 route selected. Execution is controlled in the test environment; disagreements require review.",
+      "jevVerdict": "JEV",
+      "claudeVerdict": "Claude"
     },
     "exceptions": {
       "title": "Results and exceptions",
@@ -4654,7 +4657,8 @@
       "insufficient": "Insufficient evidence",
       "refused": "Provider refusal",
       "error": "Technical error",
-      "pending": "Pending"
+      "pending": "Pending",
+      "review_required": "Review required"
     },
     "runStates": {
       "queued": "Queued",

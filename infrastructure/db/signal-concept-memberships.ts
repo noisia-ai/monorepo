@@ -202,6 +202,8 @@ export async function requestConceptMembershipsV1(args: {
           fail("membership_identity_invalid");
       },
       prepare: async (c, w, _id, ld, context) => {
+        if ((await c.query("SELECT 1 FROM signal_hybrid_membership_routes WHERE workspace_id=$1", [w])).rowCount)
+          fail("hybrid_route_selected");
         const concepts = previewConcept
           ? [previewConcept]
           : await loadMembershipConceptsV1(c, w);
@@ -304,6 +306,8 @@ export async function loadConceptMembershipsStatusV1(
     const caps = await authorize(c, args.workspace_id, args.actor_user_id);
     const change = await inspectFacetContextChangeV1(c, args.workspace_id);
     const concepts = await loadMembershipConceptsV1(c, args.workspace_id);
+    const hybridRoute = (await c.query<{route:string;route_digest:string}>(
+      "SELECT route,route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1", [args.workspace_id])).rows[0] ?? null;
     const latest =
       (
         await c.query(
@@ -414,9 +418,15 @@ export async function loadConceptMembershipsStatusV1(
        'url',CASE WHEN rights.evidence THEN mention.url ELSE NULL END,'platform',f.platform,
        'evidence_withheld',NOT rights.evidence,
        'citations',CASE WHEN rights.evidence THEN m.citations ELSE '[]'::jsonb END,
-       'rationale',CASE WHEN rights.evidence THEN m.rationale ELSE NULL END) item
+       'rationale',CASE WHEN rights.evidence THEN m.rationale ELSE NULL END,
+       'hybrid_review',CASE WHEN rights.evidence AND m.verdict='review_required'
+         THEN jsonb_build_object('jev',hybrid.jev,'claude',hybrid.claude) ELSE NULL END) item
    FROM display_pairs m JOIN display_roots f USING(root_id) JOIN current_rights rights USING(root_id)
    JOIN mentions mention ON mention.id=m.root_id
+   LEFT JOIN signal_hybrid_membership_decisions hybrid ON hybrid.workspace_id=m.workspace_id AND hybrid.root_id=m.root_id
+     AND hybrid.root_fingerprint=m.root_fingerprint AND hybrid.concept_key=m.concept_key
+     AND hybrid.definition_digest=m.definition_digest AND hybrid.entity_context_digest=m.entity_context_digest
+     AND hybrid.effective_entities_digest=m.effective_entities_digest AND hybrid.route_digest=m.labeler_digest
    WHERE ($2::text IS NULL OR m.concept_key=$2) AND ($3::text IS NULL OR m.verdict=$3)
      AND ($4::uuid IS NULL OR (m.root_id,m.concept_key)>($4::uuid,$5::text))
    ORDER BY m.root_id,m.concept_key LIMIT $6
@@ -445,15 +455,16 @@ export async function loadConceptMembershipsStatusV1(
       counts,
       population,
       latest,
+      route: hybridRoute?.route ?? "standard",
       entity_context_digest: change.digest,
       stale_count: change.changed ? change.affected.length : 0,
-      estimated_micro_usd: (await estimateMembershipWorkV1(c, {
+      estimated_micro_usd: hybridRoute ? null : (await estimateMembershipWorkV1(c, {
         workspace_id: args.workspace_id, concepts, context: change.context,
         labeler_digest: digest(membershipLabelerIdentityV1()), sample: null, preview: false,
         // These roots first need a current fiche; a read must not register CE or quote stale work.
         stale_roots: change.changed ? change.affected : [],
       })).estimated_micro_usd,
-      preview_estimated_micro_usd: estimate(
+      preview_estimated_micro_usd: hybridRoute ? null : estimate(
         Math.min(30, population.relevant),
         population.relevant
           ? Math.ceil(

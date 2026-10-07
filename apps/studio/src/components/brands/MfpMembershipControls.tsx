@@ -15,7 +15,7 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
   const resource=useMfpResource<MfpMembershipStatus>(`${base}?${query}`,"concept-membership-status-v1",onAccessDenied,true);
   const mutation=useMfpMutation(base,onAccessDenied),preview=useMfpMutation(`${base}/preview`,onAccessDenied);
   const current=resource.data?.concepts.find(item=>item.concept_key===concept.concept_key);
-  const disabled=!resource.data?.enabled||!resource.data.provider_available||!resource.data.can_request_processing||mutation.busy||mutation.pending||Boolean(resource.error);
+  const disabled=resource.data?.route==="hybrid_h1"||!resource.data?.enabled||!resource.data.provider_available||!resource.data.can_request_processing||mutation.busy||mutation.pending||Boolean(resource.error);
   const active=["queued","running"].includes(resource.data?.latest?.status??"");
   const submit=async(body:Record<string,unknown>,method="POST")=>{const result=await mutation.send(body,method);if(result){setSelection([]);await resource.read();}return result;};
   const previewConcept={concept_key:concept.concept_key,label:concept.label,scope:concept.scope,definition:concept.definition,
@@ -29,6 +29,7 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
     <header className="admin-section__head"><div><h3>{t("membership.title")}</h3><p>{t("membership.body")}</p></div>
       <button type="button" className="admin-button" disabled={resource.loading} onClick={()=>void resource.read()}>{t("refresh")}</button></header>
     <p className="mfp-notice">{t("experimental")}</p>
+    {resource.data?.route==="hybrid_h1"?<p className="mfp-notice" role="status">{t("membership.hybridRoute")}</p>:null}
     {resource.error?<p className="team-msg team-msg--error" role="alert">{t(`errors.${mfpErrorKey(resource.error)}`)}</p>:null}
     {resource.data?<>
       <dl className="admin-summary-strip admin-summary-strip--compact"><div><dt>{t("membership.relevant")}</dt><dd>{resource.data.population.relevant}</dd></div>
@@ -52,7 +53,7 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
         <a href={signalHref}>{t("openSignal")}</a></div>:null}
       <h4>{t("exceptions.title")}</h4><p>{t("exceptions.body")}</p>
       <div className="mfp-filters"><label>{t("filter")}<select value={verdict} onChange={event=>filter(event.target.value)}>
-        {["belongs","not_belongs","insufficient","refused","error","pending"].map(v=><option key={v} value={v}>{t(`verdicts.${v}`)}</option>)}</select></label>
+        {["belongs","not_belongs","review_required","insufficient","refused","error","pending"].map(v=><option key={v} value={v}>{t(`verdicts.${v}`)}</option>)}</select></label>
         <button type="button" className="admin-button" onClick={()=>filter("insufficient")}>{t("exceptions.review")}</button>
         <span>{t("count",{count:resource.data.counts.find(c=>c.verdict===verdict)?.count??0})}</span></div>
       {resource.data.items.length?<label className="mfp-select-all"><input type="checkbox" checked={selection.length===resource.data.items.length}

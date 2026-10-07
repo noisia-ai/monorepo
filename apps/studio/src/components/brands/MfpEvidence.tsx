@@ -13,6 +13,12 @@ export function MfpEvidence({item,mentionHref}:{item:Evidence;mentionHref:string
     {item.title?<h4>{item.title}</h4>:null}
     {item.text?<p className="mfp-evidence__text"><MfpHighlightedText text={item.text} quotes={item.citations.map(c=>c.quote)}/></p>:<p>{t("withheld")}</p>}
     {item.rationale?<p>{item.rationale}</p>:null}
+    {item.hybrid_review?<dl className="mfp-hybrid-review">
+      <div><dt>{t("membership.jevVerdict")}</dt><dd>{t(`verdicts.${item.hybrid_review.jev.verdict}`)}
+        {item.hybrid_review.jev.citation?.quote?<q>{item.hybrid_review.jev.citation.quote}</q>:null}</dd></div>
+      <div><dt>{t("membership.claudeVerdict")}</dt><dd>{t(`verdicts.${item.hybrid_review.claude.verdict}`)}
+        {item.hybrid_review.claude.citation?.quote?<q>{item.hybrid_review.claude.citation.quote}</q>:null}</dd></div>
+    </dl>:null}
     <div className="admin-form-actions"><a href={mentionHref}>{t("openMention")}</a>
       {original?<a href={original} target="_blank" rel="noreferrer">{t("openOriginal")}</a>:null}</div>
   </article>;

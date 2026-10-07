@@ -4590,7 +4590,10 @@
       "body": "Evalúa la definición completa y conserva citas del texto original.",
       "relevant": "Raíces relevantes",
       "withoutConcept": "Sin concepto",
-      "start": "Calcular pertenencia completa"
+      "start": "Calcular pertenencia completa",
+      "hybridRoute": "Ruta híbrida H1 experimental seleccionada. La ejecución se controla en el entorno de prueba; las discrepancias requieren revisión.",
+      "jevVerdict": "JEV",
+      "claudeVerdict": "Claude"
     },
     "exceptions": {
       "title": "Resultados y excepciones",
@@ -4654,7 +4657,8 @@
       "insufficient": "Evidencia insuficiente",
       "refused": "Rechazo del proveedor",
       "error": "Error técnico",
-      "pending": "Pendiente"
+      "pending": "Pendiente",
+      "review_required": "Revisión necesaria"
     },
     "runStates": {
       "queued": "En cola",
