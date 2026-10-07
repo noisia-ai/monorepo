@@ -247,9 +247,14 @@ void main(async()=>{
     const jevMicro=jevUniqueMicro+duplicateMicro;
     const claudeRun=await runStage("claude",jevMicro);
     const claudeCalls=await stageCalls(claudeRun),claudeMicro=claudeCalls.reduce((sum,call)=>sum+Number(call.settled_micro_usd),0);
+    const frozenKeys=new Set(frozen.map(concept=>concept.concept_key));
     const jev=new Map<string,HybridStageResultV1>(),claude=new Map<string,HybridStageResultV1>();
+    let jevExtraPairs=0,claudeExtraPairs=0,jevExtraMicro=0,claudeExtraMicro=0;
     const key=(result:HybridStageResultV1)=>`${result.root_id}:${result.concept_key}`;
     for (const call of jevCalls) for (const result of call.results??[]) {
+      if(!frozenKeys.has(result.concept_key)){
+        jevExtraPairs++;jevExtraMicro+=Number(call.settled_micro_usd);continue;
+      }
       if (jev.has(key(result))) fail("mfp_hybrid_jev_pair_duplicate");
       jev.set(key(result),result);
     }
@@ -260,7 +265,18 @@ void main(async()=>{
         facets?.entities?.abstained===false&&facets.entities.value.length>0?frozen.length:0);
     },0);
     if (jev.size+unknownPairs.size!==gatedPairs) fail("mfp_hybrid_jev_pair_coverage_incomplete");
-    for (const call of claudeCalls) for (const result of call.results??[]) claude.set(key(result),result);
+    for (const call of claudeCalls) for (const result of call.results??[]) {
+      if(!frozenKeys.has(result.concept_key)){
+        claudeExtraPairs++;claudeExtraMicro+=Number(call.settled_micro_usd);continue;
+      }
+      if(claude.has(key(result))) fail("mfp_hybrid_claude_pair_duplicate");
+      claude.set(key(result),result);
+    }
+    if(jevExtraPairs||claudeExtraPairs){
+      if(jevCalls.some(call=>call.results?.length!==1)||claudeCalls.some(call=>call.results?.length!==1)||
+        !Number.isSafeInteger(jevExtraMicro)||!Number.isSafeInteger(claudeExtraMicro))
+        fail("mfp_hybrid_extra_concept_cost_invalid");
+    }
     const output:HybridMeasuredRootV1[]=rows.map(row=>{
       const facets=row.facets;
       const gate_passed=row.status==="labeled"&&row.relevance==="relevant"&&
@@ -282,6 +298,9 @@ void main(async()=>{
     const ledger={facets_settled_usd:totalFacet/1e6,jev_settled_usd:jevMicro/1e6,
       jev_duplicate_paid_usd:duplicateMicro/1e6,
       claude_settled_usd:claudeMicro/1e6,unknown_calls:quarantined.length,
+      out_of_selection_jev_pairs:jevExtraPairs,out_of_selection_claude_pairs:claudeExtraPairs,
+      out_of_selection_jev_settled_usd:jevExtraMicro/1e6,
+      out_of_selection_claude_settled_usd:claudeExtraMicro/1e6,
       unknown_provider_usd_upper_bound:quarantined.length*0.002688};
     const report=measureHybridH1V1(gold,output,frozen.map(concept=>concept.concept_key),ledger);
     await mkdir(directory,{recursive:true,mode:0o700});

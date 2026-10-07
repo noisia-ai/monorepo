@@ -20,8 +20,12 @@ test("H1 reports review_required outside binary accuracy and uses settled cost o
         claude: { verdict: "belongs", citation: { quote: "Second", start: 0, end: 6 } } } } },
   ] as HybridMeasuredRootV1[];
   const result = measureHybridH1V1(gold, rows, ["x"], { facets_settled_usd: 0.1,
-    jev_settled_usd: 0.2, claude_settled_usd: 0.3, unknown_calls: 0 }, 2);
+    jev_settled_usd: 0.2, claude_settled_usd: 0.3, unknown_calls: 0,
+    out_of_selection_jev_pairs: 2, out_of_selection_claude_pairs: 1,
+    out_of_selection_jev_settled_usd: 0.05,
+    out_of_selection_claude_settled_usd: 0.07 }, 2);
   assert.ok(Math.abs((result.cost.observed_usd_per_1000 ?? 0) - 300) < 1e-9);
+  assert.equal(result.cost.components.out_of_selection_jev_settled_usd, 0.05);
   assert.equal(result.full_corpus.review_required, 1);
   assert.equal(result.full_corpus.claude_citations_valid, 2);
   assert.equal(result.gold[0]!.views.full_pipeline.review_required, 1);
@@ -43,6 +47,10 @@ test("H1 reports review_required outside binary accuracy and uses settled cost o
   assert.throws(() => measureHybridH1V1(gold, rows, ["x"],
     { facets_settled_usd: -1, jev_settled_usd: 0, claude_settled_usd: 0, unknown_calls: 0 }, 2),
     /hybrid_ledger_invalid/u);
+  assert.throws(() => measureHybridH1V1(gold, rows, ["x"],
+    { facets_settled_usd: 0, jev_settled_usd: 0.2, claude_settled_usd: 0,
+      unknown_calls: 0, out_of_selection_jev_settled_usd: 0.3 }, 2),
+    /hybrid_extra_concept_ledger_invalid/u);
 });
 
 test("H1 comparable views exclude missing Claude judgments only from the evaluated view", () => {

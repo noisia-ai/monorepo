@@ -9,7 +9,9 @@ import { binary, wilson } from "./metrics";
 export type HybridMeasuredRootV1 = { root_id: string; input_digest: string; text: string; gate_passed: boolean;
   decisions: Record<string, HybridDecisionV1>; unresolved_concepts?: string[] };
 export type HybridObservedLedgerV1 = { facets_settled_usd: number; jev_settled_usd: number;
-  claude_settled_usd: number; unknown_calls: number; unknown_provider_usd_upper_bound?: number };
+  claude_settled_usd: number; unknown_calls: number; unknown_provider_usd_upper_bound?: number;
+  out_of_selection_jev_pairs?: number; out_of_selection_claude_pairs?: number;
+  out_of_selection_jev_settled_usd?: number; out_of_selection_claude_settled_usd?: number };
 const emitted = (v: string) => v === "belongs" || v === "not_belongs";
 function goldEntityMix(row: Gold) {
   const kinds = new Set(row.entities.map(entity => entity.kind));
@@ -70,6 +72,13 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
   const unresolvedPairs = roots.reduce((sum,root) => sum + (root.unresolved_concepts?.length ?? 0),0);
   if (costs.some(v => !Number.isFinite(v) || v < 0) || !Number.isSafeInteger(ledger.unknown_calls) || ledger.unknown_calls < 0)
     throw new Error("hybrid_ledger_invalid");
+  if ([ledger.out_of_selection_jev_pairs,ledger.out_of_selection_claude_pairs].some(v=>
+    v!==undefined&&(!Number.isSafeInteger(v)||v<0)) ||
+    [ledger.out_of_selection_jev_settled_usd,ledger.out_of_selection_claude_settled_usd].some(v=>
+      v!==undefined&&(!Number.isFinite(v)||v<0)) ||
+    (ledger.out_of_selection_jev_settled_usd??0)>ledger.jev_settled_usd ||
+    (ledger.out_of_selection_claude_settled_usd??0)>ledger.claude_settled_usd)
+    throw new Error("hybrid_extra_concept_ledger_invalid");
   if (unresolvedPairs !== ledger.unknown_calls || (ledger.unknown_calls > 0 &&
     (!Number.isFinite(ledger.unknown_provider_usd_upper_bound) ||
       (ledger.unknown_provider_usd_upper_bound ?? 0) < 0))) throw new Error("hybrid_unknown_ledger_mismatch");
