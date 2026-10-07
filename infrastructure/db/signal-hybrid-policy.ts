@@ -37,6 +37,18 @@ export async function planMfpHybridPolicyV1(args:{database:Pick<Pool,"connect">;
     if (!actor||!caps.can_request_processing) throw new Error("hybrid_policy_forbidden");
     phase="blockers";
     const blockers=await readMfpPolicySwitchBlockersV1(client,args.organization_id);
+    // Preserve the old policy while any sibling action still owns an admission.
+    const activeOwners=(await client.query<{count:number}>(`SELECT count(*)::int count
+      FROM signal_processing_admissions admission WHERE admission.policy_version_id=$1 AND (
+        EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
+        EXISTS(SELECT 1 FROM signal_workspace_embedding_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
+        EXISTS(SELECT 1 FROM signal_corpus_preparation_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
+        EXISTS(SELECT 1 FROM signal_topic_catalog_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
+        EXISTS(SELECT 1 FROM signal_topic_consolidation_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
+        EXISTS(SELECT 1 FROM signal_topic_editorial_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','review_ready')) OR
+        EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('open','ready','blocked')) OR
+        EXISTS(SELECT 1 FROM signal_labeling_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running'))
+      )`,[prior.id])).rows[0]!.count;
     const actions=(await client.query<{action:string;provider:string|null;model:string|null}>(
       "SELECT action,provider,model FROM signal_processing_policy_actions WHERE policy_version_id=$1 ORDER BY action",
       [prior.id])).rows;
@@ -45,9 +57,9 @@ export async function planMfpHybridPolicyV1(args:{database:Pick<Pool,"connect">;
     if (!!jev!==!!claude || jev && (jev.provider!=="typesafe"||jev.model!=="jev-1.13.0") ||
       claude && (claude.provider!=="anthropic"||claude.model!=="claude-sonnet-5-5"))
       throw new Error("hybrid_policy_partial_or_changed");
-    const blocked=Object.values(blockers).some(count=>count>0);
+    const blocked=activeOwners>0||Object.values(blockers).some(count=>count>0);
     const receipt={stage:"mfp_hybrid_policy",execute:args.execute===true,prior_version:prior.version,
-      action_count:actions.length,other_actions_preserved:true,blockers,
+      action_count:actions.length,other_actions_preserved:true,blockers,active_owners:activeOwners,
       daily_cap_micro_usd:prior.daily_cap_micro_usd,hybrid_action_cap_micro_usd:null};
     if (args.execute!==true||blocked||jev) {
       await client.query("ROLLBACK");

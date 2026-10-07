@@ -56,6 +56,17 @@ test("H1 MFP policy successor preserves sibling actions and rolls back cleanly",
     assert.equal((await planMfpHybridPolicyV1(args)).status, "planned");
     assert.equal((await scoped.query("SELECT count(*)::int n FROM signal_processing_policy_versions WHERE organization_id=$1",
       [fixture.first.organization_id])).rows[0].n, 1);
+    const siblingRun = randomUUID();
+    const admitted = (await scoped.query<{ result: { receipt: { id: string } } }>(`SELECT admit_signal_processing_v1(
+      $1::uuid,$2::uuid,'corpus_preparation',$3::uuid,$4,'sha256:'||repeat('b',64),0,false) result`,
+      [fixture.second.workspace_id, fixture.actors.secondAdmin, siblingRun, randomUUID()])).rows[0]!.result.receipt;
+    await scoped.query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,
+      processing_admission_id,status,worker_job_id) VALUES($1,$2,$3,$4,'running',$5)`,
+      [siblingRun, fixture.second.workspace_id, fixture.actors.secondAdmin, admitted.id, `h1-policy-${siblingRun}`]);
+    const blocked = await planMfpHybridPolicyV1({ ...args, execute: true });
+    assert.equal(blocked.status, "blocked", "sibling admission must keep its policy active");
+    assert.equal(blocked.active_owners, 1);
+    await scoped.query("UPDATE signal_corpus_preparation_runs SET status='failed' WHERE id=$1", [siblingRun]);
     const result = await planMfpHybridPolicyV1({ ...args, execute: true });
     assert.equal(result.status, "activated");
     const successor = (await scoped.query<{ id: string; daily_cap_micro_usd: string }>(`
