@@ -134,7 +134,11 @@ export async function configureHybridMembershipRouteV1(args: {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))", [args.workspace_id]);
     await authorize(client, args.workspace_id, args.actor_user_id, true);
     const active = (await client.query<{ count: number }>(
-      "SELECT count(*)::int count FROM signal_labeling_runs WHERE workspace_id=$1 AND kind IN('facets','membership') AND status IN('queued','running')",
+      `SELECT count(*)::int count FROM signal_labeling_runs run WHERE run.workspace_id=$1
+        AND run.kind IN('facets','membership') AND (run.status IN('queued','running') OR EXISTS(
+          SELECT 1 FROM signal_labeling_calls call WHERE call.run_id=run.id
+            AND (call.status IN('reserved','submitting','submitted','unknown')
+              OR call.raw_storage_key IS NOT NULL AND NOT call.results_applied)))`,
       [args.workspace_id])).rows[0]!.count;
     if (active) fail("hybrid_run_active");
     const existing = (await client.query<{route_digest:string;jev_facets_labeler_version_id:string;

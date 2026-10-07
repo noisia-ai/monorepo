@@ -90,7 +90,8 @@ void main(async()=>{
     if (!selected) fail("mfp_hybrid_route_missing");
     const facetCost=(await pool.query<{micro:string;unknown:number}>(`SELECT
       COALESCE(sum(call.settled_micro_usd) FILTER(WHERE call.status='settled'),0)::text micro,
-      count(*) FILTER(WHERE call.status IN('submitting','submitted','unknown'))::int unknown
+      count(*) FILTER(WHERE call.status IN('reserved','submitting','submitted','unknown')
+        OR call.raw_storage_key IS NOT NULL AND NOT call.results_applied)::int unknown
       FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
       WHERE run.workspace_id=$1 AND run.kind='facets' AND run.labeler_version_id=$2`,
       [identity.workspace_id,selected.jev_facets_labeler_version_id])).rows[0]!;
