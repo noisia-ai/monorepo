@@ -1,55 +1,38 @@
-/** Runner-only rollback gate for a paid terminal labeling call. No provider transport. */
+/** Paid terminal call exposure on migrated public schema, with full rollback. */
 import assert from "node:assert/strict";
-import {createHash,randomUUID} from "node:crypto";
-import {readFile} from "node:fs/promises";
+import {randomUUID} from "node:crypto";
 import {readSignalLabelingRunExposureV1} from "../../infrastructure/db/signal-labeling-runs";
+import {createMigratedLabelingFixture} from "./migrated-labeling-fixture";
 import {main,openDatabase} from "./guard.mjs";
 
 await main(async()=>{
-  const pool=await openDatabase(),client=await pool.connect();
-  let stage="preflight",begun=false;
-  try{
-    const identity=JSON.parse(await readFile(".data/dev-corpus/identity.json","utf8"));
-    assert.match(identity.fixture_key,/^[a-z0-9-]+$/u);
-    const {rows:[fixture]}=await client.query(`SELECT w.id workspace_id,w.organization_id,o.slug
-      FROM signal_workspaces w JOIN organizations o ON o.id=w.organization_id
-      WHERE w.id=$1 AND o.id=$2`,[identity.workspace_id,identity.organization_id]);
-    assert.equal(fixture?.slug,`mfp-${identity.fixture_key}`);
-    const {rows:[run]}=await client.query(`SELECT id FROM signal_labeling_runs WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 1`,[fixture.workspace_id]);
-    assert.ok(run?.id,"fixture requires an existing labeling run");
-    const old0255=await readFile(new URL("../../infrastructure/db/migrations/0255_signal_labeling_receipts_in_object_storage.sql",import.meta.url));
-    const hash=createHash("sha256").update(old0255).digest("hex");
-    const {rows:[applied]}=await client.query(`SELECT sha256 FROM mfp_harness.migrations WHERE name='0255_signal_labeling_receipts_in_object_storage.sql'`);
-    assert.equal(applied?.sha256,hash,"applied 0255 hash must remain exact");
-    const migration=await readFile(new URL("../../infrastructure/db/migrations/0252_signal_labeling_failed_charge_exposure.sql",import.meta.url),"utf8");
-    stage="transaction";
-    await client.query("BEGIN");begun=true;
-    await client.query(migration);
-    const {rows:[day]}=await client.query(`SELECT (now() AT TIME ZONE 'UTC')::date::text AS day`);
-    const exposure=async()=>((await client.query(
-      `SELECT confirmed_micro_usd::text,total_micro_usd::text FROM signal_processing_org_exposure_v1($1,$2::date,'UTC')`,
-      [fixture.organization_id,day.day])).rows[0]!);
-    const before=await exposure(),beforeRun=BigInt(await readSignalLabelingRunExposureV1(client,run.id));
-    stage="terminal_insert";
-    const customId=`receipt-ledger-${randomUUID()}`;
-    await client.query(`INSERT INTO signal_labeling_calls
-      (run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,
-       status,reserved_micro_usd,settled_micro_usd,budget_date,budget_timezone,stop_reason)
-      VALUES($1,$2,'anthropic','claude-sonnet-5-5','batch',$3,$4,'{}'::jsonb,'[]'::jsonb,
-       'failed',83,83,$5::date,'UTC','labeling_raw_receipt_invalid')`,
-      [run.id,fixture.workspace_id,customId,`sha256:${"0".repeat(64)}`,day.day]);
-    const after=await exposure(),afterRun=BigInt(await readSignalLabelingRunExposureV1(client,run.id));
-    assert.equal(BigInt(after.confirmed_micro_usd)-BigInt(before.confirmed_micro_usd),83n);
-    assert.equal(BigInt(after.total_micro_usd)-BigInt(before.total_micro_usd),83n);
-    assert.equal(afterRun-beforeRun,83n);
-    await client.query("ROLLBACK");begun=false;
-    const {rows:[remaining]}=await client.query(`SELECT count(*)::int n FROM signal_labeling_calls WHERE custom_id=$1`,[customId]);
-    assert.equal(remaining.n,0);
-    console.log(JSON.stringify({status:"passed",cases:4,migration:"0252_rollback",applied_0255_hash_verified:true,
-      persisted_calls:0,provider_calls:0,cost_micro_usd:0}));
-  }catch(error){
-    console.error(JSON.stringify({status:"check_failed",stage,code:(error as {code?:string}).code??null,
-      message:error instanceof Error?error.message.slice(0,180):"unknown"}));
-    throw error;
-  }finally{if(begun)await client.query("ROLLBACK").catch(()=>{});client.release();await pool.end();}
+ const pool=await openDatabase(),client=await pool.connect();let stage="fixture";
+ try{
+  await client.query("BEGIN");
+  const f=await createMigratedLabelingFixture(pool,client);
+  assert.equal((await client.query(`SELECT count(*)::int n FROM information_schema.columns
+   WHERE table_schema='public' AND table_name='signal_labeling_calls' AND column_name='raw_body'`)).rows[0].n,0);
+  const exposure=async()=>{
+   const row=(await client.query(`SELECT confirmed_micro_usd::text,total_micro_usd::text
+    FROM signal_processing_org_exposure_v1($1,current_date,'UTC')`,[f.organizationId])).rows[0];
+   return{confirmed:BigInt(row.confirmed_micro_usd),total:BigInt(row.total_micro_usd)};
+  };
+  const before=await exposure(),beforeRun=BigInt(await readSignalLabelingRunExposureV1(client,f.runId));
+  stage="terminal_call";
+  const id=randomUUID();
+  await client.query(`INSERT INTO signal_labeling_calls
+   (id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,
+   status,reserved_micro_usd,settled_micro_usd,budget_date,budget_timezone,stop_reason)
+   VALUES($1,$2,$3,'anthropic','claude-sonnet-5-5','batch',$4,$5,'{}'::jsonb,'[]'::jsonb,
+   'failed',83,83,current_date,'UTC','labeling_raw_receipt_invalid')`,
+   [id,f.runId,f.workspaceId,`ci-${id}`,`sha256:${"6".repeat(64)}`]);
+  const after=await exposure(),afterRun=BigInt(await readSignalLabelingRunExposureV1(client,f.runId));
+  assert.equal(after.confirmed-before.confirmed,83n);
+  assert.equal(after.total-before.total,83n);
+  assert.equal(afterRun-beforeRun,83n);
+  await client.query("ROLLBACK");
+  assert.equal((await pool.query("SELECT count(*)::int n FROM signal_labeling_calls WHERE id=$1",[id])).rows[0].n,0);
+  console.log(JSON.stringify({status:"passed",gate:"migrated_ledger",cases:4,provider_calls:0,cost_micro_usd:0}));
+ }catch(error){console.error(JSON.stringify({status:"check_failed",stage,code:(error as {code?:string}).code??null}));throw error;}
+ finally{await client.query("ROLLBACK").catch(()=>{});client.release();await pool.end();}
 });

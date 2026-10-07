@@ -32,6 +32,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/noisia_mfp_ci
+      DATABASE_SSL: 'false'
       NOISIA_DB_SMOKE_RESET_SCHEMA: 'true'
       NOISIA_DB_SMOKE_EMULATE_SUPABASE_ROLES: 'true'
       NOISIA_MFP_PG_CI: 'true'
