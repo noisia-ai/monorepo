@@ -24,10 +24,10 @@ export const hybridH1JevAdmissionPopulationSqlV1 = `WITH current_memberships AS 
     concept->>'concept_key' concept_key,concept->>'definition_digest' definition_digest,
     input->>'entity_context_digest' entity_context_digest,
     input->>'effective_entities_digest' effective_entities_digest
-  FROM signal_labeling_calls uncertain JOIN signal_labeling_runs prior ON prior.id=uncertain.run_id
-  CROSS JOIN LATERAL jsonb_array_elements(uncertain.inputs) input
+  FROM signal_labeling_calls unknown_call JOIN signal_labeling_runs prior ON prior.id=unknown_call.run_id
+  CROSS JOIN LATERAL jsonb_array_elements(unknown_call.inputs) input
   CROSS JOIN LATERAL jsonb_array_elements(input->'evaluated_concepts') concept
-  WHERE prior.workspace_id=$1 AND prior.kind='membership' AND uncertain.status='unknown'
+  WHERE prior.workspace_id=$1 AND prior.kind='membership' AND unknown_call.status='unknown'
 )
 SELECT count(DISTINCT current.root_id)::int roots,count(*)::int pairs,
   COALESCE(sum(length(f.full_text)),0)::text characters
@@ -39,13 +39,13 @@ LEFT JOIN applied_results applied ON applied.root_id=current.root_id::text
   AND applied.definition_digest=current.definition_digest
   AND applied.entity_context_digest=current.entity_context_digest
   AND applied.effective_entities_digest=current.effective_entities_digest
-LEFT JOIN uncertain_pairs uncertain ON uncertain.root_id=current.root_id::text
-  AND uncertain.root_fingerprint=current.root_fingerprint
-  AND uncertain.concept_key=current.concept_key
-  AND uncertain.definition_digest=current.definition_digest
-  AND uncertain.entity_context_digest=current.entity_context_digest
-  AND uncertain.effective_entities_digest=current.effective_entities_digest
-WHERE applied.root_id IS NULL AND uncertain.root_id IS NULL`;
+LEFT JOIN uncertain_pairs quarantined ON quarantined.root_id=current.root_id::text
+  AND quarantined.root_fingerprint=current.root_fingerprint
+  AND quarantined.concept_key=current.concept_key
+  AND quarantined.definition_digest=current.definition_digest
+  AND quarantined.entity_context_digest=current.entity_context_digest
+  AND quarantined.effective_entities_digest=current.effective_entities_digest
+WHERE applied.root_id IS NULL AND quarantined.root_id IS NULL`;
 
 export const hybridH1ClaudeAdmissionPopulationSqlV1 = `WITH jev_positive AS MATERIALIZED (
   SELECT result->>'root_id' root_id,result->>'root_fingerprint' root_fingerprint,

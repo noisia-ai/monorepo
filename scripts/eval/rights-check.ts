@@ -10,11 +10,12 @@ export function mfpEvalRightsCensusValid(state:RightsCensus,exactWorkspace:boole
     state.authorized_batches===2&&state.authorized_sources===1&&state.expected_source_batches===2&&
     state.active_runs===0&&state.unsettled_calls===0;
 }
-export async function verifyMfpEvalRights(allowedRunId?:string,database?:{connect():Promise<any>},quarantinedRunId?:string){
+export async function verifyMfpEvalRights(allowedRunId?:string,database?:{connect():Promise<any>},quarantinedRunIds:string[]=[]){
   const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
   if(allowedRunId&&!uuid.test(allowedRunId))
     throw new Error('mfp_eval_allowed_run_invalid');
-  if(quarantinedRunId&&(!uuid.test(quarantinedRunId)||quarantinedRunId===allowedRunId))
+  if(new Set(quarantinedRunIds).size!==quarantinedRunIds.length||
+    quarantinedRunIds.some(id=>!uuid.test(id)||id===allowedRunId))
     throw new Error('mfp_eval_quarantine_run_invalid');
   const identity=await loadMfpEvalIdentity();
   const pool=database??await openDatabase();
@@ -50,33 +51,36 @@ export async function verifyMfpEvalRights(allowedRunId?:string,database?:{connec
         (SELECT count(*)::int FROM authorized) authorized_batches,
         (SELECT count(DISTINCT data_source_id)::int FROM authorized) authorized_sources,
         (SELECT count(*)::int FROM authorized WHERE data_source_id=$2::uuid) expected_source_batches`,[identity.workspace_id,identity.source_id]);
-    if(quarantinedRunId){
-      const quarantine=(await client.query(`SELECT run.status,run.error_code,
+    if(quarantinedRunIds.length){
+      const quarantines=(await client.query(`SELECT run.id,run.status,run.error_code,
         count(*) FILTER(WHERE call.status='unknown' AND call.raw_storage_key IS NULL
           AND NOT call.results_applied)::int unknown_without_receipt,
-        count(*) FILTER(WHERE call.status NOT IN('failed','unknown') OR
-          call.status='unknown' AND (call.raw_storage_key IS NOT NULL OR call.results_applied))::int other_calls
+        count(*) FILTER(WHERE call.status NOT IN('failed','unknown','settled') OR
+          call.status='unknown' AND (call.raw_storage_key IS NOT NULL OR call.results_applied) OR
+          call.status='settled' AND (call.raw_storage_key IS NULL OR call.raw_sha256 IS NULL OR
+            call.raw_size_bytes IS NULL OR NOT call.results_applied OR call.results IS NULL))::int other_calls
         FROM signal_labeling_runs run JOIN signal_labeling_calls call ON call.run_id=run.id
-        WHERE run.workspace_id=$1 AND run.id=$2 AND run.kind='membership'
+        WHERE run.workspace_id=$1 AND run.id=ANY($2::uuid[]) AND run.kind='membership'
           AND run.membership_snapshot->>'hybrid_stage'='jev'
-        GROUP BY run.status,run.error_code`,[identity.workspace_id,quarantinedRunId])).rows[0];
-      if(quarantine?.status!=='failed'||quarantine.error_code!=='labeling_outcome_unknown'||
-        quarantine.unknown_without_receipt!==1||quarantine.other_calls!==0)
+        GROUP BY run.id,run.status,run.error_code`,[identity.workspace_id,quarantinedRunIds])).rows;
+      if(quarantines.length!==quarantinedRunIds.length||quarantines.some((quarantine:any)=>
+        quarantine.status!=='failed'||quarantine.error_code!=='labeling_outcome_unknown'||
+        quarantine.unknown_without_receipt!==1||quarantine.other_calls!==0))
         throw new Error('mfp_eval_quarantine_state_invalid');
     }
     const activity=await client.query(`SELECT (SELECT count(*)::int FROM signal_labeling_runs WHERE workspace_id=$1
           AND status IN('queued','running') AND ($2::uuid IS NULL OR id<>$2::uuid)
-          AND ($3::uuid IS NULL OR id<>$3::uuid)) active_runs,
+          AND NOT (id=ANY($3::uuid[]))) active_runs,
         (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$1
           AND status IN('reserved','submitting','submitted','unknown')
           AND ($2::uuid IS NULL OR run_id<>$2::uuid)
-          AND ($3::uuid IS NULL OR run_id<>$3::uuid)) unsettled_calls`,
-      [identity.workspace_id,allowedRunId??null,quarantinedRunId??null]);
+          AND NOT (run_id=ANY($3::uuid[]))) unsettled_calls`,
+      [identity.workspace_id,allowedRunId??null,quarantinedRunIds]);
     const state={...rights.rows[0],...activity.rows[0]};
     if(!mfpEvalRightsCensusValid(state,workspace.rows[0]?.exact_workspace===true))
       throw new Error('mfp_eval_rights_or_activity_invalid');
     console.log(JSON.stringify({stage:'mfp_eval_jev_rights_verified',...state,
-      active_run_excluded:Boolean(allowedRunId),quarantined_unknown_excluded:Boolean(quarantinedRunId),
+      active_run_excluded:Boolean(allowedRunId),quarantined_unknown_excluded:quarantinedRunIds.length,
       exact_workspace:true,read_only:true}));
     await client.query('COMMIT');
   } catch(error){await client.query('ROLLBACK');throw error;}

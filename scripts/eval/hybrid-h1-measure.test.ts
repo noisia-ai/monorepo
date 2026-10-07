@@ -67,24 +67,25 @@ test("H1 comparable views exclude missing Claude judgments only from the evaluat
   assert.equal(views.full_pipeline.hybrid.operational_unpublished_gold_positive, 2);
 });
 
-test("H1 keeps an unreconciled non-gold pair out of terminal coverage and cost", () => {
+test("H1 keeps two unreconciled non-gold pairs out of terminal coverage and cost", () => {
   const gold = [{ root_id:"a",input_digest:"a",partition:"test",entities:[],memberships:{x:"not_belongs"} }] as unknown as Gold[];
   const rows:HybridMeasuredRootV1[] = [
     {root_id:"a",input_digest:"a",text:"Example",gate_passed:true,
       decisions:{x:decideHybridMembershipV1("Example",{verdict:"not_belongs",probability:0.1,citation:null},null)}},
     {root_id:"b",input_digest:"b",text:"Unresolved",gate_passed:true,decisions:{},unresolved_concepts:["x"]},
+    {root_id:"c",input_digest:"c",text:"Unresolved too",gate_passed:true,decisions:{},unresolved_concepts:["x"]},
   ];
   const report=measureHybridH1V1(gold,rows,["x"],{facets_settled_usd:0.1,
-    jev_settled_usd:0.2,claude_settled_usd:0.3,unknown_calls:1,
-    unknown_provider_usd_upper_bound:0.002688},2);
+    jev_settled_usd:0.2,claude_settled_usd:0.3,unknown_calls:2,
+    unknown_provider_usd_upper_bound:0.005376},3);
   assert.equal(report.status,"experimental_incomplete_not_approved");
-  assert.equal(report.full_corpus.unresolved_pairs,1);
-  assert.equal(report.full_corpus.pair_coverage,0.5);
+  assert.equal(report.full_corpus.unresolved_pairs,2);
+  assert.equal(report.full_corpus.pair_coverage,1/3);
   assert.equal(report.gold[0]!.views.full_pipeline.roots,0);
   assert.equal(report.gold[1]!.views.full_pipeline.roots,1);
   assert.equal(report.cost.observed_usd_per_1000,null);
-  assert.ok(Math.abs(report.cost.possible_usd_per_1000_range![0]-300)<1e-9);
-  assert.ok(Math.abs(report.cost.possible_usd_per_1000_range![1]-301.344)<1e-9);
+  assert.ok(Math.abs(report.cost.possible_usd_per_1000_range![0]-200)<1e-9);
+  assert.ok(Math.abs(report.cost.possible_usd_per_1000_range![1]-201.792)<1e-9);
   assert.throws(()=>measureHybridH1V1(gold,rows,["x"],{facets_settled_usd:0.1,
-    jev_settled_usd:0.2,claude_settled_usd:0.3,unknown_calls:0},2),/hybrid_unknown_ledger_mismatch/u);
+    jev_settled_usd:0.2,claude_settled_usd:0.3,unknown_calls:0},3),/hybrid_unknown_ledger_mismatch/u);
 });
