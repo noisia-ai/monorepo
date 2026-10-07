@@ -9,13 +9,13 @@ The route is **not ready to enable**. The provider runner is hard blocked until 
 ## Verified locally
 
 - Query engine: 586/586 tests passed, including H1 reducer and citation integrity.
-- DB typecheck passed; DB suite: 630 passed, 104 skipped without remote PostgreSQL; the H1 PG migration test is reserved for migrated `noisia_mfp_ci`.
+- DB typecheck passed; DB suite after #37 merge: 633 passed, 107 PostgreSQL skips locally. Fresh migrated `noisia_mfp_ci` passed H1 integration and all inherited PG checks in [run 37585365989](https://github.com/noisia-ai/monorepo/actions/runs/37585365989), with zero skips.
 - Studio and Workers typechecks passed; Studio lint: zero errors, 13 existing warnings.
 - H1 read-only scoring test passed. It rejects a missing root, stale gold input, and invalid decision/receipt shape. It never treats `review_required` as a binary false negative, but reports the operational unpublished positive count separately.
 
 ## Evidence still required
 
-1. Run PG migration 0259 and H1 integration in fresh migrated `noisia_mfp_ci`, with rollback and grants checks. #39 extends only the inherited #38 workflow's PR trigger to the #37 base branch; the disposable PostgreSQL runner, `develop` trigger and guards are unchanged.
+1. Keep CI green after the stage worker is wired. #39 extends only the inherited #38 PostgreSQL workflow's PR trigger and general `ci.yml` PR trigger to the #37 base branch; existing production/develop triggers, jobs, permissions and guards are unchanged.
 2. Complete sequential JEV and Claude stage adapters against the common ledger. Enable only an explicit workspace policy with both provider actions and rights checks.
 3. Execute the real 1,086-root corpus on the remote MFP runner, reconcile unknown calls, and compute the 150-gold three-view readout plus settled USD per 1,000 roots. No simulated price is reported as observed.
 
