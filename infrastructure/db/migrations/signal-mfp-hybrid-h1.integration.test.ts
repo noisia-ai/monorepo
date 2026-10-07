@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Pool } from "pg";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
@@ -25,13 +25,16 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
     assert.equal((await scoped.query("SELECT count(*)::int n FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
       [fixture.second.workspace_id])).rows[0].n, 0, "sibling workspace remains on standard route");
     const source = randomUUID(), root = randomUUID();
-    await scoped.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key)
-      VALUES($1,$2,$3,$4,'social','fixture','upload','H1 synthetic', $1::text)`,
-      [source, fixture.first.workspace_id, fixture.first.organization_id, fixture.first.brand_id]);
+    await scoped.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
+      connection_method,name,status,source_contract_version,source_key)
+      VALUES($1,$2,$3,$4,'social-listening','fixture','csv','H1 synthetic','active',
+        'signal-data-source-connector-v1',$5)`,
+      [source, fixture.first.workspace_id, fixture.first.organization_id, fixture.first.brand_id,
+        `source-sha256-${createHash("sha256").update(source).digest("hex")}`]);
     await scoped.query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,
       source_system,text_hash,text_clean,text_length,published_at,platform,inclusion_status)
       VALUES($1,$2,$3,$1,'h1-root',$1::text,'h1-ci',$4,'Synthetic mention',17,now(),'fixture','included')`,
-      [root, fixture.first.workspace_id, source, randomUUID()]);
+      [root, fixture.first.workspace_id, source, `sha256:${createHash("sha256").update(root).digest("hex")}`]);
     const insert = (verdict: string, concept: string, jev: unknown, claude: unknown, citation: unknown) => scoped.query(`
       INSERT INTO signal_hybrid_membership_decisions(workspace_id,root_id,root_fingerprint,concept_key,definition_digest,
         entity_context_digest,effective_entities_digest,route_digest,result_digest,verdict,jev,claude,citation)
