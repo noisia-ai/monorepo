@@ -731,9 +731,10 @@ export function createSignalLabelingStoreV1<
             call_id: call.id, storage_key: stored.raw_storage_key, raw_sha256: stored.raw_sha256,
             size_bytes: size });}
           catch(error){
-            if(error instanceof Error && ["workspace_engine_storage_object_missing",
+            if(error instanceof SyntaxError || error instanceof Error && ["workspace_engine_storage_object_missing",
               "workspace_engine_storage_digest_invalid","workspace_engine_storage_part_invalid",
-              "workspace_engine_storage_manifest_invalid","workspace_engine_storage_response_too_large",
+              "workspace_engine_storage_manifest_invalid","workspace_engine_storage_reference_invalid",
+              "workspace_engine_storage_response_too_large",
               "labeling_raw_receipt_invalid"].includes(error.message))
               fail("labeling_raw_receipt_invalid",503);
             fail("labeling_raw_storage_unavailable",503);
