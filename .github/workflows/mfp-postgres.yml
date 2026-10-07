@@ -71,10 +71,10 @@ jobs:
         run: |
           shopt -s nullglob
           checks=(scripts/dev-corpus/*-postgres-check.ts)
-          if (( ${#checks[@]} == 0 )); then
-            echo 'No MFP PostgreSQL checks in this checkout'
-          else
-            for check in "${checks[@]}"; do
-              pnpm exec node --import tsx "$check"
-            done
+          if (( ${#checks[@]} < 3 )); then
+            echo '::error::Expected at least the critical, ledger and receipt PostgreSQL checks'
+            exit 1
           fi
+          for check in "${checks[@]}"; do
+            pnpm exec node --import tsx "$check"
+          done
