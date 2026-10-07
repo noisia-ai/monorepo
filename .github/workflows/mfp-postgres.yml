@@ -59,7 +59,7 @@ jobs:
           if (( ${#tests[@]} == 0 )); then
             echo 'No MFP integration tests in this checkout'
           else
-            pnpm exec node --test --import tsx "${tests[@]}"
+            pnpm exec node --test --test-concurrency=1 --import tsx "${tests[@]}"
           fi
       - name: Run MFP PostgreSQL checks on migrated schema
         run: |
