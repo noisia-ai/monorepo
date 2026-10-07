@@ -183,6 +183,24 @@ void main(async()=>{
           resumeTwo&&stage==="jev"?"mfp-hybrid-h1-r4-jev-resume-two-unknown":
           resumeOne&&stage==="jev"?"mfp-hybrid-h1-r4-jev-resume-one-unknown":
           `mfp-hybrid-h1-r4-${stage}`,provider_available:true,cap_micro_usd:cap});
+      const prior=(await pool.query<{status:string;hybrid_stage:string;route_digest:string;
+        error_code:string|null;pending:string|null;unsettled:number}>(`SELECT run.status,
+        run.membership_snapshot->>'hybrid_stage' hybrid_stage,
+        run.membership_snapshot->>'route_digest' route_digest,run.error_code,
+        run.counts->>'pending' pending,
+        count(call.id) FILTER(WHERE call.status<>'settled' OR NOT call.results_applied
+          OR call.raw_storage_key IS NULL OR call.raw_sha256 IS NULL
+          OR call.raw_size_bytes IS NULL OR call.results IS NULL)::int unsettled
+        FROM signal_labeling_runs run LEFT JOIN signal_labeling_calls call ON call.run_id=run.id
+        WHERE run.id=$1 AND run.workspace_id=$2 AND run.kind='membership'
+        GROUP BY run.id`,[receipt.run_id,identity.workspace_id])).rows[0];
+      if(!prior||prior.hybrid_stage!==stage||prior.route_digest!==route_digest)
+        fail(`mfp_hybrid_${stage}_receipt_mismatch`);
+      if(prior.status==="completed"){
+        if(prior.error_code||prior.pending!=="0"||prior.unsettled)
+          fail(`mfp_hybrid_${stage}_completed_receipt_invalid`);
+        return receipt.run_id;
+      }
       const store=createHybridMembershipRuntimeStoreV1(stage,pool);
       for (let tick=0;tick<10000;tick++) {
         if (tick%25===0) await verifyMfpEvalRights(receipt.run_id,pool,quarantineRunIds);
