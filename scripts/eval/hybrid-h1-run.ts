@@ -99,14 +99,14 @@ void main(async()=>{
     const totalFacet=Number(facetCost.micro);
     if (strictCap!==null&&totalFacet>strictCap) fail("mfp_hybrid_strict_cap_exhausted");
     const runStage=async(stage:HybridMembershipStageV1,priorCost:number)=>{
-      await verifyMfpEvalRights();
+      await verifyMfpEvalRights(undefined,pool);
       const cap=strictCap===null?null:strictCap-totalFacet-priorCost;
       if (cap!==null&&cap<0) fail("mfp_hybrid_strict_cap_exhausted");
       const receipt=await requestHybridMembershipStageV1({...access,stage,route_digest,
         idempotency_key:`mfp-hybrid-h1-r4-${stage}`,provider_available:true,cap_micro_usd:cap});
       const store=createHybridMembershipRuntimeStoreV1(stage,pool);
       for (let tick=0;tick<10000;tick++) {
-        if (tick%25===0) await verifyMfpEvalRights(receipt.run_id);
+        if (tick%25===0) await verifyMfpEvalRights(receipt.run_id,pool);
         const status=await runHybridMembershipTickV1({run_id:receipt.run_id,stage,store,jevPrice});
         if (status==="completed") return receipt.run_id;
         if (typeof status==="object"&&(status.status==="outcome_unknown"||status.status==="not_claimed"))

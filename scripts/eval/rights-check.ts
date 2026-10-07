@@ -10,11 +10,11 @@ export function mfpEvalRightsCensusValid(state:RightsCensus,exactWorkspace:boole
     state.authorized_batches===2&&state.authorized_sources===1&&state.expected_source_batches===2&&
     state.active_runs===0&&state.unsettled_calls===0;
 }
-export async function verifyMfpEvalRights(allowedRunId?:string){
+export async function verifyMfpEvalRights(allowedRunId?:string,database?:{connect():Promise<any>}){
   if(allowedRunId&&!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(allowedRunId))
     throw new Error('mfp_eval_allowed_run_invalid');
   const identity=await loadMfpEvalIdentity();
-  const pool=await openDatabase();
+  const pool=database??await openDatabase();
   const client=await pool.connect();
   try {
     await client.query('BEGIN READ ONLY');
@@ -59,6 +59,6 @@ export async function verifyMfpEvalRights(allowedRunId?:string){
       active_run_excluded:Boolean(allowedRunId),exact_workspace:true,read_only:true}));
     await client.query('COMMIT');
   } catch(error){await client.query('ROLLBACK');throw error;}
-  finally{client.release();await pool.end();}
+  finally{client.release();if(!database)await pool.end();}
 }
 if(process.argv[1]?.endsWith('/scripts/eval/rights-check.ts'))void main(verifyMfpEvalRights);
