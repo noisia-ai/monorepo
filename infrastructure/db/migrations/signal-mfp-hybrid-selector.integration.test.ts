@@ -336,10 +336,23 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       [workspace, root, concept.concept_key])).rows[0], { verdict: "review_required", source: "model" });
     assert.deepEqual(await selectMembershipInputsV1(client, allWork(randomUUID()), true), [],
       "the stage labeler digest cannot reselect a pair already served by its H1 route");
+    const negativeConcept = { ...concept,concept_key:"duplicate_negative",
+      label:"Duplicate negative",definition_digest:sha("duplicate negative definition") };
+    await client.query(`INSERT INTO taxonomy_terms(taxonomy_id,term_key,label,metadata)
+      VALUES($1,$2,$3,$4::jsonb)`,[taxonomy,negativeConcept.concept_key,negativeConcept.label,
+        JSON.stringify({topic:{...negativeConcept,origin:"manual",lifecycle:"active"}})]);
+    const negativeCall=randomUUID(),negativeInput={...input,evaluated_concepts:[negativeConcept]};
+    const negativeResult={...result,concept_key:negativeConcept.concept_key,
+      definition_digest:negativeConcept.definition_digest,
+      jev:{verdict:"not_belongs" as const,probability:0.03,citation:null},
+      jev_call_id:negativeCall,claude:null,claude_call_id:null};
+    await insertCall({id:negativeCall,run:jevRun,provider:"typesafe",model:"jev-1.13.0",
+      inputs:[negativeInput],result:negativeResult});
+    assert.equal((await writeHybridMembershipDecisionPageV1({client,workspace_id:workspace,
+      route_digest:route,decisions:[{...negativeResult,text}]})).persisted,1);
     const duplicateRun = randomUUID(), duplicateCall = randomUUID(), duplicateKey = `duplicate-${duplicateRun}`;
     const duplicateUsage = { input_tokens: 8179, output_tokens: 20 };
-    const duplicateResult = { ...result, jev: { verdict: "not_belongs" as const, probability: 0.03,
-      citation: null }, jev_call_id: duplicateCall, claude: null, claude_call_id: null };
+    const duplicateResult = { ...negativeResult,jev_call_id: duplicateCall };
     await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
       preparation_run_id,entity_context_digest,entity_context_version_no,status,error_code,
       estimated_micro_usd,idempotency_key,request_digest,actor_user_id,membership_snapshot)
@@ -351,7 +364,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       usage,raw_sha256,raw_storage_key,raw_size_bytes,results_applied,budget_date,budget_timezone)
       VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}',$6::jsonb,'failed',500,344,
       $7::jsonb,$8,$9,100,false,current_date,'UTC')`, [duplicateCall,duplicateRun,workspace,
-        `duplicate-${duplicateCall}`,digest,JSON.stringify([input]),JSON.stringify(duplicateUsage),
+        `duplicate-${duplicateCall}`,digest,JSON.stringify([negativeInput]),JSON.stringify(duplicateUsage),
         sha("duplicate raw"),`private/${duplicateCall}`]);
     const reconcileArgs = { workspace_id: workspace,idempotency_key: duplicateKey,
       call_id: duplicateCall,raw_sha256: sha("duplicate raw"),usage: duplicateUsage,
@@ -364,17 +377,17 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       JOIN signal_labeling_runs run ON run.id=call.run_id WHERE call.id=$1`,[duplicateCall])).rows[0],
       {status:"settled",results_applied:true,error_code:"hybrid_duplicate_receipt_reconciled"});
     assert.equal((await client.query<{count:number}>(`SELECT count(*)::int count FROM signal_hybrid_membership_decisions
-      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,[workspace,root,concept.concept_key])).rows[0]!.count,1,
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,[workspace,root,negativeConcept.concept_key])).rows[0]!.count,1,
       "duplicate reconciliation does not create or overwrite a served decision");
     await client.query("ROLLBACK TO SAVEPOINT before_duplicate_reconcile");
     await client.query(`INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,
       definition_digest,root_fingerprint,verdict,actor_user_id)
       VALUES($1,$2,$3,$4,$5,'belongs',$6)`,
-      [workspace, root, concept.concept_key, concept.definition_digest, input.root_fingerprint, actor]);
+      [workspace, root, negativeConcept.concept_key, negativeConcept.definition_digest, input.root_fingerprint, actor]);
     assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
       SELECT verdict,source FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
-      [workspace, root, concept.concept_key])).rows[0], { verdict: "belongs", source: "human" });
+      [workspace, root, negativeConcept.concept_key])).rows[0], { verdict: "belongs", source: "human" });
     await client.query("SAVEPOINT human_duplicate_reconcile");
     await assert.rejects(reconcileHybridDuplicateJevReceiptOnClientV1(client,reconcileArgs),
       /hybrid_duplicate_prior_receipt_missing/u,

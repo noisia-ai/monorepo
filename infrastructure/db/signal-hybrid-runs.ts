@@ -79,6 +79,7 @@ export async function reconcileHybridDuplicateJevReceiptOnClientV1(client: PoolC
       WHERE h.workspace_id=$1 AND h.route_digest=$2 AND h.root_id=$3::uuid
         AND h.root_fingerprint=$4 AND h.concept_key=$5 AND h.definition_digest=$6
         AND h.entity_context_digest=$7 AND h.effective_entities_digest=$8
+        AND h.verdict='not_belongs' AND h.jev->>'verdict'='not_belongs'
         AND h.jev_call_id<>$9::uuid`,[args.workspace_id,run.route_digest,result.root_id,
       result.root_fingerprint,result.concept_key,result.definition_digest,
       result.entity_context_digest,result.effective_entities_digest,call.id])).rows[0]!.count;
