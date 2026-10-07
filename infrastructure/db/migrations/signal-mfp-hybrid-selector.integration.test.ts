@@ -31,6 +31,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     const source = randomUUID(), batch = randomUUID(), root = randomUUID(), abstainedRoot = randomUUID();
     const quality = randomUUID(), retention = randomUUID(), license = randomUUID();
     const digest = sha("fixture-digest"), text = "Synthetic discussion about bicycle brakes";
+    const abstainedText = "Synthetic discussion about bicycle brakes with an abstained facet";
     await client.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
       connection_method,name,status,source_contract_version,source_key)
       VALUES($1,$2,$3,$4,'social-listening','fixture','csv','H1 selector','active',
@@ -47,7 +48,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     await client.query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,
       external_id,source_system,text_hash,text_clean,text_length,published_at,platform,inclusion_status)
       VALUES($1::uuid,$2,$3,$1::uuid,'h1-abstained',$1::uuid::text,'fixture',$4,$5,$6,now(),'web','included')`,
-      [abstainedRoot, workspace, source, sha(text), text, text.length]);
+      [abstainedRoot, workspace, source, sha(abstainedText), abstainedText, abstainedText.length]);
     await client.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id)
       VALUES($1,$2,$3,$4)`, [workspace, abstainedRoot, batch, source]);
     const qualityHash = signalQualityPolicyDefinitionHashV1({ workspace_id: workspace,
@@ -96,12 +97,14 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       [prep, workspace, actor, revision, `h1-selector-${prep}`]);
     await client.query(`INSERT INTO signal_corpus_text_assets(workspace_id,text_sha256,chunk_policy_version,full_text)
       VALUES($1,$2,'corpus-text-chunks-v1',$3)`, [workspace, asset, text]);
+    await client.query(`INSERT INTO signal_corpus_text_assets(workspace_id,text_sha256,chunk_policy_version,full_text)
+      VALUES($1,$2,'corpus-text-chunks-v1',$3)`, [workspace, sha(abstainedText), abstainedText]);
     await client.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,
       disposition,root_metadata,provenance,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',$5)`,
       [workspace, prep, root, asset, digest]);
     await client.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,
       disposition,root_metadata,provenance,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',$5)`,
-      [workspace, prep, abstainedRoot, asset, digest]);
+      [workspace, prep, abstainedRoot, sha(abstainedText), digest]);
     const entity = { kind: "primary_brand", entity_id: brand, label: "Synthetic brand" };
     const context = sha("entity-context");
     await client.query(`INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,context,
