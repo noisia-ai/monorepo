@@ -28,6 +28,9 @@ export type HybridDuplicateReceiptArgsV1 = {
 };
 export async function reconcileHybridDuplicateJevReceiptOnClientV1(client: PoolClient,
   args: Omit<HybridDuplicateReceiptArgsV1,"database">) {
+    // Serialize with route selection and human overrides before reading the current view.
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",
+      [args.workspace_id]);
     const run=(await client.query<{id:string;route_digest:string}>(`SELECT id,
       membership_snapshot->>'route_digest' route_digest FROM signal_labeling_runs
       WHERE workspace_id=$1 AND idempotency_key=$2 AND kind='membership' AND status='failed'
