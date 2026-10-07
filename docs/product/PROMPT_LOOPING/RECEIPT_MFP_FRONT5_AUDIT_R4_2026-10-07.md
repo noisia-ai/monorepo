@@ -2,7 +2,7 @@
 
 **EN CURSO; sin aceptación integral.** Entorno exclusivo **dev-test**, marca y
 organización QA nuevas. Carga 2, corrección de contenido y consolidación cerradas;
-pertenencia del segundo adoptado en curso.
+pertenencia del segundo adoptado terminal; H1 pendiente.
 Guía reproducible y evidencia: [QA_FUNDADOR_MFP.md](QA_FUNDADOR_MFP.md).
 
 **Código:** base #38 `9bc7ff9d`; rama `feat/mfp-front5-qa-r4`.
@@ -49,13 +49,13 @@ actuales verificados 19/19. Vectores 19 nuevos/3614 cache hits, USD 0.000428.
 Ficha correctiva terminal: 22 raíces, 17/17 llamadas, USD 0.134326.
 Censo final: 1086 fichas actuales; 468 relevantes, 481 ajenas, 30 spam y
 107 indeterminadas; 0 errores técnicos. Las 19 revisiones sirven texto nuevo,
-0 digests antiguos servidos y CE v2 vigente. Los 207 pares de pertenencia
-(incluidos pendientes) coinciden en contexto, entidades efectivas y fingerprint.
+0 digests antiguos servidos y CE v2 vigente. Los 612 pares de pertenencia
+finales coinciden en contexto, entidades efectivas y fingerprint.
 No se repitieron las 250 filas.
 
-**Coste settled acumulado: USD 5.488460**, incluidos discovery, editorial y pertenencia tras carga 2:
+**Coste settled acumulado antes de H1: USD 6.484515**, incluidos discovery, editorial y pertenencia tras carga 2:
 vectores 0.110855; fichas 3.581149; preview 0.051516;
-interpretación 0.551190; editorial 0.336952; pertenencia 0.856798.
+interpretación 0.551190; editorial 0.336952; pertenencia 1.852853.
 Presupuesto orientativo, sin máximo estricto configurado. Fichas y vectores terminales sin
 reservas activas. Railway/CI no cuantificados.
 
@@ -68,7 +68,10 @@ reparaciones, USD 0.357144; 86 vigentes reutilizados. 207 pares sin pendientes,
 13/13 USD 0.093035 + global USD 0.081039, terminal: 5 Topics, 0 Narrativas,
 4 Noise y 4 insuficientes. Segundo concepto adoptado por UI tras revisar su
 original Southwest: integración de renta en plataformas de viaje, Categoría.
-Cobertura **2/2**; 405 pares nuevos en curso (53 llamadas), estimación USD 1.177746.
+Cobertura **2/2**; 405 pares nuevos terminales: 24 pertenecen/378 no/1 insuficiente/2 errores.
+58 llamadas settled (53 iniciales + 5 reparaciones), USD 0.996055; estimación USD 1.177746.
+Los 612 pares finales no tienen pendientes; cinco errores y dos insuficientes
+permanecen explícitos. Todos los jobs del recorrido están terminales.
 
 Signal ES/EN post-carga 2: 3 conceptos (5/2/18), 21 únicas seleccionadas,
 447 sin concepto. Citas/navegación correctas; badge 134 discrepante (F5-04).
@@ -77,9 +80,13 @@ F5-11: resultados guardados HTTP 409/SQL 42601 por tres comillas ausentes;
 reproducido con EXPLAIN en PG17. Explore groups y original disponibles en UI.
 No se modificó el módulo ni se adoptó por SQL.
 
-**Pendiente:** pertenencia/Signal del segundo adoptado;
-ventana H1 #39 y tres excepciones reales.
-H1 permanece sólo en preflight de lectura durante este ciclo.
+Signal ES/EN final: cuatro conceptos (5/2/24/18), 45 únicas seleccionadas y
+423 sin concepto, badge F5-04 en 134. Evidencia del segundo adoptado HTTP 200,
+24 ítems/24 citas resaltadas. Capturas privadas 21–23.
+
+**Pendiente:** ventana H1 #39 y tres excepciones reales.
+Ventana abierta al coordinador tras censo terminal y Runner libre; no se iniciarán
+más proveedores desde este frente antes del despliegue coordinado.
 
 Guard PG17/rol/base/DNS privados verificado. Migraciones 0252/0254/0257/0258
 aplicadas una vez (239 totales); no repetir. Editorial ejecutado por IDs con
