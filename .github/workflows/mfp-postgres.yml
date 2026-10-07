@@ -2,7 +2,7 @@ name: MFP PostgreSQL
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [develop, feat/mfp-ws1-pg-ci]
   push:
     branches: [develop]
 

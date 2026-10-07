@@ -103,6 +103,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let facetOptIn = false;
   let membershipCollision = false;
   let membershipAdopted = false;
+  let mfpDiscovery = false;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   let interestIdentity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
@@ -111,7 +112,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
       statements.push(sql);
       if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
       if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [
-        {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a")},
+        {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a"),mfp_discovery:mfpDiscovery},
         ...(membershipAdopted ? [{topic:adoptedTopic,selected:true,selection_revision:3,selection_digest:sha("d")}] : []),
         ...(membershipCollision ? [{topic:interestTopic,selected:false,selection_revision:2,selection_digest:sha("c")}] : [])
       ]};
@@ -420,6 +421,13 @@ test("Signal keeps served semantics while applying a safe working label", async 
     assert.equal(noDiscovery?.generation_id, generationId, "MFP preserves the existing generation without consolidation");
     assert.equal(noDiscovery?.terms.find(t=>t.term_key==="service")?.basis, "computed_cluster");
     assert.equal(noDiscovery?.terms.find(t=>t.term_key==="service")?.selected, true);
+    mfpDiscovery = true;
+    const discoveryMfp = await loadSignalWorkspaceTopicsOverviewV1({database:args.database,workspace_id:workspaceId,actor_user_id:actorId});
+    assert.equal(discoveryMfp?.terms.filter(t=>t.term_key==="service").length,1,
+      "the MFP concept replaces the discovery catalog row without duplication");
+    assert.equal(discoveryMfp?.terms.find(t=>t.term_key==="service")?.basis,"concept_membership");
+    assert.equal(discoveryMfp?.terms.find(t=>t.term_key==="service")?.selected,true);
+    mfpDiscovery = false;
     importedMode = true; selectedInterest = true;
     const importOnly = await loadSignalWorkspaceTopicsOverviewV1({database:args.database,workspace_id:workspaceId,actor_user_id:actorId});
     assert.equal(importOnly?.generation_id, null);
