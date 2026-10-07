@@ -28,7 +28,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     const fixture = await createProcessingPolicyIdentitiesV1({ database, scoped: client });
     const { workspace_id: workspace, organization_id: organization, brand_id: brand } = fixture.first;
     const actor = fixture.actors.internal;
-    const source = randomUUID(), batch = randomUUID(), root = randomUUID();
+    const source = randomUUID(), batch = randomUUID(), root = randomUUID(), abstainedRoot = randomUUID();
     const quality = randomUUID(), retention = randomUUID(), license = randomUUID();
     const digest = sha("fixture-digest"), text = "Synthetic discussion about bicycle brakes";
     await client.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
@@ -44,6 +44,12 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       [root, workspace, source, sha(text), text, text.length]);
     await client.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id)
       VALUES($1,$2,$3,$4)`, [workspace, root, batch, source]);
+    await client.query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,
+      external_id,source_system,text_hash,text_clean,text_length,published_at,platform,inclusion_status)
+      VALUES($1::uuid,$2,$3,$1::uuid,'h1-abstained',$1::uuid::text,'fixture',$4,$5,$6,now(),'web','included')`,
+      [abstainedRoot, workspace, source, sha(text), text, text.length]);
+    await client.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id)
+      VALUES($1,$2,$3,$4)`, [workspace, abstainedRoot, batch, source]);
     const qualityHash = signalQualityPolicyDefinitionHashV1({ workspace_id: workspace,
       policy_key: "h1-quality", policy_version: 1, min_quality_score: null,
       required_quality_flags: [], forbidden_quality_flags: [], canonical_root_disposition: "evaluate" });
@@ -93,6 +99,9 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     await client.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,
       disposition,root_metadata,provenance,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',$5)`,
       [workspace, prep, root, asset, digest]);
+    await client.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,
+      disposition,root_metadata,provenance,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',$5)`,
+      [workspace, prep, abstainedRoot, asset, digest]);
     const entity = { kind: "primary_brand", entity_id: brand, label: "Synthetic brand" };
     const context = sha("entity-context");
     await client.query(`INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,context,
@@ -126,6 +135,15 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       $6::jsonb,'relevant',signal_labeling_digest_v1($7::jsonb),$8)`,
       [workspace, root, pendingFacet.input_digest, sha("facet-labeler"), context,
         JSON.stringify(facets), JSON.stringify([entity]), facetCall]);
+    const abstainedFacet=(await client.query<{input_digest:string}>(`SELECT input_digest
+      FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND root_id=$2`,
+      [workspace,abstainedRoot])).rows[0]!;
+    await client.query(`INSERT INTO signal_mention_facet_labels(workspace_id,root_id,input_digest,
+      labeler_digest,entity_context_digest,facet_schema_version,status,facets,relevance,
+      effective_entities_digest,call_id) VALUES($1,$2,$3,$4,$5,'mention-facets-v1','abstained',
+      $6::jsonb,'relevant',signal_labeling_digest_v1($7::jsonb),$8)`,
+      [workspace,abstainedRoot,abstainedFacet.input_digest,sha("facet-labeler"),context,
+        JSON.stringify({...facets,voice:{value:"unknown",abstained:true}}),JSON.stringify([entity]),facetCall]);
     const currentFacet = (await client.query<{ relevance: string; status: string }>(`SELECT relevance,status
       FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND root_id=$2`, [workspace, root])).rows[0];
     assert.equal(currentFacet?.relevance, "relevant");
@@ -162,6 +180,9 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     const first = await selectMembershipInputsV1(client, work(randomUUID()), true);
     assert.equal(first.length, 1, "the real JEV selector initially finds the pair");
     assert.equal(first[0]!.evaluated_concepts[0]!.concept_key, concept.concept_key);
+    assert.equal((await client.query<{pairs:number}>(hybridH1JevAdmissionPopulationSqlV1,
+      [workspace,route])).rows[0]!.pairs,1,
+    "admission excludes abstained facets even when their H1 membership view is pending");
 
     const policy = randomUUID();
     await client.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)

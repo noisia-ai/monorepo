@@ -216,7 +216,13 @@ void main(async()=>{
       if (jev.has(key(result))) fail("mfp_hybrid_jev_pair_duplicate");
       jev.set(key(result),result);
     }
-    if (jev.size+unknownPairs.size!==2061) fail("mfp_hybrid_jev_pair_coverage_incomplete");
+    const gatedPairs=rows.reduce((count,row)=>{
+      const facets=row.facets;
+      return count+(row.status==="labeled"&&row.relevance==="relevant"&&
+        facets?.spam_or_bot?.abstained===false&&facets.spam_or_bot.value===false&&
+        facets?.entities?.abstained===false&&facets.entities.value.length>0?frozen.length:0);
+    },0);
+    if (jev.size+unknownPairs.size!==gatedPairs) fail("mfp_hybrid_jev_pair_coverage_incomplete");
     for (const call of claudeCalls) for (const result of call.results??[]) claude.set(key(result),result);
     const output:HybridMeasuredRootV1[]=rows.map(row=>{
       const facets=row.facets;

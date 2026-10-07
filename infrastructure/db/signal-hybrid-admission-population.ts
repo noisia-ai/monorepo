@@ -5,6 +5,9 @@ export const hybridH1JevAdmissionPopulationSqlV1 = `WITH current_memberships AS 
   WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict='pending'
 ), current_facets AS MATERIALIZED (
   SELECT root_id,full_text FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+    AND status='labeled' AND relevance='relevant' AND NOT requires_context_review
+    AND facets#>>'{spam_or_bot,value}'='false'
+    AND jsonb_array_length(COALESCE(facets#>'{entities,value}','[]'::jsonb))>0
 ), authorized_roots AS MATERIALIZED (
   SELECT root_id FROM signal_membership_evidence_rights_v1
   WHERE workspace_id=$1 AND metrics AND evidence
