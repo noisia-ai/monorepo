@@ -13,7 +13,7 @@ test("a terminal invalid receipt does not block the next MFP policy", {
   const pool = new Pool({ connectionString: url.href, max: 1 });
   const client = await pool.connect();
   const suffix = randomUUID().replaceAll("-", "");
-  const org = randomUUID(), brand = randomUUID(), workspace = randomUUID();
+  const org = randomUUID(), brand = randomUUID();
   const actor = randomUUID(), prep = randomUUID(), labeler = randomUUID(), run = randomUUID(), call = randomUUID();
   try {
     await client.query("BEGIN");
@@ -23,8 +23,9 @@ test("a terminal invalid receipt does not block the next MFP policy", {
       VALUES($1,$2,$3,$4,'active')`, [brand, org, `mfp-policy-${suffix}`, "MFP policy fixture"]);
     await client.query(`INSERT INTO users(id,email,user_type,primary_role,organization_id,status)
       VALUES($1,$2,'noisia_internal','noisia_admin',$3,'active')`, [actor, `mfp-policy-${suffix}@example.invalid`, org]);
-    await client.query(`INSERT INTO signal_workspaces(id,organization_id,brand_id,slug)
-      VALUES($1,$2,$3,$4)`, [workspace, org, brand, `mfp-policy-${suffix}`]);
+    const workspace = (await client.query<{ id: string }>(`SELECT id FROM signal_workspaces
+      WHERE organization_id=$1 AND brand_id=$2`, [org, brand])).rows[0]?.id;
+    assert.ok(workspace, "brand provisioning must create the workspace");
     await client.query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,worker_job_id)
       VALUES($1,$2,$3,$4)`, [prep, workspace, actor, `mfp-policy-${suffix}`]);
     await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity)
