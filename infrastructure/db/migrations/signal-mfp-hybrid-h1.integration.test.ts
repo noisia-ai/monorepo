@@ -6,6 +6,7 @@ import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.f
 import { selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
+import { hybridH1PopulationSqlV1 } from "../../../scripts/eval/hybrid-h1-population";
 
 test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
@@ -69,6 +70,32 @@ test("migrated H1 schema is workspace isolated, reviewable and rollback safe", {
         AND grant_item.privilege_type='SELECT'`)).rows[0].n, 0);
     assert.match((await scoped.query("SELECT pg_get_viewdef('signal_concept_memberships_current_v1'::regclass) definition")).rows[0].definition,
       /signal_hybrid_membership_decisions/u);
+    await scoped.query(`CREATE TEMP TABLE signal_mention_facets_current_v1 (
+      workspace_id uuid,root_id uuid,input_digest text,full_text text,requires_context_review boolean) ON COMMIT DROP`);
+    await scoped.query(`CREATE TEMP TABLE signal_membership_evidence_rights_v1 (
+      workspace_id uuid,root_id uuid,metrics boolean,evidence boolean) ON COMMIT DROP`);
+    await scoped.query(`CREATE TEMP TABLE signal_mention_facet_labels (
+      workspace_id uuid,root_id uuid,input_digest text,facets jsonb,relevance text,status text,
+      entity_context_digest text,labeler_digest text,created_at timestamptz) ON COMMIT DROP`);
+    await scoped.query("SET LOCAL search_path=pg_temp,public,extensions");
+    const deniedRoot = randomUUID(), siblingRoot = randomUUID();
+    await scoped.query(`INSERT INTO signal_mention_facets_current_v1 VALUES
+      ($1,$2,$4,$5,false),($1,$3,$4,$5,false),($6,$7,$4,$5,false)`,
+      [fixture.first.workspace_id, root, deniedRoot, digest, "Synthetic mention", fixture.second.workspace_id, siblingRoot]);
+    await scoped.query(`INSERT INTO signal_membership_evidence_rights_v1 VALUES
+      ($1,$2,true,true),($1,$3,true,false),($4,$5,true,true)`,
+      [fixture.first.workspace_id, root, deniedRoot, fixture.second.workspace_id, siblingRoot]);
+    await scoped.query(`INSERT INTO signal_mention_facet_labels
+      SELECT workspace_id,root_id,input_digest,'{}'::jsonb,'relevant','labeled',$1,$1,now()
+      FROM signal_mention_facets_current_v1`, [digest]);
+    const population = (await scoped.query<{root_id:string}>(hybridH1PopulationSqlV1,
+      [fixture.first.workspace_id, version])).rows;
+    assert.deepEqual(population.map(row => row.root_id), [root],
+      "the exact labeler and evidence rights select only the fixture root");
+    const plan = JSON.stringify((await scoped.query(`EXPLAIN (FORMAT JSON) ${hybridH1PopulationSqlV1}`,
+      [fixture.first.workspace_id, version])).rows[0]["QUERY PLAN"]);
+    for (const cte of ["current_facets", "authorized_roots", "jev_labels"]) assert.match(plan,
+      new RegExp(`"CTE Name":"${cte}"`, "u"), `the governed ${cte} input is materialized once`);
     await scoped.query("ROLLBACK");
     assert.equal((await database.query("SELECT count(*)::int n FROM signal_hybrid_membership_routes WHERE workspace_id=$1",
       [fixture.first.workspace_id])).rows[0].n, 0);

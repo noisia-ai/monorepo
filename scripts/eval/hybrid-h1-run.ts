@@ -6,6 +6,7 @@ import { loadMfpEvalIdentity } from "./fixture-identity";
 import { verifyMfpEvalRights } from "./rights-check";
 import { validateGold, validateSelection, type Gold, type Selection } from "./contract";
 import { measureHybridH1V1, type HybridMeasuredRootV1 } from "./hybrid-h1-measure";
+import { hybridH1PopulationSqlV1 } from "./hybrid-h1-population";
 import { conceptForJudgeSchemaV1, decideHybridMembershipV1,
   type ConceptForJudgeV1, type HybridClaudeDecisionV1, type HybridJevDecisionV1 } from "../../packages/query-engine/src/index";
 import { configureHybridMembershipRouteV1, requestHybridMembershipStageV1,
@@ -71,18 +72,8 @@ void main(async()=>{
       GROUP BY version.id HAVING count(DISTINCT label.root_id)=1086
       ORDER BY version.id LIMIT 1`,[identity.workspace_id])).rows[0];
     if (!facetsLabeler) fail("mfp_hybrid_complete_jev_facets_missing");
-    const rows:RootRow[]=(await pool.query(`WITH jev_labels AS MATERIALIZED (
-      SELECT DISTINCT ON(label.root_id) label.root_id,label.input_digest,label.facets,label.relevance,label.status,
-        label.entity_context_digest
-      FROM signal_mention_facet_labels label JOIN signal_labeler_versions version ON version.labeler_digest=label.labeler_digest
-      WHERE label.workspace_id=$1 AND version.id=$2
-      ORDER BY label.root_id,label.created_at DESC)
-      SELECT f.root_id,f.input_digest,f.full_text text,f.requires_context_review,
-        jev.facets,jev.relevance,jev.status,jev.entity_context_digest
-      FROM signal_mention_facets_current_v1 f JOIN jev_labels jev ON jev.root_id=f.root_id AND jev.input_digest=f.input_digest
-      JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id
-        AND rights.metrics AND rights.evidence
-      WHERE f.workspace_id=$1 ORDER BY f.root_id`,[identity.workspace_id,facetsLabeler.id])).rows;
+    const rows:RootRow[]=(await pool.query(hybridH1PopulationSqlV1,
+      [identity.workspace_id,facetsLabeler.id])).rows;
     if (rows.length!==1086||rows.some(row=>row.requires_context_review||row.entity_context_digest!==context.digest))
       fail("mfp_hybrid_full_corpus_or_context_missing");
     const policy=(await pool.query(`SELECT action,provider,model FROM signal_processing_policy_actions action
