@@ -50,5 +50,8 @@ test("JEV noul threshold is frozen and Claude references must resolve to a sourc
   assert.equal(valid.verdict, "not_belongs");
   assert.equal(valid.citation?.quote, span.text);
   assert.equal(parseHybridClaudeAnswerV1(input, JSON.stringify({ contract_version: "mfp-hybrid-claude-confirm-v1",
+    verdict: "belongs", rationale: "Evidence ".repeat(50), span_id: span.span_id })).verdict, "belongs",
+  "a long valid rationale cannot discard a paid answer when the request schema has no length cap");
+  assert.equal(parseHybridClaudeAnswerV1(input, JSON.stringify({ contract_version: "mfp-hybrid-claude-confirm-v1",
     verdict: "belongs", rationale: "Invented", span_id: "other-root" })).verdict, "error");
 });

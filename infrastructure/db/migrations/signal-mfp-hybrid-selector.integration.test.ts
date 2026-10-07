@@ -11,7 +11,8 @@ import { selectMembershipInputsV1 } from "../signal-concept-memberships";
 import { assertHybridProviderRightsBeforeSubmitV1, reconcileHybridDuplicateJevReceiptOnClientV1,
   selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationSqlV1 } from "../signal-hybrid-admission-population";
-import { writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
+import { hybridDecisionRecordV1, reconcileHybridClaudeParseOnClientV1,
+  writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
 
@@ -358,6 +359,33 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       SELECT verdict,source FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
       [workspace, root, concept.concept_key])).rows[0], { verdict: "review_required", source: "model" });
+    const parserError = { ...confirmed, claude: { verdict: "error", citation: null } };
+    const parserErrorRecord = hybridDecisionRecordV1({ ...parserError, text } as HybridDecisionInputV1);
+    await client.query("UPDATE signal_labeling_calls SET results=$2::jsonb,usage=$3::jsonb WHERE id=$1",
+      [claudeCall, JSON.stringify([parserError]), JSON.stringify({})]);
+    await client.query(`UPDATE signal_hybrid_membership_decisions SET verdict='error',
+      claude=$2::jsonb,citation='[]'::jsonb,result_digest=$3 WHERE workspace_id=$1
+        AND claude_call_id=$4`,[workspace,JSON.stringify(parserError.claude),
+      parserErrorRecord.result_digest,claudeCall]);
+    assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
+      SELECT verdict,source FROM signal_concept_memberships_current_v1
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
+      [workspace, root, concept.concept_key])).rows[0], { verdict: "error", source: "model" });
+    const reparseArgs={workspace_id:workspace,route_digest:route,run_id:claudeRun,
+      call_id:claudeCall,raw_sha256:sha(JSON.stringify([confirmed])),usage:{},
+      settled_micro_usd:2,corrected:decision};
+    await assert.rejects(reconcileHybridClaudeParseOnClientV1(client,
+      {...reparseArgs,raw_sha256:sha("wrong")}),/hybrid_claude_reparse_pair_invalid/u,
+    "a different raw receipt cannot authorize a paid decision repair");
+    assert.equal((await reconcileHybridClaudeParseOnClientV1(client,reparseArgs)).verdict,
+      "review_required");
+    assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
+      SELECT verdict,source FROM signal_concept_memberships_current_v1
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
+      [workspace, root, concept.concept_key])).rows[0], { verdict: "review_required", source: "model" });
+    assert.equal((await client.query<{stop_reason:string;verified:boolean}>(`SELECT stop_reason,
+      raw_storage_verified_key=raw_storage_key verified FROM signal_labeling_calls WHERE id=$1`,
+      [claudeCall])).rows[0]?.verified,true);
     assert.deepEqual(await selectMembershipInputsV1(client, allWork(randomUUID()), true), [],
       "the stage labeler digest cannot reselect a pair already served by its H1 route");
     const negativeConcept = { ...concept,concept_key:"duplicate_negative",

@@ -10,6 +10,7 @@ import {
   type LabelerIdentity,
   type HybridClaudeDecisionV1,
   type HybridJevDecisionV1,
+  type MembershipInputV1,
 } from "@noisia/query-engine";
 import { loadMembershipConceptsV1 } from "./signal-concept-memberships";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
@@ -226,6 +227,14 @@ export type HybridDecisionInputV1 = {
   jev: HybridJevDecisionV1; jev_call_id: string;
   claude: HybridClaudeDecisionV1 | null; claude_call_id: string | null; rationale: string | null;
 };
+export function hybridDecisionRecordV1(input: HybridDecisionInputV1) {
+  const result = decideHybridMembershipV1(input.text, input.jev, input.claude);
+  if (result.verdict === "pending") fail("hybrid_pending_decision");
+  const citation = result.verdict === "belongs" && input.claude?.citation ? [input.claude.citation] : [];
+  const stored = { ...input, text:undefined, verdict:result.verdict, citation };
+  const result_digest = `sha256:${createHash("sha256").update(JSON.stringify(stored)).digest("hex")}`;
+  return { ...stored, result_digest };
+}
 /** One page write. The caller must supply settled, durable provider receipts. */
 export async function writeHybridMembershipDecisionPageV1(args: {
   client: PoolClient; workspace_id: string; route_digest: string; decisions: HybridDecisionInputV1[];
@@ -234,14 +243,7 @@ export async function writeHybridMembershipDecisionPageV1(args: {
   const selected = (await args.client.query<{route_digest:string}>(
     "SELECT route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE", [args.workspace_id])).rows[0];
   if (!selected || selected.route_digest !== args.route_digest) fail("hybrid_route_changed");
-  const rows = args.decisions.map(input => {
-    const result = decideHybridMembershipV1(input.text, input.jev, input.claude);
-    if (result.verdict === "pending") fail("hybrid_pending_decision");
-    const citation = result.verdict === "belongs" && input.claude?.citation ? [input.claude.citation] : [];
-    const stored = { ...input, text: undefined, verdict: result.verdict, citation };
-    const result_digest = `sha256:${createHash("sha256").update(JSON.stringify(stored)).digest("hex")}`;
-    return { ...stored, result_digest };
-  });
+  const rows = args.decisions.map(hybridDecisionRecordV1);
   const matched = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb)
     r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text)
     JOIN signal_concept_memberships_current_v1 current ON current.workspace_id=$1 AND current.root_id=r.root_id
@@ -299,4 +301,106 @@ export async function writeHybridMembershipDecisionPageV1(args: {
       [args.workspace_id, JSON.stringify(rows), args.route_digest])).rows[0]!.count;
   if (persisted !== rows.length) fail("hybrid_replay_conflict");
   return { persisted };
+}
+
+/** Reproject one settled Claude answer after verifying its immutable raw receipt outside the transaction.
+ * Only a model error caused by the old rationale-length parser can be replaced. */
+export type HybridClaudeReparseArgsV1 = { database: LabelingDatabaseV1; workspace_id: string;
+  route_digest: string; run_id: string; call_id: string; raw_sha256: string;
+  usage: unknown; settled_micro_usd: number; corrected: HybridDecisionInputV1 };
+export async function reconcileHybridClaudeParseOnClientV1(client: PoolClient,
+  args: Omit<HybridClaudeReparseArgsV1,"database">) {
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",
+    [args.workspace_id]);
+  const route=(await client.query<{route_digest:string}>(
+    "SELECT route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE",
+    [args.workspace_id])).rows[0];
+  const run=(await client.query<{id:string}>(`SELECT id FROM signal_labeling_runs WHERE id=$1 AND workspace_id=$2
+    AND kind='membership' AND status='completed' AND lease_token IS NULL
+    AND membership_snapshot->>'hybrid_stage'='claude'
+    AND membership_snapshot->>'route_digest'=$3 FOR UPDATE`,
+    [args.run_id,args.workspace_id,args.route_digest])).rows[0];
+  if(!run||route?.route_digest!==args.route_digest)
+    return fail("hybrid_claude_reparse_route_or_run_changed");
+  const call=(await client.query<{inputs:MembershipInputV1[];results:Omit<HybridDecisionInputV1,"text">[]}>(`
+    SELECT inputs,results FROM signal_labeling_calls WHERE id=$1 AND run_id=$2 AND workspace_id=$3
+      AND provider='anthropic' AND model='claude-sonnet-5-5' AND status='settled'
+      AND results_applied AND raw_storage_key IS NOT NULL AND raw_sha256=$4
+      AND raw_size_bytes IS NOT NULL AND usage=$5::jsonb AND settled_micro_usd=$6 FOR UPDATE`,
+    [args.call_id,run.id,args.workspace_id,args.raw_sha256,JSON.stringify(args.usage),
+      args.settled_micro_usd])).rows[0];
+  if(!call||call.inputs.length!==1||call.results.length!==1)
+    return fail("hybrid_claude_reparse_pair_invalid");
+  const input=call.inputs[0],old=call.results[0],corrected=args.corrected;
+  if(!input||!old||input.evaluated_concepts.length!==1)
+    return fail("hybrid_claude_reparse_pair_invalid");
+  const concept=input.evaluated_concepts[0]!;
+  if(old.claude?.verdict!=="error"||
+    corrected.claude?.verdict==="error"||corrected.claude?.verdict==="refused"||
+    corrected.claude_call_id!==args.call_id||corrected.jev_call_id!==old.jev_call_id||
+    corrected.text!==input.text||corrected.root_id!==input.root_id||
+    corrected.root_fingerprint!==input.root_fingerprint||
+    corrected.concept_key!==concept.concept_key||
+    corrected.definition_digest!==concept.definition_digest||
+    corrected.entity_context_digest!==input.entity_context_digest||
+    corrected.effective_entities_digest!==input.effective_entities_digest||
+    old.root_id!==corrected.root_id||old.root_fingerprint!==corrected.root_fingerprint||
+    old.concept_key!==corrected.concept_key||old.definition_digest!==corrected.definition_digest||
+    old.entity_context_digest!==corrected.entity_context_digest||
+    old.effective_entities_digest!==corrected.effective_entities_digest||
+    old.claude_call_id!==args.call_id||
+    signalWorkspaceEmbeddingDigestV1(old.jev)!==signalWorkspaceEmbeddingDigestV1(corrected.jev)||
+    corrected.rationale!==old.rationale) return fail("hybrid_claude_reparse_pair_invalid");
+  const prior=hybridDecisionRecordV1({...old,text:input.text});
+  const next=hybridDecisionRecordV1(corrected);
+  if(prior.verdict!=="error"||!["belongs","review_required"].includes(next.verdict))
+    fail("hybrid_claude_reparse_verdict_invalid");
+  const current=(await client.query<{verdict:string;source:string;requires_override_review:boolean}>(`
+    SELECT current.verdict,current.source,current.requires_override_review
+    FROM signal_concept_memberships_current_v1 current
+    JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=current.workspace_id
+      AND rights.root_id=current.root_id AND rights.metrics AND rights.evidence
+    WHERE current.workspace_id=$1 AND current.root_id=$2::uuid AND current.root_fingerprint=$3
+      AND current.concept_key=$4 AND current.definition_digest=$5
+      AND current.entity_context_digest=$6 AND current.effective_entities_digest=$7
+      AND current.labeler_digest=$8`,[args.workspace_id,corrected.root_id,corrected.root_fingerprint,
+    corrected.concept_key,corrected.definition_digest,corrected.entity_context_digest,
+    corrected.effective_entities_digest,args.route_digest])).rows[0];
+  if(current?.source!=="model"||current.verdict!=="error"||current.requires_override_review)
+    fail("hybrid_claude_reparse_authority_changed");
+  const served=(await client.query<{result_digest:string;jev:HybridJevDecisionV1;claude:HybridClaudeDecisionV1}>(`
+    SELECT result_digest,jev,claude FROM signal_hybrid_membership_decisions
+    WHERE workspace_id=$1 AND root_id=$2::uuid AND root_fingerprint=$3 AND concept_key=$4
+      AND definition_digest=$5 AND entity_context_digest=$6 AND effective_entities_digest=$7
+      AND route_digest=$8 AND jev_call_id=$9 AND claude_call_id=$10 AND verdict='error' FOR UPDATE`,
+    [args.workspace_id,corrected.root_id,corrected.root_fingerprint,corrected.concept_key,
+      corrected.definition_digest,corrected.entity_context_digest,corrected.effective_entities_digest,
+      args.route_digest,corrected.jev_call_id,args.call_id])).rows[0];
+  if(!served||signalWorkspaceEmbeddingDigestV1(served.jev)!==signalWorkspaceEmbeddingDigestV1(old.jev)||
+    signalWorkspaceEmbeddingDigestV1(served.claude)!==signalWorkspaceEmbeddingDigestV1(old.claude))
+    return fail("hybrid_claude_reparse_served_changed");
+  const updatedResult={...old,claude:corrected.claude};
+  const callUpdate=await client.query(`UPDATE signal_labeling_calls SET results=$3::jsonb,
+    raw_storage_verified_at=now(),raw_storage_verified_key=raw_storage_key,
+    stop_reason='hybrid_claude_rationale_reparsed',updated_at=now()
+    WHERE id=$1 AND run_id=$2 AND results=$4::jsonb AND status='settled' AND results_applied`,
+    [args.call_id,run.id,JSON.stringify([updatedResult]),JSON.stringify(call.results)]);
+  if(callUpdate.rowCount!==1) fail("hybrid_claude_reparse_call_conflict");
+  const decisionUpdate=await client.query(`UPDATE signal_hybrid_membership_decisions SET
+    result_digest=$3,verdict=$4,claude=$5::jsonb,citation=$6::jsonb
+    WHERE workspace_id=$1 AND claude_call_id=$2 AND result_digest=$7 AND verdict='error'`,
+    [args.workspace_id,args.call_id,next.result_digest,next.verdict,
+      JSON.stringify(next.claude),JSON.stringify(next.citation),served.result_digest]);
+  if(decisionUpdate.rowCount!==1) fail("hybrid_claude_reparse_decision_conflict");
+  return {reparsed:true,verdict:next.verdict};
+}
+export async function reconcileHybridClaudeParseV1(args: HybridClaudeReparseArgsV1) {
+  const client=await args.database.connect();
+  try {
+    await client.query("BEGIN");
+    const result=await reconcileHybridClaudeParseOnClientV1(client,args);
+    await client.query("COMMIT");
+    return result;
+  } catch(error){await client.query("ROLLBACK");throw error;}
+  finally{client.release();}
 }

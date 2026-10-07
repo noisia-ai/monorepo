@@ -69,7 +69,7 @@ export function mapHybridJevAnswerV1(input: MembershipInputV1, response: JevResp
 
 const claudeOutput = z.object({ contract_version: z.literal("mfp-hybrid-claude-confirm-v1"),
   verdict: z.enum(["belongs", "not_belongs", "insufficient"]),
-  rationale: z.string().trim().min(1).max(300), span_id: z.string().min(1) }).strict();
+  rationale: z.string().trim().min(1), span_id: z.string().min(1) }).strict();
 export function buildHybridClaudeRequestV1(input: MembershipInputV1, concept: ConceptForJudgeV1, context: EntityContextV1) {
   const spans = membershipSpansV1([{ ...input, evaluated_concepts: [concept] }]);
   return { model: "claude-sonnet-5-5", max_tokens: 4096, thinking: { type: "adaptive" },
