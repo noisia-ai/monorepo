@@ -24,6 +24,7 @@ const fail=(code:string):never=>{throw new Error(code);};
 type RootRow={root_id:string;input_digest:string;text:string;status:string;relevance:string;
   facets:Record<string,any>;requires_context_review:boolean;entity_context_digest:string};
 type StageCall={status:string;results:HybridStageResultV1[]|null;settled_micro_usd:string|null};
+type QuarantinedPair={run_id:string;root_id:string;concept_key:string;input_digest:string};
 
 void main(async()=>{
   if (!process.argv.includes("--real") || process.env.NOISIA_MFP_HYBRID_ENABLED!=="true" ||
@@ -34,7 +35,7 @@ void main(async()=>{
   const capArg=process.argv.find(arg=>arg.startsWith("--strict-cap-micro-usd="));
   const strictCap=capArg?Number(capArg.slice("--strict-cap-micro-usd=".length)):null;
   if (strictCap!==null&&(!Number.isSafeInteger(strictCap)||strictCap<0)) fail("mfp_hybrid_cap_invalid");
-  await verifyMfpEvalRights();
+  const resume=process.argv.includes("--resume-after-unknown");
   const identity=await loadMfpEvalIdentity();
   const selection=JSON.parse(await readFile(".data/dev-corpus/voyage-real/gold-selection.json","utf8")) as Selection;
   validateSelection(selection);
@@ -42,6 +43,28 @@ void main(async()=>{
   validateGold(gold,selection);
   const pool=await openDatabase();
   try {
+    const quarantined=(await pool.query<QuarantinedPair>(`SELECT run.id run_id,
+      call.inputs->0->>'root_id' root_id,call.inputs->0->>'input_digest' input_digest,
+      call.inputs->0->'evaluated_concepts'->0->>'concept_key' concept_key
+      FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
+      WHERE run.workspace_id=$1 AND run.kind='membership'
+        AND run.membership_snapshot->>'hybrid_stage'='jev'
+        AND run.status='failed' AND run.error_code='labeling_outcome_unknown'
+        AND call.status='unknown' AND call.raw_storage_key IS NULL AND NOT call.results_applied`,
+      [identity.workspace_id])).rows;
+    if (resume ? quarantined.length!==1 : quarantined.length!==0) fail("mfp_hybrid_quarantine_mode_required");
+    const unknown=quarantined[0]??null;
+    if (unknown) {
+      const prior=(await pool.query<{failed:number;other:number;settled:number}>(`SELECT
+        count(*) FILTER(WHERE status='failed')::int failed,
+        count(*) FILTER(WHERE status NOT IN('failed','unknown'))::int other,
+        count(*) FILTER(WHERE status='settled')::int settled
+        FROM signal_labeling_calls WHERE run_id=$1`,[unknown.run_id])).rows[0]!;
+      if (prior.failed!==663||prior.other!==0||prior.settled!==0||
+        !selection.concepts.some(concept=>concept.concept_key===unknown.concept_key)||
+        gold.some(row=>row.root_id===unknown.root_id)) fail("mfp_hybrid_quarantine_scope_changed");
+    }
+    await verifyMfpEvalRights(undefined,pool,unknown?.run_id);
     const access={database:pool,workspace_id:identity.workspace_id,actor_user_id:identity.actor_user_id};
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:pool,workspace_id:identity.workspace_id,
       actor_user_id:identity.actor_user_id});
@@ -76,6 +99,8 @@ void main(async()=>{
       [identity.workspace_id,facetsLabeler.id])).rows;
     if (rows.length!==1086||rows.some(row=>row.requires_context_review||row.entity_context_digest!==context.digest))
       fail("mfp_hybrid_full_corpus_or_context_missing");
+    if (unknown && !rows.some(row=>row.root_id===unknown.root_id&&row.input_digest===unknown.input_digest))
+      fail("mfp_hybrid_quarantine_root_changed");
     const policy=(await pool.query(`SELECT action,provider,model FROM signal_processing_policy_actions action
       JOIN signal_processing_policy_versions policy ON policy.id=action.policy_version_id
       WHERE policy.organization_id=$1 AND policy.status='active' AND policy.valid_from<=now()
@@ -103,14 +128,15 @@ void main(async()=>{
     const totalFacet=Number(facetCost.micro);
     if (strictCap!==null&&totalFacet>strictCap) fail("mfp_hybrid_strict_cap_exhausted");
     const runStage=async(stage:HybridMembershipStageV1,priorCost:number)=>{
-      await verifyMfpEvalRights(undefined,pool);
+      await verifyMfpEvalRights(undefined,pool,unknown?.run_id);
       const cap=strictCap===null?null:strictCap-totalFacet-priorCost;
       if (cap!==null&&cap<0) fail("mfp_hybrid_strict_cap_exhausted");
       const receipt=await requestHybridMembershipStageV1({...access,stage,route_digest,
-        idempotency_key:`mfp-hybrid-h1-r4-${stage}`,provider_available:true,cap_micro_usd:cap});
+        idempotency_key:unknown&&stage==="jev"?"mfp-hybrid-h1-r4-jev-resume-one-unknown":
+          `mfp-hybrid-h1-r4-${stage}`,provider_available:true,cap_micro_usd:cap});
       const store=createHybridMembershipRuntimeStoreV1(stage,pool);
       for (let tick=0;tick<10000;tick++) {
-        if (tick%25===0) await verifyMfpEvalRights(receipt.run_id,pool);
+        if (tick%25===0) await verifyMfpEvalRights(receipt.run_id,pool,unknown?.run_id);
         const status=await runHybridMembershipTickV1({run_id:receipt.run_id,stage,store,jevPrice});
         if (status==="completed") return receipt.run_id;
         if (typeof status==="object"&&(status.status==="outcome_unknown"||status.status==="not_claimed"))
@@ -139,15 +165,21 @@ void main(async()=>{
         facets?.spam_or_bot?.abstained===false&&facets.spam_or_bot.value===false&&
         facets?.entities?.abstained===false&&facets.entities.value.length>0;
       const decisions:HybridMeasuredRootV1["decisions"]={};
+      const unresolved_concepts:string[]=[];
       if (gate_passed) for (const concept of frozen) {
         const j=jev.get(`${row.root_id}:${concept.concept_key}`),c=claude.get(`${row.root_id}:${concept.concept_key}`);
+        if (!j&&unknown?.root_id===row.root_id&&unknown.concept_key===concept.concept_key){
+          unresolved_concepts.push(concept.concept_key);continue;
+        }
         if (!j||j.definition_digest!==concept.definition_digest) return fail("mfp_hybrid_pair_missing");
         decisions[concept.concept_key]=decideHybridMembershipV1(row.text,j.jev,c?.claude??null);
       }
-      return {root_id:row.root_id,input_digest:row.input_digest,text:row.text,gate_passed,decisions};
+      return {root_id:row.root_id,input_digest:row.input_digest,text:row.text,gate_passed,decisions,
+        unresolved_concepts};
     });
     const ledger={facets_settled_usd:totalFacet/1e6,jev_settled_usd:jevMicro/1e6,
-      claude_settled_usd:claudeMicro/1e6,unknown_calls:0};
+      claude_settled_usd:claudeMicro/1e6,unknown_calls:unknown?1:0,
+      unknown_provider_usd_upper_bound:unknown?0.002688:0};
     const report=measureHybridH1V1(gold,output,frozen.map(concept=>concept.concept_key),ledger);
     await mkdir(directory,{recursive:true,mode:0o700});
     await writeFile(`${directory}/roots.jsonl`,output.map(row=>JSON.stringify(row)).join("\n")+"\n",{flag:"wx",mode:0o600});
@@ -155,6 +187,8 @@ void main(async()=>{
     await writeFile(`${directory}/report.json`,JSON.stringify(report,null,2)+"\n",{flag:"wx",mode:0o600});
     console.log(JSON.stringify({stage:"hybrid_complete",roots:output.length,
       observed_usd_per_1000:report.cost.observed_usd_per_1000,
-      review_required:report.full_corpus.review_required,unknown_calls:0}));
+      settled_usd_per_1000:report.cost.settled_usd_per_1000,
+      review_required:report.full_corpus.review_required,unknown_calls:ledger.unknown_calls,
+      unresolved_pairs:report.full_corpus.unresolved_pairs}));
   } finally {await pool.end();}
 });

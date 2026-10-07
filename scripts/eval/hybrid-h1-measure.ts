@@ -7,9 +7,9 @@ import { type Gold, type Selection, validateGold, validateSelection } from "./co
 import { binary, wilson } from "./metrics";
 
 export type HybridMeasuredRootV1 = { root_id: string; input_digest: string; text: string; gate_passed: boolean;
-  decisions: Record<string, HybridDecisionV1> };
+  decisions: Record<string, HybridDecisionV1>; unresolved_concepts?: string[] };
 export type HybridObservedLedgerV1 = { facets_settled_usd: number; jev_settled_usd: number;
-  claude_settled_usd: number; unknown_calls: number };
+  claude_settled_usd: number; unknown_calls: number; unknown_provider_usd_upper_bound?: number };
 const emitted = (v: string) => v === "belongs" || v === "not_belongs";
 function goldEntityMix(row: Gold) {
   const kinds = new Set(row.entities.map(entity => entity.kind));
@@ -48,7 +48,11 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
   for (const root of roots) {
     if (!root.root_id || !root.input_digest || typeof root.text !== "string" || typeof root.gate_passed !== "boolean")
       throw new Error("hybrid_root_invalid");
-    if (root.gate_passed && concepts.some(key => !root.decisions[key])) throw new Error("hybrid_pairs_missing");
+    const unresolved = root.unresolved_concepts ?? [];
+    if (new Set(unresolved).size !== unresolved.length || unresolved.some(key => !concepts.includes(key) ||
+      !root.gate_passed || root.decisions[key])) throw new Error("hybrid_unresolved_pair_invalid");
+    if (root.gate_passed && concepts.some(key => !root.decisions[key] && !unresolved.includes(key)))
+      throw new Error("hybrid_pairs_missing");
     for (const [key, decision] of Object.entries(root.decisions)) {
       if (!concepts.includes(key) || !root.gate_passed) throw new Error("hybrid_unexpected_pair");
       if (decision.verdict === "belongs" && (!decision.claude || decision.claude.verdict !== "belongs"))
@@ -63,14 +67,20 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
   for (const row of gold) if (indexed.get(row.root_id)?.input_digest !== row.input_digest)
     throw new Error("hybrid_gold_input_changed");
   const costs = [ledger.facets_settled_usd, ledger.jev_settled_usd, ledger.claude_settled_usd];
+  const unresolvedPairs = roots.reduce((sum,root) => sum + (root.unresolved_concepts?.length ?? 0),0);
   if (costs.some(v => !Number.isFinite(v) || v < 0) || !Number.isSafeInteger(ledger.unknown_calls) || ledger.unknown_calls < 0)
     throw new Error("hybrid_ledger_invalid");
+  if (unresolvedPairs !== ledger.unknown_calls || (ledger.unknown_calls > 0 &&
+    (!Number.isFinite(ledger.unknown_provider_usd_upper_bound) ||
+      (ledger.unknown_provider_usd_upper_bound ?? 0) < 0))) throw new Error("hybrid_unknown_ledger_mismatch");
   const decisions = roots.flatMap(root => Object.values(root.decisions).map(decision => ({root,decision})));
   const quoted = decisions.filter(x => x.decision.claude?.citation);
   const valid = quoted.filter(x => validHybridCitationV1(x.root.text, x.decision.claude!.citation));
   const attempted = decisions.filter(x => x.decision.claude);
   const fullCorpus = { roots: roots.length, gate_passed: roots.filter(r => r.gate_passed).length,
-    pairs: decisions.length, jev_positive: decisions.filter(x => x.decision.jev.verdict === "belongs").length,
+    pairs: decisions.length, unresolved_pairs: unresolvedPairs,
+    pair_coverage: decisions.length + unresolvedPairs ? decisions.length / (decisions.length + unresolvedPairs) : 1,
+    jev_positive: decisions.filter(x => x.decision.jev.verdict === "belongs").length,
     review_required: decisions.filter(x => x.decision.verdict === "review_required").length,
     review_rate_of_jev_positive: decisions.filter(x => x.decision.jev.verdict === "belongs").length
       ? decisions.filter(x => x.decision.verdict === "review_required").length / decisions.filter(x => x.decision.jev.verdict === "belongs").length : null,
@@ -98,9 +108,14 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
         views: { claude_evaluated_same_roots: view(evaluated), full_pipeline: view(all), common_binary: view(common) } };
     }));
   const total = costs.reduce((a,b) => a+b, 0);
-  return { contract_version: "mfp-hybrid-h1-measure-v1", status: "experimental_not_approved",
+  const settledPer1000 = 1000 * total / roots.length;
+  return { contract_version: "mfp-hybrid-h1-measure-v1",
+    status: unresolvedPairs ? "experimental_incomplete_not_approved" : "experimental_not_approved",
     full_corpus: fullCorpus, gold: reportGold,
-    cost: { observed_settled_usd: total, observed_usd_per_1000: ledger.unknown_calls ? null : 1000 * total / roots.length,
+    cost: { observed_settled_usd: total, observed_usd_per_1000: ledger.unknown_calls ? null : settledPer1000,
+      settled_usd_per_1000: settledPer1000,
+      possible_usd_per_1000_range: ledger.unknown_calls
+        ? [settledPer1000, 1000 * (total + ledger.unknown_provider_usd_upper_bound!) / roots.length] : null,
       unknown_calls: ledger.unknown_calls, components: ledger },
     note: "JEV noul does not localize evidence: its source reference is the complete root. Claude citations are span-selected and checked against literal source text." };
 }

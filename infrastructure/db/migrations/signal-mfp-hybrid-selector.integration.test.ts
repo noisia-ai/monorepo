@@ -194,6 +194,14 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
         JSON.stringify({ hybrid_stage: "jev", route_digest: route, concepts: [concept], preview: false }),
         jevAdmission]);
     const input = first[0]!;
+    const unknownCall = randomUUID();
+    await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,
+      custom_id,request_digest,request,inputs,status,reserved_micro_usd,budget_date,budget_timezone)
+      VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}',$6::jsonb,'unknown',1,current_date,'UTC')`,
+      [unknownCall,jevRun,workspace,`unknown-${unknownCall}`,digest,JSON.stringify([input])]);
+    assert.deepEqual(await selectMembershipInputsV1(client, work(randomUUID()), true), [],
+      "an unknown JEV send fences the exact pair in a successor run");
+    await client.query("UPDATE signal_labeling_calls SET status='failed' WHERE id=$1",[unknownCall]);
     const result: Omit<HybridDecisionInputV1,"text"> = { root_id: root, root_fingerprint: input.root_fingerprint,
       concept_key: concept.concept_key, definition_digest: concept.definition_digest,
       entity_context_digest: input.entity_context_digest,
