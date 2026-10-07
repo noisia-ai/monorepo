@@ -40,8 +40,11 @@ test("append-only import remains the same with MFP flags on or off",()=>{
     const env={NOISIA_MFP_ENABLED:flag,NOISIA_MENTION_FACETS_ENABLED:flag};
     assert.equal(resolveWorkspaceImportRevisionModeV1(manual,env),"append_only");
     assert.equal(resolveWorkspaceImportRevisionModeV1({...manual,contentRevisionMode:"append_only"},env),"append_only");
-    if(flag==="true")assert.equal(resolveWorkspaceImportRevisionModeV1({...manual,contentRevisionMode:"revise_existing"},env),"revise_existing");
-    else assert.throws(()=>resolveWorkspaceImportRevisionModeV1({...manual,contentRevisionMode:"revise_existing"},env),
+    if(flag==="true")assert.equal(resolveWorkspaceImportRevisionModeV1({...manual,mfpWorkspaceEnabled:true,
+      contentRevisionMode:"revise_existing"},env),"revise_existing");
+    else assert.throws(()=>resolveWorkspaceImportRevisionModeV1({...manual,mfpWorkspaceEnabled:true,contentRevisionMode:"revise_existing"},env),
       /content_revision_unavailable/u);
   }
+  assert.throws(()=>resolveWorkspaceImportRevisionModeV1({...manual,mfpWorkspaceEnabled:false,
+    contentRevisionMode:"revise_existing"},{NOISIA_MFP_ENABLED:"true"}),/content_revision_unavailable/u);
 });

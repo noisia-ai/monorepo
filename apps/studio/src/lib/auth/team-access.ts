@@ -7,7 +7,7 @@ import { revokeAllClientBrandAccess, revokeClientBrandAccessOutsideOrganization 
 
 type TeamAccessTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-/** Shared product mutation for team role changes and authenticated access recovery. */
+/** Shared product mutation for team role changes. */
 export async function applyTeamUserAccessChange(
   tx: TeamAccessTransaction,
   current: { id: string; organizationId: string | null },
