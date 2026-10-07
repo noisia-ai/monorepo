@@ -74,7 +74,24 @@ void main(async()=>{
         !selection.concepts.some(concept=>concept.concept_key===unknown.concept_key)||
         gold.some(row=>row.root_id===unknown.root_id)) fail("mfp_hybrid_quarantine_scope_changed");
     }
-    await verifyMfpEvalRights(undefined,pool,quarantineRunIds);
+    const existingClaude=(await pool.query<{id:string;status:string;lease_live:boolean;
+      hybrid_stage:string;route_digest:string;uncertain:number;invalid_settled:number}>(`SELECT run.id,
+      run.status,COALESCE(run.lease_until>now(),false) lease_live,
+      run.membership_snapshot->>'hybrid_stage' hybrid_stage,
+      run.membership_snapshot->>'route_digest' route_digest,
+      count(call.id) FILTER(WHERE call.status IN('submitting','submitted','unknown') OR
+        call.raw_storage_key IS NOT NULL AND NOT call.results_applied)::int uncertain,
+      count(call.id) FILTER(WHERE call.status='settled' AND
+        (NOT call.results_applied OR call.raw_storage_key IS NULL OR call.raw_sha256 IS NULL OR
+          call.raw_size_bytes IS NULL OR call.results IS NULL))::int invalid_settled
+      FROM signal_labeling_runs run LEFT JOIN signal_labeling_calls call ON call.run_id=run.id
+      WHERE run.workspace_id=$1 AND run.idempotency_key=$2 GROUP BY run.id`,
+      [identity.workspace_id,"mfp-hybrid-h1-r4-claude"])).rows[0];
+    const reclaimClaudeRunId=existingClaude&&["queued","running"].includes(existingClaude.status)
+      ? existingClaude.id:null;
+    if(reclaimClaudeRunId&&(existingClaude.lease_live||existingClaude.hybrid_stage!=="claude"||
+      existingClaude.uncertain||existingClaude.invalid_settled)) fail("mfp_hybrid_claude_reclaim_unsafe");
+    await verifyMfpEvalRights(reclaimClaudeRunId??undefined,pool,quarantineRunIds);
     const access={database:pool,workspace_id:identity.workspace_id,actor_user_id:identity.actor_user_id};
     const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:pool,workspace_id:identity.workspace_id,
       actor_user_id:identity.actor_user_id});
@@ -130,6 +147,8 @@ void main(async()=>{
       : await configureHybridMembershipRouteV1({...access,route:"hybrid_h1",provider_available:true});
     if (route?.route!=="hybrid_h1") fail("mfp_hybrid_route_missing");
     const route_digest:string=route.route_digest??fail("mfp_hybrid_route_missing");
+    if(reclaimClaudeRunId&&existingClaude?.route_digest!==route_digest)
+      fail("mfp_hybrid_claude_reclaim_route_changed");
     if (quarantined.some(pair=>pair.route_digest!==route_digest)) fail("mfp_hybrid_quarantine_route_changed");
     const selected=(await pool.query<{jev_facets_labeler_version_id:string}>(
       "SELECT jev_facets_labeler_version_id FROM signal_hybrid_membership_routes WHERE workspace_id=$1 AND route_digest=$2",
@@ -175,7 +194,7 @@ void main(async()=>{
     if(!Number.isSafeInteger(priorJevMicro)||priorJevMicro<0)
       fail("mfp_hybrid_prior_jev_cost_invalid");
     const runStage=async(stage:HybridMembershipStageV1,priorCost:number)=>{
-      await verifyMfpEvalRights(undefined,pool,quarantineRunIds);
+      await verifyMfpEvalRights(reclaimClaudeRunId??undefined,pool,quarantineRunIds);
       const cap=strictCap===null?null:strictCap-totalFacet-priorCost;
       if (cap!==null&&cap<0) fail("mfp_hybrid_strict_cap_exhausted");
       const receipt=await requestHybridMembershipStageV1({...access,stage,route_digest,
