@@ -94,6 +94,7 @@ function harness() {
     async calls() {
       return calls;
     },
+    async refresh() { return {status:run.status,error_code:run.error_code??null}; },
     async markSubmitting(_r, c) {
       c.forEach((x) => (x.status = "submitting"));
     },
@@ -323,6 +324,19 @@ test("an old reservation with a recent unknown outcome retains its exposure", as
   await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
   assert.equal(call.status,"unknown");
   assert.equal(h.run.error_code,"labeling_outcome_unknown");
+  assert.equal(h.submitted(),0);
+});
+test("a terminal release never reserves or submits a fresh page in the same tick",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])],false);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-27*60*60*1000);
+  call.updated_at=new Date(Date.now()-26*60*60*1000);
+  h.provider.list=async()=>({data:[],has_more:false,last_id:null});
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.calls().length,1);
   assert.equal(h.submitted(),0);
 });
 test("a receipt outside the provider window terminates without another provider scan",async()=>{

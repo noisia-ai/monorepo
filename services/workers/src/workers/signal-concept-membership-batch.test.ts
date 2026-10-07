@@ -119,6 +119,7 @@ function harness() {
     async calls() {
       return calls;
     },
+    async refresh() { return {status:run.status,error_code:run.error_code??null}; },
     async markSubmitting(_r, c) {
       c.forEach((x) => (x.status = "submitting"));
     },
@@ -380,6 +381,19 @@ test("membership recovers an unknown POST by custom_id without resubmitting", as
   assert.equal(h.calls()[0]?.status,"settled");
   assert.equal(h.labels.length,2);
 });
+test("membership does not send a new page in the tick that releases unknown calls",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[membershipCallProposalV1(h.run,[h.inputs[0]!])],false);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-27*60*60*1000);
+  call.updated_at=new Date(Date.now()-26*60*60*1000);
+  h.provider.list=async()=>({data:[],has_more:false,last_id:null});
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.calls().length,1);
+  assert.equal(h.submitted(),0);
+});
 test("a group refusal isolates one membership root and preserves the other result", async () => {
   const h = harness(), originalResults = h.provider.results;
   h.provider.results = async function* () {
@@ -484,15 +498,21 @@ test("corrupt stored receipt makes the membership run fail explicitly before pro
   assert.equal(h.submitted(),0);
 });
 
-test("missing ended-batch result preserves unknown exposure and emits no semantic negative", async () => {
+test("missing ended-batch result ends in a technical error without a semantic negative", async () => {
   const h = harness();
   h.provider.results = async function* () {};
+  h.store.finish=async()=>{
+    const call=h.calls()[0]!;
+    if(call.results_applied){call.status="failed";h.run.error_code="labeling_provider_result_missing";}
+    return "failed";
+  };
   const result = await runConceptMembershipTickV1({
     run_id: h.run.id,
     store: h.store,
     provider: h.provider,
   });
-  assert.equal(h.calls()[0]?.status, "unknown");
+  assert.equal(result.status,"failed");
+  assert.equal(h.calls()[0]?.status, "failed");
   assert.ok(h.labels.every((r) => r.verdict === "error"));
   assert.equal(h.submitted(), 1);
 });
