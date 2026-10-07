@@ -32,7 +32,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       VALUES($1,$2,$3,'fixture','h1-selector.csv','completed')`, [batch, workspace, source]);
     await client.query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,
       external_id,source_system,text_hash,text_clean,text_length,published_at,platform,inclusion_status)
-      VALUES($1,$2,$3,$1,'h1-selector',$1::text,'fixture',$4,$5,$6,now(),'web','included')`,
+      VALUES($1::uuid,$2,$3,$1::uuid,'h1-selector',$1::uuid::text,'fixture',$4,$5,$6,now(),'web','included')`,
       [root, workspace, source, sha(text), text, text.length]);
     await client.query(`INSERT INTO signal_mention_import_memberships(workspace_id,mention_id,import_batch_id,data_source_id)
       VALUES($1,$2,$3,$4)`, [workspace, root, batch, source]);
