@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { measureHybridH1V1, type HybridMeasuredRootV1 } from "./hybrid-h1-measure";
+import { hybridUncertainExposureV1, measureHybridH1V1, type HybridMeasuredRootV1 } from "./hybrid-h1-measure";
 import { decideHybridMembershipV1 } from "../../packages/query-engine/src/signal-hybrid-membership-v1";
 import type { Gold } from "./contract";
 
@@ -85,6 +85,7 @@ test("H1 keeps two unreconciled non-gold pairs out of terminal coverage and cost
   ];
   const report=measureHybridH1V1(gold,rows,["x"],{facets_settled_usd:0.1,
     jev_settled_usd:0.2,claude_settled_usd:0.3,unknown_calls:2,
+    uncertain_pair_calls:{"b:x":"call-b","c:x":"call-c"},
     unknown_provider_usd_upper_bound:0.005376},3);
   assert.equal(report.status,"experimental_incomplete_not_approved");
   assert.equal(report.full_corpus.unresolved_pairs,2);
@@ -96,4 +97,34 @@ test("H1 keeps two unreconciled non-gold pairs out of terminal coverage and cost
   assert.ok(Math.abs(report.cost.possible_usd_per_1000_range![1]-201.792)<1e-9);
   assert.throws(()=>measureHybridH1V1(gold,rows,["x"],{facets_settled_usd:0.1,
     jev_settled_usd:0.2,claude_settled_usd:0.3,unknown_calls:0},3),/hybrid_unknown_ledger_mismatch/u);
+});
+
+test("current overrides are excluded from model quality denominators without earning H1 hits",()=>{
+  const gold=[{root_id:"a",input_digest:"a",partition:"test",entities:[],memberships:{x:"belongs"}}] as unknown as Gold[];
+  const rows:HybridMeasuredRootV1[]=[{root_id:"a",input_digest:"a",text:"Example",gate_passed:true,
+    decisions:{},excluded_override_concepts:["x"]}];
+  const ledger={facets_settled_usd:0,jev_settled_usd:0,claude_settled_usd:0,unknown_calls:0,
+    override_excluded_by_decided_via:{agent_assisted:1,human_ui:0,unknown:0}};
+  const report=measureHybridH1V1(gold,rows,["x"],ledger,1);
+  const result=report.gold.find(item=>item.partition==="test")!;
+  assert.equal(report.full_corpus.override_excluded_pairs,1);
+  assert.equal(report.full_corpus.pairs,0);
+  assert.equal(result.gold_roots_before_exclusion,1);assert.equal(result.override_excluded,1);
+  assert.equal(result.views.full_pipeline.roots,0);assert.equal(result.views.full_pipeline.hybrid.tp,0);
+  assert.equal(report.cost.components.override_excluded_by_decided_via?.agent_assisted,1);
+  assert.throws(()=>measureHybridH1V1(gold,[{...rows[0]!,decisions:{x:decideHybridMembershipV1("Example",
+    {verdict:"not_belongs",probability:0.1,citation:null},null)}}],["x"],ledger,1),/hybrid_override_exclusion_invalid/u);
+});
+
+test("one uncertain provider call covers two pairs without duplicating exposure",()=>{
+  const call={id:"call-one",status:"unknown",reserved_micro_usd:"1000000",terminal_exposure_micro_usd:"0"};
+  assert.deepEqual(hybridUncertainExposureV1([call,{...call}]),{calls:1,exposure_usd:1});
+  const roots:HybridMeasuredRootV1[]=[{root_id:"a",input_digest:"a",text:"Example",gate_passed:true,
+    decisions:{},unresolved_concepts:["x","y"]}];
+  const ledger={facets_settled_usd:0,jev_settled_usd:0,claude_settled_usd:0,unknown_calls:1,
+    uncertain_pair_calls:{"a:x":"call-one","a:y":"call-one"},unknown_provider_usd_upper_bound:1};
+  const report=measureHybridH1V1([],roots,["x","y"],ledger,1);
+  assert.equal(report.full_corpus.unresolved_pairs,2);assert.equal(report.cost.unknown_calls,1);
+  assert.equal("uncertain_pair_calls" in report.cost.components,false,"public report does not expose private call IDs");
+  assert.throws(()=>measureHybridH1V1([],roots,["x","y"],{...ledger,uncertain_pair_calls:{"a:x":"call-one"}},1),/hybrid_unknown_ledger_mismatch/u);
 });

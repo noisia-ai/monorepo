@@ -12,7 +12,7 @@ test("human membership overrides are fenced by definition and root content", () 
   assert.match(sql, /stale_override\.definition_digest IS DISTINCT FROM p\.definition_digest/u);
   assert.match(sql, /stale_override\.root_fingerprint IS DISTINCT FROM p\.root_fingerprint/u);
   assert.match(store, /m\.definition_digest,m\.root_fingerprint/u);
-  assert.match(store, /current\.verdict IN\('belongs','not_belongs','insufficient','refused'\)/u);
+  assert.match(store, /current\.verdict IN\('belongs','not_belongs','insufficient','review_required','refused'\)/u);
   assert.match(store, /current\.verdict='error' AND current\.error_code IN\('membership_item_schema_invalid','membership_evidence_invalid'\)/u);
   assert.doesNotMatch(store, /current\.verdict<>'pending'/u);
 });
