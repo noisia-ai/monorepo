@@ -15,7 +15,7 @@ import {
   facetLabelerIdentityLegacyV1,
   type FacetResult,
 } from "@noisia/query-engine";
-import { AnthropicBatchTransportError } from "../providers/anthropic-message-batches";
+import { AnthropicBatchTransportError, type AnthropicBatchPage } from "../providers/anthropic-message-batches";
 const dim = <T>(value: T) => ({ value, confidence: "high", abstained: false });
 function harness() {
   const context = {
@@ -83,6 +83,8 @@ function harness() {
             results_applied: false,
             provider_batch_id: null,
             retry_depth: p.retry_depth ?? 0,
+            created_at: new Date(),
+            updated_at: new Date(),
           });
       if (advance) run.cursor_root_id = "1";
       return calls.filter((c) =>
@@ -92,6 +94,7 @@ function harness() {
     async calls() {
       return calls;
     },
+    async refresh() { return {status:run.status,error_code:run.error_code??null}; },
     async markSubmitting(_r, c) {
       c.forEach((x) => (x.status = "submitting"));
     },
@@ -104,6 +107,14 @@ function harness() {
     async markFailed(_r, c, u) {
       c.forEach((x) => (x.status = u ? "unknown" : "failed"));
     },
+    async recoverUnknownBatch(_r, c, id) {
+      c.forEach((x) => { x.status = "submitted"; x.provider_batch_id = id; });
+    },
+    async releaseUnknown(_r, c, reason) {
+      c.forEach((x) => { x.status = "failed"; x.results_applied = true; });
+      if(reason==="unresolvable_after_window"||reason==="unresolvable_timestamp")run.error_code=`labeling_${reason}`;
+    },
+    async clearUnknownFailure() { if(run.error_code==="labeling_outcome_unknown")run.error_code = null; },
     async persistRaw(_r, call, raw) {
       call.raw_body = raw;
       events.push("raw");
@@ -128,7 +139,7 @@ function harness() {
       });
     },
     async finish() {
-      return labels.length === inputs.length
+      return run.error_code ? "failed" : labels.length === inputs.length
         ? "completed"
         : calls.some((c) => c.status === "unknown")
           ? "failed"
@@ -146,6 +157,7 @@ function harness() {
       expired: 0,
     },
     ended_at: "now",
+    created_at: new Date().toISOString(),
     results_url: null,
   };
   const provider = {
@@ -159,6 +171,7 @@ function harness() {
     async cancel() {
       return state;
     },
+    async list(): Promise<AnthropicBatchPage> { return {data:[],has_more:false,last_id:null}; },
     async *results() {
       for (const call of calls.filter((c) => c.status === "submitted")) {
         const facets = {
@@ -260,6 +273,159 @@ test("ambiguous POST is never replayed blindly", async () => {
     "failed",
   );
   assert.equal(h.labels.length, 0);
+});
+test("lost batch ID is found by custom_id and its receipt settles without another POST", async () => {
+  const h = harness();
+  const originalCreate = h.provider.create;
+  h.provider.create = async () => {
+    throw new AnthropicBatchTransportError("transport", "submission_unknown");
+  };
+  await assert.rejects(runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider}));
+  assert.equal(h.calls()[0]?.status, "unknown");
+  h.provider.create = originalCreate;
+  const originalResults = h.provider.results;
+  h.provider.results = async function* () {
+    const unknown = h.calls().filter((call) => call.status === "unknown");
+    unknown.forEach((call) => {call.status="submitted";});
+    const items = [];
+    for await (const item of originalResults()) items.push(item);
+    unknown.forEach((call) => {call.status="unknown";});
+    yield* items;
+  };
+  h.provider.list = async () => ({
+    data: [{...await h.provider.get(), created_at:new Date().toISOString()}],
+    has_more:false, last_id:null,
+  });
+  assert.equal((await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"completed");
+  assert.equal(h.submitted(),0,"recovery must never submit again");
+  assert.equal(h.calls()[0]?.status,"settled");
+  assert.equal(h.labels.length,2);
+});
+test("a mature unknown call is explicitly released only after a complete empty provider scan", async () => {
+  const h = harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call = h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-26*60*60*1000);
+  call.updated_at=call.created_at;
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(call.results_applied,true);
+  assert.equal(h.run.error_code,null);
+  assert.equal(h.submitted(),0);
+});
+test("an old reservation with a recent unknown outcome retains its exposure", async () => {
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-26*60*60*1000);
+  call.updated_at=new Date();
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"unknown");
+  assert.equal(h.run.error_code,"labeling_outcome_unknown");
+  assert.equal(h.submitted(),0);
+});
+test("a terminal release never reserves or submits a fresh page in the same tick",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])],false);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-27*60*60*1000);
+  call.updated_at=new Date(Date.now()-26*60*60*1000);
+  h.provider.list=async()=>({data:[],has_more:false,last_id:null});
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.calls().length,1);
+  assert.equal(h.submitted(),0);
+});
+test("a receipt outside the provider window terminates without another provider scan",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.provider_batch_id="expired-batch";
+  call.created_at=new Date(Date.now()-30*24*60*60*1000);
+  call.updated_at=new Date();
+  h.provider.get=async()=>{throw new Error("expired batch must not be fetched");};
+  h.provider.list=async()=>{throw new Error("expired ledger must not be scanned");};
+  assert.equal((await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.equal(call.status,"failed");
+  assert.equal(call.results_applied,true);
+  assert.equal(h.run.error_code,"labeling_unresolvable_after_window");
+});
+test("an already applied submitted facet receipt does not refetch the provider batch",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="submitted";
+  call.provider_batch_id="historical-batch";
+  call.results_applied=true;
+  h.provider.get=async()=>{throw new Error("applied receipt must not be fetched again");};
+  h.store.finish=async()=>"failed";
+  assert.equal((await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"failed");
+  assert.equal(h.submitted(),0);
+});
+test("incomplete scans retain recoverable uncertainty but expire without a perpetual drainer",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(Date.now()-28*24*60*60*1000);
+  call.updated_at=new Date();
+  let pages=0;
+  h.provider.list=async()=>({data:[],has_more:true,last_id:`page-${++pages}`});
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(pages,100);
+  assert.equal(call.status,"unknown","incomplete evidence must retain exposure inside the window");
+  call.created_at=new Date(Date.now()-30*24*60*60*1000);
+  h.provider.list=async()=>{throw new Error("expired uncertainty must not rescan");};
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.run.error_code,"labeling_unresolvable_after_window");
+});
+test("invalid call timestamps use the run clock for a bounded terminal decision",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(NaN);
+  call.updated_at=new Date(NaN);
+  h.run.created_at=new Date(Date.now()-30*24*60*60*1000);
+  h.provider.list=async()=>{throw new Error("expired uncertainty must not rescan");};
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.run.error_code,"labeling_unresolvable_after_window");
+});
+test("missing call and run clocks terminate as unresolvable timestamp",async()=>{
+  const h=harness();
+  await h.store.reserve(h.run,[facetCallProposalV1(h.run,[h.inputs[0]!])]);
+  const call=h.calls()[0]!;
+  call.status="unknown";
+  call.created_at=new Date(NaN);
+  call.updated_at=new Date(NaN);
+  h.provider.list=async()=>{throw new Error("unbounded uncertainty must not spin");};
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(call.status,"failed");
+  assert.equal(h.run.error_code,"labeling_unresolvable_timestamp");
+});
+test("a group refusal splits until only the responsible facet root is refused", async () => {
+  const h = harness(), originalResults = h.provider.results;
+  h.provider.results = async function* () {
+    for await (const result of originalResults()) {
+      const call = h.calls().find((candidate) => candidate.custom_id === result.item.custom_id)!;
+      if (call.inputs.some((input) => input.root_id === "1")) {
+        result.item.result.message.stop_reason = "refusal";
+      }
+      yield { ...result, rawText: JSON.stringify(result.item) };
+    }
+  };
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.labels.length,0,"the group refusal is not assigned to either root");
+  assert.equal(h.calls().length,3,"two distinct child requests are reserved");
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.deepEqual(h.labels.map((label) => [label.root_id,label.status]),[["0","labeled"],["1","refused"]]);
+  assert.equal(h.submitted(),2);
 });
 test("custom identity is deterministic but split attempts are distinct", () => {
   const h = harness(),

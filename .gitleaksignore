@@ -5,6 +5,8 @@
 
 # Synthetic MFP fixture key in a policy test; no provider credential.
 66f4541c346e18b55eeabd73f8147024ba01958b:infrastructure/db/signal-labeling-policy-action-switch.test.ts:generic-api-key:46
+# Same reviewed fixture after the approved #34 squash merge into develop.
+d34b4338ae390bb8b607e54e7a166f15bdc29152:infrastructure/db/signal-labeling-policy-action-switch.test.ts:generic-api-key:46
 
 2ff9df4a094dd6bef00d236efd1f0b331be5f2e4:packages/query-engine/src/signal-metric-catalog-v1.ts:generic-api-key:31
 3215de791017f6122bf23aaf04332298adc44a94:apps/studio/src/lib/data-os/signal-semantic-context-pack.postgres.test.ts:generic-api-key:2276

@@ -54,15 +54,26 @@ export async function inspectFacetContextChangeV1(
   ).rows[0];
   const diff = diffEntityContextV1(previous?.context ?? null, context),
     changed = previous?.digest !== contextDigest;
+  // Read every known canonical root, including roots outside the current preparation.
+  // A later re-inclusion must not make an old label appear current. Labels from every
+  // labeler matter when a deleted entity was identified by a previous labeler.
   const roots = changed
     ? (
         await client.query<{
           root_id: string;
           title: string | null;
           full_text: string;
-          facets: FacetResult["facets"];
+          entity_ids: string[];
         }>(
-          `SELECT root_id,title,full_text,facets FROM signal_mention_facets_current_v1 WHERE workspace_id=$1`,
+          `WITH labeled_entities AS (
+             SELECT label.root_id,array_agg(DISTINCT entity->>'entity_id') entity_ids
+             FROM signal_mention_facet_labels label
+             CROSS JOIN LATERAL jsonb_array_elements(COALESCE(label.facets#>'{entities,value}','[]'::jsonb)) entity
+             WHERE label.workspace_id=$1 GROUP BY label.root_id
+           ) SELECT mention.id root_id,mention.title,mention.text_clean full_text,
+             COALESCE(labels.entity_ids,ARRAY[]::text[]) entity_ids
+           FROM mentions mention LEFT JOIN labeled_entities labels ON labels.root_id=mention.id
+           WHERE mention.workspace_id=$1 AND mention.canonical_mention_id=mention.id`,
           [workspaceId],
         )
       ).rows
@@ -72,7 +83,7 @@ export async function inspectFacetContextChangeV1(
       isEntityContextAffectedV1(diff, {
         title: r.title,
         text: r.full_text,
-        entity_ids: r.facets?.entities.value.map((e) => e.entity_id) ?? [],
+        entity_ids: r.entity_ids,
       }),
     )
     .map((r) => r.root_id);
@@ -274,7 +285,7 @@ const facetDisplayPopulation = `WITH display_roots AS MATERIALIZED (
   -- Keep the canonical human/context projection, but evaluate it once per workspace.
   -- Joining the expanded view directly to underestimated rights roots caused its
   -- entire population and correlated label lookups to run again for every root.
-  SELECT workspace_id,root_id,full_text,title,platform,status,facets,requires_context_review
+  SELECT workspace_id,root_id,full_text,title,platform,status,facets,requires_context_review,pending_context_review
   FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
 ), scoped AS MATERIALIZED (
   SELECT f.*,m.url,o.patch,
@@ -299,7 +310,7 @@ const facetDisplayPopulation = `WITH display_roots AS MATERIALIZED (
       WHEN effective_facets IS NULL OR (effective_facets#>>'{entities,abstained}')::boolean THEN 'unknown'
       WHEN jsonb_array_length(effective_facets#>'{entities,value}')>0 THEN 'relevant'
       WHEN effective_facets->>'unrelated_reason' IN('homonym','off_topic') THEN 'unrelated' ELSE 'unknown' END relevance,
-    CASE WHEN review THEN NULL ELSE effective_facets END facets,review requires_context_review,
+    CASE WHEN review THEN NULL ELSE effective_facets END facets,review requires_context_review,pending_context_review,
     COALESCE((SELECT jsonb_agg(key) FROM jsonb_object_keys(patch) key),'[]') human_dimensions
   FROM projected
 )`;
@@ -329,7 +340,7 @@ export async function loadMentionFacetBrowserV1(args: {
       ) dimension_values GROUP BY dimension,value ORDER BY dimension,count DESC,value`, parameters)).rows;
     const limit = Math.max(1, Math.min(100, args.limit ?? 30));
     const items = (await client.query<{root_id:string;text:string;title:string|null;url:string|null;platform:string|null;
-      status:string;relevance:string;facets:MentionFacetsV1|null;requires_context_review:boolean;human_dimensions:string[]}>(`${facetDisplayPopulation}
+      status:string;relevance:string;facets:MentionFacetsV1|null;requires_context_review:boolean;pending_context_review:boolean;human_dimensions:string[]}>(`${facetDisplayPopulation}
       SELECT * FROM population p WHERE ($8::uuid IS NULL OR p.root_id=$8::uuid) AND ($4::uuid IS NULL OR p.root_id>$4::uuid) AND ($5::text IS NULL OR
         CASE WHEN $5='status' THEN p.status=$6 WHEN $5='relevance' THEN p.relevance=$6
           WHEN $5 IN('entities','salience') THEN CASE WHEN $6='abstained' THEN p.facets IS NULL OR (p.facets#>>'{entities,abstained}')::boolean

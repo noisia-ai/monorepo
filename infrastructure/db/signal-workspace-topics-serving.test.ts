@@ -100,9 +100,9 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let consolidatedMode = false;
   let noOverlap = false;
   let membershipMode = false;
+  let facetOptIn = false;
   let membershipCollision = false;
   let membershipAdopted = false;
-  let facetOptIn = false;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   let interestIdentity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
@@ -118,7 +118,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
       if (membershipMode && sql.includes("FROM signal_topic_consolidation_revisions WHERE consolidation_run_id="))
         return {rows:[{id:id("31")}]};
       if (membershipMode && sql.includes("SELECT context,digest,version_no")) return {rows: []};
-      if (membershipMode && sql.includes("SELECT root_id,title,full_text,facets")) return {rows: []};
+      if (membershipMode && sql.includes("WITH labeled_entities AS (")) return {rows: []};
       if (membershipMode && sql.includes("string_agg(jsonb_build_array(root_id,concept_key")) return {rows:[{digest:sha("b")}]};
       if (membershipMode && sql.includes("SELECT s.input_revision::text")) return {rows:[{input_revision:"7",run_id:id("70"),processing:false}]};
       if (sql.includes("SELECT input_snapshot->'discovery_population'->'root_ids' root_ids")) return { rows: [] };

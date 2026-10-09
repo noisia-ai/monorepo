@@ -86,10 +86,9 @@ export function diffEntityContextV1(
     const a = before.get(id),
       b = after.get(id);
     if (digest(a ?? null) === digest(b ?? null)) continue;
+    const introducedTerms = b ? terms(b).filter((term) => !a || !terms(a).includes(term)) : [];
     if (
-      [...(a ? terms(a) : []), ...(b ? terms(b) : [])].some(
-        (t) => t.length < 3,
-      ) ||
+      introducedTerms.some((term) => term.length < 3) ||
       [a, b].some((e) => e?.kind === "category" && e.aliases.length === 0)
     )
       out.affected_mode = "full";
