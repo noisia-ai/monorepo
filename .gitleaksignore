@@ -55,3 +55,12 @@ d0d9f96d5cb6b01486272fc06e9ecf4575900e22:apps/studio/src/lib/data-os/signal-sema
 d3b4604d3a994d9f79913ac4cee735d46d0d2bb2:tools/signal-semantic-lab/config/benchmark-plan-10c2-v3.json:generic-api-key:197
 d3b4604d3a994d9f79913ac4cee735d46d0d2bb2:tools/signal-semantic-lab/config/benchmark-plan-10c2-v3.json:generic-api-key:198
 e2623ca7d27f84bdff4996cf73ea68f3193192ed:infrastructure/db/signal-topic-evaluation-v2-execution.test.ts:generic-api-key:23
+
+# PR38 integration: synthetic MFP fixture identities already reviewed in #37.
+b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:infrastructure/db/signal-labeling-policy-action-switch.ts:generic-api-key:5
+b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:scripts/eval/fixture-identity.ts:generic-api-key:5
+b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:scripts/eval/fixture-identity.test.mjs:generic-api-key:13
+b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:scripts/eval/fixture-identity.test.mjs:generic-api-key:17
+b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:scripts/eval/fixture-identity.test.mjs:generic-api-key:19
+b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:scripts/eval/fixture-identity.test.mjs:generic-api-key:22
+b0f8485a7a776b6ae81ecb66712c0d5cb8e87fc6:scripts/eval/fixture-identity.test.mjs:generic-api-key:24
