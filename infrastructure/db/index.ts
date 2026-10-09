@@ -23,6 +23,7 @@ export * from "./sentione-timestamps";
 export * from "./signal-topic-rule-suggestion-execution";
 export * from "./signal-topic-catalog";
 export * from "./signal-workspace-capabilities";
+export * from "./signal-workspace-features";
 export * from "./signal-workspace-corpus-readiness";
 export * from "./admin-workspace-corpus-summary";
 export * from "./signal-workspace-corpus-preparation";

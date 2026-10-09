@@ -65,6 +65,11 @@ export async function createBrandForActorV1(request: Request, actor: BrandCreati
   if (parsed.data.preparation?.idempotency_key !== mutationId) {
     return Response.json({ error: "idempotency_key_mismatch", message: "La preparación debe usar la misma clave que la creación." }, { status: 422 });
   }
+  if (parsed.data.mfp_opt_in && !(actor.userType === "noisia_internal"
+    && ["noisia_admin","founder","admin"].includes(actor.primaryRole)
+    && process.env.NOISIA_MENTION_FACETS_ENABLED === "true")) {
+    return Response.json({error:"mfp_opt_in_forbidden"},{status:403});
+  }
 
   try {
     const created = await db.transaction(async (tx) => {
@@ -189,6 +194,12 @@ export async function createBrandForActorV1(request: Request, actor: BrandCreati
         createdByUserId: actor.id,
         creationRequestDigest: brandCreationRequestDigestV1(organizationId, parsed.data)
       });
+      if (parsed.data.mfp_opt_in) {
+        await tx.execute(sql`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
+          VALUES (${signalWorkspace.id}::uuid,'mention_facets',${actor.id}::uuid),
+                 (${signalWorkspace.id}::uuid,'concept_membership',${actor.id}::uuid),
+                 (${signalWorkspace.id}::uuid,'mfp_discovery',${actor.id}::uuid)`);
+      }
 
       if (clientCreation.allowed) {
         const [granted] = await tx

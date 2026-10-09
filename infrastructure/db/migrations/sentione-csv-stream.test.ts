@@ -10,6 +10,7 @@ async function ingest(bytes: Uint8Array, chunkSize: number,contentRevisionMode?:
   const observations: Array<Record<string, unknown>> = [];
   // A local sink captures the SQL boundary; no database or provider is involved.
   const pool = { async query(sql: string, params: unknown[] = []) {
+    if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:true}]};
     if (sql.includes("INSERT INTO mentions (")) {
       const columns = sql.match(/INSERT INTO mentions \(([^)]+)\)/u)![1]!.split(",").map((s) => s.trim());
       const rows: SavedRow[] = [];
@@ -22,7 +23,8 @@ async function ingest(bytes: Uint8Array, chunkSize: number,contentRevisionMode?:
     }
     if (sql.includes("FROM mentions mention")) {
       const hashes = new Set(params[2] as string[]), ids = new Set(params[3] as string[]);
-      return { rows: saved.filter((row) => hashes.has(row.text_hash as string) || (row.data_source_id===params[5] && ids.has(row.provider_record_id as string))) };
+      return { rows: saved.filter((row) => (params[6] !== true && hashes.has(row.text_hash as string))
+        || (params[6] !== true || row.data_source_id===params[5]) && ids.has(row.provider_record_id as string)) };
     }
     if (sql.includes("WITH input AS")) {
       observations.push(...JSON.parse(params[3] as string) as Array<Record<string, unknown>>);
@@ -107,5 +109,25 @@ test("explicit revisions reject competing contents for one ID across CSV chunks;
   ];
   const bytes=fixture(rows,",",true);
   assert.equal((await ingest(bytes,7)).stats.duplicate_count,1);
-  await assert.rejects(ingest(bytes,7,"revise_existing"),/content_revision_conflicting_rows/);
+  const previous=process.env.NOISIA_MENTION_FACETS_ENABLED;
+  try { process.env.NOISIA_MENTION_FACETS_ENABLED="true";
+    await assert.rejects(ingest(bytes,7,"revise_existing"),/content_revision_conflicting_rows/);
+  } finally { if(previous===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+    else process.env.NOISIA_MENTION_FACETS_ENABLED=previous; }
+});
+
+test("revise_existing resolves provider IDs, not equal text from different IDs",async()=>{
+  const bytes=fixture([
+    {Created:"2026-08-01T12:00:00Z",id:"one","Content of posts":"The same synthetic review has enough length for inclusion."},
+    {Created:"2026-08-01T12:00:00Z",id:"two","Content of posts":"The same synthetic review has enough length for inclusion."}
+  ],",",true);
+  assert.equal((await ingest(bytes,256)).saved.length,1,"ordinary import retains workspace text deduplication");
+  const previous=process.env.NOISIA_MENTION_FACETS_ENABLED;
+  try { process.env.NOISIA_MENTION_FACETS_ENABLED="true";
+    const revised=await ingest(bytes,256,"revise_existing");
+    assert.equal(revised.saved.length,2);
+    assert.notEqual(revised.saved[0]?.provider_record_id,revised.saved[1]?.provider_record_id);
+    assert.ok(revised.saved.every(row=>String(row.external_id).startsWith("revise:")));
+  } finally { if(previous===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+    else process.env.NOISIA_MENTION_FACETS_ENABLED=previous; }
 });

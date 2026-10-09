@@ -16,6 +16,7 @@ import {
 } from "@noisia/query-engine";
 import {
   createConceptMembershipStoreV1,
+  signalWorkspaceFeatureEnabledV1,
   type ConceptMembershipStoreV1,
   type LabelingRunV1,
   type MembershipRunV1,
@@ -385,6 +386,10 @@ export async function signalConceptMembershipJobV1(
   )
     throw new Error("labeling_provider_disabled");
   const { pool } = await import("../db/client");
+  const workspace = (await pool.query<{workspace_id:string}>(
+    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='membership'",[job.data.run_id])).rows[0];
+  if (!workspace || !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.workspace_id,feature:"concept_membership"}))
+    throw new Error("membership_workspace_not_enabled");
   const store = options.store ?? createConceptMembershipRuntimeStoreV1(pool);
   return runConceptMembershipTickV1({
     run_id: job.data.run_id,

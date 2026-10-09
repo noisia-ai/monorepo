@@ -1,6 +1,9 @@
 import type { SignalBrandPolicyQueryable } from "./signal-governed-brand-policy";
+import {signalWorkspaceFeatureEnabledV1} from "@noisia/db";
 import { assertWorkspaceImportAuthorityV1 } from "./workspace-import-authority";
 import { createHash,randomUUID } from "node:crypto";
+import {resolveWorkspaceImportRevisionModeV1,WorkspaceAsyncImportError} from "./workspace-import-revision-mode";
+export {WorkspaceAsyncImportError} from "./workspace-import-revision-mode";
 
 import {
   SIGNAL_ACQUISITION_IMPORT_CONTRACT_VERSION,
@@ -31,6 +34,7 @@ export const WORKSPACE_ASYNC_IMPORT_CONTRACT_VERSION = "signal-workspace-async-i
 
 export type WorkspaceAsyncImportStatusV1 =
   | "queued" | "processing" | "completed" | "failed";
+
 
 export async function resolveWorkspaceConnectorByKeyV1(workspaceId:string,sourceKey:string){
   if(!/^source-sha256-[0-9a-f]{64}$/u.test(sourceKey))return null;
@@ -78,12 +82,9 @@ export async function createWorkspaceImportUploadV1(args: {
   storage?:WorkspaceImportCreationStorageV1;
 }) {
   validateFile(args.fileName,args.fileSizeBytes,args.contentType);
-  const revisionMode = args.contentRevisionMode ?? "append_only";
-  if (!["append_only","revise_existing"].includes(revisionMode)) throw new WorkspaceAsyncImportError("content_revision_mode_invalid",422);
-  if (revisionMode === "revise_existing" && (process.env.NOISIA_MFP_ENABLED !== "true"
-      || args.access !== "manual-import" || !args.acquisition || args.supersedesImportBatchId)) {
-    throw new WorkspaceAsyncImportError("content_revision_unavailable",409);
-  }
+  const mfpWorkspaceEnabled=args.contentRevisionMode==="revise_existing"
+    ? await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:args.workspace.id,feature:"mention_facets"}) : false;
+  const revisionMode=resolveWorkspaceImportRevisionModeV1({...args,mfpWorkspaceEnabled});
   const idempotencyHash = hashValue(args.idempotencyKey);
   const batchId = randomUUID();
   const objectKey = workspaceImportObjectKeyV1({
@@ -112,6 +113,11 @@ export async function createWorkspaceImportUploadV1(args: {
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
     if (args.access === "manual-import") await assertWorkspaceImportAuthorityV1({ ...args, queryable: client });
+    if(revisionMode==="revise_existing"){
+      const feature=await client.query(`SELECT feature FROM signal_workspace_features
+        WHERE workspace_id=$1::uuid AND feature='mention_facets' FOR SHARE`,[args.workspace.id]);
+      if(feature.rows.length===0)throw new WorkspaceAsyncImportError("content_revision_unavailable",409);
+    }
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[
       `workspace-import:${args.workspace.id}:${idempotencyHash}`
     ]);
@@ -929,10 +935,4 @@ function stable(value: unknown): string {
     .sort(([left],[right])=>left.localeCompare(right))
     .map(([key,item])=>`${JSON.stringify(key)}:${stable(item)}`).join(",")}}`;
   return JSON.stringify(value);
-}
-
-export class WorkspaceAsyncImportError extends Error {
-  constructor(public readonly code: string,public readonly status: number) {
-    super(code);this.name="WorkspaceAsyncImportError";
-  }
 }

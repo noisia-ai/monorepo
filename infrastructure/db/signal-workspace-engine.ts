@@ -6,6 +6,7 @@ import { admitSignalProcessingWithClientV1 } from "./signal-processing-policy";
 import { discoverySamplingOptionsV1, loadSignalDiscoveryPopulationV1, type SignalDiscoveryPopulationV1 } from "./signal-workspace-discovery-population";
 import type {SignalWorkspaceInterpretationAdmissionV1} from './signal-workspace-interpretation-admission';
 import type { Pool, PoolClient } from "pg";
+import {signalWorkspaceFeatureEnabledV1,signalWorkspaceFeatureEnabledWithDatabaseV1} from "./signal-workspace-features";
 import { loadSignalDiscoveryResidualRootsV1, buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceTopicPrototypePlanV1,
@@ -415,10 +416,11 @@ export async function readSignalWorkspaceEngineInterpretationContextV1(args:{dat
 /** Cheap-to-transport preflight; inputs are compiled once, never a root×interest array. */
 export async function loadSignalWorkspaceEnginePreflightV1(args:{database:SignalWorkspaceEngineDatabaseV1;workspace_id:string;actor_user_id:string;taxonomy_profile_id?:string}) {
   return transaction(args.database,async client=>{await authorize(client,args.workspace_id,args.actor_user_id,false);
+    const discoveryEnabled=await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,feature:"mfp_discovery"});
     let context_digest:string,catalog_digest:string,guides:Array<Omit<SignalWorkspaceEngineGuideV1,'vector'>>,total_interests:number;
-    try{const input=await buildInput(client,args.workspace_id,args.actor_user_id,args.taxonomy_profile_id,process.env.NOISIA_MENTION_FACETS_ENABLED==='true');context_digest=input.context_digest;catalog_digest=input.catalog_digest;guides=input.guides;total_interests=input.plan.topics.length;}
+    try{const input=await buildInput(client,args.workspace_id,args.actor_user_id,args.taxonomy_profile_id,discoveryEnabled);context_digest=input.context_digest;catalog_digest=input.catalog_digest;guides=input.guides;total_interests=input.plan.topics.length;}
     catch(error){if(args.taxonomy_profile_id||!(error instanceof Error)||error.message!=='workspace_topic_catalog_required')throw error;
-      const input=process.env.NOISIA_MENTION_FACETS_ENABLED==='true'
+      const input=discoveryEnabled
         ?{context:await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true,context_mode:"workspace-discovery-v1"}),context_inputs:[]}
         :await loadSignalWorkspaceAutonomousContextInputsV1({queryable:client,workspace_id:args.workspace_id});
       context_digest=input.context.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=input.context_inputs;total_interests=0;}
@@ -430,7 +432,7 @@ export async function loadSignalWorkspaceEnginePreflightV1(args:{database:Signal
     const missing = await missingGuides(client,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1.config_digest,guides);
     return {embedding_run_id:embedded?.id??null,expected_context_digest:context_digest,expected_catalog_digest:catalog_digest,
       expected_guides:guides.length,missing_guides:missing,total_interests,
-      advisory_estimate:process.env.NOISIA_MENTION_FACETS_ENABLED==='true'&&embedded
+      advisory_estimate:discoveryEnabled&&embedded
         ?await loadSignalDiscoveryEstimateV1({queryable:client,workspace_id:args.workspace_id,preparation_run_id:embedded.preparation_run_id}):null};
   });
 }
@@ -466,7 +468,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
   interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1;
   incremental_options?:{close_requested:boolean;parent_execution_id?:string;taxonomy_profile_id?:string;
     automatic_admission?:import('./signal-workspace-numeric-producer').SignalWorkspaceNumericAdmissionV1}}):Promise<{execution_id:string;replayed:boolean}> {
-  const discoveryEnabled=process.env.NOISIA_MENTION_FACETS_ENABLED==='true';
+  const discoveryEnabled=await signalWorkspaceFeatureEnabledWithDatabaseV1({database:args.database,workspace_id:args.workspace_id,feature:"mfp_discovery"});
   if(args.discovery_request_intent_digest!==undefined&&(!discoveryEnabled||!digestPattern.test(args.discovery_request_intent_digest)))return fail("workspace_engine_request_invalid",422);
   if(args.incremental_options&&(args.claude_cap_micro_usd!==0||args.interpretation_config))return fail('workspace_engine_incremental_numeric_only',422);
   if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!digestPattern.test(args.expected_context_digest)||!digestPattern.test(args.expected_catalog_digest)

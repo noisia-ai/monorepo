@@ -16,13 +16,15 @@ const env = {
 };
 type Options = { role?: string; userType?: string; actorActive?: boolean; scopeValid?: boolean; sameOrganization?: boolean; sealedCreatorMatches?: boolean;
   grantLevel?: string; grantRevoked?: boolean; creatorType?: string; creatorRole?: string; creatorActive?: boolean; creatorMissing?: boolean;
-  history?: string[]; deadlineValid?: boolean; timezoneValid?: boolean; configurationValid?: boolean; failActions?: boolean };
+  history?: string[]; activeActions?: string[]; deadlineValid?: boolean; timezoneValid?: boolean; configurationValid?: boolean; failActions?: boolean; mfpEnabled?: boolean };
 function fixture(options: Options = {}) {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   let state = [...(options.history ?? [])], previous = [...state], releases = 0;
+  let mfpEnabled=options.mfpEnabled===true;
+  const activeActions=new Set(options.activeActions ?? (state.includes("active") ? ["brand_context_proposal","topic_prototype_embeddings"] : []));
   const database = { async connect() { return { async query(sql: string, values: unknown[] = []) {
     calls.push({ sql, values });
-    assert.doesNotMatch(sql, /signal_processing_admissions|proposal_runs|budget_reservations|outbox|embedding_calls/iu);
+    assert.doesNotMatch(sql, /(?:INSERT INTO|UPDATE|DELETE FROM)\s+(?:signal_processing_admissions|proposal_runs|budget_reservations|outbox|embedding_calls)/iu);
     assert.doesNotMatch(sql, /(?:INSERT INTO|UPDATE|DELETE FROM) user_brand_access/iu);
     if (sql.startsWith("BEGIN")) previous = [...state];
     if (sql === "ROLLBACK") state = previous;
@@ -55,16 +57,30 @@ function fixture(options: Options = {}) {
         && ["noisia_admin", "founder", "admin"].includes(options.creatorRole ?? "noisia_admin");
       return { rows: valid ? [{ id: id(6) }] : [] };
     }
-    if (sql.includes("SELECT status FROM signal_processing_policy_versions")) return { rows: state.map(status => ({ status })) };
+    if (sql.includes("FROM signal_processing_policy_versions") && sql.startsWith("SELECT")) return { rows: state.map((status,index) => ({
+      id:id(5+index),status,version:index+1,valid_until:"2099-01-01T00:00:00Z",budget_timezone:"Asia/Tokyo",
+      daily_cap_micro_usd:"1100000" })) };
+    if (sql.includes("FROM signal_processing_policy_actions") && sql.startsWith("SELECT")) return { rows: [...activeActions].map(action=>({
+      action,max_execution_micro_usd:action==="brand_context_proposal"?"1000000":action==="topic_prototype_embeddings"?"100000":null
+    })) };
+    if (sql.includes("FROM signal_processing_admissions") && sql.startsWith("SELECT")) return {rows:[{pending:false}]};
+    if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:mfpEnabled}]};
     if (sql.includes("pg_timezone_names")) return { rows: [{ deadline_valid: options.deadlineValid ?? true,
       timezone_valid: options.timezoneValid ?? true, configuration_valid: options.configurationValid ?? true }] };
     if (sql.startsWith("INSERT INTO signal_processing_policy_versions")) { state.push("draft"); return { rows: [{ id: id(5) }] }; }
-    if (sql.startsWith("INSERT INTO signal_processing_policy_actions") && options.failActions) throw new Error("synthetic_action_failure");
+    if (sql.startsWith("INSERT INTO signal_processing_policy_actions")) {
+      if (options.failActions) throw new Error("synthetic_action_failure");
+      if (typeof values[1]==="string" && !uuidLike(values[1])) activeActions.add(values[1]);
+      for(const action of ["corpus_preparation","topic_fit_incremental","topic_consolidation_numeric","topic_interpretation","topic_consolidation"])
+        if(sql.includes(`'${action}'`)) activeActions.add(action);
+    }
     if (sql.startsWith("UPDATE signal_processing_policy_versions")) { state = ["active"]; return { rows: [{ id: id(5) }] }; }
     return { rows: [] };
   }, release() { releases++; } }; } } as unknown as Parameters<typeof provisionSignalBrandContextPolicyV1>[0]["database"];
-  return { database, calls, get state() { return state; }, get releases() { return releases; } };
+  return { database, calls, get state() { return state; }, get releases() { return releases; },
+    get activeActions(){return [...activeActions];}, setMfpEnabled(value:boolean){mfpEnabled=value;} };
 }
+const uuidLike=(value:unknown)=>typeof value==="string"&&/^[0-9a-f]{8}-/u.test(value);
 const request = { workspace_id: id(1), initiator_user_id: id(2), brand_id: id(4), env };
 
 test("client-admin creation provisions exact policy with the configured system creator and no grant/admission/work mutation", async () => {
@@ -74,8 +90,8 @@ test("client-admin creation provisions exact policy with the configured system c
   assert.ok(lock > 0 && lock < f.calls.findIndex(call => call.sql.includes("FOR SHARE OF")));
   assert.deepEqual(f.calls[lock]!.values, [id(3)]);
   const policy = f.calls.find(call => call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))!;
-  assert.deepEqual(policy.values, [id(3), env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL, "Asia/Tokyo", "1100000", id(6)]);
-  assert.notEqual(policy.values.at(-1), request.initiator_user_id);
+  assert.deepEqual(policy.values, [id(3), env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL, "Asia/Tokyo", "1100000", id(6),1,"infinity"]);
+  assert.notEqual(policy.values[4], request.initiator_user_id);
   assert.ok(f.calls.findIndex(call => call.sql.includes("FROM user_brand_access")) < f.calls.indexOf(policy));
   const actions = f.calls.filter(call => call.sql.startsWith("INSERT INTO signal_processing_policy_actions"));
   assert.equal(actions.length, 2);
@@ -88,6 +104,16 @@ test("client-admin creation provisions exact policy with the configured system c
   assert.equal(semantic.model, "claude-sonnet-4-6");
   assert.deepEqual(JSON.parse(actions[1]!.values[4] as string), SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1);
   assert.equal(f.calls.at(-1)?.sql, "COMMIT"); assert.equal(f.releases, 1);
+});
+
+test("brand without MFP opt-in provisions the same legacy actions with both MFP flags enabled",async()=>{
+  const off=fixture(),on=fixture();
+  assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:off.database})).status,"provisioned");
+  assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:on.database,env:{...env,
+    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_CONCEPT_MEMBERSHIP_ENABLED:"true"}})).status,"provisioned");
+  const actions=(f:ReturnType<typeof fixture>)=>f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_actions"))
+    .map(call=>[call.values[1],call.values[5],call.values[6]]);
+  assert.deepEqual(actions(on),actions(off));
 });
 
 test("same creation replay can recover a missing policy, and subsequent calls preserve every existing policy", async () => {
@@ -121,7 +147,7 @@ test("authorized internal initiators use the same configured creator without acq
     const f = fixture({ userType: "noisia_internal", role });
     assert.equal((await provisionSignalBrandContextPolicyV1({ ...request, database: f.database })).status, "provisioned");
     assert.ok(f.calls.every(call => !call.sql.includes("FROM user_brand_access")));
-    assert.equal(f.calls.find(call => call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))?.values.at(-1), id(6));
+    assert.equal(f.calls.find(call => call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))?.values[4], id(6));
   }
 });
 
@@ -162,7 +188,7 @@ test("a partial action failure rolls back the draft and remains retryable", asyn
 
 test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserves an explicit daily maximum",async()=>{
  for(const daily of [undefined,"1","2000000"]){
-  const f=fixture();
+  const f=fixture({mfpEnabled:true});
   const configured={...env,NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:daily};
   const response=await provisionSignalBrandContextPolicyV1({database:f.database,workspace_id:id(1),brand_id:id(4),initiator_user_id:id(2),env:configured});
   assert.equal(response.status,"provisioned");
@@ -181,7 +207,7 @@ test("MFP brand bootstrap defaults to no strict daily/discovery cap and preserve
 
 test("MFP brand creation needs only a server-owned creator, not a legacy semantic pack or default prototype budget",async()=>{
  for(const cap of [undefined,"123"]){
-  const f=fixture();
+  const f=fixture({mfpEnabled:true});
   const response=await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{
    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:id(6),
    NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:cap
@@ -197,10 +223,56 @@ test("MFP brand creation needs only a server-owned creator, not a legacy semanti
  }
  for(const patch of [{NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:undefined},
   {NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"0"},{NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:"garbage"}]){
-  const f=fixture();
+  const f=fixture({mfpEnabled:true});
   assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{
    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:id(6),...patch
   }})).status,"configuration_required");
   assert.deepEqual(f.state,[]);
  }
+});
+
+test("an MFP opt-in succeeds an active organization policy without removing its actions or strict cap",async()=>{
+  const f=fixture({history:["active"],mfpEnabled:true});
+  const response=await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{...env,
+    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:undefined}});
+  assert.equal(response.status,"provisioned");
+  assert.ok(f.calls.some(call=>call.sql.includes("FROM signal_processing_policy_actions WHERE policy_version_id=")),
+    "the successor must copy all prior actions");
+  for(const action of ["brand_context_proposal","topic_prototype_embeddings","corpus_preparation","corpus_embeddings",
+    "topic_fit_incremental","topic_interpretation","topic_consolidation_numeric","topic_consolidation","mention_facets","concept_membership"])
+    assert.ok(f.activeActions.includes(action),`missing preserved or new action: ${action}`);
+  const draft=f.calls.find(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))!;
+  assert.equal(draft.values[3],"1100000","the existing strict daily maximum remains binding");
+  assert.ok(f.calls.some(call=>call.sql.includes("SET status='revoked'")));
+});
+
+test("an explicitly lowered MFP daily cap is applied when it covers inherited actions",async()=>{
+  const f=fixture({history:["active"],mfpEnabled:true,activeActions:["corpus_preparation","corpus_embeddings",
+    "topic_fit_incremental","topic_interpretation","topic_consolidation_numeric","topic_consolidation",
+    "mention_facets","concept_membership"]});
+  const response=await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{...env,
+    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"1000000"}});
+  assert.equal(response.status,"provisioned");
+  const draft=f.calls.find(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_versions"))!;
+  assert.equal(draft.values[3],"1000000");
+});
+
+test("an MFP cap cannot strand Brand Context actions used by sibling workspaces",async()=>{
+  const f=fixture({history:["active"],mfpEnabled:true});
+  const response=await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{...env,
+    NOISIA_MENTION_FACETS_ENABLED:"true",NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD:"1099999"}});
+  assert.equal(response.status,"configuration_required");
+  assert.ok(f.calls.every(call=>!call.sql.startsWith("INSERT INTO signal_processing_policy_versions")));
+  assert.deepEqual(f.state,["active"]);
+});
+
+test("a later ordinary brand leaves an MFP-first organization policy unchanged",async()=>{
+  const f=fixture({mfpEnabled:true});
+  assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:f.database,env:{...env,
+    NOISIA_MENTION_FACETS_ENABLED:"true"}})).status,"provisioned");
+  f.setMfpEnabled(false);
+  assert.equal((await provisionSignalBrandContextPolicyV1({...request,database:f.database,env})).status,"existing_policy");
+  assert.equal(f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_versions")).length,1);
+  assert.ok(f.activeActions.includes("mention_facets"));
+  assert.ok(f.activeActions.includes("concept_membership"));
 });
