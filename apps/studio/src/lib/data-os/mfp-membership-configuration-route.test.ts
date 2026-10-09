@@ -38,3 +38,22 @@ test('revoked access never reaches stores; changed route and unconfirmed rollbac
   assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:code});
  }
 });
+
+test('server selection requires both providers and H1 ledger gates; provider shutdown leaves rollback reachable',()=>{
+ const source=readFileSync(new URL('./mfp-membership-configuration.ts',import.meta.url),'utf8');
+ const flags=['NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED','NOISIA_JEV_PROVIDER_ENABLED','NOISIA_MFP_HYBRID_ENABLED','NOISIA_MFP_HYBRID_LEDGER_READY'];
+ type Selection={route:'standard'|'hybrid_h1';provider_available:boolean};
+ const load=(env:Record<string,string>)=>{
+  const exports:Record<string,unknown>={};const calls:Selection[]=[];
+  new Function('require','exports','process',ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(
+   (name:string)=>name==='@noisia/db'?{configureHybridMembershipRouteV1:(args:Selection)=>{calls.push(args);return args;}}:{pool:{}},exports,{env});
+  const configure=exports.configureMembershipForActorV1 as (args:{workspace_id:string;actor_user_id:string;route:'standard'|'hybrid_h1';expected_route_digest:string|null})=>Selection;
+  return{calls,configure};
+ };
+ const complete=Object.fromEntries(flags.map(key=>[key,'true']));
+ const args={workspace_id:workspace,actor_user_id:'session-actor',route:'hybrid_h1' as const,expected_route_digest:null};
+ assert.equal(load(complete).configure(args).provider_available,true);
+ for(const missing of flags){const f=load({...complete,[missing]:'false'});assert.equal(f.configure(args).provider_available,false);}
+ const off=load({});assert.equal(off.configure({...args,route:'standard'}).route,'standard');
+ assert.equal(off.calls.length,1);assert.equal(off.calls[0].provider_available,false);
+});
