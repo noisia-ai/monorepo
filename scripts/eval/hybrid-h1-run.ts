@@ -48,7 +48,7 @@ void main(async()=>{
         const row=(await pool.query("SELECT status,error_code,next_poll_at>now() wait FROM signal_labeling_runs WHERE id=$1",[receipt.run_id])).rows[0];
         if(row.status==="completed"){console.log(JSON.stringify({stage:"hybrid_stage_completed",provider_stage:stage}));return;}
         if(row.status==="failed")fail(`hybrid_stage_failed:${row.error_code}`);
-        if(!row.wait)await runHybridMembershipTickV1({run_id:receipt.run_id,stage:stage as HybridMembershipStageV1,
+        if(stage==="jev"||!row.wait)await runHybridMembershipTickV1({run_id:receipt.run_id,stage:stage as HybridMembershipStageV1,
           store,jevPrice:Number(process.env.NOISIA_JEV_INPUT_USD_PER_MTOK)});
         await delay(stage==="claude"?30000:100);
       }
@@ -62,7 +62,7 @@ void main(async()=>{
     const rows:RootRow[]=(await pool.query(hybridH1PopulationSqlV1,[identity.workspace_id,selected.jev_facets_labeler_version_id])).rows;
     if(rows.length!==1086||rows.some(row=>row.requires_context_review))fail("hybrid_population_changed");
     const calls:Record<string,any>[]=(await pool.query(`SELECT call.id,run.membership_snapshot->>'hybrid_stage' stage,call.inputs,call.results,
-      call.status,call.settled_micro_usd::text,call.terminal_exposure_micro_usd::text,call.usage
+      call.status,call.reserved_micro_usd::text,call.settled_micro_usd::text,call.terminal_exposure_micro_usd::text,call.usage
       FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
       WHERE run.workspace_id=$1 AND run.membership_snapshot->>'route_digest'=$2 ORDER BY call.created_at,call.id`,
       [identity.workspace_id,route.route_digest])).rows;
@@ -89,21 +89,27 @@ void main(async()=>{
       }
       return {root_id:row.root_id,input_digest:row.input_digest,text:row.text,gate_passed:gate,decisions,unresolved_concepts:unknown};
     });
-    const billing:Record<string,any>[]=(await pool.query(`SELECT run.kind,run.membership_snapshot->>'hybrid_stage' stage,
+    const billing:Record<string,any>[]=(await pool.query(`SELECT run.kind,version.provider,version.model,run.membership_snapshot->>'hybrid_stage' stage,
+      run.membership_snapshot->>'route_digest' route_digest,
       count(call.id)::int calls,COALESCE(sum(call.settled_micro_usd),0)::text settled_micro_usd,
       COALESCE(sum(call.terminal_exposure_micro_usd),0)::text terminal_exposure_micro_usd,
       COALESCE(sum((call.usage->>'input_tokens')::bigint),0)::text input_tokens,
       COALESCE(sum((call.usage->>'output_tokens')::bigint),0)::text output_tokens,
       COALESCE(sum((call.usage->>'cache_read_input_tokens')::bigint),0)::text cache_read_input_tokens,
-      COALESCE(sum((call.usage->>'cache_creation_input_tokens')::bigint),0)::text cache_creation_input_tokens
+      COALESCE(sum((call.usage->>'cache_creation_input_tokens')::bigint),0)::text cache_creation_input_tokens,
+      COALESCE(sum((call.usage#>>'{cache_creation,ephemeral_5m_input_tokens}')::bigint),0)::text cache_creation_5m_input_tokens,
+      COALESCE(sum((call.usage#>>'{cache_creation,ephemeral_1h_input_tokens}')::bigint),0)::text cache_creation_1h_input_tokens
       FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
-      WHERE run.workspace_id=$1 GROUP BY run.kind,run.membership_snapshot->>'hybrid_stage'`,[identity.workspace_id])).rows;
-    const cost=(kind:string,stage:string|null)=>billing.filter(row=>row.kind===kind&&row.stage===stage)
+      JOIN signal_labeler_versions version ON version.id=run.labeler_version_id
+      WHERE run.workspace_id=$1 GROUP BY run.kind,version.provider,version.model,
+        run.membership_snapshot->>'hybrid_stage',run.membership_snapshot->>'route_digest'`,[identity.workspace_id])).rows;
+    const cost=(kind:string,stage:string|null)=>billing.filter(row=>row.kind===kind&&row.stage===stage&&(kind==="facets"?row.provider==="typesafe":row.route_digest===route.route_digest))
       .reduce((sum,row)=>sum+Number(row.settled_micro_usd),0)/1e6;
     const unresolvedPairs=output.reduce((sum,row)=>sum+(row.unresolved_concepts?.length??0),0);
     const ledger={facets_settled_usd:cost("facets",null),jev_settled_usd:cost("membership","jev"),
       claude_settled_usd:cost("membership","claude"),unknown_calls:unresolvedPairs,
-      unknown_provider_usd_upper_bound:calls.reduce((sum,call)=>sum+Number(call.terminal_exposure_micro_usd),0)/1e6};
+      unknown_provider_usd_upper_bound:calls.reduce((sum,call)=>sum+Number(call.terminal_exposure_micro_usd)+
+        (call.status==="unknown"?Number(call.reserved_micro_usd??0):0),0)/1e6};
     const report=measureHybridH1V1(gold,output,selection.concepts.map(concept=>concept.concept_key),ledger);
     await mkdir(directory,{recursive:true,mode:0o700});
     for(const [name,value] of [["roots.jsonl",output.map(row=>JSON.stringify(row)).join("\n")+"\n"],

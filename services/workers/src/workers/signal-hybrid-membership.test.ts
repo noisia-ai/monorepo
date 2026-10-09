@@ -4,7 +4,7 @@ import { buildHybridJevQuestionV1, type ConceptForJudgeV1,
   type MembershipInputV1 } from "@noisia/query-engine";
 import type { LabelingRunV1 } from "@noisia/db";
 import { JevProviderErrorV1 } from "../providers/typesafe-jev";
-import { hybridReceiptFilenameV1, hybridJevCallProposalV1, runHybridMembershipTickV1 } from "./signal-hybrid-membership";
+import { hybridReceiptFilenameV1, hybridClaudeBatchStoreV1, hybridJevCallProposalV1, runHybridMembershipTickV1 } from "./signal-hybrid-membership";
 
 const concept={concept_key:"theme",label:"Theme",scope:"all_conversations",definition:"Explicit theme",
   inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],definition_digest:"sha256:"+"a".repeat(64)} as unknown as ConceptForJudgeV1;
@@ -71,4 +71,28 @@ for(const status of [429,529] as const)test(`H1 HTTP ${status} retains raw and z
   const f=fixture(status);
   await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider});
   assert.deepEqual(f.events,["reserve","renew","submitting","provider","raw","settle","apply","run_failed","release"]);
+});
+
+test("batch confirmation preserves each root/concept JEV receipt and visible rationale",async()=>{
+  const second={...concept,concept_key:"second"};
+  const decision={verdict:"belongs" as const,probability:0.8,citation:{quote:input.text,start:0,end:input.text.length}};
+  const root={...input,evaluated_concepts:[concept,second],jev_by_concept:{
+    theme:{decision,call_id:"jev-theme"},second:{decision,call_id:"jev-second"}}};
+  const call={id:"claude-batch",inputs:[root]};
+  let captured:any;
+  const adapter=hybridClaudeBatchStoreV1({apply:async(_run:any,pages:any)=>{captured=pages;}} as never);
+  const base={root_id:input.root_id,input_digest:input.input_digest,root_fingerprint:input.root_fingerprint,entity_context_digest:input.entity_context_digest,
+    effective_entities_digest:input.effective_entities_digest,definition_digest:concept.definition_digest,citations:[]};
+  await adapter.apply(run,[{call:call as never,results:[
+    {...base,concept_key:"theme",verdict:"not_belongs",rationale:null},
+    {...base,concept_key:"second",verdict:"belongs",rationale:"The source establishes this concept.",
+      citations:[{quote:input.text,quote_start:0,quote_end:input.text.length} as never]},
+  ]}]);
+  assert.deepEqual(captured[0].results.map((result:any)=>result.jev_call_id),["jev-theme","jev-second"]);
+  assert.ok(captured[0].results.every((result:any)=>result.claude_call_id==="claude-batch"));
+  assert.equal(captured[0].results[0].claude.citation,null);
+  assert.ok(captured[0].results[0].rationale);
+  assert.equal(captured[0].results[1].rationale,"The source establishes this concept.");
+  await assert.rejects(adapter.apply(run,[{call:{...call,inputs:[{...root,jev_by_concept:{}}]} as never,
+    results:[{...base,concept_key:"theme",verdict:"not_belongs",rationale:null}]}]),/hybrid_prior_jev_missing/u);
 });
