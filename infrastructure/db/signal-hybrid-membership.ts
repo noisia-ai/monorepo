@@ -231,31 +231,6 @@ export async function loadHybridMembershipRouteV1(args: { database: LabelingData
   });
 }
 
-/** Review data is withheld unless the same rights view allows evidence for this root. */
-export async function loadHybridMembershipReviewQueueV1(args: {
-  database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string; limit?: number;
-}) {
-  return transaction(args.database, async client => {
-    const caps = await authorize(client, args.workspace_id, args.actor_user_id);
-    const limit = Math.min(100, Math.max(1, args.limit ?? 50));
-    const items = (await client.query(`SELECT h.root_id,h.concept_key,h.definition_digest,h.jev,h.claude,h.rationale,h.created_at,
-      CASE WHEN rights.evidence THEN f.full_text ELSE NULL END text,NOT rights.evidence evidence_withheld
-      FROM signal_concept_memberships_current_v1 current
-      JOIN signal_hybrid_membership_routes route ON route.workspace_id=current.workspace_id AND route.route_digest=current.labeler_digest
-      JOIN signal_hybrid_membership_decisions h ON h.workspace_id=current.workspace_id AND h.root_id=current.root_id
-        AND h.root_fingerprint=current.root_fingerprint AND h.concept_key=current.concept_key AND h.definition_digest=current.definition_digest
-        AND h.entity_context_digest=current.entity_context_digest AND h.effective_entities_digest=current.effective_entities_digest
-        AND h.route_digest=route.route_digest
-      JOIN signal_mention_facets_current_v1 f ON f.workspace_id=h.workspace_id AND f.root_id=h.root_id
-      JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=h.workspace_id AND rights.root_id=h.root_id AND rights.metrics
-      WHERE current.workspace_id=$1 AND current.verdict='review_required'
-      ORDER BY h.root_id,h.concept_key LIMIT $2`, [args.workspace_id, limit])).rows;
-    return { route: "hybrid_h1", can_override: caps.can_edit_topics, items: items.map(item =>
-      item.evidence_withheld ? { ...item, jev: { verdict: item.jev.verdict, probability: item.jev.probability },
-        claude: { verdict: item.claude.verdict }, text: null, rationale:null } : item) };
-  });
-}
-
 export type HybridDecisionInputV1 = {
   root_id: string; root_fingerprint: string; concept_key: string; definition_digest: string;
   entity_context_digest: string; effective_entities_digest: string; text: string;
