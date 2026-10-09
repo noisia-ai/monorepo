@@ -6,9 +6,10 @@ import { main, openDatabase } from "../dev-corpus/guard.mjs";
 import { loadMfpEvalIdentity } from "./fixture-identity";
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 void main(async()=>{
-  const identity=await loadMfpEvalIdentity(),pool=await openDatabase();
+  const identity=await loadMfpEvalIdentity(),pool=await openDatabase(),client=await pool.connect();
   try{
-    const rows:Record<string,any>[]=(await pool.query(`WITH current_pairs AS MATERIALIZED (
+    await client.query("SET statement_timeout='20s'");
+    const rows:Record<string,any>[]=(await client.query(`WITH current_pairs AS MATERIALIZED (
       SELECT workspace_id,root_id,concept_key,definition_digest,labeler_digest
       FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND source='model' AND verdict='belongs'
     ), authorized_roots AS MATERIALIZED (
@@ -61,5 +62,5 @@ void main(async()=>{
       review_sha256:hash(payload),trace_sha256:hash(trace)};
     await writeFile(`${directory}/manifest.json`,JSON.stringify(manifest,null,2)+"\n",{flag:"wx",mode:0o600});
     console.log(JSON.stringify({directory,...manifest}));
-  }finally{await pool.end();}
+  }finally{client.release();await pool.end();}
 });
