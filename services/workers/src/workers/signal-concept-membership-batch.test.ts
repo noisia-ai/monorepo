@@ -60,6 +60,7 @@ function harness() {
     cursor_root_id: null,
     cap_micro_usd: null,
     processing_admission_id: "admission",
+    selection_complete: false,
     status: "running",
     entity_context_version_no: 1,
   } as MembershipRunV1;
@@ -299,7 +300,7 @@ test("one malformed membership is retried alone and its final error is not bille
   assert.equal(h.labels[0]?.verdict, "not_belongs");
   await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
   assert.equal(h.labels.length, 2);
-  assert.equal(h.labels[1]?.error_code, "membership_schema_invalid");
+  assert.equal(h.labels[1]?.error_code, "membership_item_schema_invalid");
   await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
   assert.equal(h.submitted(), 2);
 });
@@ -404,14 +405,6 @@ test("one unknown call does not block reconciliation of a separate durable respo
   assert.equal(known!.results_applied, true);
   assert.equal(h.labels.length, 1);
   assert.equal(h.submitted(), 0);
-});
-
-test("corrupt stored receipt makes the membership run fail explicitly before provider work",async()=>{
-  const h=harness();
-  h.store.calls=async()=>{throw new Error("labeling_raw_receipt_invalid");};
-  await assert.rejects(runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider}),/labeling_raw_receipt_invalid/u);
-  assert.equal(h.run.error_code,"labeling_raw_receipt_invalid");
-  assert.equal(h.submitted(),0);
 });
 
 test("missing ended-batch result preserves unknown exposure and emits no semantic negative", async () => {

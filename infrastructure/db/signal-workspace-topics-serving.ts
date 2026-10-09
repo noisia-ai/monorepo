@@ -64,7 +64,7 @@ type DefinedInterest = { selection: SignalWorkspaceDefinedInterestOverlayV1; top
   generation_id: string; preparation_run_id: string; finalized_digest: string };
 type Context = { generation: Generation | null; topics: CatalogTerm[]; selection: Selection;
   is_current: boolean; is_processing: boolean; filters: CivilFilters;
-  native: boolean; consolidated: boolean; imported?: ImportedPopulation;
+  native: boolean; consolidated: boolean; consolidation_revision_id?: string; imported?: ImportedPopulation;
   facet_enabled?: boolean;
   defined_interests?: DefinedInterest[]; concept_membership?: boolean; membership_concept_keys?: Set<string>; membership_run_id?: string | null; membership_state_digest?: string };
 
@@ -142,7 +142,7 @@ function consolidatedContext(snapshot: SignalTopicConsolidationServingSnapshotV1
   const topics = snapshot.catalog.map(item => ({ ...signalTopicDefinitionSchemaV1.parse({ term_key: item.term_key,
     label: item.label, definition: item.definition, scope: "all_conversations", inclusion: [], exclusion: [],
     positive_examples: [], negative_examples: [], lifecycle: "draft", origin: "workspace_discovery", discovery_guidance: false,
-    source: { run_key: `consolidation:${snapshot.revision_id}`, candidate_key: item.concept_id, candidate_digest: item.semantic_identity_digest },
+    source: { run_key: `consolidation:${snapshot.revision_id}`, candidate_key: item.concept_key, candidate_digest: item.semantic_identity_digest },
     definition_revision: item.definition_revision, definition_digest: item.definition_digest, created_at: item.created_at, updated_at: item.updated_at }),
     kind: item.kind }));
   return { generation: { id: snapshot.id, taxonomy_profile_id: null, preparation_run_id: snapshot.preparation_run_id,
@@ -152,7 +152,7 @@ function consolidatedContext(snapshot: SignalTopicConsolidationServingSnapshotV1
     identity: null, correction_digest: snapshot.revision_digest, source_valid: snapshot.source_valid }, topics,
     selection: { revision: snapshot.binding.selection_revision, items: snapshot.binding.selection },
     is_current: snapshot.source_valid && snapshot.input_revision === snapshot.current_revision,
-    is_processing: false, filters, native: true, consolidated: true };
+    is_processing: false, filters, native: true, consolidated: true, consolidation_revision_id:snapshot.revision_id };
 }
 /** Only absence of publication permits an imported fallback. A stale or otherwise
  * unavailable prior publication must keep its original failure semantics. The
@@ -234,6 +234,17 @@ async function withDefinedInterests(client: PoolClient, args: Args, base: Contex
     defined_interests: interests, native: true };
 }
 /** MFP consumes current per-root decisions independently of frozen V2 generations. */
+export async function adoptedConsolidationConceptKeysV1(queryable:Pick<PoolClient,"query">,workspaceId:string,
+  revisionId:string,definitions:readonly SignalTopicDefinitionV1[]):Promise<Set<string>>{
+  const adopted=definitions.filter(definition=>definition.origin==="workspace_discovery"
+    && definition.source?.run_key.startsWith("workspace-discovery:"));
+  if(!adopted.length)return new Set();
+  const sameRunRevisions=new Set((await queryable.query<{id:string}>(`SELECT id::text FROM signal_topic_consolidation_revisions WHERE consolidation_run_id=(
+    SELECT consolidation_run_id FROM signal_topic_consolidation_revisions WHERE id=$1::uuid AND workspace_id=$2::uuid)
+    AND workspace_id=$2::uuid`,[revisionId,workspaceId])).rows.map(row=>row.id));
+  return new Set(adopted.filter(definition=>sameRunRevisions.has(definition.source!.run_key.slice("workspace-discovery:".length)))
+    .map(definition=>definition.source!.candidate_key));
+}
 async function membershipContext(client: PoolClient, args: Args, filters: CivilFilters): Promise<Context> {
   const base = await publishedContext(client, { ...args, imported_fallback: true }, filters);
   const rows = (await client.query<{topic:unknown; selected:boolean; selection_revision:number; selection_digest:string|null}>(`
@@ -241,9 +252,15 @@ async function membershipContext(client: PoolClient, args: Args, filters: CivilF
       COALESCE(s.selection_revision,0)::int selection_revision,s.selection_digest
     FROM signal_membership_concepts_v1 c LEFT JOIN signal_defined_interest_selections s ON s.workspace_id=c.workspace_id
       AND s.term_key=c.concept_key AND s.generation_id IS NULL WHERE c.workspace_id=$1 ORDER BY c.concept_key`,[args.workspace_id])).rows;
-  const protectedKeys=new Set(base.topics.map(topic => topic.term_key));
-  const conceptRows=rows.filter(row=>!protectedKeys.has(signalTopicDefinitionSchemaV1.parse(row.topic).term_key));
-  const topics=conceptRows.map(r=>({...signalTopicDefinitionSchemaV1.parse(r.topic),kind:"topic" as const}));
+  const concepts=rows.map(row=>({...row,definition:signalTopicDefinitionSchemaV1.parse(row.topic)}));
+  const adoptedCandidates=base.consolidated
+    ? await adoptedConsolidationConceptKeysV1(client,args.workspace_id,base.consolidation_revision_id!,concepts.map(row=>row.definition))
+    : new Set<string>();
+  const published=base.consolidated ? base.topics.filter(topic=>topic.source?.run_key.startsWith("consolidation:")
+    ? !adoptedCandidates.has(topic.source.candidate_key) : true) : base.topics;
+  const protectedKeys=new Set(published.map(topic => topic.term_key));
+  const conceptRows=concepts.filter(row=>!protectedKeys.has(row.definition.term_key));
+  const topics=conceptRows.map(r=>({...r.definition,kind:"topic" as const}));
   const keys=new Set(topics.map(t=>t.term_key));
   const change=await inspectFacetContextChangeV1(client,args.workspace_id);
   const membershipState=(await client.query<{digest:string}>(`SELECT 'sha256:'||encode(sha256(convert_to(COALESCE(string_agg(jsonb_build_array(root_id,concept_key,root_fingerprint,definition_digest,labeler_digest,entity_context_digest,effective_entities_digest,verdict,source,call_id,updated_at)::text,'' ORDER BY root_id,concept_key),''),'UTF8')),'hex') digest FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1`,[args.workspace_id])).rows[0]!.digest;
@@ -253,7 +270,7 @@ async function membershipContext(client: PoolClient, args: Args, filters: CivilF
     EXISTS(SELECT 1 FROM signal_labeling_runs WHERE workspace_id=s.workspace_id AND kind='membership' AND status IN('queued','running')) processing
     FROM signal_corpus_preparation_input_state s WHERE s.workspace_id=$1`,[args.workspace_id])).rows[0];
   const selected=Object.fromEntries(topics.map((t,i)=>[t.term_key,{selected:conceptRows[i]!.selected,definition_digest:t.definition_digest,definition_revision:t.definition_revision,generation_id:null}]));
-  return {...base,topics:[...base.topics,...topics],
+  return {...base,topics:[...published,...topics],
     selection:{revision:Math.max(base.selection.revision,...conceptRows.map(r=>r.selection_revision)),items:{...base.selection.items,...selected}},
     is_current:(!base.generation || base.is_current) && (!change.changed || change.affected.length===0),
     is_processing:base.is_processing || (state?.processing??false),filters,native:true,consolidated:base.consolidated,
