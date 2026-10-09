@@ -16,12 +16,13 @@ import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1,
   writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import { loadFacetEntityContextV1 } from "../signal-mention-facets";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
+import { verifyHybridJevPageContinuationV1 } from "./signal-mfp-hybrid-page.assertions";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
 
 const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
 test("migrated H1 selection, review queue and explicit unknown-exposure rollback use production tables", {
-  skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
+  skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 300_000,
 }, async () => {
   const priorFlags=[process.env.NOISIA_MENTION_FACETS_ENABLED,process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED];
   const database = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === "true" });
@@ -279,6 +280,10 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       "an interrupted JEV run cannot reserve the settled pair again");
     assert.deepEqual(await selectMembershipInputsV1(client, work(randomUUID()), true), [],
       "a new JEV run with the same route cannot charge the pair again");
+    await client.query("SAVEPOINT page_probe");
+    await verifyHybridJevPageContinuationV1({client,database:db,workspace,actor,source,batch,prep,
+      context,facetDigest:sha("facet-labeler"),facets,entity,facetCall,route,concept:concept as typeof input.evaluated_concepts[number],admit});
+    await client.query("ROLLBACK TO SAVEPOINT page_probe");
     const unknownConcepts = [1, 2].map(number => ({ ...concept,
       concept_key: `uncertain_brakes_${number}`, label: `Uncertain brakes ${number}`,
       definition_digest: sha(`uncertain definition ${number}`) }));

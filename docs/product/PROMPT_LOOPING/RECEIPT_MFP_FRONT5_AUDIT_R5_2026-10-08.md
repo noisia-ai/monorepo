@@ -1,5 +1,17 @@
 # Recibo §11.3 — MFP, PR #40
 
+## Revisión 6 — 9 de octubre de 2026
+
+Se integra H1 #39 `c3282a99` sobre el corte #40 `30414997`, sin abrir otro PR ni fusionar PRs. La integración automática no produjo conflictos. Los nueve archivos recibidos de H1 coinciden íntegramente con su rama; F5-12 y su prueba permanecen idénticos al corte previo. Se conservan las correcciones de §11.3, el selector y la procedencia de decisiones.
+
+CI general y PostgreSQL se vuelven a ejecutar en GitHub sobre el HEAD combinado, con base temporal develop. El SHA final y los enlaces/resultados de ambos gates se registran en el recibo final del [PR #40](https://github.com/noisia-ai/monorepo/pull/40); después se restaura su base #39 sin cambiar ese SHA. Cualquier nueva cabeza documental de #39 se incorpora antes del cierre.
+
+Esta revisión no ejecuta proveedores, migraciones contra entornos compartidos ni despliegues. El gasto nuevo de proveedor es USD 0. Las pruebas aisladas de CI no acreditan UI desplegada ni aceptación del fundador. Los datos de despliegue y ejecución que siguen son evidencia histórica del corte anterior, no una lectura del entorno actual.
+
+El runtime de esta revisión no expone el modelo ni el esfuerzo efectivos: ambos son **no observables**. La configuración `gpt-6.1-sol` / `medium` comunicada anteriormente se conserva sólo como antecedente, no como atribución medida de esta revisión.
+
+## Evidencia histórica del corte anterior
+
 Corte preparado el 8–9 de octubre de 2026 para revisión; **sin fusión ni aceptación integral del fundador**. [PR #40](https://github.com/noisia-ai/monorepo/pull/40) integra develop `b2667fc5` y depende de H1 #39 `3ba50f05`. El despliegue compartido conserva develop, Studio `2271084f-3bbc-45dd-9800-1472de995c5d` y Runner `df39c4ee-4b03-4305-ac53-9c9f0ab1b089`, publicación automática desactivada.
 
 | Requisito | Resultado y evidencia |

@@ -17,19 +17,19 @@ const run={id:"00000000-0000-4000-8000-000000000002",workspace_id:"00000000-0000
   context:{},lease_token:"00000000-0000-4000-8000-000000000004"} as unknown as LabelingRunV1;
 
 function fixture(outcome:"ok"|"unknown"|"storage_failed"|429|529) {
-  const events:string[]=[],calls:Record<string,unknown>[]=[];
+  const events:string[]=[],calls:Record<string,any>[]=[],fixtureRun={...run};
   const store={
-    claim:async()=>run,calls:async()=>calls,inputs:async()=>[input],
+    claim:async()=>fixtureRun,calls:async()=>calls,inputs:async()=>[input],
     reserve:async(_run:unknown,proposals:Record<string,unknown>[])=>{
-      events.push("reserve");calls.push({...proposals[0],id:"00000000-0000-4000-8000-000000000005",status:"reserved",
-        raw_body:null,results_applied:false});return calls;},
-    renew:async()=>events.push("renew"),markSubmitting:async()=>events.push("submitting"),
-    markFailed:async(_run:unknown,_calls:unknown,unknown:boolean)=>events.push(`failed:${unknown}`),
-    fail:async()=>events.push("run_failed"),
-    persistRaw:async()=>{events.push("raw");if(outcome==="storage_failed")throw new Error("storage_rejected");},
-    settle:async(_run:unknown,_call:unknown,receipt:{settled_micro_usd:number})=>{
-      if(typeof outcome==="number")assert.equal(receipt.settled_micro_usd,0);events.push("settle");},
-    apply:async()=>events.push("apply"),finish:async()=>({status:"completed"}),release:async()=>events.push("release"),
+      events.push("reserve");calls.push(...proposals.map((p,i)=>({...p,id:`call-${i}`,status:"reserved",raw_body:null,results_applied:false})));return calls;},
+    renew:async()=>events.push("renew"),markSubmitting:async(_run:unknown,page:Record<string,any>[])=>{events.push("submitting");page.forEach(call=>call.status="submitting");},
+    markFailed:async(_run:unknown,page:Record<string,any>[],unknown:boolean)=>{events.push(`failed:${unknown}`);page.forEach(call=>call.status=unknown?"unknown":"failed");},
+    fail:async(_run:unknown,code:string)=>{events.push("run_failed");fixtureRun.error_code=code;fixtureRun.status="failed";},
+    persistRawPage:async(_run:unknown,page:Array<{call:Record<string,any>;raw:string}>)=>{events.push("raw");if(outcome==="storage_failed")throw new Error("storage_rejected");page.forEach(row=>row.call.raw_body=row.raw);},
+    settlePage:async(_run:unknown,page:Array<{call:Record<string,any>;settled_micro_usd:number}>)=>{
+      page.forEach(row=>{assert.ok(row.call.raw_body);if(typeof outcome==="number")assert.equal(row.settled_micro_usd,0);row.call.status="settled";});events.push("settle");},
+    apply:async(_run:unknown,page:Array<{call:Record<string,any>}>)=>{events.push("apply");page.forEach(row=>row.call.results_applied=true);},
+    finish:async()=>fixtureRun.error_code?"failed":calls.some(call=>call.status==="reserved")?"running":"completed",release:async()=>events.push("release"),
   };
   const provider={evaluate:async(request:ReturnType<typeof buildHybridJevQuestionV1>)=>{
     events.push("provider");
@@ -39,7 +39,7 @@ function fixture(outcome:"ok"|"unknown"|"storage_failed"|429|529) {
     return {http_status:200,latency_ms:1,body:JSON.stringify({model:"jev-1.13.0",
       usage:{input_tokens:10,output_tokens:0},answers:{membership:{type:"noul",noul:0.8}}})};
   }};
-  return {events,store:store as never,provider:provider as never};
+  return {events,calls,store:store as never,provider:provider as never};
 }
 
 test("H1 JEV stage reserves in the shared store before one provider call and settles after raw",async()=>{
@@ -48,13 +48,13 @@ test("H1 JEV stage reserves in the shared store before one provider call and set
   assert.equal(proposal.inputs.length,1);
   assert.ok(proposal.reserved_micro_usd>0);
   await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider});
-  assert.deepEqual(f.events,["reserve","renew","submitting","provider","raw","settle","apply","release"]);
+  assert.deepEqual(f.events,["reserve","submitting","provider","raw","settle","apply","release"]);
 });
 test("H1 unknown JEV send is never settled or applied",async()=>{
   const f=fixture("unknown");
   await assert.rejects(runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider}),
     /network_unknown/u);
-  assert.deepEqual(f.events,["reserve","renew","submitting","provider","failed:true","run_failed","release"]);
+  assert.deepEqual(f.events,["reserve","submitting","provider","failed:true","run_failed","release"]);
 });
 test("H1 receipt filename starts with a letter even when the call UUID starts with a digit",()=>{
   assert.equal(hybridReceiptFilenameV1("00000000-0000-4000-8000-000000000005"),
@@ -64,13 +64,13 @@ test("H1 quarantines a returned provider response when durable raw storage fails
   const f=fixture("storage_failed");
   await assert.rejects(runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider}),
     /storage_rejected/u);
-  assert.deepEqual(f.events,["reserve","renew","submitting","provider","raw","failed:true","run_failed","release"]);
+  assert.deepEqual(f.events,["reserve","submitting","provider","raw","failed:true","run_failed","release"]);
 });
 
 for(const status of [429,529] as const)test(`H1 HTTP ${status} retains raw and zero observed cost without charging reserve`,async()=>{
   const f=fixture(status);
   await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider});
-  assert.deepEqual(f.events,["reserve","renew","submitting","provider","raw","settle","apply","run_failed","release"]);
+  assert.deepEqual(f.events,["reserve","submitting","provider","raw","settle","apply","run_failed","release"]);
 });
 
 test("batch confirmation preserves each root/concept JEV receipt and visible rationale",async()=>{
@@ -95,4 +95,15 @@ test("batch confirmation preserves each root/concept JEV receipt and visible rat
   assert.equal(captured[0].results[1].rationale,"The source establishes this concept.");
   await assert.rejects(adapter.apply(run,[{call:{...call,inputs:[{...root,jev_by_concept:{}}]} as never,
     results:[{...base,concept_key:"theme",verdict:"not_belongs",rationale:null}]}]),/hybrid_prior_jev_missing/u);
+});
+
+test("H1 stops new page sends when an uncertain call is outside the next 200 rows",async()=>{
+  const f=fixture("ok");
+  for(let n=0;n<201;n++)f.calls.push({...hybridJevCallProposalV1(run,input,concept,0.5),id:`call-${n}`,
+    status:n===200?"unknown":"reserved",raw_body:null,results_applied:false});
+  let sent=0;
+  const outcome=await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,
+    jev:{evaluate:async()=>{sent++;throw new Error("must not send");}}});
+  assert.equal(outcome.status,"outcome_unknown");assert.equal(sent,0);
+  assert.deepEqual(f.events,["run_failed","release"]);
 });

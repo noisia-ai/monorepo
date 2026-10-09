@@ -7,8 +7,9 @@ import {
 } from "@noisia/query-engine";
 import { createHybridMembershipStageStoreV1, type HybridStageInputV1, type HybridStageResultV1,
   type HybridMembershipStageV1, type LabelingRunV1, type ConceptMembershipStoreV1 } from "@noisia/db";
-import { createTypesafeJevClientV1, validateJevResponseV1, jevProviderErrorV1 } from "../providers/typesafe-jev";
+import { createTypesafeJevClientV1 } from "../providers/typesafe-jev";
 import { createAnthropicMessageBatchesClient } from "../providers/anthropic-message-batches";
+import { processJevLabelingPageV1 } from "./signal-jev-labeling-page";
 import { runConceptMembershipTickV1 } from "./signal-concept-membership-batch";
 import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 import { readSignalLabelingReceiptV1 } from "./signal-labeling-receipt-storage";
@@ -58,55 +59,24 @@ export function hybridClaudeBatchStoreV1(store:HybridStore):ConceptMembershipSto
     })})));
   }};
 }
-async function runJevTick(args:{run_id:string;store:HybridStore;jevPrice:number;
-  jev?:ReturnType<typeof createTypesafeJevClientV1>}) {
-  const {store}=args,run=await store.claim(args.run_id);
-  if(!run)return {status:"not_claimed"};
-  try {
-    if(!Number.isFinite(args.jevPrice)||args.jevPrice<=0)throw new Error("hybrid_jev_price_required");
-    let calls=await store.calls(run);
-    if(calls.some(call=>call.status==="unknown")){
-      await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
-    }
-    if(!calls.some(call=>["reserved","submitting","submitted"].includes(call.status)||!call.results_applied)){
-      const inputs=await store.inputs(run);
-      if(inputs.length)await store.reserve(run,inputs.flatMap(input=>input.evaluated_concepts.map(concept=>
-        hybridJevCallProposalV1(run,input,concept,args.jevPrice))));
-      calls=await store.calls(run);
-    }
-    for(const call of calls.filter(call=>call.raw_body&&!call.results_applied||call.status==="reserved").slice(0,10)){
-      await store.renew(run);
-      let raw:{body:string;http_status:number;latency_ms:number};
-      if(call.raw_body)raw=JSON.parse(call.raw_body);
-      else {
-        await store.markSubmitting(run,[call]);
-        try {raw=await (args.jev??createTypesafeJevClientV1()).evaluate(call.request as ReturnType<typeof buildHybridJevQuestionV1>);}
-        catch(error){const uncertain=jevProviderErrorV1(error).outcome!=="definitely_not_sent";
-          await store.markFailed(run,[call],uncertain);await store.fail(run,uncertain?"labeling_outcome_unknown":"hybrid_not_sent");throw error;}
-        try{await store.persistRaw(run,call,JSON.stringify(raw));}
-        catch(error){await store.markFailed(run,[call],true);await store.fail(run,"labeling_outcome_unknown");throw error;}
-      }
-      const input=call.inputs[0]!,concept=input.evaluated_concepts[0]!;
-      let parsed:ReturnType<typeof validateJevResponseV1>|null=null;
-      let failure:ReturnType<typeof jevProviderErrorV1>|null=null;
-      try{parsed=validateJevResponseV1(call.request as ReturnType<typeof buildHybridJevQuestionV1>,raw);}
-      catch(error){failure=jevProviderErrorV1(error);}
-      const usage={...zeroUsage(),...(parsed?.usage??failure?.evidence.usage)};
-      await store.settle(run,call,{usage,settled_micro_usd:llmCostMicroUsdV1(usage,
-        llmPriceV1("typesafe","jev-1.13.0","sync",args.jevPrice)),stop_reason:failure?.code??null});
-      const result:HybridStageResultV1={root_id:input.root_id,root_fingerprint:input.root_fingerprint,
-        concept_key:concept.concept_key,definition_digest:concept.definition_digest,
-        entity_context_digest:input.entity_context_digest,effective_entities_digest:input.effective_entities_digest,
-        jev:parsed?mapHybridJevAnswerV1(input,parsed):{verdict:"error",probability:null,citation:null},
-        jev_call_id:call.id,claude:null,claude_call_id:null,rationale:failure?.code??null};
-      await store.apply(run,[{call,results:[result]}]);
-      if(failure){await store.fail(run,failure.code);return {status:"failed"};}
-    }
-    return {status:await store.finish(run)};
-  }finally{await store.release(run);}
+function runJevTick(args:{run_id:string;store:HybridStore;jevPrice:number;lease_renewal_ms?:number;jev?:ReturnType<typeof createTypesafeJevClientV1>}) {
+  const result=(call:Parameters<HybridStore["apply"]>[1][number]["call"],jev:HybridStageResultV1["jev"],rationale:string|null):HybridStageResultV1=>{
+    const input=call.inputs[0]!,concept=input.evaluated_concepts[0]!;
+    return {root_id:input.root_id,root_fingerprint:input.root_fingerprint,concept_key:concept.concept_key,
+      definition_digest:concept.definition_digest,entity_context_digest:input.entity_context_digest,
+      effective_entities_digest:input.effective_entities_digest,jev,jev_call_id:call.id,claude:null,claude_call_id:null,rationale};
+  };
+  return processJevLabelingPageV1({...args,provider:args.jev??createTypesafeJevClientV1(),hooks:{
+    price:()=>{if(!Number.isFinite(args.jevPrice)||args.jevPrice<=0)throw new Error("hybrid_jev_price_required");return llmPriceV1("typesafe","jev-1.13.0","sync",args.jevPrice);},
+    propose:(run,inputs)=>inputs.flatMap(input=>input.evaluated_concepts.map(concept=>hybridJevCallProposalV1(run,input,concept,args.jevPrice))),
+    map:(_run,call,parsed)=>[result(call,mapHybridJevAnswerV1(call.inputs[0]!,parsed),null)],
+    error:(_run,call,code,unknown)=>unknown||!call.raw_body?[]:[result(call,{verdict:"error",probability:null,citation:null},code)],
+    invalidUsage:failure=>failure.evidence.usage??([429,529].includes(failure.evidence.http_status??0)?{input_tokens:0,output_tokens:0}:undefined),
+    labeled:()=>false,fail_on_error:true,
+  }});
 }
 export async function runHybridMembershipTickV1(args:{run_id:string;stage:HybridMembershipStageV1;
-  store:HybridStore;jevPrice:number;jev?:ReturnType<typeof createTypesafeJevClientV1>;
+  store:HybridStore;jevPrice:number;lease_renewal_ms?:number;jev?:ReturnType<typeof createTypesafeJevClientV1>;
   claude?:ReturnType<typeof createAnthropicMessageBatchesClient>}){
   if(args.stage==="jev")return runJevTick(args);
   return runConceptMembershipTickV1({run_id:args.run_id,store:hybridClaudeBatchStoreV1(args.store),
