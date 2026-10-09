@@ -36,7 +36,6 @@ const querySchema = z
         "refused",
         "error",
         "pending",
-        "review_required",
       ])
       .optional(),
     cursor: z.string().optional(),

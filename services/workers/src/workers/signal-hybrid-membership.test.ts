@@ -4,7 +4,7 @@ import { buildHybridJevQuestionV1, type ConceptForJudgeV1,
   type MembershipInputV1 } from "@noisia/query-engine";
 import type { LabelingRunV1 } from "@noisia/db";
 import { JevProviderErrorV1 } from "../providers/typesafe-jev";
-import { hybridReceiptFilenameV1, hybridStageCallProposalV1, runHybridMembershipTickV1 } from "./signal-hybrid-membership";
+import { hybridReceiptFilenameV1, hybridJevCallProposalV1, runHybridMembershipTickV1 } from "./signal-hybrid-membership";
 
 const concept={concept_key:"theme",label:"Theme",scope:"all_conversations",definition:"Explicit theme",
   inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],definition_digest:"sha256:"+"a".repeat(64)} as unknown as ConceptForJudgeV1;
@@ -16,7 +16,7 @@ const input={root_id:"00000000-0000-4000-8000-000000000001",input_digest:"sha256
 const run={id:"00000000-0000-4000-8000-000000000002",workspace_id:"00000000-0000-4000-8000-000000000003",
   context:{},lease_token:"00000000-0000-4000-8000-000000000004"} as unknown as LabelingRunV1;
 
-function fixture(outcome:"ok"|"unknown"|"storage_failed") {
+function fixture(outcome:"ok"|"unknown"|"storage_failed"|429|529) {
   const events:string[]=[],calls:Record<string,unknown>[]=[];
   const store={
     claim:async()=>run,calls:async()=>calls,inputs:async()=>[input],
@@ -27,12 +27,14 @@ function fixture(outcome:"ok"|"unknown"|"storage_failed") {
     markFailed:async(_run:unknown,_calls:unknown,unknown:boolean)=>events.push(`failed:${unknown}`),
     fail:async()=>events.push("run_failed"),
     persistRaw:async()=>{events.push("raw");if(outcome==="storage_failed")throw new Error("storage_rejected");},
-    settle:async()=>events.push("settle"),
+    settle:async(_run:unknown,_call:unknown,receipt:{settled_micro_usd:number})=>{
+      if(typeof outcome==="number")assert.equal(receipt.settled_micro_usd,0);events.push("settle");},
     apply:async()=>events.push("apply"),finish:async()=>({status:"completed"}),release:async()=>events.push("release"),
   };
   const provider={evaluate:async(request:ReturnType<typeof buildHybridJevQuestionV1>)=>{
     events.push("provider");
     if (outcome==="unknown") throw new JevProviderErrorV1("network_unknown","outcome_unknown");
+    if(typeof outcome==="number")return {http_status:outcome,latency_ms:1,body:JSON.stringify({error:"temporarily_unavailable"})};
     assert.equal(request.questions.membership?.type,"noul");
     return {http_status:200,latency_ms:1,body:JSON.stringify({model:"jev-1.13.0",
       usage:{input_tokens:10,output_tokens:0},answers:{membership:{type:"noul",noul:0.8}}})};
@@ -42,7 +44,7 @@ function fixture(outcome:"ok"|"unknown"|"storage_failed") {
 
 test("H1 JEV stage reserves in the shared store before one provider call and settles after raw",async()=>{
   const f=fixture("ok");
-  const proposal=hybridStageCallProposalV1("jev",run,input,concept,0.5);
+  const proposal=hybridJevCallProposalV1(run,input,concept,0.5);
   assert.equal(proposal.inputs.length,1);
   assert.ok(proposal.reserved_micro_usd>0);
   await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider});
@@ -63,4 +65,10 @@ test("H1 quarantines a returned provider response when durable raw storage fails
   await assert.rejects(runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider}),
     /storage_rejected/u);
   assert.deepEqual(f.events,["reserve","renew","submitting","provider","raw","failed:true","run_failed","release"]);
+});
+
+for(const status of [429,529] as const)test(`H1 HTTP ${status} retains raw and zero observed cost without charging reserve`,async()=>{
+  const f=fixture(status);
+  await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,jev:f.provider});
+  assert.deepEqual(f.events,["reserve","renew","submitting","provider","raw","settle","apply","run_failed","release"]);
 });

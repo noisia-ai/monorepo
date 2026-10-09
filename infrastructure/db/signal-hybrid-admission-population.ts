@@ -30,7 +30,7 @@ export const hybridH1JevAdmissionPopulationSqlV1 = `WITH current_memberships AS 
   FROM signal_labeling_calls unknown_call JOIN signal_labeling_runs prior ON prior.id=unknown_call.run_id
   CROSS JOIN LATERAL jsonb_array_elements(unknown_call.inputs) input
   CROSS JOIN LATERAL jsonb_array_elements(input->'evaluated_concepts') concept
-  WHERE prior.workspace_id=$1 AND prior.kind='membership' AND unknown_call.status='unknown'
+  WHERE prior.workspace_id=$1 AND prior.kind='membership' AND (unknown_call.status='unknown' OR unknown_call.terminal_exposure_micro_usd>0)
 )
 SELECT count(DISTINCT current.root_id)::int roots,count(*)::int pairs,
   COALESCE(sum(length(f.full_text)),0)::text characters

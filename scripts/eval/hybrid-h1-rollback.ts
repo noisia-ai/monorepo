@@ -25,7 +25,8 @@ void main(async () => {
         current_route: before.route }));
       return;
     }
-    const after = await configureHybridMembershipRouteV1({ ...access, route: "standard", provider_available: false });
+    const after = await configureHybridMembershipRouteV1({ ...access, route: "standard", provider_available: false,
+      expected_route_digest:before.route_digest,confirm_unresolved_jev:process.argv.includes("--confirm-unresolved-jev") });
     console.log(JSON.stringify({ stage: "mfp_hybrid_rollback", status: "restored", current_route: after.route }));
   } finally {
     await database.end();

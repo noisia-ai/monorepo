@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { main, openDatabase } from "../dev-corpus/guard.mjs";
 import { loadMfpEvalIdentity } from "./fixture-identity";
 
-const directory = ".data/dev-corpus/voyage-real/hybrid-h1-r4";
+const directory = ".data/dev-corpus/voyage-real/hybrid-h1-r5";
 void main(async () => {
   if (!process.argv.includes("--real")) throw new Error("mfp_hybrid_census_real_flag_required");
   const phase = process.argv.find(arg => arg.startsWith("--phase="))?.slice(8);

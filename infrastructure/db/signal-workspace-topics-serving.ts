@@ -245,32 +245,19 @@ export async function adoptedConsolidationConceptKeysV1(queryable:Pick<PoolClien
   return new Set(adopted.filter(definition=>sameRunRevisions.has(definition.source!.run_key.slice("workspace-discovery:".length)))
     .map(definition=>definition.source!.candidate_key));
 }
-/** Current selections belong to the definition, independently of the discovery catalog. */
-export async function loadMembershipServingConceptsV1(client: Pick<PoolClient,"query">, workspaceId: string,
-  sourceExecutionId: string | null) {
-  const rows = (await client.query<{topic:unknown; selected:boolean; selection_revision:number; selection_digest:string|null; mfp_discovery:boolean}>(`
-    SELECT c.topic,COALESCE(s.selected AND s.definition_digest=c.definition_digest,false) selected,
-      COALESCE(s.selection_revision,0)::int selection_revision,s.selection_digest,
-      EXISTS(SELECT 1 FROM signal_topic_catalog_executions e WHERE e.id=$2::uuid AND e.workspace_id=c.workspace_id
-        AND jsonb_typeof(e.input_snapshot->'discovery_population')='object') mfp_discovery
-    FROM signal_membership_concepts_v1 c LEFT JOIN signal_defined_interest_selections s ON s.workspace_id=c.workspace_id
-      AND s.term_key=c.concept_key AND s.generation_id IS NULL WHERE c.workspace_id=$1 ORDER BY c.concept_key`,[workspaceId,sourceExecutionId])).rows;
-  return rows.map(row=>({...row,definition:signalTopicDefinitionSchemaV1.parse(row.topic)}));
-}
 async function membershipContext(client: PoolClient, args: Args, filters: CivilFilters): Promise<Context> {
   const base = await publishedContext(client, { ...args, imported_fallback: true }, filters);
-  const concepts=await loadMembershipServingConceptsV1(client,args.workspace_id,base.generation?.source_engine_execution_id??null);
+  const rows = (await client.query<{topic:unknown; selected:boolean; selection_revision:number; selection_digest:string|null}>(`
+    SELECT c.topic,COALESCE(s.selected AND s.definition_digest=c.definition_digest,false) selected,
+      COALESCE(s.selection_revision,0)::int selection_revision,s.selection_digest
+    FROM signal_membership_concepts_v1 c LEFT JOIN signal_defined_interest_selections s ON s.workspace_id=c.workspace_id
+      AND s.term_key=c.concept_key AND s.generation_id IS NULL WHERE c.workspace_id=$1 ORDER BY c.concept_key`,[args.workspace_id])).rows;
+  const concepts=rows.map(row=>({...row,definition:signalTopicDefinitionSchemaV1.parse(row.topic)}));
   const adoptedCandidates=base.consolidated
     ? await adoptedConsolidationConceptKeysV1(client,args.workspace_id,base.consolidation_revision_id!,concepts.map(row=>row.definition))
     : new Set<string>();
-  const editorial=base.consolidated ? base.topics.filter(topic=>topic.source?.run_key.startsWith("consolidation:")
+  const published=base.consolidated ? base.topics.filter(topic=>topic.source?.run_key.startsWith("consolidation:")
     ? !adoptedCandidates.has(topic.source.candidate_key) : true) : base.topics;
-  // A discovery MFP generation carries the manual/adopted catalog as context,
-  // not as its membership authority. Keep frozen generations and V2 overlays.
-  const legacyInterests=new Set(base.defined_interests?.map(item=>item.topic.term_key)??[]);
-  const replacements=new Set(concepts.filter(row=>row.mfp_discovery&&!base.consolidated
-    &&!legacyInterests.has(row.definition.term_key)).map(row=>row.definition.term_key));
-  const published=editorial.filter(topic=>!replacements.has(topic.term_key));
   const protectedKeys=new Set(published.map(topic => topic.term_key));
   const conceptRows=concepts.filter(row=>!protectedKeys.has(row.definition.term_key));
   const topics=conceptRows.map(r=>({...r.definition,kind:"topic" as const}));
@@ -287,7 +274,7 @@ async function membershipContext(client: PoolClient, args: Args, filters: CivilF
     selection:{revision:Math.max(base.selection.revision,...conceptRows.map(r=>r.selection_revision)),items:{...base.selection.items,...selected}},
     is_current:(!base.generation || base.is_current) && (!change.changed || change.affected.length===0),
     is_processing:base.is_processing || (state?.processing??false),filters,native:true,consolidated:base.consolidated,
-    ...(base.generation || base.imported ? {} : {imported:{receipt_digest:hash({revision:state?.input_revision,selections:concepts.map(r=>r.selection_digest)}),input_revision:state?.input_revision??null}}),
+    ...(base.generation || base.imported ? {} : {imported:{receipt_digest:hash({revision:state?.input_revision,selections:rows.map(r=>r.selection_digest)}),input_revision:state?.input_revision??null}}),
     concept_membership:true,membership_concept_keys:keys,membership_run_id:state?.run_id??null,membership_state_digest:hash({membershipState,context:change.digest})};
 }
 async function context(client: PoolClient, args: Args): Promise<Context> {

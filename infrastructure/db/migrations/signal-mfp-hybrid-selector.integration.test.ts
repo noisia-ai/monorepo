@@ -8,17 +8,17 @@ import {
   signalProvenancePolicyBindingDefinitionHashV1,
 } from "@noisia/query-engine";
 import { selectMembershipInputsV1 } from "../signal-concept-memberships";
-import { assertHybridProviderRightsBeforeSubmitV1, reconcileHybridDuplicateJevReceiptOnClientV1,
+import { assertHybridProviderRightsBeforeSubmitV1,
   selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationSqlV1 } from "../signal-hybrid-admission-population";
-import { hybridDecisionRecordV1, reconcileHybridClaudeParseOnClientV1,
+import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1, loadHybridMembershipReviewQueueV1,
   writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
 
 const sha = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
-test("settled JEV positive is not reselected after restart; Claude alone inherits it", {
+test("migrated H1 selection, review queue and explicit unknown-exposure rollback use production tables", {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
 }, async () => {
   const database = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === "true" });
@@ -170,13 +170,26 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     await client.query(`INSERT INTO taxonomy_terms(taxonomy_id,term_key,label,metadata)
       VALUES($1,$2,$3,$4::jsonb)`, [taxonomy, concept.concept_key, concept.label,
       JSON.stringify({ topic: { ...concept, origin: "manual", lifecycle: "active" } })]);
-    const route = sha("hybrid-route"), jevVersion = randomUUID();
+    await client.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
+      VALUES($1,'mention_facets',$2),($1,'concept_membership',$2)`, [workspace, actor]);
+    let sequence=0;const stack:string[]=[];
+    const query=async(sql:string,params?:unknown[])=>{
+      if(sql==="BEGIN"){const key=`h1_${++sequence}`;stack.push(key);return client.query(`SAVEPOINT ${key}`);}
+      if(sql==="COMMIT")return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
+      if(sql==="ROLLBACK"){const key=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${key}`);return client.query(`RELEASE SAVEPOINT ${key}`);}
+      return client.query(sql,params);
+    };
+    const db={query,connect:async()=>({query,release(){}})} as unknown as Pool;
+    assert.equal((await loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor})).route,"standard");
+    const selected=await configureHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor,
+      route:"hybrid_h1",provider_available:true,expected_route_digest:null});
+    assert.equal(selected.route,"hybrid_h1");assert.ok(selected.route_digest);
+    const route=selected.route_digest!,jevVersion=randomUUID();
+    assert.equal((await client.query("SELECT count(*)::int n FROM signal_hybrid_membership_routes WHERE workspace_id=$1",[fixture.second.workspace_id])).rows[0].n,0);
+
     await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,
       schema_digest,labeler_digest,identity) VALUES($1,'membership','typesafe','jev-1.13.0',
       $2,$2,$3,'{}')`, [jevVersion, digest, sha("jev-stage")]);
-    await client.query(`INSERT INTO signal_hybrid_membership_routes(workspace_id,route,route_digest,
-      jev_labeler_digest,claude_labeler_digest,jev_facets_labeler_version_id,configured_by_user_id)
-      VALUES($1,'hybrid_h1',$2,$3,$4,$5,$6)`, [workspace, route, sha("jev-judge"), sha("claude-confirm"), facetVersion, actor]);
     const work = (id: string) => ({ id, workspace_id: workspace, cursor_root_id: null,
       labeler_digest: sha("jev-stage"),
       membership_snapshot: { concepts: [concept], preview: false, sample_root_ids: null,
@@ -189,8 +202,6 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
     "admission excludes abstained facets even when their H1 membership view is pending");
 
     const policy = randomUUID();
-    await client.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
-      VALUES($1,'mention_facets',$2),($1,'concept_membership',$2)`, [workspace, actor]);
     await client.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,
       valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
       VALUES($1,$2,1,'draft',now()-interval '1 minute','infinity','UTC',1100000,$3)`, [policy, organization, actor]);
@@ -326,7 +337,7 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
           concepts: [concept], preview: false }), claudeAdmission]);
     const excerpt = "bicycle brakes", start = text.indexOf(excerpt);
     const claudeDecision = { verdict: "not_belongs", citation: { quote: excerpt, start, end: start + excerpt.length } } as const;
-    const confirmed = { ...result, claude: claudeDecision, claude_call_id: claudeCall };
+    const confirmed = { ...result, claude: claudeDecision, claude_call_id: claudeCall, rationale:"The fragment does not establish the defined phenomenon." };
     const insertCall = async (args: { id: string; run: string; provider: string; model: string;
       inputs: unknown[]; result: unknown }) => {
       const raw = JSON.stringify([args.result]);
@@ -334,13 +345,25 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
         transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,
         settled_micro_usd,raw_sha256,raw_storage_key,raw_size_bytes,results_applied,results,
         budget_date,budget_timezone)
-        VALUES($1,$2,$3,$4,$5,'sync',$6,$7,'{}',$8::jsonb,'settled',2,2,$9,$10,$11,
+        VALUES($1,$2,$3,$4,$5,CASE WHEN $4='anthropic' THEN 'batch' ELSE 'sync' END,$6,$7,'{}',$8::jsonb,'settled',2,2,$9,$10,$11,
         true,$12::jsonb,current_date,'UTC')`,
       [args.id, args.run, workspace, args.provider, args.model, `h1-${args.id}`, digest,
         JSON.stringify(args.inputs), sha(raw), `private/${args.id}`, Buffer.byteLength(raw), raw]);
     };
     await insertCall({ id: claudeCall, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
       inputs: claude, result: confirmed });
+    const batchRightsCall=randomUUID();
+    await insertCall({id:batchRightsCall,run:claudeRun,provider:"anthropic",model:"claude-sonnet-5-5",
+      inputs:[...claude,{...input,root_id:abstainedRoot,text:abstainedText}],result:confirmed});
+    const batchRights=()=>assertHybridProviderRightsBeforeSubmitV1(client,
+      {id:claudeRun,workspace_id:workspace} as LabelingRunV1,[{id:batchRightsCall}]);
+    await batchRights();
+    await client.query("SAVEPOINT partial_batch_rights");
+    await client.query("DELETE FROM signal_mention_import_memberships WHERE workspace_id=$1 AND mention_id=$2",[workspace,abstainedRoot]);
+    await assert.rejects(batchRights(),/hybrid_provider_rights_changed/u,
+      "one authorized root cannot authorize another root in the same Claude batch request");
+    await client.query("ROLLBACK TO SAVEPOINT partial_batch_rights");
+    await batchRights();
     const wrongJev = randomUUID(), wrongClaude = randomUUID();
     await insertCall({ id: wrongJev, run: jevRun, provider: "typesafe", model: "jev-1.13.0", inputs: [input],
       result: { ...result, concept_key: "wrong_concept", jev_call_id: wrongJev } });
@@ -359,98 +382,50 @@ test("settled JEV positive is not reselected after restart; Claude alone inherit
       SELECT verdict,source FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
       [workspace, root, concept.concept_key])).rows[0], { verdict: "review_required", source: "model" });
-    const parserError = { ...confirmed, claude: { verdict: "error", citation: null } };
-    const parserErrorRecord = hybridDecisionRecordV1({ ...parserError, text } as HybridDecisionInputV1);
-    await client.query("UPDATE signal_labeling_calls SET results=$2::jsonb,usage=$3::jsonb WHERE id=$1",
-      [claudeCall, JSON.stringify([parserError]), JSON.stringify({})]);
-    await client.query(`UPDATE signal_hybrid_membership_decisions SET verdict='error',
-      claude=$2::jsonb,citation='[]'::jsonb,result_digest=$3 WHERE workspace_id=$1
-        AND claude_call_id=$4`,[workspace,JSON.stringify(parserError.claude),
-      parserErrorRecord.result_digest,claudeCall]);
-    assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
-      SELECT verdict,source FROM signal_concept_memberships_current_v1
-      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
-      [workspace, root, concept.concept_key])).rows[0], { verdict: "error", source: "model" });
-    const reparseArgs={workspace_id:workspace,route_digest:route,run_id:claudeRun,
-      call_id:claudeCall,raw_sha256:sha(JSON.stringify([confirmed])),usage:{},
-      settled_micro_usd:2,corrected:decision};
-    await assert.rejects(reconcileHybridClaudeParseOnClientV1(client,
-      {...reparseArgs,raw_sha256:sha("wrong")}),/hybrid_claude_reparse_pair_invalid/u,
-    "a different raw receipt cannot authorize a paid decision repair");
-    assert.equal((await reconcileHybridClaudeParseOnClientV1(client,reparseArgs)).verdict,
-      "review_required");
-    assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
-      SELECT verdict,source FROM signal_concept_memberships_current_v1
-      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
-      [workspace, root, concept.concept_key])).rows[0], { verdict: "review_required", source: "model" });
-    assert.equal((await client.query<{stop_reason:string;verified:boolean}>(`SELECT stop_reason,
-      raw_storage_verified_key=raw_storage_key verified FROM signal_labeling_calls WHERE id=$1`,
-      [claudeCall])).rows[0]?.verified,true);
-    assert.deepEqual(await selectMembershipInputsV1(client, allWork(randomUUID()), true), [],
-      "the stage labeler digest cannot reselect a pair already served by its H1 route");
-    const negativeConcept = { ...concept,concept_key:"duplicate_negative",
-      label:"Duplicate negative",definition_digest:sha("duplicate negative definition") };
-    await client.query(`INSERT INTO taxonomy_terms(taxonomy_id,term_key,label,metadata)
-      VALUES($1,$2,$3,$4::jsonb)`,[taxonomy,negativeConcept.concept_key,negativeConcept.label,
-        JSON.stringify({topic:{...negativeConcept,origin:"manual",lifecycle:"active"}})]);
-    const negativeCall=randomUUID(),negativeInput={...input,evaluated_concepts:[negativeConcept]};
-    const negativeResult={...result,concept_key:negativeConcept.concept_key,
-      definition_digest:negativeConcept.definition_digest,
-      jev:{verdict:"not_belongs" as const,probability:0.03,citation:null},
-      jev_call_id:negativeCall,claude:null,claude_call_id:null};
-    await insertCall({id:negativeCall,run:jevRun,provider:"typesafe",model:"jev-1.13.0",
-      inputs:[negativeInput],result:negativeResult});
-    assert.equal((await writeHybridMembershipDecisionPageV1({client,workspace_id:workspace,
-      route_digest:route,decisions:[{...negativeResult,text}]})).persisted,1);
-    const duplicateRun = randomUUID(), duplicateCall = randomUUID(), duplicateKey = `duplicate-${duplicateRun}`;
-    const duplicateUsage = { input_tokens: 8179, output_tokens: 20 };
-    const duplicateResult = { ...negativeResult,jev_call_id: duplicateCall };
-    await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,
-      preparation_run_id,entity_context_digest,entity_context_version_no,status,error_code,
-      estimated_micro_usd,idempotency_key,request_digest,actor_user_id,membership_snapshot)
-      VALUES($1,$2,'membership',$3,$4,$5,1,'failed','hybrid_raw_receipt_needs_review',
-      1,$6,$7,$8,$9::jsonb)`, [duplicateRun,workspace,jevVersion,prep,context,duplicateKey,digest,actor,
-        JSON.stringify({hybrid_stage:"jev",route_digest:route,concepts:allConcepts,preview:false})]);
-    await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,
-      custom_id,request_digest,request,inputs,status,reserved_micro_usd,settled_micro_usd,
-      usage,raw_sha256,raw_storage_key,raw_size_bytes,results_applied,budget_date,budget_timezone)
-      VALUES($1,$2,$3,'typesafe','jev-1.13.0','sync',$4,$5,'{}',$6::jsonb,'failed',500,344,
-      $7::jsonb,$8,$9,100,false,current_date,'UTC')`, [duplicateCall,duplicateRun,workspace,
-        `duplicate-${duplicateCall}`,digest,JSON.stringify([negativeInput]),JSON.stringify(duplicateUsage),
-        sha("duplicate raw"),`private/${duplicateCall}`]);
-    const reconcileArgs = { workspace_id: workspace,idempotency_key: duplicateKey,
-      call_id: duplicateCall,raw_sha256: sha("duplicate raw"),usage: duplicateUsage,
-      settled_micro_usd: 344,result: duplicateResult };
-    await client.query("SAVEPOINT before_duplicate_reconcile");
-    assert.deepEqual(await reconcileHybridDuplicateJevReceiptOnClientV1(client,reconcileArgs),
-      {reconciled:true,settled_micro_usd:344});
-    assert.deepEqual((await client.query<{status:string;results_applied:boolean;error_code:string}>(`
-      SELECT call.status,call.results_applied,run.error_code FROM signal_labeling_calls call
-      JOIN signal_labeling_runs run ON run.id=call.run_id WHERE call.id=$1`,[duplicateCall])).rows[0],
-      {status:"settled",results_applied:true,error_code:"hybrid_duplicate_receipt_reconciled"});
-    assert.equal((await client.query<{count:number}>(`SELECT count(*)::int count FROM signal_hybrid_membership_decisions
-      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,[workspace,root,negativeConcept.concept_key])).rows[0]!.count,1,
-      "duplicate reconciliation does not create or overwrite a served decision");
-    await client.query("ROLLBACK TO SAVEPOINT before_duplicate_reconcile");
+    const queue=await loadHybridMembershipReviewQueueV1({database:db,workspace_id:workspace,actor_user_id:actor});
+    assert.equal(queue.items.length,1);assert.equal(queue.items[0]?.rationale,confirmed.rationale);
+    assert.equal(queue.items[0]?.claude.verdict,"not_belongs");
+    await client.query("SAVEPOINT queue_rights");
+    await client.query("UPDATE data_sources SET status='inactive' WHERE id=$1",[source]);
+    assert.equal((await loadHybridMembershipReviewQueueV1({database:db,workspace_id:workspace,actor_user_id:actor})).items.length,0);
+    await client.query("ROLLBACK TO SAVEPOINT queue_rights");
     await client.query(`INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,
-      definition_digest,root_fingerprint,verdict,actor_user_id)
-      VALUES($1,$2,$3,$4,$5,'belongs',$6)`,
-      [workspace, root, negativeConcept.concept_key, negativeConcept.definition_digest, input.root_fingerprint, actor]);
-    assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
-      SELECT verdict,source FROM signal_concept_memberships_current_v1
-      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
-      [workspace, root, negativeConcept.concept_key])).rows[0], { verdict: "belongs", source: "human" });
-    await client.query("SAVEPOINT human_duplicate_reconcile");
-    await assert.rejects(reconcileHybridDuplicateJevReceiptOnClientV1(client,reconcileArgs),
-      /hybrid_duplicate_prior_receipt_missing/u,
-      "a human correction blocks duplicate-receipt reconciliation");
-    await client.query("ROLLBACK TO SAVEPOINT human_duplicate_reconcile");
-    assert.equal((await client.query<{status:string}>(`SELECT status FROM signal_labeling_calls
-      WHERE id=$1`,[duplicateCall])).rows[0]!.status,"failed");
+      definition_digest,root_fingerprint,verdict,actor_user_id) VALUES($1,$2,$3,$4,$5,'belongs',$6)`,
+      [workspace,root,concept.concept_key,concept.definition_digest,input.root_fingerprint,actor]);
+    assert.equal((await loadHybridMembershipReviewQueueV1({database:db,workspace_id:workspace,actor_user_id:actor})).items.length,0);
+    assert.equal((await client.query("SELECT verdict FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3",
+      [workspace,root,concept.concept_key])).rows[0].verdict,"belongs");
+    const access={database:db,workspace_id:workspace,actor_user_id:actor,provider_available:false,route:"standard" as const};
+    await assert.rejects(configureHybridMembershipRouteV1({...access,expected_route_digest:sha("stale")}),/hybrid_route_changed/u);
+    await assert.rejects(configureHybridMembershipRouteV1({...access,expected_route_digest:route}),/hybrid_unknown_confirmation_required/u);
+    const before=await loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor});
+    assert.equal(before.unknown_calls,2);assert.equal(before.reserved_exposure_micro_usd,"2");
+    const exposureBefore=(await client.query("SELECT * FROM signal_processing_org_exposure_v1($1,current_date,'UTC')",[organization])).rows[0];
+    const reverted=await configureHybridMembershipRouteV1({...access,expected_route_digest:route,confirm_unresolved_jev:true});
+    assert.deepEqual(reverted,{route:"standard",route_digest:null});
+    const after=await loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor});
+    assert.equal(after.unknown_calls,0);assert.equal(after.reserved_exposure_micro_usd,"2");
+    const terminal=(await client.query(`SELECT call.status,call.stop_reason,call.settled_micro_usd,
+      call.terminal_exposure_micro_usd::text exposure,run.error_code,run.next_poll_at::text
+      FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
+      WHERE run.workspace_id=$1 AND call.terminal_exposure_micro_usd>0`,[workspace])).rows;
+    assert.equal(terminal.length,2);
+    for(const call of terminal)assert.deepEqual(call,{status:"failed",stop_reason:"jev_unattributable_request",
+      settled_micro_usd:null,exposure:"1",error_code:"hybrid_jev_unknown_released",next_poll_at:"infinity"});
+    assert.deepEqual((await client.query("SELECT * FROM signal_processing_org_exposure_v1($1,current_date,'UTC')",[organization])).rows[0],exposureBefore);
+    assert.equal(exposureBefore.ambiguous_micro_usd,"2","two unknown reservations appear once in ambiguous exposure");
+    await assert.rejects(configureHybridMembershipRouteV1({...access,expected_route_digest:route,confirm_unresolved_jev:true}),/hybrid_route_changed/u);
+    assert.deepEqual(await configureHybridMembershipRouteV1({...access,expected_route_digest:null,confirm_unresolved_jev:true}),reverted);
+    assert.deepEqual((await client.query("SELECT * FROM signal_processing_org_exposure_v1($1,current_date,'UTC')",[organization])).rows[0],exposureBefore,
+      "replaying standard configuration does not duplicate terminal exposure");
+    await client.query("UPDATE signal_labeling_calls SET settled_micro_usd=4,reserved_micro_usd=100 WHERE id=$1",[unknownCall]);
+    const failedPaid=(await client.query("SELECT * FROM signal_processing_org_exposure_v1($1,current_date,'UTC')",[organization])).rows[0];
+    assert.equal(BigInt(failedPaid.confirmed_micro_usd),BigInt(exposureBefore.confirmed_micro_usd)+4n);
+    assert.equal(failedPaid.ambiguous_micro_usd,exposureBefore.ambiguous_micro_usd);
+    assert.equal(failedPaid.reserved_micro_usd,exposureBefore.reserved_micro_usd);
+    assert.equal(BigInt(failedPaid.total_micro_usd),BigInt(exposureBefore.total_micro_usd)+4n,
+      "a failed paid receipt adds observed settlement only, never the former reservation");
+    assert.equal((await client.query("SELECT labeler_version_id FROM signal_workspace_labelers WHERE workspace_id=$1 AND kind='facets'",[workspace])).rows[0].labeler_version_id,facetVersion);
     await client.query("ROLLBACK");
-  } finally {
-    await client.query("ROLLBACK").catch(() => undefined);
-    client.release();
-    await database.end();
-  }
+  } finally { await client.query("ROLLBACK").catch(()=>undefined);client.release();await database.end(); }
 });

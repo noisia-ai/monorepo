@@ -3,7 +3,7 @@ name: ci
 # Required status check for merging into `main` (enforce via branch protection).
 on:
   pull_request:
-    branches: [main, develop, feat/mfp-phase-c-evaluation, feat/mfp-ws1-pg-ci]
+    branches: [main, develop]
   push:
     branches: [main, develop]
 

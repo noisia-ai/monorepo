@@ -469,7 +469,7 @@ export async function requestMentionFacetsV1(args: {
 }
 export async function readSignalLabelingRunExposureV1(client: PoolClient, runId: string): Promise<string> {
   const row=(await client.query<{total:string}>(
-    `SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)
+    `SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)+terminal_exposure_micro_usd
       ELSE reserved_micro_usd END),0)::text total FROM signal_labeling_calls WHERE run_id=$1`,
     [runId],
   )).rows[0];
@@ -484,7 +484,6 @@ export function createSignalLabelingStoreV1<
     kind: "facets" | "membership";
     hybrid_stage?: "jev" | "claude";
     policy_action?: "concept_membership_jev" | "concept_membership_claude";
-    transport?: "sync" | "batch";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
     inputs: (
@@ -633,7 +632,7 @@ export function createSignalLabelingStoreV1<
     async fail(run: LabelingRunV1, code: string) {
       await tx(db, async (c) => {
         await lock(c, run);
-        if(code==="labeling_raw_receipt_invalid" || code==="hybrid_raw_receipt_needs_review"){
+        if(code==="labeling_raw_receipt_invalid"){
           await c.query(`UPDATE signal_labeling_calls
             SET status='failed',settled_micro_usd=CASE WHEN status='reserved' THEN settled_micro_usd
               ELSE COALESCE(settled_micro_usd,reserved_micro_usd) END,updated_at=now()
@@ -708,7 +707,7 @@ export function createSignalLabelingStoreV1<
               run.workspace_id,
               run.identity.provider,
               run.identity.model,
-              options.adapter?.transport ?? (run.identity.provider === "typesafe" ? "sync" : "batch"),
+              run.identity.provider === "typesafe" ? "sync" : "batch",
               JSON.stringify(fresh),
               policy.budget_date,
               policy.budget_timezone,

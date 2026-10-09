@@ -120,7 +120,7 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  WHERE (c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))
  AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM current_pairs current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
  AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest
- AND (current.verdict IN('belongs','not_belongs','insufficient','refused')
+ AND (current.verdict IN('belongs','not_belongs','insufficient','review_required','refused')
  OR (current.verdict='error' AND current.error_code IN('membership_item_schema_invalid','membership_evidence_invalid')))
  AND (current.source='human' OR current.labeler_digest=$6)))
  AND (NOT $8::boolean OR NOT EXISTS(
@@ -137,7 +137,7 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
      AND result->>'entity_context_digest'=f.effective_ce
      AND result->>'effective_entities_digest'=f.effective_entities_digest))
  AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls uncertain JOIN signal_labeling_runs r ON r.id=uncertain.run_id
- WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND uncertain.status IN('submitting','unknown')
+ WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND (uncertain.status IN('submitting','unknown') OR $8::boolean AND uncertain.terminal_exposure_micro_usd>0)
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest
  AND i->>'entity_context_digest'=f.effective_ce AND i->>'effective_entities_digest'=f.effective_entities_digest
  AND i->'evaluated_concepts' @> jsonb_build_array(jsonb_build_object('concept_key',c.concept_key,'definition_digest',c.definition_digest))))

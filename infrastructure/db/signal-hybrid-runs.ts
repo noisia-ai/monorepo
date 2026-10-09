@@ -19,91 +19,6 @@ export type HybridStageResultV1 = {
   rationale: string | null;
 };
 
-/** Reconcile a paid, durable JEV reply for a pair that was already served.
- * The prior decision remains authoritative; only the duplicate call ledger is repaired. */
-export type HybridDuplicateReceiptArgsV1 = {
-  database: LabelingDatabaseV1; workspace_id: string; idempotency_key: string;
-  call_id: string; raw_sha256: string; usage: unknown; settled_micro_usd: number;
-  result: HybridStageResultV1;
-};
-export async function reconcileHybridDuplicateJevReceiptOnClientV1(client: PoolClient,
-  args: Omit<HybridDuplicateReceiptArgsV1,"database">) {
-    // Serialize with route selection and human overrides before reading the current view.
-    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",
-      [args.workspace_id]);
-    const run=(await client.query<{id:string;route_digest:string}>(`SELECT id,
-      membership_snapshot->>'route_digest' route_digest FROM signal_labeling_runs
-      WHERE workspace_id=$1 AND idempotency_key=$2 AND kind='membership' AND status='failed'
-        AND error_code='hybrid_raw_receipt_needs_review'
-        AND membership_snapshot->>'hybrid_stage'='jev' AND lease_token IS NULL FOR UPDATE`,
-      [args.workspace_id,args.idempotency_key])).rows[0];
-    if(!run) throw new SignalLabelingError("hybrid_duplicate_run_invalid");
-    const call=(await client.query<{id:string;inputs:HybridStageInputV1[];settled_micro_usd:string}>(`
-      SELECT id,inputs,settled_micro_usd::text FROM signal_labeling_calls
-      WHERE run_id=$1 AND workspace_id=$2 AND id=$3 AND status='failed'
-        AND raw_storage_key IS NOT NULL AND raw_sha256=$4 AND raw_size_bytes IS NOT NULL
-        AND NOT results_applied AND results IS NULL AND usage=$5::jsonb
-        AND settled_micro_usd=$6 FOR UPDATE`,[run.id,args.workspace_id,args.call_id,
-      args.raw_sha256,JSON.stringify(args.usage),args.settled_micro_usd])).rows[0];
-    const input=call?.inputs[0],concept=input?.evaluated_concepts[0],result=args.result;
-    if(!call||call.inputs.length!==1||input?.evaluated_concepts.length!==1||
-      result.jev_call_id!==call.id||result.claude_call_id!==null||result.claude!==null||
-      result.jev.verdict!=="not_belongs"||result.root_id!==input.root_id||
-      result.root_fingerprint!==input.root_fingerprint||result.concept_key!==concept?.concept_key||
-      result.definition_digest!==concept.definition_digest||
-      result.entity_context_digest!==input.entity_context_digest||
-      result.effective_entities_digest!==input.effective_entities_digest)
-      throw new SignalLabelingError("hybrid_duplicate_receipt_invalid");
-    const others=(await client.query<{invalid:number}>(`SELECT count(*) FILTER(WHERE
-      status<>'failed' OR raw_storage_key IS NOT NULL OR results_applied)::int invalid
-      FROM signal_labeling_calls WHERE run_id=$1 AND id<>$2`,[run.id,call.id])).rows[0]!.invalid;
-    if(others) fail("hybrid_duplicate_run_calls_changed");
-    const served=(await client.query<{count:number}>(`SELECT count(*)::int count
-      FROM signal_hybrid_membership_decisions h
-      JOIN signal_labeling_calls prior ON prior.id=h.jev_call_id AND prior.workspace_id=h.workspace_id
-        AND prior.status='settled' AND prior.results_applied AND prior.raw_storage_key IS NOT NULL
-        AND prior.raw_sha256 IS NOT NULL AND prior.raw_size_bytes IS NOT NULL
-      JOIN signal_labeling_runs prior_run ON prior_run.id=prior.run_id
-        AND prior_run.workspace_id=h.workspace_id AND prior_run.kind='membership'
-        AND prior_run.membership_snapshot->>'hybrid_stage'='jev'
-        AND prior_run.membership_snapshot->>'route_digest'=h.route_digest
-      JOIN signal_concept_memberships_current_v1 current ON current.workspace_id=h.workspace_id
-        AND current.root_id=h.root_id AND current.root_fingerprint=h.root_fingerprint
-        AND current.concept_key=h.concept_key AND current.definition_digest=h.definition_digest
-        AND current.entity_context_digest=h.entity_context_digest
-        AND current.effective_entities_digest=h.effective_entities_digest
-        AND current.labeler_digest=h.route_digest AND current.source='model'
-        AND current.verdict=h.verdict AND NOT current.requires_override_review
-      JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=h.workspace_id
-        AND rights.root_id=h.root_id AND rights.metrics AND rights.evidence
-      WHERE h.workspace_id=$1 AND h.route_digest=$2 AND h.root_id=$3::uuid
-        AND h.root_fingerprint=$4 AND h.concept_key=$5 AND h.definition_digest=$6
-        AND h.entity_context_digest=$7 AND h.effective_entities_digest=$8
-        AND h.verdict='not_belongs' AND h.jev->>'verdict'='not_belongs'
-        AND h.jev_call_id<>$9::uuid`,[args.workspace_id,run.route_digest,result.root_id,
-      result.root_fingerprint,result.concept_key,result.definition_digest,
-      result.entity_context_digest,result.effective_entities_digest,call.id])).rows[0]!.count;
-    if(served!==1) fail("hybrid_duplicate_prior_receipt_missing");
-    const changed=await client.query(`UPDATE signal_labeling_calls SET status='settled',
-      results_applied=true,results=$3::jsonb,raw_storage_verified_at=now(),
-      raw_storage_verified_key=raw_storage_key,updated_at=now()
-      WHERE run_id=$1 AND id=$2 AND status='failed' AND NOT results_applied`,
-      [run.id,call.id,JSON.stringify([result])]);
-    if(changed.rowCount!==1) fail("hybrid_duplicate_receipt_conflict");
-    await client.query(`UPDATE signal_labeling_runs SET error_code='hybrid_duplicate_receipt_reconciled',
-      updated_at=now() WHERE id=$1`,[run.id]);
-    return {reconciled:true,settled_micro_usd:args.settled_micro_usd};
-}
-export async function reconcileHybridDuplicateJevReceiptV1(args: HybridDuplicateReceiptArgsV1) {
-  const client=await args.database.connect();
-  try {
-    await client.query("BEGIN");
-    const result=await reconcileHybridDuplicateJevReceiptOnClientV1(client,args);
-    await client.query("COMMIT");
-    return result;
-  } catch(error){await client.query("ROLLBACK");throw error;}
-  finally{client.release();}
-}
 const fail = (code: string): never => { throw new SignalLabelingError(code); };
 function snapshot(run: LabelingRunV1): Snapshot {
   const value = (run as LabelingRunV1 & {membership_snapshot?:Snapshot}).membership_snapshot;
@@ -115,9 +30,9 @@ function snapshot(run: LabelingRunV1): Snapshot {
 export async function assertHybridProviderRightsBeforeSubmitV1(client: PoolClient, run: LabelingRunV1,
   calls: {id:string}[]) {
   if (!calls.length) return;
-  const counts = (await client.query<{found:number;allowed:number;one_input:boolean|null}>(`
-    SELECT count(*)::int found,count(*) FILTER(WHERE provider.allowed IS NOT NULL)::int allowed,
-      bool_and(jsonb_array_length(call.inputs)=1) one_input
+  const counts = (await client.query<{found:number;allowed:number;input_count:number}>(`
+    SELECT count(DISTINCT call.id)::int found,count(*) FILTER(WHERE provider.allowed IS NOT NULL)::int allowed,
+      count(input)::int input_count
     FROM signal_labeling_calls call
     LEFT JOIN LATERAL jsonb_array_elements(call.inputs) input ON true
     LEFT JOIN LATERAL (
@@ -151,7 +66,7 @@ export async function assertHybridProviderRightsBeforeSubmitV1(client: PoolClien
     ) provider ON true
     WHERE call.run_id=$1 AND call.workspace_id=$2 AND call.id=ANY($3::uuid[])`,
     [run.id,run.workspace_id,calls.map(call=>call.id)])).rows[0]!;
-  if (counts.found!==calls.length || counts.allowed!==calls.length || !counts.one_input)
+  if (counts.found!==calls.length || counts.allowed!==counts.input_count || counts.input_count<calls.length)
     fail("hybrid_provider_rights_changed");
 }
 export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | PoolClient, run: LabelingRunV1): Promise<HybridStageInputV1[]> {
@@ -198,7 +113,6 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
     const input = grouped.get(row.input.root_id) ?? { ...row.input,evaluated_concepts:[],jev_by_concept:{} };
     if (input.jev_by_concept?.[concept.concept_key]) return fail("hybrid_duplicate_jev_result");
     input.evaluated_concepts.push(concept);
-    // Claude calls are one concept at a time; the value is read in the provider proposal.
     input.jev_by_concept ??= {};
     input.jev_by_concept[concept.concept_key] = { decision:row.result.jev,call_id:row.jev_call_id };
     grouped.set(row.input.root_id,input);
@@ -216,7 +130,7 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
   return createSignalLabelingStoreV1<HybridStageInputV1,HybridStageResultV1>({ ...options,
     adapter: { kind:"membership",hybrid_stage:stage,
       policy_action:stage === "jev" ? "concept_membership_jev" : "concept_membership_claude",
-      transport:"sync",persist_results_before_write:true,inputs,
+      persist_results_before_write:true,inputs,
       authority:async (client,run) => {
         const s = snapshot(run);
         const route = (await client.query<{route_digest:string}>(
@@ -238,8 +152,8 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
               concept.definition_digest === result.definition_digest)) return fail("hybrid_result_input_changed");
             return { ...result,text:input.text };
           }));
-        if (decisions.length) await writeHybridMembershipDecisionPageV1({client,workspace_id:run.workspace_id,
-          route_digest:snapshot(run).route_digest,decisions});
+        for(let offset=0;offset<decisions.length;offset+=200) await writeHybridMembershipDecisionPageV1({client,workspace_id:run.workspace_id,
+          route_digest:snapshot(run).route_digest,decisions:decisions.slice(offset,offset+200)});
       },
     },
   });
