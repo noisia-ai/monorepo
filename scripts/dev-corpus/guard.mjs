@@ -46,6 +46,24 @@ export function checkTarget(env, target) {
   return { db, redis };
 }
 export async function openDatabase() {
+  if (process.env.GITHUB_ACTIONS === 'true' && process.env.NOISIA_MFP_PG_CI === 'true') {
+    const db = new URL(process.env.DATABASE_URL ?? '');
+    if (db.protocol !== 'postgresql:' || db.hostname !== '127.0.0.1' || db.port !== '5432'
+      || db.pathname !== '/noisia_mfp_ci' || db.username !== 'postgres') fail('ci_database_target_mismatch');
+    const { default: pg } = await import('../../infrastructure/db/node_modules/pg/lib/index.js');
+    const pool = new pg.Pool({ connectionString: db.href, max: 4, connectionTimeoutMillis: 10000 });
+    try {
+      const { rows: [row] } = await pool.query(`SELECT current_database() AS database,
+        current_setting('server_version_num')::int AS version,
+        EXISTS(SELECT 1 FROM pg_extension WHERE extname='vector') AS pgvector`);
+      if (row.database !== 'noisia_mfp_ci' || row.version < 170000 || row.version >= 180000
+        || !row.pgvector) fail('ci_database_identity_mismatch');
+      globalThis.noisiaStudioPgPool = pool;
+      globalThis.noisiaWorkerPgPool = pool;
+      globalThis.noisiaWorkerNumericPgPool = pool;
+      return pool;
+    } catch (error) { await pool.end(); throw error; }
+  }
   const target = await readTarget();
   const { db, redis } = checkTarget(process.env, target);
   const [addresses, redisAddresses] = await Promise.all([lookup(db.hostname, { all: true }), lookup(redis.hostname, { all: true })]);
