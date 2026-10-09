@@ -1,6 +1,8 @@
 /** Real JEV corpus demo, opt-in only; root versions the processing policy separately. */
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { main, openDatabase } from '../dev-corpus/guard.mjs';
+import { loadMfpEvalIdentity } from '../eval/fixture-identity';
+import { verifyMfpEvalRights } from '../eval/rights-check';
 void main(async () => {
   if (process.env.NOISIA_MENTION_FACETS_ENABLED !== 'true' || process.env.NOISIA_JEV_PROVIDER_ENABLED !== 'true') throw new Error('mfp_jev_disabled');
   const key = process.argv.find(arg => arg.startsWith('--key='))?.slice(6);
@@ -8,9 +10,10 @@ void main(async () => {
   const configuredPrice = process.env.NOISIA_JEV_INPUT_USD_PER_MTOK;
   const price = Number(configuredPrice);
   if (configuredPrice === undefined || !Number.isFinite(price) || price < 0) throw new Error('mfp_jev_price_required');
+  await verifyMfpEvalRights();
+  const identity = await loadMfpEvalIdentity();
   const pool = await openDatabase();
   try {
-    const identity = JSON.parse(await readFile('.data/dev-corpus/identity.json', 'utf8'));
     const { requestMentionFacetsV1 } = await import('../../infrastructure/db/signal-labeling-runs');
     const { jevFacetLabelerIdentityV1, JEV_FACET_EXPERIMENTAL_THRESHOLDS_V1, buildJevFacetRequestV1 } = await import('../../packages/query-engine/src/signal-mention-facets-jev-v1');
     const { inspectFacetContextChangeV1 } = await import('../../infrastructure/db/signal-mention-facets');

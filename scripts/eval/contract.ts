@@ -18,7 +18,9 @@ export const VARIANTS = ['A_facets_adaptive_low', 'A_facets_between_tools', 'A_j
 export type Variant = { variant: typeof VARIANTS[number]; labeler_digest: string; prediction_rows: Prediction[];
   costs: { settled_usd: number | null; unknown_calls: number; reserved_usd: number; mentions_attempted: number; wall_ms: number | null };
   thresholds?: { selected_on: 'dev'; frozen_before_test: boolean; development_round: 0 | 1; values: Record<string, number> } };
-export type Bundle = { contract_version: 'mfp-eval-v1'; human_gold: { origin: 'human'; reviewer_confirmed: true } | null; variants: Variant[] };
+export type GoldProvenance = { origin: 'human'; reviewer_confirmed: true } |
+  { origin: 'ai_assisted_founder_reviewed'; reviewer_confirmed: true; assistant_model: string; reviewed_rows: number; corrected_rows: number };
+export type Bundle = { contract_version: 'mfp-eval-v1'; human_gold: GoldProvenance | null; variants: Variant[] };
 const assert: (value: unknown, code: string) => asserts value = (value, code) => { if (!value) throw new Error(`eval_${code}`); };
 const string = (v: unknown) => typeof v === 'string' && v.length > 0;
 const unique = (v: string[]) => new Set(v).size === v.length;
@@ -55,7 +57,14 @@ export function validateGold(rows: Gold[], selection: Selection) {
 }
 export function validateBundle(bundle: Bundle, selection: Selection, partition: Partition, hasGold: boolean) {
   assert(bundle?.contract_version === 'mfp-eval-v1' && Array.isArray(bundle.variants) && unique(bundle.variants.map(v => v.variant)), 'bundle_invalid');
-  if (hasGold) assert(bundle.human_gold?.origin === 'human' && bundle.human_gold.reviewer_confirmed === true, 'human_gold_confirmation_required');
+  if (hasGold) {
+    const provenance = bundle.human_gold;
+    assert(provenance?.reviewer_confirmed === true &&
+      (provenance.origin === 'human' || provenance.origin === 'ai_assisted_founder_reviewed' &&
+       string(provenance.assistant_model) && Number.isInteger(provenance.reviewed_rows) && provenance.reviewed_rows >= 0 && provenance.reviewed_rows <= 150 &&
+       Number.isInteger(provenance.corrected_rows) && provenance.corrected_rows >= 0 && provenance.corrected_rows <= provenance.reviewed_rows),
+    'gold_provenance_required');
+  }
   for (const v of bundle.variants) {
     assert(VARIANTS.includes(v.variant) && string(v.labeler_digest) && Array.isArray(v.prediction_rows) && unique(v.prediction_rows.map(r => r.root_id)), 'variant_invalid');
     const c = v.costs;
