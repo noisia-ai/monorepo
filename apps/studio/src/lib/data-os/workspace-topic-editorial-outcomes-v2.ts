@@ -104,7 +104,7 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
         LEFT JOIN signal_topic_editorial_reused_decisions_v2 reused
           ON reused.request_id=request_row.id AND reused.execution_id=owner.id
         LEFT JOIN LATERAL (
-          SELECT batch_item.validation,batch_item.outcome,batch_item.error_code item_error,provider_batch.state batch_state,
+          SELECT batch_item.validation,batch_item.outcome,batch_item.validation->>'code' item_error,provider_batch.state batch_state,
             provider_batch.error_code batch_error,provider_call.status call_status,provider_call.error_code call_error
           FROM signal_topic_editorial_batch_items_v2 batch_item
           JOIN signal_topic_editorial_provider_batches_v2 provider_batch ON provider_batch.id=batch_item.batch_id
@@ -136,9 +136,9 @@ export async function loadWorkspaceTopicEditorialOutcomesPageV2(args: Scope) {
             OR screened.batch_state='rejected'
             OR screened.call_status='settled' AND screened.validation IS NULL THEN 'screening'
           ELSE 'pending' END::text phase,
-        COALESCE(concept.label,screened.decision->'candidate'->>'label',screened.validation->'decision'->'candidate'->>'label) label,
-        COALESCE(concept.definition,screened.decision->'candidate'->>'definition',screened.validation->'decision'->'candidate'->>'definition) definition,
-        COALESCE(concept.locale,screened.decision->'candidate'->>'locale',screened.validation->'decision'->'candidate'->>'locale) locale,
+        COALESCE(concept.label,screened.decision->'candidate'->>'label',screened.validation->'decision'->'candidate'->>'label') label,
+        COALESCE(concept.definition,screened.decision->'candidate'->>'definition',screened.validation->'decision'->'candidate'->>'definition') definition,
+        COALESCE(concept.locale,screened.decision->'candidate'->>'locale',screened.validation->'decision'->'candidate'->>'locale') locale,
         COALESCE(decision.rationale,screened.decision->>'rationale',screened.validation->'decision'->>'rationale') rationale,
         COALESCE(decision.confidence, NULLIF(screened.decision->>'confidence','')::double precision,
           NULLIF(screened.validation->'decision'->>'confidence','')::double precision) confidence,

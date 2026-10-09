@@ -463,7 +463,7 @@ export async function loadSignalWorkspaceAnalysisUpdateV1(args:{database:SignalW
   const dispatch=(await client.query<{status:string;error_code:string|null;attempt_count:number;profile_current:boolean}>(`SELECT dispatch.status,dispatch.error_code,dispatch.attempt_count,
    EXISTS(SELECT 1 FROM analysis_artifacts binding WHERE binding.engine_execution_id=$1::uuid AND binding.metadata->>'contract_version'='workspace-incremental-binding-index-v1'
     AND binding.metadata->>'worker_job_id'=dispatch.worker_job_id AND binding.metadata->>'catalog_profile_id'=signal_workspace_incremental_operational_profile_v1($1::uuid)::text) profile_current
-   FROM signal_topic_classification_outbox dispatch WHERE dispatch.execution_id=$1::uuid AND dispatch.dispatch_kind='incremental_projection'`,[row.execution_id,args.workspace_id])).rows[0]??null;
+   FROM signal_topic_classification_outbox dispatch WHERE dispatch.execution_id=$1::uuid AND dispatch.workspace_id=$2::uuid AND dispatch.dispatch_kind='incremental_projection'`,[row.execution_id,args.workspace_id])).rows[0]??null;
   const complete=status.latest_complete;
   const served=complete?(await client.query<{input_revision:string;interpretation_coverage:SignalWorkspaceIncrementalProjectionSourceV1['interpretation_coverage']|null;
    discovery_coverage:SignalWorkspaceIncrementalProjectionSourceV1['discovery_coverage']|null}>(`SELECT input_revision::text,

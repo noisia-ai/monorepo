@@ -36,16 +36,20 @@ export async function loadSignalWorkspaceContextWithDependencies(
       ).toJSON(), { status: 503 })
     } as const;
   }
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/iu.test(workspaceId.trim())) {
+    return { response: Response.json(new SignalBackendContractError(
+      "invalid_filter", "Invalid Signal workspace locator.", { field: "workspace_id" }
+    ).toJSON(), { status: 400 }) } as const;
+  }
   let workspace: ResolvedSignalWorkspace | null;
   try {
     workspace = await dependencies.resolveWorkspace(session.appUser, { workspaceId });
-  } catch (error) {
+  } catch {
     return {
       response: Response.json(new SignalBackendContractError(
-        "invalid_filter",
-        error instanceof Error ? error.message : "Invalid Signal workspace locator.",
-        { field: "workspace_id" }
-      ).toJSON(), { status: 400 })
+        "not_available",
+        "Signal workspace is temporarily unavailable. Refresh and try again."
+      ).toJSON(), { status: 503 })
     } as const;
   }
   if (!workspace) {

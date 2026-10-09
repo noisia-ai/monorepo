@@ -401,12 +401,15 @@ export async function loadConceptMembershipsStatusV1(
    ), current_rights AS MATERIALIZED (
    SELECT root_id,evidence FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$1 AND metrics
    ), pair_context AS MATERIALIZED (
-   SELECT m.*,m.root_id=ANY($7::uuid[]) stale,
+   SELECT m.*,correction.decided_via override_decided_via,m.root_id=ANY($7::uuid[]) stale,
      f.requires_context_review OR EXISTS (
        SELECT 1 FROM jsonb_array_elements(COALESCE(f.facets#>'{entities,value}','[]'::jsonb)) entity
        WHERE NOT EXISTS (SELECT 1 FROM jsonb_array_elements($8::jsonb->'entities') known
          WHERE known->>'entity_id'=entity->>'entity_id' AND known->>'kind'=entity->>'kind')) context_invalid
    FROM current_pairs m JOIN display_roots f USING(root_id) JOIN current_rights rights USING(root_id)
+   LEFT JOIN signal_concept_membership_overrides correction ON correction.workspace_id=m.workspace_id
+     AND correction.root_id=m.root_id AND correction.concept_key=m.concept_key AND correction.superseded_at IS NULL
+     AND correction.definition_digest=m.definition_digest AND correction.root_fingerprint=m.root_fingerprint
    ), invalidated AS MATERIALIZED (
    SELECT p.*,context_invalid OR (stale AND source<>'human') invalid FROM pair_context p
    ), display_pairs AS MATERIALIZED (
@@ -420,7 +423,9 @@ export async function loadConceptMembershipsStatusV1(
      CASE WHEN invalid THEN NULL ELSE updated_at END updated_at,
      CASE WHEN invalid THEN NULL ELSE error_code END error_code,
      CASE WHEN invalid THEN NULL ELSE refusal_category END refusal_category,
-     context_invalid requires_context_review,requires_override_review
+     context_invalid requires_context_review,requires_override_review,
+     CASE WHEN NOT invalid AND source='human' THEN override_decided_via END decided_via,
+     NOT invalid AND NOT requires_override_review AND source='human' AND COALESCE(override_decided_via='human_ui',false) eligible_for_human_evaluation
    FROM invalidated
    ), population AS (
    SELECT count(*) FILTER(WHERE relevance='relevant')::int relevant,
@@ -570,10 +575,12 @@ export async function overrideConceptMembershipsV1(
       root_id: string;
       concept_key: string;
       verdict: "belongs" | "not_belongs";
+      decided_via: "human_ui" | "agent_assisted";
     }>;
   },
 ) {
   if (
+    args.overrides.some(r => !["human_ui", "agent_assisted"].includes(r.decided_via)) ||
     !args.overrides.length ||
     args.overrides.length > 500 ||
     new Set(args.overrides.map((r) => `${r.root_id}:${r.concept_key}`)).size !==
@@ -606,9 +613,9 @@ export async function overrideConceptMembershipsV1(
       [args.workspace_id, JSON.stringify(args.overrides)],
     );
     const inserted = await c.query(
-      `INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,verdict,actor_user_id,definition_digest,root_fingerprint)
-       SELECT $1,r.root_id,r.concept_key,r.verdict,$3,m.definition_digest,m.root_fingerprint
-       FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text)
+      `INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,verdict,actor_user_id,definition_digest,root_fingerprint,decided_via)
+       SELECT $1,r.root_id,r.concept_key,r.verdict,$3,m.definition_digest,m.root_fingerprint,r.decided_via
+       FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text)
        JOIN signal_concept_memberships_current_v1 m ON m.workspace_id=$1 AND m.root_id=r.root_id AND m.concept_key=r.concept_key`,
       [args.workspace_id, JSON.stringify(args.overrides), args.actor_user_id],
     );
