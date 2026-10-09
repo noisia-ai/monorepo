@@ -21,6 +21,7 @@ const sha = (value: string) => `sha256:${createHash("sha256").update(value).dige
 test("migrated H1 selection, review queue and explicit unknown-exposure rollback use production tables", {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
 }, async () => {
+  const priorFlags=[process.env.NOISIA_MENTION_FACETS_ENABLED,process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED];
   const database = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === "true" });
   const client = await database.connect();
   try {
@@ -180,6 +181,9 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       return client.query(sql,params);
     };
     const db={query,connect:async()=>({query,release(){}})} as unknown as Pool;
+    process.env.NOISIA_MENTION_FACETS_ENABLED="false";
+    await assert.rejects(loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor}),/hybrid_not_enabled/u);
+    process.env.NOISIA_MENTION_FACETS_ENABLED="true";process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED="true";
     assert.equal((await loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor})).route,"standard");
     const selected=await configureHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor,
       route:"hybrid_h1",provider_available:true,expected_route_digest:null});
@@ -427,5 +431,9 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       "a failed paid receipt adds observed settlement only, never the former reservation");
     assert.equal((await client.query("SELECT labeler_version_id FROM signal_workspace_labelers WHERE workspace_id=$1 AND kind='facets'",[workspace])).rows[0].labeler_version_id,facetVersion);
     await client.query("ROLLBACK");
-  } finally { await client.query("ROLLBACK").catch(()=>undefined);client.release();await database.end(); }
+  } finally {
+    for(const [index,key] of ["NOISIA_MENTION_FACETS_ENABLED","NOISIA_CONCEPT_MEMBERSHIP_ENABLED"].entries())
+      if(priorFlags[index]===undefined)delete process.env[key];else process.env[key]=priorFlags[index];
+    await client.query("ROLLBACK").catch(()=>undefined);client.release();await database.end();
+  }
 });
