@@ -33,6 +33,7 @@ import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storag
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readMfpInFlightPages } from "./signal-labeling-parallelism";
 export const SIGNAL_CONCEPT_MEMBERSHIP_JOB_V1 = "signal-concept-membership-v1";
 type Provider = ReturnType<typeof createAnthropicMessageBatchesClient>;
 const zeroUsage = (): LlmUsageV1 => ({
@@ -115,22 +116,15 @@ export async function runConceptMembershipTickV1(args: {
       run.error_code = "labeling_outcome_unknown";
       calls = await store.calls(run);
     }
-    if (
-      !run.error_code &&
-      !calls.some((c) =>
-        ["reserved", "submitting", "submitted"].includes(c.status),
-      )
-    ) {
-      const inputs = await store.inputs(run);
-      if (inputs.length) {
-        await store.reserve(
-          run,
-          groupMembershipInputsV1(inputs).map((group) =>
-            membershipCallProposalV1(run, group),
-          ),
-        );
-        calls = await store.calls(run);
+    if (!run.error_code && !calls.some((c) =>
+      ["reserved", "submitting", "submitted"].includes(c.status))) {
+      for (let page = 0; page < readMfpInFlightPages(); page++) {
+        const inputs = await store.inputs(run);
+        if (!inputs.length) break;
+        await store.reserve(run, groupMembershipInputsV1(inputs).map((group) =>
+          membershipCallProposalV1(run, group)));
       }
+      calls = await store.calls(run);
     }
     const reserved = run.error_code
       ? []
@@ -315,6 +309,18 @@ export async function runConceptMembershipTickV1(args: {
             results: resultsFor(call, run, "error", "incomplete_single_root"),
           });
       } else {
+        for (const ordinal of group.retry_ordinals ?? []) {
+          if (run.error_code || call.retry_depth >= 8) {
+            group.results.push(...resultsFor(
+              {...call, inputs: [call.inputs[ordinal]!]}, run, "error",
+              run.error_code ? "retry_requires_authority" : "incomplete_single_root",
+            ));
+          } else {
+            retry.push(membershipCallProposalV1(
+              run, [call.inputs[ordinal]!], call.retry_depth + 1, call.id,
+            ));
+          }
+        }
         apply.push({ call, results: group.results });
       }
     }

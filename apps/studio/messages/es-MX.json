@@ -4714,6 +4714,7 @@
     "firstPage": "Primera página",
     "nextPage": "Siguiente página",
     "contextReview": "Las entidades cambiaron. Revisa esta corrección con el contexto vigente.",
+    "overrideReview": "La corrección anterior corresponde a otra definición o versión del texto. Revísala antes de aplicarla de nuevo.",
     "openMention": "Abrir mención",
     "openOriginal": "Abrir fuente original",
     "withheld": "El texto no está disponible por los permisos vigentes de la fuente.",

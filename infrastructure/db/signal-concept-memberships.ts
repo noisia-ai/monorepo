@@ -114,7 +114,10 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  SELECT array_agg(c.concept_key) keys FROM concepts c
  WHERE (c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))
  AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM current_pairs current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
- AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest AND current.verdict NOT IN('pending','error') AND (current.source='human' OR current.labeler_digest=$6)))
+ AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest
+ AND (current.verdict IN('belongs','not_belongs','insufficient','refused')
+ OR (current.verdict='error' AND current.error_code IN('membership_item_schema_invalid','membership_evidence_invalid')))
+ AND (current.source='human' OR current.labeler_digest=$6)))
  AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls uncertain JOIN signal_labeling_runs r ON r.id=uncertain.run_id
  WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND uncertain.status IN('submitting','unknown')
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest
@@ -390,7 +393,7 @@ export async function loadConceptMembershipsStatusV1(
      CASE WHEN invalid THEN NULL ELSE updated_at END updated_at,
      CASE WHEN invalid THEN NULL ELSE error_code END error_code,
      CASE WHEN invalid THEN NULL ELSE refusal_category END refusal_category,
-     context_invalid requires_context_review
+     context_invalid requires_context_review,requires_override_review
    FROM invalidated
    ), population AS (
    SELECT count(*) FILTER(WHERE relevance='relevant')::int relevant,
@@ -568,10 +571,15 @@ export async function overrideConceptMembershipsV1(
       `UPDATE signal_concept_membership_overrides o SET superseded_at=now() FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text) WHERE o.workspace_id=$1 AND o.root_id=r.root_id AND o.concept_key=r.concept_key AND o.superseded_at IS NULL`,
       [args.workspace_id, JSON.stringify(args.overrides)],
     );
-    await c.query(
-      `INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,verdict,actor_user_id) SELECT $1,r.root_id,r.concept_key,r.verdict,$3 FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text)`,
+    const inserted = await c.query(
+      `INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,verdict,actor_user_id,definition_digest,root_fingerprint)
+       SELECT $1,r.root_id,r.concept_key,r.verdict,$3,m.definition_digest,m.root_fingerprint
+       FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text)
+       JOIN signal_concept_memberships_current_v1 m ON m.workspace_id=$1 AND m.root_id=r.root_id AND m.concept_key=r.concept_key`,
       [args.workspace_id, JSON.stringify(args.overrides), args.actor_user_id],
     );
+    if (inserted.rowCount !== args.overrides.length)
+      fail("membership_override_target_invalid", 400);
     return { updated: args.overrides.length };
   });
 }

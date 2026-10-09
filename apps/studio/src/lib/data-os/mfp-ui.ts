@@ -14,7 +14,7 @@ export type MfpFacetPage = {contract_version:"mention-facets-browser-v1";workspa
     relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];requires_context_review:boolean}>;next_cursor:string|null};
 export type MfpEvidence = {root_id:string;concept_key:string;definition_digest:string;verdict:string;
   citations:Array<{quote:string;quote_start:number;quote_end:number;chunk_index:number;chunk_sha256:string}>;
-  rationale:string|null;source:"human"|"model"|"pending";text:string|null;title:string|null;url:string|null;platform:string|null;evidence_withheld?:boolean};
+  rationale:string|null;source:"human"|"model"|"pending";text:string|null;title:string|null;url:string|null;platform:string|null;evidence_withheld?:boolean;requires_override_review?:boolean};
 export type MfpMembershipStatus = {contract_version:"concept-membership-status-v1";enabled:boolean;provider_available:boolean;
   can_request_processing:boolean;can_edit_topics:boolean;entity_context_digest:string;
   counts:Array<{verdict:string;count:number}>;population:{relevant:number;unrelated:number;unknown:number;spam:number;without_concept:number};

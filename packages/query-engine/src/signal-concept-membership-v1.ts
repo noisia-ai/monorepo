@@ -297,30 +297,20 @@ export function membershipResultsForV1(
     })),
   );
 }
+const outputRoot = z
+  .object({
+    root_ordinal: z.number().int().nonnegative(),
+    memberships: z.array(z.object({
+      concept_key: z.string(),
+      verdict: z.enum(["belongs", "insufficient"]),
+      span_ids: z.array(z.string()).min(1).max(128),
+      rationale: z.string().trim().min(1).refine((v) => v.split(/\s+/u).length <= 30),
+    }).strict()),
+  }).strict();
 const output = z
   .object({
     contract_version: z.literal(CONCEPT_MEMBERSHIP_CONTRACT_V1),
-    roots: z.array(
-      z
-        .object({
-          root_ordinal: z.number().int().nonnegative(),
-          memberships: z.array(
-            z
-              .object({
-                concept_key: z.string(),
-                verdict: z.enum(["belongs", "insufficient"]),
-                span_ids: z.array(z.string()).min(1).max(128),
-                rationale: z
-                  .string()
-                  .trim()
-                  .min(1)
-                  .refine((v) => v.split(/\s+/u).length <= 30),
-              })
-              .strict(),
-          ),
-        })
-        .strict(),
-    ),
+    roots: z.array(z.unknown()),
   })
   .strict();
 /** No negative inference until the entire response and its ordinal coverage have validated. */
@@ -328,7 +318,7 @@ export function parseMembershipGroupV1(
   text: string,
   inputs: MembershipInputV1[],
   stopReason = "end_turn",
-): { split: boolean; results: MembershipResultV1[] } {
+): { split: boolean; results: MembershipResultV1[]; retry_ordinals?: number[] } {
   if (stopReason === "max_tokens") return { split: true, results: [] };
   let value: unknown;
   try {
@@ -379,7 +369,9 @@ export function parseMembershipGroupV1(
         "membership_schema_invalid",
       ),
     };
-  const seen = new Set(parsed.data.roots.map((r) => r.root_ordinal));
+  const seen = new Set(parsed.data.roots.map((r) =>
+    r && typeof r === "object" && "root_ordinal" in r ? r.root_ordinal : null,
+  ));
   if (
     parsed.data.roots.length !== inputs.length ||
     seen.size !== inputs.length ||
@@ -387,16 +379,26 @@ export function parseMembershipGroupV1(
   )
     return { split: true, results: [] };
   const spans = new Map(membershipSpansV1(inputs).map((s) => [s.span_id, s]));
-  const results = membershipResultsForV1(inputs, "not_belongs");
-  try {
-    for (const root of parsed.data.roots) {
-      const input = inputs[root.root_ordinal]!;
+  const results: MembershipResultV1[] = [];
+  const retry_ordinals: number[] = [];
+  for (const candidate of parsed.data.roots) {
+    const ordinal = (candidate as { root_ordinal: number }).root_ordinal;
+    const input = inputs[ordinal]!;
+    const parsedRoot = outputRoot.safeParse(candidate);
+    if (!parsedRoot.success) {
+      if (inputs.length > 1) retry_ordinals.push(ordinal);
+      else results.push(...membershipResultsForV1([input], "error", "membership_item_schema_invalid"));
+      continue;
+    }
+    const root = parsedRoot.data;
+    const rootResults = membershipResultsForV1([input], "not_belongs");
+    try {
       const concepts = new Set<string>();
       for (const member of root.memberships) {
         if (concepts.has(member.concept_key))
           throw new Error("duplicate_concept");
         concepts.add(member.concept_key);
-        const target = results.find(
+        const target = rootResults.find(
           (r) =>
             r.root_id === input.root_id && r.concept_key === member.concept_key,
         );
@@ -408,16 +410,11 @@ export function parseMembershipGroupV1(
         target.verdict = member.verdict;
         target.rationale = member.rationale;
       }
+      results.push(...rootResults);
+    } catch {
+      if (inputs.length > 1) retry_ordinals.push(ordinal);
+      else results.push(...membershipResultsForV1([input], "error", "membership_evidence_invalid"));
     }
-    return { split: false, results };
-  } catch {
-    return {
-      split: false,
-      results: membershipResultsForV1(
-        inputs,
-        "error",
-        "membership_evidence_invalid",
-      ),
-    };
   }
+  return { split: false, results, retry_ordinals };
 }

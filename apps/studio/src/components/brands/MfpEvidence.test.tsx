@@ -23,6 +23,11 @@ for (const locale of ["es-MX","en-US"]) {
       citations:[],rationale:null,text:null,title:null,url:null,platform:null,evidence_withheld:true}}/>);
     assert.match(html,new RegExp(messages.Mfp.verdicts.refused));assert.match(html,new RegExp(messages.Mfp.withheld));assert.doesNotMatch(html,/<mark>/);
   });
+  test(`${locale}: stale human correction is visibly marked for review`,()=>{
+    const html=render(<MfpEvidence mentionHref="#mention-root" item={{root_id:"root",concept_key:"sample",definition_digest:"x",verdict:"pending",source:"pending",
+      citations:[],rationale:null,text:"Current text",title:null,url:null,platform:null,requires_override_review:true}}/>);
+    assert.match(html,new RegExp(messages.Mfp.overrideReview));
+  });
   test(`${locale}: an absent strict maximum is distinct from a zero maximum`,()=>{
     const run={id:"run",status:"completed",estimated_micro_usd:100,settled_micro_usd:0,reserved_micro_usd:0,budget_micro_usd:null,cap_micro_usd:null,error_code:null};
     assert.match(render(<MfpRunReceipt run={run}/>),new RegExp(messages.Mfp.noMaximum));
