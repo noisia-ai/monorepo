@@ -253,13 +253,19 @@ export async function writeHybridMembershipDecisionPageV1(args: {
     "SELECT route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE", [args.workspace_id])).rows[0];
   if (!selected || selected.route_digest !== args.route_digest) fail("hybrid_route_changed");
   const rows = args.decisions.map(hybridDecisionRecordV1);
-  const matched = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb)
+  // Fence the governed views before joining the JSON page: otherwise PostgreSQL
+  // can reevaluate their nested population/rights plans for every decision.
+  const matched = (await args.client.query<{count:number}>(`WITH current_memberships AS MATERIALIZED (
+    SELECT root_id,root_fingerprint,concept_key,definition_digest,entity_context_digest,effective_entities_digest
+    FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
+  ), authorized_roots AS MATERIALIZED (
+    SELECT root_id FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$1 AND metrics AND evidence
+  ) SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb)
     r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text)
-    JOIN signal_concept_memberships_current_v1 current ON current.workspace_id=$1 AND current.root_id=r.root_id
+    JOIN current_memberships current ON current.root_id=r.root_id
       AND current.root_fingerprint=r.root_fingerprint AND current.concept_key=r.concept_key AND current.definition_digest=r.definition_digest
       AND current.entity_context_digest=r.entity_context_digest AND current.effective_entities_digest=r.effective_entities_digest
-    JOIN signal_membership_evidence_rights_v1 rights ON rights.workspace_id=current.workspace_id AND rights.root_id=current.root_id
-      AND rights.metrics AND rights.evidence`, [args.workspace_id, JSON.stringify(rows)])).rows[0]!.count;
+    JOIN authorized_roots rights ON rights.root_id=current.root_id`, [args.workspace_id, JSON.stringify(rows)])).rows[0]!.count;
   if (matched !== rows.length) fail("hybrid_population_or_rights_changed");
   const receipts = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb)
     r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,

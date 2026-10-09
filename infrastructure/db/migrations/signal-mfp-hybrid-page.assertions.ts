@@ -5,6 +5,7 @@ import {labelerDigestV1,hybridJevMembershipIdentityV1,mapHybridJevAnswerV1} from
 import {createHybridMembershipStageStoreV1,type HybridStageResultV1} from "../signal-hybrid-runs";
 import {hybridJevCallProposalV1,runHybridMembershipTickV1} from "../../../services/workers/src/workers/signal-hybrid-membership";
 import {JevProviderErrorV1,type JevRequestV1} from "../../../services/workers/src/providers/typesafe-jev";
+import type {LabelingRunV1} from "../signal-labeling-runs";
 import type {ConceptForJudgeV1} from "@noisia/query-engine";
 const sha=(s:string)=>`sha256:${createHash("sha256").update(s).digest("hex")}`;
 /** Real migrated tables and normal store operations; only provider/storage are simulated. */
@@ -58,8 +59,20 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  const reply=(request:JevRequestV1)=>({http_status:200,latency_ms:1,body:JSON.stringify({model:request.model,
   usage:{input_tokens:10,output_tokens:0},answers:{membership:{type:"noul",noul:0.1}}})});
  const id=await createRun(),run=(await store.claim(id))!;
- for(;;){const inputs=await store.inputs(run);if(!inputs.length)break;
-  await store.reserve(run,inputs.flatMap(input=>input.evaluated_concepts.map(c=>hybridJevCallProposalV1(run,input,c,0.042))));}
+ const selected:Parameters<typeof hybridJevCallProposalV1>[1][]=[],selectedRoots=new Set<string>();
+ let cursor:string|null=null;
+ for(let page=0;page<4;page++){
+  phase(`selection_${page+1}_started`);
+  const inputs=await store.inputs({...run,cursor_root_id:cursor} as LabelingRunV1);
+  assert.ok(inputs.length>0&&inputs.length<=200);
+  for(const input of inputs){assert.ok(!selectedRoots.has(input.root_id),"selector cursor must advance");
+   selectedRoots.add(input.root_id);selected.push(input);}
+  cursor=inputs.at(-1)!.root_id;phase(`selection_${page+1}_completed`);
+ }
+ assert.equal(selected.length,662);
+ assert.equal((await store.inputs({...run,cursor_root_id:cursor} as LabelingRunV1)).length,0);
+ phase("single_reservation_started");
+ await store.reserve(run,selected.flatMap(input=>input.evaluated_concepts.map(c=>hybridJevCallProposalV1(run,input,c,0.042))),true);
  phase("reservations_completed");const calls=await store.calls(run);assert.equal(calls.length,662);
  const prior=calls.slice(0,340),priorRequests=new Set(prior.map(call=>JSON.stringify(call.request)));
  await store.markSubmitting(run,prior);
