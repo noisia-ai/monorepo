@@ -1,6 +1,5 @@
 /** Opt-in provider demo. Never imported by unit suites. Run only through guarded MFP runner. */
 import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { main, openDatabase } from "./guard.mjs";
 await main(async () => {
   const mode = process.argv.includes("--real") ? "real" : "fake";
@@ -132,12 +131,7 @@ await main(async () => {
                               act: dim("other"),
                               spam_or_bot: dim(false),
                               language: dim("es"),
-                              asunto: dim(
-                                labeler.params.request_format ===
-                                  "required-ordinal-fields-v4"
-                                  ? ""
-                                  : null,
-                              ),
+                              asunto: dim(null),
                             },
                           ]),
                         ),
@@ -200,6 +194,7 @@ await main(async () => {
               await writeFile(key, args.raw_text, { mode: 0o600 });
               return key;
             },
+            loadRaw: async (args) => readFile(args.storage_key, "utf8"),
           });
     const provider =
       mode === "real"

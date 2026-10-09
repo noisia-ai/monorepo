@@ -36,7 +36,6 @@ export type LabelingRunV1 = {
   cursor_root_id: string | null;
   cap_micro_usd: string | null;
   processing_admission_id: string;
-  selection_complete: boolean;
   status: string;
   error_code?: string | null;
 };
@@ -178,7 +177,7 @@ export async function loadMentionFacetsStatusV1(args: {
       (
         await c.query(
           `SELECT r.id,r.status,r.counts,r.estimated_micro_usd::text,r.budget_micro_usd::text,r.cap_micro_usd::text,r.waiting_full_confirmation,r.error_code,
-    COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled'),0)::text settled_micro_usd,
+    COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled' OR c.status='failed' AND c.settled_micro_usd IS NOT NULL),0)::text settled_micro_usd,
     COALESCE(sum(c.reserved_micro_usd) FILTER(WHERE c.status IN('reserved','submitting','submitted','unknown')),0)::text reserved_micro_usd
     FROM signal_labeling_runs r LEFT JOIN signal_labeling_calls c ON c.run_id=r.id WHERE r.id=(SELECT id FROM signal_labeling_runs WHERE workspace_id=$1 AND kind='facets' ORDER BY created_at DESC LIMIT 1) GROUP BY r.id`,
           [args.workspace_id],
@@ -460,6 +459,15 @@ export async function requestMentionFacetsV1(args: {
     };
   });
 }
+export async function readSignalLabelingRunExposureV1(client: PoolClient, runId: string): Promise<string> {
+  const row=(await client.query<{total:string}>(
+    `SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)
+      ELSE reserved_micro_usd END),0)::text total FROM signal_labeling_calls WHERE run_id=$1`,
+    [runId],
+  )).rows[0];
+  return row?.total??"0";
+}
+
 export function createSignalLabelingStoreV1<
   Input extends FacetInput = FacetInput,
   Result = FacetResult,
@@ -487,6 +495,14 @@ export function createSignalLabelingStoreV1<
     call_id: string;
     raw_text: string;
     raw_sha256: string;
+  }) => Promise<string>;
+  loadRaw?: (args: {
+    workspace_id: string;
+    run_id: string;
+    call_id: string;
+    storage_key: string;
+    raw_sha256: string;
+    size_bytes: number;
   }) => Promise<string>;
 }) {
   const db = options.database;
@@ -552,14 +568,7 @@ export function createSignalLabelingStoreV1<
         [policy.organization_id, policy.budget_date, policy.budget_timezone],
       )
     ).rows[0]!;
-    const spent = Number(
-      (
-        await c.query(
-          `SELECT COALESCE(sum(CASE WHEN status='settled' THEN settled_micro_usd WHEN status='failed' THEN 0 ELSE reserved_micro_usd END),0) total FROM signal_labeling_calls WHERE run_id=$1`,
-          [run.id],
-        )
-      ).rows[0]!.total,
-    );
+    const spent = Number(await readSignalLabelingRunExposureV1(c,run.id));
     if (
       (run.cap_micro_usd !== null &&
         spent + amount > Number(run.cap_micro_usd)) ||
@@ -588,7 +597,7 @@ export function createSignalLabelingStoreV1<
         ).rows[0];
         if (!row) return null;
         await c.query(
-          `UPDATE signal_labeling_calls SET status='unknown',updated_at=now() WHERE run_id=$1 AND status='submitting' AND raw_body IS NULL`,
+          `UPDATE signal_labeling_calls SET status='unknown',updated_at=now() WHERE run_id=$1 AND status='submitting' AND raw_storage_key IS NULL`,
           [runId],
         );
         return (
@@ -602,12 +611,21 @@ export function createSignalLabelingStoreV1<
     async fail(run: LabelingRunV1, code: string) {
       await tx(db, async (c) => {
         await lock(c, run);
+        if(code==="labeling_raw_receipt_invalid"){
+          await c.query(`UPDATE signal_labeling_calls
+            SET status='failed',settled_micro_usd=CASE WHEN status='reserved' THEN settled_micro_usd
+              ELSE COALESCE(settled_micro_usd,reserved_micro_usd) END,updated_at=now()
+            WHERE run_id=$1 AND (status IN('reserved','submitting','submitted','unknown')
+              OR status='settled' AND NOT results_applied)`,[run.id]);
+          await c.query(`UPDATE signal_labeling_runs SET error_code=$2,status='failed',updated_at=now() WHERE id=$1`,[run.id,code]);
+          return;
+        }
         await c.query(
           `UPDATE signal_labeling_calls SET status='failed',updated_at=now() WHERE run_id=$1 AND status='reserved'`,
           [run.id],
         );
         await c.query(
-          `UPDATE signal_labeling_runs SET error_code=$2,status=CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND (status='submitted' OR raw_body IS NOT NULL AND NOT results_applied)) THEN 'running' ELSE 'failed' END,updated_at=now() WHERE id=$1`,
+          `UPDATE signal_labeling_runs SET error_code=$2,status=CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND (status='submitted' OR raw_storage_key IS NOT NULL AND NOT results_applied)) THEN 'running' ELSE 'failed' END,updated_at=now() WHERE id=$1`,
           [run.id, code],
         );
       });
@@ -693,12 +711,40 @@ export function createSignalLabelingStoreV1<
       });
     },
     async calls(run: LabelingRunV1): Promise<LabelingCallV1<Input>[]> {
-      return (
+      const calls = (
         await db.query<LabelingCallV1<Input>>(
           "SELECT * FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id",
           [run.id],
         )
-      ).rows;
+      ).rows.map((call) => ({ ...call, raw_body: call.raw_body ?? null }));
+      for (const call of calls) {
+        const stored = call as LabelingCallV1<Input> & {
+          raw_storage_key?: string | null;
+          raw_sha256?: string | null;
+          raw_size_bytes?: string | number | null;
+        };
+        if (stored.raw_storage_key && stored.raw_sha256 && !call.raw_body && !call.results_applied) {
+          if (!options.loadRaw) fail("labeling_raw_loader_unavailable", 503);
+          const size = Number(stored.raw_size_bytes);
+          if (!Number.isSafeInteger(size) || size < 0) fail("labeling_raw_receipt_invalid", 503);
+          try{call.raw_body = await options.loadRaw({ workspace_id: run.workspace_id, run_id: run.id,
+            call_id: call.id, storage_key: stored.raw_storage_key, raw_sha256: stored.raw_sha256,
+            size_bytes: size });}
+          catch(error){
+            if(error instanceof SyntaxError || error instanceof Error && ["workspace_engine_storage_object_missing",
+              "workspace_engine_storage_digest_invalid","workspace_engine_storage_part_invalid",
+              "workspace_engine_storage_manifest_invalid","workspace_engine_storage_reference_invalid",
+              "workspace_engine_storage_response_too_large",
+              "labeling_raw_receipt_invalid"].includes(error.message))
+              fail("labeling_raw_receipt_invalid",503);
+            fail("labeling_raw_storage_unavailable",503);
+          }
+          if (Buffer.byteLength(call.raw_body)!==size ||
+            `sha256:${createHash("sha256").update(call.raw_body).digest("hex")}` !== stored.raw_sha256)
+            fail("labeling_raw_receipt_invalid", 503);
+        }
+      }
+      return calls;
     },
     async markSubmitting(run: LabelingRunV1, calls: LabelingCallV1<Input>[]) {
       await options.assertRawReady?.();
@@ -747,8 +793,8 @@ export function createSignalLabelingStoreV1<
         raw_sha256: sha,
       });
       const result = await db.query(
-        `UPDATE signal_labeling_calls SET raw_body=$3,raw_sha256=$4,raw_storage_key=$5,updated_at=now() WHERE run_id=$1 AND id=$2 AND (raw_sha256 IS NULL OR raw_sha256=$4) RETURNING id`,
-        [run.id, call.id, raw, sha, key],
+        `UPDATE signal_labeling_calls SET raw_sha256=$3,raw_storage_key=$4,raw_size_bytes=$5,updated_at=now() WHERE run_id=$1 AND id=$2 AND (raw_sha256 IS NULL OR raw_sha256=$3 AND raw_storage_key=$4 AND raw_size_bytes=$5) RETURNING id`,
+        [run.id, call.id, sha, key, Buffer.byteLength(raw)],
       );
       if (!result.rows.length) fail("labeling_raw_conflict");
       call.raw_body = raw;
@@ -791,12 +837,12 @@ export function createSignalLabelingStoreV1<
           raw_text: page.raw,
           raw_sha256: sha,
         });
-        receipts.push({ id: page.call.id, raw: page.raw, sha, key });
+        receipts.push({ id: page.call.id, sha, key, size: Buffer.byteLength(page.raw) });
       }
       const changed = await db.query(
-        `UPDATE signal_labeling_calls c SET raw_body=x.raw,raw_sha256=x.sha,raw_storage_key=x.key,updated_at=now()
-   FROM jsonb_to_recordset($2::jsonb) x(id uuid,raw text,sha text,key text) WHERE c.run_id=$1 AND c.id=x.id AND (c.raw_sha256 IS NULL OR c.raw_sha256=x.sha) RETURNING c.id`,
-        [run.id, JSON.stringify(receipts)],
+        `UPDATE signal_labeling_calls c SET raw_sha256=x.sha,raw_storage_key=x.key,raw_size_bytes=x.size,updated_at=now()
+   FROM jsonb_to_recordset($2::jsonb) x(id uuid,sha text,key text,size bigint) WHERE c.run_id=$1 AND c.id=x.id AND (c.raw_sha256 IS NULL OR c.raw_sha256=x.sha AND c.raw_storage_key=x.key AND c.raw_size_bytes=x.size) RETURNING c.id`,
+        [run.id, JSON.stringify(receipts.map(({id,sha,key,size})=>({id,sha,key,size})))],
       );
       if (changed.rows.length !== pages.length) fail("labeling_raw_conflict");
       for (const p of pages) p.call.raw_body = p.raw;
@@ -868,7 +914,7 @@ export function createSignalLabelingStoreV1<
         await lock(c, run);
         const calls = (
           await c.query(
-            `SELECT count(*) FILTER(WHERE status='unknown')::int unknown,count(*) FILTER(WHERE status IN('reserved','submitting','submitted') OR raw_body IS NOT NULL AND NOT results_applied)::int active FROM signal_labeling_calls WHERE run_id=$1`,
+            `SELECT count(*) FILTER(WHERE status='unknown')::int unknown,count(*) FILTER(WHERE status IN('reserved','submitting','submitted') OR raw_storage_key IS NOT NULL AND NOT results_applied)::int active FROM signal_labeling_calls WHERE run_id=$1`,
             [run.id],
           )
         ).rows[0]!;

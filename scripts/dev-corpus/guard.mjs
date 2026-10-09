@@ -2,6 +2,31 @@ import { lookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
 import { privateAddress } from '../../infrastructure/db/scripts/noi19-dev-test/target-guard.mjs';
 export const fail = code => { throw new Error(`mfp_${code}`); };
+export function assertDisposableFixture(identity, suite) {
+  if (!/^[a-z0-9-]+$/u.test(suite) || !new RegExp(`^${suite}-[a-z0-9]{6,}$`, 'u').test(identity?.fixture_key ?? ''))
+    fail('disposable_fixture_required');
+  return identity;
+}
+export async function verifyDisposableFixtureInDatabase(database, identity, suite) {
+  assertDisposableFixture(identity, suite);
+  const { rows } = await database.query(`SELECT 1
+    FROM organizations o
+    JOIN signal_workspaces w ON w.organization_id=o.id
+    JOIN brands b ON b.id=w.brand_id AND b.organization_id=o.id
+    JOIN users internal ON internal.id=$4 AND internal.organization_id=o.id
+      AND internal.user_type='noisia_internal' AND internal.primary_role='noisia_admin' AND internal.status='active'
+    JOIN users actor ON actor.id=$5 AND actor.organization_id=o.id
+      AND actor.user_type='client' AND actor.primary_role='client_admin' AND actor.status='active'
+    JOIN data_sources source ON source.id=$6 AND source.workspace_id=w.id
+      AND source.organization_id=o.id AND source.brand_id=b.id
+    WHERE o.id=$1 AND o.slug=$7 AND w.id=$2 AND b.id=$3`, [
+      identity?.organization_id, identity?.workspace_id, identity?.brand_id,
+      identity?.internal_user_id, identity?.actor_user_id, identity?.source_id,
+      `mfp-${identity?.fixture_key}`,
+    ]);
+  if (rows.length !== 1) fail('fixture_database_identity_mismatch');
+  return identity;
+}
 export async function readTarget() { return JSON.parse(await readFile(new URL('./target.json', import.meta.url), 'utf8')); }
 export function checkTarget(env, target) {
   if (target.environment_id !== '5bad359d-cfa4-4e8f-aa41-98e6f075375a'

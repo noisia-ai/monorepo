@@ -1,6 +1,9 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { openDatabase, main, fail } from './guard.mjs';
+import {assertLabelingReceiptGateV1} from './labeling-receipt-gate.mjs';
 await main(async () => {
   const pool = await openDatabase(); const client = await pool.connect();
   let stage = 'inventory';
@@ -21,9 +24,25 @@ await main(async () => {
     let count = 0;
     for (const { file, sql, digest } of sources) {
       if (applied.has(file)) continue;
-      stage = file; await client.query('BEGIN');
+      stage=file;
+      if (file === '0254_signal_labeling_receipt_verified_gate.sql' && !applied.has('0255_signal_labeling_receipts_in_object_storage.sql')
+        || file === '0255_signal_labeling_receipts_in_object_storage.sql') {
+        const {rows:[inventory]}=await client.query('SELECT count(*)::int n FROM signal_labeling_calls WHERE raw_body IS NOT NULL');
+        if(inventory.n>0){
+          const gate=spawnSync(process.execPath,['--import','tsx',fileURLToPath(new URL('./verify-labeling-receipts-before-0255.ts',import.meta.url))],
+            {cwd:fileURLToPath(new URL('../../',import.meta.url)),env:process.env,encoding:'utf8',timeout:30*60_000,maxBuffer:1024*1024});
+          if(gate.status!==0)fail('labeling_receipt_verification_failed');
+          let receipt;try{receipt=JSON.parse(gate.stdout.trim().split('\n').at(-1));}catch{fail('labeling_receipt_verification_failed');}
+          if(receipt.status!=='verified'||receipt.receipts!==inventory.n)fail('labeling_receipt_verification_failed');
+        }
+      }
+      await client.query('BEGIN');
       try {
         await client.query("SET LOCAL statement_timeout='5min'");
+        if(file==='0255_signal_labeling_receipts_in_object_storage.sql'){
+          await client.query('LOCK TABLE signal_labeling_calls IN ACCESS EXCLUSIVE MODE');
+          await assertLabelingReceiptGateV1(client);
+        }
         await client.query(sql);
         await client.query('INSERT INTO mfp_harness.migrations(name,sha256) VALUES($1,$2)',[file,digest]);
         await client.query('COMMIT'); count++;
