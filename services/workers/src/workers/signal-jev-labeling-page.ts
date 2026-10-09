@@ -32,10 +32,11 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
   },interval);heartbeat.unref?.();
   try{
     const price=hooks.price(run);
-    let calls=(await store.calls(run)).filter(call=>!call.results_applied).slice(0,200);
-    if(hooks.fail_on_error&&calls.some(call=>call.status==="unknown"&&!call.raw_body)){
+    const pending=(await store.calls(run)).filter(call=>!call.results_applied);
+    if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
       await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
     }
+    let calls=pending.slice(0,200);
     if(!calls.length&&!run.error_code){
       const proposals=hooks.propose(run,await store.inputs(run));
       if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,200);

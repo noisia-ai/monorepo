@@ -96,3 +96,14 @@ test("batch confirmation preserves each root/concept JEV receipt and visible rat
   await assert.rejects(adapter.apply(run,[{call:{...call,inputs:[{...root,jev_by_concept:{}}]} as never,
     results:[{...base,concept_key:"theme",verdict:"not_belongs",rationale:null}]}]),/hybrid_prior_jev_missing/u);
 });
+
+test("H1 stops new page sends when an uncertain call is outside the next 200 rows",async()=>{
+  const f=fixture("ok");
+  for(let n=0;n<201;n++)f.calls.push({...hybridJevCallProposalV1(run,input,concept,0.5),id:`call-${n}`,
+    status:n===200?"unknown":"reserved",raw_body:null,results_applied:false});
+  let sent=0;
+  const outcome=await runHybridMembershipTickV1({run_id:run.id,stage:"jev",store:f.store,jevPrice:0.5,
+    jev:{evaluate:async()=>{sent++;throw new Error("must not send");}}});
+  assert.equal(outcome.status,"outcome_unknown");assert.equal(sent,0);
+  assert.deepEqual(f.events,["run_failed","release"]);
+});

@@ -11,7 +11,10 @@ const sha=(s:string)=>`sha256:${createHash("sha256").update(s).digest("hex")}`;
 export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;database:Pool;workspace:string;
  actor:string;source:string;batch:string;prep:string;context:string;facetDigest:string;facets:unknown;
  entity:unknown;facetCall:string;route:string;concept:ConceptForJudgeV1;admit(action:string,target:string):Promise<string>}){
- const {client,workspace}=a;
+ const {client,workspace}=a,started=Date.now();
+ const phase=(name:string)=>console.log(JSON.stringify({gate:"h1_pg_page_probe",phase:name,elapsed_ms:Date.now()-started}));
+ await client.query("SET LOCAL statement_timeout='20s'");
+ phase("clone_roots_started");
  const cloneRoots=async(count:number,offset:number)=>{
   const rows=Array.from({length:count},(_,i)=>{const text=`Synthetic page bicycle brake discussion ${offset+i}`;
     return {id:randomUUID(),text,asset:sha(text)};});
@@ -36,7 +39,7 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
    WHERE f.workspace_id=$1 AND f.root_id=ANY($7::uuid[])`,[workspace,a.facetDigest,a.context,
     JSON.stringify(a.facets),JSON.stringify([a.entity]),a.facetCall,rows.map(r=>r.id)]);
  };
- await cloneRoots(662,0);
+ await cloneRoots(662,0);phase("clone_roots_completed");
  const identity=hybridJevMembershipIdentityV1(),version=randomUUID();
  await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,schema_digest,
   labeler_digest,identity) VALUES($1,'membership','typesafe','jev-1.13.0',$2,$3,$4,$5::jsonb)`,
@@ -57,7 +60,7 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  const id=await createRun(),run=(await store.claim(id))!;
  for(;;){const inputs=await store.inputs(run);if(!inputs.length)break;
   await store.reserve(run,inputs.flatMap(input=>input.evaluated_concepts.map(c=>hybridJevCallProposalV1(run,input,c,0.042))));}
- const calls=await store.calls(run);assert.equal(calls.length,662);
+ phase("reservations_completed");const calls=await store.calls(run);assert.equal(calls.length,662);
  const prior=calls.slice(0,340),priorRequests=new Set(prior.map(call=>JSON.stringify(call.request)));
  await store.markSubmitting(run,prior);
  await store.persistRawPage(run,prior.map(call=>({call,raw:JSON.stringify(reply(call.request as JevRequestV1))})));
@@ -69,7 +72,7 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
    concept_key:concept.concept_key,definition_digest:concept.definition_digest,entity_context_digest:input.entity_context_digest,
    effective_entities_digest:input.effective_entities_digest,jev:mapHybridJevAnswerV1(input,parsed),jev_call_id:call.id,
    claude:null,claude_call_id:null,rationale:null};return {call,results:[result]};});
- await store.apply(run,seed);await store.release(run);
+ phase("seed_apply_started");await store.apply(run,seed);await store.release(run);phase("seed_apply_completed");
  const census=async()=> (await client.query(`SELECT count(*)::int calls,
   count(*)FILTER(WHERE status='settled')::int settled,count(*)FILTER(WHERE status='reserved')::int reserved,
   count(*)FILTER(WHERE status='unknown')::int unknown,count(*)FILTER(WHERE results_applied)::int applied,
@@ -84,17 +87,17 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  const provider={evaluate:async(request:JevRequestV1)=>{const key=JSON.stringify(request);
   assert.ok(!priorRequests.has(key));assert.ok(!seen.has(key));seen.add(key);sent++;return reply(request);}};
  const tick=()=>runHybridMembershipTickV1({run_id:id,stage:"jev",store,jevPrice:0.042,jev:provider});
- await assert.rejects(tick(),/synthetic application interruption/u);
+ phase("resume_started");await assert.rejects(tick(),/synthetic application interruption/u);phase("resume_interrupted_durable");
  assert.deepEqual(await census(),{calls:662,settled:540,reserved:122,unknown:0,applied:340,durable_raw:540,cost:540});
- await tick();assert.equal(sent,200,"durable 200-call page replays without transport");
- await tick();assert.equal(sent,322);assert.deepEqual(pages,[200,200,122]);
+ phase("replay_started");await tick();phase("replay_completed");assert.equal(sent,200,"durable 200-call page replays without transport");
+ await tick();phase("continuation_completed");assert.equal(sent,322);assert.deepEqual(pages,[200,200,122]);
  assert.deepEqual(await census(),{calls:662,settled:662,reserved:0,unknown:0,applied:662,durable_raw:662,cost:662});
  await tick();assert.equal(sent,322,"completed run never resubmits");
  assert.deepEqual((await client.query("SELECT * FROM signal_labeling_calls WHERE id=ANY($1::uuid[]) ORDER BY id",[prior.map(c=>c.id)])).rows,oldRows);
  assert.equal((await client.query(`SELECT count(*)::int n FROM signal_hybrid_membership_decisions
   WHERE workspace_id=$1 AND jev_call_id=ANY($2::uuid[])`,[workspace,calls.map(c=>c.id)])).rows[0].n,662);
  // Real lease loss: persist the sent response, cancel queued work, apply nothing under the lost token.
- await cloneRoots(2,662);const lossId=await createRun();let attempts=0;
+ phase("lease_loss_started");await cloneRoots(2,662);const lossId=await createRun();let attempts=0;
  const lossStore=createHybridMembershipStageStoreV1("jev",{database:a.database,
   storeRaw:async r=>{const key=`private/page/${r.call_id}`;raw.set(key,r.raw_text);return key;},loadRaw:async r=>raw.get(r.storage_key)!});
  const lossProvider={evaluate:async(request:JevRequestV1,cancellation?:{signal?:AbortSignal})=>{
@@ -106,7 +109,7 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  lossStore.renew=async r=>{if(attempts)await renew(r);};
  await assert.rejects(runHybridMembershipTickV1({run_id:lossId,stage:"jev",store:lossStore,jevPrice:0.042,
   jev:lossProvider,lease_renewal_ms:5}),/labeling_lease_lost/u);
- const lost=(await client.query(`SELECT count(*)FILTER(WHERE raw_storage_key IS NOT NULL)::int raw,
+ phase("lease_loss_observed");const lost=(await client.query(`SELECT count(*)FILTER(WHERE raw_storage_key IS NOT NULL)::int raw,
   count(*)FILTER(WHERE status='settled')::int settled,count(*)FILTER(WHERE results_applied)::int applied,
   count(*)FILTER(WHERE status='failed')::int definitely_not_sent FROM signal_labeling_calls WHERE run_id=$1`,[lossId])).rows[0];
  assert.deepEqual(lost,{raw:1,settled:0,applied:0,definitely_not_sent:1});
@@ -114,10 +117,10 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
  await runHybridMembershipTickV1({run_id:lossId,stage:"jev",store:lossStore,jevPrice:0.042,
   jev:{evaluate:async()=>{throw new Error("lost-lease raw must replay without transport");}}});
  assert.equal((await client.query("SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1 AND status='settled' AND results_applied",[lossId])).rows[0].n,1);
- const unknownId=await createRun();let unknownAttempts=0;
+ phase("lease_replay_completed");const unknownId=await createRun();let unknownAttempts=0;
  const unknownProvider={evaluate:async()=>{unknownAttempts++;throw new JevProviderErrorV1("synthetic_unknown","outcome_unknown");}};
  await assert.rejects(runHybridMembershipTickV1({run_id:unknownId,stage:"jev",store:lossStore,jevPrice:0.042,jev:unknownProvider}),/synthetic_unknown/u);
  await runHybridMembershipTickV1({run_id:unknownId,stage:"jev",store:lossStore,jevPrice:0.042,jev:unknownProvider});
- assert.equal(unknownAttempts,1);assert.equal((await client.query(`SELECT count(*)::int n FROM signal_labeling_calls
+ phase("unknown_replay_completed");assert.equal(unknownAttempts,1);assert.equal((await client.query(`SELECT count(*)::int n FROM signal_labeling_calls
   WHERE run_id=$1 AND status='unknown' AND settled_micro_usd IS NULL AND NOT results_applied`,[unknownId])).rows[0].n,1);
 }
