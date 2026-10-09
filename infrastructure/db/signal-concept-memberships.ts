@@ -178,8 +178,10 @@ export async function requestConceptMembershipsV1(args: {
   full_recalculation?: boolean;
   provider_available: boolean;
   concept?: ConceptForJudgeV1;
+  /** Private WS4 evaluation variant; Studio leaves the production default untouched. */
+  evaluation_effort?: "low" | "medium";
 }) {
-  const identity = membershipLabelerIdentityV1();
+  const identity = membershipLabelerIdentityV1(args.evaluation_effort);
   const previewConcept = args.concept
     ? conceptForJudgeSchemaV1.parse({
         ...args.concept,
