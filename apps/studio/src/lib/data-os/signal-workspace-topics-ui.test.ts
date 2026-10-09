@@ -307,3 +307,13 @@ for (const locale of ["es-MX", "en-US"]) test(`${locale}: MFP shows relevance an
   assert.ok(!html.includes(locale === "es-MX" ? "una decisión aprobada" : "an approved decision"));
   assert.ok(!html.includes(locale === "es-MX" ? "Los grupos se calcularon" : "Clusters were computed"));
 });
+
+for(const locale of ["es-MX","en-US"])test(`${locale}: without-concept tab and KPI use the relevant population rather than legacy unresolved coverage`,async()=>{
+ const html=await render(locale,{...data,denominator:1176,coverage:{processed:1176,assigned_unique:45,noise:null,unresolved:134,abstained:0,withheld:0},
+  membership_population:{relevant:468,unrelated:481,spam:30,unknown:107,without_concept:423}});
+ const messages=JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`,import.meta.url),"utf8"));
+ const label=messages.SignalV2.workspaceTopics.mfp.without_concept;
+ assert.ok(html.includes(`${label}<span>423</span>`));
+ assert.ok((html.match(/>423</gu)??[]).length>=2,"tab and KPI both show423");
+ assert.doesNotMatch(html,/>134</u);
+});

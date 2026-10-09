@@ -624,6 +624,16 @@ test("workspace loader fails closed for unauthenticated, suspended, disabled, pa
     isEnabled: () => false
   });
   assert.equal("response" in disabled ? disabled.response?.status : 0, 503);
+  const invalid = await loadSignalWorkspaceContextWithDependencies("invalid", { ...dependencies,
+    resolveWorkspace: async () => { throw new Error("resolver must not run"); }
+  });
+  assert.equal("response" in invalid ? invalid.response?.status : 0, 400);
+  const unavailable = await loadSignalWorkspaceContextWithDependencies(SIGNAL_WORKSPACE_FIXTURE_IDS.workspace, { ...dependencies,
+    resolveWorkspace: async () => { throw new Error("timeout exceeded when trying to connect: private database detail"); }
+  });
+  assert.equal("response" in unavailable ? unavailable.response?.status : 0, 503);
+  assert.ok(unavailable.response);
+  assert.doesNotMatch(await unavailable.response.text(), /timeout|private database detail/u);
   const inaccessible = await loadSignalWorkspaceContextWithDependencies(SIGNAL_WORKSPACE_FIXTURE_IDS.workspace, {
     ...dependencies,
     resolveWorkspace: async () => null

@@ -10,6 +10,7 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
   const t=useTranslations("Mfp"),locale=useLocale();
   const base=`/api/data-os/signal/${encodeURIComponent(workspaceId)}/memberships`;
   const [verdict,setVerdict]=useState("belongs"),[cursor,setCursor]=useState<string|null>(null),[selection,setSelection]=useState<string[]>([]);
+  const [decidedVia,setDecidedVia]=useState<""|"human_ui"|"agent_assisted">("");
   const [previewRun,setPreviewRun]=useState<string|null>(null),[previewDefinition,setPreviewDefinition]=useState<string|null>(null);
   const query=new URLSearchParams({concept_key:concept.concept_key,verdict,limit:"30"});if(cursor)query.set("cursor",cursor);
   const resource=useMfpResource<MfpMembershipStatus>(`${base}?${query}`,"concept-membership-status-v1",onAccessDenied,true);
@@ -52,14 +53,15 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
         <a href={signalHref}>{t("openSignal")}</a></div>:null}
       <h4>{t("exceptions.title")}</h4><p>{t("exceptions.body")}</p>
       <div className="mfp-filters"><label>{t("filter")}<select value={verdict} onChange={event=>filter(event.target.value)}>
-        {["belongs","not_belongs","insufficient","refused","error","pending"].map(v=><option key={v} value={v}>{t(`verdicts.${v}`)}</option>)}</select></label>
-        <button type="button" className="admin-button" onClick={()=>filter("insufficient")}>{t("exceptions.review")}</button>
+        {["belongs","not_belongs",...(resource.data.route==="hybrid_h1"?["review_required"]:[]),"insufficient","refused","error","pending"].map(v=><option key={v} value={v}>{t(`verdicts.${v}`)}</option>)}</select></label>
+        <button type="button" className="admin-button" onClick={()=>filter(resource.data?.route==="hybrid_h1"?"review_required":"insufficient")}>{t(resource.data.route==="hybrid_h1"?"exceptions.reviewHybrid":"exceptions.review")}</button>
         <span>{t("count",{count:resource.data.counts.find(c=>c.verdict===verdict)?.count??0})}</span></div>
       {resource.data.items.length?<label className="mfp-select-all"><input type="checkbox" checked={selection.length===resource.data.items.length}
         disabled={!resource.data.can_edit_topics||mutation.busy} onChange={event=>setSelection(event.target.checked?resource.data!.items.map(i=>i.root_id):[])}/>{t("selectPage")}</label>:null}
-      {selection.length?<div className="admin-form-actions"><span>{t("correctSelected",{count:selection.length})}</span>
+      {selection.length?<div className="admin-form-actions"><label>{t("decisionOrigin.label")}<select value={decidedVia} onChange={event=>setDecidedVia(event.target.value as typeof decidedVia)}>
+          <option value="">{t("decisionOrigin.choose")}</option>{(["human_ui","agent_assisted"] as const).map(v=><option key={v} value={v}>{t(`decisionOrigin.${v}`)}</option>)}</select></label><span>{t("correctSelected",{count:selection.length})}</span>
         {(["belongs","not_belongs"] as const).map(decision=><button className="admin-button" type="button" key={decision}
-          disabled={mutation.busy||mutation.pending||!resource.data?.can_edit_topics} onClick={()=>void submit({overrides:selection.map(root_id=>({root_id,concept_key:concept.concept_key,verdict:decision}))},"PATCH")}>{t(decision==="belongs"?"exceptions.accept":"exceptions.reject")}</button>)}</div>:null}
+          disabled={!decidedVia||mutation.busy||mutation.pending||!resource.data?.can_edit_topics} onClick={()=>void submit({overrides:selection.map(root_id=>({root_id,concept_key:concept.concept_key,verdict:decision,decided_via:decidedVia}))},"PATCH")}>{t(decision==="belongs"?"exceptions.accept":"exceptions.reject")}</button>)}</div>:null}
       <div>{resource.data.items.map(item=><div key={`${item.root_id}:${item.concept_key}`}>
         <label className="mfp-select-all"><input type="checkbox" checked={selection.includes(item.root_id)} disabled={!resource.data?.can_edit_topics||mutation.busy}
           onChange={event=>setSelection(old=>event.target.checked?[...old,item.root_id]:old.filter(id=>id!==item.root_id))}/>{t("selectMention")}</label>
