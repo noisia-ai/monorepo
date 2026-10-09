@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { buildHybridJevQuestionV1, decideHybridMembershipV1, mapHybridJevAnswerV1, hybridJevMembershipIdentityV1, HYBRID_JEV_ANSWER_SCHEMA_V1 } from "./signal-hybrid-membership-v1";
+import { membershipLabelerIdentityV1, buildMembershipRequestV1, groupMembershipInputsV1, parseMembershipGroupV1, type ConceptForJudgeV1, type MembershipInputV1 } from "./signal-concept-membership-v1";
+
+const text = "The customer rented a car after the flight.";
+const quote = { quote: "rented a car", start: 13, end: 25 };
+const jev = { verdict: "belongs" as const, probability: 0.4, citation: quote };
+
+test("H1 requires Claude only for JEV positives and an exact literal citation for agreement", () => {
+  assert.deepEqual(decideHybridMembershipV1(text, { ...jev, verdict: "not_belongs", probability: 0.3999 }, null), {
+    verdict: "not_belongs", needs_claude: false, jev: { ...jev, verdict: "not_belongs", probability: 0.3999 }, claude: null,
+  });
+  assert.equal(decideHybridMembershipV1(text, jev, null).verdict, "pending");
+  assert.equal(decideHybridMembershipV1(text, jev, { verdict: "belongs", citation: quote }).verdict, "belongs");
+  assert.equal(decideHybridMembershipV1(text, jev, { verdict: "belongs", citation: { ...quote, quote: "fabricated" } }).verdict, "error");
+});
+
+test("H1 disagreement is review_required retains JEV evidence and allows omitted clear negatives", () => {
+  for (const verdict of ["not_belongs", "insufficient"] as const) {
+    const result = decideHybridMembershipV1(text, jev, { verdict, citation: quote });
+    assert.equal(result.verdict, "review_required");
+    assert.equal(result.jev.citation?.quote, quote.quote);
+    assert.equal(result.claude?.citation?.quote, quote.quote);
+  }
+  assert.equal(decideHybridMembershipV1(text, jev, { verdict: "not_belongs", citation: null }).verdict, "review_required");
+  assert.equal(decideHybridMembershipV1(text, jev, { verdict: "refused", citation: null }).verdict, "refused");
+  assert.equal(decideHybridMembershipV1(text, { verdict: "error", probability: null, citation: null }, null).verdict, "error");
+});
+
+const concept = { concept_key: "rental_cars", label: "Rental cars", scope: "all_conversations",
+  definition: "A completed car rental", inclusion: ["completed rental"], exclusion: ["flights only"],
+  positive_examples: [], negative_examples: [], definition_digest: `sha256:${"a".repeat(64)}` } as ConceptForJudgeV1;
+const input = { root_id: "11111111-1111-4111-8111-111111111111", input_digest: "sha256:x",
+  root_fingerprint: "sha256:y", entity_context_digest: "sha256:z", effective_entities_digest: "sha256:q",
+  text, title: null, platform: null, content_type: null, author: null, published_at: "2026-01-01", language: "en",
+  entities: [], voice: null, act: null, evaluated_concepts: [concept] } as MembershipInputV1;
+
+test("JEV noul threshold is frozen and Claude references must resolve to a source span", () => {
+  const request = buildHybridJevQuestionV1(input, concept);
+  assert.equal(request.questions.membership?.type, "noul");
+  const answer = mapHybridJevAnswerV1(input, { model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 0 },
+    answers: { membership: { type: "noul", noul: 0.4 } } });
+  assert.equal(answer.verdict, "belongs");
+  assert.equal(answer.citation?.quote, text);
+  assert.equal(hybridJevMembershipIdentityV1().model, "jev-1.13.0");
+  assert.equal(HYBRID_JEV_ANSWER_SCHEMA_V1.properties.membership.properties.type.const, "noul");
+});
+
+test("confirmation uses the shared low batch judge with all positive concepts per root", () => {
+  const second = {...concept,concept_key:"travel"};
+  const roots = Array.from({length:17},(_,i)=>({...input,root_id:`root-${i}`,evaluated_concepts:[concept,second]}));
+  const groups = groupMembershipInputsV1(roots);
+  assert.deepEqual(groups.map(group=>group.length),[16,1]);
+  const request = buildMembershipRequestV1(groups[0]!,{entities:[]},[concept,second],membershipLabelerIdentityV1("low"));
+  assert.equal(request.output_config.effort,"low");
+  assert.equal(request.system[0]?.cache_control.ttl,"1h");
+  const parsed = parseMembershipGroupV1(JSON.stringify({contract_version:"concept-membership-judge-v1",roots:[{
+    root_ordinal:0,memberships:[{concept_key:concept.concept_key,verdict:"belongs",span_ids:["r0c0s0"],rationale:"Completed rental described."}]
+  }]}),[input]);
+  assert.equal(parsed.results[0]?.rationale,"Completed rental described.");
+  assert.equal(parsed.results[0]?.citations[0]?.quote,text);
+});
