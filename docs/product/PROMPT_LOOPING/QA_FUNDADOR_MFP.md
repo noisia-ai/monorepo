@@ -28,6 +28,17 @@ Configuración observada en Studio el 9 de octubre; todos los siguientes valores
 | Editorial y consolidación | `NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_PROVIDER_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED` |
 | Vectores e interpretación | `NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED`, `NOISIA_WORKSPACE_INTERPRETATION_ENABLED` |
 
+Para H1, lectura directa de Studio a las **03:40:06 UTC del 9 de octubre**:
+
+| Variable | Estado actual |
+|---|---|
+| `NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED` | `true` |
+| `NOISIA_JEV_PROVIDER_ENABLED` | No configurada |
+| `NOISIA_MFP_HYBRID_ENABLED` | No configurada |
+| `NOISIA_MFP_HYBRID_LEDGER_READY` | No configurada |
+
+El corte compartido no está habilitado para seleccionar H1 mediante el control nuevo. Para activarlo después de revisar y desplegar #39/#40, el operador debe comprobar las cuatro variables en `true` en Studio y Runner, además de permisos, habilitación de la marca y presupuesto. Volver a Estándar permanece posible con proveedores apagados. Esta condición futura no acredita un despliegue actual.
+
 `NOISIA_FOUNDER_RECOVERY_ENABLED` está en `false`. El operador técnico debe confirmar también permisos, configuración del Runner y coste disponible antes de cualquier ejecución. Una función activa por configuración no acredita que el recorrido funcione.
 
 ## Recorrido
