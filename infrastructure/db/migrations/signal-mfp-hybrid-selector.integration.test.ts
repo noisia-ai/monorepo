@@ -3,16 +3,18 @@ import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { Pool } from "pg";
 import {
+  entityContextDigestV1,
   signalQualityPolicyDefinitionHashV1,
   signalRetentionPolicyDefinitionHashV1,
   signalProvenancePolicyBindingDefinitionHashV1,
 } from "@noisia/query-engine";
-import { selectMembershipInputsV1 } from "../signal-concept-memberships";
+import { loadConceptMembershipsStatusV1, selectMembershipInputsV1 } from "../signal-concept-memberships";
 import { assertHybridProviderRightsBeforeSubmitV1,
   selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
 import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationSqlV1 } from "../signal-hybrid-admission-population";
-import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1, loadHybridMembershipReviewQueueV1,
+import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1,
   writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
+import { loadFacetEntityContextV1 } from "../signal-mention-facets";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
 
@@ -21,6 +23,7 @@ const sha = (value: string) => `sha256:${createHash("sha256").update(value).dige
 test("migrated H1 selection, review queue and explicit unknown-exposure rollback use production tables", {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 120_000,
 }, async () => {
+  const priorFlags=[process.env.NOISIA_MENTION_FACETS_ENABLED,process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED];
   const database = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.DATABASE_SSL === "true" });
   const client = await database.connect();
   try {
@@ -106,11 +109,13 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     await client.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,
       disposition,root_metadata,provenance,fingerprint) VALUES($1,$2,$3,$4,'eligible','{}','[]',$5)`,
       [workspace, prep, abstainedRoot, sha(abstainedText), digest]);
-    const entity = { kind: "primary_brand", entity_id: brand, label: "Synthetic brand" };
-    const context = sha("entity-context");
+    const canonicalContext=await loadFacetEntityContextV1(client,workspace);
+    const known=canonicalContext.entities[0]!;
+    const entity = {entity_id:known.entity_id,kind:known.kind,salience:"main"};
+    const context = entityContextDigestV1(canonicalContext);
     await client.query(`INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,context,
       diff,affected_mode,affected_count) VALUES($1,1,$2,$3::jsonb,'{}','targeted',0)`,
-      [workspace, context, JSON.stringify({ entities: [entity] })]);
+      [workspace, context, JSON.stringify(canonicalContext)]);
     const facetVersion = randomUUID(), facetRun = randomUUID(), facetCall = randomUUID();
     await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,schema_digest,
       labeler_digest,identity) VALUES($1,'facets','typesafe','jev-1.13.0',$2,$2,$3,'{}')`,
@@ -180,6 +185,9 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       return client.query(sql,params);
     };
     const db={query,connect:async()=>({query,release(){}})} as unknown as Pool;
+    process.env.NOISIA_MENTION_FACETS_ENABLED="false";
+    await assert.rejects(loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor}),/hybrid_not_enabled/u);
+    process.env.NOISIA_MENTION_FACETS_ENABLED="true";process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED="true";
     assert.equal((await loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor})).route,"standard");
     const selected=await configureHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor,
       route:"hybrid_h1",provider_available:true,expected_route_digest:null});
@@ -382,17 +390,17 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       SELECT verdict,source FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
       [workspace, root, concept.concept_key])).rows[0], { verdict: "review_required", source: "model" });
-    const queue=await loadHybridMembershipReviewQueueV1({database:db,workspace_id:workspace,actor_user_id:actor});
+    const queue=await loadConceptMembershipsStatusV1({database:db,workspace_id:workspace,actor_user_id:actor,verdict:"review_required"});
     assert.equal(queue.items.length,1);assert.equal(queue.items[0]?.rationale,confirmed.rationale);
-    assert.equal(queue.items[0]?.claude.verdict,"not_belongs");
+    assert.equal(queue.items[0]?.hybrid_review.claude.verdict,"not_belongs");
     await client.query("SAVEPOINT queue_rights");
     await client.query("UPDATE data_sources SET status='inactive' WHERE id=$1",[source]);
-    assert.equal((await loadHybridMembershipReviewQueueV1({database:db,workspace_id:workspace,actor_user_id:actor})).items.length,0);
+    assert.equal((await loadConceptMembershipsStatusV1({database:db,workspace_id:workspace,actor_user_id:actor,verdict:"review_required"})).items.length,0);
     await client.query("ROLLBACK TO SAVEPOINT queue_rights");
     await client.query(`INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,
       definition_digest,root_fingerprint,verdict,actor_user_id) VALUES($1,$2,$3,$4,$5,'belongs',$6)`,
       [workspace,root,concept.concept_key,concept.definition_digest,input.root_fingerprint,actor]);
-    assert.equal((await loadHybridMembershipReviewQueueV1({database:db,workspace_id:workspace,actor_user_id:actor})).items.length,0);
+    assert.equal((await loadConceptMembershipsStatusV1({database:db,workspace_id:workspace,actor_user_id:actor,verdict:"review_required"})).items.length,0);
     assert.equal((await client.query("SELECT verdict FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3",
       [workspace,root,concept.concept_key])).rows[0].verdict,"belongs");
     const access={database:db,workspace_id:workspace,actor_user_id:actor,provider_available:false,route:"standard" as const};
@@ -427,5 +435,9 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       "a failed paid receipt adds observed settlement only, never the former reservation");
     assert.equal((await client.query("SELECT labeler_version_id FROM signal_workspace_labelers WHERE workspace_id=$1 AND kind='facets'",[workspace])).rows[0].labeler_version_id,facetVersion);
     await client.query("ROLLBACK");
-  } finally { await client.query("ROLLBACK").catch(()=>undefined);client.release();await database.end(); }
+  } finally {
+    for(const [index,key] of ["NOISIA_MENTION_FACETS_ENABLED","NOISIA_CONCEPT_MEMBERSHIP_ENABLED"].entries())
+      if(priorFlags[index]===undefined)delete process.env[key];else process.env[key]=priorFlags[index];
+    await client.query("ROLLBACK").catch(()=>undefined);client.release();await database.end();
+  }
 });
