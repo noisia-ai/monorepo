@@ -2,7 +2,7 @@
 
 ## Revisión 6 — 9 de octubre de 2026
 
-Se integra H1 #39 `c3282a99` sobre el corte #40 `30414997`, sin abrir otro PR ni fusionar PRs. La integración automática no produjo conflictos. Los nueve archivos recibidos de H1 coinciden íntegramente con su rama; F5-12 y su prueba permanecen idénticos al corte previo. Se conservan las correcciones de §11.3, el selector y la procedencia de decisiones.
+Se integra la cabeza final de H1 #39 `03208f3c5062c6d6cdaf66fa49dccd4e6deaf85e` (código `c3282a99`, seguido únicamente de su recibo documental) sobre el corte #40 `30414997`, sin abrir otro PR ni fusionar PRs. La integración automática no produjo conflictos. Los nueve archivos recibidos de H1, incluido su recibo final, coinciden íntegramente con su rama; F5-12 y su prueba permanecen idénticos al corte previo. Se conservan las correcciones de §11.3, el selector y la procedencia de decisiones.
 
 CI general y PostgreSQL se vuelven a ejecutar en GitHub sobre el HEAD combinado, con base temporal develop. El SHA final y los enlaces/resultados de ambos gates se registran en el recibo final del [PR #40](https://github.com/noisia-ai/monorepo/pull/40); después se restaura su base #39 sin cambiar ese SHA. Cualquier nueva cabeza documental de #39 se incorpora antes del cierre.
 
