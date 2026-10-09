@@ -5,6 +5,7 @@ import type { Pool } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1, listSignalBrandWorkspaceEntriesStoreV1, resolveSignalWorkspaceCapabilitiesV1,
   type SignalWorkspaceCapabilityAuthorityV1 } from "./signal-workspace-capabilities";
 import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
+import {beginSignalWorkspaceEngineV1} from "./signal-workspace-engine";
 
 const client: SignalWorkspaceCapabilityAuthorityV1 = {
   workspace_status: "active", brand_status: "active", actor_status: "active", user_type: "client",
@@ -21,6 +22,31 @@ test("environment switches cannot enable MFP for a workspace without durable opt
   for(const feature of ["mention_facets","concept_membership","mfp_discovery"] as const){
     assert.equal(await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:"workspace-id",feature,env:off}),false);
     assert.equal(await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:"workspace-id",feature,env:on}),false);
+  }
+});
+
+test("without workspace opt-in, motor admission is identical with the MFP kill switch on or off",async()=>{
+  const previous=process.env.NOISIA_MENTION_FACETS_ENABLED;
+  try {
+    for(const flag of ["false","true"]){
+      process.env.NOISIA_MENTION_FACETS_ENABLED=flag;
+      let writes=0;
+      const query=async(sql:string)=>{
+        if(sql.includes("FROM signal_workspace_features"))return {rows:[{enabled:false}]};
+        if(sql.includes("workspace.status workspace_status"))return {rows:[{...client,brand_access_level:"admin"}]};
+        if(/^(INSERT|UPDATE|DELETE)/u.test(sql.trim()))writes++;
+        return {rows:[]};
+      };
+      const database={query,connect:async()=>({query,release(){}})} as unknown as Pick<Pool,"query"|"connect">;
+      await assert.rejects(beginSignalWorkspaceEngineV1({database,workspace_id:"workspace-id",actor_user_id:"actor-id",
+        idempotency_key:"legacy-request",embedding_run_id:"embedding-id",expected_context_digest:`sha256:${"a".repeat(64)}`,
+        expected_catalog_digest:`sha256:${"b".repeat(64)}`,claude_cap_micro_usd:0,engine_config:{}}),
+      /workspace_engine_forbidden/u);
+      assert.equal(writes,0);
+    }
+  }finally{
+    if(previous===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+    else process.env.NOISIA_MENTION_FACETS_ENABLED=previous;
   }
 });
 

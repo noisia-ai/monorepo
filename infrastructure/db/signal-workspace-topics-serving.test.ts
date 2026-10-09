@@ -31,6 +31,11 @@ const interestTopic = { ...interestContent, definition_revision: 1,
   definition_digest: signalTopicDefinitionDigestV1(interestContent),
   created_at: topicA.created_at, updated_at: topicA.updated_at };
 const consolidatedKey = `consolidated_${"c".repeat(64)}`, consolidatedSnapshotId = id("30");
+const adoptedContent = { ...topicAContent, term_key: "service_adopted", label: "Servicio adoptado",
+  origin: "workspace_discovery" as const, discovery_guidance: false,
+  source: { run_key: `workspace-discovery:${id("31")}`, candidate_key: "consolidated_service", candidate_digest: sha("c") } };
+const adoptedTopic = { ...adoptedContent, definition_revision: 1,
+  definition_digest: signalTopicDefinitionDigestV1(adoptedContent), created_at: topicA.created_at, updated_at: topicA.updated_at };
 const consolidatedSnapshot = { id: consolidatedSnapshotId, revision_id: id("31"), revision_digest: sha("a"),
   snapshot_digest: sha("b"), source_engine_execution_id: id("32"), preparation_run_id: id("33"),
   input_revision: "7", current_revision: "7", source_valid: true, expected_group_count: 1,
@@ -95,8 +100,9 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let consolidatedMode = false;
   let noOverlap = false;
   let membershipMode = false;
-  let facetOptIn = false;
   let membershipCollision = false;
+  let membershipAdopted = false;
+  let facetOptIn = false;
   const topicQueries: Array<{ sql: string; params: unknown[] }> = [];
   let identity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
   let interestIdentity: Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>> | null = null;
@@ -106,8 +112,11 @@ test("Signal keeps served semantics while applying a safe working label", async 
       if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
       if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [
         {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a")},
+        ...(membershipAdopted ? [{topic:adoptedTopic,selected:true,selection_revision:3,selection_digest:sha("d")}] : []),
         ...(membershipCollision ? [{topic:interestTopic,selected:false,selection_revision:2,selection_digest:sha("c")}] : [])
       ]};
+      if (membershipMode && sql.includes("FROM signal_topic_consolidation_revisions WHERE consolidation_run_id="))
+        return {rows:[{id:id("31")}]};
       if (membershipMode && sql.includes("SELECT context,digest,version_no")) return {rows: []};
       if (membershipMode && sql.includes("SELECT root_id,title,full_text,facets")) return {rows: []};
       if (membershipMode && sql.includes("string_agg(jsonb_build_array(root_id,concept_key")) return {rows:[{digest:sha("b")}]};
@@ -385,6 +394,12 @@ test("Signal keeps served semantics while applying a safe working label", async 
     const mfp = await loadSignalWorkspaceTopicsOverviewV1({database: args.database,workspace_id:workspaceId,actor_user_id:actorId});
     assert.equal(mfp?.terms.find(t => t.term_key === "service")?.basis, "concept_membership");
     assert.equal(mfp?.terms.find(t => t.term_key === consolidatedKey)?.basis, "computed_cluster");
+    membershipAdopted = true;
+    const adopted = await loadSignalWorkspaceTopicsOverviewV1({database:args.database,workspace_id:workspaceId,actor_user_id:actorId});
+    assert.equal(adopted?.terms.some(t => t.term_key === consolidatedKey),false,
+      "an adopted editorial concept replaces its consolidated presentation even when term keys differ");
+    assert.equal(adopted?.terms.find(t => t.term_key === adoptedTopic.term_key)?.basis,"concept_membership");
+    membershipAdopted = false;
     assert.deepEqual(mfp?.membership_population, {relevant:6,unrelated:3,spam:1,unknown:2,without_concept:4});
     assert.equal(mfp?.coverage.noise, 0, "editorial Noise remains visible independently of unrelated facets");
     selectedInterest = true; membershipCollision = true;
@@ -398,8 +413,6 @@ test("Signal keeps served semantics while applying a safe working label", async 
     assert.match(additiveSql,/UNION ALL SELECT root_id,term_key,visible,evidence_fragment FROM defined_interest_memberships/u);
     assert.match(additiveSql,/UNION ALL SELECT current.root_id,current.concept_key/u);
     assert.match(additiveSql,/AND visible.membership_concept/u);
-    assert.doesNotMatch(additiveSql,/signal_membership_concepts_v1 adopted/u,
-      "adoption must not remove the published consolidated memberships");
     membershipCollision = false;
     selectedInterest = false;
     consolidatedMode = false;
