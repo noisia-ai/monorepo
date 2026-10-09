@@ -55,5 +55,5 @@ test('server selection requires both providers and H1 ledger gates; provider shu
  assert.equal(load(complete).configure(args).provider_available,true);
  for(const missing of flags){const f=load({...complete,[missing]:'false'});assert.equal(f.configure(args).provider_available,false);}
  const off=load({});assert.equal(off.configure({...args,route:'standard'}).route,'standard');
- assert.equal(off.calls.length,1);assert.equal(off.calls[0].provider_available,false);
+ assert.equal(off.calls.length,1);const rollback=off.calls[0];assert.ok(rollback);assert.equal(rollback.provider_available,false);
 });
