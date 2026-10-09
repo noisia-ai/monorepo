@@ -8,6 +8,7 @@ import {
   membershipSpansV1,
   buildMembershipRequestV1,
   conceptSetDigestV1,
+  membershipLabelerIdentityV1,
   type ConceptForJudgeV1,
   type MembershipInputV1,
 } from "./signal-concept-membership-v1";
@@ -176,6 +177,14 @@ test("request contains full catalog, entity hints, adaptive reasoning and cache"
   assert.ok(req.system[0]?.text.includes("positive_examples"));
   assert.ok(req.messages[0]?.content.includes("secondary"));
   assert.equal("temperature" in req, false);
+});
+test("judge evaluation accepts low and medium as distinct audited identities", () => {
+  const low = membershipLabelerIdentityV1("low");
+  const medium = membershipLabelerIdentityV1("medium");
+  assert.notDeepEqual(low, medium);
+  assert.equal(buildMembershipRequestV1([root()], {entities:[]}, [concept()], low).output_config.effort, "low");
+  assert.equal(buildMembershipRequestV1([root()], {entities:[]}, [concept()], medium).output_config.effort, "medium");
+  assert.throws(() => buildMembershipRequestV1([root()], {entities:[]}, [concept()], {...low, model:"other"}), /membership_identity_invalid/);
 });
 
 test("provider required ordinal keys normalize to the canonical response", () => {

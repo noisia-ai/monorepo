@@ -1,5 +1,6 @@
 /** Opt-in provider demo. Never imported by unit suites. Run only through guarded MFP runner. */
 import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { loadMfpEvalIdentity } from "../eval/fixture-identity";
 import { main, openDatabase } from "./guard.mjs";
 await main(async () => {
   const mode = process.argv.includes("--real") ? "real" : "fake";
@@ -9,9 +10,7 @@ await main(async () => {
       process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED !== "true")
   )
     throw new Error("mfp_facets_provider_disabled");
-  const identity = JSON.parse(
-      await readFile(".data/dev-corpus/identity.json", "utf8"),
-    ),
+  const identity = await loadMfpEvalIdentity(),
     pool = await openDatabase();
   try {
     const { provisionSignalLabelingPolicyV1 } = await import(
@@ -56,6 +55,11 @@ await main(async () => {
         identity.workspace_id,
       ),
       labeler = facetLabelerIdentityV1();
+    const thinking = process.argv.find((x) => x.startsWith("--thinking="))?.slice(11);
+    if (thinking && thinking !== "adaptive" && thinking !== "between_tools")
+      throw new Error("mfp_facets_thinking_invalid");
+    if (thinking === "between_tools")
+      labeler.params = { ...labeler.params, thinking: { type: "between_tools" } };
     if (mode === "fake")
       labeler.params = { ...labeler.params, simulated_transport: true };
     const count = (

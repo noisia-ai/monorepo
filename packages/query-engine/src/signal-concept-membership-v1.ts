@@ -164,7 +164,7 @@ export function membershipOutputSchemaV1(rootCount: number) {
   };
 }
 
-export function membershipLabelerIdentityV1(): LabelerIdentity {
+export function membershipLabelerIdentityV1(effort: "low" | "medium" = "medium"): LabelerIdentity {
   return {
     kind: "membership",
     provider: "anthropic",
@@ -176,7 +176,7 @@ export function membershipLabelerIdentityV1(): LabelerIdentity {
     }),
     params: {
       thinking: { type: "adaptive" },
-      effort: "medium",
+      effort,
       max_tokens: 16384,
       max_roots: 16,
     },
@@ -204,7 +204,8 @@ export function buildMembershipRequestV1(
   concepts: ConceptForJudgeV1[],
   identity = membershipLabelerIdentityV1(),
 ) {
-  if (digest(identity) !== digest(membershipLabelerIdentityV1()))
+  const effort = z.enum(["low", "medium"]).parse(identity.params.effort);
+  if (digest(identity) !== digest(membershipLabelerIdentityV1(effort)))
     throw new Error("membership_identity_invalid");
   if (!inputs.length || inputs.length > 16)
     throw new Error("membership_root_count_invalid");
@@ -214,7 +215,7 @@ export function buildMembershipRequestV1(
     max_tokens: 16384,
     thinking: { type: "adaptive" },
     output_config: {
-      effort: "medium",
+      effort,
       format: {
         type: "json_schema",
         schema: membershipOutputSchemaV1(inputs.length),

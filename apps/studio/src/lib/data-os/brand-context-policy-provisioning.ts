@@ -11,8 +11,9 @@ type ProvisioningState =
       status: "unavailable";
     };
 
-/** The brand transaction has already committed. A retry may finish missing setup,
- * but this hook never edits an existing policy, accepts browser money or changes grants. */
+/** The brand transaction has already committed. A retry may provision missing setup
+ * or a successor policy for an opted-in MFP workspace after active work drains.
+ * This server-owned hook never accepts browser money or changes grants. */
 export async function provisionBrandContextPolicyAfterCreationV1(
   args: {
     brandId: string;
