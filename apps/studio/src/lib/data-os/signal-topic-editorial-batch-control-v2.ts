@@ -231,13 +231,19 @@ export async function loadWorkspaceTopicEditorialBatchStatusV2ForActor(args:Args
             UNION SELECT batch_error FROM unit_outcomes WHERE batch_error IS NOT NULL AND NOT grammar_recovering
           ) errors ORDER BY code),'') error_codes
         FROM unit_outcomes
+      ), cost_calls AS (
+        SELECT c.status,c.settled_micro_usd,c.reserved_micro_usd,c.observed_micro_usd
+        FROM latest e JOIN signal_topic_editorial_calls c ON c.execution_id=e.id
+        UNION ALL
+        SELECT c.status,c.settled_micro_usd,c.reserved_micro_usd,c.observed_micro_usd
+        FROM latest e JOIN signal_topic_editorial_global_stage_calls_v2 c ON c.execution_id=e.id
       ), costs AS (
         SELECT COALESCE(sum(c.settled_micro_usd) FILTER(WHERE c.status='settled'),0)::text confirmed,
           COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0)))
             FILTER(WHERE c.status IN('reserved','in_flight','response_persisted')),0)::text reserved,
           COALESCE(sum(greatest(c.reserved_micro_usd,COALESCE(c.observed_micro_usd,0)))
-            FILTER(WHERE c.status='outcome_unknown'),0)::text ambiguous
-        FROM latest e LEFT JOIN signal_topic_editorial_calls c ON c.execution_id=e.id
+            FILTER(WHERE c.status IN('outcome_unknown','submission_unknown')),0)::text ambiguous
+        FROM cost_calls c
       )
       SELECT e.id::text execution_id,e.status,o.stage owner_stage,e.plan->>'contract_version' contract_version,
         EXISTS(SELECT 1 FROM signal_topic_consolidation_revisions r WHERE r.consolidation_run_id=e.numeric_run_id
