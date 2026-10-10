@@ -56,3 +56,14 @@ test("a committed receipt is returned without coupling acceptance to any later G
   await assert.rejects(Promise.reject(new Error("independent status timeout")), /status timeout/u);
   assert.deepEqual(calls, ["POST"]);
 });
+test("numeric preparation calls the browser transport without a foreign receiver", async () => {
+  const intent = workspaceTopicConsolidationIntentV1({ workspace_id: workspace, body,
+    previous: null, createKey: () => receipt.idempotency_key });
+  const fetcher: typeof fetch = async function (this: unknown, _url, options) {
+    assert.equal(this, undefined, "native browser fetch rejects a foreign receiver before sending HTTP");
+    assert.equal(options?.method, "POST");
+    assert.equal(new Headers(options?.headers).get("Idempotency-Key"), intent.key);
+    return Response.json(receipt, { status: 202 });
+  };
+  assert.deepEqual(await submitWorkspaceTopicConsolidationIntentV1({ intent, fetcher }), receipt);
+});
