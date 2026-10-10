@@ -91,7 +91,7 @@ test("batch confirmation preserves each root/concept JEV receipt and visible rat
   assert.deepEqual(captured[0].results.map((result:any)=>result.jev_call_id),["jev-theme","jev-second"]);
   assert.ok(captured[0].results.every((result:any)=>result.claude_call_id==="claude-batch"));
   assert.equal(captured[0].results[0].claude.citation,null);
-  assert.ok(captured[0].results[0].rationale);
+  assert.equal(captured[0].results[0].rationale,null,"the adapter never fabricates a negative rationale");
   assert.equal(captured[0].results[1].rationale,"The source establishes this concept.");
   await assert.rejects(adapter.apply(run,[{call:{...call,inputs:[{...root,jev_by_concept:{}}]} as never,
     results:[{...base,concept_key:"theme",verdict:"not_belongs",rationale:null}]}]),/hybrid_prior_jev_missing/u);

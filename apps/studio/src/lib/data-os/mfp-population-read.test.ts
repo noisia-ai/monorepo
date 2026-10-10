@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {createMfpPopulationReader} from './mfp-population-read';
 
-test('two tabs and different workspaces share a population slot while metadata remains free', async () => {
+test('independent callers share a population slot until the first query releases it', async () => {
   const read = createMfpPopulationReader();
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -11,7 +11,6 @@ test('two tabs and different workspaces share a population slot while metadata r
   const tabB = read(async () => { started.push('B'); return 'B'; });
   await Promise.resolve();
   assert.deepEqual(started, ['A']);
-  assert.equal(await Promise.resolve('metadata'), 'metadata');
   release();
   assert.deepEqual(await Promise.all([tabA, tabB]), ['A', 'B']);
   assert.deepEqual(started, ['A', 'B']);

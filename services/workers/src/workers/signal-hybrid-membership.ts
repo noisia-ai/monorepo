@@ -55,7 +55,7 @@ export function hybridClaudeBatchStoreV1(store:HybridStore):ConceptMembershipSto
       const citation=result.citations[0];
       return {...result,jev:prior.decision,jev_call_id:prior.call_id,claude_call_id:page.call.id,
         claude:{verdict:result.verdict,citation:citation?{quote:citation.quote,start:citation.quote_start,end:citation.quote_end}:null},
-        rationale:result.rationale??(result.verdict==="not_belongs"?"The judge did not find evidence establishing this concept.":null)};
+        rationale:result.rationale};
     })})));
   }};
 }
@@ -82,6 +82,13 @@ export async function runHybridMembershipTickV1(args:{run_id:string;stage:Hybrid
   return runConceptMembershipTickV1({run_id:args.run_id,store:hybridClaudeBatchStoreV1(args.store),
     provider:args.claude??createAnthropicMessageBatchesClient({apiKey:process.env.ANTHROPIC_API_KEY??""})});
 }
+export const hybridMembershipDrainerSqlV1 = `SELECT id,membership_snapshot->>'hybrid_stage' stage
+        FROM signal_labeling_runs run WHERE kind='membership' AND (status IN('queued','running')
+        OR status='failed' AND error_code='labeling_outcome_unknown'
+          AND membership_snapshot->>'hybrid_stage'='claude'
+          AND EXISTS(SELECT 1 FROM signal_labeling_calls call WHERE call.run_id=run.id AND call.status='unknown'))
+        AND membership_snapshot->>'hybrid_stage' IN('jev','claude') AND NOT waiting_full_confirmation
+        AND next_poll_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY created_at LIMIT 2`;
 export function startHybridMembershipDrainerV1(){
   let running=false;
   const tick=async()=>{
@@ -89,10 +96,7 @@ export function startHybridMembershipDrainerV1(){
     running=true;
     try{
       const {pool}=await import("../db/client");
-      const rows=(await pool.query<{id:string;stage:HybridMembershipStageV1}>(`SELECT id,membership_snapshot->>'hybrid_stage' stage
-        FROM signal_labeling_runs WHERE kind='membership' AND status IN('queued','running')
-        AND membership_snapshot->>'hybrid_stage' IN('jev','claude') AND NOT waiting_full_confirmation
-        AND next_poll_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY created_at LIMIT 2`)).rows;
+      const rows=(await pool.query<{id:string;stage:HybridMembershipStageV1}>(hybridMembershipDrainerSqlV1)).rows;
       for(const row of rows){
         const enabled=row.stage==="jev"?process.env.NOISIA_JEV_PROVIDER_ENABLED:process.env.NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED;
         if(enabled!=="true")continue;

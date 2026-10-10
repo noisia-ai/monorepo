@@ -16,6 +16,7 @@ import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1,
   writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import { loadFacetEntityContextV1 } from "../signal-mention-facets";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
+import { verifyHybridClaudeRecoveryV1 } from "./signal-mfp-hybrid-claude.assertions";
 import { verifyHybridJevPageContinuationV1 } from "./signal-mfp-hybrid-page.assertions";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
 
@@ -284,6 +285,15 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     await verifyHybridJevPageContinuationV1({client,database:db,workspace,actor,source,batch,prep,
       context,facetDigest:sha("facet-labeler"),facets,entity,facetCall,route,concept:concept as typeof input.evaluated_concepts[number],admit});
     await client.query("ROLLBACK TO SAVEPOINT page_probe");
+    await verifyHybridClaudeRecoveryV1({client,database:db,workspace,actor,prep,context,route,jevRun,
+      concept:concept as typeof input.evaluated_concepts[number],admit});
+    await client.query("SAVEPOINT jev_transient_error");
+    await client.query(`UPDATE signal_labeling_calls SET results=$2::jsonb WHERE id=$1`,
+      [jevCall,JSON.stringify([{...result,jev:{verdict:"error",probability:null,citation:null}}])]);
+    assert.equal((await selectMembershipInputsV1(client,work(randomUUID()),true)).length,1,
+      "settled JEV technical errors can be requested again without changing route identity");
+    assert.equal((await client.query(hybridH1JevAdmissionPopulationSqlV1,[workspace,route])).rows[0].pairs,1);
+    await client.query("ROLLBACK TO SAVEPOINT jev_transient_error");
     const unknownConcepts = [1, 2].map(number => ({ ...concept,
       concept_key: `uncertain_brakes_${number}`, label: `Uncertain brakes ${number}`,
       definition_digest: sha(`uncertain definition ${number}`) }));
@@ -390,7 +400,18 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       "a settled JEV call for another pair cannot support this decision");
     await assert.rejects(write({ ...decision, claude_call_id: wrongClaude }), /hybrid_settled_receipt_required/u,
       "a settled Claude call for another pair cannot support this decision");
+    // Earlier H1 versions cached technical errors; a valid retry can replace only an error.
+    await client.query(`INSERT INTO signal_hybrid_membership_decisions(workspace_id,root_id,root_fingerprint,
+      concept_key,definition_digest,entity_context_digest,effective_entities_digest,route_digest,jev_call_id,
+      claude_call_id,verdict,jev,claude,citation,rationale)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'error',$11::jsonb,$12::jsonb,'[]',NULL)`,
+      [workspace,root,input.root_fingerprint,concept.concept_key,concept.definition_digest,input.entity_context_digest,
+        input.effective_entities_digest,route,jevCall,claudeCall,JSON.stringify(result.jev),
+        JSON.stringify({verdict:"error",citation:null})]);
+    assert.equal((await selectHybridClaudeInputsV1(client,{...work(randomUUID()),membership_snapshot:{
+      concepts:allConcepts,hybrid_stage:"claude",route_digest:route,jev_run_id:jevAnchor}} as unknown as LabelingRunV1)).length,1);
     assert.equal((await write(decision)).persisted, 1);
+    assert.equal((await write(decision)).persisted, 1,"successful replay is idempotent");
     assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
       SELECT verdict,source FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
@@ -409,6 +430,8 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     assert.equal((await client.query("SELECT verdict FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3",
       [workspace,root,concept.concept_key])).rows[0].verdict,"belongs");
     const access={database:db,workspace_id:workspace,actor_user_id:actor,provider_available:false,route:"standard" as const};
+    // @ts-expect-error Exercise callers bypassing the required TypeScript contract.
+    await assert.rejects(configureHybridMembershipRouteV1(access),/hybrid_expected_route_digest_required/u);
     await assert.rejects(configureHybridMembershipRouteV1({...access,expected_route_digest:sha("stale")}),/hybrid_route_changed/u);
     await assert.rejects(configureHybridMembershipRouteV1({...access,expected_route_digest:route}),/hybrid_unknown_confirmation_required/u);
     const before=await loadHybridMembershipRouteV1({database:db,workspace_id:workspace,actor_user_id:actor});

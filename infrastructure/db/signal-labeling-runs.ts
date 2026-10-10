@@ -983,13 +983,16 @@ export function createSignalLabelingStoreV1<
       return tx(db, async (c) => {
         await lock(c, run);
         await c.query(`UPDATE signal_labeling_calls call SET status='failed',
-          settled_micro_usd=COALESCE(call.settled_micro_usd,call.reserved_micro_usd),
+          settled_micro_usd=CASE WHEN $2::boolean THEN call.settled_micro_usd
+            ELSE COALESCE(call.settled_micro_usd,call.reserved_micro_usd) END,
+          terminal_exposure_micro_usd=CASE WHEN $2::boolean AND call.settled_micro_usd IS NULL
+            THEN call.reserved_micro_usd ELSE call.terminal_exposure_micro_usd END,
           stop_reason=CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
             WHERE result->>'error_code'='provider_usage_invalid') THEN 'provider_usage_invalid'
             ELSE 'provider_result_missing' END,updated_at=now()
           WHERE call.run_id=$1 AND call.status IN ('submitted','unknown') AND call.results_applied
           AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
-            WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id]);
+            WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id,options.adapter?.hybrid_stage === 'claude']);
         const calls = (
           await c.query(
             `SELECT count(*) FILTER(WHERE status='unknown')::int unknown,count(*) FILTER(WHERE status IN('reserved','submitting','submitted') OR raw_storage_key IS NOT NULL AND NOT results_applied)::int active FROM signal_labeling_calls WHERE run_id=$1`,
