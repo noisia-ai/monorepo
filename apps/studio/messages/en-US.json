@@ -4576,11 +4576,11 @@
     },
     "configuration": {
       "title": "Membership method",
-      "body": "Choose how mentions are evaluated against each concept. Saving the method does not start processing or spending. H1 is experimental.",
+      "body": "Choose how mentions are evaluated against each concept. Saving the method does not start processing or spending. The hybrid method is experimental.",
       "refresh": "Refresh",
       "route": "Method",
       "standard": "Standard",
-      "hybrid_h1": "Experimental H1",
+      "hybrid_h1": "Experimental hybrid",
       "exposure": "{count} calls still have unconfirmed results; reserved cost: {cost}.",
       "confirm": "I understand that returning to the standard method does not cancel these calls or remove their cost exposure.",
       "readOnly": "Your access allows viewing the method; changing it requires editing permission.",
@@ -4715,6 +4715,7 @@
       "stale": "The source or definition changed. Refresh results before continuing.",
       "active": "A run is already active. Refresh to view its progress.",
       "invalid": "Review correction values and save again.",
+      "routeUpgrade": "This experimental method needs an update before another analysis. In Access and settings, save Standard, then select and save Experimental hybrid again.",
       "request": "The request could not be completed. Refresh or recover the same request if its response is pending."
     },
     "refresh": "Refresh",

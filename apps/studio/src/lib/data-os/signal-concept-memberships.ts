@@ -8,6 +8,7 @@ import {
   signalWorkspaceFeatureEnabledV1,
 } from "@noisia/db";
 import { pool } from "@/lib/db";
+import { readMfpPopulation } from "./mfp-population-read";
 export { SignalLabelingError } from "@noisia/db";
 const enabled = (workspace_id:string) => signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id,feature:"concept_membership"});
 const providerAvailable = async (workspace_id:string) =>
@@ -16,9 +17,10 @@ const providerAvailable = async (workspace_id:string) =>
 type WithoutDatabase<T> = Omit<T, "database">;
 export async function loadMembershipStatusForActorV1(
   args: WithoutDatabase<Parameters<typeof loadConceptMembershipsStatusV1>[0]>,
+  signal?: AbortSignal,
 ) {
   return {
-    ...(await loadConceptMembershipsStatusV1({ ...args, database: pool })),
+    ...(await readMfpPopulation(() => loadConceptMembershipsStatusV1({ ...args, database: pool }), signal)),
     enabled: await enabled(args.workspace_id),
     provider_available: await providerAvailable(args.workspace_id),
   };

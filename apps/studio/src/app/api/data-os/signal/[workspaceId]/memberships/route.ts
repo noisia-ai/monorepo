@@ -102,7 +102,7 @@ export async function GET(request: Request, context: Context) {
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
         ...query.data,
-      }),
+      }, request.signal),
       { headers },
     );
   } catch (e) {

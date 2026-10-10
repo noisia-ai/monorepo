@@ -102,12 +102,12 @@ export async function GET(
       }).safeParse(Object.fromEntries([...query].filter(([key]) => key !== "view")));
       if (!parsed.success) return Response.json({error:"facets_filter_invalid"},{status:400,headers});
       return Response.json(await loadMentionFacetBrowserForActorV1({workspace_id:loaded.workspace.id,
-        actor_user_id:loaded.session.appUser.id,...parsed.data}),{headers});
+        actor_user_id:loaded.session.appUser.id,...parsed.data}, request.signal),{headers});
     }
     const status = await loadMentionFacetsStatusForActorV1({
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
-      });
+      }, request.signal);
     const availability = await loadMentionFacetsAvailabilityV1(loaded.workspace.id);
     return Response.json({...status, ...availability}, {headers});
   } catch (error) { return errorResponse(error); }

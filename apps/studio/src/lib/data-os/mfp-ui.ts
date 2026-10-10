@@ -46,6 +46,7 @@ export function mfpQuoteParts(text:string,quotes:string[]) {
   if(start<text.length)parts.push({text:text.slice(start),highlight:false});return parts;
 }
 export function mfpErrorKey(code:string) {
+  if (code === "hybrid_route_upgrade_required") return "routeUpgrade";
   if (/unresolvable/.test(code)) return "unresolvable";
   if (/provider_usage_invalid/.test(code)) return "usageInvalid";
   if (/forbidden|unauthorized/.test(code)) return "forbidden";

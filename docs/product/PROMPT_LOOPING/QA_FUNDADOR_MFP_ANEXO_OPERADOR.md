@@ -307,3 +307,18 @@ sin atribuir al cierre H1 una disponibilidad integral de los paneles anteriores.
 Evidencia privada: `h1-visible-persistence.json` y captura 30; la captura final
 muestra el tercero con su veredicto y atribución. F5-12 cerrado en código y UI;
 la aceptación semántica del etiquetador sigue pendiente.
+
+
+## Preparación de revisión 7 · 10 octubre 2026
+
+Estado todavía pendiente de integración final #39, despliegue y comprobación de interfaz. No usar este apartado como prueba de publicación.
+
+Archivos locales verificados por CSV reader: `load1.csv` 1,000 filas y `load2.csv` 250 filas, cabecera excluida, en `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/`.
+
+Previsión orientativa de la guía: estándar USD7 redondea el total histórico USD6.484515. Híbrido USD5 aproxima USD6.484515 − USD2.705168 de pertenencia estándar + USD0.937167 de ficha JEV/pertenencia híbrida = USD4.716514. Es una extrapolación del recorrido histórico, no una cotización exacta ni una suma de llamadas nuevas: mantiene el costo anterior de clasificación en la base, por lo que resulta conservadora al sustituirlo por JEV; catálogo, texto y nueva identidad Claude pueden variar el resultado. Comparación adicional tras un recorrido estándar: aproximadamente USD1, a partir de USD0.937167. Las admisiones reales y sus estimaciones prevalecen. Fuente: `RECEIPT_MFP_HYBRID_H1_R4_2026-10-07.md`, revisión 5, 1,086 raíces; cobertura inicial de 1,250 filas no implica 1,250 raíces.
+
+Lectura directa Runner durante preparación: `NOISIA_MFP_WORKER_ENABLED=true`, `NOISIA_DATA_OS_WORKER_ENABLED=true`; `NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED=false`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_PROVIDER_ENABLED=false`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED=false`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_ENABLED=false`; providers batch/global=true. Studio habilitado no basta: el Worker sólo inicia drainers cuando DATA_OS está activo y cada lane tiene su flag. La ruta batch/global requiere además sus correspondientes flags provider. No se cambiaron flags ni se iniciaron jobs durante esta lectura.
+
+El inicio normal es `scripts/dev-corpus/runtime.mjs`: guard privado → Worker existente → drainers. La demo editorial deberá entrar por UI; invocar jobs manualmente no acredita este gate. Conservar un único Worker, autodeploy OFF y SHA integrado en ambos servicios. Activar sólo después del HEAD final #39 con CI/PG verdes, sin repetir audit-r5.
+
+Una ruta H1 histórica exigirá `hybrid_route_upgrade_required` antes de nuevas admisiones: selección explícita Estándar→Híbrido en UI con `expected_route_digest` vigente (null explícito sólo sin ruta). No migrar ni repetir recibos históricos.
