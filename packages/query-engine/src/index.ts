@@ -1266,4 +1266,5 @@ export * from './llm-pricing-v1';
 export * from './anthropic-response-v1';
 
 export * from "./signal-concept-membership-v1";
+export * from "./signal-hybrid-membership-v1";
 export * from "./signal-literal-spans-v1";

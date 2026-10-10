@@ -28,6 +28,7 @@ type Snapshot = {
   preview: boolean;
   concepts: ConceptForJudgeV1[];
   sample_root_ids: string[] | null;
+  route_digest?: string;
 };
 export type MembershipRunV1 = LabelingRunV1 & { membership_snapshot: Snapshot };
 const fail = (code: string, status = 409): never => {
@@ -108,6 +109,10 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
 ), roots AS MATERIALIZED (
  SELECT f.*,COALESCE(f.entity_context_digest,(SELECT digest FROM signal_entity_context_versions ce WHERE ce.workspace_id=f.workspace_id ORDER BY version_no DESC LIMIT 1)) effective_ce
  FROM signal_mention_facets_current_v1 f WHERE f.workspace_id=$1 AND f.relevance='relevant' AND NOT f.requires_context_review
+ AND (NOT $8::boolean OR f.status='labeled' AND f.facets#>>'{spam_or_bot,value}'='false'
+   AND jsonb_array_length(COALESCE(f.facets#>'{entities,value}','[]'::jsonb))>0
+   AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 rights
+     WHERE rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id AND rights.metrics AND rights.evidence))
  AND NOT (f.root_id=ANY($7::uuid[])) AND ($2::uuid IS NULL OR f.root_id>$2) AND ($3::uuid[] IS NULL OR f.root_id=ANY($3))), work AS (
  SELECT f.*,pending.keys
  FROM roots f JOIN LATERAL (
@@ -115,24 +120,41 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  WHERE (c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))
  AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM current_pairs current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
  AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest
- AND (current.verdict IN('belongs','not_belongs','insufficient','refused')
+ AND (current.verdict IN('belongs','not_belongs','insufficient','review_required','refused')
  OR (current.verdict='error' AND current.error_code IN('membership_item_schema_invalid','membership_evidence_invalid')))
  AND (current.source='human' OR current.labeler_digest=$6)))
+ AND (NOT $8::boolean OR NOT EXISTS(
+   SELECT 1 FROM signal_labeling_calls applied
+   JOIN signal_labeling_runs prior ON prior.id=applied.run_id
+   CROSS JOIN LATERAL jsonb_array_elements(applied.results) result
+   WHERE prior.workspace_id=f.workspace_id AND prior.kind='membership'
+     AND prior.membership_snapshot->>'hybrid_stage'='jev'
+     AND prior.membership_snapshot->>'route_digest'=$6
+     AND applied.status='settled' AND applied.results_applied
+     AND result#>>'{jev,verdict}' IN('belongs','not_belongs','refused')
+     AND result->>'root_id'=f.root_id::text
+     AND result->>'root_fingerprint'=signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest))
+     AND result->>'concept_key'=c.concept_key AND result->>'definition_digest'=c.definition_digest
+     AND result->>'entity_context_digest'=f.effective_ce
+     AND result->>'effective_entities_digest'=f.effective_entities_digest))
  AND NOT EXISTS(SELECT 1 FROM signal_labeling_calls uncertain JOIN signal_labeling_runs r ON r.id=uncertain.run_id
- WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND uncertain.status IN('submitting','unknown')
+ WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND (uncertain.status IN('submitting','unknown') OR $8::boolean AND uncertain.terminal_exposure_micro_usd>0)
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest
  AND i->>'entity_context_digest'=f.effective_ce AND i->>'effective_entities_digest'=f.effective_entities_digest
  AND i->'evaluated_concepts' @> jsonb_build_array(jsonb_build_object('concept_key',c.concept_key,'definition_digest',c.definition_digest))))
  ) pending ON cardinality(pending.keys)>0)`;
 /** Select by full-text fingerprint, effective entities and per-concept definition. No vectors or V2 classifications. */
-export async function selectMembershipInputsV1(c: Queryable, run: LabelingRunV1): Promise<MembershipInputV1[]> {
+export async function selectMembershipInputsV1(c: Queryable, run: LabelingRunV1, hybrid = false): Promise<MembershipInputV1[]> {
   const s = snapshot(run);
+  // The current H1 view is keyed by the route digest, while the run itself is
+  // keyed by its provider-stage labeler. Reuse the route to fence served pairs.
+  const servingDigest = hybrid ? s.route_digest ?? fail("hybrid_route_missing") : run.labeler_digest;
   return (await c.query<MembershipInputV1>(`${membershipWorkSql}
  SELECT f.root_id,f.input_digest,signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest)) root_fingerprint,f.full_text text,f.title,f.platform,f.content_type,f.author,f.published_at::text,f.language,
  f.effective_ce entity_context_digest,f.effective_entities_digest,f.facets#>'{entities,value}' entities,f.facets#>>'{voice,value}' voice,f.facets#>>'{act,value}' act,
  (SELECT jsonb_agg(concept) FROM jsonb_array_elements($4::jsonb) concept WHERE concept->>'concept_key'=ANY(f.keys)) evaluated_concepts
  FROM work f ORDER BY f.root_id LIMIT 200`,
-    [run.workspace_id, run.cursor_root_id, s.sample_root_ids, JSON.stringify(s.concepts), s.preview, run.labeler_digest, []])).rows;
+    [run.workspace_id, run.cursor_root_id, s.sample_root_ids, JSON.stringify(s.concepts), s.preview, servingDigest, [], hybrid])).rows;
 }
 export async function estimateMembershipWorkV1(c: Queryable, args: {
   workspace_id: string; concepts: ConceptForJudgeV1[]; context: EntityContextV1;
@@ -141,7 +163,7 @@ export async function estimateMembershipWorkV1(c: Queryable, args: {
   const pop = (await c.query<{ roots: number; characters: string; pairs: string }>(`${membershipWorkSql}
  SELECT count(*)::int roots,COALESCE(sum(length(full_text)),0)::text characters,
  COALESCE(sum(cardinality(keys)),0)::text pairs FROM work`,
-    [args.workspace_id, null, args.sample, JSON.stringify(args.concepts), args.preview, args.labeler_digest, args.stale_roots ?? []])).rows[0]!;
+    [args.workspace_id, null, args.sample, JSON.stringify(args.concepts), args.preview, args.labeler_digest, args.stale_roots ?? [], false])).rows[0]!;
   return estimate(pop.roots, Number(pop.characters), args.concepts, args.context, Number(pop.pairs));
 }
 function estimate(
@@ -202,6 +224,8 @@ export async function requestConceptMembershipsV1(args: {
           fail("membership_identity_invalid");
       },
       prepare: async (c, w, _id, ld, context) => {
+        if ((await c.query("SELECT 1 FROM signal_hybrid_membership_routes WHERE workspace_id=$1", [w])).rowCount)
+          fail("hybrid_route_selected");
         const concepts = previewConcept
           ? [previewConcept]
           : await loadMembershipConceptsV1(c, w);
@@ -304,6 +328,8 @@ export async function loadConceptMembershipsStatusV1(
     const caps = await authorize(c, args.workspace_id, args.actor_user_id);
     const change = await inspectFacetContextChangeV1(c, args.workspace_id);
     const concepts = await loadMembershipConceptsV1(c, args.workspace_id);
+    const hybridRoute = (await c.query<{route:string;route_digest:string}>(
+      "SELECT route,route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1", [args.workspace_id])).rows[0] ?? null;
     const latest =
       (
         await c.query(
@@ -414,9 +440,15 @@ export async function loadConceptMembershipsStatusV1(
        'url',CASE WHEN rights.evidence THEN mention.url ELSE NULL END,'platform',f.platform,
        'evidence_withheld',NOT rights.evidence,
        'citations',CASE WHEN rights.evidence THEN m.citations ELSE '[]'::jsonb END,
-       'rationale',CASE WHEN rights.evidence THEN m.rationale ELSE NULL END) item
+       'rationale',CASE WHEN rights.evidence THEN m.rationale ELSE NULL END,
+       'hybrid_review',CASE WHEN rights.evidence AND m.verdict='review_required'
+         THEN jsonb_build_object('jev',hybrid.jev,'claude',hybrid.claude) ELSE NULL END) item
    FROM display_pairs m JOIN display_roots f USING(root_id) JOIN current_rights rights USING(root_id)
    JOIN mentions mention ON mention.id=m.root_id
+   LEFT JOIN signal_hybrid_membership_decisions hybrid ON hybrid.workspace_id=m.workspace_id AND hybrid.root_id=m.root_id
+     AND hybrid.root_fingerprint=m.root_fingerprint AND hybrid.concept_key=m.concept_key
+     AND hybrid.definition_digest=m.definition_digest AND hybrid.entity_context_digest=m.entity_context_digest
+     AND hybrid.effective_entities_digest=m.effective_entities_digest AND hybrid.route_digest=m.labeler_digest
    WHERE ($2::text IS NULL OR m.concept_key=$2) AND ($3::text IS NULL OR m.verdict=$3)
      AND ($4::uuid IS NULL OR (m.root_id,m.concept_key)>($4::uuid,$5::text))
    ORDER BY m.root_id,m.concept_key LIMIT $6
@@ -445,15 +477,16 @@ export async function loadConceptMembershipsStatusV1(
       counts,
       population,
       latest,
+      route: hybridRoute?.route ?? "standard",
       entity_context_digest: change.digest,
       stale_count: change.changed ? change.affected.length : 0,
-      estimated_micro_usd: (await estimateMembershipWorkV1(c, {
+      estimated_micro_usd: hybridRoute ? null : (await estimateMembershipWorkV1(c, {
         workspace_id: args.workspace_id, concepts, context: change.context,
         labeler_digest: digest(membershipLabelerIdentityV1()), sample: null, preview: false,
         // These roots first need a current fiche; a read must not register CE or quote stale work.
         stale_roots: change.changed ? change.affected : [],
       })).estimated_micro_usd,
-      preview_estimated_micro_usd: estimate(
+      preview_estimated_micro_usd: hybridRoute ? null : estimate(
         Math.min(30, population.relevant),
         population.relevant
           ? Math.ceil(
