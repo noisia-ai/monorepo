@@ -124,6 +124,13 @@ composition and it comes with four rules:
 
 Grain belongs to the asset, not to the browser. See `ICONS.md`.
 
+### Variant: the client's mark on a market study
+
+A study read market by market can carry the client's logo and the market's flag on the cover. The
+flag is redrawn as a 44px circle in the official colours, turned a few degrees so it does not read
+as an emoji; the shared flag module generates unique SVG ids per use (`CANON.md` §6). A text chip
+restating "brand × topic · country" is redundant next to both marks and comes out.
+
 ## Reporte — canonical sequence (~10 slides)
 
 | # | Slide | Components |
@@ -165,8 +172,9 @@ Slide 12 stays optional and depends on the brief: a category-agnostic study has 
 
 **The sequence is a ceiling, not a floor.** A study can land at twelve slides and be better for it.
 The narrative order that survived review: the finding that opens the story goes **right after the
-frame**, not as a late support slide; the plumbing (the de-noising funnel, the corpus composition)
-goes to the annex, and if two annex slides repeat each other's numbers, they merge. A slide that
+frame**, not as a late support slide; the plumbing (the de-noising detail, the corpus composition)
+goes to the annex, and if two annex slides repeat each other's numbers, they merge. The three-step
+corpus funnel is the exception: the study is sold by its size, so it stays in the body (see below). A slide that
 arrives confusing after two clear ones is cut and its finding folded into a neighbour. When the
 funnel does appear, it is drawn as a real funnel, decreasing width and centred, not as a list.
 
@@ -279,10 +287,20 @@ then **one sub-cover per research question**, its analysis, and **a recommendati
 question**, not all of them piled at the end. Then the brand lens, mirror, kanban, the answer and
 the questions to validate; the method, glossary and brands go to the annex.
 
-**Recommendations follow one format**: action, owner, indicator and risk. Each carries the study's
-evidence and **a real precedent with its source**. Only on layers a brand can move. If there is no
-precedent, say so ("open ground"); if a competitor already did it, it goes in as a risk ("reads as
-a copy").
+**Recommendations follow one format**: the action as the headline, how, *from the study* with the
+figure that backs it, *who has done it* with a real public precedent and its source, and when. In a
+plan the client's team will run, add owner, indicator and risk. Only on layers a brand can move. If
+there is no precedent, say so ("open ground"); if a competitor already did it, it goes in as a risk
+("reads as a copy").
+
+- **Only what a brand team can execute**: communication, content, activation, media and
+  partnerships. "Make getting into the stadium easy" is not marketing's to do, and it was rejected.
+- **Three good ones beat five weak ones.** Not one per theme out of obligation.
+- **Research the portfolio before recommending.** Sister brands in the same group may already own
+  the asset, and a competitor may own the league, the club or the venue. The recommendation moves to
+  the free space ("be the beer of the banter, not of the badge").
+- **A question works as the headline**, trend-report style: "How can {{BRAND}} win the
+  viewing-centre night?", over action cards.
 
 **A client's own hypothesis is measured part by part.** When the client brings a brand idea, each
 part gets its quantity per channel. If a part barely appears, say it with the number and show where
@@ -296,6 +314,47 @@ which parts depend on us and which on them.
 **Adding a finding means re-reading the whole deck.** A new finding changes old slides: the answer,
 the kanban, the index, the recommendations. In one case a single new reading improved ten existing
 slides. Patching only the new slide leaves the deck arguing with itself.
+
+### Slides that came out of a multi-market study
+
+- **The corpus funnel.** Three cards, collected → unique → analysed, each with a proportional bar.
+  Under them two equal cards: channels, and languages with a census figure for the market and its
+  source. Because the study is sold by corpus size, this one is **not** annex plumbing: it goes at the
+  start of the method or as its own slide (`DATA.md` §25, `CANON.md` §5.7). The de-noising detail,
+  the composition of the discard, still goes to the annex.
+- **Subthemes, right after the theme's data slide.** One card per subtheme with its share, a chip
+  carrying the name the subtheme had on the previous slide to the right of the share, an evocative
+  title with its definition for this market, a trend line, the channels and a literal quote. The
+  card links to its gallery with `#N`.
+- **Day of the week**: a heatmap of theme × day (`CHARTS.md`).
+- **A three-slide summary across markets**: three things to know, with evidence per country; the
+  markets side by side; the main bet per country.
+- **The presenter script for several decks at once** is an internal HTML table, one row per slide and
+  one column per deck. It reads the slide numbers from the decks so it never drifts.
+
+### The "in the wild" gallery
+
+Asked for by a client: tiles per theme that open 10 to 20 real pieces (TikTok, Instagram, YouTube),
+ordered by engagement, mixing fans with brands, clubs and competitors. A data-backed mood board for
+creatives that also serves measurement and awards entries.
+
+1. **Candidates come from the raw exports**, emitters included: YouTube comments with `v=` (they carry
+   the parent video's views), TikTok comments (the link leads to the parent video), X posts with
+   `pic.x.com`, Instagram posts. Gate by country and theme, rank by views/100 + interactions + 25 ×
+   comments in the corpus.
+2. **Public metadata, no login**: YouTube oEmbed (title, author, `i.ytimg.com/vi/<id>/hqdefault.jpg`),
+   X through its syndication endpoint, TikTok oEmbed with a browser User-Agent (it rate-limits early,
+   space the calls). Instagram and Facebook give no thumbnail without login: they go as text tiles.
+3. **Curation by agents**, eight per theme: real relevance, a mix of fan, brand, club and media, the
+   subtheme, who posted, and one line on what it shows.
+4. **Human review before publishing.** A violent meme, a political image, a post about a player's
+   death and a campaign repeated across two networks came out. A gallery ships with seven pieces
+   rather than with a doubtful one, and it reflects what exists: it is never padded.
+5. **Thumbnails downloaded and recompressed** (640px, JPEG 82) into `assets/img/`. That is a file
+   download: ask the user first, with the source and the size.
+6. **The tile**: a fixed-height image with `object-fit:cover`; a pill with the network and the reach
+   (hidden below 1K views or 50 interactions); a subtheme chip and a who-posted chip; a two-line
+   clamp; the whole tile is an `<a target=_blank>`. Links survive Chrome's PDF, about 140 per deck.
 
 ### Composition rules from the same case
 
@@ -312,6 +371,10 @@ slides. Patching only the new slide leaves the deck arguing with itself.
   description and a verified quote.
 - A cover asset is cut to its contour **without quantising colours**: quantising leaves rings in the
   halo. Position it by looking at the render.
+- **A grid has a hierarchy.** The main card is wider and sits on `--teal-soft`; N identical cards
+  weigh every point the same (`impeccable.style/slop`, identical card grids).
+- **Cards with few elements get a max width and are centred.** A two-card slide never stretches its
+  content edge to edge.
 - **Titles stay within two lines** at the deck's scale. Shortening a title means rendering again:
   one shortened after review shipped broken, three lines over a matrix.
 
@@ -353,7 +416,13 @@ months, what was there before, why didn't I see it. In a report the de-noising i
 - **The teal `.note` is for insights only.** A methodological aside in that container gives a
   footnote the visual weight of a finding. Scope notes, axis explanations and honest limits go in
   `.foot`: grey, small, italic, no fill.
-- **Soft bar gradients** (`#0d8a8a→#37b0ad`, coral `#d6492f→#e8735c`), never harsh cyan.
+- **No gradient on anything that encodes a value**, and never an off-palette gradient. Bars and
+  lines are flat colour (`CHARTS.md` §1); the soft gradients live in backgrounds only.
+- **No side-tab accent border.** A thick coloured stripe on one side of a quote, card or callout is
+  the first thing a reader spots as AI-made, and the user marked it rule number one. Valence goes in
+  the source line or the slide's context. Before delivering, `grep -c border-left index.html` gives 0.
+- **No uppercase label above a title that only restates it, and no icon tile stacked above a
+  heading.** An eyebrow earns its place only by saying something the title does not.
 - **Icons everywhere**, and real (see `ICONS.md`).
 - **`data-label` is navigation metadata**, never rendered copy.
 - **Footer left is `noisia · social intelligence architects`**, footer right is `NN / TOTAL`.

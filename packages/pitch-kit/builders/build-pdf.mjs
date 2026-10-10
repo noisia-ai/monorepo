@@ -12,7 +12,7 @@
  * Print → Save as PDF (same result).
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -40,6 +40,9 @@ if (!chrome) {
   process.exit(2);
 }
 
+// A failed export once left the previous PDF in place without an error, and that stale file was
+// sent. Delete first, then check the page count against the slides in the deck.
+rmSync(outPath, { force: true });
 console.log(`Rendering ${htmlPath}\n  with ${chrome}\n  → ${outPath}`);
 execFileSync(chrome, [
   "--headless=new",
@@ -48,4 +51,14 @@ execFileSync(chrome, [
   `--print-to-pdf=${outPath}`,
   pathToFileURL(htmlPath).href,
 ], { stdio: "inherit" });
-console.log("Done.");
+if (!existsSync(outPath)) {
+  console.error("Chrome exited without writing the PDF. Nothing was exported.");
+  process.exit(3);
+}
+const slides = (readFileSync(htmlPath, "utf8").match(/<section\b[^>]*class="[^"]*\bslide\b/g) || []).length;
+const pages = (readFileSync(outPath, "latin1").match(/\/Type\s*\/Page(?!s)/g) || []).length;
+if (slides && pages !== slides) {
+  console.error(`Page count mismatch: ${pages} pages in the PDF, ${slides} slides in the deck.`);
+  process.exit(4);
+}
+console.log(`Done. ${pages} pages.`);

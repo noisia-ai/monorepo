@@ -201,6 +201,18 @@ Y se comprueba en el PDF, no en el screenshot: el artefacto solo aparece al impr
 Reales, con liga al post, plataforma y fecha visibles. Sin corregir ortografía ni tono. Si no se
 puede verificar en su fuente, no entra. Sin excepción y en cualquier familia.
 
+### 5.7 El estudio se cobra por su corpus
+
+El tamaño del corpus es lo que se vende, así que todo deck de estudio para cliente lleva el embudo
+de tres pasos: menciones recolectadas, menciones únicas y posts analizados (`DATA.md` §25, y su
+slide en `LAYOUTS.md`). Lo que nunca se muestra es la mecánica de lectura: ni "muestra aleatoria",
+ni "leídos uno por uno", ni "codificado a mano", ni cuántos posts se leyeron por tema, ni cuántas
+búsquedas se corrieron. Un deck que dijo "4 posts leídos" en un tema invitó a que se lo cobraran de
+vuelta. Esa mecánica vive en el changelog del caso, y `leak-check.py` ya la busca.
+
+Los límites propios no se mueven por eso: no se afirma lectura manual de todo y no se inventa una
+distribución. Si un mercado es chico, se lee completo, y entonces cada porcentaje es real.
+
 ## 6. Ciclo de vida de un entregable
 
 ```text
@@ -217,7 +229,11 @@ iconos rotos y texto cortado. Hay herramienta para eso, no hace falta hacerlo a 
 arma hojas de contacto de cuatro para revisarlas en bloque.
 
 **Las cifras no se teclean.** Todo número que aparece en una slide se calcula de la tabla codificada
-al momento de construir el deck. Un número escrito a mano sobrevive al corpus que lo contradice, y
+al momento de construir el deck. El patrón que funcionó en un estudio de tres mercados: un
+builder por familia de deck, con un módulo de narrativa que lleva el copy y lee los números de las
+tablas, otro que arma el HTML, y la fecha de verificación tomada del reloj del sistema. Los módulos
+compartidos entre builders (banderas, logos) generan ids de SVG únicos por uso: dos `clipPath` con el
+mismo id en una slide rompen el segundo dibujo. Un número escrito a mano sobrevive al corpus que lo contradice, y
 en un deck bilingüe además se desincroniza entre idiomas. Si el corpus cambia, el deck tiene que
 cambiar solo.
 
@@ -239,7 +255,10 @@ node builders/build-portable.mjs <deck>/index.html <deck>/salida.html
 ```
 
 **Después de cada cambio se vuelve a renderizar esa slide y se mira, y al final se revisa el PDF
-exportado, no el HTML.** `qa-render.py` marca tinta pegada al borde; no detecta texto encimado ni
+exportado, no el HTML.** `build-pdf.mjs` borra el PDF anterior antes de exportar y compara las
+páginas contra las slides del deck: una exportación falló una vez sin error, dejó el PDF viejo en su
+lugar y ese fue el que se mandó. Las hojas de contacto finales se arman desde el PDF, no desde el
+HTML (en macOS sin poppler, PyMuPDF o un script de PDFKit sirven). `qa-render.py` marca tinta pegada al borde; no detecta texto encimado ni
 huecos. Esos solo los ve alguien mirando. Un título acortado después del último render salió
 entregado en tres líneas encima de una matriz.
 
@@ -335,3 +354,5 @@ Lo que sigue pendiente:
 | Declarar en un solo lugar la jerarquía de fases de un journey | Tres documentos dan tres respuestas: emergen del corpus, set canónico de siete, o default de cinco. Dos de ellos viven en el repo de website | Media |
 | Migrar los decks entregados al engine enlazado | Siguen cargando su bloque inline. No urge, pero el siguiente que se toque debería migrarse | Baja |
 | Fragmentos para hipótesis, mapa, espejo y kanban | Los componentes ya están en el engine, falta el fragmento con placeholders | Baja |
+| `qa-render.py` no detecta texto encimado dentro de la slide | Una galería se encimó con el título y el pie y el script dijo "sin desborde". Falta comparar la caja del título contra la del contenido. Mientras tanto, la revisión visual sigue siendo obligatoria | Media |
+| Fragmentos del embudo de corpus, la slide de subtemas y la galería | Salieron de un estudio multimercado y se describen en `LAYOUTS.md`; falta sanitizarlos como fragmentos | Media |

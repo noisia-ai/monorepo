@@ -521,3 +521,74 @@ periodo se analizó, qué filas se excluyeron y por qué, qué universo represen
 resolvieron duplicados y colisiones, qué significa cada conteo, qué etiquetas se traslapan, cómo
 regresar de un hallazgo a sus menciones, qué afirmaciones son exactas o direccionales, y cómo
 volver a ejecutar el proceso sin reconstruir decisiones de memoria.
+
+## 25. El corpus que se cobra, y cómo se presenta
+
+Regla comercial: el estudio se cobra por el tamaño del corpus. Todo deck client-facing lleva una
+slide de embudo, al inicio del método o en la slide de corpus:
+
+1. **Menciones recolectadas:** la suma de menciones únicas de cada búsqueda. Una mención que
+   aparece en dos búsquedas cuenta en las dos; una descarga repetida del mismo periodo no cuenta dos veces.
+2. **Menciones únicas** del universo del estudio.
+3. **Posts de fans analizados:** la voz que queda después de la limpieza. Es la base que se vende como analizada.
+
+En el deck client-facing no aparece la mecánica interna: ni tamaños de muestra, ni "random sample",
+ni "coded/read by hand", ni "posts read on it: N". Tono y subtemas se presentan sobre la base
+analizada.
+
+Límites, que no se negocian:
+- Nunca se afirma que cada post fue leído a mano, ni se escribe un número que no salga de los datos.
+- Un porcentaje calculado sobre muy pocos casos (menos de 20) no se muestra como porcentaje: el tema
+  va como lectura cualitativa, con los subtemas en orden y sus citas.
+- La mecánica completa (muestras, n, precisión) queda en el changelog interno del caso.
+
+## 26. Varios mercados en un estudio
+
+Salió de tres estudios de un mismo tema en tres países, con idiomas locales mezclados con inglés.
+
+### 26.1 Queries
+
+- **Un solo `AND` por query.** Para cruzar dos conceptos se corren dos queries.
+- **La geografía va en la query.** Las anclas del país a la izquierda del `AND`: selección, ligas,
+  clubes, estadios, palabras locales. El filtro de país de la herramienta dejó más de la mitad de las
+  filas sin país.
+- **No se filtra por idioma.** Las lenguas locales salen etiquetadas como inglés u otra cosa. Se
+  capturan con palabras locales en la query.
+- **Una query por pregunta de negocio**, no una general. En el mercado chico así se pasó de unas
+  cien menciones a varios miles.
+- **Se baja por momentos, no por volumen.** Si una exportación pasa del límite de la herramienta se
+  parte por momento (torneo, eliminatorias, liga), y se revisa que el rango de fechas sea el acordado.
+- **Antes de bajar un pico raro, se pregunta si es ruido.** Un pico de tres meses era una liga de otro
+  deporte y otro país con la misma sigla. Se corrigió la query con el nombre actual de la liga.
+
+### 26.2 Siglas y palabras compartidas
+
+Cada caso se detectó leyendo muestras de los picos: siglas que también nombran una liga de otro
+deporte, un partido político o la federación de otro país; una palabra local que en el idioma del
+país vecino significa otra cosa y trae su conversación; jugadores que juegan en Europa y traen prensa
+de esos países; partidos internacionales que traen la prensa del rival.
+
+La regla: **cada ancla ambigua lleva un gate de contexto**, se descarta la conversación en idiomas
+europeos que no se hablan en el país, y las palabras locales cuentan como señal del país.
+
+### 26.3 Spam y política
+
+- **Spam masivo en comentarios de Facebook**: curanderos, préstamos, cripto y números de teléfono. En
+  un mercado fueron decenas de miles de filas. El regex de spam va antes que todo lo demás.
+- **Política bajo posts oficiales.** En un mercado, la mitad del corpus era discusión política bajo
+  posts de jefes de Estado. Se excluye del análisis, no se cita, y en la codificación se marca como
+  no relevante.
+
+### 26.4 El contrato que funcionó
+
+- Fuera: artículos, blogs y cuentas emisoras (clubes, medios, casas de apuestas, bots).
+- El ancla del país en el texto propio o en su contexto; el término del tema, en el texto propio.
+- Dedupe por id y por texto normalizado.
+- Columnas de momento (la ventana del calendario), de marca sí o no, y del archivo de origen.
+- Un segundo paso de idioma y ruido sobre la voz ya limpia, no sobre el crudo.
+- Los exports de cientos de MB se leen en streaming, con `csv.field_size_limit` alto (§4).
+
+### 26.5 Gotchas de herramienta
+
+- En zsh, `set -- $var` no parte palabras como en bash.
+- En Python 3.9, una f-string no acepta backslashes dentro de `{}`: se saca a una función.

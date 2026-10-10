@@ -25,9 +25,13 @@ import argparse, html, json, re, sys
 # each one has produced a real leak. Extend per case with --extra, not here.
 PROCESS_ES = ["brief", "alcance acordado", "lo que pediste", "nos pediste", "esta slide",
               "en esta lámina", "a continuación", "feedback", "pendiente de alcance",
-              "la reunión pasada", "como comentaste", "el tablero"]
+              "la reunión pasada", "como comentaste", "el tablero",
+              # sampling mechanics: the study is sold by corpus size, never by how much was read
+              "muestra aleatoria", "leídos uno por uno", "codificado a mano", "posts leídos",
+              "búsquedas"]
 PROCESS_EN = ["this slide shows", "as requested", "you asked", "pending scope", "we added",
-              "per your feedback", "as discussed", "the brief", "hand off to"]
+              "per your feedback", "as discussed", "the brief", "hand off to",
+              "random sample", "read one by one", "coded by hand", "posts read", "searches"]
 
 
 def slide_texts(src):
