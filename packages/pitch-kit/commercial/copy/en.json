@@ -1,0 +1,1071 @@
+{
+ "_about": "Canonical commercial copy, US English. Taken almost verbatim from the sales team's decks (Commercial Overview, Product Scope & Pricing 2026, recent proposals, one-pagers) and cleaned: no typos, no em dashes, no forced contrasts. {{ }} is filled by the interview. Prices are always XXX and get filled in the editable file. A module with client:true has no fixed copy: the agent writes it following COMMERCIAL.md.",
+ "cover_noisia": {
+  "type": "cover",
+  "eyebrow": "Social intelligence",
+  "title": "Market research and brand monitoring, built on **social data**",
+  "subtitle": "You tell us what you need to know. We research the conversations people are already having and deliver insights ready for decision-making.",
+  "meta": "{{MARKET}} · {{DATE}}"
+ },
+ "cover_offer": {
+  "type": "cover",
+  "eyebrow": "Products and pricing",
+  "title": "What we deliver, and **what it costs**",
+  "subtitle": "Our two services, how we tailor each engagement, and how we price it.",
+  "meta": "{{MARKET}} · {{DATE}}"
+ },
+ "cover_client": {
+  "type": "cover",
+  "client": true,
+  "eyebrow": "{{DOCUMENT_TYPE}}",
+  "title": "{{CLIENT_QUESTION}}",
+  "subtitle": "{{WHAT_THIS_DOCUMENT_ANSWERS}}",
+  "meta": "Prepared for {{CLIENT}} · Confidential information · {{DATE}}"
+ },
+ "statement_punch": {
+  "type": "statement",
+  "client": true,
+  "kicker": "{{SECTOR}}",
+  "title": "{{OPENING_LINE}}",
+  "subtitle": "{{ONE_LINE_THAT_GROUNDS_IT}}"
+ },
+ "question_hook": {
+  "type": "statement",
+  "client": true,
+  "kicker": "Did you know?",
+  "title": "{{TRICKY_QUESTION}}",
+  "subtitle": "{{WHY_IT_MATTERS}}"
+ },
+ "questions_client": {
+  "type": "questions",
+  "client": true,
+  "eyebrow": "Where Noisia comes in",
+  "eyebrow_icon": "compass",
+  "title": "Questions {{CLIENT}}'s numbers can't answer",
+  "context": "{{PUBLIC_BRAND_CONTEXT}}",
+  "items": [
+   {
+    "theme": "{{THEME}}",
+    "icon": "help-circle",
+    "question": "{{QUESTION}}",
+    "detail": "{{WHY_IT_MATTERS}}"
+   }
+  ],
+  "answers": [
+   {
+    "name": "Why",
+    "text": "Market Studies: why customers choose you, stay or leave"
+   },
+   {
+    "name": "What",
+    "text": "Social Listening: customers and stakeholders, always on"
+   },
+   {
+    "name": "Next",
+    "text": "Radar: trends and what is coming in your category"
+   }
+  ]
+ },
+ "what_we_do": {
+  "type": "what_we_do",
+  "eyebrow": "What we do",
+  "eyebrow_icon": "sparks",
+  "title": "A context-driven social intelligence **partner**",
+  "lead": "We help brands understand what people do, why they do it and what it means for the business. Our analysts turn social conversation into clear, decision-ready intelligence.",
+  "highlight": 2,
+  "pillars": [
+   {
+    "icon": "sound-high",
+    "name": "Listen to the market",
+    "text": "Continuous monitoring of your brand, your competitors and your category."
+   },
+   {
+    "icon": "brain",
+    "name": "Understand the why",
+    "text": "Interpretation with your context on top of the data."
+   },
+   {
+    "icon": "light-bulb",
+    "name": "Answer the decision",
+    "text": "In-depth studies to launch, enter, defend, optimize or innovate."
+   },
+   {
+    "icon": "page-search",
+    "name": "Back it with evidence",
+    "text": "Every finding points to real, traceable conversation you can see."
+   }
+  ]
+ },
+ "where_we_stand": {
+  "type": "where_we_stand",
+  "eyebrow": "Where we stand",
+  "eyebrow_icon": "position",
+  "title": "The rigor of a data tool with the judgment of an **analyst**",
+  "columns": [
+   {
+    "name": "Social listening tools",
+    "kicker": "Data, dashboards and reports",
+    "points": [
+     "They leave the question open",
+     "Sentiment, totals and a word cloud",
+     "Labor-intensive manual work"
+    ],
+    "verdict": "A dashboard someone on your team still has to operate."
+   },
+   {
+    "noisia": true,
+    "kicker": "Tailor-made, built for decisions",
+    "points": [
+     "We bring in your full context",
+     "Analysts and our own technology on every read",
+     "Insights shaped around your questions"
+    ],
+    "verdict": "Insights that answer your business questions."
+   },
+   {
+    "name": "Marketing agencies",
+    "kicker": "A secondary marketing task",
+    "points": [
+     "No specialist team",
+     "Decisions rest on generic dashboards",
+     "No method to turn data into insights"
+    ],
+    "verdict": "Listening stays an add-on to the service."
+   }
+  ]
+ },
+ "where_we_stand_agency": {
+  "type": "where_we_stand",
+  "eyebrow": "Where we stand",
+  "eyebrow_icon": "position",
+  "title": "Beyond listening **tools**",
+  "columns": [
+   {
+    "name": "Social listening tools",
+    "kicker": "Data, dashboards and reports",
+    "points": [
+     "They leave the question open",
+     "Sentiment, totals and a word cloud",
+     "Labor-intensive manual work"
+    ],
+    "verdict": "A dashboard someone still has to operate."
+   },
+   {
+    "noisia": true,
+    "kicker": "Your social intelligence layer",
+    "points": [
+     "We bring in your client's context",
+     "Analysts and our own technology on every read",
+     "Deliverables under your brand, ours or both"
+    ],
+    "verdict": "Data to win the pitch, intelligence to grow the account."
+   }
+  ]
+ },
+ "coverage": {
+  "type": "coverage",
+  "eyebrow": "Coverage",
+  "eyebrow_icon": "globe",
+  "title": "Where the conversation lives",
+  "groups": [
+   {
+    "name": "Social",
+    "brands": [
+     "instagram",
+     "tiktok",
+     "facebook",
+     "x",
+     "youtube",
+     "reddit"
+    ],
+    "text": "Owned, shared and earned conversation, by keyword, hashtag, author, brand, product or topic."
+   },
+   {
+    "name": "Reviews and ratings",
+    "brands": [
+     "googlemaps",
+     "trustpilot",
+     "tripadvisor",
+     "appstore",
+     "googleplay"
+    ],
+    "text": "Product and location reviews, ratings and listings across the web."
+   },
+   {
+    "name": "Search and AI",
+    "brands": [
+     "google",
+     "perplexity",
+     "googlegemini"
+    ],
+    "text": "What people search for, and the answers AI assistants give."
+   }
+  ],
+  "stats": [
+   {
+    "value": "10",
+    "label": "social platforms"
+   },
+   {
+    "value": "14",
+    "label": "search engines"
+   },
+   {
+    "value": "150+",
+    "label": "review sites"
+   }
+  ],
+  "foot": "We combine the best sources on the market so nothing is left out, and we choose them to answer your question."
+ },
+ "portfolio": {
+  "type": "portfolio",
+  "eyebrow": "The portfolio",
+  "eyebrow_icon": "reports",
+  "title": "Two ways to work with Noisia",
+  "left": {
+   "kicker": "Social Listening as a Service",
+   "name": "Reports",
+   "lead": "Always-on monitoring with human interpretation on top. Monthly, weekly, or daily during a crisis.",
+   "questions": [
+    "How much conversation did I generate?",
+    "What is my share of voice in the category?",
+    "What is my sentiment, and what's driving it?",
+    "Which topics and narratives are moving right now?",
+    "How did my campaign or launch really land?"
+   ],
+   "tags": [
+    "Brand monitoring",
+    "Brand and competitors",
+    "Campaign readout"
+   ]
+  },
+  "right": {
+   "kicker": "Market Research as a Service",
+   "name": "Studies",
+   "lead": "In-depth research that answers one specific business question. Per project.",
+   "questions": [
+    "What territory can I build on without sounding generic?",
+    "Who really consumes my product, and what drives their decision?",
+    "Why do people choose a competitor over me?",
+    "Where do people stall, what drives them and what holds them back?",
+    "What is changing in my category and among my consumers?"
+   ],
+   "tags": [
+    "To launch",
+    "To enter",
+    "To defend",
+    "To optimize",
+    "To innovate"
+   ]
+  },
+  "punchline": "The report tells you what's happening. **The study tells you what to do about it.**"
+ },
+ "cooperations": {
+  "type": "cooperations",
+  "eyebrow": "How we work together",
+  "eyebrow_icon": "puzzle",
+  "title": "Three ways to bring Noisia in",
+  "highlight": 0,
+  "items": [
+   {
+    "icon": "page-search",
+    "kicker": "A decision on the table",
+    "name": "One-time study",
+    "text": "The state of social conversation around a topic, a category or a brand.",
+    "price_label": "From",
+    "price": "XXX {{CURRENCY}}"
+   },
+   {
+    "icon": "activity",
+    "kicker": "Before it escalates",
+    "name": "Continuous monitoring",
+    "text": "Reputation, competitors, crisis and industry, watched over time.",
+    "price_label": "From",
+    "price": "XXX {{CURRENCY}} / month"
+   },
+   {
+    "icon": "compass",
+    "kicker": "Where it is heading",
+    "name": "Audience and trends",
+    "text": "Consumer behavior, cultural tensions and where the category is heading.",
+    "price_label": "From",
+    "price": "XXX {{CURRENCY}}"
+   }
+  ],
+  "foot": "Studies start at **XXX {{CURRENCY}}**. The exact scope and price come out of the workshop."
+ },
+ "outputs_impact": {
+  "type": "outputs_impact",
+  "eyebrow": "What we deliver",
+  "eyebrow_icon": "multiple-pages",
+  "title": "Every study lands as an argument you can **defend**",
+  "outputs_label": "What you get",
+  "outputs": [
+   {
+    "icon": "light-bulb",
+    "name": "Clear thesis",
+    "text": "The human tension that explains why the market behaves this way."
+   },
+   {
+    "icon": "priority-high",
+    "name": "Prioritized recommendation",
+    "text": "What to do first, what to expect and where not to overreact."
+   },
+   {
+    "icon": "page-search",
+    "name": "Original evidence",
+    "text": "Text, date, platform and market behind each key insight."
+   },
+   {
+    "icon": "filter",
+    "name": "Actionable cuts",
+    "text": "Reads by audience, barrier, category, competitor or decision moment."
+   }
+  ],
+  "impact_label": "What changes for your team",
+  "impacts": [
+   {
+    "icon": "check-circle",
+    "text": "You decide with evidence you can show the room."
+   },
+   {
+    "icon": "check-circle",
+    "text": "You know what to move first and what to expect from each move."
+   },
+   {
+    "icon": "check-circle",
+    "text": "Your team acts in time, while the conversation is still small."
+   },
+   {
+    "icon": "check-circle",
+    "text": "Every delivery closes with the decision it informs and what to test next."
+   }
+  ]
+ },
+ "engine": {
+  "type": "engine",
+  "eyebrow": "How it works",
+  "eyebrow_icon": "network",
+  "title": "How we turn conversation into **decisions**",
+  "sources_label": "Sources",
+  "sources": [
+   {
+    "name": "10 social platforms",
+    "brands": [
+     "instagram",
+     "tiktok",
+     "facebook",
+     "x",
+     "youtube"
+    ]
+   },
+   {
+    "name": "14 search engines and AI assistants",
+    "brands": [
+     "google",
+     "perplexity",
+     "googlegemini"
+    ]
+   },
+   {
+    "name": "150+ review sites",
+    "brands": [
+     "googlemaps",
+     "trustpilot",
+     "tripadvisor"
+    ]
+   },
+   {
+    "name": "Your own data (NPS, sales, CRM, campaigns), when you share it",
+    "icon": "database"
+   }
+  ],
+  "brain_title": "The Noisia engine",
+  "brain_text": "Our technology processes and structures the conversation. Our proprietary methodologies give it a frame. Our analysts interpret it with your context.",
+  "methods": [
+   "Triggers & Barriers",
+   "Influencers",
+   "Value Perception",
+   "Cultural Codes",
+   "Consumer Behavior",
+   "Industry",
+   "Trends",
+   "Competitive Intelligence",
+   "Purchase Decision"
+  ],
+  "impact_label": "Impact",
+  "impacts": [
+   {
+    "icon": "rocket",
+    "text": "What to launch, and on which territory"
+   },
+   {
+    "icon": "map",
+    "text": "Where to enter, and how the market works"
+   },
+   {
+    "icon": "shield-check",
+    "text": "How to defend against your competitors"
+   },
+   {
+    "icon": "graph-up",
+    "text": "What to optimize and where to innovate, with evidence you can show"
+   }
+  ],
+  "explain": "The engine widens what we can analyze. The interpretation is always human."
+ },
+ "steps": {
+  "type": "steps",
+  "eyebrow": "How we get started",
+  "eyebrow_icon": "path-arrow",
+  "title": "Every engagement starts with a **free** workshop",
+  "steps": [
+   {
+    "name": "Workshop",
+    "tag": "Free",
+    "text": "30 to 60 minutes to understand your context, your challenges and the decisions you need to make."
+   },
+   {
+    "name": "Scope of Work",
+    "tag": "Free",
+    "text": "The right sources, methodology, deliverables, timing and investment for your case, ready to execute."
+   },
+   {
+    "name": "First delivery",
+    "text": "We run the study or launch the monitoring, present the results live and answer your questions."
+   }
+  ],
+  "note": "From there, we align each study and report with your key dates (launches, campaigns and seasons) so the insight arrives before the decision is made."
+ },
+ "workshop": {
+  "type": "detail",
+  "eyebrow": "How we get started",
+  "eyebrow_icon": "calendar",
+  "title": "Every engagement starts with a **free** workshop",
+  "lead": "A 30 to 60 minute session, at no cost, where we understand what you do today, your challenges and your objectives. We use it to tailor each service to your case, because the focus is insights that move business decisions.",
+  "list_label": "What happens in the workshop",
+  "list": [
+   "What we learn: your context, your business challenges and the decisions you need to make.",
+   "What we tailor: the right sources, methodology and delivery format for your case.",
+   "What you leave with: a first assessment and a tailored Scope of Work, ready to execute."
+  ],
+  "side": [
+   {
+    "label": "The format",
+    "chips": [
+     "30 to 60 min",
+     "One working session",
+     "Free"
+    ]
+   },
+   {
+    "label": "Who should be there",
+    "icon": "group",
+    "items": [
+     "Whoever signs off the decision",
+     "Whoever will use the result",
+     "Whoever knows the brand's context"
+    ]
+   }
+  ]
+ },
+ "build_vs_buy": {
+  "type": "build_vs_buy",
+  "eyebrow": "Build or plug in",
+  "eyebrow_icon": "cube",
+  "title": "Build the capability, or plug into **ours**",
+  "left_label": "If you build it yourself",
+  "rows": [
+   [
+    "Several tool licenses on 12-month upfront contracts",
+    "Access to 11 tools and a design studio, already in place"
+   ],
+   [
+    "Hiring and managing analysts and a design team",
+    "A dedicated project manager, a local social intelligence analyst and a social anthropologist"
+   ],
+   [
+    "Building the methodology and playbooks from scratch",
+    "A consulting layer that connects insight to action inside your processes"
+   ],
+   [
+    "An analyst who pulls data but may not turn it into a decision",
+    "Faster studies and higher-quality outputs"
+   ],
+   [
+    "Slow to produce, with a fixed cost whether you use it or not",
+    "Flexible by study or in short cycles, following your campaigns and projects"
+   ]
+  ],
+  "foot": "Your market intelligence partner, without building and maintaining internal tools and headcount. **Market agility, with costs under control.**"
+ },
+ "report_detail": {
+  "type": "detail",
+  "eyebrow": "Social Listening as a Service",
+  "eyebrow_icon": "activity",
+  "title": "Always-on intelligence on what's **happening**",
+  "lead": "Continuous monitoring of your brand, your competitors and your category, with human interpretation on top of the data.",
+  "list_label": "What it answers, each period",
+  "list": [
+   "Volume and velocity, and how they move",
+   "Sentiment and emotion, with the themes behind each side",
+   "Share of voice in the category",
+   "Engagement: what moved and what went unnoticed",
+   "Active topics and narratives of the period",
+   "Top conversations, prioritized and explained"
+  ],
+  "side": [
+   {
+    "label": "Cadence",
+    "chips": [
+     "Daily",
+     "Weekly",
+     "Every two weeks",
+     "Monthly"
+    ]
+   },
+   {
+    "label": "Formats",
+    "chips": [
+     "PDF",
+     "PPTX",
+     "Executive summary",
+     "Email",
+     "WhatsApp",
+     "API",
+     "Live dashboard"
+    ]
+   },
+   {
+    "label": "What each cadence is for",
+    "icon": "nav-arrow-right",
+    "items": [
+     "Daily: alerts and intensive tracking during a crisis",
+     "Weekly: a pulse on brands, products and competitors",
+     "Monthly: an executive report with share of voice, sentiment, topics and recommendations"
+    ]
+   }
+  ],
+  "sample": "Sample reports available on request"
+ },
+ "report_pricing": {
+  "type": "factor_pricing",
+  "eyebrow": "Pricing · Reports",
+  "eyebrow_icon": "hand-cash",
+  "title": "Priced by factor. It **scales** as you grow",
+  "headers": [
+   "Factors",
+   "Total / month",
+   "Per factor / month"
+  ],
+  "rows": [
+   [
+    "1",
+    "XXX",
+    "XXX"
+   ],
+   [
+    "2",
+    "XXX",
+    "XXX"
+   ],
+   [
+    "5",
+    "XXX",
+    "XXX"
+   ],
+   [
+    "10",
+    "XXX",
+    "XXX"
+   ]
+  ],
+  "table_foot": "{{CURRENCY}} per month, {{TAXES}}. The per-factor price drops as you add factors.",
+  "features": [
+   {
+    "icon": "help-circle",
+    "name": "What is a factor?",
+    "text": "Any single point of differentiation the analysis focuses on: a brand, product, service, influencer or person of interest. An industry is not a factor; it contains several."
+   },
+   {
+    "icon": "plus",
+    "name": "More than 10 factors",
+    "text": "Custom pricing with our commercial team, since effort varies by factor."
+   },
+   {
+    "icon": "design-pencil",
+    "name": "Full personalization",
+    "text": "Each report is built to your corporate identity, your language and the charts you need."
+   },
+   {
+    "icon": "send",
+    "name": "Flexible delivery",
+    "text": "PDF, PPTX, executive summary, email, WhatsApp or API, with a cadence from daily to monthly."
+   },
+   {
+    "icon": "calendar",
+    "name": "Contract",
+    "text": "Recurring monthly, with a 3-month minimum. Longer terms come with discounts. The first month builds the baseline."
+   }
+  ]
+ },
+ "study_detail": {
+  "type": "detail",
+  "eyebrow": "Market Research as a Service",
+  "eyebrow_icon": "open-book",
+  "title": "In-depth research into why it's **happening**",
+  "lead": "One study answers one specific business question, per project, with no subscription. We apply our proprietary methodologies to a corpus built for that question, and our analysts turn it into a decision.",
+  "list_label": "How it's delivered",
+  "list": [
+   "A decision-ready document",
+   "A live presentation and Q&A",
+   "Supporting evidence and mentions on request",
+   "We can also adapt the business question, combine several methodologies in one study, or build a custom framework for your case"
+  ],
+  "side": [
+   {
+    "label": "Decision moments",
+    "chips": [
+     "To launch",
+     "To enter",
+     "To defend",
+     "To optimize",
+     "To innovate"
+    ]
+   },
+   {
+    "label": "Our rule",
+    "icon": "shield-check",
+    "items": [
+     "We always separate the data from the interpretation",
+     "If a question doesn't have enough volume to be answered, we say so"
+    ]
+   }
+  ],
+  "sample": "Sample studies available on request"
+ },
+ "studies_catalog": {
+  "type": "catalog",
+  "eyebrow": "Studies",
+  "eyebrow_icon": "open-book",
+  "title": "The studies you can commission",
+  "items": [
+   {
+    "icon": "flash",
+    "name": "Triggers & Barriers",
+    "bullets": [
+     "What drives purchase and what blocks it",
+     "Which barriers you can actually move"
+    ]
+   },
+   {
+    "icon": "community",
+    "name": "Influencers",
+    "bullets": [
+     "Who really moves your category, beyond followers",
+     "The 15 to 30 nodes that matter, by role"
+    ]
+   },
+   {
+    "icon": "dollar-circle",
+    "name": "Value Perception",
+    "bullets": [
+     "Where you justify price and where you leak margin",
+     "The territory nobody owns yet"
+    ]
+   },
+   {
+    "icon": "open-book",
+    "name": "Cultural Codes",
+    "bullets": [
+     "The unwritten rules of your category",
+     "Which narrative territories are still free"
+    ]
+   },
+   {
+    "icon": "path-arrow",
+    "name": "Consumer Behavior",
+    "bullets": [
+     "Where intention breaks before it converts",
+     "Which frictions to fix first, by impact"
+    ]
+   },
+   {
+    "icon": "industry",
+    "name": "Industry",
+    "bullets": [
+     "The themes that dominate your category now",
+     "What's rising, fading and left unclaimed"
+    ]
+   },
+   {
+    "icon": "sparks",
+    "name": "Trends",
+    "bullets": [
+     "What's emerging before dashboards show it",
+     "The new vocabulary your category will use"
+    ]
+   },
+   {
+    "icon": "trophy",
+    "name": "Competitive Intelligence",
+    "bullets": [
+     "What each competitor is capitalizing on",
+     "Where you gain ground and where you lose it"
+    ]
+   },
+   {
+    "icon": "timer",
+    "name": "Purchase Decision",
+    "bullets": [
+     "Why people decide fast or slow in your category",
+     "What accelerates or stalls the decision"
+    ]
+   }
+  ]
+ },
+ "studies_pricing": {
+  "type": "catalog",
+  "eyebrow": "Pricing · Studies",
+  "eyebrow_icon": "hand-cash",
+  "title": "One price per study. No minimum and no **subscription**",
+  "headers": [
+   "Study",
+   "What you get",
+   "Price"
+  ],
+  "items": [
+   {
+    "name": "Triggers & Barriers",
+    "bullets": [
+     "What drives purchase and what blocks it",
+     "Which barriers you can actually move"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Influencers",
+    "bullets": [
+     "Who really moves your category, beyond followers",
+     "The 15 to 30 nodes that matter, by role"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Value Perception",
+    "bullets": [
+     "Where you justify price and where you leak margin",
+     "The territory nobody owns yet"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Cultural Codes",
+    "bullets": [
+     "The unwritten rules of your category",
+     "Which narrative territories are still free"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Consumer Behavior",
+    "bullets": [
+     "Where intention breaks before it converts",
+     "Which frictions to fix first, by impact"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Industry",
+    "bullets": [
+     "The themes that dominate your category now",
+     "What's rising, fading and left unclaimed"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Trends",
+    "bullets": [
+     "What's emerging before dashboards show it",
+     "The new vocabulary your category will use"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Competitive Intelligence",
+    "bullets": [
+     "What each competitor is capitalizing on",
+     "Where you gain ground and where you lose it"
+    ],
+    "price": "XXX"
+   },
+   {
+    "name": "Purchase Decision",
+    "bullets": [
+     "Why people decide fast or slow in your category",
+     "What accelerates or stalls the decision"
+    ],
+    "price": "XXX"
+   }
+  ],
+  "foot": "{{CURRENCY}} per study, {{TAXES}}. Every study includes a live presentation and a decision-ready document."
+ },
+ "year_plan": {
+  "type": "year_plan",
+  "eyebrow": "How we plan the year",
+  "eyebrow_icon": "calendar",
+  "title": "Studies work best as a year-round **plan**",
+  "explain": "Your team places studies at the moments that matter (launches, campaigns, positioning, competitor and trend reads) and has the insights it needs to hit its goals all year.",
+  "plans": [
+   {
+    "name": "Same study, repeated",
+    "text": "One study, revisited every 6 to 9 months to track how the picture moves.",
+    "blocks": [
+     {
+      "start": 1,
+      "span": 3,
+      "name": "Triggers & Barriers",
+      "price": "XXX",
+      "first": true
+     },
+     {
+      "start": 8,
+      "span": 3,
+      "name": "Triggers & Barriers",
+      "price": "XXX · -XX%"
+     }
+    ]
+   },
+   {
+    "name": "Different studies across the year",
+    "text": "A sequence of study types, each timed to a moment that matters.",
+    "blocks": [
+     {
+      "start": 1,
+      "span": 3,
+      "name": "Triggers & Barriers",
+      "price": "XXX",
+      "first": true
+     },
+     {
+      "start": 5,
+      "span": 3,
+      "name": "Competitive Intelligence",
+      "price": "XXX · -XX%"
+     },
+     {
+      "start": 9,
+      "span": 3,
+      "name": "Trends",
+      "price": "XXX · -XX%"
+     }
+    ]
+   },
+   {
+    "name": "One study, several methodologies",
+    "text": "Several methodologies combined into a single, deeper read.",
+    "blocks": [
+     {
+      "start": 1,
+      "span": 5,
+      "name": "3 methodologies, 1 study",
+      "price": "XXX",
+      "first": true
+     },
+     {
+      "start": 7,
+      "span": 5,
+      "name": "3 methodologies, 1 study",
+      "price": "XXX · -XX%"
+     }
+    ]
+   }
+  ]
+ },
+ "understood": {
+  "type": "understood",
+  "client": true,
+  "eyebrow": "What we understood",
+  "eyebrow_icon": "chat-lines",
+  "title": "{{CONTEXT_HEADLINE}}",
+  "question_label": "The business question",
+  "question": "{{CENTRAL_QUESTION}}",
+  "decisions_label": "The decisions the data has to resolve",
+  "decisions": [
+   {
+    "name": "{{DECISION}}",
+    "text": "{{DETAIL}}"
+   }
+  ]
+ },
+ "formats": {
+  "type": "formats",
+  "client": true,
+  "eyebrow": "The proposal",
+  "eyebrow_icon": "puzzle",
+  "title": "Three formats for {{CLIENT}}",
+  "items": [
+   {
+    "kicker": "Per project",
+    "name": "Market Study",
+    "text": "{{WHAT_IT_ANSWERS_FOR_THE_CLIENT}}",
+    "meta": [
+     {
+      "label": "Deliverables",
+      "value": "Study · presentation · evidence"
+     },
+     {
+      "label": "Delivery time",
+      "value": "{{TIME}}"
+     }
+    ]
+   },
+   {
+    "kicker": "Always on",
+    "name": "Social Listening",
+    "text": "{{WHAT_IT_MONITORS_FOR_THE_CLIENT}}",
+    "meta": [
+     {
+      "label": "Deliverables",
+      "value": "Alerts · weekly pulse · monthly report"
+     },
+     {
+      "label": "Frequency",
+      "value": "Daily, weekly and monthly"
+     }
+    ]
+   },
+   {
+    "kicker": "Monthly",
+    "name": "Trends Radar",
+    "text": "{{WHAT_IT_ANTICIPATES_FOR_THE_CLIENT}}",
+    "meta": [
+     {
+      "label": "Deliverables",
+      "value": "Trends radar"
+     },
+     {
+      "label": "Delivery time",
+      "value": "{{TIME}}"
+     }
+    ]
+   }
+  ],
+  "foot": "Each format can be contracted separately, in the order set by {{CLIENT}}'s agenda."
+ },
+ "blocks": {
+  "type": "blocks",
+  "client": true,
+  "eyebrow": "What the study answers",
+  "eyebrow_icon": "help-circle",
+  "title": "{{N}} blocks, one complete read",
+  "items": [
+   {
+    "letter": "A",
+    "name": "{{BLOCK}}",
+    "questions": [
+     "{{QUESTION}}"
+    ]
+   }
+  ]
+ },
+ "investment": {
+  "type": "investment",
+  "client": true,
+  "eyebrow": "Investment",
+  "eyebrow_icon": "hand-cash",
+  "title": "A clear price per **format**",
+  "rows": [
+   {
+    "name": "{{FORMAT}}",
+    "text": "{{WHAT_IT_INCLUDES}}",
+    "price": "XXX",
+    "unit": "{{CURRENCY}} + taxes · per study"
+   }
+  ],
+  "excluded_label": "Not included",
+  "excluded": [
+   "Production and execution of brand experiences",
+   "Community management and content publishing",
+   "Data capture at events or touchpoints; we analyze the data you provide",
+   "Sales data, market sizing or demand forecasts"
+  ],
+  "terms": "Prices in {{CURRENCY}}, {{TAXES}}. Every study includes a live presentation, a decision-ready document and Q&A rounds."
+ },
+ "sample": {
+  "type": "sample",
+  "client": true,
+  "eyebrow": "We have already read your category",
+  "eyebrow_icon": "open-book",
+  "title": "We have already read your **category**",
+  "kicker": "Sample study · {{CATEGORY}} · {{MARKET}}",
+  "study_title": "{{SAMPLE_STUDY_TITLE}}",
+  "text": "{{WHAT_IT_IS_ABOUT_IN_TWO_SENTENCES}}",
+  "link_label": "Open the sample study"
+ },
+ "closing": {
+  "type": "closing",
+  "title": "Two services. One intelligence **partner**.",
+  "subtitle": "Let's shape the plan that fits your year.",
+  "cta": "Book the workshop",
+  "contact": "{{SIGNATURE}} · {{EMAIL}} · www.noisia.ai"
+ },
+ "closing_question": {
+  "type": "closing",
+  "title": "Which questions matter most to you, your audience and your **industry**?",
+  "subtitle": "Let's start with a workshop to define your challenge and your business question together.",
+  "cta": "Book the workshop",
+  "contact": "{{SIGNATURE}} · {{EMAIL}} · www.noisia.ai"
+ },
+ "onepager": {
+  "type": "onepager",
+  "client": true,
+  "label": "Offer · {{CLIENT}}",
+  "title": "{{QUESTION_HEADLINE}}",
+  "intro": "Noisia is a context-driven social intelligence partner. Our analysts build a corpus tailored to your business question and turn it into a decision. We listen across 10 social platforms, 14 search engines and 150+ review sites.",
+  "left": {
+   "label": "The challenge",
+   "items": [
+    "{{CHALLENGE}}"
+   ]
+  },
+  "right": {
+   "label": "What you'll be able to decide",
+   "items": [
+    "{{DECISION}}"
+   ]
+  },
+  "proposal_label": "The proposal",
+  "proposal": "A tailored {{STUDY}} study.",
+  "proposal_text": "{{WHAT_IT_DOES_IN_ONE_LINE}}",
+  "how_label": "How and with what",
+  "how": [
+   {
+    "label": "Methodology",
+    "value": "{{METHODOLOGY}}"
+   },
+   {
+    "label": "Sources",
+    "value": "Social platforms, search engines and review sites"
+   },
+   {
+    "label": "Markets",
+    "value": "{{MARKETS}}"
+   },
+   {
+    "label": "Delivery",
+    "value": "Decision-ready document, live presentation and Q&A"
+   },
+   {
+    "label": "Timing",
+    "value": "{{TIME}}"
+   }
+  ],
+  "price": "XXX {{CURRENCY}} {{TAXES}}",
+  "price_note": "Complete study, all included",
+  "next_label": "Next step",
+  "next": "A free kickoff workshop to refine the context and the business question. From there, we close the scope and start the study.",
+  "contact": "{{SIGNATURE}} · {{EMAIL}} · www.noisia.ai",
+  "confidential": "Confidential information"
+ }
+}

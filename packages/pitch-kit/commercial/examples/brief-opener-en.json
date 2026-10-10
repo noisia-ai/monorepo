@@ -1,0 +1,16 @@
+{
+ "deliverable": "opener", "lang": "en", "mode": "present",
+ "vars": {"CLIENT": "Aurora Coffee", "MARKET": "Mexico", "DATE": "October 2026", "CURRENCY": "USD", "TAXES": "taxes not included",
+          "SIGNATURE": "Ferdinand Meister & David Alfaro · Founders", "EMAIL": "fer@noisia.ai"},
+ "slides": {
+  "statement_punch": {"kicker": "Specialty coffee", "title": "Your customers already explain why they come back. They just say it **somewhere else**.",
+    "subtitle": "In reviews, comments and searches. That is where we listen.", "notes": "Hook: the reasons people come back are already in public conversation."},
+  "questions_client": {
+    "context": "Aurora Coffee opened in three new cities this year and launched a cold drinks line. What comes next depends on what people say before, during and after each visit.",
+    "items": [
+      {"theme": "Occasion", "icon": "clock", "question": "When do people pick a specialty café, and when does the chain win?", "detail": "Occasion beats price in everyday coffee."},
+      {"theme": "Price", "icon": "dollar-circle", "question": "Where does paying more feel right, and where does it feel expensive?"},
+      {"theme": "Launch", "icon": "glass-half", "question": "What makes people try a new cold drink, and what holds them back?"},
+      {"theme": "New cities", "icon": "map", "question": "How do people talk about the brand where they don't know it yet?"}]}
+ }
+}

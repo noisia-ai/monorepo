@@ -51,7 +51,7 @@ Dentro del kit, cuando dos documentos se contradigan gana el de arriba:
 1. La instrucción vigente del usuario y el brief confirmado con el cliente.
 2. `packages/kb/` para todo lo comercial y de producto.
 3. Este canon.
-4. Los rulebooks: `LAYOUTS.md`, `COPY_RULES.md`, `ICONS.md`, `METHODOLOGY.md`, `DATA.md`, `PROPOSALS.md`.
+4. Los rulebooks: `LAYOUTS.md`, `COPY_RULES.md`, `ICONS.md`, `METHODOLOGY.md`, `DATA.md`, `commercial/COMMERCIAL.md`.
 5. `slides/recipes.json` y `slides/catalog.json`.
 6. El engine (`engine/`) y los assets (`assets/`).
 7. Los decks ya entregados, como referencia de acabado.
@@ -59,16 +59,17 @@ Dentro del kit, cuando dos documentos se contradigan gana el de arriba:
 Un deck entregado enseña forma, densidad y ritmo. **No manda sobre una regla** y no autoriza
 reusar contenido de otro cliente.
 
-## 3. Las seis familias de entregable
+## 3. Las familias de entregable
 
 Antes de la tabla, la distinción que evita el malentendido más caro: **lo que Noisia vende son
 Reportes y Estudios.** El catálogo comercial, R1 a R3 y E1 a E5, vive en
 `packages/kb/02-services/product-model.md` y manda sobre cualquier cosa que se escriba aquí.
 
-Las seis familias de abajo son **artefactos, no productos**. Una muestra es una pieza comercial
-recortada de un estudio, no algo que se cotiza aparte. Una propuesta es cómo se acuerda el trabajo
-antes de que exista. El bloque de producto solo explica a la compañía. Ninguna de esas tres se
-vende por sí sola, y ninguna se presenta al cliente como si fuera una línea de servicio.
+Las familias de abajo son **artefactos, no productos**. Una muestra es una pieza comercial
+recortada de un estudio, no algo que se cotiza aparte. Un deck comercial (opener, overview,
+oferta, propuesta o one-pager) es cómo se explica Noisia y se acuerda el trabajo antes de que
+exista. Ninguno se vende por sí solo, y ninguno se presenta al cliente como si fuera una línea de
+servicio.
 
 Dos cosas más que la KB declara y que aquí no se reabren. **Data existe como línea, pero está
 marcada como exploratoria y sin precio**, así que no se pitchea como si estuviera lista ni aparece
@@ -85,8 +86,7 @@ caro.
 | **Reporte** | Qué está pasando y qué cambió contra el periodo anterior | Un tablero y un periodo | 9 a 10 slides | `LAYOUTS.md` |
 | **Estudio** | Por qué la gente se acerca o se aleja, y dónde se puede actuar | Una pregunta de investigación | 14 a 18 slides | `LAYOUTS.md` |
 | **Muestra** | Qué tan buena es la lectura de Noisia, con alcance recortado | Una pregunta corta y un corpus acotado | 10 a 14 slides | `LAYOUTS.md`, variante de Estudio |
-| **Propuesta** | Qué haremos, para qué decisión, con qué alcance y qué recibe el cliente | Un discovery | 10 a 14 slides | `PROPOSALS.md` |
-| **Producto** | Qué es Noisia y dónde entra | Nada, es institucional | 14 a 15 slides | `PROPOSALS.md`, bloque de producto |
+| **Comercial** | Qué es Noisia para este cliente, qué proponemos, qué cuesta y qué no incluye | Un lead o un workshop | 1 a 11 slides | `commercial/COMMERCIAL.md` |
 | **Interno** | Qué existe, cómo funciona y qué falta | Una necesidad del equipo | Las que haga falta | `INTERNAL.md` |
 
 Dos fronteras que no se cruzan:
@@ -94,8 +94,12 @@ Dos fronteras que no se cruzan:
 - **Reporte no es Estudio.** El reporte parte del dato y describe el periodo. El estudio parte de
   una pregunta y responde por qué. Un reporte con una tesis inventada es un estudio mal hecho.
 - **Propuesta no adelanta hallazgos.** Puede enseñar la forma de la entrega y el nivel de
-  evidencia. No puede decir qué va a encontrar. Ver `PROPOSALS.md`, regla de frontera.
-- **Interno no es cliente.** Las otras cinco familias se escriben para alguien de fuera; esta, para
+  evidencia. No puede decir qué va a encontrar. Ver `commercial/COMMERCIAL.md` §11.
+- **Comercial no es HTML.** Reporte, estudio, muestra e interno salen del engine HTML. La familia
+  comercial sale en PPTX nativo, porque el equipo comercial la edita en Google Slides, y el PDF se
+  exporta de ese PPTX. Comparte tokens, fuente, iconos y fondos con el engine; no comparte el
+  render.
+- **Interno no es cliente.** Las demás familias se escriben para alguien de fuera; esta, para
   el equipo. Varias de las reglas más fuertes del kit, el título que afirma el hallazgo, la portada
   con ilustración y el cuestionario del prompt de arranque, en un deck interno son justo lo que no
   se hace. `INTERNAL.md` dice cuáles cambian y cuáles se quedan.
@@ -119,7 +123,7 @@ Lee solo lo que tu entregable necesita:
 | Gráficas | `CHARTS.md` | Barras, líneas, ejes, color por plataforma y la regla de sin gradientes |
 | Criterio | `METHODOLOGY.md` | Qué se puede afirmar y con qué fuerza |
 | Ejecución de datos | `DATA.md` | Inventario, ETL, gates de calidad, contratos de salida |
-| Comercial | `PROPOSALS.md` | Propuestas, alcance, entregables, lo que no incluye |
+| Comercial | `commercial/COMMERCIAL.md` | Openers, overview, oferta, propuesta y one-pager; la entrevista, el copy canónico y los precios en XXX |
 | Interno | `INTERNAL.md` | Decks para el equipo: status, operación, producto y su estado |
 | Arranque | `PROMPTS.md` | El prompt con el que empieza cualquier corrida |
 | Campo | `LEARNINGS.md` | Lo que enseñó un deck real antes de volverse regla |
@@ -335,3 +339,5 @@ Lo que sigue pendiente:
 | Declarar en un solo lugar la jerarquía de fases de un journey | Tres documentos dan tres respuestas: emergen del corpus, set canónico de siete, o default de cinco. Dos de ellos viven en el repo de website | Media |
 | Migrar los decks entregados al engine enlazado | Siguen cargando su bloque inline. No urge, pero el siguiente que se toque debería migrarse | Baja |
 | Fragmentos para hipótesis, mapa, espejo y kanban | Los componentes ya están en el engine, falta el fragmento con placeholders | Baja |
+| Probar el PPTX comercial importado en Google Slides | El builder dibuja solo lo que Slides importa bien (cajas, rectángulos redondeados, PNG, fondo de slide, campo de número), pero la prueba real es abrirlo ahí: fuente Google Sans, interlineado, fondos y el recuadro del logo | Alta |
+| Empaquetar Google Sans en la skill comercial | Sin la fuente, el PDF que exporta LibreOffice en el sandbox sustituye la tipografía. El PDF de Google Slides sale bien | Alta |

@@ -1,0 +1,24 @@
+{
+ "deliverable": "overview", "lang": "es", "mode": "send",
+ "vars": {"CLIENTE": "Café Aurora", "MERCADO": "México", "FECHA": "Octubre 2026", "MONEDA": "USD", "IMPUESTOS": "más impuestos",
+          "FIRMA": "Ferdinand Meister y David Alfaro · Fundadores", "EMAIL": "hola@noisia.ai"},
+ "include": ["sample"],
+ "slides": {
+  "cover_client": {"eyebrow": "Overview comercial", "title": "¿Por qué la gente elige su café de **todos los días**?",
+    "subtitle": "Cómo Noisia puede leer la conversación de tu categoría y convertirla en decisiones para Café Aurora."},
+  "questions_client": {
+    "context": "Café Aurora abrió sucursales en tres ciudades nuevas este año y lanzó su línea de bebidas frías. Lo que sigue depende de lo que la gente dice antes, durante y después de cada visita.",
+    "items": [
+      {"theme": "Ocasión", "icon": "clock", "question": "¿En qué momentos del día se elige una cafetería de especialidad, y cuándo gana la cadena?", "detail": "La ocasión decide más que el precio en café de todos los días."},
+      {"theme": "Precio", "icon": "dollar-circle", "question": "¿Dónde se justifica pagar más por un café, y dónde se siente caro?", "detail": "La percepción de valor cambia por ciudad y por tipo de bebida."},
+      {"theme": "Lanzamiento", "icon": "glass-half", "question": "¿Qué empuja a probar una bebida fría nueva, y qué la frena?", "detail": "Las bebidas de temporada viven o mueren en las primeras semanas."},
+      {"theme": "Ciudades nuevas", "icon": "map", "question": "¿Cómo se habla de la marca donde todavía no la conocen?"},
+      {"theme": "Competencia", "icon": "trophy", "question": "¿Qué está capitalizando cada competidor en la conversación?"}]},
+  "sample": {"study_title": "Rentar un auto, o abrir una app", "kicker": "Estudio de muestra · Movilidad · México",
+    "text": "Un estudio sobre qué empuja y qué detiene la renta de autos en México, leído en redes, reseñas y foros. Te lo compartimos como ejemplo del tipo de lectura que entregamos."},
+  "formats": {"items": [
+      {"text": "Qué empuja y qué detiene la elección de cafetería en cada ciudad, y qué ocasiones están libres para Café Aurora.", "meta": [{"label": "Entregables", "value": "Estudio · presentación · evidencia"}, {"label": "Tiempo de entrega", "value": "3 a 5 días hábiles después del workshop"}]},
+      {"text": "Marca, sucursales, lanzamientos y competencia, para actuar mientras una conversación todavía es chica."},
+      {"text": "Tendencias de café, bebidas frías y hábitos de consumo, para llegar antes a lo que viene.", "meta": [{"label": "Entregables", "value": "Radar de tendencias"}, {"label": "Tiempo de entrega", "value": "Mensual"}]}]}
+ }
+}

@@ -47,7 +47,7 @@ python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/
 | `CHARTS.md` | Bars, lines, axes, platform colour, and the no-gradient rule |
 | `METHODOLOGY.md` | What you may claim and how strongly |
 | `DATA.md` | How the corpus is processed: ETL, quality gates, output contracts |
-| `PROPOSALS.md` | Proposals and the product block |
+| `commercial/` | Sales decks in native, editable PPTX: openers, tailored overview, offer with prices, proposal, one-pager. `COMMERCIAL.md` is the rulebook; `build_skill.py` packages it as the claude.ai skill `noisia-comercial` |
 | `INTERNAL.md` | Decks for the team: status, operation, product and its state |
 | `PROMPTS.md` | The parameterized prompt that starts a run |
 

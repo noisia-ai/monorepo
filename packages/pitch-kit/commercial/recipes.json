@@ -1,0 +1,39 @@
+{
+  "_about": "The five commercial deliverables. Each lists its slides in order as modules of copy/<lang>.json. client:true modules (see the copy file) must be written for the client in the brief; optional modules go in only when the brief names them in `include` or fills them in `slides`. COMMERCIAL.md §2 explains when each deliverable is used.",
+  "opener": {
+    "name": {"es": "Opener informativo", "en": "Informative opener"},
+    "when": "A warm lead that already knows Noisia. Goal: confirm interest and get the first meeting.",
+    "slides": ["cover_noisia", "statement_punch", "questions_client", "what_we_do", "outputs_impact",
+               "cooperations", "steps", "studies_catalog", "closing_question"]
+  },
+  "outbound": {
+    "name": {"es": "Opener outbound", "en": "Outbound opener"},
+    "when": "A cold lead, sent after the Loom video. Goal: earn a reply. Same body as the opener; slide 2 is a question instead of a statement.",
+    "slides": ["cover_noisia", "question_hook", "questions_client", "what_we_do", "outputs_impact",
+               "cooperations", "steps", "studies_catalog", "closing_question"]
+  },
+  "overview": {
+    "name": {"es": "Overview a la medida", "en": "Tailored commercial overview"},
+    "when": "A qualified lead, before or right after the workshop. Noisia explained through the client's own questions.",
+    "slides": ["cover_client", "what_we_do", "where_we_stand", "coverage", "portfolio", "questions_client",
+               {"module": "sample", "optional": true}, "formats", "steps", "closing"]
+  },
+  "offer": {
+    "name": {"es": "Oferta comercial · productos y precios", "en": "Commercial offer · products and pricing"},
+    "when": "The lead asks what it costs. The catalogue with the price slides; prices are XXX until someone fills them.",
+    "slides": ["cover_offer", "workshop", "build_vs_buy", "portfolio", {"module": "engine", "optional": true},
+               "report_detail", "report_pricing", "study_detail", "studies_pricing", "year_plan", "closing"]
+  },
+  "proposal": {
+    "name": {"es": "Propuesta", "en": "Proposal"},
+    "when": "After the workshop. What we understood, what we propose, what it costs and what it does not include.",
+    "slides": ["cover_client", {"module": "portfolio", "optional": true}, "understood", "formats",
+               {"module": "blocks", "optional": true}, {"module": "sample", "optional": true}, "investment",
+               "steps", "closing"]
+  },
+  "onepager": {
+    "name": {"es": "One-pager de oferta o piloto", "en": "Offer or pilot one-pager"},
+    "when": "One A4 page to send by email or WhatsApp: the challenge, the proposal, what it lets the client decide, how, the price and the next step.",
+    "slides": ["onepager"]
+  }
+}

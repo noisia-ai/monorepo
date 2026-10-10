@@ -1,0 +1,17 @@
+{
+ "deliverable": "outbound", "lang": "es", "mode": "send",
+ "vars": {"CLIENTE": "Café Aurora", "MERCADO": "México", "FECHA": "Octubre 2026", "MONEDA": "USD", "IMPUESTOS": "más impuestos",
+          "FIRMA": "Ferdinand Meister · Fundador", "EMAIL": "fer@noisia.ai"},
+ "slides": {
+  "question_hook": {"title": "¿Sabes en qué momento del día te eligen, y en cuál gana **la cadena**?",
+    "subtitle": "La respuesta no está en tus ventas. Está en lo que la gente escribe antes y después de cada visita.",
+    "notes": "Pregunta abierta: no afirmamos nada de la marca, la invitamos a querer saberlo."},
+  "questions_client": {
+    "context": "Café Aurora abrió en tres ciudades nuevas este año y lanzó una línea de bebidas frías.",
+    "items": [
+      {"theme": "Ocasión", "icon": "clock", "question": "¿En qué momentos del día se elige una cafetería de especialidad, y cuándo gana la cadena?", "detail": "La ocasión decide más que el precio en café de todos los días."},
+      {"theme": "Precio", "icon": "dollar-circle", "question": "¿Dónde se justifica pagar más por un café, y dónde se siente caro?"},
+      {"theme": "Lanzamiento", "icon": "glass-half", "question": "¿Qué empuja a probar una bebida fría nueva, y qué la frena?"},
+      {"theme": "Ciudades nuevas", "icon": "map", "question": "¿Cómo se habla de la marca donde todavía no la conocen?"}]}
+ }
+}

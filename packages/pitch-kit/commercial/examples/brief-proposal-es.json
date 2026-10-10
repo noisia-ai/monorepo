@@ -1,0 +1,29 @@
+{
+ "deliverable": "proposal", "lang": "es", "mode": "send",
+ "vars": {"CLIENTE": "Café Aurora", "MERCADO": "México", "FECHA": "Octubre 2026", "MONEDA": "USD", "IMPUESTOS": "más impuestos",
+          "FIRMA": "Ferdinand Meister y David Alfaro · Fundadores", "EMAIL": "hola@noisia.ai", "N": "Seis"},
+ "include": ["blocks"],
+ "slides": {
+  "cover_client": {"eyebrow": "Propuesta", "title": "¿Qué hace que una bebida fría se vuelva **hábito**?",
+    "subtitle": "Un estudio y un monitoreo para el lanzamiento de la línea fría de Café Aurora."},
+  "understood": {"title": "Una línea nueva, una pregunta puntual",
+    "question": "¿Qué empuja a probar y repetir una bebida fría en una cafetería, qué lo frena, y dónde puede ganar Café Aurora?",
+    "decisions": [
+      {"name": "Qué mensaje lleva el lanzamiento", "text": "Qué motivos de prueba tienen más fuerza en cada ciudad."},
+      {"name": "Qué barreras atacar primero", "text": "Precio, tamaño, temporada o costumbre: cuál se puede mover."},
+      {"name": "Cómo medir si funcionó", "text": "Qué conversación esperar en las primeras semanas y cómo leerla."}]},
+  "formats": {"title": "Dos formatos para el lanzamiento", "items": [
+      {"text": "Qué empuja y qué detiene la prueba y la repetición de bebidas frías, por ciudad y por ocasión.", "meta": [{"label": "Entregables", "value": "Estudio · presentación · evidencia"}, {"label": "Tiempo de entrega", "value": "3 a 5 días hábiles después del workshop"}]},
+      {"text": "La conversación del lanzamiento semana a semana: qué se dice, dónde y qué corregir a tiempo.", "meta": [{"label": "Entregables", "value": "Pulso semanal · reporte mensual"}, {"label": "Frecuencia", "value": "Semanal durante 3 meses"}]}]},
+  "blocks": {"items": [
+      {"letter": "A", "name": "La ocasión", "questions": ["¿En qué momentos del día se antoja una bebida fría?", "¿Con quién y dónde se toma?"]},
+      {"letter": "B", "name": "La prueba", "questions": ["¿Qué hace que alguien pruebe algo nuevo en su cafetería?"]},
+      {"letter": "C", "name": "La repetición", "questions": ["¿Qué convierte una prueba en costumbre?"]},
+      {"letter": "D", "name": "El precio", "questions": ["¿Cuándo se siente justo y cuándo caro?"]},
+      {"letter": "E", "name": "La competencia", "questions": ["¿Qué marcas ocupan ya este territorio y con qué?"]},
+      {"letter": "F", "name": "Las ciudades", "questions": ["¿Cambia la conversación entre ciudades nuevas y conocidas?"]}]},
+  "investment": {"rows": [
+      {"name": "Estudio de lanzamiento", "text": "Corpus a la medida, documento listo para decidir, presentación en vivo y Q&A.", "price": "XXX", "unit": "USD + impuestos · por estudio"},
+      {"name": "Monitoreo del lanzamiento", "text": "Pulso semanal y reporte mensual durante 3 meses.", "price": "XXX", "unit": "USD + impuestos · al mes"}]}
+ }
+}

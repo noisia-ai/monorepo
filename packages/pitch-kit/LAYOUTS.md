@@ -24,10 +24,11 @@ the engine (`AGENTS.md` → contribution loop).
 Assets keep one canonical name each: `assets/tb-map.png`, `assets/cover-illustration.png`,
 `assets/logo_norm.svg`.
 
-## The five families
+## The families
 
 `CANON.md` §3 owns the family decision. This file owns the sequences for **Reporte**, **Estudio**
-and **Muestra**; `PROPOSALS.md` owns **Propuesta** and the **Producto** block.
+and **Muestra**; the commercial family (openers, overview, offer, proposal, one-pager) is built in
+native PPTX from `commercial/` and follows `commercial/COMMERCIAL.md`.
 
 - **Reporte** = agnostic monthly monitor. Answers *"what's happening"* + a light interpretation
   layer. Starts from the data, not a question. Always compares vs. the prior period.

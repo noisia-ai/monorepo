@@ -217,21 +217,15 @@ Ante cliente final se muestra participación sobre la conversación depurada, no
 Ver CANON.md, sección 5.3.
 ```
 
-## Bloque · Propuesta
+## Bloque · Comercial
 
 ```text
-FAMILIA: propuesta. Lee packages/pitch-kit/PROPOSALS.md y packages/kb/02-services/product-model.md
-completos antes de construir. Lo que Noisia vende son Reportes y Estudios. Data está marcada como
-exploratoria y no se pitchea. Foundation, Intelligence y Strategy son calibración interna y no van
-en una slide.
-
-La propuesta no contiene hallazgos sobre el prospecto. Cierra la pregunta, el alcance, los
-entregables, lo que no incluye y el siguiente paso. Todo ejemplo va rotulado como ilustrativo.
-Sin montos inventados y sin lenguaje interno de proceso.
-
-Cierra antes de construir: cliente y aprobador, decisión y fecha, pregunta de negocio en una
-frase, qué producto del catálogo o scope especial es, sujeto y competidores, mercados e idiomas,
-fuentes y periodo, entregables, qué no incluye, dependencias del cliente y términos aprobados.
+FAMILIA: comercial (opener, outbound, overview, oferta, propuesta o one-pager). Lee
+packages/pitch-kit/commercial/COMMERCIAL.md completo antes de construir. El deck sale en PPTX
+nativo con commercial/builder/compose.py a partir de un brief; el copy canónico está en
+commercial/copy/ y no se reescribe. Haz la entrevista de §3, una pregunta a la vez. Cero insights:
+solo preguntas que Noisia podría responder, aterrizadas a la marca con hechos públicos citados en
+las notas. Precios en XXX salvo que te den el monto en el chat.
 ```
 
 ## Registros de sujeto

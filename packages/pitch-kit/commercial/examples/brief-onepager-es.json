@@ -1,0 +1,10 @@
+{"deliverable": "onepager", "lang": "es", "mode": "send",
+ "vars": {"CLIENTE": "Café Aurora", "MONEDA": "MXN", "IMPUESTOS": "+ IVA", "FIRMA": "David Alfaro · Fundador", "EMAIL": "hola@noisia.ai"},
+ "slides": {"onepager": {
+   "title": "¿Por qué se prueba (o no) una bebida fría nueva?",
+   "left": {"items": ["La línea fría compite con cadenas que ya ocupan la ocasión de la tarde", "No se sabe qué motivo de prueba pesa más en cada ciudad", "El precio puede ser barrera o señal de calidad", "Las primeras semanas deciden si el lanzamiento se queda"]},
+   "right": {"items": ["Qué mensaje lleva el lanzamiento en cada ciudad", "Qué barreras atacar primero y cuáles solo vigilar", "Qué ocasiones están libres para la marca", "Cómo leer la conversación de las primeras semanas"]},
+   "proposal": "Un estudio Triggers & Barriers a la medida.",
+   "proposal_text": "Separa lo que empuja la prueba y la repetición de lo que la frena, y en qué capa de la persona vive cada cosa.",
+   "how": [{"label": "Metodología", "value": "Triggers & Barriers"}, {"label": "Fuentes", "value": "Redes sociales, buscadores y sitios de reseñas"}, {"label": "Mercados", "value": "CDMX, Monterrey y Guadalajara"}, {"label": "Entrega", "value": "Documento, presentación en vivo y Q&A"}, {"label": "Tiempo", "value": "3 a 5 días hábiles"}]
+ }}}

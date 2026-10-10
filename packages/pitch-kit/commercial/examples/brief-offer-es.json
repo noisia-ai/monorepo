@@ -1,0 +1,3 @@
+{"deliverable": "offer", "lang": "es", "mode": "send", "include": ["engine"],
+ "vars": {"MERCADO": "México", "FECHA": "Octubre 2026", "MONEDA": "USD", "IMPUESTOS": "más impuestos",
+          "FIRMA": "Ferdinand Meister y David Alfaro · Fundadores", "EMAIL": "hola@noisia.ai"}}
