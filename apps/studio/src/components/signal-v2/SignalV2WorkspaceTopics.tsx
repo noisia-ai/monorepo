@@ -170,7 +170,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
         }}>{t(mfp && key === "noise" ? "mfp.unrelated" : mfp && key === "unresolved" ? "mfp.without_concept" : `sections.${key}`)}<span>{key === "topics" ? number(workspaceTermsForSectionV1(data, "topics").length)
           : key === "narratives" ? consolidated || mfp ? number(workspaceTermsForSectionV1(data, "narratives").length) : t("sections.unavailable")
           : key === "noise" ? mfp ? number(mfp.unrelated) : data.coverage.noise === null ? t("sections.unavailable") : number(data.coverage.noise)
-          : data.coverage.unresolved === null ? t("sections.unavailable") : number(data.coverage.unresolved)}</span></button>)}
+          : mfp ? number(mfp.without_concept) : data.coverage.unresolved === null ? t("sections.unavailable") : number(data.coverage.unresolved)}</span></button>)}
     </div> : null}
     <div id={`${tabsId}-panel`} role={surface === "topics" ? "tabpanel" : undefined}
       aria-labelledby={surface === "topics" ? `${tabsId}-${section}` : undefined} tabIndex={surface === "topics" ? 0 : undefined}>

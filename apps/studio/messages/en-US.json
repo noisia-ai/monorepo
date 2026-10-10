@@ -4568,6 +4568,35 @@
     "goSignal": "Go to Signal"
   },
   "Mfp": {
+    "hybridReview": {
+      "title": "Results requiring review",
+      "first": "Initial evaluation",
+      "verification": "Citation verification",
+      "withoutCitation": "No verified literal citation."
+    },
+    "configuration": {
+      "title": "Membership method",
+      "body": "Choose how mentions are evaluated against each concept. Saving the method does not start processing or spending. The hybrid method is experimental.",
+      "refresh": "Refresh",
+      "route": "Method",
+      "standard": "Standard",
+      "hybrid_h1": "Experimental hybrid",
+      "exposure": "{count} calls still have unconfirmed results; reserved cost: {cost}.",
+      "confirm": "I understand that returning to the standard method does not cancel these calls or remove their cost exposure.",
+      "readOnly": "Your access allows viewing the method; changing it requires editing permission.",
+      "save": "Save method",
+      "loading": "Loading method…",
+      "unavailable": "Could not read or save the method. Refresh its state before trying again.",
+      "changed": "Someone else changed the method. Refresh its state and choose again.",
+      "confirmationRequired": "Confirm that pending calls retain their cost exposure before returning to the standard method."
+    },
+    "decisionOrigin": {
+      "label": "Who made this decision?",
+      "choose": "Select the origin",
+      "human_ui": "Direct human review",
+      "agent_assisted": "Agent-assisted decision",
+      "unknown": "Correction with unrecorded origin"
+    },
     "showAllMentions": "Show all mentions",
     "fullEstimate": "Full recalculation estimate",
     "journey": {
@@ -4593,6 +4622,7 @@
       "start": "Calculate full membership"
     },
     "exceptions": {
+      "reviewHybrid": "Review disagreements",
       "title": "Results and exceptions",
       "body": "Abstention, provider refusal and technical error are separate states. Correct only the mentions you reviewed.",
       "review": "Review insufficient evidence",
@@ -4649,6 +4679,7 @@
       "off_topic": "Off topic"
     },
     "verdicts": {
+      "review_required": "Review required",
       "belongs": "Belongs",
       "not_belongs": "Does not belong",
       "insufficient": "Insufficient evidence",
@@ -4684,6 +4715,7 @@
       "stale": "The source or definition changed. Refresh results before continuing.",
       "active": "A run is already active. Refresh to view its progress.",
       "invalid": "Review correction values and save again.",
+      "routeUpgrade": "This experimental method needs an update before another analysis. In Access and settings, save Standard, then select and save Experimental hybrid again.",
       "request": "The request could not be completed. Refresh or recover the same request if its response is pending."
     },
     "refresh": "Refresh",

@@ -1,0 +1,30 @@
+# Recibo §11.3 — MFP, PR #40
+
+## Revisión 6 — 9 de octubre de 2026
+
+Se integra la cabeza final de H1 #39 `03208f3c5062c6d6cdaf66fa49dccd4e6deaf85e` (código `c3282a99`, seguido únicamente de su recibo documental) sobre el corte #40 `30414997`, sin abrir otro PR ni fusionar PRs. La integración automática no produjo conflictos. Los nueve archivos recibidos de H1, incluido su recibo final, coinciden íntegramente con su rama; F5-12 y su prueba permanecen idénticos al corte previo. Se conservan las correcciones de §11.3, el selector y la procedencia de decisiones.
+
+CI general y PostgreSQL se vuelven a ejecutar en GitHub sobre el HEAD combinado, con base temporal develop. El SHA final y los enlaces/resultados de ambos gates se registran en el recibo final del [PR #40](https://github.com/noisia-ai/monorepo/pull/40); después se restaura su base #39 sin cambiar ese SHA. Cualquier nueva cabeza documental de #39 se incorpora antes del cierre.
+
+Esta revisión no ejecuta proveedores, migraciones contra entornos compartidos ni despliegues. El gasto nuevo de proveedor es USD 0. Las pruebas aisladas de CI no acreditan UI desplegada ni aceptación del fundador. Los datos de despliegue y ejecución que siguen son evidencia histórica del corte anterior, no una lectura del entorno actual.
+
+El runtime de esta revisión no expone el modelo ni el esfuerzo efectivos: ambos son **no observables**. La configuración `gpt-6.1-sol` / `medium` comunicada anteriormente se conserva sólo como antecedente, no como atribución medida de esta revisión.
+
+## Evidencia histórica del corte anterior
+
+Corte preparado el 8–9 de octubre de 2026 para revisión; **sin fusión ni aceptación integral del fundador**. [PR #40](https://github.com/noisia-ai/monorepo/pull/40) integra develop `b2667fc5` y depende de H1 #39 `3ba50f05`. El despliegue compartido conserva develop, Studio `2271084f-3bbc-45dd-9800-1472de995c5d` y Runner `df39c4ee-4b03-4305-ac53-9c9f0ab1b089`, publicación automática desactivada.
+
+| Requisito | Resultado y evidencia |
+|---|---|
+| Análisis/cómputo/editorial | Análisis enviaba dos parámetros a una consulta con uno: se agregó el alcance explícito de workspace. Editorial corrige las tres claves JSON sin comilla final y lee el error desde `validation`, pues `error_code` no existe en esa tabla. PostgreSQL aceptó las consultas corregidas mediante EXPLAIN de sólo lectura. |
+| HTTP intermitente | En National, tres consultas de población ocuparon las tres conexiones de Studio durante más de diez segundos. Se observó espera de conexión presentada incorrectamente como filtro inválido. La UI acota a una lectura pesada activa y tres pendientes por workspace, sin bloquear previews, otros workspaces ni escrituras. Medición nativa con pool3 y las tres consultas reales: antes la lectura de metadatos agotó 10,002 ms; después respondió en 1 ms, las tres consultas terminaron y el total pasó de 20,293 a 21,187 ms. Esto es medición de loaders, no HTTP desplegado; el contexto devuelve 503 saneado ante indisponibilidad. |
+| 134 frente a 423 | Pestaña e indicador usan `without_concept` en MFP; regresión de renderizado bilingüe con los conteos históricos divergentes. |
+| Editorial/selector H1 | Se conserva la consolidación editorial existente, reparando su lectura. Nuevo selector en Configuración usa el contrato de #39: autorización del servidor, disponibilidad de ambos proveedores y flags H1/ledger, versión esperada, confirmación de llamadas inciertas al volver a estándar y ninguna ejecución de proveedor por seleccionar. Desacuerdos muestran ambos resultados y sólo citas comprobadas contra el original. |
+| Origen de correcciones | La UI exige origen explícito; el servidor rechaza omisiones/valores inválidos. `human_ui` y `agent_assisted` quedan separados; legado desconocido no se infiere humano. Vista privada de evaluación excluye decisiones asistidas, obsoletas o sustituidas. |
+| Reparación acotada | 0260 aplicada una vez a las 03:01:56Z del 9 de octubre. SHA `b66643e960bba08af6d5386b2bbf50c33c0c26f874aad81d52953d4c003afc7f`. Simulación con rollback, luego commit a las 03:07:09Z: tres decisiones exactas marcadas asistidas; veredictos y demás campos intactos; cero filas de evaluación humana. Verificación posterior: 6,133 llamadas históricas y sus estados/reservas/costes idénticos; cero proveedores nuevos. Recibos privados `front5-qa/origin-*.json`. |
+| CI y regresiones | Typecheck remoto 11/11, scripts de corpus sin errores, lint sin errores y 119 tests focales PASS y prueba adicional de los cuatro gates de activación H1/retorno a estándar. CI conserva bases main/develop y PostgreSQL la base develop; se retiró el disparador de la rama antigua. F5-12 y su prueba de consulta opcional vacía están conservados. Validaciones del HEAD final se registran en PR #40; después se apila sobre #39 sin cambiar el SHA validado. |
+| Guía | [QA del fundador](QA_FUNDADOR_MFP.md) reescrita con rol, tiempo, coste, despliegue/configuración exactos, controles, fallos y recuperación. [Anexo](QA_FUNDADOR_MFP_ANEXO_OPERADOR.md) conserva el registro anterior. |
+
+**Límite de evidencia:** las respuestas autenticadas 200 de análisis, cómputo, consolidación y editorial en la marca QA corresponden al develop fijado. National reprodujo la saturación en ese mismo corte. El overlay remoto acredita código/pruebas, no un recorrido de interfaz desplegada de #40. No existe otro Studio autenticado en dev-test; no se alteraron servicios compartidos ni credenciales para simularlo. Queda pendiente el recorrido del código revisado en un despliegue coordinado antes de aceptación del fundador. No UAT, producción ni proveedores nuevos; gasto nuevo de proveedor USD 0. Infraestructura de pruebas no cuantificada.
+
+Modelo configurado comunicado por coordinación: `gpt-6.1-sol`, esfuerzo `medium`. El modelo/esfuerzo efectivo del runtime no está expuesto y no se acredita como medido. La evidencia histórica de USD 6.484515 y dos cargas pertenece al anexo, no a la aceptación de este corte.

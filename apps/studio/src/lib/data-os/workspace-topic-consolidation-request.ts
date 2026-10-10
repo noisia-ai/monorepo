@@ -40,7 +40,9 @@ export class WorkspaceTopicConsolidationRequestError extends Error {
 export async function submitWorkspaceTopicConsolidationIntentV1(args: {
   intent: WorkspaceTopicConsolidationIntentV1; fetcher: typeof fetch; signal?: AbortSignal;
 }): Promise<WorkspaceTopicConsolidationReceiptV1> {
-  const response = await args.fetcher(`/api/data-os/signal/${encodeURIComponent(args.intent.workspace_id)}/topics/consolidation`, {
+  // Native browser fetch cannot be called with this options object as its receiver.
+  const { fetcher } = args;
+  const response = await fetcher(`/api/data-os/signal/${encodeURIComponent(args.intent.workspace_id)}/topics/consolidation`, {
     method: "POST", cache: "no-store", signal: args.signal,
     headers: { "Content-Type": "application/json", "Idempotency-Key": args.intent.key }, body: JSON.stringify(args.intent.body)
   });

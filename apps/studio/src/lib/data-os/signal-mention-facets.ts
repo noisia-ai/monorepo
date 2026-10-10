@@ -7,6 +7,7 @@ import {
   signalWorkspaceFeatureEnabledV1,
 } from "@noisia/db";
 import { pool } from "@/lib/db";
+import { readMfpPopulation } from "./mfp-population-read";
 
 export { SignalLabelingError } from "@noisia/db";
 
@@ -20,8 +21,8 @@ type FacetRequest = FacetAccess & {
 
 // The DB service revalidates workspace grants and financial authority in its
 // transaction. Runtime provider availability is owned by this server boundary.
-export function loadMentionFacetsStatusForActorV1(args: FacetAccess) {
-  return loadMentionFacetsStatusV1({ ...args, database: pool });
+export function loadMentionFacetsStatusForActorV1(args: FacetAccess, signal?: AbortSignal) {
+  return readMfpPopulation(() => loadMentionFacetsStatusV1({ ...args, database: pool }), signal);
 }
 
 export async function loadMentionFacetsAvailabilityV1(workspace_id: string) {
@@ -48,7 +49,7 @@ export function confirmMentionFacetsForActorV1(
 
 export function loadMentionFacetBrowserForActorV1(args: FacetAccess & {
   dimension?: string; value?: string; cursor?: string; root_id?: string; limit?: number;
-}) { return loadMentionFacetBrowserV1({ ...args, database: pool }); }
+}, signal?: AbortSignal) { return readMfpPopulation(() => loadMentionFacetBrowserV1({ ...args, database: pool }), signal); }
 export function overrideMentionFacetsForActorV1(args: FacetAccess & {
   overrides: Array<{root_id:string;dimension:string;value:unknown}>;
 }) { return overrideMentionFacetsBatchV1({ ...args, database: pool }); }

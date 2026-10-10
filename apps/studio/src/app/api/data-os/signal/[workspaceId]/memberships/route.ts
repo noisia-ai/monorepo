@@ -33,6 +33,7 @@ const querySchema = z
         "belongs",
         "not_belongs",
         "insufficient",
+        "review_required",
         "refused",
         "error",
         "pending",
@@ -52,6 +53,7 @@ const patchSchema = z.union([
               root_id: z.string().uuid(),
               concept_key: z.string(),
               verdict: z.enum(["belongs", "not_belongs"]),
+              decided_via: z.enum(["human_ui", "agent_assisted"]),
             })
             .strict(),
         )
@@ -100,7 +102,7 @@ export async function GET(request: Request, context: Context) {
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
         ...query.data,
-      }),
+      }, request.signal),
       { headers },
     );
   } catch (e) {

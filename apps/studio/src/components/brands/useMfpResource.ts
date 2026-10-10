@@ -1,4 +1,5 @@
 "use client";
+import {readMfpResource} from "@/lib/data-os/mfp-resource-read";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {executeMfpIntent,mfpIntent,type MfpIntent} from "@/lib/data-os/mfp-ui-state";
 export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>void,poll=false) {
@@ -6,7 +7,7 @@ export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>
   const live=useRef(true),controller=useRef<AbortController|null>(null),denied=useRef(onDenied);denied.current=onDenied;
   const read=useCallback(async()=>{
     controller.current?.abort();const next=new AbortController();controller.current=next;setLoading(true);
-    try {const response=await fetch(endpoint,{cache:"no-store",signal:next.signal});
+    try {const response=await readMfpResource(endpoint,next.signal);
       if(next.signal.aborted||!live.current)return;
       if([401,403,404].includes(response.status)){setData(null);denied.current?.();throw Error("forbidden");}
       const body=await response.json(); if(next.signal.aborted||!live.current)return;

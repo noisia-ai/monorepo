@@ -1,6 +1,10 @@
 import type {MfpRun} from "./mfp-ui";
 
 export type MfpIntent={method:string;body:Record<string,unknown>};
+/** UI provenance is fixed; assisted scripts must use the explicit API contract. */
+export function mfpHumanMembershipCorrection(rootIds:string[],conceptKey:string,verdict:'belongs'|'not_belongs') {
+  return {overrides:rootIds.map(root_id=>({root_id,concept_key:conceptKey,verdict,decided_via:'human_ui' as const}))};
+}
 /** Snapshot the submitted definition, including nested arrays, before the editor changes. */
 export function mfpIntent(body:Record<string,unknown>,method:string,key:string):MfpIntent {
   return {method,body:JSON.parse(JSON.stringify(method==="POST"&&!body.confirm_run_id?{...body,idempotency_key:key}:body))};
