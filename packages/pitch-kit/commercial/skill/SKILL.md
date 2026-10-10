@@ -52,7 +52,7 @@ skill (`COMMERCIAL.md` §4.1).
 ### 4. Escribe el brief
 
 Copia el ejemplo del entregable desde `examples/` y cambia solo lo que es del cliente: `vars`, las
-slides con `client: true` de la receta, y `include`/`exclude` si hace falta. No reescribas el copy
+slides con `_client` de la receta, y `include`/`exclude` si hace falta. No reescribas el copy
 canónico. Precios: siempre `XXX`, salvo que la persona te dé el monto en este chat. Si subió el
 logo del cliente, pon su ruta en `client_logo`.
 

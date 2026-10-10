@@ -1,5 +1,5 @@
 {
- "_about": "Canonical commercial copy, US English. Taken almost verbatim from the sales team's decks (Commercial Overview, Product Scope & Pricing 2026, recent proposals, one-pagers) and cleaned: no typos, no em dashes, no forced contrasts. {{ }} is filled by the interview. Prices are always XXX and get filled in the editable file. A module with client:true has no fixed copy: the agent writes it following COMMERCIAL.md.",
+ "_about": "Canonical commercial copy, US English. Taken almost verbatim from the sales team's decks (Commercial Overview, Product Scope & Pricing 2026, recent proposals, one-pagers) and cleaned: no typos, no em dashes, no forced contrasts. {{ }} is filled by the interview. Prices are always XXX and get filled in the editable file. A module with _client has no fixed copy: the agent writes it following COMMERCIAL.md.",
  "cover_noisia": {
   "type": "cover",
   "eyebrow": "Social intelligence",
@@ -16,29 +16,29 @@
  },
  "cover_client": {
   "type": "cover",
-  "client": true,
   "eyebrow": "{{DOCUMENT_TYPE}}",
   "title": "{{CLIENT_QUESTION}}",
   "subtitle": "{{WHAT_THIS_DOCUMENT_ANSWERS}}",
-  "meta": "Prepared for {{CLIENT}} · Confidential information · {{DATE}}"
+  "meta": "Confidential information · {{DATE}}",
+  "_client": true,
+  "client": "{{CLIENT}}"
  },
  "statement_punch": {
   "type": "statement",
-  "client": true,
   "kicker": "{{SECTOR}}",
   "title": "{{OPENING_LINE}}",
-  "subtitle": "{{ONE_LINE_THAT_GROUNDS_IT}}"
+  "subtitle": "{{ONE_LINE_THAT_GROUNDS_IT}}",
+  "_client": true
  },
  "question_hook": {
   "type": "statement",
-  "client": true,
   "kicker": "Did you know?",
   "title": "{{TRICKY_QUESTION}}",
-  "subtitle": "{{WHY_IT_MATTERS}}"
+  "subtitle": "{{WHY_IT_MATTERS}}",
+  "_client": true
  },
  "questions_client": {
   "type": "questions",
-  "client": true,
   "eyebrow": "Where Noisia comes in",
   "eyebrow_icon": "compass",
   "title": "Questions {{CLIENT}}'s numbers can't answer",
@@ -64,7 +64,8 @@
     "name": "Next",
     "text": "Radar: trends and what is coming in your category"
    }
-  ]
+  ],
+  "_client": true
  },
  "what_we_do": {
   "type": "what_we_do",
@@ -884,7 +885,6 @@
  },
  "understood": {
   "type": "understood",
-  "client": true,
   "eyebrow": "What we understood",
   "eyebrow_icon": "chat-lines",
   "title": "{{CONTEXT_HEADLINE}}",
@@ -896,11 +896,11 @@
     "name": "{{DECISION}}",
     "text": "{{DETAIL}}"
    }
-  ]
+  ],
+  "_client": true
  },
  "formats": {
   "type": "formats",
-  "client": true,
   "eyebrow": "The proposal",
   "eyebrow_icon": "puzzle",
   "title": "Three formats for {{CLIENT}}",
@@ -951,11 +951,11 @@
     ]
    }
   ],
-  "foot": "Each format can be contracted separately, in the order set by {{CLIENT}}'s agenda."
+  "foot": "Each format can be contracted separately, in the order set by {{CLIENT}}'s agenda.",
+  "_client": true
  },
  "blocks": {
   "type": "blocks",
-  "client": true,
   "eyebrow": "What the study answers",
   "eyebrow_icon": "help-circle",
   "title": "{{N}} blocks, one complete read",
@@ -967,11 +967,11 @@
      "{{QUESTION}}"
     ]
    }
-  ]
+  ],
+  "_client": true
  },
  "investment": {
   "type": "investment",
-  "client": true,
   "eyebrow": "Investment",
   "eyebrow_icon": "hand-cash",
   "title": "A clear price per **format**",
@@ -990,18 +990,19 @@
    "Data capture at events or touchpoints; we analyze the data you provide",
    "Sales data, market sizing or demand forecasts"
   ],
-  "terms": "Prices in {{CURRENCY}}, {{TAXES}}. Every study includes a live presentation, a decision-ready document and Q&A rounds."
+  "terms": "Prices in {{CURRENCY}}, {{TAXES}}. Every study includes a live presentation, a decision-ready document and Q&A rounds.",
+  "_client": true
  },
  "sample": {
   "type": "sample",
-  "client": true,
   "eyebrow": "We have already read your category",
   "eyebrow_icon": "open-book",
   "title": "We have already read your **category**",
   "kicker": "Sample study · {{CATEGORY}} · {{MARKET}}",
   "study_title": "{{SAMPLE_STUDY_TITLE}}",
   "text": "{{WHAT_IT_IS_ABOUT_IN_TWO_SENTENCES}}",
-  "link_label": "Open the sample study"
+  "link_label": "Open the sample study",
+  "_client": true
  },
  "closing": {
   "type": "closing",
@@ -1019,7 +1020,6 @@
  },
  "onepager": {
   "type": "onepager",
-  "client": true,
   "label": "Offer · {{CLIENT}}",
   "title": "{{QUESTION_HEADLINE}}",
   "intro": "Noisia is a context-driven social intelligence partner. Our analysts build a corpus tailored to your business question and turn it into a decision. We listen across 10 social platforms, 14 search engines and 150+ review sites.",
@@ -1066,6 +1066,7 @@
   "next_label": "Next step",
   "next": "A free kickoff workshop to refine the context and the business question. From there, we close the scope and start the study.",
   "contact": "{{SIGNATURE}} · {{EMAIL}} · www.noisia.ai",
-  "confidential": "Confidential information"
+  "confidential": "Confidential information",
+  "_client": true
  }
 }

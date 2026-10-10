@@ -20,8 +20,8 @@ Así que aquí **el PPTX es la fuente** y el PDF se exporta de él:
 
 - Todo es PowerPoint nativo: cajas de texto, rectángulos redondeados e íconos PNG. Nada es una
   captura. Se abre en Google Slides y se edita palabra por palabra.
-- La fuente es **Google Sans**, la misma del engine, disponible en Google Slides (menú de fuentes,
-  "Más fuentes", buscar Google Sans).
+- La fuente es **Google Sans**, la misma del engine, open source (OFL) y nativa en Google Slides.
+  Se probó: el PPTX importado en Slides se ve igual que la vista previa.
 - El fondo de cada slide es el fondo de la slide, no una imagen encima: no se mueve por accidente.
 - El número de slide es un campo vivo: si se reordenan, se renumeran solas.
 - El logo del cliente es un recuadro que se reemplaza (clic derecho, Reemplazar imagen).
@@ -156,8 +156,9 @@ python3 builder/preview.py Noisia_<Cliente>_<Entregable>_ES.pptx revision --shee
 
 `compose.py` toma la receta, pone el copy canónico, encima las slides del cliente y las variables,
 y pasa los filtros antes de guardar: sin em dash, sin `{{ }}` sin llenar, sin frases prohibidas.
-Si algo falla, no construye y dice dónde. `preview.py` dibuja cada slide con la fuente real y marca
-todo texto que no cabe en su caja. **El deck no se entrega con un desborde marcado, y no se
+Si algo falla, no construye y dice dónde. Con Google Sans instalada (la skill la trae), el builder
+mide cada texto con la fuente real para acomodar títulos y bloques. `preview.py` dibuja cada slide
+con esa misma fuente y marca todo texto que no cabe en su caja. **El deck no se entrega con un desborde marcado, y no se
 entrega sin mirar las hojas de contacto.**
 
 ## 6. El copy

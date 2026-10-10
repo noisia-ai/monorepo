@@ -1,5 +1,5 @@
 {
- "_about": "Copy canónico comercial, español de México, de tú. Sale casi verbatim de los decks del equipo comercial (Commercial Overview, Productos y Precios 2026, propuestas recientes, one-pagers), limpiado: sin typos, sin em dash, sin contrastes forzados. Lo que va entre {{ }} lo llena la entrevista. Los precios van siempre como XXX: se llenan en el editable. Un módulo con client:true no tiene copy fijo: lo escribe el agente con la guía de COMMERCIAL.md.",
+ "_about": "Copy canónico comercial, español de México, de tú. Sale casi verbatim de los decks del equipo comercial (Commercial Overview, Productos y Precios 2026, propuestas recientes, one-pagers), limpiado: sin typos, sin em dash, sin contrastes forzados. Lo que va entre {{ }} lo llena la entrevista. Los precios van siempre como XXX: se llenan en el editable. Un módulo con _client no tiene copy fijo: lo escribe el agente con la guía de COMMERCIAL.md.",
  "cover_noisia": {
   "type": "cover",
   "eyebrow": "Social intelligence",
@@ -16,29 +16,29 @@
  },
  "cover_client": {
   "type": "cover",
-  "client": true,
   "eyebrow": "{{TIPO_DE_DOCUMENTO}}",
   "title": "{{PREGUNTA_DEL_CLIENTE}}",
   "subtitle": "{{QUE_RESPONDE_ESTE_DOCUMENTO}}",
-  "meta": "Preparado para {{CLIENTE}} · Información confidencial · {{FECHA}}"
+  "meta": "Información confidencial · {{FECHA}}",
+  "_client": true,
+  "client": "{{CLIENTE}}"
  },
  "statement_punch": {
   "type": "statement",
-  "client": true,
   "kicker": "{{SECTOR}}",
   "title": "{{FRASE_DE_ENTRADA}}",
-  "subtitle": "{{UNA_LINEA_QUE_LA_ATERRIZA}}"
+  "subtitle": "{{UNA_LINEA_QUE_LA_ATERRIZA}}",
+  "_client": true
  },
  "question_hook": {
   "type": "statement",
-  "client": true,
   "kicker": "¿Lo sabías?",
   "title": "{{PREGUNTA_TRAMPA}}",
-  "subtitle": "{{POR_QUE_IMPORTA}}"
+  "subtitle": "{{POR_QUE_IMPORTA}}",
+  "_client": true
  },
  "questions_client": {
   "type": "questions",
-  "client": true,
   "eyebrow": "Dónde entra Noisia",
   "eyebrow_icon": "compass",
   "title": "Preguntas que los números de {{CLIENTE}} no responden",
@@ -64,7 +64,8 @@
     "name": "Qué sigue",
     "text": "Radar: tendencias y lo que viene en tu categoría"
    }
-  ]
+  ],
+  "_client": true
  },
  "what_we_do": {
   "type": "what_we_do",
@@ -884,7 +885,6 @@
  },
  "understood": {
   "type": "understood",
-  "client": true,
   "eyebrow": "Lo que entendimos",
   "eyebrow_icon": "chat-lines",
   "title": "{{TITULAR_DEL_CONTEXTO}}",
@@ -896,11 +896,11 @@
     "name": "{{DECISION}}",
     "text": "{{DETALLE}}"
    }
-  ]
+  ],
+  "_client": true
  },
  "formats": {
   "type": "formats",
-  "client": true,
   "eyebrow": "La propuesta",
   "eyebrow_icon": "puzzle",
   "title": "Tres formatos para {{CLIENTE}}",
@@ -951,11 +951,11 @@
     ]
    }
   ],
-  "foot": "Cada formato se puede contratar por separado, en el orden que marque la agenda de {{CLIENTE}}."
+  "foot": "Cada formato se puede contratar por separado, en el orden que marque la agenda de {{CLIENTE}}.",
+  "_client": true
  },
  "blocks": {
   "type": "blocks",
-  "client": true,
   "eyebrow": "Qué responde el estudio",
   "eyebrow_icon": "help-circle",
   "title": "{{N}} bloques, una lectura completa",
@@ -967,11 +967,11 @@
      "{{PREGUNTA}}"
     ]
    }
-  ]
+  ],
+  "_client": true
  },
  "investment": {
   "type": "investment",
-  "client": true,
   "eyebrow": "Inversión",
   "eyebrow_icon": "hand-cash",
   "title": "Un precio claro por **formato**",
@@ -990,18 +990,19 @@
    "La captura de datos en eventos o puntos de contacto; analizamos los que nos compartas",
    "Datos de ventas, tamaño de mercado o proyección de demanda"
   ],
-  "terms": "Precios en {{MONEDA}}, {{IMPUESTOS}}. Cada estudio incluye presentación en vivo, documento listo para decidir y rondas de Q&A."
+  "terms": "Precios en {{MONEDA}}, {{IMPUESTOS}}. Cada estudio incluye presentación en vivo, documento listo para decidir y rondas de Q&A.",
+  "_client": true
  },
  "sample": {
   "type": "sample",
-  "client": true,
   "eyebrow": "Ya leímos tu categoría",
   "eyebrow_icon": "open-book",
   "title": "Ya leímos tu **categoría**",
   "kicker": "Estudio de muestra · {{CATEGORIA}} · {{MERCADO}}",
   "study_title": "{{TITULO_DEL_ESTUDIO_DE_MUESTRA}}",
   "text": "{{DE_QUE_TRATA_EN_DOS_FRASES}}",
-  "link_label": "Ver el estudio de muestra"
+  "link_label": "Ver el estudio de muestra",
+  "_client": true
  },
  "closing": {
   "type": "closing",
@@ -1019,7 +1020,6 @@
  },
  "onepager": {
   "type": "onepager",
-  "client": true,
   "label": "Oferta · {{CLIENTE}}",
   "title": "{{TITULAR_EN_FORMA_DE_PREGUNTA}}",
   "intro": "Noisia es un partner de inteligencia social basado en contexto. Nuestros analistas construyen un corpus a la medida de tu pregunta de negocio y lo convierten en una decisión. Escuchamos en 10 plataformas sociales, 14 buscadores y más de 150 sitios de reseñas.",
@@ -1066,6 +1066,7 @@
   "next_label": "Siguiente paso",
   "next": "Un workshop de arranque sin costo para afinar el contexto y la pregunta de negocio. De ahí cerramos el scope y arrancamos el estudio.",
   "contact": "{{FIRMA}} · {{EMAIL}} · www.noisia.ai",
-  "confidential": "Información confidencial"
+  "confidential": "Información confidencial",
+  "_client": true
  }
 }

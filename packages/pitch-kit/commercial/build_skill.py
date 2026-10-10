@@ -9,9 +9,10 @@ claude.ai expects). Upload the zip in claude.ai: Organization settings > Skills 
 (everyone gets it, and updates replace it for all), or Customize > Skills on a personal account
 (each person uploads it, and each update too).
 
-Fonts are optional but recommended: with Google Sans inside the skill, the PDF exported in the
-sandbox and the overflow check both use the real font. Google Sans is open source (OFL) since
-late 2025; get it from Google Fonts. Never package a font whose license does not allow it.
+Google Sans travels inside the skill from commercial/fonts/: static Regular, Medium and Bold
+instances cut from the variable font in github.com/google/fonts (ofl/googlesans), subset to Latin,
+with its OFL license next to them. With it, the builder measures text with the real font and the
+PDF exported in the sandbox uses it too. Never package a font whose license does not allow it.
 
 dist/ is git-ignored: the zip is a build output, the source is this folder.
 """
@@ -41,12 +42,14 @@ def main():
     for f in ("noisia_pptx.py", "build_deck.py", "compose.py", "preview.py"):
         shutil.copy(os.path.join(HERE, "builder", f), os.path.join(out, "scripts", f))
     fonts = 0
-    if a.fonts:
-        os.makedirs(os.path.join(out, "fonts"))
-        for f in os.listdir(a.fonts):
-            if f.lower().endswith(".ttf") and "googlesans" in f.lower().replace(" ", "").replace("-", ""):
-                shutil.copy(os.path.join(a.fonts, f), os.path.join(out, "fonts", f))
-                fonts += 1
+    os.makedirs(os.path.join(out, "fonts"))
+    for src in [os.path.join(HERE, "fonts")] + ([a.fonts] if a.fonts else []):
+        if not os.path.isdir(src):
+            continue
+        for f in os.listdir(src):
+            if f == "OFL.txt" or (f.lower().endswith(".ttf") and "googlesans" in f.lower().replace(" ", "").replace("-", "")):
+                shutil.copy(os.path.join(src, f), os.path.join(out, "fonts", f))
+                fonts += f.endswith(".ttf")
     z = os.path.join(DIST, f"{NAME}.zip")
     if os.path.exists(z):
         os.remove(z)

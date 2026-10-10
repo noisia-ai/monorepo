@@ -73,7 +73,7 @@ def compose(brief):
         if mod in exclude or (optional and mod not in include and mod not in given):
             continue
         base = copy.deepcopy(lib[mod])
-        needs_client = base.pop("client", False)
+        needs_client = base.pop("_client", False)
         if needs_client and mod not in given:
             missing.append(mod)
             continue

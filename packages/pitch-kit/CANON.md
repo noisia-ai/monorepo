@@ -339,5 +339,4 @@ Lo que sigue pendiente:
 | Declarar en un solo lugar la jerarquía de fases de un journey | Tres documentos dan tres respuestas: emergen del corpus, set canónico de siete, o default de cinco. Dos de ellos viven en el repo de website | Media |
 | Migrar los decks entregados al engine enlazado | Siguen cargando su bloque inline. No urge, pero el siguiente que se toque debería migrarse | Baja |
 | Fragmentos para hipótesis, mapa, espejo y kanban | Los componentes ya están en el engine, falta el fragmento con placeholders | Baja |
-| Probar el PPTX comercial importado en Google Slides | El builder dibuja solo lo que Slides importa bien (cajas, rectángulos redondeados, PNG, fondo de slide, campo de número), pero la prueba real es abrirlo ahí: fuente Google Sans, interlineado, fondos y el recuadro del logo | Alta |
-| Empaquetar Google Sans en la skill comercial | Sin la fuente, el PDF que exporta LibreOffice en el sandbox sustituye la tipografía. El PDF de Google Slides sale bien | Alta |
+| Probar el PDF que exporta LibreOffice en el sandbox de claude.ai | Google Slides ya se probó y se ve igual que la vista previa. El PDF del sandbox, con la fuente empaquetada, falta verlo en una corrida real de la skill | Media |

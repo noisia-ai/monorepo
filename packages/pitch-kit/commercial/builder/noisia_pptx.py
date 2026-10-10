@@ -49,11 +49,42 @@ def rgb(h):
 CHAR_EM = 0.52   # average advance of Google Sans, mixed-case Latin text
 
 
-def _lines(text, w, size):
-    cpl = max(1, int(w / (size * CHAR_EM)))
+_MEASURE = None
+
+
+def _measurer():
+    """Real advance widths when Google Sans (or Product Sans) is installed or bundled; the
+    average-width estimate otherwise. Measuring is what keeps titles from leaving holes."""
+    global _MEASURE
+    if _MEASURE is None:
+        try:
+            from preview import find_fonts, Fonts
+            import contextlib, io as _io
+            with contextlib.redirect_stdout(_io.StringIO()):
+                reg, bold = find_fonts()
+            _MEASURE = Fonts(reg, bold) if ("oogle" in reg or "roduct" in reg) else False
+        except BaseException:
+            _MEASURE = False
+    return _MEASURE
+
+
+def _lines(text, w, size, bold=False):
+    m = _measurer()
     n = 0
     for para in str(text).split("\n"):
-        words, line = para.split(), 0
+        words = para.split()
+        if m:
+            f = m.get(size, bold)
+            sp, cur = f.getlength(" "), 0.0
+            for wd in words:
+                L = f.getlength(wd)
+                if cur and cur + sp + L > w:
+                    n += 1; cur = L
+                else:
+                    cur = cur + (sp if cur else 0) + L
+            n += 1
+            continue
+        cpl = max(1, int(w / (size * CHAR_EM)))
         cur = 0
         for wd in words:
             L = len(wd) + (1 if cur else 0)
