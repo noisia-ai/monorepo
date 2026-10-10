@@ -4576,11 +4576,11 @@
     },
     "configuration": {
       "title": "Método de pertenencia",
-      "body": "Elige cómo se evalúa si una mención pertenece a cada concepto. Guardar el método no inicia procesamiento ni gasto. H1 es experimental.",
+      "body": "Elige cómo se evalúa si una mención pertenece a cada concepto. Guardar el método no inicia procesamiento ni gasto. El método híbrido es experimental.",
       "refresh": "Actualizar",
       "route": "Método",
       "standard": "Estándar",
-      "hybrid_h1": "H1 experimental",
+      "hybrid_h1": "Híbrido experimental",
       "exposure": "{count} llamadas aún sin resultado confirmado; coste reservado: {cost}.",
       "confirm": "Entiendo que volver al método estándar no cancela estas llamadas ni elimina el coste expuesto.",
       "readOnly": "Tu acceso permite consultar el método; cambiarlo requiere permisos de edición.",
@@ -4715,6 +4715,7 @@
       "stale": "La fuente o definición cambió. Actualiza los resultados antes de continuar.",
       "active": "Ya hay una ejecución activa. Actualiza para ver su progreso.",
       "invalid": "Revisa los valores de la corrección y vuelve a guardar.",
+      "routeUpgrade": "Este método experimental necesita actualizarse antes de iniciar otro análisis. En Acceso y configuración, guarda Estándar y después vuelve a elegir y guardar Híbrido experimental.",
       "request": "No se pudo completar la solicitud. Actualiza o recupera la misma solicitud si su respuesta quedó pendiente."
     },
     "refresh": "Actualizar",

@@ -1,70 +1,54 @@
-# QA del fundador — MFP
+# QA del fundador
 
-Actualizado el 9 de octubre de 2026. Revisión §11.3 del audit MFP.
+Actualizado el 10 de octubre de 2026. La aceptación del fundador sigue pendiente.
 
-**La aceptación del fundador sigue pendiente.** El entorno compartido ejecuta el corte indicado abajo. Las correcciones de [PR #40](https://github.com/noisia-ai/monorepo/pull/40) y el selector experimental de [PR #39](https://github.com/noisia-ai/monorepo/pull/39) requieren revisión y comprobación de interfaz en su propio despliegue antes del recorrido completo.
+Abrir [Studio de desarrollo](https://mfp-studio-dev-test.up.railway.app) con la sesión habitual y rol **Admin Noisia**. Para revisar resultados existentes, abrir **Marca QA MFP Oct07 R4**. Para probar el alta completa, crear una marca desechable; no volver a importar archivos en la marca ya procesada.
 
-## Acceso, tiempo y coste
+La versión integrada de las correcciones está pendiente de despliegue y comprobación. El [anexo del operador](QA_FUNDADOR_MFP_ANEXO_OPERADOR.md) registrará la versión publicada y sus pruebas. Esta guía no acredita todavía el recorrido de un administrador cliente.
 
-Entrar a [Studio MFP de desarrollo](https://mfp-studio-dev-test.up.railway.app) con la sesión habitual y rol **Admin Noisia**. Éste es el rol usado en la prueba anterior. Un administrador cliente necesita permisos de importación y procesamiento de su marca; ese recorrido no está acreditado todavía.
+Reservar 20–30 minutos para consultar resultados guardados, sin gasto adicional. Un recorrido nuevo puede tardar 1–2 horas o más si el servicio de análisis sigue trabajando. Para los dos archivos de esta prueba, prever aproximadamente **USD 7 por el método Estándar** o **USD 5 por el método Híbrido experimental**. Comparar ambos métodos sobre los mismos datos añade aproximadamente **USD 1** al recorrido estándar. Son previsiones, no máximos: el texto, los intereses y las repeticiones cambian el costo. Revisar el importe mostrado antes de cada inicio. El cálculo y los costos observados están en el anexo.
 
-Reservar 20–30 minutos para revisar resultados existentes: no consume proveedores y cuesta USD 0. Para repetir el recorrido con una marca nueva y dos archivos de 1,000 y 250 filas, reservar 1–2 horas y una estimación orientativa de USD 7. USD 7 corresponde al recorrido estándar; una ejecución H1 adicional requiere revisar su propio presupuesto con el operador antes de iniciarla. La ejecución anterior costó USD 6.484515; no garantiza el coste de otra marca. Revisar cada estimación antes de iniciar procesamiento. Un máximo estricto sólo rige si está configurado expresamente.
+Los archivos están en la Mac del fundador:
 
-## Entorno que se debe comprobar
+- Primera carga, **1,000 filas**: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/load1.csv`.
+- Segunda carga, **250 filas**: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/load2.csv`.
 
-| Componente | Corte y despliegue compartido |
-|---|---|
-| Código | `b2667fc5bec37a66414f23b6e6b275ff82dadbeb`, rama develop |
-| Studio | `2271084f-3bbc-45dd-9800-1472de995c5d` |
-| Runner | `df39c4ee-4b03-4305-ac53-9c9f0ab1b089` |
-| Publicación automática | Desactivada en ambos |
+Cada fila siguiente indica una sola acción. Si una acción falla, resolverla antes de avanzar. Conservar una captura, la hora, el idioma y el costo mostrado.
 
-Configuración observada en Studio el 9 de octubre; todos los siguientes valores son `true`:
-
-| Función | Variables activas |
-|---|---|
-| Datos y API de marca | `NOISIA_DATA_OS_ENABLED`, `NOISIA_DATA_OS_SERVING_ENABLED`, `NOISIA_SIGNAL_WORKSPACE_API_ENABLED` |
-| Ficha y pertenencia | `NOISIA_MFP_ENABLED`, `NOISIA_MENTION_FACETS_ENABLED`, `NOISIA_MENTION_FACETS_PROVIDER_ENABLED`, `NOISIA_CONCEPT_MEMBERSHIP_ENABLED`, `NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED` |
-| Editorial y consolidación | `NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_PROVIDER_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED` |
-| Vectores e interpretación | `NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED`, `NOISIA_WORKSPACE_INTERPRETATION_ENABLED` |
-
-Para H1, lectura directa de Studio a las **03:40:06 UTC del 9 de octubre**:
-
-| Variable | Estado actual |
-|---|---|
-| `NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED` | `true` |
-| `NOISIA_JEV_PROVIDER_ENABLED` | No configurada |
-| `NOISIA_MFP_HYBRID_ENABLED` | No configurada |
-| `NOISIA_MFP_HYBRID_LEDGER_READY` | No configurada |
-
-El corte compartido no está habilitado para seleccionar H1 mediante el control nuevo. Para activarlo después de revisar y desplegar #39/#40, el operador debe comprobar las cuatro variables en `true` en Studio y Runner, además de permisos, habilitación de la marca y presupuesto. Volver a Estándar permanece posible con proveedores apagados. Esta condición futura no acredita un despliegue actual.
-
-`NOISIA_FOUNDER_RECOVERY_ENABLED` está en `false`. El operador técnico debe confirmar también permisos, configuración del Runner y coste disponible antes de cualquier ejecución. Una función activa por configuración no acredita que el recorrido funcione.
-
-## Recorrido
-
-| Paso | Control y acción | Qué comprobar |
+| Paso | Dónde y qué hacer | Resultado visible; problema y recuperación |
 |---|---|---|
-| 1 | **Marcas → Crear marca**. Usar una marca desechable nueva. Completar mercado, zona horaria, alias, competidores y descripción. | Una sola marca propia y datos guardados al recargar. No repetir el alta por una respuesta lenta. |
-| 2 | **Brand OS** y catálogo de **Topics**. Crear dos o tres intereses con definición, inclusiones, exclusiones y ejemplos. | Guardar no inicia procesamiento. Marca y competidor permanecen separados. |
-| 3 | **Datos**. Importar el primer archivo una vez y revisar su recibo. | Filas recibidas, únicas, duplicadas y excluidas. Conservar fechas, procedencia y permisos. |
-| 4 | Preparar texto, generar vectores y pulsar **Completar fichas pendientes**, revisando estimaciones. | Cada etapa termina con conteos y coste. Relevante, ajena, insuficiente y error siguen separados. Abrir originales, incluida una comparación con un competidor. |
-| 5 | **Probar definición · 30 raíces** y **Analizar conversaciones**. En **Convertir grupos en Topics útiles**, pulsar **Preparar revisión de Topics** y seguir **Revisión editorial de Topics**. Abrir **Ver resultados guardados**; revisar y usar **Adoptar concepto** hasta dos veces. | Las citas existen literalmente en el original. La consolidación muestra sus resultados guardados. Si faltan candidatos reales, registrar el límite. |
-| 6 | Pulsar **Calcular pertenencia completa**. | Los conceptos se resuelven por mención. Un grupo descubierto no concede pertenencia automáticamente. Revisar decisiones con su evidencia. |
-| 7 | Tras verificar el despliegue de #39/#40: **Configuración → Método de pertenencia → Estándar / H1 experimental → Guardar método**. | La selección persiste; seleccionar no ejecuta proveedores. Para obtener desacuerdos nuevos, el operador verifica presupuesto y habilitación y después se ejecuta Pertenencia con H1; los resultados estándar anteriores no son una prueba H1. Volver a Estándar puede exigir confirmar llamadas cuyo resultado sigue pendiente. No elimina el coste expuesto. |
-| 8 | En H1, **Revisar desacuerdos**. Revisar tres casos reales y elegir **Revisión humana directa** o **Decisión asistida por agente** antes de corregir. | Se ven ambos resultados y citas disponibles. La decisión persiste al recargar. Si no hay tres casos reales, registrar cobertura faltante. Las correcciones asistidas no cuentan como evaluación humana. |
-| 9 | **Signal**. Seleccionar los intereses y conceptos; abrir detalle y original. Repetir en español e inglés con iguales fechas y filtros. | Conteos iguales, citas visibles, sin duplicados por adopción. El indicador de relevantes sin concepto coincide con su panel. |
-| 10 | Cambiar primero la descripción narrativa; después un alias de al menos tres caracteres y un competidor presente en los datos. Editar una sola definición. | La descripción no invalida fichas. Los cambios de entidades afectan sólo sus menciones; editar una definición afecta sólo ese concepto. |
-| 11 | Importar el segundo archivo; actualizar las etapas necesarias y repetir Signal ES/EN. | Sólo se procesa contenido nuevo o cambiado y decisiones afectadas. Registrar tiempos y coste por etapa. |
+| 1 | **Marcas → Crear marca**: guardar una marca desechable con sus datos mínimos. | Aparece una sola marca. Si la respuesta tarda, revisar Marcas antes de volver a guardar. |
+| 2 | **Brand OS**: guardar descripción, alias y competidores. | Los datos permanecen al recargar. Si falta contexto, completar el campo señalado. |
+| 3 | **Topics → Crear interés**: guardar un interés con definición, inclusiones, exclusiones y ejemplos. | Aparece en el catálogo; guardar no inicia análisis. Repetir este paso para tener dos o tres intereses. |
+| 4 | **Datos y fuentes**: importar `load1.csv` una vez. | El recibo indica 1,000 filas recibidas, con sus duplicadas y excluidas. Si tarda, consultar el estado antes de repetir la importación. |
+| 5 | **Datos y fuentes**, panel de preparación: solicitar la preparación del texto. | El estado termina y muestra cuántas menciones pueden analizarse. Si hay errores, abrir el detalle y conservar el recibo. |
+| 6 | **Topics**, panel de preparación: pulsar **Crear vectores · estimación …** después de revisar el costo. | La preparación termina con costo y avance visibles. Si ofrece **Usar vectores existentes · sin costo**, usar ese control para reutilizar la preparación. |
+| 7 | **Topics**, panel de clasificación: pulsar **Completar fichas pendientes**. | Se ven cantidades de conversaciones relevantes, ajenas y pendientes de revisión. Un error técnico permanece separado de una conversación ajena. |
+| 8 | **Topics**, conversaciones clasificadas: abrir una mención original. | El texto permite comprobar por qué se consideró relevante. Elegir también una comparación con un competidor; no confundir quién aparece en ella. |
+| 9 | **Topics → Analizar conversaciones**: iniciar el análisis. | Aparecen propuestas agrupadas y un estado final. Si sólo aparece un error de consulta, actualizar una vez; no volver a importar para resolverlo. |
+| 10 | **Topics → Convertir grupos en Topics útiles**: pulsar **Preparar revisión de Topics**. | Termina la preparación y aparece **Revisión editorial de Topics**. Si sigue esperando sin avance, registrar el bloqueo y avisar al operador. |
+| 11 | **Revisión editorial de Topics**: pulsar **Calcular cotización editorial**. | Se muestran la cantidad a revisar y el importe autorizado. Si no hay autorización disponible, resolverla con el operador en este paso. |
+| 12 | **Revisión editorial de Topics**: marcar la autorización del importe mostrado. | El control para iniciar queda disponible. No marcarlo sin revisar el costo. |
+| 13 | **Revisión editorial de Topics**: pulsar **Iniciar revisión editorial** o **Autorizar revisión editorial**, según el estado mostrado. | El progreso avanza hasta terminar. Si la respuesta queda pendiente, comprobar el estado; no crear otro análisis. Usar la recuperación de la misma solicitud si la pantalla la ofrece. |
+| 14 | **Revisión editorial de Topics**: abrir **Ver resultados guardados**. | Cada resultado conserva su texto y evidencia; los errores y pendientes siguen identificados. Si el catálogo aún necesita terminar, usar **Completar catálogo** y volver a este paso. |
+| 15 | Resultado elegido: pulsar **Adoptar concepto**. | Se agrega al catálogo editable. Repetir con una segunda propuesta real; si no hay dos propuestas útiles, registrar esa limitación. |
+| 16 | **Acceso y configuración → Método de pertenencia**: elegir **Estándar** o **Híbrido experimental**. | La selección cambia en el formulario. Si la opción experimental no está disponible, el operador debe habilitarla antes de continuar. Si avisa que el método anterior necesita actualizarse, elegir Estándar, pasar al paso 17 y repetir ambos pasos con Híbrido experimental. |
+| 17 | En ese formulario: pulsar **Guardar método**. | La selección permanece al recargar; guardar no inicia análisis. Si avisa que otra persona cambió la selección, actualizar y decidir de nuevo. |
+| 18 | **Topics**, interés elegido: pulsar **Probar definición · 30 raíces**. | Se muestran decisiones y citas de prueba, con su costo. La cita debe existir literalmente en el original; la prueba no cambia las decisiones completas. |
+| 19 | **Topics**, interés elegido: pulsar **Calcular pertenencia completa**. | Termina con cantidades y costo. Los resultados estándar anteriores no prueban el método experimental: éste necesita su propia ejecución. |
+| 20 | Con el método experimental: pulsar **Revisar desacuerdos**. | Se ven las dos decisiones y sus citas disponibles. Si no hay casos reales suficientes, registrar la cobertura faltante. |
+| 21 | Caso revisado: marcar la conversación que se corregirá. | Sólo esa conversación queda seleccionada. No seleccionar toda la página sin leer sus casos. |
+| 22 | En ese caso: pulsar **Aceptar pertenencia** o **Rechazar pertenencia** tras leer el original. | La corrección permanece al recargar y queda atribuida a quien usa la interfaz. Las correcciones anteriores hechas mediante un agente están identificadas por separado. Repetir en tres casos reales. |
+| 23 | Interés elegido: activar **Mostrar este concepto en Signal**. | Se conserva la selección; repetir para cada interés que deba mostrarse. |
+| 24 | **Signal**: abrir el detalle de un interés. | El número y la evidencia coinciden con Topics para las mismas fechas y filtros. El número de relevantes sin concepto también coincide entre sus dos paneles. |
+| 25 | Selector de idioma: cambiar a inglés. | Para las mismas fechas y filtros, los números se mantienen. Repetir la revisión del detalle en español. |
+| 26 | **Brand OS**: cambiar sólo la descripción narrativa. | El texto se guarda sin volver a analizar conversaciones ya clasificadas. |
+| 27 | **Brand OS**: agregar un alias presente en los datos. | Sólo quedan pendientes las conversaciones afectadas. Repetir por separado con un competidor presente en los datos. |
+| 28 | **Topics**, un interés: editar su definición. | Sólo ese interés necesita una nueva evaluación completa. |
+| 29 | **Datos y fuentes**: importar `load2.csv` una vez. | El recibo indica 250 filas y distingue contenido nuevo, repetido y cambiado. |
+| 30 | Panel correspondiente: ejecutar únicamente la etapa que aparece pendiente. | Se reutiliza el trabajo vigente. Repetir este paso por cada etapa necesaria, anotando tiempo y costo frente a la primera carga. |
+| 31 | **Signal**: revisar otra vez el detalle con las mismas fechas y filtros. | Refleja la segunda carga, sin duplicar conversaciones ni propuestas adoptadas. |
 
-## Fallos conocidos y recuperación
+Si dos pestañas muestran errores de lectura, esperar a que termine la consulta y actualizar una vez. Si persiste, registrar el fallo con ambas URLs. No iniciar trabajo pagado para recuperar una consulta.
 
-En el corte compartido, National puede agotar las conexiones de lectura: aparecen errores al consultar análisis, cómputo o consolidación. Esperar a que terminen las lecturas y actualizar una vez; si persiste, detener el recorrido y registrar el fallo. No volver a importar ni iniciar procesamiento para resolver un error de consulta. #40 corrige la consulta de análisis, errores de SQL editorial y limita las lecturas simultáneas; su interfaz corregida aún debe verificarse desplegada.
-
-La prueba anterior mostró **134** en una pestaña y **423** en el indicador de relevantes sin concepto. #40 hace que ambos usen la misma definición. También conserva la corrección de una consulta opcional que impedía mostrar controles. No usar esos resultados históricos como aceptación del código actual.
-
-Las tres correcciones anteriores hechas con ayuda de un agente ya quedaron identificadas como asistidas, conservando sus decisiones y sin gasto nuevo. No presentarlas como revisión humana del fundador.
-
-Ante una respuesta lenta después de ejecutar, consultar el estado antes de repetir el clic. Si no se sabe si empezó el trabajo, pedir conciliación al operador. Registrar hora, URL, idioma, control pulsado, resultado observado, resultado esperado y una captura sin secretos. Conservar el recibo y el coste conocido.
-
-El [anexo del operador](QA_FUNDADOR_MFP_ANEXO_OPERADOR.md) conserva la ejecución anterior y sus límites de atribución. Esta guía no acredita entrega UAT ni producción.
+Conservar los recibos de las dos cargas y la lista de problemas observados. La prueba de desarrollo no equivale a entrega en UAT ni a publicación en producción.
