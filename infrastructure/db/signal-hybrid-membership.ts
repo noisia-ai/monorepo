@@ -20,7 +20,7 @@ import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationS
 
 const fail = (code: string, status = 409): never => { throw new SignalLabelingError(code, status); };
 const jevDigest = labelerDigestV1(hybridJevMembershipIdentityV1());
-const claudeDigest = labelerDigestV1(membershipLabelerIdentityV1("low"));
+const claudeDigest = labelerDigestV1(membershipLabelerIdentityV1("low", true));
 export const hybridH1RouteDigestV1 = (jevFacetsLabelerDigest: string) => signalWorkspaceEmbeddingDigestV1({
   contract_version: "mfp-hybrid-h1-v1", jev_facets_labeler_digest: jevFacetsLabelerDigest,
   jev_judge_labeler_digest: jevDigest, claude_labeler_digest: claudeDigest,
@@ -28,7 +28,7 @@ export const hybridH1RouteDigestV1 = (jevFacetsLabelerDigest: string) => signalW
 export type HybridMembershipStageV1 = "jev" | "claude";
 export function hybridMembershipStageIdentityV1(stage: HybridMembershipStageV1, route_digest: string): LabelerIdentity {
   void route_digest;
-  return stage === "jev" ? hybridJevMembershipIdentityV1() : membershipLabelerIdentityV1("low");
+  return stage === "jev" ? hybridJevMembershipIdentityV1() : membershipLabelerIdentityV1("low", true);
 }
 
 /** Stage admissions are separate because the common ledger requires one provider/model per run. */
@@ -44,10 +44,12 @@ export async function requestHybridMembershipStageV1(args: {
     feature: "concept_membership", select_labeler: false,
     validateIdentity: candidate => { if (labelerDigestV1(candidate) !== labelerDigestV1(identity)) fail("hybrid_stage_identity_changed"); },
     prepare: async (client, workspace, _runId, _labeler, context) => {
-      const route = (await client.query<{route_digest:string;jev_facets_labeler_version_id:string}>(
-        "SELECT route_digest,jev_facets_labeler_version_id FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE",
+      const route = (await client.query<{route_digest:string;jev_facets_labeler_version_id:string;claude_labeler_digest:string;jev_labeler_digest:string}>(
+        "SELECT route_digest,jev_facets_labeler_version_id,claude_labeler_digest,jev_labeler_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE",
         [workspace])).rows[0];
       if (!route || route.route_digest !== args.route_digest) return fail("hybrid_route_changed");
+      if (route.claude_labeler_digest !== claudeDigest || route.jev_labeler_digest !== jevDigest)
+        return fail("hybrid_route_upgrade_required");
       const selected = (await client.query<{labeler_version_id:string}>(
         "SELECT labeler_version_id FROM signal_workspace_labelers WHERE workspace_id=$1 AND kind='facets'",
         [workspace])).rows[0];
@@ -138,8 +140,9 @@ async function releaseHybridJevUnknownsV1(client:PoolClient,workspace:string,rou
 export async function configureHybridMembershipRouteV1(args: {
   database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string;
   route: "standard" | "hybrid_h1"; provider_available: boolean;
-  confirm_unresolved_jev?: boolean; expected_route_digest?: string | null;
+  confirm_unresolved_jev?: boolean; expected_route_digest: string | null;
 }) {
+  if (args.expected_route_digest === undefined) fail("hybrid_expected_route_digest_required", 400);
   if (args.route === "hybrid_h1" && !args.provider_available) fail("hybrid_provider_unavailable", 503);
   return transaction(args.database, async client => {
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))", [args.workspace_id]);
@@ -148,7 +151,7 @@ export async function configureHybridMembershipRouteV1(args: {
       prior_facets_labeler_version_id:string|null}>(
       "SELECT route_digest,jev_facets_labeler_version_id,prior_facets_labeler_version_id FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE",
       [args.workspace_id])).rows[0];
-    if (args.expected_route_digest !== undefined && args.expected_route_digest !== (existing?.route_digest ?? null))
+    if (args.expected_route_digest !== (existing?.route_digest ?? null))
       fail("hybrid_route_changed");
     if (args.route === "standard" && existing) {
       const uncertain=(await client.query<{count:number}>(`SELECT count(*)::int count
@@ -240,7 +243,7 @@ export type HybridDecisionInputV1 = {
 export function hybridDecisionRecordV1(input: HybridDecisionInputV1) {
   const result = decideHybridMembershipV1(input.text, input.jev, input.claude);
   if (result.verdict === "pending") fail("hybrid_pending_decision");
-  const citation = result.verdict === "belongs" && input.claude?.citation ? [input.claude.citation] : [];
+  const citation = input.claude?.citation ? [input.claude.citation] : [];
   const stored = { ...input, text:undefined, verdict:result.verdict, citation };
   return stored;
 }
@@ -307,7 +310,12 @@ export async function writeHybridMembershipDecisionPageV1(args: {
     FROM jsonb_to_recordset($3::jsonb) r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,
       entity_context_digest text,effective_entities_digest text,jev_call_id uuid,claude_call_id uuid,
       verdict text,jev jsonb,claude jsonb,citation jsonb,rationale text)
-    ON CONFLICT DO NOTHING`, [args.workspace_id, args.route_digest, JSON.stringify(rows)]);
+    ON CONFLICT (workspace_id,root_fingerprint,concept_key,definition_digest,
+      entity_context_digest,effective_entities_digest,route_digest) DO UPDATE SET
+      jev_call_id=excluded.jev_call_id,claude_call_id=excluded.claude_call_id,
+      verdict=excluded.verdict,jev=excluded.jev,claude=excluded.claude,
+      citation=excluded.citation,rationale=excluded.rationale
+    WHERE signal_hybrid_membership_decisions.verdict='error'`, [args.workspace_id, args.route_digest, JSON.stringify(rows)]);
   const persisted = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb) r(
       root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text,
       jev_call_id uuid,claude_call_id uuid,verdict text,jev jsonb,claude jsonb,citation jsonb,rationale text)

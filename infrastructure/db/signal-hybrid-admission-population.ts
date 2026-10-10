@@ -1,8 +1,24 @@
+/** Unattributed cost or submission uncertainty cannot authorize another send of the same pair. */
+export const hybridUncertainPairSqlV1 = `NOT EXISTS (
+  SELECT 1 FROM signal_labeling_calls uncertain
+  JOIN signal_labeling_runs prior ON prior.id=uncertain.run_id
+  CROSS JOIN LATERAL jsonb_array_elements(uncertain.inputs) input
+  CROSS JOIN LATERAL jsonb_array_elements(input->'evaluated_concepts') concept
+  WHERE uncertain.workspace_id=current.workspace_id AND prior.kind='membership'
+    AND (uncertain.status IN('submitting','unknown') OR uncertain.terminal_exposure_micro_usd>0)
+    AND input->>'root_id'=current.root_id::text
+    AND input->>'root_fingerprint'=current.root_fingerprint
+    AND concept->>'concept_key'=current.concept_key
+    AND concept->>'definition_digest'=current.definition_digest
+    AND input->>'entity_context_digest'=current.entity_context_digest
+    AND input->>'effective_entities_digest'=current.effective_entities_digest
+)`;
+
 /** Bound the H1 stage estimate to one materialization of each governed surface. */
 export const hybridH1JevAdmissionPopulationSqlV1 = `WITH current_memberships AS MATERIALIZED (
   SELECT root_id,root_fingerprint,concept_key,definition_digest,entity_context_digest,effective_entities_digest
   FROM signal_concept_memberships_current_v1
-  WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict='pending'
+  WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict IN('pending','error')
 ), current_facets AS MATERIALIZED (
   SELECT root_id,full_text FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
     AND status='labeled' AND relevance='relevant' AND NOT requires_context_review
@@ -22,6 +38,7 @@ export const hybridH1JevAdmissionPopulationSqlV1 = `WITH current_memberships AS 
     AND prior.membership_snapshot->>'hybrid_stage'='jev'
     AND prior.membership_snapshot->>'route_digest'=$2
     AND applied.status='settled' AND applied.results_applied
+    AND result#>>'{jev,verdict}' IN('belongs','not_belongs','refused')
 ), uncertain_pairs AS MATERIALIZED (
   SELECT input->>'root_id' root_id,input->>'root_fingerprint' root_fingerprint,
     concept->>'concept_key' concept_key,concept->>'definition_digest' definition_digest,
@@ -63,8 +80,9 @@ export const hybridH1ClaudeAdmissionPopulationSqlV1 = `WITH jev_positive AS MATE
     AND call.status='settled' AND call.results_applied AND result#>>'{jev,verdict}'='belongs'
 ), current_memberships AS MATERIALIZED (
   SELECT root_id,root_fingerprint,concept_key,definition_digest,entity_context_digest,
-    effective_entities_digest FROM signal_concept_memberships_current_v1
-  WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict='pending'
+    effective_entities_digest FROM signal_concept_memberships_current_v1 current
+  WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict IN('pending','error')
+    AND ${hybridUncertainPairSqlV1}
 ), current_facets AS MATERIALIZED (
   SELECT root_id,full_text FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
 ), authorized_roots AS MATERIALIZED (

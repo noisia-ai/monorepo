@@ -131,6 +131,7 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
      AND prior.membership_snapshot->>'hybrid_stage'='jev'
      AND prior.membership_snapshot->>'route_digest'=$6
      AND applied.status='settled' AND applied.results_applied
+     AND result#>>'{jev,verdict}' IN('belongs','not_belongs','refused')
      AND result->>'root_id'=f.root_id::text
      AND result->>'root_fingerprint'=signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest))
      AND result->>'concept_key'=c.concept_key AND result->>'definition_digest'=c.definition_digest

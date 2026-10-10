@@ -195,7 +195,8 @@ test("provider required ordinal keys normalize to the canonical response", () =>
     r.evaluated_concepts,
   );
   assert.deepEqual(
-    request.output_config.format.schema.properties.roots.required,
+    ("required" in request.output_config.format.schema.properties.roots
+      ? request.output_config.format.schema.properties.roots.required : null),
     ["r0"],
   );
   const parsed = parseMembershipGroupV1(
@@ -230,5 +231,31 @@ test("provider grammar shares definitions while requiring every ordinal at 8 and
       "belongs",
       "insufficient",
     ]);
+  }
+});
+
+
+test("H1 schema and cache prefix stay fixed for 1, 8 and 16 roots", () => {
+  const identity = membershipLabelerIdentityV1("low", true);
+  const requests = [1,8,16].map(count => buildMembershipRequestV1(
+    Array.from({length:count}, (_,i) => root(`root-${i}`)), {entities:[]}, root().evaluated_concepts, identity));
+  for (const request of requests) {
+    assert.deepEqual(request.output_config, requests[0]!.output_config);
+    assert.deepEqual(request.system, requests[0]!.system);
+  }
+  assert.notEqual(identity.prompt_digest, membershipLabelerIdentityV1("low").prompt_digest);
+  assert.notEqual(identity.schema_digest, membershipLabelerIdentityV1("low").schema_digest);
+});
+
+test("H1 requires every positive concept explicitly with rationale and same-root context", () => {
+  const members = root().evaluated_concepts.map(c => ({concept_key:c.concept_key,
+    verdict:"not_belongs", span_ids:["r0c0s0"], rationale:"This context does not establish the concept."}));
+  const parse = (memberships:unknown[]) => parseMembershipGroupV1(
+    response([{root_ordinal:0,memberships}]), [root()], "end_turn", true);
+  assert.ok(parse(members).results.every(r => r.verdict === "not_belongs" && r.rationale && r.citations.length));
+  for (const malformed of [[], members.slice(1), [members[0], members[0]],
+    members.map(m => ({...m,rationale:""})), members.map(m => ({...m,span_ids:[]})),
+    members.map(m => ({...m,span_ids:["r1c0s0"]}))]) {
+    assert.ok(parse(malformed).results.every(r => r.verdict === "error"));
   }
 });

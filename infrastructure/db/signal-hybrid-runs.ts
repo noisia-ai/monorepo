@@ -6,6 +6,8 @@ import { createSignalLabelingStoreV1, SignalLabelingError, type LabelingRunV1 } 
 import { writeHybridMembershipDecisionPageV1, type HybridMembershipStageV1 } from "./signal-hybrid-membership";
 import type { LabelingDatabaseV1 } from "./signal-mention-facets";
 
+import { hybridUncertainPairSqlV1 } from "./signal-hybrid-admission-population";
+
 type Snapshot = { hybrid_stage: HybridMembershipStageV1; route_digest: string; jev_run_id: string | null;
   concepts: ConceptForJudgeV1[] };
 export type HybridStageInputV1 = MembershipInputV1 & {
@@ -76,8 +78,9 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
     WITH current_pairs AS MATERIALIZED (
       SELECT root_id,root_fingerprint,concept_key,definition_digest,
         entity_context_digest,effective_entities_digest
-      FROM signal_concept_memberships_current_v1
-      WHERE workspace_id=$2 AND labeler_digest=$3 AND verdict='pending'
+      FROM signal_concept_memberships_current_v1 current
+      WHERE workspace_id=$2 AND labeler_digest=$3 AND verdict IN('pending','error')
+        AND ${hybridUncertainPairSqlV1}
     ), authorized_roots AS MATERIALIZED (
       SELECT root_id FROM signal_membership_evidence_rights_v1
       WHERE workspace_id=$2 AND metrics AND evidence
@@ -143,7 +146,8 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
       pending:async (client,run) => (await inputs(client,run)).length,
       write:async (client,run,pages) => {
         const decisions = pages.flatMap(page => page.results
-          .filter(result => stage === "claude" || result.jev.verdict !== "belongs")
+          .filter(result => result.jev.verdict !== "error" && result.claude?.verdict !== "error"
+            && (stage === "claude" || result.jev.verdict !== "belongs"))
           .map(result => {
             if (stage === "jev" ? result.jev_call_id !== page.call.id || result.claude_call_id !== null
               : result.claude_call_id !== page.call.id) return fail("hybrid_result_call_changed");

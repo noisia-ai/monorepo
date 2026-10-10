@@ -290,7 +290,7 @@ export async function runConceptMembershipTickV1(args: {
       const group =
         parsed.status === "split"
           ? { split: true, results: [] }
-          : parseMembershipGroupV1(parsed.text!, call.inputs);
+          : parseMembershipGroupV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
       if (group.split) {
         if (run.error_code) {
           apply.push({

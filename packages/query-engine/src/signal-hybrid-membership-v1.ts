@@ -43,8 +43,6 @@ export function decideHybridMembershipV1(
   if (!validHybridCitationV1(text, jev.citation)) return result("error", false);
   if (!claude) return result("pending", true);
   if (claude.verdict === "error" || claude.verdict === "refused") return result(claude.verdict, false);
-  // The shared judge omits clear negatives; that is a disagreement requiring review.
-  if (claude.verdict === "not_belongs") return result("review_required", false);
   if (!validHybridCitationV1(text, claude.citation)) return result("error", false);
   if (claude.verdict === "belongs") return result("belongs", false);
   return result("review_required", false);

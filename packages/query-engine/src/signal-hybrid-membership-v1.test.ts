@@ -16,14 +16,14 @@ test("H1 requires Claude only for JEV positives and an exact literal citation fo
   assert.equal(decideHybridMembershipV1(text, jev, { verdict: "belongs", citation: { ...quote, quote: "fabricated" } }).verdict, "error");
 });
 
-test("H1 disagreement is review_required retains JEV evidence and allows omitted clear negatives", () => {
+test("H1 disagreement is review_required retains JEV evidence and requires context for explicit negatives", () => {
   for (const verdict of ["not_belongs", "insufficient"] as const) {
     const result = decideHybridMembershipV1(text, jev, { verdict, citation: quote });
     assert.equal(result.verdict, "review_required");
     assert.equal(result.jev.citation?.quote, quote.quote);
     assert.equal(result.claude?.citation?.quote, quote.quote);
   }
-  assert.equal(decideHybridMembershipV1(text, jev, { verdict: "not_belongs", citation: null }).verdict, "review_required");
+  assert.equal(decideHybridMembershipV1(text, jev, { verdict: "not_belongs", citation: null }).verdict, "error");
   assert.equal(decideHybridMembershipV1(text, jev, { verdict: "refused", citation: null }).verdict, "refused");
   assert.equal(decideHybridMembershipV1(text, { verdict: "error", probability: null, citation: null }, null).verdict, "error");
 });
