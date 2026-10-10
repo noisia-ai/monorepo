@@ -22,7 +22,7 @@ export async function verifyHybridClaudeRecoveryV1(a:{client:PoolClient;database
     await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,preparation_run_id,
       entity_context_digest,entity_context_version_no,status,estimated_micro_usd,idempotency_key,request_digest,
       actor_user_id,membership_snapshot,processing_admission_id)
-      VALUES($1,$2,'membership',$3,$4,$5,1,'queued',1,$1::text,$6,$7,$8::jsonb,$9)`,
+      VALUES($1::uuid,$2,'membership',$3,$4,$5,1,'queued',1,$1::uuid::text,$6,$7,$8::jsonb,$9)`,
       [id,a.workspace,version,a.prep,a.context,labelerDigestV1(identity),a.actor,JSON.stringify({hybrid_stage:"claude",
         route_digest:a.route,jev_run_id:a.jevRun,concepts:[a.concept],preview:false}),admission]);
     const raw=new Map<string,string>(),store=createHybridMembershipStageStoreV1("claude",{database:a.database,
