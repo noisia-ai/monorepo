@@ -311,7 +311,7 @@ la aceptación semántica del etiquetador sigue pendiente.
 
 ## Preparación de revisión 7 · 10 octubre 2026
 
-Estado todavía pendiente de integración final #39, despliegue y comprobación de interfaz. No usar este apartado como prueba de publicación.
+Este apartado conserva el preflight anterior a la integración; el resultado vigente está en «Revisión 7 · resultados de dev-test» y en el recibo enlazado.
 
 Archivos locales verificados por CSV reader: `load1.csv` 1,000 filas y `load2.csv` 250 filas, cabecera excluida, en `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/`.
 
@@ -322,3 +322,23 @@ Lectura directa Runner durante preparación: `NOISIA_MFP_WORKER_ENABLED=true`, `
 El inicio normal es `scripts/dev-corpus/runtime.mjs`: guard privado → Worker existente → drainers. La demo editorial deberá entrar por UI; invocar jobs manualmente no acredita este gate. Conservar un único Worker, autodeploy OFF y SHA integrado en ambos servicios. Activar sólo después del HEAD final #39 con CI/PG verdes, sin repetir audit-r5.
 
 Una ruta H1 histórica exigirá `hybrid_route_upgrade_required` antes de nuevas admisiones: selección explícita Estándar→Híbrido en UI con `expected_route_digest` vigente (null explícito sólo sin ruta). No migrar ni repetir recibos históricos.
+
+## Revisión 7 · resultados de dev-test
+
+El [recibo de revisión 7](RECEIPT_MFP_FRONT5_AUDIT_R7_2026-10-10.md) distingue el código publicado del HEAD documental. Integración #39 final f5d9c0e0 en f20209e2, CI38084734821/PG38084734847 SUCCESS; Runner c547b347… y Studio cf4c60e6… SUCCESS, autodeploy OFF y una réplica cada uno. Hashes de fuentes coinciden con el archivo Git.
+
+Activación verificada en ambos: `NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED`, `NOISIA_JEV_PROVIDER_ENABLED`, `NOISIA_MFP_HYBRID_ENABLED`, `NOISIA_MFP_HYBRID_LEDGER_READY`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_PROVIDER_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED`, `NOISIA_SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_ENABLED` y `NOISIA_SIGNAL_TOPIC_EDITORIAL_GLOBAL_STAGE_PROVIDER_ENABLED=true`. Runner conserva `NOISIA_MFP_WORKER_ENABLED=true` y `NOISIA_DATA_OS_WORKER_ENABLED=true`. No se añadió Worker a Studio. Tras activación: cero llamadas nuevas, 36 históricas settled y tres batches applied.
+
+Dos pestañas reales National: antes 10 HTTP500/uno503/uno404; después 28 HTTP200 y cero fallos de transporte, sin pérdida de acceso. Metadatos 322–505 ms; labeling 16.8/26.3 s, browser 15.7/12.6 s, membership 13.5/14.3 s. Es disponibilidad comprobada, con latencia pesada todavía presente. Límite por proceso previo al pool: una consulta pesada activa, ocho pendientes, 60 s de espera y cancelación; pool de tres conexiones/una réplica. No es coordinación distribuida.
+
+La UI muestra controles de corrección por lote sin origen seleccionable; payload fija human_ui. No se enviaron falsos overrides humanos ni se tocó el historial agent_assisted. El selector Estándar/Híbrido experimental está disponible; su guardado no procesa datos.
+
+No había fuente elegible sin revisión: National294… carece de fit_checkpoint. Coordinación confirmó que §12.3 autoriza un único nuevo análisis por UI en la marca QA, bajo estimación USD1.23069. Fuente `8d2d01f4-b097-46b5-9f5e-05b8831e5de6`: POST202, Worker automático, ready/13 grupos, cuatro llamadas claude-sonnet-4-6/high, 60,998 input/5,952 output, USD0.272274 settled/reserva cero. Se conserva esta fuente para editorial; no repetir el análisis.
+
+El control numérico fallaba antes de HTTP porque invocaba args.fetcher con receiver ajeno. Dos intentos del mismo ref no enviaron POST y SQL confirma cero solicitudes numéricas. Arreglo b0de34c1: invocación libre; cinco tests PASS, regresión rojo/verde, typecheck/lint 11/11. No se altera idempotencia, body ni autorización. Al recargar el código, la key no emitida del ref anterior se pierde: sin commit/outbox, la primera petición efectiva puede obtener quote/key nuevos sobre la misma fuente.
+
+Studio b0de34c1, deployment e78be2d5… SUCCESS, CI 38087196871/PG 38087196941 SUCCESS y hash del helper coincidente. Primera petición numérica efectiva: POST 202, control 569184c8… sobre source 8d2d…, key d79122ae…, Worker automático 13/13. Inicio editorial único POST 202, start e6a5c4db…, key b71c7252…, ejecución 66686b2b-2fff-45f9-aa08-7bd6c253751f. Cribado 13/13, shard/merge imported y global materialized automáticamente. UI Actualizar estado → guardada; Ver resultados guardados → validada, 13/13 consolidados (5 Topics/4 Noise/4 insuficientes, 0 errores/pendientes). Se abrió un Topic y su evidencia. No apareció Completar catálogo; la guía refleja finalización automática del corte v3.
+
+Costos reales Sonnet 4.6/high: análisis, 4 llamadas, USD 0.272274, 60,998 tokens de entrada/5,952 de salida; screening, 13 llamadas, USD 0.093034, 35,377/5,329; global, 2 llamadas, USD 0.078824, 31,199/4,270. Total editorial USD 0.171858 y proveedor nuevo USD 0.444132; reservado/ambiguo cero. Recibos privados r7-ui-receipts.json y r7-editorial-final-receipt.json en .data/front5-qa. No se repitieron imports ni audit-r5, no hubo jobs manuales y no se publicó Signal.
+
+Durante global se detectó que el DTO de costo omitía signal_topic_editorial_global_stage_calls_v2. Corrección b9942dab suma ambos ledgers bajo el mismo execution_id, incluyendo submission_unknown en ambiguo; no altera admisión, cap o escritura. Aceptación PostgreSQL real en un solo snapshot READ ONLY: DTO anterior USD 0.093034/reserva cero; corregido USD 0.155125/reserva USD 0.980489/ambiguo cero, igual a SQL independiente. Nueve focales y typecheck/lint 11/11 PASS; CI 38088681060 / PG 38088681047 SUCCESS. Studio b994, deployment 2e003701-0e9f-4ed3-9ebd-7d84d4d2d5ef SUCCESS, health OK, hashes de costo/fetch/semáforo coincidentes; todos los flags requeridos ON, Worker sólo en Runner. UI final confirma USD 0.171858, reservado y pendiente de conciliación USD 0.00, con 13 resultados guardados y sin reiniciar procesamiento. Runner conserva f202; ambos autodeploy OFF y una réplica. Captura privada r7-editorial-final-ui.png. Evidencia privada r7-editorial-cost-acceptance.json.
