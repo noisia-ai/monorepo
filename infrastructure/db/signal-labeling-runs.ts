@@ -241,6 +241,9 @@ export async function requestMentionFacetsV1(args: {
   identity?: LabelerIdentity;
   adapter?: {
     request_identity: unknown;
+    /** A provider-specific membership stage must use its own governed action. */
+    policy_action?: "concept_membership_jev" | "concept_membership_claude";
+    feature?: SignalWorkspaceFeatureV1;
     validateIdentity: (identity: LabelerIdentity) => void;
     prepare: (
       client: PoolClient,
@@ -276,7 +279,7 @@ export async function requestMentionFacetsV1(args: {
        WHERE w.id=$1`,
       [args.workspace_id],
     );
-    await authorize(c, args.workspace_id, args.actor_user_id, true);
+    await authorize(c, args.workspace_id, args.actor_user_id, true, args.adapter?.feature);
     // A replay belongs to its sealed labeler, even if the workspace later selects
     // another version. Explicit request identities still participate in the seal.
     const replay = (await c.query<{id:string;request_digest:string;identity:LabelerIdentity}>(
@@ -338,8 +341,8 @@ export async function requestMentionFacetsV1(args: {
       )
     ).rows[0];
     if (!prep) fail("labeling_preparation_required");
-    const action =
-      identity.kind === "facets" ? "mention_facets" : "concept_membership";
+    const action = args.adapter?.policy_action ??
+      (identity.kind === "facets" ? "mention_facets" : "concept_membership");
     const policy = (
       await c.query<{
         max_execution_micro_usd: string | null;
@@ -466,7 +469,7 @@ export async function requestMentionFacetsV1(args: {
 }
 export async function readSignalLabelingRunExposureV1(client: PoolClient, runId: string): Promise<string> {
   const row=(await client.query<{total:string}>(
-    `SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)
+    `SELECT COALESCE(sum(CASE WHEN status IN('settled','failed') THEN COALESCE(settled_micro_usd,0)+terminal_exposure_micro_usd
       ELSE reserved_micro_usd END),0)::text total FROM signal_labeling_calls WHERE run_id=$1`,
     [runId],
   )).rows[0];
@@ -479,6 +482,10 @@ export function createSignalLabelingStoreV1<
 >(options: {
   adapter?: {
     kind: "facets" | "membership";
+    hybrid_stage?: "jev" | "claude";
+    policy_action?: "concept_membership_jev" | "concept_membership_claude";
+    /** H1 verifies each decision against this call's results in the same transaction. */
+    persist_results_before_write?: boolean;
     inputs: (
       client: LabelingDatabaseV1 | PoolClient,
       run: LabelingRunV1,
@@ -490,6 +497,7 @@ export function createSignalLabelingStoreV1<
     ) => Promise<void>;
     pending: (client: PoolClient, run: LabelingRunV1) => Promise<number>;
     authority?: (client: PoolClient, run: LabelingRunV1) => Promise<void>;
+    beforeSubmit?: (client: PoolClient, run: LabelingRunV1, calls: LabelingCallV1<Input>[]) => Promise<void>;
   };
   database: LabelingDatabaseV1;
   /** Runtime preflight, cached by the existing private storage adapter. */
@@ -537,8 +545,9 @@ export function createSignalLabelingStoreV1<
         max_execution_micro_usd: string | null;
         provider: string;
         model: string;
+        action: string;
       }>(
-        `SELECT w.organization_id,p.budget_timezone,(now() AT TIME ZONE p.budget_timezone)::date::text budget_date,p.daily_cap_micro_usd::text,a.max_execution_micro_usd::text,a.provider,a.model
+        `SELECT w.organization_id,p.budget_timezone,(now() AT TIME ZONE p.budget_timezone)::date::text budget_date,p.daily_cap_micro_usd::text,a.max_execution_micro_usd::text,a.provider,a.model,a.action
    FROM signal_workspaces w JOIN signal_processing_admissions admission ON admission.id=$2 AND admission.workspace_id=w.id AND admission.target_id=$3
    JOIN signal_processing_policy_versions p ON p.id=admission.policy_version_id JOIN signal_processing_policy_actions a ON a.policy_version_id=p.id AND a.action=admission.action
    WHERE w.id=$1 AND p.status='active' AND p.valid_from<=now() AND p.valid_until>now()`,
@@ -548,14 +557,16 @@ export function createSignalLabelingStoreV1<
     if (
       !policy ||
       policy.provider !== run.identity.provider ||
-      policy.model !== run.identity.model
+      policy.model !== run.identity.model ||
+      policy.action !== (options.adapter?.policy_action ?? (run.kind === "membership" ? "concept_membership" : "mention_facets"))
     )
       fail("labeling_policy_changed");
     await c.query("SELECT signal_processing_lock_v1($1,$2::date)", [
       policy.organization_id,
       policy.budget_date,
     ]);
-    await authorize(c, run.workspace_id, run.actor_user_id, true, run.kind === "membership" ? "concept_membership" : "mention_facets");
+    await authorize(c, run.workspace_id, run.actor_user_id, true,
+      run.kind === "membership" ? "concept_membership" : "mention_facets");
     const current = await inspectFacetContextChangeV1(c, run.workspace_id);
     if (current.digest !== run.entity_context_digest)
       fail("labeling_context_changed");
@@ -596,12 +607,13 @@ export function createSignalLabelingStoreV1<
         const row = (
           await c.query(
             `UPDATE signal_labeling_runs SET lease_token=$2,lease_until=now()+interval '10 minutes',status='running',updated_at=now()
-   WHERE id=$1 AND kind=$3 AND (status IN('queued','running') OR status='failed' AND error_code='labeling_outcome_unknown'
+   WHERE id=$1 AND kind=$3 AND ($4::text IS NULL OR membership_snapshot->>'hybrid_stage'=$4)
+   AND (status IN('queued','running') OR status='failed' AND error_code='labeling_outcome_unknown'
    AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=$1 AND c.status='unknown')
    AND NOT EXISTS(SELECT 1 FROM signal_labeling_runs active WHERE active.workspace_id=signal_labeling_runs.workspace_id
      AND active.kind=signal_labeling_runs.kind AND active.id<>signal_labeling_runs.id AND active.status IN('queued','running')))
    AND NOT waiting_full_confirmation AND (lease_until IS NULL OR lease_until<now()) RETURNING id`,
-            [runId, token, options.adapter?.kind ?? "facets"],
+            [runId, token, options.adapter?.kind ?? "facets", options.adapter?.hybrid_stage ?? null],
           )
         ).rows[0];
         if (!row) return null;
@@ -770,6 +782,7 @@ export function createSignalLabelingStoreV1<
       await tx(db, async (c) => {
         await lock(c, run);
         await authority(c, run, 0);
+        await options.adapter?.beforeSubmit?.(c, run, calls);
         const changed = await c.query(
           `UPDATE signal_labeling_calls SET status='submitting',updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status='reserved' RETURNING id`,
           [run.id, calls.map((x) => x.id)],
@@ -940,6 +953,16 @@ export function createSignalLabelingStoreV1<
     ) {
       await tx(db, async (c) => {
         await lock(c, run);
+        const persistResults = async () => {
+          const changed = await c.query(
+          `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results
+           FROM jsonb_to_recordset($2::jsonb) page(id uuid,results jsonb)
+           WHERE call.run_id=$1 AND call.id=page.id`,
+          [run.id, JSON.stringify(pages.map((p) => ({ id: p.call.id, results: p.results })))],
+          );
+          if (changed.rowCount !== pages.length) fail("labeling_result_call_conflict");
+        };
+        if (options.adapter?.persist_results_before_write) await persistResults();
         if (options.adapter) await options.adapter.write(c, run, pages);
         else
           await writeFacetResultsV1(c, {
@@ -953,30 +976,23 @@ export function createSignalLabelingStoreV1<
               })),
             ),
           });
-        await c.query(
-          `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results
-           FROM jsonb_to_recordset($2::jsonb) page(id uuid,results jsonb)
-           WHERE call.run_id=$1 AND call.id=page.id`,
-          [
-            run.id,
-            JSON.stringify(
-              pages.map((p) => ({ id: p.call.id, results: p.results })),
-            ),
-          ],
-        );
+        if (!options.adapter?.persist_results_before_write) await persistResults();
       });
     },
     async finish(run: LabelingRunV1) {
       return tx(db, async (c) => {
         await lock(c, run);
         await c.query(`UPDATE signal_labeling_calls call SET status='failed',
-          settled_micro_usd=COALESCE(call.settled_micro_usd,call.reserved_micro_usd),
+          settled_micro_usd=CASE WHEN $2::boolean THEN call.settled_micro_usd
+            ELSE COALESCE(call.settled_micro_usd,call.reserved_micro_usd) END,
+          terminal_exposure_micro_usd=CASE WHEN $2::boolean AND call.settled_micro_usd IS NULL
+            THEN call.reserved_micro_usd ELSE call.terminal_exposure_micro_usd END,
           stop_reason=CASE WHEN EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
             WHERE result->>'error_code'='provider_usage_invalid') THEN 'provider_usage_invalid'
             ELSE 'provider_result_missing' END,updated_at=now()
           WHERE call.run_id=$1 AND call.status IN ('submitted','unknown') AND call.results_applied
           AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
-            WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id]);
+            WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id,options.adapter?.hybrid_stage === 'claude']);
         const calls = (
           await c.query(
             `SELECT count(*) FILTER(WHERE status='unknown')::int unknown,count(*) FILTER(WHERE status IN('reserved','submitting','submitted') OR raw_storage_key IS NOT NULL AND NOT results_applied)::int active FROM signal_labeling_calls WHERE run_id=$1`,

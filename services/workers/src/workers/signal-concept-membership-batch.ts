@@ -290,7 +290,7 @@ export async function runConceptMembershipTickV1(args: {
       const group =
         parsed.status === "split"
           ? { split: true, results: [] }
-          : parseMembershipGroupV1(parsed.text!, call.inputs);
+          : parseMembershipGroupV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
       if (group.split) {
         if (run.error_code) {
           apply.push({
@@ -404,7 +404,7 @@ export async function signalConceptMembershipJobV1(
     throw new Error("labeling_provider_disabled");
   const { pool } = await import("../db/client");
   const workspace = (await pool.query<{workspace_id:string}>(
-    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='membership'",[job.data.run_id])).rows[0];
+    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='membership' AND membership_snapshot->>'hybrid_stage' IS NULL",[job.data.run_id])).rows[0];
   if (!workspace || !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.workspace_id,feature:"concept_membership"}))
     throw new Error("membership_workspace_not_enabled");
   const store = options.store ?? createConceptMembershipRuntimeStoreV1(pool);
@@ -438,7 +438,7 @@ export function startConceptMembershipDrainerV1() {
       if (!exists) return;
       const rows = (
         await pool.query(
-          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='membership' AND l.provider='anthropic' AND (r.status IN('queued','running') OR r.status='failed' AND r.error_code='labeling_outcome_unknown' AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id AND c.status='unknown')) AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
+          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='membership' AND r.membership_snapshot->>'hybrid_stage' IS NULL AND l.provider='anthropic' AND (r.status IN('queued','running') OR r.status='failed' AND r.error_code='labeling_outcome_unknown' AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id AND c.status='unknown')) AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
         )
       ).rows;
       for (const row of rows)
