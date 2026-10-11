@@ -183,7 +183,7 @@ export async function loadMentionFacetsStatusV1(args: {
       full: { roots: number; characters: string; long_roots: number };
     }>(`WITH roots AS MATERIALIZED (
       SELECT *, (status IN('pending','error') AND NOT requires_context_review) OR root_id=ANY($2::uuid[]) needs_work
-      FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+      FROM signal_workspace_mention_facets_read_v1($1::uuid) WHERE workspace_id=$1
     ), counts AS (
       SELECT CASE WHEN root_id=ANY($2::uuid[]) THEN 'pending' ELSE status END status,
         CASE WHEN root_id=ANY($2::uuid[]) THEN 'unknown' ELSE relevance END relevance,count(*)::int count
