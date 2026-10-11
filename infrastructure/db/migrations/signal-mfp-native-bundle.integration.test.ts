@@ -4,6 +4,7 @@ import test from "node:test";
 import type { Pool } from "pg";
 import { seedSignalTopicEditorialRenewalSourceV1 } from "./signal-topic-editorial-renewal.synthetic.fixture";
 import { createSignalTopicStoreV1 } from "../signal-topic-catalog";
+import { registerFacetContextV1 } from "../signal-mention-facets";
 import { selectConceptMembershipV1 } from "../signal-concept-memberships";
 import { loadSignalWorkspaceTopicsPageV1, loadSignalWorkspaceTopicReadBundleV1,
   loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1 } from "../signal-workspace-topics-serving";
@@ -40,6 +41,11 @@ test("MFP native bundle: complete PG DTO parity, one snapshot, topic changes and
         concept_key: created.term_key, selected: true, expected_selection_revision: 0,
       } });
     }
+    const unprepared = await loadSignalWorkspaceTopicsPageV1(args);
+    assert.ok(unprepared && !unprepared.overview.is_current);
+    assert.equal(unprepared.detail, null, "unregistered initial entity context keeps the source stale");
+    assert.equal(unprepared.evidence, null);
+    await registerFacetContextV1(scoped, args.workspace_id);
     connections = 0;
     const initial = await loadSignalWorkspaceTopicsPageV1(args);
     assert.ok(initial?.detail && initial.evidence, "fixture must exercise actual aggregate and evidence SQL");
