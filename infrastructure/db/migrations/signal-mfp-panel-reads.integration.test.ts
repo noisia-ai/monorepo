@@ -33,7 +33,7 @@ test('MFP panel readers preserve authorization and produce one bounded scoped qu
     const {sql,params}=await capturePanelQuery(reader);
     assert.equal(params[0],id);
     if(reader===projectionReader){assert.match(sql,/selected AS MATERIALIZED/);assert.match(sql,/signal_workspace_projection_assignments_current_v1/);}
-    assert.equal([...sql.matchAll(/FROM signal_mention_facets_current_v1/g)].length,reader===projectionReader?0:1);
+    assert.equal([...sql.matchAll(/FROM signal_workspace_mention_facets_read_v1\(\$1::uuid\)/g)].length,reader===projectionReader?0:1);
     if(reader!==loadMentionFacetsStatusV1&&reader!==projectionReader)assert.ok(params.includes(31));
   }}finally{if(previous===undefined)delete process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;else process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED=previous;
     if(previousFacets===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;else process.env.NOISIA_MENTION_FACETS_ENABLED=previousFacets;}
@@ -52,7 +52,7 @@ test('MFP panels: PostgreSQL plans the exact workspace-scoped counts, quotes and
       assert.equal(params[0],id);
     if(reader===projectionReader){assert.match(sql,/selected AS MATERIALIZED/);assert.match(sql,/signal_workspace_projection_assignments_current_v1/);}
       assert.match(sql,/(?:WHERE|AND) (?:[a-z]+\.)?workspace_id=\$1/);
-      assert.equal([...sql.matchAll(/FROM signal_mention_facets_current_v1/g)].length,reader===projectionReader?0:1,'one current-facet projection per workspace read');
+      assert.equal([...sql.matchAll(/FROM signal_workspace_mention_facets_read_v1\(\$1::uuid\)/g)].length,reader===projectionReader?0:1,'one scoped current-facet projection per workspace read');
       await c.query(`EXPLAIN ${sql}`,params);
       if(reader!==loadMentionFacetsStatusV1&&reader!==projectionReader)assert.ok(params.includes(31),'bounded page plus next-cursor sentinel');
     }

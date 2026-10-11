@@ -1,0 +1,120 @@
+{
+  "migration": "0266_mfp_scoped_native_reads.sql",
+  "migration_sha256": "82b6e82331a66941a93d566d7d29461565cfc8af95529b34853b5a05e07aa6ce",
+  "preimages_pg_get_viewdef_false_sha256": {
+    "signal_mention_facets_current_v1": "ff5014bc0f307f2e9980a972263d0aae77c0d239a3c1ed33acb02ff47c1bdd3a",
+    "signal_concept_memberships_current_v1_0259": "6fa663efa382723bedbd05aacb46ad8af83a354e9c3d878c050dd3af82abd2aa",
+    "signal_concept_memberships_current_v1_0262": "54175bb4c02e62f73f278fb23abf41d6bf724aa2dfbce70e10389239ffb80f58"
+  },
+  "postimages_prosrc_sha256": {
+    "signal_workspace_mention_facets_read_v1": "f919123cb4fb882f0675419158cf1f25067d16d880d3933ca42f229ff8b1737c",
+    "signal_workspace_concept_memberships_read_v1": "d24bd82e95e40fcff91a43b1483e554c7d2e99c46e8fa41dcf356b5a778c6f4d"
+  },
+  "dto_measurements": [
+    {
+      "history": "0259",
+      "round": 0,
+      "name": "overview",
+      "ms": 11805,
+      "sha": "97c8d5db143629ba5da55b81b29826562fbc6ad985ea1e8eb9dd600f971b88cd"
+    },
+    {
+      "history": "0259",
+      "round": 0,
+      "name": "detail",
+      "ms": 14827,
+      "sha": "abc31cd7daf1c9211e9663f7029cdbb2c04302d8968a436e3e56333014a57fea"
+    },
+    {
+      "history": "0259",
+      "round": 0,
+      "name": "evidence",
+      "ms": 13803,
+      "sha": "91db7c65be9c81a9ba5f5153aa3499c40b1e061b3b22976c44f7e626bc4f4a99"
+    },
+    {
+      "history": "0259",
+      "round": 1,
+      "name": "overview",
+      "ms": 4402,
+      "sha": "97c8d5db143629ba5da55b81b29826562fbc6ad985ea1e8eb9dd600f971b88cd",
+      "equal": true
+    },
+    {
+      "history": "0259",
+      "round": 1,
+      "name": "detail",
+      "ms": 6606,
+      "sha": "abc31cd7daf1c9211e9663f7029cdbb2c04302d8968a436e3e56333014a57fea",
+      "equal": true
+    },
+    {
+      "history": "0259",
+      "round": 1,
+      "name": "evidence",
+      "ms": 6282,
+      "sha": "91db7c65be9c81a9ba5f5153aa3499c40b1e061b3b22976c44f7e626bc4f4a99",
+      "equal": true
+    },
+    {
+      "history": "0262",
+      "round": 0,
+      "name": "overview",
+      "ms": 9894,
+      "sha": "0c771b1713844fd9a5f1d3a06343dfbd56f66b68d7b7c0b980424187c5b2f795"
+    },
+    {
+      "history": "0262",
+      "round": 0,
+      "name": "detail",
+      "ms": 15237,
+      "sha": "912035459ec3e2551e5663196ca4882b42cde22c80a3d4b2edaa14ae92a837b4"
+    },
+    {
+      "history": "0262",
+      "round": 0,
+      "name": "evidence",
+      "ms": 15025,
+      "sha": "c697f50ae7f2998504f6d24eecaefa21493da8514aeb0577fd91a7804de72927"
+    },
+    {
+      "history": "0262",
+      "round": 1,
+      "name": "overview",
+      "ms": 4295,
+      "sha": "0c771b1713844fd9a5f1d3a06343dfbd56f66b68d7b7c0b980424187c5b2f795",
+      "equal": true
+    },
+    {
+      "history": "0262",
+      "round": 1,
+      "name": "detail",
+      "ms": 6463,
+      "sha": "912035459ec3e2551e5663196ca4882b42cde22c80a3d4b2edaa14ae92a837b4",
+      "equal": true
+    },
+    {
+      "history": "0262",
+      "round": 1,
+      "name": "evidence",
+      "ms": 6861,
+      "sha": "c697f50ae7f2998504f6d24eecaefa21493da8514aeb0577fd91a7804de72927",
+      "equal": true
+    }
+  ],
+  "dto_normalization": "Only root observed_at removed; all other DTO fields compared with assert.deepEqual; raw PostgreSQL rows compare all timestamps without normalization.",
+  "postgres_acceptance": {
+    "passed": 1,
+    "skipped": 0,
+    "duration_ms": 12538,
+    "histories": [
+      "0259",
+      "0262",
+      "0259->0262 without reader recreation"
+    ],
+    "scope": "1086 facets and 134 memberships in each history, full rows, missing workspace, execution grants, unknown preimage rejection"
+  },
+  "private_probe": "native-exact-measure-result.txt",
+  "provider_cost_usd": 0,
+  "persistent_application": false
+}

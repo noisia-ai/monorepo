@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import pg from 'pg';
 import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 
 // Acceptance before SQL0266: execute the exact migration with temporary function
 // names against both supported view histories, then compare every returned column.
@@ -35,6 +36,13 @@ test('MFP native scoped readers preserve 0259 and current serving history and wo
     const grants=(await c.query(`SELECT has_function_privilege('anon',$1,'EXECUTE') anon,
       has_function_privilege('authenticated',$1,'EXECUTE') authenticated`,[`${candidate}(uuid)`])).rows[0];
     assert.deepEqual(grants,{anon:false,authenticated:false});
+   }
+   if(index===0){
+    await c.query(`CREATE OR REPLACE TEMP VIEW native_original_0 AS ${live}`);
+    const old=(await c.query('SELECT * FROM pg_temp.native_original_0 WHERE workspace_id=$1 ORDER BY root_id,concept_key',[workspace])).rows;
+    const current=(await c.query('SELECT * FROM pg_temp.native_members_0($1) ORDER BY root_id,concept_key',[workspace])).rows;
+    const hash=(rows:unknown)=>createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+    assert.equal(hash(current),hash(old),'a later supported history must not leave the reader on stale 0259 semantics');
    }
   }
   // The exact migration must reject any third history before creating readers.
