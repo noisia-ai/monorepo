@@ -9,7 +9,7 @@ import { binary, wilson } from "./metrics";
 export type HybridMeasuredRootV1 = { root_id: string; input_digest: string; text: string; gate_passed: boolean;
   decisions: Record<string, HybridDecisionV1>; unresolved_concepts?: string[]; excluded_override_concepts?:string[] };
 export type HybridObservedLedgerV1 = { facets_settled_usd: number; jev_settled_usd: number;
-  claude_settled_usd: number; unknown_calls: number; unknown_provider_usd_upper_bound?: number;
+  claude_settled_usd: number; citation_settled_usd?:number; unknown_calls: number; unknown_provider_usd_upper_bound?: number;
   uncertain_pair_calls?:Record<string,string>;
   historical_unknown_calls?:number;historical_unknown_exposure_usd?:number;
   override_excluded_by_decided_via?:Record<string,number>;
@@ -84,7 +84,7 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
   }
   for (const row of gold) if (indexed.get(row.root_id)?.input_digest !== row.input_digest)
     throw new Error("hybrid_gold_input_changed");
-  const costs = [ledger.facets_settled_usd, ledger.jev_settled_usd, ledger.claude_settled_usd];
+  const costs = [ledger.facets_settled_usd, ledger.jev_settled_usd, ledger.claude_settled_usd,ledger.citation_settled_usd??0];
   const unresolvedPairs = roots.reduce((sum,root) => sum + (root.unresolved_concepts?.length ?? 0),0);
   if (costs.some(v => !Number.isFinite(v) || v < 0) || !Number.isSafeInteger(ledger.unknown_calls) || ledger.unknown_calls < 0)
     throw new Error("hybrid_ledger_invalid");
@@ -103,7 +103,7 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
     throw new Error("hybrid_unknown_ledger_mismatch");
   const decisions = roots.flatMap(root => Object.values(root.decisions).map(decision => ({root,decision})));
   const quoted = decisions.filter(x => x.decision.claude?.citation);
-  const valid = quoted.filter(x => validHybridCitationV1(x.root.text, x.decision.claude!.citation));
+  const valid = quoted.filter(x => (x.decision.claude!.citations??[x.decision.claude!.citation!]).every(c=>validHybridCitationV1(x.root.text,c)));
   const attempted = decisions.filter(x => x.decision.claude);
   const fullCorpus = { roots: roots.length, gate_passed: roots.filter(r => r.gate_passed).length,
     pairs: decisions.length, unresolved_pairs: unresolvedPairs,
@@ -144,14 +144,14 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
   return { contract_version: "mfp-hybrid-h1-measure-v1",
     status: unresolvedPairs ? "experimental_incomplete_not_approved" : "experimental_not_approved",
     full_corpus: fullCorpus, gold: reportGold,
-    cost: { new_membership_settled_usd:ledger.jev_settled_usd+ledger.claude_settled_usd,
-      new_membership_usd_per_1000:1000*(ledger.jev_settled_usd+ledger.claude_settled_usd)/roots.length,
+    cost: { new_membership_settled_usd:ledger.jev_settled_usd+ledger.claude_settled_usd+(ledger.citation_settled_usd??0),
+      new_membership_usd_per_1000:1000*(ledger.jev_settled_usd+ledger.claude_settled_usd+(ledger.citation_settled_usd??0))/roots.length,
       reused_facets_settled_usd:ledger.facets_settled_usd,observed_settled_usd: total, observed_usd_per_1000: ledger.unknown_calls ? null : settledPer1000,
       settled_usd_per_1000: settledPer1000,
       possible_usd_per_1000_range: ledger.unknown_calls
         ? [settledPer1000, 1000 * (total + ledger.unknown_provider_usd_upper_bound!) / roots.length] : null,
       unknown_calls: ledger.unknown_calls, components: publicLedger },
-    note: "JEV noul does not localize evidence: its source reference is the complete root. Claude citations are span-selected and checked against literal source text. Current overrides are excluded per concept from model quality denominators; they never become model hits." };
+    note: "JEV membership noul refers to the complete root. Claude selects up to three literal fragments; a separate JEV noul verifies their support. The ledger includes verification and the single authorized repair. Current overrides are excluded per concept from model quality denominators; they never become model hits." };
 }
 
 async function main(args: string[]) {

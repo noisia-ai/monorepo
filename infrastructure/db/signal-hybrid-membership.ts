@@ -353,7 +353,9 @@ export async function writeHybridMembershipDecisionPageV1(args: {
       jev_call_id=excluded.jev_call_id,claude_call_id=excluded.claude_call_id,
       verdict=excluded.verdict,jev=excluded.jev,claude=excluded.claude,
       citation=excluded.citation,rationale=excluded.rationale,error_code=excluded.error_code,citation_call_id=excluded.citation_call_id,updated_at=now()
-    WHERE signal_hybrid_membership_decisions.verdict='error' AND signal_hybrid_membership_decisions.error_code NOT LIKE 'membership_%'`, [args.workspace_id, args.route_digest, JSON.stringify(rows)]);
+    WHERE signal_hybrid_membership_decisions.verdict='error'
+      AND signal_hybrid_membership_decisions.error_code IS DISTINCT FROM 'hybrid_attempts_exhausted'
+      AND COALESCE(signal_hybrid_membership_decisions.error_code,'') !~ '^(membership_|incomplete_single_root)'`, [args.workspace_id, args.route_digest, JSON.stringify(rows)]);
   const persisted = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb) r(
       root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text,
       jev_call_id uuid,claude_call_id uuid,verdict text,jev jsonb,claude jsonb,citation jsonb,rationale text,error_code text,citation_call_id uuid)
@@ -362,7 +364,9 @@ export async function writeHybridMembershipDecisionPageV1(args: {
       AND h.effective_entities_digest=r.effective_entities_digest AND h.verdict=r.verdict
       AND h.jev=r.jev AND h.claude IS NOT DISTINCT FROM r.claude AND h.citation=r.citation
       AND h.rationale IS NOT DISTINCT FROM r.rationale AND h.jev_call_id=r.jev_call_id
-      AND h.claude_call_id IS NOT DISTINCT FROM r.claude_call_id`,
+      AND h.claude_call_id IS NOT DISTINCT FROM r.claude_call_id
+      AND h.error_code IS NOT DISTINCT FROM r.error_code
+      AND h.citation_call_id IS NOT DISTINCT FROM r.citation_call_id`,
       [args.workspace_id, JSON.stringify(rows), args.route_digest])).rows[0]!.count;
   if (persisted !== rows.length) fail("hybrid_replay_conflict");
   return { persisted };

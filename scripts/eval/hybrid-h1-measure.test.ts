@@ -128,3 +128,12 @@ test("one uncertain provider call covers two pairs without duplicating exposure"
   assert.equal("uncertain_pair_calls" in report.cost.components,false,"public report does not expose private call IDs");
   assert.throws(()=>measureHybridH1V1([],roots,["x","y"],{...ledger,uncertain_pair_calls:{"a:x":"call-one"}},1),/hybrid_unknown_ledger_mismatch/u);
 });
+
+test('observed full-corpus membership cost includes every citation verifier',()=>{
+ const roots:HybridMeasuredRootV1[]=[{root_id:'a',input_digest:'a',text:'Example',gate_passed:true,
+  decisions:{x:decideHybridMembershipV1('Example',{verdict:'not_belongs',probability:0.1,citation:null},null)}}];
+ const report=measureHybridH1V1([],roots,['x'],{facets_settled_usd:0.1,jev_settled_usd:0.2,
+  claude_settled_usd:0.3,citation_settled_usd:0.4,unknown_calls:0},1);
+ assert.equal(report.cost.observed_settled_usd,1);assert.equal(report.cost.new_membership_settled_usd,0.9);
+ assert.equal(report.cost.observed_usd_per_1000,1000);
+});

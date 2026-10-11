@@ -15,7 +15,7 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   await client.query('SAVEPOINT citation_quality');
   await client.query("UPDATE signal_labeling_calls SET results_applied=true,results='[]' WHERE run_id=$1 AND status='failed'",[a.jevRun]);
   const raw=new Map<string,string>();
-  const createStore=(stage:'claude'|'citation')=>createHybridMembershipStageStoreV1(stage,{database:a.database,
+ const createStore=(stage:'claude'|'citation')=>createHybridMembershipStageStoreV1(stage,{database:a.database,
    storeRaw:async r=>{raw.set(r.call_id,r.raw_text);return r.call_id;},loadRaw:async r=>raw.get(r.storage_key)!});
   let claudeSends=0,verifySends=0;let requests:Array<{custom_id:string}>=[];
   const batch={id:'msgbatch_citation_fixture',processing_status:'ended',created_at:new Date().toISOString()};
@@ -69,5 +69,31 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   console.log(JSON.stringify({gate:'h1_pg_citation_quality',scenario,claudeSends,verifySends,verdict:decision.verdict}));
   await client.query('ROLLBACK TO SAVEPOINT citation_quality');
  }
+ await client.query('SAVEPOINT bounded_jev_retry');
+ await client.query("UPDATE signal_labeling_calls SET results_applied=true,results='[]' WHERE run_id=$1 AND status='failed'",[a.jevRun]);
+ await client.query(`UPDATE signal_labeling_calls SET results=(SELECT jsonb_agg(result || jsonb_build_object('jev',
+   jsonb_build_object('verdict','error','probability',NULL,'citation',NULL),'error_code','jev_http_429'))
+   FROM jsonb_array_elements(results) result) WHERE run_id=$1 AND status='settled'`,[a.jevRun]);
+ let retrySends=0;
+ const raw=new Map<string,string>(),store=createHybridMembershipStageStoreV1('jev',{database:a.database,
+  storeRaw:async r=>{raw.set(r.call_id,r.raw_text);return r.call_id;},loadRaw:async r=>raw.get(r.storage_key)!});
+ for(let attempt=2;attempt<=3;attempt++){
+  const receipt=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,
+   stage:'jev',route_digest:a.route,idempotency_key:`bounded-${randomUUID()}`,provider_available:true});
+  const outcome=await runHybridMembershipTickV1({run_id:receipt.run_id,stage:'jev',store,jevPrice:0.042,
+   jev:{evaluate:async()=>{retrySends++;return {http_status:429,latency_ms:1,body:JSON.stringify({error:'synthetic_overload'})};}}});
+  assert.equal(outcome.status,'failed');
+  assert.equal((await client.query('SELECT count(*)::int n FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0].n,attempt===3?1:0);
+ }
+ assert.equal(retrySends,2,'the seeded first attempt and two real worker attempts exhaust the pair');
+ const exhausted=(await client.query('SELECT root_id,verdict,error_code FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0];
+ assert.equal(exhausted.verdict,'error');assert.equal(exhausted.error_code,'hybrid_attempts_exhausted');
+ const {hybridH1JevAdmissionPopulationSqlV1}=await import('../signal-hybrid-admission-population');
+ assert.equal((await client.query(hybridH1JevAdmissionPopulationSqlV1,[a.workspace,a.route])).rows[0].pairs,0,'exhausted JEV pair is absent from admission');
+ const {selectMembershipInputsV1}=await import('../signal-concept-memberships');
+ const prior=(await client.query('SELECT * FROM signal_labeling_runs WHERE id=$1',[a.jevRun])).rows[0];
+ assert.equal((await selectMembershipInputsV1(client,{...prior,id:randomUUID(),cursor_root_id:null},true)).length,0,'exhausted JEV pair is absent from dispatch');
+ console.log(JSON.stringify({gate:'h1_pg_bounded_jev_retry',seeded_attempts:1,worker_sends:retrySends,max_attempts:3}));
+ await client.query('ROLLBACK TO SAVEPOINT bounded_jev_retry');
  }finally{if(oldPrice===undefined)delete process.env.NOISIA_JEV_INPUT_USD_PER_MTOK;else process.env.NOISIA_JEV_INPUT_USD_PER_MTOK=oldPrice;}
 }

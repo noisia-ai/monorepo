@@ -395,7 +395,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     await insertCall({ id: wrongClaude, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
       inputs: claude, result: { ...confirmed, concept_key: "wrong_concept", claude_call_id: wrongClaude } });
     const decision = { ...confirmed, text };
-    const write = (candidate: typeof decision) => writeHybridMembershipDecisionPageV1({
+    const write = (candidate: HybridDecisionInputV1) => writeHybridMembershipDecisionPageV1({
       client, workspace_id: workspace, route_digest: route, decisions: [candidate],
     });
     await assert.rejects(write({ ...decision, jev_call_id: wrongJev }), /hybrid_settled_receipt_required/u,
@@ -412,8 +412,25 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
         JSON.stringify({verdict:"error",citation:null})]);
     assert.equal((await selectHybridClaudeInputsV1(client,{...work(randomUUID()),membership_snapshot:{
       concepts:allConcepts,hybrid_stage:"claude",route_digest:route,jev_run_id:jevAnchor}} as unknown as LabelingRunV1)).length,1);
-    assert.equal((await write(decision)).persisted, 1);
+    const storedDecision = async () => (await client.query(`SELECT * FROM signal_hybrid_membership_decisions
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3 AND route_digest=$4`,
+      [workspace,root,concept.concept_key,route])).rows[0];
+    assert.equal((await storedDecision()).error_code,null,"legacy technical errors have no error code");
+    for (const code of ["membership_item_schema_invalid","membership_evidence_invalid",
+      "incomplete_single_root","hybrid_attempts_exhausted"]) {
+      await client.query("SAVEPOINT final_hybrid_error");
+      await client.query(`UPDATE signal_hybrid_membership_decisions SET error_code=$4
+        WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,[workspace,root,concept.concept_key,code]);
+      const finalError = await storedDecision();
+      await assert.rejects(write(decision),/hybrid_replay_conflict/u,`${code} cannot be replaced by a retry`);
+      assert.deepEqual(await storedDecision(),finalError,"terminal decision and receipt stay immutable");
+      await client.query("ROLLBACK TO SAVEPOINT final_hybrid_error");
+      await client.query("RELEASE SAVEPOINT final_hybrid_error");
+    }
+    assert.equal((await write(decision)).persisted, 1,"valid receipt replaces a legacy technical error with NULL code");
     assert.equal((await write(decision)).persisted, 1,"successful replay is idempotent");
+    const changedErrorCode: HybridDecisionInputV1 = {...decision,error_code:"membership_evidence_invalid"};
+    await assert.rejects(write(changedErrorCode),/hybrid_replay_conflict/u,"replay cannot change the stored error code");
     assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
       SELECT verdict,source FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,

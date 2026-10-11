@@ -50,7 +50,7 @@ export async function requestHybridCitationFollowupV1(database:LabelingDatabaseV
  CROSS JOIN LATERAL jsonb_array_elements(call.results) r WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
  AND r#>>'{claude,verdict}'='belongs' AND ($2::boolean=false OR r#>>'{claude,verification,supported}'='false')`,[runId,s.hybrid_stage==='citation'])).rows[0]!.count;
  if(!candidates)return null;
- const stage=s.hybrid_stage==='claude'?'citation':'claude';
+ const stage:HybridMembershipStageV1=s.hybrid_stage==='claude'?'citation':'claude';
  const receipt=await requestHybridMembershipStageV1({database,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id,
    stage,route_digest:s.route_digest,citation_retry:s.hybrid_stage==='citation'||s.citation_retry===true,
    source_run_id:run.id,idempotency_key:`h1-citation-${run.id}`,provider_available:true});
