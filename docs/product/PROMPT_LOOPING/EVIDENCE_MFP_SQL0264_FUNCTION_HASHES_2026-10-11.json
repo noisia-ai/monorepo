@@ -1,0 +1,66 @@
+{
+  "target": "mfp_dev_test",
+  "migration": "0264_mfp_factored_read_guards.sql",
+  "file_sha256": "3708d699d0cd5769eed6e23b307f4f41ff638dae1e55073a0463e1a80477ac05",
+  "preimages": [
+    {
+      "signature": "signal_workspace_classification_assignment_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "7675fb317916d7bf768fc3ca21bee21c75cd909d024ff21675c8251c1ea132ef"
+    },
+    {
+      "signature": "signal_workspace_fit_membership_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "e3118383798f9832aea7f9dfbc0224aee9be5fee90ebabed5618488aef659e13"
+    },
+    {
+      "signature": "signal_workspace_incremental_membership_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "91812f25f0d9dfe1579a3ba5cdb959a4a3e42bdea1ded0a0bd8695ba3cd246a4"
+    },
+    {
+      "signature": "workspace_incremental_editorial_plan_unit_valid_v1(analysis_artifacts)",
+      "prosrc_sha256": "9e73336ba26455bed278c4b4045428b5ec9b2b494fdf5ff5b384e95649b48caa"
+    },
+    {
+      "signature": "workspace_incremental_editorial_plan_valid_v1(uuid)",
+      "prosrc_sha256": "a8bc4e48913c8c2df680305703e134d3597ee1922d2942299eddceab13ae1e7e"
+    }
+  ],
+  "postimages": [
+    {
+      "signature": "signal_workspace_classification_assignment_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "7675fb317916d7bf768fc3ca21bee21c75cd909d024ff21675c8251c1ea132ef"
+    },
+    {
+      "signature": "signal_workspace_classification_assignment_row_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "285f26b9afcd2c064baa69e847274927010ede44a9b650414855072e9c3bdcc5"
+    },
+    {
+      "signature": "signal_workspace_fit_membership_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "e3118383798f9832aea7f9dfbc0224aee9be5fee90ebabed5618488aef659e13"
+    },
+    {
+      "signature": "signal_workspace_fit_membership_row_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "f03ae38e98d2a7817ff40aa2ca34c3fa6b104214f07b02fe59bb2bea1f41d54a"
+    },
+    {
+      "signature": "signal_workspace_incremental_membership_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "91812f25f0d9dfe1579a3ba5cdb959a4a3e42bdea1ded0a0bd8695ba3cd246a4"
+    },
+    {
+      "signature": "signal_workspace_incremental_membership_row_current_v1(signal_classification_assignments,signal_classification_generations)",
+      "prosrc_sha256": "c117369f21e6ba5653dda37bcea5e51b484e816f1273e58ea4099cec5d1ea804"
+    },
+    {
+      "signature": "signal_workspace_projection_assignments_current_v1(signal_classification_generations)",
+      "prosrc_sha256": "b9b98c4e8b08505908fbbb020970e883b96dcad595f25bcee9058ee389f4c6b4"
+    },
+    {
+      "signature": "workspace_incremental_editorial_plan_unit_valid_v1(analysis_artifacts)",
+      "prosrc_sha256": "9e73336ba26455bed278c4b4045428b5ec9b2b494fdf5ff5b384e95649b48caa"
+    },
+    {
+      "signature": "workspace_incremental_editorial_plan_valid_v1(uuid)",
+      "prosrc_sha256": "1080c34cd9e739e3d3daeeab3ef44df37501329faf7a6800380354fb1e962f4a"
+    }
+  ],
+  "rollback": true
+}

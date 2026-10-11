@@ -32,7 +32,7 @@ test('MFP panel readers preserve authorization and produce one bounded scoped qu
   try {for(const reader of [loadMentionFacetsStatusV1,loadMentionFacetBrowserV1,loadConceptMembershipsStatusV1,projectionReader]) {
     const {sql,params}=await capturePanelQuery(reader);
     assert.equal(params[0],id);
-    if(reader===projectionReader){assert.match(sql,/selected AS MATERIALIZED/);assert.match(sql,/signal_workspace_projection_source_current_v1/);assert.match(sql,/signal_workspace_classification_assignment_current_v1/);}
+    if(reader===projectionReader){assert.match(sql,/selected AS MATERIALIZED/);assert.match(sql,/signal_workspace_projection_assignments_current_v1/);}
     assert.equal([...sql.matchAll(/FROM signal_mention_facets_current_v1/g)].length,reader===projectionReader?0:1);
     if(reader!==loadMentionFacetsStatusV1&&reader!==projectionReader)assert.ok(params.includes(31));
   }}finally{if(previous===undefined)delete process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;else process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED=previous;
@@ -50,7 +50,7 @@ test('MFP panels: PostgreSQL plans the exact workspace-scoped counts, quotes and
     for(const reader of [loadMentionFacetsStatusV1,loadMentionFacetBrowserV1,loadConceptMembershipsStatusV1,projectionReader]){
       const {sql,params}=await capturePanelQuery(reader);
       assert.equal(params[0],id);
-    if(reader===projectionReader){assert.match(sql,/selected AS MATERIALIZED/);assert.match(sql,/signal_workspace_projection_source_current_v1/);assert.match(sql,/signal_workspace_classification_assignment_current_v1/);}
+    if(reader===projectionReader){assert.match(sql,/selected AS MATERIALIZED/);assert.match(sql,/signal_workspace_projection_assignments_current_v1/);}
       assert.match(sql,/(?:WHERE|AND) (?:[a-z]+\.)?workspace_id=\$1/);
       assert.equal([...sql.matchAll(/FROM signal_mention_facets_current_v1/g)].length,reader===projectionReader?0:1,'one current-facet projection per workspace read');
       await c.query(`EXPLAIN ${sql}`,params);
@@ -89,12 +89,32 @@ test('MFP projection paging retains separate latest and latest-complete receipts
         await incrementalProjectionFixtureV1(checkpoint,clusterIds,{migrations_applied:true,onParentProjection:async previous=>{
           const materialization=(await query("SELECT input_snapshot->'source_projection'->>'materialization_artifact_id' id FROM signal_classification_generations WHERE id=$1::uuid",[previous.generation_id])).rows[0].id;
           const next=await requestSignalWorkspaceTopicProjectionV1({...checkpoint.access,engine_execution_id:checkpoint.lease.execution_id,materialization_artifact_id:materialization,idempotency_key:randomUUID()});
+          const parity=async()=>{
+           const rows=(await query(`SELECT signal_workspace_projection_source_current_v1(g) AND NOT EXISTS(
+             SELECT 1 FROM signal_classification_assignments a WHERE a.generation_id=g.id
+              AND NOT signal_workspace_classification_assignment_current_v1(a,g)) old,
+              signal_workspace_projection_assignments_current_v1(g) current
+             FROM signal_classification_generations g WHERE g.id=ANY($1::uuid[])`,[[previous.generation_id,next.generation_id]])).rows;
+           assert.equal(rows.length,2);for(const row of rows)assert.equal(row.current,row.old);
+          };
+          await parity();
+          const localRows=(await query(`SELECT signal_workspace_classification_assignment_current_v1(a,g) old,
+            signal_workspace_classification_assignment_row_current_v1(a,g) current,
+            signal_workspace_classification_assignment_row_current_v1(jsonb_populate_record(NULL::signal_classification_assignments,
+              to_jsonb(a)||jsonb_build_object('canonical_root_id',gen_random_uuid())),g) corrupt_root,
+            signal_workspace_classification_assignment_row_current_v1(jsonb_populate_record(NULL::signal_classification_assignments,
+              to_jsonb(a)||jsonb_build_object('definition_digest','sha256:'||repeat('0',64))),g) corrupt_definition
+            FROM signal_classification_assignments a JOIN signal_classification_generations g ON g.id=a.generation_id
+            WHERE a.generation_id=$1 AND a.membership_basis='computed_cluster'`,[previous.generation_id])).rows;
+          assert.ok(localRows.length);for(const row of localRows){assert.equal(row.old,true);assert.equal(row.current,true);
+           assert.equal(row.corrupt_root,false);assert.equal(row.corrupt_definition,false);}
           const read=()=>loadSignalWorkspaceTopicProjectionStatusWithQueryableV1({...checkpoint.access,queryable:database});
           const result=await read();
           assert.equal(result.latest_run?.generation_id,next.generation_id,'new queued generation remains latest');
           assert.equal(result.latest_complete?.generation_id,previous.generation_id,'prior complete generation remains separately visible');
           assert.equal(result.latest_complete?.is_current,true);
           await query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1::uuid",[checkpoint.access.workspace_id]);
+          await parity();
           const revoked=await read();
           assert.equal(revoked.latest_run?.generation_id,next.generation_id);
           assert.equal(revoked.latest_complete?.generation_id,previous.generation_id,'revocation preserves historical receipt');
