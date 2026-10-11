@@ -52,14 +52,21 @@ test("MFP native bundle: complete PG DTO parity, one snapshot, topic changes and
     assert.equal(connections, 1, "SSR complete bundle holds one connection/snapshot");
     assert.equal(initial.overview.source, "workspace_computed");
     assert.ok(initial.overview.denominator > 0, "real nonempty synthetic mention population");
-    assert.deepEqual(initial.overview, await loadSignalWorkspaceTopicsOverviewV1(args), "all DTO fields share transaction timestamp naturally");
+    const content = (value: NonNullable<Awaited<ReturnType<typeof loadSignalWorkspaceTopicsOverviewV1>>>) => {
+      // Serving intentionally stamps clock_timestamp(), even inside one outer
+      // transaction. Exclude only this root observation time, never data/guards.
+      const { observed_at, ...rest } = value;
+      assert.ok(Number.isFinite(Date.parse(observed_at)));
+      return rest;
+    };
+    assert.deepEqual(content(initial.overview), content((await loadSignalWorkspaceTopicsOverviewV1(args))!));
     assert.equal(initial.overview.terms.length, 2);
     for (const term of initial.overview.terms) {
       const selected: Parameters<typeof loadSignalWorkspaceTopicReadBundleV1>[0] = { ...args, term_key: term.term_key, kind: "topic" as const, expected_scope_digest: initial.overview.scope_digest, limit: 25 };
       connections = 0;
       const bundle = await loadSignalWorkspaceTopicReadBundleV1(selected);
       assert.equal(connections, 1, "Topic switch combines its metrics and evidence without duplicate context reads");
-      assert.deepEqual(bundle.overview, initial.overview);
+      assert.deepEqual(content(bundle.overview), content(initial.overview));
       assert.deepEqual(bundle.detail, await loadSignalWorkspaceTopicDetailV1(selected));
       assert.deepEqual(bundle.evidence, await loadSignalWorkspaceTopicEvidenceV1(selected));
       await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...selected, expected_scope_digest: `sha256:${"0".repeat(64)}` }), /workspace_topics_scope_changed/);
