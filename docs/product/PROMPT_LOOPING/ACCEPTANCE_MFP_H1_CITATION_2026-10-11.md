@@ -6,4 +6,4 @@
 4. PostgreSQL 17 migrado: reserva/recepción/liquidación/verificación/reintento/revisión, recuperación y rollback explícito de incertidumbre de ambos proveedores, exposición preservada y `updated_at` correcto. Sin tablas sustituidas.
 5. Sólo tras confirmación de las cuatro propuestas de datos: 1.086 raíces, tres vistas gold, 30 positivos nuevos disjuntos y revisión ciega independiente; gasto, tokens, caché, revisiones y duplicados reportados.
 
-El punto 5 queda pendiente de la confirmación del fundador. Las pruebas de 1–4 no llaman proveedores.
+El fundador confirmó las cuatro definiciones el 11 de octubre (§14.2 de la auditoría). La carga se verificó primero en PostgreSQL real con rollback y replay; el punto 5 se completa con el recibo de medición. Las pruebas de 1–4 no llaman proveedores.

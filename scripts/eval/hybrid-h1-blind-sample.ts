@@ -16,7 +16,7 @@ void main(async()=>{
   const previousHash=hash(await readFile(previousPath,"utf8"));
   const identity=await loadMfpEvalIdentity(),pool=await openDatabase(),client=await pool.connect();
   try{
-    await client.query("SET statement_timeout='20s'");
+    await client.query("SET statement_timeout='5min'");
     const rows:Record<string,any>[]=(await client.query(`WITH current_pairs AS MATERIALIZED (
       SELECT workspace_id,root_id,concept_key,definition_digest,labeler_digest
       FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND source='model' AND verdict='belongs'
