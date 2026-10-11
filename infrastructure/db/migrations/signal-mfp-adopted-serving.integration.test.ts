@@ -3,8 +3,9 @@ import {randomUUID} from "node:crypto";
 import test from "node:test";
 import type {Pool} from "pg";
 import {signalTopicDefinitionSchemaV1} from "@noisia/query-engine";
-import {adoptSignalTopicCandidateStoreV1} from "../signal-topic-catalog";
-import {adoptedConsolidationConceptKeysV1} from "../signal-workspace-topics-serving";
+import {adoptSignalTopicCandidateStoreV1,createSignalTopicStoreV1,updateSignalTopicStoreV1} from "../signal-topic-catalog";
+import {adoptedConsolidationConceptKeysV1,loadMembershipServingConceptsV1} from "../signal-workspace-topics-serving";
+import {selectConceptMembershipV1} from "../signal-concept-memberships";
 import {seedSignalTopicEditorialRenewalSourceV1} from "./signal-topic-editorial-renewal.synthetic.fixture";
 import {signalTopicConsolidationDigestV1} from "../signal-topic-consolidation";
 
@@ -94,6 +95,31 @@ test("MFP Signal replaces a consolidated concept after real adoption by key and 
     const foreignRevision=randomUUID();
     const unrelated=await adoptedConsolidationConceptKeysV1(raw,f.workspace_id,foreignRevision,definitions);
     assert.equal(unrelated.size,0,"an unrelated consolidation revision cannot hide a concept");
+    const manual=await createSignalTopicStoreV1({pool:database,workspace_id:f.workspace_id,
+      actor_user_id:f.actor_id,idempotency_key:randomUUID(),input:{label:"Ajuste manual de frenos",
+        definition:"Experiencias de ajuste de frenos de bicicletas",scope:"all_conversations",
+        inclusion:[],exclusion:[],positive_examples:[],negative_examples:[]}});
+    for(const concept_key of [adopted.term_key,manual.term_key]){
+      await selectConceptMembershipV1({database,workspace_id:f.workspace_id,actor_user_id:f.actor_id,
+        idempotency_key:randomUUID(),selection:{concept_key,selected:true,expected_selection_revision:0}});
+    }
+    const selected=await loadMembershipServingConceptsV1(raw,f.workspace_id,seed.source_engine_execution_id);
+    for(const key of [adopted.term_key,manual.term_key]){
+      assert.equal(selected.filter(row=>row.definition.term_key===key).length,1,
+        "actual catalog adoption and manual creation produce one serving row per concept");
+      assert.equal(selected.find(row=>row.definition.term_key===key)?.selected,true);
+    }
+    assert.ok(selected.every(row=>!row.mfp_discovery),"legacy source is not relabeled as MFP discovery");
+    const current=selected.find(row=>row.definition.term_key===manual.term_key)!.definition;
+    await updateSignalTopicStoreV1({pool:database,workspace_id:f.workspace_id,actor_user_id:f.actor_id,
+      idempotency_key:randomUUID(),term_key:manual.term_key,input:{
+        expected_definition_revision:current.definition_revision,expected_definition_digest:current.definition_digest,
+        definition:"Sólo fallas del freno delantero de bicicletas"}});
+    const changed=await loadMembershipServingConceptsV1(raw,f.workspace_id,seed.source_engine_execution_id);
+    assert.equal(changed.find(row=>row.definition.term_key===manual.term_key)?.selected,false,
+      "a real semantic edit cannot reuse the stale selection digest");
+    assert.equal(changed.find(row=>row.definition.term_key===adopted.term_key)?.selected,true,
+      "editing one concept leaves the independently adopted selection current");
     await raw.query("ROLLBACK");
   }finally{
     await raw.query("ROLLBACK").catch(()=>undefined);raw.release();await pool.end();

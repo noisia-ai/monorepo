@@ -72,6 +72,7 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
         <li><span className="client-processing-journey__number">5</span><a href="#defined-interests">{t("journey.membership")}</a></li>
         <li><span className="client-processing-journey__number">6</span><a href={signalHref}>{t("journey.signal")}</a></li>
       </ol>
+    {status.loading||browser.loading?<p role="status" aria-live="polite">{t("loadingPopulation")}</p>:null}
       {status.error||browser.error?<p role="alert" className="team-msg team-msg--error">{t(`errors.${mfpErrorKey(status.error??browser.error??"")}`)}</p>:null}
       {browser.data?.labeler_status!=="approved"?<p className="mfp-notice" role="status">{t("experimental")}</p>:null}
       {status.data?<>

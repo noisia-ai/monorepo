@@ -446,6 +446,7 @@ await main(async () => {
           root_id: root.root_id,
           concept_key: target.concept_key,
           verdict: "not_belongs",
+          decided_via: "agent_assisted",
         },
       ],
     });
