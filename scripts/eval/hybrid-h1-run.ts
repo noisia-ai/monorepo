@@ -36,6 +36,15 @@ void main(async()=>{
   const access={database:pool,workspace_id:identity.workspace_id,actor_user_id:identity.actor_user_id};
   try{
     let route=await loadHybridMembershipRouteV1(access);
+    const isolatedCalendar=process.argv.includes('--isolated-calendar');
+    if(isolatedCalendar){
+      const isolation=JSON.parse(await readFile(`${directory}/isolation-installed.json`,'utf8'));
+      const fn=(await pool.query("SELECT prosrc FROM pg_proc WHERE oid=to_regprocedure('mfp_harness.h1_audit_r8_calendar()')")).rows[0];
+      const trigger=(await pool.query("SELECT 1 FROM pg_trigger WHERE tgname='mfp_h1_audit_r8_calendar' AND tgrelid='signal_labeling_runs'::regclass AND tgenabled='O'")).rows[0];
+      if(!isolation.passed||isolation.workspace_id!==identity.workspace_id||isolation.route_digest!==route.route_digest||!trigger||
+        fn?.prosrc!==`BEGIN IF NEW.workspace_id='${identity.workspace_id}'::uuid AND NEW.membership_snapshot->>'route_digest'='${route.route_digest}' THEN NEW.next_poll_at='infinity'::timestamptz; END IF; RETURN NEW; END`)
+        fail('mfp_isolated_calendar_not_verified');
+    }
     if(stage!=="report"){
       if(process.env.NOISIA_MFP_HYBRID_ENABLED!=="true"||process.env.NOISIA_MFP_HYBRID_LEDGER_READY!=="true"||
         stage==="pipeline"&&process.env.NOISIA_JEV_PROVIDER_ENABLED!=="true"||
@@ -65,7 +74,7 @@ void main(async()=>{
             }
             return followup;
           }
-          if(currentStage!=="claude"||!row.wait)await runHybridMembershipTickV1({run_id:id,stage:currentStage,
+          if(isolatedCalendar||currentStage!=="claude"||!row.wait)await runHybridMembershipTickV1({run_id:id,stage:currentStage,
             store,jevPrice:Number(process.env.NOISIA_JEV_INPUT_USD_PER_MTOK)});
           await delay(currentStage==="claude"?30000:100);
         }
