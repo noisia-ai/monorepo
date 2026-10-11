@@ -29,11 +29,12 @@ import {
 } from "./signal-brand-context.synthetic.fixture";
 import type { BrandContextSyntheticSaveBindingsV1 } from "./signal-brand-context.integration.assertions";
 import { syntheticClientWorkspaceFixtureV1, type SyntheticTransactionV1 } from "./signal-client-workspace-entry.synthetic.fixture";
-import { fixtureSha } from "./signal-workspace-topic-projection.fixture";
+import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-workspace-topic-projection.fixture";
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
   runtime?: SignalBrandContextPreparationRuntimeV1;
   saves?: Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge">;
+  projection?: Pick<WorkspaceProjectionFixtureOptionsV1, "cluster_ids" | "model_configuration" | "onCheckpoint">;
 };
 
 /** Explicit synthetic configuration. Passing this literal to the parser never
@@ -213,9 +214,9 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
 
   // Suppress only the nested helper's cleanup callback: the runner always owns
   // rollback, including failures. Its numerical records and receipts are real.
-  const clusterIds = [randomUUID(), randomUUID()] as const;
+  const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, projection: { cluster_ids: clusterIds },
+    identity, projection: { ...args.projection, cluster_ids: clusterIds },
   });
   assert.equal(projection.roots.length, 3, "exactly three invented canonical roots are used");
   assert.equal(projection.chunks.length, 3, "the tiny texts each occupy exactly one governed chunk");

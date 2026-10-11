@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import type {Pool} from 'pg';
-import {syntheticClientWorkspaceFixtureV1} from './signal-client-workspace-entry.synthetic.fixture';
+import {seedSignalTopicEditorialRenewalSourceV1} from './signal-topic-editorial-renewal.synthetic.fixture';
 import {incrementalProjectionFixtureV1} from './signal-workspace-incremental-projection.fixture';
 import {fixtureSha} from './signal-workspace-topic-projection.fixture';
 
@@ -25,7 +25,7 @@ test('MFP incremental history allows renewed discovery context only with frozen 
     const database=Object.assign(Object.create(pool),{query,connect:async()=>scoped}) as Pool;
     const clusterIds=[randomUUID(),randomUUID()] as const,done=new Error('context history acceptance complete');
     let checked=false;
-    await assert.rejects(syntheticClientWorkspaceFixtureV1({database,scoped,query,cleanup:async()=>{}},{projection:{
+    await assert.rejects(seedSignalTopicEditorialRenewalSourceV1({database,scoped,query,cleanup:async()=>{},projection:{
       cluster_ids:clusterIds,model_configuration:{fixture:true,versions:{python:'synthetic-context-history'}},
       onCheckpoint:async checkpoint=>{
         const f=await incrementalProjectionFixtureV1(checkpoint,clusterIds,{migrations_applied:true});
@@ -76,7 +76,7 @@ test('MFP incremental history allows renewed discovery context only with frozen 
         assert.equal(body.replace(changed,oldPredicate).trim(),old.trim(),'only the context compatibility predicate changes');
         checked=true;throw done;
       },
-    }}),error=>error===done);
+    }}),error=>{if(error!==done)console.error(error);return error===done;});
     assert.equal(checked,true);
   }finally{await raw.query('ROLLBACK');raw.release();await pool.end();}
 });
