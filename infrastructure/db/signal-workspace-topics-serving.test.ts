@@ -280,6 +280,10 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.equal(statements.slice(bundleStart).filter(sql => sql.startsWith("BEGIN")).length, 1);
   assert.equal(statements.slice(bundleStart).filter(sql => sql.includes("SELECT count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total")).length, 1,
     "one overview/digest reconstruction per complete read");
+  assert.equal(statements.slice(bundleStart).filter(sql => sql.includes("signal_workspace_projection_source_current_v1(generation)")).length, 1,
+    "bundle checks the projection source once in its RR context; population retains workspace/generation scope");
+  assert.ok(statements.slice(bundleStart).filter(sql => sql.startsWith("WITH source_generation")).every(sql =>
+    sql.includes("generation.workspace_id=$1::uuid AND true")));
   const initialBundle = await loadSignalWorkspaceTopicsPageV1(args);
   assert.deepEqual(initialBundle, bundle);
   await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, expected_scope_digest: sha("0") }), /workspace_topics_scope_changed/);
