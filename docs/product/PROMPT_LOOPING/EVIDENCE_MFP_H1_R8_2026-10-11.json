@@ -2869,7 +2869,7 @@
     "implementer_configured_model": "gpt-6.1-sol",
     "implementer_reasoning_effort": "high",
     "provider_driver_commit": "c9e7429f4e49d662ff8142ba9a929596eadb1fbf",
-    "provider_driver_sha256": "ec9b20ae4b13e355f8c08350d08567002d56db97ae38f43c7a4b2b29706c770348",
+    "provider_driver_sha256": "ec9b20ae4b13e355f8c08350d08567002d56db97ae38f43c7a4b29706c770348",
     "offline_report_commit": "da8d85103a71841a4aec85953c8e14151766c412",
     "offline_report_sha256": "24b19afc6b0946a2450fba7c2a4dd1d723323a73e9420570955486b73d598d15",
     "offline_blind_base_commit": "da8d85103a71841a4aec85953c8e14151766c412",
