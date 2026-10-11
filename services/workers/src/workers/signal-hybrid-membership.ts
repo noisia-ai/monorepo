@@ -115,7 +115,10 @@ export async function runHybridMembershipTickV1(args:{run_id:string;stage:Hybrid
 }
 export const hybridMembershipDrainerSqlV1 = `SELECT id,membership_snapshot->>'hybrid_stage' stage
         FROM signal_labeling_runs run WHERE kind='membership' AND (status IN('queued','running')
-        OR status IN('completed','failed') AND membership_snapshot->>'hybrid_stage' IN('claude','citation')
+        OR status IN('completed','failed')
+          AND EXISTS(SELECT 1 FROM signal_labeler_versions version WHERE version.id=run.labeler_version_id
+            AND (version.identity#>>'{params,hybrid_citation_quality}'='true' OR version.identity#>>'{params,hybrid_citation_verifier}'='true'))
+          AND membership_snapshot->>'hybrid_stage' IN('claude','citation')
           AND (membership_snapshot->>'hybrid_stage'='claude' OR NOT COALESCE((membership_snapshot->>'citation_retry')::boolean,false))
           AND EXISTS(SELECT 1 FROM signal_labeling_calls call CROSS JOIN LATERAL jsonb_array_elements(call.results) result
             WHERE call.run_id=run.id AND call.status='settled' AND call.results_applied AND result#>>'{claude,verdict}'='belongs'

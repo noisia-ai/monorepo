@@ -51,7 +51,9 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
    next=outcome.followup as typeof next;
   }
   if(scenario==='deterministic_error'){
-    const row=(await client.query('SELECT verdict,error_code FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND concept_key=$2',[a.workspace,a.concept.concept_key])).rows[0];
+    const decision=(await client.query('SELECT root_id FROM signal_hybrid_membership_decisions WHERE workspace_id=$1 AND concept_key=$2',[a.workspace,a.concept.concept_key])).rows[0];
+    assert.ok(decision?.root_id,'deterministic failure has a persisted pair receipt');
+    const row=(await client.query('SELECT verdict,error_code FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND concept_key=$2 AND root_id=$3',[a.workspace,a.concept.concept_key,decision.root_id])).rows[0];
     assert.equal(row.verdict,'error');assert.equal(row.error_code,'membership_json_invalid');assert.equal(claudeSends,1);assert.equal(verifySends,0);
     const {selectHybridClaudeInputsV1}=await import('../signal-hybrid-runs');
     const r=(await client.query('SELECT * FROM signal_labeling_runs WHERE id=$1',[initial.run_id])).rows[0];
@@ -61,7 +63,7 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   const expected=scenario==='supported'?1:2;assert.equal(claudeSends,expected);assert.equal(verifySends,expected);
   const decision=(await client.query('SELECT * FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0];
   assert.equal(decision.verdict,scenario==='repair_unsupported'?'review_required':'belongs');assert.equal(decision.citation.length,1);assert.ok(decision.citation_call_id);
-  const current=(await client.query('SELECT verdict,updated_at FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND concept_key=$2',[a.workspace,a.concept.concept_key])).rows[0];
+  const current=(await client.query('SELECT verdict,updated_at FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND concept_key=$2 AND root_id=$3',[a.workspace,a.concept.concept_key,decision.root_id])).rows[0];
   assert.equal(current.verdict,decision.verdict);assert.deepEqual(current.updated_at,decision.updated_at);
   assert.equal((await client.query(hybridMembershipDrainerSqlV1)).rows.filter(r=>[initial.run_id].includes(r.id)).length,0);
   console.log(JSON.stringify({gate:'h1_pg_citation_quality',scenario,claudeSends,verifySends,verdict:decision.verdict}));
