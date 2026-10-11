@@ -2937,6 +2937,12 @@
           "incrementalPreparationFailed": "Evidence for new topics could not be prepared. Refresh the status to check available recovery."
         },
         "incrementalEditorial": {
+          "quote": "View new-topic estimate",
+          "quoting": "Loading estimate…",
+          "quoteError": "The estimate could not be loaded. Request it again before authorizing.",
+          "quoteEstimate": "Advisory estimate: {amount} for {count} new groups with {model}.",
+          "quoteHelp": "This forecast is separate from the temporary reservation and any strict cap. Actual cost is recorded. This quote expires on {expiry}.",
+          "quoteConfirm": "I confirm starting paid interpretation of the new topics with this estimate.",
           "uncapped": "No configured maximum",
           "optionalCap": "Optional maximum (USD)",
           "noDeadline": "no operational expiry",
@@ -2960,7 +2966,7 @@
           "targetUnits": "{count, plural, one {# group has evidence ready for interpretation.} other {# groups have evidence ready for interpretation.}}",
           "legacyUnits": "{count, plural, one {# pending group belongs to the earlier analysis and keeps its separate authorization.} other {# pending groups belong to the earlier analysis and keep their separate authorization.}}",
           "claimedUnits": "{count, plural, one {# group already has an assigned interpretation and will not be authorized again here.} other {# groups already have assigned interpretations and will not be authorized again here.}}",
-          "confirmBody": "Confirm interpretation of {count, plural, one {# group} other {# groups}} with {model}. This amount is a cap, not an estimate.",
+          "confirmBody": "Confirm interpretation of {count, plural, one {# group} other {# groups}} with {model}. Review the estimate and confirm before starting. A configured maximum remains a strict limit.",
           "cap": "Maximum for this interpretation (up to {amount})",
           "expiry": "Spending authorization expires {expiry} ({zone}).",
           "budget": "Claude budget for {date} ({zone}): {confirmed} confirmed, {reserved} reserved. Daily cap: {daily}.",

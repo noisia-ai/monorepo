@@ -16,6 +16,7 @@ import { signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SI
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
+import { signIncrementalEditorialQuote, verifyIncrementalEditorialQuote, type IncrementalEditorialQuoteSource } from "./incremental-editorial-quote";
 
 type Database = Pick<Pool, "query" | "connect">;
 type Access = { database?: Database; workspaceId: string; actorUserId: string };
@@ -79,6 +80,46 @@ export async function loadWorkspaceIncrementalEditorialForActorV1(args: {
   return preparation || admission || execution ? { preparation,
     execution: workspaceIncrementalEditorialExecutionViewV1(execution, providerAvailable),
     admission: admission ? { ...admission, adapter_available: true, provider_available: providerAvailable } : null } : null;
+}
+async function incrementalQuoteSource(access: Awaited<ReturnType<typeof authorize>>, action: IncrementalEditorialQuoteSource["action"], runId: string,
+  state: WorkspaceIncrementalEditorial) {
+  const admission = state.admission, execution = state.execution;
+  const renewal = action === "renew_incremental_editorial" ? execution?.renewal : null;
+  if (!admission || !admission.is_current || !admission.provider_available || !admission.adapter_available
+    || (action === "renew_incremental_editorial" ? !renewal?.can_renew || execution?.execution_id !== runId : !admission.can_authorize || admission.numeric_execution_id !== runId)
+    || !admission.evidence_plan_artifact_id || !admission.target_unit_digest) throw new SignalWorkspaceEngineError("workspace_incremental_editorial_quote_unavailable", 409);
+  const row = (await access.database.query<{ evidence_bytes: string; context_bytes: number }>(`SELECT
+    plan.metadata->'descriptor'->'stream'->>'bytes' evidence_bytes,
+    octet_length((numeric.input_snapshot-'guides')::text) context_bytes
+    FROM analysis_artifacts plan JOIN signal_topic_catalog_executions numeric
+      ON numeric.id=$3::uuid AND numeric.workspace_id=plan.workspace_id
+    WHERE plan.id=$2::uuid AND plan.workspace_id=$1::uuid
+      AND plan.metadata->>'contract_version'='workspace-incremental-editorial-plan-v1'`,
+  [access.workspace_id, admission.evidence_plan_artifact_id, admission.numeric_execution_id])).rows[0];
+  if (!row) throw new SignalWorkspaceEngineError("workspace_incremental_editorial_quote_unavailable", 409);
+  const remaining = renewal && execution ? execution.expected_units - execution.interpreted_units : admission.target_units;
+  return { workspace_id: access.workspace_id, actor_user_id: access.actor_user_id, action, run_id: runId,
+    evidence_plan_artifact_id: admission.evidence_plan_artifact_id, numeric_checkpoint_digest: admission.numeric_checkpoint_digest,
+    target_unit_digest: admission.target_unit_digest, history_cut_digest: admission.history_cut_digest, target_units: remaining,
+    evidence_bytes: Math.ceil(Number(row.evidence_bytes) * remaining / Math.max(1, admission.target_units)), context_bytes: row.context_bytes,
+    maximum_micro_usd: renewal ? renewal.maximum_grant_micro_usd : admission.maximum_grant_micro_usd,
+    prior_admission_operation_id: renewal?.expected_admission_operation_id ?? null } satisfies IncrementalEditorialQuoteSource;
+}
+export async function quoteWorkspaceIncrementalEditorialForActorV1(args: Access & { action: IncrementalEditorialQuoteSource["action"]; runId: string }) {
+  const access = await authorize(args, true);
+  const state = await loadWorkspaceIncrementalEditorialForActorV1(access);
+  if (!state) throw new SignalWorkspaceEngineError("workspace_incremental_editorial_quote_unavailable", 409);
+  return signIncrementalEditorialQuote(await incrementalQuoteSource(access, args.action, args.runId, state));
+}
+async function confirmIncrementalQuote(access: Awaited<ReturnType<typeof authorize>>, body: {
+  action: IncrementalEditorialQuoteSource["action"]; run_id: string; quote_reference?: string; confirmed?: boolean;
+}, idempotencyKey: string) {
+  const state = await loadWorkspaceIncrementalEditorialForActorV1({ ...access, idempotency_key: idempotencyKey });
+  // The existing DB ledger still compares the complete accepted request. Expiry
+  // must not block recovery of an admission whose HTTP response was lost.
+  if (state?.admission?.request) return;
+  if (!state) throw new SignalWorkspaceEngineError("workspace_incremental_editorial_quote_required", 409);
+  verifyIncrementalEditorialQuote(await incrementalQuoteSource(access, body.action, body.run_id, state), body.quote_reference, body.confirmed);
 }
 export function workspaceAnalysisRunViewV1(run: SignalWorkspaceEngineStatusV1["latest_run"], budget?: SignalWorkspaceEngineInterpretationBudgetV1): WorkspaceAnalysisRun | null {
   if (!run) return null;
@@ -194,6 +235,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     await requestSignalWorkspaceIncrementalEditorialPreparationV1({ ...access, numeric_execution_id: args.body.run_id,
       expected_source_digest: args.body.expected_source_digest, idempotency_key: args.idempotencyKey });
   } else if (args.body.action === "begin_incremental_editorial") {
+    await confirmIncrementalQuote(access, args.body, args.idempotencyKey);
     await beginAndEnqueueSignalWorkspaceIncrementalEditorialV1({ ...access, numeric_execution_id: args.body.run_id,
       expected_evidence_plan_artifact_id: args.body.expected_evidence_plan_artifact_id,
       expected_numeric_checkpoint_digest: args.body.expected_numeric_checkpoint_digest,
@@ -201,6 +243,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       cap_micro_usd: args.body.cap_micro_usd, admission_not_after: args.body.admission_not_after, idempotency_key: args.idempotencyKey,
       provider_available: workspaceAnalysisAdmissionProviderAvailableV1() });
   } else if (args.body.action === "renew_incremental_editorial") {
+    await confirmIncrementalQuote(access, args.body, args.idempotencyKey);
     await renewAndEnqueueSignalWorkspaceIncrementalEditorialV1({ ...access, execution_id: args.body.run_id,
       expected_admission_operation_id: args.body.expected_admission_operation_id,
       grant_cap_micro_usd: args.body.grant_cap_micro_usd, admission_not_after: args.body.admission_not_after,

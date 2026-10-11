@@ -2937,6 +2937,12 @@
           "incrementalPreparationFailed": "No se pudo preparar la evidencia de los temas nuevos. Actualiza el estado para consultar la recuperación disponible."
         },
         "incrementalEditorial": {
+          "quote": "Ver estimación de temas nuevos",
+          "quoting": "Consultando estimación…",
+          "quoteError": "No se pudo obtener la estimación. Consulta de nuevo antes de autorizar.",
+          "quoteEstimate": "Estimación orientativa: {amount} para {count} grupos nuevos con {model}.",
+          "quoteHelp": "Es una previsión, no la reserva temporal ni un máximo estricto. El costo real queda registrado. Esta cotización vence el {expiry}.",
+          "quoteConfirm": "Confirmo iniciar la interpretación pagada de los temas nuevos con esta estimación.",
           "uncapped": "Sin máximo configurado",
           "optionalCap": "Máximo opcional (USD)",
           "noDeadline": "sin vencimiento operativo",
@@ -2960,7 +2966,7 @@
           "targetUnits": "{count, plural, one {# grupo con evidencia para interpretar.} other {# grupos con evidencia para interpretar.}}",
           "legacyUnits": "{count, plural, one {# grupo pendiente pertenece al análisis anterior y conserva su autorización separada.} other {# grupos pendientes pertenecen al análisis anterior y conservan su autorización separada.}}",
           "claimedUnits": "{count, plural, one {# grupo ya tiene una interpretación asignada; no se autoriza otra aquí.} other {# grupos ya tienen una interpretación asignada; no se autorizan de nuevo aquí.}}",
-          "confirmBody": "Confirma la interpretación de {count, plural, one {# grupo} other {# grupos}} con {model}. El importe es un máximo, no una estimación.",
+          "confirmBody": "Confirma la interpretación de {count, plural, one {# grupo} other {# grupos}} con {model}. Revisa la estimación y confirma antes de iniciar. Un máximo configurado se respeta como límite estricto.",
           "cap": "Máximo para esta interpretación (hasta {amount})",
           "expiry": "Permiso de gasto válido hasta {expiry} ({zone}).",
           "budget": "Presupuesto Claude del {date} ({zone}): {confirmed} confirmado, {reserved} reservado. Tope diario: {daily}.",
