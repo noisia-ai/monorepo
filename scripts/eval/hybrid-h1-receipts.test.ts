@@ -18,3 +18,10 @@ test('measurement accepts recovery of a technical JEV error and rejects duplicat
  assert.equal(hybridReceiptResultsV1([call('j0','jev','j0r',null,{...result,jev:{verdict:'error'}}),call('j','jev','jr',null,result)] as never).jev.get('root:concept')?.jev.verdict,'belongs');
  assert.throws(()=>hybridReceiptResultsV1([call('j','jev','jr',null,result),call('j2','jev','j2r',null,result)] as never),/duplicate_result/);
 });
+test('explicit technical verifier retries retain the original Claude judgement and never become semantic repair',()=>{
+ const error={...result,verdict:'error',error_code:'jev_http_429',claude:{...result.claude,verdict:'error'}};
+ const verified={...result,citation_call_id:'v2',claude:{...result.claude,verification:{supported:true}}};
+ const maps=hybridReceiptResultsV1([call('c','claude','cr',null,result),call('v','citation','vr','cr',error),call('v2','citation','v2r','cr',verified)] as never);
+ assert.equal(maps.claude.get('root:concept')?.claude?.verification?.supported,true);
+ assert.equal(maps.judgements.get('root:concept')?.claude?.verdict,'belongs');
+});

@@ -117,19 +117,20 @@ void main(async()=>{
         AND current.concept_key=concept->>'concept_key' AND current.definition_digest=concept->>'definition_digest'
       WHERE run.workspace_id=$1 AND run.membership_snapshot->>'hybrid_stage' IN('jev','claude','citation')
         AND (call.status='unknown' OR call.terminal_exposure_micro_usd>0)`,[identity.workspace_id])).rows;
-    const {jev,claude}=hybridReceiptResultsV1(calls as any),unresolved=new Set<string>(uncertain.map(row=>`${row.root_id}:${row.concept_key}`));
+    const {jev,claude,judgements}=hybridReceiptResultsV1(calls as any),unresolved=new Set<string>(uncertain.map(row=>`${row.root_id}:${row.concept_key}`));
     const output:HybridMeasuredRootV1[]=rows.map(row=>{
       const f=row.facets,gate=row.status==="labeled"&&row.relevance==="relevant"&&
         f?.spam_or_bot?.abstained===false&&f.spam_or_bot.value===false&&f?.entities?.abstained===false&&f.entities.value.length>0;
-      const decisions:HybridMeasuredRootV1["decisions"]={},unknown:string[]=[],human:string[]=[];
+      const decisions:HybridMeasuredRootV1["decisions"]={},claude_verdicts:NonNullable<HybridMeasuredRootV1["claude_verdicts"]>={},unknown:string[]=[],human:string[]=[];
       if(gate)for(const concept of selection.concepts){
         const k=`${row.root_id}:${concept.concept_key}`,j=jev.get(k),c=claude.get(k);
         if(excluded.has(k)){human.push(concept.concept_key);continue;}
         if(!j&&unresolved.has(k)){unknown.push(concept.concept_key);continue;}
         if(!j)fail("hybrid_pair_missing");
         decisions[concept.concept_key]=decideHybridMembershipV1(row.text,j!.jev,c?.claude??null);
+        const judged=judgements.get(k)?.claude?.verdict;if(judged)claude_verdicts[concept.concept_key]=judged;
       }
-      return {root_id:row.root_id,input_digest:row.input_digest,text:row.text,gate_passed:gate,decisions,unresolved_concepts:unknown,excluded_override_concepts:human};
+      return {root_id:row.root_id,input_digest:row.input_digest,text:row.text,gate_passed:gate,decisions,claude_verdicts,unresolved_concepts:unknown,excluded_override_concepts:human};
     });
     const billing:Record<string,any>[]=(await pool.query(`SELECT run.kind,version.provider,version.model,run.membership_snapshot->>'hybrid_stage' stage,
       run.membership_snapshot->>'route_digest' route_digest,

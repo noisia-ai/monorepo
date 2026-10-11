@@ -377,6 +377,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     };
     await insertCall({ id: claudeCall, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
       inputs: claude, result: confirmed });
+    await client.query("SAVEPOINT authorization_probes");
     const batchRightsCall=randomUUID();
     await insertCall({id:batchRightsCall,run:claudeRun,provider:"anthropic",model:"claude-sonnet-5-5",
       inputs:[...claude,{...input,root_id:abstainedRoot,text:abstainedText}],result:confirmed});
@@ -402,6 +403,11 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       "a settled JEV call for another pair cannot support this decision");
     await assert.rejects(write({ ...decision, claude_call_id: wrongClaude }), /hybrid_settled_receipt_required/u,
       "a settled Claude call for another pair cannot support this decision");
+    await client.query("ROLLBACK TO SAVEPOINT authorization_probes");
+    await client.query("RELEASE SAVEPOINT authorization_probes");
+    assert.deepEqual((await client.query("SELECT id FROM signal_labeling_calls WHERE id=ANY($1::uuid[])",
+      [[claudeCall,batchRightsCall,wrongJev,wrongClaude]])).rows,[{id:claudeCall}],
+      "authorization probes must not consume attempts in the legacy recovery fixture");
     // Earlier H1 versions cached technical errors; a valid retry can replace only an error.
     await client.query(`INSERT INTO signal_hybrid_membership_decisions(workspace_id,root_id,root_fingerprint,
       concept_key,definition_digest,entity_context_digest,effective_entities_digest,route_digest,jev_call_id,

@@ -137,3 +137,12 @@ test('observed full-corpus membership cost includes every citation verifier',()=
  assert.equal(report.cost.observed_settled_usd,1);assert.equal(report.cost.new_membership_settled_usd,0.9);
  assert.equal(report.cost.observed_usd_per_1000,1000);
 });
+test('gold Claude views retain an actual judge verdict when the independent verifier fails technically',()=>{
+ const citation={quote:'Example',start:0,end:7},jev={verdict:'belongs' as const,probability:0.8,citation};
+ const roots:HybridMeasuredRootV1[]=[{root_id:'a',input_digest:'a',text:'Example',gate_passed:true,
+  decisions:{x:decideHybridMembershipV1('Example',jev,{verdict:'error',citation})},claude_verdicts:{x:'belongs'}}];
+ const gold=[{root_id:'a',input_digest:'a',partition:'test',entities:[],memberships:{x:'belongs'}}] as unknown as Gold[];
+ const views=measureHybridH1V1(gold,roots,['x'],{facets_settled_usd:0,jev_settled_usd:0,claude_settled_usd:0,unknown_calls:0},1).gold.find(row=>row.partition==='test')!.views;
+ assert.equal(views.claude_evaluated_same_roots.roots,1);assert.equal(views.full_pipeline.claude.tp,1);
+ assert.equal(views.full_pipeline.hybrid.states.error,1);assert.equal(views.common_binary.roots,1);
+});

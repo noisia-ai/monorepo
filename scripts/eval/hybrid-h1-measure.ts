@@ -7,7 +7,8 @@ import { type Gold, type Selection, validateGold, validateSelection } from "./co
 import { binary, wilson } from "./metrics";
 
 export type HybridMeasuredRootV1 = { root_id: string; input_digest: string; text: string; gate_passed: boolean;
-  decisions: Record<string, HybridDecisionV1>; unresolved_concepts?: string[]; excluded_override_concepts?:string[] };
+  decisions: Record<string, HybridDecisionV1>; claude_verdicts?:Record<string,NonNullable<HybridDecisionV1['claude']>['verdict']>;
+  unresolved_concepts?: string[]; excluded_override_concepts?:string[] };
 export type HybridObservedLedgerV1 = { facets_settled_usd: number; jev_settled_usd: number;
   claude_settled_usd: number; citation_settled_usd?:number; unknown_calls: number; unknown_provider_usd_upper_bound?: number;
   uncertain_pair_calls?:Record<string,string>;
@@ -81,6 +82,8 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
       if (decision.verdict !== recalculated.verdict || decision.needs_claude !== recalculated.needs_claude)
         throw new Error("hybrid_decision_mismatch");
     }
+    if(Object.entries(root.claude_verdicts??{}).some(([key,verdict])=>!root.gate_passed||!concepts.includes(key)||
+      !['belongs','not_belongs','insufficient','refused','error'].includes(verdict)))throw new Error('hybrid_claude_judgement_invalid');
   }
   for (const row of gold) if (indexed.get(row.root_id)?.input_digest !== row.input_digest)
     throw new Error("hybrid_gold_input_changed");
@@ -124,12 +127,12 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
       const partitionGold = gold.filter(g => g.partition === partition);
       const all=partitionGold.filter(g=>!indexed.get(g.root_id)?.excluded_override_concepts?.includes(key));
       const positive = all.filter(g => indexed.get(g.root_id)?.decisions[key]?.jev.verdict === "belongs");
+      const claude = (r: HybridMeasuredRootV1 | undefined) => r?.claude_verdicts?.[key]??r?.decisions[key]?.claude?.verdict ?? "pending";
       const evaluated = positive.filter(g => ["belongs", "not_belongs", "insufficient"].includes(
-        indexed.get(g.root_id)?.decisions[key]?.claude?.verdict ?? ""));
-      const common = positive.filter(g => emitted(indexed.get(g.root_id)?.decisions[key]?.claude?.verdict ?? ""));
+        claude(indexed.get(g.root_id))));
+      const common = positive.filter(g => emitted(claude(indexed.get(g.root_id))));
       const verdict = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.verdict ?? "pending";
       const jev = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.jev.verdict ?? "pending";
-      const claude = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.claude?.verdict ?? "pending";
       const view = (subset: Gold[]) => ({ roots: subset.length,
         hybrid: score(subset, indexed, key, verdict), jev: score(subset, indexed, key, jev), claude: score(subset, indexed, key, claude),
         review_required: subset.filter(g => verdict(indexed.get(g.root_id)) === "review_required").length,
