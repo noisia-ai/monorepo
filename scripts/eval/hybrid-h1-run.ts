@@ -212,5 +212,11 @@ void main(async()=>{
       ["ledger.json",JSON.stringify({route_digest:route.route_digest,window,billing,...ledger},null,2)+"\n"],
       ["report.json",JSON.stringify(report,null,2)+"\n"],["populations.json",JSON.stringify(populations,null,2)+"\n"]])await writeFile(`${directory}/${name}`,value!,{mode:0o600});
     console.log(JSON.stringify({stage:"hybrid_reported",roots:rows.length,status:report.status,cost:report.cost}));
+  }catch(error){
+    const safe=(value:unknown)=>typeof value==='string'&&/^[A-Za-z0-9_]{1,100}$/u.test(value)?value:null;
+    const details=error as {name?:unknown;code?:unknown;constraint?:unknown;message?:unknown};
+    console.error(JSON.stringify({stage:'hybrid_driver_failed',name:safe(details.name),code:safe(details.code),constraint:safe(details.constraint),
+      message:typeof details.message==='string'&&/^[a-z][a-z_]*(?::[a-z_]+)?$/u.test(details.message)?details.message:null}));
+    throw error;
   }finally{await pool.end();}
 });

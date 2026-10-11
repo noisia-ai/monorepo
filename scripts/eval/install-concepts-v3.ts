@@ -93,8 +93,8 @@ void main(async()=>{
       const receipt={stage:'v3_postgres_acceptance',passed:true,input_sha256:hash,created:result!.created,updated:result!.updated,
         checks:['exact_data','scopes','provenance','reservation_v2','unrelated_catalog','idempotent_replay','rollback','zero_provider_calls'],
         target_workspaces:targets.map(row=>row.id),at:new Date().toISOString()};
-      await mkdir('.data/dev-corpus/voyage-real/hybrid-h1-audit-r8',{recursive:true});
-      await writeFile(receiptPath,JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt));
+      await mkdir('.data/dev-corpus/voyage-real/hybrid-h1-audit-r8',{recursive:true,mode:0o700});
+      await writeFile(receiptPath,JSON.stringify(receipt,null,2)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));
     }else{
       const acceptanceReceipt=JSON.parse(await readFile(receiptPath,'utf8'));
       if(!acceptanceReceipt.passed||acceptanceReceipt.input_sha256!==hash)throw new Error('mfp_v3_acceptance_required');
@@ -103,7 +103,7 @@ void main(async()=>{
       const receipt={stage:'v3_data_installed',...result,input_sha256:hash,confirmed_by:'founder AUDIT §14.2',
         evaluation_equivalents:{workspace_id:evaluationWorkspace,origin:'manual',source_workspace_id:originWorkspace,concept_keys:V3_KEYS.slice(2)},
         origin_updates:{workspace_id:originWorkspace,adoption_preserved:true},provider_calls:0,at:new Date().toISOString()};
-      await writeFile('.data/dev-corpus/voyage-real/hybrid-h1-audit-r8/v3-data-installed.json',JSON.stringify(receipt,null,2)+'\n');console.log(JSON.stringify(receipt));
+      await writeFile('.data/dev-corpus/voyage-real/hybrid-h1-audit-r8/v3-data-installed.json',JSON.stringify(receipt,null,2)+'\n',{mode:0o600});console.log(JSON.stringify(receipt));
     }
   }finally{await pool.end();}
 });
