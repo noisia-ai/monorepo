@@ -1,3 +1,4 @@
+import { shareWorkspaceAnalysisRead } from "./workspace-analysis-read-sharing";
 import { readWorkspaceAnalysis } from "./mfp-population-read";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
@@ -167,6 +168,15 @@ export async function loadWorkspaceAnalysisPreflightForReadV1<T>(loader: () => P
 export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempotencyKey?: string }): Promise<WorkspaceAnalysisStatus> {
   if (args.idempotencyKey !== undefined && !requestKeyPattern.test(args.idempotencyKey)) throw new SignalWorkspaceEngineError("workspace_analysis_request_invalid", 422);
   const access = await authorize(args, false);
+  const authority = JSON.stringify({ capabilities: access.capabilities, discoveryEnabled: access.discoveryEnabled });
+  const scope = JSON.stringify([args.workspaceId, args.actorUserId, args.idempotencyKey ?? null, authority]);
+  return shareWorkspaceAnalysisRead(access.database, scope, () => loadAuthorizedWorkspaceAnalysisV1(args, access), async () => {
+    const current = await authorize({ ...args, database: access.database }, false);
+    if (JSON.stringify({ capabilities: current.capabilities, discoveryEnabled: current.discoveryEnabled }) !== authority)
+      throw new SignalWorkspaceEngineError("workspace_analysis_status_unavailable", 503);
+  });
+}
+async function loadAuthorizedWorkspaceAnalysisV1(args: Access & { idempotencyKey?: string }, access: Awaited<ReturnType<typeof authorize>>): Promise<WorkspaceAnalysisStatus> {
   // Authority is resolved before any corpus read. Independent read-only stores
   // use their own guarded transactions; only receipt-dependent readers wait.
   const discoveryEnabled = access.discoveryEnabled;
