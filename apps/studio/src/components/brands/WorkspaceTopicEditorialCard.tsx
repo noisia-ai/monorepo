@@ -22,12 +22,13 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
   const [confirmed, setConfirmed] = useState(false);
   useEffect(() => setConfirmed(false), [value.quote?.reference]);
   const [quoteExpired, setQuoteExpired] = useState(false);
+  const quoteDeadline = value.quote?.expires_at;
   useEffect(() => {
     setQuoteExpired(false);
-    if (!value.quote) return;
-    const timer = setTimeout(() => setQuoteExpired(true), Math.max(0, Date.parse(value.quote.expires_at)-Date.now()));
+    if (!quoteDeadline) return;
+    const timer = setTimeout(() => setQuoteExpired(true), Math.max(0, Date.parse(quoteDeadline)-Date.now()));
     return () => clearTimeout(timer);
-  }, [value.quote?.reference, value.quote?.expires_at]);
+  }, [value.quote?.reference, quoteDeadline]);
   const quoteReady = !quoteExpired && !!value.quote?.estimated_micro_usd && Date.parse(value.quote.expires_at) > Date.now();
   const state = value.status;
   const execution = value.execution;
