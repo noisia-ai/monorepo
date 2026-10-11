@@ -139,7 +139,9 @@ test("MFP generation bundle reuses one RR source proof with exact DTO parity and
           // a fresh proof; no successful proof survives between transactions.
           for (const mutation of [
             () => query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1::uuid", [args.workspace_id]),
-            () => query("UPDATE signal_classification_generations SET policy_valid_until=now()-interval '1 second' WHERE id=$1::uuid", [parent.generation_id]),
+            // Retiring the active retention policy is a valid live revocation;
+            // sealed classification generations are intentionally immutable.
+            () => query("UPDATE signal_retention_policies SET status='retired',effective_to=now(),updated_at=now() WHERE workspace_id=$1::uuid AND status='active'", [args.workspace_id]),
             () => query("UPDATE signal_corpus_preparation_input_state SET input_revision=input_revision+1 WHERE workspace_id=$1::uuid", [args.workspace_id]),
           ]) {
             await query("BEGIN");
