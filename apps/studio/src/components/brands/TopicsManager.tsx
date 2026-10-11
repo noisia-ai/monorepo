@@ -71,7 +71,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
   const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
   const selectedIsDiscovery = selected?.origin === "workspace_discovery";
   const processingVisible = !navigation || data.capabilities.can_execute;
-  const computation = useWorkspaceTopicComputation({ workspaceId,
+  const computation = useWorkspaceTopicComputation({ workspaceId, enabled: !mfpEnabled,
     termKey: !mfpEnabled && processingVisible && !selectedIsDiscovery ? selectedKey : null,
     catalogVersion: `${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`, initial: initialComputation });
   const workspaceSearch = !mfpEnabled && computation.data?.mode === "workspace";
@@ -530,7 +530,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
               workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
               definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null}
               refreshKey={associationReceipt} signalHref={signalHref} onAccessDenied={clearAccess} /> : null} /> : null}
-          {processingVisible && !creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
+          {!mfpEnabled && processingVisible && !creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
           {processingVisible && !creating && !selectedIsDiscovery && workspaceSearch && computation.data ? <>
             {computation.data.preflight.state !== "ready" ? <p className="topics-manager__cost-notice" role="status">
               {t(`computation.preflight.${computation.data.preflight.state}`, { count: computation.data.preflight.missing_prototypes ?? 0 })}

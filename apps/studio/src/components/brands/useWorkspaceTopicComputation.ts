@@ -8,12 +8,12 @@ import {
   type WorkspaceTopicComputationStatus
 } from "@/lib/data-os/signal-workspace-topic-computation-ui";
 
-export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVersion, initial = null }: {
+export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVersion, initial = null, enabled = true }: {
   workspaceId: string; termKey: string | null; catalogVersion: string;
-  initial?: WorkspaceTopicComputationStatus | null;
+  initial?: WorkspaceTopicComputationStatus | null; enabled?: boolean;
 }) {
   const [snapshot, setSnapshot] = useState(() => initial ? latestWorkspaceTopicComputation(null, initial, workspaceId) : null);
-  const [reading, setReading] = useState(!snapshot);
+  const [reading, setReading] = useState(enabled && !snapshot);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState<PendingWorkspaceTopicComputation | null>(null);
@@ -60,6 +60,7 @@ export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVers
     return next;
   }, [forgetRequest, workspaceId]);
   const read = useCallback(async () => {
+    if (!enabled) { setReading(false); return; }
     readController.current?.abort();
     const controller = new AbortController(); readController.current = controller;
     const ticket = epoch.current;
@@ -76,7 +77,7 @@ export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVers
       accept(next, request?.key); setError((previous) => pendingRef.current ? previous : null);
     } catch { if (!controller.signal.aborted && ticket === epoch.current) setError("load"); }
     finally { if (!controller.signal.aborted && ticket === epoch.current) setReading(false); }
-  }, [accept, endpoint, revoke, workspaceId]);
+  }, [accept, enabled, endpoint, revoke, workspaceId]);
 
   useEffect(() => {
     const fence = epoch;
@@ -88,15 +89,15 @@ export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVers
   useEffect(() => { void read(); }, [catalogVersion, read, pending?.key]);
   const active = data?.active_run?.id;
   useEffect(() => {
-    if (!active) return;
+    if (!enabled || !active) return;
     let stopped = false; let timer: ReturnType<typeof setTimeout>;
     const schedule = () => { timer = setTimeout(async () => { await read(); if (!stopped) schedule(); }, 4_000); };
     schedule(); return () => { stopped = true; clearTimeout(timer); };
-  }, [active, read]);
+  }, [active, enabled, read]);
 
   const start = useCallback(async () => {
     const next = current.current;
-    if (writeController.current || !next?.can_execute || next.mode !== "workspace" || next.active_run
+    if (!enabled || writeController.current || !next?.can_execute || next.mode !== "workspace" || next.active_run
       || next.request_run?.status === "queued" || next.request_run?.status === "running"
       || (!pendingRef.current && (!workspaceTopicSearchCanStart(next) || error === "load"))) return;
     let request = pendingRef.current;
@@ -127,11 +128,11 @@ export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVers
     } catch { if (!controller.signal.aborted && ticket === epoch.current) setError("request"); }
     finally { if (writeController.current === controller) writeController.current = null;
       if (!controller.signal.aborted && ticket === epoch.current) setSubmitting(false); }
-  }, [accept, endpoint, error, forgetRequest, revoke, workspaceId]);
+  }, [accept, enabled, endpoint, error, forgetRequest, revoke, workspaceId]);
 
   const executionId = data?.mode === "workspace" ? data.latest_ready?.id ?? null : null;
   const readResults = useCallback(async (cursor: string | null = null) => {
-    if (!executionId || !termKey) return;
+    if (!enabled || !executionId || !termKey) return;
     resultsController.current?.abort(); const controller = new AbortController(); resultsController.current = controller;
     const ticket = epoch.current;
     setResultsStatus("loading");
@@ -156,7 +157,7 @@ export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVers
         ? { ...payload, items: [...previous.data.items, ...payload.items.filter((item) => !previous.data.items.some((old) => old.root_id === item.root_id))] } : payload }));
       setResultsErrorCode(null); setResultsStatus("ready");
     } catch { if (!controller.signal.aborted && ticket === epoch.current) setResultsStatus("error"); }
-  }, [endpoint, executionId, revoke, termKey]);
+  }, [enabled, endpoint, executionId, revoke, termKey]);
   useEffect(() => {
     setResultSnapshot(null); setResultsStatus("idle"); setResultsErrorCode(null); void readResults();
     return () => resultsController.current?.abort();
@@ -164,6 +165,6 @@ export function useWorkspaceTopicComputation({ workspaceId, termKey, catalogVers
 
   const results = resultSnapshot?.termKey === termKey && resultSnapshot?.data.execution_id === executionId ? resultSnapshot.data : null;
   return { data, reading, submitting, error, pending, results, resultsStatus, resultsErrorCode, read, start, readResults,
-    canStart: error !== "load" && workspaceTopicSearchCanStart(data) || Boolean(pending && data?.can_execute && data.mode === "workspace"
-      && !data.active_run && data.request_run?.status !== "queued" && data.request_run?.status !== "running") };
+    canStart: enabled && (error !== "load" && workspaceTopicSearchCanStart(data) || Boolean(pending && data?.can_execute && data.mode === "workspace"
+      && !data.active_run && data.request_run?.status !== "queued" && data.request_run?.status !== "running")) };
 }

@@ -1,3 +1,4 @@
+import { readWorkspaceAnalysis } from "./mfp-population-read";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1, signalWorkspaceFeatureEnabledV1,
@@ -70,12 +71,13 @@ const incrementalEditorialReaders = {
  * receipts must not depend on the current preparation or catalog still existing. */
 export async function loadWorkspaceIncrementalEditorialForActorV1(args: {
   database: Database; workspace_id: string; actor_user_id: string; idempotency_key?: string;
-}, readers = incrementalEditorialReaders): Promise<WorkspaceIncrementalEditorial | null> {
+}, readers = incrementalEditorialReaders, options: { parallel?: boolean } = {}): Promise<WorkspaceIncrementalEditorial | null> {
   const admission = await readers.admission(args);
-  const [preparation, execution] = await Promise.all([
-    readers.preparation({ ...args, numeric_execution_id: admission?.request?.receipt.numeric_execution_id }),
-    readers.execution({ ...args, execution_id: admission?.request?.receipt.execution_id ?? admission?.operation?.execution_id })
-  ]);
+  const preparationArgs = { ...args, numeric_execution_id: admission?.request?.receipt.numeric_execution_id };
+  const executionArgs = { ...args, execution_id: admission?.request?.receipt.execution_id ?? admission?.operation?.execution_id };
+  const [preparation, execution] = options.parallel === false
+    ? [await readers.preparation(preparationArgs), await readers.execution(executionArgs)]
+    : await Promise.all([readers.preparation(preparationArgs), readers.execution(executionArgs)]);
   const providerAvailable = workspaceAnalysisAdmissionProviderAvailableV1();
   return preparation || admission || execution ? { preparation,
     execution: workspaceIncrementalEditorialExecutionViewV1(execution, providerAvailable),
@@ -169,16 +171,16 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   // use their own guarded transactions; only receipt-dependent readers wait.
   const discoveryEnabled = access.discoveryEnabled;
   const [numeric_readiness, raw, update, preparation, receivedResult, preflightRead, policy, loadedAdmission, incremental_editorial] = await Promise.all([
-    loadSignalWorkspaceNumericReadinessV1(access),
-    loadSignalWorkspaceEngineStatusV1({ ...access, idempotency_key: args.idempotencyKey }),
-    loadSignalWorkspaceAnalysisUpdateV1({ ...access, idempotency_key: args.idempotencyKey }),
-    loadSignalWorkspaceCorpusPreparationStoreV1({ queryable: access.database, workspace_id: args.workspaceId }),
-    access.database.query<{ received: boolean }>(`SELECT EXISTS(SELECT 1 FROM import_batches
-      WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId]),
-    loadWorkspaceAnalysisPreflightForReadV1(() => loadSignalWorkspaceEnginePreflightV1(access)),
-    discoveryEnabled ? loadSignalDiscoveryPolicyV1(access.database,args.workspaceId).then(value => ({ ...value })) : Promise.resolve(workspaceAnalysisInterpretationPolicyV1()),
-    loadSignalWorkspaceInterpretationAdmissionV1({ ...access, idempotency_key: args.idempotencyKey }),
-    loadWorkspaceIncrementalEditorialForActorV1({ ...access, idempotency_key: args.idempotencyKey })
+    readWorkspaceAnalysis(() => loadSignalWorkspaceNumericReadinessV1(access)),
+    readWorkspaceAnalysis(() => loadSignalWorkspaceEngineStatusV1({ ...access, idempotency_key: args.idempotencyKey })),
+    readWorkspaceAnalysis(() => loadSignalWorkspaceAnalysisUpdateV1({ ...access, idempotency_key: args.idempotencyKey })),
+    readWorkspaceAnalysis(() => loadSignalWorkspaceCorpusPreparationStoreV1({ queryable: access.database, workspace_id: args.workspaceId })),
+    readWorkspaceAnalysis(() => access.database.query<{ received: boolean }>(`SELECT EXISTS(SELECT 1 FROM import_batches
+      WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId])),
+    readWorkspaceAnalysis(() => loadWorkspaceAnalysisPreflightForReadV1(() => loadSignalWorkspaceEnginePreflightV1(access))),
+    readWorkspaceAnalysis(async () => discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1()),
+    readWorkspaceAnalysis(() => loadSignalWorkspaceInterpretationAdmissionV1({ ...access, idempotency_key: args.idempotencyKey })),
+    readWorkspaceAnalysis(() => loadWorkspaceIncrementalEditorialForActorV1({ ...access, idempotency_key: args.idempotencyKey }, undefined, { parallel: false }))
   ]);
   const received = receivedResult.rows[0]?.received === true;
   const preflight = preflightRead.value;
@@ -186,7 +188,7 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
   const budgets = new Map<string, SignalWorkspaceEngineInterpretationBudgetV1>();
   const runs = [raw.latest_run, raw.latest_complete, raw.request_run].filter((run) => run && run.claude_cap_micro_usd !== 0);
   await Promise.all([...new Set(runs.map(run => run!.execution_id))].map(async execution_id => {
-    budgets.set(execution_id, await loadSignalWorkspaceEngineInterpretationBudgetV1({ ...access, execution_id }));
+    budgets.set(execution_id, await readWorkspaceAnalysis(() => loadSignalWorkspaceEngineInterpretationBudgetV1({ ...access, execution_id })));
   }));
   const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
   const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1() } : null;
