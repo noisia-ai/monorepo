@@ -178,9 +178,7 @@ export async function loadSignalWorkspaceTopicProjectionStatusWithQueryableV1(ar
   OR execution_id=(SELECT execution_id FROM runs WHERE complete ORDER BY generation_version DESC LIMIT 1)
  ) SELECT selected.*,
    generation.input_revision=state.input_revision AND (generation.policy_valid_until IS NULL OR generation.policy_valid_until>clock_timestamp())
-    AND signal_workspace_projection_source_current_v1(generation)
-    AND NOT EXISTS(SELECT 1 FROM signal_classification_assignments assignment WHERE assignment.generation_id=generation.id
-     AND NOT signal_workspace_classification_assignment_current_v1(assignment,generation)) source_current
+    AND signal_workspace_projection_assignments_current_v1(generation) source_current
  FROM selected JOIN signal_classification_generations generation ON generation.id=selected.generation_id
  JOIN signal_corpus_preparation_input_state state ON state.workspace_id=generation.workspace_id
  ORDER BY selected.generation_version DESC`,[args.workspace_id,contract])).rows;
