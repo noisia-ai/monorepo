@@ -10,6 +10,7 @@ import { validateGold, validateSelection, type Gold, type Selection } from "./co
 import { hybridUncertainExposureV1, measureHybridH1V1, type HybridMeasuredRootV1 } from "./hybrid-h1-measure";
 import { hybridReceiptResultsV1 } from "./hybrid-h1-receipts";
 import { hybridH1PopulationSqlV1 } from "./hybrid-h1-population";
+import { V3_KEYS } from "./concepts-v3";
 import { decideHybridMembershipV1 } from "../../packages/query-engine/src/index";
 import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1, requestHybridMembershipStageV1,
   type HybridMembershipStageV1 } from "../../infrastructure/db/index";
@@ -177,10 +178,30 @@ void main(async()=>{
         [via,overrides.filter(row=>row.decided_via===via&&excludedPairs.has(`${row.root_id}:${row.concept_key}`)).length])),
       unknown_provider_usd_upper_bound:hybridUncertainExposureV1(currentUnknown as any).exposure_usd};
     const report=measureHybridH1V1(gold,output,selection.concepts.map(concept=>concept.concept_key),ledger);
+    const catalogRows: {concept_key:string}[]=(await pool.query("SELECT concept_key FROM signal_membership_concepts_v1 WHERE workspace_id=$1",[identity.workspace_id])).rows;
+    const catalogKeys=catalogRows.map(row=>row.concept_key);
+    const currentPairs: {root_id:string;concept_key:string;verdict:string;source:string;citations:any[]}[]=(await pool.query(`SELECT root_id::text,concept_key,verdict,source,citations
+      FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1`,[identity.workspace_id])).rows;
+    const focus=['reserva_entrega',...V3_KEYS],textByRoot=new Map(rows.map(row=>[row.root_id,row.text]));
+    const summarize=(keys:string[])=>{
+      const pairs=currentPairs.filter(row=>keys.includes(row.concept_key)&&row.source!=='human');
+      const review=pairs.filter(row=>row.verdict==='review_required'),belongs=pairs.filter(row=>row.verdict==='belongs');
+      return {concept_keys:keys,pair_denominator:pairs.length,human_overrides_excluded:currentPairs.filter(row=>keys.includes(row.concept_key)&&row.source==='human').length,
+        by_verdict:Object.fromEntries([...new Set(pairs.map(row=>row.verdict))].map(verdict=>[verdict,pairs.filter(row=>row.verdict===verdict).length])),
+        review_required_decisions:review.length,review_required_roots:new Set(review.map(row=>row.root_id)).size,
+        review_required_decisions_per_1000_roots:review.length*1000/rows.length,
+        review_required_root_rate:new Set(review.map(row=>row.root_id)).size/rows.length,
+        literal_valid_belongs:belongs.filter(row=>{const text=textByRoot.get(row.root_id);return text&&row.citations.length>0&&row.citations.length<=3&&
+          row.citations.every((citation:any)=>Number.isSafeInteger(citation.start)&&Number.isSafeInteger(citation.end)&&citation.start>=0&&citation.end>citation.start&&text.slice(citation.start,citation.end)===citation.quote);}).length,
+        belongs_decisions:belongs.length};
+    };
+    const populations={roots:rows.length,route_digest:route.route_digest,cost_concept_denominator:catalogKeys.length,
+      all_route:summarize(catalogKeys),quality_five:summarize(focus),gold_concept_keys:selection.concepts.map(concept=>concept.concept_key),
+      note:'Cost covers the entire route catalog; five-concept quality and three-concept gold are separate.'};
     await mkdir(directory,{recursive:true,mode:0o700});
     for(const [name,value] of [["roots.jsonl",output.map(row=>JSON.stringify(row)).join("\n")+"\n"],
       ["ledger.json",JSON.stringify({route_digest:route.route_digest,window,billing,...ledger},null,2)+"\n"],
-      ["report.json",JSON.stringify(report,null,2)+"\n"]])await writeFile(`${directory}/${name}`,value!,{mode:0o600});
+      ["report.json",JSON.stringify(report,null,2)+"\n"],["populations.json",JSON.stringify(populations,null,2)+"\n"]])await writeFile(`${directory}/${name}`,value!,{mode:0o600});
     console.log(JSON.stringify({stage:"hybrid_reported",roots:rows.length,status:report.status,cost:report.cost}));
   }finally{await pool.end();}
 });

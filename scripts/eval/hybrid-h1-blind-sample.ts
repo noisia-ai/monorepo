@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { main, openDatabase } from "../dev-corpus/guard.mjs";
 import { selectDisjointHybridPositivesV1 } from "./hybrid-h1-blind-selection";
 import { loadMfpEvalIdentity } from "./fixture-identity";
+import { V3_KEYS } from "./concepts-v3";
 const hash=(value:string)=>createHash("sha256").update(value).digest("hex");
 void main(async()=>{
   const previousPath=process.argv.find(arg=>arg.startsWith("--previous-trace="))?.split("=")[1];
@@ -34,7 +35,8 @@ void main(async()=>{
       JOIN signal_labeling_runs run ON run.id=call.run_id
       JOIN signal_entity_context_versions context ON context.workspace_id=run.workspace_id AND context.version_no=run.entity_context_version_no
       JOIN LATERAL jsonb_array_elements(call.inputs) input(value) ON input.value->>'root_id'=decision.root_id::text
-      WHERE decision.workspace_id=$1 AND decision.verdict='belongs'`,[identity.workspace_id])).rows;
+      WHERE decision.workspace_id=$1 AND decision.verdict='belongs'
+        AND decision.concept_key=ANY($2::text[])`,[identity.workspace_id,['reserva_entrega',...V3_KEYS]])).rows;
     const seed=`mfp-h1-blind-r8:${rows[0]?.route_digest}:${previousHash}`;
     const selected=selectDisjointHybridPositivesV1(rows as Array<Record<string,any>&{root_id:string;concept_key:string}>,excluded,seed);
     const items=selected.map((row,index)=>{
@@ -49,7 +51,10 @@ void main(async()=>{
     });
     const rubric="Evalúa los 30 ítems de forma independiente, sin informes H1 ni gold. Para cada sample_id devuelve membership: belongs, not_belongs o insufficient y citation_support: supported, unsupported o insufficient, con razones separadas. Primero decide si el texto propio de la mención establece la pertenencia al concepto; luego si los fragmentos sostienen el hecho decisivo y cada condición necesaria. Una cita literal, hipotético o comentario general no acredita pertenencia. No infieras hechos ausentes. Puedes proponer hasta tres fragmentos literales alternativos de la misma raíz.";
     const payload=JSON.stringify({contract_version:"mfp-blind-semantic-review-v2",rubric,items},null,2)+"\n";
-    const trace=JSON.stringify({seed,selection:"SHA256 order within concept, round-robin concepts, distinct roots excluding prior 30",population:rows.length,previous_trace_sha256:previousHash,excluded_roots:excluded.size,disjoint:true,
+    const trace=JSON.stringify({seed,selection:"SHA256 order within concept, round-robin concepts, distinct roots excluding prior 30",
+      population:rows.length,concept_keys:['reserva_entrega',...V3_KEYS],
+      strata:Object.fromEntries(['reserva_entrega',...V3_KEYS].map(key=>[key,{population:rows.filter(row=>row.concept_key===key).length,samples:selected.filter(row=>row.concept_key===key).length}])),
+      previous_trace_sha256:previousHash,excluded_roots:excluded.size,disjoint:true,
       items:selected.map((row,index)=>({sample_id:items[index]!.sample_id,root_id:row.root_id,concept_key:row.concept_key,
         definition_digest:row.definition_digest,route_digest:row.route_digest,jev_call_id:row.jev_call_id,
         claude_call_id:row.claude_call_id,citation_call_id:row.citation_call_id,run_id:row.run_id,raw_sha256:row.raw_sha256,raw_storage_key:row.raw_storage_key}))},null,2)+"\n";
