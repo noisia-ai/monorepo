@@ -3233,6 +3233,11 @@
           "failed": "Preparation did not finish. The analysis and source groups are preserved."
         },
         "editorial": {
+          "estimate": "View editorial estimate",
+          "estimated": "Estimate: {amount} for {groups} groups",
+          "estimateHint": "Includes screening and the three global stages with expected output. This is a forecast: actual cost depends on usage and is recorded at completion.",
+          "confirmEstimate": "I confirm starting the paid editorial review with this estimate.",
+          "loading": "Loading editorial status or estimate. This read may take up to a minute.",
           "title": "Topics editorial review",
           "body": "The full review proposes Topics, Narratives and Noise from the groups and their evidence.",
           "maximum": "Authorized cap",
@@ -4568,6 +4573,7 @@
     "goSignal": "Go to Signal"
   },
   "Mfp": {
+    "loadingPopulation": "Loading population and saved results. The first read can take up to a minute; you can keep using the page.",
     "hybridReview": {
       "title": "Results requiring review",
       "first": "Initial evaluation",
@@ -4706,6 +4712,7 @@
       "all_conversations": "All conversations"
     },
     "errors": {
+      "busy": "The read is busy. Select Refresh to retry.",
       "forbidden": "Access changed. Reload the page to review your permissions.",
       "preparation": "Prepare mentions in Data before continuing.",
       "policy": "The processing policy needs review. Contact your organization administrator.",

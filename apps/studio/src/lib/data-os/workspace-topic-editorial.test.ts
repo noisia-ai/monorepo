@@ -129,7 +129,7 @@ test("V2 start keeps the policy quote internal and admits from one server-built 
     "status polling must not keep hitting PostgreSQL at a fixed five-second rate after errors");
   const route = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/consolidation/editorial/route.ts", import.meta.url), "utf8");
   const start = await readFile(new URL("./signal-topic-editorial-batch-control-v2.ts", import.meta.url), "utf8");
-  assert.match(ui, /action: "start_editorial" as const/u); assert.doesNotMatch(ui, /quote=1|onQuote|onAuthorize/u);
+  assert.match(ui, /action: "authorize_editorial" as const/u); assert.match(ui, /quote=1/u);
   assert.match(route, /command\?\.action==="start_editorial"[\s\S]*enqueueSignalTopicEditorialStartV2/u);
   assert.match(start, /startWorkspaceTopicEditorialBatchV2ForActor[\s\S]*signal_topic_editorial_request_keys[\s\S]*replaySignalTopicEditorialBatchV2/u);
   assert.match(start, /quoteSignalTopicEditorialChunkedAdmissionV3[\s\S]*requestSignalTopicEditorialChunkedAdmissionV3/u);
@@ -440,14 +440,19 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: saved group o
   assert.match(html, locale === "es-MX" ? /Los grupos pendientes aún no tienen una decisión editorial/u : /Pending groups do not yet have an editorial decision/u);
   assert.doesNotMatch(html, /<blockquote/u);
 });
-for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: one start action uses policy without a per-run quote or confirmation`, async () => {
+for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: unpaid estimate precedes an explicitly confirmed paid start`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
-  const render = (props: Partial<ComponentProps<typeof WorkspaceTopicEditorialCard>> = {}) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+  const render = (value: WorkspaceTopicEditorialViewV1) => renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>, createElement(WorkspaceTopicEditorialCard,
-      { value: ready, onStart: () => {}, ...props })));
-  const html = render(); assert.doesNotMatch(html, /type="checkbox"|30\.00|cotización editorial|editorial quote/iu);
-  assert.match(html, /(Iniciar revisión editorial|Start editorial review)/u);
-  assert.doesNotMatch(render({ stale: true }), /(Iniciar revisión editorial|Start editorial review)/u);
+      { value, onStart: () => {} })));
+  const initial = render({...ready, status:"not_requested",quote:null});
+  assert.match(initial, /(Ver estimación editorial|View editorial estimate)/u);
+  assert.doesNotMatch(initial, /type="checkbox"/u);
+  const estimated = render({...ready, quote:{...ready.quote!,estimated_micro_usd:"444000",expires_at:new Date(Date.now()+240000).toISOString(),maximum_micro_usd:null}});
+  assert.match(estimated, /0[.,]444/u);
+  assert.match(estimated, /type="checkbox"/u);
+  assert.match(estimated, /<button[^>]*disabled=""[^>]*>(?:Iniciar revisión editorial|Start editorial review)/u);
+  assert.doesNotMatch(estimated, /30[.,]00/u, 'an unset hard cap is never presented as the forecast');
 });
 for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: completed V3 screening cannot publish an unconsolidated atomic catalog`, async () => {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
@@ -534,7 +539,7 @@ for (const locale of ["es-MX", "en-US"] as const) test(`${locale}: a quiescent f
     { locale, messages, timeZone: "America/Mexico_City" } as ComponentProps<typeof NextIntlClientProvider>,
     createElement(WorkspaceTopicEditorialCard, { value: successorView, onStart: () => {} })));
   assert.match(html, locale === "es-MX" ? /La revisión anterior quedó detenida/u : /The previous review stopped/u);
-  assert.match(html, locale === "es-MX" ? /Iniciar revisión editorial/u : /Start editorial review/u);
+  assert.match(html, locale === "es-MX" ? /Ver estimación editorial/u : /View editorial estimate/u);
   assert.doesNotMatch(html, /Reanudar la misma revisión|Resume the same review/u);
 });
 

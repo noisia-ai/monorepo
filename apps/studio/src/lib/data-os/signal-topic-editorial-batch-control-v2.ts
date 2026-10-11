@@ -1,3 +1,4 @@
+import { estimateTopicEditorialMicroUsd } from "./topic-editorial-estimate";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalTopicConsolidationEditorialInputV1,
@@ -62,7 +63,7 @@ export async function quoteWorkspaceTopicEditorialBatchV2ForActor(args:Args){
   if(quote.status!=="ready_to_authorize")return {status:quote.status,quote:null};
   if(!quote.quote_reference||!quote.quote_expires_at||(quote.maximum_micro_usd!==null&&!editorialCap(quote.maximum_micro_usd)))fail("topic_editorial_quote_expired");
   return {status:"ready_to_authorize",quote:{reference:quote.quote_reference,expires_at:quote.quote_expires_at,
-    maximum_micro_usd:quote.maximum_micro_usd,group_count:quote.expected_group_count,
+    estimated_micro_usd:estimateTopicEditorialMicroUsd(plan),maximum_micro_usd:quote.maximum_micro_usd,group_count:quote.expected_group_count,
     screening_count:quote.expected_group_count,global_count:0 as const}};
 }
 /** Starts under the workspace's already approved policy. The signed policy quote
@@ -338,7 +339,7 @@ export async function authorizeWorkspaceTopicEditorialBatchV2ForActor(args:Args&
   if(![args.workspaceId,args.actorUserId,args.numericExecutionId].every(editorialUuid)
     ||!editorialKey(args.idempotencyKey)||(args.confirmedMaximumMicroUsd!==null&&!editorialCap(args.confirmedMaximumMicroUsd)))fail("topic_editorial_request_invalid",422);
   const database=args.database??(await import("@/lib/db")).pool;
-  const replay=await replaySignalTopicEditorialBatchV2({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
+  const replay=await replaySignalTopicEditorialChunkedAdmissionV3({database,workspace_id:args.workspaceId,actor_user_id:args.actorUserId,
     numeric_execution_id:args.numericExecutionId,idempotency_key:args.idempotencyKey,quote_reference:args.quoteReference,
     confirmed_cap_micro_usd:args.confirmedMaximumMicroUsd});
   if(replay.replayed){

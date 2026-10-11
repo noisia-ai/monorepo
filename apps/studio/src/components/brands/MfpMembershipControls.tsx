@@ -30,6 +30,7 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
     <header className="admin-section__head"><div><h3>{t("membership.title")}</h3><p>{t("membership.body")}</p></div>
       <button type="button" className="admin-button" disabled={resource.loading} onClick={()=>void resource.read()}>{t("refresh")}</button></header>
     <p className="mfp-notice">{t("experimental")}</p>
+    {resource.loading?<p role="status" aria-live="polite">{t("loadingPopulation")}</p>:null}
     {resource.error?<p className="team-msg team-msg--error" role="alert">{t(`errors.${mfpErrorKey(resource.error)}`)}</p>:null}
     {resource.data?<>
       <dl className="admin-summary-strip admin-summary-strip--compact"><div><dt>{t("membership.relevant")}</dt><dd>{resource.data.population.relevant}</dd></div>

@@ -78,7 +78,7 @@ const errorResponse = (e: unknown) =>
   Response.json(
     {
       error:
-        e instanceof SignalLabelingError ? e.code : "memberships_unavailable",
+        e instanceof Error && e.message === "population_read_busy" ? "population_read_busy" : e instanceof SignalLabelingError ? e.code : "memberships_unavailable",
     },
     { status: e instanceof SignalLabelingError ? e.status : 503, headers },
   );

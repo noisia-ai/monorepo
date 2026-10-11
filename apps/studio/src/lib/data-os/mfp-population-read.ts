@@ -2,7 +2,7 @@
  * The other two pool connections remain available to metadata and mutations.
  * This is process-wide, including separate route bundles and browser tabs.
  */
-export function createMfpPopulationReader(maxPending = 8, waitMs = 60_000) {
+export function createMfpPopulationReader(maxPending = 8, waitMs = 120_000) {
   type Item = { start: () => void; cancel: () => void };
   const queue: Item[] = [];
   let active = false;

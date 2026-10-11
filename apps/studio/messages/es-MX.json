@@ -3233,6 +3233,11 @@
           "failed": "La preparación no terminó. El análisis y los grupos de origen se conservan."
         },
         "editorial": {
+          "estimate": "Ver estimación editorial",
+          "estimated": "Estimación: {amount} para {groups} grupos",
+          "estimateHint": "Incluye screening y las tres etapas globales con salida prevista. Es orientativa: el coste real depende del uso y se registra al terminar.",
+          "confirmEstimate": "Confirmo iniciar la revisión editorial pagada con esta estimación.",
+          "loading": "Cargando estado o estimación editorial. Esta consulta puede tardar hasta un minuto.",
           "title": "Revisión editorial de Topics",
           "body": "La revisión completa propone Topics, Narrativas y Noise a partir de los grupos y su evidencia.",
           "maximum": "Tope autorizado",
@@ -4568,6 +4573,7 @@
     "goSignal": "Ir a Signal"
   },
   "Mfp": {
+    "loadingPopulation": "Cargando población y resultados guardados. La primera consulta puede tardar hasta un minuto; puedes seguir usando la página.",
     "hybridReview": {
       "title": "Resultados por revisar",
       "first": "Evaluación inicial",
@@ -4706,6 +4712,7 @@
       "all_conversations": "Todas las conversaciones"
     },
     "errors": {
+      "busy": "La consulta está ocupada. Pulsa Actualizar para reintentar.",
       "forbidden": "El acceso cambió. Recarga la página para revisar tus permisos.",
       "preparation": "Prepara las menciones en Datos antes de continuar.",
       "policy": "La política de procesamiento requiere revisión. Consulta al administrador de tu organización.",

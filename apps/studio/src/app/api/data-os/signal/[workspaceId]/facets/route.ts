@@ -76,7 +76,7 @@ function errorResponse(error: unknown) {
       error:
         error instanceof SignalLabelingError
           ? error.code
-          : "facets_unavailable",
+          : error instanceof Error && error.message === "population_read_busy" ? "population_read_busy" : "facets_unavailable",
     },
     {
       status: error instanceof SignalLabelingError ? error.status : 503,

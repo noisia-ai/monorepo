@@ -34,7 +34,7 @@ export type WorkspaceTopicEditorialViewV1 = {
   /** A failed, quiescent V1 owner can be superseded by the durable Message Batches path. */
   replaces_failed_v1?: boolean;
   start_error_code?: string;
-  quote: null | { reference: string; expires_at: string; maximum_micro_usd: string | null; group_count: number; screening_count: number; global_count: 0 | 1 };
+  quote: null | { estimated_micro_usd?: string; reference: string; expires_at: string; maximum_micro_usd: string | null; group_count: number; screening_count: number; global_count: 0 | 1 };
   execution: null | { execution_id: string; status: "queued" | "running" | "failed" | "review_ready" | "consolidation_pending" | "completed";
     completed_screening_count: number; expected_screening_count: number; maximum_micro_usd: string | null;
     confirmed_micro_usd: string; reserved_micro_usd: string; ambiguous_micro_usd: string };
@@ -56,7 +56,8 @@ export function validWorkspaceTopicEditorialViewV1(v: unknown, workspace: string
     || !/^[a-z][a-z0-9_]{1,119}$/u.test(v.start_error_code))) return false;
   if (v.quote !== null) {
     const q = v.quote;
-    if (!object(q) || !keys(q, ["reference", "expires_at", "maximum_micro_usd", "group_count", "screening_count", "global_count"])
+    if (!object(q) || !(keys(q, ["reference", "expires_at", "maximum_micro_usd", "group_count", "screening_count", "global_count"]) || keys(q, ["estimated_micro_usd", "reference", "expires_at", "maximum_micro_usd", "group_count", "screening_count", "global_count"]))
+      || "estimated_micro_usd" in q && !editorialMoney(q.estimated_micro_usd)
       || !editorialQuote(q.reference) || typeof q.expires_at !== "string" || !Number.isFinite(Date.parse(q.expires_at))
       || Math.floor(Date.parse(q.expires_at) / 1000) !== Number(q.reference.split(".")[1])
       || !editorialQuoteCap(q.reference, q.maximum_micro_usd) || !natural(q.group_count) || q.group_count < 1 || q.group_count > 5000
