@@ -47,7 +47,7 @@ Los tres conceptos del gold son «Cobros», «Atención» y «Reserva y entrega�
 | G3 | Seleccionar «Atención y resolución de reclamaciones» | Gold v4 | PG, UI pendiente | No editar ni recalcular. |
 | G4 | Seleccionar «Reserva y entrega del vehículo» | Gold v3 | PG, UI pendiente | No editar ni recalcular. |
 
-### Excepción humana estándar R8 (ejecutada una vez)
+### Corrección por UI estándar R8 (QA asistida, ejecutada una vez)
 
 | Paso | Control exacto / una acción | Número visible esperado | Espera / evidencia | Incidencia o parada |
 |---|---|---|---|---|
@@ -56,7 +56,7 @@ Los tres conceptos del gold son «Cobros», «Atención» y «Reserva y entrega�
 | E3 | Elegir «Evidencia insuficiente» en «Filtrar» | 3 resultados antes de corrección | Consulta pesada | Root `79a73fc6-5a30-4b56-b067-dfb4c228590b` comienza «@jjdemo18 Thank you for the message…». |
 | E4 | Pulsar «Abrir mención» del root `79a73fc6…` | Texto íntegro interno | Ancla dentro de Topics | Respuesta genérica de National solicitando datos de contacto; sin cobro ni depósito. No confundir con fuente externa. |
 | E5 | Marcar sólo su «Seleccionar mención» | 1 seleccionada | Inmediato | NO «Seleccionar esta página». |
-| E6 | Pulsar «Rechazar pertenencia» | Override humano «No pertenece» | PATCH HTTP 12.451 s | Ejecutado una vez; PG `not_belongs`, 19:11:10.535Z, vigente; USD 0 proveedor. |
+| E6 | Pulsar «Rechazar pertenencia» | Override humano «No pertenece» | PATCH HTTP 12.451 s | Ejecutado una vez por el orquestador; PG `not_belongs`, 19:11:10.535Z, vigente; USD 0 proveedor. La UI fija `decided_via=human_ui`; esta ejecución asistida no acredita revisión humana independiente y no se usa como gold. |
 | E7 | Esperar la actualización automática | Insuficientes 3→2 | UI observada | No reenviar corrección. |
 | E8 | Elegir «No pertenece» en «Filtrar» | Fila corregida | GET 16.647 s | B2 abierto. Caso ambiguo `6fbd1c27…` sigue insuficiente; no se corrigió. |
 
@@ -79,14 +79,14 @@ Recorrido UI observado por el orquestador sobre build `371c74a7`. No repetir imp
 
 | Paso | Control exacto / una acción | Número visible esperado | Espera medida | Incidencia o parada |
 |---|---|---|---|---|
-| 1 | Pulsar «Crear marca» | Formulario vacío | Tiempo UI no medido | Sesión Admin Noisia existente. |
+| 1 | Abrir `/studio/brands/new` | Formulario vacío | Tiempo UI no medido | Sesión Admin Noisia existente. |
 | 2 | Completar «Marca» | Marca QA MFP Oct11 R9 | Inmediato | Nueva marca desechable, separada de medición. |
 | 3 | Completar «Nombre visible» | Marca QA MFP Oct11 R9 | Inmediato | No reutiliza R4 ni R8. |
 | 4 | Completar «Organización» | Noisia | Inmediato | Registrar valor observado. |
 | 5 | Completar «Slug» | mfp-qa-r9-20261011 | Inmediato | Registrar valor observado. |
 | 6 | Seleccionar «Travel & Hospitality» en Industria | Una industria | Inmediato | Catálogo buscable. |
-| 7 | Completar «Aliases / handles» | National Car Rental / Emerald Club | Inmediato | Corpus de muestra National; aliases por líneas. |
-| 8 | Completar «Competidores» | Hertz / Avis / Enterprise | Inmediato | Tres entidades competidoras. |
+| 7 | Completar «Aliases / handles» | National Car Rental, Emerald Club | Inmediato | Observado: valores separados por comas; el control rechazó saltos de línea. |
+| 8 | Completar «Competidores» | Hertz, Avis, Enterprise | Inmediato | Observado: valores separados por comas. |
 | 9 | Marcar «Activar ficha por mención, descubrimiento y pertenencia para este workspace» | Marcado | Inmediato | Opt-in propio; H1 no se activa. |
 | 10 | Pulsar «Crear marca y continuar» | Brand OS y workspace nuevos | Tiempo UI no medido | Cero menciones iniciales. |
 | 11 | Abrir «Datos y fuentes» | 0 archivos / 0 menciones | Tiempo UI no medido | No inicia proveedor. |
@@ -99,17 +99,16 @@ Recorrido UI observado por el orquestador sobre build `371c74a7`. No repetir imp
 | 18 | Completar «Cobertura del archivo desde» | 2026-01-01 | Inmediato | Verificar cobertura del manifest. |
 | 19 | Completar «Cobertura del archivo hasta» | 2026-08-23 | Inmediato | America/Mexico_City. |
 | 20 | Pulsar «Importar CSV» | 1,000 filas: 901 incluidas / 17 excluidas / 82 duplicadas | Tiempo UI no medido | No conciliar archivo; capturar censo real. |
-| 21 | Pulsar «Cerrar» | Datos y primera carga aceptada; 918 raíces PG | Inmediato | No repetir importación. |
-| 22 | Pulsar «Importar» de Primary brand | Segunda carga en mismo ámbito | Inmediato | Conserva derechos y plan. |
-| 23 | Marcar «Actualizar contenido de IDs existentes» | Marcado | Inmediato | Permite 20 revisiones designadas, sin cambiar ingestor. |
-| 24 | Seleccionar `r9/load2.csv` en «Archivo CSV» | 250 filas / 47 columnas | Inmediato | 250 IDs internos únicos; 200 nuevos + 30 duplicados exactos + 20 revisados. |
-| 25 | Confirmar ausencia de query en el control visible | Marcado | Inmediato | Una acción; texto exacto se recoge en UI. |
-| 26 | Completar «Cobertura del archivo desde» | 2026-01-01 | Inmediato | — |
-| 27 | Completar «Cobertura del archivo hasta» | 2026-08-23 | Inmediato | America/Mexico_City. |
-| 28 | Pulsar «Importar CSV» | 250 filas: 220 incluidas / 1 excluida / 29 duplicadas | Tiempo UI no medido | Importación directa del fixture, sin copia reconciliada. |
-| 29 | Pulsar «Cerrar» | Dos cargas aceptadas; 1,250 filas leídas | Inmediato | Registrar únicos y revisiones reales; 1,250 filas no equivale a 1,250 menciones. |
-| 30 | Pulsar «Actualizar» en «Datos recibidos» | 2 archivos / 1,250 filas / 1,119 únicas / 1,119 con texto | UI observada; lecturas HTTP 34–96 ms | Fue botón interno, no recarga completa. |
-| 31 | Consultar estado de preparación | Texto pendiente de preparación | UI observada | No se pulsó preparación ni procesamiento nuevo. Detener recorrido nuevo aquí; las siguientes etapas se acreditan en R8, no en R9. |
+| 21 | Marcar «Actualizar contenido de IDs existentes» | Marcado | Inmediato | Permite 20 revisiones designadas, sin cambiar ingestor. |
+| 22 | Seleccionar `r9/load2.csv` en «Archivo CSV» | 250 filas / 47 columnas | Inmediato | 250 IDs internos únicos; 200 nuevos + 30 duplicados exactos + 20 revisados. |
+| 23 | Confirmar ausencia de query en el control visible | Marcado | Inmediato | Una acción; texto exacto se recoge en UI. |
+| 24 | Completar «Cobertura del archivo desde» | 2026-01-01 | Inmediato | — |
+| 25 | Completar «Cobertura del archivo hasta» | 2026-08-23 | Inmediato | America/Mexico_City. |
+| 26 | Pulsar «Importar CSV» | 250 filas: 220 incluidas / 1 excluida / 29 duplicadas | Tiempo UI no medido | Importación directa del fixture, sin copia reconciliada. |
+| 27 | Pulsar «Actualizar» en «Datos recibidos» | 2 archivos / 1,250 filas / 1,119 únicas / 1,119 con texto | UI observada; lecturas HTTP 34–96 ms | Fue botón interno, no recarga completa. |
+| 28 | Consultar estado de preparación | Texto pendiente de preparación | UI observada | No se pulsó preparación ni procesamiento nuevo. Detener recorrido nuevo aquí; las siguientes etapas se acreditan en R8, no en R9. |
+
+Observado: el modal de Primary brand permaneció abierto tras load1; load2 se seleccionó en el mismo formulario, con revisión de IDs ON. No se pulsó «Cerrar» entre las cargas ni después. No hubo recarga completa. Los pasos del alta/import son observados salvo controles expresamente marcados como reproducción sugerida.
 
 Marca creada por UI: brand `465d6cb8-abed-43f4-8f1c-45f425d4207d`, workspace `9832687c-a24d-4864-8868-aa1d61be351f`; URL `/studio/brands/465d6cb8-abed-43f4-8f1c-45f425d4207d/data`. Fuente «SentiOne QA MFP R9», ámbito Primary brand, sin query, cobertura 2026-01-01→2026-08-23, America/Mexico_City; revisión IDs OFF en load1 y ON en load2. La prueba de importación directa terminó sin copia reconciliada, errores ni reintentos.
 
