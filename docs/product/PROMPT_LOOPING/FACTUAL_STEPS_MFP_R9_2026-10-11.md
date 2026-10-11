@@ -4,7 +4,7 @@ Este documento alimenta al auditor; no sustituye ni modifica `QA_FUNDADOR_MFP.md
 
 ## Prerrequisitos
 
-- Entorno: https://mfp-studio-dev-test.up.railway.app. Build `371c74a717926598eafc4a26c32300301624bee3`, deployment `36376c82-f6e5-45c5-9e50-5d964c6ca63f` SUCCESS; autodeploy OFF y una réplica verificados en Railway UI antes del pin. El siguiente cambio TS `09cb2016` todavía no está desplegado.
+- Entorno: https://mfp-studio-dev-test.up.railway.app. Build `371c74a717926598eafc4a26c32300301624bee3`, deployment `36376c82-f6e5-45c5-9e50-5d964c6ca63f` SUCCESS; autodeploy OFF y una réplica verificados en Railway UI antes del pin. Los cambios TS `09cb2016` / `8c7e8a32` y SQL0265 todavía no están desplegados/aplicados. CI y PG de `43405e1a` SUCCESS (13 tests PG); el conjunto con SQL0266 espera validación.
 - Cuenta: sesión Admin Noisia existente en dev-test, autorización propia del workspace. Sin cambios de roles ni copia de cookies.
 - Resultados existentes: «Marca QA MFP Oct07 R4», brand `38c31650-7512-497d-9836-2f39e1659fc8`, workspace `9a695132-238b-4ce4-aa97-73c6a02da9d8`, slug Signal `mfp-qa-front5-20261007`.
 - Continuación pagada: «Marca QA MFP Oct11R8», workspace `2f1c193a-df0c-4fc7-973e-8e311d59c746`; completó 25/25 unidades interpretadas: conserva las 18 anteriores y agregó 7/7 con cotización y confirmación. No repetir esta admisión.
