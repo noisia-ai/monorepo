@@ -3233,6 +3233,7 @@
           "failed": "Preparation did not finish. The analysis and source groups are preserved."
         },
         "editorial": {
+          "estimateExpired": "The estimate expired. Select Refresh status and request a new estimate before starting.",
           "estimate": "View editorial estimate",
           "estimated": "Estimate: {amount} for {groups} groups",
           "estimateHint": "Includes screening and the three global stages with expected output. This is a forecast: actual cost depends on usage and is recorded at completion.",
@@ -4573,7 +4574,7 @@
     "goSignal": "Go to Signal"
   },
   "Mfp": {
-    "loadingPopulation": "Loading population and saved results. The first read can take up to a minute; you can keep using the page.",
+    "loadingPopulation": "Loading population and saved results. The first read can take up to two minutes; you can keep using the page.",
     "hybridReview": {
       "title": "Results requiring review",
       "first": "Initial evaluation",

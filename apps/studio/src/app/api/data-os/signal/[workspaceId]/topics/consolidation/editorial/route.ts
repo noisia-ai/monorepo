@@ -21,7 +21,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     if(v2)return topicResponse(v2);
     const start=await loadSignalTopicEditorialStartV2({database:pool,workspace_id:workspaceId,
       actor_user_id:loaded.session.appUser.id,numeric_execution_id:numericExecutionId});
-    if(start){
+    if(start && !withQuote){
       const failed=start.status==="failed";
       return topicResponse({contract_version:"workspace-topic-editorial-view-v1",workspace_id:workspaceId,
         numeric_execution_id:numericExecutionId,status:failed?"start_failed":"preparing",can_quote:failed,

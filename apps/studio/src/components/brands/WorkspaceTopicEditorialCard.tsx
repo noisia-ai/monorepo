@@ -21,7 +21,14 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
   const money = (v: string) => new Intl.NumberFormat(locale, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(Number(v) / 1_000_000);
   const [confirmed, setConfirmed] = useState(false);
   useEffect(() => setConfirmed(false), [value.quote?.reference]);
-  const quoteReady = !!value.quote?.estimated_micro_usd && Date.parse(value.quote.expires_at) > Date.now();
+  const [quoteExpired, setQuoteExpired] = useState(false);
+  useEffect(() => {
+    setQuoteExpired(false);
+    if (!value.quote) return;
+    const timer = setTimeout(() => setQuoteExpired(true), Math.max(0, Date.parse(value.quote.expires_at)-Date.now()));
+    return () => clearTimeout(timer);
+  }, [value.quote?.reference, value.quote?.expires_at]);
+  const quoteReady = !quoteExpired && !!value.quote?.estimated_micro_usd && Date.parse(value.quote.expires_at) > Date.now();
   const state = value.status;
   const execution = value.execution;
   const preparationFailed = value.batch_progress?.error_codes.includes("topic_editorial_batch_preparation_failed") === true;
@@ -42,6 +49,7 @@ export function WorkspaceTopicEditorialCard({ value, workspaceId, numericExecuti
       {value.quote?.estimated_micro_usd ? <>
         <p>{t("estimated", { amount: money(value.quote.estimated_micro_usd), groups: value.quote.group_count })}</p>
         <p className="admin-drawer-form__hint">{t("estimateHint")}</p>
+        {!quoteReady ? <p role="status">{t("estimateExpired")}</p> : null}
         {value.quote.maximum_micro_usd !== null ? <p>{t("maximum")}: {money(value.quote.maximum_micro_usd)}</p> : null}
         <label className="admin-checkbox"><input type="checkbox" checked={confirmed} disabled={busy || !quoteReady}
           onChange={event => setConfirmed(event.target.checked)} />{t("confirmEstimate")}</label>

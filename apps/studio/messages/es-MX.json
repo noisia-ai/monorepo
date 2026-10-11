@@ -3233,6 +3233,7 @@
           "failed": "La preparación no terminó. El análisis y los grupos de origen se conservan."
         },
         "editorial": {
+          "estimateExpired": "La estimación venció. Pulsa Actualizar estado y consulta una nueva antes de iniciar.",
           "estimate": "Ver estimación editorial",
           "estimated": "Estimación: {amount} para {groups} grupos",
           "estimateHint": "Incluye screening y las tres etapas globales con salida prevista. Es orientativa: el coste real depende del uso y se registra al terminar.",
@@ -4573,7 +4574,7 @@
     "goSignal": "Ir a Signal"
   },
   "Mfp": {
-    "loadingPopulation": "Cargando población y resultados guardados. La primera consulta puede tardar hasta un minuto; puedes seguir usando la página.",
+    "loadingPopulation": "Cargando población y resultados guardados. La primera consulta puede tardar hasta dos minutos; puedes seguir usando la página.",
     "hybridReview": {
       "title": "Resultados por revisar",
       "first": "Evaluación inicial",
