@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { signalTopicDefinitionDigestV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceClassificationInputV1 } from "./signal-workspace-classification";
-import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1, loadSignalWorkspaceTopicsOverviewV1,
+import { loadSignalWorkspaceTopicsPageV1, loadSignalWorkspaceTopicReadBundleV1, loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1, loadSignalWorkspaceTopicsOverviewV1,
   prepareSignalWorkspaceDefinedInterestOverlayV1 } from "./signal-workspace-topics-serving";
 
 const id = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
@@ -271,6 +271,19 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.match(detailQueries[0]!.sql, /WHERE root.metrics/);
   assert.match(detailQueries[0]!.sql, /published_at>=\(\$3::date::timestamp AT TIME ZONE \$5::text\)/u);
   assert.match(detailQueries[0]!.sql, /published_at<\(\(\$4::date\+1\)::timestamp AT TIME ZONE \$5::text\)/u);
+  const baselineEvidence = await loadSignalWorkspaceTopicEvidenceV1({ ...args, limit: 25 });
+  const bundleStart = statements.length;
+  const bundle = await loadSignalWorkspaceTopicReadBundleV1({ ...args, limit: 25 });
+  assert.deepEqual(bundle.overview, overview);
+  assert.deepEqual(bundle.detail, detail);
+  assert.deepEqual(bundle.evidence, baselineEvidence);
+  assert.equal(statements.slice(bundleStart).filter(sql => sql.startsWith("BEGIN")).length, 1);
+  assert.equal(statements.slice(bundleStart).filter(sql => sql.includes("SELECT count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total")).length, 1,
+    "one overview/digest reconstruction per complete read");
+  const initialBundle = await loadSignalWorkspaceTopicsPageV1(args);
+  assert.deepEqual(initialBundle, bundle);
+  await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, expected_scope_digest: sha("0") }), /workspace_topics_scope_changed/);
+  await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, term_key: "foreign" }), /workspace_topics_topic_unavailable/);
   selectedInterest = true;
   const withInterest = await loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
     workspace_id: workspaceId, actor_user_id: actorId, timezone: "America/Mexico_City" });

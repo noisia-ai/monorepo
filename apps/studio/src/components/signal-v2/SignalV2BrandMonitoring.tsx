@@ -1,4 +1,5 @@
 "use client";
+import type { SignalWorkspaceTopicReadBundleV1 } from "@noisia/db";
 
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -152,6 +153,7 @@ export function SignalV2BrandMonitoring({
   initialNativeMentionsUnavailable = false,
   initialSettings,
   initialTopicsNarratives,
+  initialNativeTopicBundle = null,
   initialTriggersBarriers,
   legacyOutputId,
   manageTopicsHref,
@@ -172,6 +174,7 @@ export function SignalV2BrandMonitoring({
   initialMentions: SignalMentionsViewData | null;
   initialNativeMentionsUnavailable?: boolean;
   initialSettings: SignalClientSettingsV1 | null;
+  initialNativeTopicBundle?: SignalWorkspaceTopicReadBundleV1 | null;
   initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1 | null;
   initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
   legacyOutputId: string | null;
@@ -188,6 +191,7 @@ export function SignalV2BrandMonitoring({
   const [nativeMentionsUnavailable, setNativeMentionsUnavailable] = useState(initialNativeMentionsUnavailable);
   const hasNativeMentions = Boolean(mentionsData?.native);
   const [topicsNarrativesData, setTopicsNarrativesData] = useState(initialTopicsNarratives);
+  const [nativeTopicBundle, setNativeTopicBundle] = useState(initialNativeTopicBundle);
   const [triggersBarriersData, setTriggersBarriersData] = useState(initialTriggersBarriers);
   const [currentStudy, setCurrentStudy] = useState(activeStudy);
   const [currentModule, setCurrentModule] = useState<SignalWorkspaceModule>(
@@ -369,17 +373,19 @@ export function SignalV2BrandMonitoring({
     const to = selection?.end ?? topicsNarrativesData.filters.date_to;
     if (from) params.set("date_from", from); if (to) params.set("date_to", to);
     try {
-      const response = await fetch(`/api/data-os/signal/${data.workspace.id}/topics-narratives?${params}`, { cache: "no-store", signal: controller.signal });
+      const response = await fetch(`/api/data-os/signal/${data.workspace.id}/topics-narratives/page?${params}`, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
       if (!response.ok) {
         if ([401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
         throw new Error(t("errors.load"));
       }
-      const payload = await response.json() as SignalWorkspaceOverviewV1;
+      const bundle = await response.json() as SignalWorkspaceTopicReadBundleV1;
+      const payload = bundle.overview;
       if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
-      if (payload.contract_version !== "signal-workspace-topics-serving-v1" || payload.workspace_id !== data.workspace.id) {
+      if (bundle.contract_version !== "signal-workspace-topic-read-bundle-v1" || !payload || payload.contract_version !== "signal-workspace-topics-serving-v1" || payload.workspace_id !== data.workspace.id) {
         invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
       }
+      setNativeTopicBundle(bundle);
       applyModulePayload(currentModule, payload); moduleCacheRef.current.set(moduleCacheKey(currentModule, params), payload);
       const next = new URL(window.location.href); next.search = params.toString(); window.history.replaceState(null, "", next);
       return true;
@@ -1290,7 +1296,7 @@ export function SignalV2BrandMonitoring({
         {currentModule === "settings" && initialSettings ? (
           <SignalV2Settings data={initialSettings} />
         ) : currentModule === "topics" && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
-          <SignalV2WorkspaceTopics brandName={brandName} data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
+          <SignalV2WorkspaceTopics initialBundle={nativeTopicBundle} brandName={brandName} data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
             surface="topics" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
             workspaceTimezone={data.workspace.timezone}
             onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenTopics={() => void navigateToModule("topics")}
