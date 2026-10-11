@@ -56,7 +56,12 @@ void main(async()=>{
           // A completed source may still lack its idempotent verification successor after a crash.
           if(row.status==="completed"||row.status==="failed"){
             const followup=await store.followup(id);
-            if(row.status==="failed"&&!followup)fail(`hybrid_stage_failed:${row.error_code}`);
+            if(row.status==="failed"&&!followup){
+              const held=(await pool.query(`SELECT count(*)::int n FROM signal_labeling_calls
+                WHERE run_id=$1 AND (status IN('reserved','submitting','submitted','unknown') OR NOT results_applied)`,[id])).rows[0].n;
+              if(currentStage!=="jev"||held)fail(`hybrid_stage_failed:${row.error_code}`);
+              console.log(JSON.stringify({stage:"hybrid_jev_partial",error_code:row.error_code}));
+            }
             return followup;
           }
           if(currentStage!=="claude"||!row.wait)await runHybridMembershipTickV1({run_id:id,stage:currentStage,
