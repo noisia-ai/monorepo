@@ -162,23 +162,28 @@ export async function readSignalWorkspaceTopicProjectionProposalsV1(args:{databa
 export async function loadSignalWorkspaceTopicProjectionStatusWithQueryableV1(args:{queryable:SignalWorkspaceProjectionQueryableV1;workspace_id:string;actor_user_id:string}):Promise<SignalWorkspaceTopicProjectionStatusV1>{
  await authorize(args.queryable,args.workspace_id,args.actor_user_id,false);
  const observed=(await args.queryable.query<{observed_at:string}>(`SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') observed_at`)).rows[0]!.observed_at;
- const rows=(await args.queryable.query<SignalWorkspaceTopicProjectionRunV1&{identity:SignalWorkspaceClassificationIdentityV1;correction_digest:string;generation_version:number;source_current:boolean}>(`WITH runs AS(
+ const rows=(await args.queryable.query<SignalWorkspaceTopicProjectionRunV1&{identity:SignalWorkspaceClassificationIdentityV1;correction_digest:string;generation_version:number;source_current:boolean}>(`WITH runs AS MATERIALIZED(
   SELECT execution.id execution_id,generation.id generation_id,generation.taxonomy_profile_id,generation.generation_version,execution.status,
    generation.input_snapshot->'source_projection'->>'engine_execution_id' source_engine_execution_id,
    COALESCE(generation.input_snapshot->'source_projection'->>'mapping_digest',generation.input_snapshot->'source_projection'->>'binding_digest') mapping_digest,generation.input_snapshot->'source_projection'->>'model_version_id' model_version_id,
    generation.input_snapshot->'identity' identity,generation.input_snapshot->>'correction_digest' correction_digest,generation.denominator,execution.processed_roots,
    execution.expected_chunks::int expected_chunks,execution.processed_chunks::int processed_chunks,execution.error_code,
    to_char(generation.finalized_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') computed_at,
-   generation.status='ready' AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item WHERE item.generation_id=generation.id AND item.resolution_state='error') complete,
+   generation.status='ready' AND NOT EXISTS(SELECT 1 FROM signal_classification_generation_items item WHERE item.generation_id=generation.id AND item.resolution_state='error') complete
+  FROM signal_topic_catalog_executions execution JOIN signal_classification_generations generation ON generation.id=execution.generation_id
+  JOIN signal_corpus_preparation_input_state state ON state.workspace_id=generation.workspace_id
+  WHERE execution.workspace_id=$1::uuid AND execution.input_contract=$2 AND generation.input_snapshot->'source_projection' IS NOT NULL)
+ , selected AS MATERIALIZED (
+ SELECT * FROM runs WHERE execution_id=(SELECT execution_id FROM runs ORDER BY generation_version DESC LIMIT 1)
+  OR execution_id=(SELECT execution_id FROM runs WHERE complete ORDER BY generation_version DESC LIMIT 1)
+ ) SELECT selected.*,
    generation.input_revision=state.input_revision AND (generation.policy_valid_until IS NULL OR generation.policy_valid_until>clock_timestamp())
     AND signal_workspace_projection_source_current_v1(generation)
     AND NOT EXISTS(SELECT 1 FROM signal_classification_assignments assignment WHERE assignment.generation_id=generation.id
      AND NOT signal_workspace_classification_assignment_current_v1(assignment,generation)) source_current
-  FROM signal_topic_catalog_executions execution JOIN signal_classification_generations generation ON generation.id=execution.generation_id
-  JOIN signal_corpus_preparation_input_state state ON state.workspace_id=generation.workspace_id
-  WHERE execution.workspace_id=$1::uuid AND execution.input_contract=$2 AND generation.input_snapshot->'source_projection' IS NOT NULL)
- SELECT * FROM runs WHERE execution_id=(SELECT execution_id FROM runs ORDER BY generation_version DESC LIMIT 1)
-  OR execution_id=(SELECT execution_id FROM runs WHERE complete ORDER BY generation_version DESC LIMIT 1) ORDER BY generation_version DESC`,[args.workspace_id,contract])).rows;
+ FROM selected JOIN signal_classification_generations generation ON generation.id=selected.generation_id
+ JOIN signal_corpus_preparation_input_state state ON state.workspace_id=generation.workspace_id
+ ORDER BY selected.generation_version DESC`,[args.workspace_id,contract])).rows;
  const views=[];
  for(const {identity,correction_digest,generation_version:_version,source_current,...row} of rows){
   let current:Awaited<ReturnType<typeof loadSignalWorkspaceClassificationInputV1>>|null=null;

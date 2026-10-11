@@ -125,6 +125,12 @@ async function estimatePopulation(
       [workspace, affected, allPopulation],
     )
   ).rows[0]!;
+  return estimatePopulationFromCounts(row, identity, context, allPopulation);
+}
+function estimatePopulationFromCounts(
+  row: { roots: number; characters: string; long_roots: number },
+  identity: LabelerIdentity, context: EntityContextV1, allPopulation: boolean,
+) {
   const maxRoots =
     identity.provider === "typesafe" ? 1 : facetMaxRootsPerRequestV1(identity);
   const requests =
@@ -170,12 +176,29 @@ export async function loadMentionFacetsStatusV1(args: {
   return tx(args.database, async (c) => {
     await authorize(c, args.workspace_id, args.actor_user_id, false);
     const change = await inspectFacetContextChangeV1(c, args.workspace_id);
-    const counts = (
-      await c.query<{ status: string; relevance: string; count: number }>(
-        `SELECT CASE WHEN root_id=ANY($2::uuid[]) THEN 'pending' ELSE status END status,CASE WHEN root_id=ANY($2::uuid[]) THEN 'unknown' ELSE relevance END relevance,count(*)::int count FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 GROUP BY 1,2`,
-        [args.workspace_id, change.changed ? change.affected : []],
-      )
-    ).rows;
+    // A single workspace projection supplies counts and both quote populations.
+    const population = (await c.query<{
+      counts: Array<{ status: string; relevance: string; count: number }>;
+      pending: { roots: number; characters: string; long_roots: number };
+      full: { roots: number; characters: string; long_roots: number };
+    }>(`WITH roots AS MATERIALIZED (
+      SELECT *, (status IN('pending','error') AND NOT requires_context_review) OR root_id=ANY($2::uuid[]) needs_work
+      FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+    ), counts AS (
+      SELECT CASE WHEN root_id=ANY($2::uuid[]) THEN 'pending' ELSE status END status,
+        CASE WHEN root_id=ANY($2::uuid[]) THEN 'unknown' ELSE relevance END relevance,count(*)::int count
+      FROM roots GROUP BY 1,2
+    ), metrics AS (
+      SELECT count(*)::int roots,COALESCE(sum(length(full_text)+COALESCE(length(title),0)),0)::text characters,
+        count(*) FILTER(WHERE length(full_text)>12000)::int long_roots,
+        count(*) FILTER(WHERE needs_work)::int pending_roots,
+        COALESCE(sum(length(full_text)+COALESCE(length(title),0)) FILTER(WHERE needs_work),0)::text pending_characters,
+        count(*) FILTER(WHERE needs_work AND length(full_text)>12000)::int pending_long_roots FROM roots
+    ) SELECT COALESCE((SELECT jsonb_agg(counts) FROM counts),'[]'::jsonb) counts,
+      jsonb_build_object('roots',pending_roots,'characters',pending_characters,'long_roots',pending_long_roots) pending,
+      jsonb_build_object('roots',roots,'characters',characters,'long_roots',long_roots) full FROM metrics`,
+      [args.workspace_id, change.changed ? change.affected : []])).rows[0]!;
+    const counts = population.counts;
     const latest =
       (
         await c.query(
@@ -197,15 +220,8 @@ export async function loadMentionFacetsStatusV1(args: {
     ).rows[0]?.identity;
     const labeler = args.identity ?? selectedLabeler ?? facetLabelerIdentityV1();
     if (labeler.provider === "anthropic") validateFacetLabelerIdentityV1(labeler);
-    const estimate = await estimatePopulation(
-      c,
-      args.workspace_id,
-      labeler,
-      change.context,
-      change.changed ? change.affected : [],
-      !selectedLabeler ||
-        labelerDigestV1(selectedLabeler) !== labelerDigestV1(labeler),
-    );
+    const allPopulation = !selectedLabeler || labelerDigestV1(selectedLabeler) !== labelerDigestV1(labeler);
+    const estimate = estimatePopulationFromCounts(allPopulation ? population.full : population.pending, labeler, change.context, allPopulation);
     return {
       contract_version: "mention-facets-status-v1",
       counts,
@@ -215,16 +231,7 @@ export async function loadMentionFacetsStatusV1(args: {
       affected_mode: change.diff.affected_mode,
       pending,
       estimated_micro_usd: estimate.estimated_micro_usd,
-      estimated_full_micro_usd: (
-        await estimatePopulation(
-          c,
-          args.workspace_id,
-          labeler,
-          change.context,
-          [],
-          true,
-        )
-      ).estimated_micro_usd,
+      estimated_full_micro_usd: estimatePopulationFromCounts(population.full, labeler, change.context, true).estimated_micro_usd,
       estimate,
     };
   });
