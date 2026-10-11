@@ -276,7 +276,7 @@ async function membershipContext(client: PoolClient, args: Args, filters: CivilF
   const topics=conceptRows.map(r=>({...r.definition,kind:"topic" as const}));
   const keys=new Set(topics.map(t=>t.term_key));
   const change=await inspectFacetContextChangeV1(client,args.workspace_id);
-  const membershipState=(await client.query<{digest:string}>(`SELECT 'sha256:'||encode(sha256(convert_to(COALESCE(string_agg(jsonb_build_array(root_id,concept_key,root_fingerprint,definition_digest,labeler_digest,entity_context_digest,effective_entities_digest,verdict,source,call_id,updated_at)::text,'' ORDER BY root_id,concept_key),''),'UTF8')),'hex') digest FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1`,[args.workspace_id])).rows[0]!.digest;
+  const membershipState=(await client.query<{digest:string}>(`SELECT 'sha256:'||encode(sha256(convert_to(COALESCE(string_agg(jsonb_build_array(root_id,concept_key,root_fingerprint,definition_digest,labeler_digest,entity_context_digest,effective_entities_digest,verdict,source,call_id,updated_at)::text,'' ORDER BY root_id,concept_key),''),'UTF8')),'hex') digest FROM signal_workspace_concept_memberships_read_v1($1::uuid) WHERE workspace_id=$1`,[args.workspace_id])).rows[0]!.digest;
   const state=(await client.query<{input_revision:string; run_id:string|null; processing:boolean}>(`
     SELECT s.input_revision::text,(SELECT id FROM signal_labeling_runs WHERE workspace_id=s.workspace_id AND kind='membership'
       AND NOT COALESCE((membership_snapshot->>'preview')::boolean,false) ORDER BY created_at DESC LIMIT 1) run_id,
@@ -506,10 +506,10 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
 ), visible_terms AS MATERIALIZED (
   SELECT * FROM jsonb_to_recordset($6::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean${membership ? ",membership_concept boolean" : ""}${definedInterest ? ",interest_generation_id uuid,interest_taxonomy_term_id uuid" : ""})
 ), ${membership ? `mfp_memberships AS MATERIALIZED (
-  SELECT root_id,concept_key,definition_digest,citations FROM signal_concept_memberships_current_v1
+  SELECT root_id,concept_key,definition_digest,citations FROM signal_workspace_concept_memberships_read_v1($1::uuid)
   WHERE workspace_id=$1::uuid AND verdict='belongs'
 ), mfp_facets AS MATERIALIZED (
-  SELECT root_id,relevance FROM signal_mention_facets_current_v1 WHERE workspace_id=$1::uuid
+  SELECT root_id,relevance FROM signal_workspace_mention_facets_read_v1($1::uuid) WHERE workspace_id=$1::uuid
 ), mfp_roots_with_concept AS MATERIALIZED (
   SELECT DISTINCT root_id FROM mfp_memberships
 ), ` : ""}legacy_memberships AS MATERIALIZED (

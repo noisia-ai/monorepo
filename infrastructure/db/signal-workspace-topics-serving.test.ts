@@ -110,6 +110,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
   const client = {
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
+      if (sql.includes("signal_workspace_concept_memberships_read_v1") || sql.includes("signal_workspace_mention_facets_read_v1"))
+        assert.equal(params[0], workspaceId, "scoped MFP readers receive the authorized workspace");
       if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
       if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [
         {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a"),mfp_discovery:mfpDiscovery},
@@ -414,6 +416,9 @@ test("Signal keeps served semantics while applying a safe working label", async 
     assert.match(additiveSql,/UNION ALL SELECT root_id,term_key,visible,evidence_fragment FROM defined_interest_memberships/u);
     assert.match(additiveSql,/UNION ALL SELECT current.root_id,current.concept_key/u);
     assert.match(additiveSql,/AND visible.membership_concept/u);
+    assert.match(additiveSql,/FROM signal_workspace_concept_memberships_read_v1\(\$1::uuid\)\s+WHERE workspace_id=\$1::uuid AND verdict='belongs'/u);
+    assert.match(additiveSql,/FROM signal_workspace_mention_facets_read_v1\(\$1::uuid\) WHERE workspace_id=\$1::uuid/u);
+    assert.doesNotMatch(additiveSql,/FROM signal_(concept_memberships|mention_facets)_current_v1/u);
     membershipCollision = false;
     selectedInterest = false;
     consolidatedMode = false;
@@ -442,8 +447,11 @@ test("Signal keeps served semantics while applying a safe working label", async 
   }
   access = false;
   const authorizedDetailQueries=detailQueries.length;
+  const unauthorizedStart=statements.length;
   await assert.rejects(loadSignalWorkspaceTopicDetailV1(args), /workspace_topics_forbidden/);
   assert.equal(detailQueries.length, authorizedDetailQueries, "scope rejection must precede another aggregate query");
+  assert.equal(statements.slice(unauthorizedStart).some(sql=>sql.includes("signal_workspace_concept_memberships_read_v1") || sql.includes("signal_workspace_mention_facets_read_v1")),false,
+    "scope rejection precedes all scoped MFP readers");
 
 });
 

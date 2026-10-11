@@ -286,7 +286,7 @@ const facetDisplayPopulation = `WITH display_roots AS MATERIALIZED (
   -- Joining the expanded view directly to underestimated rights roots caused its
   -- entire population and correlated label lookups to run again for every root.
   SELECT workspace_id,root_id,full_text,title,platform,status,facets,requires_context_review,pending_context_review
-  FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+  FROM signal_workspace_mention_facets_read_v1($1::uuid) WHERE workspace_id=$1
 ), scoped AS MATERIALIZED (
   SELECT f.*,m.url,o.patch,
     f.root_id=ANY($2::uuid[]) stale

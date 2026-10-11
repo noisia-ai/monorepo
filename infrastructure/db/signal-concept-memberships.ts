@@ -374,10 +374,10 @@ export async function loadConceptMembershipsStatusV1(
         // Project lazy CE invalidation before filtering, aggregation or paging.
         // Each expensive current view is evaluated once for this workspace.
         `/* membership-status-items */ WITH concepts AS (SELECT * FROM jsonb_to_recordset($9::jsonb) c(concept_key text,definition_digest text,scope text)), current_pairs AS MATERIALIZED (
-   SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
+   SELECT * FROM signal_workspace_concept_memberships_read_v1($1::uuid) WHERE workspace_id=$1
    ), current_roots AS MATERIALIZED (
    SELECT f.*,COALESCE(f.entity_context_digest,$11::text) effective_ce
-   FROM signal_mention_facets_current_v1 f WHERE workspace_id=$1
+   FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE workspace_id=$1
    ), human_patches AS MATERIALIZED (
    SELECT root_id,jsonb_object_agg(dimension,value) patch FROM signal_mention_facet_overrides
    WHERE workspace_id=$1 AND superseded_at IS NULL GROUP BY root_id
