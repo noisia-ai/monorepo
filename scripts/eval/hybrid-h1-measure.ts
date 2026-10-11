@@ -40,10 +40,14 @@ function score(gold: Gold[], rows: Map<string, HybridMeasuredRootV1>, key: strin
   const evaluated = gold.map(g => ({ truth: g.memberships[key], predicted: prediction(rows.get(g.root_id)),
     entity_mix: goldEntityMix(g) }));
   const binaryRows = evaluated.filter(r => r.truth !== "insufficient" && emitted(r.predicted));
-  const tp = binaryRows.filter(r => r.truth === "belongs" && r.predicted === "belongs").length;
-  const fp = binaryRows.filter(r => r.truth === "not_belongs" && r.predicted === "belongs").length;
-  const fn = binaryRows.filter(r => r.truth === "belongs" && r.predicted === "not_belongs").length;
-  return { roots: gold.length, binary_evaluated: binaryRows.length,
+  // AUDIT §§8.5/9.5: gate and technical misses remain pipeline FN. The founder's
+  // §10.4 exception keeps review_required outside correct/error scoring.
+  const scored = evaluated.filter(r => r.truth !== "insufficient" && r.predicted !== "review_required");
+  const tp = scored.filter(r => r.truth === "belongs" && r.predicted === "belongs").length;
+  const fp = scored.filter(r => r.truth === "not_belongs" && r.predicted === "belongs").length;
+  const fn = scored.filter(r => r.truth === "belongs" && r.predicted !== "belongs").length;
+  return { roots: gold.length, binary_evaluated: binaryRows.length, scoring_denominator: scored.length,
+    review_required_gold_positive: evaluated.filter(r => r.truth === "belongs" && r.predicted === "review_required").length,
     review_required: evaluated.filter(r => r.predicted === "review_required").length,
     states: Object.fromEntries(["belongs", "not_belongs", "review_required", "insufficient", "refused", "error", "pending"]
       .map(v => [v, evaluated.filter(r => r.predicted === v).length])),
