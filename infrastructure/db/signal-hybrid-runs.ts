@@ -153,7 +153,7 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
         let decisions = pages.flatMap(page => page.results
           .filter(result => (stage !== "jev" || result.jev.verdict !== "belongs")
             && (stage !== "claude" || !run.identity.params.hybrid_citation_quality || result.claude?.verdict !== "belongs")
-            && (stage !== "citation" || result.claude?.verification?.supported || snapshot(run).citation_retry))
+            && (stage !== "citation" || result.claude?.verification && (result.claude.verification.supported || snapshot(run).citation_retry)))
           .map(result => {
             if (stage === "jev" ? result.jev_call_id !== page.call.id || result.claude_call_id !== null
               : stage === "citation" ? result.citation_call_id !== page.call.id : result.claude_call_id !== page.call.id) return fail("hybrid_result_call_changed");

@@ -48,7 +48,10 @@ export function decideHybridMembershipV1(
   if (claude.verdict === "error" || claude.verdict === "refused") return result(claude.verdict, false);
   const citations = claude.citations ?? (claude.citation ? [claude.citation] : []);
   if (!citations.length || citations.length > 3 || citations.some(c => !validHybridCitationV1(text,c))) return result("error", false);
-  if (claude.verdict === "belongs" && claude.verification && !claude.verification.supported) return result("review_required", false);
+  if (claude.verdict === "belongs" && claude.verification) {
+    if(claude.verification.probability===null||!Number.isFinite(claude.verification.probability))return result("error",false);
+    if(!claude.verification.supported)return claude.verification.attempt===0?result("pending",true):result("review_required",false);
+  }
   if (claude.verdict === "belongs") return result("belongs", false);
   return result("review_required", false);
 }

@@ -11,7 +11,7 @@ import type { createAnthropicMessageBatchesClient } from '../../../services/work
 export async function verifyHybridCitationQualityV1(a:{client:PoolClient;database:Pool;workspace:string;actor:string;route:string;jevRun:string;concept:ConceptForJudgeV1}) {
  const {client}=a,oldPrice=process.env.NOISIA_JEV_INPUT_USD_PER_MTOK;process.env.NOISIA_JEV_INPUT_USD_PER_MTOK='0.042';
  try{
- for(const scenario of ['supported','repair_supported','repair_unsupported','deterministic_error','explicit_unknown_release'] as const){
+ for(const scenario of ['supported','repair_supported','repair_unsupported','deterministic_error','explicit_unknown_release','verifier_http_error','verifier_invalid_noul'] as const){
   await client.query('SAVEPOINT citation_quality');
   await client.query("UPDATE signal_labeling_calls SET results_applied=true,results='[]' WHERE run_id=$1 AND status='failed'",[a.jevRun]);
   const raw=new Map<string,string>();
@@ -23,7 +23,9 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
    list:async()=>({data:[batch],has_more:false,last_id:batch.id}),results:async function*(){for(const request of requests){
     const item={custom_id:request.custom_id,result:{type:'succeeded',message:{id:'synthetic_citation',type:'message',role:'assistant',model:'claude-sonnet-5-5',stop_reason:'end_turn',usage:{input_tokens:10,output_tokens:10},content:[{type:'text',text:scenario==='deterministic_error'?'invalid JSON':JSON.stringify({contract_version:'concept-membership-judge-v1',roots:[{root_ordinal:0,memberships:[{concept_key:a.concept.concept_key,verdict:'belongs',span_ids:['r0c0s0'],rationale:'The cited sentence establishes the decisive activity.'}]}]})}]}}};yield{item,rawText:JSON.stringify(item)};
    }}} as unknown as ReturnType<typeof createAnthropicMessageBatchesClient>;
-  const jev={evaluate:async()=>{verifySends++;return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:scenario==='supported'||scenario==='repair_supported'&&verifySends===2?0.9:0.1}}})};}};
+  const technical=scenario==='verifier_http_error'||scenario==='verifier_invalid_noul';
+  const jev={evaluate:async()=>{verifySends++;if(scenario==='verifier_http_error')return {http_status:429,latency_ms:1,body:JSON.stringify({error:'overloaded'})};
+   if(scenario==='verifier_invalid_noul')return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:2}}})};return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:scenario==='supported'||scenario==='repair_supported'&&verifySends===2?0.9:0.1}}})};}};
   const initial=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,stage:'claude',route_digest:a.route,idempotency_key:`citation-${randomUUID()}`,provider_available:true});
   if(scenario==='explicit_unknown_release'){
    const store=createStore('claude'),run=(await store.claim(initial.run_id))!;
@@ -42,13 +44,34 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   let next:{run_id:string;stage:'claude'|'citation'}|null={run_id:initial.run_id,stage:'claude'};let stages=0;
   while(next){
    assert.ok(++stages<=4,'one confirmation, one verifier, at most one repair and one re-verification');
-   const stage=next.stage,id=next.run_id,store=createStore(stage);
+   const stage:'claude'|'citation'=next.stage,id=next.run_id,store=createStore(stage);
    const outcome=await runHybridMembershipTickV1({run_id:id,stage,store,jevPrice:0.042,jev,claude});
-   assert.equal(outcome.status,'completed');
+   assert.equal(outcome.status,technical&&stage==='citation'?'failed':'completed');
    const replay=await runHybridMembershipTickV1({run_id:id,stage,store,jevPrice:0.042,jev,claude});
    assert.deepEqual(replay.followup,outcome.followup,'successor admission replays exactly');
    if(stage==='claude'&&scenario!=='deterministic_error')assert.equal((await client.query('SELECT count(*)::int n FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0].n,0,'unverified agreement stays out of Signal');
    next=outcome.followup as typeof next;
+  }
+  if(technical){
+   assert.equal(claudeSends,1);assert.equal(verifySends,1,'technical failure never authorizes a paid Claude repair');
+   assert.equal((await client.query('SELECT count(*)::int n FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0].n,0,'technical failure is outside the semantic cache');
+   const call=(await client.query(`SELECT * FROM signal_labeling_calls WHERE run_id IN
+    (SELECT id FROM signal_labeling_runs WHERE membership_snapshot->>'source_run_id'=$1)`,[initial.run_id])).rows[0];
+   assert.equal(call.results[0].claude.verdict,'error');assert.equal(call.results[0].claude.verification,undefined);
+   const current=(await client.query('SELECT verdict,error_code,updated_at FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3',[a.workspace,call.inputs[0].root_id,a.concept.concept_key])).rows[0];
+   assert.equal(current.verdict,'error');assert.ok(current.error_code);assert.deepEqual(current.updated_at,call.updated_at);
+   for(let retry=1;retry<=2;retry++){
+    const receipt=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,
+     stage:'citation',route_digest:a.route,source_run_id:initial.run_id,idempotency_key:`technical-${randomUUID()}`,provider_available:true});
+    const outcome=await runHybridMembershipTickV1({run_id:receipt.run_id,stage:'citation',store:createStore('citation'),jevPrice:0.042,jev,claude});
+    assert.equal(outcome.status,'failed');assert.equal(outcome.followup,null);
+   }
+   const final=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,
+    stage:'citation',route_digest:a.route,source_run_id:initial.run_id,idempotency_key:`exhausted-${randomUUID()}`,provider_available:true});
+   await runHybridMembershipTickV1({run_id:final.run_id,stage:'citation',store:createStore('citation'),jevPrice:0.042,jev,claude});
+   assert.equal(verifySends,3,'explicit technical retry is bounded to three verifier attempts');assert.equal(claudeSends,1);
+   console.log(JSON.stringify({gate:'h1_pg_verifier_technical_error',scenario,claudeSends,verifySends,verdict:current.verdict}));
+   await client.query('ROLLBACK TO SAVEPOINT citation_quality');continue;
   }
   if(scenario==='deterministic_error'){
     const decision=(await client.query('SELECT root_id FROM signal_hybrid_membership_decisions WHERE workspace_id=$1 AND concept_key=$2',[a.workspace,a.concept.concept_key])).rows[0];

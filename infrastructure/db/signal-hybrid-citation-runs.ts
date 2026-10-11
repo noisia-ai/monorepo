@@ -4,13 +4,14 @@ import type { LabelingDatabaseV1 } from './signal-mention-facets';
 import type { LabelingRunV1 } from './signal-labeling-runs';
 import { requestHybridMembershipStageV1, type HybridMembershipStageV1 } from './signal-hybrid-membership';
 import type { HybridStageInputV1, HybridStageResultV1 } from './signal-hybrid-runs';
+import {hybridPairRetrySqlV1,hybridUncertainPairSqlV1} from './signal-hybrid-admission-population';
 
 /** Previous receipt is the immutable input to verification or to the single citation repair. */
 export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|PoolClient,run:LabelingRunV1):Promise<HybridStageInputV1[]> {
  const s=(run as LabelingRunV1&{membership_snapshot:{source_run_id:string;hybrid_stage:HybridMembershipStageV1;citation_retry:boolean;route_digest:string}}).membership_snapshot;
  const rows=(await client.query<{input:HybridStageInputV1;result:HybridStageResultV1}>(`WITH current_pairs AS MATERIALIZED (
-   SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$2 AND labeler_digest=$3
-     AND verdict IN('pending','error')
+   SELECT * FROM signal_concept_memberships_current_v1 current WHERE workspace_id=$2 AND labeler_digest=$3
+     AND verdict IN('pending','error') AND ${hybridPairRetrySqlV1(s.hybrid_stage)} AND ${hybridUncertainPairSqlV1}
  ), rights AS MATERIALIZED (SELECT root_id FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$2 AND metrics AND evidence)
  SELECT input,result FROM signal_labeling_calls call
  CROSS JOIN LATERAL jsonb_array_elements(call.results) result

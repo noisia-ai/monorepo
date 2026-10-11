@@ -35,3 +35,17 @@ test('one noul verification uses only cited fragments and full concept; one retr
  assert.equal(hybridCitationOutcomeV1(false,0),'retry');assert.equal(hybridCitationOutcomeV1(false,1),'review_required');
  assert.equal(hybridCitationOutcomeV1(true,1),'belongs');
 });
+test('invalid or missing noul is a technical failure, never a semantic support rejection',()=>{
+ for(const answers of [{},{support:{type:'noul',noul:NaN}},{support:{type:'noul',noul:1.1}}])
+  assert.throws(()=>mapHybridCitationVerificationV1({model:'jev-1.13.0',usage:{input_tokens:1,output_tokens:0},answers} as never),/hybrid_citation_answer_invalid/);
+ assert.equal(mapHybridCitationVerificationV1({model:'jev-1.13.0',usage:{input_tokens:1,output_tokens:0},answers:{support:{type:'noul',noul:0.1}}}).supported,false);
+});
+test('first valid rejection stays pending; only a second valid rejection becomes review_required',async()=>{
+ const {decideHybridMembershipV1}=await import('./signal-hybrid-membership-v1');
+ const citation={quote:text,start:0,end:text.length};
+ const jev={verdict:'belongs' as const,probability:0.8,citation};
+ const claude={verdict:'belongs' as const,citation,citations:[citation]};
+ assert.equal(decideHybridMembershipV1(text,jev,{...claude,verification:{supported:false,probability:0.1,attempt:0}}).verdict,'pending');
+ assert.equal(decideHybridMembershipV1(text,jev,{...claude,verification:{supported:false,probability:0.1,attempt:1}}).verdict,'review_required');
+ assert.equal(decideHybridMembershipV1(text,jev,{...claude,verification:{supported:false,probability:null,attempt:1}}).verdict,'error');
+});

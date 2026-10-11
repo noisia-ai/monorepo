@@ -85,7 +85,10 @@ export async function requestHybridMembershipStageV1(args: {
           CROSS JOIN LATERAL jsonb_array_elements(call.results) r
           JOIN LATERAL jsonb_array_elements(call.inputs) i ON i->>'root_id'=r->>'root_id'
           WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied AND r#>>'{claude,verdict}'='belongs'
-          AND ($2::boolean=false OR r#>>'{claude,verification,supported}'='false')`,[args.source_run_id,args.stage==="claude"])).rows[0]!
+          AND ($2::boolean=false OR r#>>'{claude,verification,supported}'='false')
+          AND signal_hybrid_pair_attempts_v1(call.workspace_id,$3,$4,r->>'root_id',r->>'root_fingerprint',
+            r->>'concept_key',r->>'definition_digest',r->>'entity_context_digest',r->>'effective_entities_digest')<3`,
+          [args.source_run_id,args.stage==="claude",args.route_digest,args.stage])).rows[0]!
         : args.stage === "jev"
         ? (await client.query<{roots:number;pairs:number;characters:string}>(
           hybridH1JevAdmissionPopulationSqlV1, [workspace,args.route_digest])).rows[0]!

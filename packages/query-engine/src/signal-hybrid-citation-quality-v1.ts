@@ -15,7 +15,7 @@ export const HYBRID_CITATION_SUPPORT_THRESHOLD_V1 = 0.5;
 export type HybridCitationVerificationV1 = { supported: boolean; probability: number | null; call_id?: string; attempt: 0 | 1 };
 export const hybridCitationOutcomeV1 = (supported:boolean,attempt:0|1) => supported?'belongs':attempt===0?'retry':'review_required';
 export function hybridCitationJudgeIdentityV1(): LabelerIdentity {
- return {kind:'membership',provider:'anthropic',model:'claude-sonnet-5-5',prompt_digest:digest(HYBRID_CITATION_PROMPT_V1),schema_digest:digest(membershipExplicitOutputSchemaV1()),params:{thinking:{type:'adaptive'},effort:'low',max_tokens:16384,max_roots:16,explicit_verdicts:true,hybrid_citation_quality:true,max_fragments:3,partition:'complete-sentences-v1'}};
+ return {kind:'membership',provider:'anthropic',model:'claude-sonnet-5-5',prompt_digest:digest(HYBRID_CITATION_PROMPT_V1),schema_digest:digest(membershipExplicitOutputSchemaV1()),params:{thinking:{type:'adaptive'},effort:'low',max_tokens:16384,max_roots:16,explicit_verdicts:true,hybrid_citation_quality:true,max_fragments:3,max_transport_retries:2,partition:'complete-sentences-v1'}};
 }
 /** H1 keeps a long sentence intact instead of silently losing its decisive clause. Legacy/V2 spans stay unchanged. */
 export function hybridSentenceSpansV1(inputs:MembershipInputV1[]):LiteralSpanV1[] {
@@ -36,6 +36,7 @@ export function buildHybridCitationVerificationV1(concept:ConceptForJudgeV1,cita
 }
 export function mapHybridCitationVerificationV1(response:JevResponseV1):HybridCitationVerificationV1 {
  const a=response.answers.support;const probability=a?.type==='noul'&&Number.isFinite(a.noul)&&a.noul>=0&&a.noul<=1?a.noul:null;
+ if(probability===null)throw new Error('hybrid_citation_answer_invalid');
  return {supported:probability!==null&&probability>=HYBRID_CITATION_SUPPORT_THRESHOLD_V1,probability,attempt:0};
 }
 export function hybridCitationVerifierIdentityV1():LabelerIdentity {

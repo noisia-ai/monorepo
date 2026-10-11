@@ -98,7 +98,9 @@ function runCitationTick(args:{run_id:string;store:HybridStore;jevPrice:number;l
     if(unknown)return [];
     const input=call.inputs[0]!,prior=input.confirmation_by_concept?.[input.evaluated_concepts[0]!.concept_key];
     if(!prior?.claude)return [];
-    return [{...prior,error_code:code,citation_call_id:call.id,claude:{...prior.claude,verification:{supported:false,probability:null,call_id:call.id,attempt:1 as const}}}];
+    const {verification:_previousVerification,...confirmation}=prior.claude;
+    return [{...prior,verdict:'error',error_code:code,citation_call_id:call.id,
+      claude:{...confirmation,verdict:'error' as const}}];
   },
   invalidUsage:failure=>failure.evidence.usage??([429,529].includes(failure.evidence.http_status??0)?{input_tokens:0,output_tokens:0}:undefined),
   labeled:()=>false,fail_on_error:true,

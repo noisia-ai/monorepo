@@ -111,6 +111,7 @@ export async function runConceptMembershipTickV1(args: {
   const { store, provider } = args,
     run = await store.claim(args.run_id);
   if (!run) return { status: "not_claimed" };
+  const retryLimit=run.identity.params.hybrid_citation_quality===true?2:8;
   try {
     let calls = await store.calls(run);
     if (calls.some((c) => c.status === "unknown") && !run.error_code) {
@@ -267,7 +268,7 @@ export async function runConceptMembershipTickV1(args: {
         refusal_category: parsed.refusal_category,
       });
       if (parsed.status === "refused") {
-        if (call.inputs.length > 1 && !run.error_code && call.retry_depth < 8) {
+        if (call.inputs.length > 1 && !run.error_code && call.retry_depth < retryLimit) {
           const half = Math.ceil(call.inputs.length / 2);
           for (const split of [call.inputs.slice(0, half), call.inputs.slice(half)])
             retry.push(membershipCallProposalV1(run, split, call.retry_depth + 1, call.id));
@@ -299,7 +300,7 @@ export async function runConceptMembershipTickV1(args: {
             call,
             results: resultsFor(call, run, "error", "retry_requires_authority"),
           });
-        } else if (call.inputs.length > 1 && call.retry_depth < 8) {
+        } else if (call.inputs.length > 1 && call.retry_depth < retryLimit) {
           const half = Math.ceil(call.inputs.length / 2);
           for (const split of [
             call.inputs.slice(0, half),
@@ -321,7 +322,7 @@ export async function runConceptMembershipTickV1(args: {
           });
       } else {
         for (const ordinal of group.retry_ordinals ?? []) {
-          if (run.error_code || call.retry_depth >= 8) {
+          if (run.error_code || call.retry_depth >= retryLimit) {
             group.results.push(...resultsFor(
               {...call, inputs: [call.inputs[ordinal]!]}, run, "error",
               run.error_code ? "retry_requires_authority" : "incomplete_single_root",

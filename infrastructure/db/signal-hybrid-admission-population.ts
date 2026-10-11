@@ -1,5 +1,5 @@
 /** Deterministic parser failures are final; at most three governed attempts per unchanged pair and stage. */
-export const hybridPairRetrySqlV1 = (stage:"jev"|"claude") => `current.error_code IS DISTINCT FROM 'hybrid_attempts_exhausted'
+export const hybridPairRetrySqlV1 = (stage:"jev"|"claude"|"citation") => `current.error_code IS DISTINCT FROM 'hybrid_attempts_exhausted'
  AND COALESCE(current.error_code,'') !~ '^(membership_|incomplete_single_root)'
  AND signal_hybrid_pair_attempts_v1(current.workspace_id,current.labeler_digest,'${stage}',
  current.root_id::text,current.root_fingerprint,current.concept_key,current.definition_digest,
