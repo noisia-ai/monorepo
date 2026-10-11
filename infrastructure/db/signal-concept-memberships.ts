@@ -121,8 +121,11 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM current_pairs current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
  AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest
  AND (current.verdict IN('belongs','not_belongs','insufficient','review_required','refused')
- OR (current.verdict='error' AND current.error_code IN('membership_item_schema_invalid','membership_evidence_invalid')))
+ OR (current.verdict='error' AND (current.error_code IN('membership_item_schema_invalid','membership_evidence_invalid','hybrid_attempts_exhausted') OR $8::boolean AND current.error_code ~ '^(membership_|incomplete_single_root)')))
  AND (current.source='human' OR current.labeler_digest=$6)))
+ AND (NOT $8::boolean OR signal_hybrid_pair_attempts_v1(f.workspace_id,$6,'jev',f.root_id::text,
+   signal_labeling_digest_v1(jsonb_build_object('root_id',f.root_id,'input_digest',f.input_digest)),
+   c.concept_key,c.definition_digest,f.effective_ce,f.effective_entities_digest)<3)
  AND (NOT $8::boolean OR NOT EXISTS(
    SELECT 1 FROM signal_labeling_calls applied
    JOIN signal_labeling_runs prior ON prior.id=applied.run_id

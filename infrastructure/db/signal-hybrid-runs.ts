@@ -6,12 +6,15 @@ import { createSignalLabelingStoreV1, SignalLabelingError, type LabelingRunV1 } 
 import { writeHybridMembershipDecisionPageV1, type HybridMembershipStageV1 } from "./signal-hybrid-membership";
 import type { LabelingDatabaseV1 } from "./signal-mention-facets";
 
-import { hybridUncertainPairSqlV1 } from "./signal-hybrid-admission-population";
+import { selectHybridCitationInputsV1, requestHybridCitationFollowupV1 } from "./signal-hybrid-citation-runs";
+import { hybridPairRetrySqlV1, hybridUncertainPairSqlV1 } from "./signal-hybrid-admission-population";
 
 type Snapshot = { hybrid_stage: HybridMembershipStageV1; route_digest: string; jev_run_id: string | null;
-  concepts: ConceptForJudgeV1[] };
+  concepts: ConceptForJudgeV1[]; citation_retry?: boolean };
 export type HybridStageInputV1 = MembershipInputV1 & {
   jev_by_concept?: Record<string,{ decision: HybridJevDecisionV1; call_id: string }>;
+  confirmation_by_concept?: Record<string,HybridStageResultV1>;
+  citation_repair?: unknown;
 };
 export type HybridStageResultV1 = {
   root_id: string; root_fingerprint: string; concept_key: string; definition_digest: string;
@@ -19,12 +22,13 @@ export type HybridStageResultV1 = {
   jev: HybridJevDecisionV1; jev_call_id: string;
   claude: HybridClaudeDecisionV1 | null; claude_call_id: string | null;
   rationale: string | null;
+  error_code?: string; citation_call_id?: string | null;
 };
 
 const fail = (code: string): never => { throw new SignalLabelingError(code); };
 function snapshot(run: LabelingRunV1): Snapshot {
   const value = (run as LabelingRunV1 & {membership_snapshot?:Snapshot}).membership_snapshot;
-  if (!value || !["jev","claude"].includes(value.hybrid_stage) || !value.route_digest || !value.concepts)
+  if (!value || !["jev","claude","citation"].includes(value.hybrid_stage) || !value.route_digest || !value.concepts)
     return fail("hybrid_snapshot_invalid");
   return value;
 }
@@ -80,7 +84,7 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
         entity_context_digest,effective_entities_digest
       FROM signal_concept_memberships_current_v1 current
       WHERE workspace_id=$2 AND labeler_digest=$3 AND verdict IN('pending','error')
-        AND ${hybridUncertainPairSqlV1}
+        AND ${hybridUncertainPairSqlV1} AND ${hybridPairRetrySqlV1("claude")}
     ), authorized_roots AS MATERIALIZED (
       SELECT root_id FROM signal_membership_evidence_rights_v1
       WHERE workspace_id=$2 AND metrics AND evidence
@@ -128,11 +132,12 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
   options: Omit<Parameters<typeof createSignalLabelingStoreV1>[0],"adapter">) {
   const inputs = async (client: LabelingDatabaseV1 | PoolClient, run: LabelingRunV1): Promise<HybridStageInputV1[]> => {
     if (snapshot(run).hybrid_stage !== stage) return fail("hybrid_stage_changed");
-    return stage === "jev" ? selectMembershipInputsV1(client,run,true) : selectHybridClaudeInputsV1(client,run);
+    return stage === "jev" ? selectMembershipInputsV1(client,run,true) : stage === "citation" || snapshot(run).citation_retry
+      ? selectHybridCitationInputsV1(client,run) : selectHybridClaudeInputsV1(client,run);
   };
-  return createSignalLabelingStoreV1<HybridStageInputV1,HybridStageResultV1>({ ...options,
+  const store=createSignalLabelingStoreV1<HybridStageInputV1,HybridStageResultV1>({ ...options,
     adapter: { kind:"membership",hybrid_stage:stage,
-      policy_action:stage === "jev" ? "concept_membership_jev" : "concept_membership_claude",
+      policy_action:stage !== "claude" ? "concept_membership_jev" : "concept_membership_claude",
       persist_results_before_write:true,inputs,
       authority:async (client,run) => {
         const s = snapshot(run);
@@ -145,20 +150,36 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
       beforeSubmit:assertHybridProviderRightsBeforeSubmitV1,
       pending:async (client,run) => (await inputs(client,run)).length,
       write:async (client,run,pages) => {
-        const decisions = pages.flatMap(page => page.results
-          .filter(result => result.jev.verdict !== "error" && result.claude?.verdict !== "error"
-            && (stage === "claude" || result.jev.verdict !== "belongs"))
+        let decisions = pages.flatMap(page => page.results
+          .filter(result => (stage !== "jev" || result.jev.verdict !== "belongs")
+            && (stage !== "claude" || !run.identity.params.hybrid_citation_quality || result.claude?.verdict !== "belongs")
+            && (stage !== "citation" || result.claude?.verification?.supported || snapshot(run).citation_retry))
           .map(result => {
             if (stage === "jev" ? result.jev_call_id !== page.call.id || result.claude_call_id !== null
-              : result.claude_call_id !== page.call.id) return fail("hybrid_result_call_changed");
+              : stage === "citation" ? result.citation_call_id !== page.call.id : result.claude_call_id !== page.call.id) return fail("hybrid_result_call_changed");
             const input = page.call.inputs.find(item => item.root_id === result.root_id);
             if (!input || !input.evaluated_concepts.some(concept => concept.concept_key === result.concept_key &&
               concept.definition_digest === result.definition_digest)) return fail("hybrid_result_input_changed");
             return { ...result,text:input.text };
           }));
+        const admitted=[];
+        for(const decision of decisions){
+          if(decision.jev.verdict==="error"||decision.claude?.verdict==="error"){
+            if(!/^(membership_|incomplete_single_root)/u.test(decision.error_code??"")){
+              const attempts=(await client.query<{n:number}>(`SELECT signal_hybrid_pair_attempts_v1($1,$2,$3,$4,$5,$6,$7,$8,$9) n`,
+                [run.workspace_id,snapshot(run).route_digest,stage,decision.root_id,decision.root_fingerprint,decision.concept_key,
+                  decision.definition_digest,decision.entity_context_digest,decision.effective_entities_digest])).rows[0]!.n;
+              if(attempts<3)continue;
+              decision.error_code="hybrid_attempts_exhausted";
+            }
+          }
+          admitted.push(decision);
+        }
+        decisions=admitted;
         for(let offset=0;offset<decisions.length;offset+=200) await writeHybridMembershipDecisionPageV1({client,workspace_id:run.workspace_id,
           route_digest:snapshot(run).route_digest,decisions:decisions.slice(offset,offset+200)});
       },
     },
   });
+  return {...store,followup:(runId:string)=>requestHybridCitationFollowupV1(options.database,runId)};
 }

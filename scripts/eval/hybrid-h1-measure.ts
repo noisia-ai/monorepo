@@ -75,7 +75,7 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
       if (!concepts.includes(key) || !root.gate_passed) throw new Error("hybrid_unexpected_pair");
       if (decision.verdict === "belongs" && (!decision.claude || decision.claude.verdict !== "belongs"))
         throw new Error("hybrid_agreement_invalid");
-      if (decision.verdict === "review_required" && (!decision.claude || !["not_belongs", "insufficient"].includes(decision.claude.verdict)))
+      if (decision.verdict === "review_required" && (!decision.claude || !["not_belongs", "insufficient"].includes(decision.claude.verdict) && !(decision.claude.verdict === "belongs" && decision.claude.verification?.supported === false)))
         throw new Error("hybrid_review_invalid");
       const recalculated = decideHybridMembershipV1(root.text, decision.jev, decision.claude);
       if (decision.verdict !== recalculated.verdict || decision.needs_claude !== recalculated.needs_claude)

@@ -1,6 +1,7 @@
 import { signalWorkspaceEmbeddingDigestV1 as digest } from "./signal-workspace-embeddings-v1";
 import type { LabelerIdentity } from "./signal-mention-labeler-v1";
 import { type ConceptForJudgeV1, type MembershipInputV1 } from "./signal-concept-membership-v1";
+import type { HybridCitationVerificationV1 } from "./signal-hybrid-citation-quality-v1";
 import type { JevRequestV1, JevResponseV1 } from "./signal-mention-facets-jev-v1";
 /** Experimental H1 reducer. Its threshold is the frozen dev choice, not a workspace knob. */
 export const HYBRID_JEV_POSITIVE_THRESHOLD_V1 = 0.4;
@@ -12,6 +13,8 @@ export type HybridJevDecisionV1 = {
   citation: HybridCitationV1 | null;
 };
 export type HybridClaudeDecisionV1 = {
+  citations?: HybridCitationV1[];
+  verification?: HybridCitationVerificationV1;
   verdict: "belongs" | "not_belongs" | "insufficient" | "error" | "refused";
   citation: HybridCitationV1 | null;
 };
@@ -43,7 +46,9 @@ export function decideHybridMembershipV1(
   if (!validHybridCitationV1(text, jev.citation)) return result("error", false);
   if (!claude) return result("pending", true);
   if (claude.verdict === "error" || claude.verdict === "refused") return result(claude.verdict, false);
-  if (!validHybridCitationV1(text, claude.citation)) return result("error", false);
+  const citations = claude.citations ?? (claude.citation ? [claude.citation] : []);
+  if (!citations.length || citations.length > 3 || citations.some(c => !validHybridCitationV1(text,c))) return result("error", false);
+  if (claude.verdict === "belongs" && claude.verification && !claude.verification.supported) return result("review_required", false);
   if (claude.verdict === "belongs") return result("belongs", false);
   return result("review_required", false);
 }
@@ -80,5 +85,5 @@ export function hybridJevMembershipIdentityV1(): LabelerIdentity {
   return {kind:"membership",provider:"typesafe",model:"jev-1.13.0",
     prompt_digest:digest(buildHybridJevQuestionV1(input,concept).questions),
     schema_digest:digest(HYBRID_JEV_ANSWER_SCHEMA_V1),
-    params:{threshold:HYBRID_JEV_POSITIVE_THRESHOLD_V1,transport:"sync"}};
+    params:{threshold:HYBRID_JEV_POSITIVE_THRESHOLD_V1,transport:"sync",max_pair_attempts:3}};
 }

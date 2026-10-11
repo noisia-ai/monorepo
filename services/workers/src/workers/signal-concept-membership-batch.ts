@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Job } from "bullmq";
 import {
   groupMembershipInputsV1,
-  buildMembershipRequestV1,
+  buildMembershipRequestV1, buildHybridCitationRequestV1, parseHybridCitationGroupV1,
   parseMembershipGroupV1,
   parseAnthropicResponseV1,
   anthropicUsageV1,
@@ -54,7 +54,7 @@ export function membershipCallProposalV1(
   retryDepth = 0,
   parent: string | null = null,
 ): LabelingCallProposalV1<MembershipInputV1> {
-  const request = buildMembershipRequestV1(
+  const request = (run.identity.params.hybrid_citation_quality === true ? buildHybridCitationRequestV1 : buildMembershipRequestV1)(
       inputs,
       run.context,
       (run as MembershipRunV1).membership_snapshot.concepts,
@@ -290,7 +290,9 @@ export async function runConceptMembershipTickV1(args: {
       const group =
         parsed.status === "split"
           ? { split: true, results: [] }
-          : parseMembershipGroupV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
+          : run.identity.params.hybrid_citation_quality === true
+            ? parseHybridCitationGroupV1(parsed.text!,call.inputs)
+            : parseMembershipGroupV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
       if (group.split) {
         if (run.error_code) {
           apply.push({

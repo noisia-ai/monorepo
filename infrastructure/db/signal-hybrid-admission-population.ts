@@ -1,3 +1,9 @@
+/** Deterministic parser failures are final; at most three governed attempts per unchanged pair and stage. */
+export const hybridPairRetrySqlV1 = (stage:"jev"|"claude") => `current.error_code IS DISTINCT FROM 'hybrid_attempts_exhausted'
+ AND COALESCE(current.error_code,'') !~ '^(membership_|incomplete_single_root)'
+ AND signal_hybrid_pair_attempts_v1(current.workspace_id,current.labeler_digest,'${stage}',
+ current.root_id::text,current.root_fingerprint,current.concept_key,current.definition_digest,
+ current.entity_context_digest,current.effective_entities_digest)<3`;
 /** Unattributed cost or submission uncertainty cannot authorize another send of the same pair. */
 export const hybridUncertainPairSqlV1 = `NOT EXISTS (
   SELECT 1 FROM signal_labeling_calls uncertain
@@ -17,8 +23,9 @@ export const hybridUncertainPairSqlV1 = `NOT EXISTS (
 /** Bound the H1 stage estimate to one materialization of each governed surface. */
 export const hybridH1JevAdmissionPopulationSqlV1 = `WITH current_memberships AS MATERIALIZED (
   SELECT root_id,root_fingerprint,concept_key,definition_digest,entity_context_digest,effective_entities_digest
-  FROM signal_concept_memberships_current_v1
+  FROM signal_concept_memberships_current_v1 current
   WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict IN('pending','error')
+    AND ${hybridPairRetrySqlV1("jev")}
 ), current_facets AS MATERIALIZED (
   SELECT root_id,full_text FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
     AND status='labeled' AND relevance='relevant' AND NOT requires_context_review
@@ -82,7 +89,7 @@ export const hybridH1ClaudeAdmissionPopulationSqlV1 = `WITH jev_positive AS MATE
   SELECT root_id,root_fingerprint,concept_key,definition_digest,entity_context_digest,
     effective_entities_digest FROM signal_concept_memberships_current_v1 current
   WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict IN('pending','error')
-    AND ${hybridUncertainPairSqlV1}
+    AND ${hybridUncertainPairSqlV1} AND ${hybridPairRetrySqlV1("claude")}
 ), current_facets AS MATERIALIZED (
   SELECT root_id,full_text FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
 ), authorized_roots AS MATERIALIZED (

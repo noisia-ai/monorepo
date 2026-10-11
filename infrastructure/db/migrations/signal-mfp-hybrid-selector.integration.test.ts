@@ -16,6 +16,7 @@ import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1,
   writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import { loadFacetEntityContextV1 } from "../signal-mention-facets";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
+import { verifyHybridCitationQualityV1 } from "./signal-mfp-hybrid-citation.assertions";
 import { verifyHybridClaudeRecoveryV1 } from "./signal-mfp-hybrid-claude.assertions";
 import { verifyHybridJevPageContinuationV1 } from "./signal-mfp-hybrid-page.assertions";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
@@ -287,6 +288,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     await client.query("ROLLBACK TO SAVEPOINT page_probe");
     await verifyHybridClaudeRecoveryV1({client,database:db,workspace,actor,prep,context,route,jevRun,
       concept:concept as typeof input.evaluated_concepts[number],admit});
+    await verifyHybridCitationQualityV1({client,database:db,workspace,actor,route,jevRun,concept:concept as typeof input.evaluated_concepts[number]});
     await client.query("SAVEPOINT jev_transient_error");
     await client.query(`UPDATE signal_labeling_calls SET results=$2::jsonb WHERE id=$1`,
       [jevCall,JSON.stringify([{...result,jev:{verdict:"error",probability:null,citation:null}}])]);

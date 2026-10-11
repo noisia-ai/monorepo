@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import {
-  conceptSetDigestV1, hybridJevMembershipIdentityV1, membershipLabelerIdentityV1,
+  conceptSetDigestV1, hybridJevMembershipIdentityV1, hybridCitationJudgeIdentityV1, hybridCitationVerifierIdentityV1,
   decideHybridMembershipV1,
   labelerDigestV1,
   llmCostMicroUsdV1,
@@ -20,27 +20,29 @@ import { hybridH1ClaudeAdmissionPopulationSqlV1, hybridH1JevAdmissionPopulationS
 
 const fail = (code: string, status = 409): never => { throw new SignalLabelingError(code, status); };
 const jevDigest = labelerDigestV1(hybridJevMembershipIdentityV1());
-const claudeDigest = labelerDigestV1(membershipLabelerIdentityV1("low", true));
+const claudeDigest = labelerDigestV1(hybridCitationJudgeIdentityV1());
 export const hybridH1RouteDigestV1 = (jevFacetsLabelerDigest: string) => signalWorkspaceEmbeddingDigestV1({
   contract_version: "mfp-hybrid-h1-v1", jev_facets_labeler_digest: jevFacetsLabelerDigest,
   jev_judge_labeler_digest: jevDigest, claude_labeler_digest: claudeDigest,
+  citation_verifier_digest:labelerDigestV1(hybridCitationVerifierIdentityV1()),
 });
-export type HybridMembershipStageV1 = "jev" | "claude";
+export type HybridMembershipStageV1 = "jev" | "claude" | "citation";
 export function hybridMembershipStageIdentityV1(stage: HybridMembershipStageV1, route_digest: string): LabelerIdentity {
   void route_digest;
-  return stage === "jev" ? hybridJevMembershipIdentityV1() : membershipLabelerIdentityV1("low", true);
+  return stage === "jev" ? hybridJevMembershipIdentityV1() : stage === "citation" ? hybridCitationVerifierIdentityV1() : hybridCitationJudgeIdentityV1();
 }
 
 /** Stage admissions are separate because the common ledger requires one provider/model per run. */
 export async function requestHybridMembershipStageV1(args: {
   database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string;
   stage: HybridMembershipStageV1; route_digest: string; idempotency_key: string;
+  citation_retry?: boolean; source_run_id?: string;
   provider_available: boolean; budget_micro_usd?: number | null; cap_micro_usd?: number | null;
 }) {
   const identity = hybridMembershipStageIdentityV1(args.stage, args.route_digest);
   return requestMentionFacetsV1({ ...args, identity, adapter: {
-    request_identity: { contract_version:"mfp-hybrid-h1-stage-request-v1",stage:args.stage,route_digest:args.route_digest },
-    policy_action: args.stage === "jev" ? "concept_membership_jev" : "concept_membership_claude",
+    request_identity: { contract_version:"mfp-hybrid-h1-stage-request-v1",stage:args.stage,route_digest:args.route_digest,citation_retry:args.citation_retry??false,source_run_id:args.source_run_id??null },
+    policy_action: args.stage !== "claude" ? "concept_membership_jev" : "concept_membership_claude",
     feature: "concept_membership", select_labeler: false,
     validateIdentity: candidate => { if (labelerDigestV1(candidate) !== labelerDigestV1(identity)) fail("hybrid_stage_identity_changed"); },
     prepare: async (client, workspace, _runId, _labeler, context) => {
@@ -57,12 +59,12 @@ export async function requestHybridMembershipStageV1(args: {
       const concepts = await loadMembershipConceptsV1(client, workspace);
       if (!concepts.length) return fail("hybrid_concepts_required");
       let jev_run_id: string | null = null;
-      if (args.stage === "claude") {
+      if (args.stage === "claude" && !args.citation_retry) {
         const prior = (await client.query<{id:string;unknown:number}>(`SELECT run.id,
           (SELECT count(*)::int FROM signal_labeling_calls call WHERE call.run_id=run.id AND
             (call.status IN('reserved','submitting','submitted','unknown') OR NOT call.results_applied)) unknown
           FROM signal_labeling_runs run WHERE run.workspace_id=$1 AND run.kind='membership'
-            AND run.status='completed' AND run.membership_snapshot->>'hybrid_stage'='jev'
+            AND run.status IN('completed','failed') AND run.membership_snapshot->>'hybrid_stage'='jev'
             AND run.membership_snapshot->>'route_digest'=$2 ORDER BY run.completed_at DESC LIMIT 1`,
           [workspace, args.route_digest])).rows[0];
         if (!prior || prior.unknown) return fail("hybrid_jev_stage_incomplete");
@@ -74,26 +76,45 @@ export async function requestHybridMembershipStageV1(args: {
           [workspace,args.route_digest])).rows[0]!.count;
         const remaining = (await client.query<{pairs:number}>(hybridH1JevAdmissionPopulationSqlV1,
           [workspace,args.route_digest])).rows[0]!.pairs;
-        if (active || remaining) return fail("hybrid_jev_stage_incomplete");
+        if (active) return fail("hybrid_jev_stage_incomplete");
+        void remaining;
       }
-      const population = args.stage === "jev"
+      const population = args.source_run_id
+        ? (await client.query<{roots:number;pairs:number;characters:string}>(`SELECT count(DISTINCT r->>'root_id')::int roots,count(*)::int pairs,
+          COALESCE(sum(length(i->>'text')),0)::text characters FROM signal_labeling_calls call
+          CROSS JOIN LATERAL jsonb_array_elements(call.results) r
+          JOIN LATERAL jsonb_array_elements(call.inputs) i ON i->>'root_id'=r->>'root_id'
+          WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied AND r#>>'{claude,verdict}'='belongs'
+          AND ($2::boolean=false OR r#>>'{claude,verification,supported}'='false')`,[args.source_run_id,args.stage==="claude"])).rows[0]!
+        : args.stage === "jev"
         ? (await client.query<{roots:number;pairs:number;characters:string}>(
           hybridH1JevAdmissionPopulationSqlV1, [workspace,args.route_digest])).rows[0]!
         : (await client.query<{roots:number;pairs:number;characters:string}>(
           hybridH1ClaudeAdmissionPopulationSqlV1, [workspace,args.route_digest])).rows[0]!;
       const jevPrice=Number(process.env.NOISIA_JEV_INPUT_USD_PER_MTOK);
-      if (args.stage === "jev" && (!Number.isFinite(jevPrice) || jevPrice <= 0))
+      if (args.stage !== "claude" && (!Number.isFinite(jevPrice) || jevPrice <= 0))
         return fail("hybrid_jev_price_required");
       // Advisory estimate only. The shared ledger checks the actual reservation and settlement.
+      if (args.stage === "citation" || args.citation_retry) {
+        const prior=(await client.query<{id:string;stage:string;retry:boolean;active:boolean}>(`SELECT run.id,run.membership_snapshot->>'hybrid_stage' stage,
+          COALESCE((run.membership_snapshot->>'citation_retry')::boolean,false) retry,
+          EXISTS(SELECT 1 FROM signal_labeling_calls call WHERE call.run_id=run.id AND call.status IN('reserved','submitting','submitted','unknown')) active
+          FROM signal_labeling_runs run WHERE run.id=$1 AND run.workspace_id=$2 AND run.status IN('completed','failed')
+            AND run.membership_snapshot->>'route_digest'=$3`,[args.source_run_id,workspace,args.route_digest])).rows[0];
+        if(!prior||prior.active||prior.stage!==(args.stage==="citation"?"claude":"citation")
+          || (args.stage==="claude"&&prior.retry)|| (args.stage==="citation"&&prior.retry!==(args.citation_retry??false)))
+          return fail("hybrid_citation_predecessor_invalid");
+      }
       const estimated_micro_usd=llmCostMicroUsdV1({
         input_tokens:Math.ceil(Number(population.characters)/3.5)+population.pairs*500,
         output_tokens:args.stage === "claude" ? population.pairs*512 : 0,
         cache_read_input_tokens:0,cache_creation_input_tokens:0,
         cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}},
-      llmPriceV1(args.stage === "jev" ? "typesafe" : "anthropic",
-        args.stage === "jev" ? "jev-1.13.0" : "claude-sonnet-5-5",args.stage === "claude" ? "batch" : "sync",jevPrice));
+      llmPriceV1(args.stage !== "claude" ? "typesafe" : "anthropic",
+        args.stage !== "claude" ? "jev-1.13.0" : "claude-sonnet-5-5",args.stage === "claude" ? "batch" : "sync",jevPrice));
       return { roots:population.roots,estimated_micro_usd,
         snapshot:{ hybrid_stage:args.stage,route_digest:args.route_digest,jev_run_id,concepts,
+          citation_retry:args.citation_retry??false,source_run_id:args.source_run_id??null,
           context_digest:signalWorkspaceEmbeddingDigestV1(context),preview:false,sample_root_ids:null },
         concept_set_digest:conceptSetDigestV1(concepts) };
     },
@@ -123,14 +144,14 @@ async function authorize(client: PoolClient, workspace_id: string, actor_user_id
 async function releaseHybridJevUnknownsV1(client:PoolClient,workspace:string,routeDigest:string){
   const calls=(await client.query<{id:string;run_id:string}>(`SELECT call.id,call.run_id
     FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
-    WHERE run.workspace_id=$1 AND run.membership_snapshot->>'hybrid_stage'='jev'
+    WHERE run.workspace_id=$1 AND run.membership_snapshot->>'hybrid_stage' IN('jev','claude','citation')
       AND run.membership_snapshot->>'route_digest'=$2 AND call.status='unknown'
-      AND call.raw_storage_key IS NULL AND call.settled_micro_usd IS NULL
-      AND run.status='failed' AND (run.lease_until IS NULL OR run.lease_until<now()) FOR UPDATE OF call,run`,
+      AND call.settled_micro_usd IS NULL
+      AND run.status IN('failed','running') AND (run.lease_until IS NULL OR run.lease_until<now()) FOR UPDATE OF call,run`,
     [workspace,routeDigest])).rows;
   if(!calls.length)fail("hybrid_unknown_release_unavailable");
   await client.query(`UPDATE signal_labeling_calls SET status='failed',results_applied=true,results='[]'::jsonb,
-    terminal_exposure_micro_usd=reserved_micro_usd,stop_reason='jev_unattributable_request',updated_at=now()
+    terminal_exposure_micro_usd=reserved_micro_usd,stop_reason=CASE WHEN provider='typesafe' THEN 'jev_unattributable_request' ELSE 'claude_uncertain_explicit_release' END,updated_at=now()
     WHERE id=ANY($1::uuid[])`,[calls.map(call=>call.id)]);
   await client.query(`UPDATE signal_labeling_runs SET status='failed',error_code='hybrid_jev_unknown_released',
     completed_at=now(),next_poll_at='infinity',updated_at=now() WHERE id=ANY($1::uuid[])`,[calls.map(call=>call.run_id)]);
@@ -156,7 +177,7 @@ export async function configureHybridMembershipRouteV1(args: {
     if (args.route === "standard" && existing) {
       const uncertain=(await client.query<{count:number}>(`SELECT count(*)::int count
         FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
-        WHERE run.workspace_id=$1 AND run.membership_snapshot->>'hybrid_stage'='jev'
+        WHERE run.workspace_id=$1 AND run.membership_snapshot->>'hybrid_stage' IN('jev','claude','citation')
           AND run.membership_snapshot->>'route_digest'=$2 AND call.status='unknown'`,
         [args.workspace_id,existing.route_digest])).rows[0]!.count;
       if(uncertain){
@@ -226,9 +247,11 @@ export async function loadHybridMembershipRouteV1(args: { database: LabelingData
       "SELECT route,route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1", [args.workspace_id])).rows[0];
     const exposure=(await client.query<{unknown_calls:number;reserved_exposure_micro_usd:string}>(`SELECT
       count(*) FILTER(WHERE call.status='unknown')::int unknown_calls,
+      count(*) FILTER(WHERE call.status='failed' AND call.terminal_exposure_micro_usd>0)::int released_calls,
+      count(*) FILTER(WHERE call.status='failed')::int failed_calls,
       COALESCE(sum(CASE WHEN call.status='unknown' THEN call.reserved_micro_usd ELSE call.terminal_exposure_micro_usd END),0)::text reserved_exposure_micro_usd
       FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
-      WHERE run.workspace_id=$1 AND run.membership_snapshot->>'hybrid_stage'='jev'`,[args.workspace_id])).rows[0]!;
+      WHERE run.workspace_id=$1 AND run.membership_snapshot->>'hybrid_stage' IN('jev','claude','citation')`,[args.workspace_id])).rows[0]!;
     return {...(selected ?? { route: "standard", route_digest: null }),
       can_configure:caps.can_edit_topics&&caps.can_request_processing,...exposure};
   });
@@ -238,12 +261,14 @@ export type HybridDecisionInputV1 = {
   root_id: string; root_fingerprint: string; concept_key: string; definition_digest: string;
   entity_context_digest: string; effective_entities_digest: string; text: string;
   jev: HybridJevDecisionV1; jev_call_id: string;
+  error_code?: string; citation_call_id?: string | null;
   claude: HybridClaudeDecisionV1 | null; claude_call_id: string | null; rationale: string | null;
 };
 export function hybridDecisionRecordV1(input: HybridDecisionInputV1) {
   const result = decideHybridMembershipV1(input.text, input.jev, input.claude);
   if (result.verdict === "pending") fail("hybrid_pending_decision");
-  const citation = input.claude?.citation ? [input.claude.citation] : [];
+  if (result.verdict === "belongs" && input.claude?.citations && !input.claude.verification?.supported) fail("hybrid_citation_support_required");
+  const citation = input.claude?.citations ?? (input.claude?.citation ? [input.claude.citation] : []);
   const stored = { ...input, text:undefined, verdict:result.verdict, citation };
   return stored;
 }
@@ -273,10 +298,10 @@ export async function writeHybridMembershipDecisionPageV1(args: {
   const receipts = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb)
     r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,
       entity_context_digest text,effective_entities_digest text,jev jsonb,claude jsonb,
-      jev_call_id uuid,claude_call_id uuid)
-    JOIN signal_labeling_calls j ON j.id=r.jev_call_id AND j.workspace_id=$1 AND j.status='settled'
+      jev_call_id uuid,claude_call_id uuid,citation_call_id uuid)
+    JOIN signal_labeling_calls j ON j.id=r.jev_call_id AND j.workspace_id=$1 AND (j.status='settled' OR j.status='failed' AND r.jev->>'verdict'='error')
       AND j.provider='typesafe' AND j.model='jev-1.13.0' AND j.results_applied
-      AND j.raw_sha256 IS NOT NULL AND j.raw_storage_key IS NOT NULL AND j.raw_size_bytes IS NOT NULL
+      AND (j.status='failed' OR j.raw_sha256 IS NOT NULL AND j.raw_storage_key IS NOT NULL AND j.raw_size_bytes IS NOT NULL)
       AND EXISTS(SELECT 1 FROM jsonb_array_elements(j.results) result
         WHERE result->>'root_id'=r.root_id::text AND result->>'root_fingerprint'=r.root_fingerprint
           AND result->>'concept_key'=r.concept_key AND result->>'definition_digest'=r.definition_digest
@@ -286,39 +311,52 @@ export async function writeHybridMembershipDecisionPageV1(args: {
     JOIN signal_labeling_runs jr ON jr.id=j.run_id AND jr.workspace_id=$1
       AND jr.membership_snapshot->>'hybrid_stage'='jev' AND jr.membership_snapshot->>'route_digest'=$3
     JOIN signal_processing_admissions ja ON ja.id=jr.processing_admission_id AND ja.action='concept_membership_jev'
-    LEFT JOIN signal_labeling_calls c ON c.id=r.claude_call_id AND c.workspace_id=$1 AND c.status='settled'
+    LEFT JOIN signal_labeling_calls c ON c.id=r.claude_call_id AND c.workspace_id=$1 AND (c.status='settled' OR c.status IN('failed','unknown') AND r.claude->>'verdict'='error')
       AND c.provider='anthropic' AND c.model='claude-sonnet-5-5' AND c.results_applied
-      AND c.raw_sha256 IS NOT NULL AND c.raw_storage_key IS NOT NULL AND c.raw_size_bytes IS NOT NULL
+      AND (c.status IN('failed','unknown') OR c.raw_sha256 IS NOT NULL AND c.raw_storage_key IS NOT NULL AND c.raw_size_bytes IS NOT NULL)
       AND EXISTS(SELECT 1 FROM jsonb_array_elements(c.results) result
         WHERE result->>'root_id'=r.root_id::text AND result->>'root_fingerprint'=r.root_fingerprint
           AND result->>'concept_key'=r.concept_key AND result->>'definition_digest'=r.definition_digest
           AND result->>'entity_context_digest'=r.entity_context_digest
           AND result->>'effective_entities_digest'=r.effective_entities_digest
           AND result->>'jev_call_id'=j.id::text AND result->>'claude_call_id'=c.id::text
-          AND result->'jev'=r.jev AND result->'claude'=r.claude)
+          AND result->'jev'=r.jev AND result->'claude'=(r.claude-'verification'))
     LEFT JOIN signal_labeling_runs cr ON cr.id=c.run_id AND cr.workspace_id=$1
       AND cr.membership_snapshot->>'hybrid_stage'='claude' AND cr.membership_snapshot->>'route_digest'=$3
     LEFT JOIN signal_processing_admissions ca ON ca.id=cr.processing_admission_id AND ca.action='concept_membership_claude'
-    WHERE (r.claude_call_id IS NULL AND r.claude IS NULL) OR ca.id IS NOT NULL`,
+    LEFT JOIN signal_labeling_calls v ON v.id=r.citation_call_id AND v.workspace_id=$1 AND v.provider='typesafe'
+      AND v.model='jev-1.13.0' AND v.status='settled' AND v.results_applied
+      AND v.raw_sha256 IS NOT NULL AND v.raw_storage_key IS NOT NULL AND v.raw_size_bytes IS NOT NULL
+      AND EXISTS(SELECT 1 FROM jsonb_array_elements(v.results) result WHERE result->>'root_id'=r.root_id::text
+        AND result->>'root_fingerprint'=r.root_fingerprint AND result->>'concept_key'=r.concept_key
+        AND result->>'definition_digest'=r.definition_digest AND result->>'entity_context_digest'=r.entity_context_digest
+        AND result->>'effective_entities_digest'=r.effective_entities_digest
+        AND result->>'jev_call_id'=j.id::text AND result->>'claude_call_id'=c.id::text AND result->>'citation_call_id'=v.id::text
+        AND result->'claude'=r.claude AND result->'jev'=r.jev)
+    LEFT JOIN signal_labeling_runs vr ON vr.id=v.run_id AND vr.membership_snapshot->>'hybrid_stage'='citation'
+      AND vr.membership_snapshot->>'route_digest'=$3
+    LEFT JOIN signal_processing_admissions va ON va.id=vr.processing_admission_id AND va.action='concept_membership_jev'
+    WHERE ((r.claude_call_id IS NULL AND r.claude IS NULL) OR ca.id IS NOT NULL)
+      AND (r.citation_call_id IS NULL OR va.id IS NOT NULL)`,
     [args.workspace_id,JSON.stringify(rows),args.route_digest])).rows[0]!.count;
   if (receipts !== rows.length) fail("hybrid_settled_receipt_required");
   await args.client.query(`INSERT INTO signal_hybrid_membership_decisions(workspace_id,root_id,root_fingerprint,concept_key,definition_digest,
       entity_context_digest,effective_entities_digest,route_digest,jev_call_id,claude_call_id,
-      verdict,jev,claude,citation,rationale)
+      verdict,jev,claude,citation,rationale,error_code,citation_call_id)
     SELECT $1,r.root_id,r.root_fingerprint,r.concept_key,r.definition_digest,r.entity_context_digest,r.effective_entities_digest,$2,
-      r.jev_call_id,r.claude_call_id,r.verdict,r.jev,r.claude,r.citation,r.rationale
+      r.jev_call_id,r.claude_call_id,r.verdict,r.jev,r.claude,r.citation,r.rationale,r.error_code,r.citation_call_id
     FROM jsonb_to_recordset($3::jsonb) r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,
       entity_context_digest text,effective_entities_digest text,jev_call_id uuid,claude_call_id uuid,
-      verdict text,jev jsonb,claude jsonb,citation jsonb,rationale text)
+      verdict text,jev jsonb,claude jsonb,citation jsonb,rationale text,error_code text,citation_call_id uuid)
     ON CONFLICT (workspace_id,root_fingerprint,concept_key,definition_digest,
       entity_context_digest,effective_entities_digest,route_digest) DO UPDATE SET
       jev_call_id=excluded.jev_call_id,claude_call_id=excluded.claude_call_id,
       verdict=excluded.verdict,jev=excluded.jev,claude=excluded.claude,
-      citation=excluded.citation,rationale=excluded.rationale
-    WHERE signal_hybrid_membership_decisions.verdict='error'`, [args.workspace_id, args.route_digest, JSON.stringify(rows)]);
+      citation=excluded.citation,rationale=excluded.rationale,error_code=excluded.error_code,citation_call_id=excluded.citation_call_id,updated_at=now()
+    WHERE signal_hybrid_membership_decisions.verdict='error' AND signal_hybrid_membership_decisions.error_code NOT LIKE 'membership_%'`, [args.workspace_id, args.route_digest, JSON.stringify(rows)]);
   const persisted = (await args.client.query<{count:number}>(`SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb) r(
       root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text,
-      jev_call_id uuid,claude_call_id uuid,verdict text,jev jsonb,claude jsonb,citation jsonb,rationale text)
+      jev_call_id uuid,claude_call_id uuid,verdict text,jev jsonb,claude jsonb,citation jsonb,rationale text,error_code text,citation_call_id uuid)
     JOIN signal_hybrid_membership_decisions h ON h.workspace_id=$1 AND h.route_digest=$3 AND h.root_id=r.root_id AND h.root_fingerprint=r.root_fingerprint
       AND h.concept_key=r.concept_key AND h.definition_digest=r.definition_digest AND h.entity_context_digest=r.entity_context_digest
       AND h.effective_entities_digest=r.effective_entities_digest AND h.verdict=r.verdict
