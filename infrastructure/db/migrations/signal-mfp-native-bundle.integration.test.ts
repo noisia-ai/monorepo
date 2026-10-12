@@ -4,7 +4,7 @@ import test from "node:test";
 import type { Pool } from "pg";
 import { seedSignalTopicEditorialRenewalSourceV1 } from "./signal-topic-editorial-renewal.synthetic.fixture";
 import { createSignalTopicStoreV1 } from "../signal-topic-catalog";
-import { registerFacetContextV1 } from "../signal-mention-facets";
+import { overrideMentionFacetV1, registerFacetContextV1 } from "../signal-mention-facets";
 import { overrideConceptMembershipsV1, selectConceptMembershipV1 } from "../signal-concept-memberships";
 import { loadSignalWorkspaceTopicsPageV1, loadSignalWorkspaceTopicReadBundleV1,
   loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1 } from "../signal-workspace-topics-serving";
@@ -45,7 +45,7 @@ test("MFP native bundle: complete PG DTO parity, one snapshot, topic changes and
     assert.ok(unprepared && !unprepared.overview.is_current);
     assert.equal(unprepared.detail, null, "unregistered initial entity context keeps the source stale");
     assert.equal(unprepared.evidence, null);
-    await registerFacetContextV1(scoped, args.workspace_id);
+    const entityContext = await registerFacetContextV1(scoped, args.workspace_id);
     connections = 0;
     const initial = await loadSignalWorkspaceTopicsPageV1(args);
     assert.ok(initial?.detail && initial.evidence, "fixture must exercise actual aggregate and evidence SQL");
@@ -75,6 +75,14 @@ test("MFP native bundle: complete PG DTO parity, one snapshot, topic changes and
     }
     await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, term_key: "foreign-topic", expected_scope_digest: initial.overview.scope_digest }), /workspace_topics_topic_unavailable/);
     const term = initial.overview.terms[0]!;
+    const fixtureRoot = (await query("SELECT root_id FROM signal_workspace_mention_facets_read_v1($1::uuid) LIMIT 1", [args.workspace_id])).rows[0];
+    assert.ok(fixtureRoot && entityContext.context.entities[0]);
+    // The synthetic fixture begins without semantic labels. Establish one
+    // relevant root through the real human facet API, not a fabricated label.
+    await overrideMentionFacetV1({ ...args, root_id: fixtureRoot.root_id, dimension: "entities", value: {
+      value: [{ entity_id: entityContext.context.entities[0]!.entity_id, kind: entityContext.context.entities[0]!.kind, salience: "main" }],
+      confidence: "high", abstained: false,
+    } });
     const target = (await query(`SELECT root_id FROM signal_workspace_concept_memberships_read_v1($1::uuid)
       WHERE workspace_id=$1 AND concept_key=$2 LIMIT 1`, [args.workspace_id, term.term_key])).rows[0];
     assert.ok(target, "a real current root/concept is required for human correction");
