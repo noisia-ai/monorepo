@@ -19,6 +19,10 @@ function harness(allowed=true){
 for(const decided_via of ['human_ui','agent_assisted'] as const)test(`preserves explicit ${decided_via} through atomic correction`,async()=>{
  const h=harness();assert.deepEqual(await overrideConceptMembershipsV1({database:h.database,workspace_id:workspace,actor_user_id:actor,
   overrides:[{root_id:actor,concept_key:'example',verdict:'belongs',decided_via}]}),{updated:1});
+ const targets=h.calls.find(c=>c.sql.includes('membership-override-targets'))!;
+ assert.match(targets.sql,/signal_workspace_concept_memberships_read_v1\(\$1::uuid\)/);
+ assert.match(targets.sql,/workspace_id=\$1 AND root_id=ANY\(\$3::uuid\[\]\)/);
+ assert.equal(targets.params[0],workspace);assert.deepEqual(targets.params[2],[actor]);
  const insert=h.calls.find(c=>c.sql.includes('INSERT INTO'))!;
  assert.match(insert.sql,/root_fingerprint,decided_via/);assert.equal(JSON.parse(String(insert.params[1]))[0].decided_via,decided_via);
  assert.equal(JSON.parse(String(insert.params[1]))[0].definition_digest,'sha256:'+"1".repeat(64));

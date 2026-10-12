@@ -613,7 +613,7 @@ export async function overrideConceptMembershipsV1(
     const targets = (
       await c.query(
         `/* membership-override-targets */ WITH targets AS MATERIALIZED (
- SELECT root_id,concept_key,definition_digest,root_fingerprint FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=ANY($3::uuid[])
+ SELECT root_id,concept_key,definition_digest,root_fingerprint FROM signal_workspace_concept_memberships_read_v1($1::uuid) WHERE workspace_id=$1 AND root_id=ANY($3::uuid[])
  ) SELECT r.root_id,r.concept_key,r.verdict,r.decided_via,m.definition_digest,m.root_fingerprint
  FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text)
  JOIN targets m ON m.root_id=r.root_id AND m.concept_key=r.concept_key WHERE r.verdict IN('belongs','not_belongs')`,
