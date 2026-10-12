@@ -275,7 +275,17 @@ conversación no es controlable por el cliente, y ya se descartó una vez (`DATA
 - **Lo que aprende un deck comercial** va al caso, no al kit, igual que en el resto del kit
   (`AGENTS.md`, cuando una sesión aprende algo).
 
-## 13. Decisiones abiertas
+## 13. Briefs
+
+Antes de un estudio o un reporte, el cliente llena un brief. Hay cuatro, en Google Docs con cajas
+para escribir y casillas para marcar: estudio de marca, reporte de marca, estudio político y
+reporte político. Viven en el Drive comercial (*Sales › Briefs Noisia (plantillas)*): se duplican
+por cliente, nunca se llenan sobre la plantilla. Cada uno cierra con una sección *Lo completa
+Noisia* que alimenta el prompt de arranque del estudio o del reporte (`PROMPTS.md`). Los políticos
+traen los cuatro límites que se acuerdan desde el inicio. Se regeneran con `briefs/make_briefs.py`,
+que explica también los pasos que se hacen en el navegador.
+
+## 14. Decisiones abiertas
 
 Quedan para el equipo comercial. Mientras no se decidan, el copy hace lo que dice la columna de
 la derecha.
