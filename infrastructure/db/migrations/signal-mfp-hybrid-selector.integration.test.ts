@@ -16,6 +16,7 @@ import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1,
   writeHybridMembershipDecisionPageV1, type HybridDecisionInputV1 } from "../signal-hybrid-membership";
 import { loadFacetEntityContextV1 } from "../signal-mention-facets";
 import type { LabelingRunV1 } from "../signal-labeling-runs";
+import { verifyHybridCitationQualityV1 } from "./signal-mfp-hybrid-citation.assertions";
 import { verifyHybridClaudeRecoveryV1 } from "./signal-mfp-hybrid-claude.assertions";
 import { verifyHybridJevPageContinuationV1 } from "./signal-mfp-hybrid-page.assertions";
 import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.fixture";
@@ -287,6 +288,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     await client.query("ROLLBACK TO SAVEPOINT page_probe");
     await verifyHybridClaudeRecoveryV1({client,database:db,workspace,actor,prep,context,route,jevRun,
       concept:concept as typeof input.evaluated_concepts[number],admit});
+    await verifyHybridCitationQualityV1({client,database:db,workspace,actor,route,jevRun,concept:concept as typeof input.evaluated_concepts[number]});
     await client.query("SAVEPOINT jev_transient_error");
     await client.query(`UPDATE signal_labeling_calls SET results=$2::jsonb WHERE id=$1`,
       [jevCall,JSON.stringify([{...result,jev:{verdict:"error",probability:null,citation:null}}])]);
@@ -375,6 +377,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     };
     await insertCall({ id: claudeCall, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
       inputs: claude, result: confirmed });
+    await client.query("SAVEPOINT authorization_probes");
     const batchRightsCall=randomUUID();
     await insertCall({id:batchRightsCall,run:claudeRun,provider:"anthropic",model:"claude-sonnet-5-5",
       inputs:[...claude,{...input,root_id:abstainedRoot,text:abstainedText}],result:confirmed});
@@ -393,13 +396,18 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     await insertCall({ id: wrongClaude, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
       inputs: claude, result: { ...confirmed, concept_key: "wrong_concept", claude_call_id: wrongClaude } });
     const decision = { ...confirmed, text };
-    const write = (candidate: typeof decision) => writeHybridMembershipDecisionPageV1({
+    const write = (candidate: HybridDecisionInputV1) => writeHybridMembershipDecisionPageV1({
       client, workspace_id: workspace, route_digest: route, decisions: [candidate],
     });
     await assert.rejects(write({ ...decision, jev_call_id: wrongJev }), /hybrid_settled_receipt_required/u,
       "a settled JEV call for another pair cannot support this decision");
     await assert.rejects(write({ ...decision, claude_call_id: wrongClaude }), /hybrid_settled_receipt_required/u,
       "a settled Claude call for another pair cannot support this decision");
+    await client.query("ROLLBACK TO SAVEPOINT authorization_probes");
+    await client.query("RELEASE SAVEPOINT authorization_probes");
+    assert.deepEqual((await client.query("SELECT id FROM signal_labeling_calls WHERE id=ANY($1::uuid[])",
+      [[claudeCall,batchRightsCall,wrongJev,wrongClaude]])).rows,[{id:claudeCall}],
+      "authorization probes must not consume attempts in the legacy recovery fixture");
     // Earlier H1 versions cached technical errors; a valid retry can replace only an error.
     await client.query(`INSERT INTO signal_hybrid_membership_decisions(workspace_id,root_id,root_fingerprint,
       concept_key,definition_digest,entity_context_digest,effective_entities_digest,route_digest,jev_call_id,
@@ -410,8 +418,25 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
         JSON.stringify({verdict:"error",citation:null})]);
     assert.equal((await selectHybridClaudeInputsV1(client,{...work(randomUUID()),membership_snapshot:{
       concepts:allConcepts,hybrid_stage:"claude",route_digest:route,jev_run_id:jevAnchor}} as unknown as LabelingRunV1)).length,1);
-    assert.equal((await write(decision)).persisted, 1);
+    const storedDecision = async () => (await client.query(`SELECT * FROM signal_hybrid_membership_decisions
+      WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3 AND route_digest=$4`,
+      [workspace,root,concept.concept_key,route])).rows[0];
+    assert.equal((await storedDecision()).error_code,null,"legacy technical errors have no error code");
+    for (const code of ["membership_item_schema_invalid","membership_evidence_invalid",
+      "incomplete_single_root","hybrid_attempts_exhausted"]) {
+      await client.query("SAVEPOINT final_hybrid_error");
+      await client.query(`UPDATE signal_hybrid_membership_decisions SET error_code=$4
+        WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,[workspace,root,concept.concept_key,code]);
+      const finalError = await storedDecision();
+      await assert.rejects(write(decision),/hybrid_replay_conflict/u,`${code} cannot be replaced by a retry`);
+      assert.deepEqual(await storedDecision(),finalError,"terminal decision and receipt stay immutable");
+      await client.query("ROLLBACK TO SAVEPOINT final_hybrid_error");
+      await client.query("RELEASE SAVEPOINT final_hybrid_error");
+    }
+    assert.equal((await write(decision)).persisted, 1,"valid receipt replaces a legacy technical error with NULL code");
     assert.equal((await write(decision)).persisted, 1,"successful replay is idempotent");
+    const changedErrorCode: HybridDecisionInputV1 = {...decision,error_code:"membership_evidence_invalid"};
+    await assert.rejects(write(changedErrorCode),/hybrid_replay_conflict/u,"replay cannot change the stored error code");
     assert.deepEqual((await client.query<{ verdict: string; source: string }>(`
       SELECT verdict,source FROM signal_concept_memberships_current_v1
       WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,

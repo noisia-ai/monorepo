@@ -75,6 +75,12 @@ export async function verifyHybridClaudeRecoveryV1(a:{client:PoolClient;database
     } else if(scenario==="missing"||scenario==="invalid_usage") {
       assert.equal(call.settled_micro_usd,null,"unknown usage is not reported as actual spend");
       assert.equal(call.terminal_exposure_micro_usd,call.reserved_micro_usd);
+      const visible=(await client.query(`SELECT verdict,error_code,updated_at FROM signal_concept_memberships_current_v1
+        WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
+        [a.workspace,call.inputs[0].root_id,a.concept.concept_key])).rows[0];
+      assert.equal(visible.verdict,"error","terminal missing/invalid usage remains visible as technical error");
+      assert.equal(visible.error_code,scenario==="missing"?"provider_result_missing":"provider_usage_invalid");
+      assert.deepEqual(visible.updated_at,call.updated_at,"technical visibility uses the latest receipt update time");
     } else {
       const successor={...run,cursor_root_id:null};
       assert.equal((await selectHybridClaudeInputsV1(client,successor)).length,1,

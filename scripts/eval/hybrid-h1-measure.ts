@@ -7,9 +7,10 @@ import { type Gold, type Selection, validateGold, validateSelection } from "./co
 import { binary, wilson } from "./metrics";
 
 export type HybridMeasuredRootV1 = { root_id: string; input_digest: string; text: string; gate_passed: boolean;
-  decisions: Record<string, HybridDecisionV1>; unresolved_concepts?: string[]; excluded_override_concepts?:string[] };
+  decisions: Record<string, HybridDecisionV1>; claude_verdicts?:Record<string,NonNullable<HybridDecisionV1['claude']>['verdict']>;
+  unresolved_concepts?: string[]; excluded_override_concepts?:string[] };
 export type HybridObservedLedgerV1 = { facets_settled_usd: number; jev_settled_usd: number;
-  claude_settled_usd: number; unknown_calls: number; unknown_provider_usd_upper_bound?: number;
+  claude_settled_usd: number; citation_settled_usd?:number; unknown_calls: number; unknown_provider_usd_upper_bound?: number;
   uncertain_pair_calls?:Record<string,string>;
   historical_unknown_calls?:number;historical_unknown_exposure_usd?:number;
   override_excluded_by_decided_via?:Record<string,number>;
@@ -39,10 +40,14 @@ function score(gold: Gold[], rows: Map<string, HybridMeasuredRootV1>, key: strin
   const evaluated = gold.map(g => ({ truth: g.memberships[key], predicted: prediction(rows.get(g.root_id)),
     entity_mix: goldEntityMix(g) }));
   const binaryRows = evaluated.filter(r => r.truth !== "insufficient" && emitted(r.predicted));
-  const tp = binaryRows.filter(r => r.truth === "belongs" && r.predicted === "belongs").length;
-  const fp = binaryRows.filter(r => r.truth === "not_belongs" && r.predicted === "belongs").length;
-  const fn = binaryRows.filter(r => r.truth === "belongs" && r.predicted === "not_belongs").length;
-  return { roots: gold.length, binary_evaluated: binaryRows.length,
+  // AUDIT §§8.5/9.5: gate and technical misses remain pipeline FN. The founder's
+  // §10.4 exception keeps review_required outside correct/error scoring.
+  const scored = evaluated.filter(r => r.truth !== "insufficient" && r.predicted !== "review_required");
+  const tp = scored.filter(r => r.truth === "belongs" && r.predicted === "belongs").length;
+  const fp = scored.filter(r => r.truth === "not_belongs" && r.predicted === "belongs").length;
+  const fn = scored.filter(r => r.truth === "belongs" && r.predicted !== "belongs").length;
+  return { roots: gold.length, binary_evaluated: binaryRows.length, scoring_denominator: scored.length,
+    review_required_gold_positive: evaluated.filter(r => r.truth === "belongs" && r.predicted === "review_required").length,
     review_required: evaluated.filter(r => r.predicted === "review_required").length,
     states: Object.fromEntries(["belongs", "not_belongs", "review_required", "insufficient", "refused", "error", "pending"]
       .map(v => [v, evaluated.filter(r => r.predicted === v).length])),
@@ -75,16 +80,18 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
       if (!concepts.includes(key) || !root.gate_passed) throw new Error("hybrid_unexpected_pair");
       if (decision.verdict === "belongs" && (!decision.claude || decision.claude.verdict !== "belongs"))
         throw new Error("hybrid_agreement_invalid");
-      if (decision.verdict === "review_required" && (!decision.claude || !["not_belongs", "insufficient"].includes(decision.claude.verdict)))
+      if (decision.verdict === "review_required" && (!decision.claude || !["not_belongs", "insufficient"].includes(decision.claude.verdict) && !(decision.claude.verdict === "belongs" && decision.claude.verification?.supported === false)))
         throw new Error("hybrid_review_invalid");
       const recalculated = decideHybridMembershipV1(root.text, decision.jev, decision.claude);
       if (decision.verdict !== recalculated.verdict || decision.needs_claude !== recalculated.needs_claude)
         throw new Error("hybrid_decision_mismatch");
     }
+    if(Object.entries(root.claude_verdicts??{}).some(([key,verdict])=>!root.gate_passed||!concepts.includes(key)||
+      !['belongs','not_belongs','insufficient','refused','error'].includes(verdict)))throw new Error('hybrid_claude_judgement_invalid');
   }
   for (const row of gold) if (indexed.get(row.root_id)?.input_digest !== row.input_digest)
     throw new Error("hybrid_gold_input_changed");
-  const costs = [ledger.facets_settled_usd, ledger.jev_settled_usd, ledger.claude_settled_usd];
+  const costs = [ledger.facets_settled_usd, ledger.jev_settled_usd, ledger.claude_settled_usd,ledger.citation_settled_usd??0];
   const unresolvedPairs = roots.reduce((sum,root) => sum + (root.unresolved_concepts?.length ?? 0),0);
   if (costs.some(v => !Number.isFinite(v) || v < 0) || !Number.isSafeInteger(ledger.unknown_calls) || ledger.unknown_calls < 0)
     throw new Error("hybrid_ledger_invalid");
@@ -103,7 +110,7 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
     throw new Error("hybrid_unknown_ledger_mismatch");
   const decisions = roots.flatMap(root => Object.values(root.decisions).map(decision => ({root,decision})));
   const quoted = decisions.filter(x => x.decision.claude?.citation);
-  const valid = quoted.filter(x => validHybridCitationV1(x.root.text, x.decision.claude!.citation));
+  const valid = quoted.filter(x => (x.decision.claude!.citations??[x.decision.claude!.citation!]).every(c=>validHybridCitationV1(x.root.text,c)));
   const attempted = decisions.filter(x => x.decision.claude);
   const fullCorpus = { roots: roots.length, gate_passed: roots.filter(r => r.gate_passed).length,
     pairs: decisions.length, unresolved_pairs: unresolvedPairs,
@@ -124,12 +131,12 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
       const partitionGold = gold.filter(g => g.partition === partition);
       const all=partitionGold.filter(g=>!indexed.get(g.root_id)?.excluded_override_concepts?.includes(key));
       const positive = all.filter(g => indexed.get(g.root_id)?.decisions[key]?.jev.verdict === "belongs");
+      const claude = (r: HybridMeasuredRootV1 | undefined) => r?.claude_verdicts?.[key]??r?.decisions[key]?.claude?.verdict ?? "pending";
       const evaluated = positive.filter(g => ["belongs", "not_belongs", "insufficient"].includes(
-        indexed.get(g.root_id)?.decisions[key]?.claude?.verdict ?? ""));
-      const common = positive.filter(g => emitted(indexed.get(g.root_id)?.decisions[key]?.claude?.verdict ?? ""));
+        claude(indexed.get(g.root_id))));
+      const common = positive.filter(g => emitted(claude(indexed.get(g.root_id))));
       const verdict = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.verdict ?? "pending";
       const jev = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.jev.verdict ?? "pending";
-      const claude = (r: HybridMeasuredRootV1 | undefined) => r?.decisions[key]?.claude?.verdict ?? "pending";
       const view = (subset: Gold[]) => ({ roots: subset.length,
         hybrid: score(subset, indexed, key, verdict), jev: score(subset, indexed, key, jev), claude: score(subset, indexed, key, claude),
         review_required: subset.filter(g => verdict(indexed.get(g.root_id)) === "review_required").length,
@@ -144,14 +151,14 @@ export function measureHybridH1V1(gold: Gold[], roots: HybridMeasuredRootV1[], c
   return { contract_version: "mfp-hybrid-h1-measure-v1",
     status: unresolvedPairs ? "experimental_incomplete_not_approved" : "experimental_not_approved",
     full_corpus: fullCorpus, gold: reportGold,
-    cost: { new_membership_settled_usd:ledger.jev_settled_usd+ledger.claude_settled_usd,
-      new_membership_usd_per_1000:1000*(ledger.jev_settled_usd+ledger.claude_settled_usd)/roots.length,
+    cost: { new_membership_settled_usd:ledger.jev_settled_usd+ledger.claude_settled_usd+(ledger.citation_settled_usd??0),
+      new_membership_usd_per_1000:1000*(ledger.jev_settled_usd+ledger.claude_settled_usd+(ledger.citation_settled_usd??0))/roots.length,
       reused_facets_settled_usd:ledger.facets_settled_usd,observed_settled_usd: total, observed_usd_per_1000: ledger.unknown_calls ? null : settledPer1000,
       settled_usd_per_1000: settledPer1000,
       possible_usd_per_1000_range: ledger.unknown_calls
         ? [settledPer1000, 1000 * (total + ledger.unknown_provider_usd_upper_bound!) / roots.length] : null,
       unknown_calls: ledger.unknown_calls, components: publicLedger },
-    note: "JEV noul does not localize evidence: its source reference is the complete root. Claude citations are span-selected and checked against literal source text. Current overrides are excluded per concept from model quality denominators; they never become model hits." };
+    note: "JEV membership noul refers to the complete root. Claude selects up to three literal fragments; a separate JEV noul verifies their support. The ledger includes verification and the single authorized repair. Current overrides are excluded per concept from model quality denominators; they never become model hits." };
 }
 
 async function main(args: string[]) {

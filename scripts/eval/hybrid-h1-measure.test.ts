@@ -128,3 +128,50 @@ test("one uncertain provider call covers two pairs without duplicating exposure"
   assert.equal("uncertain_pair_calls" in report.cost.components,false,"public report does not expose private call IDs");
   assert.throws(()=>measureHybridH1V1([],roots,["x","y"],{...ledger,uncertain_pair_calls:{"a:x":"call-one"}},1),/hybrid_unknown_ledger_mismatch/u);
 });
+
+test('observed full-corpus membership cost includes every citation verifier',()=>{
+ const roots:HybridMeasuredRootV1[]=[{root_id:'a',input_digest:'a',text:'Example',gate_passed:true,
+  decisions:{x:decideHybridMembershipV1('Example',{verdict:'not_belongs',probability:0.1,citation:null},null)}}];
+ const report=measureHybridH1V1([],roots,['x'],{facets_settled_usd:0.1,jev_settled_usd:0.2,
+  claude_settled_usd:0.3,citation_settled_usd:0.4,unknown_calls:0},1);
+ assert.equal(report.cost.observed_settled_usd,1);assert.equal(report.cost.new_membership_settled_usd,0.9);
+ assert.equal(report.cost.observed_usd_per_1000,1000);
+});
+test('gold Claude views retain an actual judge verdict when the independent verifier fails technically',()=>{
+ const citation={quote:'Example',start:0,end:7},jev={verdict:'belongs' as const,probability:0.8,citation};
+ const roots:HybridMeasuredRootV1[]=[{root_id:'a',input_digest:'a',text:'Example',gate_passed:true,
+  decisions:{x:decideHybridMembershipV1('Example',jev,{verdict:'error',citation})},claude_verdicts:{x:'belongs'}}];
+ const gold=[{root_id:'a',input_digest:'a',partition:'test',entities:[],memberships:{x:'belongs'}}] as unknown as Gold[];
+ const views=measureHybridH1V1(gold,roots,['x'],{facets_settled_usd:0,jev_settled_usd:0,claude_settled_usd:0,unknown_calls:0},1).gold.find(row=>row.partition==='test')!.views;
+ assert.equal(views.claude_evaluated_same_roots.roots,1);assert.equal(views.full_pipeline.claude.tp,1);
+ assert.equal(views.full_pipeline.hybrid.states.error,1);assert.equal(views.common_binary.roots,1);
+ assert.equal(views.full_pipeline.hybrid.fn,1);assert.equal(views.full_pipeline.hybrid.recall,0);
+});
+
+test('full pipeline counts unpublished gold positives as FN but keeps review_required outside scoring',()=>{
+ const jev={verdict:'belongs' as const,probability:0.8,citation:{quote:'Example',start:0,end:7}};
+ const choices=[
+  decideHybridMembershipV1('Example',{verdict:'not_belongs',probability:0.1,citation:null},null),
+  null,
+  decideHybridMembershipV1('Example',jev,{verdict:'error',citation:null}),
+  decideHybridMembershipV1('Example',{verdict:'refused',probability:null,citation:null},null),
+  decideHybridMembershipV1('Example',jev,{verdict:'insufficient',citation:jev.citation}),
+  decideHybridMembershipV1('Example',jev,{verdict:'belongs',citation:jev.citation}),
+ ];
+ const roots=choices.map((choice,index):HybridMeasuredRootV1=>({root_id:String(index),input_digest:String(index),
+  text:'Example',gate_passed:choice!==null,decisions:choice?{x:choice}:{}}));
+ const gold=roots.map(row=>({root_id:row.root_id,input_digest:row.input_digest,partition:'test',entities:[],
+  memberships:{x:'belongs'}})) as unknown as Gold[];
+ const views=measureHybridH1V1(gold,roots,['x'],{facets_settled_usd:0,jev_settled_usd:0,claude_settled_usd:0,
+  unknown_calls:0},roots.length).gold.find(row=>row.partition==='test')!.views;
+ assert.equal(views.full_pipeline.hybrid.tp,1);assert.equal(views.full_pipeline.hybrid.fn,4);
+ assert.equal(views.full_pipeline.hybrid.recall,1/5);
+ assert.equal(views.full_pipeline.hybrid.review_required,1);
+ assert.equal(views.full_pipeline.hybrid.operational_unpublished_gold_positive,5);
+ assert.equal(views.full_pipeline.hybrid.binary_evaluated,2);
+ assert.equal(views.full_pipeline.hybrid.scoring_denominator,5);
+ assert.equal(views.full_pipeline.hybrid.review_required_gold_positive,1);
+ assert.equal(views.claude_evaluated_same_roots.claude.fn,1,'Claude insufficient is a judge miss');
+ assert.equal(views.claude_evaluated_same_roots.hybrid.fn,0,'H1 disagreement stays review_required');
+ assert.equal(views.common_binary.hybrid.fn,0);
+});

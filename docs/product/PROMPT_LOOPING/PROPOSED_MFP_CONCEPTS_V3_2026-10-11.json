@@ -1,0 +1,154 @@
+{
+  "status": "proposal_only_no_data_mutated",
+  "unchanged_concept": "reserva_entrega v2",
+  "concepts": [
+    {
+      "concept_key": "cobros_depositos_devoluciones",
+      "label": "Cobros, depósitos y devoluciones",
+      "status": "proposed_v3_pending_founder",
+      "definition": "La mención afirma o consulta un cargo adicional, retención, depósito, reembolso, disputa o seguro impuesto en una renta de autos, describe una práctica de cobro atribuida a un proveedor o mercado identificable, o documenta una resolución judicial o regulatoria sobre cláusulas o cargos de la renta.",
+      "inclusions": [
+        "Cargos adicionales sobre la tarifa: daños, combustible, conductor joven o adicional, entrega en otro punto, impuestos, accesorios.",
+        "Cargos disputados o no reconocidos, incluidos reclamos de daños falsos o preexistentes.",
+        "Depósito, preautorización o bloqueo de tarjeta, y su liberación o retención.",
+        "Reembolsos, devoluciones de dinero, contracargos y compensaciones.",
+        "Seguro o protección impuestos, no solicitados o vendidos con presión en el mostrador.",
+        "Seguro obligatorio exigido por la rentadora o la ley local y cobrado como cargo de la renta.",
+        "Upgrades u otros extras cobrados por imposición o por falta de la categoría reservada.",
+        "Cargos de terceros pasados a la tarjeta por la rentadora (peajes, multas) con comisión administrativa.",
+        "Práctica de cobro atribuida a un proveedor o mercado identificable, p. ej. \"esa rentadora retiene depósitos más altos\".",
+        "Práctica atribuida a las rentadoras de un país o región deducible del texto o de su fuente, aunque no se nombre una empresa.",
+        "Resoluciones judiciales o regulatorias sobre cláusulas, cargos y reembolsos de renta de autos."
+      ],
+      "exclusions": [
+        "Tarifa de reserva pagada sin cargo adicional, retención, disputa ni reembolso.",
+        "Diferencias de precio o comparaciones de tarifas entre proveedores, fechas o canales.",
+        "Precios orientativos, promociones, descuentos y códigos.",
+        "Consejos genéricos sin atribución: \"los cargos pueden inflar la cuenta\", \"revisa la letra chica\".",
+        "Estadísticas de precios de mercado sin práctica de cobro descrita.",
+        "Seguro ofrecido y rechazado sin presión ni cargo, y coberturas de tarjeta de crédito.",
+        "Devolución física del vehículo sin condición monetaria.",
+        "Cobros de rentas que no son de autos: vivienda, cuartos u otros bienes.",
+        "Hipótesis, posibilidades o comentarios genéricos de precio sin un hecho, práctica atribuida o pregunta específica sobre un cargo."
+      ],
+      "examples_positive": [
+        "Me retuvieron el depósito tres semanas después de devolver el auto.",
+        "Me cobraron una cobertura que rechacé en el mostrador.",
+        "En ese país el seguro de responsabilidad es obligatorio y lo cobran aparte.",
+        "Esa compañía suele facturar daños que el auto ya traía.",
+        "Pedí el reembolso de un cargo duplicado y me lo devolvieron.",
+        "Por entregar el auto en otra ciudad me cobraron un cargo extra.",
+        "La organización de consumidores española denunció que las rentadoras del país cobran daños preexistentes.",
+        "Un tribunal anuló las cláusulas de cargos de una rentadora y ordenó devolver esos importes."
+      ],
+      "examples_negative": [
+        "Pagué 30 dólares al día y todo salió bien.",
+        "En una página salía más barato que en la otra.",
+        "Hay 20% de descuento si reservas esta semana.",
+        "Los cargos extra pueden encarecer la renta.",
+        "Mi tarjeta incluye seguro de auto rentado.",
+        "Dejé las llaves en el buzón al devolver el auto.",
+        "Si un día la rentadora quisiera cobrar daños, podría hacerlo."
+      ]
+    },
+    {
+      "concept_key": "atencion_reclamaciones",
+      "label": "Atención y resolución de reclamaciones",
+      "status": "proposed_v3_pending_founder",
+      "definition": "La mención relata, pregunta o evalúa la atención del personal o el servicio al cliente de una rentadora de autos, o la gestión de una reclamación, incluidas las respuestas oficiales de la marca.",
+      "inclusions": [
+        "Trato del personal en mostrador, kiosco, entrega o devolución.",
+        "Evaluaciones explícitas del personal o del servicio al cliente de un proveedor identificable.",
+        "Respuesta, falta de respuesta o demora ante un reclamo.",
+        "Resolución, compensación o escalamiento de un problema gestionado por la empresa, por correo o reseña pública.",
+        "Respuestas oficiales de la marca a reclamos, como pedir el folio para dar seguimiento; se codifican con voz brand_official.",
+        "Presión o agresividad del personal para vender extras o coberturas.",
+        "Quejas canalizadas a autoridades de protección al consumidor sobre una rentadora.",
+        "Práctica de atención atribuida a un proveedor identificable."
+      ],
+      "exclusions": [
+        "Mera existencia de un teléfono, correo o chat de atención.",
+        "Problema operativo sin atención ni reclamo descrito, p. ej. auto sucio o abolladura.",
+        "Menciones genéricas de \"servicio\" sin proveedor identificable ni interacción.",
+        "Respuestas de cuentas de marca sin pista de que sean de una rentadora de autos.",
+        "Atención de aerolíneas, hoteles, bancos u otros servicios ajenos a la renta de autos.",
+        "Rentas que no son de autos.",
+        "Resoluciones judiciales o regulatorias sobre cláusulas o cargos, salvo que el texto también describa interacción con el personal o gestión del reclamo por la empresa.",
+        "Respuestas sin contexto propio que identifique una renta de autos o una rentadora: se abstiene como insufficient."
+      ],
+      "examples_positive": [
+        "El agente se molestó cuando pedí cambiar de auto.",
+        "Mandé tres correos de reclamo y nadie respondió.",
+        "Después de varias llamadas, un supervisor anuló el cargo indebido.",
+        "Lamentamos lo ocurrido; envíanos por mensaje privado tu folio de renta y lo revisamos.",
+        "Su servicio al cliente es pésimo, nunca resuelven nada.",
+        "Me presionaron mucho para comprar la cobertura total."
+      ],
+      "examples_negative": [
+        "El teléfono de la oficina está en su web.",
+        "El auto tenía una abolladura.",
+        "La aerolínea no me dio respuesta.",
+        "El aeropuerto abrió nuevas oficinas de rentadoras.",
+        "Un tribunal anuló cláusulas de cargos y ordenó reembolsos, sin describir atención al cliente."
+      ]
+    },
+    {
+      "concept_key": "integracion_de_renta_de_autos_en_plataformas_de_viaje",
+      "label": "Integración de renta de autos en plataformas de viaje",
+      "scope": "category",
+      "status": "proposed_v3_pending_founder",
+      "definition": "La mención documenta, describe o pregunta específicamente por una plataforma de viajes o aerolínea identificable que integra la búsqueda, reserva o contratación de autos de alquiler en su propio sitio, aplicación o proceso de compra.",
+      "inclusions": [
+        "Reserva o contratación de autos dentro de una plataforma de viajes o aerolínea identificable.",
+        "Lanzamiento o descripción de una integración concreta que permite planificar o comprar vuelo, alojamiento y renta de auto desde el mismo servicio.",
+        "Pregunta específica sobre disponibilidad o uso de esa integración."
+      ],
+      "exclusions": [
+        "Lista de enlaces, proveedores o anuncios de renta sin proceso integrado descrito.",
+        "Paquete turístico o recomendación genérica sin plataforma identificable ni integración explícita.",
+        "Reserva directa en el sitio de una rentadora; comparadores dedicados exclusivamente a autos.",
+        "Hipótesis de futuras integraciones sin anuncio, hecho o procedimiento documentado."
+      ],
+      "examples_positive": [
+        "La aerolínea incorporó la reserva de autos en su aplicación junto con la compra de vuelos.",
+        "La plataforma permite reservar un alojamiento y añadir un auto de alquiler en el mismo proceso.",
+        "¿Puedo añadir un coche de alquiler al vuelo que ya compré en la aplicación de la aerolínea?"
+      ],
+      "examples_negative": [
+        "Aquí hay enlaces para hoteles, vuelos y rentadoras.",
+        "Sería útil que una aerolínea permitiera reservar un auto.",
+        "Reservé directamente en la web de la rentadora."
+      ]
+    },
+    {
+      "concept_key": "programa_emerald_aisle_y_beneficios_de_estatus_elite",
+      "label": "Programa Emerald Aisle y beneficios de estatus élite",
+      "scope": "primary_brand",
+      "status": "proposed_v3_pending_founder",
+      "definition": "La mención describe, evalúa o pregunta específicamente por el programa Emerald Club de National Car Rental: elección de auto en Emerald Aisle sin mostrador, ventajas de los niveles Executive o Executive Elite, obtención de ese estatus por equivalencia, o uso de códigos corporativos en una renta de National.",
+      "inclusions": [
+        "Acceso, selección del auto o procedimiento de recogida en Emerald Aisle.",
+        "Beneficio concreto, requisito o diferencia de nivel Executive o Executive Elite de National.",
+        "Procedimiento de status match que otorga un estatus identificado de National.",
+        "Aplicación o efecto de un código corporativo en una renta de National."
+      ],
+      "exclusions": [
+        "Mención de National o de un nivel de estatus sin describir un beneficio, requisito, procedimiento o pregunta específica.",
+        "Beneficios de tarjetas, hoteles o aerolíneas sin conexión explícita con el programa o renta de National.",
+        "Programas de otras rentadoras sin comparación explícita con un beneficio de National.",
+        "Promoción genérica de tarifas, código sin atribución a National o consejo genérico de reservar.",
+        "Hipótesis o posibilidades sin hecho, procedimiento atribuido ni pregunta específica."
+      ],
+      "examples_positive": [
+        "Con Emerald Club fui al Emerald Aisle y escogí el auto sin pasar por el mostrador.",
+        "Obtuve Executive Elite de National mediante equivalencia con mi estatus de hotel.",
+        "El código de mi empresa redujo la tarifa de mi renta de National."
+      ],
+      "examples_negative": [
+        "La tarjeta incluye estatus con varias rentadoras.",
+        "National aparece en la lista de oficinas del aeropuerto.",
+        "Aprovecha este código para rentar más barato."
+      ]
+    }
+  ]
+}

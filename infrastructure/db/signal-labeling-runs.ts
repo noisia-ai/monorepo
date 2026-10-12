@@ -482,7 +482,7 @@ export function createSignalLabelingStoreV1<
 >(options: {
   adapter?: {
     kind: "facets" | "membership";
-    hybrid_stage?: "jev" | "claude";
+    hybrid_stage?: "jev" | "claude" | "citation";
     policy_action?: "concept_membership_jev" | "concept_membership_claude";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
@@ -955,7 +955,7 @@ export function createSignalLabelingStoreV1<
         await lock(c, run);
         const persistResults = async () => {
           const changed = await c.query(
-          `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results
+          `UPDATE signal_labeling_calls call SET results_applied=true,results=page.results,updated_at=now()
            FROM jsonb_to_recordset($2::jsonb) page(id uuid,results jsonb)
            WHERE call.run_id=$1 AND call.id=page.id`,
           [run.id, JSON.stringify(pages.map((p) => ({ id: p.call.id, results: p.results })))],
@@ -992,7 +992,7 @@ export function createSignalLabelingStoreV1<
             ELSE 'provider_result_missing' END,updated_at=now()
           WHERE call.run_id=$1 AND call.status IN ('submitted','unknown') AND call.results_applied
           AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
-            WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id,options.adapter?.hybrid_stage === 'claude']);
+            WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id,options.adapter?.hybrid_stage !== undefined]);
         const calls = (
           await c.query(
             `SELECT count(*) FILTER(WHERE status='unknown')::int unknown,count(*) FILTER(WHERE status IN('reserved','submitting','submitted') OR raw_storage_key IS NOT NULL AND NOT results_applied)::int active FROM signal_labeling_calls WHERE run_id=$1`,
