@@ -65,6 +65,28 @@ export type LabelingCallV1<Input extends FacetInput = FacetInput> =
     created_at?: Date | string;
     updated_at?: Date | string;
   };
+/** Durable diagnostic allowlist; never serialize Error.message, cause or provider bodies. */
+export function labelingCreateFailureReceiptV1(error: unknown): string | null {
+  if (error === undefined) return null;
+  const e = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const transport = e.name === "AnthropicBatchTransportError";
+  const code = typeof e.code === "string" && (
+    /^batch_http_[1-5][0-9]{2}$/u.test(e.code) ||
+    ["batch_api_key_missing", "batch_timeout_invalid", "batch_request_count_invalid",
+      "batch_request_invalid", "batch_request_not_serializable", "batch_request_envelope_too_large",
+      "batch_transport_or_response_invalid"].includes(e.code)
+  ) ? e.code : "unclassified_create_failure";
+  const status = transport && Number.isInteger(e.httpStatus) &&
+    Number(e.httpStatus) >= 100 && Number(e.httpStatus) <= 599 ? Number(e.httpStatus) : null;
+  return JSON.stringify({
+    contract_version: "labeling-create-failure-v1",
+    error_class: transport ? "AnthropicBatchTransportError" : "Error",
+    code: transport ? code : "unclassified_create_failure",
+    http_status: status,
+    submission: transport && ["not_submitted", "submission_unknown", "read_failed"].includes(String(e.submission))
+      ? e.submission : "submission_unknown",
+  });
+}
 export class SignalLabelingError extends Error {
   constructor(
     readonly code: string,
@@ -850,10 +872,11 @@ export function createSignalLabelingStoreV1<
       run: LabelingRunV1,
       calls: LabelingCallV1<Input>[],
       unknown: boolean,
+      createError?: unknown,
     ) {
       await db.query(
-        `UPDATE signal_labeling_calls SET status=$3,updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status IN('reserved','submitting','submitted')`,
-        [run.id, calls.map((x) => x.id), unknown ? "unknown" : "failed"],
+        `UPDATE signal_labeling_calls SET status=$3,stop_reason=COALESCE($4,stop_reason),updated_at=now() WHERE run_id=$1 AND id=ANY($2::uuid[]) AND status IN('reserved','submitting','submitted')`,
+        [run.id, calls.map((x) => x.id), unknown ? "unknown" : "failed", labelingCreateFailureReceiptV1(createError)],
       );
     },
     async persistRaw(

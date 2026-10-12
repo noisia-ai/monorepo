@@ -4,6 +4,7 @@ import {
   runMentionFacetsTickV1,
   facetCallProposalV1,
 } from "./signal-mention-facets-batch";
+import { labelingCreateFailureReceiptV1 } from "@noisia/db";
 import type {
   LabelingCallV1,
   LabelingRunV1,
@@ -104,8 +105,9 @@ function harness() {
         x.provider_batch_id = b;
       });
     },
-    async markFailed(_r, c, u) {
+    async markFailed(_r, c, u, error) {
       c.forEach((x) => (x.status = u ? "unknown" : "failed"));
+      if (error) events.push(labelingCreateFailureReceiptV1(error)!);
     },
     async recoverUnknownBatch(_r, c, id) {
       c.forEach((x) => { x.status = "submitted"; x.provider_batch_id = id; });
@@ -602,4 +604,19 @@ test("required ordinal grammar flows through persisted request and worker parser
   assert.equal(h.calls().length, 4);
   assert.ok(h.labels.every((label) => label.status === "labeled"));
   assert.equal(h.submitted(), 1);
+});
+
+
+test("explicit create rejection keeps the sane receipt and never resends that admission", async () => {
+  const h = harness();
+  let creates = 0;
+  h.provider.create = async () => { creates++; throw new AnthropicBatchTransportError("batch_http_400", "not_submitted", 400); };
+  await assert.rejects(runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider}));
+  assert.ok(h.calls().every(call=>call.status === "failed" && call.provider_batch_id === null));
+  assert.equal(JSON.parse(h.events[0]!).http_status,400);
+  assert.equal(JSON.parse(h.events[0]!).submission,"not_submitted");
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(creates,1);
+  assert.equal(h.labels.length,2);
+  assert.ok(h.labels.every(label=>label.status === "error" && label.error_code === "definitely_not_sent"));
 });
