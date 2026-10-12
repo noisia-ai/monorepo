@@ -14,14 +14,21 @@ import { WorkspaceIncrementalEditorialControls } from "./WorkspaceIncrementalEdi
 import { ClientBrandContextProcessingQuote } from "./ClientBrandContextProcessingQuote";
 import { useWorkspaceAnalysis } from "./useWorkspaceAnalysis";
 
-export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, suppressLegacyActions = false, initial = null, onCompleted, onCatalogAvailable, onAssociationsAvailable, signalHref }: {
+export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion, disabled = false, suppressLegacyActions = false, initial = null, onCompleted, onCatalogAvailable, onAssociationsAvailable, signalHref,facetsReceipt }: {
   brandId: string; workspaceId: string; catalogVersion: string; disabled?: boolean;
   suppressLegacyActions?: boolean;
   onAssociationsAvailable?: (receipt: string) => unknown; signalHref?: string;
   initial?: WorkspaceAnalysisStatus | null; onCompleted?: () => unknown; onCatalogAvailable?: (signal: AbortSignal) => Promise<unknown>;
+  facetsReceipt?:string|null;
 }) {
   const t = useTranslations("AdminWorkspace.topics.analysis"), locale = useLocale();
   const analysis = useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled, initial });
+  const refreshAnalysis=analysis.read;
+  const refreshedFacets=useRef(facetsReceipt);
+  useEffect(()=>{
+    if(disabled||refreshedFacets.current===facetsReceipt)return;
+    refreshedFacets.current=facetsReceipt;void refreshAnalysis();
+  },[facetsReceipt,disabled,refreshAnalysis]);
   const status = analysis.data;
   const hideLegacyActions = suppressLegacyActions && !status?.discovery_enabled;
   const usesIncremental = workspaceAnalysisUsesIncremental(status);

@@ -1,19 +1,20 @@
 "use client";
-import {useState} from "react";
+import {useEffect,useState} from "react";
 import {useLocale,useTranslations} from "next-intl";
 import {useMfpResource,useMfpMutation} from "./useMfpResource";
 import {MfpEvidence} from "./MfpEvidence";
 import {mfpHumanMembershipCorrection} from "@/lib/data-os/mfp-ui-state";
 import {mfpErrorKey,mfpMoney,type MfpMembershipStatus,type MfpPreview,type MfpRun} from "@/lib/data-os/mfp-ui";
 type Concept={concept_key:string;label:string;scope:string;definition:string;inclusion:string[];exclusion:string[];positive_examples:string[];negative_examples:string[];definition_digest:string};
-export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mentionHref,signalHref,onAccessDenied}:{workspaceId:string;concept:Concept;dirty:boolean;canEdit:boolean;
-  mentionHref:string;signalHref:string;onAccessDenied?:()=>void}) {
+export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mentionHref,signalHref,onAccessDenied,facetsReceipt}:{workspaceId:string;concept:Concept;dirty:boolean;canEdit:boolean;
+  mentionHref:string;signalHref:string;onAccessDenied?:()=>void;facetsReceipt?:string|null}) {
   const t=useTranslations("Mfp"),locale=useLocale();
   const base=`/api/data-os/signal/${encodeURIComponent(workspaceId)}/memberships`;
   const [verdict,setVerdict]=useState("belongs"),[cursor,setCursor]=useState<string|null>(null),[selection,setSelection]=useState<string[]>([]);
   const [previewRun,setPreviewRun]=useState<string|null>(null),[previewDefinition,setPreviewDefinition]=useState<string|null>(null);
   const query=new URLSearchParams({concept_key:concept.concept_key,verdict,limit:"30"});if(cursor)query.set("cursor",cursor);
-  const resource=useMfpResource<MfpMembershipStatus>(`${base}?${query}`,"concept-membership-status-v1",onAccessDenied,true);
+  const resource=useMfpResource<MfpMembershipStatus>(`${base}?${query}`,"concept-membership-status-v1",onAccessDenied,true,facetsReceipt);
+  useEffect(()=>{setSelection([]);},[facetsReceipt]);
   const mutation=useMfpMutation(base,onAccessDenied),preview=useMfpMutation(`${base}/preview`,onAccessDenied);
   const current=resource.data?.concepts.find(item=>item.concept_key===concept.concept_key);
   const disabled=!resource.data?.enabled||!resource.data.provider_available||!resource.data.can_request_processing||mutation.busy||mutation.pending||Boolean(resource.error);
