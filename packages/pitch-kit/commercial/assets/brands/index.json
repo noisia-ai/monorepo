@@ -1,0 +1,29 @@
+{
+"cell": 128,
+"cols": 12,
+"names": [
+"appstore",
+"discord",
+"facebook",
+"google",
+"googlegemini",
+"googlemaps",
+"googleplay",
+"instagram",
+"perplexity",
+"pinterest",
+"quora",
+"reddit",
+"spotify",
+"telegram",
+"threads",
+"tiktok",
+"tripadvisor",
+"trustpilot",
+"twitch",
+"whatsapp",
+"x",
+"yelp",
+"youtube"
+]
+}

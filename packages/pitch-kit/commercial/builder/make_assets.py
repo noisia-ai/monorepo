@@ -91,12 +91,16 @@ def icons(iconoir_dir):
     missing = sorted(set(ICONS) - set(names))
     if missing:
         print("iconoir sin estos nombres:", " ".join(missing))
+    names = sorted(names)
     svgs = [iconoir_svg(os.path.join(iconoir_dir, f"{n}.svg")) for n in names]
-    with tempfile.TemporaryDirectory() as td:
-        for tone, hexv in TONES.items():
-            sheet, cols = chrome_sheet(svgs, hexv, os.path.join(td, f"{tone}.png"))
-            crop_all(sheet, cols, names, os.path.join(OUT, "icons"), f"-{tone}")
-    print(f"{len(names)} íconos × {len(TONES)} tonos")
+    d = os.path.join(OUT, "icons")
+    os.makedirs(d, exist_ok=True)
+    # One sprite per tone: the claude.ai skill accepts at most 200 files, and the builder crops
+    # each cell on demand (noisia_pptx.sprite_cell).
+    for tone, hexv in TONES.items():
+        chrome_sheet(svgs, hexv, os.path.join(d, f"sprite-{tone}.png"))
+    json.dump({"cell": CELL, "cols": 12, "names": names}, open(os.path.join(d, "index.json"), "w"))
+    print(f"{len(names)} íconos × {len(TONES)} tonos, en {len(TONES)} sprites")
     return names
 
 
@@ -110,19 +114,17 @@ def brands(si_dir):
         d = re.search(r'<path d="([^"]+)"', open(p).read()).group(1)
         names.append(slug)
         glyphs.append(d)
-    with tempfile.TemporaryDirectory() as td:
-        # brand-coloured glyph on transparent
-        for i, (slug, d) in enumerate(zip(names, glyphs)):
-            pass
-        coloured = [f'<svg viewBox="0 0 24 24"><path fill="{BRANDS[s]}" d="{d}"/></svg>'
-                    for s, d in zip(names, glyphs)]
-        sheet, cols = chrome_sheet(coloured, "#000", os.path.join(td, "b.png"))
-        crop_all(sheet, cols, names, os.path.join(OUT, "brands"), "")
-        # white glyph, to sit on a brand-coloured chip drawn as a PPTX shape (stays editable)
-        white = [f'<svg viewBox="0 0 24 24"><path fill="#ffffff" d="{d}"/></svg>' for d in glyphs]
-        sheet, cols = chrome_sheet(white, "#fff", os.path.join(td, "w.png"))
-        crop_all(sheet, cols, names, os.path.join(OUT, "brands"), "-white")
-    json.dump(BRANDS, open(os.path.join(OUT, "brands", "colors.json"), "w"), indent=1)
+    order = sorted(range(len(names)), key=lambda i: names[i])
+    names, glyphs = [names[i] for i in order], [glyphs[i] for i in order]
+    d = os.path.join(OUT, "brands")
+    os.makedirs(d, exist_ok=True)
+    coloured = [f'<svg viewBox="0 0 24 24"><path fill="{BRANDS[s]}" d="{g}"/></svg>' for s, g in zip(names, glyphs)]
+    chrome_sheet(coloured, "#000", os.path.join(d, "sprite-color.png"))
+    # white glyph, to sit on a brand-coloured chip drawn as a PPTX shape (stays editable)
+    white = [f'<svg viewBox="0 0 24 24"><path fill="#ffffff" d="{g}"/></svg>' for g in glyphs]
+    chrome_sheet(white, "#fff", os.path.join(d, "sprite-white.png"))
+    json.dump({"cell": CELL, "cols": 12, "names": names}, open(os.path.join(d, "index.json"), "w"))
+    json.dump(BRANDS, open(os.path.join(d, "colors.json"), "w"), indent=1)
     print(f"{len(names)} marcas")
 
 
@@ -165,45 +167,19 @@ def blob(spec, size=(960, 540), base=(255, 255, 255)):
 
 
 def backgrounds():
+    """The dark statement canvas. Covers, closings and content fragments come from
+    make_shapes.py, the shape family that replaced the blobs and the people illustration."""
     cy, rd, dark = (0, 205, 214), (232, 70, 58), (6, 18, 24)
     out = os.path.join(OUT, "bg")
     os.makedirs(out, exist_ok=True)
-    # Content: one composition per slide, rotating corners (LAYOUTS.md, Backgrounds).
-    content = [
-        [(0.97, 0.05, 0.40, cy, 26), (0.05, 0.98, 0.20, rd, 12)],
-        [(0.03, 0.95, 0.42, cy, 24), (0.98, 0.10, 0.18, rd, 10)],
-        [(1.00, 0.70, 0.38, cy, 24), (0.10, 0.02, 0.18, rd, 10)],
-        [(0.02, 0.12, 0.40, cy, 22), (0.92, 0.98, 0.20, rd, 12)],
-        [(0.50, 1.06, 0.44, cy, 22), (1.00, 0.05, 0.16, rd, 10)],
-        [(0.98, 0.95, 0.36, rd, 16), (0.02, 0.05, 0.24, cy, 18)],
-        [(0.70, -0.05, 0.40, cy, 22), (0.02, 0.85, 0.18, rd, 10)],
-        [(0.03, 0.50, 0.36, cy, 20), (1.00, 0.40, 0.20, rd, 12)],
-    ]
-    for i, spec in enumerate(content, 1):
-        blob(spec).save(os.path.join(out, f"content-{i:02d}.png"), optimize=True)
-    # Dark statement: the "answer" slide of the canon, #061218 with cyan and red at ~30%.
     blob([(0.10, 0.98, 0.46, cy, 74), (0.95, 0.05, 0.30, rd, 44)], base=dark).save(
         os.path.join(out, "dark-01.png"), optimize=True)
-    blob([(0.95, 0.95, 0.44, cy, 70), (0.05, 0.08, 0.28, rd, 40)], base=dark).save(
-        os.path.join(out, "dark-02.png"), optimize=True)
-    # Bold art from the website, for cover, statements and closing.
-    ref = os.path.join(KIT, "..", "..", "apps", "website", "assets", "background-reference")
-    for src, dst in (("Slide 16_9 - 26.png", "bold-right.jpg"), ("Slide 16_9 - 2.png", "bold-corner.jpg"),
-                     ("Slide 16_9 - 5.png", "bold-left.jpg"), ("Slide 16_9 - 8.png", "bold-center.jpg"),
-                     ("Slide 16_9 - 9.png", "bold-scatter.jpg")):
-        p = os.path.join(ref, src)
-        if os.path.exists(p):
-            Image.open(p).convert("RGB").resize((1920, 1080), Image.LANCZOS).save(
-                os.path.join(out, dst), quality=84, optimize=True)
-    print("fondos listos")
+    print("fondo oscuro listo")
 
 
 def art():
     out = os.path.join(OUT, "art")
     os.makedirs(out, exist_ok=True)
-    im = Image.open(os.path.join(KIT, "assets", "cover-illustration.png")).convert("RGBA")
-    im.thumbnail((1400, 1400), Image.LANCZOS)
-    im.save(os.path.join(out, "cover-illustration.png"), optimize=True)
     # Client-logo slot: a dashed box people replace in Google Slides (right click > Replace image).
     for lang, label in (("es", "Logo del cliente"), ("en", "Client logo")):
         w, h = 560, 200

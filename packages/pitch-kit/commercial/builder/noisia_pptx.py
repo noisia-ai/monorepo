@@ -34,6 +34,7 @@ CYAN = "00eeee"; DARK = "061218"; POS = "008f66"; POS_SOFT = "eaf8f2"
 
 W, H = 1920, 1080
 PADX, TOP = 110, 90
+TITLE_Y = 160
 CONTENT_W = W - 2 * PADX
 
 
@@ -106,6 +107,29 @@ def fit(text, w, h, size, lh=1.3, min_ratio=0.8):
     return s, True
 
 
+_SPRITES = {}
+
+
+def sprite_cell(folder, sheet, name):
+    """Icons and brand marks live in one sprite per colour (the claude.ai skill accepts at most
+    200 files). Returns the cell as an in-memory PNG; identical cells share one image part."""
+    import io, json
+    from PIL import Image
+    key = (folder, sheet)
+    if key not in _SPRITES:
+        idx = json.load(open(os.path.join(ASSETS, folder, "index.json")))
+        _SPRITES[key] = (Image.open(os.path.join(ASSETS, folder, sheet)).convert("RGBA"), idx)
+    im, idx = _SPRITES[key]
+    if name not in idx["names"]:
+        return None
+    i, c, n = idx["names"].index(name), idx["cell"], idx["cols"]
+    r, k = divmod(i, n)
+    buf = io.BytesIO()
+    im.crop((k * c, r * c, (k + 1) * c, (r + 1) * c)).save(buf, "PNG")
+    buf.seek(0)
+    return buf
+
+
 class Deck:
     def __init__(self, lang="es", mode="send", header_right="noisia.ai", portrait=False):
         self.lang, self.mode, self.header_right = lang, mode, header_right
@@ -137,7 +161,9 @@ class Deck:
         return s
 
     def background(self, s, name):
-        path = os.path.join(ASSETS, "bg", name)
+        path = os.path.join(ASSETS, "shapes", name)
+        if not os.path.exists(path):
+            path = os.path.join(ASSETS, "bg", name)
         _, rid = s.part.get_or_add_image_part(path)
         bg = etree.fromstring(
             '<p:bg xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
@@ -148,8 +174,9 @@ class Deck:
         s.shapes._spTree.getparent().insert(0, bg)
 
     def content_bg(self):
-        self._bg_cycle = self._bg_cycle % 8 + 1
-        return f"content-{self._bg_cycle:02d}.png"
+        """A faint fragment of the shape family, in a different corner on every slide."""
+        self._bg_cycle = self._bg_cycle % 6 + 1
+        return f"frag-{self._bg_cycle}.jpg"
 
     def note(self, s, text):
         if text:
@@ -239,19 +266,20 @@ class Deck:
         return ln
 
     def image(self, s, path, x, y, w=None, h=None, name=None):
+        """`path` is a file path or an in-memory PNG (a sprite cell)."""
         pic = s.shapes.add_picture(path, px(x), px(y), px(w) if w else None, px(h) if h else None)
         if name:
             pic.name = name
         return pic
 
     def icon(self, s, name, x, y, size=28, tone="teal"):
-        p = os.path.join(ASSETS, "icons", f"{name}-{tone}.png")
-        if not os.path.exists(p):
+        im = sprite_cell("icons", f"sprite-{tone}.png", name)
+        if im is None:
             self.warnings.append(f"slide {self.n}: ícono '{name}' no existe, usé 'sparks'")
-            p = os.path.join(ASSETS, "icons", f"sparks-{tone}.png")
-        # the PNG cell carries 8px of padding per 128px, so the glyph lands at `size`
+            im = sprite_cell("icons", f"sprite-{tone}.png", "sparks")
+        # the cell carries 8px of padding per 128px, so the glyph lands at `size`
         pad = size * 8 / 112
-        return self.image(s, p, x - pad, y - pad, w=size + 2 * pad, h=size + 2 * pad)
+        return self.image(s, im, x - pad, y - pad, w=size + 2 * pad, h=size + 2 * pad)
 
     def icobox(self, s, name, x, y, size=56, tone="teal", fill=TEAL_SOFT):
         self.box(s, x, y, size, size, fill=fill, line=None, radius=size * 0.28)
@@ -261,8 +289,8 @@ class Deck:
     def brand_chip(self, s, slug, x, y, size=44):
         import json
         colors = json.load(open(os.path.join(ASSETS, "brands", "colors.json")))
-        p = os.path.join(ASSETS, "brands", f"{slug}-white.png")
-        if slug not in colors or not os.path.exists(p):
+        p = sprite_cell("brands", "sprite-white.png", slug)
+        if slug not in colors or p is None:
             self.warnings.append(f"slide {self.n}: marca '{slug}' no está en el set")
             return
         self.box(s, x, y, size, size, fill=colors[slug].lstrip("#"), line=None, radius=size * 0.26)
@@ -306,27 +334,27 @@ class Deck:
                       fit_box=False)
             self.slide_number(s, W - PADX - 200, H - 66, 200, 22, dark)
 
-    def eyebrow(self, s, text, icon=None, x=PADX, y=158, color=TEAL, tone="teal"):
-        if not text:
-            return
-        dx = 0
-        if icon:
-            self.icon(s, icon, x, y + 1, 24, tone)
-            dx = 34
-        self.text(s, x + dx, y, 1200, 30, text, 21, color, bold=True, fit_box=False)
+    def eyebrow(self, *a, **k):
+        """Commercial decks carry no eyebrows: a label above the title reads as AI slop
+        (COMMERCIAL.md §6). Kept as a no-op so old briefs with an eyebrow still build."""
+        return
 
-    def title(self, s, text, y=200, w=1500, size=54, color=INK, h=None):
+    def title(self, s, text, y=TITLE_Y, w=1500, size=54, color=INK, h=None):
         h = h or size * 2.3
         return self.text(s, PADX, y, w, h, text, size, color, lh=1.08)
 
     def head(self, s, d, w=1500, size=54):
-        """Eyebrow + title + optional explain line. Returns the y where content can start."""
-        self.eyebrow(s, d.get("eyebrow"), d.get("eyebrow_icon"))
-        t = d.get("title", "")
-        size2, _ = fit(t.replace("**", ""), w, size * 2.2, size, 1.08)
-        lines = min(2, _lines(t.replace("**", ""), w, size2))
-        self.title(s, t, w=w, size=size2, h=size2 * 1.1 * lines + 6)
-        y = 200 + size2 * 1.1 * lines + 18
+        """Title (only when the slide needs one) + optional explain line. Returns the y where
+        content can start. Commercial titles are descriptive and plain; no accent word."""
+        t = (d.get("title") or "").replace("**", "")
+        y = TITLE_Y
+        if t:
+            size2, _ = fit(t, w, size * 2.2, size, 1.08)
+            lines = min(2, _lines(t, w, size2))
+            self.title(s, t, w=w, size=size2, h=size2 * 1.1 * lines + 6)
+            y = TITLE_Y + size2 * 1.1 * lines + 18
+        else:
+            y = TITLE_Y - 20
         ex = self.explain(s, d.get("explain"))
         if ex:
             self.text(s, PADX, y, min(w, 1400), 70, ex, 24, FG2, lh=1.35)
@@ -337,14 +365,9 @@ class Deck:
     def cover(self, d):
         """Kit cover: illustration bleeding right, copy anchored bottom-left. With `client`,
         it becomes the prepared-for cover and carries a client-logo slot."""
-        s = self.new(notes=d.get("notes"))
-        art = os.path.join(ASSETS, "art", "cover-illustration.png")
-        self.image(s, art, 1010, -70, h=1220, name="Ilustración")
+        s = self.new(bg=d.get("bg", "cover.jpg"), notes=d.get("notes"))
         self.chrome(s, header_right=d.get("header_right", self.header_right))
-        y = 330 if d.get("client") else 380
-        if d.get("eyebrow"):
-            self.pill(s, PADX, y, d["eyebrow"])
-            y += 74
+        y = 360 if d.get("client") else 400
         size, _ = fit(d["title"].replace("**", ""), 1000, 290, 76, 1.04)
         lines = min(4, _lines(d["title"].replace("**", ""), 1000, size))
         self.text(s, PADX, y, 1000, size * 1.08 * lines + 10, d["title"], size, INK, lh=1.04)
@@ -374,15 +397,12 @@ class Deck:
     def statement(self, d):
         """A punch line on the bold brand art. `dark: true` puts it on the dark answer canvas."""
         dark = d.get("dark", False)
-        s = self.new(bg=("dark-01.png" if dark else d.get("bg", "bold-right.jpg")), notes=d.get("notes"))
+        s = self.new(bg=("dark-01.png" if dark else d.get("bg", "statement.jpg")), notes=d.get("notes"))
         self.chrome(s, dark=dark)
         col = WHITE if dark else INK
         acc = CYAN if dark else TEAL
         w = d.get("width", 960)
-        y = 300
-        if d.get("kicker"):
-            self.text(s, PADX, y, w, 34, d["kicker"], 24, acc, bold=True, fit_box=False)
-            y += 64
+        y = 420
         size, _ = fit(d["title"].replace("**", ""), w, 420, d.get("size", 80), 1.04)
         lines = min(5, _lines(d["title"].replace("**", ""), w, size))
         self.text(s, PADX, y, w, size * 1.08 * lines + 10, d["title"], size, col, lh=1.04, accent=acc)
@@ -1013,7 +1033,7 @@ class Deck:
         return s
 
     def closing(self, d):
-        s = self.new(bg=d.get("bg", "bold-corner.jpg"), notes=d.get("notes"))
+        s = self.new(bg=d.get("bg", "closing.jpg"), notes=d.get("notes"))
         self.chrome(s)
         size, _ = fit(d["title"].replace("**", ""), 1000, 360, 72, 1.05)
         lines = min(4, _lines(d["title"].replace("**", ""), 1000, size))
@@ -1037,7 +1057,7 @@ class Deck:
         PW, PH, M = 1191, 1684, 84
         cw = PW - 2 * M
         s = self.new(notes=d.get("notes"))
-        bg = os.path.join(ASSETS, "bg", "content-01.png")
+        bg = os.path.join(ASSETS, "shapes", "onepager.jpg")
         self.image(s, bg, 0, 0, w=PW, h=PH, name="Fondo")
         self.image(s, os.path.join(ASSETS, "logo", "noisia.png"), M, 64, h=28, name="Logo Noisia")
         logo = d.get("client_logo")
@@ -1048,13 +1068,15 @@ class Deck:
             self.image(s, slot, PW - M - 180, 52, w=180, h=56, name="Logo del cliente (reemplazar)")
             self.text(s, PW - M - 180, 52, 180, 56, {"es": "Logo del cliente", "en": "Client logo"}[self.lang],
                       14, EDGE, align="c", anchor="m", fit_box=False)
-        y = 150
-        self.pill(s, M, y, d["label"], size=17, padx=16, h=36)
-        y += 62
+        y = 170
         tsize, _ = fit(d["title"].replace("**", ""), cw, 160, 46, 1.1)
         tl = min(3, _lines(d["title"].replace("**", ""), cw, tsize))
         self.text(s, M, y, cw, tsize * 1.12 * tl + 6, d["title"], tsize, INK, lh=1.1)
-        y += tsize * 1.12 * tl + 22
+        y += tsize * 1.12 * tl + 12
+        if d.get("label"):
+            self.text(s, M, y, cw, 26, d["label"], 17, EDGE, bold=True, fit_box=False)
+            y += 40
+        y += 10
         self.text(s, M, y, cw, 130, d["intro"], 21, FG2, lh=1.42)
         y += 21 * 1.42 * min(4, _lines(d["intro"], cw, 21)) + 34
         # challenge | decisions
