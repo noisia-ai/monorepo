@@ -426,7 +426,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     const writeConfirmation=(candidate:HybridDecisionInputV1)=>writeHybridMembershipDecisionPageV1({client,
       workspace_id:workspace,route_digest:route,decisions:[candidate]});
     assert.equal((await writeConfirmation({...confirmed,text})).persisted,1,
-      'fresh Claude can publish a negative using an older compatible paid JEV source');
+      'fresh Claude can persist its negative confirmation using an older compatible paid JEV source');
     await assert.rejects(writeConfirmation({...confirmed,text,jev:{...confirmed.jev,probability:.7}}),/hybrid_settled_receipt_required/,
       'automatic source provenance cannot authorize a changed stored probability');
     await client.query('SAVEPOINT cached_confirmation_identity');

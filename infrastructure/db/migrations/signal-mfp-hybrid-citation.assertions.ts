@@ -79,7 +79,7 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   if(scenario==='cached_jev_rejected'){
    assert.equal(claudeSends,1);assert.equal(verifySends,0);
    const decision=(await client.query('SELECT verdict,jev_call_id FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0];
-   assert.equal(decision.verdict,'not_belongs');assert.ok(decision.jev_call_id);
+   assert.equal(decision.verdict,'review_required');assert.ok(decision.jev_call_id);
    console.log(JSON.stringify({gate:'h1_pg_cached_jev_confirmation',scenario,claudeSends,verifySends,verdict:decision.verdict}));
    await client.query('ROLLBACK TO SAVEPOINT citation_quality');continue;
   }
