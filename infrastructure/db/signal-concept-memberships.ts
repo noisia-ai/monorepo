@@ -602,11 +602,15 @@ export async function overrideConceptMembershipsV1(
       [args.workspace_id],
     );
     await authorize(c, args.workspace_id, args.actor_user_id, true);
-    const matches = (
+    // Resolve the current targets once under the workspace lock. Reuse only
+    // server-observed fingerprints/definitions for the write; a second serving
+    // scan adds latency without giving a newer snapshot of these locked targets.
+    const targets = (
       await c.query(
         `/* membership-override-targets */ WITH targets AS MATERIALIZED (
- SELECT root_id,concept_key FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=ANY($3::uuid[])
- ) SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text)
+ SELECT root_id,concept_key,definition_digest,root_fingerprint FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=ANY($3::uuid[])
+ ) SELECT r.root_id,r.concept_key,r.verdict,r.decided_via,m.definition_digest,m.root_fingerprint
+ FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text)
  JOIN targets m ON m.root_id=r.root_id AND m.concept_key=r.concept_key WHERE r.verdict IN('belongs','not_belongs')`,
         [
           args.workspace_id,
@@ -614,8 +618,8 @@ export async function overrideConceptMembershipsV1(
           args.overrides.map((r) => r.root_id),
         ],
       )
-    ).rows[0]!.count;
-    if (matches !== args.overrides.length)
+    ).rows;
+    if (targets.length !== args.overrides.length)
       fail("membership_override_target_invalid", 400);
     await c.query(
       `UPDATE signal_concept_membership_overrides o SET superseded_at=now() FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text) WHERE o.workspace_id=$1 AND o.root_id=r.root_id AND o.concept_key=r.concept_key AND o.superseded_at IS NULL`,
@@ -623,10 +627,9 @@ export async function overrideConceptMembershipsV1(
     );
     const inserted = await c.query(
       `INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,verdict,actor_user_id,definition_digest,root_fingerprint,decided_via)
-       SELECT $1,r.root_id,r.concept_key,r.verdict,$3,m.definition_digest,m.root_fingerprint,r.decided_via
-       FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text)
-       JOIN signal_concept_memberships_current_v1 m ON m.workspace_id=$1 AND m.root_id=r.root_id AND m.concept_key=r.concept_key`,
-      [args.workspace_id, JSON.stringify(args.overrides), args.actor_user_id],
+       SELECT $1,r.root_id,r.concept_key,r.verdict,$3,r.definition_digest,r.root_fingerprint,r.decided_via
+       FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text,definition_digest text,root_fingerprint text)`,
+      [args.workspace_id, JSON.stringify(targets), args.actor_user_id],
     );
     if (inserted.rowCount !== args.overrides.length)
       fail("membership_override_target_invalid", 400);

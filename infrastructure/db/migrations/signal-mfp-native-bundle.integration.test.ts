@@ -5,7 +5,7 @@ import type { Pool } from "pg";
 import { seedSignalTopicEditorialRenewalSourceV1 } from "./signal-topic-editorial-renewal.synthetic.fixture";
 import { createSignalTopicStoreV1 } from "../signal-topic-catalog";
 import { registerFacetContextV1 } from "../signal-mention-facets";
-import { selectConceptMembershipV1 } from "../signal-concept-memberships";
+import { overrideConceptMembershipsV1, selectConceptMembershipV1 } from "../signal-concept-memberships";
 import { loadSignalWorkspaceTopicsPageV1, loadSignalWorkspaceTopicReadBundleV1,
   loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1 } from "../signal-workspace-topics-serving";
 
@@ -74,6 +74,26 @@ test("MFP native bundle: complete PG DTO parity, one snapshot, topic changes and
       await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...selected, cursor }), /workspace_topics_scope_changed/);
     }
     await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, term_key: "foreign-topic", expected_scope_digest: initial.overview.scope_digest }), /workspace_topics_topic_unavailable/);
+    const term = initial.overview.terms[0]!;
+    const target = (await query(`SELECT root_id FROM signal_workspace_concept_memberships_read_v1($1::uuid)
+      WHERE workspace_id=$1 AND concept_key=$2 LIMIT 1`, [args.workspace_id, term.term_key])).rows[0];
+    assert.ok(target, "a real current root/concept is required for human correction");
+    await assert.rejects(overrideConceptMembershipsV1({ ...args, overrides: [{
+      root_id: randomUUID(), concept_key: term.term_key, verdict: "belongs", decided_via: "human_ui",
+    }] }), /membership_override_target_invalid/);
+    const callsBefore = (await query("SELECT count(*)::int count FROM signal_labeling_calls WHERE workspace_id=$1", [args.workspace_id])).rows[0].count;
+    for (const verdict of ["belongs", "not_belongs"] as const) {
+      await overrideConceptMembershipsV1({ ...args, overrides: [{
+        root_id: target.root_id, concept_key: term.term_key, verdict, decided_via: "human_ui",
+      }] });
+      const served = await loadSignalWorkspaceTopicsPageV1(args);
+      assert.ok(served?.overview.is_current);
+      assert.equal(served.overview.terms.find(item => item.term_key === term.term_key)?.mention_count,
+        verdict === "belongs" ? 1 : 0, "Signal reads the committed human decision immediately, without recomputation");
+      assert.notEqual(served.overview.scope_digest, initial.overview.scope_digest);
+      assert.equal((await query("SELECT count(*)::int count FROM signal_labeling_calls WHERE workspace_id=$1", [args.workspace_id])).rows[0].count,
+        callsBefore, "human correction creates no provider transport");
+    }
     await query("UPDATE users SET status='inactive' WHERE id=$1", [args.actor_user_id]);
     await assert.rejects(loadSignalWorkspaceTopicsPageV1(args), /workspace_topics_forbidden/);
     await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, term_key: initial.detail.term_key, expected_scope_digest: initial.overview.scope_digest }), /workspace_topics_forbidden/);
