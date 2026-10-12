@@ -543,3 +543,17 @@ test("max_tokens splits all roots, then only complete responses materialize deci
   assert.equal(h.labels.length, 2);
   assert.ok(h.labels.every((r) => r.verdict === "belongs"));
 });
+test('new H1 stops transport splits after three calls per root without changing legacy retry policy',async()=>{
+ const h=harness();const {hybridCitationJudgeIdentityV1}=await import('@noisia/query-engine');
+ h.run.identity=hybridCitationJudgeIdentityV1();
+ for(let n=2;n<16;n++)h.inputs.push({...h.inputs[0]!,root_id:String(n),root_fingerprint:`d${n}`,input_digest:`d${n}`});
+ const original=h.provider.results;
+ h.provider.results=async function*(){for await(const result of original()){
+  result.item.result.message.stop_reason='max_tokens';yield {...result,rawText:JSON.stringify(result.item)};
+ }};
+ for(let tick=0;tick<3;tick++)await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+ assert.equal(h.labels.length,16);assert.ok(h.labels.every(r=>r.error_code==='incomplete_single_root'));
+ for(const root of h.inputs)assert.equal(h.calls().filter(c=>c.inputs.some(i=>i.root_id===root.root_id)).length,3);
+ await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+ assert.equal(h.submitted(),3,'replay does not create a fourth batch');
+});
