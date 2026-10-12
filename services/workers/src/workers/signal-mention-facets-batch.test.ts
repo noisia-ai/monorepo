@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   runMentionFacetsTickV1,
   facetCallProposalV1,
@@ -18,7 +19,7 @@ import {
 } from "@noisia/query-engine";
 import { AnthropicBatchTransportError, type AnthropicBatchPage } from "../providers/anthropic-message-batches";
 const dim = <T>(value: T) => ({ value, confidence: "high", abstained: false });
-function harness() {
+function harness(summary: string | null = null) {
   const context = {
     entities: [
       {
@@ -185,7 +186,7 @@ function harness() {
           act: dim("opinion"),
           spam_or_bot: dim(false),
           language: dim("es"),
-          asunto: dim(null),
+          asunto: dim(summary),
         };
         const message = {
           stop_reason: "end_turn",
@@ -619,4 +620,18 @@ test("explicit create rejection keeps the sane receipt and never resends that ad
   assert.equal(creates,1);
   assert.equal(h.labels.length,2);
   assert.ok(h.labels.every(label=>label.status === "error" && label.error_code === "definitely_not_sent"));
+});
+
+
+test("optional summary normalization persists traced results after exact raw without altering entity evidence", async () => {
+  const summary = "word ".repeat(13).trim(), h = harness(summary);
+  assert.equal((await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"completed");
+  assert.deepEqual(h.events,["raw","settle","apply"]);
+  const raw = h.calls()[0]!.raw_body!;
+  const hash = createHash("sha256").update(raw).digest("hex");
+  assert.ok(raw.includes(summary));
+  assert.ok(h.labels.every(label=>label.status === "labeled" && label.facets?.asunto.abstained && label.facets.entities.value?.[0]?.entity_id === "a" && label.normalizations?.[0]?.reason === "exceeds_word_limit"));
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.submitted(),1);
+  assert.equal(createHash("sha256").update(h.calls()[0]!.raw_body!).digest("hex"),hash);
 });
