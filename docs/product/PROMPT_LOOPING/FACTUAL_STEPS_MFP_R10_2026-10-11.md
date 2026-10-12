@@ -70,7 +70,9 @@ Las estimaciones preceden al proveedor; son orientativas. Reserva temporal y gas
 | «Guardar correcciones» / «Rechazar pertenencia» | Corrección gratuita, sin proveedor | Clic con selección concreta | R10 aún sin corrección; objetivoPATCH<5s y Signal inmediato pendientes de nueva build. |
 | «Mostrar este concepto en Signal» | Selección gratuita | Checkbox de selección; no casilla de gasto | R10 aún sin seleccionar; no llama proveedor. |
 
-## Continuación no ejecutada
+## Bloqueo externo y continuación no ejecutada
+
+Un create independiente en el workspace privado H1 confirmó HTTP400/not_submitted, error_type `invalid_request_error`, firma exacta `credit_balance_insufficient`, coste0. Es compatible con el rechazo R10, **no probado para los110DNC históricos**, cuyo body/status no se preservó. R10 espera saldo Anthropic y cierre explícito QA-1; no tercer intento, importload2 ni despliegue ahora.
 
 Después de QA-1 y pin reparado verificado: cerrar fichas mediante recuperación focal autorizada, medir terminal sin refresco manual; descubrir grupos; evaluar pertenencia de los tres intereses; cotizar/confirmar revisión editorial; revisar/adoptar sólo Topics reales y seleccionar en Signal; verificar original y denominadores. **Sólo entonces** importar `load2.csv` una vez con revisión IDs ON, preparar delta, vectores reutilizados/nuevos, fichas afectadas, proyección numérica e interpretación cotizada de unidades nuevas; comparar Signal actualizado. Ninguno de esos resultados existe aún en R10; no se mezclan con R9/R8 ni se rellenan números de otra marca.
 
