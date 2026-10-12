@@ -7,6 +7,7 @@ import {
   signalQualityPolicyDefinitionHashV1,
   signalRetentionPolicyDefinitionHashV1,
   signalProvenancePolicyBindingDefinitionHashV1,
+  hybridJevMembershipIdentityV1,labelerDigestV1,
 } from "@noisia/query-engine";
 import { loadConceptMembershipsStatusV1, selectMembershipInputsV1 } from "../signal-concept-memberships";
 import { assertHybridProviderRightsBeforeSubmitV1,
@@ -37,7 +38,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     const actor = fixture.actors.internal;
     const source = randomUUID(), batch = randomUUID(), root = randomUUID(), abstainedRoot = randomUUID();
     const quality = randomUUID(), retention = randomUUID(), license = randomUUID();
-    const digest = sha("fixture-digest"), text = "Synthetic discussion about bicycle brakes";
+    const digest = sha("fixture-digest"), text = "Synthetic discussion about bicycle brakes. ".repeat(410);
     const abstainedText = "Synthetic discussion about bicycle brakes with an abstained facet";
     await client.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,
       connection_method,name,status,source_contract_version,source_key)
@@ -200,17 +201,26 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
 
     await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,
       schema_digest,labeler_digest,identity) VALUES($1,'membership','typesafe','jev-1.13.0',
-      $2,$2,$3,'{}')`, [jevVersion, digest, sha("jev-stage")]);
+      $2,$3,$4,$5::jsonb)`, [jevVersion, hybridJevMembershipIdentityV1().prompt_digest,
+        hybridJevMembershipIdentityV1().schema_digest,labelerDigestV1(hybridJevMembershipIdentityV1()),JSON.stringify(hybridJevMembershipIdentityV1())]);
     const work = (id: string) => ({ id, workspace_id: workspace, cursor_root_id: null,
       labeler_digest: sha("jev-stage"),
       membership_snapshot: { concepts: [concept], preview: false, sample_root_ids: null,
         hybrid_stage: "jev", route_digest: route } }) as unknown as LabelingRunV1;
     const first = await selectMembershipInputsV1(client, work(randomUUID()), true);
-    assert.equal(first.length, 1, "the real JEV selector initially finds the pair");
+    assert.equal(first.length, 2, "relevant abstained facets are admitted alongside labeled facets");
     assert.equal(first[0]!.evaluated_concepts[0]!.concept_key, concept.concept_key);
     assert.equal((await client.query<{pairs:number}>(hybridH1JevAdmissionPopulationSqlV1,
-      [workspace,route])).rows[0]!.pairs,1,
-    "admission excludes abstained facets even when their H1 membership view is pending");
+      [workspace,route])).rows[0]!.pairs,2,
+    "admission and selection agree for relevant abstained facets");
+    assert.ok(first.some(input=>input.root_id===abstainedRoot));
+    // A later entity abstention becomes indeterminate, never reused as a relevant pair.
+    await client.query(`UPDATE signal_mention_facet_labels SET relevance='unknown',
+      facets=jsonb_set(facets,'{entities}',jsonb_build_object('value','[]'::jsonb,'abstained',true)),
+      effective_entities_digest=signal_labeling_digest_v1('[]'::jsonb)
+      WHERE workspace_id=$1 AND root_id=$2`,[workspace,abstainedRoot]);
+    assert.equal((await selectMembershipInputsV1(client,work(randomUUID()),true)).length,1);
+    assert.equal((await client.query('SELECT count(*)::int n FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2',[workspace,abstainedRoot])).rows[0].n,0);
 
     const policy = randomUUID();
     await client.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,
@@ -243,7 +253,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       [jevRun, workspace, jevVersion, prep, context, `jev-${jevRun}`, digest, actor,
         JSON.stringify({ hybrid_stage: "jev", route_digest: route, concepts: [concept], preview: false }),
         jevAdmission]);
-    const input = first[0]!;
+    const input = first.find(input=>input.root_id===root)!;
     const unknownCall = randomUUID();
     await client.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,
       custom_id,request_digest,request,inputs,status,reserved_micro_usd,budget_date,budget_timezone)
@@ -282,6 +292,31 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       "an interrupted JEV run cannot reserve the settled pair again");
     assert.deepEqual(await selectMembershipInputsV1(client, work(randomUUID()), true), [],
       "a new JEV run with the same route cannot charge the pair again");
+    await client.query('SAVEPOINT cached_probability');
+    await client.query(`UPDATE signal_labeling_runs SET membership_snapshot=jsonb_set(membership_snapshot,'{route_digest}',to_jsonb($2::text)) WHERE id=$1`,[jevRun,sha('prior-compatible-route')]);
+    const negative={...result,jev:{...result.jev,verdict:'not_belongs',probability:.2}};
+    await client.query('UPDATE signal_labeling_calls SET results=$2::jsonb WHERE id=$1',[jevCall,JSON.stringify([negative])]);
+    const cachedBefore=(await client.query('SELECT to_jsonb(call) snapshot FROM signal_labeling_calls call WHERE workspace_id=$1 ORDER BY id',[workspace])).rows;
+    const {reuseHybridCachedJevV1}=await import('../signal-hybrid-cache');
+    await client.query('SAVEPOINT compatible_cache');
+    assert.equal((await reuseHybridCachedJevV1(client,work(randomUUID()),[input])).length,0);
+    const cached=(await client.query('SELECT * FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[workspace])).rows[0];
+    assert.equal(cached.verdict,'not_belongs');assert.equal(cached.jev.threshold,.35);assert.equal(cached.jev_call_id,jevCall);
+    assert.equal((await reuseHybridCachedJevV1(client,work(randomUUID()),[input])).length,1,'a resolved pair is outside pending cache work');
+    assert.deepEqual((await client.query('SELECT to_jsonb(call) snapshot FROM signal_labeling_calls call WHERE workspace_id=$1 ORDER BY id',[workspace])).rows,cachedBefore,'cached decision creates no fake call and never mutates paid receipts');
+    await assert.rejects(writeHybridMembershipDecisionPageV1({client,workspace_id:workspace,route_digest:route,
+      cached_route_digest:sha('prior-compatible-route'),decisions:[{...cached,text:input.text,definition_digest:sha('different-definition')}]}),/hybrid_population_or_rights_changed/);
+    await client.query('ROLLBACK TO SAVEPOINT compatible_cache');
+    await client.query('SAVEPOINT incompatible_cache');
+    await client.query('UPDATE signal_labeler_versions SET prompt_digest=$2 WHERE id=$1',[jevVersion,sha('different-question')]);
+    assert.equal((await reuseHybridCachedJevV1(client,work(randomUUID()),[input])).length,1,'different question is not a cache hit');
+    await client.query('ROLLBACK TO SAVEPOINT incompatible_cache');
+    await client.query('UPDATE signal_labeling_calls SET results=$2::jsonb WHERE id=$1',[jevCall,JSON.stringify([{...negative,jev:{...negative.jev,probability:.36}}])]);
+    const cachedPositive=await selectHybridClaudeInputsV1(client,{...work(randomUUID()),membership_snapshot:{concepts:[concept],route_digest:route,hybrid_stage:'claude',jev_run_id:jevRun}} as unknown as LabelingRunV1);
+    assert.equal(cachedPositive.length,1);assert.equal(cachedPositive[0]!.jev_by_concept![concept.concept_key]!.decision.verdict,'belongs');
+    assert.equal(cachedPositive[0]!.jev_by_concept![concept.concept_key]!.decision.threshold,.35);
+    assert.equal((await client.query('SELECT results#>>\'{0,jev,verdict}\' verdict FROM signal_labeling_calls WHERE id=$1',[jevCall])).rows[0].verdict,'not_belongs','rethresholding does not rewrite the original verdict');
+    await client.query('ROLLBACK TO SAVEPOINT cached_probability');
     await client.query("SAVEPOINT page_probe");
     await verifyHybridJevPageContinuationV1({client,database:db,workspace,actor,source,batch,prep,
       context,facetDigest:sha("facet-labeler"),facets,entity,facetCall,route,concept:concept as typeof input.evaluated_concepts[number],admit});

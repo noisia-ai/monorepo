@@ -982,6 +982,12 @@ export function createSignalLabelingStoreV1<
     async finish(run: LabelingRunV1) {
       return tx(db, async (c) => {
         await lock(c, run);
+        if(options.adapter?.hybrid_stage!==undefined)await c.query(`UPDATE signal_labeling_calls call
+          SET status='unknown',stop_reason='provider_usage_invalid',updated_at=now()
+          WHERE call.run_id=$1 AND call.status IN('submitted','unknown') AND call.results_applied
+          AND call.settled_micro_usd IS NULL AND call.raw_storage_key IS NOT NULL
+          AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
+            WHERE result->>'error_code' IN('provider_usage_invalid','provider_result_missing'))`,[run.id]);
         await c.query(`UPDATE signal_labeling_calls call SET status='failed',
           settled_micro_usd=CASE WHEN $2::boolean THEN call.settled_micro_usd
             ELSE COALESCE(call.settled_micro_usd,call.reserved_micro_usd) END,
@@ -991,6 +997,7 @@ export function createSignalLabelingStoreV1<
             WHERE result->>'error_code'='provider_usage_invalid') THEN 'provider_usage_invalid'
             ELSE 'provider_result_missing' END,updated_at=now()
           WHERE call.run_id=$1 AND call.status IN ('submitted','unknown') AND call.results_applied
+          AND (NOT $2::boolean OR call.raw_storage_key IS NULL AND call.raw_sha256 IS NULL)
           AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
             WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id,options.adapter?.hybrid_stage !== undefined]);
         const calls = (

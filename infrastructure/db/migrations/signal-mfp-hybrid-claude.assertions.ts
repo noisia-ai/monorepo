@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool, PoolClient } from "pg";
 import { labelerDigestV1, membershipLabelerIdentityV1, type ConceptForJudgeV1 } from "@noisia/query-engine";
 import { createHybridMembershipStageStoreV1, selectHybridClaudeInputsV1 } from "../signal-hybrid-runs";
-import { configureHybridMembershipRouteV1 } from "../signal-hybrid-membership";
+import { configureHybridMembershipRouteV1,loadHybridMembershipRouteV1 } from "../signal-hybrid-membership";
 import { hybridH1ClaudeAdmissionPopulationSqlV1 } from "../signal-hybrid-admission-population";
 import { hybridMembershipDrainerSqlV1, runHybridMembershipTickV1 } from "../../../services/workers/src/workers/signal-hybrid-membership";
 import { AnthropicBatchTransportError, type createAnthropicMessageBatchesClient } from "../../../services/workers/src/providers/anthropic-message-batches";
@@ -74,7 +74,13 @@ export async function verifyHybridClaudeRecoveryV1(a:{client:PoolClient;database
       assert.ok(Number(call.settled_micro_usd)>0);
     } else if(scenario==="missing"||scenario==="invalid_usage") {
       assert.equal(call.settled_micro_usd,null,"unknown usage is not reported as actual spend");
-      assert.equal(call.terminal_exposure_micro_usd,call.reserved_micro_usd);
+      assert.equal(call.terminal_exposure_micro_usd,scenario==='missing'?call.reserved_micro_usd:'0');
+      if(scenario==='invalid_usage'){
+        assert.equal(call.status,'unknown');assert.ok(call.raw_storage_key);
+        assert.equal((await loadHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor})).unknown_calls,1);
+        await assert.rejects(configureHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,
+          actor_user_id:a.actor,route:'standard',provider_available:false,expected_route_digest:a.route,confirm_unresolved_jev:true}),/hybrid_response_reconciliation_required/);
+      }
       const visible=(await client.query(`SELECT verdict,error_code,updated_at FROM signal_concept_memberships_current_v1
         WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3`,
         [a.workspace,call.inputs[0].root_id,a.concept.concept_key])).rows[0];
@@ -87,7 +93,7 @@ export async function verifyHybridClaudeRecoveryV1(a:{client:PoolClient;database
         "a new explicit run can recover a known transient failure under the same route");
       assert.equal((await client.query(hybridH1ClaudeAdmissionPopulationSqlV1,[a.workspace,a.route])).rows[0].pairs,1);
     }
-    assert.deepEqual(await configureHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,
+    if(scenario!=='invalid_usage')assert.deepEqual(await configureHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,
       actor_user_id:a.actor,route:"standard",provider_available:false,expected_route_digest:a.route}),
     {route:"standard",route_digest:null},`${scenario} does not block standard rollback`);
     console.log(JSON.stringify({gate:"h1_pg_claude_recovery",scenario,status:run.status,sends}));

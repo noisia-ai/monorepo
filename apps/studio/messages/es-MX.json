@@ -4588,6 +4588,7 @@
       "route": "Método",
       "standard": "Estándar",
       "hybrid_h1": "Híbrido experimental",
+      "released": "{count} llamadas liberadas ({pairs} pares evaluados) sin confirmar su resultado. El coste expuesto se conserva: {cost}.",
       "exposure": "{count} llamadas aún sin resultado confirmado; coste reservado: {cost}.",
       "confirm": "Entiendo que volver al método estándar no cancela estas llamadas ni elimina el coste expuesto.",
       "readOnly": "Tu acceso permite consultar el método; cambiarlo requiere permisos de edición.",

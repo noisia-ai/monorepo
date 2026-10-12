@@ -57,6 +57,7 @@ export function hybridClaudeBatchStoreV1(store:HybridStore):ConceptMembershipSto
         claude:{verdict:result.verdict,citation:citation?{quote:citation.quote,start:citation.quote_start,end:citation.quote_end}:null,
           ...(run.identity?.params.hybrid_citation_quality===true?{citations:result.citations.map(c=>({quote:c.quote,start:c.quote_start,end:c.quote_end}))}:{})},
         error_code:result.error_code,
+        ...('citation_window' in input?{citation_window:input.citation_window}:{}),
         rationale:result.rationale};
     })})));
   }};

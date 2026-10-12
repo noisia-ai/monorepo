@@ -4588,6 +4588,7 @@
       "route": "Method",
       "standard": "Standard",
       "hybrid_h1": "Experimental hybrid",
+      "released": "{count} calls released ({pairs} evaluated pairs) without confirming their results. Cost exposure is retained: {cost}.",
       "exposure": "{count} calls still have unconfirmed results; reserved cost: {cost}.",
       "confirm": "I understand that returning to the standard method does not cancel these calls or remove their cost exposure.",
       "readOnly": "Your access allows viewing the method; changing it requires editing permission.",

@@ -7,7 +7,11 @@ import { writeHybridMembershipDecisionPageV1, type HybridMembershipStageV1 } fro
 import type { LabelingDatabaseV1 } from "./signal-mention-facets";
 
 import { selectHybridCitationInputsV1, requestHybridCitationFollowupV1 } from "./signal-hybrid-citation-runs";
-import { hybridPairRetrySqlV1, hybridUncertainPairSqlV1 } from "./signal-hybrid-admission-population";
+import { hybridPairRetrySqlV1, hybridUncertainPairSqlV1, hybridUnconfirmedPairSqlV1 } from "./signal-hybrid-admission-population";
+import {reduceHybridWindowResultsV1} from './signal-hybrid-window-results';
+import {reuseHybridCachedJevV1} from './signal-hybrid-cache';
+import {hybridCompatibleJevRunSqlV1,hybridJevPositiveSqlV1} from './signal-hybrid-semantic-cache-sql';
+import {rethresholdHybridJevV1} from '@noisia/query-engine';
 
 type Snapshot = { hybrid_stage: HybridMembershipStageV1; route_digest: string; jev_run_id: string | null;
   concepts: ConceptForJudgeV1[]; citation_retry?: boolean };
@@ -15,6 +19,7 @@ export type HybridStageInputV1 = MembershipInputV1 & {
   jev_by_concept?: Record<string,{ decision: HybridJevDecisionV1; call_id: string }>;
   confirmation_by_concept?: Record<string,HybridStageResultV1>;
   citation_repair?: unknown;
+  citation_window?: {start:number;end:number;index:number;count:number};
 };
 export type HybridStageResultV1 = {
   root_id: string; root_fingerprint: string; concept_key: string; definition_digest: string;
@@ -23,6 +28,7 @@ export type HybridStageResultV1 = {
   claude: HybridClaudeDecisionV1 | null; claude_call_id: string | null;
   rationale: string | null;
   error_code?: string; citation_call_id?: string | null;
+  citation_window?: {start:number;end:number;index:number;count:number};
 };
 
 const fail = (code: string): never => { throw new SignalLabelingError(code); };
@@ -84,12 +90,12 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
         entity_context_digest,effective_entities_digest
       FROM signal_concept_memberships_current_v1 current
       WHERE workspace_id=$2 AND labeler_digest=$3 AND verdict IN('pending','error')
-        AND ${hybridUncertainPairSqlV1} AND ${hybridPairRetrySqlV1("claude")}
+        AND ${hybridUncertainPairSqlV1} AND ${hybridPairRetrySqlV1("claude")} AND ${hybridUnconfirmedPairSqlV1}
     ), authorized_roots AS MATERIALIZED (
       SELECT root_id FROM signal_membership_evidence_rights_v1
       WHERE workspace_id=$2 AND metrics AND evidence
     ), candidates AS MATERIALIZED (
-      SELECT call.id jev_call_id,call.inputs->0 input,result,
+      SELECT DISTINCT ON(current.root_id,current.concept_key) call.id jev_call_id,call.inputs->0 input,result,
         (result->>'root_id')::uuid root_id
       FROM signal_labeling_calls call JOIN signal_labeling_runs prior ON prior.id=call.run_id
       CROSS JOIN LATERAL jsonb_array_elements(call.results) result
@@ -102,10 +108,11 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
       JOIN authorized_roots rights ON rights.root_id=current.root_id
       WHERE prior.workspace_id=$2 AND prior.kind='membership' AND prior.status IN('completed','failed')
         AND prior.membership_snapshot->>'hybrid_stage'='jev'
-        AND prior.membership_snapshot->>'route_digest'=$3
+        AND (prior.membership_snapshot->>'route_digest'=$3 OR ${hybridCompatibleJevRunSqlV1('prior')})
         AND call.status='settled' AND call.results_applied
-        AND result#>>'{jev,verdict}'='belongs'
+        AND result#>>'{jev,verdict}' IN('belongs','not_belongs') AND ${hybridJevPositiveSqlV1}
         AND ($1::uuid IS NULL OR (result->>'root_id')::uuid>$1::uuid)
+      ORDER BY current.root_id,current.concept_key,call.created_at DESC,call.id
     ), selected_roots AS (
       SELECT DISTINCT root_id FROM candidates ORDER BY root_id LIMIT 200
     ) SELECT candidate.input,candidate.result,candidate.jev_call_id FROM candidates candidate
@@ -116,12 +123,12 @@ export async function selectHybridClaudeInputsV1(client: LabelingDatabaseV1 | Po
   for (const row of rows) {
     const concept = snapshot(run).concepts.find(item => item.concept_key === row.result.concept_key &&
       item.definition_digest === row.result.definition_digest);
-    if (!concept || row.result.jev.verdict !== "belongs") return fail("hybrid_jev_result_invalid");
+    if (!concept) return fail("hybrid_jev_result_invalid");
     const input = grouped.get(row.input.root_id) ?? { ...row.input,evaluated_concepts:[],jev_by_concept:{} };
     if (input.jev_by_concept?.[concept.concept_key]) return fail("hybrid_duplicate_jev_result");
     input.evaluated_concepts.push(concept);
     input.jev_by_concept ??= {};
-    input.jev_by_concept[concept.concept_key] = { decision:row.result.jev,call_id:row.jev_call_id };
+    input.jev_by_concept[concept.concept_key] = { decision:rethresholdHybridJevV1(row.result.jev),call_id:row.jev_call_id };
     grouped.set(row.input.root_id,input);
   }
   return [...grouped.values()];
@@ -132,8 +139,15 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
   options: Omit<Parameters<typeof createSignalLabelingStoreV1>[0],"adapter">) {
   const inputs = async (client: LabelingDatabaseV1 | PoolClient, run: LabelingRunV1): Promise<HybridStageInputV1[]> => {
     if (snapshot(run).hybrid_stage !== stage) return fail("hybrid_stage_changed");
-    return stage === "jev" ? selectMembershipInputsV1(client,run,true) : stage === "citation" || snapshot(run).citation_retry
-      ? selectHybridCitationInputsV1(client,run) : selectHybridClaudeInputsV1(client,run);
+    if(stage!=='jev')return stage==='citation'||snapshot(run).citation_retry?selectHybridCitationInputsV1(client,run):selectHybridClaudeInputsV1(client,run);
+    for(;;){
+      const selected=await selectMembershipInputsV1(client,run,true);
+      if(!selected.length)return [];
+      const missing=await reuseHybridCachedJevV1(client as PoolClient,run,selected);
+      if(missing.length)return missing;
+      run.cursor_root_id=selected.at(-1)!.root_id;
+      await client.query('UPDATE signal_labeling_runs SET cursor_root_id=$2 WHERE id=$1',[run.id,run.cursor_root_id]);
+    }
   };
   const store=createSignalLabelingStoreV1<HybridStageInputV1,HybridStageResultV1>({ ...options,
     adapter: { kind:"membership",hybrid_stage:stage,
@@ -150,11 +164,7 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
       beforeSubmit:assertHybridProviderRightsBeforeSubmitV1,
       pending:async (client,run) => (await inputs(client,run)).length,
       write:async (client,run,pages) => {
-        let decisions = pages.flatMap(page => page.results
-          .filter(result => (stage !== "jev" || result.jev.verdict !== "belongs")
-            && (stage !== "claude" || !run.identity.params.hybrid_citation_quality || result.claude?.verdict !== "belongs")
-            && (stage !== "citation" || result.claude?.verification && (result.claude.verification.supported || snapshot(run).citation_retry)))
-          .map(result => {
+        let decisions = pages.flatMap(page => page.results.map(result => {
             if (stage === "jev" ? result.jev_call_id !== page.call.id || result.claude_call_id !== null
               : stage === "citation" ? result.citation_call_id !== page.call.id : result.claude_call_id !== page.call.id) return fail("hybrid_result_call_changed");
             const input = page.call.inputs.find(item => item.root_id === result.root_id);
@@ -162,6 +172,17 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
               concept.definition_digest === result.definition_digest)) return fail("hybrid_result_input_changed");
             return { ...result,text:input.text };
           }));
+        if(stage==='claude'&&decisions.some(result=>result.citation_window)){
+          const stored=(await client.query<{result:HybridStageResultV1;text:string}>(`SELECT result,input->>'text' text
+            FROM signal_labeling_calls call CROSS JOIN LATERAL jsonb_array_elements(call.results) result
+            JOIN LATERAL jsonb_array_elements(call.inputs) input ON input->>'root_id'=result->>'root_id'
+            WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied AND result ? 'citation_window'
+            ORDER BY call.created_at,call.id`,[run.id])).rows;
+          decisions=reduceHybridWindowResultsV1([...decisions.filter(r=>!r.citation_window),...stored.map(row=>({...row.result,text:row.text}))]);
+        }
+        decisions=decisions.filter(result=>(stage!=='jev'||result.jev.verdict!=='belongs')
+          &&(stage!=='claude'||!run.identity.params.hybrid_citation_quality||result.claude?.verdict!=='belongs')
+          &&(stage!=='citation'||result.claude?.verification&&(result.claude.verification.supported||snapshot(run).citation_retry)));
         const admitted=[];
         for(const decision of decisions){
           if(decision.jev.verdict==="error"||decision.claude?.verdict==="error"){

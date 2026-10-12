@@ -13,7 +13,7 @@ export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|Poo
    SELECT * FROM signal_concept_memberships_current_v1 current WHERE workspace_id=$2 AND labeler_digest=$3
      AND verdict IN('pending','error') AND ${hybridPairRetrySqlV1(s.hybrid_stage)} AND ${hybridUncertainPairSqlV1}
  ), rights AS MATERIALIZED (SELECT root_id FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$2 AND metrics AND evidence)
- SELECT input,result FROM signal_labeling_calls call
+ SELECT DISTINCT ON(p.root_id,p.concept_key) input,result FROM signal_labeling_calls call
  CROSS JOIN LATERAL jsonb_array_elements(call.results) result
  JOIN LATERAL jsonb_array_elements(call.inputs) input ON input->>'root_id'=result->>'root_id'
  JOIN current_pairs p ON p.root_id::text=result->>'root_id' AND p.root_fingerprint=result->>'root_fingerprint'
@@ -22,9 +22,14 @@ export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|Poo
  JOIN rights ON rights.root_id=p.root_id
  WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
    AND result#>>'{claude,verdict}'='belongs'
+   AND (NOT result ? 'citation_window' OR (SELECT count(DISTINCT item#>>'{citation_window,index}')
+    FROM signal_labeling_calls covered CROSS JOIN LATERAL jsonb_array_elements(covered.results) item
+    WHERE covered.run_id=call.run_id AND covered.status='settled' AND covered.results_applied
+     AND item->>'root_id'=result->>'root_id' AND item->>'concept_key'=result->>'concept_key'
+     AND item#>>'{claude,verdict}' IN('belongs','not_belongs','insufficient'))=(result#>>'{citation_window,count}')::int)
    AND ($4::boolean=false OR result#>>'{claude,verification,supported}'='false')
    AND ($5::uuid IS NULL OR p.root_id>$5::uuid)
- ORDER BY p.root_id,p.concept_key`,[s.source_run_id,run.workspace_id,s.route_digest,s.hybrid_stage==='claude',run.cursor_root_id])).rows;
+ ORDER BY p.root_id,p.concept_key,call.created_at,call.id`,[s.source_run_id,run.workspace_id,s.route_digest,s.hybrid_stage==='claude',run.cursor_root_id])).rows;
  const grouped=new Map<string,HybridStageInputV1>();
  for(const row of rows){
   const concept=row.input.evaluated_concepts.find(c=>c.concept_key===row.result.concept_key&&c.definition_digest===row.result.definition_digest);

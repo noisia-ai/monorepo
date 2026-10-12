@@ -17,21 +17,36 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   const raw=new Map<string,string>();
  const createStore=(stage:'claude'|'citation')=>createHybridMembershipStageStoreV1(stage,{database:a.database,
    storeRaw:async r=>{raw.set(r.call_id,r.raw_text);return r.call_id;},loadRaw:async r=>raw.get(r.storage_key)!});
-  let claudeSends=0,verifySends=0;let requests:Array<{custom_id:string}>=[];
+  let claudeSends=0,verifySends=0;let requests:Array<{custom_id:string;params:{messages:Array<{content:string}>}}>=[];
   const batch={id:'msgbatch_citation_fixture',processing_status:'ended',created_at:new Date().toISOString()};
-  const claude={create:async(items:Array<{custom_id:string}>)=>{claudeSends++;requests=items;return batch;},get:async()=>batch,
+  const claude={create:async(items:typeof requests)=>{claudeSends++;requests=items;return batch;},get:async()=>batch,
    list:async()=>({data:[batch],has_more:false,last_id:batch.id}),results:async function*(){for(const request of requests){
-    const item={custom_id:request.custom_id,result:{type:'succeeded',message:{id:'synthetic_citation',type:'message',role:'assistant',model:'claude-sonnet-5-5',stop_reason:'end_turn',usage:{input_tokens:10,output_tokens:10},content:[{type:'text',text:scenario==='deterministic_error'?'invalid JSON':JSON.stringify({contract_version:'concept-membership-judge-v1',roots:[{root_ordinal:0,memberships:[{concept_key:a.concept.concept_key,verdict:'belongs',span_ids:['r0c0s0'],rationale:'The cited sentence establishes the decisive activity.'}]}]})}]}}};yield{item,rawText:JSON.stringify(item)};
+    const span=JSON.parse(request.params.messages[0]!.content).roots[0].spans[0].span_id;
+    const item={custom_id:request.custom_id,result:{type:'succeeded',message:{id:'synthetic_citation',type:'message',role:'assistant',model:'claude-sonnet-5-5',stop_reason:'end_turn',usage:{input_tokens:10,output_tokens:10},content:[{type:'text',text:scenario==='deterministic_error'?'invalid JSON':JSON.stringify({contract_version:'concept-membership-judge-v1',roots:[{root_ordinal:0,memberships:[{concept_key:a.concept.concept_key,verdict:'belongs',span_ids:[span],rationale:'The cited sentence establishes the decisive activity.'}]}]})}]}}};yield{item,rawText:JSON.stringify(item)};
    }}} as unknown as ReturnType<typeof createAnthropicMessageBatchesClient>;
   const technical=scenario==='verifier_http_error'||scenario==='verifier_invalid_noul';
   const jev={evaluate:async()=>{verifySends++;if(scenario==='verifier_http_error')return {http_status:429,latency_ms:1,body:JSON.stringify({error:'overloaded'})};
    if(scenario==='verifier_invalid_noul')return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:2}}})};return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:scenario==='supported'||scenario==='repair_supported'&&verifySends===2?0.9:0.1}}})};}};
   const initial=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,stage:'claude',route_digest:a.route,idempotency_key:`citation-${randomUUID()}`,provider_available:true});
+  const admitted=(await client.query('SELECT estimated_micro_usd,membership_snapshot FROM signal_labeling_runs WHERE id=$1',[initial.run_id])).rows[0];
+  assert.ok(admitted.membership_snapshot.pipeline_estimate?.citation_initial_micro_usd>0,
+   'initial admission includes verification in its pipeline estimate');
+  assert.ok(admitted.membership_snapshot.pipeline_estimate?.claude_repair_micro_usd>0,
+   'initial admission includes the bounded citation repair');
+  assert.ok(admitted.membership_snapshot.pipeline_estimate?.citation_final_micro_usd>0);
+  assert.equal(Number(admitted.estimated_micro_usd),admitted.membership_snapshot.pipeline_estimate.total_micro_usd);
   if(scenario==='explicit_unknown_release'){
    const store=createStore('claude'),run=(await store.claim(initial.run_id))!;
    const {membershipCallProposalV1}=await import('../../../services/workers/src/workers/signal-concept-membership-batch');
    const inputs=await store.inputs(run),calls=await store.reserve(run,[membershipCallProposalV1(run,inputs)]);
    await store.markSubmitting(run,calls);await store.markFailed(run,calls,true);await store.fail(run,'labeling_outcome_unknown');await store.release(run);
+   await client.query('SAVEPOINT response_requires_reconciliation');
+   await client.query("UPDATE signal_labeling_calls SET raw_storage_key='private/response-already-stored',raw_sha256=$2,raw_size_bytes=2 WHERE id=$1",[calls[0]!.id,'sha256:'+'a'.repeat(64)]);
+   const retained=(await client.query('SELECT * FROM signal_labeling_calls WHERE id=$1',[calls[0]!.id])).rows[0];
+   await assert.rejects(configureHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,route:'standard',provider_available:false,expected_route_digest:a.route,confirm_unresolved_jev:true}),/hybrid_response_reconciliation_required/);
+   assert.deepEqual((await client.query('SELECT * FROM signal_labeling_calls WHERE id=$1',[calls[0]!.id])).rows[0],retained,
+    'known returned response cannot be erased by explicit uncertainty release');
+   await client.query('ROLLBACK TO SAVEPOINT response_requires_reconciliation');
    await assert.rejects(configureHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,route:'standard',provider_available:false,expected_route_digest:a.route}),/hybrid_unknown_confirmation_required/);
    const before=await loadHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor});assert.equal(before.unknown_calls,1);
    await configureHybridMembershipRouteV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,route:'standard',provider_available:false,expected_route_digest:a.route,confirm_unresolved_jev:true});
@@ -60,6 +75,11 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
    assert.equal(call.results[0].claude.verdict,'error');assert.equal(call.results[0].claude.verification,undefined);
    const current=(await client.query('SELECT verdict,error_code,updated_at FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3',[a.workspace,call.inputs[0].root_id,a.concept.concept_key])).rows[0];
    assert.equal(current.verdict,'error');assert.ok(current.error_code);assert.deepEqual(current.updated_at,call.updated_at);
+   const {selectHybridClaudeInputsV1}=await import('../signal-hybrid-runs');
+   const initialRun=(await client.query(`SELECT run.*,version.identity FROM signal_labeling_runs run
+    JOIN signal_labeler_versions version ON version.id=run.labeler_version_id WHERE run.id=$1`,[initial.run_id])).rows[0];
+   assert.equal((await selectHybridClaudeInputsV1(client,{...initialRun,cursor_root_id:null})).length,0,
+    'a technical verifier failure never re-admits an already settled Claude confirmation');
    for(let retry=1;retry<=2;retry++){
     const receipt=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,
      stage:'citation',route_digest:a.route,source_run_id:initial.run_id,idempotency_key:`technical-${randomUUID()}`,provider_available:true});
@@ -84,6 +104,16 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
     await client.query('ROLLBACK TO SAVEPOINT citation_quality');continue;
   }
   const expected=scenario==='supported'?1:2;assert.equal(claudeSends,expected);assert.equal(verifySends,expected);
+  const windows=(await client.query(`SELECT input,result FROM signal_labeling_calls call
+   CROSS JOIN LATERAL jsonb_array_elements(call.inputs) input
+   CROSS JOIN LATERAL jsonb_array_elements(call.results) result WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied`,[initial.run_id])).rows;
+  assert.ok(windows.length>=3,'long root is covered by multiple settled windows');
+  assert.equal(windows.length,windows[0].input.citation_window.count);
+  const w=windows[0].input;
+  assert.equal((await client.query('SELECT signal_hybrid_pair_attempts_v1($1,$2,$3,$4,$5,$6,$7,$8,$9) n',
+   [a.workspace,a.route,'claude',w.root_id,w.root_fingerprint,a.concept.concept_key,a.concept.definition_digest,w.entity_context_digest,w.effective_entities_digest])).rows[0].n,expected,
+   'independent windows count once per window, preserving the attempt bound');
+  assert.ok(windows.some(row=>row.result.claude.citations[0].start>10000),'late window preserves absolute offsets');
   const decision=(await client.query('SELECT * FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0];
   assert.equal(decision.verdict,scenario==='repair_unsupported'?'review_required':'belongs');assert.equal(decision.citation.length,1);assert.ok(decision.citation_call_id);
   const current=(await client.query('SELECT verdict,updated_at FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND concept_key=$2 AND root_id=$3',[a.workspace,a.concept.concept_key,decision.root_id])).rows[0];
