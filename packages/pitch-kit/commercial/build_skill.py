@@ -14,6 +14,13 @@ instances cut from the variable font in github.com/google/fonts (ofl/googlesans)
 with its OFL license next to them. With it, the builder measures text with the real font and the
 PDF exported in the sandbox uses it too. Never package a font whose license does not allow it.
 
+Private values never live in this public repo. The link to the Leads folder in the commercial
+Drive goes in commercial/.private.json ({"leads_folder_url": "..."}, git-ignored) or in
+--leads-folder, and is written into SKILL.md at packaging time. Without it, the skill delivers the
+files for download instead of uploading them.
+
+The zip is checked against claude.ai's limit of 200 files before it is written.
+
 dist/ is git-ignored: the zip is a build output, the source is this folder.
 """
 import argparse, os, shutil, zipfile
@@ -26,11 +33,17 @@ NAME = "noisia-comercial"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fonts", help="folder with GoogleSans TTF files to bundle")
+    ap.add_argument("--leads-folder", help="Drive URL of the Leads folder (else .private.json)")
     a = ap.parse_args()
     out = os.path.join(DIST, NAME)
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
-    shutil.copy(os.path.join(HERE, "skill", "SKILL.md"), out)
+    import json
+    priv = os.path.join(HERE, ".private.json")
+    leads = a.leads_folder or (json.load(open(priv)).get("leads_folder_url") if os.path.exists(priv) else None)
+    skill = open(os.path.join(HERE, "skill", "SKILL.md"), encoding="utf-8").read()
+    skill = skill.replace("{{LEADS_FOLDER_URL}}", leads or "(no configurada: entrega para descargar)")
+    open(os.path.join(out, "SKILL.md"), "w", encoding="utf-8").write(skill)
     os.makedirs(os.path.join(out, "reference"))
     for f in ("COMMERCIAL.md", "INDUSTRIES.md"):
         shutil.copy(os.path.join(HERE, f), os.path.join(out, "reference", f))
@@ -50,6 +63,9 @@ def main():
             if f == "OFL.txt" or (f.lower().endswith(".ttf") and "googlesans" in f.lower().replace(" ", "").replace("-", "")):
                 shutil.copy(os.path.join(src, f), os.path.join(out, "fonts", f))
                 fonts += f.endswith(".ttf")
+    count = sum(len(fs) for _, _, fs in os.walk(out))
+    if count > 200:
+        raise SystemExit(f"{count} archivos: claude.ai acepta como máximo 200. Junta assets en sprites.")
     z = os.path.join(DIST, f"{NAME}.zip")
     if os.path.exists(z):
         os.remove(z)
@@ -60,7 +76,8 @@ def main():
                     continue
                 p = os.path.join(root, f)
                 zf.write(p, os.path.relpath(p, DIST))
-    print(f"{z} · {os.path.getsize(z) / 1e6:.1f} MB · {fonts} fuentes")
+    print(f"{z} · {os.path.getsize(z) / 1e6:.1f} MB · {count} archivos · {fonts} fuentes"
+          f" · Leads: {'sí' if leads else 'no'}")
     if not fonts:
         print("aviso: sin Google Sans empaquetada. El PDF del sandbox usará otra fuente; el de Google Slides sale bien.")
 

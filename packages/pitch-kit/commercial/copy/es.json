@@ -2,21 +2,18 @@
  "_about": "Copy canónico comercial, español de México, de tú. Sale casi verbatim de los decks del equipo comercial (Commercial Overview, Productos y Precios 2026, propuestas recientes, one-pagers), limpiado: sin typos, sin em dash, sin contrastes forzados. Lo que va entre {{ }} lo llena la entrevista. Los precios van siempre como XXX: se llenan en el editable. Un módulo con _client no tiene copy fijo: lo escribe el agente con la guía de COMMERCIAL.md.",
  "cover_noisia": {
   "type": "cover",
-  "eyebrow": "Social intelligence",
   "title": "Investigación de mercado y monitoreo de marca, construidos sobre **datos sociales**",
   "subtitle": "Tú nos dices qué necesitas saber. Nosotros investigamos las conversaciones que la gente ya tiene y te entregamos insights listos para decidir.",
   "meta": "{{MERCADO}} · {{FECHA}}"
  },
  "cover_offer": {
   "type": "cover",
-  "eyebrow": "Productos y precios",
   "title": "Lo que entregamos, y **cuánto cuesta**",
   "subtitle": "Nuestros dos servicios, cómo adaptamos cada proyecto y cómo lo cotizamos.",
   "meta": "{{MERCADO}} · {{FECHA}}"
  },
  "cover_client": {
   "type": "cover",
-  "eyebrow": "{{TIPO_DE_DOCUMENTO}}",
   "title": "{{PREGUNTA_DEL_CLIENTE}}",
   "subtitle": "{{QUE_RESPONDE_ESTE_DOCUMENTO}}",
   "meta": "Información confidencial · {{FECHA}}",
@@ -25,23 +22,19 @@
  },
  "statement_punch": {
   "type": "statement",
-  "kicker": "{{SECTOR}}",
   "title": "{{FRASE_DE_ENTRADA}}",
   "subtitle": "{{UNA_LINEA_QUE_LA_ATERRIZA}}",
   "_client": true
  },
  "question_hook": {
   "type": "statement",
-  "kicker": "¿Lo sabías?",
   "title": "{{PREGUNTA_TRAMPA}}",
   "subtitle": "{{POR_QUE_IMPORTA}}",
   "_client": true
  },
  "questions_client": {
   "type": "questions",
-  "eyebrow": "Dónde entra Noisia",
-  "eyebrow_icon": "compass",
-  "title": "Preguntas que los números de {{CLIENTE}} no responden",
+  "title": "Lo que podríamos responder para {{CLIENTE}}",
   "context": "{{CONTEXTO_PUBLICO_DE_LA_MARCA}}",
   "items": [
    {
@@ -69,8 +62,6 @@
  },
  "what_we_do": {
   "type": "what_we_do",
-  "eyebrow": "Qué hacemos",
-  "eyebrow_icon": "sparks",
   "title": "Un partner de inteligencia social basado en **contexto**",
   "lead": "Ayudamos a las marcas a entender qué hace la gente, por qué lo hace y qué significa para el negocio. Nuestros analistas convierten la conversación social en inteligencia clara y lista para decidir.",
   "highlight": 2,
@@ -99,9 +90,7 @@
  },
  "where_we_stand": {
   "type": "where_we_stand",
-  "eyebrow": "Dónde estamos",
-  "eyebrow_icon": "position",
-  "title": "El rigor de una herramienta de datos con el criterio de un **analista**",
+  "title": "Dónde estamos",
   "columns": [
    {
     "name": "Herramientas de social listening",
@@ -137,9 +126,7 @@
  },
  "where_we_stand_agency": {
   "type": "where_we_stand",
-  "eyebrow": "Dónde estamos",
-  "eyebrow_icon": "position",
-  "title": "Más allá de las herramientas de **escucha**",
+  "title": "Dónde estamos",
   "columns": [
    {
     "name": "Herramientas de social listening",
@@ -165,9 +152,7 @@
  },
  "coverage": {
   "type": "coverage",
-  "eyebrow": "Cobertura",
-  "eyebrow_icon": "globe",
-  "title": "Dónde vive la conversación",
+  "title": "Dónde escuchamos",
   "groups": [
    {
     "name": "Social",
@@ -220,8 +205,6 @@
  },
  "portfolio": {
   "type": "portfolio",
-  "eyebrow": "El portafolio",
-  "eyebrow_icon": "reports",
   "title": "Dos formas de trabajar con Noisia",
   "left": {
    "kicker": "Social Listening as a Service",
@@ -263,14 +246,11 @@
  },
  "cooperations": {
   "type": "cooperations",
-  "eyebrow": "Cómo trabajamos juntos",
-  "eyebrow_icon": "puzzle",
-  "title": "Tres formas de traer a Noisia a la mesa",
+  "title": "Cómo podemos trabajar juntos",
   "highlight": 0,
   "items": [
    {
     "icon": "page-search",
-    "kicker": "Una decisión enfrente",
     "name": "Estudio puntual",
     "text": "El estado de la conversación social sobre un tema, una categoría o una marca.",
     "price_label": "Desde",
@@ -278,7 +258,6 @@
    },
    {
     "icon": "activity",
-    "kicker": "Antes de que escale",
     "name": "Monitoreo continuo",
     "text": "Reputación, competencia, crisis e industria, a lo largo del tiempo.",
     "price_label": "Desde",
@@ -286,7 +265,6 @@
    },
    {
     "icon": "compass",
-    "kicker": "Hacia dónde va",
     "name": "Audiencias y tendencias",
     "text": "Comportamiento del consumidor, tensiones culturales y hacia dónde va la categoría.",
     "price_label": "Desde",
@@ -297,9 +275,7 @@
  },
  "outputs_impact": {
   "type": "outputs_impact",
-  "eyebrow": "Qué entregamos",
-  "eyebrow_icon": "multiple-pages",
-  "title": "Cada estudio llega como un argumento que puedes **defender**",
+  "title": "Qué entregamos",
   "outputs_label": "Qué recibes",
   "outputs": [
    {
@@ -345,9 +321,7 @@
  },
  "engine": {
   "type": "engine",
-  "eyebrow": "Cómo funciona",
-  "eyebrow_icon": "network",
-  "title": "Cómo convertimos la conversación en **decisiones**",
+  "title": "Cómo funciona",
   "sources_label": "Fuentes",
   "sources": [
    {
@@ -417,9 +391,7 @@
  },
  "steps": {
   "type": "steps",
-  "eyebrow": "Cómo empezamos",
-  "eyebrow_icon": "path-arrow",
-  "title": "Cada proyecto arranca con un workshop **gratis**",
+  "title": "Cómo empezamos",
   "steps": [
    {
     "name": "Workshop",
@@ -440,9 +412,7 @@
  },
  "workshop": {
   "type": "detail",
-  "eyebrow": "Cómo empezamos",
-  "eyebrow_icon": "calendar",
-  "title": "Cada proyecto arranca con un workshop **gratis**",
+  "title": "El workshop",
   "lead": "Una sesión de 30 a 60 minutos, sin costo, donde entendemos qué haces hoy, tus retos y tus objetivos. La usamos para adaptar cada servicio a tu caso, porque el foco son insights que mueven decisiones de negocio.",
   "list_label": "Qué pasa en el workshop",
   "list": [
@@ -472,9 +442,7 @@
  },
  "build_vs_buy": {
   "type": "build_vs_buy",
-  "eyebrow": "Construir o conectarte",
-  "eyebrow_icon": "cube",
-  "title": "Construye la capacidad, o conéctate a la **nuestra**",
+  "title": "Construirlo o contratarlo",
   "left_label": "Si lo construyes tú",
   "rows": [
    [
@@ -502,9 +470,7 @@
  },
  "report_detail": {
   "type": "detail",
-  "eyebrow": "Social Listening as a Service",
-  "eyebrow_icon": "activity",
-  "title": "Inteligencia always-on de lo que está **pasando**",
+  "title": "Reportes",
   "lead": "Monitoreo continuo de tu marca, tu competencia y tu categoría, con interpretación humana encima de los datos.",
   "list_label": "Qué responde, cada periodo",
   "list": [
@@ -551,9 +517,7 @@
  },
  "report_pricing": {
   "type": "factor_pricing",
-  "eyebrow": "Precios · Reportes",
-  "eyebrow_icon": "hand-cash",
-  "title": "Se cobra por factor. **Escala** conforme creces",
+  "title": "Precios de reportes",
   "headers": [
    "Factores",
    "Total / mes",
@@ -612,9 +576,7 @@
  },
  "study_detail": {
   "type": "detail",
-  "eyebrow": "Market Research as a Service",
-  "eyebrow_icon": "open-book",
-  "title": "Investigación a profundidad de por qué está **pasando**",
+  "title": "Estudios",
   "lead": "Un estudio responde una pregunta de negocio concreta, por proyecto y sin suscripción. Aplicamos nuestras metodologías propias sobre un corpus construido para esa pregunta, y nuestros analistas lo convierten en una decisión.",
   "list_label": "Cómo se entrega",
   "list": [
@@ -647,9 +609,7 @@
  },
  "studies_catalog": {
   "type": "catalog",
-  "eyebrow": "Estudios",
-  "eyebrow_icon": "open-book",
-  "title": "Los estudios que puedes contratar",
+  "title": "Catálogo de estudios",
   "items": [
    {
     "icon": "flash",
@@ -727,9 +687,7 @@
  },
  "studies_pricing": {
   "type": "catalog",
-  "eyebrow": "Precios · Estudios",
-  "eyebrow_icon": "hand-cash",
-  "title": "Un precio por estudio. Sin mínimo y sin **suscripción**",
+  "title": "Precios de estudios",
   "headers": [
    "Estudio",
    "Qué recibes",
@@ -813,9 +771,7 @@
  },
  "year_plan": {
   "type": "year_plan",
-  "eyebrow": "Cómo planeamos el año",
-  "eyebrow_icon": "calendar",
-  "title": "Los estudios rinden más como plan **anual**",
+  "title": "Plan anual de estudios",
   "explain": "Tu equipo coloca estudios en los momentos que importan (lanzamientos, campañas, posicionamiento, competencia y tendencias) y tiene los insights que necesita para lograr sus metas.",
   "plans": [
    {
@@ -885,9 +841,7 @@
  },
  "understood": {
   "type": "understood",
-  "eyebrow": "Lo que entendimos",
-  "eyebrow_icon": "chat-lines",
-  "title": "{{TITULAR_DEL_CONTEXTO}}",
+  "title": "",
   "question_label": "La pregunta de negocio",
   "question": "{{PREGUNTA_CENTRAL}}",
   "decisions_label": "Las decisiones que los datos tienen que resolver",
@@ -901,9 +855,7 @@
  },
  "formats": {
   "type": "formats",
-  "eyebrow": "La propuesta",
-  "eyebrow_icon": "puzzle",
-  "title": "Tres formatos para {{CLIENTE}}",
+  "title": "Formatos para {{CLIENTE}}",
   "items": [
    {
     "kicker": "Por proyecto",
@@ -956,9 +908,7 @@
  },
  "blocks": {
   "type": "blocks",
-  "eyebrow": "Qué responde el estudio",
-  "eyebrow_icon": "help-circle",
-  "title": "{{N}} bloques, una lectura completa",
+  "title": "Qué responde el estudio",
   "items": [
    {
     "letter": "A",
@@ -972,9 +922,7 @@
  },
  "investment": {
   "type": "investment",
-  "eyebrow": "Inversión",
-  "eyebrow_icon": "hand-cash",
-  "title": "Un precio claro por **formato**",
+  "title": "Inversión",
   "rows": [
    {
     "name": "{{FORMATO}}",
@@ -995,9 +943,8 @@
  },
  "sample": {
   "type": "sample",
-  "eyebrow": "Ya leímos tu categoría",
   "eyebrow_icon": "open-book",
-  "title": "Ya leímos tu **categoría**",
+  "title": "Estudio de muestra",
   "kicker": "Estudio de muestra · {{CATEGORIA}} · {{MERCADO}}",
   "study_title": "{{TITULO_DEL_ESTUDIO_DE_MUESTRA}}",
   "text": "{{DE_QUE_TRATA_EN_DOS_FRASES}}",

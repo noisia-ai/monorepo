@@ -27,10 +27,22 @@ Así que aquí **el PPTX es la fuente** y el PDF se exporta de él:
 - El logo del cliente es un recuadro que se reemplaza (clic derecho, Reemplazar imagen).
 - Los precios salen como **XXX** y se llenan en el editable.
 
-La receta visual es la misma de los estudios aprobados: lienzo blanco con una atmósfera cyan y
-roja muy tenue por slide, cada una en otra esquina; los fondos fuertes del website en portada,
-statements y cierre; cards `#fafafa` con borde `#eeeeee` y radio 16; eyebrow teal con ícono real;
-una palabra en teal por título; sin sombras, sin bordes laterales, sin gradientes en un valor.
+**Lo comercial no se ve como un entregable.** Si una propuesta se parece a un estudio, el cliente
+no distingue qué compró de qué le vendieron, y todo empieza a verse hecho en serie. La diferencia
+vive en portadas y fondos, nunca en la UI: las cards, la tipografía, los íconos y la retícula son
+los mismos del sistema de diseño.
+
+- **Portada, statement y cierre** llevan la familia de formas de Noisia sobre lienzo blanco, con el
+  texto a la izquierda y la forma a la derecha. Reemplaza a la ilustración de personas, que queda
+  para los estudios.
+- **Las slides de contenido** llevan un fragmento tenue de una forma que sale por la mitad de un
+  borde, nunca por una esquina: en las esquinas viven el logo, `noisia.ai`, el pie y el número.
+- **Las formas se hacen por código** (`builder/make_shapes.py`) con el método de las exploraciones
+  de marca en Figma: trazo orgánico, gradiente lineal de cyan a teal profundo a carbón, tres
+  sombras internas (cyan arriba, rojo `#FF464C` y `#C7313D` abajo), blur de capa y ruido duo. Una
+  forma nueva se agrega ahí, no se dibuja aparte.
+- **UI:** cards `#fafafa` con borde `#eeeeee` y radio 16; íconos reales; sin sombras, sin bordes
+  laterales, sin gradientes en un valor, sin eyebrows (§6).
 
 ## 2. Los entregables
 
@@ -54,6 +66,8 @@ de la oferta.
 Antes de construir, el agente pregunta. Una pregunta a la vez, corta, con opciones. Nunca asume:
 cada respuesta cambia el deck.
 
+0. **¿Ya hay un brief lleno?** Si la persona tiene uno de los briefs de §13 contestado, que lo
+   pegue o lo suba. El agente lo usa como fuente (§13) y solo pregunta lo que falte.
 1. **¿Qué necesitas?** Los seis entregables de §2, con su "cuándo" en una línea. Si no sabe,
    lo ayuda a elegir con esa columna.
 2. **¿En qué idioma?** Español o inglés.
@@ -66,8 +80,9 @@ cada respuesta cambia el deck.
 7. **Precios** (solo oferta, propuesta y one-pager, o si el opener lleva "desde"): ¿en qué moneda,
    con qué impuestos? El agente avisa que las slides de precio salen en XXX para llenarlas en el
    editable. Si la persona da los montos en el chat, se usan esos y nada más.
-8. **Logo del cliente.** Que lo suba al chat como imagen. Si no, sale el recuadro para
-   reemplazarlo.
+8. **Logo del cliente.** El agente le pide a la persona que lo baje del sitio del cliente y lo suba
+   al chat como imagen. La skill no lo busca sola: el sandbox de Claude no tiene internet abierto.
+   Si no lo sube, sale el recuadro para reemplazarlo en Slides.
 9. **Solo para propuesta y overview:** lo que se habló con el cliente. Qué necesita decidir, para
    cuándo, qué formatos le interesan, mercados, competidores, qué queda fuera. Si no hay notas de
    la reunión, el agente lo dice y propone un overview en lugar de una propuesta.
@@ -101,6 +116,12 @@ lealtad.
   "creció 20%".
 - Nada que se haya dicho en una reunión, nada confidencial, nada que el cliente no haya hecho
   público.
+
+**Antes de construir, confirma.** Terminada la investigación, el agente escribe en el chat un
+resumen corto y espera un sí: qué hace la empresa y en qué industria la ubica, en qué mercado, los
+hechos públicos que va a usar con su fuente, y las preguntas que piensa poner. La IA confunde
+giros y empresas homónimas; un error aquí arruina el deck entero y cuesta un mensaje evitarlo.
+Sin ese sí no se construye nada.
 
 ### 4.3 Las preguntas, por industria
 
@@ -186,12 +207,27 @@ impeccable.style/slop y de `COPY_RULES.md`):
 - [ ] Cero em dash.
 - [ ] Ninguna afirmación sobre lo que dice la gente (§4.1).
 - [ ] Ningún número que no sea del copy canónico, de una fuente pública citada o del usuario.
-- [ ] Ninguna etiqueta encima del título que repita el título.
+- [ ] Ningún eyebrow: ninguna etiqueta encima de un título (ver abajo).
 - [ ] Ningún nombre de herramienta (SentiOne, Brandwatch…) ni palabra de proceso interno.
 - [ ] Un solo idioma por deck. En español, los anglicismos técnicos se quedan: dashboard, insight,
   share of voice, Social Listening, Scope of Work.
 - [ ] Ningún nombre de otro cliente.
 - [ ] Los precios solo en las slides de precio, y en XXX salvo que el usuario dé el monto.
+
+### Títulos y eyebrows
+
+Un título de una o cuatro palabras que resume la slide ("Lo que encontramos", "Una línea nueva, una
+pregunta puntual") es el título que escribe una IA. Una persona hace otra cosa:
+
+- **En una slide de research**, si hay un insight fuerte, evidente en los datos, va en el título.
+  Solo entonces. En lo comercial no hay slides de research, así que este caso no aplica.
+- **En una slide de presentación**, se pregunta primero si necesita título. Si lo necesita porque
+  sin él no se entiende qué es, se pone **descriptivo y llano**: "Cómo empezamos", "Precios de
+  reportes", "Dónde escuchamos". Si la slide se entiende sola, va **sin título**.
+- **Los eyebrows no van.** Una etiqueta encima del título ("Qué hacemos", "Cobertura", "La
+  propuesta") es ruido que delata un deck hecho en serie. El builder ya no los dibuja.
+- Portada y cierre son la excepción: llevan la frase que abre o cierra la conversación, con una
+  palabra en teal.
 
 ## 7. Presentar o mandar
 
@@ -214,6 +250,11 @@ Las dos versiones salen del mismo brief:
   público.
 
 ## 9. La entrega
+
+**A Drive, a la carpeta del lead.** Si la persona tiene conectado Google Drive en Claude, el
+agente sube el PPTX (y el PDF) a la carpeta del cliente dentro de *Leads* en el Drive comercial: la
+busca por nombre y, si no existe, la crea. El enlace a *Leads* lo inyecta `build_skill.py` al
+empaquetar, porque este repo es público. Sin Drive conectado, entrega los archivos para descargar.
 
 El agente entrega el PPTX y, si se pidió, el PDF, con tres cosas dichas en el chat:
 
@@ -267,8 +308,11 @@ conversación no es controlable por el cliente, y ya se descartó una vez (`DATA
 - **Copy:** se cambia en `copy/es.json` y `copy/en.json`, por PR. Las dos lenguas a la vez.
 - **Una slide nueva:** un método en `builder/noisia_pptx.py`, su módulo en los dos copys, y la
   receta que la usa. Se revisa con `preview.py` antes del PR.
-- **Íconos y fondos:** `builder/make_assets.py` los regenera desde Iconoir y Simple Icons. Los PNG
-  se suben al repo.
+- **Íconos y marcas:** `builder/make_assets.py` los regenera desde Iconoir y Simple Icons, en un
+  sprite por color con su índice. La skill de claude.ai acepta como máximo 200 archivos, así que
+  nada va suelto: el builder recorta cada ícono del sprite al usarlo.
+- **Formas:** `builder/make_shapes.py` genera la familia y las composiciones de portada, cierre,
+  statement, fragmentos y one-pager (`--sheet` para verla, `--build` para escribirlas).
 - **La skill:** `python3 build_skill.py` arma `dist/noisia-comercial.zip`. Se sube en claude.ai, en
   Organization settings, Skills (Team) o en Customize, Skills (cuenta personal). Cada cambio al
   kit comercial se vuelve a empaquetar y a subir.
@@ -284,6 +328,24 @@ por cliente, nunca se llenan sobre la plantilla. Cada uno cierra con una secció
 Noisia* que alimenta el prompt de arranque del estudio o del reporte (`PROMPTS.md`). Los políticos
 traen los cuatro límites que se acuerdan desde el inicio. Se regeneran con `briefs/make_briefs.py`,
 que explica también los pasos que se hacen en el navegador.
+
+**Del brief al deck.** Un brief lleno es la mejor fuente para una propuesta o un overview: lo
+escribió el cliente. Si la persona lo pega o lo sube, el agente lo usa así y no vuelve a
+preguntar lo que ya está contestado:
+
+| Del brief | Al deck |
+|---|---|
+| Empresa, marca, industria, mercados, idioma | `vars`, `lang` y la industria de `INDUSTRIES.md` |
+| La pregunta de negocio, en una frase | Título de la portada y la pregunta de `understood` |
+| ¿Qué decisión vas a tomar? · ¿Quién va a usar el resultado? | Las decisiones de `understood` |
+| Momento de decisión (lanzar, entrar, defender, optimizar, innovar) | El estudio que se propone y su copy de catálogo |
+| ¿Qué crees que está pasando? | Bloques de preguntas (`blocks`): cada hipótesis se vuelve una pregunta a medir, nunca una afirmación |
+| Sujeto, competidores, periodo, fuentes | El alcance en `formats` y en `blocks` |
+| Formato y quién va a estar en la presentación | Versión presentar o mandar, PPTX o PDF |
+| Temas sensibles o confidenciales | Lo que no aparece en ninguna slide ni en las notas |
+| En un reporte: tipo, cadencia, marcas y competidores | Los formatos de Social Listening y la base de factores para la inversión |
+
+La sección *Lo completa Noisia* del brief es interna: alimenta el estudio, no el deck.
 
 ## 14. Decisiones abiertas
 

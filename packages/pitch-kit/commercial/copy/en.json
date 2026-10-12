@@ -2,21 +2,18 @@
  "_about": "Canonical commercial copy, US English. Taken almost verbatim from the sales team's decks (Commercial Overview, Product Scope & Pricing 2026, recent proposals, one-pagers) and cleaned: no typos, no em dashes, no forced contrasts. {{ }} is filled by the interview. Prices are always XXX and get filled in the editable file. A module with _client has no fixed copy: the agent writes it following COMMERCIAL.md.",
  "cover_noisia": {
   "type": "cover",
-  "eyebrow": "Social intelligence",
   "title": "Market research and brand monitoring, built on **social data**",
   "subtitle": "You tell us what you need to know. We research the conversations people are already having and deliver insights ready for decision-making.",
   "meta": "{{MARKET}} · {{DATE}}"
  },
  "cover_offer": {
   "type": "cover",
-  "eyebrow": "Products and pricing",
   "title": "What we deliver, and **what it costs**",
   "subtitle": "Our two services, how we tailor each engagement, and how we price it.",
   "meta": "{{MARKET}} · {{DATE}}"
  },
  "cover_client": {
   "type": "cover",
-  "eyebrow": "{{DOCUMENT_TYPE}}",
   "title": "{{CLIENT_QUESTION}}",
   "subtitle": "{{WHAT_THIS_DOCUMENT_ANSWERS}}",
   "meta": "Confidential information · {{DATE}}",
@@ -25,23 +22,19 @@
  },
  "statement_punch": {
   "type": "statement",
-  "kicker": "{{SECTOR}}",
   "title": "{{OPENING_LINE}}",
   "subtitle": "{{ONE_LINE_THAT_GROUNDS_IT}}",
   "_client": true
  },
  "question_hook": {
   "type": "statement",
-  "kicker": "Did you know?",
   "title": "{{TRICKY_QUESTION}}",
   "subtitle": "{{WHY_IT_MATTERS}}",
   "_client": true
  },
  "questions_client": {
   "type": "questions",
-  "eyebrow": "Where Noisia comes in",
-  "eyebrow_icon": "compass",
-  "title": "Questions {{CLIENT}}'s numbers can't answer",
+  "title": "What we could answer for {{CLIENT}}",
   "context": "{{PUBLIC_BRAND_CONTEXT}}",
   "items": [
    {
@@ -69,8 +62,6 @@
  },
  "what_we_do": {
   "type": "what_we_do",
-  "eyebrow": "What we do",
-  "eyebrow_icon": "sparks",
   "title": "A context-driven social intelligence **partner**",
   "lead": "We help brands understand what people do, why they do it and what it means for the business. Our analysts turn social conversation into clear, decision-ready intelligence.",
   "highlight": 2,
@@ -99,9 +90,7 @@
  },
  "where_we_stand": {
   "type": "where_we_stand",
-  "eyebrow": "Where we stand",
-  "eyebrow_icon": "position",
-  "title": "The rigor of a data tool with the judgment of an **analyst**",
+  "title": "Where we stand",
   "columns": [
    {
     "name": "Social listening tools",
@@ -137,9 +126,7 @@
  },
  "where_we_stand_agency": {
   "type": "where_we_stand",
-  "eyebrow": "Where we stand",
-  "eyebrow_icon": "position",
-  "title": "Beyond listening **tools**",
+  "title": "Where we stand",
   "columns": [
    {
     "name": "Social listening tools",
@@ -165,9 +152,7 @@
  },
  "coverage": {
   "type": "coverage",
-  "eyebrow": "Coverage",
-  "eyebrow_icon": "globe",
-  "title": "Where the conversation lives",
+  "title": "Where we listen",
   "groups": [
    {
     "name": "Social",
@@ -220,8 +205,6 @@
  },
  "portfolio": {
   "type": "portfolio",
-  "eyebrow": "The portfolio",
-  "eyebrow_icon": "reports",
   "title": "Two ways to work with Noisia",
   "left": {
    "kicker": "Social Listening as a Service",
@@ -263,14 +246,11 @@
  },
  "cooperations": {
   "type": "cooperations",
-  "eyebrow": "How we work together",
-  "eyebrow_icon": "puzzle",
-  "title": "Three ways to bring Noisia in",
+  "title": "How we can work together",
   "highlight": 0,
   "items": [
    {
     "icon": "page-search",
-    "kicker": "A decision on the table",
     "name": "One-time study",
     "text": "The state of social conversation around a topic, a category or a brand.",
     "price_label": "From",
@@ -278,7 +258,6 @@
    },
    {
     "icon": "activity",
-    "kicker": "Before it escalates",
     "name": "Continuous monitoring",
     "text": "Reputation, competitors, crisis and industry, watched over time.",
     "price_label": "From",
@@ -286,7 +265,6 @@
    },
    {
     "icon": "compass",
-    "kicker": "Where it is heading",
     "name": "Audience and trends",
     "text": "Consumer behavior, cultural tensions and where the category is heading.",
     "price_label": "From",
@@ -297,9 +275,7 @@
  },
  "outputs_impact": {
   "type": "outputs_impact",
-  "eyebrow": "What we deliver",
-  "eyebrow_icon": "multiple-pages",
-  "title": "Every study lands as an argument you can **defend**",
+  "title": "What we deliver",
   "outputs_label": "What you get",
   "outputs": [
    {
@@ -345,9 +321,7 @@
  },
  "engine": {
   "type": "engine",
-  "eyebrow": "How it works",
-  "eyebrow_icon": "network",
-  "title": "How we turn conversation into **decisions**",
+  "title": "How it works",
   "sources_label": "Sources",
   "sources": [
    {
@@ -417,9 +391,7 @@
  },
  "steps": {
   "type": "steps",
-  "eyebrow": "How we get started",
-  "eyebrow_icon": "path-arrow",
-  "title": "Every engagement starts with a **free** workshop",
+  "title": "How we get started",
   "steps": [
    {
     "name": "Workshop",
@@ -440,9 +412,7 @@
  },
  "workshop": {
   "type": "detail",
-  "eyebrow": "How we get started",
-  "eyebrow_icon": "calendar",
-  "title": "Every engagement starts with a **free** workshop",
+  "title": "The workshop",
   "lead": "A 30 to 60 minute session, at no cost, where we understand what you do today, your challenges and your objectives. We use it to tailor each service to your case, because the focus is insights that move business decisions.",
   "list_label": "What happens in the workshop",
   "list": [
@@ -472,9 +442,7 @@
  },
  "build_vs_buy": {
   "type": "build_vs_buy",
-  "eyebrow": "Build or plug in",
-  "eyebrow_icon": "cube",
-  "title": "Build the capability, or plug into **ours**",
+  "title": "Build it or hire it",
   "left_label": "If you build it yourself",
   "rows": [
    [
@@ -502,9 +470,7 @@
  },
  "report_detail": {
   "type": "detail",
-  "eyebrow": "Social Listening as a Service",
-  "eyebrow_icon": "activity",
-  "title": "Always-on intelligence on what's **happening**",
+  "title": "Reports",
   "lead": "Continuous monitoring of your brand, your competitors and your category, with human interpretation on top of the data.",
   "list_label": "What it answers, each period",
   "list": [
@@ -551,9 +517,7 @@
  },
  "report_pricing": {
   "type": "factor_pricing",
-  "eyebrow": "Pricing · Reports",
-  "eyebrow_icon": "hand-cash",
-  "title": "Priced by factor. It **scales** as you grow",
+  "title": "Report pricing",
   "headers": [
    "Factors",
    "Total / month",
@@ -612,9 +576,7 @@
  },
  "study_detail": {
   "type": "detail",
-  "eyebrow": "Market Research as a Service",
-  "eyebrow_icon": "open-book",
-  "title": "In-depth research into why it's **happening**",
+  "title": "Studies",
   "lead": "One study answers one specific business question, per project, with no subscription. We apply our proprietary methodologies to a corpus built for that question, and our analysts turn it into a decision.",
   "list_label": "How it's delivered",
   "list": [
@@ -647,9 +609,7 @@
  },
  "studies_catalog": {
   "type": "catalog",
-  "eyebrow": "Studies",
-  "eyebrow_icon": "open-book",
-  "title": "The studies you can commission",
+  "title": "Study catalogue",
   "items": [
    {
     "icon": "flash",
@@ -727,9 +687,7 @@
  },
  "studies_pricing": {
   "type": "catalog",
-  "eyebrow": "Pricing · Studies",
-  "eyebrow_icon": "hand-cash",
-  "title": "One price per study. No minimum and no **subscription**",
+  "title": "Study pricing",
   "headers": [
    "Study",
    "What you get",
@@ -813,9 +771,7 @@
  },
  "year_plan": {
   "type": "year_plan",
-  "eyebrow": "How we plan the year",
-  "eyebrow_icon": "calendar",
-  "title": "Studies work best as a year-round **plan**",
+  "title": "A year of studies",
   "explain": "Your team places studies at the moments that matter (launches, campaigns, positioning, competitor and trend reads) and has the insights it needs to hit its goals all year.",
   "plans": [
    {
@@ -885,9 +841,7 @@
  },
  "understood": {
   "type": "understood",
-  "eyebrow": "What we understood",
-  "eyebrow_icon": "chat-lines",
-  "title": "{{CONTEXT_HEADLINE}}",
+  "title": "",
   "question_label": "The business question",
   "question": "{{CENTRAL_QUESTION}}",
   "decisions_label": "The decisions the data has to resolve",
@@ -901,9 +855,7 @@
  },
  "formats": {
   "type": "formats",
-  "eyebrow": "The proposal",
-  "eyebrow_icon": "puzzle",
-  "title": "Three formats for {{CLIENT}}",
+  "title": "Formats for {{CLIENT}}",
   "items": [
    {
     "kicker": "Per project",
@@ -956,9 +908,7 @@
  },
  "blocks": {
   "type": "blocks",
-  "eyebrow": "What the study answers",
-  "eyebrow_icon": "help-circle",
-  "title": "{{N}} blocks, one complete read",
+  "title": "What the study answers",
   "items": [
    {
     "letter": "A",
@@ -972,9 +922,7 @@
  },
  "investment": {
   "type": "investment",
-  "eyebrow": "Investment",
-  "eyebrow_icon": "hand-cash",
-  "title": "A clear price per **format**",
+  "title": "Investment",
   "rows": [
    {
     "name": "{{FORMAT}}",
@@ -995,9 +943,8 @@
  },
  "sample": {
   "type": "sample",
-  "eyebrow": "We have already read your category",
   "eyebrow_icon": "open-book",
-  "title": "We have already read your **category**",
+  "title": "Sample study",
   "kicker": "Sample study · {{CATEGORY}} · {{MARKET}}",
   "study_title": "{{SAMPLE_STUDY_TITLE}}",
   "text": "{{WHAT_IT_IS_ABOUT_IN_TWO_SENTENCES}}",
