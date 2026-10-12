@@ -301,6 +301,14 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     assert.equal((await reuseHybridCachedJevV1(client,work(randomUUID()),[input])).length,0);
     const cached=(await client.query('SELECT * FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[workspace])).rows[0];
     assert.equal(cached.verdict,'not_belongs');assert.equal(cached.jev.threshold,.35);assert.equal(cached.jev_call_id,jevCall);
+    const writeCached=(jev: typeof cached.jev)=>writeHybridMembershipDecisionPageV1({client,workspace_id:workspace,route_digest:route,
+      cached_route_digest:sha('prior-compatible-route'),decisions:[{...cached,text:input.text,jev}]});
+    await assert.rejects(writeCached({...cached.jev,probability:.1}),/hybrid_settled_receipt_required/,
+      'rethresholding cannot substitute a different stored probability');
+    await assert.rejects(writeCached({...cached.jev,citation:{quote:'different source',start:0,end:16}}),/hybrid_settled_receipt_required/,
+      'rethresholding cannot substitute a different source reference');
+    await assert.rejects(writeCached({...cached.jev,threshold:.4}),/hybrid_settled_receipt_required/,
+      'a derived decision uses the frozen R10 threshold, not an arbitrary historical threshold');
     assert.equal((await reuseHybridCachedJevV1(client,work(randomUUID()),[input])).length,1,'a resolved pair is outside pending cache work');
     assert.deepEqual((await client.query('SELECT to_jsonb(call) snapshot FROM signal_labeling_calls call WHERE workspace_id=$1 ORDER BY id',[workspace])).rows,cachedBefore,'cached decision creates no fake call and never mutates paid receipts');
     await assert.rejects(writeHybridMembershipDecisionPageV1({client,workspace_id:workspace,route_digest:route,

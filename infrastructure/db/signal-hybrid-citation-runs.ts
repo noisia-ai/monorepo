@@ -22,7 +22,7 @@ export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|Poo
  JOIN rights ON rights.root_id=p.root_id
  WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
    AND result#>>'{claude,verdict}'='belongs'
-   AND (NOT result ? 'citation_window' OR (SELECT count(DISTINCT item#>>'{citation_window,index}')
+   AND ($4::boolean OR NOT result ? 'citation_window' OR (SELECT count(DISTINCT item#>>'{citation_window,index}')
     FROM signal_labeling_calls covered CROSS JOIN LATERAL jsonb_array_elements(covered.results) item
     WHERE covered.run_id=call.run_id AND covered.status='settled' AND covered.results_applied
      AND item->>'root_id'=result->>'root_id' AND item->>'concept_key'=result->>'concept_key'

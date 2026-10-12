@@ -309,9 +309,9 @@ export async function writeHybridMembershipDecisionPageV1(args: {
           AND result->>'concept_key'=r.concept_key AND result->>'definition_digest'=r.definition_digest
           AND result->>'entity_context_digest'=r.entity_context_digest
           AND result->>'effective_entities_digest'=r.effective_entities_digest
-          AND result->>'jev_call_id'=j.id::text AND (result->'jev'=r.jev OR r.jev ? 'threshold'
+          AND result->>'jev_call_id'=j.id::text AND (result->'jev'=r.jev OR r.jev->'threshold'='0.35'::jsonb
             AND result#>>'{jev,verdict}' IN('belongs','not_belongs')
-            AND (result->'jev'-'threshold'-'verdict')=(r.jev-'threshold'-'verdict')))
+            AND ((result->'jev')-'threshold'-'verdict')=(r.jev-'threshold'-'verdict')))
     JOIN signal_labeling_runs jr ON jr.id=j.run_id AND jr.workspace_id=$1
       AND jr.membership_snapshot->>'hybrid_stage'='jev' AND (jr.membership_snapshot->>'route_digest'=$3
         OR jr.membership_snapshot->>'route_digest'=$4 AND EXISTS(SELECT 1 FROM signal_labeler_versions semantic
@@ -326,11 +326,12 @@ export async function writeHybridMembershipDecisionPageV1(args: {
           AND result->>'entity_context_digest'=r.entity_context_digest
           AND result->>'effective_entities_digest'=r.effective_entities_digest
           AND result->>'jev_call_id'=j.id::text AND result->>'claude_call_id'=c.id::text
-          AND (result->'jev'-'threshold')=(r.jev-'threshold') AND result->'claude'=(r.claude-'verification'))
+          AND ((result->'jev')-'threshold')=(r.jev-'threshold') AND result->'claude'=(r.claude-'verification'))
     LEFT JOIN signal_labeling_runs cr ON cr.id=c.run_id AND cr.workspace_id=$1
       AND cr.membership_snapshot->>'hybrid_stage'='claude' AND (cr.membership_snapshot->>'route_digest'=$3
         OR cr.membership_snapshot->>'route_digest'=$4 AND EXISTS(SELECT 1 FROM signal_labeler_versions semantic
-          WHERE semantic.id=cr.labeler_version_id AND semantic.prompt_digest=$7 AND semantic.schema_digest=$8)
+          WHERE semantic.id=cr.labeler_version_id AND semantic.prompt_digest=$7 AND semantic.schema_digest=$8
+            AND semantic.identity#>>'{params,effort}'='low')
         AND EXISTS(SELECT 1 FROM jsonb_array_elements(c.inputs) cached_input
           WHERE cached_input->>'root_id'=r.root_id::text AND length(cached_input->>'text')<=12000))
     LEFT JOIN signal_processing_admissions ca ON ca.id=cr.processing_admission_id AND ca.action='concept_membership_claude'
@@ -342,7 +343,7 @@ export async function writeHybridMembershipDecisionPageV1(args: {
         AND result->>'definition_digest'=r.definition_digest AND result->>'entity_context_digest'=r.entity_context_digest
         AND result->>'effective_entities_digest'=r.effective_entities_digest
         AND result->>'jev_call_id'=j.id::text AND result->>'claude_call_id'=c.id::text AND result->>'citation_call_id'=v.id::text
-        AND result->'claude'=r.claude AND (result->'jev'-'threshold')=(r.jev-'threshold'))
+        AND result->'claude'=r.claude AND ((result->'jev')-'threshold')=(r.jev-'threshold'))
     LEFT JOIN signal_labeling_runs vr ON vr.id=v.run_id AND vr.membership_snapshot->>'hybrid_stage'='citation'
       AND (vr.membership_snapshot->>'route_digest'=$3 OR vr.membership_snapshot->>'route_digest'=$4
         AND EXISTS(SELECT 1 FROM signal_labeler_versions semantic WHERE semantic.id=vr.labeler_version_id
