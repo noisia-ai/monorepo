@@ -11,6 +11,8 @@ Antes del cambio se fijan estas pruebas:
 5. **Raíces largas:** diagnóstico privado guarda código exacto, longitud y hash de recibo. La ruta H1 evalúa ventanas completas de oraciones que cubren todo el texto, con offsets absolutos y clave idempotente por ventana. Sólo se publica al completar todas las ventanas necesarias; un resultado incompleto/error no significa not_belongs. V2 permanece intacto.
 6. **Facetas abstained:** cada par relevante/compatible vigente queda admitido o cerrado con estado final explícito; no hay pending perpetuo. Overrides, derechos, definición, CE y entidades efectivas siguen cercados. PostgreSQL prueba la raíz abstained y cambio posterior de procedencia.
 
+7. **Tarifa verificada antes de corregir:** Sonnet5.5 cache-hit USD0.10/MTok síncrono y USD0.05/MTok Batch; prueba roja USD0.20 frente a USD0.10, después verde con descuento compuesto y controles de Haiku4.5. No reescribir ledger histórico; recibo distingue monto contabilizado y revaloración gratuita de uso observado. Fuente: [pricing oficial](https://platform.claude.com/docs/en/about-claude/pricing), verificada2026-10-12.
+
 ## Comparación preregistrada (antes de nuevas llamadas)
 
 **Bars:** regla AUDIT §15.3: precisión ciega en los tres conceptos gold ≥90%, con cota inferior; recall gold test H1 ≥ estándar −3 puntos; review_required ≤50/1,000 raíces; costo H1 ≤50% del estándar. Se reportan todos los incumplimientos y la ruta por defecto no cambia.
