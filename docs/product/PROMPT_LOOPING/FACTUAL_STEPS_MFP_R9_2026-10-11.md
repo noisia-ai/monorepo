@@ -1,4 +1,4 @@
-# Lista factual MFP · revisión 9 (B2 medido en reposo)
+# Anexo factual histórico R9 · resultados e imports, no recorrido integral R10
 
 Este documento alimenta al auditor; no sustituye ni modifica `QA_FUNDADOR_MFP.md`. Cada fila contiene una acción. Las esperas indicarán medición de la vista completa; los tiempos de SQL aislada no acreditan tiempos de UI.
 
@@ -83,26 +83,26 @@ Recorrido UI observado por el orquestador sobre build `371c74a7`. No repetir imp
 | 1 | Abrir `/studio/brands/new` | Formulario vacío | Tiempo UI no medido | Sesión Admin Noisia existente. |
 | 2 | Completar «Marca» | Marca QA MFP Oct11 R9 | Inmediato | Nueva marca desechable, separada de medición. |
 | 3 | Completar «Nombre visible» | Marca QA MFP Oct11 R9 | Inmediato | No reutiliza R4 ni R8. |
-| 4 | Completar «Organización» | Noisia | Inmediato | Registrar valor observado. |
-| 5 | Completar «Slug» | mfp-qa-r9-20261011 | Inmediato | Registrar valor observado. |
+| 4 | Completar «Organización» | Noisia | Inmediato | Valor observado por el orquestador. |
+| 5 | Completar «Slug» | mfp-qa-r9-20261011 | Inmediato | Valor observado por el orquestador. |
 | 6 | Seleccionar «Travel & Hospitality» en Industria | Una industria | Inmediato | Catálogo buscable. |
 | 7 | Completar «Aliases / handles» | National Car Rental, Emerald Club | Inmediato | Observado: valores separados por comas; el control rechazó saltos de línea. |
 | 8 | Completar «Competidores» | Hertz, Avis, Enterprise | Inmediato | Observado: valores separados por comas. |
 | 9 | Marcar «Activar ficha por mención, descubrimiento y pertenencia para este workspace» | Marcado | Inmediato | Opt-in propio; H1 no se activa. |
 | 10 | Pulsar «Crear marca y continuar» | Brand OS y workspace nuevos | Tiempo UI no medido | Cero menciones iniciales. |
 | 11 | Abrir «Datos y fuentes» | 0 archivos / 0 menciones | Tiempo UI no medido | No inicia proveedor. |
-| 12 | Marcar confirmación de permiso para almacenar y analizar datos | Marcado | Inmediato | Registrar texto completo visible. |
+| 12 | Marcar confirmación de permiso para almacenar y analizar datos | Marcado | Inmediato | Declaración de derechos de la fuente; alta histórica R9, no instrucción pendiente R10. |
 | 13 | Marcar permiso de procesamiento con proveedores de IA | Marcado | Inmediato | No inicia proveedor. |
 | 14 | Pulsar «Continuar a la carga» | Fuente Exportaciones de SentiOne | Tiempo UI no medido | — |
 | 15 | Pulsar «Importar» de Primary brand | Formulario de importación | Inmediato | Mantener mismo ámbito en ambas cargas. |
 | 16 | Seleccionar `r9/load1.csv` en «Archivo CSV» | 1,000 filas / 47 columnas | Inmediato | 1,000 IDs internos únicos comprobados en preflight. |
-| 17 | Marcar «Voy a importar este archivo sin adjuntar su consulta de búsqueda.» | Marcado | Inmediato | Registrar variante exacta de formulario si cambia. |
+| 17 | Marcar «Voy a importar este archivo sin adjuntar su consulta de búsqueda.» | Marcado | Inmediato | Casilla observada por el orquestador. |
 | 18 | Completar «Cobertura del archivo desde» | 2026-01-01 | Inmediato | Verificar cobertura del manifest. |
 | 19 | Completar «Cobertura del archivo hasta» | 2026-08-23 | Inmediato | America/Mexico_City. |
 | 20 | Pulsar «Importar CSV» | 1,000 filas: 901 incluidas / 17 excluidas / 82 duplicadas | Tiempo UI no medido | No conciliar archivo; capturar censo real. |
 | 21 | Marcar «Actualizar contenido de IDs existentes» | Marcado | Inmediato | Permite 20 revisiones designadas, sin cambiar ingestor. |
 | 22 | Seleccionar `r9/load2.csv` en «Archivo CSV» | 250 filas / 47 columnas | Inmediato | 250 IDs internos únicos; 200 nuevos + 30 duplicados exactos + 20 revisados. |
-| 23 | Confirmar ausencia de query en el control visible | Marcado | Inmediato | Una acción; texto exacto se recoge en UI. |
+| 23 | Confirmar ausencia de query en el control visible | Marcado | Inmediato | Casilla «Voy a importar este archivo sin adjuntar su consulta de búsqueda.» |
 | 24 | Completar «Cobertura del archivo desde» | 2026-01-01 | Inmediato | — |
 | 25 | Completar «Cobertura del archivo hasta» | 2026-08-23 | Inmediato | America/Mexico_City. |
 | 26 | Pulsar «Importar CSV» | 250 filas: 220 incluidas / 1 excluida / 29 duplicadas | Tiempo UI no medido | Importación directa del fixture, sin copia reconciliada. |
@@ -124,4 +124,6 @@ Censo PG: load1 918 raíces (901 incluidas +17 excluidas); los 82 duplicados int
 | «Ver estimación de temas nuevos» → «Autorizar e interpretar temas nuevos» | USD 0.65142 y casilla exacta arriba; botón inicialmente deshabilitado. | Una autorización R9 de siete grupos sobre R8. | Mientras falte este patrón de #56, NO pulsar Autorizar; quote vencida/fuente cambiada exige cotizar y confirmar otra vez. |
 | «Adoptar concepto» | Gratuito; guarda concepto editable, no llama proveedor. | Dos adoptados existentes R4. | Si corte automático no ofrece Topics adoptables, registrar adopción vacía y NO forzar Noise ni fabricar adopciones. |
 
-B2 pendiente: el último smoke d4 cargó Topics en ~11 s sin alertas y análisis «Completado» antes de 13.75 s. Signal principal cargó en ~12 s, pero detalle/evidencia siguieron cargando después de 35 s y terminaron antes de 58 s desde abrir la ruta. HTTP: principal 14.978 s; detalle 35.892 s; evidencia 36.247 s, ambos 200. El corte TS combinado ca9c480e comparte una transacción y contexto para portada, primer detalle y evidencia; cambiar Topic conserva digest, autorización, derechos y cursor. CI/PG/pin y medición completa pendientes; no acredita todavía el objetivo de 15 s. Ningún SQL aislado sustituye esta medición. «Actualizar» de Datos y las recargas automáticas de idioma están separados; no hubo recarga manual para finalizar Signal ni segunda autorización. El auditor redacta la guía a partir de esta lista; `QA_FUNDADOR_MFP.md` queda intacta.
+### Anexo de rendimiento sustituido por pin44
+
+El smoke histórico d4 cargó Topics en ~11 s sin alertas y análisis «Completado» antes de 13.75 s. Signal principal cargó en ~12 s, pero detalle/evidencia siguieron cargando después de 35 s y terminaron antes de 58 s desde abrir la ruta. HTTP: principal 14.978 s; detalle 35.892 s; evidencia 36.247 s, ambos 200. El corte TS combinado ca9c480e comparte una transacción y contexto para portada, primer detalle y evidencia; cambiar Topic conserva digest, autorización, derechos y cursor. Ese corte histórico no acreditaba 15 s; lo sustituyó la medición completa verde de pin44 en los prerrequisitos. La corrección PATCH 12.451 s y el filtro 16.647 s de E6/E8 siguen siendo incidencias §15.1.2 pendientes de nueva build y medición R10. Ningún SQL aislado sustituye esta medición. «Actualizar» de Datos y las recargas automáticas de idioma están separados; no hubo recarga manual para finalizar Signal ni segunda autorización. El auditor redacta la guía a partir de esta lista; `QA_FUNDADOR_MFP.md` queda intacta.
