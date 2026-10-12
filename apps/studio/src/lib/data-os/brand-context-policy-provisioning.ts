@@ -1,5 +1,4 @@
 import {
-  provisionSignalLabelingPolicyV1,
   provisionSignalBrandContextPolicyV1,
   type SignalBrandContextPolicyProvisioningV1,
 } from "@noisia/db";
@@ -12,8 +11,9 @@ type ProvisioningState =
       status: "unavailable";
     };
 
-/** The brand transaction has already committed. A retry may finish missing setup,
- * but this hook never edits an existing policy, accepts browser money or changes grants. */
+/** The brand transaction has already committed. A retry may provision missing setup
+ * or a successor policy for an opted-in MFP workspace after active work drains.
+ * This server-owned hook never accepts browser money or changes grants. */
 export async function provisionBrandContextPolicyAfterCreationV1(
   args: {
     brandId: string;
@@ -38,24 +38,6 @@ export async function provisionBrandContextPolicyAfterCreationV1(
     };
   try {
     const database = dependencies.database ?? (await import("@/lib/db")).pool;
-    const creator = process.env.NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID;
-    if (process.env.NOISIA_MENTION_FACETS_ENABLED === "true") {
-      if (!creator)
-        return {
-          contract_version: "brand-context-policy-provisioning-v1",
-          status: "configuration_required",
-        };
-      const labeling = await provisionSignalLabelingPolicyV1({
-        database,
-        workspace_id: args.workspaceId,
-        initiator_user_id: args.actor.id,
-        creator_user_id: creator,
-      });
-      return {
-        contract_version: "brand-context-policy-provisioning-v1",
-        status: labeling.status as "provisioned" | "existing_policy",
-      };
-    }
     return await (
       dependencies.provision ?? provisionSignalBrandContextPolicyV1
     )({

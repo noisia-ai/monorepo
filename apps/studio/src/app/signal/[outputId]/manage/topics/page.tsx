@@ -8,6 +8,8 @@ import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeade
 import { requirePortalUser } from "@/lib/auth/guards";
 import { loadClientBrandWorkspaceEntryV1 } from "@/lib/data-os/workspace-management-entry";
 import { loadSignalTopicsManagementProductV1 } from "@/lib/data-os/signal-topics-management";
+import { signalWorkspaceFeatureEnabledV1 } from "@noisia/db";
+import { pool } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -19,6 +21,7 @@ export default async function ClientBrandTopicsPage({ params }: { params: Promis
   const entry = await loadClientBrandWorkspaceEntryV1(session.appUser, outputId);
   if (!entry) notFound();
   const initial = await loadSignalTopicsManagementProductV1({ workspace: entry.workspace, actor: session.appUser });
+  const mfpEnabled = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:entry.workspaceId,feature:"concept_membership"});
   return <div className="topics-workspace-page">
     <SignalV2ModuleHeader title={t("title")} subtitle={t("subtitle")} icon={<Pulse aria-hidden size={21} weight="fill" />}
       aside={<Link className="admin-button" href={entry.navigation.dataHref} prefetch={false}>
@@ -26,7 +29,7 @@ export default async function ClientBrandTopicsPage({ params }: { params: Promis
     <BrandMonitoringJourney brandId={entry.brandId} current="topics" destinations={{
       topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref,
       brandOs: entry.navigation.brandOsHref }} />
-    <TopicsManager mfpEnabled={process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED === "true"} key={entry.requestScope} brandId={entry.brandId} workspaceId={entry.workspaceId} actorId={session.appUser.id} initial={initial}
+    <TopicsManager mfpEnabled={mfpEnabled} key={entry.requestScope} brandId={entry.brandId} workspaceId={entry.workspaceId} actorId={session.appUser.id} initial={initial}
       navigation={entry.navigation} requestScope={entry.requestScope} />
   </div>;
 }

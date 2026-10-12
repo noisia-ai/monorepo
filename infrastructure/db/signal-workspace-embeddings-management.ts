@@ -4,6 +4,7 @@ import { assertSignalWorkspaceEmbeddingProfileV1, quoteSignalWorkspaceEmbeddingC
   signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
   type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
+import { signalWorkspaceFeatureEnabledV1 } from "./signal-workspace-features";
 import { SignalWorkspaceEmbeddingsError, type SignalWorkspaceEmbeddingsDatabaseV1,
   type SignalWorkspaceEmbeddingsQueryableV1, type SignalWorkspaceEmbeddingRunV1,
   type SignalWorkspaceEmbeddingCountsV1, type SignalWorkspaceEmbeddingsQuoteV1,
@@ -89,7 +90,9 @@ export async function loadSignalWorkspaceEmbeddingsStoreV1(args: {
 
 async function authorize(queryable: SignalWorkspaceEmbeddingsQueryableV1, workspace: string, actor: string, execute: boolean) {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable, workspace_id: workspace, actor_user_id: actor });
-  if (!capabilities.can_view || execute && !(process.env.NOISIA_MENTION_FACETS_ENABLED === "true" ? capabilities.can_request_processing : capabilities.can_execute_topics)) return fail("workspace_embedding_forbidden", 403);
+  const mfp = await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:workspace,feature:"mention_facets"});
+  if (!capabilities.can_view || execute && !(mfp ? capabilities.can_request_processing : capabilities.can_execute_topics)) return fail("workspace_embedding_forbidden", 403);
+  return mfp;
 }
 
 async function quote(queryable: SignalWorkspaceEmbeddingsQueryableV1, workspace: string,
@@ -170,7 +173,7 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
   const client = await args.database.connect();
   try {
     await client.query("BEGIN");
-    await authorize(client, args.workspace_id, args.actor_user_id, true);
+    const mfp = await authorize(client, args.workspace_id, args.actor_user_id, true);
     // Serialize only requests, not the input-state row held by import/rights writers.
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`workspace-embedding-request:${args.workspace_id}`]);
     const replay = (await client.query<{ id: string; actor: string; digest: string }>(`SELECT id,
@@ -211,7 +214,7 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
     }
     if (current.resume_run_id) {
       if (args.hard_cap_micro_usd !== current.required_cap_micro_usd) return fail("workspace_embedding_resume_budget_changed", 422);
-      if (process.env.NOISIA_MENTION_FACETS_ENABLED === "true") {
+      if (mfp) {
         await client.query(`SELECT signal_processing_capacity_v1(workspace_id,actor_user_id,id,processing_admission_id,
           ARRAY['corpus_embeddings'],profile->>'provider',profile->>'model',profile,hard_cap_micro_usd)
           FROM signal_workspace_embedding_runs WHERE id=$1::uuid AND processing_admission_id IS NOT NULL`, [current.resume_run_id]);
@@ -228,7 +231,7 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
     }
     const runId = randomUUID();
     let effectiveCap=args.hard_cap_micro_usd,admissionId:string|null=null;
-    if(process.env.NOISIA_MENTION_FACETS_ENABLED === "true" || effectiveCap===null){
+    if(mfp || effectiveCap===null){
       const policy=(await client.query<{max_execution_micro_usd:string|null}>(`SELECT a.max_execution_micro_usd::text FROM signal_processing_policy_actions a JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id
         WHERE p.organization_id=(SELECT organization_id FROM signal_workspaces WHERE id=$1) AND p.status='active' AND p.valid_from<=now() AND p.valid_until>now() AND a.action='corpus_embeddings'`,[args.workspace_id])).rows[0];
       if(!policy)return fail('workspace_embedding_policy_required');

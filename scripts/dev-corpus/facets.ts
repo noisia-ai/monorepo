@@ -1,6 +1,6 @@
 /** Opt-in provider demo. Never imported by unit suites. Run only through guarded MFP runner. */
 import { readFile, mkdir, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { loadMfpEvalIdentity } from "../eval/fixture-identity";
 import { main, openDatabase } from "./guard.mjs";
 await main(async () => {
   const mode = process.argv.includes("--real") ? "real" : "fake";
@@ -10,9 +10,7 @@ await main(async () => {
       process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED !== "true")
   )
     throw new Error("mfp_facets_provider_disabled");
-  const identity = JSON.parse(
-      await readFile(".data/dev-corpus/identity.json", "utf8"),
-    ),
+  const identity = await loadMfpEvalIdentity(),
     pool = await openDatabase();
   try {
     const { provisionSignalLabelingPolicyV1 } = await import(
@@ -57,6 +55,11 @@ await main(async () => {
         identity.workspace_id,
       ),
       labeler = facetLabelerIdentityV1();
+    const thinking = process.argv.find((x) => x.startsWith("--thinking="))?.slice(11);
+    if (thinking && thinking !== "adaptive" && thinking !== "between_tools")
+      throw new Error("mfp_facets_thinking_invalid");
+    if (thinking === "between_tools")
+      labeler.params = { ...labeler.params, thinking: { type: "between_tools" } };
     if (mode === "fake")
       labeler.params = { ...labeler.params, simulated_transport: true };
     const count = (
@@ -132,12 +135,7 @@ await main(async () => {
                               act: dim("other"),
                               spam_or_bot: dim(false),
                               language: dim("es"),
-                              asunto: dim(
-                                labeler.params.request_format ===
-                                  "required-ordinal-fields-v4"
-                                  ? ""
-                                  : null,
-                              ),
+                              asunto: dim(null),
                             },
                           ]),
                         ),
@@ -181,6 +179,24 @@ await main(async () => {
       async cancel() {
         throw new Error("unsupported");
       },
+      async list(afterId?: string) {
+        const ids = [...responses.keys()];
+        const start = afterId ? ids.indexOf(afterId) + 1 : 0;
+        const page = ids.slice(start).map((id) => ({
+          id,
+          processing_status: "ended" as const,
+          request_counts: {
+            processing: 0,
+            succeeded: responses.get(id)!.length,
+            errored: 0,
+            canceled: 0,
+            expired: 0,
+          },
+          ended_at: new Date().toISOString(),
+          results_url: null,
+        }));
+        return { data: page, has_more: false, last_id: page.at(-1)?.id ?? null };
+      },
       async *results(batch: any) {
         for (const item of responses.get(batch.id) ?? [])
           yield { item, rawText: JSON.stringify(item) };
@@ -200,6 +216,7 @@ await main(async () => {
               await writeFile(key, args.raw_text, { mode: 0o600 });
               return key;
             },
+            loadRaw: async (args) => readFile(args.storage_key, "utf8"),
           });
     const provider =
       mode === "real"

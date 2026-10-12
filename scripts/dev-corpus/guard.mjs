@@ -2,6 +2,31 @@ import { lookup } from 'node:dns/promises';
 import { readFile } from 'node:fs/promises';
 import { privateAddress } from '../../infrastructure/db/scripts/noi19-dev-test/target-guard.mjs';
 export const fail = code => { throw new Error(`mfp_${code}`); };
+export function assertDisposableFixture(identity, suite) {
+  if (!/^[a-z0-9-]+$/u.test(suite) || !new RegExp(`^${suite}-[a-z0-9]{6,}$`, 'u').test(identity?.fixture_key ?? ''))
+    fail('disposable_fixture_required');
+  return identity;
+}
+export async function verifyDisposableFixtureInDatabase(database, identity, suite) {
+  assertDisposableFixture(identity, suite);
+  const { rows } = await database.query(`SELECT 1
+    FROM organizations o
+    JOIN signal_workspaces w ON w.organization_id=o.id
+    JOIN brands b ON b.id=w.brand_id AND b.organization_id=o.id
+    JOIN users internal ON internal.id=$4 AND internal.organization_id=o.id
+      AND internal.user_type='noisia_internal' AND internal.primary_role='noisia_admin' AND internal.status='active'
+    JOIN users actor ON actor.id=$5 AND actor.organization_id=o.id
+      AND actor.user_type='client' AND actor.primary_role='client_admin' AND actor.status='active'
+    JOIN data_sources source ON source.id=$6 AND source.workspace_id=w.id
+      AND source.organization_id=o.id AND source.brand_id=b.id
+    WHERE o.id=$1 AND o.slug=$7 AND w.id=$2 AND b.id=$3`, [
+      identity?.organization_id, identity?.workspace_id, identity?.brand_id,
+      identity?.internal_user_id, identity?.actor_user_id, identity?.source_id,
+      `mfp-${identity?.fixture_key}`,
+    ]);
+  if (rows.length !== 1) fail('fixture_database_identity_mismatch');
+  return identity;
+}
 export async function readTarget() { return JSON.parse(await readFile(new URL('./target.json', import.meta.url), 'utf8')); }
 export function checkTarget(env, target) {
   if (target.environment_id !== '5bad359d-cfa4-4e8f-aa41-98e6f075375a'
@@ -21,6 +46,24 @@ export function checkTarget(env, target) {
   return { db, redis };
 }
 export async function openDatabase() {
+  if (process.env.GITHUB_ACTIONS === 'true' && process.env.NOISIA_MFP_PG_CI === 'true') {
+    const db = new URL(process.env.DATABASE_URL ?? '');
+    if (db.protocol !== 'postgresql:' || db.hostname !== '127.0.0.1' || db.port !== '5432'
+      || db.pathname !== '/noisia_mfp_ci' || db.username !== 'postgres') fail('ci_database_target_mismatch');
+    const { default: pg } = await import('../../infrastructure/db/node_modules/pg/lib/index.js');
+    const pool = new pg.Pool({ connectionString: db.href, max: 4, connectionTimeoutMillis: 10000 });
+    try {
+      const { rows: [row] } = await pool.query(`SELECT current_database() AS database,
+        current_setting('server_version_num')::int AS version,
+        EXISTS(SELECT 1 FROM pg_extension WHERE extname='vector') AS pgvector`);
+      if (row.database !== 'noisia_mfp_ci' || row.version < 170000 || row.version >= 180000
+        || !row.pgvector) fail('ci_database_identity_mismatch');
+      globalThis.noisiaStudioPgPool = pool;
+      globalThis.noisiaWorkerPgPool = pool;
+      globalThis.noisiaWorkerNumericPgPool = pool;
+      return pool;
+    } catch (error) { await pool.end(); throw error; }
+  }
   const target = await readTarget();
   const { db, redis } = checkTarget(process.env, target);
   const [addresses, redisAddresses] = await Promise.all([lookup(db.hostname, { all: true }), lookup(redis.hostname, { all: true })]);

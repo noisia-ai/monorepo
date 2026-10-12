@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalWorkspaceEmbeddingsStoreV1,
-  readSignalProcessingPolicyWithQueryableV1, quoteSignalWorkspaceEmbeddingsStoreV1, requestSignalWorkspaceEmbeddingsStoreV1 } from "@noisia/db";
+  readSignalProcessingPolicyWithQueryableV1, quoteSignalWorkspaceEmbeddingsStoreV1, requestSignalWorkspaceEmbeddingsStoreV1,
+  signalWorkspaceFeatureEnabledV1 } from "@noisia/db";
 import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1 } from "@noisia/query-engine";
 export { SignalWorkspaceEmbeddingsError } from "@noisia/db";
 export class WorkspaceCorpusEmbeddingsError extends Error {
@@ -11,9 +12,9 @@ type Database = Pick<Pool, "query" | "connect">;
 type AccessArgs = { database?: Database; workspaceId: string; actorUserId: string };
 export type WorkspaceCorpusEmbeddingRequestV1 = { preparation_run_id: string; quote_digest: string; hard_cap_micro_usd: number | null };
 
-export function workspaceEmbeddingRuntimeSettingsV1(env: Record<string, string | undefined> = process.env) {
+export function workspaceEmbeddingRuntimeSettingsV1(env: Record<string, string | undefined> = process.env, mfp = false) {
   const raw = env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD;
-  const cap = raw === undefined ? (env.NOISIA_MENTION_FACETS_ENABLED === "true" ? null : SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1)
+  const cap = raw === undefined ? (mfp ? null : SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1)
     : /^\d+$/u.test(raw) ? Number(raw) : NaN;
   if (cap !== null && (!Number.isSafeInteger(cap) || cap < 0)) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_budget_configuration_invalid", 503);
   return { provider_available: env.NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED === "true" && Boolean(env.VOYAGE_API_KEY?.trim()),
@@ -23,10 +24,10 @@ async function authorize(args: AccessArgs, execute: boolean) {
   const database = args.database ?? (await import("@/lib/db")).pool;
   const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database,
     workspace_id: args.workspaceId, actor_user_id: args.actorUserId });
-  const mfp = process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
+  const mfp = await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id:args.workspaceId,feature:"mention_facets"});
   const allowed = mfp ? caps.can_request_processing : caps.can_execute_topics;
   if (!caps.can_view || execute && !allowed) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_forbidden", 403);
-  const runtime = workspaceEmbeddingRuntimeSettingsV1();
+  const runtime = workspaceEmbeddingRuntimeSettingsV1(process.env,mfp);
   let maximum = runtime.max_run_cost_micro_usd;
   let policyAllows = true;
   if (mfp) {

@@ -28,7 +28,10 @@ test("technical errors remain actionable without becoming semantic decisions",()
   assert.equal(mfpErrorKey("labeling_preparation_required"),"preparation");
   assert.equal(mfpErrorKey("labeling_provider_unavailable"),"provider");
   assert.equal(mfpErrorKey("unknown_transport_failure"),"request");
+  assert.equal(mfpErrorKey("hybrid_route_upgrade_required"),"routeUpgrade");
   assert.equal(mfpErrorKey("facets_override_invalid"),"invalid");
+  assert.equal(mfpErrorKey("labeling_unresolvable_after_window"),"unresolvable");
+  assert.equal(mfpErrorKey("labeling_provider_usage_invalid"),"usageInvalid");
 });
 test("both locales cover the complete MFP vocabulary",()=>{
   const es=JSON.parse(readFileSync(new URL("../../../messages/es-MX.json",import.meta.url),"utf8")).Mfp;

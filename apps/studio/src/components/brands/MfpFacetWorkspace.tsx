@@ -72,6 +72,7 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
         <li><span className="client-processing-journey__number">5</span><a href="#defined-interests">{t("journey.membership")}</a></li>
         <li><span className="client-processing-journey__number">6</span><a href={signalHref}>{t("journey.signal")}</a></li>
       </ol>
+    {status.loading||browser.loading?<p role="status" aria-live="polite">{t("loadingPopulation")}</p>:null}
       {status.error||browser.error?<p role="alert" className="team-msg team-msg--error">{t(`errors.${mfpErrorKey(status.error??browser.error??"")}`)}</p>:null}
       {browser.data?.labeler_status!=="approved"?<p className="mfp-notice" role="status">{t("experimental")}</p>:null}
       {status.data?<>
@@ -117,6 +118,7 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
         <dl className="mfp-facet-values">{correctable.map(dim=><div key={dim}><dt>{t(`dimensions.${dim}`)}</dt>
           <dd>{facetLabel(item.facets,dim,label)}</dd></div>)}</dl>
         {item.requires_context_review?<p role="status">{t("contextReview")}</p>:null}
+        {item.pending_context_review?<p role="status">{t("pendingContextReview")}</p>:null}
         <div className="admin-form-actions"><button type="button" className="admin-button" disabled={!browser.data?.can_edit||mutation.busy}
           onClick={()=>beginEdit(item)}>{t("correct")}</button>
           {mfpSafeUrl(item.url)?<a href={mfpSafeUrl(item.url)!} target="_blank" rel="noreferrer">{t("openOriginal")}</a>:null}</div>

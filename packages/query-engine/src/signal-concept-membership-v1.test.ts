@@ -8,6 +8,7 @@ import {
   membershipSpansV1,
   buildMembershipRequestV1,
   conceptSetDigestV1,
+  membershipLabelerIdentityV1,
   type ConceptForJudgeV1,
   type MembershipInputV1,
 } from "./signal-concept-membership-v1";
@@ -67,6 +68,18 @@ test("complete ordinal coverage emits explicit negative for only evaluated conce
   assert.equal(parsed.split, false);
   assert.equal(parsed.results.length, 2);
   assert.ok(parsed.results.every((r) => r.verdict === "not_belongs"));
+});
+test("an invalid item retries alone while valid roots keep their decisions; isolated error is durable", () => {
+  const bad = {root_ordinal: 1, memberships: [{concept_key:"example",verdict:"insufficient",span_ids:[],rationale:"Missing evidence"}]};
+  const good = {root_ordinal: 0, memberships: []};
+  const grouped = parseMembershipGroupV1(response([good,bad]), [root("first"),root("second")]);
+  assert.equal(grouped.split, false);
+  assert.deepEqual(grouped.retry_ordinals, [1]);
+  assert.ok(grouped.results.every((r) => r.root_id === "first" && r.verdict === "not_belongs"));
+  const isolated = parseMembershipGroupV1(response([{...bad,root_ordinal:0}]), [root("second")]);
+  assert.ok(isolated.results.every((r) => r.verdict === "error" && r.error_code === "membership_item_schema_invalid"));
+  const malformedGroup = parseMembershipGroupV1("{", [root("second")]);
+  assert.ok(malformedGroup.results.every((r) => r.error_code === "membership_json_invalid"));
 });
 test("missing/duplicate/out-of-range ordinals and max_tokens never create negatives", () => {
   for (const roots of [
@@ -165,6 +178,14 @@ test("request contains full catalog, entity hints, adaptive reasoning and cache"
   assert.ok(req.messages[0]?.content.includes("secondary"));
   assert.equal("temperature" in req, false);
 });
+test("judge evaluation accepts low and medium as distinct audited identities", () => {
+  const low = membershipLabelerIdentityV1("low");
+  const medium = membershipLabelerIdentityV1("medium");
+  assert.notDeepEqual(low, medium);
+  assert.equal(buildMembershipRequestV1([root()], {entities:[]}, [concept()], low).output_config.effort, "low");
+  assert.equal(buildMembershipRequestV1([root()], {entities:[]}, [concept()], medium).output_config.effort, "medium");
+  assert.throws(() => buildMembershipRequestV1([root()], {entities:[]}, [concept()], {...low, model:"other"}), /membership_identity_invalid/);
+});
 
 test("provider required ordinal keys normalize to the canonical response", () => {
   const r = root();
@@ -174,7 +195,8 @@ test("provider required ordinal keys normalize to the canonical response", () =>
     r.evaluated_concepts,
   );
   assert.deepEqual(
-    request.output_config.format.schema.properties.roots.required,
+    ("required" in request.output_config.format.schema.properties.roots
+      ? request.output_config.format.schema.properties.roots.required : null),
     ["r0"],
   );
   const parsed = parseMembershipGroupV1(
@@ -209,5 +231,31 @@ test("provider grammar shares definitions while requiring every ordinal at 8 and
       "belongs",
       "insufficient",
     ]);
+  }
+});
+
+
+test("H1 schema and cache prefix stay fixed for 1, 8 and 16 roots", () => {
+  const identity = membershipLabelerIdentityV1("low", true);
+  const requests = [1,8,16].map(count => buildMembershipRequestV1(
+    Array.from({length:count}, (_,i) => root(`root-${i}`)), {entities:[]}, root().evaluated_concepts, identity));
+  for (const request of requests) {
+    assert.deepEqual(request.output_config, requests[0]!.output_config);
+    assert.deepEqual(request.system, requests[0]!.system);
+  }
+  assert.notEqual(identity.prompt_digest, membershipLabelerIdentityV1("low").prompt_digest);
+  assert.notEqual(identity.schema_digest, membershipLabelerIdentityV1("low").schema_digest);
+});
+
+test("H1 requires every positive concept explicitly with rationale and same-root context", () => {
+  const members = root().evaluated_concepts.map(c => ({concept_key:c.concept_key,
+    verdict:"not_belongs", span_ids:["r0c0s0"], rationale:"This context does not establish the concept."}));
+  const parse = (memberships:unknown[]) => parseMembershipGroupV1(
+    response([{root_ordinal:0,memberships}]), [root()], "end_turn", true);
+  assert.ok(parse(members).results.every(r => r.verdict === "not_belongs" && r.rationale && r.citations.length));
+  for (const malformed of [[], members.slice(1), [members[0], members[0]],
+    members.map(m => ({...m,rationale:""})), members.map(m => ({...m,span_ids:[]})),
+    members.map(m => ({...m,span_ids:["r1c0s0"]}))]) {
+    assert.ok(parse(malformed).results.every(r => r.verdict === "error"));
   }
 });

@@ -111,6 +111,7 @@ export function createWorkspaceEngineStorageV1(options: {
         || ref.storage_key.includes("..") || !ref.storage_key.endsWith(`.${ref.sha256.slice(7)}.parts.json`)
         || !digest.test(ref.sha256) || !Number.isSafeInteger(ref.size_bytes) || ref.size_bytes < 0) return fail("reference_invalid");
       const response = await request(objectUrl(ref.storage_key));
+      if (response.status === 404) { await response.body?.cancel(); return fail("object_missing"); }
       if (!response.ok) { await response.body?.cancel(); return fail("read_failed"); }
       const envelope = JSON.parse((await bytes(response, 1024 * 1024)).toString("utf8")) as Envelope;
       if (envelope.contract_version !== "workspace-engine-parts-v1" || envelope.sha256 !== ref.sha256
@@ -124,6 +125,7 @@ export function createWorkspaceEngineStorageV1(options: {
         if (!part || part.key !== expectedKey || !digest.test(part.sha256)
           || part.size_bytes !== Math.min(PART_BYTES, ref.size_bytes - size)) return fail("manifest_invalid");
         const read = await request(objectUrl(part.key));
+        if (read.status === 404) { await read.body?.cancel(); return fail("object_missing"); }
         if (!read.ok) { await read.body?.cancel(); return fail("read_failed"); }
         const buffer = await bytes(read, part.size_bytes);
         if (buffer.length !== part.size_bytes || hash(buffer) !== part.sha256) return fail("part_invalid");

@@ -105,9 +105,15 @@ No convierte el presupuesto orientativo en techo. Éste es un pendiente de códi
 no una solicitud de aprobación de gasto.
 
 `sample.mjs <directorio CSV> <entity-context.json>` genera 1,000 + 250 filas fuera de
-Git. Las 20 modificaciones son edits de desarrollo marcados y registrados; no se
-presentan como texto original del proveedor. Transferir corpus por Railway SSH
-cifrado; nunca en argumentos, logs ni un endpoint público de base.
+Git. La identidad para deduplicar es el `id` de proveedor: dos menciones con texto
+idéntico permanecen como dos registros distintos. Las 20 modificaciones son edits
+de desarrollo marcados y registrados; no se presentan como texto original del proveedor.
+`facets-lock-check.ts` exige una identidad cuyo `fixture_key` tenga el formato
+`facets-lock-check-<sufijo-aleatorio>` y verifica en PostgreSQL que organización, marca,
+workspace, operadores y fuente estén ligados a ese fixture desechable antes de crear
+datos de prueba. El probe se limita al orden de locks de reserva/renovación y no cambia
+políticas. No apuntar esa comprobación a la identidad habitual del corpus. Transferir
+corpus por Railway SSH cifrado; nunca en argumentos, logs ni un endpoint público de base.
 
 Recorrido remoto comprobado: 1,000 filas → 977 únicas → 905 elegibles → 3,158 chunks;
 replay sin nuevos vectores ni llamadas. Plantilla privada `gold-template.csv` creada:

@@ -39,6 +39,7 @@ COPY packages packages
 COPY apps/studio/src apps/studio/src
 COPY apps/studio/tsconfig.json apps/studio/tsconfig.json
 COPY scripts/dev-corpus scripts/dev-corpus
+COPY scripts/eval scripts/eval
 COPY scripts/providers scripts/providers
 RUN mkdir -p /app/.data/dev-corpus && chmod 700 /app/.data/dev-corpus
 # Idle by default. An explicit MFP runtime flag starts the existing product Worker.

@@ -120,6 +120,13 @@ test("CE deleted aliases/entities, kind, disambiguation, short names and categor
     true,
   );
 });
+test("CE only demands full recalculation for a newly introduced short term", () => {
+  const withShort: EntityContextV1 = {entities:[{...ce.entities[0]!,aliases:["xy","Product One"]}]};
+  const longAlias: EntityContextV1 = {entities:[{...withShort.entities[0]!,aliases:["xy","Product One","Long new alias"]}]};
+  assert.equal(diffEntityContextV1(withShort,longAlias).affected_mode,"targeted");
+  assert.equal(diffEntityContextV1(longAlias,withShort).affected_mode,"targeted");
+  assert.equal(diffEntityContextV1(ce,withShort).affected_mode,"full");
+});
 test("facets distinguish entity failures from abstention and preserve multi-entities", () => {
   assert.equal(
     deriveRelevanceV1(validateMentionFacetsV1(facets(), ce)),
@@ -406,135 +413,6 @@ test("ordinal grammar preserves legacy identities and requires every input key",
     () => buildFacetRequestV1([input(0)], ce, incompatible),
     /facet_labeler_identity_unsupported/u,
   );
-});
-
-test("union-free ordinal transport restores the exact semantic facet contract", async () => {
-  const {
-    buildFacetRequestV1,
-    facetLabelerIdentityOrdinalV4,
-    facetLabelerIdentityLegacyV1,
-    facetLabelerIdentityOrdinalV3,
-    decodeFacetOrdinalWireV4,
-  } = await import("./signal-mention-facets-v1");
-  const identity = facetLabelerIdentityOrdinalV4();
-  const legacy = facetLabelerIdentityLegacyV1();
-  assert.equal(identity.params.request_format, "required-ordinal-fields-v4");
-  assert.notEqual(
-    identity.prompt_digest,
-    facetLabelerIdentityOrdinalV3().prompt_digest,
-  );
-  const context: EntityContextV1 = {
-    entities: [
-      ...ce.entities,
-      {
-        entity_id: "b",
-        kind: "competitor",
-        name: "Second Example",
-        aliases: [],
-        disambiguation: null,
-      },
-    ],
-  };
-  const examples = [
-    {
-      ...facets(),
-      entities: dim([
-        { entity_id: "a", kind: "primary_brand", salience: "main" },
-        { entity_id: "b", kind: "competitor", salience: "secondary" },
-      ]),
-      asunto: dim("Comparison of installation experiences"),
-    },
-    { ...facets(), entities: dim([]), unrelated_reason: "off_topic" },
-    {
-      ...facets(),
-      entities: { ...dim([]), abstained: true },
-      language: { ...dim(null), confidence: "low", abstained: true },
-    },
-    {
-      ...facets(),
-      entities: dim([]),
-      unrelated_reason: "homonym",
-      spam_or_bot: dim(true),
-    },
-  ];
-  for (const count of [2, 8, 25]) {
-    const inputs = Array.from({ length: count }, (_, i) => ({
-      ...input(i),
-      language: null,
-    }));
-    const semantic = inputs.map((_, i) => examples[i % examples.length]!);
-    const wire = semantic.map((row) => ({
-      ...row,
-      unrelated_reason: row.unrelated_reason ?? "none",
-      language: { ...row.language, value: row.language.value ?? "" },
-      asunto: { ...row.asunto, value: row.asunto.value ?? "" },
-    }));
-    wire.forEach((row, i) =>
-      assert.deepEqual(decodeFacetOrdinalWireV4(row), semantic[i]),
-    );
-    const response = JSON.stringify({
-      roots: Object.fromEntries(wire.map((row, i) => [`r${i}`, row])),
-    });
-    assert.deepEqual(
-      parseFacetGroupV1(response, inputs, context, identity),
-      parseFacetGroupV1(
-        JSON.stringify({
-          roots: semantic.map((row, i) => ({ root_ordinal: i, facets: row })),
-        }),
-        inputs,
-        context,
-        legacy,
-      ),
-    );
-    const schema = buildFacetRequestV1(inputs, context, identity).output_config
-      .format.schema as any;
-    assert.deepEqual(
-      schema.properties.roots.required,
-      inputs.map((_, i) => `r${i}`),
-    );
-    const visit = (value: any) => {
-      if (value && typeof value === "object") {
-        assert.equal(value.anyOf, undefined);
-        assert.equal(value.oneOf, undefined);
-        assert.equal(Array.isArray(value.type), false);
-        for (const child of Object.values(value)) visit(child);
-      }
-    };
-    visit(schema);
-    const missing = JSON.parse(response);
-    delete missing.roots.r1;
-    assert.equal(
-      parseFacetGroupV1(JSON.stringify(missing), inputs, context, identity)
-        .split,
-      true,
-    );
-  }
-  const badLanguage = {
-    ...facets(),
-    unrelated_reason: "none",
-    language: dim("es-MX"),
-    asunto: dim(""),
-  };
-  const badTopic = {
-    ...badLanguage,
-    language: dim("es"),
-    asunto: dim("word ".repeat(13).trim()),
-  };
-  for (const bad of [
-    badLanguage,
-    badTopic,
-    { ...badLanguage, unrelated_reason: null },
-  ]) {
-    assert.equal(
-      parseFacetGroupV1(
-        JSON.stringify({ roots: { r0: bad } }),
-        [{ ...input(0), language: null }],
-        context,
-        identity,
-      ).results[0]?.error_code,
-      "invalid_facets",
-    );
-  }
 });
 
 test("demonstrated grammar partitions all 905 roots without changing facets or imposing a cost cap", async () => {

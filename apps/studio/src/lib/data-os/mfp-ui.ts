@@ -1,4 +1,4 @@
-import type { MentionFacetsV1 } from "@noisia/query-engine";
+import type { MentionFacetsV1, HybridJevDecisionV1, HybridClaudeDecisionV1 } from "@noisia/query-engine";
 
 export type MfpRun = { id:string; status:string; estimated_micro_usd:string|number; settled_micro_usd:string|number;
   reserved_micro_usd:string|number; budget_micro_usd:string|number|null; cap_micro_usd:string|number|null;
@@ -11,15 +11,17 @@ export type MfpFacetPage = {contract_version:"mention-facets-browser-v1";workspa
   entities:Array<{entity_id:string;name:string;kind:"primary_brand"|"competitor"|"category"}>;
   distributions:Array<{dimension:string;value:string;count:number}>;
   items:Array<{root_id:string;text:string;title:string|null;url:string|null;platform:string|null;status:string;
-    relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];requires_context_review:boolean}>;next_cursor:string|null};
+    relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];requires_context_review:boolean;pending_context_review:boolean}>;next_cursor:string|null};
 export type MfpEvidence = {root_id:string;concept_key:string;definition_digest:string;verdict:string;
   citations:Array<{quote:string;quote_start:number;quote_end:number;chunk_index:number;chunk_sha256:string}>;
-  rationale:string|null;source:"human"|"model"|"pending";text:string|null;title:string|null;url:string|null;platform:string|null;evidence_withheld?:boolean};
+  hybrid_review?:{jev:HybridJevDecisionV1;claude:HybridClaudeDecisionV1|null}|null;
+  decided_via?:"human_ui"|"agent_assisted"|null;eligible_for_human_evaluation?:boolean;
+  rationale:string|null;source:"human"|"model"|"pending";text:string|null;title:string|null;url:string|null;platform:string|null;evidence_withheld?:boolean;requires_override_review?:boolean};
 export type MfpMembershipStatus = {contract_version:"concept-membership-status-v1";enabled:boolean;provider_available:boolean;
-  can_request_processing:boolean;can_edit_topics:boolean;entity_context_digest:string;
+  can_request_processing:boolean;can_edit_topics:boolean;entity_context_digest:string;route?:"standard"|"hybrid_h1";
   counts:Array<{verdict:string;count:number}>;population:{relevant:number;unrelated:number;unknown:number;spam:number;without_concept:number};
   concepts:Array<{concept_key:string;label:string;definition_digest:string;selected:boolean;selection_revision:number}>;
-  estimated_micro_usd:string|number;preview_estimated_micro_usd:string|number;latest:MfpRun|null;items:MfpEvidence[];next_cursor:string|null};
+  estimated_micro_usd:string|number|null;preview_estimated_micro_usd:string|number|null;latest:MfpRun|null;items:MfpEvidence[];next_cursor:string|null};
 export type MfpPreview = {contract_version:"concept-membership-preview-v1";run:MfpRun;items:MfpEvidence[];sample_size:number};
 
 export function mfpMoney(value:string|number|null|undefined,locale:string) {
@@ -44,6 +46,10 @@ export function mfpQuoteParts(text:string,quotes:string[]) {
   if(start<text.length)parts.push({text:text.slice(start),highlight:false});return parts;
 }
 export function mfpErrorKey(code:string) {
+  if (code === "population_read_busy") return "busy";
+  if (code === "hybrid_route_upgrade_required") return "routeUpgrade";
+  if (/unresolvable/.test(code)) return "unresolvable";
+  if (/provider_usage_invalid/.test(code)) return "usageInvalid";
   if (/forbidden|unauthorized/.test(code)) return "forbidden";
   if (/preparation/.test(code)) return "preparation";
   if (/policy|cap_exceeded/.test(code)) return "policy";

@@ -83,6 +83,20 @@ export async function assertClientWorkspaceEntryV1(t:Pick<TestContext,'test'>,
         const value=await caps(actor);assert.equal(value.can_view,true);assert.equal(value.can_select_signal,true);
         assert.equal(value.can_import_mentions,true);assert.equal(value.can_execute_topics,false);assert.equal(value.can_adopt_topics,false);
       }
+      const priorFlag=process.env.NOISIA_MENTION_FACETS_ENABLED;
+      try {
+        process.env.NOISIA_MENTION_FACETS_ENABLED='true';
+        assert.equal((await caps(admin)).can_adopt_topics,false,'environment flag alone grants nothing');
+        await f.query(`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
+          VALUES($1::uuid,'mfp_discovery',$2::uuid)`,[f.workspace_id,admin]);
+        assert.equal((await caps(admin)).can_adopt_topics,true);
+        assert.equal((await caps(comment)).can_adopt_topics,true);
+        assert.equal((await caps(owner)).can_adopt_topics,false);
+        await f.query(`DELETE FROM signal_workspace_features WHERE workspace_id=$1::uuid AND feature='mfp_discovery'`,[f.workspace_id]);
+      } finally {
+        if(priorFlag===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+        else process.env.NOISIA_MENTION_FACETS_ENABLED=priorFlag;
+      }
       for(const actor of [reader,viewer,agency]){
         const value=await caps(actor);assert.equal(value.can_view,true);assert.equal(value.can_select_signal,false);
         assert.equal(value.can_import_mentions,false);assert.equal(value.can_execute_topics,false);

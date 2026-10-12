@@ -13,7 +13,9 @@ export default async function NewBrandPage() {
     getTranslations("AdminWorkspace"),
     getTranslations("BrandOs")
   ]);
-  await requireStudioUser("/studio/brands/new");
+  const session = await requireStudioUser("/studio/brands/new");
+  const mfpOptInAllowed = process.env.NOISIA_MENTION_FACETS_ENABLED === "true"
+    && ["noisia_admin","founder","admin"].includes(session.appUser.primaryRole);
 
   return (
     <div className="admin-workspace-page admin-workspace-page--form">
@@ -28,7 +30,7 @@ export default async function NewBrandPage() {
         subtitle={tBrandOs("new.subtitle")}
         title={tBrandOs("new.title")}
       />
-      <BrandOsForm />
+      <BrandOsForm mfpOptInAllowed={mfpOptInAllowed} />
     </div>
   );
 }

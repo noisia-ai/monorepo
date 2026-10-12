@@ -23,12 +23,14 @@ export function categorical(rows: { truth: string; predicted: string }[], labels
     if (!confusion[row.truth] || !(row.predicted in confusion[row.truth])) throw new Error('eval_category_invalid');
     confusion[row.truth][row.predicted]++;
   }
-  const per_class = Object.fromEntries(labels.map(label => [label, binary(
-    rows.filter(r => r.truth === label && r.predicted === label).length,
-    rows.filter(r => r.truth !== label && r.predicted === label).length,
-    rows.filter(r => r.truth === label && r.predicted !== label).length,
-  )]));
-  return { denominator: rows.length, accuracy: divide(rows.filter(r => r.truth === r.predicted).length, rows.length),
+  const per_class = Object.fromEntries(labels.map(label => {
+    const tp=rows.filter(r => r.truth === label && r.predicted === label).length;
+    const fp=rows.filter(r => r.truth !== label && r.predicted === label).length;
+    const fn=rows.filter(r => r.truth === label && r.predicted !== label).length;
+    return [label,{...binary(tp,fp,fn),precision_wilson:wilson(tp,tp+fp),recall_wilson:wilson(tp,tp+fn)}];
+  }));
+  const correct=rows.filter(r => r.truth === r.predicted).length;
+  return { denominator: rows.length, accuracy: divide(correct, rows.length),accuracy_wilson:wilson(correct,rows.length),
     macro_f1: mean(Object.values(per_class).map(v => v.f1)),
     abstention_rate: divide(rows.filter(r => r.predicted === 'abstained').length, rows.length),
     status_counts: Object.fromEntries(specials.map(s => [s, rows.filter(r => r.predicted === s).length])), per_class, confusion };

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1,
+import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1, signalWorkspaceFeatureEnabledV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
   retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, retrySignalWorkspaceIncrementalDeliveryV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
@@ -30,8 +30,9 @@ async function authorize(args: Access, execute: boolean) {
   const database = args.database ?? (await import("@/lib/db")).pool;
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database,
     workspace_id: args.workspaceId, actor_user_id: args.actorUserId });
-  if (!capabilities.can_view || execute && !(process.env.NOISIA_MENTION_FACETS_ENABLED === "true" ? capabilities.can_request_processing : capabilities.can_execute_topics)) throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
-  return { database, capabilities, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
+  const discoveryEnabled = await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id:args.workspaceId,feature:"mfp_discovery"});
+  if (!capabilities.can_view || execute && !(discoveryEnabled ? capabilities.can_request_processing : capabilities.can_execute_topics)) throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
+  return { database, capabilities, discoveryEnabled, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
 }
 export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env, nowMilliseconds = Date.now()) {
   const maximum = Number(env.NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD ?? 0);
@@ -132,7 +133,7 @@ export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempoten
     WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId])).rows[0]?.received === true;
   const preflightRead = await loadWorkspaceAnalysisPreflightForReadV1(() => loadSignalWorkspaceEnginePreflightV1(access));
   const preflight = preflightRead.value;
-  const discoveryEnabled = process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
+  const discoveryEnabled = access.discoveryEnabled;
   const policy = discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
   policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
   const budgets = new Map<string, SignalWorkspaceEngineInterpretationBudgetV1>();
@@ -164,7 +165,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
   if (!requestKeyPattern.test(args.idempotencyKey) || !validateWorkspaceAnalysisRequestV1(args.body)) throw new SignalWorkspaceEngineError("workspace_analysis_request_invalid", 422);
   const access = await authorize(args, true);
   if (args.body.action === "start") {
-    const discoveryEnabled = process.env.NOISIA_MENTION_FACETS_ENABLED === "true";
+    const discoveryEnabled = access.discoveryEnabled;
     const intentDigest = discoveryEnabled ? signalWorkspaceEmbeddingDigestV1({ action: "start",
       embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
       expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: args.body.claude_cap_micro_usd ?? null,

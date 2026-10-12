@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import type { Pool } from "pg";
+import { signalWorkspaceFeatureEnabledV1 } from "./signal-workspace-features";
 import { createSentioneTimestampParser, SentioneTimestampError } from "./sentione-timestamps";
 
 type CsvRow = Record<string, string>;
@@ -228,6 +229,9 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
   async function processSentioneCsvStream(
     params:{stream:ReadableStream<Uint8Array>;sourceTimezone?:string|null},ingestion:SentioneCsvIngestionParams|null
   ) {
+    if (ingestion?.contentRevisionMode === "revise_existing" &&
+      !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:ingestion.workspaceId,feature:"mention_facets"}))
+      throw new Error("content_revision_workspace_not_enabled");
     const startedAt = performance.now();
     let timestamps:TimestampParser|null=null;
     let validationError:SentioneTimestampError|null=null;
@@ -336,7 +340,8 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
         revisionContents.set(mention.externalId,content);
       }
       // Dedup on either unique key before it can blow up a batch insert.
-      if (seenHashes!.has(mention.textHash) || seenExternalIds!.has(mention.externalId)) {
+      if ((ingestion.contentRevisionMode !== "revise_existing" && seenHashes!.has(mention.textHash))
+        || seenExternalIds!.has(mention.externalId)) {
         stats.duplicate_count += 1;
         metrics.classification.duplicate_inside_file+=1;
         return;
@@ -502,7 +507,9 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
       dataSourceId: params.dataSourceId,
       canonicalMentionId: mentionId,
       providerRecordId: m.externalId,
-      externalId: `${params.workspaceId}:${params.dataSourceId}:${m.externalId}`.slice(0, 500),
+      externalId: (params.contentRevisionMode === "revise_existing"
+        ? `revise:${params.workspaceId}:${params.dataSourceId}:${m.externalId}`
+        : `${params.workspaceId}:${m.externalId}`).slice(0, 500),
       sourceSystem: "listening_csv",
       sourceFileId: params.importBatchId,
       textHash: m.textHash,
@@ -548,7 +555,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     // Resolve the pre-attempt state before inserting. This is the boundary that
     // prevents rows inserted below from being mistaken for resumed rows.
     const before=await findCanonicalMentionRows(
-      params.workspaceId,params.importBatchId,params.supersedesImportBatchId ?? null,values
+      params.workspaceId,params.importBatchId,params.supersedesImportBatchId ?? null,values,params.contentRevisionMode
     );
     metrics.query_count+=1;
     const beforeByValue=mapCanonicalRows(values,before,params.contentRevisionMode);
@@ -557,7 +564,7 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     metrics.query_count+=candidates.length>0 ? 1 : 0;
     const insertedIds=new Set(inserted.map((row)=>row.id));
     const after=await findCanonicalMentionRows(
-      params.workspaceId,params.importBatchId,params.supersedesImportBatchId ?? null,values
+      params.workspaceId,params.importBatchId,params.supersedesImportBatchId ?? null,values,params.contentRevisionMode
     );
     metrics.query_count+=1;
     const afterByValue=mapCanonicalRows(values,after,params.contentRevisionMode);
@@ -621,7 +628,8 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     workspaceId: string,
     importBatchId: string,
     supersedesImportBatchId: string | null,
-    values: Array<{ textHash: string; providerRecordId: string;dataSourceId:string }>
+    values: Array<{ textHash: string; providerRecordId: string;dataSourceId:string }>,
+    revisionMode?: "append_only" | "revise_existing"
   ): Promise<InsertedMentionRow[]> {
     const hashes = Array.from(new Set(values.map((value) => value.textHash).filter(Boolean)));
     const providerRecordIds = Array.from(new Set(
@@ -657,11 +665,12 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
         WHERE mention.workspace_id = $1::uuid
           AND mention.canonical_mention_id = mention.id
           AND (
-            mention.text_hash = ANY($3::text[])
-            OR (mention.data_source_id=$6::uuid AND mention.source_system='listening_csv' AND mention.provider_record_id = ANY($4::text[]))
+            ($7::boolean=false AND mention.text_hash = ANY($3::text[]))
+            OR (mention.source_system='listening_csv' AND mention.provider_record_id = ANY($4::text[])
+              AND ($7::boolean=false OR mention.data_source_id=$6::uuid))
           )
       `,
-      [workspaceId,importBatchId,hashes,providerRecordIds,supersedesImportBatchId,values[0]!.dataSourceId]
+      [workspaceId,importBatchId,hashes,providerRecordIds,supersedesImportBatchId,values[0]!.dataSourceId,revisionMode==="revise_existing"]
     );
     return result.rows;
   }
@@ -673,8 +682,9 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
   ) {
     const mapped=new Map<string,InsertedMentionRow>();
     for (const value of values) {
-      const matches=rows.filter((row)=>row.text_hash===value.textHash
-        || (row.data_source_id===value.dataSourceId && row.source_system==="listening_csv" && row.provider_record_id===value.providerRecordId));
+      const matches=rows.filter((row)=>revisionMode==="revise_existing"
+        ? row.data_source_id===value.dataSourceId && row.source_system==="listening_csv" && row.provider_record_id===value.providerRecordId
+        : row.text_hash===value.textHash || row.source_system==="listening_csv" && row.provider_record_id===value.providerRecordId);
       const identities=new Map(matches.map((row)=>[row.id,row]));
       if (identities.size>1) {
         throw new Error(revisionMode === "revise_existing" ? "content_revision_conflict" : "Workspace import canonical keys resolve to different roots.");

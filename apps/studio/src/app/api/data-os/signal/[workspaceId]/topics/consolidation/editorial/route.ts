@@ -1,6 +1,6 @@
 import { loadSignalWorkspaceContextForTopics, requireIdempotencyKey, topicError, topicResponse } from "../../_lib";
 import { loadWorkspaceTopicEditorialForActorV1, requestWorkspaceTopicEditorialForActorV1 } from "@/lib/data-os/signal-topic-editorial-control";
-import { authorizeWorkspaceTopicEditorialBatchV2ForActor, loadWorkspaceTopicEditorialBatchStatusV2ForActor,
+import { authorizeWorkspaceTopicEditorialBatchV2ForActor, quoteWorkspaceTopicEditorialBatchV2ForActor, loadWorkspaceTopicEditorialBatchStatusV2ForActor,
   completeWorkspaceTopicEditorialBatchV2ForActor, canSupersedeFailedLegacyEditorialWithBatchV2ForActor,
   retryWorkspaceTopicEditorialPreparationV2ForActor } from "@/lib/data-os/signal-topic-editorial-batch-control-v2";
 import { editorialUuid, parseWorkspaceTopicEditorialCommandV1 } from "@/lib/data-os/workspace-topic-editorial-contract";
@@ -21,7 +21,7 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     if(v2)return topicResponse(v2);
     const start=await loadSignalTopicEditorialStartV2({database:pool,workspace_id:workspaceId,
       actor_user_id:loaded.session.appUser.id,numeric_execution_id:numericExecutionId});
-    if(start){
+    if(start && !withQuote){
       const failed=start.status==="failed";
       return topicResponse({contract_version:"workspace-topic-editorial-view-v1",workspace_id:workspaceId,
         numeric_execution_id:numericExecutionId,status:failed?"start_failed":"preparing",can_quote:failed,
@@ -42,9 +42,8 @@ export async function GET(request: Request, context: { params: Promise<{ workspa
     if(process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED!=="true"
       ||process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED!=="true")
       return topicResponse({...base,status:"runtime_unavailable",can_quote:false,quote:null});
-    // A quote for every group is now produced in the durable Worker start.
-    // The legacy query parameter must not perform the same heavy work in GET.
-    return topicResponse(base);
+    const quoted=await quoteWorkspaceTopicEditorialBatchV2ForActor({workspaceId,actorUserId:loaded.session.appUser.id,numericExecutionId});
+    return topicResponse({...base,status:quoted.status,can_quote:quoted.status==="ready_to_authorize",quote:quoted.quote});
   }
   catch (error) { return topicError(error, "topic_editorial_status_unavailable"); }
 }
@@ -62,6 +61,10 @@ export async function POST(request: Request, context: { params: Promise<{ worksp
       if(process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_ENABLED!=="true"
         ||process.env.NOISIA_SIGNAL_TOPIC_EDITORIAL_BATCH_PROVIDER_ENABLED!=="true")
         return topicResponse({error:"topic_editorial_runtime_unavailable"},503);
+      const previous=await loadSignalTopicEditorialStartV2({database:pool,workspace_id:workspaceId,
+        actor_user_id:loaded.session.appUser.id,numeric_execution_id:command.numeric_execution_id});
+      if(!previous || previous.idempotency_key!==idempotencyKey)
+        return topicResponse({error:"topic_editorial_confirmation_required"},409);
       const start=await enqueueSignalTopicEditorialStartV2({database:pool,workspace_id:workspaceId,
         actor_user_id:loaded.session.appUser.id,numeric_execution_id:command.numeric_execution_id,
         idempotency_key:idempotencyKey});

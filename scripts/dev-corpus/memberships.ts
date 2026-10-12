@@ -1,6 +1,7 @@
 /** Real-provider demo tick. Root serializes execution on the verified private MFP runner. */
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { main, openDatabase } from "./guard.mjs";
+import { loadMfpEvalIdentity } from "../eval/fixture-identity";
 import {
   loadConceptMembershipsStatusV1,
   requestConceptMembershipsV1,
@@ -10,20 +11,14 @@ import {
   createConceptMembershipRuntimeStoreV1,
 } from "../../services/workers/src/workers/signal-concept-membership-batch";
 import { createAnthropicMessageBatchesClient } from "../../services/workers/src/providers/anthropic-message-batches";
-await main(async () => {
+void main(async () => {
   if (
     !process.argv.includes("--real") ||
     process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED !== "true" ||
     process.env.NOISIA_CONCEPT_MEMBERSHIP_PROVIDER_ENABLED !== "true"
   )
     throw new Error("mfp_membership_provider_disabled");
-  const identity = JSON.parse(
-      await readFile(
-        process.env.NOISIA_MFP_IDENTITY_FILE ??
-          ".data/dev-corpus/identity.json",
-        "utf8",
-      ),
-    ),
+  const identity = await loadMfpEvalIdentity(),
     pool = await openDatabase();
   try {
     const access = {
@@ -42,6 +37,8 @@ await main(async () => {
     );
     const given = process.argv.find((a) => a.startsWith("--run-id="))?.slice(9),
       key = process.argv.find((a) => a.startsWith("--key="))?.slice(6);
+    const effort = process.argv.find((a) => a.startsWith("--effort="))?.slice(9);
+    if (effort && effort !== "low" && effort !== "medium") throw new Error("mfp_membership_effort_invalid");
     if (!given && !key) throw new Error("mfp_membership_key_required");
     const run = given
       ? { run_id: given }
@@ -49,6 +46,7 @@ await main(async () => {
           ...access,
           idempotency_key: key!,
           provider_available: true,
+          evaluation_effort: effort as "low" | "medium" | undefined,
           full_recalculation: process.argv.includes("--full"),
         });
     const result = await runConceptMembershipTickV1({

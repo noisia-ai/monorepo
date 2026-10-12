@@ -12,12 +12,19 @@ export type AnthropicBatchRequest = {
 
 export type AnthropicBatchState = {
   id: string;
+  created_at?: string;
   processing_status: "in_progress" | "canceling" | "ended";
   request_counts: {
     processing: number; succeeded: number; errored: number; canceled: number; expired: number;
   };
   ended_at: string | null;
   results_url: string | null;
+};
+
+export type AnthropicBatchPage = {
+  data: AnthropicBatchState[];
+  has_more: boolean;
+  last_id: string | null;
 };
 
 export type AnthropicBatchItem = {
@@ -102,6 +109,34 @@ export function createAnthropicMessageBatchesClient(options: {
   }
 
   return {
+    async list(afterId?: string): Promise<AnthropicBatchPage> {
+      const suffix = afterId ? `?limit=100&after_id=${providerId(afterId)}` : "?limit=100";
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const response = await fetchImpl(`${API_ROOT}${suffix}`, {
+          method: "GET", headers, redirect: "error", signal: controller.signal,
+        });
+        if (!response.ok) {
+          await response.body?.cancel();
+          throw new AnthropicBatchTransportError(`batch_http_${response.status}`, "read_failed", response.status);
+        }
+        const value: unknown = JSON.parse(await readBoundedText(response, MAX_CONTROL_BYTES));
+        if (!object(value) || !Array.isArray(value.data) || typeof value.has_more !== "boolean"
+          || !(value.last_id === null || typeof value.last_id === "string")) throw new Error("invalid_batch_page");
+        const data = value.data.map(parseState);
+        if (data.some((batch) => !batch.created_at || !Number.isFinite(Date.parse(batch.created_at))))
+          throw new Error("invalid_batch_page_date");
+        if (value.has_more && (!value.last_id || !/^msgbatch_[a-zA-Z0-9_-]+$/u.test(value.last_id)))
+          throw new Error("invalid_batch_page_cursor");
+        return { data, has_more: value.has_more, last_id: value.last_id };
+      } catch (error) {
+        if (error instanceof AnthropicBatchTransportError) throw error;
+        throw new AnthropicBatchTransportError("batch_list_transport_or_response_invalid", "read_failed");
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     async create(requests: readonly AnthropicBatchRequest[]): Promise<AnthropicBatchState> {
       if (requests.length === 0 || requests.length > MAX_REQUESTS) {
         throw new AnthropicBatchTransportError("batch_request_count_invalid", "not_submitted");
@@ -207,7 +242,8 @@ function parseState(value: unknown): AnthropicBatchState {
     || !["in_progress", "canceling", "ended"].includes(String(value.processing_status))
     || !object(value.request_counts)
     || !(value.ended_at === null || typeof value.ended_at === "string")
-    || !(value.results_url === null || typeof value.results_url === "string")) throw new Error("invalid_batch");
+    || !(value.results_url === null || typeof value.results_url === "string")
+    || !(value.created_at === undefined || typeof value.created_at === "string")) throw new Error("invalid_batch");
   // Do not allow providerId's read error to misclassify an ambiguous POST receipt.
   if (!/^msgbatch_[a-zA-Z0-9_-]+$/u.test(value.id)) throw new Error("invalid_batch_id");
   for (const key of ["processing", "succeeded", "errored", "canceled", "expired"]) {

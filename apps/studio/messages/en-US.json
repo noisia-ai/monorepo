@@ -123,6 +123,7 @@
       "subindustryPlaceholder": "Add one or more: Pet Food, Marketplace, Accessories...",
       "subindustryDisabled": "Select an industry first",
       "timezone": "Brand timezone",
+      "mfpOptIn": "Enable mention facets, discovery, and concept membership for this workspace",
       "timezoneHelp": "Search for a city or region. Signal and reports use this timezone for their periods.",
       "timezoneSearch": "Search city or timezone",
       "timezoneEmpty": "No timezones match your search.",
@@ -3196,7 +3197,7 @@
         "numericProgress": "Preparing {done, number} of {total, number} groups",
         "unavailable": "Unavailable",
         "automation": "You will not need to approve groups one by one. Claude will propose Topics, Narratives and Noise across the full census; you can then edit the resulting catalogue.",
-        "numericFree": "The review follows this brand's processing policy. You do not need to quote or approve each run; usage and errors remain visible as it progresses.",
+        "numericFree": "View the estimate and confirm the paid editorial review. Numeric preparation does not use providers; review usage and errors remain visible as it progresses.",
         "preparationGroups": "{count, plural, =0 {Every group has a prepared numeric dossier.} one {# group remains to be prepared.} other {# groups remain to be prepared.}}",
         "reviewGroups": "Editorial review will cover all {count, number} prepared groups.",
         "prepare": "Prepare Topics review",
@@ -3232,6 +3233,12 @@
           "failed": "Preparation did not finish. The analysis and source groups are preserved."
         },
         "editorial": {
+          "estimateExpired": "The estimate expired. Select Refresh status and request a new estimate before starting.",
+          "estimate": "View editorial estimate",
+          "estimated": "Estimate: {amount} for {groups} groups",
+          "estimateHint": "Includes screening and the three global stages with expected output. This is a forecast: actual cost depends on usage and is recorded at completion.",
+          "confirmEstimate": "I confirm starting the paid editorial review with this estimate.",
+          "loading": "Loading editorial status or estimate. This read may take up to a minute.",
           "title": "Topics editorial review",
           "body": "The full review proposes Topics, Narratives and Noise from the groups and their evidence.",
           "maximum": "Authorized cap",
@@ -4567,6 +4574,36 @@
     "goSignal": "Go to Signal"
   },
   "Mfp": {
+    "loadingPopulation": "Loading population and saved results. The first read can take up to two minutes; you can keep using the page.",
+    "hybridReview": {
+      "title": "Results requiring review",
+      "first": "Initial evaluation",
+      "verification": "Citation verification",
+      "withoutCitation": "No verified literal citation."
+    },
+    "configuration": {
+      "title": "Membership method",
+      "body": "Choose how mentions are evaluated against each concept. Saving the method does not start processing or spending. The hybrid method is experimental.",
+      "refresh": "Refresh",
+      "route": "Method",
+      "standard": "Standard",
+      "hybrid_h1": "Experimental hybrid",
+      "exposure": "{count} calls still have unconfirmed results; reserved cost: {cost}.",
+      "confirm": "I understand that returning to the standard method does not cancel these calls or remove their cost exposure.",
+      "readOnly": "Your access allows viewing the method; changing it requires editing permission.",
+      "save": "Save method",
+      "loading": "Loading method…",
+      "unavailable": "Could not read or save the method. Refresh its state before trying again.",
+      "changed": "Someone else changed the method. Refresh its state and choose again.",
+      "confirmationRequired": "Confirm that pending calls retain their cost exposure before returning to the standard method."
+    },
+    "decisionOrigin": {
+      "label": "Who made this decision?",
+      "choose": "Select the origin",
+      "human_ui": "Direct human review",
+      "agent_assisted": "Agent-assisted decision",
+      "unknown": "Correction with unrecorded origin"
+    },
     "showAllMentions": "Show all mentions",
     "fullEstimate": "Full recalculation estimate",
     "journey": {
@@ -4592,6 +4629,7 @@
       "start": "Calculate full membership"
     },
     "exceptions": {
+      "reviewHybrid": "Review disagreements",
       "title": "Results and exceptions",
       "body": "Abstention, provider refusal and technical error are separate states. Correct only the mentions you reviewed.",
       "review": "Review insufficient evidence",
@@ -4648,6 +4686,7 @@
       "off_topic": "Off topic"
     },
     "verdicts": {
+      "review_required": "Review required",
       "belongs": "Belongs",
       "not_belongs": "Does not belong",
       "insufficient": "Insufficient evidence",
@@ -4674,27 +4713,31 @@
       "all_conversations": "All conversations"
     },
     "errors": {
+      "busy": "The read is busy. Select Refresh to retry.",
       "forbidden": "Access changed. Reload the page to review your permissions.",
       "preparation": "Prepare mentions in Data before continuing.",
       "policy": "The processing policy needs review. Contact your organization administrator.",
       "provider": "Processing is not available yet. You can review and correct existing results.",
+      "unresolvable": "The provider can no longer verify this uncertain call. The run closed without resending it; review the receipt and request a new run if needed.",
+      "usageInvalid": "The provider responded, but its billable usage could not be verified. The run closed without repeating the call; review the receipt.",
       "stale": "The source or definition changed. Refresh results before continuing.",
       "active": "A run is already active. Refresh to view its progress.",
       "invalid": "Review correction values and save again.",
+      "routeUpgrade": "This experimental method needs an update before another analysis. In Access and settings, save Standard, then select and save Experimental hybrid again.",
       "request": "The request could not be completed. Refresh or recover the same request if its response is pending."
     },
     "refresh": "Refresh",
     "experimental": "Experimental results: semantic evaluation is pending.",
     "estimated": "Next run estimate",
     "actual": "Latest run actual cost",
-    "reserved": "Reserved cost",
+    "reserved": "Maximum temporary reservation",
     "strictMaximum": "Strict maximum",
     "noMaximum": "No strict maximum",
     "staleCount": "Facets are outdated for {count} mentions.",
     "progress": "{done} of {total} roots with a semantic state",
     "recoverContext": "Request recalculation with current context",
     "confirmFull": "Confirm full recalculation",
-    "estimateNotice": "The estimate is indicative. Only a configured strict maximum limits spending; each run records its actual cost.",
+    "estimateNotice": "The estimate is indicative. The temporary reservation covers the maximum of pending calls and is not settled spending. Only a configured strict maximum limits spending; each run records its actual cost.",
     "dimension": "Dimension",
     "filter": "Filter",
     "all": "All",
@@ -4713,6 +4756,8 @@
     "firstPage": "First page",
     "nextPage": "Next page",
     "contextReview": "Entities changed. Review this correction against the current context.",
+    "overrideReview": "The previous correction belongs to another definition or text version. Review it before applying it again.",
+    "pendingContextReview": "Full context review pending. This facet remains visible until recalculation is confirmed.",
     "openMention": "Open mention",
     "openOriginal": "Open original source",
     "withheld": "Text is unavailable under the current source permissions.",

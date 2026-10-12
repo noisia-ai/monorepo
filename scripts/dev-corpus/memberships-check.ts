@@ -247,6 +247,12 @@ await main(async () => {
       results_url: null,
     });
     const provider = {
+      async list(afterId?: string) {
+        const ids = [...batches.keys()];
+        const start = afterId ? ids.indexOf(afterId) + 1 : 0;
+        const page = ids.slice(start).map(state);
+        return { data: page, has_more: false, last_id: page.at(-1)?.id ?? null };
+      },
       async create(requests: any[]) {
         sends++;
         const id = `fake-${sends}`;
@@ -440,6 +446,7 @@ await main(async () => {
           root_id: root.root_id,
           concept_key: target.concept_key,
           verdict: "not_belongs",
+          decided_via: "agent_assisted",
         },
       ],
     });

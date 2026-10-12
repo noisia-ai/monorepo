@@ -23,6 +23,7 @@ export * from "./sentione-timestamps";
 export * from "./signal-topic-rule-suggestion-execution";
 export * from "./signal-topic-catalog";
 export * from "./signal-workspace-capabilities";
+export * from "./signal-workspace-features";
 export * from "./signal-workspace-corpus-readiness";
 export * from "./admin-workspace-corpus-summary";
 export * from "./signal-workspace-corpus-preparation";
@@ -107,5 +108,9 @@ export * from './signal-mention-facets';
 export * from './signal-labeling-policy-provisioning';
 
 export * from "./signal-concept-memberships";
+export * from "./signal-hybrid-membership";
+export * from "./signal-hybrid-runs";
 
 export * from "./signal-workspace-incremental-candidates";
+
+export * from "./signal-hybrid-citation-runs";

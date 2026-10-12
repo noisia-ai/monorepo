@@ -1,6 +1,5 @@
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
 import { resolve, basename } from 'node:path';
-import { createHash } from 'node:crypto';
 import { parseCsv, csv } from './csv.mjs';
 import { matchingEntities, hash } from './gold.mjs';
 import { main } from './guard.mjs';
@@ -17,8 +16,14 @@ await main(async()=>{
     header=parsed.header;provenance.push({file:basename(file),sha256:hash(raw),rows:parsed.records.length});
     for(const row of parsed.records){
       if(!row['Content of posts']?.trim())continue;
-      const key=hash(row['Content of posts'].trim());
-      if(!unique.has(key))unique.set(key,{row,key});
+      const key=String(row.id??'').trim();
+      if(!key)throw new Error('mfp_sample_provider_id_missing');
+      const prior=unique.get(key);
+      if(prior){
+        if(JSON.stringify(prior.row)!==JSON.stringify(row))throw new Error('mfp_sample_provider_id_conflict');
+        continue;
+      }
+      unique.set(key,{row,key});
     }
   }
   const rows=[...unique.values()].sort((a,b)=>a.key.localeCompare(b.key));
@@ -34,7 +39,7 @@ await main(async()=>{
   await writeFile(`${output}/load1.csv`,csv(header,load1.map(item=>item.row)),{mode:0o600,flag:'wx'});
   await writeFile(`${output}/load2.csv`,csv(header,[...novel.map(item=>item.row),...load1.slice(0,30).map(item=>item.row),...revisions]),{mode:0o600,flag:'wx'});
   await writeFile(`${output}/sampling-manifest.json`,JSON.stringify({version:'mfp-sampling-v1',source_files:provenance,
-    sampling:'content-sha256-order-with-lexical-enrichment',load1:1000,load2:{new:200,duplicate:30,modified_fixture:20},
+    sampling:'provider-id-order-with-lexical-enrichment',load1:1000,load2:{new:200,duplicate:30,modified_fixture:20},
     modified_fixture_ids:revisions.map(row=>row.id),gold_comparisons:'unverified_candidates',candidate_count:candidates.length,
     note:'Twenty revised rows deliberately append a fixture marker; they are development edits, not provider-original text.'},null,2),{mode:0o600,flag:'wx'});
   console.log(JSON.stringify({status:'sampled',load1:1000,load2:250,comparison_candidates:candidates.length,human_comparisons_verified:0}));

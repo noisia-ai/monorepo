@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { Job } from "bullmq";
 import {
   groupMembershipInputsV1,
-  buildMembershipRequestV1,
+  buildMembershipRequestV1, buildHybridCitationRequestV1, parseHybridCitationGroupV1,
   parseMembershipGroupV1,
   parseAnthropicResponseV1,
   anthropicUsageV1,
@@ -16,6 +16,7 @@ import {
 } from "@noisia/query-engine";
 import {
   createConceptMembershipStoreV1,
+  signalWorkspaceFeatureEnabledV1,
   type ConceptMembershipStoreV1,
   type LabelingRunV1,
   type MembershipRunV1,
@@ -29,9 +30,12 @@ import {
   type AnthropicBatchRequest,
 } from "../providers/anthropic-message-batches";
 import { createWorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
+import { readSignalLabelingReceiptV1 } from "./signal-labeling-receipt-storage";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readMfpInFlightPages } from "./signal-labeling-parallelism";
+import { reconcileUnknownBatchCallsV1 } from "./signal-batch-unknown-reconciliation";
 export const SIGNAL_CONCEPT_MEMBERSHIP_JOB_V1 = "signal-concept-membership-v1";
 type Provider = ReturnType<typeof createAnthropicMessageBatchesClient>;
 const zeroUsage = (): LlmUsageV1 => ({
@@ -50,7 +54,7 @@ export function membershipCallProposalV1(
   retryDepth = 0,
   parent: string | null = null,
 ): LabelingCallProposalV1<MembershipInputV1> {
-  const request = buildMembershipRequestV1(
+  const request = (run.identity.params.hybrid_citation_quality === true ? buildHybridCitationRequestV1 : buildMembershipRequestV1)(
       inputs,
       run.context,
       (run as MembershipRunV1).membership_snapshot.concepts,
@@ -107,29 +111,29 @@ export async function runConceptMembershipTickV1(args: {
   const { store, provider } = args,
     run = await store.claim(args.run_id);
   if (!run) return { status: "not_claimed" };
+  const retryLimit=run.identity.params.hybrid_citation_quality===true?2:8;
   try {
     let calls = await store.calls(run);
     if (calls.some((c) => c.status === "unknown") && !run.error_code) {
       await store.fail(run, "labeling_outcome_unknown");
       run.error_code = "labeling_outcome_unknown";
-      calls = await store.calls(run);
     }
-    if (
-      !run.error_code &&
-      !calls.some((c) =>
-        ["reserved", "submitting", "submitted"].includes(c.status),
-      )
-    ) {
-      const inputs = await store.inputs(run);
-      if (inputs.length) {
-        await store.reserve(
-          run,
-          groupMembershipInputsV1(inputs).map((group) =>
-            membershipCallProposalV1(run, group),
-          ),
-        );
-        calls = await store.calls(run);
+    if (calls.some((c) => c.status === "unknown")) {
+      const reconciliation=await reconcileUnknownBatchCallsV1(run, calls, store, provider);
+      calls = await store.calls(run);
+      const current=await store.refresh(run);
+      run.error_code=current.error_code;
+      if(reconciliation.released)return {status:await store.finish(run)};
+    }
+    if (!run.error_code && !calls.some((c) =>
+      ["reserved", "submitting", "submitted"].includes(c.status))) {
+      for (let page = 0; page < readMfpInFlightPages(); page++) {
+        const inputs = await store.inputs(run);
+        if (!inputs.length) break;
+        await store.reserve(run, groupMembershipInputsV1(inputs).map((group) =>
+          membershipCallProposalV1(run, group)));
       }
+      calls = await store.calls(run);
     }
     const reserved = run.error_code
       ? []
@@ -165,7 +169,7 @@ export async function runConceptMembershipTickV1(args: {
         calls
           .filter(
             (c) =>
-              c.status === "submitted" && c.provider_batch_id && !c.raw_body,
+              c.status === "submitted" && c.provider_batch_id && !c.raw_body && !c.results_applied,
           )
           .map((c) => c.provider_batch_id!),
       ),
@@ -264,15 +268,16 @@ export async function runConceptMembershipTickV1(args: {
         refusal_category: parsed.refusal_category,
       });
       if (parsed.status === "refused") {
-        apply.push({
+        if (call.inputs.length > 1 && !run.error_code && call.retry_depth < retryLimit) {
+          const half = Math.ceil(call.inputs.length / 2);
+          for (const split of [call.inputs.slice(0, half), call.inputs.slice(half)])
+            retry.push(membershipCallProposalV1(run, split, call.retry_depth + 1, call.id));
+          apply.push({ call, results: [] });
+        } else apply.push({
           call,
-          results: resultsFor(
-            call,
-            run,
-            "refused",
-            undefined,
-            parsed.refusal_category,
-          ),
+          results: call.inputs.length === 1
+            ? resultsFor(call, run, "refused", undefined, parsed.refusal_category)
+            : resultsFor(call, run, "error", "refusal_requires_authority"),
         });
         continue;
       }
@@ -286,14 +291,16 @@ export async function runConceptMembershipTickV1(args: {
       const group =
         parsed.status === "split"
           ? { split: true, results: [] }
-          : parseMembershipGroupV1(parsed.text!, call.inputs);
+          : run.identity.params.hybrid_citation_quality === true
+            ? parseHybridCitationGroupV1(parsed.text!,call.inputs)
+            : parseMembershipGroupV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
       if (group.split) {
         if (run.error_code) {
           apply.push({
             call,
             results: resultsFor(call, run, "error", "retry_requires_authority"),
           });
-        } else if (call.inputs.length > 1 && call.retry_depth < 8) {
+        } else if (call.inputs.length > 1 && call.retry_depth < retryLimit) {
           const half = Math.ceil(call.inputs.length / 2);
           for (const split of [
             call.inputs.slice(0, half),
@@ -314,6 +321,18 @@ export async function runConceptMembershipTickV1(args: {
             results: resultsFor(call, run, "error", "incomplete_single_root"),
           });
       } else {
+        for (const ordinal of group.retry_ordinals ?? []) {
+          if (run.error_code || call.retry_depth >= retryLimit) {
+            group.results.push(...resultsFor(
+              {...call, inputs: [call.inputs[ordinal]!]}, run, "error",
+              run.error_code ? "retry_requires_authority" : "incomplete_single_root",
+            ));
+          } else {
+            retry.push(membershipCallProposalV1(
+              run, [call.inputs[ordinal]!], call.retry_depth + 1, call.id,
+            ));
+          }
+        }
         apply.push({ call, results: group.results });
       }
     }
@@ -336,7 +355,7 @@ export async function runConceptMembershipTickV1(args: {
   } catch (error) {
     const code = error instanceof Error ? error.message : "";
     if (
-      /^labeling_(concepts_changed|context_changed|preparation_changed|policy_changed|forbidden|cap_exhausted|daily_cap_exhausted)$/u.test(
+      /^labeling_(concepts_changed|context_changed|preparation_changed|policy_changed|forbidden|cap_exhausted|daily_cap_exhausted|raw_receipt_invalid)$/u.test(
         code,
       )
     )
@@ -373,6 +392,8 @@ export function createConceptMembershipRuntimeStoreV1(
         await rm(directory, { recursive: true, force: true });
       }
     },
+    loadRaw: async (args) => readSignalLabelingReceiptV1({ storage, workspace_id: args.workspace_id,
+      run_id: args.run_id, storage_key: args.storage_key, raw_sha256: args.raw_sha256, size_bytes: args.size_bytes }),
   });
 }
 export async function signalConceptMembershipJobV1(
@@ -385,6 +406,10 @@ export async function signalConceptMembershipJobV1(
   )
     throw new Error("labeling_provider_disabled");
   const { pool } = await import("../db/client");
+  const workspace = (await pool.query<{workspace_id:string}>(
+    "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='membership' AND membership_snapshot->>'hybrid_stage' IS NULL",[job.data.run_id])).rows[0];
+  if (!workspace || !await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.workspace_id,feature:"concept_membership"}))
+    throw new Error("membership_workspace_not_enabled");
   const store = options.store ?? createConceptMembershipRuntimeStoreV1(pool);
   return runConceptMembershipTickV1({
     run_id: job.data.run_id,
@@ -416,7 +441,7 @@ export function startConceptMembershipDrainerV1() {
       if (!exists) return;
       const rows = (
         await pool.query(
-          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='membership' AND l.provider='anthropic' AND r.status IN('queued','running') AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
+          `SELECT r.id FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id WHERE r.kind='membership' AND r.membership_snapshot->>'hybrid_stage' IS NULL AND l.provider='anthropic' AND (r.status IN('queued','running') OR r.status='failed' AND r.error_code='labeling_outcome_unknown' AND EXISTS(SELECT 1 FROM signal_labeling_calls c WHERE c.run_id=r.id AND c.status='unknown')) AND NOT r.waiting_full_confirmation AND r.next_poll_at<=now() AND (r.lease_until IS NULL OR r.lease_until<now()) ORDER BY r.created_at LIMIT 4`,
         )
       ).rows;
       for (const row of rows)

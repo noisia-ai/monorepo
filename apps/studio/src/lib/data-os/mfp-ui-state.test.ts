@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {executeMfpIntent,mfpContextRecovery,mfpIntent,mfpSelectionTransition} from "./mfp-ui-state";
+import {executeMfpIntent,mfpContextRecovery,mfpHumanMembershipCorrection,mfpIntent,mfpSelectionTransition} from "./mfp-ui-state";
 import type {MfpRun} from "./mfp-ui";
+
+test('bulk UI correction preserves the selected roots and always submits direct human provenance',async()=>{
+  const intent=mfpIntent(mfpHumanMembershipCorrection(['root-a','root-b'],'concept-a','not_belongs'),'PATCH','unused');
+  let submitted:Record<string,unknown>|undefined;
+  await executeMfpIntent('/memberships',intent,async(_url,init)=>{
+    submitted=JSON.parse(String(init?.body));return Response.json({status:'corrected'});
+  });
+  assert.deepEqual(submitted,{overrides:[
+    {root_id:'root-a',concept_key:'concept-a',verdict:'not_belongs',decided_via:'human_ui'},
+    {root_id:'root-b',concept_key:'concept-a',verdict:'not_belongs',decided_via:'human_ui'},
+  ]});
+});
 
 test("an ambiguous preview A is recovered with its original snapshot after the editor changes to B",async()=>{
   const editor={label:"A",definition:"Definition A",inclusion:["A only"]};

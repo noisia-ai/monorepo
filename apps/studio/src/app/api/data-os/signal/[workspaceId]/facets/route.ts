@@ -1,5 +1,6 @@
 import { loadSignalWorkspaceContextForTopics } from "../topics/_lib";
 import {
+  loadMentionFacetsAvailabilityV1,
   loadMentionFacetsStatusForActorV1,
   loadMentionFacetBrowserForActorV1,
   overrideMentionFacetsForActorV1,
@@ -75,7 +76,7 @@ function errorResponse(error: unknown) {
       error:
         error instanceof SignalLabelingError
           ? error.code
-          : "facets_unavailable",
+          : error instanceof Error && error.message === "population_read_busy" ? "population_read_busy" : "facets_unavailable",
     },
     {
       status: error instanceof SignalLabelingError ? error.status : 503,
@@ -101,14 +102,14 @@ export async function GET(
       }).safeParse(Object.fromEntries([...query].filter(([key]) => key !== "view")));
       if (!parsed.success) return Response.json({error:"facets_filter_invalid"},{status:400,headers});
       return Response.json(await loadMentionFacetBrowserForActorV1({workspace_id:loaded.workspace.id,
-        actor_user_id:loaded.session.appUser.id,...parsed.data}),{headers});
+        actor_user_id:loaded.session.appUser.id,...parsed.data}, request.signal),{headers});
     }
     const status = await loadMentionFacetsStatusForActorV1({
         workspace_id: loaded.workspace.id,
         actor_user_id: loaded.session.appUser.id,
-      });
-    return Response.json({...status, enabled:process.env.NOISIA_MENTION_FACETS_ENABLED === "true",
-      provider_available:process.env.NOISIA_MENTION_FACETS_ENABLED === "true" && process.env.NOISIA_MENTION_FACETS_PROVIDER_ENABLED === "true"}, {headers});
+      }, request.signal);
+    const availability = await loadMentionFacetsAvailabilityV1(loaded.workspace.id);
+    return Response.json({...status, ...availability}, {headers});
   } catch (error) { return errorResponse(error); }
 }
 export async function POST(

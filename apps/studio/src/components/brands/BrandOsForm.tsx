@@ -35,8 +35,9 @@ const industryOptions = INDUSTRY_OPTIONS.map((industry) => ({
   keywords: INDUSTRY_SEARCH_ALIASES.get(industry) ?? []
 }));
 
-export function BrandOsForm({ clientContext }: {
+export function BrandOsForm({ clientContext, mfpOptInAllowed = false }: {
   clientContext?: { organizationId: string; organizationName: string };
+  mfpOptInAllowed?: boolean;
 }) {
   const t = useTranslations("BrandOs.form");
   const locale = useLocale();
@@ -53,6 +54,7 @@ export function BrandOsForm({ clientContext }: {
   const [competitorValues, setCompetitorValues] = useState<string[]>([]);
   const [knowledgeNotesValue, setKnowledgeNotesValue] = useState("");
   const [timezoneValue, setTimezoneValue] = useState(DEFAULT_WORKSPACE_TIMEZONE);
+  const [mfpOptIn, setMfpOptIn] = useState(false);
   useEffect(() => { setTimezoneValue(browserWorkspaceTimezone()); }, []);
   const [aiDraft, setAiDraft] = useState<BrandIntakeAiDraft | null>(null);
   const [aiStatus, setAiStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -163,7 +165,8 @@ export function BrandOsForm({ clientContext }: {
     };
     const requestPayload = clientContext ? payload : {
       ...payload,
-      organization_name: organizationValue.trim()
+      organization_name: organizationValue.trim(),
+      ...(mfpOptInAllowed && mfpOptIn ? {mfp_opt_in:true} : {})
     };
 
     try {
@@ -242,6 +245,11 @@ export function BrandOsForm({ clientContext }: {
           <WorkspaceTimezoneField value={timezoneValue} onChange={setTimezoneValue} surface="study" disabled={isSubmitting} />
           <div aria-hidden="true" />
         </div>
+        {mfpOptInAllowed ? <label className="admin-checkbox">
+          <input type="checkbox" checked={mfpOptIn} disabled={isSubmitting}
+            onChange={event=>setMfpOptIn(event.target.checked)} />
+          <span>{t("mfpOptIn")}</span>
+        </label> : null}
 
         <div className="new-study-grid">
           <TokenCatalogField

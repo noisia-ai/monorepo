@@ -1,4 +1,5 @@
 import { SIGNAL_CONCEPT_MEMBERSHIP_JOB_V1, signalConceptMembershipJobV1, startConceptMembershipDrainerV1 } from "../workers/signal-concept-membership-batch";
+import { startHybridMembershipDrainerV1 } from "../workers/signal-hybrid-membership";
 import { SIGNAL_MENTION_FACETS_JOB_V1, signalMentionFacetsJobV1, startMentionFacetsDrainerV1 } from '../workers/signal-mention-facets-batch';
 import { SIGNAL_MENTION_FACETS_JEV_JOB_V1, signalMentionFacetsJevJobV1, startMentionFacetsJevDrainerV1 } from '../workers/signal-mention-facets-jev';
 import { SIGNAL_WORKSPACE_INCREMENTAL_EDITORIAL_EVIDENCE_JOB_V1 } from '@noisia/db';
@@ -149,6 +150,7 @@ export function startDataOsWorker() {
   const facetsDrainer = startMentionFacetsDrainerV1();
   const facetsJevDrainer = startMentionFacetsJevDrainerV1();
   const membershipDrainer = startConceptMembershipDrainerV1();
+  const hybridMembershipDrainer = startHybridMembershipDrainerV1();
   const batchDrainer = startSignalWorkspaceInterestDecisionBatchDrainerV1();
   const preparationDrainer = startSignalWorkspaceInterestDecisionPreparationDrainerV1();
   const materializationDrainer = startSignalWorkspaceInterestDecisionMaterializationDrainerV1();
@@ -160,6 +162,7 @@ export function startDataOsWorker() {
     void facetsDrainer.close();
     void facetsJevDrainer.close();
     void membershipDrainer.close();
+    void hybridMembershipDrainer.close();
     void batchDrainer.close();
     void preparationDrainer.close();
     void materializationDrainer.close();

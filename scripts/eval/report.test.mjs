@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { binary, categorical, reliability, wilson } from './metrics.ts';
 import { buildReport, renderMarkdown } from './report.ts';
+import { buildHybridC2 } from './hybrid-c2.ts';
 import { main } from './facets-report.ts';
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 const entity = (entity_id = 'private-entity', salience = 'main') => ({ entity_id, kind: entity_id === 'private-entity' ? 'primary_brand' : 'competitor', salience });
@@ -16,7 +17,7 @@ function fixture() {
   const dim = value => ({ value, confidence: 'high', abstained: false });
   const prediction_rows = gold.map(g => ({ root_id: g.root_id, input_digest: g.input_digest, status: 'labeled', facets: { entities: dim(g.entities), unrelated_reason: null, voice: dim(g.voice), act: dim(g.act), spam_or_bot: dim(false), language: dim('es'), asunto: dim(g.asunto) }, memberships: g.memberships }));
   const variant = { variant: 'A_facets_adaptive_low', labeler_digest: 'private-labeler', prediction_rows, costs: { settled_usd: 0.15, reserved_usd: 0, unknown_calls: 0, mentions_attempted: 150, wall_ms: 1000 } };
-  const bundle = { contract_version: 'mfp-eval-v1', human_gold: { origin: 'human', reviewer_confirmed: true }, variants: [variant] };
+  const bundle = { contract_version: 'mfp-eval-v1', human_gold: { origin: 'ai_assisted_founder_reviewed', reviewer_confirmed: true, assistant_model: 'independent-opus', reviewed_rows: 15, corrected_rows: 2 }, variants: [variant] };
   return { selection, gold, bundle, variant };
 }
 test('independent binary counts and Wilson examples, including zero denominators', () => {
@@ -28,6 +29,9 @@ test('independent binary counts and Wilson examples, including zero denominators
 test('categorical macro includes prediction-only classes and keeps technical failures', () => {
   const m = categorical([{ truth: 'a', predicted: 'a' }, { truth: 'a', predicted: 'b' }, { truth: 'a', predicted: 'error' }, { truth: 'a', predicted: 'abstained' }], ['a', 'b', 'absent']);
   close(m.accuracy, 0.25); close(m.macro_f1, 0.2); close(m.abstention_rate, 0.25);
+  close(m.accuracy_wilson.low,wilson(1,4).low);
+  close(m.per_class.a.recall_wilson.high,wilson(1,4).high);
+  assert.equal(m.per_class.absent.precision_wilson,null);
   assert.equal(m.confusion.a.error, 1); assert.equal(m.per_class.absent.f1, null);
 });
 test('ECE known example and p=1 boundary', () => {
@@ -41,11 +45,13 @@ test('no human gold gives no evaluated metrics, winner, or approval', () => {
   assert.equal(r.status, 'no_evaluado'); assert.equal(r.variants[0].dimensions, null); assert.equal(r.variants[0].entities, null);
   assert.equal(r.approval, 'requires_founder_confirmation');
 });
-test('fixed source/split and human origin reject substitute gold; scarce comparisons remain usable', () => {
+test('fixed source/split and truthful assisted gold provenance reject substitutes', () => {
   const f = fixture();
   assert.equal(buildReport(f.selection, f.gold, f.bundle, 'dev').selection.comparison_target_met, false);
   f.gold[0].partition = 'test'; assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_gold_selection_changed/);
-  f.gold[0].partition = 'dev'; f.bundle.human_gold.origin = 'model'; assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_human_gold_confirmation_required/);
+  f.gold[0].partition = 'dev'; f.bundle.human_gold.origin = 'model'; assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_gold_provenance_required/);
+  f.bundle.human_gold.origin = 'ai_assisted_founder_reviewed'; f.bundle.human_gold.reviewed_rows = 1; f.bundle.human_gold.corrected_rows = 2;
+  assert.throws(() => buildReport(f.selection, f.gold, f.bundle, 'dev'), /eval_gold_provenance_required/);
 });
 test('entity multi-label counts, kind/salience, and missing prediction retain FN', () => {
   const f = fixture(); f.gold[0].entities = [entity(), entity('private-competitor')];
@@ -64,6 +70,81 @@ test('membership never interprets absent/error/insufficient as semantic negative
   const m = buildReport(f.selection, f.gold, f.bundle, 'dev').variants[0].memberships[0];
   assert.equal(m.tp, 87); assert.equal(m.fn, 3); assert.equal(m.errors.false_negative_semantic, 0);
   assert.equal(m.errors.error, 1); assert.equal(m.errors.pending, 1); close(m.insufficient_rate, 1 / 90);
+  assert.equal(m.errors.false_negative_without_positive_judgment, 3);
+});
+test('judge comparison separates A-evaluated, own-gate pipelines, and common-emitted roots', () => {
+  const f = fixture();
+  const a = structuredClone(f.variant); a.variant = 'A_judge_low';
+  const bFacet = structuredClone(f.variant); bFacet.variant = 'B_facets_jev';
+  bFacet.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1,
+    values: { entity: 0.5, salience: 0.5, spam: 0.5, minimum_choice_confidence: 0 } };
+  const b = structuredClone(f.variant); b.variant = 'B_judge_jev';
+  b.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1, values: { membership: 0.4 } };
+  const key = 'private-concept-one';
+  a.prediction_rows[91].memberships[key] = 'pending';
+  a.prediction_rows[92].memberships[key] = 'error';
+  a.prediction_rows[93].memberships[key] = 'insufficient';
+  a.prediction_rows[94].memberships[key] = 'not_belongs';
+  b.prediction_rows[94].memberships[key] = 'not_belongs';
+  for (const index of [92,94]) {
+    bFacet.prediction_rows[index].facets.entities.value = [];
+    bFacet.prediction_rows[index].facets.unrelated_reason = 'off_topic';
+  }
+  f.bundle.variants = [a,bFacet,b];
+  const report = buildReport(f.selection,f.gold,f.bundle,'test');
+  const row = report.judge_comparisons.find(r => r.a_variant === 'A_judge_low' && r.concept === 'concept_1');
+  assert.equal(row.a_evaluated_vs_b_same_roots.roots,58);
+  assert.equal(row.a_evaluated_vs_b_same_roots.a.tp,56);
+  assert.equal(row.a_evaluated_vs_b_same_roots.b.tp,57);
+  assert.equal(row.full_pipeline.roots,60);
+  assert.equal(row.full_pipeline.b_gate_relevant_roots,58);
+  assert.equal(row.full_pipeline.a.tp,56);
+  assert.equal(row.full_pipeline.a.errors.false_negative_semantic,1);
+  assert.equal(row.full_pipeline.a.errors.false_negative_without_positive_judgment,3);
+  assert.equal(row.full_pipeline.b.tp,58);
+  assert.equal(row.full_pipeline.b.errors.pending,2);
+  assert.equal(row.common_emitted.roots,57);
+  assert.equal(row.common_emitted.a.tp,56);
+  assert.equal(row.common_emitted.b.tp,56);
+  assert.match(renderMarkdown(report),/Comparación de jueces en tres vistas/);
+});
+test('C2 hybrids preserve missing Claude judgment and separate positive confirmation from gate-wide judging', () => {
+  const f = fixture();
+  const a = structuredClone(f.variant); a.variant = 'A_judge_low';
+  const bFacet = structuredClone(f.variant); bFacet.variant = 'B_facets_jev';
+  bFacet.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1,
+    values: { entity: 0.5, salience: 0.5, spam: 0.5, minimum_choice_confidence: 0 } };
+  const b = structuredClone(f.variant); b.variant = 'B_judge_jev';
+  b.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1, values: { membership: 0.4 } };
+  const key = 'private-concept-one';
+  // A JEV positive without a saved Claude call stays pending; a negative needs no confirmation.
+  a.prediction_rows.splice(90,1);
+  b.prediction_rows[91].memberships[key] = 'not_belongs';
+  a.prediction_rows.find(r => r.root_id === 'private-root-92').memberships[key] = 'not_belongs';
+  bFacet.prediction_rows[93].facets.entities.value = [];
+  bFacet.prediction_rows[93].facets.unrelated_reason = 'off_topic';
+  const medium = structuredClone(a); medium.variant = 'A_judge_medium';
+  f.bundle.variants = [a,medium,bFacet,b];
+  const row = buildHybridC2(f.selection,f.gold,f.bundle).rows.find(r => r.partition === 'test' && r.claude === 'A_judge_low' && r.concept === 'concept_1');
+  assert.equal(row.gate_passed,59);
+  assert.equal(row.missing_claude_saved.among_jev_positive,1);
+  assert.equal(row.views.full_pipeline.jev_then_claude_positive.fn_without_judgment,2);
+  assert.equal(row.views.full_pipeline.jev_then_claude_positive.fn_explicit,2);
+  assert.equal(row.views.full_pipeline.jev_gate_claude_judge.fn_without_judgment,2);
+  assert.equal(row.views.claude_evaluated_same_roots.roots,58);
+  assert.equal(row.views.common_binary.roots,58);
+  assert.equal(buildHybridC2(f.selection,f.gold,f.bundle).status,'counterfactual_no_labeler_approval');
+});
+test('JEV judge cost and freeze provenance are explicit without claiming a judge winner', () => {
+  const f = fixture(); f.variant.variant = 'B_judge_jev';
+  f.variant.thresholds = { selected_on: 'dev', frozen_before_test: true, development_round: 1, values: { membership: 0.4 } };
+  const report = buildReport(f.selection,f.gold,f.bundle,'test');
+  assert.equal(report.variants[0].cost_basis,'private_journal_input_tokens_times_configured_usd_per_mtok_not_labeling_ledger');
+  const md = renderMarkdown(report);
+  assert.match(md,/input_tokens × precio configurado por MTok; no ledger/);
+  assert.match(md,/declaración del operador, no una barrera temporal/);
+  assert.match(md,/puede sesgar la comparación a su favor/);
+  assert.match(md,/No hay comparador preregistrado ni ganador de jueces/);
 });
 test('dev statistics invariant to held-out test predictions; B/test requires dev threshold provenance', () => {
   const f = fixture(), before = buildReport(f.selection, f.gold, f.bundle, 'dev');

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
-import { checkTarget } from './guard.mjs';
+import { assertDisposableFixture, checkTarget, verifyDisposableFixtureInDatabase } from './guard.mjs';
 import { parseCsv, csv } from './csv.mjs';
 import { matchingEntities, selectGold, importGold } from './gold.mjs';
 const target = JSON.parse(await readFile(new URL('./target.json', import.meta.url),'utf8'));
@@ -27,6 +29,34 @@ test('only dedicated remote target is accepted', () => {
     {DATABASE_URL:env.DATABASE_URL.replace('pgvector.railway.internal','localhost')},
     {DATABASE_URL:env.DATABASE_URL+'?options=-csearch_path=other'}, {PGHOST:'localhost'},
     {REDIS_URL:env.REDIS_URL.replace('mfp-redis','shared-redis')}]) assert.throws(()=>checkTarget({...env,...mutation},target),/^Error: mfp_/u);
+});
+test('mutating concurrency probes require their own disposable fixture identity',()=>{
+  assert.equal(assertDisposableFixture({fixture_key:'facets-lock-check-abc123'},'facets-lock-check').fixture_key,
+    'facets-lock-check-abc123');
+  assert.throws(()=>assertDisposableFixture({fixture_key:'voyage-real'},'facets-lock-check'),/disposable_fixture_required/u);
+});
+test('facets lock harness requires its fixture workspace to match database ownership',async()=>{
+  const identity={fixture_key:'facets-lock-check-abc123',organization_id:'org',workspace_id:'workspace',brand_id:'brand',
+    internal_user_id:'internal',actor_user_id:'actor',source_id:'source'};
+  let called=false;
+  const database={query:async(sql,values)=>{
+    called=true;
+    assert.match(sql,/JOIN signal_workspaces w ON w.organization_id=o.id/u);
+    assert.match(sql,/JOIN data_sources source ON source.id=\$6 AND source.workspace_id=w.id/u);
+    assert.deepEqual(values,['org','workspace','brand','internal','actor','source','mfp-facets-lock-check-abc123']);
+    return {rows:[{}]};
+  }};
+  assert.equal(await verifyDisposableFixtureInDatabase(database,identity,'facets-lock-check'),identity);
+  assert.equal(called,true);
+  await assert.rejects(verifyDisposableFixtureInDatabase({query:async()=>({rows:[]})},identity,'facets-lock-check'),
+    /fixture_database_identity_mismatch/u);
+  const source=await readFile(new URL('./facets-lock-check.ts',import.meta.url),'utf8');
+  assert.match(source,/verifyDisposableFixtureInDatabase\(database, identity, "facets-lock-check"\)/u);
+});
+test('facets lock harness leaves policy transitions to product code',async()=>{
+  const source=await readFile(new URL('./facets-lock-check.ts',import.meta.url),'utf8');
+  assert.doesNotMatch(source,/\b(?:INSERT|UPDATE|DELETE)\s+INTO?\s+signal_processing_policy_(?:versions|actions)/iu);
+  assert.doesNotMatch(source,/revocation_during_wait|restored_policy_successor/u);
 });
 test('CSV round-trips quotes, accents and multiline text', () => {
   const data=[{a:'Descripción; uno',b:'Line 1\n"Line 2"'}];
@@ -56,6 +86,26 @@ test('gold import validates human dimensions, entity identity and source invaria
 test('brand route authenticates before delegating to shared service',async()=>{
   const source=await readFile(new URL('../../apps/studio/src/app/api/brands/route.ts',import.meta.url),'utf8');
   assert.match(source,/if \(!session\) return unauthorized\(\);\s*return createBrandForActorV1\(request, session.appUser\)/u);
+});
+
+test('sample preserves provider identity when distinct mentions have identical text',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'mfp-sample-'));
+  try{
+    const source=join(root,'source'),output=join(root,'out');await mkdir(source);
+    const records=Array.from({length:1200},(_,index)=>({id:`provider-${String(index).padStart(4,'0')}`,Title:'Title',
+      'Content of posts':index<2?'Repeated post':'Post '+index}));
+    await writeFile(join(source,'batch.csv'),csv(['id','Title','Content of posts'],records));
+    const context=join(root,'context.json');await writeFile(context,JSON.stringify({entities:[]}));
+    const script=fileURLToPath(new URL('./sample.mjs',import.meta.url));
+    const result=spawnSync(process.execPath,[script,source,context,output],{encoding:'utf8',timeout:10000});
+    assert.equal(result.status,0,result.stderr);
+    const sampled=parseCsv(await readFile(join(output,'load1.csv'),'utf8')).records;
+    assert.equal(sampled.length,1000);
+    assert.deepEqual(sampled.slice(0,2).map(row=>row.id),['provider-0000','provider-0001']);
+    assert.equal(sampled[0]['Content of posts'],sampled[1]['Content of posts']);
+    const manifest=JSON.parse(await readFile(join(output,'sampling-manifest.json'),'utf8'));
+    assert.equal(manifest.sampling,'provider-id-order-with-lexical-enrichment');
+  }finally{await rm(root,{recursive:true,force:true});}
 });
 
 test('job queues isolate concurrent work and recovery never converts unknown into retry',async()=>{

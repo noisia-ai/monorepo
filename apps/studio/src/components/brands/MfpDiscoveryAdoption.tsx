@@ -27,6 +27,7 @@ export function MfpDiscoveryAdoption({workspaceId,canAdopt,sources,onAdopted,onA
   };
   return <section className="admin-section" id="mfp-discovery"><div className="admin-section__head"><div><h3>{t("discovery.title")}</h3><p>{t("discovery.body")}</p></div>
     <button className="admin-button" type="button" disabled={resource.loading||busy} onClick={()=>void Promise.all([resource.read(),incremental.read()])}>{t("refresh")}</button></div>
+    {resource.loading||incremental.loading?<p role="status" aria-live="polite">{t("loadingPopulation")}</p>:null}
     <div className="admin-section__body topics-manager__candidate-grid">{candidates.map(concept=>{
       const candidateId=`${concept.run_key}:${concept.concept_key}`;
       const adopted=sources.some(source=>source?.run_key===concept.run_key&&source.candidate_key===concept.concept_key);
@@ -37,7 +38,7 @@ export function MfpDiscoveryAdoption({workspaceId,canAdopt,sources,onAdopted,onA
         <button className="admin-button" type="button" disabled={adopted||busy||pending||!canAdopt||!scope[candidateId]||!concept.source_valid}
           onClick={()=>void adopt(candidateId)}>{t(adopted?"discovery.adopted":"discovery.adopt")}</button></article>;
     })}
-    {!candidates.length?<p>{t("discovery.empty")}</p>:null}</div>
+    {!resource.loading&&!incremental.loading&&!candidates.length?<p>{t("discovery.empty")}</p>:null}</div>
     {resource.error||incremental.error||error?<p role="alert">{t(`errors.${mfpErrorKey(error??resource.error??incremental.error??"")}`)}</p>:null}
     {pending?<button className="admin-button" disabled={busy} type="button" onClick={()=>void adopt()}>{t("retrySame")}</button>:null}
   </section>;

@@ -1,4 +1,7 @@
 import Link from "next/link";
+import {signalWorkspaceFeatureEnabledV1} from "@noisia/db";
+import {pool} from "@/lib/db";
+import {MfpMembershipConfiguration} from "@/components/brands/MfpMembershipConfiguration";
 import {
   ArrowRight,
   ClockCountdown,
@@ -34,6 +37,7 @@ export default async function BrandSettingsPage({ params }: { params: Promise<{ 
   const workspace = await getAdminBrandWorkspace(session.appUser, id);
   if (!workspace) notFound();
   const { summary } = workspace;
+  const membershipEnabled=summary.workspaceId ? await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:summary.workspaceId,feature:"concept_membership"}) : false;
   const report = workspace.reports.find((item) => item.reportKey === "triggers-barriers") ?? null;
 
   return (
@@ -51,6 +55,7 @@ export default async function BrandSettingsPage({ params }: { params: Promise<{ 
       />
 
       <div className="admin-settings-stack admin-settings-stack--workspace">
+        {membershipEnabled && summary.workspaceId ? <MfpMembershipConfiguration key={summary.workspaceId} workspaceId={summary.workspaceId}/> : null}
         <AdminResourceSection subtitle={t("settings.workspace.subtitle")} title={t("settings.workspace.title")}>
           <div className="admin-settings-list">
             <AdminSettingsRow icon={<ShieldCheck aria-hidden size={17} />} title={t("settings.workspace.status")} value={<AdminStatus state={summary.workspaceStatus === "active" ? "good" : "warning"}>{summary.workspaceStatus ? t(`states.${summary.workspaceStatus}`) : t("states.not_available")}</AdminStatus>} />

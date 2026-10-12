@@ -6,17 +6,18 @@ import { jevFacetLabelerIdentityV1, JEV_FACET_EXPERIMENTAL_THRESHOLDS_V1 } from 
 import type { SignalLabelingStoreV1, LabelingRunV1, LabelingCallV1 } from '@noisia/db';
 import type { FacetResult } from '@noisia/query-engine/src/signal-mention-labeler-v1';
 function fixture(count: number) {
-  const run: LabelingRunV1 = { id: 'run', workspace_id: 'workspace', actor_user_id: 'actor', kind: 'facets', labeler_digest: 'labeler', identity: jevFacetLabelerIdentityV1(JEV_FACET_EXPERIMENTAL_THRESHOLDS_V1, 0.042), entity_context_digest: 'context', entity_context_version_no: 1, context: { entities: [{ entity_id: 'a', kind: 'primary_brand', name: 'Fictional device', aliases: [], disambiguation: null }] }, lease_token: 'lease', cursor_root_id: null, cap_micro_usd: null, processing_admission_id: 'admission', selection_complete: false, status: 'running', error_code: null };
+  const run: LabelingRunV1 = { id: 'run', workspace_id: 'workspace', actor_user_id: 'actor', kind: 'facets', labeler_digest: 'labeler', identity: jevFacetLabelerIdentityV1(JEV_FACET_EXPERIMENTAL_THRESHOLDS_V1, 0.042), entity_context_digest: 'context', entity_context_version_no: 1, context: { entities: [{ entity_id: 'a', kind: 'primary_brand', name: 'Fictional device', aliases: [], disambiguation: null }] }, lease_token: 'lease', cursor_root_id: null, cap_micro_usd: null, processing_admission_id: 'admission', status: 'running', error_code: null };
   const calls: LabelingCallV1[] = []; const results: FacetResult[] = []; const events: string[] = [];
   let selected = false;
   const store: SignalLabelingStoreV1 = {
     async renew() {}, async fail() {},
     async claim() { events.push('claim'); return run; }, async release() { events.push('release'); },
-    async calls() { return calls; },
+    async calls() { return calls; }, async refresh(){return {status:run.status,error_code:run.error_code??null};},
     async inputs() { if (selected) return []; selected = true; return Array.from({ length: count }, (_, i) => ({ root_id: `root-${i}`, input_digest: `input-${i}`, text: 'Synthetic content', title: null, platform: null, content_type: null, author: null, published_at: '2026-10-04T00:00:00Z', language: 'es' })); },
     async reserve(_run, proposals) { events.push(`reserve:${proposals.length}`); const added = proposals.map((p, i) => ({ ...p, id: `call-${i}`, status: 'reserved' as const, raw_body: null, results_applied: false, provider_batch_id: null, retry_depth: 0 })); calls.push(...added); return added; },
     async markSubmitting(_run, page) { events.push(`submitting:${page.length}`); page.forEach(call => { call.status = 'submitting'; }); },
     async markSubmitted() {},
+    async recoverUnknownBatch() {}, async releaseUnknown() {}, async clearUnknownFailure() {},
     async markFailed(_run, page, unknown) { page.forEach(call => { call.status = unknown ? 'unknown' : 'failed'; }); },
     async persistRaw(_run, call, raw) { call.raw_body = raw; },
     async persistRawPage(_run, page) { events.push(`raw:${page.length}`); page.forEach(row => { row.call.raw_body = row.raw; }); },

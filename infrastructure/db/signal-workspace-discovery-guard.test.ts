@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { beginSignalWorkspaceEngineV1, type SignalWorkspaceEngineDatabaseV1 } from "./signal-workspace-engine";
 
-const input={database:{connect(){throw new Error("unexpected database work");}} as unknown as SignalWorkspaceEngineDatabaseV1,
+const input={database:{async connect(){return {async query(sql:string){
+  if(sql.includes('FROM signal_workspace_features'))return {rows:[{enabled:true}]};
+  throw new Error('unexpected database work');
+},release(){}};}} as unknown as SignalWorkspaceEngineDatabaseV1,
   workspace_id:"10000000-0000-4000-8000-000000000001",actor_user_id:"10000000-0000-4000-8000-000000000002",
   embedding_run_id:"10000000-0000-4000-8000-000000000003",idempotency_key:"discovery-guard-test",
   expected_context_digest:`sha256:${"a".repeat(64)}`,expected_catalog_digest:`sha256:${"b".repeat(64)}`,

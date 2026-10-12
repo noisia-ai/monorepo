@@ -53,7 +53,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm dev:corpus:check
-      - run: node --test --import tsx scripts/eval/*.test.mjs
+      - run: node --test --import tsx scripts/eval/*.test.mjs scripts/eval/*.test.ts
       - run: pnpm exec tsc --project scripts/eval/tsconfig.json
       - run: pnpm exec tsc --project scripts/dev-corpus/tsconfig.json
       - run: pnpm exec tsc --project scripts/providers/tsconfig.json

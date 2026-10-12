@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
+import { SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1 } from "@noisia/query-engine";
 import { loadWorkspaceCorpusEmbeddingsForActorV1, quoteWorkspaceCorpusEmbeddingsForActorV1,
   requestWorkspaceCorpusEmbeddingsForActorV1, validateWorkspaceCorpusEmbeddingRequestV1,
   workspaceEmbeddingRuntimeSettingsV1, WorkspaceCorpusEmbeddingsError } from "./workspace-corpus-embeddings";
@@ -99,19 +100,52 @@ test('server recomputes the cache-only plan while disabled and refuses stale, mi
 
 test("MFP omits only the inherited cap, preserving explicitly configured strict maxima", () => {
   const mfp = { NOISIA_MENTION_FACETS_ENABLED: "true" };
-  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp).max_run_cost_micro_usd, null);
-  assert.equal(workspaceEmbeddingRuntimeSettingsV1({...mfp, NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: "123"}).max_run_cost_micro_usd, 123);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp).max_run_cost_micro_usd, SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp,true).max_run_cost_micro_usd, null);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1({...mfp, NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: "123"},true).max_run_cost_micro_usd, 123);
   assert.equal(validateWorkspaceCorpusEmbeddingRequestV1({...body, hard_cap_micro_usd: null}), true);
 });
 
+test("without workspace opt-in, embedding authority and cap stay legacy with the switch on or off",async()=>{
+  const previous=process.env.NOISIA_MENTION_FACETS_ENABLED;
+  try {
+    for(const flag of ["false","true"]){
+      process.env.NOISIA_MENTION_FACETS_ENABLED=flag;
+      let featureReads=0,writes=0;
+      let authority:Record<string,unknown>={...granted,organization_status:"active",brand_same_organization:true};
+      const query=async(sql:string)=>{
+        if(sql.includes("workspace.status workspace_status"))return {rows:[authority]};
+        if(sql.includes("FROM signal_workspace_features")){featureReads++;return {rows:[{enabled:false}]};}
+        if(/^(INSERT|UPDATE|DELETE)/u.test(sql.trim()))writes++;
+        return {rows:[]};
+      };
+      const database={query,connect:async()=>({query,release(){}})} as unknown as Pick<Pool,"query"|"connect">;
+      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"workspace",actorUserId:"actor",
+        idempotencyKey:"legacy-request",body:{...body,hard_cap_micro_usd:null}}),
+      (error:unknown)=>error instanceof WorkspaceCorpusEmbeddingsError&&error.code==="workspace_embedding_forbidden");
+      authority={...authority,user_type:"noisia_internal",primary_role:"noisia_admin"};
+      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"workspace",actorUserId:"actor",
+        idempotencyKey:"legacy-request",body:{...body,hard_cap_micro_usd:null}}),
+      (error:unknown)=>error instanceof WorkspaceCorpusEmbeddingsError&&error.code==="workspace_embedding_budget_exceeds_limit");
+      assert.equal(featureReads,flag==="true"?3:0);
+      assert.equal(writes,0);
+    }
+  }finally{
+    if(previous===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;
+    else process.env.NOISIA_MENTION_FACETS_ENABLED=previous;
+  }
+});
+
 test("facet replay uses its original identity despite a changed workspace selection", async () => {
+  process.env.NOISIA_MENTION_FACETS_ENABLED = "true";
   const {requestMentionFacetsV1} = await import("../../../../../infrastructure/db/signal-labeling-runs");
-  const {facetLabelerIdentityV1,facetLabelerIdentityOrdinalV4,labelerDigestV1,signalWorkspaceEmbeddingDigestV1} = await import("@noisia/query-engine");
-  const selected = facetLabelerIdentityOrdinalV4(), fallback = facetLabelerIdentityV1();
+  const {facetLabelerIdentityV1,facetLabelerIdentityOrdinalV3,labelerDigestV1,signalWorkspaceEmbeddingDigestV1} = await import("@noisia/query-engine");
+  const selected = facetLabelerIdentityOrdinalV3(), fallback = facetLabelerIdentityV1();
   for (const [selection, explicit, expected] of [[fallback,undefined,selected],[selected,fallback,fallback],[undefined,undefined,fallback]] as const) {
     let selectionReads = 0;
     const query = async (sql:string) => {
       if(sql.includes('workspace.status workspace_status'))return {rows:[{...granted,organization_status:'active',brand_same_organization:true}]};
+      if(sql.includes('FROM signal_workspace_features'))return {rows:[{enabled:true}]};
       if(sql.includes('SELECT l.identity')){selectionReads++;return {rows:selection?[{identity:selection,status:'experimental'}]:[]};}
       if(sql.includes('SELECT r.id,r.request_digest,l.identity'))return {rows:[{id:body.preparation_run_id,identity:expected,request_digest:signalWorkspaceEmbeddingDigestV1({labeler_digest:labelerDigestV1(expected),budget_micro_usd:null,cap_micro_usd:null,full_recalculation:false})}]};
       if(/^(INSERT|UPDATE)/u.test(sql.trim()))throw Error('Replay must not mutate');
@@ -125,11 +159,13 @@ test("facet replay uses its original identity despite a changed workspace select
 });
 
 test("new facet requests reject retired persisted labelers instead of falling back or approving them", async () => {
+  process.env.NOISIA_MENTION_FACETS_ENABLED = "true";
   const {requestMentionFacetsV1} = await import("../../../../../infrastructure/db/signal-labeling-runs");
   const {facetLabelerIdentityV1} = await import("@noisia/query-engine");
   let writes=0;
   const query=async(sql:string)=>{
     if(sql.includes('workspace.status workspace_status'))return {rows:[{...granted,organization_status:'active',brand_same_organization:true}]};
+    if(sql.includes('FROM signal_workspace_features'))return {rows:[{enabled:true}]};
     if(sql.includes('SELECT l.identity'))return {rows:[{identity:facetLabelerIdentityV1(),status:'retired'}]};
     if(/^(INSERT|UPDATE)/u.test(sql.trim()))writes++;
     return {rows:[]};

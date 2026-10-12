@@ -54,6 +54,7 @@ export const createBrandSchema = z.object({
   timezone: timezoneSchema.default("America/Mexico_City"),
   status: z.enum(["active", "paused", "archived"]).default("active"),
   primary_brand_manager_user_id: z.string().uuid().optional(),
+  mfp_opt_in: z.boolean().optional(),
   preparation: brandContextPreparationIntentSchema.optional()
 }).refine((data) => data.organization_id || data.organization_name, {
   path: ["organization_name"],

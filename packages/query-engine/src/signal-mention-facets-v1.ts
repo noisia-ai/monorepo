@@ -285,59 +285,6 @@ export function facetLabelerIdentityOrdinalV3(): LabelerIdentity {
     },
   };
 }
-// The wire-only sentinels avoid nullable union expansion across 25 required roots.
-// The public facet contract and persisted facets still use null, never sentinels.
-const ordinalFacetSchemaV4 = structuredClone(ordinalFacetSchemaV3);
-ordinalFacetSchemaV4.properties.unrelated_reason = enumJson([
-  "homonym",
-  "off_topic",
-  "none",
-]);
-(
-  ordinalFacetSchemaV4.properties.language as ReturnType<typeof objectJson>
-).properties.value = { type: "string" };
-(
-  ordinalFacetSchemaV4.properties.asunto as ReturnType<typeof objectJson>
-).properties.value = { type: "string" };
-export const MENTION_FACETS_ORDINAL_FORMAT_V4 =
-  "required-ordinal-fields-v4" as const;
-export const mentionFacetsOrdinalSchemaTemplateV4 = {
-  ...mentionFacetsOrdinalSchemaTemplateV3,
-  contract: MENTION_FACETS_ORDINAL_FORMAT_V4,
-  definitions: { facet: ordinalFacetSchemaV4 },
-};
-export const MENTION_FACETS_ORDINAL_PROMPT_V4 =
-  MENTION_FACETS_ORDINAL_PROMPT_V2.replace(
-    "if uncertain abstain on entities and use null.",
-    "if uncertain abstain on entities and use unrelated_reason none.",
-  )
-    .replace(
-      "Use null for an absent asunto;",
-      "Use an empty string for an absent asunto;",
-    )
-    .replace(
-      "or null with abstained=true.",
-      "or an empty string with abstained=true.",
-    ) +
-  " Wire serialization: never emit null. unrelated_reason none represents an absent reason (including when entities are present). Empty language.value and asunto.value represent absent values only. Preserve every confidence and abstained flag independently.";
-export function mentionFacetsOrdinalJsonSchemaV4(rootCount: number) {
-  return {
-    ...mentionFacetsOrdinalJsonSchemaV3(rootCount),
-    definitions: { facet: ordinalFacetSchemaV4 },
-  };
-}
-export function facetLabelerIdentityOrdinalV4(): LabelerIdentity {
-  const previous = facetLabelerIdentityOrdinalV3();
-  return {
-    ...previous,
-    prompt_digest: digest(MENTION_FACETS_ORDINAL_PROMPT_V4),
-    schema_digest: digest(mentionFacetsOrdinalSchemaTemplateV4),
-    params: {
-      ...previous.params,
-      request_format: MENTION_FACETS_ORDINAL_FORMAT_V4,
-    },
-  };
-}
 // Eight roots compiled and completed with the full facet grammar in a real probe.
 // This technical partition does not limit population or impose a financial cap.
 export function facetLabelerIdentityV1(): LabelerIdentity {
@@ -355,32 +302,10 @@ export function facetMaxRootsPerRequestV1(identity: LabelerIdentity): number {
     .max(25)
     .parse(identity.params.max_roots_per_request ?? 25);
 }
-const ordinalWireSchemaV4 = mentionFacetsSchemaV1.extend({
-  unrelated_reason: z.enum(["homonym", "off_topic", "none"]),
-  language: dimension(z.string()),
-  asunto: dimension(z.string()),
-});
-export function decodeFacetOrdinalWireV4(value: unknown): MentionFacetsV1 {
-  const wire = ordinalWireSchemaV4.parse(value);
-  return {
-    ...wire,
-    unrelated_reason:
-      wire.unrelated_reason === "none" ? null : wire.unrelated_reason,
-    language: {
-      ...wire.language,
-      value: wire.language.value === "" ? null : wire.language.value,
-    },
-    asunto: {
-      ...wire.asunto,
-      value: wire.asunto.value === "" ? null : wire.asunto.value,
-    },
-  };
-}
 function facetRequestFormatV1(identity: LabelerIdentity) {
   const legacy = facetLabelerIdentityLegacyV1(),
     previous = facetLabelerIdentityOrdinalV2(),
-    ordinalV3 = facetLabelerIdentityOrdinalV3(),
-    current = facetLabelerIdentityOrdinalV4();
+    ordinalV3 = facetLabelerIdentityOrdinalV3();
   if (
     identity.kind !== "facets" ||
     identity.provider !== "anthropic" ||
@@ -405,12 +330,6 @@ function facetRequestFormatV1(identity: LabelerIdentity) {
     identity.params.request_format === MENTION_FACETS_ORDINAL_FORMAT_V3
   )
     return MENTION_FACETS_ORDINAL_FORMAT_V3;
-  if (
-    identity.prompt_digest === current.prompt_digest &&
-    identity.schema_digest === current.schema_digest &&
-    identity.params.request_format === MENTION_FACETS_ORDINAL_FORMAT_V4
-  )
-    return MENTION_FACETS_ORDINAL_FORMAT_V4;
   throw new Error("facet_labeler_identity_unsupported");
 }
 export function validateFacetLabelerIdentityV1(identity: LabelerIdentity) {
@@ -462,15 +381,13 @@ export function buildFacetRequestV1(
             ? mentionFacetsJsonSchemaV1
             : format === MENTION_FACETS_ORDINAL_FORMAT_V2
               ? mentionFacetsOrdinalJsonSchemaV2(inputs.length)
-              : format === MENTION_FACETS_ORDINAL_FORMAT_V3
-                ? mentionFacetsOrdinalJsonSchemaV3(inputs.length)
-                : mentionFacetsOrdinalJsonSchemaV4(inputs.length),
+              : mentionFacetsOrdinalJsonSchemaV3(inputs.length),
       },
     },
     system: [
       {
         type: "text",
-        text: `${format === "legacy-array-v1" ? MENTION_FACETS_PROMPT_V1 : format === MENTION_FACETS_ORDINAL_FORMAT_V4 ? MENTION_FACETS_ORDINAL_PROMPT_V4 : MENTION_FACETS_ORDINAL_PROMPT_V2}\nEntity context: ${JSON.stringify(context)}`,
+        text: `${format === "legacy-array-v1" ? MENTION_FACETS_PROMPT_V1 : MENTION_FACETS_ORDINAL_PROMPT_V2}\nEntity context: ${JSON.stringify(context)}`,
         cache_control: { type: "ephemeral", ttl: "1h" },
       },
     ],
@@ -586,13 +503,7 @@ export function parseFacetGroupV1(
         entity_context_digest: entityContextDigestV1(context),
       };
       try {
-        const facets = validateMentionFacetsV1(
-          format === MENTION_FACETS_ORDINAL_FORMAT_V4
-            ? decodeFacetOrdinalWireV4(root.facets)
-            : root.facets,
-          context,
-          input.language,
-        );
+        const facets = validateMentionFacetsV1(root.facets, context, input.language);
         return {
           ...base,
           status: facets.entities.abstained ? "abstained" : "labeled",
