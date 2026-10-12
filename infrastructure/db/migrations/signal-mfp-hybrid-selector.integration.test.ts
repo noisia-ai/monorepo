@@ -215,10 +215,9 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     "admission and selection agree for relevant abstained facets");
     assert.ok(first.some(input=>input.root_id===abstainedRoot));
     // A later entity abstention becomes indeterminate, never reused as a relevant pair.
-    await client.query(`UPDATE signal_mention_facet_labels SET relevance='unknown',
-      facets=jsonb_set(facets,'{entities}',jsonb_build_object('value','[]'::jsonb,'abstained',true)),
-      effective_entities_digest=signal_labeling_digest_v1('[]'::jsonb)
-      WHERE workspace_id=$1 AND root_id=$2`,[workspace,abstainedRoot]);
+    await client.query(`INSERT INTO signal_mention_facet_overrides(workspace_id,root_id,dimension,value,actor_user_id)
+      VALUES($1,$2,'entities',jsonb_build_object('value','[]'::jsonb,'confidence','high','abstained',true),$3)`,
+      [workspace,abstainedRoot,actor]);
     assert.equal((await selectMembershipInputsV1(client,work(randomUUID()),true)).length,1);
     assert.equal((await client.query('SELECT count(*)::int n FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2',[workspace,abstainedRoot])).rows[0].n,0);
 
