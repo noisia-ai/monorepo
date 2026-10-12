@@ -419,6 +419,25 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     };
     await insertCall({ id: claudeCall, run: claudeRun, provider: "anthropic", model: "claude-sonnet-5-5",
       inputs: claude, result: confirmed });
+    await client.query('SAVEPOINT cached_jev_confirmation');
+    await client.query(`UPDATE signal_labeling_runs SET membership_snapshot=jsonb_set(membership_snapshot,'{route_digest}',to_jsonb($2::text)) WHERE id=$1`,
+      [jevRun,sha('prior-compatible-route')]);
+    const paidBefore=(await client.query('SELECT to_jsonb(call) snapshot FROM signal_labeling_calls call WHERE id=ANY($1::uuid[]) ORDER BY id',[[jevCall,claudeCall]])).rows;
+    const writeConfirmation=(candidate:HybridDecisionInputV1)=>writeHybridMembershipDecisionPageV1({client,
+      workspace_id:workspace,route_digest:route,decisions:[candidate]});
+    assert.equal((await writeConfirmation({...confirmed,text})).persisted,1,
+      'fresh Claude can publish a negative using an older compatible paid JEV source');
+    await assert.rejects(writeConfirmation({...confirmed,text,jev:{...confirmed.jev,probability:.7}}),/hybrid_settled_receipt_required/,
+      'automatic source provenance cannot authorize a changed stored probability');
+    await client.query('SAVEPOINT cached_confirmation_identity');
+    await client.query('UPDATE signal_labeler_versions SET prompt_digest=$2 WHERE id=$1',[jevVersion,sha('different-question')]);
+    await assert.rejects(writeConfirmation({...confirmed,text}),/hybrid_settled_receipt_required/,
+      'an older route still requires the canonical JEV question identity');
+    await client.query('ROLLBACK TO SAVEPOINT cached_confirmation_identity');
+    assert.equal((await writeConfirmation({...confirmed,text})).persisted,1,'the compatible receipt replays without a new call');
+    assert.deepEqual((await client.query('SELECT to_jsonb(call) snapshot FROM signal_labeling_calls call WHERE id=ANY($1::uuid[]) ORDER BY id',[[jevCall,claudeCall]])).rows,paidBefore,
+      'source inference does not rewrite paid JEV or Claude receipts');
+    await client.query('ROLLBACK TO SAVEPOINT cached_jev_confirmation');
     await client.query("SAVEPOINT authorization_probes");
     const batchRightsCall=randomUUID();
     await insertCall({id:batchRightsCall,run:claudeRun,provider:"anthropic",model:"claude-sonnet-5-5",

@@ -277,12 +277,34 @@ export function hybridDecisionRecordV1(input: HybridDecisionInputV1) {
 export async function writeHybridMembershipDecisionPageV1(args: {
   client: PoolClient; workspace_id: string; route_digest: string; decisions: HybridDecisionInputV1[];
   cached_route_digest?: string;
-}) {
+}): Promise<{persisted:number}> {
   if (!args.decisions.length || args.decisions.length > 200) fail("hybrid_page_invalid", 400);
   const selected = (await args.client.query<{route_digest:string}>(
     "SELECT route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE", [args.workspace_id])).rows[0];
   if (!selected || selected.route_digest !== args.route_digest) fail("hybrid_route_changed");
   const rows = args.decisions.map(hybridDecisionRecordV1);
+  if (args.cached_route_digest === undefined) {
+    // Fresh C/V can consume compatible paid JEV from an older route. Carry its
+    // database provenance into the existing receipt guard, never from input data.
+    const sources = (await args.client.query<{id:string;source_route_digest:string|null}>(
+      `SELECT call.id,run.membership_snapshot->>'route_digest' source_route_digest
+       FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
+       WHERE call.workspace_id=$1 AND run.workspace_id=$1 AND call.id=ANY($2::uuid[])`,
+      [args.workspace_id,[...new Set(rows.map(row=>row.jev_call_id))]])).rows;
+    const byCall = new Map(sources.map(source=>[source.id,source.source_route_digest]));
+    const bySource = new Map<string,HybridDecisionInputV1[]>();
+    for (const decision of args.decisions) {
+      const source = byCall.get(decision.jev_call_id) ?? args.route_digest;
+      bySource.set(source,[...(bySource.get(source)??[]),decision]);
+    }
+    if ([...bySource.keys()].some(source=>source!==args.route_digest)) {
+      let persisted=0;
+      for (const [source,decisions] of bySource) persisted+=(await writeHybridMembershipDecisionPageV1({
+        ...args,cached_route_digest:source,decisions,
+      })).persisted;
+      return {persisted};
+    }
+  }
   // Fence the governed views before joining the JSON page: otherwise PostgreSQL
   // can reevaluate their nested population/rights plans for every decision.
   const matched = (await args.client.query<{count:number}>(`WITH current_memberships AS MATERIALIZED (
