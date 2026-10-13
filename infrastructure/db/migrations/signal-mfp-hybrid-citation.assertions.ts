@@ -139,7 +139,7 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   assert.equal((await client.query('SELECT signal_hybrid_pair_attempts_v1($1,$2,$3,$4,$5,$6,$7,$8,$9) n',
    [a.workspace,a.route,'claude',w.root_id,w.root_fingerprint,a.concept.concept_key,a.concept.definition_digest,w.entity_context_digest,w.effective_entities_digest])).rows[0].n,expected,
    'independent windows count once per window, preserving the attempt bound');
-  assert.ok(windows.some(row=>row.result.claude.citations[0].start>10000),'late window preserves absolute offsets');
+  assert.ok(windows.some(row=>(row.result.claude.citations?.[0]?.start??-1)>10000),'late window preserves absolute offsets');
   if(scenario==='supported'){
    await client.query('SAVEPOINT window_input_correspondence');
    const windowCalls=(await client.query('SELECT * FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id',[initial.run_id])).rows;
