@@ -385,7 +385,7 @@ export async function writeHybridMembershipDecisionPageV1(args: {
           AND ((result->'jev')-'threshold')=(r.jev-'threshold') AND (result->'claude'=(r.claude-'verification')
             OR r.citation_call_id IS NOT NULL AND r.claude->>'verdict'='error'
               AND result#>>'{claude,verdict}'='belongs'
-              AND (result->'claude'-'verdict')=(r.claude-'verification'-'verdict')))
+              AND ((result->'claude')-'verdict')=(r.claude-'verification'-'verdict')))
     LEFT JOIN signal_labeling_runs cr ON cr.id=c.run_id AND cr.workspace_id=$1
       AND cr.membership_snapshot->>'hybrid_stage'='claude' AND (cr.membership_snapshot->>'route_digest'=$3
         OR cr.membership_snapshot->>'route_digest'=$4 AND EXISTS(SELECT 1 FROM signal_labeler_versions semantic
