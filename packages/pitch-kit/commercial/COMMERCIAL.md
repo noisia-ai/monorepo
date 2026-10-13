@@ -32,15 +32,16 @@ no distingue qué compró de qué le vendieron, y todo empieza a verse hecho en 
 vive en portadas y fondos, nunca en la UI: las cards, la tipografía, los íconos y la retícula son
 los mismos del sistema de diseño.
 
-- **Portada, statement y cierre** llevan la familia de formas de Noisia sobre lienzo blanco, con el
-  texto a la izquierda y la forma a la derecha. Reemplaza a la ilustración de personas, que queda
-  para los estudios.
-- **Las slides de contenido** llevan un fragmento tenue de una forma que sale por la mitad de un
-  borde, nunca por una esquina: en las esquinas viven el logo, `noisia.ai`, el pie y el número.
-- **Las formas se hacen por código** (`builder/make_shapes.py`) con el método de las exploraciones
-  de marca en Figma: trazo orgánico, gradiente lineal de cyan a teal profundo a carbón, tres
-  sombras internas (cyan arriba, rojo `#FF464C` y `#C7313D` abajo), blur de capa y ruido duo. Una
-  forma nueva se agrega ahí, no se dibuja aparte.
+- **Portada, statement y cierre** llevan el *bloom* de Noisia sobre lienzo blanco, con el texto a
+  la izquierda y el color a la derecha. Reemplaza a la ilustración de personas, que queda para los
+  estudios.
+- **Las slides de contenido** llevan un bloom chico y tenue que sale por la mitad de un borde, nunca
+  por una esquina: en las esquinas viven el logo, `noisia.ai`, el pie y el número.
+- **El bloom se hace por código** (`builder/make_shapes.py`). No es una figura con contorno: es un
+  campo de color abstracto que se funde con el blanco. Colores apagados en las orillas que se
+  saturan hacia los oficiales, cyan `#00EEEE` y rojo `#EE0B00`, donde el color es más denso, con un
+  núcleo navy profundo; bordes disueltos con grano, sin halo; y grano intenso sobre el color, que es
+  lo que lo distingue de un degradado genérico. Una composición nueva se agrega ahí.
 - **UI:** cards `#fafafa` con borde `#eeeeee` y radio 16; íconos reales; sin sombras, sin bordes
   laterales, sin gradientes en un valor, sin eyebrows (§6).
 
