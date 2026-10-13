@@ -27,6 +27,8 @@ export function reparseHybridWindowRawV1(call:Call,raw:string):HybridStageResult
  const body=JSON.parse(raw);
  if(call.membership_snapshot.hybrid_stage==='citation'){
   const parsed=validateJevResponseV1(call.request,body),support=mapHybridCitationVerificationV1(parsed);
+  assert.deepEqual({...parsed.usage,cache_read_input_tokens:0,cache_creation_input_tokens:0,
+   cache_creation:{ephemeral_5m_input_tokens:0,ephemeral_1h_input_tokens:0}},call.usage);
   return call.results.map(prior=>{
    assert.equal(prior.claude?.verification?.supported,support.supported);
    assert.equal(prior.claude?.verification?.probability,support.probability);
