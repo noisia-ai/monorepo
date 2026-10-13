@@ -16,6 +16,7 @@ writes what is genuinely about this client.
       "vars": {"CLIENTE": "...", "MERCADO": "México", "FECHA": "Octubre 2026",
                "MONEDA": "USD", "IMPUESTOS": "más impuestos", "FIRMA": "...", "EMAIL": "..."},
       "client_logo": "logo.png",            # optional; otherwise a replaceable slot
+      "cover_variant": 3,                   # optional, 1..6; else picked from the client's name
       "include": ["sample", "engine"],      # optional modules to switch on
       "exclude": ["coverage"],              # recipe modules to drop
       "slides": {"questions_client": {...}, "statement_punch": {...}}
@@ -87,7 +88,12 @@ def compose(brief):
             print("  ·", m)
         sys.exit(1)
     vars_ = dict(brief.get("vars", {}))
-    spec = {"lang": lang, "mode": brief.get("mode", "send"),
+    # Each deck gets one of the six cover/closing pairs, chosen from the client's name so the same
+    # client always gets the same one and two clients rarely share it. `cover_variant` fixes it.
+    import zlib
+    who = vars_.get("CLIENTE") or vars_.get("CLIENT") or deliv
+    variant = int(brief.get("cover_variant") or zlib.crc32(who.encode("utf-8")) % 6 + 1)
+    spec = {"lang": lang, "mode": brief.get("mode", "send"), "variant": variant,
             "header_right": brief.get("header_right", "noisia.ai"),
             "portrait": deliv == "onepager",
             "slides": substitute(slides, vars_)}

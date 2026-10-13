@@ -108,6 +108,19 @@ def fit(text, w, h, size, lh=1.3, min_ratio=0.8):
 
 
 _SPRITES = {}
+_BGLUM = {}
+
+
+def bg_luminance(path, box):
+    """Mean luminance (0..255) of a background image under a slide-pixel box."""
+    from PIL import Image
+    if path not in _BGLUM:
+        _BGLUM[path] = Image.open(path).convert("L").resize((W // 4, H // 4))
+    im = _BGLUM[path]
+    x0, y0, x1, y1 = [int(v / 4) for v in box]
+    crop = im.crop((max(0, x0), max(0, y0), max(x0 + 1, x1), max(y0 + 1, y1)))
+    px_ = list(crop.getdata())
+    return sum(px_) / max(1, len(px_))
 
 
 def sprite_cell(folder, sheet, name):
@@ -131,8 +144,9 @@ def sprite_cell(folder, sheet, name):
 
 
 class Deck:
-    def __init__(self, lang="es", mode="send", header_right="noisia.ai", portrait=False):
+    def __init__(self, lang="es", mode="send", header_right="noisia.ai", portrait=False, variant=1):
         self.lang, self.mode, self.header_right = lang, mode, header_right
+        self.variant = variant   # which cover/closing pair of the bloom family (1..6)
         self.prs = Presentation()
         if portrait:   # A4 one-pager
             self.prs.slide_width, self.prs.slide_height = Emu(7560310), Emu(10692130)
@@ -155,6 +169,7 @@ class Deck:
     def new(self, bg=None, notes=""):
         s = self.prs.slides.add_slide(self.prs.slide_layouts[6])
         self.n += 1
+        s._noisia_bg = None
         if bg:
             self.background(s, bg)
         s._noisia_notes = [notes] if notes else []
@@ -164,6 +179,7 @@ class Deck:
         path = os.path.join(ASSETS, "shapes", name)
         if not os.path.exists(path):
             path = os.path.join(ASSETS, "bg", name)
+        s._noisia_bg = path
         _, rid = s.part.get_or_add_image_part(path)
         bg = etree.fromstring(
             '<p:bg xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
@@ -305,7 +321,7 @@ class Deck:
         self.text(s, x, y, w, h, label, size, color, bold=bold, align="c", anchor="m", fit_box=False)
         return w
 
-    def slide_number(self, s, x, y, w, h, dark=False):
+    def slide_number(self, s, x, y, w, h, dark=False, color=None):
         tb = s.shapes.add_textbox(px(x), px(y), px(w), px(h))
         tf = tb.text_frame
         tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
@@ -317,7 +333,7 @@ class Deck:
         rpr = etree.SubElement(fld, qn("a:rPr"))
         rpr.set("lang", "es-MX"); rpr.set("sz", "775"); rpr.set("b", "1")
         fill = etree.SubElement(rpr, qn("a:solidFill"))
-        etree.SubElement(fill, qn("a:srgbClr")).set("val", "ffffff" if dark else FG)
+        etree.SubElement(fill, qn("a:srgbClr")).set("val", "ffffff" if dark else (color or FG))
         latin = etree.SubElement(rpr, qn("a:latin")); latin.set("typeface", FONT)
         t = etree.SubElement(fld, qn("a:t")); t.text = str(self.n)
 
@@ -326,13 +342,30 @@ class Deck:
         logo = "noisia-white.png" if dark else "noisia.png"
         self.image(s, os.path.join(ASSETS, "logo", logo), PADX, 62, h=30, name="Logo Noisia")
         edge = "c9d3d6" if dark else EDGE
+        bg = getattr(s, "_noisia_bg", None)
+
+        def edge_for(box):
+            """Edge text follows what is under it: the usual grey on white, ink on a mid tone of
+            the bloom, white on its dark core."""
+            if dark:
+                return "c9d3d6", True
+            if bg is None:
+                return EDGE, False
+            lum = bg_luminance(bg, box)
+            if lum >= 215:
+                return EDGE, False
+            return ("2b2b2b", False) if lum >= 135 else ("ffffff", True)
+
         hr = self.header_right if header_right is None else header_right
         if hr:
-            self.text(s, W - PADX - 600, 66, 600, 24, hr, 15.5, edge, align="r", fit_box=False)
+            col, _ = edge_for((W - PADX - 160, 60, W - PADX, 96))
+            self.text(s, W - PADX - 600, 66, 600, 24, hr, 15.5, col, align="r", fit_box=False)
         if footer:
-            self.text(s, PADX, H - 66, 700, 22, "noisia · social intelligence architects", 15.5, edge,
+            col, _ = edge_for((PADX, H - 72, PADX + 380, H - 40))
+            self.text(s, PADX, H - 66, 700, 22, "noisia · social intelligence architects", 15.5, col,
                       fit_box=False)
-            self.slide_number(s, W - PADX - 200, H - 66, 200, 22, dark)
+            col, white = edge_for((W - PADX - 40, H - 72, W - PADX, H - 40))
+            self.slide_number(s, W - PADX - 200, H - 66, 200, 22, white, color=None if white else col)
 
     def eyebrow(self, *a, **k):
         """Commercial decks carry no eyebrows: a label above the title reads as AI slop
@@ -365,7 +398,7 @@ class Deck:
     def cover(self, d):
         """Kit cover: illustration bleeding right, copy anchored bottom-left. With `client`,
         it becomes the prepared-for cover and carries a client-logo slot."""
-        s = self.new(bg=d.get("bg", "cover.jpg"), notes=d.get("notes"))
+        s = self.new(bg=d.get("bg", f"cover-{self.variant}.jpg"), notes=d.get("notes"))
         self.chrome(s, header_right=d.get("header_right", self.header_right))
         y = 360 if d.get("client") else 400
         size, _ = fit(d["title"].replace("**", ""), 1000, 290, 76, 1.04)
@@ -1033,7 +1066,7 @@ class Deck:
         return s
 
     def closing(self, d):
-        s = self.new(bg=d.get("bg", "closing.jpg"), notes=d.get("notes"))
+        s = self.new(bg=d.get("bg", f"closing-{self.variant}.jpg"), notes=d.get("notes"))
         self.chrome(s)
         size, _ = fit(d["title"].replace("**", ""), 1000, 360, 72, 1.05)
         lines = min(4, _lines(d["title"].replace("**", ""), 1000, size))

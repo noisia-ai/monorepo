@@ -98,7 +98,8 @@ def build(spec, out, pdf=False):
             print("  ·", e)
         sys.exit(1)
     deck = Deck(lang=spec.get("lang", "es"), mode=spec.get("mode", "send"),
-                header_right=spec.get("header_right", "noisia.ai"), portrait=spec.get("portrait", False))
+                header_right=spec.get("header_right", "noisia.ai"), portrait=spec.get("portrait", False),
+                variant=int(spec.get("variant", 1)))
     for sl in spec["slides"]:
         SLIDES[sl["type"]](deck, sl)
     deck.save(out)

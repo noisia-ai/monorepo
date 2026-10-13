@@ -33,15 +33,19 @@ vive en portadas y fondos, nunca en la UI: las cards, la tipografía, los ícono
 los mismos del sistema de diseño.
 
 - **Portada, statement y cierre** llevan el *bloom* de Noisia sobre lienzo blanco, con el texto a
-  la izquierda y el color a la derecha. Reemplaza a la ilustración de personas, que queda para los
-  estudios.
-- **Las slides de contenido** llevan un bloom chico y tenue que sale por la mitad de un borde, nunca
+  la izquierda y el color entrando desde el borde derecho. Reemplaza a la ilustración de personas,
+  que queda para los estudios.
+- **Seis portadas, cada una con su cierre.** Cada deck usa una pareja, elegida a partir del nombre
+  del cliente: el mismo cliente siempre recibe la misma y dos clientes casi nunca comparten. El
+  brief puede fijarla con `"cover_variant": 1..6`.
+- **Las slides de contenido** llevan un bloom chico y tenue que entra por la mitad de un borde, nunca
   por una esquina: en las esquinas viven el logo, `noisia.ai`, el pie y el número.
-- **El bloom se hace por código** (`builder/make_shapes.py`). No es una figura con contorno: es un
-  campo de color abstracto que se funde con el blanco. Colores apagados en las orillas que se
-  saturan hacia los oficiales, cyan `#00EEEE` y rojo `#EE0B00`, donde el color es más denso, con un
-  núcleo navy profundo; bordes disueltos con grano, sin halo; y grano intenso sobre el color, que es
-  lo que lo distingue de un degradado genérico. Una composición nueva se agrega ahí.
+- **El bloom se hace por código** (`builder/make_shapes.py`, modo lineal). No es una figura con
+  contorno: el color nace en un punto focal del borde y avanza con un frente ondulado. Navy profundo
+  junto al foco, cyan `#00EEEE` y rojo `#EE0B00` a media distancia, apagados en el frente, y se
+  disuelve en el blanco con grano intenso, que es lo que lo distingue de un degradado genérico.
+- **El texto de las orillas** (`noisia.ai`, el pie y el número) cambia solo según lo que tiene
+  detrás: gris sobre blanco, tinta sobre un tono medio, blanco sobre el núcleo oscuro.
 - **UI:** cards `#fafafa` con borde `#eeeeee` y radio 16; íconos reales; sin sombras, sin bordes
   laterales, sin gradientes en un valor, sin eyebrows (§6).
 

@@ -125,9 +125,14 @@ def bloom(seed=11, strength=1.0, red=0.5, blobs=(), size=(1920, 1080), colour=(4
 # reach (how far the colour travels, fraction of width), strength (alpha cap), depth (how much of the
 # navy core shows), tilt (+ puts red below, - puts red above), seed.
 LINEAR = {
-    "cover":     dict(seed=7, fx=1.02, fy=0.45, ang=188, reach=0.50, strength=1.0, depth=1.0, tilt=0.9,
+    # Six covers; each deck gets one, chosen from the client's name so it is stable per client.
+    "cover-1":   dict(seed=7, fx=1.02, fy=0.45, ang=188, reach=0.50, strength=1.0, depth=1.0, tilt=0.9,
                       across_y=True),
-    "closing":   dict(seed=12, fx=1.03, fy=0.62, ang=196, reach=0.52, strength=1.0, depth=1.0, tilt=-1.1),
+    "cover-2":   dict(seed=27, fx=1.02, fy=0.55, ang=180, reach=0.48, strength=1.0, depth=1.0, tilt=-1.0),
+    "cover-3":   dict(seed=33, fx=1.03, fy=0.30, ang=170, reach=0.50, strength=1.0, depth=1.0, tilt=1.1),
+    "cover-4":   dict(seed=41, fx=1.04, fy=0.75, ang=196, reach=0.52, strength=1.0, depth=1.0, tilt=-0.8),
+    "cover-5":   dict(seed=52, fx=1.02, fy=0.50, ang=184, reach=0.46, strength=1.0, depth=1.0, tilt=0.4),
+    "cover-6":   dict(seed=64, fx=1.03, fy=0.20, ang=160, reach=0.55, strength=1.0, depth=1.0, tilt=0.9),
     "statement": dict(seed=5, fx=0.82, fy=-0.06, ang=110, reach=0.42, strength=0.95, depth=0.9, tilt=0.7),
     "frag-1":    dict(seed=21, fx=1.03, fy=0.50, ang=180, reach=0.2, strength=0.62, depth=0.35, tilt=0.9),
     "frag-2":    dict(seed=22, fx=0.56, fy=1.06, ang=268, reach=0.16, strength=0.6, depth=0.35, tilt=0.0),
@@ -138,6 +143,13 @@ LINEAR = {
     "onepager":  dict(seed=31, fx=1.04, fy=1.01, ang=225, reach=0.62, strength=0.7, depth=0.55, tilt=1.2,
                       size=(1191, 1684)),
 }
+
+
+for _i in range(1, 7):
+    _c = dict(LINEAR[f"cover-{_i}"])
+    _c.pop("across_y", None)
+    _c.update(seed=_c["seed"] + 100, tilt=-_c["tilt"], fy=min(0.9, max(0.1, 1.0 - _c["fy"])))
+    LINEAR[f"closing-{_i}"] = _c
 
 
 def linear(seed=7, fx=1.02, fy=0.45, ang=188, reach=0.5, strength=1.0, depth=1.0, tilt=0.9,
@@ -222,9 +234,9 @@ if __name__ == "__main__":
         print(sheet(a.sheet))
     if a.build:
         os.makedirs(OUT, exist_ok=True)
-        for n in COMPOSITIONS:
+        for n in (LINEAR if MODE == "linear" else COMPOSITIONS):
             if a.only and n not in a.only.split(","):
                 continue
             p = os.path.join(OUT, f"{n}.jpg")
-            compose(n).save(p, quality=88, optimize=True, progressive=True)
+            compose(n).save(p, quality=82, optimize=True, progressive=True)
             print(p)
