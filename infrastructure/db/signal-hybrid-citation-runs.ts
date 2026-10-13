@@ -29,9 +29,9 @@ export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|Poo
  WHERE result#>>'{claude,verdict}'='belongs'
    AND ($4::boolean OR NOT result ? 'citation_window' OR (SELECT count(DISTINCT item#>>'{citation_window,index}')
     FROM source_results covered CROSS JOIN LATERAL (SELECT covered.result item) one
-    WHERE item->>'root_id'=result->>'root_id' AND item->>'concept_key'=result->>'concept_key'
-     AND item->>'root_fingerprint'=result->>'root_fingerprint' AND item->>'definition_digest'=result->>'definition_digest'
-     AND item->>'entity_context_digest'=result->>'entity_context_digest' AND item->>'effective_entities_digest'=result->>'effective_entities_digest'
+    WHERE item->>'root_id'=call.result->>'root_id' AND item->>'concept_key'=call.result->>'concept_key'
+     AND item->>'root_fingerprint'=call.result->>'root_fingerprint' AND item->>'definition_digest'=call.result->>'definition_digest'
+     AND item->>'entity_context_digest'=call.result->>'entity_context_digest' AND item->>'effective_entities_digest'=call.result->>'effective_entities_digest'
      AND item#>>'{claude,verdict}' IN('belongs','not_belongs','insufficient','error','refused'))=(result#>>'{citation_window,count}')::int)
    AND ($4::boolean=false OR result#>>'{claude,verification,supported}'='false')
    AND ($5::uuid IS NULL OR p.root_id>$5::uuid)
@@ -40,12 +40,13 @@ export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|Poo
  for(const row of rows){
   const concept=row.input.evaluated_concepts.find(c=>c.concept_key===row.result.concept_key&&c.definition_digest===row.result.definition_digest);
   if(!concept)throw new Error('hybrid_citation_source_invalid');
-  const input=grouped.get(row.input.root_id)??{...row.input,evaluated_concepts:[],jev_by_concept:{},confirmation_by_concept:{}};
+  const key=s.hybrid_stage==='claude'?JSON.stringify([row.input.root_id,row.input.citation_window??null]):row.input.root_id;
+  const input=grouped.get(key)??{...row.input,evaluated_concepts:[],jev_by_concept:{},confirmation_by_concept:{}};
   if(input.confirmation_by_concept?.[concept.concept_key])throw new Error('hybrid_duplicate_confirmation');
   input.evaluated_concepts.push(concept);input.confirmation_by_concept??={};input.confirmation_by_concept[concept.concept_key]=row.result;
   input.jev_by_concept??={};input.jev_by_concept[concept.concept_key]={decision:row.result.jev,call_id:row.result.jev_call_id};
   if(s.hybrid_stage==='claude')input.citation_repair={reason:'The previous fragments did not independently support all necessary conditions. Reassess and select better decisive fragments.',previous_fragments:Object.values(input.confirmation_by_concept).flatMap(r=>r.claude?.citations??[])};
-  grouped.set(input.root_id,input);
+  grouped.set(key,input);
  }
  return [...grouped.values()].slice(0,200);
 }
