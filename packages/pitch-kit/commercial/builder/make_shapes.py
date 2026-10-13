@@ -118,12 +118,92 @@ def bloom(seed=11, strength=1.0, red=0.5, blobs=(), size=(1920, 1080), colour=(4
     return Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8))
 
 
-def compose(name):
+# ------------------------------------------------------------------ linear bloom (approved oct 2026)
+# The colour is born at a focal point on an edge and travels across the canvas with a wavy front:
+# deep navy at the focus, saturated cyan and red midway, muted at the front, dissolving into white.
+# Each: focus (fx, fy) in canvas fractions, travel angle in degrees (0 = right, 90 = down),
+# reach (how far the colour travels, fraction of width), strength (alpha cap), depth (how much of the
+# navy core shows), tilt (+ puts red below, - puts red above), seed.
+LINEAR = {
+    "cover":     dict(seed=7, fx=1.02, fy=0.45, ang=188, reach=0.50, strength=1.0, depth=1.0, tilt=0.9,
+                      across_y=True),
+    "closing":   dict(seed=12, fx=1.03, fy=0.62, ang=196, reach=0.52, strength=1.0, depth=1.0, tilt=-1.1),
+    "statement": dict(seed=5, fx=0.82, fy=-0.06, ang=110, reach=0.42, strength=0.95, depth=0.9, tilt=0.7),
+    "frag-1":    dict(seed=21, fx=1.03, fy=0.50, ang=180, reach=0.2, strength=0.62, depth=0.35, tilt=0.9),
+    "frag-2":    dict(seed=22, fx=0.56, fy=1.06, ang=268, reach=0.16, strength=0.6, depth=0.35, tilt=0.0),
+    "frag-3":    dict(seed=23, fx=-0.03, fy=0.50, ang=0, reach=0.19, strength=0.6, depth=0.35, tilt=-0.9),
+    "frag-4":    dict(seed=24, fx=1.03, fy=0.66, ang=185, reach=0.19, strength=0.6, depth=0.35, tilt=-0.9),
+    "frag-5":    dict(seed=25, fx=0.40, fy=1.06, ang=272, reach=0.16, strength=0.58, depth=0.35, tilt=0.0),
+    "frag-6":    dict(seed=26, fx=-0.03, fy=0.38, ang=-5, reach=0.19, strength=0.6, depth=0.35, tilt=0.9),
+    "onepager":  dict(seed=31, fx=1.04, fy=1.01, ang=225, reach=0.62, strength=0.7, depth=0.55, tilt=1.2,
+                      size=(1191, 1684)),
+}
+
+
+def linear(seed=7, fx=1.02, fy=0.45, ang=188, reach=0.5, strength=1.0, depth=1.0, tilt=0.9,
+           size=(1920, 1080), across_y=False):
+    W, H = size
+    S = 4
+    w, h = W // S, H // S
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    X, Y = xx / w, yy / h
+    asp = h / w
+
+    def lowfreq(n, amp, k=2.4):
+        f = np.zeros_like(X)
+        for _ in range(n):
+            kx, ky = rng.uniform(-k, k, 2)
+            f += np.sin((kx * X * 1.7 + ky * Y) * math.pi + rng.uniform(0, 2 * math.pi))
+        return f / n * amp
+
+    a = math.radians(ang)
+    ca, sa = math.cos(a), math.sin(a)
+    proj = (X - fx) * ca + (Y - fy) * asp * sa                  # 0 at the focus
+    # the wavy front runs across the travel direction
+    # perpendicular coordinate, in canvas units: for a leftward travel it is simply Y
+    across = (X - fx) * sa - (Y - fy) * ca + fy * (1 if abs(ca) >= abs(sa) else 0) + fx * (1 if abs(sa) > abs(ca) else 0)
+    if across_y:   # the approved cover was drawn with the front and the colour bands on plain Y
+        across = Y
+    front = proj + lowfreq(5, 0.11 * reach / 0.5, 2.6) + 0.10 * reach / 0.5 * np.sin(across * math.pi * 2.2 + 0.6)
+    al = np.clip(1 - front / reach, 0, 1)
+    alpha = al * al * (3 - 2 * al) * strength
+
+    d = np.clip(front / reach, 0, 1)[..., None]                 # 0 focus .. 1 front
+    band = np.clip(0.5 + lowfreq(3, 0.9, 1.4) + (across - 0.5) * tilt, 0, 1)[..., None]
+    mid_c = np.array(CYAN, np.float32) * (1 - band) + np.array(RED, np.float32) * band
+    muted_c = np.array(MUTED["cyan"], np.float32) * (1 - band) + np.array(MUTED["red"], np.float32) * band
+    deep_c = np.array(DEEP, np.float32) * 0.6 + np.array(NAVY, np.float32) * 0.4
+    deep_c = deep_c * depth + mid_c * (1 - depth)
+    rgb = np.where(d < 0.35, deep_c * (1 - d / 0.35) + mid_c * (d / 0.35),
+                   mid_c * (1 - (d - 0.35) / 0.65) + muted_c * ((d - 0.35) / 0.65))
+
+    def up(arr_, b):
+        im = Image.fromarray(arr_).resize((W, H), Image.BICUBIC).filter(ImageFilter.GaussianBlur(b))
+        return np.asarray(im, np.float32)
+
+    rgb_f = up(np.clip(rgb, 0, 255).astype(np.uint8), 8)
+    a_full = up((np.clip(alpha, 0, 1) * 255).astype(np.uint8), 14) / 255
+    nr = np.random.default_rng(seed + 1000)
+    dither = nr.normal(0, 1, (H, W)).astype(np.float32)
+    a_d = np.clip(a_full + dither * 0.44 * np.sqrt(np.clip(a_full * (1 - a_full), 0, 1)), 0, 1)
+    out = 255 * (1 - a_d[..., None]) + rgb_f * a_d[..., None]
+    g = nr.normal(0, 1, (H, W)).astype(np.float32)
+    out = out + (g * (30 * np.clip(a_full * 1.5, 0, 1) + 4))[..., None]
+    return Image.fromarray(np.clip(out, 0, 255).astype(np.uint8))
+
+
+MODE = "linear"   # "linear" (approved) or "radial" (the first bloom, kept for comparison)
+
+
+def compose(name, mode=None):
+    if (mode or MODE) == "linear":
+        return linear(**LINEAR[name])
     return bloom(**COMPOSITIONS[name])
 
 
 def sheet(path):
-    names = [n for n in COMPOSITIONS if n != "onepager"]
+    names = [n for n in LINEAR if n != "onepager"]
     tiles = [compose(n).resize((640, 360)) for n in names]
     out = Image.new("RGB", (3 * 650 + 10, ((len(tiles) + 2) // 3) * 370 + 10), "#444")
     for i, t in enumerate(tiles):
