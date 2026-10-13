@@ -635,3 +635,21 @@ test("optional summary normalization persists traced results after exact raw wit
   assert.equal(h.submitted(),1);
   assert.equal(createHash("sha256").update(h.calls()[0]!.raw_body!).digest("hex"),hash);
 });
+
+test("stored optional-summary replay plans only rejected roots, keeps raw/valid labels and separates paid recovery", async () => {
+  const { planStoredFacetReplayV1 } = await import("./signal-facet-stored-replay");
+  const h=harness("word ".repeat(13).trim());
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  const call={...h.calls()[0]!,raw_sha256:`sha256:${createHash("sha256").update(h.calls()[0]!.raw_body!).digest("hex")}`,settled_micro_usd:12,
+    results:h.labels.map(result=>({...result,status:"error" as const,error_code:"invalid_facets",facets:undefined}))};
+  const args={run:h.run,calls:[call],pending_root_ids:[...h.labels.map(result=>result.root_id),"unsent"],valid_root_ids:["already-valid"]};
+  const before=JSON.stringify(args);
+  const plan=planStoredFacetReplayV1(args);
+  assert.deepEqual(plan.replayed_root_ids,h.labels.map(result=>result.root_id).sort());
+  assert.deepEqual(plan.recovery_root_ids,["unsent"]);assert.equal(plan.provider_sends,0);
+  assert.equal(JSON.stringify(args),before);assert.equal(h.submitted(),1);
+  assert.ok(plan.pages[0]!.results.every(result=>result.facets?.asunto.abstained));
+  assert.throws(()=>planStoredFacetReplayV1({...args,calls:[{...call,raw_sha256:"sha256:wrong"}]}),/receipt_invalid/);
+  assert.throws(()=>planStoredFacetReplayV1({...args,valid_root_ids:[h.labels[0]!.root_id]}),/population_invalid/);
+  assert.throws(()=>planStoredFacetReplayV1({...args,calls:[{...call,status:"unknown"}]}),/receipt_invalid/);
+});

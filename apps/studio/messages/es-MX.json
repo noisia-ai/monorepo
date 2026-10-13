@@ -642,6 +642,7 @@
         "spam": "Spam o bots",
         "unknown": "Relevancia sin determinar",
         "without_concept": "Relevantes sin concepto",
+        "forcedAbstention": "Abstención aplicada por el sistema: asunto supera 12 palabras",
         "denominatorHelp": "Relevantes, ajenas, spam y relevancia sin determinar dividen el total de menciones únicas. Sin concepto es un subconjunto de relevantes y considera todos los conceptos de pertenencia, aunque no estén seleccionados. Las menciones seleccionadas y los conteos por concepto se superponen; no se suman a esas categorías.",
         "help": {
           "denominator": "Menciones únicas del período con derechos vigentes para métricas.",
@@ -4764,6 +4765,7 @@
     "nextPage": "Siguiente página",
     "contextReview": "Las entidades cambiaron. Revisa esta corrección con el contexto vigente.",
     "overrideReview": "La corrección anterior corresponde a otra definición o versión del texto. Revísala antes de aplicarla de nuevo.",
+    "forcedAbstention": "Abstención aplicada por el sistema: asunto supera 12 palabras",
     "pendingContextReview": "Revisión completa del contexto pendiente. Esta ficha sigue visible hasta confirmar el recálculo.",
     "openMention": "Abrir mención",
     "openOriginal": "Abrir fuente original",

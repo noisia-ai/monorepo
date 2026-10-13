@@ -289,7 +289,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
       records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at,
         platform: item.platform, originalUrl: item.url, quote: "quote" in item && typeof item.quote === "string" ? item.quote : null,
         provenanceLabel: item.evidence_origin === "human_correction" ? t("humanCorrection")
-          : item.decision_citation ? t("citedDecision") : null }))}
+          : item.forced_abstentions?.includes("asunto") ? t("mfp.forcedAbstention") : item.decision_citation ? t("citedDecision") : null }))}
       loading={reading} loadingLabel={t("loading")} emptyLabel={t("noEvidence")} errorMessage={error ? t(error === "evidenceStale" ? "evidenceStale" : "evidenceError") : null}
       onClose={() => { request.current?.abort(); sequence.current++; setDrawer(false); setReading(false); }}
       onOpenEnriched={onOpenMention ? record => { setDrawer(false); onOpenMention(record.id); } : undefined}

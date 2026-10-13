@@ -92,7 +92,7 @@ export function createAnthropicMessageBatchesClient(options: {
         // (429) are explicit provider rejections, not uncertain POST outcomes.
         const rejected = [400, 401, 402, 403, 404, 413, 422, 429].includes(response.status);
         const error = new AnthropicBatchTransportError(
-          `batch_http_${response.status}`, creates && rejected ? "not_submitted" : uncertain,
+          batchFailureCode(response.status, raw_body), creates && rejected ? "not_submitted" : uncertain,
           response.status,
         );
         errorReceipts.set(error, { http_status: response.status, raw_body, complete: true,
@@ -284,4 +284,17 @@ async function readBoundedText(response: Response, maxBytes: number) {
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+}
+
+/** Classify only a known billing rejection; provider text never becomes a receipt. */
+export function batchFailureCode(status: number, raw: string): string {
+  if (status === 400 || status === 402) {
+    try {
+      const body = JSON.parse(raw);
+      if (body?.error?.type === "invalid_request_error"
+        && typeof body.error.message === "string"
+        && /credit balance is too low/i.test(body.error.message)) return "credit_balance_insufficient";
+    } catch { /* malformed rejection retains its safe HTTP code */ }
+  }
+  return `batch_http_${status}`;
 }

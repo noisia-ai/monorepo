@@ -1,3 +1,4 @@
+import { facetForcedAbstentionsSqlV1 } from "./signal-facet-normalizations";
 import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
 import { createHash } from "node:crypto";
@@ -513,7 +514,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   SELECT root_id,concept_key,definition_digest,citations FROM signal_workspace_concept_memberships_read_v1($1::uuid)
   WHERE workspace_id=$1::uuid AND verdict='belongs'
 ), mfp_facets AS MATERIALIZED (
-  SELECT root_id,relevance FROM signal_workspace_mention_facets_read_v1($1::uuid) WHERE workspace_id=$1::uuid
+  SELECT f.workspace_id,f.root_id,f.input_digest,f.labeler_digest,f.entity_context_digest,f.facets,f.relevance FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE workspace_id=$1::uuid
 ), mfp_roots_with_concept AS MATERIALIZED (
   SELECT DISTINCT root_id FROM mfp_memberships
 ), ` : ""}legacy_memberships AS MATERIALIZED (
@@ -844,8 +845,10 @@ async function evidenceWithin(client: PoolClient, args: EvidenceArgs, ctx: Conte
       SELECT DISTINCT ON(root.root_id) root.root_id mention_id,
         mention.text_clean text,
         CASE WHEN member.evidence_fragment IS NOT NULL THEN signal_topic_utf16_fragment_v1(mention.text_clean,(member.evidence_fragment->>'start')::int,(member.evidence_fragment->>'end')::int) ELSE NULL END quote,
+        ${facetForcedAbstentionsSqlV1("facet")} forced_abstentions,
         member.evidence_fragment,mention.platform,to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url
       FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$7
+      LEFT JOIN mfp_facets facet ON facet.root_id=root.root_id
       JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
       WHERE root.evidence AND ($8::uuid IS NULL OR root.root_id>$8::uuid) ORDER BY root.root_id LIMIT $9`,[...populationParams(args,ctx),args.term_key,after,limit+1])).rows;
     const items=rows.slice(0,limit);

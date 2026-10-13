@@ -159,6 +159,7 @@ export async function runConceptMembershipTickV1(args: {
             error instanceof AnthropicBatchTransportError &&
             error.submission === "not_submitted"
           ),
+          error,
         );
         throw error;
       }

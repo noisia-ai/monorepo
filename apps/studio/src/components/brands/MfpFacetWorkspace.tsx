@@ -129,7 +129,7 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
           {item.human_dimensions.length?<span>{t("sources.human")}</span>:null}</div>
         <p className="mfp-evidence__text">{item.text}</p>
         <dl className="mfp-facet-values">{correctable.map(dim=><div key={dim}><dt>{t(`dimensions.${dim}`)}</dt>
-          <dd>{facetLabel(item.facets,dim,label)}</dd></div>)}</dl>
+          <dd>{facetLabel(item.facets,dim,label)}{item.forced_abstentions?.includes(dim)?` — ${t("forcedAbstention")}`:null}</dd></div>)}</dl>
         {item.requires_context_review?<p role="status">{t("contextReview")}</p>:null}
         {item.pending_context_review?<p role="status">{t("pendingContextReview")}</p>:null}
         <div className="admin-form-actions"><button type="button" className="admin-button" disabled={!browser.data?.can_edit||mutation.busy}

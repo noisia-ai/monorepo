@@ -8,7 +8,7 @@ Este documento alimenta al auditor; no sustituye ni modifica `QA_FUNDADOR_MFP.md
 - Cuenta: sesión Admin Noisia existente en dev-test, autorización propia del workspace. Sin cambios de roles ni copia de cookies.
 - Resultados existentes: «Marca QA MFP Oct07 R4», brand `38c31650-7512-497d-9836-2f39e1659fc8`, workspace `9a695132-238b-4ce4-aa97-73c6a02da9d8`, slug Signal `mfp-qa-front5-20261007`.
 - Continuación pagada: «Marca QA MFP Oct11R8», workspace `2f1c193a-df0c-4fc7-973e-8e311d59c746`; completó 25/25 unidades interpretadas: conserva las 18 anteriores y agregó 7/7 con cotización y confirmación. No repetir esta admisión.
-- Recorrido nuevo: marca propia R9 y estos CSV privados: `/Users/brandhon_o/.codex/worktrees/742b/noisia-website/.data/dev-corpus/r9/load1.csv` y `load2.csv`. 1,000 y 250 filas; 47 columnas, IDs únicos dentro de cada archivo. Segunda carga: 200 IDs nuevos, 30 duplicados exactos y 20 revisiones designadas. No se usa copia reconciliada.
+- Recorrido nuevo: marca propia R9 y estos CSV privados: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/r10/load1.csv` y `load2.csv`. 1,000 y 250 filas; 47 columnas, IDs únicos dentro de cada archivo. Segunda carga: 200 IDs nuevos, 30 duplicados exactos y 20 revisiones designadas. No se usa copia reconciliada.
 - Fixture nuevo excluye 344 IDs contradictorios / 1,230 filas fuente. Manifest privado `.data/dev-corpus/r9/sampling-manifest.json` contiene cada ID, archivo, número de fila y motivo, todos los hashes fuente/output y conteos; SHA256 `86cfde3bda7aa9fa9f4c1eea3fd52b60009d7a2f7db80031436f186e61881c0f`. Preflight `.data/front5-qa/r9/fixture-preflight.json` acredita fuentes intactas y validación del ingestor. Los CSV/IDs/fuentes no se versionan. Es una muestra limpia de QA, no la fuente íntegra. Originales preservados.
 - Runner dev-test: `NOISIA_WORKSPACE_NUMERIC_PRODUCER_ENABLED=true`, gate worker e incremental-projection verificados; sin pasos de operador en el recorrido. Runner conserva SHA `f20209e209e48483ea3dbc9da076e319d1c0c66f`, deployment `76acfe00-70bc-4c5b-ba53-6edc31425e21`; flags numeric producer, topic progress e incremental projection verificados true, sin cambios ni reinicio de Runner. No se activa H1 en el recorrido estándar.
 - Coste histórico R8: USD 5.553529 liquidado (≈ USD 5.6), separado de la continuación R9. Coste incremental R9 USD 0.164070 liquidado; forecast USD 0.65142; reserva activa USD 0. El total histórico R8 más esta continuación es USD 5.717599; imports, lecturas y corrección humana USD 0 proveedor. Las estimaciones son orientativas; reserva temporal y gasto liquidado se muestran separados. Un máximo sólo es estricto si se configura.
@@ -95,13 +95,13 @@ Recorrido UI observado por el orquestador sobre build `371c74a7`. No repetir imp
 | 13 | Marcar permiso de procesamiento con proveedores de IA | Marcado | Inmediato | No inicia proveedor. |
 | 14 | Pulsar «Continuar a la carga» | Fuente Exportaciones de SentiOne | Tiempo UI no medido | — |
 | 15 | Pulsar «Importar» de Primary brand | Formulario de importación | Inmediato | Mantener mismo ámbito en ambas cargas. |
-| 16 | Seleccionar `r9/load1.csv` en «Archivo CSV» | 1,000 filas / 47 columnas | Inmediato | 1,000 IDs internos únicos comprobados en preflight. |
+| 16 | Seleccionar `r10/load1.csv` en «Archivo CSV» | 1,000 filas / 47 columnas | Inmediato | 1,000 IDs internos únicos comprobados en preflight. |
 | 17 | Marcar «Voy a importar este archivo sin adjuntar su consulta de búsqueda.» | Marcado | Inmediato | Casilla observada por el orquestador. |
 | 18 | Completar «Cobertura del archivo desde» | 2026-01-01 | Inmediato | Verificar cobertura del manifest. |
 | 19 | Completar «Cobertura del archivo hasta» | 2026-08-23 | Inmediato | America/Mexico_City. |
 | 20 | Pulsar «Importar CSV» | 1,000 filas: 901 incluidas / 17 excluidas / 82 duplicadas | Tiempo UI no medido | No conciliar archivo; capturar censo real. |
 | 21 | Marcar «Actualizar contenido de IDs existentes» | Marcado | Inmediato | Permite 20 revisiones designadas, sin cambiar ingestor. |
-| 22 | Seleccionar `r9/load2.csv` en «Archivo CSV» | 250 filas / 47 columnas | Inmediato | 250 IDs internos únicos; 200 nuevos + 30 duplicados exactos + 20 revisados. |
+| 22 | Seleccionar `r10/load2.csv` en «Archivo CSV» | 250 filas / 47 columnas | Inmediato | 250 IDs internos únicos; 200 nuevos + 30 duplicados exactos + 20 revisados. |
 | 23 | Confirmar ausencia de query en el control visible | Marcado | Inmediato | Casilla «Voy a importar este archivo sin adjuntar su consulta de búsqueda.» |
 | 24 | Completar «Cobertura del archivo desde» | 2026-01-01 | Inmediato | — |
 | 25 | Completar «Cobertura del archivo hasta» | 2026-08-23 | Inmediato | America/Mexico_City. |

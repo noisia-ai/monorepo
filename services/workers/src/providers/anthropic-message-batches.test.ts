@@ -199,3 +199,11 @@ test("stalled POST times out with submission unknown instead of making a second 
   await assert.rejects(client.create([request]), matches("batch_transport_or_response_invalid", "submission_unknown"));
   assert.equal(calls, 1);
 });
+
+test("billing rejection exposes only its safe category while retaining private HTTP receipt", async () => {
+  const { batchFailureCode } = await import("./anthropic-message-batches");
+  assert.equal(batchFailureCode(400,JSON.stringify({error:{type:"invalid_request_error",message:"Your credit balance is too low to access the Anthropic API. sk-secret"}})),"credit_balance_insufficient");
+  assert.equal(batchFailureCode(500,JSON.stringify({error:{type:"invalid_request_error",message:"credit balance is too low"}})),"batch_http_500");
+  assert.equal(batchFailureCode(400,'{"error":{"type":"other","message":"credit balance is too low"}}'),"batch_http_400");
+  assert.equal(batchFailureCode(400,"sk-secret malformed"),"batch_http_400");
+});

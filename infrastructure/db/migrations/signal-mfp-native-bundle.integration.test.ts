@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import test from "node:test";
 import type { Pool } from "pg";
 import { seedSignalTopicEditorialRenewalSourceV1 } from "./signal-topic-editorial-renewal.synthetic.fixture";
@@ -86,6 +86,21 @@ test("MFP native bundle: complete PG DTO parity, one snapshot, topic changes and
     const target = (await query(`SELECT root_id FROM signal_workspace_concept_memberships_read_v1($1::uuid)
       WHERE workspace_id=$1 AND concept_key=$2 LIMIT 1`, [args.workspace_id, term.term_key])).rows[0];
     assert.ok(target, "a real current root/concept is required for human correction");
+    const fixed=(await query("SELECT prosrc FROM pg_proc WHERE oid='signal_workspace_concept_memberships_read_v1(uuid)'::regprocedure")).rows[0];
+    assert.doesNotMatch(fixed.prosrc,/pg_get_viewdef|EXECUTE|body_hash/);
+    const readerHash=createHash('sha256').update(fixed.prosrc).digest('hex');
+    const beforeDrift=(await query("SELECT * FROM signal_workspace_concept_memberships_read_v1($1::uuid) ORDER BY root_id,concept_key",[args.workspace_id])).rows;
+    assert.ok(beforeDrift.length);
+    await query("SAVEPOINT view_format_drift");
+    try {
+      const original=(await query("SELECT pg_get_viewdef('signal_concept_memberships_current_v1'::regclass,false) body")).rows[0].body;
+      await query(`CREATE OR REPLACE VIEW signal_concept_memberships_current_v1 AS SELECT * FROM (${original.trim().replace(/;$/u,'')}) approved WHERE false`);
+      assert.deepEqual((await query("SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1",[args.workspace_id])).rows,[]);
+      assert.deepEqual((await query("SELECT * FROM signal_workspace_concept_memberships_read_v1($1::uuid) ORDER BY root_id,concept_key",[args.workspace_id])).rows,beforeDrift,"approved reader does not re-hash/re-execute a future view");
+      assert.equal(createHash('sha256').update((await query("SELECT prosrc FROM pg_proc WHERE oid='signal_workspace_concept_memberships_read_v1(uuid)'::regprocedure")).rows[0].prosrc).digest('hex'),readerHash);
+      assert.deepEqual((await query("SELECT has_function_privilege('anon','signal_workspace_concept_memberships_read_v1(uuid)','EXECUTE') anon,has_function_privilege('authenticated','signal_workspace_concept_memberships_read_v1(uuid)','EXECUTE') authenticated")).rows[0],{anon:false,authenticated:false});
+    } finally { await query("ROLLBACK TO SAVEPOINT view_format_drift"); }
+
     await assert.rejects(overrideConceptMembershipsV1({ ...args, overrides: [{
       root_id: randomUUID(), concept_key: term.term_key, verdict: "belongs", decided_via: "human_ui",
     }] }), /membership_override_target_invalid/);

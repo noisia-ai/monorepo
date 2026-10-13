@@ -644,6 +644,7 @@
         "spam": "Spam or bots",
         "unknown": "Undetermined relevance",
         "without_concept": "Relevant without a concept",
+        "forcedAbstention": "System abstention: summary exceeds 12 words",
         "denominatorHelp": "Relevant, unrelated, spam and undetermined relevance partition unique mentions. Without a concept is a subset of relevant and considers all membership concepts, including unselected ones. Selected mentions and per-concept counts overlap; do not add them to those categories.",
         "help": {
           "denominator": "Unique mentions in the period with current metric rights.",
@@ -4764,6 +4765,7 @@
     "nextPage": "Next page",
     "contextReview": "Entities changed. Review this correction against the current context.",
     "overrideReview": "The previous correction belongs to another definition or text version. Review it before applying it again.",
+    "forcedAbstention": "System abstention: summary exceeds 12 words",
     "pendingContextReview": "Full context review pending. This facet remains visible until recalculation is confirmed.",
     "openMention": "Open mention",
     "openOriginal": "Open original source",
