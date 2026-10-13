@@ -89,6 +89,9 @@ test("MFP native bundle: complete PG DTO parity, one snapshot, topic changes and
     const fixed=(await query("SELECT prosrc FROM pg_proc WHERE oid='signal_workspace_concept_memberships_read_v1(uuid)'::regprocedure")).rows[0];
     assert.doesNotMatch(fixed.prosrc,/pg_get_viewdef|EXECUTE|body_hash/);
     const readerHash=createHash('sha256').update(fixed.prosrc).digest('hex');
+    const approvedBody=(await query("SELECT pg_get_viewdef('signal_concept_memberships_current_v1'::regclass,false) body")).rows[0].body;
+    assert.equal(fixed.prosrc,approvedBody.replace('signal_mention_facets_current_v1 f','signal_workspace_mention_facets_read_v1($1) f'));
+    console.log(`SQL0268 approved prosrc SHA256 ${readerHash}`);
     const beforeDrift=(await query("SELECT * FROM signal_workspace_concept_memberships_read_v1($1::uuid) ORDER BY root_id,concept_key",[args.workspace_id])).rows;
     assert.ok(beforeDrift.length);
     await query("SAVEPOINT view_format_drift");

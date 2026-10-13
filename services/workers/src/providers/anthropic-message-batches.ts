@@ -50,6 +50,7 @@ export class AnthropicBatchTransportError extends Error {
     readonly code: string,
     readonly submission: "not_submitted" | "submission_unknown" | "read_failed",
     readonly httpStatus?: number,
+    readonly providerReason?: "credit_balance_insufficient",
   ) {
     // Do not expose provider bodies, prompts, API keys or fetch error causes.
     super(code);
@@ -92,8 +93,9 @@ export function createAnthropicMessageBatchesClient(options: {
         // (429) are explicit provider rejections, not uncertain POST outcomes.
         const rejected = [400, 401, 402, 403, 404, 413, 422, 429].includes(response.status);
         const error = new AnthropicBatchTransportError(
-          batchFailureCode(response.status, raw_body), creates && rejected ? "not_submitted" : uncertain,
+          `batch_http_${response.status}`, creates && rejected ? "not_submitted" : uncertain,
           response.status,
+          creates && batchFailureCode(response.status,raw_body) === "credit_balance_insufficient" ? "credit_balance_insufficient" : undefined,
         );
         errorReceipts.set(error, { http_status: response.status, raw_body, complete: true,
           provider_request_id: response.headers.get("request-id") });

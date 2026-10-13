@@ -207,3 +207,12 @@ test("billing rejection exposes only its safe category while retaining private H
   assert.equal(batchFailureCode(400,'{"error":{"type":"other","message":"credit balance is too low"}}'),"batch_http_400");
   assert.equal(batchFailureCode(400,"sk-secret malformed"),"batch_http_400");
 });
+
+test("credit diagnostic keeps the established HTTP transport code and rejection semantics",async()=>{
+  const client=createAnthropicMessageBatchesClient({apiKey:"test-secret",fetch:async()=>new Response(JSON.stringify({error:{type:"invalid_request_error",message:"Your credit balance is too low. sk-secret"}}),{status:400})});
+  await assert.rejects(client.create([request]),error=>{
+    assert.ok(error instanceof AnthropicBatchTransportError);assert.equal(error.code,"batch_http_400");
+    assert.equal(error.submission,"not_submitted");assert.equal(error.providerReason,"credit_balance_insufficient");
+    assert.doesNotMatch(JSON.stringify(error),/sk-secret/);return true;
+  });
+});

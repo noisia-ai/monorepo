@@ -74,7 +74,7 @@ export function labelingCreateFailureReceiptV1(error: unknown): string | null {
     /^batch_http_[1-5][0-9]{2}$/u.test(e.code) ||
     ["batch_api_key_missing", "batch_timeout_invalid", "batch_request_count_invalid",
       "batch_request_invalid", "batch_request_not_serializable", "batch_request_envelope_too_large",
-      "batch_transport_or_response_invalid", "credit_balance_insufficient"].includes(e.code)
+      "batch_transport_or_response_invalid"].includes(e.code)
   ) ? e.code : "unclassified_create_failure";
   const status = transport && Number.isInteger(e.httpStatus) &&
     Number(e.httpStatus) >= 100 && Number(e.httpStatus) <= 599 ? Number(e.httpStatus) : null;
@@ -83,6 +83,8 @@ export function labelingCreateFailureReceiptV1(error: unknown): string | null {
     error_class: transport ? "AnthropicBatchTransportError" : "Error",
     code: transport ? code : "unclassified_create_failure",
     http_status: status,
+    ...(transport && e.providerReason === "credit_balance_insufficient"
+      ? {provider_reason:"credit_balance_insufficient"} : {}),
     submission: transport && ["not_submitted", "submission_unknown", "read_failed"].includes(String(e.submission))
       ? e.submission : "submission_unknown",
   });

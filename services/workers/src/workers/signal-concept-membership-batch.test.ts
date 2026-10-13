@@ -563,10 +563,11 @@ test('new H1 stops transport splits after three calls per root without changing 
 test("membership creation persists a safe billing rejection and never resends it", async () => {
   const h = harness(); let sends = 0;
   h.provider.create = async () => { sends++; throw Object.assign(
-    new AnthropicBatchTransportError("credit_balance_insufficient", "not_submitted", 400),
+    new AnthropicBatchTransportError("batch_http_400", "not_submitted", 400,"credit_balance_insufficient"),
     { raw_body: "sk-secret private provider text" }); };
   await assert.rejects(runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider}));
-  assert.equal(JSON.parse(h.events[0]!).code,"credit_balance_insufficient");
+  assert.equal(JSON.parse(h.events[0]!).code,"batch_http_400");
+  assert.equal(JSON.parse(h.events[0]!).provider_reason,"credit_balance_insufficient");
   assert.doesNotMatch(h.events[0]!,/sk-secret|private/);
   assert.ok(h.calls().every(call=>call.status==="failed" && call.provider_batch_id===null));
   await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
