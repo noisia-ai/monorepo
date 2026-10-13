@@ -11,22 +11,24 @@ import type { createAnthropicMessageBatchesClient } from '../../../services/work
 export async function verifyHybridCitationQualityV1(a:{client:PoolClient;database:Pool;workspace:string;actor:string;route:string;jevRun:string;concept:ConceptForJudgeV1}) {
  const {client}=a,oldPrice=process.env.NOISIA_JEV_INPUT_USD_PER_MTOK;process.env.NOISIA_JEV_INPUT_USD_PER_MTOK='0.042';
  try{
- for(const scenario of ['supported','cached_jev_supported','cached_jev_rejected','repair_supported','repair_unsupported','deterministic_error','explicit_unknown_release','verifier_http_error','verifier_invalid_noul'] as const){
+ for(const scenario of ['supported','mixed_window_error','cached_jev_supported','cached_jev_rejected','repair_supported','repair_unsupported','deterministic_error','explicit_unknown_release','verifier_http_error','verifier_invalid_noul'] as const){
   await client.query('SAVEPOINT citation_quality');
   await client.query("UPDATE signal_labeling_calls SET results_applied=true,results='[]' WHERE run_id=$1 AND status='failed'",[a.jevRun]);
   const raw=new Map<string,string>();
  const createStore=(stage:'claude'|'citation')=>createHybridMembershipStageStoreV1(stage,{database:a.database,
    storeRaw:async r=>{raw.set(r.call_id,r.raw_text);return r.call_id;},loadRaw:async r=>raw.get(r.storage_key)!});
-  let claudeSends=0,verifySends=0;let requests:Array<{custom_id:string;params:{messages:Array<{content:string}>}}>=[];
+  let claudeSends=0,verifySends=0;const submittedWindows:string[][]=[];
+  let requests:Array<{custom_id:string;params:{messages:Array<{content:string}>}}>=[];
   const batch={id:'msgbatch_citation_fixture',processing_status:'ended',created_at:new Date().toISOString()};
-  const claude={create:async(items:typeof requests)=>{claudeSends++;requests=items;return batch;},get:async()=>batch,
+  const claude={create:async(items:typeof requests)=>{claudeSends++;requests=items;
+    submittedWindows.push(items.map(item=>JSON.parse(item.params.messages[0]!.content).roots[0].spans[0].span_id));return batch;},get:async()=>batch,
    list:async()=>({data:[batch],has_more:false,last_id:batch.id}),results:async function*(){for(const request of requests){
     const span=JSON.parse(request.params.messages[0]!.content).roots[0].spans[0].span_id;
-    const item={custom_id:request.custom_id,result:{type:'succeeded',message:{id:'synthetic_citation',type:'message',role:'assistant',model:'claude-sonnet-5-5',stop_reason:'end_turn',usage:{input_tokens:10,output_tokens:10},content:[{type:'text',text:scenario==='deterministic_error'?'invalid JSON':JSON.stringify({contract_version:'concept-membership-judge-v1',roots:[{root_ordinal:0,memberships:[{concept_key:a.concept.concept_key,verdict:scenario==='cached_jev_rejected'?'not_belongs':'belongs',span_ids:[span],rationale:'The cited sentence establishes the decisive activity.'}]}]})}]}}};yield{item,rawText:JSON.stringify(item)};
+    const item={custom_id:request.custom_id,result:{type:'succeeded',message:{id:'synthetic_citation',type:'message',role:'assistant',model:'claude-sonnet-5-5',stop_reason:'end_turn',usage:{input_tokens:10,output_tokens:10},content:[{type:'text',text:scenario==='deterministic_error'||scenario==='mixed_window_error'&&request===requests[0]?'invalid JSON':JSON.stringify({contract_version:'concept-membership-judge-v1',roots:[{root_ordinal:0,memberships:[{concept_key:a.concept.concept_key,verdict:scenario==='cached_jev_rejected'?'not_belongs':'belongs',span_ids:[span],rationale:'The cited sentence establishes the decisive activity.'}]}]})}]}}};yield{item,rawText:JSON.stringify(item)};
    }}} as unknown as ReturnType<typeof createAnthropicMessageBatchesClient>;
   const technical=scenario==='verifier_http_error'||scenario==='verifier_invalid_noul';
   const jev={evaluate:async()=>{verifySends++;if(scenario==='verifier_http_error')return {http_status:429,latency_ms:1,body:JSON.stringify({error:'overloaded'})};
-   if(scenario==='verifier_invalid_noul')return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:2}}})};return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:scenario==='supported'||scenario==='cached_jev_supported'||scenario==='repair_supported'&&verifySends===2?0.9:0.1}}})};}};
+   if(scenario==='verifier_invalid_noul')return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:2}}})};return {http_status:200,latency_ms:1,body:JSON.stringify({model:'jev-1.13.0',usage:{input_tokens:10,output_tokens:0},answers:{support:{type:'noul',noul:scenario==='supported'||scenario==='mixed_window_error'||scenario==='cached_jev_supported'||scenario==='repair_supported'&&verifySends===2?0.9:0.1}}})};}};
   const initial=await requestHybridMembershipStageV1({database:a.database,workspace_id:a.workspace,actor_user_id:a.actor,stage:'claude',route_digest:a.route,idempotency_key:`citation-${randomUUID()}`,provider_available:true});
   const cached=scenario==='cached_jev_supported'||scenario==='cached_jev_rejected';
   let sourceCalls:unknown[]=[];
@@ -106,6 +108,11 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
     stage:'citation',route_digest:a.route,source_run_id:initial.run_id,idempotency_key:`exhausted-${randomUUID()}`,provider_available:true});
    await runHybridMembershipTickV1({run_id:final.run_id,stage:'citation',store:createStore('citation'),jevPrice:0.042,jev,claude});
    assert.equal(verifySends,3,'explicit technical retry is bounded to three verifier attempts');assert.equal(claudeSends,1);
+   const exhausted=(await client.query('SELECT verdict,error_code FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows;
+   assert.deepEqual(exhausted,[{verdict:'error',error_code:'hybrid_attempts_exhausted'}],
+    'three verifier failures write an explicit final technical pair state');
+   const visibleFinal=(await client.query('SELECT verdict,error_code FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=$2 AND concept_key=$3',[a.workspace,call.inputs[0].root_id,a.concept.concept_key])).rows[0];
+   assert.deepEqual(visibleFinal,exhausted[0]);
    console.log(JSON.stringify({gate:'h1_pg_verifier_technical_error',scenario,claudeSends,verifySends,verdict:current.verdict}));
    await client.query('ROLLBACK TO SAVEPOINT citation_quality');continue;
   }
@@ -119,7 +126,9 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
     assert.equal((await selectHybridClaudeInputsV1(client,{...r,cursor_root_id:null})).length,0,'deterministic pair never recharges');
     await client.query('ROLLBACK TO SAVEPOINT citation_quality');continue;
   }
-  const expected=scenario==='supported'||scenario==='cached_jev_supported'?1:2;assert.equal(claudeSends,expected);assert.equal(verifySends,expected);
+  const expected=scenario==='supported'||scenario==='mixed_window_error'||scenario==='cached_jev_supported'?1:2;assert.equal(claudeSends,expected);assert.equal(verifySends,expected);
+  if(expected===2){assert.equal(submittedWindows[1]?.length,1,'citation repair sends only the rejected window');
+   assert.ok(submittedWindows[0]?.includes(submittedWindows[1]![0]!), 'repair keeps the original absolute span');}
   const windows=(await client.query(`SELECT input,result FROM signal_labeling_calls call
    CROSS JOIN LATERAL jsonb_array_elements(call.inputs) input
    CROSS JOIN LATERAL jsonb_array_elements(call.results) result WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied`,[initial.run_id])).rows;
