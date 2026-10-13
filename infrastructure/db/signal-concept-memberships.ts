@@ -4,7 +4,7 @@ import {
   conceptForJudgeSchemaV1,
   conceptCompatibleV1,
   conceptSetDigestV1,
-  membershipLabelerIdentityV1,
+  membershipLabelerIdentityV1, membershipLabelerIdentityV2,
   signalWorkspaceEmbeddingDigestV1 as digest,
   type ConceptForJudgeV1,
   type MembershipInputV1,
@@ -207,8 +207,14 @@ export async function requestConceptMembershipsV1(args: {
   concept?: ConceptForJudgeV1;
   /** Private WS4 evaluation variant; Studio leaves the production default untouched. */
   evaluation_effort?: "low" | "medium";
+  /** Offline/remote WS4 experiment: never selects the workspace default or writes serving pairs. */
+  evaluation_judge_version?: 2;
+  evaluation_root_ids?: string[];
 }) {
-  const identity = membershipLabelerIdentityV1(args.evaluation_effort);
+  const evaluation = args.evaluation_judge_version === 2;
+  if (evaluation && (!args.evaluation_root_ids?.length || new Set(args.evaluation_root_ids).size !== args.evaluation_root_ids.length))
+    fail("membership_evaluation_population_invalid");
+  const identity = evaluation ? membershipLabelerIdentityV2() : membershipLabelerIdentityV1(args.evaluation_effort);
   const previewConcept = args.concept
     ? conceptForJudgeSchemaV1.parse({
         ...args.concept,
@@ -222,21 +228,21 @@ export async function requestConceptMembershipsV1(args: {
     ...args,
     identity,
     adapter: {
-      request_identity: { kind: "membership", preview: previewConcept },
-      select_labeler: !previewConcept,
+      request_identity: { kind: "membership", preview: previewConcept, ...(evaluation ? {evaluation_judge_version:2, sample_root_ids:args.evaluation_root_ids} : {}) },
+      select_labeler: !previewConcept && !evaluation,
       validateIdentity: (id) => {
         if (digest(id) !== digest(identity))
           fail("membership_identity_invalid");
       },
       prepare: async (c, w, _id, ld, context) => {
-        if ((await c.query("SELECT 1 FROM signal_hybrid_membership_routes WHERE workspace_id=$1", [w])).rowCount)
+        if (!evaluation && (await c.query("SELECT 1 FROM signal_hybrid_membership_routes WHERE workspace_id=$1", [w])).rowCount)
           fail("hybrid_route_selected");
         const concepts = previewConcept
           ? [previewConcept]
           : await loadMembershipConceptsV1(c, w);
         if (!concepts.length) fail("membership_concepts_required");
         // Round-robin across platform/month strata, deterministically ordered within each stratum.
-        const sample = previewConcept
+        const sample = evaluation ? args.evaluation_root_ids! : previewConcept
           ? (
               await c.query<{ root_id: string }>(
                 `SELECT root_id FROM (SELECT root_id,platform,published_at,row_number() OVER(PARTITION BY platform,date_trunc('month',published_at) ORDER BY input_digest,root_id) rank FROM signal_mention_facets_current_v1 WHERE workspace_id=$1 AND relevance='relevant' AND NOT requires_context_review AND ($2='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(facets#>'{entities,value}') e WHERE e->>'kind'=$2))) sample ORDER BY rank,platform,published_at,root_id LIMIT 30`,
@@ -245,11 +251,12 @@ export async function requestConceptMembershipsV1(args: {
             ).rows.map((r) => r.root_id)
           : null;
         const estimate = await estimateMembershipWorkV1(c, {workspace_id: w, concepts, context,
-          labeler_digest: ld, sample, preview: !!previewConcept});
+          labeler_digest: ld, sample, preview: !!previewConcept || evaluation});
         return {
           ...estimate,
           snapshot: {
-            preview: !!previewConcept,
+            preview: !!previewConcept || evaluation,
+            ...(evaluation ? {evaluation_judge_version:2} : {}),
             concepts,
             sample_root_ids: sample,
           },
