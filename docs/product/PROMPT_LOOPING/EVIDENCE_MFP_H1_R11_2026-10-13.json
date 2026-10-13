@@ -126,5 +126,27 @@
     "reasoning_output_tokens": 201,
     "cost_usd": null,
     "independent_backend_attestation": false
-  }
+  },
+  "focal_fixture_review": {
+    "configured_model": "gpt-6-astra",
+    "configured_effort": "medium",
+    "id": "01a13402-357f-7863-806f-cf14d8e0a89c",
+    "scope": "Late-offset mixed-window acceptance after PG189 TypeError and PG192 late-offset assertion failure; dispatch hash order was not text order.",
+    "kind": "read_only_consultation",
+    "result": "Error injection fixed to first source sentence; late offsets and exactly one technical error remain required.",
+    "input_tokens": 20123,
+    "cached_input_tokens": 13184,
+    "output_tokens": 148,
+    "reasoning_output_tokens": 0,
+    "cost_usd": null,
+    "independent_backend_attestation": false
+  },
+  "failed_postgres_runs": [
+    181,
+    182,
+    184,
+    189,
+    192,
+    193
+  ]
 }

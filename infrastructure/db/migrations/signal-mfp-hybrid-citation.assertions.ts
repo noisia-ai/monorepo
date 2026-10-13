@@ -25,7 +25,7 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
     submittedWindows.push(items.map(item=>JSON.parse(item.params.messages[0]!.content).roots[0].spans[0].span_id));return batch;},get:async()=>batch,
    list:async()=>({data:[batch],has_more:false,last_id:batch.id}),results:async function*(){for(const request of requests){
     const span=JSON.parse(request.params.messages[0]!.content).roots[0].spans[0].span_id;
-    const item={custom_id:request.custom_id,result:{type:'succeeded',message:{id:'synthetic_citation',type:'message',role:'assistant',model:'claude-sonnet-5-5',stop_reason:'end_turn',usage:{input_tokens:10,output_tokens:10},content:[{type:'text',text:scenario==='deterministic_error'||scenario==='mixed_window_error'&&request===requests[0]?'invalid JSON':JSON.stringify({contract_version:'concept-membership-judge-v1',roots:[{root_ordinal:0,memberships:[{concept_key:a.concept.concept_key,verdict:scenario==='cached_jev_rejected'?'not_belongs':'belongs',span_ids:[span],rationale:'The cited sentence establishes the decisive activity.'}]}]})}]}}};yield{item,rawText:JSON.stringify(item)};
+    const item={custom_id:request.custom_id,result:{type:'succeeded',message:{id:'synthetic_citation',type:'message',role:'assistant',model:'claude-sonnet-5-5',stop_reason:'end_turn',usage:{input_tokens:10,output_tokens:10},content:[{type:'text',text:scenario==='deterministic_error'||scenario==='mixed_window_error'&&span==='r0c0s0'?'invalid JSON':JSON.stringify({contract_version:'concept-membership-judge-v1',roots:[{root_ordinal:0,memberships:[{concept_key:a.concept.concept_key,verdict:scenario==='cached_jev_rejected'?'not_belongs':'belongs',span_ids:[span],rationale:'The cited sentence establishes the decisive activity.'}]}]})}]}}};yield{item,rawText:JSON.stringify(item)};
    }}} as unknown as ReturnType<typeof createAnthropicMessageBatchesClient>;
   const technical=scenario==='verifier_http_error'||scenario==='verifier_invalid_noul';
   const jev={evaluate:async()=>{verifySends++;if(scenario==='verifier_http_error')return {http_status:429,latency_ms:1,body:JSON.stringify({error:'overloaded'})};
@@ -140,6 +140,8 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
    [a.workspace,a.route,'claude',w.root_id,w.root_fingerprint,a.concept.concept_key,a.concept.definition_digest,w.entity_context_digest,w.effective_entities_digest])).rows[0].n,expected,
    'independent windows count once per window, preserving the attempt bound');
   assert.ok(windows.some(row=>(row.result.claude.citations?.[0]?.start??-1)>10000),'late window preserves absolute offsets');
+  if(scenario==='mixed_window_error')assert.equal(windows.filter(row=>row.result.claude.verdict==='error').length,1,
+   'only the initial window fails; late positive still requires its paid verifier');
   if(scenario==='supported'){
    await client.query('SAVEPOINT window_input_correspondence');
    const windowCalls=(await client.query('SELECT * FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id',[initial.run_id])).rows;
