@@ -16,7 +16,7 @@ export const hybridUnconfirmedPairSqlV1 = `NOT EXISTS (
   FROM signal_labeling_calls covered CROSS JOIN LATERAL jsonb_array_elements(covered.results) item
   WHERE covered.run_id=confirmation.run_id AND covered.status='settled' AND covered.results_applied
    AND item->>'root_id'=result->>'root_id' AND item->>'concept_key'=result->>'concept_key'
-   AND item#>>'{claude,verdict}' IN('belongs','not_belongs','insufficient'))=(result#>>'{citation_window,count}')::int)
+   AND item#>>'{claude,verdict}' IN('belongs','not_belongs','insufficient','error','refused'))=(result#>>'{citation_window,count}')::int)
  AND result#>>'{claude,verdict}'='belongs' AND result->>'root_id'=current.root_id::text
  AND result->>'root_fingerprint'=current.root_fingerprint AND result->>'concept_key'=current.concept_key
  AND result->>'definition_digest'=current.definition_digest AND result->>'entity_context_digest'=current.entity_context_digest

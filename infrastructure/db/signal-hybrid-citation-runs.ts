@@ -5,31 +5,37 @@ import type { LabelingRunV1 } from './signal-labeling-runs';
 import { requestHybridMembershipStageV1, type HybridMembershipStageV1 } from './signal-hybrid-membership';
 import type { HybridStageInputV1, HybridStageResultV1 } from './signal-hybrid-runs';
 import {hybridPairRetrySqlV1,hybridUncertainPairSqlV1} from './signal-hybrid-admission-population';
+import {hybridSettledWindowResultsSqlV1} from './signal-hybrid-window-results';
 
 /** Previous receipt is the immutable input to verification or to the single citation repair. */
 export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|PoolClient,run:LabelingRunV1):Promise<HybridStageInputV1[]> {
  const s=(run as LabelingRunV1&{membership_snapshot:{source_run_id:string;hybrid_stage:HybridMembershipStageV1;citation_retry:boolean;route_digest:string}}).membership_snapshot;
+ const sourceSql=`SELECT result,input,0 depth,call.created_at,call.id FROM signal_labeling_calls call
+  CROSS JOIN LATERAL jsonb_array_elements(call.results) result
+  JOIN LATERAL jsonb_array_elements(call.inputs) input ON input->>'root_id'=result->>'root_id'
+  WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
+   ${s.hybrid_stage==='citation'?`AND NOT result ? 'citation_window'
+   UNION ALL SELECT * FROM (${hybridSettledWindowResultsSqlV1}) windows`:''}`;
  const rows=(await client.query<{input:HybridStageInputV1;result:HybridStageResultV1}>(`WITH current_pairs AS MATERIALIZED (
    SELECT * FROM signal_concept_memberships_current_v1 current WHERE workspace_id=$2 AND labeler_digest=$3
      AND verdict IN('pending','error') AND ${hybridPairRetrySqlV1(s.hybrid_stage)} AND ${hybridUncertainPairSqlV1}
- ), rights AS MATERIALIZED (SELECT root_id FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$2 AND metrics AND evidence)
- SELECT DISTINCT ON(p.root_id,p.concept_key) input,result FROM signal_labeling_calls call
- CROSS JOIN LATERAL jsonb_array_elements(call.results) result
- JOIN LATERAL jsonb_array_elements(call.inputs) input ON input->>'root_id'=result->>'root_id'
+ ), rights AS MATERIALIZED (SELECT root_id FROM signal_membership_evidence_rights_v1 WHERE workspace_id=$2 AND metrics AND evidence),
+ source_results AS MATERIALIZED (${sourceSql})
+ SELECT DISTINCT ON(p.root_id,p.concept_key) input,result FROM source_results call
  JOIN current_pairs p ON p.root_id::text=result->>'root_id' AND p.root_fingerprint=result->>'root_fingerprint'
    AND p.concept_key=result->>'concept_key' AND p.definition_digest=result->>'definition_digest'
    AND p.entity_context_digest=result->>'entity_context_digest' AND p.effective_entities_digest=result->>'effective_entities_digest'
  JOIN rights ON rights.root_id=p.root_id
- WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
-   AND result#>>'{claude,verdict}'='belongs'
+ WHERE result#>>'{claude,verdict}'='belongs'
    AND ($4::boolean OR NOT result ? 'citation_window' OR (SELECT count(DISTINCT item#>>'{citation_window,index}')
-    FROM signal_labeling_calls covered CROSS JOIN LATERAL jsonb_array_elements(covered.results) item
-    WHERE covered.run_id=call.run_id AND covered.status='settled' AND covered.results_applied
-     AND item->>'root_id'=result->>'root_id' AND item->>'concept_key'=result->>'concept_key'
-     AND item#>>'{claude,verdict}' IN('belongs','not_belongs','insufficient'))=(result#>>'{citation_window,count}')::int)
+    FROM source_results covered CROSS JOIN LATERAL (SELECT covered.result item) one
+    WHERE item->>'root_id'=result->>'root_id' AND item->>'concept_key'=result->>'concept_key'
+     AND item->>'root_fingerprint'=result->>'root_fingerprint' AND item->>'definition_digest'=result->>'definition_digest'
+     AND item->>'entity_context_digest'=result->>'entity_context_digest' AND item->>'effective_entities_digest'=result->>'effective_entities_digest'
+     AND item#>>'{claude,verdict}' IN('belongs','not_belongs','insufficient','error','refused'))=(result#>>'{citation_window,count}')::int)
    AND ($4::boolean=false OR result#>>'{claude,verification,supported}'='false')
    AND ($5::uuid IS NULL OR p.root_id>$5::uuid)
- ORDER BY p.root_id,p.concept_key,call.created_at,call.id`,[s.source_run_id,run.workspace_id,s.route_digest,s.hybrid_stage==='claude',run.cursor_root_id])).rows;
+ ORDER BY p.root_id,p.concept_key,call.depth,call.created_at DESC,call.id DESC`,[s.source_run_id,run.workspace_id,s.route_digest,s.hybrid_stage==='claude',run.cursor_root_id])).rows;
  const grouped=new Map<string,HybridStageInputV1>();
  for(const row of rows){
   const concept=row.input.evaluated_concepts.find(c=>c.concept_key===row.result.concept_key&&c.definition_digest===row.result.definition_digest);

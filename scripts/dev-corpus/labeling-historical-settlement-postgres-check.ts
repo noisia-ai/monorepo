@@ -1,7 +1,7 @@
 /** Replaying a receipt uses its booked historical cost, never the current price. */
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
-import {llmCostMicroUsdV1,llmPriceV1} from '@noisia/query-engine';
+import {llmCostMicroUsdV1,llmPriceV1} from '../../packages/query-engine/src/llm-pricing-v1';
 import {createSignalLabelingStoreV1,type LabelingRunV1,type LabelingCallV1} from '../../infrastructure/db/signal-labeling-runs';
 import {createMigratedLabelingFixture} from './migrated-labeling-fixture';
 import {main,openDatabase} from './guard.mjs';

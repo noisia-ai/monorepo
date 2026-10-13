@@ -8,7 +8,7 @@ import type { LabelingDatabaseV1 } from "./signal-mention-facets";
 
 import { selectHybridCitationInputsV1, requestHybridCitationFollowupV1 } from "./signal-hybrid-citation-runs";
 import { hybridPairRetrySqlV1, hybridUncertainPairSqlV1, hybridUnconfirmedPairSqlV1 } from "./signal-hybrid-admission-population";
-import {reduceHybridWindowResultsV1} from './signal-hybrid-window-results';
+import {reduceHybridWindowResultsV1,hybridSettledWindowResultsSqlV1} from './signal-hybrid-window-results';
 import {reuseHybridCachedJevV1} from './signal-hybrid-cache';
 import {hybridCompatibleJevRunSqlV1,hybridJevPositiveSqlV1} from './signal-hybrid-semantic-cache-sql';
 import {rethresholdHybridJevV1} from '@noisia/query-engine';
@@ -173,16 +173,12 @@ export function createHybridMembershipStageStoreV1(stage: HybridMembershipStageV
             return { ...result,text:input.text };
           }));
         if(stage==='claude'&&decisions.some(result=>result.citation_window)){
-          const stored=(await client.query<{result:HybridStageResultV1;text:string}>(`SELECT result,input->>'text' text
-            FROM signal_labeling_calls call CROSS JOIN LATERAL jsonb_array_elements(call.results) result
-            JOIN LATERAL jsonb_array_elements(call.inputs) input ON input->>'root_id'=result->>'root_id'
-            WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied AND result ? 'citation_window'
-            ORDER BY call.created_at,call.id`,[run.id])).rows;
-          decisions=reduceHybridWindowResultsV1([...decisions.filter(r=>!r.citation_window),...stored.map(row=>({...row.result,text:row.text}))]);
+          const stored=(await client.query<{result:HybridStageResultV1;input:HybridStageInputV1}>(hybridSettledWindowResultsSqlV1,[run.id])).rows;
+          decisions=reduceHybridWindowResultsV1([...decisions.filter(r=>!r.citation_window),...stored.map(row=>({...row.result,text:row.input.text}))]);
         }
         decisions=decisions.filter(result=>(stage!=='jev'||result.jev.verdict!=='belongs')
           &&(stage!=='claude'||!run.identity.params.hybrid_citation_quality||result.claude?.verdict!=='belongs')
-          &&(stage!=='citation'||result.claude?.verification&&(result.claude.verification.supported||snapshot(run).citation_retry)));
+          &&(stage!=='citation'||result.claude?.verdict==='error'||result.claude?.verification&&(result.claude.verification.supported||snapshot(run).citation_retry)));
         const admitted=[];
         for(const decision of decisions){
           if(decision.jev.verdict==="error"||decision.claude?.verdict==="error"){

@@ -132,7 +132,7 @@ export async function runConceptMembershipTickV1(args: {
         const inputs = await store.inputs(run);
         if (!inputs.length) break;
         const windowed=run.identity.params.hybrid_citation_quality===true
-          ? inputs.filter(input=>input.text.length>Number(run.identity.params.long_root_characters??12000)) : [];
+          ? inputs.filter(input=>!('citation_window' in input)&&input.text.length>Number(run.identity.params.long_root_characters??12000)) : [];
         const ordinary=inputs.filter(input=>!windowed.includes(input));
         await store.reserve(run, [...groupMembershipInputsV1(ordinary).map(group=>membershipCallProposalV1(run,group)),
           ...windowed.flatMap(input=>hybridCitationWindowsV1(input,Number(run.identity.params.window_characters??6000))

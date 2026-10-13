@@ -155,6 +155,40 @@ async function releaseHybridJevUnknownsV1(client:PoolClient,workspace:string,rou
     completed_at=now(),next_poll_at='infinity',updated_at=now() WHERE id=ANY($1::uuid[])`,[calls.map(call=>call.run_id)]);
 }
 
+/** Explicitly acknowledge returned technical responses with unattributable usage.
+ * The raw and booked ledger remain immutable; uncertainty becomes terminal exposure.
+ * This is not settlement and cannot authorize another send of the same pair. */
+export async function reconcileHybridResponseExposureV1(args:{database:LabelingDatabaseV1;
+ workspace_id:string;actor_user_id:string;expected_route_digest:string;call_ids:string[]}){
+ if(!args.call_ids.length||new Set(args.call_ids).size!==args.call_ids.length)fail('hybrid_reconciliation_calls_invalid',400);
+ return transaction(args.database,async client=>{
+  await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mfp-labeling:'||$1,0))",[args.workspace_id]);
+  await authorize(client,args.workspace_id,args.actor_user_id,true);
+  const selected=(await client.query<{route_digest:string}>(
+   'SELECT route_digest FROM signal_hybrid_membership_routes WHERE workspace_id=$1 FOR UPDATE',[args.workspace_id])).rows[0];
+  if(selected?.route_digest!==args.expected_route_digest)fail('hybrid_route_changed');
+  const calls=(await client.query<{id:string;run_id:string;status:string;stop_reason:string|null}>(`SELECT call.id,call.run_id,call.status,call.stop_reason
+   FROM signal_labeling_calls call JOIN signal_labeling_runs run ON run.id=call.run_id
+   WHERE call.workspace_id=$1 AND run.workspace_id=$1 AND call.id=ANY($2::uuid[])
+    AND run.membership_snapshot->>'route_digest'=$3 AND run.membership_snapshot->>'hybrid_stage' IN('jev','claude','citation')
+    AND run.status='failed' AND (run.lease_until IS NULL OR run.lease_until<now())
+    AND call.settled_micro_usd IS NULL AND call.results_applied
+    AND call.raw_storage_key IS NOT NULL AND call.raw_sha256 IS NOT NULL AND call.raw_size_bytes IS NOT NULL
+    AND jsonb_array_length(call.results)>0
+    AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(call.results) result
+     WHERE COALESCE(result->>'error_code','') NOT IN('provider_usage_invalid','provider_result_missing'))
+    AND (call.status='unknown' OR call.status='failed' AND call.stop_reason='hybrid_response_usage_unattributed'
+      AND call.terminal_exposure_micro_usd=call.reserved_micro_usd)
+   FOR UPDATE OF call,run`,[args.workspace_id,args.call_ids,args.expected_route_digest])).rows;
+  if(calls.length!==args.call_ids.length)fail('hybrid_response_reconciliation_unavailable');
+  await client.query(`UPDATE signal_labeling_calls SET status='failed',terminal_exposure_micro_usd=reserved_micro_usd,
+   stop_reason='hybrid_response_usage_unattributed',updated_at=now() WHERE id=ANY($1::uuid[]) AND status='unknown'`,[args.call_ids]);
+  await client.query(`UPDATE signal_labeling_runs SET next_poll_at='infinity',updated_at=now()
+   WHERE id=ANY($1::uuid[]) AND next_poll_at IS DISTINCT FROM 'infinity'::timestamptz`,[calls.map(call=>call.run_id)]);
+  return {reconciled_calls:calls.length};
+ });
+}
+
 /** Route selection is explicit, workspace scoped and reversible. No provider is invoked here. */
 export async function configureHybridMembershipRouteV1(args: {
   database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string;
@@ -348,7 +382,10 @@ export async function writeHybridMembershipDecisionPageV1(args: {
           AND result->>'entity_context_digest'=r.entity_context_digest
           AND result->>'effective_entities_digest'=r.effective_entities_digest
           AND result->>'jev_call_id'=j.id::text AND result->>'claude_call_id'=c.id::text
-          AND ((result->'jev')-'threshold')=(r.jev-'threshold') AND result->'claude'=(r.claude-'verification'))
+          AND ((result->'jev')-'threshold')=(r.jev-'threshold') AND (result->'claude'=(r.claude-'verification')
+            OR r.citation_call_id IS NOT NULL AND r.claude->>'verdict'='error'
+              AND result#>>'{claude,verdict}'='belongs'
+              AND (result->'claude'-'verdict')=(r.claude-'verification'-'verdict')))
     LEFT JOIN signal_labeling_runs cr ON cr.id=c.run_id AND cr.workspace_id=$1
       AND cr.membership_snapshot->>'hybrid_stage'='claude' AND (cr.membership_snapshot->>'route_digest'=$3
         OR cr.membership_snapshot->>'route_digest'=$4 AND EXISTS(SELECT 1 FROM signal_labeler_versions semantic
