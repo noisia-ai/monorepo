@@ -128,3 +128,37 @@ test('job queues isolate concurrent work and recovery never converts unknown int
   assert.throws(()=>recoveryIntent('embedding',{latest_run:{...failed,retryable:false}},'original',true),/not_retryable/u);
   assert.equal(recoveryIntent('prepare',{is_current:true,latest_completed:{id:'done'}},'key',true).kind,'completed');
 });
+
+test('QA sampling excludes entire contradictory IDs only when explicitly selected and writes directly importable incremental files',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'mfp-clean-sample-'));
+  try{
+    const source=join(root,'source'),output=join(root,'out');await mkdir(source);
+    const header=['id','Title','Content of posts'];
+    const rows=Array.from({length:1202},(_,i)=>({id:`provider-${String(i).padStart(4,'0')}`,Title:'Title','Content of posts':`Post ${i}`}));
+    await writeFile(join(source,'a.csv'),csv(header,rows));
+    await writeFile(join(source,'b.csv'),csv(header,[{...rows[0],'Content of posts':'Conflicting original'},rows[0],rows[1]]));
+    const context=join(root,'context.json');await writeFile(context,JSON.stringify({entities:[]}));
+    const script=fileURLToPath(new URL('./sample.mjs',import.meta.url));
+    const rejected=spawnSync(process.execPath,[script,source,context,output],{encoding:'utf8',timeout:10000});
+    assert.equal(rejected.status,1);assert.match(rejected.stderr,/provider_id_conflict/);
+    const accepted=spawnSync(process.execPath,[script,source,context,output,'--exclude-conflicting-source-ids'],{encoding:'utf8',timeout:10000});
+    assert.equal(accepted.status,0,accepted.stderr);
+    const first=parseCsv(await readFile(join(output,'load1.csv'),'utf8'));
+    const second=parseCsv(await readFile(join(output,'load2.csv'),'utf8'));
+    assert.deepEqual(second.header,header);assert.equal(first.records.length,1000);assert.equal(second.records.length,250);
+    assert.equal(new Set(second.records.map(row=>row.id)).size,250,'no contradictory or repeated IDs within second upload');
+    const firstById=new Map(first.records.map(row=>[row.id,row]));
+    assert.equal(second.records.filter(row=>!firstById.has(row.id)).length,200);
+    assert.equal(second.records.filter(row=>JSON.stringify(firstById.get(row.id))===JSON.stringify(row)).length,30);
+    assert.equal(second.records.filter(row=>firstById.has(row.id)&&JSON.stringify(firstById.get(row.id))!==JSON.stringify(row)).length,20);
+    assert.ok(![...first.records,...second.records].some(row=>row.id===rows[0].id));
+    const manifest=JSON.parse(await readFile(join(output,'sampling-manifest.json'),'utf8'));
+    assert.deepEqual(manifest.excluded_source_ids,[{id:rows[0].id,reason:'same_provider_id_with_different_source_row',rows:[
+      {file:'a.csv',row:2},{file:'b.csv',row:2},{file:'b.csv',row:3}]}]);
+    assert.equal(manifest.excluded_source_rows,3);
+    assert.match(manifest.output_hashes.load2,/^[a-f0-9]{64}$/);
+    assert.equal((await readFile(join(source,'a.csv'),'utf8')),csv(header,rows),'source remains byte-identical');
+    const repeat=spawnSync(process.execPath,[script,source,context,output,'--exclude-conflicting-source-ids'],{encoding:'utf8',timeout:10000});
+    assert.equal(repeat.status,1,'existing fixture cannot be overwritten');
+  }finally{await rm(root,{recursive:true,force:true});}
+});

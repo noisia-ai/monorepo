@@ -46,7 +46,7 @@ import {
   findSignalStrategicStudy
 } from "@/lib/signal-v2/workspace-navigation";
 import { SignalV2BrandMonitoring } from "@/components/signal-v2/SignalV2BrandMonitoring";
-import { loadNativeSignalTopicsV1 } from "@/lib/data-os/signal-workspace-topics-native";
+import { loadNativeSignalTopicsPageV1 } from "@/lib/data-os/signal-workspace-topics-native";
 import { buildNativeSignalMonitoringV1 } from "@/lib/data-os/signal-workspace-monitoring-native";
 import { loadNativeSignalMentionsV1 } from "@/lib/data-os/signal-workspace-mentions-native";
 
@@ -120,8 +120,9 @@ export async function SignalV2WorkspacePage({
     for (const [key, value] of Object.entries(query)) {
       for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
     }
-    const native = await loadNativeSignalTopicsV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id,
+    const bundle = await loadNativeSignalTopicsPageV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id,
       timezone: workspace.timezone, imported_fallback: allowImportedSignalFallbackV1(workspace) }, params);
+    const native = bundle?.overview;
     if (native) {
       const [workspaceOptions, releases] = await Promise.all([
         listSignalWorkspaceOptionsForUser(session.appUser),
@@ -135,7 +136,7 @@ export async function SignalV2WorkspacePage({
         comparison: resolveSignalComparisonV1({ filter, mode: "none" }) }, native);
       return <SignalV2BrandMonitoring activeModule={activeModule} activeStudy={null} brandName={workspace.name}
         canRefreshInsights={false} initialData={nativeMonitoring}
-        initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialTriggersBarriers={null}
+        initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialNativeTopicBundle={bundle} initialTriggersBarriers={null}
         legacyOutputId={null} manageTopicsHref={manageTopicsHref}
         strategicStudies={buildSignalStrategicStudyNavigation({ workspace, releases: releases.history })}
         userName={session.appUser.fullName ?? session.appUser.email ?? "Noisia"} workspaceOptions={workspaceOptions}

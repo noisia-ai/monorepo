@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
+import type { SignalWorkspaceTopicReadBundleV1, SignalWorkspaceTopicDetailV1 } from "@noisia/db";
 import { ArrowClockwise, Gauge, Quotes } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import type { SignalFilterV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceDefinedInterestOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
@@ -9,7 +10,7 @@ import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./SignalAnalyticsFilter";
 import { SignalDataScopeFilter } from "./SignalDataScopeFilter";
 import { SignalEChart } from "./SignalEChart";
-import { SignalWorkspaceTopicDetail } from "./SignalWorkspaceTopicDetail";
+import { SignalWorkspaceTopicDetailMetrics, validNativeTopicDetail } from "./SignalWorkspaceTopicDetail";
 import { SignalSourceIcon } from "./SignalSourceIcon";
 import { SignalEvidenceDrawer } from "./SignalEvidenceDrawer";
 import { SignalTopicsKpi, SignalTopicsRankingCard, SignalTopicsRankingList } from "./SignalTopicsPrimitives";
@@ -27,6 +28,7 @@ export function workspaceTermsForSectionV1(data: ComputedTopics, section: "topic
 }
 
 type WorkspaceTopicsProps = {
+  initialBundle?: SignalWorkspaceTopicReadBundleV1 | null;
   brandName: string;
   data: ComputedTopics; loading: boolean; manageTopicsHref: string | null;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
@@ -35,6 +37,19 @@ type WorkspaceTopicsProps = {
   onOpenMentions: () => void;
   workspaceTimezone: string;
 };
+
+export function validInitialTopicBundle(bundle: SignalWorkspaceTopicReadBundleV1 | null | undefined, data: ComputedTopics) {
+  const term = workspaceTermsForSectionV1(data, "topics")[0];
+  if (!bundle || bundle.contract_version !== "signal-workspace-topic-read-bundle-v1" || !data.is_current || !term
+    || bundle.overview.workspace_id !== data.workspace_id || bundle.overview.scope_digest !== data.scope_digest
+    || bundle.overview.observed_at !== data.observed_at || !bundle.overview.is_current) return null;
+  const identity = { workspace_id: data.workspace_id, generation_id: term.interest_generation_id ?? data.generation_id,
+    scope_digest: data.scope_digest, kind: "topic" as const, term_key: term.term_key };
+  const evidence = bundle.evidence;
+  return validNativeTopicDetail(bundle.detail, identity) && evidence?.contract_version === "signal-workspace-topic-evidence-v1"
+    && evidence.workspace_id === identity.workspace_id && evidence.generation_id === identity.generation_id
+    && evidence.scope_digest === identity.scope_digest && evidence.term_key === identity.term_key && evidence.kind === identity.kind ? bundle : null;
+}
 
 export function SignalV2WorkspaceTopics(props: Omit<WorkspaceTopicsProps, "data"> & { data: SignalWorkspaceOverviewV1 }) {
   return props.data.source === "workspace_imported"
@@ -59,7 +74,7 @@ function SignalImportedTopics({ data, loading, manageTopicsHref, onOpenMentions,
   </div>;
 }
 
-function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, onOpenMentions, refreshFailed = false, workspaceTimezone }: WorkspaceTopicsProps) {
+function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, onOpenMentions, refreshFailed = false, workspaceTimezone }: WorkspaceTopicsProps) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
   const [selectedKey, setSelectedKey] = useState<string | null>(data.terms[0]?.term_key ?? null);
   const [termLimit, setTermLimit] = useState(50);
@@ -70,7 +85,10 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
 
   const refreshCallback = useRef(onRefresh); refreshCallback.current = onRefresh;
   const [drawer, setDrawer] = useState(false), [reading, setReading] = useState(false), [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState<SignalWorkspaceTopicEvidencePageV1 | null>(null);
+  const initial = validInitialTopicBundle(initialBundle, data);
+  const [page, setPage] = useState<SignalWorkspaceTopicEvidencePageV1 | null>(initial?.evidence ?? null);
+  const [detail, setDetail] = useState<SignalWorkspaceTopicDetailV1 | null>(initial?.detail ?? null);
+  const consumedInitial = useRef<SignalWorkspaceTopicReadBundleV1 | null>(null);
   const request = useRef<AbortController | null>(null), sequence = useRef(0);
   const mfp = data.membership_population;
   const consolidated = data.coverage.noise !== null;
@@ -88,7 +106,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   const share = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale,
     { style: "percent", maximumFractionDigits: 1 }).format(value);
   const read = useCallback(async (cursor?: string) => {
-    if (!term || term.evidence_available === false || !data.is_current || (!termGeneration && term.basis !== "concept_membership")) return;
+    if (!term || !data.is_current || (!termGeneration && term.basis !== "concept_membership")) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     const version = ++sequence.current; setReading(true); setError(null);
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest, limit: "25" });
@@ -96,18 +114,29 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
     if (data.filters.date_to) params.set("date_to", data.filters.date_to);
     if (cursor) params.set("cursor", cursor);
     try {
-      const response = await fetch(`/api/data-os/signal/${data.workspace_id}/topics-narratives/${sectionKind}/${encodeURIComponent(term.term_key)}/evidence?${params}`,
+      const response = await fetch(`/api/data-os/signal/${data.workspace_id}/topics-narratives/${sectionKind}/${encodeURIComponent(term.term_key)}/${cursor ? "evidence" : "inspection"}?${params}`,
         { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || version !== sequence.current) return;
       if (!response.ok) {
-        if ([401, 403, 404, 409].includes(response.status)) setPage(null);
+        if ([401, 403, 404, 409].includes(response.status)) { setPage(null); setDetail(null); }
         throw new Error([401, 403, 404, 409].includes(response.status) ? "evidenceStale" : "evidenceError");
       }
-      const body = await response.json() as SignalWorkspaceTopicEvidencePageV1;
+      const payload = await response.json() as SignalWorkspaceTopicEvidencePageV1 | SignalWorkspaceTopicReadBundleV1;
+      const body = cursor ? payload as SignalWorkspaceTopicEvidencePageV1 : (payload as SignalWorkspaceTopicReadBundleV1).evidence;
+      const inspected = cursor ? null : payload as SignalWorkspaceTopicReadBundleV1;
       if (controller.signal.aborted || version !== sequence.current) return;
-      if (body.contract_version !== "signal-workspace-topic-evidence-v1" || body.workspace_id !== data.workspace_id
+      if (!body || body.contract_version !== "signal-workspace-topic-evidence-v1" || body.workspace_id !== data.workspace_id
         || body.generation_id !== termGeneration || body.scope_digest !== data.scope_digest || body.kind !== sectionKind || body.term_key !== term.term_key) {
         setPage(null); throw new Error("evidenceStale");
+      }
+      if (inspected) {
+        if (inspected.contract_version !== "signal-workspace-topic-read-bundle-v1"
+          || inspected.overview.workspace_id !== data.workspace_id || inspected.overview.scope_digest !== data.scope_digest
+          || !inspected.overview.is_current || !validNativeTopicDetail(inspected.detail, {
+            workspace_id: data.workspace_id, generation_id: termGeneration, scope_digest: data.scope_digest, kind: sectionKind, term_key: term.term_key })) {
+          setDetail(null); setPage(null); throw new Error("evidenceStale");
+        }
+        setDetail(inspected.detail);
       }
       setPage(previous => cursor && previous?.scope_digest === body.scope_digest && previous.kind === body.kind && previous.term_key === body.term_key
         ? { ...body, items: [...previous.items, ...body.items.filter(item => !previous.items.some(prior => prior.mention_id === item.mention_id))] }
@@ -118,12 +147,15 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
   }, [data.filters.date_from, data.filters.date_to, data.is_current, data.scope_digest, data.workspace_id, sectionKind, term, termGeneration]);
   useEffect(() => {
     const fence = sequence;
-    sequence.current++; request.current?.abort(); setPage(null); setError(null); setReading(false);
+    sequence.current++; request.current?.abort(); setError(null); setReading(false);
+    if (initial !== consumedInitial.current && initial?.detail && initial.detail.term_key === term?.term_key && initial.detail.kind === sectionKind) {
+      consumedInitial.current = initial; setPage(initial.evidence); setDetail(initial.detail);
+    } else {
+      setPage(null); setDetail(null);
+      if ((section === "topics" || section === "narratives" || surface === "summary") && data.is_current) void read();
+    }
     return () => { fence.current++; request.current?.abort(); };
-  }, [data.scope_digest, data.workspace_id, data.is_current, term?.term_key, termGeneration, sectionKind]);
-  useEffect(() => {
-    if ((section === "topics" || section === "narratives" || surface === "summary") && data.is_current && term?.evidence_available !== false) void read();
-  }, [read, section, surface, data.is_current, term]);
+  }, [read, data.observed_at, section, surface, initial, term, sectionKind, data.is_current]);
   useEffect(() => {
     if (!data.is_processing || loading || refreshFailed || !onRefresh) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -206,9 +238,12 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
           : term?.basis === "concept_membership" ? "mfp.membership" : term?.basis === "defined_interest" ? "definedMembership" : "membership", { count: term?.mention_count ?? 0 })}</p>
           <p>{term?.basis === "concept_membership" ? t("mfp.quality") : term?.basis === "defined_interest" ? t("definedQuality") : t("traceability")}</p></div>
         <div className="signal-v2-tn__detail-actions"><button className="signal-v2-tn__button" type="button" disabled={!term || term.evidence_available === false || !data.is_current}
-          onClick={() => { setDrawer(true); if (!evidence) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
+          onClick={() => { setDrawer(true); if (!evidence && !reading) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
         {term?.evidence_available === false ? <p className="signal-v2-tn__evidence-intro">{t("definedEvidencePending")}</p> : null}
-        {term ? <SignalWorkspaceTopicDetail data={data} termKey={term.term_key} kind={sectionKind} onSelect={select} /> : null}
+        {term ? <>{error ? <p role="alert">{t("detailMetrics.error")} <button className="signal-v2-filter" type="button" onClick={() => void read()}>{t("detailMetrics.retry")}</button></p> : null}
+          <SignalWorkspaceTopicDetailMetrics detail={data.is_current && detail && validNativeTopicDetail(detail, {
+            workspace_id: data.workspace_id, generation_id: termGeneration, scope_digest: data.scope_digest, kind: sectionKind, term_key: term.term_key }) ? detail : null}
+            loading={reading && !error} onSelect={select} /></> : null}
         {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t(term?.basis !== "computed_cluster" ? "membershipEvidence" : "detailMetrics.evidence")}</strong>
           {evidence?.items.slice(0, 5).map(item => <button key={item.mention_id} type="button" onClick={() => setDrawer(true)}>
             <span><SignalSourceIcon label={item.platform} platform={item.platform} size={15} />{item.platform}</span><p>{item.text}</p>
@@ -254,7 +289,7 @@ function SignalComputedWorkspaceTopics({ brandName, data, loading, manageTopicsH
       records={(evidence?.items ?? []).map(item => ({ id: item.mention_id, body: item.text, occurredAt: item.occurred_at,
         platform: item.platform, originalUrl: item.url, quote: "quote" in item && typeof item.quote === "string" ? item.quote : null,
         provenanceLabel: item.evidence_origin === "human_correction" ? t("humanCorrection")
-          : item.decision_citation ? t("citedDecision") : null }))}
+          : item.forced_abstentions?.includes("asunto") ? t("mfp.forcedAbstention") : item.decision_citation ? t("citedDecision") : null }))}
       loading={reading} loadingLabel={t("loading")} emptyLabel={t("noEvidence")} errorMessage={error ? t(error === "evidenceStale" ? "evidenceStale" : "evidenceError") : null}
       onClose={() => { request.current?.abort(); sequence.current++; setDrawer(false); setReading(false); }}
       onOpenEnriched={onOpenMention ? record => { setDrawer(false); onOpenMention(record.id); } : undefined}

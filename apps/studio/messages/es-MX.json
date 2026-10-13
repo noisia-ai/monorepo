@@ -642,6 +642,7 @@
         "spam": "Spam o bots",
         "unknown": "Relevancia sin determinar",
         "without_concept": "Relevantes sin concepto",
+        "forcedAbstention": "Abstención aplicada por el sistema: asunto supera 12 palabras",
         "denominatorHelp": "Relevantes, ajenas, spam y relevancia sin determinar dividen el total de menciones únicas. Sin concepto es un subconjunto de relevantes y considera todos los conceptos de pertenencia, aunque no estén seleccionados. Las menciones seleccionadas y los conteos por concepto se superponen; no se suman a esas categorías.",
         "help": {
           "denominator": "Menciones únicas del período con derechos vigentes para métricas.",
@@ -2429,6 +2430,7 @@
       "eyebrow": "Workspace de marca", "title": "Brand OS de {brand}", "subtitle": "Identidad, competencia y contexto que ayudan a interpretar las conversaciones de tu marca.", "back": "Volver al overview",
       "compatibility": { "title": "Estudios · Avanzado", "subtitle": "Accede a estudios independientes cuando los necesites.", "newStudy": "Nuevo estudio", "emptyTitle": "Sin estudios", "emptyBody": "Esta marca puede operar Signal sin crear un estudio.", "study": "Estudio", "method": "Método", "status": "Estado", "open": "Abrir Engine", "unnamed": "Estudio sin título" },
       "topics": { "title": "Topics", "subtitle": "La marca aporta contexto; los tópicos se gestionan en su propio flujo.", "body": "Crea, incorpora descubrimientos, prueba pertenencia y publica resultados verificables en Signal.", "action": "Gestionar tópicos" },
+      "mfpContext": { "title": "Contexto guardado para tus conversaciones", "body": "Tu identidad, competencia y conocimiento guardados aportan contexto al análisis. Continúa en Datos para preparar el texto y los vectores de tus conversaciones.", "openData": "Ir a Datos" },
       "semanticContext": {
         "eyebrow": "Contexto semántico", "title": "Vocabulario y límites de la marca", "subtitle": "Organiza los conceptos, nombres y límites de tu marca. Puedes editar el resultado y resolver sólo las excepciones que necesitan atención.",
         "actions": { "close": "Cerrar", "cancel": "Cancelar", "refresh": "Actualizar", "retry": "Reintentar", "retrySafe": "Reintentar de forma segura", "prepare": "Preparar contexto", "preparing": "Preparando…", "newVersion": "Nueva versión", "reconcile": "Reconciliar contexto", "reconciling": "Reconciliando…", "prepareSuccessor": "Preparar nueva generación", "generate": "Generar vocabulario", "calculate": "Ver costo y preparar", "confirmGenerate": "Generar resultado editable", "review": "Revisar", "approve": "Aprobar", "reject": "Rechazar", "edit": "Editar", "cancelEdit": "Cancelar", "saveCorrection": "Guardar", "undo": "Deshacer", "archive": "Archivar", "restore": "Restaurar", "preserveApplicability": "Conservar aplicabilidad", "inheritedApplicability": "Hereda {markets}", "explicitGlobal": "Global explícito", "publish": "Publicar pack" },
@@ -2937,6 +2939,12 @@
           "incrementalPreparationFailed": "No se pudo preparar la evidencia de los temas nuevos. Actualiza el estado para consultar la recuperación disponible."
         },
         "incrementalEditorial": {
+          "quote": "Ver estimación de temas nuevos",
+          "quoting": "Consultando estimación…",
+          "quoteError": "No se pudo obtener la estimación. Consulta de nuevo antes de autorizar.",
+          "quoteEstimate": "Estimación orientativa: {amount} para {count} grupos nuevos con {model}.",
+          "quoteHelp": "Es una previsión, no la reserva temporal ni un máximo estricto. El costo real queda registrado. Esta cotización vence el {expiry}.",
+          "quoteConfirm": "Confirmo iniciar la interpretación pagada de los temas nuevos con esta estimación.",
           "uncapped": "Sin máximo configurado",
           "optionalCap": "Máximo opcional (USD)",
           "noDeadline": "sin vencimiento operativo",
@@ -2960,7 +2968,7 @@
           "targetUnits": "{count, plural, one {# grupo con evidencia para interpretar.} other {# grupos con evidencia para interpretar.}}",
           "legacyUnits": "{count, plural, one {# grupo pendiente pertenece al análisis anterior y conserva su autorización separada.} other {# grupos pendientes pertenecen al análisis anterior y conservan su autorización separada.}}",
           "claimedUnits": "{count, plural, one {# grupo ya tiene una interpretación asignada; no se autoriza otra aquí.} other {# grupos ya tienen una interpretación asignada; no se autorizan de nuevo aquí.}}",
-          "confirmBody": "Confirma la interpretación de {count, plural, one {# grupo} other {# grupos}} con {model}. El importe es un máximo, no una estimación.",
+          "confirmBody": "Confirma la interpretación de {count, plural, one {# grupo} other {# grupos}} con {model}. Revisa la estimación y confirma antes de iniciar. Un máximo configurado se respeta como límite estricto.",
           "cap": "Máximo para esta interpretación (hasta {amount})",
           "expiry": "Permiso de gasto válido hasta {expiry} ({zone}).",
           "budget": "Presupuesto Claude del {date} ({zone}): {confirmed} confirmado, {reserved} reservado. Tope diario: {daily}.",
@@ -4757,6 +4765,7 @@
     "nextPage": "Siguiente página",
     "contextReview": "Las entidades cambiaron. Revisa esta corrección con el contexto vigente.",
     "overrideReview": "La corrección anterior corresponde a otra definición o versión del texto. Revísala antes de aplicarla de nuevo.",
+    "forcedAbstention": "Abstención aplicada por el sistema: asunto supera 12 palabras",
     "pendingContextReview": "Revisión completa del contexto pendiente. Esta ficha sigue visible hasta confirmar el recálculo.",
     "openMention": "Abrir mención",
     "openOriginal": "Abrir fuente original",

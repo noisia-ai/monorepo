@@ -1,17 +1,18 @@
 "use client";
-import {useEffect,useState} from "react";
+import {useEffect,useRef,useState} from "react";
 import {useLocale,useTranslations} from "next-intl";
 import type {MentionFacetsV1} from "@noisia/query-engine";
 import {ClientCorpusPreparationStep} from "./ClientCorpusPreparationStep";
 import {useMfpMutation,useMfpResource} from "./useMfpResource";
 import {mfpMoney,mfpErrorKey,mfpSafeUrl,type MfpFacetPage,type MfpFacetStatus} from "@/lib/data-os/mfp-ui";
 import {mfpContextRecovery,mfpSelectionTransition,type MfpQuerySelection} from "@/lib/data-os/mfp-ui-state";
+import {mfpFacetTerminalReceipt,type MfpFacetRunObservation} from "@/lib/data-os/mfp-facet-receipt";
 const dimensions=["relevance","entities","salience","voice","act","spam_or_bot","language","asunto","status"];
 const voices=["individual","media","brand_official","retail_promo","creator","institution","unknown"];
 const acts=["experience","question_help","complaint","praise","opinion","news","promotion","other"];
 const correctable=["entities","voice","act","spam_or_bot","language","asunto"];
 
-export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenied}:{workspaceId:string;dataHref:string;signalHref:string;onAccessDenied?:()=>void}) {
+export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenied,onFacetsChanged}:{workspaceId:string;dataHref:string;signalHref:string;onAccessDenied?:()=>void;onFacetsChanged?:(receipt:string)=>void}) {
   const t=useTranslations("Mfp"),locale=useLocale();
   const base=`/api/data-os/signal/${encodeURIComponent(workspaceId)}/facets`;
   const [rootId,setRootId]=useState<string|null>(null);
@@ -19,6 +20,8 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
   const [querySelection,setQuerySelection]=useState<MfpQuerySelection>({query:"",ids:[]}),[editDimension,setEditDimension]=useState("voice"),[editValue,setEditValue]=useState("individual");
   const [entities,setEntities]=useState<Array<{entity_id:string;kind:"primary_brand"|"competitor"|"category";salience:"main"|"secondary"}>>([]);
   const [reason,setReason]=useState("off_topic"),[saved,setSaved]=useState(false);
+  const [facetReceipt,setFacetReceipt]=useState<string|null>(null);
+  const previousRun=useRef<MfpFacetRunObservation|null>(null),onChanged=useRef(onFacetsChanged);onChanged.current=onFacetsChanged;
   const filter=new URLSearchParams({view:"mentions",limit:"30"});if(value){filter.set("dimension",dimension);filter.set("value",value);}if(cursor)filter.set("cursor",cursor);if(rootId)filter.set("root_id",rootId);
   const browserEndpoint=`${base}?${filter}`;
   const visibleSelection=mfpSelectionTransition(querySelection,browserEndpoint);
@@ -29,8 +32,17 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
     return mfpSelectionTransition(current,browserEndpoint,typeof next==="function"?next(current.ids):next);
   });
   const status=useMfpResource<MfpFacetStatus>(`${base}?view=labeling`,"mention-facets-status-v1",onAccessDenied,true);
-  const browser=useMfpResource<MfpFacetPage>(browserEndpoint,"mention-facets-browser-v1",onAccessDenied);
+  const browser=useMfpResource<MfpFacetPage>(browserEndpoint,"mention-facets-browser-v1",onAccessDenied,false,facetReceipt);
   const mutation=useMfpMutation(base,onAccessDenied);
+  const observedRun=status.data?.latest;
+  useEffect(()=>{
+    const run=observedRun;
+    const next=run?{workspace_id:workspaceId,id:run.id,status:run.status}:null;
+    const receipt=mfpFacetTerminalReceipt(previousRun.current,next);previousRun.current=next;
+    if(!receipt)return;
+    setQuerySelection(current=>({...mfpSelectionTransition(current,browserEndpoint),ids:[]}));
+    setFacetReceipt(receipt);onChanged.current?.(receipt);
+  },[workspaceId,observedRun,browserEndpoint]);
   useEffect(()=>{const navigate=()=>{const id=window.location.hash.replace(/^#mention-/,"");
     if(/^[a-f0-9-]{36}$/i.test(id)){setRootId(id);setValue("");setCursor(null);}};navigate();window.addEventListener("hashchange",navigate);
     return()=>window.removeEventListener("hashchange",navigate);},[]);
@@ -50,7 +62,8 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
     const overrides=selection.flatMap(root_id=>[
       {root_id,dimension:editDimension,value:{value:resolved,confidence:"high",abstained:false}},
       ...(editDimension==="entities"&&!entities.length?[{root_id,dimension:"unrelated_reason",value:reason}]:[])]);
-    if(await mutation.send({overrides},"PATCH")){setSelection([]);setSaved(true);await refresh();}
+    if(await mutation.send({overrides},"PATCH")){setSelection([]);setSaved(true);
+      onChanged.current?.(`${workspaceId}:human:${crypto.randomUUID()}`);await refresh();}
   };
   const label=(dim:string,v:string)=>dim==="entities"?browser.data?.entities.find(e=>e.entity_id===v)?.name??(v==="abstained"?t("values.abstained"):v)
     :["language","asunto"].includes(dim)&&v!=="abstained"?v:t(`values.${v}`);
@@ -116,7 +129,7 @@ export function MfpFacetWorkspace({workspaceId,dataHref,signalHref,onAccessDenie
           {item.human_dimensions.length?<span>{t("sources.human")}</span>:null}</div>
         <p className="mfp-evidence__text">{item.text}</p>
         <dl className="mfp-facet-values">{correctable.map(dim=><div key={dim}><dt>{t(`dimensions.${dim}`)}</dt>
-          <dd>{facetLabel(item.facets,dim,label)}</dd></div>)}</dl>
+          <dd>{facetLabel(item.facets,dim,label)}{item.forced_abstentions?.includes(dim)?` — ${t("forcedAbstention")}`:null}</dd></div>)}</dl>
         {item.requires_context_review?<p role="status">{t("contextReview")}</p>:null}
         {item.pending_context_review?<p role="status">{t("pendingContextReview")}</p>:null}
         <div className="admin-form-actions"><button type="button" className="admin-button" disabled={!browser.data?.can_edit||mutation.busy}

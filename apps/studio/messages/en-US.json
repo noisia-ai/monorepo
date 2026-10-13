@@ -644,6 +644,7 @@
         "spam": "Spam or bots",
         "unknown": "Undetermined relevance",
         "without_concept": "Relevant without a concept",
+        "forcedAbstention": "System abstention: summary exceeds 12 words",
         "denominatorHelp": "Relevant, unrelated, spam and undetermined relevance partition unique mentions. Without a concept is a subset of relevant and considers all membership concepts, including unselected ones. Selected mentions and per-concept counts overlap; do not add them to those categories.",
         "help": {
           "denominator": "Unique mentions in the period with current metric rights.",
@@ -2429,6 +2430,7 @@
       "eyebrow": "Brand workspace", "title": "{brand} Brand OS", "subtitle": "Identity, competitors and context that help interpret your brand’s conversations.", "back": "Back to overview",
       "compatibility": { "title": "Studies · Advanced", "subtitle": "Access independent studies when you need them.", "newStudy": "New study", "emptyTitle": "No studies", "emptyBody": "This brand can operate Signal without creating a study.", "study": "Study", "method": "Method", "status": "Status", "open": "Open Engine", "unnamed": "Untitled study" },
       "topics": { "title": "Topics", "subtitle": "The brand supplies context; topics are managed in their own flow.", "body": "Create topics, add discoveries, test membership, and publish verifiable results to Signal.", "action": "Manage topics" },
+      "mfpContext": { "title": "Saved context for your conversations", "body": "Your saved identity, competitors and knowledge provide context for analysis. Continue in Data to prepare your conversation text and vectors.", "openData": "Go to Data" },
       "semanticContext": {
         "eyebrow": "Semantic context", "title": "Brand vocabulary and boundaries", "subtitle": "Organize your brand’s concepts, names and boundaries. Edit the result and resolve only the exceptions that need attention.",
         "actions": { "close": "Close", "cancel": "Cancel", "refresh": "Refresh", "retry": "Retry", "retrySafe": "Retry safely", "prepare": "Prepare context", "preparing": "Preparing…", "newVersion": "New version", "reconcile": "Reconcile context", "reconciling": "Reconciling…", "prepareSuccessor": "Prepare new generation", "generate": "Generate vocabulary", "calculate": "Review cost and prepare", "confirmGenerate": "Generate editable result", "review": "Review", "approve": "Approve", "reject": "Reject", "edit": "Edit", "cancelEdit": "Cancel", "saveCorrection": "Save", "undo": "Undo", "archive": "Archive", "restore": "Restore", "preserveApplicability": "Keep applicability", "inheritedApplicability": "Inherits {markets}", "explicitGlobal": "Explicit global", "publish": "Publish pack" },
@@ -2937,6 +2939,12 @@
           "incrementalPreparationFailed": "Evidence for new topics could not be prepared. Refresh the status to check available recovery."
         },
         "incrementalEditorial": {
+          "quote": "View new-topic estimate",
+          "quoting": "Loading estimate…",
+          "quoteError": "The estimate could not be loaded. Request it again before authorizing.",
+          "quoteEstimate": "Advisory estimate: {amount} for {count} new groups with {model}.",
+          "quoteHelp": "This forecast is separate from the temporary reservation and any strict cap. Actual cost is recorded. This quote expires on {expiry}.",
+          "quoteConfirm": "I confirm starting paid interpretation of the new topics with this estimate.",
           "uncapped": "No configured maximum",
           "optionalCap": "Optional maximum (USD)",
           "noDeadline": "no operational expiry",
@@ -2960,7 +2968,7 @@
           "targetUnits": "{count, plural, one {# group has evidence ready for interpretation.} other {# groups have evidence ready for interpretation.}}",
           "legacyUnits": "{count, plural, one {# pending group belongs to the earlier analysis and keeps its separate authorization.} other {# pending groups belong to the earlier analysis and keep their separate authorization.}}",
           "claimedUnits": "{count, plural, one {# group already has an assigned interpretation and will not be authorized again here.} other {# groups already have assigned interpretations and will not be authorized again here.}}",
-          "confirmBody": "Confirm interpretation of {count, plural, one {# group} other {# groups}} with {model}. This amount is a cap, not an estimate.",
+          "confirmBody": "Confirm interpretation of {count, plural, one {# group} other {# groups}} with {model}. Review the estimate and confirm before starting. A configured maximum remains a strict limit.",
           "cap": "Maximum for this interpretation (up to {amount})",
           "expiry": "Spending authorization expires {expiry} ({zone}).",
           "budget": "Claude budget for {date} ({zone}): {confirmed} confirmed, {reserved} reserved. Daily cap: {daily}.",
@@ -4757,6 +4765,7 @@
     "nextPage": "Next page",
     "contextReview": "Entities changed. Review this correction against the current context.",
     "overrideReview": "The previous correction belongs to another definition or text version. Review it before applying it again.",
+    "forcedAbstention": "System abstention: summary exceeds 12 words",
     "pendingContextReview": "Full context review pending. This facet remains visible until recalculation is confirmed.",
     "openMention": "Open mention",
     "openOriginal": "Open original source",

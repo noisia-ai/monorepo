@@ -194,7 +194,7 @@ for (const locale of ["es-MX", "en-US"]) test(`${locale}: real controls distingu
   assert.match(html, /America\/Mexico_City/);
   assert.match(html, /value="6.5"/);
   assert.match(html, locale === "es-MX" ? /sin costo Claude/ : /no Claude cost/);
-  assert.match(html, locale === "es-MX" ? /no una estimación/ : /not an estimate/);
+  assert.match(html, locale === "es-MX" ? /Revisa la estimación/ : /Review the estimate/);
   assert.match(html, locale === "es-MX" ? /análisis anterior/ : /earlier analysis/);
   assert.doesNotMatch(html, /data-analysis-receipt/);
 });
@@ -346,4 +346,22 @@ test("MFP may omit an execution maximum; a configured maximum and legacy finite 
  assert.equal(workspaceIncrementalEditorialCanSubmit(status,uncapped),false);
  assert.equal(workspaceIncrementalEditorialCanSubmit(open,{...begin,cap_micro_usd:100_000_000}),true);
  assert.equal(workspaceIncrementalEditorialCanSubmit(status,{...begin,cap_micro_usd:100_000_000}),false);
+});
+
+test("incremental paid requests validate quote and confirmation together; free preparation cannot smuggle paid fields", () => {
+  const reference = `iq1.1791720000.${"a".repeat(64)}.${"b".repeat(64)}`;
+  assert.equal(validWorkspaceIncrementalEditorialRequest({ ...begin, quote_reference: reference, confirmed: true }), true);
+  assert.equal(validWorkspaceIncrementalEditorialRequest({ ...begin, quote_reference: reference }), false);
+  assert.equal(validWorkspaceIncrementalEditorialRequest({ ...begin, confirmed: true }), false);
+  assert.equal(validWorkspaceIncrementalEditorialRequest({ ...begin, quote_reference: reference, confirmed: false }), false);
+  assert.equal(validWorkspaceIncrementalEditorialRequest({ ...prepare, quote_reference: reference, confirmed: true }), false);
+});
+for (const locale of ["es-MX", "en-US"]) test(`${locale}: incremental payment remains disabled before the visible forecast and checkbox`, async () => {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  const markup = renderToStaticMarkup(<NextIntlClientProvider locale={locale} messages={messages} timeZone="UTC">
+    <WorkspaceIncrementalEditorialControls status={withAdmission({ maximum_grant_micro_usd: null })} canSubmit canRevoke submitting={false}
+      canReplay={false} onReplay={async () => { throw new Error("render must not replay"); }} onSubmit={async () => { throw new Error("render must not charge"); }} />
+  </NextIntlClientProvider>);
+  assert.match(markup, locale === "es-MX" ? /Ver estimación de temas nuevos/ : /View new-topic estimate/);
+  assert.match(markup, /disabled=""[^>]*>[^<]*(?:Autorizar e interpretar temas nuevos|Authorize and interpret new topics)/);
 });

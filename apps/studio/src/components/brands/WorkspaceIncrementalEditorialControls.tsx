@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { IncrementalEditorialQuote } from "@/lib/data-os/incremental-editorial-quote";
 import { useLocale, useTranslations } from "next-intl";
 import { embeddingCapUsdInput, formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
 import { formatWorkspaceAdmissionExpiry } from "@/lib/data-os/signal-workspace-interpretation-admission-ui";
@@ -15,6 +16,17 @@ export function WorkspaceIncrementalEditorialControls({ status, canSubmit, canRe
 }) {
   const t = useTranslations("AdminWorkspace.topics.analysis.incrementalEditorial"), locale = useLocale();
   const [edited, setEdited] = useState<{ identity: string; value: string } | null>(null);
+  const [quoted, setQuoted] = useState<{ identity: string; quote: IncrementalEditorialQuote } | null>(null);
+  const [confirmed, setConfirmed] = useState<string | null>(null);
+  const [quoting, setQuoting] = useState(false), [quoteError, setQuoteError] = useState(false);
+  const quoteSequence = useRef(0);
+  const quoteController = useRef<AbortController | null>(null);
+  useEffect(() => () => { quoteController.current?.abort(); }, []);
+  useEffect(() => {
+    if (!quoted) return;
+    const timer = setTimeout(() => { setQuoted(null); setConfirmed(null); }, Math.max(0, Date.parse(quoted.quote.expires_at) - Date.now()));
+    return () => clearTimeout(timer);
+  }, [quoted]);
   const state = status.incremental_editorial;
   if (!state) return null;
   const prep = state.preparation, admission = state.admission, operation = admission?.operation, execution = state.execution;
@@ -44,6 +56,28 @@ export function WorkspaceIncrementalEditorialControls({ status, canSubmit, canRe
     expected_admission_operation_id: renewal.expected_admission_operation_id, grant_cap_micro_usd: amount,
     admission_not_after: renewal.maximum_admission_not_after
   } : begin;
+  const quoteIdentity = `${identity}:${cap}`;
+  const quote = quoted?.identity === quoteIdentity && Date.parse(quoted.quote.expires_at) > Date.now() ? quoted.quote : null;
+  const paidConfirmed = Boolean(quote && confirmed === quoteIdentity);
+  const requestQuote = async () => {
+    if (!confirmation || !authorization) return;
+    quoteController.current?.abort();
+    const controller = new AbortController(); quoteController.current = controller;
+    const sequence = ++quoteSequence.current;
+    setQuoting(true); setQuoteError(false); setQuoted(null); setConfirmed(null);
+    try {
+      const params = new URLSearchParams({ action: confirmation.action, run_id: confirmation.run_id });
+      const response = await fetch(`/api/data-os/signal/${encodeURIComponent(status.workspace_id)}/topics/analysis/incremental-quote?${params}`, { cache: "no-store", signal: controller.signal });
+      const value: unknown = await response.json();
+      if (!response.ok || !value || typeof value !== "object") throw new Error("quote_unavailable");
+      const result = value as IncrementalEditorialQuote;
+      if (!/^iq1\.[0-9]{10}\.[a-f0-9]{64}\.[a-f0-9]{64}$/u.test(result.reference) || result.model !== "claude-sonnet-4-6"
+        || !Number.isSafeInteger(result.estimated_micro_usd) || result.estimated_micro_usd < 0 || result.target_units !== (renewal ? remaining : admission?.target_units)
+        || !Number.isFinite(Date.parse(result.expires_at)) || Date.parse(result.expires_at) <= Date.now()) throw new Error("quote_invalid");
+      if (!controller.signal.aborted && sequence === quoteSequence.current) setQuoted({ identity: quoteIdentity, quote: result });
+    } catch { if (!controller.signal.aborted && sequence === quoteSequence.current) setQuoteError(true); }
+    finally { if (!controller.signal.aborted && sequence === quoteSequence.current) setQuoting(false); }
+  };
   const preparationRequest: WorkspaceIncrementalEditorialRequest | null = prep ? {
     action: "prepare_incremental_editorial", run_id: prep.numeric_execution_id, expected_source_digest: prep.source_digest
   } : null;
@@ -92,11 +126,19 @@ export function WorkspaceIncrementalEditorialControls({ status, canSubmit, canRe
         <label className="admin-field" style={{ maxWidth: 360 }}><span>{t(authorization.maximum_grant_micro_usd===null?"optionalCap":renewal ? "renewCap" : "cap", { amount: money(authorization.maximum_grant_micro_usd) })}</span>
           <input inputMode="decimal" value={cap} disabled={!canSubmit || submitting} onChange={event => setEdited({ identity, value: event.target.value })} /></label>
         <p>{t("expiry", { expiry: expiry(authorization.maximum_admission_not_after, authorization.budget_timezone), zone: authorization.budget_timezone })}</p>
+        <button type="button" className="admin-button" disabled={!canSubmit || submitting || quoting || !validCap} onClick={() => void requestQuote()}>{t(quoting ? "quoting" : "quote")}</button>
+        {quoteError ? <p role="alert">{t("quoteError")}</p> : null}
+        {quote ? <>
+          <p>{t("quoteEstimate", { amount: money(quote.estimated_micro_usd), count: quote.target_units, model: "Claude Sonnet 4.6" })}</p>
+          <p className="admin-drawer-form__hint">{t("quoteHelp", { expiry: formatWorkspaceAdmissionExpiry(quote.expires_at, authorization.budget_timezone, locale) })}</p>
+          <label className="admin-field"><span><input type="checkbox" checked={confirmed === quoteIdentity} disabled={submitting}
+            onChange={event => setConfirmed(event.target.checked ? quoteIdentity : null)} /> {t("quoteConfirm")}</span></label>
+        </> : null}
         {!admission?.provider_available || !admission.adapter_available ? <p role="status">{t("providerUnavailable")}</p> : null}
         {!validCap ? <p role="alert" className="workspace-form__error">{t("invalidCap")}</p> : null}
         <div className="admin-form-actions"><button type="button" className="admin-button admin-button--primary"
-          disabled={!canSubmit || submitting || !confirmation || !workspaceIncrementalEditorialCanSubmit(status, confirmation)}
-          onClick={() => { if (confirmation) void onSubmit(confirmation); }}>{t(renewal ? "renew" : "authorize")}</button></div>
+          disabled={!canSubmit || submitting || !confirmation || !paidConfirmed || !workspaceIncrementalEditorialCanSubmit(status, confirmation)}
+          onClick={() => { if (confirmation && quote && paidConfirmed) void onSubmit({ ...confirmation, quote_reference: quote.reference, confirmed: true }); }}>{t(renewal ? "renew" : "authorize")}</button></div>
       </> : null}
       {operation?.can_revoke && operation.receipt.action === "authorize_interpretation" ? <>
         <p className="admin-drawer-form__hint">{t("stopEffect")}</p>

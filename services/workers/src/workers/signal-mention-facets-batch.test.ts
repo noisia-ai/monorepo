@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   runMentionFacetsTickV1,
   facetCallProposalV1,
 } from "./signal-mention-facets-batch";
+import { labelingCreateFailureReceiptV1 } from "@noisia/db";
 import type {
   LabelingCallV1,
   LabelingRunV1,
@@ -17,7 +19,7 @@ import {
 } from "@noisia/query-engine";
 import { AnthropicBatchTransportError, type AnthropicBatchPage } from "../providers/anthropic-message-batches";
 const dim = <T>(value: T) => ({ value, confidence: "high", abstained: false });
-function harness() {
+function harness(summary: string | null = null) {
   const context = {
     entities: [
       {
@@ -104,8 +106,9 @@ function harness() {
         x.provider_batch_id = b;
       });
     },
-    async markFailed(_r, c, u) {
+    async markFailed(_r, c, u, error) {
       c.forEach((x) => (x.status = u ? "unknown" : "failed"));
+      if (error) events.push(labelingCreateFailureReceiptV1(error)!);
     },
     async recoverUnknownBatch(_r, c, id) {
       c.forEach((x) => { x.status = "submitted"; x.provider_batch_id = id; });
@@ -183,7 +186,7 @@ function harness() {
           act: dim("opinion"),
           spam_or_bot: dim(false),
           language: dim("es"),
-          asunto: dim(null),
+          asunto: dim(summary),
         };
         const message = {
           stop_reason: "end_turn",
@@ -602,4 +605,51 @@ test("required ordinal grammar flows through persisted request and worker parser
   assert.equal(h.calls().length, 4);
   assert.ok(h.labels.every((label) => label.status === "labeled"));
   assert.equal(h.submitted(), 1);
+});
+
+
+test("explicit create rejection keeps the sane receipt and never resends that admission", async () => {
+  const h = harness();
+  let creates = 0;
+  h.provider.create = async () => { creates++; throw new AnthropicBatchTransportError("batch_http_400", "not_submitted", 400); };
+  await assert.rejects(runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider}));
+  assert.ok(h.calls().every(call=>call.status === "failed" && call.provider_batch_id === null));
+  assert.equal(JSON.parse(h.events[0]!).http_status,400);
+  assert.equal(JSON.parse(h.events[0]!).submission,"not_submitted");
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(creates,1);
+  assert.equal(h.labels.length,2);
+  assert.ok(h.labels.every(label=>label.status === "error" && label.error_code === "definitely_not_sent"));
+});
+
+
+test("optional summary normalization persists traced results after exact raw without altering entity evidence", async () => {
+  const summary = "word ".repeat(13).trim(), h = harness(summary);
+  assert.equal((await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider})).status,"completed");
+  assert.deepEqual(h.events,["raw","settle","apply"]);
+  const raw = h.calls()[0]!.raw_body!;
+  const hash = createHash("sha256").update(raw).digest("hex");
+  assert.ok(raw.includes(summary));
+  assert.ok(h.labels.every(label=>label.status === "labeled" && label.facets?.asunto.abstained && label.facets.entities.value?.[0]?.entity_id === "a" && label.normalizations?.[0]?.reason === "exceeds_word_limit"));
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(h.submitted(),1);
+  assert.equal(createHash("sha256").update(h.calls()[0]!.raw_body!).digest("hex"),hash);
+});
+
+test("stored optional-summary replay plans only rejected roots, keeps raw/valid labels and separates paid recovery", async () => {
+  const { planStoredFacetReplayV1 } = await import("./signal-facet-stored-replay");
+  const h=harness("word ".repeat(13).trim());
+  await runMentionFacetsTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  const call={...h.calls()[0]!,raw_sha256:`sha256:${createHash("sha256").update(h.calls()[0]!.raw_body!).digest("hex")}`,settled_micro_usd:12,
+    results:h.labels.map(result=>({...result,status:"error" as const,error_code:"invalid_facets",facets:undefined}))};
+  const args={run:h.run,calls:[call],pending_root_ids:[...h.labels.map(result=>result.root_id),"unsent"],valid_root_ids:["already-valid"]};
+  const before=JSON.stringify(args);
+  const plan=planStoredFacetReplayV1(args);
+  assert.deepEqual(plan.replayed_root_ids,h.labels.map(result=>result.root_id).sort());
+  assert.deepEqual(plan.recovery_root_ids,["unsent"]);assert.equal(plan.provider_sends,0);
+  assert.equal(JSON.stringify(args),before);assert.equal(h.submitted(),1);
+  assert.ok(plan.pages[0]!.results.every(result=>result.facets?.asunto.abstained));
+  assert.throws(()=>planStoredFacetReplayV1({...args,calls:[{...call,raw_sha256:"sha256:wrong"}]}),/receipt_invalid/);
+  assert.throws(()=>planStoredFacetReplayV1({...args,valid_root_ids:[h.labels[0]!.root_id]}),/population_invalid/);
+  assert.throws(()=>planStoredFacetReplayV1({...args,calls:[{...call,status:"unknown"}]}),/receipt_invalid/);
 });

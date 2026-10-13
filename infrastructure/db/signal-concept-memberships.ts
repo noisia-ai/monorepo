@@ -104,19 +104,7 @@ function snapshot(run: LabelingRunV1): Snapshot {
 }
 /** One pending-pair predicate for estimates and dispatch: current semantic decisions and
  * human overrides are reused; unresolved transports remain fenced. */
-const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4::jsonb) c(concept_key text,definition_digest text,scope text)) , current_pairs AS MATERIALIZED (
- SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
-), roots AS MATERIALIZED (
- SELECT f.*,COALESCE(f.entity_context_digest,(SELECT digest FROM signal_entity_context_versions ce WHERE ce.workspace_id=f.workspace_id ORDER BY version_no DESC LIMIT 1)) effective_ce
- FROM signal_mention_facets_current_v1 f WHERE f.workspace_id=$1 AND f.relevance='relevant' AND NOT f.requires_context_review
- AND (NOT $8::boolean OR f.status='labeled' AND f.facets#>>'{spam_or_bot,value}'='false'
-   AND jsonb_array_length(COALESCE(f.facets#>'{entities,value}','[]'::jsonb))>0
-   AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 rights
-     WHERE rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id AND rights.metrics AND rights.evidence))
- AND NOT (f.root_id=ANY($7::uuid[])) AND ($2::uuid IS NULL OR f.root_id>$2) AND ($3::uuid[] IS NULL OR f.root_id=ANY($3))), work AS (
- SELECT f.*,pending.keys
- FROM roots f JOIN LATERAL (
- SELECT array_agg(c.concept_key) keys FROM concepts c
+const membershipPendingKeysSql = ` SELECT array_agg(c.concept_key) keys FROM concepts c
  WHERE (c.scope='all_conversations' OR EXISTS(SELECT 1 FROM jsonb_array_elements(f.facets#>'{entities,value}') e WHERE e->>'kind'=c.scope))
  AND ($5::boolean OR NOT EXISTS(SELECT 1 FROM current_pairs current WHERE current.workspace_id=f.workspace_id AND current.root_id=f.root_id
  AND current.concept_key=c.concept_key AND current.definition_digest=c.definition_digest
@@ -146,7 +134,20 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
  WHERE uncertain.workspace_id=f.workspace_id AND r.kind='membership' AND (uncertain.status IN('submitting','unknown') OR $8::boolean AND uncertain.terminal_exposure_micro_usd>0)
  AND EXISTS(SELECT 1 FROM jsonb_array_elements(uncertain.inputs) i WHERE i->>'root_id'=f.root_id::text AND i->>'input_digest'=f.input_digest
  AND i->>'entity_context_digest'=f.effective_ce AND i->>'effective_entities_digest'=f.effective_entities_digest
- AND i->'evaluated_concepts' @> jsonb_build_array(jsonb_build_object('concept_key',c.concept_key,'definition_digest',c.definition_digest))))
+ AND i->'evaluated_concepts' @> jsonb_build_array(jsonb_build_object('concept_key',c.concept_key,'definition_digest',c.definition_digest))))`;
+const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4::jsonb) c(concept_key text,definition_digest text,scope text)) , current_pairs AS MATERIALIZED (
+ SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
+), roots AS MATERIALIZED (
+ SELECT f.*,COALESCE(f.entity_context_digest,(SELECT digest FROM signal_entity_context_versions ce WHERE ce.workspace_id=f.workspace_id ORDER BY version_no DESC LIMIT 1)) effective_ce
+ FROM signal_mention_facets_current_v1 f WHERE f.workspace_id=$1 AND f.relevance='relevant' AND NOT f.requires_context_review
+ AND (NOT $8::boolean OR f.status='labeled' AND f.facets#>>'{spam_or_bot,value}'='false'
+   AND jsonb_array_length(COALESCE(f.facets#>'{entities,value}','[]'::jsonb))>0
+   AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 rights
+     WHERE rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id AND rights.metrics AND rights.evidence))
+ AND NOT (f.root_id=ANY($7::uuid[])) AND ($2::uuid IS NULL OR f.root_id>$2) AND ($3::uuid[] IS NULL OR f.root_id=ANY($3))), work AS (
+ SELECT f.*,pending.keys
+ FROM roots f JOIN LATERAL (
+${membershipPendingKeysSql}
  ) pending ON cardinality(pending.keys)>0)`;
 /** Select by full-text fingerprint, effective entities and per-concept definition. No vectors or V2 classifications. */
 export async function selectMembershipInputsV1(c: Queryable, run: LabelingRunV1, hybrid = false): Promise<MembershipInputV1[]> {
@@ -371,16 +372,17 @@ export async function loadConceptMembershipsStatusV1(
           without_concept: number;
           characters: string;
         };
+        work_estimate: { roots: number; characters: string; pairs: string };
         counts: Array<{ verdict: string; count: number }>;
         items: Array<Record<string, any>>;
       }>(
         // Project lazy CE invalidation before filtering, aggregation or paging.
         // Each expensive current view is evaluated once for this workspace.
-        `/* membership-status-items */ WITH current_pairs AS MATERIALIZED (
-   SELECT * FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1
+        `/* membership-status-items */ WITH concepts AS (SELECT * FROM jsonb_to_recordset($9::jsonb) c(concept_key text,definition_digest text,scope text)), current_pairs AS MATERIALIZED (
+   SELECT * FROM signal_workspace_concept_memberships_read_v1($1::uuid) WHERE workspace_id=$1
    ), current_roots AS MATERIALIZED (
-   SELECT root_id,full_text,title,platform,relevance,facets,requires_context_review
-   FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+   SELECT f.*,COALESCE(f.entity_context_digest,$11::text) effective_ce
+   FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE workspace_id=$1
    ), human_patches AS MATERIALIZED (
    SELECT root_id,jsonb_object_agg(dimension,value) patch FROM signal_mention_facet_overrides
    WHERE workspace_id=$1 AND superseded_at IS NULL GROUP BY root_id
@@ -433,6 +435,14 @@ export async function loadConceptMembershipsStatusV1(
      CASE WHEN NOT invalid AND source='human' THEN override_decided_via END decided_via,
      NOT invalid AND NOT requires_override_review AND source='human' AND COALESCE(override_decided_via='human_ui',false) eligible_for_human_evaluation
    FROM invalidated
+   ), status_work AS (
+   SELECT f.*,pending.keys FROM current_roots f JOIN LATERAL (
+   ${membershipPendingKeysSql.replace(/\$([4568])/gu, (_, number: string) => ({ '4': '$9', '5': 'false', '6': '$10', '8': 'false' })[number]!)}
+   ) pending ON cardinality(pending.keys)>0
+   WHERE f.relevance='relevant' AND NOT f.requires_context_review AND NOT (f.root_id=ANY($7::uuid[]))
+   ), work_estimate AS (
+   SELECT count(*)::int roots,COALESCE(sum(length(full_text)),0)::text characters,
+     COALESCE(sum(cardinality(keys)),0)::text pairs FROM status_work
    ), population AS (
    SELECT count(*) FILTER(WHERE relevance='relevant')::int relevant,
      count(*) FILTER(WHERE relevance='unrelated')::int unrelated,count(*) FILTER(WHERE relevance='unknown')::int unknown,
@@ -463,6 +473,7 @@ export async function loadConceptMembershipsStatusV1(
      AND ($4::uuid IS NULL OR (m.root_id,m.concept_key)>($4::uuid,$5::text))
    ORDER BY m.root_id,m.concept_key LIMIT $6
    ) SELECT (SELECT to_jsonb(population) FROM population) population,
+     (SELECT to_jsonb(work_estimate) FROM work_estimate) work_estimate,
      COALESCE((SELECT jsonb_agg(counts ORDER BY verdict) FROM counts),'[]'::jsonb) counts,
      COALESCE((SELECT jsonb_agg(item ORDER BY root_id,concept_key) FROM page),'[]'::jsonb) items`,
         [
@@ -474,6 +485,7 @@ export async function loadConceptMembershipsStatusV1(
           limit + 1,
           change.changed ? change.affected : [],
           JSON.stringify(change.context),
+          JSON.stringify(concepts), digest(membershipLabelerIdentityV1()), change.digest,
         ],
       )
     ).rows[0]!;
@@ -490,12 +502,8 @@ export async function loadConceptMembershipsStatusV1(
       route: hybridRoute?.route ?? "standard",
       entity_context_digest: change.digest,
       stale_count: change.changed ? change.affected.length : 0,
-      estimated_micro_usd: hybridRoute ? null : (await estimateMembershipWorkV1(c, {
-        workspace_id: args.workspace_id, concepts, context: change.context,
-        labeler_digest: digest(membershipLabelerIdentityV1()), sample: null, preview: false,
-        // These roots first need a current fiche; a read must not register CE or quote stale work.
-        stale_roots: change.changed ? change.affected : [],
-      })).estimated_micro_usd,
+      estimated_micro_usd: hybridRoute ? null : estimate(result.work_estimate.roots, Number(result.work_estimate.characters),
+        concepts, change.context, Number(result.work_estimate.pairs)).estimated_micro_usd,
       preview_estimated_micro_usd: hybridRoute ? null : estimate(
         Math.min(30, population.relevant),
         population.relevant
@@ -599,11 +607,15 @@ export async function overrideConceptMembershipsV1(
       [args.workspace_id],
     );
     await authorize(c, args.workspace_id, args.actor_user_id, true);
-    const matches = (
+    // Resolve the current targets once under the workspace lock. Reuse only
+    // server-observed fingerprints/definitions for the write; a second serving
+    // scan adds latency without giving a newer snapshot of these locked targets.
+    const targets = (
       await c.query(
         `/* membership-override-targets */ WITH targets AS MATERIALIZED (
- SELECT root_id,concept_key FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND root_id=ANY($3::uuid[])
- ) SELECT count(*)::int count FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text)
+ SELECT root_id,concept_key,definition_digest,root_fingerprint FROM signal_workspace_concept_memberships_read_v1($1::uuid) WHERE workspace_id=$1 AND root_id=ANY($3::uuid[])
+ ) SELECT r.root_id,r.concept_key,r.verdict,r.decided_via,m.definition_digest,m.root_fingerprint
+ FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text)
  JOIN targets m ON m.root_id=r.root_id AND m.concept_key=r.concept_key WHERE r.verdict IN('belongs','not_belongs')`,
         [
           args.workspace_id,
@@ -611,8 +623,8 @@ export async function overrideConceptMembershipsV1(
           args.overrides.map((r) => r.root_id),
         ],
       )
-    ).rows[0]!.count;
-    if (matches !== args.overrides.length)
+    ).rows;
+    if (targets.length !== args.overrides.length)
       fail("membership_override_target_invalid", 400);
     await c.query(
       `UPDATE signal_concept_membership_overrides o SET superseded_at=now() FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text) WHERE o.workspace_id=$1 AND o.root_id=r.root_id AND o.concept_key=r.concept_key AND o.superseded_at IS NULL`,
@@ -620,10 +632,9 @@ export async function overrideConceptMembershipsV1(
     );
     const inserted = await c.query(
       `INSERT INTO signal_concept_membership_overrides(workspace_id,root_id,concept_key,verdict,actor_user_id,definition_digest,root_fingerprint,decided_via)
-       SELECT $1,r.root_id,r.concept_key,r.verdict,$3,m.definition_digest,m.root_fingerprint,r.decided_via
-       FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text)
-       JOIN signal_concept_memberships_current_v1 m ON m.workspace_id=$1 AND m.root_id=r.root_id AND m.concept_key=r.concept_key`,
-      [args.workspace_id, JSON.stringify(args.overrides), args.actor_user_id],
+       SELECT $1,r.root_id,r.concept_key,r.verdict,$3,r.definition_digest,r.root_fingerprint,r.decided_via
+       FROM jsonb_to_recordset($2::jsonb) r(root_id uuid,concept_key text,verdict text,decided_via text,definition_digest text,root_fingerprint text)`,
+      [args.workspace_id, JSON.stringify(targets), args.actor_user_id],
     );
     if (inserted.rowCount !== args.overrides.length)
       fail("membership_override_target_invalid", 400);
