@@ -1,12 +1,15 @@
 /** MFP-only route rollback through the product transaction; no provider transport. */
 // @ts-expect-error guarded private runner JavaScript
 import { main, openDatabase } from "../dev-corpus/guard.mjs";
-import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1 } from "../../infrastructure/db/index";
+import { configureHybridMembershipRouteV1, loadHybridMembershipRouteV1,reconcileHybridResponseExposureV1 } from "../../infrastructure/db/index";
 import { loadMfpEvalIdentity } from "./fixture-identity";
 
 void main(async () => {
   if (!process.argv.includes("--real")) throw new Error("mfp_hybrid_rollback_real_flag_required");
   const execute = process.argv.includes("--execute");
+  const reconcileIds=process.argv.find(arg=>arg.startsWith('--reconcile-response-calls='))?.slice(27).split(',')??[];
+  if(reconcileIds.some(id=>!(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu.test(id))))
+    throw new Error('mfp_hybrid_reconciliation_call_ids_invalid');
   if (execute && process.env.NOISIA_MFP_HYBRID_ROLLBACK_EXECUTE !== "true")
     throw new Error("mfp_hybrid_rollback_execute_disabled");
   const identity = await loadMfpEvalIdentity();
@@ -22,9 +25,11 @@ void main(async () => {
     const before = await loadHybridMembershipRouteV1(access);
     if (!execute || before.route === "standard") {
       console.log(JSON.stringify({ stage: "mfp_hybrid_rollback", status: before.route === "standard" ? "unchanged" : "planned",
-        current_route: before.route }));
+        current_route: before.route,reconciliation_calls:reconcileIds.length }));
       return;
     }
+    if(reconcileIds.length)await reconcileHybridResponseExposureV1({...access,
+      expected_route_digest:before.route_digest!,call_ids:reconcileIds});
     const after = await configureHybridMembershipRouteV1({ ...access, route: "standard", provider_available: false,
       expected_route_digest:before.route_digest,confirm_unresolved_jev:process.argv.includes("--confirm-unresolved-jev") });
     console.log(JSON.stringify({ stage: "mfp_hybrid_rollback", status: "restored", current_route: after.route }));

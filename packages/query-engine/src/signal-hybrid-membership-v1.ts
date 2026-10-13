@@ -5,10 +5,13 @@ import type { HybridCitationVerificationV1 } from "./signal-hybrid-citation-qual
 import type { JevRequestV1, JevResponseV1 } from "./signal-mention-facets-jev-v1";
 /** Experimental H1 reducer. Its threshold is the frozen dev choice, not a workspace knob. */
 export const HYBRID_JEV_POSITIVE_THRESHOLD_V1 = 0.4;
+/** R10 dev-only cached sweep: .35 maximized micro F1 before reporting test. */
+export const HYBRID_JEV_R10_THRESHOLD_V1 = 0.35;
 export type HybridCitationV1 = { quote: string; start: number; end: number };
 export type HybridJevDecisionV1 = {
   verdict: "belongs" | "not_belongs" | "error" | "refused" | "pending";
   probability: number | null;
+  threshold?: number;
   /** Literal source span carried with the JEV decision; JEV noul does not select spans. */
   citation: HybridCitationV1 | null;
 };
@@ -40,7 +43,9 @@ export function decideHybridMembershipV1(
     return result(jev.verdict, false);
   if (jev.probability === null || !Number.isFinite(jev.probability) || jev.probability < 0 || jev.probability > 1)
     return result("error", false);
-  const positive = jev.probability >= HYBRID_JEV_POSITIVE_THRESHOLD_V1;
+  const threshold=jev.threshold??HYBRID_JEV_POSITIVE_THRESHOLD_V1;
+  if(![HYBRID_JEV_POSITIVE_THRESHOLD_V1,HYBRID_JEV_R10_THRESHOLD_V1].includes(threshold))return result('error',false);
+  const positive = jev.probability >= threshold;
   if (jev.verdict !== (positive ? "belongs" : "not_belongs")) return result("error", false);
   if (!positive) return result(claude ? "error" : "not_belongs", false);
   if (!validHybridCitationV1(text, jev.citation)) return result("error", false);
@@ -76,7 +81,7 @@ export function mapHybridJevAnswerV1(input: MembershipInputV1, response: JevResp
   const answer = response.answers.membership;
   if (!answer || answer.type !== "noul" || !Number.isFinite(answer.noul) || answer.noul < 0 || answer.noul > 1)
     return { verdict: "error", probability: null, citation: null };
-  return { verdict: answer.noul >= HYBRID_JEV_POSITIVE_THRESHOLD_V1 ? "belongs" : "not_belongs",
+  return { verdict: answer.noul >= HYBRID_JEV_R10_THRESHOLD_V1 ? "belongs" : "not_belongs",threshold:HYBRID_JEV_R10_THRESHOLD_V1,
     probability: answer.noul, citation: input.text.trim() ? { quote: input.text, start: 0, end: input.text.length } : null };
 }
 
@@ -88,5 +93,9 @@ export function hybridJevMembershipIdentityV1(): LabelerIdentity {
   return {kind:"membership",provider:"typesafe",model:"jev-1.13.0",
     prompt_digest:digest(buildHybridJevQuestionV1(input,concept).questions),
     schema_digest:digest(HYBRID_JEV_ANSWER_SCHEMA_V1),
-    params:{threshold:HYBRID_JEV_POSITIVE_THRESHOLD_V1,transport:"sync",max_pair_attempts:3}};
+    params:{threshold:HYBRID_JEV_R10_THRESHOLD_V1,transport:"sync",max_pair_attempts:3}};
+}
+export function rethresholdHybridJevV1(jev:HybridJevDecisionV1):HybridJevDecisionV1{
+ if(!['belongs','not_belongs'].includes(jev.verdict)||jev.probability===null||!Number.isFinite(jev.probability)||jev.probability<0||jev.probability>1)throw Error('hybrid_cached_probability_invalid');
+ return {...jev,threshold:HYBRID_JEV_R10_THRESHOLD_V1,verdict:jev.probability>=HYBRID_JEV_R10_THRESHOLD_V1?'belongs':'not_belongs'};
 }

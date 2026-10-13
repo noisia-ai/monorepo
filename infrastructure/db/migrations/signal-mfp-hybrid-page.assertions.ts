@@ -41,10 +41,12 @@ export async function verifyHybridJevPageContinuationV1(a:{client:PoolClient;dat
     JSON.stringify(a.facets),JSON.stringify([a.entity]),a.facetCall,rows.map(r=>r.id)]);
  };
  await cloneRoots(662,0);phase("clone_roots_completed");
- const identity=hybridJevMembershipIdentityV1(),version=randomUUID();
+ const identity=hybridJevMembershipIdentityV1(),identityDigest=labelerDigestV1(identity);
  await client.query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,schema_digest,
-  labeler_digest,identity) VALUES($1,'membership','typesafe','jev-1.13.0',$2,$3,$4,$5::jsonb)`,
- [version,identity.prompt_digest,identity.schema_digest,labelerDigestV1(identity),JSON.stringify(identity)]);
+  labeler_digest,identity) VALUES($1,'membership','typesafe','jev-1.13.0',$2,$3,$4,$5::jsonb)
+  ON CONFLICT(labeler_digest) DO NOTHING`,
+ [randomUUID(),identity.prompt_digest,identity.schema_digest,identityDigest,JSON.stringify(identity)]);
+ const version=(await client.query<{id:string}>('SELECT id FROM signal_labeler_versions WHERE labeler_digest=$1',[identityDigest])).rows[0]!.id;
  const createRun=async()=>{
   const id=randomUUID(),admission=await a.admit("concept_membership_jev",id);
   await client.query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,preparation_run_id,

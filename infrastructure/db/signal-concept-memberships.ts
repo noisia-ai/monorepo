@@ -109,7 +109,7 @@ const membershipWorkSql = `WITH concepts AS (SELECT * FROM jsonb_to_recordset($4
 ), roots AS MATERIALIZED (
  SELECT f.*,COALESCE(f.entity_context_digest,(SELECT digest FROM signal_entity_context_versions ce WHERE ce.workspace_id=f.workspace_id ORDER BY version_no DESC LIMIT 1)) effective_ce
  FROM signal_mention_facets_current_v1 f WHERE f.workspace_id=$1 AND f.relevance='relevant' AND NOT f.requires_context_review
- AND (NOT $8::boolean OR f.status='labeled' AND f.facets#>>'{spam_or_bot,value}'='false'
+ AND (NOT $8::boolean OR f.status IN('labeled','abstained') AND f.facets#>>'{spam_or_bot,value}'='false'
    AND jsonb_array_length(COALESCE(f.facets#>'{entities,value}','[]'::jsonb))>0
    AND EXISTS(SELECT 1 FROM signal_membership_evidence_rights_v1 rights
      WHERE rights.workspace_id=f.workspace_id AND rights.root_id=f.root_id AND rights.metrics AND rights.evidence))
