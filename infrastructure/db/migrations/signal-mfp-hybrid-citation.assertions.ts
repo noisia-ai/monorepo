@@ -6,6 +6,7 @@ import { requestHybridMembershipStageV1, configureHybridMembershipRouteV1,loadHy
 import { createHybridMembershipStageStoreV1 } from '../signal-hybrid-runs';
 import { runHybridMembershipTickV1,hybridMembershipDrainerSqlV1 } from '../../../services/workers/src/workers/signal-hybrid-membership';
 import type { createAnthropicMessageBatchesClient } from '../../../services/workers/src/providers/anthropic-message-batches';
+import {hybridSettledWindowResultsSqlV1} from '../signal-hybrid-window-results';
 
 /** Real migrated schema, normal admission/reserve/store/ledger; only provider HTTP and private storage are simulated. */
 export async function verifyHybridCitationQualityV1(a:{client:PoolClient;database:Pool;workspace:string;actor:string;route:string;jevRun:string;concept:ConceptForJudgeV1}) {
@@ -139,6 +140,19 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
    [a.workspace,a.route,'claude',w.root_id,w.root_fingerprint,a.concept.concept_key,a.concept.definition_digest,w.entity_context_digest,w.effective_entities_digest])).rows[0].n,expected,
    'independent windows count once per window, preserving the attempt bound');
   assert.ok(windows.some(row=>row.result.claude.citations[0].start>10000),'late window preserves absolute offsets');
+  if(scenario==='supported'){
+   await client.query('SAVEPOINT window_input_correspondence');
+   const windowCalls=(await client.query('SELECT * FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id',[initial.run_id])).rows;
+   const merged=windowCalls.slice(0,2);
+   await client.query('UPDATE signal_labeling_calls SET inputs=$2::jsonb,results=$3::jsonb WHERE id=$1',
+    [merged[0].id,JSON.stringify(merged.flatMap(c=>c.inputs)),JSON.stringify(merged.flatMap(c=>c.results))]);
+   await client.query('UPDATE signal_labeling_calls SET results_applied=false WHERE id=$1',[merged[1].id]);
+   const paired=(await client.query(hybridSettledWindowResultsSqlV1,[initial.run_id])).rows;
+   assert.equal(paired.length,windows.length,'two windows in one call do not produce an N×N input join');
+   for(const row of paired)assert.deepEqual(row.input.citation_window,row.result.citation_window,
+    'every raw result keeps its exact index/start/end/count input window');
+   await client.query('ROLLBACK TO SAVEPOINT window_input_correspondence');
+  }
   const decision=(await client.query('SELECT * FROM signal_hybrid_membership_decisions WHERE workspace_id=$1',[a.workspace])).rows[0];
   assert.equal(decision.verdict,scenario==='repair_unsupported'?'review_required':'belongs');assert.equal(decision.citation.length,1);assert.ok(decision.citation_call_id);
   const current=(await client.query('SELECT verdict,updated_at FROM signal_concept_memberships_current_v1 WHERE workspace_id=$1 AND concept_key=$2 AND root_id=$3',[a.workspace,a.concept.concept_key,decision.root_id])).rows[0];

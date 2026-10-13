@@ -39,6 +39,7 @@ export const hybridSettledWindowResultsSqlV1=`WITH RECURSIVE sources AS (
  JOIN signal_labeling_calls call ON call.run_id=source.id AND call.workspace_id=source.workspace_id
  CROSS JOIN LATERAL jsonb_array_elements(call.results) result
  JOIN LATERAL jsonb_array_elements(call.inputs) input ON input->>'root_id'=result->>'root_id'
+  AND input->'citation_window'=result->'citation_window'
  WHERE call.status='settled' AND call.results_applied AND source.membership_snapshot->>'hybrid_stage'='claude'
   AND result ? 'citation_window'
 ), latest AS (

@@ -10,7 +10,8 @@ import {hybridSettledWindowResultsSqlV1} from './signal-hybrid-window-results';
 /** Previous receipt is the immutable input to verification or to the single citation repair. */
 export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|PoolClient,run:LabelingRunV1):Promise<HybridStageInputV1[]> {
  const s=(run as LabelingRunV1&{membership_snapshot:{source_run_id:string;hybrid_stage:HybridMembershipStageV1;citation_retry:boolean;route_digest:string}}).membership_snapshot;
- const sourceSql=`SELECT result,input,0 depth,call.created_at,call.id FROM signal_labeling_calls call
+ const sourceSql=`SELECT result,CASE WHEN result ? 'citation_window'
+  THEN jsonb_set(input,'{citation_window}',result->'citation_window') ELSE input END input,0 depth,call.created_at,call.id FROM signal_labeling_calls call
   CROSS JOIN LATERAL jsonb_array_elements(call.results) result
   JOIN LATERAL jsonb_array_elements(call.inputs) input ON input->>'root_id'=result->>'root_id'
   WHERE call.run_id=$1 AND call.status='settled' AND call.results_applied
@@ -36,19 +37,22 @@ export async function selectHybridCitationInputsV1(client:LabelingDatabaseV1|Poo
    AND ($4::boolean=false OR result#>>'{claude,verification,supported}'='false')
    AND ($5::uuid IS NULL OR p.root_id>$5::uuid)
  ORDER BY p.root_id,p.concept_key,call.depth,call.created_at DESC,call.id DESC`,[s.source_run_id,run.workspace_id,s.route_digest,s.hybrid_stage==='claude',run.cursor_root_id])).rows;
+ return groupHybridCitationInputsV1(rows,s.hybrid_stage).slice(0,200);
+}
+export function groupHybridCitationInputsV1(rows:Array<{input:HybridStageInputV1;result:HybridStageResultV1}>,stage:HybridMembershipStageV1){
  const grouped=new Map<string,HybridStageInputV1>();
  for(const row of rows){
   const concept=row.input.evaluated_concepts.find(c=>c.concept_key===row.result.concept_key&&c.definition_digest===row.result.definition_digest);
   if(!concept)throw new Error('hybrid_citation_source_invalid');
-  const key=s.hybrid_stage==='claude'?JSON.stringify([row.input.root_id,row.input.citation_window??null]):row.input.root_id;
+  const key=stage==='claude'?JSON.stringify([row.input.root_id,row.input.citation_window??null]):row.input.root_id;
   const input=grouped.get(key)??{...row.input,evaluated_concepts:[],jev_by_concept:{},confirmation_by_concept:{}};
   if(input.confirmation_by_concept?.[concept.concept_key])throw new Error('hybrid_duplicate_confirmation');
   input.evaluated_concepts.push(concept);input.confirmation_by_concept??={};input.confirmation_by_concept[concept.concept_key]=row.result;
   input.jev_by_concept??={};input.jev_by_concept[concept.concept_key]={decision:row.result.jev,call_id:row.result.jev_call_id};
-  if(s.hybrid_stage==='claude')input.citation_repair={reason:'The previous fragments did not independently support all necessary conditions. Reassess and select better decisive fragments.',previous_fragments:Object.values(input.confirmation_by_concept).flatMap(r=>r.claude?.citations??[])};
+  if(stage==='claude')input.citation_repair={reason:'The previous fragments did not independently support all necessary conditions. Reassess and select better decisive fragments.',previous_fragments:Object.values(input.confirmation_by_concept).flatMap(r=>r.claude?.citations??[])};
   grouped.set(key,input);
  }
- return [...grouped.values()].slice(0,200);
+ return [...grouped.values()];
 }
 
 /** One idempotent successor per terminal source, under the existing governed admission. */
