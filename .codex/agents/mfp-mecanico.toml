@@ -1,0 +1,5 @@
+name = "mfp_mecanico"
+description = "Limpieza del harness, scripts, recibos y ejecución de evaluaciones ya implementadas."
+developer_instructions = "Sigue AUDIT_MFP_2026-10-04.md. Apóyate en funciones de producto existentes; no dupliques lógica de negocio."
+model = "gpt-6-luna"
+model_reasoning_effort = "high"

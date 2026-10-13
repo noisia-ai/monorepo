@@ -1,55 +1,96 @@
-# QA del fundador
+# QA del fundador — MFP
 
-Actualizado el 10 de octubre de 2026. La aceptación del fundador sigue pendiente.
+Redactada por el auditor el 11 de octubre de 2026 a partir de la lista factual de Codex (revisión 9). Versión del Studio de desarrollo: `44a2e1be` (fijada, sin publicación automática).
 
-Abrir [Studio de desarrollo](https://mfp-studio-dev-test.up.railway.app) con la sesión habitual y rol **Admin Noisia**. Para revisar resultados existentes, abrir **Marca QA MFP Oct07 R4**. Para probar el alta completa, crear una marca desechable; no volver a importar archivos en la marca ya procesada.
+La QA tiene dos partes:
 
-Antes del recorrido, comprobar en el [recibo de revisión 7](RECEIPT_MFP_FRONT5_AUDIT_R7_2026-10-10.md) qué versión se publicó y qué pruebas terminaron. El [PR del corte](https://github.com/noisia-ai/monorepo/pull/40) registra los checks del documento final. El [anexo del operador](QA_FUNDADOR_MFP_ANEXO_OPERADOR.md) conserva los detalles técnicos y costos anteriores. Esta guía no acredita todavía el recorrido de un administrador cliente.
+- **QA-1 (esta guía):** revisar resultados ya calculados, ver Signal, corregir un caso dudoso y cambiar de idioma. Unos 30 minutos y **USD 0**.
+- **QA-2 (marca nueva completa):** crear la marca, importar, analizar, segunda carga y Signal. El auditor la escribe cuando Codex la haya corrido entera sobre esta misma versión.
 
-Reservar 20–30 minutos para consultar resultados guardados, sin gasto adicional. Un recorrido nuevo puede tardar 1–2 horas o más si el servicio de análisis sigue trabajando. Para los dos archivos de esta prueba, prever aproximadamente **USD 7 por el método Estándar** o **USD 5 por el método Híbrido experimental**. Comparar ambos métodos sobre los mismos datos añade aproximadamente **USD 1** al recorrido estándar. Son previsiones, no máximos: el texto, los intereses y las repeticiones cambian el costo. Revisar el importe mostrado antes de cada inicio. El cálculo y los costos observados están en el anexo.
+## Antes de empezar
 
-Los archivos están en la Mac del fundador:
+1. Abre <https://mfp-studio-dev-test.up.railway.app> con tu sesión habitual (rol Admin Noisia).
+2. Abre una nota con cuatro columnas: paso, ¿OK?, segundos si tardó más de 15, comentario. Si algo falla, toma una captura.
+3. **No pulses botones que inicien o autoricen trabajo:** «Calcular…», «Completar…», «Recalcular…», «Probar definición…», «Crear vectores…», «Iniciar…», «Ver estimación…», «Autorizar…», «Importar…», «Adoptar concepto», «Guardar cambios». Esta QA no gasta nada. Si pulsas uno por error, anota la hora y avísame.
+4. **Meta de tiempo:** cada pantalla termina de cargar en menos de 15 segundos sin recargar a mano. Si tarda más, espera hasta un minuto, anota cuánto y sigue.
 
-- Primera carga, **1,000 filas**: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/load1.csv`.
-- Segunda carga, **250 filas**: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/load2.csv`.
+## Parte A · Resultados de una marca ya analizada (≈10 min)
 
-Cada fila siguiente indica una sola acción. Si una acción falla, resolverla antes de avanzar. Conservar una captura, la hora, el idioma y el costo mostrado.
+Marca: **Marca QA MFP Oct07 R4**.
 
-| Paso | Dónde y qué hacer | Resultado visible; problema y recuperación |
+| Paso | Haz esto | Deberías ver |
 |---|---|---|
-| 1 | **Marcas → Crear marca**: guardar una marca desechable con sus datos mínimos. | Aparece una sola marca. Si la respuesta tarda, revisar Marcas antes de volver a guardar. |
-| 2 | **Brand OS**: guardar descripción, alias y competidores. | Los datos permanecen al recargar. Si falta contexto, completar el campo señalado. |
-| 3 | **Topics → Crear tópico**: guardar un interés con definición, inclusiones, exclusiones y ejemplos. | Aparece en el catálogo; guardar no inicia análisis. Repetir este paso para tener dos o tres intereses. |
-| 4 | **Datos y fuentes**: importar `load1.csv` una vez. | El recibo indica 1,000 filas recibidas, con sus duplicadas y excluidas. Si tarda, consultar el estado antes de repetir la importación. |
-| 5 | **Datos y fuentes**, panel de preparación: solicitar la preparación del texto. | El estado termina y muestra cuántas menciones pueden analizarse. Si hay errores, abrir el detalle y conservar el recibo. |
-| 6 | **Topics**, panel de preparación: pulsar **Crear vectores · estimación …** después de revisar el costo. | La preparación termina con costo y avance visibles. Si ofrece **Usar vectores existentes · sin costo**, usar ese control para reutilizar la preparación. |
-| 7 | **Topics**, panel de clasificación: pulsar **Completar fichas pendientes**. | Se ven cantidades de conversaciones relevantes, ajenas y pendientes de revisión. Un error técnico permanece separado de una conversación ajena. |
-| 8 | **Topics**, conversaciones clasificadas: abrir una mención original. | El texto permite comprobar por qué se consideró relevante. Elegir también una comparación con un competidor; no confundir quién aparece en ella. |
-| 9 | **Topics → Analizar conversaciones**: iniciar el análisis. | Aparecen propuestas agrupadas y un estado final. Si la preparación editorial todavía muestra la revisión anterior, recargar una vez cuando el análisis termine. Si sólo aparece un error de consulta, actualizar una vez; no volver a importar para resolverlo. |
-| 10 | **Topics → Convertir grupos en Topics útiles**: pulsar **Preparar revisión de Topics**. | Termina la preparación y aparece **Revisión editorial de Topics**. Si sigue esperando sin avance, registrar el bloqueo y avisar al operador. |
-| 11 | **Revisión editorial de Topics**: pulsar **Iniciar revisión editorial**. | La revisión empieza bajo la autorización existente. Este panel no ofrece una cotización previa ni una casilla de autorización: usar la previsión orientativa de esta guía y continuar bajo la autorización vigente, registrando el costo observado. Si sigue esperando sin avance, registrar el bloqueo. |
-| 12 | **Revisión editorial de Topics**: pulsar **Actualizar estado** cuando se necesite consultar el avance. | El catálogo se guarda automáticamente y la pantalla lo confirma al terminar. Si la respuesta queda pendiente, consultar el estado antes de repetir el inicio; usar la recuperación de la misma solicitud si la pantalla la ofrece. |
-| 13 | **Revisión editorial de Topics**: abrir **Ver resultados guardados**. | Aparece la revisión guardada y validada, con sus resultados consolidados. Si falla la consulta, actualizar una vez; no volver a importar para recuperarla. |
-| 14 | En los resultados guardados: abrir un Topic pulsando su nombre. | Aparecen definición, evidencia y enlaces a la mención original. Los ejemplos representativos se distinguen de las citas de decisión; los errores y pendientes siguen identificados. |
-| 15 | Concepto descubierto elegido: seleccionar **Ámbito** según su evidencia. | El ámbito queda elegido y permite adoptar el concepto. Si la evidencia no permite decidir, conservar la propuesta sin adoptarla. |
-| 16 | Resultado elegido: pulsar **Adoptar concepto**. | Se agrega al catálogo editable. Repetir con una segunda propuesta real; si no hay dos propuestas útiles, registrar esa limitación. |
-| 17 | **Acceso y configuración → Método de pertenencia**: elegir **Estándar** o **Híbrido experimental**. | La selección cambia en el formulario. Si la opción experimental no está disponible, el operador debe habilitarla antes de continuar. Si avisa que el método anterior necesita actualizarse, elegir Estándar, pasar al paso 18 y repetir ambos pasos con Híbrido experimental. |
-| 18 | En ese formulario: pulsar **Guardar método**. | La selección permanece al recargar; guardar no inicia análisis. Si avisa que otra persona cambió la selección, actualizar y decidir de nuevo. |
-| 19 | **Topics**, interés elegido: pulsar **Probar definición · 30 raíces**. | Se muestran decisiones y citas de prueba, con su costo. La cita debe existir literalmente en el original; la prueba no cambia las decisiones completas. |
-| 20 | **Topics**, interés elegido: pulsar **Calcular pertenencia completa**. | Termina con cantidades y costo. Los resultados estándar anteriores no prueban el método experimental: éste necesita su propia ejecución. |
-| 21 | Con el método experimental: pulsar **Revisar desacuerdos**. | Se ven las dos decisiones y sus citas disponibles. Si no hay casos reales suficientes, registrar la cobertura faltante. |
-| 22 | Caso revisado: marcar la conversación que se corregirá. | Sólo esa conversación queda seleccionada. No seleccionar toda la página sin leer sus casos. |
-| 23 | En ese caso: pulsar **Aceptar pertenencia** o **Rechazar pertenencia** tras leer el original. | La corrección permanece al recargar y queda atribuida a quien usa la interfaz. Las correcciones anteriores hechas mediante un agente están identificadas por separado. Repetir en tres casos reales. |
-| 24 | Interés elegido: activar **Mostrar este concepto en Signal**. | Se conserva la selección; repetir para cada interés que deba mostrarse. |
-| 25 | **Signal**: abrir el detalle de un interés. | El número y la evidencia coinciden con Topics para las mismas fechas y filtros. El número de relevantes sin concepto también coincide entre sus dos paneles. |
-| 26 | Selector de idioma: cambiar a inglés. | Para las mismas fechas y filtros, los números se mantienen. Repetir la revisión del detalle en español. |
-| 27 | **Brand OS**: cambiar sólo la descripción narrativa. | El texto se guarda sin volver a analizar conversaciones ya clasificadas. |
-| 28 | **Brand OS**: agregar un alias presente en los datos. | Sólo quedan pendientes las conversaciones afectadas. Repetir por separado con un competidor presente en los datos. |
-| 29 | **Topics**, un interés: editar su definición. | Sólo ese interés necesita una nueva evaluación completa. |
-| 30 | **Datos y fuentes**: importar `load2.csv` una vez. | El recibo indica 250 filas y distingue contenido nuevo, repetido y cambiado. |
-| 31 | Panel correspondiente: ejecutar únicamente la etapa que aparece pendiente. | Se reutiliza el trabajo vigente. Repetir este paso por cada etapa necesaria, anotando tiempo y costo frente a la primera carga. |
-| 32 | **Signal**: revisar otra vez el detalle con las mismas fechas y filtros. | Refleja la segunda carga, sin duplicar conversaciones ni propuestas adoptadas. |
+| A1 | En Studio, entra a la marca «Marca QA MFP Oct07 R4». | 1,176 menciones, 3 archivos, 1,273 filas. |
+| A2 | Pulsa «Revisar tópicos para Signal». | La página de Topics. El análisis indica 13/13 interpretados. |
+| A3 | Pulsa «Ver resultados guardados». | 5 Topics, 0 Narrativas, 4 Noise y 4 con evidencia insuficiente. |
+| A4 | Abre dos o tres grupos de la lista. | Cada grupo muestra su resultado y su evidencia. |
+| A5 | En la lista de Topics, selecciona «Cobros y depósitos en la renta». | Su ficha, en Borrador. «Guardar cambios» está apagado. No edites nada. |
+| A6 | En su evidencia, pulsa «Abrir mención». | El texto completo de la mención original, dentro de Studio. «Abrir fuente original» lleva a la red social; aquí no se usa. |
+| A7 | Selecciona, uno por uno: «Atención durante la entrega y devolución», «Programa Emerald Aisle y beneficios de estatus élite» e «Integración de renta de autos en plataformas de viaje». | Cobros y Atención los definió una persona. Los otros dos salieron del descubrimiento automático y se adoptaron. |
 
-Si dos pestañas muestran errores de lectura, esperar a que termine la consulta y actualizar una vez. Si persiste, registrar el fallo con ambas URLs. No iniciar trabajo pagado para recuperar una consulta.
+Anota tu opinión; no hay respuesta correcta:
 
-Conservar los recibos de las dos cargas y la lista de problemas observados. La prueba de desarrollo no equivale a entrega en UAT ni a publicación en producción.
+- ¿Se entienden los nombres de los Topics sin explicación?
+- ¿La mención que abriste justifica que esté en ese Topic?
+
+## Parte B · Signal (≈5 min)
+
+Marca: **Marca QA MFP Oct11R8**.
+
+| Paso | Haz esto | Deberías ver |
+|---|---|---|
+| B1 | Abre <https://mfp-studio-dev-test.up.railway.app/signal/mfp-qa-r8-20261011/topics-narratives>. | En menos de 15 s: 2 Topics seleccionados, «Atención…» con 7 menciones y «Cobros…» con 2. En el resumen: Total de menciones 1,086; Relevantes 616; Ajenas 300; Spam o bots 35; Relevancia sin determinar 135; En conceptos seleccionados 8. |
+| B2 | Selecciona «Cobros y depósitos en la renta». | En menos de 15 s, su detalle y sus 2 menciones de evidencia. |
+| B3 | Lee la evidencia de una mención. | El fragmento citado («Cita de la decisión guardada»). Si la corrigió una persona, dice «Corrección humana». |
+
+Anota tu opinión:
+
+- ¿Se ve y se siente como el Signal de Laika? ¿Qué falta?
+
+## Parte C · Corregir un caso dudoso (≈10 min)
+
+En el concepto «Cobros y depósitos en la renta» de la marca R8 quedan **2 menciones con evidencia insuficiente**: el sistema no pudo decidir si pertenecen y nadie las ha revisado. **La decisión es tuya.**
+
+| Paso | Haz esto | Deberías ver |
+|---|---|---|
+| C1 | Abre <https://mfp-studio-dev-test.up.railway.app/studio/brands/7f853d28-c6bf-4ec2-b678-d72750ff7a44/topics>. | Los Topics de la marca R8, con dos conceptos. |
+| C2 | Selecciona «Cobros y depósitos en la renta» y lee su definición: qué incluye y qué excluye. | La definición del concepto. |
+| C3 | Baja a «Resultados y excepciones» y pulsa «Revisar insuficientes». | El filtro cambia a «Evidencia insuficiente» y muestra 2 resultados. Hoy tarda unos 17 s: es un problema conocido, anota el tiempo. |
+| C4 | En la primera mención, pulsa «Abrir mención» y léela completa. Después vuelve a la lista. | El texto completo. |
+| C5 | Decide: ¿el texto, por sí solo, habla de un cobro, un depósito o una devolución de la marca, o de las rentadoras de un país? | Tu decisión: pertenece, no pertenece o no se puede saber. |
+| C6 | Si decidiste, marca **solo** su casilla «Seleccionar mención». No uses «Seleccionar esta página». | «Corregir 1 menciones seleccionadas» y dos botones. |
+| C7 | Pulsa «Aceptar pertenencia» si pertenece o «Rechazar pertenencia» si no. Si no se puede saber, no pulses nada. | Se guarda (hoy tarda unos 12 s) y el contador de insuficientes baja en uno. |
+| C8 | Repite C4 a C7 con la segunda mención. | — |
+| C9 | En «Filtrar», elige «Pertenece» o «No pertenece», según lo que decidiste. | Tu corrección aparece ahí, marcada como «Corrección humana» y «Revisión humana directa». |
+| C10 | Si aceptaste alguna, vuelve a Signal (enlace de B1) y selecciona «Cobros…». | Cobros sube de 2 a 3 menciones (o 4) y la tuya aparece en la evidencia. **Si no cambia, anótalo: es un hallazgo.** |
+
+Si te equivocas, filtra por el veredicto que guardaste, selecciona la mención y pulsa el otro botón.
+
+## Parte D · Idioma (≈5 min)
+
+| Paso | Haz esto | Deberías ver |
+|---|---|---|
+| D1 | Abre <https://mfp-studio-dev-test.up.railway.app/studio/settings>. | El control «Idioma». |
+| D2 | Elige English. | La página se recarga sola y queda en inglés: «Settings», «Brands», «Data». |
+| D3 | Abre Signal (enlace de B1). | Títulos y botones en inglés: «Brand monitoring», «Mentions», «Topics and narratives». Los números son los mismos que en español. Los nombres de los Topics pueden seguir en español: son datos de la marca. |
+| D4 | Vuelve a <https://mfp-studio-dev-test.up.railway.app/studio/settings> y, en «Language», elige Español. | Se recarga sola, en español. |
+
+## Al terminar, mándame
+
+1. Tu nota: OK o problema en cada paso.
+2. Las pantallas que tardaron más de 15 s.
+3. Tu decisión sobre las dos menciones de la Parte C, con una línea de por qué.
+4. Tus opiniones de las Partes A y B.
+5. Capturas de lo que falló.
+
+## Si algo sale mal
+
+- **«La consulta está ocupada»:** pulsa «Actualizar» una vez.
+- **Error de acceso:** recarga la página.
+- **Una corrección se queda guardando:** no la repitas. Si aparece «Recuperar la misma solicitud», púlsalo.
+
+## Problemas ya conocidos
+
+No hace falta reportarlos de nuevo, pero sí anotar sus tiempos:
+
+- El filtro de excepciones tarda unos 17 s y guardar una corrección unos 12 s. Codex los está acelerando; la meta es 15 s para el filtro y 5 s para guardar.
