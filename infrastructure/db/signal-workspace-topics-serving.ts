@@ -514,7 +514,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   SELECT root_id,concept_key,definition_digest,citations FROM signal_workspace_concept_memberships_read_v1($1::uuid)
   WHERE workspace_id=$1::uuid AND verdict='belongs'
 ), mfp_facets AS MATERIALIZED (
-  SELECT f.workspace_id,f.root_id,f.input_digest,f.labeler_digest,f.entity_context_digest,f.facets,f.relevance FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE workspace_id=$1::uuid
+  SELECT f.workspace_id,f.root_id,f.input_digest,f.labeler_digest,f.entity_context_digest,f.facets,f.relevance FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE f.workspace_id=$1::uuid
 ), mfp_roots_with_concept AS MATERIALIZED (
   SELECT DISTINCT root_id FROM mfp_memberships
 ), ` : ""}legacy_memberships AS MATERIALIZED (

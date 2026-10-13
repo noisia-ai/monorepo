@@ -434,7 +434,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
     assert.match(additiveSql,/UNION ALL SELECT current.root_id,current.concept_key/u);
     assert.match(additiveSql,/AND visible.membership_concept/u);
     assert.match(additiveSql,/FROM signal_workspace_concept_memberships_read_v1\(\$1::uuid\)\s+WHERE workspace_id=\$1::uuid AND verdict='belongs'/u);
-    assert.match(additiveSql,/FROM signal_workspace_mention_facets_read_v1\(\$1::uuid\) WHERE workspace_id=\$1::uuid/u);
+    assert.match(additiveSql,/FROM signal_workspace_mention_facets_read_v1\(\$1::uuid\) f WHERE f\.workspace_id=\$1::uuid/u);
     assert.doesNotMatch(additiveSql,/FROM signal_(concept_memberships|mention_facets)_current_v1/u);
     membershipCollision = false;
     selectedInterest = false;
