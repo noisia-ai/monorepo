@@ -44,6 +44,8 @@ los mismos del sistema de diseño.
   contorno: el color nace en un punto focal del borde y avanza con un frente ondulado. Navy profundo
   junto al foco, cyan `#00EEEE` y rojo `#EE0B00` a media distancia, apagados en el frente, y se
   disuelve en el blanco con grano intenso, que es lo que lo distingue de un degradado genérico.
+- **Los fondos son JPEG estándar, nunca progresivo.** Google Slides no abre un PPTX con un JPEG
+  progresivo adentro: dice "No se ha podido abrir el archivo". Pasó con los demos de octubre.
 - **El texto de las orillas** (`noisia.ai`, el pie y el número) cambia solo según lo que tiene
   detrás: gris sobre blanco, tinta sobre un tono medio, blanco sobre el núcleo oscuro.
 - **UI:** cards `#fafafa` con borde `#eeeeee` y radio 16; íconos reales; sin sombras, sin bordes

@@ -238,5 +238,5 @@ if __name__ == "__main__":
             if a.only and n not in a.only.split(","):
                 continue
             p = os.path.join(OUT, f"{n}.jpg")
-            compose(n).save(p, quality=82, optimize=True, progressive=True)
+            compose(n).save(p, quality=82, optimize=True)   # baseline JPEG: Google Slides rejects progressive ones
             print(p)
