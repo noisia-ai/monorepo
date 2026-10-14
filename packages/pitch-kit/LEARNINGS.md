@@ -101,3 +101,23 @@ ejemplo y el resto del deck explicando el servicio. Lo que se corrigió en dos r
   frase que explica por qué cambiaron los números. El crédito a quien pidió el cambio se da de
   palabra, nunca en la slide.
 
+## Estudio multimercado (octubre 2026)
+
+Tres estudios de un mismo tema en tres países, con presentación en vivo y ronda de feedback. Lo
+reutilizable ya vive en su rulebook: el embudo de corpus y la mecánica que no se muestra en
+`CANON.md` §5.7 y `DATA.md` §25; queries, ruido y ETL de varios mercados en `DATA.md` §26;
+codificación por agentes, lectura por muestra, día de la semana e intensidad en `METHODOLOGY.md`
+§4.6; la anatomía del insight en `COPY_RULES.md` §2.8; recomendaciones, slides nuevas y galería en
+`LAYOUTS.md`; sparklines y comparación de marcas en `CHARTS.md`; el PDF verificado en
+`builders/build-pdf.mjs`.
+
+De la forma de trabajo:
+
+- **Avisar cuando un número no se puede vender, y proponer la salida honesta que sí se puede.** En el
+  mercado chico la salida fue leer el corpus completo. El usuario prefiere eso a un deck vacío o a un
+  número inventado.
+- **"Dime si se puede" pide primero la respuesta**, después el plan, y al final el permiso si hay
+  descargas.
+- **Se lee el transcript completo de la reunión antes de actuar.** El pedido real no siempre es el
+  que se recuerda: la pregunta de los viernes era sobre un ritual, no sobre el día con más menciones.
+- **El transcript se guarda en la carpeta del caso** (`01-Brief/reuniones/`) cuando se comparte.

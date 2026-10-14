@@ -52,6 +52,11 @@ Se verifica con herramienta, no a ojo: `builders/leak-check.py`, con una lista d
 en un `names.txt` que vive en la carpeta del caso y nunca en el repo. Si encuentra algo, el build
 no sale.
 
+Aplica también a los chips de revisión y a cualquier marca de trabajo dentro del HTML: nombres de
+personas del cliente, presupuestos, quién pidió qué, si un dato es público o no. **Si algo solo se
+supo en una reunión, no va, aunque sea cierto.** En un estudio, un patrocinio mencionado en la
+reunión que no era público se quedó fuera del deck por esa razón.
+
 ## 0.5 Posicionamiento, no solo estilo
 
 Tres reglas que vienen de feedback de cliente y que cambian el sentido de la slide, no su forma:
@@ -250,6 +255,32 @@ cerrarla**. Un caso real: "¿Dónde se rompe la visita?" se rechazó porque "se 
 en México. Quedó "¿En qué momento de la visita perdemos al cliente?", que además habla el idioma de
 quien recibe el deck.
 
+## 2.8 Anatomía de un insight: hook arriba, rigor abajo
+
+El insight que mejor funcionó en una presentación en vivo fue uno que el presentador **dijo** mejor
+de lo que el deck lo **escribía**: la frase de los fans como etiqueta, el paso de la conducta al
+significado (burlarse era pertenecer), un contraste con otros mercados y una puerta para la marca.
+El cliente lo confirmó después: "no queremos reportes grandes, queremos hooks". El estratega casi
+nunca cita porcentajes, pero necesita saber que hay solidez detrás.
+
+Cuatro capas y una puerta:
+
+1. **Hook.** La frase textual de la gente, entre comillas, en su idioma si hace falta.
+2. **Verdad humana.** Qué significa sobre ellos, en una línea.
+3. **Tensión.** Lo que la hace no obvia: "parece hostilidad, funciona como pertenencia".
+4. **Solidez, en chico.** El número y la frecuencia de la frase, para el estratega, no para el creativo.
+5. **Puerta.** El territorio que abre para la marca, sin ejecución.
+
+Un hook pasa cuatro filtros: la frase es de ellos; se repite y se contó, no basta un post; habla de
+identidad y no solo de conducta; y sería falsa en otro mercado.
+
+El puente personal del presentador ("en mi país decimos lo mismo") no va escrito, porque es contexto.
+Se reemplaza por **un puente entre mercados**: "como la zoeira en Brasil, pero vivida como carácter
+nacional".
+
+Queda por decidir, caso por caso, si el insight va como portada de cada tema o en el título de la
+slide de datos, y si son tres o cinco por mercado.
+
 ## 2.5 Números ante el cliente
 
 Conteos crudos y participación no son intercambiables. Ante cliente final, C-level, freebie o
@@ -283,6 +314,7 @@ depurado, núcleo) en la misma slide.
 - [ ] Ningún título tiene dos puntos a media frase. Es el patrón que más se escapa.
 - [ ] Ningún título repite los encabezados de las columnas ni presume del método.
 - [ ] Ninguna palabra necesita haber estado en la conversación interna para entenderse.
+- [ ] Ninguna slide ni nota describe la mecánica de lectura (muestra, lectura manual, posts leídos, búsquedas).
 - [ ] `grep -c '—' index.html` da `0`.
 - [ ] Footer izquierdo `noisia · social intelligence architects`, footer derecho `NN / TOTAL`.
 - [ ] Una sola convención de header derecho en todo el deck.

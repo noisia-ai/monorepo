@@ -83,14 +83,16 @@ def blob_bg(spec, w=480, h=270, blur=52):
     return img.filter(ImageFilter.GaussianBlur(blur * 0.35))
 
 
-def default_spec(n_slides, dark=(), seed=20260915):
+def default_spec(n_slides, dark=(), seed=20260915, first=2):
     """A composition per slide: one large blob plus a small counterweight of the other colour.
 
     Alphas stay low on purpose. The background accompanies the content, it never competes with
     it. On a slide whose content is the protagonist (a map, a matrix) drop it further by hand."""
     rnd = random.Random(seed)
     out = {}
-    for i, n in enumerate(range(2, n_slides + 1)):   # slide 1 is the cover, it carries its own art
+    # Slide 1 is usually the cover and carries its own art. A deck without a cover passes
+    # --no-cover and gets bg-01 too: once a deck shipped a broken image because bg-01 never existed.
+    for i, n in enumerate(range(first, n_slides + 1)):
         cx, cy = ANCHORS[i % len(ANCHORS)]
         ox, oy = ANCHORS[(i + 5) % len(ANCHORS)]
         big, small = ("cyan", "red") if i % 3 else ("red", "cyan")
@@ -106,7 +108,8 @@ def default_spec(n_slides, dark=(), seed=20260915):
 def main():
     ap = argparse.ArgumentParser(description="Per-slide background blobs for a Noisia deck.")
     ap.add_argument("deck")
-    ap.add_argument("--slides", type=int, help="total slides; generates 2..N")
+    ap.add_argument("--slides", type=int, help="total slides; generates 2..N (1..N with --no-cover)")
+    ap.add_argument("--no-cover", action="store_true", help="the deck has no cover: also write bg-01")
     ap.add_argument("--spec", help="JSON file: {\"4\": [[cx,cy,r,\"cyan\",22], …]}")
     ap.add_argument("--dark", default="", help="comma-separated slide numbers that are .slide.dark")
     ap.add_argument("--grain", action="store_true", help="also write assets/grain.png")
@@ -120,7 +123,7 @@ def main():
         spec_set = {int(k): [tuple(b) for b in v] for k, v in json.load(open(a.spec)).items()}
     elif a.slides:
         dark = {int(x) for x in a.dark.split(",") if x.strip()}
-        spec_set = default_spec(a.slides, dark, a.seed)
+        spec_set = default_spec(a.slides, dark, a.seed, first=1 if a.no_cover else 2)
     else:
         ap.error("pass --slides N or --spec file.json")
 

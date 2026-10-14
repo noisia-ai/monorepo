@@ -33,6 +33,10 @@ Two libraries, two jobs:
    `<polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/>` (fill white).
 5. **Competitor rows** may carry the real brand logo (Simple Icons: `apple`, `sonos`, `googlehome`, …), white on the brand color. If a brand has no logo (Amazon/Alexa), use a neutral Iconoir device glyph (`sound-high`) instead of faking one.
 6. **Never change a brand glyph across a deck** — a viewer finds a platform by its mark.
+7. **Platform marks inside a card run at about 16px.** Bigger, they compete with the content they
+   label.
+8. **No icon tile stacked above a heading.** The icon goes beside the heading or inside the row it
+   belongs to (`impeccable.style/slop`).
 
 ## Bulk replace (porting a deck)
 

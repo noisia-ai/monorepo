@@ -57,6 +57,10 @@ Hard rules, learned the hard way:
   subcategory's terms)`, so every export maps to one client category. The overlap between those
   exports is measured and deduplicated after ingest (`DATA.md` §9), never by merging queries.
 
+- **Several markets in one study** add their own rules: one `AND` per query, the country's anchors
+  inside the query rather than the tool's country filter, no language filter, one query per
+  business question, and exports split by moment. See `DATA.md` §26.
+
 ## 2. Data reality checks — before you trust the corpus
 
 Run these every time. Most "insights" die here, and that's the point.
@@ -109,6 +113,40 @@ research channel, the complaint channel, and the foreign-planner channel. See th
   `DATA.md` §15, arriving from the other direction. The "where to act" kanban falls straight out of this.
 - **Verbatims are real, linked, and sourced** (platform mark + date + link to the post). Never
   invent one. Imperfections stay — they're information.
+
+## 4.6 Coding with agents, and reading by sample
+
+What held up across three markets:
+
+- **An explicit codebook in a file**: theme, relevance, subtheme, tone, level (for football:
+  national team, local league, Europe), language, translation, quotable or not, brand mentioned.
+- **Batches of about 200 posts per agent**, JSONL output validated against the input: same line
+  count, same ids, same order, every key present. Assigning codes with a keyword script is not
+  coding and is not allowed.
+- **Two samples with two jobs.** A random sample fixes precision and volume per theme (posts that use
+  the theme's words × the share that really talk about it, with a Wilson interval in the internal
+  record). A focus sample, matched on a strict experience pattern, is used only for subthemes, tone
+  and quotes.
+- **Below about 20 mentions read, a theme is not shown as a percentage**, unless the whole corpus was
+  read. With a census the percentage is real and it goes on the slide.
+- **Subthemes are their own layer.** The share of a subtheme inside its theme comes from the reading;
+  the monthly curve and the channel split come from the full corpus by word rule (or from the
+  reading, in a census).
+- **Brands are counted behind a double gate**: a term from the topic and a signal from the country.
+  Without it, a record book and a city that share a beer's name inflated the counts.
+- **Day of the week.** When the question arrives, the useful answer is a heatmap of theme × day,
+  crossed with the fixture. The finding there was that conversation follows the calendar of matches,
+  not a weekly ritual.
+- **Intensity of a moment**: posts per day inside the event window against regular days, over the
+  months with data. It lets a deck say "the tournament ran at N times its usual pace" without depending on the size of
+  the download.
+
+Agents share the scratch folder, and they overwrote each other's helper files once. **Prefix every
+helper file with the batch name.** Agents also return truncated or positional ids in their
+summaries, so **quotes are always resolved against the file, never against the summary**. Quotes in
+the original language are picked from the unfiltered exports (so local voice is not lost), verified
+as a literal substring of the text, and, for X, against their source. Quotes or pieces carrying the
+names of private people are trimmed or dropped.
 
 ## 4.5 Before any count goes on a slide
 

@@ -78,6 +78,19 @@ function smoothPath(pts) {
 - El radio del punto puede codificar volumen: `r = 7 + sqrt(n) * 0.48`. Si lo usas, dilo en la
   leyenda, porque un punto más grande sin explicación se lee como énfasis y no como tamaño.
 
+**Sparklines.** Línea suavizada con un área clara debajo y sin puntos. El SVG escala pero nunca se
+estira: `preserveAspectRatio="none"` está prohibido. Los meses de los extremos se anclan para que no
+se corten, y un hueco de datos se dibuja como hueco, no como una línea que lo cruza.
+
+**Serie semanal.** Va suavizada, y cada semana se dibuja en su punto medio, para que el pico caiga
+dentro de la banda del evento que lo explica.
+
+**Comparación de marcas.** Todas en gris y la marca cliente en el color de acento. El rojo para la
+marca cliente se leyó como error.
+
+**Día de la semana.** Mapa de calor de tema × día, cruzado con el calendario de eventos cuando lo hay
+(`METHODOLOGY.md` §4.6).
+
 ## 4. Series por plataforma
 
 Cada línea lleva **el color de su red**, no un color de paleta. El lector encuentra su canal por el
