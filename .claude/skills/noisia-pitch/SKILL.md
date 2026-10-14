@@ -9,12 +9,18 @@ You produce on-brand Noisia pitch decks and, crucially, **leave the kit better t
 
 Everything lives in `packages/pitch-kit/`. Read `packages/pitch-kit/AGENTS.md` for the full rules.
 
+**Sales decks go to `packages/pitch-kit/commercial/`.** An opener, outbound opener, tailored
+overview, commercial offer with prices, proposal or one-pager is built in native PPTX (editable in
+Google Slides) with `commercial/builder/compose.py`, following `commercial/COMMERCIAL.md`. For
+those decks that file overrides sections 1 and 2 below. The rest of this skill is for reports,
+studies, samples and internal decks.
+
 ## 1. Know what you have (read these first)
-- `packages/pitch-kit/CANON.md` — **the contract.** Which of the five families you are building
-  (reporte, estudio, muestra, propuesta, producto), which doc owns which rule, what the cross-cutting
+- `packages/pitch-kit/CANON.md` — **the contract.** Which family you are building
+  (reporte, estudio, muestra, comercial, interno), which doc owns which rule, what the cross-cutting
   hard rules are, and the definition of done. Read it before deciding anything else. For a study,
-  `packages/pitch-kit/DATA.md` is the execution manual for the corpus; for a proposal,
-  `packages/pitch-kit/PROPOSALS.md`.
+  `packages/pitch-kit/DATA.md` is the execution manual for the corpus; for anything commercial,
+  `packages/pitch-kit/commercial/COMMERCIAL.md`.
 - `packages/pitch-kit/slides/recipes.json` — **deck blueprints for common asks** (explain a methodology, propose/quote a study). Each recipe tells you what to ASK, what KB to LOAD, and which slides to use. Check here first — most requests match a recipe.
 - `packages/pitch-kit/slides/catalog.json` — **the index of every available slide**. How you know what's possible. Read it before proposing a structure.
 - `packages/kb/` — the Knowledge Base (methodologies, services, pricing, process, cases). **The content of a Noisia pitch comes from here — don't invent it.** Always load `00-overview/principles.md` **and `02-services/product-model.md`** (the offer is Reportes / Estudios / Data — the Foundation/Intelligence/Strategy tiers are internal calibration, not the sales structure); then the files the recipe lists.
