@@ -41,7 +41,17 @@ Hard rules, learned the hard way:
   (e.g. the housing/tax/objects senses of a rental word) and say what you cut.
 - **Accents are not documented, so cover both spellings.** The LQL reference says nothing about how
   accented characters are matched. Assume they are not folded: every accented term goes in twice,
-  with and without the accent, or half a Spanish-language corpus never shows up.
+  with and without the accent, or half a Spanish-language corpus never shows up. One case saw the
+  tool fold accents; until a controlled test settles it, both spellings still go in, since it
+  costs nothing.
+- **The unaccented variant can be a word of another language.** In a Portuguese query, `diaria`,
+  `salario` and `migrantes` without their accents are Spanish words, and they brought in more
+  Spanish (7,885) than Portuguese (2,386). When a query covers a language that shares roots with
+  another, the ETL filters by detected language or by country for that export.
+- **An exact phrase of two common words does not guarantee their order.** A two-word brand
+  phrase brought back home remedies "at home" and a party in another country: 9 of 28 rows of the
+  brand query were noise from that branch. When the phrase is common language, add an anchor that
+  cannot be anything else (handle, domain, address), or leave it out and recover it after ingest.
 - **Wildcards are prefix only, ≥4 chars.** `rent*` catches rent/renta/rental/rented; pair it with a
   subject anchor so it doesn't catch unrelated words.
 - **Porting the client's booleans from another tool.** When the client already has queries built
@@ -106,6 +116,24 @@ research channel, the complaint channel, and the foreign-planner channel. See th
   norms, appropriation, plagiarism, fair pay, authorship, royalties, heritage, who has the right to
   use what. Applying that distinction took one study's cultural layer from 1,607 mentions to 259,
   and only then did it mean anything.
+- **No default layer, literal evidence, and `unclear` allowed.** A codebook that sent every
+  accusation to "psychological" by default put 71% to 78% of the mentions in one layer, with a
+  κ of 0.43 against a blind second coder. Recoded with no default, a literal fragment required
+  as evidence for each layer and `unclear` as a valid answer: κ 0.85 on the dominant layer, and
+  the largest layer at 44%. A mention without evidence of a layer stays without a layer; it is
+  reported apart, never spread across the four.
+- **When the query is the vocabulary of the problem, the balance of direction is partly the
+  query's.** A corpus collected with the words of an accusation (child labour, exploitation,
+  boycott) will come back mostly barrier. Say it on the slide that shows the balance, and where
+  possible compare against the brand's own baseline: how much of everything said about the brand
+  is about this at all. That ratio was the strongest number of the study where it happened.
+- **When the subject is an alternative, a barrier to the conventional product is a trigger toward
+  it.** Rejecting conventional antiperspirant for health reasons is a barrier relative to its own
+  target, and the reason to buy the natural one. Record the target (`alternative` or
+  `conventional`) and read the rejection of the conventional as a push toward the alternative.
+- **Motives that can point both ways go in both directions from the start.** In sunscreen, "it
+  damages reefs and cenotes" had no barrier code, because the environment only existed as a push.
+  Agents split it between no motive and safety until it was unified after the fact.
 - **If one category of the scheme takes more than half the corpus, the dictionary is wrong, not the
   corpus.** Check the rules before reporting. It has now happened twice, in two different
   methodologies: a cultural layer at 62% and an effort category at 81%, both caused by rules that
@@ -127,6 +155,11 @@ What held up across three markets:
   the theme's words × the share that really talk about it, with a Wilson interval in the internal
   record). A focus sample, matched on a strict experience pattern, is used only for subthemes, tone
   and quotes.
+- **A pilot batch, blind-recoded, before the agents run.** One batch of about 200 coded by an
+  agent and recoded blind by another, with κ per axis. Only when it passes do the other batches
+  launch. In one study the pilot passed relevance (κ 0.80) and direction (κ 0.93), and the layer,
+  checked the same way after the fact, failed at 0.43: checking it on the pilot would have saved a
+  full recode.
 - **Below about 20 mentions read, a theme is not shown as a percentage**, unless the whole corpus was
   read. With a census the percentage is real and it goes on the slide.
 - **Subthemes are their own layer.** The share of a subtheme inside its theme comes from the reading;
@@ -141,8 +174,9 @@ What held up across three markets:
   months with data. It lets a deck say "the tournament ran at N times its usual pace" without depending on the size of
   the download.
 
-Agents share the scratch folder, and they overwrote each other's helper files once. **Prefix every
-helper file with the batch name.** Agents also return truncated or positional ids in their
+Agents share the scratch folder, and they overwrote each other's helper files twice, in two
+studies. **Give each agent its own folder**, and have the merge validate ids, order and allowed
+values batch by batch before anything is added up; that check is what caught it the second time. Agents also return truncated or positional ids in their
 summaries, so **quotes are always resolved against the file, never against the summary**. Quotes in
 the original language are picked from the unfiltered exports (so local voice is not lost), verified
 as a literal substring of the text, and, for X, against their source. Quotes or pieces carrying the

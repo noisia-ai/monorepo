@@ -121,3 +121,24 @@ De la forma de trabajo:
 - **Se lee el transcript completo de la reunión antes de actuar.** El pedido real no siempre es el
   que se recuerda: la pregunta de los viernes era sobre un ritual, no sobre el día con más menciones.
 - **El transcript se guarda en la carpeta del caso** (`01-Brief/reuniones/`) cuando se comparte.
+
+## Forma contra sustancia (octubre 2026)
+
+Dos casos de la misma semana, sobre el mismo kit. Un estudio salió correcto en cada regla, gates y
+kappa incluidos, y se sintió sonso. Una propuesta comercial rehecha con el kit fue la mejor salida
+que ha tenido. El diseño era el mismo. Lo que cambió:
+
+- **La propuesta partió de lo que el cliente ya tiene**: su métrica (un NPS), sus unidades de
+  negocio, sus competidores y su calendario, y el resultado de un piloto ya leído. Cada slide
+  respondía algo que al cliente ya le importaba.
+- **El estudio partió de la secuencia**: llenó las diecisiete ranuras con una base delgada, puso lo
+  obvio en los titulares y dejó lo no obvio en la slide 11. Encima, cada slide traía eyebrow, nota
+  y pie.
+
+La forma ya está resuelta en el kit; lo escaso es la sustancia. Por eso el prompt pide ahora la
+pregunta por la decisión y lo que el cliente ya tiene armado, y un alto antes de construir: las
+tres frases que el cliente va a repetir, con la prueba de lo obvio. Las reglas viven en
+`COPY_RULES.md` §2.9 y en `LAYOUTS.md`, "Before the sequence" y "Rhythm". Los aprendizajes de
+método del mismo estudio (capa sin default, lote piloto, reglas como filtro de candidatos, páginas
+web completas) están en `METHODOLOGY.md` §1, §4 y §4.6 y en `DATA.md` §8; los del builder
+comercial, en `commercial/COMMERCIAL.md` §3, §5 y §9.

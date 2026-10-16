@@ -39,6 +39,10 @@ Primero pregunta si ya hay un brief lleno de los de Noisia: si lo pega o lo sube
 fuente (`COMMERCIAL.md` §13, tabla "Del brief al deck") y pregunta solo lo que falte. Después,
 siempre: qué entregable, qué idioma, para presentar o para mandar, PDF o editable.
 
+Si ya hay **un deck hecho fuera del kit** (una propuesta aprobada que hay que pasar a la marca),
+léelo completo y sigue el paso 0b de `COMMERCIAL.md` §3: mapeo lámina por lámina y lista del copy
+que choca con las reglas, antes de construir. Las láminas sin módulo van en `extra` (§5).
+
 Pide el **logo del cliente**: que lo baje del sitio del cliente y lo suba aquí como imagen. No lo
 busques tú; si no lo sube, el deck sale con un recuadro para reemplazarlo en Slides.
 
@@ -75,7 +79,8 @@ python3 scripts/preview.py Noisia_<Cliente>_<Entregable>_<ES|EN>_v1.pptx revisio
 ```
 
 - Si `compose.py` se niega, corrige el brief en lo que te dice (em dash, frase prohibida,
-  placeholder, slide de cliente faltante) y vuelve a correrlo.
+  placeholder, slide de cliente faltante) y vuelve a correrlo. Si avisa de un contraste
+  ("no es X: es Y"), reescríbelo salvo que sea copy aprobado que la persona quiso conservar.
 - Si `preview.py` marca un desborde, acorta ese texto. No entregues con desbordes.
 - **Mira las hojas de contacto** (`revision/hoja-*.png`) antes de entregar. Pasa la lista de
   `COMMERCIAL.md` §6 slide por slide.
@@ -92,7 +97,7 @@ Después di en el chat, corto:
 2. Qué `XXX` quedan por llenar, en qué slides.
 3. Si el logo del cliente quedó como recuadro: clic derecho, Reemplazar imagen.
 4. Para editar: abrir el PPTX con Google Slides.
-5. Si el PDF no salió o la fuente se ve rara en él: en Google Slides, Archivo, Descargar, PDF. Ese
-   es el que se manda, después de llenar los precios.
+5. El PDF que se manda sale de Google Slides: Archivo, Descargar, PDF, después de llenar los
+   precios. El de aquí es una vista previa.
 
 Si la persona pide cambios, edita el brief y vuelve a construir; sube la versión (`_v2`).

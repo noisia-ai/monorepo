@@ -34,8 +34,10 @@ LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni m�
 - DATA.md         el pipeline, sus gates y sus contratos de salida
 - LEARNINGS.md    reglas de campo, incluida la terminología por terreno
 - slides/catalog.json   qué slides existen y qué cabe en cada una
-Y antes de escribir, mira renderizado el deck aprobado más reciente de examples/_local/: es la vara
-de calidad. Un primer borrador con CSS propio y copy genérico ya se rechazó entero una vez.
+Y antes de escribir, abre examples/_local/INDEX.md y mira renderizado el deck aprobado más cercano
+a esta familia, y también el contraejemplo que lista: es la vara de calidad. Si el índice no existe
+o trabajas en una copia del kit, pídeme la ruta. Un primer borrador con CSS propio y copy genérico
+ya se rechazó entero una vez.
 Y si el entregable toca lo comercial, la KB manda sobre el contenido:
 packages/kb/00-overview/positioning.md y packages/kb/02-services/product-model.md
 
@@ -54,22 +56,31 @@ PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna:
 6. Contra qué se compara: competidores, categoría, o nada.
 7. Quién recibe el deck, para calibrar vocabulario.
 8. ¿Ya hay exportaciones, o arrancamos por las queries?
+9. ¿Qué va a decidir el cliente con esto, y qué tiene ya armado que el deck pueda usar: una
+   métrica propia (un NPS, un tracking), sus unidades de negocio, sus competidores, su calendario?
+   El mejor deck que ha salido del kit habló con la métrica y el organigrama del cliente.
 
 SI ARRANCAMOS POR LAS QUERIES:
 Entrégamelas listas para copiar y pegar, una por bloque, con su nombre corto arriba y la
 configuración de interfaz al lado: idioma, país, ventana y fuentes. Nunca en piezas para que yo
 las combine. El razonamiento de cada query va en un archivo aparte. Recuerda que los acentos no
-están documentados en LQL, así que cada término acentuado va también sin acento.
+están documentados en LQL, así que cada término acentuado va también sin acento, y si la variante
+sin acento es palabra de otro idioma (portugués y español), ese export se filtra por idioma en el ETL.
 
 FLUJO:
 advisor para cerrar el alcance
   → queries listas para pegar
   → ETL en streaming, nunca licuadora
   → los gates de DATA.md antes de cualquier conclusión, y me dices cuáles fallan
+  → un lote piloto codificado y recodificado a ciegas, con kappa por eje, antes de lanzar los
+    demás lotes. Codebook sin capa por defecto: evidencia literal y "unclear" permitido
   → codificación en dos ejes, con su cobertura y su guard de sesgo
   → mapa de hallazgos con verbatims reales ligados
+  → LAS TRES FRASES, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
+    junta, cada una con su cifra; la prueba de lo obvio para cada una (¿la pudo escribir antes
+    del estudio?); y lo que esta base no da. Ver LAYOUTS.md, "Before the sequence"
   → slides sobre el engine, con los fragmentos de slides/ y un fondo propio por slide
-    con builders/gen-backgrounds.py
+    con builders/gen-backgrounds.py. Si falta Pillow, instálalo; no portes los builders
   → render slide por slide con builders/qa-render.py, y los miras
   → PDF, y lo revisas página por página
   → PROVENANCE_AND_CHANGELOG.md y GUION_POR_SLIDE.md desde templates/
@@ -96,7 +107,15 @@ NO NEGOCIABLES:
 - Un conteo sin validación se llama direccional, con esa palabra.
 - assets/tb-map.png se usa tal cual, con su anillo interior en inglés, en cualquier idioma.
 - Nada de mask-image, filter ni box-shadow en lo que se imprime. Se resuelve en el asset.
-- Los assets se entregan al tamaño del canvas, 1920 x 1080.
+- Los assets se entregan al tamaño del canvas, 1920 x 1080, salvo los fondos de
+  gen-backgrounds.py, que van a 480 x 270 a propósito.
+- Lo obvio es contexto, no titular. Lo no obvio abre el deck, justo después del marco. Si la
+  respuesta es "casi nada", esa es la respuesta y el deck se acorta. COPY_RULES.md §2.9.
+- La respuesta cabe en una frase que el cliente pueda repetir. Las salvedades van una vez, en la
+  slide de método.
+- Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado. La nota de insight en un
+  tercio de las slides como máximo, el pie solo donde una cifra necesita su base, y nunca tres
+  slides seguidas con el mismo layout. LAYOUTS.md, "Rhythm".
 - Verbatims reales, con liga, plataforma y fecha, y sin la liga pegada dentro del texto.
 - Ningún dato de cliente entra al repo. El deck vive en una carpeta local.
 
@@ -176,7 +195,7 @@ y no deben volverse regla.
 ## Bloque · Estudio de Triggers y Barriers
 
 ```text
-FAMILIA: estudio T&B, 14 a 17 slides, secuencia en LAYOUTS.md.
+FAMILIA: estudio T&B, hasta 17 slides (con base chica, 10 a 12), secuencia en LAYOUTS.md.
 
 El método, que se nombra en inglés en la slide del marco:
 - Triggers, lo que empuja hacia el sujeto. Barriers, lo que frena.
@@ -184,6 +203,11 @@ El método, que se nombra en inglés en la slide del marco:
 - Doble codificación: cada expresión se clasifica por dirección y por capa.
 - Permiso para actuar: una marca mueve lo psicológico y lo personal de lleno, lo social
   parcialmente, y con lo cultural solo se alinea. De ahí sale la slide de dónde actuar.
+
+El orden lo dan las tres frases: la primera abre justo después del marco, y la secuencia de
+LAYOUTS.md ordena lo que sobra. Si el tema es escaso, la hipótesis se prueba con su peso: menciones
+por cada 10,000 de la conversación de cada marca. Si el query se armó con el vocabulario del
+problema, el balance de dirección es en parte del query, y se dice.
 
 Obligatorias de esta familia: la portada con ilustración, la slide que explica las cuatro capas
 con el mapa detrás, la slide de canales, el mapa de hallazgos, el espejo, dónde actuar, la
@@ -223,7 +247,9 @@ Ver CANON.md, sección 5.3.
 FAMILIA: comercial (opener, outbound, overview, oferta, propuesta o one-pager). Lee
 packages/pitch-kit/commercial/COMMERCIAL.md completo antes de construir. El deck sale en PPTX
 nativo con commercial/builder/compose.py a partir de un brief; el copy canónico está en
-commercial/copy/ y no se reescribe. Haz la entrevista de §3, una pregunta a la vez. Cero insights:
+commercial/copy/ y no se reescribe. Haz la entrevista de §3, una pregunta a la vez. Si ya hay un
+deck hecho fuera del kit, sigue el paso 0b: mapeo lámina por lámina y lista del copy que choca,
+antes de construir; las láminas sin módulo van en `extra`. Cero insights:
 solo preguntas que Noisia podría responder, aterrizadas a la marca con hechos públicos citados en
 las notas. Precios en XXX salvo que te den el monto en el chat.
 ```

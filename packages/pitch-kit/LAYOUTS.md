@@ -153,7 +153,7 @@ restating "brand × topic · country" is redundant next to both marks and comes 
 | 1 | Cover | `slides/cover-study` — cover spec above; research question as the subject |
 | 2 | Brief | `.idx` index cards. The cover already asked the question, so **this slide says what the study delivers**, not what it asks. Repeating the research question two slides running burns the second-most expensive title in the deck |
 | 3 | The four layers | `slides/tb-layers`, or `slides/tb-layers-evidence` when there are quotes to carry it. See spec below |
-| 4 | Hypothesis | the claim + a chart that *is* the proof (e.g. triggers & barriers rising together) |
+| 4 | Hypothesis | the claim + a chart that *is* the proof (e.g. triggers & barriers rising together). When the subject is scarce, the proof is its weight: mentions per 10,000 of each brand's own conversation, which compares brands of very different size on one bar |
 | 5 | Where the conversation lives | `slides/channels` — `.roles` (channel mark + share + one-line role each) + `.note` for the odd-one-out |
 | 6 | The map | `.mtx` 4×2 matrix (each pull with its shadow), counts + channel + sentiment dot |
 | 7 | What it pulls in | `.barh` triggers + `.note` |
@@ -178,6 +178,40 @@ goes to the annex, and if two annex slides repeat each other's numbers, they mer
 corpus funnel is the exception: the study is sold by its size, so it stays in the body (see below). A slide that
 arrives confusing after two clear ones is cut and its finding folded into a neighbour. When the
 funnel does appear, it is drawn as a real funnel, decreasing width and centred, not as a list.
+
+### Before the sequence: the three sentences
+
+Before choosing a single slide, the agent writes in the chat, and waits for a yes:
+
+1. **The three sentences the client will repeat** in their next meeting, each one tied to the
+   decision the study enables. Not three topics: three claims with their number.
+2. **The obvious test for each** (`COPY_RULES.md` §2.9): could the client have written it before
+   the study? If so, it is context and a fourth candidate takes its place.
+3. **What the data does not give**, said before the deck exists, not on the method slide after.
+
+The deck is then built from those sentences: the first one opens right after the frame, each one
+gets its proof and its anatomy, and the canonical sequence orders whatever is left. Two cases set
+this rule side by side. A study that filled the sequence slot by slot, on a thin base, came out
+correct in every rule and flat: its strongest finding sat on slide 11. A proposal built on the
+client's own metric and its own org chart, one block per business unit, with its competitors and
+its calendar in the questions, was the deck the team rated best. The design was the same;
+what changed was that every slide answered something the client already cared about.
+
+### Rhythm: what made a correct deck read as machine-made
+
+Same study. Every body slide had an eyebrow with an icon, a teal `.note` and a `.foot`, and five
+of them were the same horizontal bar chart. Each slide was fine; seventeen of them read as a
+template filled in. Rules:
+
+- **No eyebrow on body slides by default.** It goes only to carry a coined name the client will
+  reuse (the name of a program or of the method, `LEARNINGS.md`), or to mark sections in a long
+  deck. "What pushes", "the mirror", "anatomy of the trigger" are labels the title already says.
+  The fragments in `slides/` carry an eyebrow slot: delete it unless one of those two applies.
+- **The insight `.note` on at most a third of the slides**, the ones where interpretation is the
+  point. On the rest the title already says the finding.
+- **A `.foot` only where a number needs its base** or a reader would ask "out of what".
+- **Never three slides running with the same layout.** Two bar charts in a row are fine; a third
+  becomes a table, a mirror, a quote wall or a single big number.
 
 **Channels slide framing.** Clients ask for the channel split and it earns its place, but frame it
 as *where people talk and what each platform is for*, never as "share of voice de la categoría".
@@ -423,7 +457,8 @@ months, what was there before, why didn't I see it. In a report the de-noising i
   the first thing a reader spots as AI-made, and the user marked it rule number one. Valence goes in
   the source line or the slide's context. Before delivering, `grep -c border-left index.html` gives 0.
 - **No uppercase label above a title that only restates it, and no icon tile stacked above a
-  heading.** An eyebrow earns its place only by saying something the title does not.
+  heading.** An eyebrow earns its place only by saying something the title does not, and on study
+  body slides it is off by default (see "Rhythm" above). Commercial decks carry none at all.
 - **Icons everywhere**, and real (see `ICONS.md`).
 - **`data-label` is navigation metadata**, never rendered copy.
 - **Footer left is `noisia · social intelligence architects`**, footer right is `NN / TOTAL`.
