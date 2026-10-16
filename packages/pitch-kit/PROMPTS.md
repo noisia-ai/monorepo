@@ -195,7 +195,7 @@ y no deben volverse regla.
 ## Bloque · Estudio de Triggers y Barriers
 
 ```text
-FAMILIA: estudio T&B, 14 a 17 slides, secuencia en LAYOUTS.md.
+FAMILIA: estudio T&B, hasta 17 slides (con base chica, 10 a 12), secuencia en LAYOUTS.md.
 
 El método, que se nombra en inglés en la slide del marco:
 - Triggers, lo que empuja hacia el sujeto. Barriers, lo que frena.
