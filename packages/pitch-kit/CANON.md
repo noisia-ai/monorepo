@@ -243,7 +243,13 @@ cambiar solo.
 
 **Los assets se entregan al tamaño del canvas**, 1920 × 1080, salvo que haya razón para más. Un
 fondo al doble de resolución no se ve mejor en el PDF y sí lo engorda: en un caso llevó el
-entregable de 8.5 MB a 19 MB sin ganancia visible.
+entregable de 8.5 MB a 19 MB sin ganancia visible. La excepción son los fondos de
+`builders/gen-backgrounds.py`: se generan a 480 × 270, desenfocados, y el CSS los estira. Ya son
+difusos, así que el estiramiento no se nota, y pesan kilobytes. No se reescalan a 1920.
+
+**Los builders necesitan Pillow.** Si la máquina no lo tiene, se instala (`python3 -m pip install
+--user pillow`) antes de tocar nada más. En un caso se portaron los builders a otro lenguaje para
+no instalarlo, y la copia ya no seguía al kit.
 
 ```bash
 # una slide, para revisarla a tamaño real

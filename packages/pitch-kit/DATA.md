@@ -203,6 +203,21 @@ la marca en ese país. Una mención sin país y sin ninguna señal **no entra a 
 las que sí traían país y tampoco tenían señal eran del mercado objetivo solo en 60%. Se leen y se
 decide una por una, o quedan fuera.
 
+**Las reglas de pertinencia son filtro de candidatos, no juez.** En un estudio, tres versiones de
+reglas llegaron a 82% a 100% de recall, pero con precisión de 43% a 88% según el corpus. Se miden
+las dos leyendo una muestra por corpus (50 bastan para ver el orden de magnitud), se usa la regla
+para quedarse con candidatos y la pertinencia final la decide la lectura. Los juicios de esa
+lectura se guardan en un archivo, porque son la evidencia del gate C.
+
+**Las páginas web llegan completas.** Un sitio o un blog trae la página entera, menú y pie
+incluidos, y el ancla puede estar a mil palabras del tema. Para esas fuentes se exige cercanía en
+el ETL: ancla y tema a no más de 25 palabras, en el texto propio, no en el contexto.
+
+**El uso figurado se mide aparte, no se tira en silencio.** En un estudio de ingredientes, 205
+menciones eran un meme que usa el nombre de una planta medicinal para hablar del ardor en política
+y futbol. No son voz de consumidor, pero dicen que el ingrediente es parte del habla cotidiana, y
+eso alimenta la lectura cultural. Se cuenta como clase propia y se decide después de leerla.
+
 Si un archivo falla pertinencia: se conserva la versión anterior como evidencia de control, se
 corrige el query, se exporta de nuevo, se comparan volumen y anclas, se mide cuánto del archivo
 corregido ya estaba en el universo principal y se declara cuál versión queda vigente. **No se
@@ -332,6 +347,11 @@ clasificador por reglas los manda a la queja. En un caso, las reglas daban menos
 leídas una por una las 2,266 menciones, el elogio real era 7%, y era justo el lado que la
 comparación con el cliente necesitaba. Cuando el análisis compara valencias, la valencia se revisa
 completa o con una muestra grande por clase antes de publicar cualquier reparto.
+
+**En categorías de producto de uso, negar un defecto es elogio.** "No deja grasoso", "no deja
+blanco" caían en la barrera de experiencia, y "cara" (rostro) caía en precio alto. Las reglas de
+la primera versión acertaban entre 0 y 7 de cada 10 por etiqueta, y se reemplazaron por
+clasificación asistida con lectura. Es el mismo modo de falla que el elogio por comparación.
 
 ### Si se usa un modelo generativo
 

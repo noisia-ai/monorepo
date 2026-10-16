@@ -11,7 +11,9 @@ shipped: real overflow onto the footer, KPI cards left transparent over the back
 and chips that contradicted their own slide title.
 
 The overflow check is a heuristic: dense ink in the top or bottom 18px band of the canvas
-means something escaped its container. It tells you where to look, it does not decide.
+means something escaped its container. It tells you where to look, it does not decide. On a
+dark band (the answer slide) ink is light text, not dark pixels: counting dark pixels there
+flagged every dark slide as overflowing.
 Needs Pillow (`pip install pillow`) and Chrome.
 """
 import json, os, subprocess, sys
@@ -41,7 +43,11 @@ def edge_ink(png):
     w, h = im.size
     out = {}
     for name, box in (("top", (0, 0, w, BAND)), ("bottom", (0, h - BAND, w, h))):
-        out[name] = sum(1 for p in im.crop(box).getdata() if p < DARK)
+        px = list(im.crop(box).getdata())
+        if sum(px) / len(px) < 128:     # dark band: text is the light pixels
+            out[name] = sum(1 for p in px if p > 255 - DARK)
+        else:
+            out[name] = sum(1 for p in px if p < DARK)
     return out
 
 
