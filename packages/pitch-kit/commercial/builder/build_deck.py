@@ -9,12 +9,17 @@ The spec is what the agent writes after the interview (COMMERCIAL.md §3): langu
 Canonical copy comes from copy/<lang>.json; only the client-specific fields are written fresh.
 
 Before saving, the spec goes through the gates that make a deck Noisia's and not AI slop:
-no em dash, no leftover {{PLACEHOLDER}}, no forbidden phrasing, every price written as XXX
-unless the person filled it in. A failed gate stops the build and says where.
+no em dash, no leftover {{PLACEHOLDER}}, no forbidden phrasing. A failed gate stops the build
+and says where. Two things are only reported, never blocked: the contrast constructions in
+CONTRAST (legitimate "no" sentences exist, so a person reads them), and how many prices are
+still XXX. Prices are not checked against anything: a real amount is valid when the person
+gave it in the chat, so the agent checks those by hand.
 
 PDF: LibreOffice when it exists (the claude.ai sandbox has it; call it through the
-`soffice.py` wrapper there if a direct call hangs), Keynote on a Mac, otherwise the PPTX
-opens in Google Slides and File > Download > PDF gives the same result.
+`soffice.py` wrapper there if a direct call hangs), Keynote on a Mac if asked with
+NOISIA_PDF=keynote (it needs Google Sans installed in the system, and it may refuse to open a
+PPTX by script). The exact PDF is always Google Slides: open the PPTX there, File > Download >
+PDF.
 """
 import json, os, re, shutil, subprocess, sys
 
@@ -36,6 +41,16 @@ FORBIDDEN = {
 }
 
 
+# "No es X: es Y" and "X, no en Y" are the contrast tic the team flagged as AI copy. Warned, not
+# blocked, because a plain negative sentence is fine.
+CONTRAST = {
+    "es": [r"\bno es (?:un|una|el|la|lo)\b[^.]{0,90}?[:;,]\s*es\b", r",\s*no en\b",
+           r"\bno [^.]{1,60}?, sino\b"],
+    "en": [r"\bit'?s not (?:a|an|the)\b[^.]{0,90}?[:;,]\s*it'?s\b", r",\s*not in\b",
+           r"\bnot [^.]{1,60}?, but\b"],
+}
+
+
 def strings(obj, path=""):
     if isinstance(obj, str):
         yield path, obj
@@ -48,6 +63,18 @@ def strings(obj, path=""):
     elif isinstance(obj, list):
         for i, v in enumerate(obj):
             yield from strings(v, f"{path}[{i}]")
+
+
+def contrasts(spec):
+    lang = spec.get("lang", "es")
+    out = []
+    for n, sl in enumerate(spec["slides"], 1):
+        for p, t in strings(sl):
+            for rx in CONTRAST.get(lang, []):
+                m = re.search(rx, t.lower())
+                if m:
+                    out.append(f"slide {n}{p}: contraste «{t[max(0, m.start() - 10):m.end() + 10].strip()}», revisa si suena a IA")
+    return out
 
 
 def gates(spec):
@@ -69,6 +96,8 @@ def gates(spec):
 
 
 def to_pdf(pptx, pdf):
+    """Returns the PDF path, or None when there is no exporter here. Raises when an exporter
+    exists and fails, so the message can say which one."""
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     if soffice:
         out = os.path.dirname(os.path.abspath(pdf))
@@ -78,7 +107,7 @@ def to_pdf(pptx, pdf):
         if made != os.path.abspath(pdf):
             shutil.move(made, pdf)
         return pdf
-    if sys.platform == "darwin" and os.path.exists("/Applications/Keynote.app"):
+    if os.environ.get("NOISIA_PDF") == "keynote" and os.path.exists("/Applications/Keynote.app"):
         script = f'''
         tell application "Keynote"
           set d to open POSIX file "{os.path.abspath(pptx)}"
@@ -108,16 +137,16 @@ def build(spec, out, pdf=False):
     print(f"listo: {out} · {deck.n} slides · {spec.get('lang')} · versión {spec.get('mode', 'send')}")
     if xxx:
         print(f"  {xxx} precio(s) en XXX: se llenan en el editable antes de mandarlo")
-    for w in deck.warnings:
+    for w in deck.warnings + contrasts(spec):
         print("  aviso:", w)
     if pdf:
         p = os.path.splitext(out)[0] + ".pdf"
+        slides_hint = "Abre el PPTX en Google Slides > Archivo > Descargar > PDF, que es el PDF exacto."
         try:
             r = to_pdf(out, p)
+            print(f"  pdf: {r}" if r else f"  pdf: no hay exportador aquí. {slides_hint}")
         except Exception as e:  # LibreOffice can hang or fail in a sandbox; the PPTX is still good
-            print(f"  pdf: la exportación falló ({e.__class__.__name__})")
-            r = None
-        print(f"  pdf: {r}" if r else "  pdf: sin LibreOffice ni Keynote aquí. Abre el PPTX en Google Slides > Archivo > Descargar > PDF")
+            print(f"  pdf: el exportador falló ({e.__class__.__name__}). {slides_hint}")
     return deck
 
 

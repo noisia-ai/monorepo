@@ -68,6 +68,9 @@ Las secuencias exactas están en `recipes.json`. Cada entregable sale en **espa�
 El deck de metodologías no es un entregable aparte: el catálogo de estudios va dentro del opener y
 de la oferta.
 
+El conteo de slides es de referencia. Cuando se rehace un deck que ya estaba aprobado (§3, paso
+0b), manda el deck original: una propuesta salió en 16 slides y estaba bien.
+
 ## 3. La entrevista
 
 Antes de construir, el agente pregunta. Una pregunta a la vez, corta, con opciones. Nunca asume:
@@ -75,14 +78,21 @@ cada respuesta cambia el deck.
 
 0. **¿Ya hay un brief lleno?** Si la persona tiene uno de los briefs de §13 contestado, que lo
    pegue o lo suba. El agente lo usa como fuente (§13) y solo pregunta lo que falte.
+
+   **0b. ¿Ya hay un deck, hecho fuera del kit?** Pasa seguido: una propuesta con copy y precios
+   ya aprobados que hay que pasar a la marca. El agente lo lee completo y, antes de construir,
+   entrega en el chat dos listas: el mapeo de cada lámina a un módulo de la receta o a un tipo de
+   slide del builder (las que no tienen módulo van en `extra`, §5), y el copy que choca con las
+   reglas (eyebrows, contrastes "no es X: es Y", cifras de conversación, índices, precios). La
+   persona decide qué se queda. El copy aprobado se respeta palabra por palabra salvo en lo que
+   ella decida corregir.
 1. **¿Qué necesitas?** Los seis entregables de §2, con su "cuándo" en una línea. Si no sabe,
    lo ayuda a elegir con esa columna.
 2. **¿En qué idioma?** Español o inglés.
 3. **¿Para presentar o para mandar?** Presentar: poco texto, el guion en las notas. Mandar: cada
    slide se entiende sola.
 4. **¿En qué formato?** PPTX editable para Google Slides, PDF, o los dos.
-5. **¿Para quién?** Marca, industria y mercado. Si es un opener o un overview, el agente investiga
-   la marca (§4.2).
+5. **¿Para quién?** Marca, industria y mercado. El agente investiga la marca (§4.2).
 6. **¿Quién firma?** El nombre y el correo que van en el cierre.
 7. **Precios** (solo oferta, propuesta y one-pager, o si el opener lleva "desde"): ¿en qué moneda,
    con qué impuestos? El agente avisa que las slides de precio salen en XXX para llenarlas en el
@@ -112,8 +122,10 @@ Lo que sí va: **preguntas**. Lo que Noisia podría responder, explorar o invest
 
 ### 4.2 Investigar la marca
 
-Para el opener y el overview, el agente busca a la marca en fuentes públicas: su sitio, sus
-comunicados, prensa de los últimos doce meses. Busca hechos que abran preguntas: una apertura, un
+En todo entregable con cliente, no solo en el opener y el overview, el agente busca a la marca
+en fuentes públicas: su sitio, sus comunicados, prensa de los últimos doce meses. En una propuesta
+que se rehízo, la confirmación encontró que dos aliados del programa de lealtad del cliente eran
+de otro país del mismo grupo. Busca hechos que abran preguntas: una apertura, un
 lanzamiento, una expansión, una adquisición, un cambio de precio, una campaña, un programa de
 lealtad.
 
@@ -182,9 +194,28 @@ python3 builder/compose.py brief.json Noisia_<Cliente>_<Entregable>_ES.pptx --pd
 python3 builder/preview.py Noisia_<Cliente>_<Entregable>_ES.pptx revision --sheet
 ```
 
+**Slides fuera de la receta.** `slides` solo modifica módulos de la receta; si trae uno que la
+receta no usa, `compose.py` avisa. Para sumar slides, el brief lleva `extra`: cada una es un spec
+de slide con su `type` del builder, colocada después de un módulo de la receta (o `start`, `end`).
+Los tipos que existen alcanzan para casi todo: `factor_pricing` sirve para cualquier tabla de
+precios de tres columnas, `questions` para listas de preguntas con su momento de decisión,
+`formats` para condiciones comerciales, `coverage` para datos y fuentes.
+
+```json
+"extra": [{"after": "cover_client", "slide": {"type": "factor_pricing", "title": "…", …}}]
+```
+
+**El fondo de una slide.** Cada slide de contenido lleva un fragmento del bloom, en otra esquina
+que la anterior; las de precios, inversión y catálogo nunca lo reciben por la derecha, donde
+taparía la columna de texto. Una slide puede fijar el suyo con `"bg": "frag-3.jpg"` (1 y 4 entran
+por la derecha, 2 y 5 por abajo, 3 y 6 por la izquierda).
+
 `compose.py` toma la receta, pone el copy canónico, encima las slides del cliente y las variables,
 y pasa los filtros antes de guardar: sin em dash, sin `{{ }}` sin llenar, sin frases prohibidas.
-Si algo falla, no construye y dice dónde. Con Google Sans instalada (la skill la trae), el builder
+Si algo falla, no construye y dice dónde. Avisa, sin bloquear, de los contrastes "no es X: es Y",
+"X, no en Y" y "no X, sino Y": hay frases con "no" que sí van, así que las lee una persona. Los
+precios no se validan, solo se cuentan los XXX: si la persona dio montos en el chat, el agente
+los revisa a mano contra su fuente. Con Google Sans instalada (la skill la trae), el builder
 mide cada texto con la fuente real para acomodar títulos y bloques. `preview.py` dibuja cada slide
 con esa misma fuente y marca todo texto que no cabe en su caja. **El deck no se entrega con un desborde marcado, y no se
 entrega sin mirar las hojas de contacto.**
@@ -263,6 +294,11 @@ agente sube el PPTX (y el PDF) a la carpeta del cliente dentro de *Leads* en el 
 busca por nombre y, si no existe, la crea. El enlace a *Leads* lo inyecta `build_skill.py` al
 empaquetar, porque este repo es público. Sin Drive conectado, entrega los archivos para descargar.
 
+Desde el repo, en Claude Code, el conector de Drive no sirve para subir: manda el archivo en base64
+dentro de la llamada y un PPTX de unos MB no cabe. Ahí el conector solo busca o crea la carpeta y
+confirma que el archivo quedó; el archivo se sube por el navegador, con el botón de Drive, o por
+Drive para escritorio. Un PPTX en Drive se abre en Slides sin convertirlo.
+
 El agente entrega el PPTX y, si se pidió, el PDF, con tres cosas dichas en el chat:
 
 1. Qué XXX quedan por llenar y en qué slides.
@@ -270,9 +306,12 @@ El agente entrega el PPTX y, si se pidió, el PDF, con tres cosas dichas en el c
 3. Cómo abrirlo en Google Slides: subir el PPTX a Drive y abrirlo con Google Slides, o en Slides,
    Archivo, Importar diapositivas.
 
-**PDF.** En el sandbox de Claude se exporta con LibreOffice. Si la fuente no se ve bien en ese PDF,
-el PDF exacto sale de Google Slides: Archivo, Descargar, PDF. Después de llenar los XXX, ese es
-el PDF que se manda.
+**PDF.** El PDF exacto sale de Google Slides: Archivo, Descargar, PDF. Es el camino por defecto, y
+después de llenar los XXX es el PDF que se manda. En el sandbox de Claude, `--pdf` exporta con
+LibreOffice como vista previa. En una Mac no hay exportador automático: Keynote solo se intenta con
+`NOISIA_PDF=keynote`, necesita Google Sans instalada en el sistema (la trae el kit, no la Mac) y en
+un caso no abrió ningún PPTX por script. Si un exportador falla, el build dice cuál falló, no que
+no existe.
 
 **Nombre del archivo:** `Noisia_<Cliente>_<Entregable>_<ES|EN>_v1.pptx`. Una versión nueva no pisa
 la anterior: sube el número.
@@ -367,3 +406,5 @@ la derecha.
 | ¿Un correo por idioma? | El de quien firma, que la entrevista pregunta |
 | ¿Se queda el tercer tipo de cooperación (audiencias y tendencias)? | Sí, en el opener |
 | Tiempo de entrega por defecto | 3 a 5 días hábiles después del workshop |
+| ¿Un índice diseñado y acordado con el cliente puede ir en su propuesta? Se pidió para un cliente con NPS y el equipo dice que va a pasar seguido | Excepción del caso, autorizada en el chat. §11 sigue igual: ningún índice de escucha como indicador genérico de Noisia, ni en decks de otros clientes |
+| ¿Los resultados de un piloto ya entregado al mismo cliente pueden abrir su propuesta? La razón de §4.1, "no los hemos leído", no aplica | Excepción del caso, autorizada en el chat, con el entregable y la fecha en las notas. Nunca en el deck de otro cliente |

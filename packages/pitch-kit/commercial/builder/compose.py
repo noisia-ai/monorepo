@@ -19,12 +19,19 @@ writes what is genuinely about this client.
       "cover_variant": 3,                   # optional, 1..6; else picked from the client's name
       "include": ["sample", "engine"],      # optional modules to switch on
       "exclude": ["coverage"],              # recipe modules to drop
-      "slides": {"questions_client": {...}, "statement_punch": {...}}
+      "slides": {"questions_client": {...}, "statement_punch": {...}},
+      "extra": [{"after": "understood", "slide": {"type": "factor_pricing", ...}}]
     }
 
 `slides.<module>` is merged over the canonical module: keys you give replace the canonical
 ones, keys you leave out keep the canonical copy, and lists of cards merge card by card. A module marked client:true in the copy file
-has to be given here, or the build stops and says which.
+has to be given here, or the build stops and says which. A module in `slides` that the recipe
+does not use is reported, never dropped in silence.
+
+`extra` adds slides the recipe does not have, written straight as a slide spec (a `type` from
+noisia_pptx.SLIDES plus its fields), each placed after a recipe module (`"after": "<module>"`,
+or "start" / "end"). It exists for remaking a deck that was built outside the kit, where the
+approved deck has slides no recipe covers. They pass the same gates as everything else.
 """
 import copy, json, os, re, sys
 
@@ -67,7 +74,7 @@ def compose(brief):
         sys.exit(f"entregable '{deliv}' no existe. Opciones: {', '.join(k for k in recipes if not k.startswith('_'))}")
     given = brief.get("slides", {})
     include, exclude = set(brief.get("include", [])), set(brief.get("exclude", []))
-    missing, slides = [], []
+    missing, slides, mods = [], [], []
     for entry in recipes[deliv]["slides"]:
         mod = entry if isinstance(entry, str) else entry["module"]
         optional = isinstance(entry, dict) and entry.get("optional")
@@ -82,6 +89,27 @@ def compose(brief):
         if mod in ("cover_client", "onepager") and brief.get("client_logo"):
             sl["client_logo"] = brief["client_logo"]
         slides.append(sl)
+        mods.append(mod)
+    unused = [m for m in given if m not in mods]
+    for m in unused:
+        print(f"aviso: el brief trae '{m}' pero no entra al deck: "
+              + ("está en `exclude`." if m in exclude else f"la receta de '{deliv}' no lo usa. Para sumarlo, ponlo en `extra`."))
+    placed = {}   # extras that share an anchor keep the order they have in the brief
+    for ex in brief.get("extra", []):
+        sl, after = ex.get("slide") or {}, ex.get("after", "end")
+        if not sl.get("type"):
+            sys.exit(f"extra: cada slide necesita `type` (después de '{after}')")
+        if after == "start":
+            at = placed.get(after, 0)
+        elif after == "end":
+            at = len(slides)
+        elif after in mods:
+            at = mods.index(after) + 1 + placed.get(after, 0)
+        else:
+            sys.exit(f"extra: '{after}' no está en el deck. Opciones: start, end, {', '.join(mods)}")
+        placed[after] = placed.get(after, 0) + 1
+        slides.insert(at, copy.deepcopy(sl))
+        mods.insert(at, f"extra:{sl['type']}")
     if missing:
         print("FALTAN slides del cliente en el brief (escríbelas con COMMERCIAL.md §4):")
         for m in missing:

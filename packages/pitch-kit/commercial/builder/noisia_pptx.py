@@ -8,10 +8,10 @@ card and logo can be edited, moved or replaced.
 Coordinates are written in canvas pixels (the same 1920x1080 the HTML engine uses) and
 converted here: 1px = 6350 EMU, and a CSS px is half a point at this size.
 
-The visual recipe is the one the approved study decks converged on (CANON.md, LAYOUTS.md):
-white canvas, one soft cyan/red atmosphere per slide in a different corner, cards in #fafafa
-with a 1px #eeeeee border and 16px radius, a teal eyebrow with a real icon, titles at 54px,
-one accent word in teal, no shadows, no side-tab borders, no gradients on values.
+The visual recipe is COMMERCIAL.md §1 and §6: white canvas, the linear bloom on covers and
+closings and one fragment of it per content slide, cards in #fafafa with a 1px #eeeeee border
+and 16px radius, real icons, plain descriptive titles or none, no eyebrows (eyebrow() is kept
+as a no-op so old specs still build), no shadows, no side-tab borders, no gradients on values.
 """
 import math, os, re, uuid
 from pptx import Presentation
@@ -189,9 +189,19 @@ class Deck:
             '<a:stretch><a:fillRect/></a:stretch></a:blipFill><a:effectLst/></p:bgPr></p:bg>')
         s.shapes._spTree.getparent().insert(0, bg)
 
-    def content_bg(self):
-        """A faint fragment of the shape family, in a different corner on every slide."""
+    # frag-1 and frag-4 enter from the right edge, 2 and 5 from the bottom, 3 and 6 from the left
+    RIGHT_FRAGS = (1, 4)
+
+    def content_bg(self, d=None, avoid_right=False):
+        """A faint fragment of the bloom, in a different corner on every slide. A slide spec can
+        fix its own with `"bg": "frag-3.jpg"`. Slides whose text runs to the right edge (price
+        tables, investment, the catalogue) skip the fragments that enter from the right, where
+        the grain sat under 18px text and made it hard to read."""
+        if d and d.get("bg"):
+            return d["bg"]
         self._bg_cycle = self._bg_cycle % 6 + 1
+        while avoid_right and self._bg_cycle in self.RIGHT_FRAGS:
+            self._bg_cycle = self._bg_cycle % 6 + 1
         return f"frag-{self._bg_cycle}.jpg"
 
     def note(self, s, text):
@@ -287,6 +297,16 @@ class Deck:
         if name:
             pic.name = name
         return pic
+
+    def image_contain(self, s, path, x, y, w, h, name=None):
+        """Fit a picture inside w x h without distorting it, centred. A very horizontal logo
+        placed by height alone ran out of its box on a cover."""
+        from PIL import Image
+        with Image.open(path) as im:
+            iw, ih = im.size
+        k = min(w / iw, h / ih)
+        dw, dh = iw * k, ih * k
+        return self.image(s, path, x + (w - dw) / 2, y + (h - dh) / 2, w=dw, h=dh, name=name)
 
     def icon(self, s, name, x, y, size=28, tone="teal"):
         im = sprite_cell("icons", f"sprite-{tone}.png", name)
@@ -417,7 +437,7 @@ class Deck:
             logo = d.get("client_logo")
             if logo and os.path.exists(logo):
                 self.box(s, PADX, y + 44, 260, 84, fill=WHITE, line=BORDER2, radius=14)
-                self.image(s, logo, PADX + 18, y + 54, h=64, name="Logo del cliente")
+                self.image_contain(s, logo, PADX + 18, y + 54, 224, 64, name="Logo del cliente")
             else:
                 slot = os.path.join(ASSETS, "art", f"client-logo-slot-{self.lang}.png")
                 self.image(s, slot, PADX, y + 44, w=260, h=92, name="Logo del cliente (reemplazar)")
@@ -452,7 +472,7 @@ class Deck:
     def questions(self, d):
         """Questions this brand could answer with us. Researched from public facts about the
         brand and its industry; never social-data insights (COMMERCIAL.md, rule 1)."""
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         if d.get("context"):
@@ -485,7 +505,7 @@ class Deck:
         return s
 
     def what_we_do(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         self.eyebrow(s, d.get("eyebrow"), d.get("eyebrow_icon"))
         tsize, _ = fit(d["title"].replace("**", ""), 760, 330, 58, 1.08)
@@ -510,7 +530,7 @@ class Deck:
         return s
 
     def where_we_stand(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         cols = d["columns"]
@@ -544,13 +564,14 @@ class Deck:
         return s
 
     def coverage(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         groups = d["groups"][:3]
         gap = 24
         cw = (CONTENT_W - gap * (len(groups) - 1)) / len(groups)
-        hh = min(420, 760 - y)
+        # stats end about 220px below the cards; with a foot at 960 they need to stop at 940
+        hh = min(420, (720 if d.get("stats") and d.get("foot") else 760) - y)
         for i, g in enumerate(groups):
             x = PADX + i * (cw + gap)
             self.box(s, x, y, cw, hh, radius=20)
@@ -578,7 +599,7 @@ class Deck:
         return s
 
     def portfolio(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         gap = 28
@@ -609,7 +630,7 @@ class Deck:
         return s
 
     def outputs_impact(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         lw = 980
@@ -639,7 +660,7 @@ class Deck:
         return s
 
     def cooperations(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         items = d["items"][:3]
@@ -666,7 +687,7 @@ class Deck:
         return s
 
     def engine(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         hh = 960 - y
@@ -719,7 +740,7 @@ class Deck:
         return s
 
     def steps(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         st = d["steps"][:5]
@@ -749,7 +770,7 @@ class Deck:
 
     def catalog(self, d):
         """Study catalogue. With prices: a table (name | what you get | price). Without: a grid."""
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d, avoid_right=True), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         items = d["items"]
@@ -793,7 +814,7 @@ class Deck:
 
     def detail_slide(self, d):
         """Report or study detail: what it answers on the left, how it is delivered on the right."""
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d, w=1000)
         lw = 1000
@@ -836,7 +857,7 @@ class Deck:
         return s
 
     def factor_pricing(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d, avoid_right=True), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         lw = 820
@@ -870,7 +891,7 @@ class Deck:
         return s
 
     def build_vs_buy(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         gap = 70
@@ -895,7 +916,7 @@ class Deck:
         return s
 
     def year_plan(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         lw = 470
@@ -927,7 +948,7 @@ class Deck:
         return s
 
     def understood(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         lw = 820
@@ -953,7 +974,7 @@ class Deck:
         return s
 
     def formats(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         items = d["items"][:3]
@@ -982,7 +1003,7 @@ class Deck:
         return s
 
     def blocks(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         items = d["items"][:8]
@@ -1005,7 +1026,7 @@ class Deck:
         return s
 
     def investment(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d, avoid_right=True), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d)
         lw = 1060
@@ -1036,7 +1057,7 @@ class Deck:
         return s
 
     def sample(self, d):
-        s = self.new(bg=self.content_bg(), notes=d.get("notes"))
+        s = self.new(bg=self.content_bg(d), notes=d.get("notes"))
         self.chrome(s)
         y = self.head(s, d, w=900)
         lw = 860
@@ -1095,7 +1116,7 @@ class Deck:
         self.image(s, os.path.join(ASSETS, "logo", "noisia.png"), M, 64, h=28, name="Logo Noisia")
         logo = d.get("client_logo")
         if logo and os.path.exists(logo):
-            self.image(s, logo, PW - M - 200, 54, h=48, name="Logo del cliente")
+            self.image_contain(s, logo, PW - M - 200, 54, 200, 48, name="Logo del cliente")
         elif d.get("client_logo_slot", True):
             slot = os.path.join(ASSETS, "art", f"client-logo-slot-{self.lang}.png")
             self.image(s, slot, PW - M - 180, 52, w=180, h=56, name="Logo del cliente (reemplazar)")
