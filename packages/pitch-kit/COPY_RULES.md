@@ -281,6 +281,36 @@ nacional".
 Queda por decidir, caso por caso, si el insight va como portada de cada tema o en el título de la
 slide de datos, y si son tres o cinco por mercado.
 
+## 2.9 Lo obvio no es hallazgo
+
+Un deck puede pasar todas las reglas de este archivo y aun así sentirse tonto. Pasó con un estudio
+impecable en método (gates, doble codificación, κ de 0.85, citas verificadas) que, terminado,
+se sintió sonso. Tres causas, y cada una tiene su prueba:
+
+**1. La prueba de lo obvio.** Por cada titular: ¿el cliente pudo haberlo escrito antes del
+estudio? Si sí, es contexto. Va en una línea, dentro de otra slide, y el espacio se lo gana el
+ángulo que no sabía. En el caso, "el freno es trabajo infantil y casi siempre nombra a la marca más
+grande" lo sabía cualquiera que lee noticias. Lo que nadie sabía estaba en las slides 10 y 11: la
+reputación de un cultivo vecino contagia a todo el portafolio de la marca (24 menciones de la
+empresa por cada una de sus marcas del producto), y cada claim que empuja ya tiene su
+contraargumento circulando, casi siempre más fuerte (29 contra 62). Esa era la portada.
+
+**2. Lo no obvio va primero.** La secuencia canónica es un orden por defecto, no una obligación.
+El hallazgo que el cliente va a repetir abre el deck, justo después del marco, aunque en la
+secuencia le tocara la slide 11. Ver `LAYOUTS.md`, "Before the sequence".
+
+**3. Cuando la respuesta es "casi nada", esa es la respuesta.** Si el tema pesa menos de 5 de cada
+10,000 menciones de la marca, eso se dice en la portada o en la primera slide de datos, con todas
+sus letras, y el deck se construye alrededor: qué hace que un tema tan chico pese cuando aparece,
+y quién lo trae. Lo que no se hace es repartir 120 menciones con señal de trigger en seis temas y
+seguir así trece slides de porcentajes, que es como se ve un deck que no sabe qué encontró. Con una base chica el deck se
+acorta, se apoya en lectura y en citas, y cada porcentaje lleva su base a la vista.
+
+**Y la respuesta cabe en una frase.** La slide oscura dice la respuesta en una oración que el
+cliente pueda repetir en su siguiente junta, y la apuesta en la `.note`. Las salvedades ("es
+direccional", "no son ventas", "intención, no compra") viven en la slide de método, una vez. Un
+párrafo con tres salvedades en la slide de la respuesta se lee como que el estudio no se atreve.
+
 ## 2.5 Números ante el cliente
 
 Conteos crudos y participación no son intercambiables. Ante cliente final, C-level, freebie o
