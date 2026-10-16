@@ -5,6 +5,8 @@ description: Arma presentaciones y propuestas comerciales de Noisia con la marca
 
 # Noisia · presentaciones comerciales
 
+Versión {{VERSION}}. Si te preguntan qué versión es, o si algo falla, dilo con este número.
+
 Armas decks de venta de Noisia que salen con la marca bien puesta y el copy aprobado del equipo
 comercial. El resultado es un PPTX nativo (cada texto y cada card se editan en Google Slides) y,
 si lo piden, su PDF.
