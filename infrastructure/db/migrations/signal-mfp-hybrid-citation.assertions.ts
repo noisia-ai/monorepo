@@ -143,6 +143,21 @@ export async function verifyHybridCitationQualityV1(a:{client:PoolClient;databas
   if(scenario==='mixed_window_error')assert.equal(windows.filter(row=>row.result.claude.verdict==='error').length,1,
    'only the initial window fails; late positive still requires its paid verifier');
   if(scenario==='supported'){
+   // Acceptance: a settled positive source must never re-admit an immutable deterministic error.
+   await client.query('SAVEPOINT terminal_citation_selection');
+   const {selectHybridCitationInputsV1}=await import('../signal-hybrid-citation-runs');
+   const citationSource=(await client.query('SELECT * FROM signal_labeling_runs WHERE id=$1',[initial.run_id])).rows[0];
+   const candidate={...citationSource,cursor_root_id:null,membership_snapshot:{...citationSource.membership_snapshot,
+    hybrid_stage:'citation',source_run_id:initial.run_id,citation_retry:false}};
+   await client.query("UPDATE signal_hybrid_membership_decisions SET verdict='error',error_code=NULL WHERE workspace_id=$1",[a.workspace]);
+   assert.equal((await selectHybridCitationInputsV1(client,candidate)).length,1,'legacy technical error is retryable with a settled positive source');
+   const callsBefore=(await client.query('SELECT to_jsonb(call) snapshot FROM signal_labeling_calls call WHERE workspace_id=$1 ORDER BY id',[a.workspace])).rows;
+   for(const code of ['membership_json_invalid','membership_item_schema_invalid','membership_evidence_invalid','incomplete_single_root','hybrid_attempts_exhausted']){
+    await client.query('UPDATE signal_hybrid_membership_decisions SET error_code=$2 WHERE workspace_id=$1',[a.workspace,code]);
+    assert.deepEqual(await selectHybridCitationInputsV1(client,candidate),[],`${code} is excluded before a verifier can be reserved`);
+   }
+   assert.deepEqual((await client.query('SELECT to_jsonb(call) snapshot FROM signal_labeling_calls call WHERE workspace_id=$1 ORDER BY id',[a.workspace])).rows,callsBefore,'terminal selection does not rewrite or charge settled calls');
+   await client.query('ROLLBACK TO SAVEPOINT terminal_citation_selection');
    await client.query('SAVEPOINT window_input_correspondence');
    const windowCalls=(await client.query('SELECT * FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id',[initial.run_id])).rows;
    const merged=windowCalls.slice(0,2);
