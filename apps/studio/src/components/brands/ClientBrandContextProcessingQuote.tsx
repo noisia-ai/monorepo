@@ -287,7 +287,7 @@ export function ClientBrandContextProcessingQuote({ workspaceId, variant = "full
     && clientBrandContextProcessingCanConfirmV1(current)
     && (!prototypeOnly || current?.operation && ["guides_pending", "awaiting_authorization"].includes(current.operation.state)));
   const canConfirm = Boolean(!disabled && submitAuthorization && clientBrandContextProcessingCanConfirmV1(current, submitting));
-  const money = (value: string) => formatClientProcessingMicroUsdV1(value, locale);
+  const money = (value: string | null) => value === null ? t("noStrictMaximum") : formatClientProcessingMicroUsdV1(value, locale);
   const expiry = current?.quote?.expires_at ? new Intl.DateTimeFormat(locale, {
     dateStyle: "medium", timeStyle: "short"
   }).format(new Date(current.quote.expires_at)) : null;

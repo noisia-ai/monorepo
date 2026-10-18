@@ -473,3 +473,15 @@ test("micro-USD accounting is exact and rounded upward", () => {
   assert.equal(signalSemanticContextProposalCostMicroUsdV1({ input_tokens: 1,
     output_tokens: 0, input_usd_per_million_tokens: "0.1", output_usd_per_million_tokens: "0" }), 1n);
 });
+
+test('provider lineage preserves absent strict cap distinctly from explicit maxima',()=>{
+  const args={provider:'anthropic',model:'claude-sonnet-4-6',model_version:'claude-sonnet-4-6',pricing_version:'synthetic',
+    input_usd_per_million_tokens:'3',output_usd_per_million_tokens:'15',max_input_tokens:20000,
+    configured_max_output_tokens:64000,model_max_output_tokens:64000,capacity:fixtureCapacity};
+  const optional=buildSignalSemanticContextProviderLineageV1({...args,platform_hard_cap_micro_usd:null});
+  const capped=buildSignalSemanticContextProviderLineageV1({...args,platform_hard_cap_micro_usd:1000000n});
+  assert.equal(optional.platform_hard_cap_micro_usd,null);
+  assert.deepEqual(parseSignalSemanticContextProviderLineageV1(optional),optional);
+  assert.notEqual(optional.lineage_digest,capped.lineage_digest);
+  assert.throws(()=>buildSignalSemanticContextProviderLineageV1({...args,platform_hard_cap_micro_usd:0n}));
+});
