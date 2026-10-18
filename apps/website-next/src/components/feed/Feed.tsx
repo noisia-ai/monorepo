@@ -59,19 +59,22 @@ export function Feed({ stories, initialId }: Props) {
 
   const industries = useMemo(() => Array.from(new Set(stories.map((story) => story.industry))), [stories]);
 
+  // Every item is exactly one viewport tall, so the active story follows from the scroll
+  // position. Simpler and sturdier than an IntersectionObserver across browsers.
   useEffect(() => {
     const root = scrollerRef.current;
     if (!root) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) setActive(Number((entry.target as HTMLElement).dataset.index));
-        }
-      },
-      { root, threshold: 0.6 }
-    );
-    root.querySelectorAll("[data-index]").forEach((node) => observer.observe(node));
-    return () => observer.disconnect();
+    const update = () => {
+      const height = root.clientHeight || 1;
+      setActive(Math.max(0, Math.round(root.scrollTop / height)));
+    };
+    update();
+    root.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+    return () => {
+      root.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
   }, [items]);
 
   useEffect(() => {

@@ -14,7 +14,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import tsx src/motion/runtime.test.ts src/content/stories/schema.test.ts",
-    "export:story": "node scripts/export-story.mjs"
+    "export:story": "node scripts/export-story.mjs",
+    "smoke:feed": "node scripts/smoke-feed.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
