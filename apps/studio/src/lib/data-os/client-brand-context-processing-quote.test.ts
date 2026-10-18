@@ -590,6 +590,11 @@ for (const locale of ["es-MX", "en-US"] as const) {
       workspaceId, variant, initial, authorize, ...extra
     })));
 
+  test(`${locale}: absent strict maxima render without a fabricated zero`,()=>{
+    const html=render("full",{...availableView,quote:{...availableView.quote!,maximum_micro_usd:null,available_today_micro_usd:null}});
+    assert.ok(html.includes(copy.noStrictMaximum));
+    assert.doesNotMatch(html,/\$0(?:\.00)?/u);
+  });
   test(`${locale}: the Brand Context quote is read-only, sanitized and distinct from corpus vectors`, () => {
     for (const html of [render("full"), render("compact")]) {
       assert.ok(html.includes(copy.title));
