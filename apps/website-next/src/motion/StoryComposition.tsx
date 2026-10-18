@@ -57,7 +57,8 @@ function Bloom() {
           position: "absolute",
           width: 1100,
           height: 1100,
-          right: -520 + drift,
+          right: -520,
+          transform: `translateX(${drift}px)`,
           top: -420,
           borderRadius: "50%",
           background: `radial-gradient(circle closest-side, ${color.cyan}50, ${color.cyan}26 40%, ${color.teal}10 70%, transparent 100%)`,
@@ -69,7 +70,8 @@ function Bloom() {
           position: "absolute",
           width: 900,
           height: 900,
-          left: -480 - drift,
+          left: -480,
+          transform: `translateX(${-drift}px)`,
           bottom: -380,
           borderRadius: "50%",
           background: `radial-gradient(circle closest-side, ${color.red}2a, ${color.coral}14 45%, ${color.coral}08 72%, transparent 100%)`,
@@ -89,7 +91,7 @@ function Bloom() {
         ))}
       </svg>
       {/* Grain as a tiled image: rasterized once by the browser instead of filtered every frame. */}
-      <div style={{ position: "absolute", inset: 0, opacity: 0.07, mixBlendMode: "multiply", backgroundImage: GRAIN, backgroundSize: "240px 240px" }} />
+      <div style={{ position: "absolute", inset: 0, opacity: 0.05, backgroundImage: GRAIN, backgroundSize: "240px 240px" }} />
     </AbsoluteFill>
   );
 }

@@ -57,7 +57,7 @@
 .field input:focus,
 .field textarea:focus {
   outline: none;
-  border-color: var(--teal);
+  border-color: var(--teal-text);
   box-shadow: 0 0 0 3px var(--teal-soft);
 }
 

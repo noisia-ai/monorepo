@@ -17,12 +17,19 @@ const legacyCases = {
   "influencia-de-categoria": "/metodos/influence-architecture"
 };
 
-const legacyReports = ["cultural-foresight-mexico-2026", "mexico-esta-cansado-de-performar", "future-is-human", "the-mexican-home"];
+const legacyReports = {
+  "cultural-foresight-mexico-2026": "cultural-foresight-mexico-2026",
+  "mexico-esta-cansado-de-performar": "cultural-foresight-mexico-2026",
+  "future-is-human": "future-is-human",
+  "the-mexican-home": "the-mexican-home"
+};
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   devIndicators: false,
+  // Stories and reports are read from disk at request time; ship them with the server bundle.
+  outputFileTracingIncludes: { "/**": ["./src/content/stories/public/**", "./src/content/reports/**"] },
   async redirects() {
     return [
       { source: "/metodologias", destination: "/metodos", permanent: true },
@@ -34,7 +41,7 @@ const nextConfig = {
       { source: "/diagnostico", destination: "/taller", permanent: true },
       { source: "/meeting", destination: "/taller", permanent: true },
       { source: "/contacto", destination: "/taller", permanent: true },
-      ...legacyReports.map((slug) => ({ source: `/insights/${slug}`, destination: "/insights", permanent: false }))
+      ...Object.entries(legacyReports).map(([from, to]) => ({ source: `/insights/${from}`, destination: `/insights/reportes/${to}`, permanent: true }))
     ];
   }
 };

@@ -24,6 +24,8 @@
   --cyan: #00eeee;
   --red: #ee0b00;
   --teal: #008a8a;
+  /* Darker teal for text: 5.2:1 on white, 4.7:1 on teal-soft (AA for small text). */
+  --teal-text: #007a7a;
   --teal-soft: #e6f7f7;
   --coral: #e2543c;
   --coral-soft: #fdece8;

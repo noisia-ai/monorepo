@@ -127,13 +127,13 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.92) 34%, #fff 100%);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0) 0px, rgba(255, 255, 255, 0.96) 40px, #fff 56px, #fff 100%);
 }
 
 .kind {
   align-self: flex-start;
   font-size: var(--text-xs);
-  color: var(--teal);
+  color: var(--teal-text);
   font-weight: 500;
 }
 
@@ -301,7 +301,7 @@
 }
 
 .quoteMeta {
-  color: var(--teal);
+  color: var(--teal-text);
   font-size: var(--text-xs);
   font-weight: 500;
 }
@@ -332,7 +332,7 @@
 
 .takeawayLabel {
   font-size: var(--text-xs);
-  color: var(--teal);
+  color: var(--teal-text);
   font-weight: 500;
 }
 

@@ -14,7 +14,8 @@
     "menu": "Menu",
     "close": "Close",
     "language": "Español",
-    "skip": "Skip to content"
+    "skip": "Skip to content",
+    "mainNav": "Main navigation"
   },
   "industries": {
     "all": "All",
@@ -32,7 +33,7 @@
     "cultura-y-sociedad": "Culture and society"
   },
   "feed": {
-    "label": "Noisia insights",
+    "label": "Insights",
     "kindEditorial": "Noisia research",
     "kindExample": "Illustrative example",
     "evidence": "See the evidence",
@@ -52,7 +53,9 @@
     "whatToDo": "What a brand could do",
     "closeSheet": "Close",
     "swipeHint": "Swipe for the next one",
-    "backToSite": "Back"
+    "backToSite": "Back",
+    "metaDescription": "Short findings from Noisia research, in motion and with the evidence behind them. Swipe for the next one.",
+    "heading": "Noisia insights"
   },
   "footer": {
     "tagline": "Social intelligence. Research produced with our own technology and human judgment.",

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, type ComponentType, type SVGProps } from "react";
+import { Fragment, useLayoutEffect, useRef, type ComponentType, type SVGProps } from "react";
 import { ChatLines, Filter, LightBulb, Search, UserBadgeCheck, Network } from "iconoir-react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "./runtime";
 import { color, font } from "./theme";
@@ -132,6 +132,36 @@ function makeDots(layout: Layout, count: number): Dot[] {
 // Fewer points on the phone layout: same story, lighter on the GPU.
 const DOTS = { wide: makeDots(LAYOUTS.wide, N), tall: makeDots(LAYOUTS.tall, 340) };
 
+type DrawDot = { x: number; y: number; r: number; fill: string; op: number; ring: number } | null;
+
+/** Hundreds of moving points drawn on one canvas instead of hundreds of DOM nodes. */
+function DotCanvas({ width, height, dots }: { width: number; height: number; dots: DrawDot[] }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    const ctx = ref.current?.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, width, height);
+    for (const dot of dots) {
+      if (!dot || dot.op <= 0.01) continue;
+      ctx.globalAlpha = Math.min(1, dot.op);
+      ctx.fillStyle = dot.fill;
+      ctx.beginPath();
+      ctx.arc(dot.x, dot.y, dot.r, 0, Math.PI * 2);
+      ctx.fill();
+      if (dot.ring > 0) {
+        ctx.globalAlpha = dot.ring;
+        ctx.strokeStyle = color.teal;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(dot.x, dot.y, 18 * (0.6 + 0.4 * dot.ring), 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+    ctx.globalAlpha = 1;
+  });
+  return <canvas ref={ref} width={width} height={height} style={{ position: "absolute", left: 0, top: 0 }} aria-hidden />;
+}
+
 function Card({ x, y, w, soft, children, style }: { x: number; y: number; w: number; soft?: boolean; children: React.ReactNode; style?: React.CSSProperties }) {
   return (
     <div
@@ -225,72 +255,45 @@ export function ProcessComposition({ copy, variant }: { copy: ProcessCopy; varia
           );
         })}
 
-        {dots.map((d, i) => {
-          const born = tween(f, d.t0, d.t0 + 16);
-          if (born <= 0) return null;
-          let x = interpolate(born, [0, 1], [L.spawn.x, d.x]);
-          let y = interpolate(born, [0, 1], [L.spawn.y + ((i * 37) % 60), d.y]);
-          let fill: string = "#9a9a9a";
-          let op = born;
-          if (d.kind === "noise") {
-            if (tween(f, 142 + (i % 20), 152 + (i % 20)) > 0) fill = color.coral;
-            const drop = tween(f, 158 + (i % 24), 185 + (i % 24), 0, 1, EASE_IO);
-            y += drop * 90;
-            op *= 1 - drop;
-          }
-          if (d.kind === "dup") {
-            const twin = dots[d.twin]!;
-            const m = tween(f, 146 + (i % 26), 176 + (i % 26));
-            x = interpolate(m, [0, 1], [x, twin.x]);
-            y = interpolate(m, [0, 1], [y, twin.y]);
-            op *= 1 - tween(f, 170 + (i % 26), 182 + (i % 26));
-          }
-          if (d.kind === "ok") {
-            if (!d.core) op *= 1 - 0.78 * tween(f, 190 + (i % 20), 215 + (i % 20));
-            else if (tween(f, 190, 215) > 0.5) fill = color.fg;
-            if (d.core) {
-              const mv = tween(f, 228 + (i % 40), 278 + (i % 40), 0, 1, EASE_IO);
-              x = interpolate(mv, [0, 1], [x, d.cx]);
-              y = interpolate(mv, [0, 1], [y, d.cy]);
-              if (mv > 0.6) fill = d.c === HIGHLIGHT ? color.teal : "#3f8f8f";
-            } else {
-              op *= 1 - tween(f, 230, 260) * 0.6;
+        <DotCanvas
+          width={L.width}
+          height={L.height}
+          dots={dots.map((d, i) => {
+            const born = tween(f, d.t0, d.t0 + 16);
+            if (born <= 0) return null;
+            let x = interpolate(born, [0, 1], [L.spawn.x, d.x]);
+            let y = interpolate(born, [0, 1], [L.spawn.y + ((i * 37) % 60), d.y]);
+            let fill: string = "#9a9a9a";
+            let op = born;
+            if (d.kind === "noise") {
+              if (tween(f, 142 + (i % 20), 152 + (i % 20)) > 0) fill = color.coral;
+              const drop = tween(f, 158 + (i % 24), 185 + (i % 24), 0, 1, EASE_IO);
+              y += drop * 90;
+              op *= 1 - drop;
             }
-          }
-          const pulse = i === traceIndex ? tween(f, 360, 380) : 0;
-          const size = pulse > 0 ? 12 : 7;
-          return (
-            <Fragment key={i}>
-              {pulse > 0 ? (
-                <div
-                  style={{
-                    position: "absolute",
-                    left: Math.round(x - 18),
-                    top: Math.round(y - 18),
-                    width: 36,
-                    height: 36,
-                    borderRadius: 18,
-                    border: `2.5px solid ${color.teal}`,
-                    opacity: pulse,
-                    transform: `scale(${0.6 + 0.4 * pulse})`
-                  }}
-                />
-              ) : null}
-              <div
-                style={{
-                  position: "absolute",
-                  left: Math.round(x - size / 2),
-                  top: Math.round(y - size / 2),
-                  width: size,
-                  height: size,
-                  borderRadius: "50%",
-                  background: pulse > 0 ? color.teal : fill,
-                  opacity: op
-                }}
-              />
-            </Fragment>
-          );
-        })}
+            if (d.kind === "dup") {
+              const twin = dots[d.twin]!;
+              const m = tween(f, 146 + (i % 26), 176 + (i % 26));
+              x = interpolate(m, [0, 1], [x, twin.x]);
+              y = interpolate(m, [0, 1], [y, twin.y]);
+              op *= 1 - tween(f, 170 + (i % 26), 182 + (i % 26));
+            }
+            if (d.kind === "ok") {
+              if (!d.core) op *= 1 - 0.78 * tween(f, 190 + (i % 20), 215 + (i % 20));
+              else if (tween(f, 190, 215) > 0.5) fill = color.fg;
+              if (d.core) {
+                const mv = tween(f, 228 + (i % 40), 278 + (i % 40), 0, 1, EASE_IO);
+                x = interpolate(mv, [0, 1], [x, d.cx]);
+                y = interpolate(mv, [0, 1], [y, d.cy]);
+                if (mv > 0.6) fill = d.c === HIGHLIGHT ? color.teal : "#3f8f8f";
+              } else {
+                op *= 1 - tween(f, 230, 260) * 0.6;
+              }
+            }
+            const pulse = i === traceIndex ? tween(f, 360, 380) : 0;
+            return { x, y, r: pulse > 0 ? 6 : 3.5, fill: pulse > 0 ? color.teal : fill, op, ring: pulse };
+          })}
+        />
 
         {/* stage label in place of raw counts */}
         <div style={{ position: "absolute", left: field.x, width: field.w, top: field.y + field.h * 0.36, textAlign: "center", opacity: stageOp }}>

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Menu, Xmark } from "iconoir-react";
 import { useParams } from "next/navigation";
-import { Link, usePathname } from "@/i18n/navigation";
+import { Link, getPathname, usePathname } from "@/i18n/navigation";
 import { useAlternateHref } from "./alternate";
 import { mainNav } from "./nav";
 import styles from "./SiteHeader.module.css";
@@ -26,6 +26,12 @@ export function SiteHeader() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
   useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+  useEffect(() => {
     document.body.style.overflow = open ? "hidden" : "";
     return () => {
       document.body.style.overflow = "";
@@ -33,6 +39,24 @@ export function SiteHeader() {
   }, [open]);
 
   const other = locale === "en" ? "es" : "en";
+  // The switch must be right before hydration too. Pages with translated slugs register their
+  // exact twin (SetAlternate); until then a translated-slug page points to its section index.
+  const switchHref = (() => {
+    if (alternate) return alternate;
+    let href: string;
+    try {
+      if (pathname.includes("[slug]") && !pathname.startsWith("/insights/")) {
+        // @ts-expect-error the stripped template is a valid static route
+        href = getPathname({ locale: other, href: pathname.replace("/[slug]", "") });
+      } else {
+        // @ts-expect-error pathname and params come from the current route
+        href = getPathname({ locale: other, href: { pathname, params } });
+      }
+    } catch {
+      href = other === "en" ? "/en" : "/";
+    }
+    return href.replace(/^\/es(?=\/|$)/, "") || "/";
+  })();
 
   return (
     <header className={styles.header} data-scrolled={scrolled || open}>
@@ -43,7 +67,7 @@ export function SiteHeader() {
         <Link href="/" className={styles.logo} aria-label="Noisia">
           noisia
         </Link>
-        <nav className={styles.desktopNav} aria-label="Principal">
+        <nav className={styles.desktopNav} aria-label={t("mainNav")}>
           {mainNav.map((item) => (
             <Link key={item.key} href={item.href} className={styles.navLink} aria-current={pathname.startsWith(item.href) ? "page" : undefined}>
               {t(item.key)}
@@ -51,16 +75,9 @@ export function SiteHeader() {
           ))}
         </nav>
         <div className={styles.end}>
-          {alternate ? (
-            <a href={alternate} className={styles.lang} hrefLang={other}>
-              {other.toUpperCase()}
-            </a>
-          ) : (
-            // @ts-expect-error pathname and params come from the current route, valid at runtime
-            <Link href={{ pathname, params }} locale={other} className={styles.lang} hrefLang={other}>
-              {other.toUpperCase()}
-            </Link>
-          )}
+          <a href={switchHref} className={styles.lang} hrefLang={other} lang={other}>
+            {other.toUpperCase()}
+          </a>
           <Link href="/taller" className={styles.cta}>
             {t("cta")}
           </Link>
@@ -71,7 +88,7 @@ export function SiteHeader() {
         </div>
       </div>
       <div id="mobile-menu" className={styles.mobileMenu} data-open={open} hidden={!open}>
-        <nav aria-label="Principal">
+        <nav aria-label={t("mainNav")}>
           {mainNav.map((item, i) => (
             <Link key={item.key} href={item.href} className={styles.mobileLink} style={{ animationDelay: `${i * 40}ms` }}>
               {t(item.key)}

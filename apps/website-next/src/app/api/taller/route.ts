@@ -11,13 +11,15 @@ const schema = z.object({
   when: z.string().trim().max(60).optional().default(""),
   locale: z.enum(["es", "en"]).default("es"),
   // Honeypot: real people never fill it.
-  website: z.string().max(0).optional().default("")
+  website: z.string().max(500).optional().default("")
 });
 
 export async function POST(request: NextRequest) {
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   const body = parsed.data;
+  // A filled honeypot is a bot: answer as if it worked and drop it.
+  if (body.website) return NextResponse.json({ ok: true });
 
   const text = [
     `TALLER NOISIA · ${new Date().toISOString()} · ${body.locale.toUpperCase()}`,
@@ -36,6 +38,11 @@ export async function POST(request: NextRequest) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     console.log("[taller] RESEND_API_KEY is not set; request:\n", text);
+    // In production a request that can't be delivered must not look like a success.
+    if (process.env.NODE_ENV === "production") {
+      console.error("[taller] refusing workshop request: email delivery is not configured");
+      return NextResponse.json({ ok: false, error: "delivery_not_configured" }, { status: 503 });
+    }
     return NextResponse.json({ ok: true, delivered: false });
   }
 

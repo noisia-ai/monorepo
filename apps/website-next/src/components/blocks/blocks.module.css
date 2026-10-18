@@ -77,7 +77,7 @@
 
 .number {
   display: block;
-  color: var(--teal);
+  color: var(--teal-text);
   font-size: var(--text-sm);
   margin-bottom: var(--space-2);
 }
@@ -153,7 +153,7 @@
 
 .quote figcaption {
   margin-top: var(--space-3);
-  color: var(--teal);
+  color: var(--teal-text);
   font-size: var(--text-sm);
 }
 
@@ -191,7 +191,7 @@
 }
 
 .link:hover {
-  border-color: var(--teal);
+  border-color: var(--teal-text);
   background: var(--teal-soft);
 }
 

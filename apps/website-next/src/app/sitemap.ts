@@ -33,6 +33,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
     ...getStories().filter((story) => story.kind === "editorial").map((story) => entry({ pathname: "/insights/[slug]", params: { slug: story.id } })),
     ...solutionEntries.map((e) => ({ url: `${SITE_URL}/soluciones/${e.slug.es}`, alternates: { languages: { es: `${SITE_URL}/soluciones/${e.slug.es}`, en: `${SITE_URL}/en/solutions/${e.slug.en}` } } })),
     ...methodEntries.map((e) => ({ url: `${SITE_URL}/metodos/${e.slug.es}`, alternates: { languages: { es: `${SITE_URL}/metodos/${e.slug.es}`, en: `${SITE_URL}/en/methods/${e.slug.en}` } } })),
+    ...["cultural-foresight-mexico-2026", "future-is-human", "the-mexican-home"].map((slug) => ({
+      url: `${SITE_URL}/insights/reportes/${slug}`,
+      alternates: { languages: { es: `${SITE_URL}/insights/reportes/${slug}`, en: `${SITE_URL}/en/insights/reports/${slug}` } }
+    })),
     ...industryEntries.map((e) => ({ url: `${SITE_URL}/industrias/${e.slug.es}`, alternates: { languages: { es: `${SITE_URL}/industrias/${e.slug.es}`, en: `${SITE_URL}/en/industries/${e.slug.en}` } } })),
     ...compareEntries.map((e) => ({ url: `${SITE_URL}/comparar/${e.slug.es}`, alternates: { languages: { es: `${SITE_URL}/comparar/${e.slug.es}`, en: `${SITE_URL}/en/compare/${e.slug.en}` } } }))
   ];

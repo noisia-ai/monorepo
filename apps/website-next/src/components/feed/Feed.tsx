@@ -11,9 +11,9 @@ import { EvidenceSheet } from "./EvidenceSheet";
 import type { FeedStory } from "./types";
 import styles from "./Feed.module.css";
 
-type Props = { stories: FeedStory[]; initialId?: string; initialFilter?: string };
+type Props = { stories: FeedStory[]; initialId?: string; initialFilter?: string; initialTitle?: string };
 
-const WINDOW = 2;
+const WINDOW = 1;
 
 function rotateTo(stories: FeedStory[], id?: string): FeedStory[] {
   const at = id ? stories.findIndex((story) => story.id === id) : -1;
@@ -32,7 +32,7 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export function Feed({ stories, initialId, initialFilter }: Props) {
+export function Feed({ stories, initialId, initialFilter, initialTitle }: Props) {
   const t = useTranslations("feed");
   const tIndustry = useTranslations("industries");
   const locale = useLocale();
@@ -47,6 +47,8 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
   const [optIn, setOptIn] = useState(false);
   const [sheet, setSheet] = useState<FeedStory | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const evidenceTrigger = useRef<HTMLElement | null>(null);
 
   const base = useMemo(() => {
     const filtered = filter ? stories.filter((story) => story.industry === filter) : stories;
@@ -84,24 +86,27 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
   }, [active, items.length, base.length]);
 
   // Each story keeps its own shareable URL; the address bar follows the feed.
+  const activeId = items[active]?.story.id;
   useEffect(() => {
-    const story = items[active]?.story;
-    if (!story) return;
-    const path = `${locale === "en" ? "/en" : ""}/insights/${story.id}`;
-    if (window.location.pathname !== path) window.history.replaceState(window.history.state, "", path);
+    if (!activeId) return;
+    const path = `${locale === "en" ? "/en" : ""}/insights/${activeId}`;
+    if (window.location.pathname !== path) window.history.replaceState(window.history.state, "", path + window.location.search);
     setPaused(false);
     setOptIn(false);
-  }, [active, items, locale]);
+  }, [activeId, locale]);
 
   const scrollToIndex = useCallback((index: number) => {
     const root = scrollerRef.current;
     const target = root?.querySelector<HTMLElement>(`[data-index="${index}"]`);
-    target?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, []);
+    target?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+  }, [reduced]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (sheet) return;
+      if (sheet || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      // Leave keys alone while a control has focus: Space must still press buttons.
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("button, a, input, textarea, select, [contenteditable]")) return;
       if (["ArrowDown", "PageDown", "j"].includes(event.key)) {
         event.preventDefault();
         scrollToIndex(active + 1);
@@ -127,13 +132,26 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
         }
         await navigator.clipboard.writeText(url);
         setToast(t("copied"));
-        window.setTimeout(() => setToast(null), 1800);
-      } catch {
-        // The reader closed the share sheet; nothing to do.
+        if (toastTimer.current) window.clearTimeout(toastTimer.current);
+        toastTimer.current = window.setTimeout(() => setToast(null), 1800);
+      } catch (error) {
+        // Closing the native share sheet throws AbortError; anything else falls back to copying.
+        if ((error as Error)?.name !== "AbortError") {
+          await navigator.clipboard?.writeText(url).catch(() => undefined);
+          setToast(t("copied"));
+          if (toastTimer.current) window.clearTimeout(toastTimer.current);
+          toastTimer.current = window.setTimeout(() => setToast(null), 1800);
+        }
       }
     },
     [locale, t]
   );
+
+  const closeSheet = useCallback(() => {
+    setSheet(null);
+    // Return focus to the button that opened the sheet.
+    window.requestAnimationFrame(() => evidenceTrigger.current?.focus());
+  }, []);
 
   const changeFilter = (value: string | null) => {
     setFilter(value);
@@ -160,6 +178,7 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
         </nav>
       </header>
 
+      <h1 className="visually-hidden">{initialTitle ?? t("heading")}</h1>
       <div ref={scrollerRef} className={styles.scroller} role="feed" aria-label={t("label")} aria-busy={false}>
         {items.map(({ story, key }, index) => {
           const near = Math.abs(index - active) <= WINDOW;
@@ -171,6 +190,7 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
               key={key}
               data-index={index}
               className={styles.item}
+              tabIndex={0}
               aria-posinset={index + 1}
               aria-setsize={-1}
               aria-labelledby={`${key}-title`}
@@ -200,6 +220,7 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
                 ) : null}
               </div>
 
+              {near ? (
               <div className={styles.caption}>
                 <span className={styles.kind}>{story.kind === "editorial" ? t("kindEditorial") : t("kindExample")}</span>
                 <h2 id={`${key}-title`} className={styles.title}>
@@ -220,7 +241,14 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
                   </ul>
                 ) : null}
                 <div className={styles.actions}>
-                  <button type="button" className={styles.action} onClick={() => setSheet(story)}>
+                  <button
+                    type="button"
+                    className={styles.action}
+                    onClick={(event) => {
+                      evidenceTrigger.current = event.currentTarget;
+                      setSheet(story);
+                    }}
+                  >
                     {t("evidence")}
                   </button>
                   {story.reportHref ? (
@@ -233,6 +261,11 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
                   </button>
                 </div>
               </div>
+              ) : (
+                <h2 id={`${key}-title`} className="visually-hidden">
+                  {story.content.title}
+                </h2>
+              )}
             </article>
           );
         })}
@@ -248,7 +281,7 @@ export function Feed({ stories, initialId, initialFilter }: Props) {
           {toast}
         </div>
       ) : null}
-      {sheet ? <EvidenceSheet story={sheet} onClose={() => setSheet(null)} /> : null}
+      {sheet ? <EvidenceSheet story={sheet} onClose={closeSheet} /> : null}
     </div>
   );
 }

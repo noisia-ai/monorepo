@@ -23,8 +23,10 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
     description: content.dek,
     alternates: {
       canonical: `${locale === "en" ? "/en" : ""}/insights/${slug}`,
-      languages: { es: `/insights/${slug}`, en: `/en/insights/${slug}` }
+      languages: { es: `/insights/${slug}`, en: `/en/insights/${slug}`, "x-default": `/insights/${slug}` }
     },
+    // Illustrative examples are for the feed experience, not for search results.
+    robots: story.kind === "editorial" ? undefined : { index: false, follow: true },
     openGraph: { title: content.title, description: content.dek, type: "article" }
   };
 }
@@ -49,7 +51,7 @@ export default async function InsightPage({ params }: { params: Promise<Params> 
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <Feed stories={stories} initialId={slug} />
+      <Feed stories={stories} initialId={slug} initialTitle={content.title} />
     </>
   );
 }

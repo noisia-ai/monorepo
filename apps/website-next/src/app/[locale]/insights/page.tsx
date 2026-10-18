@@ -8,7 +8,11 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   const t = await getTranslations({ locale, namespace: "feed" });
   return {
     title: t("label"),
-    alternates: { canonical: locale === "en" ? "/en/insights" : "/insights", languages: { es: "/insights", en: "/en/insights" } }
+    description: t("metaDescription"),
+    alternates: {
+      canonical: locale === "en" ? "/en/insights" : "/insights",
+      languages: { es: "/insights", en: "/en/insights", "x-default": "/insights" }
+    }
   };
 }
 

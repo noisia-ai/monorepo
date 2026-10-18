@@ -11,6 +11,7 @@
 
 import {
   createContext,
+  useLayoutEffect,
   useContext,
   useEffect,
   useMemo,
@@ -19,6 +20,8 @@ import {
   type CSSProperties,
   type ReactNode
 } from "react";
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 type FrameContextValue = { frame: number; fps: number; durationInFrames: number; width: number; height: number };
 
@@ -152,8 +155,9 @@ export function Stage({
     return () => observer.disconnect();
   }, [width, height]);
 
-  // A new requested frame (e.g. the poster, or 0 when a story becomes active) moves the clock.
-  useEffect(() => {
+  // A new requested frame (e.g. the poster, or 0 when a story becomes active) moves the clock
+  // before the browser paints, so a story never flashes its previous frame.
+  useIsomorphicLayoutEffect(() => {
     setLiveFrame(controlledFrame);
     offsetRef.current = controlledFrame;
     startRef.current = null;

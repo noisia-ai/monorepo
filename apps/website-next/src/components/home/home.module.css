@@ -40,7 +40,7 @@
   align-self: flex-start;
   font-size: var(--text-sm);
   font-weight: 500;
-  color: var(--teal);
+  color: var(--teal-text);
   background: var(--teal-soft);
   border-radius: var(--radius-pill);
   padding: 4px 12px;
@@ -155,7 +155,7 @@
 
 .momentName {
   font-size: var(--text-sm);
-  color: var(--teal);
+  color: var(--teal-text);
   font-weight: 500;
 }
 
@@ -299,7 +299,7 @@
 
 .stepNumber {
   font-size: var(--text-sm);
-  color: var(--teal);
+  color: var(--teal-text);
   font-variant-numeric: tabular-nums;
 }
 
@@ -333,7 +333,7 @@
   width: 20px;
   height: 20px;
   margin-top: 3px;
-  color: var(--teal);
+  color: var(--teal-text);
 }
 
 /* ---------- methods ---------- */
@@ -388,7 +388,7 @@
 }
 
 .compareNoisia .compareName {
-  color: var(--teal);
+  color: var(--teal-text);
 }
 
 @media (min-width: 900px) {
@@ -509,7 +509,7 @@
   place-items: center;
   background: var(--canvas);
   border: 2px solid var(--teal);
-  color: var(--teal);
+  color: var(--teal-text);
   font-size: var(--text-sm);
   font-weight: 500;
 }

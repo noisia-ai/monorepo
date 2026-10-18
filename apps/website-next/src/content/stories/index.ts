@@ -33,7 +33,9 @@ let cache: Story[] | null = null;
 
 export function getStories(): Story[] {
   if (!cache) {
-    const local = readDir("_local");
+    // Client-derived test stories never load in production unless explicitly enabled.
+    const allowLocal = process.env.NODE_ENV !== "production" || process.env.NOISIA_LOCAL_STORIES === "1";
+    const local = allowLocal ? readDir("_local") : [];
     const published = readDir("public");
     // Interleave so the feed alternates sources instead of showing one block after another.
     const merged: Story[] = [];

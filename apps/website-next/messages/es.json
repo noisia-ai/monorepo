@@ -14,7 +14,8 @@
     "menu": "Menú",
     "close": "Cerrar",
     "language": "English",
-    "skip": "Saltar al contenido"
+    "skip": "Saltar al contenido",
+    "mainNav": "Navegación principal"
   },
   "industries": {
     "all": "Todo",
@@ -32,7 +33,7 @@
     "cultura-y-sociedad": "Cultura y sociedad"
   },
   "feed": {
-    "label": "Insights de Noisia",
+    "label": "Insights",
     "kindEditorial": "Investigación Noisia",
     "kindExample": "Ejemplo ilustrativo",
     "evidence": "Ver la evidencia",
@@ -52,7 +53,9 @@
     "whatToDo": "Qué puede hacer una marca",
     "closeSheet": "Cerrar",
     "swipeHint": "Desliza para el siguiente",
-    "backToSite": "Volver"
+    "backToSite": "Volver",
+    "metaDescription": "Hallazgos cortos de la investigación de Noisia, en video y con la evidencia detrás. Desliza para el siguiente.",
+    "heading": "Insights de Noisia"
   },
   "footer": {
     "tagline": "Inteligencia social. Investigación producida con tecnología propia y criterio humano.",

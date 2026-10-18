@@ -51,12 +51,12 @@
 }
 
 .col a:hover {
-  color: var(--teal);
+  color: var(--teal-text);
 }
 
 .colTitle {
   font-size: var(--text-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
   margin-bottom: var(--space-1);
 }
 
@@ -65,7 +65,7 @@
   margin: var(--space-8) auto 0;
   padding: 0 var(--gutter);
   font-size: var(--text-xs);
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 @media (min-width: 768px) {

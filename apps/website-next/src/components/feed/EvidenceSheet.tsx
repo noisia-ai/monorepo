@@ -10,9 +10,26 @@ export function EvidenceSheet({ story, onClose }: { story: FeedStory; onClose: (
   const t = useTranslations("feed");
   const closeRef = useRef<HTMLButtonElement>(null);
 
+  const sheetRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     closeRef.current?.focus();
-    const onKey = (event: KeyboardEvent) => event.key === "Escape" && onClose();
+  }, []);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || !sheetRef.current) return;
+      // Keep focus inside the dialog.
+      const focusable = sheetRef.current.querySelectorAll<HTMLElement>("button, a[href], [tabindex]:not([tabindex='-1'])");
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
@@ -29,6 +46,7 @@ export function EvidenceSheet({ story, onClose }: { story: FeedStory; onClose: (
   return (
     <div className={styles.sheetBackdrop} onClick={onClose}>
       <div
+        ref={sheetRef}
         className={styles.sheet}
         role="dialog"
         aria-modal="true"

@@ -83,7 +83,7 @@
 .button-text {
   height: auto;
   padding: 0;
-  color: var(--teal);
+  color: var(--teal-text);
 }
 
 .buttonIcon {
@@ -119,7 +119,7 @@
 
 .faqQ::after {
   content: "+";
-  color: var(--teal);
+  color: var(--teal-text);
   font-weight: 400;
   transition: transform var(--dur-base) var(--ease-out);
 }

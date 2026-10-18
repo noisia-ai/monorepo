@@ -43,7 +43,7 @@
 
 .navLink:hover,
 .navLink[aria-current="page"] {
-  color: var(--teal);
+  color: var(--teal-text);
 }
 
 .end {
