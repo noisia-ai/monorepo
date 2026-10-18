@@ -16,6 +16,7 @@ test('uncertain exposure requires confirmation only when returning from H1 to st
  assert.equal(parseMembershipConfiguration({...value,unknown_calls:-1}),null);
  assert.equal(parseMembershipConfiguration({...value,reserved_exposure_micro_usd:'unknown'}),null);
  assert.deepEqual(parseMembershipConfiguration(value),value);
+ assert.equal(parseMembershipConfiguration({...value,released_calls:-1}),null);
 });
 for(const locale of ['es-MX','en-US'] as const)test(`${locale}: save is disabled without permission or acknowledgement; assisted correction is clearly attributed`,async()=>{
  const messages=JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`,import.meta.url),'utf8'));
@@ -24,6 +25,9 @@ for(const locale of ['es-MX','en-US'] as const)test(`${locale}: save is disabled
  assert.match(render(),/disabled=""[^>]*>[^<]*(?:Guardar método|Save method)/);
  assert.doesNotMatch(render(value,true),/disabled=""[^>]*>[^<]*(?:Guardar método|Save method)/);
  assert.match(render({...value,can_configure:false},true),/disabled=""[^>]*>[^<]*(?:Guardar método|Save method)/);
+ const released=render({...value,released_calls:3} as MembershipConfiguration,true);
+ assert.ok(released.includes(messages.Mfp.configuration.released.split('{count}')[0]),
+  'released uncertain calls and their retained exposure remain visible');
  const evidence=wrapper(createElement(MfpEvidence,{mentionHref:'/mentions',item:{root_id:'r',concept_key:'c',definition_digest:'d',verdict:'belongs',citations:[],rationale:'original rationale',source:'human',decided_via:'agent_assisted',text:'Original',title:null,url:null,platform:null}}));
  assert.ok(evidence.includes(messages.Mfp.decisionOrigin.agent_assisted));assert.ok(evidence.includes('original rationale'));
  assert.ok(!evidence.includes(messages.Mfp.decisionOrigin.human_ui));

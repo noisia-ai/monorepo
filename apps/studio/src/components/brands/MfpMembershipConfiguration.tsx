@@ -13,6 +13,7 @@ export function MfpMembershipConfigurationView({value,route,busy,confirmed,error
    <label>{t('route')}<select value={route} disabled={busy||!value.can_configure} onChange={e=>onRoute(e.target.value as MembershipRoute)}>
     <option value="standard">{t('standard')}</option><option value="hybrid_h1">{t('hybrid_h1')}</option></select></label>
    <p>{t('exposure',{count:value.unknown_calls,cost:mfpMoney(value.reserved_exposure_micro_usd,locale)})}</p>
+   {(value.released_calls??0)>0?<p role="status">{t('released',{count:value.released_calls!,pairs:value.released_pairs??0,cost:mfpMoney(value.released_exposure_micro_usd??'0',locale)})}</p>:null}
    {confirmation?<label><input type="checkbox" checked={confirmed} disabled={busy} onChange={e=>onConfirm(e.target.checked)}/>{t('confirm')}</label>:null}
    {!value.can_configure?<p role="status">{t('readOnly')}</p>:null}
    <button className="admin-button" type="button" disabled={busy||!value.can_configure||route===value.route||Boolean(confirmation&&!confirmed)} onClick={onSave}>{t('save')}</button>
