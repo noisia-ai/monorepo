@@ -1270,4 +1270,5 @@ export * from "./signal-hybrid-membership-v1";
 export * from "./signal-literal-spans-v1";
 
 export * from "./signal-hybrid-citation-quality-v1";
+export * from './signal-concept-membership-v2';
 export * from "./signal-hybrid-windows-v1";
