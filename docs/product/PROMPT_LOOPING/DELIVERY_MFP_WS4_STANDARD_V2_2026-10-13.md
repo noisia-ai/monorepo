@@ -19,3 +19,7 @@
 | Reporte privado | `d883cd569a35d177c4ca7091c1b76d5f99487b774290b356572b5eadc9e0a693` |
 
 ZIP privado: `/Users/brandhon_o/.config/noisia/mfp/standard-v2-r11/auditor-sealed-baseline-v2.zip`; manifiesto incluye counts positive60/disagreement60, sampling_version sealed-baseline-v2 y huella del corpus. Copia idéntica de los tres JSON en checkout principal `.data/dev-corpus/voyage-real/standard-v2-r11/blind/`, modo directorio0700/archivos0600. Trace/evidencia permanecen separados. [PR draft #59](https://github.com/noisia-ai/monorepo/pull/59) hacia `develop`. Código: Codex gpt-6-sol/medium (fallback por dos fallos de capacidad del modelo anterior); sin agentes adicionales ni Astra. El auditor decide según §16.4; ninguna selección/default/serving se modificó.
+
+## Revisión 12 — guardas previas a fusión (18 de octubre)
+
+La construcción falla cerrada si el prompt heredado no aparece exactamente una vez. La prueba compara el sistema completo y comprueba ausencia/duplicación. El esfuerzo (`low`/`medium`) es parámetro de la identidad, se valida y llega al proveedor; el default histórico de v2 sigue `low` y no cambia su digest. Se conserva v1, no hay selección de v2 ni llamadas nuevas. Prueba focal: 7/7 PASS; la aceptación se escribió primero y falló por export inexistente. CI y PostgreSQL se verifican antes de fusionar. Modelo configurado: gpt-6.1-sol/high. Coste de proveedores: USD0.

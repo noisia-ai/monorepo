@@ -214,7 +214,7 @@ export async function requestConceptMembershipsV1(args: {
   const evaluation = args.evaluation_judge_version === 2;
   if (evaluation && (!args.evaluation_root_ids?.length || new Set(args.evaluation_root_ids).size !== args.evaluation_root_ids.length))
     fail("membership_evaluation_population_invalid");
-  const identity = evaluation ? membershipLabelerIdentityV2() : membershipLabelerIdentityV1(args.evaluation_effort);
+  const identity = evaluation ? membershipLabelerIdentityV2(args.evaluation_effort) : membershipLabelerIdentityV1(args.evaluation_effort);
   const previewConcept = args.concept
     ? conceptForJudgeSchemaV1.parse({
         ...args.concept,
