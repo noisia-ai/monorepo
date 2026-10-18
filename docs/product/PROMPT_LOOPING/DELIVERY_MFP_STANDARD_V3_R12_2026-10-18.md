@@ -1,15 +1,25 @@
 # Juez estándar v3 — revisión 12
 
-**Estado:** medium medido; low pendiente de ventana exclusiva y saldo fresco. Experimento sin fusionar ni adoptar. La ruta vigente sigue estándar v1. Auditor revisará la calidad ciega.
+**Estado:** ambos brazos medidos; revisión ciega pendiente del auditor. **Ninguno se adopta:** ambos pierden más de dos positivos verdaderos del gold. #66 sigue draft; default estándar v1 y serving intactos.
 
-**Cambio.** AUDIT §§17.5–17.7: identidades distintas por esfuerzo; contexto propio incluye título, entidades y voz; salvaguardas de v1 restauradas. Respuestas oficiales concretas son elegibles; afiliados y patrocinados quedan fuera, salvo experiencias personales de promociones usadas. Cobros v5 distingue cashback de devolver un cobro ocurrido. Se instaló mediante funciones de producto, SHA-256 `c6784f2bd53cedb9ea5436b95e84e4c547abba4360dc3374a4827c0d3aaa8817`, con replay sin revisiones adicionales y catálogo ajeno intacto.
+**Contrato y aceptación.** AUDIT §§17.5–17.7: identidades low/medium nuevas, contexto propio ampliado, salvaguardas restauradas, promociones y cashback conforme al fundador. Cobros v5 instalado por funciones de producto con SHA `c6784f2b…aaa8817`, replay y catálogo ajeno intactos. PostgreSQL real verificó admisión, preview, rollback y las mismas **1,086 raíces / 2,757 pares por brazo**, hash `957de70e…0cb2eea`, partición fija y selectores/contextos sin cambios. Seis pruebas focales PASS; código validado por CI486/PG221 y CI525/PG260. Source experimental aislado; runtime compartido sin reemplazo.
 
-**Aceptación.** CI486/PG221 verdes para el código; seis pruebas focales remotas PASS. `install-concepts-v5.ts --acceptance` y `standard-v3-preflight.ts` pasaron contra PostgreSQL dev-test, con rollback, preview, identidad por esfuerzo, idempotencia y selectores/serving/contextos intactos. Se conservaron las mismas 1,086 raíces, la partición fijada y el hash de inputs `957de70e…0cb2eea`. Source experimental aislado en el volumen; no se sustituyó el runtime compartido.
+| Brazo | Solicitudes / batches | USD observado | USD / 1,000 raíces | USD sin caché, revalorado | Gold TP dev / test |
+|---|---:|---:|---:|---:|---:|
+| low | 142 / 7 | 1.873591 | 1.725222 | 2.938157 | 24 / 22 |
+| medium | 138 / 4 | 2.201052 | 2.026751 | 2.917047 | 25 / 25 |
 
-**Medium real.** `standard-v3-run.ts --real --effort=medium`: 138 solicitudes en cuatro batches, todas liquidadas y aplicadas; cero llamadas inciertas, reserva pendiente o escritura a serving. Finalizó a las 18:13:08 UTC; 30 min 32 s desde el arranque del driver, más 14 min de espera previa tras admisión. Saldo Anthropic leído antes de empezar: USD29.32, con USD10 coordinados para otros carriles; no hubo compra de créditos. Estimación USD4.686782; observado **USD2.201052**, **USD2.026751 por 1,000 raíces**. Tokens: entrada 1,530,558; salida 41,999; lectura de caché 970,534; creación de caché 205,960. Compra y consumo se mantienen separados.
+**Consumo total: USD4.074643**, frente a USD9.373564 estimados. Lecturas de saldo antes de etapas: USD29.32, USD24.73 y USD22.91 al recuperar low; sin compras. La revaloración usa las tarifas existentes verificadas el 12 de octubre; no es gasto observado ni factura. El orden favoreció la caché de low: no se atribuye su menor consumo al esfuerzo.
 
-**Resultado verificable.** 2,757 pares: 265 `belongs`, 2,455 `not_belongs`, 19 `insufficient` y 18 errores técnicos. Los 138 raw pasaron SHA/tamaño y reparse idéntico. En gold: dev 25 positivos verdaderos frente a 27 de la actual; test 25 frente a 28: **−5 pares**, fuera de la regla de pérdida ≤2. Precisión ciega y pérdidas extrapoladas siguen pendientes; no se declara aprobación.
+Tokens entrada / salida / lectura caché / creación caché: low **1,532,829 / 39,038 / 1,166,547 / 43,591**; medium **1,530,558 / 41,999 / 970,534 / 205,960**.
 
-**Errores y siguiente corte.** Los 18 errores pertenecen a tres salidas inválidas reales: justificación de 38 palabras (7 pares), cuatro citas cuando se admiten tres (4), y concepto `x` no suministrado (7). No son abstenciones ni negativos; no se repararon inventando evidencia ni modificando el parser. Una recuperación exigiría ejecución posterior separada. Low espera saldo actual después de R10. Hay 200 positivos y 96 desacuerdos elegibles tras excluir los 120 casos revisados; los paquetes finales de 60 positivos y hasta 60 desacuerdos por brazo se sellarán juntos al cerrar los brazos. Raw, IDs, métricas por concepto/intervalos y recuperación permanecen privados bajo `.data/`.
+| Brazo | belongs | not_belongs | insufficient | error técnico |
+|---|---:|---:|---:|---:|
+| low | 240 | 2,492 | 18 | 7 |
+| medium | 265 | 2,455 | 19 | 18 |
 
-**Agente:** `mfp_critico`, configuración gpt-6.1-sol/high; backend efectivo y coste Codex sin telemetría independiente. Único proveedor nuevo en este corte: Claude Sonnet 5.5 medium, coste anterior registrado.
+**Calidad y recuperación.** La actual conserva 55 TP: low pierde nueve y medium cinco; falla la regla ≤2. No se declara precisión ciega. Los errores son salidas inválidas reales, no negativos: low, justificación de 34 palabras; medium, 38 palabras, cuatro citas o concepto no suministrado. No se alteraron prompt, identidad ni parser. Los 280 raw verifican SHA/tamaño y reparse idéntico. Low sufrió una excepción no tipada del driver: se recuperaron 49 respuestas ya emitidas desde raw capturado mediante aceptación PostgreSQL con rollback, liquidación/replay y cero POST; después se enviaron únicamente pendientes. El subtipo original no quedó acreditado. Quedaron cero reservas o llamadas inciertas y procesos terminados. Pared: medium 30m32s más 14m previos; low 74m42s, incluida recuperación operativa.
+
+**Entrega ciega.** 60 positivos y 60 desacuerdos por brazo, excluidos los 120 casos anteriores; 339 citas literales verificadas. ZIP privado en checkout principal, SHA `2d4b44d5…755414a`, sin clave. Traza, IDs, métricas por concepto/intervalos y recuperación quedan bajo `.data/`. Comparación contra v1 histórica con definiciones anteriores: no aísla causalmente el prompt. El auditor revisa; no se hicieron llamadas de revisión.
+
+**Agente:** `mfp_critico`, configuración gpt-6.1-sol/high; backend efectivo y coste Codex sin telemetría independiente.
