@@ -5,11 +5,11 @@ import pg from 'pg';
 import {createMigratedLabelingFixture} from '../../../scripts/dev-corpus/migrated-labeling-fixture';
 import {loadFacetEntityContextV1} from '../signal-mention-facets';
 import {replayStoredMembershipResultsV1} from '../signal-membership-stored-replay';
-import {entityContextDigestV1,membershipLabelerIdentityV1,parseMembershipGroupV1,normalizeMembershipRationaleV2,type MembershipInputV1} from '@noisia/query-engine';
+import {entityContextDigestV1,membershipLabelerIdentityV1,parseMembershipGroupV1,type MembershipInputV1} from '@noisia/query-engine';
 
 // Real PostgreSQL acceptance: one root's three decisions recover from the same paid raw;
 // the immutable receipt, valid decisions and all money remain unchanged, including replay.
-test('stored membership replay recovers all three decisions atomically without new settlement',{
+test('stored membership replay recovers a 37-word rationale and all three decisions without new settlement',{
  skip:process.env.NOISIA_MFP_PG_CI!=='true',timeout:60_000,
 },async()=>{
  const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==='false'?false:{rejectUnauthorized:false},max:1});
@@ -35,7 +35,7 @@ test('stored membership replay recovers all three decisions atomically without n
   await c.query('INSERT INTO signal_labeling_runs SELECT * FROM public.signal_labeling_runs WHERE id=$1',[f.runId]);
   await c.query("UPDATE signal_labeling_runs SET entity_context_digest=$1,status='completed',lease_until=NULL,membership_snapshot=$2",[digest,JSON.stringify({preview:false,concepts,sample_root_ids:null})]);
   for(const concept of concepts){await c.query('INSERT INTO signal_membership_concepts_v1(workspace_id,concept_key,topic) VALUES($1,$2,$3)',[f.workspaceId,concept.concept_key,JSON.stringify(concept)]);await c.query("INSERT INTO population VALUES($1,$2,$3,$4,$5,$6,$7,'error','machine')",[input.root_id,fingerprint,concept.concept_key,ld,digest,ld,ld]);}
-  const text=JSON.stringify({contract_version:'concept-membership-judge-v1',roots:{r0:{root_ordinal:0,memberships:concepts.slice(0,2).map((concept,i)=>({concept_key:concept.concept_key,verdict:'belongs',span_ids:['r0c0s0'],rationale:Array(33-i).fill('word').join(' ')}))}}});
+  const text=JSON.stringify({contract_version:'concept-membership-judge-v1',roots:{r0:{root_ordinal:0,memberships:concepts.slice(0,2).map((concept,i)=>({concept_key:concept.concept_key,verdict:'belongs',span_ids:['r0c0s0'],rationale:Array(i===0?37:32).fill('word').join(' ')}))}}});
   const errors=parseMembershipGroupV1(text,[input]).results;assert.equal(errors.length,3);assert.ok(errors.every(r=>r.verdict==='error'));
   const callId=randomUUID(),custom=`stored-${callId}`,raw=JSON.stringify({custom_id:custom,result:{type:'succeeded',message:{stop_reason:'end_turn',content:[{type:'text',text}],usage:{input_tokens:100,output_tokens:50}}}});
   await c.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,settled_micro_usd,budget_date,budget_timezone,results_applied,results,raw_sha256,raw_storage_key,raw_size_bytes)
@@ -75,8 +75,11 @@ test('stored membership replay recovers all three decisions atomically without n
   assert.deepEqual((await c.query('SELECT verdict FROM signal_workspace_concept_memberships_read_v1($1) ORDER BY concept_key',[f.workspaceId])).rows.map(r=>r.verdict),['error','error','error']);
   const result=await replayStoredMembershipResultsV1(args);assert.equal(result.replayed_pairs,3);assert.equal(result.provider_sends,0);assert.equal(result.additional_settlement_micro_usd,0);
   const rows=(await c.query('SELECT concept_key,verdict,citations,rationale FROM signal_concept_memberships WHERE root_id=$1 ORDER BY concept_key',[input.root_id])).rows;
-  const expected=parseMembershipGroupV1(normalizeMembershipRationaleV2(text).text,[input]).results.map(({concept_key,verdict,citations,rationale})=>({concept_key,verdict,citations,rationale})).sort((a,b)=>a.concept_key.localeCompare(b.concept_key));assert.deepEqual(rows,expected);
+  const bounded=JSON.parse(text);for(const member of bounded.roots.r0.memberships)member.rationale=Array(30).fill('word').join(' ')+'…';
+  const expected=parseMembershipGroupV1(JSON.stringify(bounded),[input]).results.map(({concept_key,verdict,citations,rationale})=>({concept_key,verdict,citations,rationale})).sort((a,b)=>a.concept_key.localeCompare(b.concept_key));assert.deepEqual(rows,expected);
+  assert.deepEqual(rows.map(row=>row.verdict),['belongs','not_belongs','belongs']);
   const recorded=(await c.query('SELECT results FROM signal_labeling_calls')).rows[0].results;assert.equal(recorded.filter((r:{normalizations?:unknown[]})=>r.normalizations?.length).length,2);
+  assert.deepEqual(recorded.filter((r:{normalizations?:unknown[]})=>r.normalizations?.length).map((r:{normalizations:Array<{before_words:number;after_words:number}>})=>[r.normalizations[0]!.before_words,r.normalizations[0]!.after_words]).sort((a:number[],b:number[])=>b[0]!-a[0]!),[[37,30],[32,30]]);
   assert.deepEqual((await c.query('SELECT concept_key,verdict,error_code FROM signal_workspace_concept_memberships_read_v1($1) ORDER BY concept_key',[f.workspaceId])).rows,expected.map(({concept_key,verdict})=>({concept_key,verdict,error_code:null})));
   assert.ok(recorded.every((r:{verdict:string;error_code?:string})=>r.verdict!=='error'&&!r.error_code));
   assert.equal((await replayStoredMembershipResultsV1(args)).replayed_pairs,0);assert.equal(await money(),before);assert.equal(await stable(),beforeStable);
