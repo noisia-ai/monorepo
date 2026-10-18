@@ -45,11 +45,8 @@ Los tiempos son límites clic→observación, salvo duración worker indicada. C
 | 26 | Esperar actualización automática | Resumen791/901 | TerminalPG02:54:54.333Z/UI02:55:50.478Z | Tabla y poblaciones dependientes siguieron obsoletas; fix local invalida GET, no intención pagada. Checkpoint histórico; actualización automática acreditada después en31 y45. |
 | 27 | Pulsar «Completar fichas pendientes» para recuperación focal | EstimaciónUSD0.4016;110raíces exactas;0válidas reenviadas | Worker83.427s; USD0 real | Autorizado una vez03:05:59.494Z; runc6a28ab8…:39callsfailed/110DNC;791válidas intactas. |
 | 28 | Esperar resultado automático | 791válidas/110errores; reserva activa0 | Terminal03:07:23.986Z; USD0 | No tercer intento. Cuerpo/códigoHTTP histórico no preservado. Checkpoint histórico; superado por el pin y replay gratuito del 18-oct. |
-
 | 29 | Pin Studio+Runner y 0268; reaplicar nueve respuestas almacenadas mediante escritor de producto | 800/901 semánticas;101errores | 18-oct 08:54:43Z; USD0 adicional | Las791 anteriores y ledger intactos; replay posterior sin efecto. Operación interna gratuita, no es un control UI self-service. |
 | 30 | Consultar Topics autenticado sobre pin nuevo | 800/901; cotización recuperación101 USD0.3483 | Lectura gratuita | No se pulsó en este checkpoint; ejecutada después en31 con saldo actual. |
-
-
 | 31 | «Completar fichas pendientes», tras saldo Claude USD32.54 | 101 pendientes →901/901 (831 labeled/70 abstained) | 15:44:52.777→15:55:51.361Z; 658.584s; USD0.391729 | 31 calls; las800 previas intactas, sin reenvío. |
 | 32 | «Analizar conversaciones», tras saldo Claude USD32.15 | QuoteUSD2.042448;527raíces/~61grupos estimados →23grupos reales/26tópicos técnicos incluidos3manuales | 15:56:37.213→16:05:04.720Z;507.507s;USD0.809574 | Un clic; no sustituye revisión editorial. |
 | 33 | «Calcular pertenencia completa», tras saldo Claude USD31.34 | QuoteUSD0.445842;54raíces×3conceptos=162pares | 16:06:43.680→16:24:44.626Z;1080.946s;USD0.336086 | 35calls/2batches;3errores de una raíz por rationale33/32palabras, reparados gratis en37. |
@@ -72,8 +69,6 @@ Los tiempos son límites clic→observación, salvo duración worker indicada. C
 | 50 | Esperar catálogo y segunda proyección automática | Catálogo36=33grupos+3manuales;9candidatos nuevos | Materializado17:37:57.620Z;proyección17:38:34.205→17:43:55.882Z;321.677s;USD0 | 1,101raíces/5,208fragmentos completos;sin nueva autorización/proveedor. |
 | 51 | Revisar evidencia y «Adoptar concepto» únicamente en Mercado de renta, ámbito Categoría | 4conceptos;digest nuevo;no selección automática | ConfirmadoUIyPG17:46:15Z;USD0 | 11/11citas de dos propuestas exactas/SHA;se elige propuesta sectorial coherente,otra conCSR/patrocinio se pospone. |
 | 52 | Consultar estimación del delta de pertenencia | 578pares=33delta previos+545concepto nuevo;quoteUSD2.816596 | DTOproductoREADONLY17:47:02Z;USD0 | Route estándar,stale0;sin autorizar aún mientras termina juez aislado;requiere nuevo saldo. |
-
-
 | 53 | Saldo Claude USD27.12, cotización global y «Calcular pertenencia completa» una vez | 578pares pendientes en4conceptos;quoteUSD2.816596;147vigentes no reenviados | 18:15:39.780→18:33:54.060Z;1094.280s;USD2.393363 | 185calls/2Batches;547raíces;0fuera de selección;1error técnico de presentación. |
 | 54 | Pin pareado del arreglo tras run terminal y CI/PG verdes | Studio+Runner0e84ddf6;fuentes40/38 y7vars cada uno | Verificado18:51:42Z;USD0 | AutodeployOFF/réplica1/HTTP200;R4/R8 y725pares/1101fichas/ledger pre-post idénticos;0268canónico. |
 | 55 | «Recuperar respuestas guardadas · sin costo» una vez | 1schemaerror→belongs;37→30palabras;2citas intactas | Verificado18:52:21Z;USD0 | 725pares=259belongs/454not_belongs/12insufficient;0error/0pending;185calls/USD2.393363 sin cambio;repeticiónPGno-op. |
