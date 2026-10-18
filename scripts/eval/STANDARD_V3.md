@@ -10,3 +10,5 @@ Experimento sin selección ni serving. Estándar vigente conserva su default. S�
 6. `standard-v3-report.ts` verifica raw por SHA/size, reutiliza el parser de citas y métricas existentes y sella paquetes nuevos. Excluye los 120 casos de revisión11; los desacuerdos con error técnico se reportan aparte y no se convierten en negativos semánticos. La traza de brazo/ruta queda privada; el auditor recibe positivos y opciones con citas normalizadas.
 
 Reentrada: conservar manifiestos, idempotency keys y raw. Si hay run activo o llamada desconocida, no reiniciar ni duplicar envíos; conciliar en la misma ejecución antes de continuar. No ejecutar este driver desde la Mac contra PostgreSQL remoto. No fusionar ni adoptar v3 antes de revisión del auditor/fundador.
+
+The sealed auditor packet contains 60 fresh positive cases per completed arm and at most 60 disagreements **total**, split equally between arms and stratified by concept prevalence. During a reseal, use `--preserve-positives-from=<previous positives.json>` to require byte-identical positives; preserve the superseded package separately. The R12 v2 packet replaces the earlier 240-case package.

@@ -7,7 +7,7 @@ import {main,openDatabase} from '../dev-corpus/guard.mjs';
 import {loadMfpEvalIdentity} from './fixture-identity';
 import {indexStandardBaselineV2} from './standard-v2-baseline';
 import {normalizeCitationsV2,blindDisagreementV2} from './standard-v2-blind';
-import {reviewedPairExclusionV3,selectFreshPrevalenceSampleV3} from './standard-v3-blind';
+import {reviewedPairExclusionV3,selectFreshPrevalenceSampleV3,selectFreshDisagreementsV3} from './standard-v3-blind';
 import {replayStandardV2Raw} from './standard-v2-raw-audit';
 import {binary,wilson} from './metrics';
 import {validateGold,validateSelection,type Gold,type Selection} from './contract';
@@ -27,8 +27,9 @@ void main(async()=>{
   const selection=JSON.parse(await readFile('.data/dev-corpus/voyage-real/gold-selection.json','utf8')) as Selection;validateSelection(selection);
   const gold=(await readFile('.data/dev-corpus/voyage-real/gold.jsonl','utf8')).trim().split('\n').map(line=>JSON.parse(line)) as Gold[];validateGold(gold,selection);
   const positives:any[]=[],disagreements:any[]=[],trace:any[]=[];const arms:any[]=[];
-  for(const effort of ['low','medium'] as const){
-   let manifest:any;try{manifest=JSON.parse(await readFile(`${directory}/run-${effort}.json`,'utf8'));}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
+  const manifests=await Promise.all((['low','medium'] as const).map(async effort=>{try{return {effort,manifest:JSON.parse(await readFile(`${directory}/run-${effort}.json`,'utf8'))};}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return null;throw error;}}));
+  const available=manifests.filter(item=>item!==null);
+  for(const {effort,manifest} of available){
    assert.equal(manifest.root_input_sha256,baseline.root_input_sha256);
    const run=(await pool.query(`SELECT r.*,l.identity,l.labeler_digest,ce.context FROM signal_labeling_runs r JOIN signal_labeler_versions l ON l.id=r.labeler_version_id JOIN signal_entity_context_versions ce ON ce.workspace_id=r.workspace_id AND ce.version_no=r.entity_context_version_no WHERE r.id=$1 AND r.workspace_id=$2`,[manifest.run_id,identity.workspace_id])).rows[0];
    assert.equal(run.status,'completed');assert.equal(run.identity.params.standard_judge_version,3);assert.equal(run.membership_snapshot.preview,true);assert.equal(run.identity.params.effort,effort);
@@ -44,7 +45,7 @@ void main(async()=>{
    const sample=selectFreshPrevalenceSampleV3(population,excluded,seed,60);
    const changed=[...predictions.values()].filter(r=>semantic.has(r.verdict)&&semantic.has(current.get(key(r))?.verdict)&&r.verdict!==current.get(key(r))?.verdict&&!excluded.has(key(r)));
    const technical=[...predictions.values()].filter(r=>!semantic.has(r.verdict));
-   const changedSample=changed.length>60?selectFreshPrevalenceSampleV3(changed,excluded,seed+':disagreements',60):changed.sort((a,b)=>hash(seed+key(a)).localeCompare(hash(seed+key(b))));
+   const changedSample=selectFreshDisagreementsV3(changed,excluded,seed+':disagreements',available.length);
    for(const row of sample){const id=hash(seed+':positive:'+key(row));positives.push({_sort:id,concept:definition(row.concept_key),mention:mention(row),entity_context:run.context,citations:normalize(row).citations});trace.push({private_id:id,kind:'positive',effort,root_id:row.root_id,concept_key:row.concept_key,call_id:row.call_id});}
    for(const row of changedSample){const id=hash(seed+':disagreement:'+key(row)),options=blindDisagreementV2(key(row),seed,[normalize(current.get(key(row))),normalize(row)]);disagreements.push({_sort:id,concept:definition(row.concept_key),mention:mention(row),entity_context:run.context,options:options.options});trace.push({private_id:id,kind:'disagreement',effort,root_id:row.root_id,concept_key:row.concept_key,version_order:options.version_order});}
    const scores=['dev','test'].map(partition=>({partition,concepts:concepts.map((concept:any)=>{
@@ -68,6 +69,9 @@ void main(async()=>{
    const items=rows.sort((a,b)=>a._sort.localeCompare(b._sort)).map(({_sort,...row},i)=>{const sample_id=`${kind==='positives'?'P':'D'}${String(i+1).padStart(3,'0')}`;trace.find(t=>t.private_id===_sort)!.sample_id=sample_id;return {sample_id,...row};});
    files[kind]=JSON.stringify({contract_version:'mfp-blind-semantic-review-v4',rubric,items},null,2)+'\n';
   }
+  assert.ok(disagreements.length<=60,'AUDIT §17.5.6 caps disagreements across all arms');
+  const preserve=process.argv.find(arg=>arg.startsWith('--preserve-positives-from='))?.split('=').slice(1).join('=');
+  if(preserve)assert.equal(files.positives,await readFile(preserve,'utf8'),'already sealed 120 positive cases must remain byte-identical');
   files.trace=JSON.stringify({excluded_previous_trace_sha256:hash(previousBytes),excluded_previous_items:120,excluded_unique_pairs:excluded.size,items:trace,arms:arms.map(a=>({effort:a.effort,labeler_digest:a.labeler_digest})),normalization:'Shared quote/start/end fields, literal same-root complete sentences, overlaps merged.'},null,2)+'\n';
   for(const [name,payload]of Object.entries(files))await writeFile(`${directory}/blind/${name}.json`,payload,{flag:'wx',mode:0o600});
   const sealed={counts:{positives:positives.length,disagreements:disagreements.length},sha256:Object.fromEntries(Object.entries(files).map(([name,payload])=>[name,hash(payload)])),excluded_previous_items:120,root_input_sha256:baseline.root_input_sha256};
