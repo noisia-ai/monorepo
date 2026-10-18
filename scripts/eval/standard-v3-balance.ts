@@ -6,3 +6,8 @@ export function currentStageBalanceV3(balance:{source:string;available_micro_usd
  if(available<estimate)throw new Error('mfp_v3_credit_insufficient_before_stage');
  return available;
 }
+
+/** Corpus/model text is untrusted data, never a provider billing signal. */
+export function batchCreditInsufficientV3(resultType:string,rawText:string){
+ return resultType==='errored'&&/credit[_ ]balance|insufficient[_ ]credit/i.test(rawText);
+}

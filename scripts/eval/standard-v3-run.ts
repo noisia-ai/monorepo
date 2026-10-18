@@ -8,7 +8,7 @@ import {loadMfpEvalIdentity} from './fixture-identity';
 import {requestConceptMembershipsV1} from '../../infrastructure/db/signal-concept-memberships';
 import {createConceptMembershipRuntimeStoreV1,runConceptMembershipTickV1} from '../../services/workers/src/workers/signal-concept-membership-batch';
 import {createAnthropicMessageBatchesClient,AnthropicBatchTransportError,anthropicBatchErrorReceipt} from '../../services/workers/src/providers/anthropic-message-batches';
-import {currentStageBalanceV3} from './standard-v3-balance';
+import {currentStageBalanceV3,batchCreditInsufficientV3} from './standard-v3-balance';
 const directory='.data/dev-corpus/voyage-real/standard-v3-r12';
 void main(async()=>{
  const effort=process.argv.find(a=>a.startsWith('--effort='))?.slice(9);
@@ -32,7 +32,7 @@ void main(async()=>{
   const provider={...transport,create:async(requests:Parameters<typeof transport.create>[0])=>{
    const cost=await ledger();if(creditRejected||Number(cost.settled_micro_usd)+Number(cost.held_micro_usd)>available)throw new AnthropicBatchTransportError('mfp_v3_credit_guard','not_submitted');
    try{return await transport.create(requests);}catch(error){if(error instanceof AnthropicBatchTransportError&&/credit[_ ]balance|insufficient[_ ]credit/i.test(anthropicBatchErrorReceipt(error)?.raw_body??''))creditRejected=true;throw error;}
-  },results:async function*(batch:Parameters<typeof transport.results>[0]){for await(const item of transport.results(batch)){if(/credit[_ ]balance|insufficient[_ ]credit/i.test(item.rawText))creditRejected=true;yield item;}}};
+  },results:async function*(batch:Parameters<typeof transport.results>[0]){for await(const item of transport.results(batch)){if(batchCreditInsufficientV3(item.item.result.type,item.rawText))creditRejected=true;yield item;}}};
   const manifest={...receipt,effort,root_input_sha256:baseline.root_input_sha256,definitions_sha256:installed.input_sha256,balance_observed_at:balance.observed_at,balance_available_micro_usd:balance.available_micro_usd,reserved_for_other_lanes_micro_usd:reserve,budget_kind:'orientative',default_changed:false};
   await writeFile(`${directory}/run-${effort}.json`,JSON.stringify(manifest,null,2)+'\n',{mode:0o600});
   for(;;){
