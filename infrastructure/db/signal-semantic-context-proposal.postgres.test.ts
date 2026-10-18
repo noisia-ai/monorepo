@@ -36,13 +36,13 @@ const digest = (value: string) => `sha256:${createHash("sha256").update(value).d
 const runtime = { queue_configured: true, worker_alive: true, recovery_alive: true };
 type Mutable<T> = { -readonly [Key in keyof T]: T[Key] extends object ? Mutable<T[Key]> : T[Key] };
 type MutableProviderLineage = Mutable<SignalSemanticContextProviderLineageV1>;
-const configuration: SignalSemanticContextProposalRuntimeConfigurationV1 = {
+const configuration = {
   available: true, provider: "anthropic", model: "fixture-model", model_version: "immutable-fixture-v1",
   pricing_version: "fixture-pricing-v1", max_input_tokens: 20_000, max_output_tokens: 64_000,
   model_max_output_tokens: 64_000,
   input_usd_per_million_tokens: "3", output_usd_per_million_tokens: "15",
   platform_hard_cap_micro_usd: 1_000_000n
-};
+} satisfies SignalSemanticContextProposalRuntimeConfigurationV1;
 
 test("0092/0105 runs one bounded call, creates a ready editable draft, and recovers fail-closed", {
   skip: !DB_URL || !APPROVED, timeout: 240_000

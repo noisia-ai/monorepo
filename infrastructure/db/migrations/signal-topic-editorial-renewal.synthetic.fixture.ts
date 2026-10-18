@@ -84,6 +84,7 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
           creation_request_digest: digest({ contract_version: "synthetic-interest-review-base-intake-v1", brand_id, intake: args.intake }) })]);
       await refreshSnapshot({ ...args, brand_id, title: "Synthetic base identity", raw_text: "" });
       const config = runtime.semantic;
+      assert.ok(config.platform_hard_cap_micro_usd !== null, "this historical capped fixture requires an explicit maximum");
       const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
         brand_id, initiator_user_id: args.actor_user_id, env: {
           NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID: args.actor_user_id,

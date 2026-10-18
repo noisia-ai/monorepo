@@ -2,9 +2,9 @@
 -- NULL is no configured strict maximum; token-derived reservation remains mandatory.
 -- No policy, workspace feature, provider call, owner or serving row is changed here.
 ALTER TABLE signal_processing_policy_actions DROP CONSTRAINT processing_nullable_action_cap;
-ALTER TABLE signal_processing_policy_actions ADD CONSTRAINT processing_nullable_action_cap CHECK(max_execution_micro_usd IS NOT NULL OR action IN('mention_facets','concept_membership','corpus_embeddings','topic_interpretation','brand_context_proposal','topic_prototype_embeddings'));
+ALTER TABLE signal_processing_policy_actions ADD CONSTRAINT processing_nullable_action_cap CHECK(max_execution_micro_usd IS NOT NULL OR action IN('mention_facets','concept_membership','corpus_embeddings','topic_interpretation','topic_consolidation','concept_membership_jev','concept_membership_claude','brand_context_proposal','topic_prototype_embeddings'));
 ALTER TABLE signal_processing_admissions DROP CONSTRAINT processing_nullable_admission_cap;
-ALTER TABLE signal_processing_admissions ADD CONSTRAINT processing_nullable_admission_cap CHECK(execution_cap_micro_usd IS NOT NULL OR action IN('mention_facets','concept_membership','corpus_embeddings','topic_interpretation','brand_context_proposal','topic_prototype_embeddings'));
+ALTER TABLE signal_processing_admissions ADD CONSTRAINT processing_nullable_admission_cap CHECK(execution_cap_micro_usd IS NOT NULL OR action IN('mention_facets','concept_membership','corpus_embeddings','topic_interpretation','topic_consolidation','concept_membership_jev','concept_membership_claude','brand_context_proposal','topic_prototype_embeddings'));
 ALTER TABLE signal_brand_context_processing_receipts ALTER COLUMN semantic_cap_micro_usd DROP NOT NULL;
 ALTER TABLE signal_brand_context_processing_receipts ALTER COLUMN prototype_cap_micro_usd DROP NOT NULL;
 ALTER TABLE signal_brand_context_prototype_receipts ALTER COLUMN execution_cap_micro_usd DROP NOT NULL;
