@@ -1,15 +1,15 @@
-# Lista factual R10 · §15.1 · checkpoint en fichas
+# Lista factual R10 · §15.1 · Signal inicial y delta en curso
 
-Esta lista alimenta al auditor; `QA_FUNDADOR_MFP.md` permanece intacta. **No es todavía un recorrido integral acreditado.** Alta, Brand OS, intereses, load1, preparación y vectores ocurrieron por UI; fichas conserva 800 estados semánticos y101 errores tras recuperar nueve respuestas ya pagadas. Descubrimiento, pertenencia, editorial, Signal inicial y load2 no se han ejecutado. No usar los resultados R4/R8 para completar números de R10.
+Esta lista alimenta al auditor; `QA_FUNDADOR_MFP.md` permanece intacta. **Corte 18-oct 17:17 UTC: Signal inicial acreditado, delta en ejecución; no es aún un recorrido integral cerrado.** Las filas 1–30 son historia fechada; las posteriores documentan la continuación real. Load1 tiene 901 fichas semánticas, tres intereses seleccionados y una corrección inmediata en Signal. Load2 ya se importó y terminó vectores; sus 201 fichas pendientes siguen vivas. No se usan datos de R4/R8 para completar R10.
 
 ## Destino y custodia
 
-- Build fijada `c0db93c243b4b6e6af63f2368dfc7dafe497636c`; Studio y Runner SUCCESS, 30 hashes runtime y siete variables privadas verificados en ambos; una réplica, autodeploy OFF y salud HTTP200. El fundador eligió opción B: una sola QA final con R10 completa. Respaldo anterior preservado; no redeploy durante import activo del estudio.
+- Build fijada `5cfbd2d485643f19037d73a9b828b759a753a4f4`; Studio y Runner SUCCESS, 38 hashes comunes más dos catálogos de idioma en Studio y siete variables privadas verificados en ambos; una réplica, autodeploy OFF y salud HTTP200. El fundador eligió opción B: una sola QA final con R10 completa. Respaldo anterior preservado; no redeploy durante import activo del estudio.
 - Marca «Marca QA MFP Oct11 R10»; brand `20c7d12a-57fd-49d9-a97b-7b19bf5f2d8f`, workspace `b466a888-c3f6-4b53-babe-e076be9e82d1`, slug `mfp-qa-r10-20261011`.
-- URL Topics: https://mfp-studio-dev-test.up.railway.app/studio/brands/20c7d12a-57fd-49d9-a97b-7b19bf5f2d8f/topics. Signal propio: `/signal/mfp-qa-r10-20261011/topics-narratives`; aún no servido por este recorrido.
+- URL Topics: https://mfp-studio-dev-test.up.railway.app/studio/brands/20c7d12a-57fd-49d9-a97b-7b19bf5f2d8f/topics. Signal propio: `/signal/mfp-qa-r10-20261011/topics-narratives`; servido con los tres intereses manuales y sus pertenencias vigentes.
 - CSV: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/r10/load1.csv` y `load2.csv`; 47 columnas/1,000 y250 filas. Load1 SHA256 `4773f7ff553419422163d89c688cfa86227736844f4c9d5e02d0de3a4fb41d86`; load2 `8817c1fa4a055a807198582f449265d01a38821f6b1b2ecf0fb0e93cf2c213ea`.
 - Muestra QA limpia: excluye344 IDs/1,230 filas contradictorias. Manifest privado enumera todos los IDs/filas/motivos y hashes originales/nuevos, SHA256 `86cfde3bda7aa9fa9f4c1eea3fd52b60009d7a2f7db80031436f186e61881c0f`. No representa la fuente íntegra; originales preservados, sin reconciliar durante importación.
-- Fuente «SentiOne QA MFP R10», Primary brand, cobertura 2026-01-01→2026-08-23, America/Mexico_City. Revisión IDs OFF en load1; load2 queda reservado y sólo se importará después de Signal inicial, con revisión ON.
+- Fuente «SentiOne QA MFP R10», Primary brand, cobertura 2026-01-01→2026-08-23, America/Mexico_City. Revisión IDs OFF en load1; load2 se importó una sola vez después de Signal inicial, con revisión ON.
 
 ## Acciones observadas, una por fila
 
@@ -49,9 +49,26 @@ Los tiempos son límites clic→observación, salvo duración worker indicada. C
 | 29 | Pin Studio+Runner y 0268; reaplicar nueve respuestas almacenadas mediante escritor de producto | 800/901 semánticas;101errores | 18-oct 08:54:43Z; USD0 adicional | Las791 anteriores y ledger intactos; replay posterior sin efecto. Operación interna gratuita, no es un control UI self-service. |
 | 30 | Consultar Topics autenticado sobre pin nuevo | 800/901; cotización recuperación101 USD0.3483 | Lectura gratuita | No se pulsó recuperación; requiere saldo actual. |
 
-Estado visible al último refresco ya ejecutado:472 relevantes/254ajenas/152indeterminadas/23spam =901. Son poblaciones completas de la tabla incluyendo errores, **no** 901 fichas válidas. No sustituirlo por el censo real748labeled/52abstained ni por un denominador de análisis todavía inexistente.
 
-Censo gratuito previo/post al pin integrado de las 10:43:39Z: 748 labeled + 52 abstained + 101 error. Los hashes de las 800 labels y las 101 raíces pendientes permanecen iguales; ledger247 calls settled/USD2.838194 y70 failed sin cambio. USD2.970354 incluye además USD0.132160 de vectores; no son cifras comparables de una misma etapa. 0269 ya constaba aplicada por su carril separado; no se repitió ni se llamó proveedor durante este despliegue.
+| 31 | «Completar fichas pendientes», tras saldo Claude USD32.54 | 101 pendientes →901/901 (831 labeled/70 abstained) | 15:44:52.777→15:55:51.361Z; 658.584s; USD0.391729 | 31 calls; las800 previas intactas, sin reenvío. |
+| 32 | «Analizar conversaciones», tras saldo Claude USD32.15 | QuoteUSD2.042448;527raíces/~61grupos estimados →23grupos reales/26tópicos técnicos incluidos3manuales | 15:56:37.213→16:05:04.720Z;507.507s;USD0.809574 | Un clic; no sustituye revisión editorial. |
+| 33 | «Calcular pertenencia completa», tras saldo Claude USD31.34 | QuoteUSD0.445842;54raíces×3conceptos=162pares | 16:06:43.680→16:24:44.626Z;1080.946s;USD0.336086 | 35calls/2batches;3errores de una raíz por rationale33/32palabras, reparados gratis en37. |
+| 34 | «Preparar revisión de Topics» | 23/23dossiers | 16:14:40.593→16:14:46.203Z;5.610s;USD0 | Gratis, en paralelo a33; no autorización editorial. |
+| 35 | Cotizar, marcar confirmación y «Iniciar revisión editorial», tras saldo Claude USD31.00 | QuoteUSD1.347187/23grupos | 16:33:41.525→16:39:54.835Z;373.310s;USD0.304142 | 23screening+1shard global. Screening17Noise/6insuficientes; finalglobal16Noise/7insuficientes,0conceptos y0errores. No hay adopción inventada. |
+| 36 | Pin manual Studio+Runner del fix de recuperación | `5cfbd2d4`;38hashes comunes+2idiomas Studio;7variables;HTTP200 | Ambos SUCCESS verificados16:57Z;USD0 | CI521/PG256 verdes;backup/autodeployOFF;R4/R8 y901fichas intactos. |
+| 37 | «Recuperar respuestas guardadas · sin costo» | 3errores→2belongs+1not_belongs;162pares sin errores | Verificado16:59:33Z;USD0 | Un clic; botón desaparece al no quedar candidatos; mismo run/calls/ledger, no proveedor. Replay no-op probado en PG. |
+| 38 | Seleccionar «Mostrar este concepto en Signal» en los tres intereses | Atención12/Cobros6/Reserva12;3Topics;509relevantes sin concepto | Selección gratuita | Signal inicial, aún sin concepto descubierto adoptable. |
+| 39 | Filtro plataforma «Reviews» en Menciones | 901→73; desaparece «Actualizando…» | 14.061s observados;USD0 | Incluye latencia CUA; cumple<15s en este caso, no SLO general. |
+| 40 | Seleccionar sólo caso justificado y «Rechazar pertenencia» en Reserva | 12→11 resultados;Signal12/6/11 sin run nuevo | 3.668s observados;USD0 | PG17:07Z:override vigente/sourcehuman,0calls nuevos;ID/texto/cita sólo privados. |
+| 41 | Importar `load2.csv` una vez, revisión IDs ON | 250filas/47columnas;220incluidas/1excluida/29duplicadas;20revisiones | 17:07:43.720→17:07:49.173Z;5.453s;worker3.522s;USD0 | 250observaciones+250membresías de procedencia;1chunk/8queries/0fallback. |
+| 42 | Preparación automática de texto tras load2 | 1,101preparadas/18excluidas | Observación UI;USD0 | No nuevo clic manual de preparación. |
+| 43 | «Calcular costo» de vectores delta y comprobar saldo Voyage | USD0.496863;840chunks faltantes;4,063cached;4,133,529tokens cota | Cotización gratuita | Saldo fresco149,892,300tokens gratuitos cubre cota; no compra. |
+| 44 | «Crear vectores» una vez | 1,101/1,101;5,208refs/4,903asset-chunks | 17:11:13.964→17:11:31.563Z;17.599s;USD0.027357 | 840vectores nuevos/39calls;227,790tokens observados;0pending/reserva/unknown. |
+| 45 | Cotizar y «Completar fichas pendientes», tras saldo Claude USD30.70 | QuoteUSD0.823287;201pendientes=181nuevas+20revisadas;900vigentes | En ejecución desde17:15:02.421Z | Un clic.76calls/201raíces en1Batch;0inputs fuera del conjunto pendiente.900vigentes y901labels almacenadas conservan sus hashes. Gasto final pendiente. |
+
+Estado histórico antes de la recuperación101:472 relevantes/254ajenas/152indeterminadas/23spam =901. Son poblaciones completas de la tabla incluyendo errores, **no** 901 fichas válidas. No sustituirlo por el censo real748labeled/52abstained ni por un denominador de análisis todavía inexistente.
+
+Censo histórico previo/post al pin integrado de las 10:43:39Z: 748 labeled + 52 abstained + 101 error. Los hashes de las 800 labels y las 101 raíces pendientes permanecen iguales; ledger247 calls settled/USD2.838194 y70 failed sin cambio. USD2.970354 incluye además USD0.132160 de vectores; no son cifras comparables de una misma etapa. 0269 ya constaba aplicada por su carril separado; no se repitió ni se llamó proveedor durante este despliegue.
 
 ## Tabla completa de controles y dinero
 
@@ -62,23 +79,23 @@ Las estimaciones preceden al proveedor; son orientativas. Reserva temporal y gas
 | «Preparar texto» | Preparación gratuita, sin proveedor | Clic; sin casilla pagada | Ejecutado:USD0. |
 | «Calcular costo» | Cotiza vectores/fragmentos reutilizables | Lectura gratuita | Ejecutado:USD1.814885. |
 | «Crear vectores · estimación …» | Importe estimado dentro del botón; máximo sólo si configurado | Clic; sin casilla específica | Ejecutado:USD0.132160 real. |
-| «Completar fichas pendientes» | «Estimación de la próxima ejecución», reserva temporal y máximo separados | Clic; sin casilla específica | Dos admisiones registradas arriba; no repetir ahora. |
+| «Completar fichas pendientes» | «Estimación de la próxima ejecución», reserva temporal y máximo separados | Clic; sin casilla específica | Load1 y recuperaciones registradas arriba; delta201 en curso, no repetir. |
 | «Recalcular ficha completa» | «Estimación del recálculo completo» | Clic; si cambia CE puede exigir confirmación ulterior | Sin ejecutar R10; no usar para recuperar101. |
 | «Confirmar recálculo completo» | Recálculo pendiente y estimación completa vinculados al contexto actual | Clic de segunda confirmación, mismo run | Sólo aparece si el run requiere confirmación; sin ejecutar R10. |
-| «Analizar conversaciones» | Interpretación orientativa por menciones/grupos; no incluye consolidación ni fija límite | Clic; sin casilla editorial en este inicio | Descubrimiento aún sin ejecutar R10; esperar fichas completas. |
+| «Analizar conversaciones» | Interpretación orientativa por menciones/grupos; no incluye consolidación ni fija límite | Clic; sin casilla editorial en este inicio | Ejecutado:USD0.809574;527raíces/23grupos. |
 | «Probar definición · 30 raíces» | «Estimación de prueba · 30 raíces» | Clic; sin casilla específica | Sin ejecutar R10; prueba no publica pertenencias ni cambia Signal. |
-| «Calcular pertenencia completa» | «Estimación de la próxima ejecución», relevante/pendiente y reserva separados | Clic; sin casilla específica | Sin ejecutar R10; definición debe estar guardada. |
-| «Ver estimación editorial» | Quote, importe/grupos y vencimiento | Lectura gratuita | Sin ejecutar R10. |
-| «Autorizar revisión editorial» | Quote vigente | «Confirmo iniciar la revisión editorial pagada con esta estimación.» | Sin ejecutar R10; botón exige quote+casilla. |
+| «Calcular pertenencia completa» | «Estimación de la próxima ejecución», relevante/pendiente y reserva separados | Clic; sin casilla específica | Ejecutado:USD0.336086 para162pares;replay3 gratuito. |
+| «Ver estimación editorial» | Quote, importe/grupos y vencimiento | Lectura gratuita | Ejecutado:quoteUSD1.347187/23grupos. |
+| «Autorizar revisión editorial» | Quote vigente | «Confirmo iniciar la revisión editorial pagada con esta estimación.» | Ejecutado:USD0.304142;quote+casilla antes del único inicio. |
 | «Ver estimación de temas nuevos» | Quote sólo de unidades nuevas, importe/reserva/vencimiento | Lectura gratuita | Sin ejecutar R10; requiere load2 y delta después del primer Signal. |
 | «Autorizar e interpretar temas nuevos» | Quote vigente sólo de unidades pendientes | «Confirmo iniciar la interpretación pagada de los temas nuevos con esta estimación.» | Sin ejecutar R10; botón exige quote+casilla. |
-| «Guardar correcciones» / «Rechazar pertenencia» | Corrección gratuita, sin proveedor | Clic con selección concreta | R10 aún sin corrección; objetivoPATCH<5s y Signal inmediato pendientes de nueva build. |
-| «Mostrar este concepto en Signal» | Selección gratuita | Checkbox de selección; no casilla de gasto | R10 aún sin seleccionar; no llama proveedor. |
+| «Guardar correcciones» / «Rechazar pertenencia» | Corrección gratuita, sin proveedor | Clic con selección concreta | Ejecutado:3.668s ySignal inmediato sin otro run, caso justificado privado. |
+| «Mostrar este concepto en Signal» | Selección gratuita | Checkbox de selección; no casilla de gasto | Tres seleccionados;12/6/11asociaciones después de corregir;sin proveedor. |
 
-## Bloqueo externo y continuación no ejecutada
+## Conciliación y continuación
 
-Un create independiente en el workspace privado H1 confirmó HTTP400/not_submitted, error_type `invalid_request_error`, firma exacta `credit_balance_insufficient`, coste0. Es compatible con el rechazo R10, **no probado para los110DNC históricos**, cuyo body/status no se preservó. La QA-1 histórica quedó sustituida por opción B. El pin nuevo y las nueve respuestas gratuitas están aplicados; R10 espera una lectura actual del saldo Anthropic antes de recuperar101. No repetir las800 ni importar load2 antes de Signal inicial.
+CSV load2 original conserva 200 IDs nuevos/30 filas exactas/20 modificadas. De los200 nuevos, uno se excluye por `text_under_30_chars` y199 son elegibles. De las30 exactas,29 son duplicadas y una se instancia como canónica propia: su texto ya existía bajo otro providerID; `revise_existing` resuelve por identidad de fuente y no por text_hash. Resultado del recibo:220incluidas=199nuevas+1exacta ahora canónica+20revisadas;1excluida+29duplicadas=250. No se regeneró la selección ni se cambió el CSV.
 
-Sobre el pin reparado verificado: leer saldo y cerrar las101 fichas mediante recuperación focal autorizada, medir terminal sin refresco manual; descubrir grupos; evaluar pertenencia de los tres intereses; cotizar/confirmar revisión editorial; revisar/adoptar sólo Topics reales y seleccionar en Signal; verificar original y denominadores. **Sólo entonces** importar `load2.csv` una vez con revisión IDs ON, preparar delta, vectores reutilizados/nuevos, fichas afectadas, proyección numérica e interpretación cotizada de unidades nuevas; comparar Signal actualizado. Ninguno de esos resultados existe aún en R10; no se mezclan con R9/R8 ni se rellenan números de otra marca.
+Las20 revisiones cambiaron texto. El delta de fichas no es220:19raíces nuevas reutilizan entrada semántica idéntica. Quedan201pendientes=181nuevas+20revisadas y900vigentes=881previas+19reusadas. Las901labels físicas anteriores mantienen SHA; las900lecturas vigentes tienen su propio hash. Hasta vectores delta el gasto observado total esUSD4.839242; la reserva del Batch de fichas delta no se suma como consumo. El rechazo histórico de saldo en otro workspace no se atribuye retrospectivamente a110DNC sin body/status; las nuevas etapas sí tuvieron lectura de saldo antes del clic.
 
-R9 queda exclusivamente como anexo histórico de importación directa. La medición vigente pin44 R8 fue Topics<9.3s/Signal completo<9s/cambioTopic<9.2s en reposo; la corrección humana12.451s y filtro16.647s continúan como incidencias históricas que esta nueva ronda debe corregir y medir. No hay acreditación nueva de esos límites en R10. CSV y recibos privados se conservan; el auditor redacta la guía final cuando cierre el recorrido.
+Falta terminal de fichas delta, proyección numérica, cotización/interpretación de unidades nuevas, pertenencia de pares afectados y Signal actualizado. El editorial inicial no produjo conceptos adoptables; no se confunden los26tópicos técnicos previos con su revisión final. R10 no queda cerrado hasta documentar ese recorrido y sus límites. Los tiempos3.668s/14.061s son mediciones cliente de este corte y no un SLO general; los antiguos R8 quedan como historia, sin usarlos como aceptación R10. El auditor conserva la autoría de la guía final.
