@@ -215,7 +215,7 @@ export const howItWorks: Localized<PageContent> = {
         title: "Every voice, in a single analysis",
         lead: "Social media, reviews, forums and search flow into the same analysis. Your own data, like NPS or CRM, is read with the same topic structure.",
         copy: {
-          center: "One single analysis",
+          center: "One analysis",
           sources: ["TikTok", "Instagram", "YouTube", "X", "Facebook", "Reviews", "Forums", "Search", "NPS and surveys", "CRM"],
           owned: "Your own data"
         }
