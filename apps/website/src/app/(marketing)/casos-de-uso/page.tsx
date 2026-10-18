@@ -156,8 +156,8 @@ export default function UseCasesPage() {
               <h2>El caso se entiende mejor cuando ves la pregunta, la evidencia y la decisión juntas.</h2>
             </div>
             <p>
-              GWI y Synthesio ordenan sus casos por necesidades de negocio. Nosotros lo llevamos a situaciones
-              concretas: qué estaba atorado, qué dijo la gente y qué cambió para el equipo.
+              Cada caso parte de una situación concreta: qué estaba atorado, qué dijo la gente y qué cambió para
+              el equipo.
             </p>
           </div>
         </div>

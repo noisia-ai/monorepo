@@ -1,21 +1,6 @@
 "use client";
 
 import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
-import {
-  siAnthropic,
-  siApacheairflow,
-  siApachekafka,
-  siClickhouse,
-  siGooglegemini,
-  siHuggingface,
-  siLangchain,
-  siOllama,
-  siOpentelemetry,
-  siPostgresql,
-  siPython,
-  siQdrant,
-  siSpacy
-} from "simple-icons";
 
 const architectureSteps = [
   {
@@ -72,22 +57,6 @@ const processLogs = [
   "→ narrative   draft ready · 3 moves",
   "→ export      decision deck ready",
   "→ source_drawer  linked · 2,847 refs"
-];
-
-const stackLogos = [
-  { name: "Anthropic", icon: siAnthropic, color: "#181818" },
-  { name: "Gemini", icon: siGooglegemini, color: "#8E75B2" },
-  { name: "Hugging Face", icon: siHuggingface, color: "#FF9D00" },
-  { name: "Ollama", icon: siOllama, color: "#111111" },
-  { name: "LangGraph", icon: siLangchain, color: "#1c3c3c" },
-  { name: "Apache Airflow", icon: siApacheairflow, color: "#017CEE" },
-  { name: "Kafka", icon: siApachekafka, color: "#231F20" },
-  { name: "Qdrant", icon: siQdrant, color: "#dc244c" },
-  { name: "ClickHouse", icon: siClickhouse, color: "#ffcc01" },
-  { name: "Postgres", icon: siPostgresql, color: "#4169e1" },
-  { name: "spaCy", icon: siSpacy, color: "#09a3d5" },
-  { name: "Python", icon: siPython, color: "#3776ab" },
-  { name: "OpenTelemetry", icon: siOpentelemetry, color: "#4f62ad" }
 ];
 
 function clamp(value: number, min: number, max: number) {
@@ -196,17 +165,6 @@ export function ArchitectureFlow() {
       </div>
 
       <div className="architecture-runtime">
-        <div className="architecture-stack" aria-label="Stack operativo">
-          {stackLogos.map((tool) => (
-            <span className="architecture-logo-chip" key={tool.name} style={{ "--tool-color": tool.color } as CSSProperties}>
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d={tool.icon.path} />
-              </svg>
-              {tool.name}
-            </span>
-          ))}
-        </div>
-
         <div className="architecture-timeline">
           <span className="architecture-timeline-fill" />
           {architectureSteps.map((step, index) => {

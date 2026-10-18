@@ -2452,33 +2452,6 @@ h4 {
   line-height: 1.55;
 }
 
-.architecture-stack {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.architecture-logo-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid rgba(35, 35, 39, 0.08);
-  border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.62);
-  color: var(--neutral-10);
-  font-size: 0.72rem;
-  font-weight: 700;
-  box-shadow: 0 16px 42px rgba(47, 56, 72, 0.06);
-}
-
-.architecture-logo-chip svg {
-  width: 14px;
-  height: 14px;
-  fill: var(--tool-color);
-}
-
 .architecture-timeline {
   position: relative;
   display: grid;
@@ -5001,15 +4974,6 @@ h4 {
     gap: 12px;
   }
 
-  .architecture-stack {
-    max-height: 78px;
-    overflow: hidden;
-  }
-
-  .architecture-logo-chip:nth-child(n + 7) {
-    display: none;
-  }
-
   .architecture-node h3 {
     font-size: 0.98rem;
   }
@@ -5554,15 +5518,6 @@ h4 {
 
   .architecture-code-card pre {
     font-size: 0.72rem;
-  }
-
-  .architecture-stack {
-    gap: 7px;
-  }
-
-  .architecture-logo-chip {
-    min-height: 32px;
-    font-size: 0.68rem;
   }
 
   .architecture-timeline {
