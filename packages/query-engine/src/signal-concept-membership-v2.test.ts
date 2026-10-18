@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { membershipLabelerIdentityV1, type MembershipInputV1, type ConceptForJudgeV1 } from './signal-concept-membership-v1';
-import { membershipLabelerIdentityV2, buildMembershipRequestV2, parseMembershipGroupV2, MEMBERSHIP_PROMPT_V2 } from './signal-concept-membership-v2';
+import { membershipLabelerIdentityV1, buildMembershipRequestV1, MEMBERSHIP_PROMPT_V1, type MembershipInputV1, type ConceptForJudgeV1 } from './signal-concept-membership-v1';
+import { membershipLabelerIdentityV2, buildMembershipRequestV2, parseMembershipGroupV2, MEMBERSHIP_PROMPT_V2, replaceMembershipPromptV2 } from './signal-concept-membership-v2';
 import { signalWorkspaceEmbeddingDigestV1 as digest } from './signal-workspace-embeddings-v1';
 const concept={concept_key:'experience',label:'Experience',scope:'all_conversations',definition:'A completed activity at a destination.',inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],definition_digest:'sha256:'+'a'.repeat(64)} as ConceptForJudgeV1;
 const text='The customer completed the activity. The destination was named. Another fact. Fourth fact.';
@@ -52,4 +52,22 @@ test('v2 normalizes only 31–33 rationale words, preserving exact verdicts and 
   const raw=JSON.parse(response(['r0c0s0']));raw.roots.r0.memberships[0].rationale='word '.repeat(31);change(raw.roots.r0.memberships[0]);
   assert.equal(parseMembershipGroupV2(JSON.stringify(raw),[input]).results[0]?.verdict,'error');
  }
+});
+
+test('v2 fails closed if the inherited system prompt is missing or ambiguous',()=>{
+ assert.throws(()=>replaceMembershipPromptV2('unexpected upstream prompt'),/membership_v2_prompt_replacement_invalid/);
+ const upstream=buildMembershipRequestV1([input],{entities:[]},[concept]).system[0]!.text;
+ assert.equal(replaceMembershipPromptV2(upstream).includes(MEMBERSHIP_PROMPT_V2),true);
+ assert.throws(()=>replaceMembershipPromptV2(upstream+MEMBERSHIP_PROMPT_V1),/membership_v2_prompt_replacement_invalid/);
+ const request=buildMembershipRequestV2([input],{entities:[]},[concept]);
+ assert.equal(request.system[0]!.text,replaceMembershipPromptV2(upstream));
+ assert.equal(request.system[0]!.text.includes(MEMBERSHIP_PROMPT_V1),false);
+});
+test('v2 effort belongs to the immutable identity and the provider request',()=>{
+ for(const effort of ['low','medium'] as const){
+  const identity=membershipLabelerIdentityV2(effort),request=buildMembershipRequestV2([input],{entities:[]},[concept],identity);
+  assert.equal(identity.params.effort,effort);assert.equal(request.output_config.effort,effort);
+ }
+ assert.notEqual(digest(membershipLabelerIdentityV2('low')),digest(membershipLabelerIdentityV2('medium')));
+ assert.throws(()=>buildMembershipRequestV2([input],{entities:[]},[concept],{...membershipLabelerIdentityV2(),params:{...membershipLabelerIdentityV2().params,effort:'high'}}),/identity_invalid/);
 });

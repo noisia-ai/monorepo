@@ -9,18 +9,24 @@ export const MEMBERSHIP_PROMPT_V2 = `Judge every supplied concept using the root
 Promotions and advertisements published by a brand or retailer do not belong to public-voice concepts. Use the supplied voice (brand_official or retail_promo) together with act (promotion) as evidence of promotional brand or retailer speech; exclude those promotional statements across all brands and concepts. Official replies and other non-promotional statements remain eligible when they satisfy the definition. Do not exclude a consumer merely reporting or discussing a promotion. Entity salience is a hint, not a membership rule; a comparison can belong to multiple compatible concepts.
 Return every root ordinal exactly once, even if memberships is empty. Include only belongs or insufficient in memberships; omit the remaining evaluated concepts to record not_belongs. Use contract_version concept-membership-judge-v1 and roots as an object with required keys r0 through rN-1. Cite the decisive fact that satisfies the definition, not incidental context or an exclusion. Select one to three supplied complete sentence fragments from this root only; at least one contains the decisive fact. For conjunctive definitions select a fragment supporting every necessary condition, within three fragments; otherwise return insufficient. Insufficient verdicts cite the context that explains the missing condition. Rationale: at most 30 words describing the fact and necessary conditions. Never invent a fragment, rewrite a quotation or infer an absent fact. Evaluate only the concept keys supplied for that root. Do not provide internal reasoning.`;
 
+/** Refuse to label a changed upstream prompt with the experimental identity. */
+export function replaceMembershipPromptV2(systemText:string) {
+  if(systemText.split(MEMBERSHIP_PROMPT_V1).length!==2)throw new Error('membership_v2_prompt_replacement_invalid');
+  return systemText.replace(MEMBERSHIP_PROMPT_V1,MEMBERSHIP_PROMPT_V2);
+}
 /** Experimental identity only: registration does not select this version in the workspace. */
-export function membershipLabelerIdentityV2(): LabelerIdentity {
-  return {...membershipLabelerIdentityV1('low'), prompt_digest:digest(MEMBERSHIP_PROMPT_V2),
+export function membershipLabelerIdentityV2(effort: "low" | "medium" = "low"): LabelerIdentity {
+  return {...membershipLabelerIdentityV1(effort), prompt_digest:digest(MEMBERSHIP_PROMPT_V2),
     schema_digest:digest({format:'membership-required-ordinals-refs-v2',schema:membershipOutputSchemaV1(16)}),
-    params:{thinking:{type:'adaptive'},effort:'low',max_tokens:16384,max_roots:16,
+    params:{thinking:{type:'adaptive'},effort,max_tokens:16384,max_roots:16,
       standard_judge_version:2,max_fragments:3,partition:'complete-sentences-v1'}};
 }
 export function buildMembershipRequestV2(inputs:MembershipInputV1[],context:EntityContextV1,
   concepts:ConceptForJudgeV1[],identity=membershipLabelerIdentityV2()) {
-  if(digest(identity)!==digest(membershipLabelerIdentityV2()))throw new Error('membership_v2_identity_invalid');
-  const request=buildMembershipRequestV1(inputs,context,concepts,membershipLabelerIdentityV1('low'));
-  request.system[0]!.text=request.system[0]!.text.replace(MEMBERSHIP_PROMPT_V1,MEMBERSHIP_PROMPT_V2);
+  const effort=identity.params.effort;
+  if((effort!=='low'&&effort!=='medium')||digest(identity)!==digest(membershipLabelerIdentityV2(effort)))throw new Error('membership_v2_identity_invalid');
+  const request=buildMembershipRequestV1(inputs,context,concepts,membershipLabelerIdentityV1(effort));
+  request.system[0]!.text=replaceMembershipPromptV2(request.system[0]!.text);
   const spans=hybridSentenceSpansV1(inputs);
   const content=JSON.parse(request.messages[0]!.content);
   content.roots.forEach((root:{root_ordinal:number;spans:unknown})=>{
