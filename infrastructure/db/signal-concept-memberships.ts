@@ -4,7 +4,7 @@ import {
   conceptForJudgeSchemaV1,
   conceptCompatibleV1,
   conceptSetDigestV1,
-  membershipLabelerIdentityV1, membershipLabelerIdentityV2,
+  membershipLabelerIdentityV1, membershipLabelerIdentityV2, membershipLabelerIdentityV3,
   signalWorkspaceEmbeddingDigestV1 as digest,
   type ConceptForJudgeV1,
   type MembershipInputV1,
@@ -208,13 +208,13 @@ export async function requestConceptMembershipsV1(args: {
   /** Private WS4 evaluation variant; Studio leaves the production default untouched. */
   evaluation_effort?: "low" | "medium";
   /** Offline/remote WS4 experiment: never selects the workspace default or writes serving pairs. */
-  evaluation_judge_version?: 2;
+  evaluation_judge_version?: 2 | 3;
   evaluation_root_ids?: string[];
 }) {
-  const evaluation = args.evaluation_judge_version === 2;
+  const evaluation = args.evaluation_judge_version === 2 || args.evaluation_judge_version === 3;
   if (evaluation && (!args.evaluation_root_ids?.length || new Set(args.evaluation_root_ids).size !== args.evaluation_root_ids.length))
     fail("membership_evaluation_population_invalid");
-  const identity = evaluation ? membershipLabelerIdentityV2(args.evaluation_effort) : membershipLabelerIdentityV1(args.evaluation_effort);
+  const identity = args.evaluation_judge_version === 3 ? membershipLabelerIdentityV3(args.evaluation_effort) : evaluation ? membershipLabelerIdentityV2(args.evaluation_effort) : membershipLabelerIdentityV1(args.evaluation_effort);
   const previewConcept = args.concept
     ? conceptForJudgeSchemaV1.parse({
         ...args.concept,
@@ -228,7 +228,7 @@ export async function requestConceptMembershipsV1(args: {
     ...args,
     identity,
     adapter: {
-      request_identity: { kind: "membership", preview: previewConcept, ...(evaluation ? {evaluation_judge_version:2, sample_root_ids:args.evaluation_root_ids} : {}) },
+      request_identity: { kind: "membership", preview: previewConcept, ...(evaluation ? {evaluation_judge_version:args.evaluation_judge_version, sample_root_ids:args.evaluation_root_ids} : {}) },
       select_labeler: !previewConcept && !evaluation,
       validateIdentity: (id) => {
         if (digest(id) !== digest(identity))
@@ -256,7 +256,7 @@ export async function requestConceptMembershipsV1(args: {
           ...estimate,
           snapshot: {
             preview: !!previewConcept || evaluation,
-            ...(evaluation ? {evaluation_judge_version:2} : {}),
+            ...(evaluation ? {evaluation_judge_version:args.evaluation_judge_version} : {}),
             concepts,
             sample_root_ids: sample,
           },
@@ -265,7 +265,8 @@ export async function requestConceptMembershipsV1(args: {
       },
       persist: async (c, id, p) => {
         await c.query(
-          "UPDATE signal_labeling_runs SET membership_snapshot=$2::jsonb,concept_set_digest=$3 WHERE id=$1",
+          `UPDATE signal_labeling_runs SET membership_snapshot=$2::jsonb,concept_set_digest=$3,
+          next_poll_at=CASE WHEN $2::jsonb->>'evaluation_judge_version'='3' AND ($2::jsonb->>'preview')::boolean THEN 'infinity'::timestamptz ELSE next_poll_at END WHERE id=$1`,
           [id, JSON.stringify(p.snapshot), p.concept_set_digest],
         );
       },

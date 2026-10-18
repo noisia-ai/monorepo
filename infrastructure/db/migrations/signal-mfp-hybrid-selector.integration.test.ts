@@ -1,3 +1,4 @@
+import {verifyStandardV3EvaluationV1} from './signal-mfp-standard-v3.assertions';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
@@ -242,6 +243,8 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       [workspace, actor, action, target, randomUUID(), digest])).rows[0]!.result.receipt;
       return receipt.id;
     };
+
+    await verifyStandardV3EvaluationV1({database:db,client,workspace,actor,root,policy});
 
     const jevRun = randomUUID(), jevCall = randomUUID();
     const jevAdmission = await admit("concept_membership_jev", jevRun);
