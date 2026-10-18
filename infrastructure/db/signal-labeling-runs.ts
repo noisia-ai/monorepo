@@ -665,7 +665,8 @@ export function createSignalLabelingStoreV1<
     async release(run: LabelingRunV1) {
       await db.query(
         `UPDATE signal_labeling_runs SET lease_token=NULL,lease_until=NULL,
-         next_poll_at=CASE WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown')
+         next_poll_at=CASE WHEN membership_snapshot->>'evaluation_judge_version'='3' AND COALESCE((membership_snapshot->>'preview')::boolean,false) THEN 'infinity'::timestamptz
+           WHEN EXISTS(SELECT 1 FROM signal_labeling_calls WHERE run_id=$1 AND status='unknown')
            THEN now()+interval '1 hour' ELSE now()+interval '30 seconds' END WHERE id=$1 AND lease_token=$2`,
         [run.id, run.lease_token],
       );

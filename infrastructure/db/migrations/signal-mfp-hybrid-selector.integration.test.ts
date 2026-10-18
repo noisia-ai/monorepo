@@ -1,3 +1,4 @@
+import {verifyStandardV3EvaluationV1} from './signal-mfp-standard-v3.assertions';
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
@@ -228,6 +229,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     for (const [action, provider, modelName] of [
       ["concept_membership_jev", "typesafe", "jev-1.13.0"],
       ["concept_membership_claude", "anthropic", "claude-sonnet-5-5"],
+      ["concept_membership", "anthropic", "claude-sonnet-5-5"],
     ]) {
       const config = JSON.stringify({ provider, model: modelName });
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
@@ -242,6 +244,8 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
       [workspace, actor, action, target, randomUUID(), digest])).rows[0]!.result.receipt;
       return receipt.id;
     };
+
+    await verifyStandardV3EvaluationV1({database:db,client,workspace,actor,root,policy});
 
     const jevRun = randomUUID(), jevCall = randomUUID();
     const jevAdmission = await admit("concept_membership_jev", jevRun);
