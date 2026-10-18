@@ -3,8 +3,10 @@ import test from 'node:test';
 import type {Pool} from 'pg';
 import {loadSignalWorkspaceCapabilitiesStoreV1} from '../signal-workspace-capabilities';
 import {randomUUID} from 'node:crypto';
-import {completeSignalClassicPolicyV1} from '../signal-classic-policy-completion';
+import {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1} from '@noisia/query-engine';
+import {completeSignalClassicPolicyV1,readClassicPolicyActiveWorkV1} from '../signal-classic-policy-completion';
 import {provisionSignalBrandContextPolicyV1} from '../signal-brand-context-policy-provisioning';
+import {seedComposedFixture,quoteComposedFixture,startComposedFixture,semanticConfiguration} from './signal-brand-context-composed.fixture';
 import {createProcessingPolicyIdentitiesV1} from './signal-processing-policy.fixture';
 
 test('explicit classic completion preserves a sibling policy and live actor authority in PostgreSQL',{
@@ -65,6 +67,25 @@ test('explicit classic completion preserves a sibling policy and live actor auth
    assert.deepEqual((await raw.query(snapshotSql,[f.first.organization_id])).rows[0],original);
   }
   await raw.query('ROLLBACK TO SAVEPOINT sibling_preparation');await raw.query('RELEASE SAVEPOINT sibling_preparation');
+  await raw.query('SAVEPOINT sibling_embeddings');
+  const embeddingPrep=randomUUID(),embeddingRun=randomUUID();
+  await raw.query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,worker_job_id,status)
+   VALUES($1,$2,$3,$4,'failed')`,[embeddingPrep,f.first.workspace_id,f.actors.firstAdmin,`classic-${embeddingPrep}`]);
+  const embeddingAdmission=(await raw.query<{result:{receipt:{id:string}}}>(`SELECT admit_signal_processing_v1(
+   $1::uuid,$2::uuid,'corpus_embeddings',$3::uuid,$4,'sha256:'||repeat('a',64),NULL,false) result`,
+   [f.first.workspace_id,f.actors.firstAdmin,embeddingRun,randomUUID()])).rows[0]!.result.receipt;
+  await raw.query(`INSERT INTO signal_workspace_embedding_runs(id,workspace_id,preparation_run_id,actor_user_id,
+   input_revision,profile,config_digest,quote_digest,request_keys,hard_cap_micro_usd,estimated_upper_micro_usd,
+   status,counts,worker_job_id,input_contract,processing_admission_id)
+   VALUES($1,$2,$3,$4,1,$5::jsonb,$6,$6,'{}',NULL,0,'queued','{}',$7,'corpus',$8)`,
+   [embeddingRun,f.first.workspace_id,embeddingPrep,f.actors.firstAdmin,JSON.stringify(SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1),
+    SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1.config_digest,`classic-${embeddingRun}`,embeddingAdmission.id]);
+  for(const status of ['queued','running','outcome_unknown']){
+   await raw.query('UPDATE signal_workspace_embedding_runs SET status=$2 WHERE id=$1',[embeddingRun,status]);
+   assert.equal((await invoke(f.actors.internal)).status,'active_work',`${status} sibling embeddings block replacement`);
+   assert.deepEqual((await raw.query(snapshotSql,[f.first.organization_id])).rows[0],original);
+  }
+  await raw.query('ROLLBACK TO SAVEPOINT sibling_embeddings');await raw.query('RELEASE SAVEPOINT sibling_embeddings');
   // A failed sibling run can still own already-paid raw results. No transport
   // is used: real ledger rows establish the policy-replacement barrier.
   await raw.query('SAVEPOINT sibling_raw');
@@ -92,6 +113,53 @@ test('explicit classic completion preserves a sibling policy and live actor auth
   assert.equal((await invoke(f.actors.secondAdmin)).status,'not_eligible');
   assert.deepEqual((await raw.query(snapshotSql,[f.first.organization_id])).rows[0],original);
   await raw.query('ROLLBACK TO SAVEPOINT revoked_grant');await raw.query('RELEASE SAVEPOINT revoked_grant');
+  await raw.query('SAVEPOINT sibling_semantic');
+  const scopedPool={query:raw.query.bind(raw),connect:database.connect} as unknown as Pool;
+  const semanticFixture=await seedComposedFixture(scopedPool,'classic-completion',{optionalStrictCaps:true});
+  const quote=await quoteComposedFixture(scopedPool,semanticFixture);
+  assert.equal(quote.quote_status,'quoted');assert.ok(quote.quote_digest);
+  const semanticRun=await startComposedFixture(scopedPool,semanticFixture,quote.quote_digest!,`classic-${randomUUID()}`,
+   {...semanticConfiguration,platform_hard_cap_micro_usd:null});
+  await raw.query('SET CONSTRAINTS ALL IMMEDIATE');await raw.query('SET CONSTRAINTS ALL DEFERRED');
+  // Simulate an admitted historical owner under a prior policy. All inserts,
+  // admission and transitions use the real schema/guards; no trigger is disabled.
+  const semanticPrior=(await raw.query<{id:string}>(`SELECT id::text FROM signal_processing_policy_versions
+   WHERE organization_id=$1 AND status='active'`,[semanticFixture.organizationId])).rows[0]!;
+  for(const status of ['queued','processing','validating']){
+   await raw.query('SAVEPOINT semantic_status');
+   await raw.query('UPDATE signal_semantic_context_proposal_runs SET status=$2 WHERE id=$1',[semanticRun.run_id,status]);
+  const partial=(await raw.query<{id:string}>(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,
+   valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+   SELECT organization_id,version+1,'draft',clock_timestamp(),valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id
+   FROM signal_processing_policy_versions WHERE id=$1 RETURNING id::text`,[semanticPrior.id])).rows[0]!;
+  await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,
+   configuration_digest,max_execution_micro_usd,automatic_allowed)
+   SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
+   FROM signal_processing_policy_actions WHERE policy_version_id=$2 AND action='brand_context_proposal'`,[partial.id,semanticPrior.id]);
+  await raw.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[semanticPrior.id]);
+  await raw.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[partial.id]);
+   assert.equal(await readClassicPolicyActiveWorkV1(raw,semanticFixture.organizationId),true);
+   assert.equal((await completeSignalClassicPolicyV1({database,workspace_id:semanticFixture.workspaceId,
+    brand_id:semanticFixture.brandId,actor_user_id:semanticFixture.internalActorId,env})).status,'active_work',
+    `${status} semantic owner blocks replacement even when its original policy is historical`);
+   assert.equal((await raw.query("SELECT count(*)::int n FROM signal_processing_policy_versions WHERE organization_id=$1",[semanticFixture.organizationId])).rows[0].n,2);
+   await raw.query('ROLLBACK TO SAVEPOINT semantic_status');await raw.query('RELEASE SAVEPOINT semantic_status');
+  }
+  await raw.query('ROLLBACK TO SAVEPOINT sibling_semantic');await raw.query('RELEASE SAVEPOINT sibling_semantic');
+  await raw.query('SAVEPOINT future_policy');
+  const future=(await raw.query<{id:string}>(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,
+   valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+   SELECT organization_id,version+1,'draft',clock_timestamp()+interval '1 hour',valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id
+   FROM signal_processing_policy_versions WHERE id=$1 RETURNING id::text`,[original.id])).rows[0]!;
+  await raw.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,
+   configuration_digest,max_execution_micro_usd,automatic_allowed)
+   SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
+   FROM signal_processing_policy_actions WHERE policy_version_id=$2`,[future.id,original.id]);
+  await raw.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[original.id]);
+  await raw.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[future.id]);
+  assert.equal((await invoke(f.actors.internal)).status,'configuration_required','a future policy cannot be completed early');
+  assert.equal((await raw.query('SELECT count(*)::int n FROM signal_processing_policy_versions WHERE organization_id=$1',[f.first.organization_id])).rows[0].n,2);
+  await raw.query('ROLLBACK TO SAVEPOINT future_policy');await raw.query('RELEASE SAVEPOINT future_policy');
   assert.equal((await invoke(f.actors.internal,{})).status,'configuration_required');
   assert.deepEqual((await raw.query(snapshotSql,[f.first.organization_id])).rows[0],original);
   failAction=true;

@@ -11,6 +11,23 @@ const result=(status:Status):SignalClassicPolicyCompletionV1=>({contract_version
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const required=['brand_context_proposal','topic_prototype_embeddings'] as const;
 
+
+/** Shared read for admission-backed and historical owners in the same organization. */
+export async function readClassicPolicyActiveWorkV1(client:Pick<import('pg').PoolClient,'query'>,organizationId:string){
+ const pending=(await client.query<{pending:boolean}>(`SELECT EXISTS(
+  SELECT 1 FROM signal_workspaces w WHERE w.organization_id=$1 AND(
+   EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs r WHERE r.workspace_id=w.id AND
+    (r.status IN('queued','processing','validating') OR r.provider_call_state IN('in_flight','response_persisted','outcome_unknown'))) OR
+   EXISTS(SELECT 1 FROM signal_corpus_preparation_runs r WHERE r.workspace_id=w.id AND r.status IN('queued','running')) OR
+   EXISTS(SELECT 1 FROM signal_topic_catalog_executions r WHERE r.workspace_id=w.id AND r.status IN('queued','running')) OR
+   EXISTS(SELECT 1 FROM signal_topic_consolidation_executions r WHERE r.workspace_id=w.id AND r.status IN('queued','running')) OR
+   EXISTS(SELECT 1 FROM signal_topic_editorial_executions r WHERE r.workspace_id=w.id AND r.status IN('queued','running','review_ready')) OR
+   EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 r WHERE r.workspace_id=w.id AND r.status IN('open','ready','blocked'))
+  )) pending`,[organizationId])).rows[0];
+ const labeling=await readMfpPolicySwitchBlockersV1(client,organizationId);
+ return pending?.pending===true||Object.values(labeling).some(count=>count>0);
+}
+
 /** Explicit server-owned completion, separate from creation replay. A live actor
  * acts as themselves; this never impersonates the original brand creator. */
 export async function completeSignalClassicPolicyV1(args:Args):Promise<SignalClassicPolicyCompletionV1>{
@@ -26,26 +43,19 @@ export async function completeSignalClassicPolicyV1(args:Args):Promise<SignalCla
   const capabilities=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,lock_authority:true});
   const actor=(await client.query(`SELECT id FROM users WHERE id=$1 AND status='active' AND user_type='noisia_internal'
    AND primary_role IN('noisia_admin','founder','admin') FOR SHARE`,[args.actor_user_id])).rows[0];
-  if(!actor||!capabilities.can_request_processing)return await commit('not_eligible');
-  const prior=(await client.query<{id:string;status:string;version:string;valid_until:string;daily_cap_micro_usd:string|null;budget_timezone:string}>(`
-   SELECT id::text,status,version::text,valid_until::text,daily_cap_micro_usd::text,budget_timezone
+  const tenant=(await client.query('SELECT id FROM signal_workspaces WHERE id=$1 AND brand_id=$2 AND organization_id=$3',[args.workspace_id,args.brand_id,scope.organization_id])).rows[0];
+  if(!actor||!tenant||!capabilities.can_request_processing)return await commit('not_eligible');
+  const prior=(await client.query<{id:string;status:string;version:string;valid_from:string;valid_until:string;daily_cap_micro_usd:string|null;budget_timezone:string}>(`
+   SELECT id::text,status,version::text,valid_from::text,valid_until::text,daily_cap_micro_usd::text,budget_timezone
    FROM signal_processing_policy_versions WHERE organization_id=$1 ORDER BY version DESC LIMIT 1`,[scope.organization_id])).rows[0];
   if(!prior||prior.status!=='active')return await commit('configuration_required');
+  if(!(await client.query<{current:boolean}>('SELECT $1::timestamptz<=clock_timestamp() AND $2::timestamptz>clock_timestamp() current',[prior.valid_from,prior.valid_until])).rows[0]?.current)return await commit('configuration_required');
   const existing=(await client.query<{action:string}>('SELECT action FROM signal_processing_policy_actions WHERE policy_version_id=$1',[prior.id])).rows;
   const missing=required.filter(action=>!existing.some(row=>row.action===action));
   if(!missing.length)return await commit('existing_policy');
   // A terminal run can still hold a paid response awaiting free application.
   // Keep its original policy active until both active owners and stored results drain.
-  const pending=(await client.query<{pending:boolean}>(`SELECT EXISTS(SELECT 1 FROM signal_processing_admissions a WHERE a.policy_version_id=$1 AND(
-   EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs r WHERE r.processing_admission_id=a.id AND r.status IN('queued','running','outcome_unknown')) OR
-   EXISTS(SELECT 1 FROM signal_corpus_preparation_runs r WHERE r.processing_admission_id=a.id AND r.status IN('queued','running')) OR
-   EXISTS(SELECT 1 FROM signal_topic_catalog_executions r WHERE r.processing_admission_id=a.id AND r.status IN('queued','running')) OR
-   EXISTS(SELECT 1 FROM signal_topic_consolidation_executions r WHERE r.processing_admission_id=a.id AND r.status IN('queued','running')) OR
-   EXISTS(SELECT 1 FROM signal_topic_editorial_executions r WHERE r.processing_admission_id=a.id AND r.status IN('queued','running','review_ready')) OR
-   EXISTS(SELECT 1 FROM signal_interest_decision_owners_v1 r WHERE r.processing_admission_id=a.id AND r.status IN('open','ready','blocked'))
-  )) pending`,[prior.id])).rows[0];
-  const labeling=await readMfpPolicySwitchBlockersV1(client,scope.organization_id);
-  if(pending?.pending||Object.values(labeling).some(count=>count>0))return await commit('active_work');
+  if(await readClassicPolicyActiveWorkV1(client,scope.organization_id))return await commit('active_work');
   const configuration=signalClassicPolicyCompletionConfigurationV1(args.env??process.env);
   if(!configuration.available||!configuration.creatorUserId||!uuid.test(configuration.creatorUserId)||!configuration.semanticConfiguration)return await commit('configuration_required');
   const creator=(await client.query(`SELECT id FROM users WHERE id=$1 AND status='active' AND user_type='noisia_internal'
