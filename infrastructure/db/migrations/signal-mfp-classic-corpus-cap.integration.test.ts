@@ -28,13 +28,13 @@ test('classic corpus admits PostgreSQL quote above USD5 with no feature and resp
   const sha=`sha256:${createHash('sha256').update(text).digest('hex')}`,chunks=prepareWorkspaceCorpusTextChunksV1(text,sha);
   const revision=(await scoped.query('SELECT input_revision::text FROM signal_corpus_preparation_input_state WHERE workspace_id=$1',[workspace])).rows[0].input_revision;
   await scoped.query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,status,phase,input_revision,completed_at,worker_job_id)
-   VALUES($1,$2,$3,'completed','complete',$4,clock_timestamp(),$1::text)`,[prep,workspace,actor,revision]);
+   VALUES($1::uuid,$2::uuid,$3::uuid,'completed','complete',$4,clock_timestamp(),$1::uuid::text)`,[prep,workspace,actor,revision]);
   await scoped.query(`INSERT INTO signal_corpus_text_assets(workspace_id,text_sha256,chunk_policy_version,full_text,chunks,prepared_at)
    VALUES($1,$2,'corpus-text-chunks-v1',$3,$4::jsonb,clock_timestamp())`,[workspace,sha,text,JSON.stringify(chunks)]);
   await scoped.query(`INSERT INTO signal_corpus_preparation_items(workspace_id,run_id,root_id,asset_sha256,disposition,root_metadata,provenance,semantic_eligible,fingerprint)
    VALUES($1,$2,$3,$4,'eligible','{}','[]',true,$4)`,[workspace,prep,randomUUID(),sha]);
   await scoped.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
-   VALUES($1,$2,1,'draft',clock_timestamp()-interval '1 minute','infinity','UTC',NULL,$3)`,[policy,org,actor]);
+   VALUES($1,$2,1,'draft',clock_timestamp()-interval '1 minute','infinity','UTC',20000000,$3)`,[policy,org,actor]);
   await scoped.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd)
    VALUES($1,'corpus_embeddings','provider','voyage','voyage-4-large',$2::jsonb,signal_semantic_context_digest_json_v2($2::jsonb),NULL)`,[policy,JSON.stringify(profile)]);
   await scoped.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[policy]);
@@ -62,6 +62,12 @@ test('classic corpus admits PostgreSQL quote above USD5 with no feature and resp
   const run=(await scoped.query('SELECT id::text,hard_cap_micro_usd::text,processing_admission_id::text FROM signal_workspace_embedding_runs WHERE workspace_id=$1',[workspace])).rows[0];
   assert.equal(run.hard_cap_micro_usd,null);assert.ok(run.processing_admission_id);
   assert.equal((await scoped.query('SELECT count(*)::int n FROM signal_workspace_embedding_calls WHERE run_id=$1',[run.id])).rows[0].n,0);
+  await client.query('SAVEPOINT daily_budget');
+  try{
+    await assert.rejects(scoped.query(`SELECT signal_processing_capacity_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,
+      ARRAY['corpus_embeddings'],'voyage','voyage-4-large',$5::jsonb,NULL,NULL,NULL,20000001)`,
+      [workspace,actor,run.id,run.processing_admission_id,JSON.stringify(profile)]),/processing_daily_cap_exhausted/u);
+  }finally{await client.query('ROLLBACK TO SAVEPOINT daily_budget');await client.query('RELEASE SAVEPOINT daily_budget');}
   process.env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD='5000000';
   const strict=await quoteWorkspaceCorpusEmbeddingsForActorV1(args);assert.equal(strict.max_run_cost_micro_usd,5_000_000);
   await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({...args,idempotencyKey:'classic-cannot-remove-cap',body:{preparation_run_id:prep,quote_digest:strict.quote_digest,hard_cap_micro_usd:null}}),/budget_exceeds_limit/u);
