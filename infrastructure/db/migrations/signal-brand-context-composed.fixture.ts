@@ -8,13 +8,13 @@ import { loadSignalBrandContextProcessingQuoteV1 } from "../signal-brand-context
 import { buildSignalSemanticContextProposalRuntimeLineageV1, planSignalSemanticContextProposalCapacityForAuthorityV1,
  startSignalBrandContextComposedSemanticRunV1, type SignalSemanticContextProposalRuntimeConfigurationV1 } from "../signal-semantic-context-proposal";
 const digest = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
-export const semanticConfiguration: SignalSemanticContextProposalRuntimeConfigurationV1 = {
+export const semanticConfiguration = {
   available: true, provider: "anthropic", model: "claude-sonnet-4-6",
   model_version: "claude-sonnet-4-6", pricing_version: "synthetic-sonnet-pricing-v1",
   max_input_tokens: 20_000, max_output_tokens: 64_000, model_max_output_tokens: 64_000,
   input_usd_per_million_tokens: "3", output_usd_per_million_tokens: "15",
   platform_hard_cap_micro_usd: 1_000_000n
-};
+} satisfies SignalSemanticContextProposalRuntimeConfigurationV1;
 export const composedRuntime = { queue_configured: true, worker_alive: true, recovery_alive: true,
   prototype_available: true };
 
@@ -81,7 +81,7 @@ export async function seedComposedFixture(pool: pg.Pool, label: string, options:
       knowledge_digest: authority.knowledgeDigest, locale_context_digest: authority.localeContextDigest,
       primary_locale: authority.primaryLocale, locale_variants: authority.localeVariants,
       markets: authority.markets, timezone: authority.timezone } });
-  const lineage = buildSignalSemanticContextProposalRuntimeLineageV1(semanticConfiguration, capacity);
+  const lineage = buildSignalSemanticContextProposalRuntimeLineageV1(options.optionalStrictCaps ? { ...semanticConfiguration, platform_hard_cap_micro_usd: null } : semanticConfiguration, capacity);
   const createOperationId = randomUUID(), generationKey = `context-${suffix}`;
   await pool.query(`INSERT INTO signal_governance_control_operations(id,workspace_id,actor_user_id,
     action,request_digest,idempotency_key,status) VALUES($1::uuid,$2::uuid,$3::uuid,
@@ -174,7 +174,7 @@ export async function quoteComposedFixture(pool: pg.Pool, fixture: ComposedFixtu
 }
 
 export async function startComposedFixture(pool: pg.Pool, fixture: ComposedFixture, quoteDigest: string,
-  idempotencyKey: string, configuration = semanticConfiguration,
+  idempotencyKey: string, configuration: SignalSemanticContextProposalRuntimeConfigurationV1 = semanticConfiguration,
   runtime = composedRuntime) {
   return startSignalBrandContextComposedSemanticRunV1({ pool,
     workspace: { id: fixture.workspaceId, organization_id: fixture.organizationId, brand_id: fixture.brandId },

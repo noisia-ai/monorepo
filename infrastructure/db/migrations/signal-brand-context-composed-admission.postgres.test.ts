@@ -23,6 +23,8 @@ const enabled = process.env.NOISIA_BRAND_CONTEXT_COMPOSED_ADMISSION_PG_APPROVED 
 const databaseUrl = process.env.NOISIA_BRAND_CONTEXT_COMPOSED_ADMISSION_DATABASE_URL;
 const digest = (value: string) => `sha256:${createHash("sha256").update(value).digest("hex")}`;
 
+type Scope = { organizationId: string; semanticWorkspaceId: string; voyageWorkspaceId: string;
+  semanticRunId: string; voyageRunId: string; actorId: string };
 async function seedScope(client: pg.PoolClient, label: string): Promise<Scope> {
   const organizationId = randomUUID();
   const actorId = randomUUID();

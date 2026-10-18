@@ -725,3 +725,16 @@ test("changed interests are a separate explicit preparation, including a cached 
     status: "processing_paused", quote: null }), true);
   assert.equal(clientBrandContextProcessingCanConfirmV1({ ...pending, can_start: false }), false);
 });
+
+test('optional strict maxima remain null through public quote, confirmation and display',()=>{
+  const quote=toClientBrandContextProcessingQuoteViewV1({...internal,maximum_total_micro_usd:null,remaining_micro_usd:null});
+  assert.equal(validClientBrandContextProcessingQuoteViewV1(quote),true);
+  const view={...clientBrandContextProcessingViewFromQuoteV1(quote),can_start:true};
+  assert.equal(validClientBrandContextProcessingViewV1(view),true);
+  const request=clientBrandContextProcessingRequestV1(null,view,()=>"optional-maxima-key");
+  const body=clientBrandContextProcessingConfirmationV1(request);
+  assert.equal(validClientBrandContextProcessingConfirmationV1(body),true);
+  assert.equal(body.expected_quote.maximum_micro_usd,null);
+  assert.equal(body.expected_quote.available_today_micro_usd,null);
+  assert.equal(validClientBrandContextProcessingConfirmationV1({...body,expected_quote:{...body.expected_quote,maximum_micro_usd:undefined}}),false);
+});

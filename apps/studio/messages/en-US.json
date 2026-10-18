@@ -4375,6 +4375,7 @@
     }
   },
   "ClientBrandContextProcessing": {
+    "noStrictMaximum": "No strict maximum",
     "authorizationRefresh": "Prepare current interests with a maximum of {maximum}. Available today: {available}. Saved vectors will be reused.",
     "title": "Brand semantic preparation",
     "body": "Turn Brand OS context and knowledge sources into a reusable semantic foundation for Topics.",

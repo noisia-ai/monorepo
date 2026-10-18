@@ -50,7 +50,7 @@ export type SignalSemanticContextProposalRuntimeConfigurationV1 = {
   model_max_output_tokens: number;
   input_usd_per_million_tokens: string;
   output_usd_per_million_tokens: string;
-  platform_hard_cap_micro_usd: bigint;
+  platform_hard_cap_micro_usd: bigint | null;
 };
 
 export type SignalSemanticContextProposalWorkspaceV1 = {
@@ -107,7 +107,7 @@ type RunRow = {
   provider: string; model: string; model_version: string; pricing_version: string;
   max_input_tokens: number; max_output_tokens: number;
   input_usd_per_million_tokens: string; output_usd_per_million_tokens: string;
-  hard_cap_micro_usd: string; reservation_micro_usd: string;
+  hard_cap_micro_usd: string | null; reservation_micro_usd: string;
   provider_lineage_digest: string | null; provider_request_identity: string;
   provider_request_id: string | null;
   provider_call_state: "not_started" | "in_flight" | "response_persisted" | "outcome_unknown" | "settled";
@@ -174,13 +174,14 @@ export function signalSemanticContextProposalRuntimeConfigurationFromEnvV1(
   const modelMaxOutput = semanticContextModelMaximumOutputTokensV1(model, modelVersion);
   return {
     available: Boolean(model && modelVersion && pricingVersion && maxInput && maxOutput
-      && modelMaxOutput && inputPrice && outputPrice && hardCap),
+      && modelMaxOutput && inputPrice && outputPrice
+      && ((env.NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD === undefined && env.NOISIA_SEMANTIC_CONTEXT_HARD_CAP_USD === undefined) || hardCap > 0)),
     provider: "anthropic", model, model_version: modelVersion, pricing_version: pricingVersion,
     max_input_tokens: maxInput, max_output_tokens: maxOutput,
     model_max_output_tokens: modelMaxOutput,
     input_usd_per_million_tokens: inputPrice || "0",
     output_usd_per_million_tokens: outputPrice || "0",
-    platform_hard_cap_micro_usd: BigInt(hardCap)
+    platform_hard_cap_micro_usd: hardCap > 0 ? BigInt(hardCap) : null
   };
 }
 
@@ -284,7 +285,7 @@ async function loadSignalSemanticContextProposalPreflightRuntimeCoreV1(args: {
   const reservation = providerLineage ? configurationReservation(providerLineage,
     inputTokenUpperBound ?? args.configuration.max_input_tokens,
     prepared?.capacity.output_token_budget ?? args.configuration.max_output_tokens) : 0n;
-  if (reservation > args.configuration.platform_hard_cap_micro_usd) blockers.push("platform_hard_cap_insufficient");
+  if (args.configuration.platform_hard_cap_micro_usd !== null && reservation > args.configuration.platform_hard_cap_micro_usd) blockers.push("platform_hard_cap_insufficient");
   const payload = {
     contract_version: "signal-semantic-context-proposal-preflight-v3",
     generation_key: generation?.generation_key ?? null,
@@ -318,8 +319,8 @@ async function loadSignalSemanticContextProposalPreflightRuntimeCoreV1(args: {
     } : null,
     maximum_proposals: prepared?.input.limits.maximum_proposals ?? null,
     estimated_max_cost_micro_usd: reservation.toString(),
-    recommended_hard_cap_micro_usd: args.configuration.platform_hard_cap_micro_usd.toString(),
-    platform_hard_cap_micro_usd: args.configuration.platform_hard_cap_micro_usd.toString(),
+    recommended_hard_cap_micro_usd: args.configuration.platform_hard_cap_micro_usd?.toString() ?? null,
+    platform_hard_cap_micro_usd: args.configuration.platform_hard_cap_micro_usd?.toString() ?? null,
     runtime: args.runtime,
     drift: blockers.some((value) => value.includes("drift")) ? "stale" : "current",
     readiness: blockers.length === 0 ? "ready" : "blocked",
@@ -596,11 +597,11 @@ type BrandContextComposedAuthorizationV1 = {
   receipt: {
     id: string; workspace_id: string; organization_id: string; brand_id: string;
     actor_user_id: string; generation_id: string; semantic_admission_id: string;
-    semantic_run_id: string; quote_digest: string; semantic_cap_micro_usd: string | number;
+    semantic_run_id: string; quote_digest: string; semantic_cap_micro_usd: string | number | null;
   };
   run_contract?: {
     semantic_run_id: string; generation_id: string; generation_key: string;
-    policy_configuration: Record<string, unknown>; semantic_cap_micro_usd: string | number;
+    policy_configuration: Record<string, unknown>; semantic_cap_micro_usd: string | number | null;
   };
 };
 
@@ -625,7 +626,7 @@ function brandContextComposedRuntimeAvailableV1(args: SignalBrandContextComposed
     && Number.isSafeInteger(configuration.max_input_tokens) && configuration.max_input_tokens > 0
     && Number.isSafeInteger(configuration.max_output_tokens) && configuration.max_output_tokens > 0
     && Number.isSafeInteger(configuration.model_max_output_tokens) && configuration.model_max_output_tokens > 0
-    && configuration.platform_hard_cap_micro_usd > 0n;
+    && (configuration.platform_hard_cap_micro_usd === null || configuration.platform_hard_cap_micro_usd > 0n);
 }
 
 function brandContextComposedConfigurationV1(
@@ -709,9 +710,9 @@ export async function startSignalBrandContextComposedSemanticRunV1(
       "SELECT signal_processing_configuration_allows_v1('brand_context_proposal',$1::jsonb,$2::jsonb) allowed",
       [JSON.stringify(contract.policy_configuration), JSON.stringify(actualConfiguration)]
     )).rows[0]?.allowed;
-    const semanticCap = BigInt(String(receipt.semantic_cap_micro_usd));
-    if (!configurationAllowed || semanticCap <= 0n
-      || semanticCap > args.configuration.platform_hard_cap_micro_usd) {
+    const semanticCap = receipt.semantic_cap_micro_usd === null ? null : BigInt(String(receipt.semantic_cap_micro_usd));
+    if (!configurationAllowed || (semanticCap !== null && semanticCap <= 0n)
+      || (args.configuration.platform_hard_cap_micro_usd !== null && (semanticCap === null || semanticCap > args.configuration.platform_hard_cap_micro_usd))) {
       throw new SignalSemanticContextProposalExecutionError("brand_context_processing_runtime_drift", 409);
     }
     const preflight = await loadSignalSemanticContextProposalPreflightRuntimeCoreV1({
@@ -726,7 +727,7 @@ export async function startSignalBrandContextComposedSemanticRunV1(
       );
     }
     const reservation = BigInt(preflight.estimated_max_cost_micro_usd);
-    if (reservation <= 0n || reservation > semanticCap) {
+    if (reservation <= 0n || (semanticCap !== null && reservation > semanticCap)) {
       throw new SignalSemanticContextProposalExecutionError("semantic_context_hard_cap_insufficient", 422);
     }
     const prepared = await prepareSignalSemanticContextProposalInputV1({
@@ -750,7 +751,7 @@ export async function startSignalBrandContextComposedSemanticRunV1(
       idempotency_key: `brand-context-composed:${receipt.id}`,
       input: { generation_key: contract.generation_key, preflight_digest: preflight.preflight_digest,
         confirmation: SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
-        hard_cap_micro_usd: semanticCap.toString() }
+        hard_cap_micro_usd: semanticCap?.toString() ?? null }
     });
     if (operation.replay) {
       throw new SignalSemanticContextProposalExecutionError("brand_context_processing_operation_conflict", 409);
@@ -773,7 +774,7 @@ export async function startSignalBrandContextComposedSemanticRunV1(
       providerLineage.provider, providerLineage.model, providerLineage.model_version,
       providerLineage.pricing.version, providerLineage.token_ceilings.max_input_tokens,
       prepared.capacity.output_token_budget, providerLineage.pricing.input_usd_per_million_tokens,
-      providerLineage.pricing.output_usd_per_million_tokens, semanticCap.toString(), reservation.toString(),
+      providerLineage.pricing.output_usd_per_million_tokens, semanticCap?.toString() ?? null, reservation.toString(),
       providerLineage.lineage_digest, providerRequestIdentity, args.actor.id, receipt.semantic_admission_id
     ]);
     const run = inserted.rows[0];
@@ -817,7 +818,7 @@ export async function startSignalSemanticContextProposalRunWithClientV1(client:P
     throw new SignalSemanticContextProposalExecutionError("semantic_context_confirmation_required", 422);
   }
   if (args.hard_cap_micro_usd <= 0n
-      || args.hard_cap_micro_usd > args.configuration.platform_hard_cap_micro_usd) {
+      || (args.configuration.platform_hard_cap_micro_usd !== null && args.hard_cap_micro_usd > args.configuration.platform_hard_cap_micro_usd)) {
     throw new SignalSemanticContextProposalExecutionError("semantic_context_hard_cap_invalid", 422);
   }
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",

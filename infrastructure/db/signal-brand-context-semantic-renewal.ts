@@ -7,7 +7,7 @@ type Identity={database:Pick<Pool,'connect'>;parent_receipt_id:string;actor_user
  runtime:{queue_configured:boolean;worker_alive:boolean;recovery_alive:boolean}};
 export type SignalBrandContextSemanticRenewalQuoteV1={contract_version:'brand-context-semantic-renewal-quote-v1';
  parent_receipt_id:string;workspace_id:string;run_id:string;quote_digest:string;quote_expires_at:string;
- admission_not_after:string;maximum_micro_usd:string;reservation_micro_usd:string;available_today_micro_usd:string};
+ admission_not_after:string;maximum_micro_usd:string;reservation_micro_usd:string;available_today_micro_usd:string|null};
 export type SignalBrandContextSemanticRenewalV1={contract_version:'brand-context-semantic-renewal-v1';
  parent_receipt_id:string;workspace_id:string;run_id:string;admission_id:string;reservation_id:string;renewal_id:string;
  status:'queued'|'processing'|'validating'|'completed'|'failed'|'stale'|'dead_letter';replayed:boolean;admission_not_after:string};
@@ -44,8 +44,8 @@ export async function quoteSignalBrandContextSemanticRenewalV1(args:Identity):Pr
   const row=(await client.query<{value:{quote_digest:string;quote_snapshot:Record<string,unknown>};compatible:boolean}>(`WITH q AS (
    SELECT quote_signal_brand_context_semantic_renewal_v1($1::uuid,$2::uuid) value
   ) SELECT value,signal_processing_configuration_allows_v1('brand_context_proposal',$3::jsonb,value#>'{quote_snapshot,configuration}')
-   AND $4::bigint>=(value#>>'{quote_snapshot,execution_cap_micro_usd}')::bigint compatible FROM q`,
-  [args.parent_receipt_id,args.actor_user_id,JSON.stringify(configuration(args)),args.configuration.platform_hard_cap_micro_usd.toString()])).rows[0];
+   AND ($4::bigint IS NULL OR ($4::bigint>=(value#>>'{quote_snapshot,execution_cap_micro_usd}')::bigint)) compatible FROM q`,
+  [args.parent_receipt_id,args.actor_user_id,JSON.stringify(configuration(args)),args.configuration.platform_hard_cap_micro_usd?.toString()??null])).rows[0];
   if(!row||row.compatible!==true)return fail('brand_context_processing_runtime_drift');
   const q=row.value,s=q.quote_snapshot;
   if(!digest.test(q.quote_digest)||s.parent_receipt_id!==args.parent_receipt_id
@@ -55,7 +55,7 @@ export async function quoteSignalBrandContextSemanticRenewalV1(args:Identity):Pr
    parent_receipt_id:args.parent_receipt_id,workspace_id:s.workspace_id,run_id:s.run_id,quote_digest:q.quote_digest,
    quote_expires_at:timestamp(s.quote_expires_at),admission_not_after:timestamp(s.admission_not_after),
    maximum_micro_usd:money(s.reservation_micro_usd),reservation_micro_usd:money(s.reservation_micro_usd),
-   available_today_micro_usd:money(s.available_today_micro_usd)};
+   available_today_micro_usd:s.available_today_micro_usd===null?null:money(s.available_today_micro_usd)};
   await client.query('COMMIT');return result;
  }catch(error){await client.query('ROLLBACK').catch(()=>undefined);mapError(error);}finally{client.release();}
 }
@@ -72,7 +72,7 @@ export async function renewSignalBrandContextSemanticAdmissionV1(args:SignalBran
   const value=(await client.query<{value:SignalBrandContextSemanticRenewalV1}>(`SELECT renew_signal_brand_context_semantic_admission_v1(
    $1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7::bigint,$8::boolean) value`,[args.parent_receipt_id,args.actor_user_id,
    args.idempotency_key,args.expected_quote_digest,args.confirmation,JSON.stringify(configuration(args)),
-   args.configuration.platform_hard_cap_micro_usd.toString(),available(args)])).rows[0]?.value;
+   args.configuration.platform_hard_cap_micro_usd?.toString()??null,available(args)])).rows[0]?.value;
   if(!value||value.contract_version!=='brand-context-semantic-renewal-v1'||value.parent_receipt_id!==args.parent_receipt_id
    ||![value.workspace_id,value.run_id,value.admission_id,value.reservation_id,value.renewal_id].every(v=>typeof v==='string'&&uuid.test(v))
    ||!['queued','processing','validating','completed','failed','stale','dead_letter'].includes(value.status)

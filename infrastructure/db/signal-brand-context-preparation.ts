@@ -37,17 +37,17 @@ type Operation={brand_context_progress:{attempt:number;last_error:string;retry_a
   brand_context_preparation:PreparationInput};
 const fail=(code:string,status=409):never=>{throw new SignalSemanticContextProposalExecutionError(code,status);};
 const configDigest=(runtime:SignalBrandContextPreparationRuntimeV1)=>digest({semantic:{...runtime.semantic,
-  platform_hard_cap_micro_usd:runtime.semantic.platform_hard_cap_micro_usd.toString(),available:true},
+  platform_hard_cap_micro_usd:runtime.semantic.platform_hard_cap_micro_usd?.toString() ?? null,available:true},
   prototype:{profile:SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,max_run_cost_micro_usd:runtime.prototype.max_run_cost_micro_usd}});
 const quoteWindow=15*60*1000;
 /** Read-only quote: a bounded server clock window can be reconstructed at submit; no bearer grant. */
 export function quoteSignalBrandContextPreparationV1(args:{actor_user_id:string;runtime:SignalBrandContextPreparationRuntimeV1;now?:Date}):SignalBrandContextPreparationQuoteV1 {
   const now=args.now??new Date();
   const available=args.runtime.queue_configured&&args.runtime.worker_alive&&args.runtime.recovery_alive&&args.runtime.semantic.available&&args.runtime.semantic.model==='claude-sonnet-4-6'
-    &&args.runtime.semantic.model_version==='claude-sonnet-4-6'&&args.runtime.semantic.platform_hard_cap_micro_usd>0n
+    &&args.runtime.semantic.model_version==='claude-sonnet-4-6'&&args.runtime.semantic.platform_hard_cap_micro_usd!==null&&args.runtime.semantic.platform_hard_cap_micro_usd>0n
     &&args.runtime.prototype.available&&Number.isSafeInteger(args.runtime.prototype.max_run_cost_micro_usd)&&args.runtime.prototype.max_run_cost_micro_usd>=0;
   const payload={contract_version:'brand-context-preparation-quote-v1' as const,available,
-    semantic_cap_micro_usd:args.runtime.semantic.platform_hard_cap_micro_usd.toString(),
+    semantic_cap_micro_usd:args.runtime.semantic.platform_hard_cap_micro_usd?.toString() ?? "0",
     prototype_cap_micro_usd:String(args.runtime.prototype.max_run_cost_micro_usd),
     quote_expires_at:new Date((Math.floor(now.getTime()/quoteWindow)+2)*quoteWindow).toISOString(),
     admission_not_after:new Date(Math.floor(now.getTime()/quoteWindow)*quoteWindow+24*60*60*1000).toISOString(),

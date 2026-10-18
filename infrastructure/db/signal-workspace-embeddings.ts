@@ -118,19 +118,19 @@ async function composedPrototypeReceiptExact(client:PoolClient,run:Run):Promise<
    JOIN signal_workspace_embedding_runs owner ON owner.id=receipt.run_id
    WHERE receipt.run_id=$1::uuid AND receipt.workspace_id=$2::uuid AND receipt.actor_user_id=$3::uuid
     AND receipt.admission_id=$4::uuid AND receipt.generation_id=parent.generation_id
-    AND receipt.plan_digest=$5 AND receipt.plan->'embedding_profile'=$6::jsonb AND receipt.execution_cap_micro_usd=$7::bigint
+    AND receipt.plan_digest=$5 AND receipt.plan->'embedding_profile'=$6::jsonb AND receipt.execution_cap_micro_usd IS NOT DISTINCT FROM $7::bigint
     AND owner.workspace_id=receipt.workspace_id AND owner.actor_user_id=receipt.actor_user_id
     AND owner.processing_admission_id=receipt.admission_id AND owner.input_contract='topic_prototypes'
     AND owner.brand_context_preparation_operation_id IS NULL AND owner.taxonomy_profile_id=receipt.taxonomy_profile_id
     AND owner.topic_input_snapshot=receipt.plan AND owner.topic_input_digest=receipt.plan_digest
-    AND owner.profile=receipt.plan->'embedding_profile' AND owner.hard_cap_micro_usd=receipt.execution_cap_micro_usd
+    AND owner.profile=receipt.plan->'embedding_profile' AND owner.hard_cap_micro_usd IS NOT DISTINCT FROM receipt.execution_cap_micro_usd
     AND admission.id=$4::uuid AND admission.target_id=$1::uuid AND admission.workspace_id=$2::uuid
     AND admission.actor_user_id=$3::uuid AND admission.action='topic_prototype_embeddings' AND admission.automatic
     AND admission.brand_context_processing_receipt_id=parent.id
     AND admission.brand_context_prototype_receipt_id=receipt.id
     AND admission.configuration=receipt.plan->'embedding_profile'
     AND admission.configuration_digest=receipt.configuration_digest
-    AND admission.execution_cap_micro_usd=receipt.execution_cap_micro_usd
+    AND admission.execution_cap_micro_usd IS NOT DISTINCT FROM receipt.execution_cap_micro_usd
     AND parent.workspace_id=receipt.workspace_id AND parent.actor_user_id=receipt.actor_user_id) valid`,
    [run.id,run.workspace_id,run.actor_user_id,run.processing_admission_id,run.topic_input_digest,JSON.stringify(run.profile),run.hard_cap_micro_usd])).rows[0]?.valid??false;
 }

@@ -525,7 +525,7 @@ export type SignalSemanticContextProviderLineageInputV1 = {
   max_input_tokens: number;
   configured_max_output_tokens: number;
   model_max_output_tokens: number;
-  platform_hard_cap_micro_usd: bigint | string;
+  platform_hard_cap_micro_usd: bigint | string | null;
   capacity?: SignalSemanticContextCapacityPlanV1 | null;
 };
 
@@ -555,8 +555,8 @@ export function buildSignalSemanticContextProviderLineageV1(
       throw new Error("semantic_context_provider_lineage_token_ceiling_invalid");
     }
   }
-  const hardCap = String(input.platform_hard_cap_micro_usd).trim();
-  if (!/^[1-9][0-9]*$/u.test(hardCap)) {
+  const hardCap = input.platform_hard_cap_micro_usd === null ? null : String(input.platform_hard_cap_micro_usd).trim();
+  if (hardCap !== null && !/^[1-9][0-9]*$/u.test(hardCap)) {
     throw new Error("semantic_context_provider_lineage_hard_cap_invalid");
   }
   // Reuse the integer pricing parser; zero tokens validate rates without spending.
@@ -680,7 +680,7 @@ const persistedProviderLineageSchemaV1 = z.object({
     configured_max_output_tokens: z.number().int().positive(),
     model_max_output_tokens: z.number().int().positive()
   }).strict(),
-  platform_hard_cap_micro_usd: z.string().regex(/^[1-9][0-9]*$/u),
+  platform_hard_cap_micro_usd: z.string().regex(/^[1-9][0-9]*$/u).nullable(),
   lineage_digest: digestSchema
 }).strict();
 
