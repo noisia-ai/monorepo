@@ -134,14 +134,25 @@ function BlockView({ block }: { block: Block }) {
 }
 
 /** Standard inner page: plain H1 and lead, then blocks in a single readable column. */
-export function ContentPage({ page, aside, wide = false }: { page: PageContent; aside?: React.ReactNode; wide?: boolean }) {
+export function ContentPage({
+  page,
+  aside,
+  wide = false,
+  split = false
+}: {
+  page: PageContent;
+  aside?: React.ReactNode;
+  wide?: boolean;
+  /** On desktop the aside (e.g. a form) sits in its own sticky column beside the text. */
+  split?: boolean;
+}) {
   return (
-    <article className={styles.page}>
+    <article className={split ? `${styles.page} ${styles.split}` : styles.page}>
       <header className={styles.header}>
         <h1 className={styles.h1}>{page.title}</h1>
         {page.lead ? <p className={styles.pageLead}>{page.lead}</p> : null}
       </header>
-      {aside ? <div className={wide ? styles.asideWide : styles.aside}>{aside}</div> : null}
+      {aside ? <div className={split ? styles.asideSplit : wide ? styles.asideWide : styles.aside}>{aside}</div> : null}
       <div className={styles.blocks}>
         {page.blocks.map((block, i) => (
           <section key={i} className={styles.block}>

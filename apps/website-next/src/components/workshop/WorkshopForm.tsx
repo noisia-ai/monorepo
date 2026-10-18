@@ -62,12 +62,11 @@ export function WorkshopForm({ copy }: { copy: Copy }) {
           <input name="role" autoComplete="organization-title" />
         </label>
       </div>
-      <div className={styles.row}>
-        <label className={styles.field}>
-          <span>{copy.market}</span>
-          <input name="market" />
-        </label>
-        <fieldset className={styles.field}>
+      <label className={styles.field}>
+        <span>{copy.market}</span>
+        <input name="market" />
+      </label>
+      <fieldset className={styles.field}>
           <legend>{copy.when}</legend>
           <div className={styles.options}>
             {copy.whenOptions.map((option) => (
@@ -78,7 +77,6 @@ export function WorkshopForm({ copy }: { copy: Copy }) {
             ))}
           </div>
         </fieldset>
-      </div>
       <input type="text" name="website" tabIndex={-1} autoComplete="off" className={styles.honeypot} aria-hidden />
       <button type="submit" className={styles.submit} disabled={status === "sending"}>
         {status === "sending" ? copy.sending : copy.submit}

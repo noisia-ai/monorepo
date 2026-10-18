@@ -231,3 +231,36 @@
 .asideWide {
   margin-bottom: var(--space-8);
 }
+
+/* Split page: text on the left, a sticky aside (the workshop form) on the right. */
+@media (min-width: 1024px) {
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(400px, 480px);
+    grid-template-areas:
+      "header aside"
+      "blocks aside";
+    column-gap: var(--space-8);
+    align-items: start;
+  }
+
+  .split > .header {
+    grid-area: header;
+  }
+
+  .split > .blocks {
+    grid-area: blocks;
+  }
+
+  .asideSplit {
+    grid-area: aside;
+    position: sticky;
+    top: 96px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .asideSplit {
+    margin-bottom: var(--space-8);
+  }
+}
