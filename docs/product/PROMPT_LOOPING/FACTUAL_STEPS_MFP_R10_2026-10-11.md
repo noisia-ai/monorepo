@@ -4,7 +4,7 @@ Esta lista alimenta al auditor; `QA_FUNDADOR_MFP.md` permanece intacta. **No es 
 
 ## Destino y custodia
 
-- Build fijada `80cf9077a87c95fa0cdebc0359e53e3774d956b8`; Studio y Runner SUCCESS, 28 hashes runtime y siete variables privadas verificados en ambos; una réplica, autodeploy OFF y salud HTTP200. El fundador eligió opción B: una sola QA final con R10 completa. Respaldo anterior preservado; no redeploy durante import activo del estudio.
+- Build fijada `c0db93c243b4b6e6af63f2368dfc7dafe497636c`; Studio y Runner SUCCESS, 30 hashes runtime y siete variables privadas verificados en ambos; una réplica, autodeploy OFF y salud HTTP200. El fundador eligió opción B: una sola QA final con R10 completa. Respaldo anterior preservado; no redeploy durante import activo del estudio.
 - Marca «Marca QA MFP Oct11 R10»; brand `20c7d12a-57fd-49d9-a97b-7b19bf5f2d8f`, workspace `b466a888-c3f6-4b53-babe-e076be9e82d1`, slug `mfp-qa-r10-20261011`.
 - URL Topics: https://mfp-studio-dev-test.up.railway.app/studio/brands/20c7d12a-57fd-49d9-a97b-7b19bf5f2d8f/topics. Signal propio: `/signal/mfp-qa-r10-20261011/topics-narratives`; aún no servido por este recorrido.
 - CSV: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/r10/load1.csv` y `load2.csv`; 47 columnas/1,000 y250 filas. Load1 SHA256 `4773f7ff553419422163d89c688cfa86227736844f4c9d5e02d0de3a4fb41d86`; load2 `8817c1fa4a055a807198582f449265d01a38821f6b1b2ecf0fb0e93cf2c213ea`.
@@ -51,7 +51,7 @@ Los tiempos son límites clic→observación, salvo duración worker indicada. C
 
 Estado visible al último refresco ya ejecutado:472 relevantes/254ajenas/152indeterminadas/23spam =901. Son poblaciones completas de la tabla incluyendo errores, **no** 901 fichas válidas. No sustituirlo por el censo real748labeled/52abstained ni por un denominador de análisis todavía inexistente.
 
-Censo gratuito previo/post al pin integrado de las 09:56:23Z: 748 labeled + 52 abstained + 101 error. Los hashes de las 800 labels y las 101 raíces pendientes permanecen iguales; ledger247 calls settled/USD2.838194 y70 failed sin cambio. USD2.970354 incluye además USD0.132160 de vectores; no son cifras comparables de una misma etapa. No se aplicó0269 ni se llamó proveedor durante este despliegue.
+Censo gratuito previo/post al pin integrado de las 10:43:39Z: 748 labeled + 52 abstained + 101 error. Los hashes de las 800 labels y las 101 raíces pendientes permanecen iguales; ledger247 calls settled/USD2.838194 y70 failed sin cambio. USD2.970354 incluye además USD0.132160 de vectores; no son cifras comparables de una misma etapa. 0269 ya constaba aplicada por su carril separado; no se repitió ni se llamó proveedor durante este despliegue.
 
 ## Tabla completa de controles y dinero
 
