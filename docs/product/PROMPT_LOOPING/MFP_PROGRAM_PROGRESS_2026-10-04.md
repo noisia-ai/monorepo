@@ -1,5 +1,7 @@
 # MFP · Recibo del programa · 4 octubre 2026
 
+> **Corte histórico de avance.** El fundador solicitó el alto de desarrollo. El estado posterior, con SQL0242 instalada, recuperación real completada y censo seguro de las 18:02 UTC, está en la [entrega completa al auditor](HANDOFF_AUDITOR_MFP_2026-10-04.md). Este recibo no autoriza reanudar trabajo.
+
 Corte observado: **17:39 UTC**. Canon: `SPEC_FICHA_Y_PERTENENCIA_2026-10-04.md` **v1.3**, preservado con los accesos antes de delegar. Este recibo distingue código integrado, ejecución real remota y aceptación pendiente. No acredita producción ni sustituye la evaluación humana.
 
 ## Resultado demostrable
