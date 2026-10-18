@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { setRequestLocale } from "next-intl/server";
 import { getStories, getStory } from "@/content/stories";
 import { Feed } from "@/components/feed/Feed";
-import { getFeedStories } from "@/components/feed/feed-data";
+import { getFeedCollections, getFeedStories } from "@/components/feed/feed-data";
 import { routing } from "@/i18n/routing";
 import { SITE_URL } from "@/lib/site";
 
@@ -51,7 +51,7 @@ export default async function InsightPage({ params }: { params: Promise<Params> 
   return (
     <>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
-      <Feed stories={stories} initialId={slug} initialTitle={content.title} />
+      <Feed stories={stories} collections={getFeedCollections(stories, locale)} initialId={slug} initialTitle={content.title} />
     </>
   );
 }

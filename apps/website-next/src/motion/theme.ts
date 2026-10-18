@@ -10,6 +10,7 @@ export const color = {
   faint: "#b5b5b5",
   line: "#e6e6e6",
   track: "#f1f1f1",
+  bubble: "#eeeeee",
   teal: "#008a8a",
   tealSoft: "#e6f7f7",
   coral: "#e2543c",

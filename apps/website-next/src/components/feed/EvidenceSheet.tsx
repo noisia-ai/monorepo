@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Xmark } from "iconoir-react";
+import { SourceMark } from "@/components/brand/SourceMark";
+import { MentionMeta } from "./MentionMeta";
 import type { FeedStory } from "./types";
 import styles from "./Feed.module.css";
 
 export function EvidenceSheet({ story, onClose }: { story: FeedStory; onClose: () => void }) {
   const t = useTranslations("feed");
+  const locale = useLocale();
   const closeRef = useRef<HTMLButtonElement>(null);
 
   const sheetRef = useRef<HTMLDivElement>(null);
@@ -36,9 +39,6 @@ export function EvidenceSheet({ story, onClose }: { story: FeedStory; onClose: (
 
   const facts = [
     story.method ? { label: t("method"), value: story.method } : null,
-    story.sources.length
-      ? { label: t("sources"), value: story.sources.map((s) => (s.length <= 3 ? s.toUpperCase() : s.charAt(0).toUpperCase() + s.slice(1))).join(" · ") }
-      : null,
     story.period ? { label: t("period"), value: story.period } : null,
     { label: t("market"), value: story.market }
   ].filter(Boolean) as { label: string; value: string }[];
@@ -67,16 +67,28 @@ export function EvidenceSheet({ story, onClose }: { story: FeedStory; onClose: (
 
         <ul className={styles.quotes}>
           {story.content.evidence.map((item, i) => (
-            <li key={i} className={styles.quote}>
-              <p className={styles.quoteText}>{item.quote}</p>
-              {item.translation ? <p className={styles.quoteTranslation}>{item.translation}</p> : null}
-              <p className={styles.quoteMeta}>
-                {item.platform}
-                {item.date ? ` · ${item.date}` : ""}
-              </p>
+            <li key={i} className={styles.mention}>
+              <div className={styles.bubble}>
+                <p className={styles.quoteText}>{item.quote}</p>
+                {item.translation ? <p className={styles.quoteTranslation}>{item.translation}</p> : null}
+              </div>
+              <MentionMeta platform={item.platform} date={item.date} locale={locale} />
             </li>
           ))}
         </ul>
+
+        {story.sources.length ? (
+          <div className={styles.sourcesBlock}>
+            <p className={styles.factLabel}>{t("sources")}</p>
+            <ul className={styles.sourceList}>
+              {story.sources.map((source) => (
+                <li key={source}>
+                  <SourceMark name={source} locale={locale} size={16} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
         <dl className={styles.facts}>
           {facts.map((fact) => (

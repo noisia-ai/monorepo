@@ -27,9 +27,11 @@ const legacyReports = {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // Import only the icons in use; without this the whole Iconoir and Simple Icons sets ship.
+  experimental: { optimizePackageImports: ["iconoir-react", "simple-icons"] },
   devIndicators: false,
   // Stories and reports are read from disk at request time; ship them with the server bundle.
-  outputFileTracingIncludes: { "/**": ["./src/content/stories/public/**", "./src/content/reports/**"] },
+  outputFileTracingIncludes: { "/**": ["./src/content/stories/public/**", "./src/content/stories/demo/**", "./src/content/reports/**", "./public/brand/**"] },
   async redirects() {
     return [
       { source: "/metodologias", destination: "/metodos", permanent: true },

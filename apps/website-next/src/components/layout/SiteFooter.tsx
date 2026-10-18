@@ -1,5 +1,6 @@
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
+import { Logo } from "@/components/brand/Logo";
 import { mainNav } from "./nav";
 import styles from "./SiteFooter.module.css";
 
@@ -10,7 +11,7 @@ export function SiteFooter() {
     <footer className={styles.footer}>
       <div className={styles.inner}>
         <div className={styles.brand}>
-          <span className={styles.logo}>noisia</span>
+          <Logo height={30} className={styles.logo} />
           <p className={styles.tagline}>{t("tagline")}</p>
           <Link href="/taller" className={styles.cta}>
             {tNav("cta")}

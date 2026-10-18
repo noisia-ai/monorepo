@@ -23,10 +23,14 @@
 }
 
 .logo {
-  font-weight: 700;
-  font-size: 1.375rem;
-  color: var(--ink);
-  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+}
+
+.logo img {
+  display: block;
+  height: 24px;
+  width: auto;
 }
 
 .desktopNav {

@@ -4,14 +4,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { OpenBook, Pause, Play, ShareIos } from "iconoir-react";
 import { Link } from "@/i18n/navigation";
+import { Logo } from "@/components/brand/Logo";
+import { SourceIcon, sourceLabel } from "@/components/brand/SourceMark";
 import { Stage } from "@/motion/runtime";
 import { StoryComposition, posterFrame, storyDuration } from "@/motion/StoryComposition";
 import { CANVAS } from "@/motion/theme";
 import { EvidenceSheet } from "./EvidenceSheet";
-import type { FeedStory } from "./types";
+import { MentionMeta } from "./MentionMeta";
+import type { FeedCollection, FeedStory } from "./types";
 import styles from "./Feed.module.css";
 
-type Props = { stories: FeedStory[]; initialId?: string; initialFilter?: string; initialTitle?: string };
+export type FeedFilter = { type: "industry" | "collection"; id: string };
+
+type Props = {
+  stories: FeedStory[];
+  collections?: FeedCollection[];
+  initialId?: string;
+  initialFilter?: FeedFilter;
+  initialTitle?: string;
+};
+
+const matches = (story: FeedStory, filter: FeedFilter | null) =>
+  !filter || (filter.type === "collection" ? story.collection === filter.id : story.industry === filter.id);
 
 const WINDOW = 1;
 
@@ -32,14 +46,14 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export function Feed({ stories, initialId, initialFilter, initialTitle }: Props) {
+export function Feed({ stories, collections = [], initialId, initialFilter, initialTitle }: Props) {
   const t = useTranslations("feed");
   const tIndustry = useTranslations("industries");
   const locale = useLocale();
   const reduced = usePrefersReducedMotion();
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const [filter, setFilter] = useState<string | null>(
-    initialFilter && stories.some((story) => story.industry === initialFilter) ? initialFilter : null
+  const [filter, setFilter] = useState<FeedFilter | null>(
+    initialFilter && stories.some((story) => matches(story, initialFilter)) ? initialFilter : null
   );
   const [cycles, setCycles] = useState(1);
   const [active, setActive] = useState(0);
@@ -51,7 +65,7 @@ export function Feed({ stories, initialId, initialFilter, initialTitle }: Props)
   const evidenceTrigger = useRef<HTMLElement | null>(null);
 
   const base = useMemo(() => {
-    const filtered = filter ? stories.filter((story) => story.industry === filter) : stories;
+    const filtered = stories.filter((story) => matches(story, filter));
     return rotateTo(filtered, filter ? undefined : initialId);
   }, [stories, filter, initialId]);
 
@@ -62,6 +76,7 @@ export function Feed({ stories, initialId, initialFilter, initialTitle }: Props)
   );
 
   const industries = useMemo(() => Array.from(new Set(stories.map((story) => story.industry))), [stories]);
+  const collectionName = useMemo(() => new Map(collections.map((collection) => [collection.id, collection.name])), [collections]);
 
   // Every item is exactly one viewport tall, so the active story follows from the scroll
   // position. Simpler and sturdier than an IntersectionObserver across browsers.
@@ -153,25 +168,50 @@ export function Feed({ stories, initialId, initialFilter, initialTitle }: Props)
     window.requestAnimationFrame(() => evidenceTrigger.current?.focus());
   }, []);
 
-  const changeFilter = (value: string | null) => {
+  const changeFilter = (value: FeedFilter | null) => {
     setFilter(value);
     setCycles(1);
     setActive(0);
     scrollerRef.current?.scrollTo({ top: 0 });
+    // The tab lives in the query string so a study's feed can be shared as one link.
+    const params = new URLSearchParams(window.location.search);
+    ["coleccion", "collection", "industria", "industry"].forEach((key) => params.delete(key));
+    if (value) params.set(value.type === "collection" ? (locale === "en" ? "collection" : "coleccion") : locale === "en" ? "industry" : "industria", value.id);
+    const query = params.toString();
+    window.history.replaceState(window.history.state, "", window.location.pathname + (query ? `?${query}` : ""));
   };
+  const isOn = (type: FeedFilter["type"], id: string) => filter?.type === type && filter.id === id;
 
   return (
     <div className={styles.shell}>
       <header className={styles.topbar}>
-        <Link href="/" className={styles.logo} aria-label="Noisia">
-          noisia
+        <Link href="/" className={styles.logo}>
+          <Logo height={22} />
         </Link>
         <nav className={styles.filters} aria-label={t("filter")}>
           <button type="button" className={styles.chip} aria-pressed={filter === null} onClick={() => changeFilter(null)}>
             {tIndustry("all")}
           </button>
+          {collections.map((collection) => (
+            <button
+              key={collection.id}
+              type="button"
+              className={`${styles.chip} ${styles.chipCollection}`}
+              aria-pressed={isOn("collection", collection.id)}
+              onClick={() => changeFilter({ type: "collection", id: collection.id })}
+            >
+              <span className={styles.chipDot} aria-hidden />
+              {collection.name}
+            </button>
+          ))}
           {industries.map((industry) => (
-            <button key={industry} type="button" className={styles.chip} aria-pressed={filter === industry} onClick={() => changeFilter(industry)}>
+            <button
+              key={industry}
+              type="button"
+              className={styles.chip}
+              aria-pressed={isOn("industry", industry)}
+              onClick={() => changeFilter({ type: "industry", id: industry })}
+            >
               {tIndustry(industry)}
             </button>
           ))}
@@ -199,6 +239,7 @@ export function Feed({ stories, initialId, initialFilter, initialTitle }: Props)
                 {near ? (
                   <Stage
                     className={styles.stage}
+                    align="top"
                     durationInFrames={duration}
                     fps={CANVAS.fps}
                     playing={playing}
@@ -222,7 +263,19 @@ export function Feed({ stories, initialId, initialFilter, initialTitle }: Props)
 
               {near ? (
               <div className={styles.caption}>
-                <span className={styles.kind}>{story.kind === "editorial" ? t("kindEditorial") : t("kindExample")}</span>
+                <div className={styles.metaRow}>
+                  <span className={story.kind === "demo" ? styles.kindDemo : styles.kind}>
+                    {story.kind === "editorial" ? t("kindEditorial") : story.kind === "demo" ? t("kindDemo") : t("kindExample")}
+                    {story.collection && collectionName.has(story.collection) ? ` · ${collectionName.get(story.collection)}` : ""}
+                  </span>
+                  <span className={styles.sourceIcons}>
+                    {story.sources.slice(0, 6).map((source) => (
+                      <span key={source} title={sourceLabel(source, locale)} aria-label={sourceLabel(source, locale)} role="img">
+                        <SourceIcon name={source} size={15} />
+                      </span>
+                    ))}
+                  </span>
+                </div>
                 <h2 id={`${key}-title`} className={styles.title}>
                   {story.content.title}
                 </h2>
@@ -230,12 +283,11 @@ export function Feed({ stories, initialId, initialFilter, initialTitle }: Props)
                 {near ? (
                   <ul className={styles.inlineEvidence} aria-label={t("evidenceTitle")}>
                     {story.content.evidence.slice(0, 2).map((item, i) => (
-                      <li key={i}>
-                        <p className={styles.inlineQuote}>{item.quote}</p>
-                        <p className={styles.quoteMeta}>
-                          {item.platform}
-                          {item.date ? ` · ${item.date}` : ""}
-                        </p>
+                      <li key={i} className={styles.mention}>
+                        <div className={styles.bubble}>
+                          <p className={styles.inlineQuote}>{item.quote}</p>
+                        </div>
+                        <MentionMeta platform={item.platform} date={item.date} locale={locale} />
                       </li>
                     ))}
                   </ul>
@@ -285,3 +337,4 @@ export function Feed({ stories, initialId, initialFilter, initialTitle }: Props)
     </div>
   );
 }
+

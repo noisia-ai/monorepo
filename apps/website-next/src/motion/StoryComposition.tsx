@@ -5,6 +5,7 @@ import { AbsoluteFill, Sequence, interpolate, useCurrentFrame, useVideoConfig } 
 import { SceneView } from "./scenes";
 import { CANVAS, OUTRO_FRAMES, SAFE, SCENE_FRAMES, color, font } from "./theme";
 import { clamp, enter } from "./util";
+import { LOGO_RATIO } from "@/components/brand/Logo";
 
 export type StoryCompositionProps = {
   story: StoryLocale;
@@ -34,66 +35,12 @@ export function posterFrame(story: StoryLocale): number {
   return Math.max(0, at - 14);
 }
 
-const GRAIN =
-  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")";
-
-const PARTICLES = Array.from({ length: 46 }, (_, i) => {
-  const r = (n: number) => {
-    const x = Math.sin(i * 12.9898 + n * 78.233) * 43758.5453;
-    return x - Math.floor(x);
-  };
-  return { x: r(1) * 1080, y: r(2) * 1920, size: 5 + r(3) * 7, speed: 0.12 + r(4) * 0.3, phase: r(5) * Math.PI * 2 };
-});
-
-/** Brand atmosphere: a slow cyan/red bloom with grain and drifting points of conversation. */
-function Bloom() {
-  const frame = useCurrentFrame();
-  // Rounded so server and browser math agree to the pixel (avoids hydration mismatches).
-  const drift = Math.round(Math.sin(frame / 90) * 40);
-  return (
-    <AbsoluteFill style={{ background: color.canvas, overflow: "hidden" }}>
-      <div
-        style={{
-          position: "absolute",
-          width: 1100,
-          height: 1100,
-          right: -520,
-          transform: `translateX(${drift}px)`,
-          top: -420,
-          borderRadius: "50%",
-          background: `radial-gradient(circle closest-side, ${color.cyan}50, ${color.cyan}26 40%, ${color.teal}10 70%, transparent 100%)`,
-          willChange: "transform"
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          width: 900,
-          height: 900,
-          left: -480,
-          transform: `translateX(${-drift}px)`,
-          bottom: -380,
-          borderRadius: "50%",
-          background: `radial-gradient(circle closest-side, ${color.red}2a, ${color.coral}14 45%, ${color.coral}08 72%, transparent 100%)`,
-          willChange: "transform"
-        }}
-      />
-      <svg width={1080} height={1920} style={{ position: "absolute", inset: 0 }} aria-hidden>
-        {PARTICLES.map((p, i) => (
-          <circle
-            key={i}
-            cx={Math.round((p.x + Math.cos(frame / 60 + p.phase) * 24) % 1080)}
-            cy={Math.round((p.y - frame * p.speed * 2 + 1920) % 1920)}
-            r={Math.round(p.size)}
-            fill={i % 7 === 0 ? color.coral : color.teal}
-            opacity={Math.round((0.08 + 0.06 * Math.sin(frame / 40 + p.phase)) * 100) / 100}
-          />
-        ))}
-      </svg>
-      {/* Grain as a tiled image: rasterized once by the browser instead of filtered every frame. */}
-      <div style={{ position: "absolute", inset: 0, opacity: 0.05, backgroundImage: GRAIN, backgroundSize: "240px 240px" }} />
-    </AbsoluteFill>
-  );
+/**
+ * Brand canvas: white, like every Noisia surface, with a very soft teal wash at the foot.
+ * The chromatic offset stays reserved for the logo, so the scenes carry the color.
+ */
+function Canvas() {
+  return <AbsoluteFill style={{ background: `linear-gradient(180deg, ${color.canvas} 0%, ${color.canvas} 55%, #f1f9f9 100%)` }} />;
 }
 
 /** Story-style progress segments, one per scene, plus the tag chip. */
@@ -137,11 +84,11 @@ function Outro({ locale }: { locale: string }) {
   const { fps } = useVideoConfig();
   const p = enter(frame, fps, 0, 20);
   return (
-    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", gap: 24, opacity: p }}>
-      <span style={{ fontFamily: font, fontSize: 150, fontWeight: 700, color: color.ink, letterSpacing: -2, transform: `scale(${0.92 + p * 0.08})` }}>
-        noisia
-      </span>
-      <span style={{ fontFamily: font, fontSize: 40, color: color.muted }}>{locale === "en" ? "social intelligence" : "inteligencia social"}</span>
+    <AbsoluteFill style={{ alignItems: "center", justifyContent: "center", gap: 36, opacity: p }}>
+      {/* The real Noisia logo, never typed text. */}
+      {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size SVG inside the canvas */}
+      <img src="/brand/noisia.svg" alt="Noisia" width={560} height={Math.round(560 / LOGO_RATIO)} style={{ transform: `scale(${0.92 + p * 0.08})` }} />
+      <span style={{ fontFamily: font, fontSize: 40, color: color.muted }}>{locale === "en" ? "Social intelligence" : "Inteligencia social"}</span>
     </AbsoluteFill>
   );
 }
@@ -163,7 +110,7 @@ export function StoryComposition({ story, locale, tag, mode }: StoryCompositionP
   let from = 0;
   return (
     <AbsoluteFill style={{ width: CANVAS.width, height: CANVAS.height }}>
-      <Bloom />
+      <Canvas />
       {story.scenes.map((scene, i) => {
         const start = from;
         from += lengths[i]!;

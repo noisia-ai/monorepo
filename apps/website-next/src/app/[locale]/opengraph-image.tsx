@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { logoDataUri } from "@/lib/logo-data";
 
 export const size = { width: 1200, height: 630 };
 export const contentType = "image/png";
@@ -23,7 +24,7 @@ export default async function Image({ params }: { params: Promise<{ locale: stri
         <span style={{ fontSize: 72, lineHeight: 1.08, color: "#0a0a0a", maxWidth: 980 }}>
           {en ? "Every conversation, read to answer your question" : "Toda la conversación, leída para responder tu pregunta"}
         </span>
-        <span style={{ fontSize: 48, color: "#0a0a0a" }}>noisia</span>
+        <img src={logoDataUri()} width={200} height={70} alt="Noisia" />
       </div>
     ),
     size

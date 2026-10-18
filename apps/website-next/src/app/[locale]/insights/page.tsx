@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { Feed } from "@/components/feed/Feed";
-import { getFeedStories } from "@/components/feed/feed-data";
+import { getFeedCollections, getFeedStories } from "@/components/feed/feed-data";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
@@ -21,11 +21,19 @@ export default async function InsightsPage({
   searchParams
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ industria?: string }>;
+  searchParams: Promise<{ industria?: string; industry?: string; coleccion?: string; collection?: string }>;
 }) {
   const { locale } = await params;
-  const { industria } = await searchParams;
+  const query = await searchParams;
   setRequestLocale(locale);
   const stories = await getFeedStories(locale);
-  return <Feed stories={stories} initialFilter={industria} />;
+  const collection = query.coleccion ?? query.collection;
+  const industry = query.industria ?? query.industry;
+  return (
+    <Feed
+      stories={stories}
+      collections={getFeedCollections(stories, locale)}
+      initialFilter={collection ? { type: "collection", id: collection } : industry ? { type: "industry", id: industry } : undefined}
+    />
+  );
 }

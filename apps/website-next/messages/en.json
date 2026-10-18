@@ -42,7 +42,7 @@
     "copied": "Link copied",
     "pause": "Pause",
     "play": "Play",
-    "filter": "Filter by industry",
+    "filter": "Filter by study or industry",
     "next": "Next",
     "evidenceTitle": "The evidence",
     "evidenceIntro": "What people wrote, word for word.",
@@ -55,7 +55,9 @@
     "swipeHint": "Swipe for the next one",
     "backToSite": "Back",
     "metaDescription": "Short findings from Noisia research, in motion and with the evidence behind them. Swipe for the next one.",
-    "heading": "Noisia insights"
+    "heading": "Noisia insights",
+    "kindDemo": "Invented data",
+    "collection": "Study"
   },
   "footer": {
     "tagline": "Social intelligence. Research produced with our own technology and human judgment.",

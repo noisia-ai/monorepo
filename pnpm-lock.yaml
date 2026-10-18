@@ -199,6 +199,9 @@ importers:
       server-only:
         specifier: ^0.0.1
         version: 0.0.1
+      simple-icons:
+        specifier: ^15.22.0
+        version: 15.22.0
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -3611,6 +3614,10 @@ packages:
     resolution: {integrity: sha512-ZX99e6tRweoUXqR+VBrslhda51Nh5MTQwou5tnUDgbtyM0dBgmhEDtWGP/xbKn6hqfPRHujUNwz5fy/wbbhnpw==}
     engines: {node: '>= 0.4'}
 
+  simple-icons@15.22.0:
+    resolution: {integrity: sha512-i/w5Ie4tENfGYbdCo2iJ+oies0vOFd8QXWHopKOUzudfLCvnmeheF2PpHp89Z2azpc+c2su3lMiWO/SpP+429A==}
+    engines: {node: '>=0.12.18'}
+
   simple-icons@16.18.0:
     resolution: {integrity: sha512-5KbjcP456Gm1lrk+rhDuX4zFri+3lRX39IjzXAvoMAO8Ne76WlVlM+Z3kA6jdZ7+QHadgXsf++R7g2jaYVbYig==}
     engines: {node: '>=0.12.18'}
@@ -6995,6 +7002,8 @@ snapshots:
       side-channel-list: 1.0.1
       side-channel-map: 1.0.1
       side-channel-weakmap: 1.0.2
+
+  simple-icons@15.22.0: {}
 
   simple-icons@16.18.0: {}
 

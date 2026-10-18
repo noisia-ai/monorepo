@@ -19,10 +19,9 @@
 }
 
 .logo {
-  font-weight: 700;
-  font-size: 1.75rem;
-  color: var(--ink);
-  letter-spacing: -0.02em;
+  display: block;
+  height: 30px;
+  width: auto;
 }
 
 .tagline {

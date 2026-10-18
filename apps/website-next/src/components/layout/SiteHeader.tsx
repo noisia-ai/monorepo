@@ -8,6 +8,7 @@ import { Link, getPathname, usePathname } from "@/i18n/navigation";
 import { useAlternateHref } from "./alternate";
 import { mainNav } from "./nav";
 import styles from "./SiteHeader.module.css";
+import { Logo } from "@/components/brand/Logo";
 
 export function SiteHeader() {
   const t = useTranslations("nav");
@@ -64,8 +65,8 @@ export function SiteHeader() {
         {t("skip")}
       </a>
       <div className={styles.bar}>
-        <Link href="/" className={styles.logo} aria-label="Noisia">
-          noisia
+        <Link href="/" className={styles.logo}>
+          <Logo height={24} />
         </Link>
         <nav className={styles.desktopNav} aria-label={t("mainNav")}>
           {mainNav.map((item) => (

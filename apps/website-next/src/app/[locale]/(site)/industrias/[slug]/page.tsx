@@ -8,6 +8,7 @@ import { getFeedStories } from "@/components/feed/feed-data";
 import { industryEntries } from "@/content/pages/industries";
 import { routing } from "@/i18n/routing";
 import styles from "@/components/industry/industry.module.css";
+import { SourceMark } from "@/components/brand/SourceMark";
 
 type Params = { locale: string; slug: string };
 
@@ -42,7 +43,7 @@ export default async function IndustryPage({ params }: { params: Promise<Params>
   if (!entry) notFound();
   const t = await getTranslations("industryPage");
   const copy = locale === "en" ? entry.en : entry.es;
-  const stories = (await getFeedStories(locale)).filter((story) => entry.storyIndustries.includes(story.industry)).slice(0, 4);
+  const stories = (await getFeedStories(locale)).filter((story) => story.kind !== "demo" && entry.storyIndustries.includes(story.industry)).slice(0, 4);
   const alternate = locale === "en" ? `/industrias/${entry.slug.es}` : `/en/industries/${entry.slug.en}`;
   const feedHref = `${locale === "en" ? "/en" : ""}/insights?industria=${entry.storyIndustries[0] ?? ""}`;
   return (
@@ -71,7 +72,9 @@ export default async function IndustryPage({ params }: { params: Promise<Params>
           <h2 className={styles.h2}>{t("where")}</h2>
           <ul className={styles.chips}>
             {copy.where.map((place) => (
-              <li key={place}>{place}</li>
+              <li key={place}>
+                <SourceMark name={place} locale={locale} size={16} />
+              </li>
             ))}
           </ul>
         </section>

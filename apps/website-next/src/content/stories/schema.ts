@@ -84,8 +84,11 @@ export const industries = [
 export const storySchema = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   industry: z.enum(industries),
-  // editorial = Noisia's own public research; example = illustrative finding from client-style work.
-  kind: z.enum(["editorial", "example"]).default("example"),
+  // editorial = Noisia's own public research; example = illustrative finding from client-style work;
+  // demo = invented data to test a format, never published.
+  kind: z.enum(["editorial", "example", "demo"]).default("example"),
+  // Groups the stories that come from one report or study (e.g. a Buen Fin study) into its own feed tab.
+  collection: z.string().regex(/^[a-z0-9-]+$/).optional(),
   market: z.string().max(12),
   method: z.string().max(60).optional(),
   sources: z.array(z.string()).default([]),
@@ -99,3 +102,4 @@ export type Scene = z.infer<typeof sceneSchema>;
 export type Story = z.infer<typeof storySchema>;
 export type StoryLocale = z.infer<typeof localizedSchema>;
 export type Industry = (typeof industries)[number];
+export type StoryKind = Story["kind"];

@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { logoDataUri } from "@/lib/logo-data";
 import { getStory } from "@/content/stories";
 
 export const size = { width: 1200, height: 630 };
@@ -24,7 +25,7 @@ export default async function Image({ params }: { params: Promise<{ locale: stri
         <div style={{ display: "flex", fontSize: 28, color: "#008a8a" }}>{story ? `${story.industry.replace(/-/g, " ")} · ${story.market}` : "insights"}</div>
         <div style={{ display: "flex", fontSize: 64, lineHeight: 1.1, color: "#0a0a0a", maxWidth: 1000 }}>{content?.title ?? "Noisia"}</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 44, color: "#0a0a0a" }}>noisia</span>
+          <img src={logoDataUri()} width={180} height={63} alt="Noisia" />
           <span style={{ fontSize: 24, color: "#6d6d6d" }}>{locale === "en" ? "social intelligence" : "inteligencia social"}</span>
         </div>
       </div>

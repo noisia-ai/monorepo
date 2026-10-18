@@ -110,6 +110,8 @@ type StageProps = {
   onFrame?: (frame: number) => void;
   onEnded?: () => void;
   className?: string;
+  /** Where the scaled canvas sits when the box is taller than it: centered, or pinned to the top. */
+  align?: "center" | "top";
   label?: string;
   children: ReactNode;
 };
@@ -131,6 +133,7 @@ export function Stage({
   onFrame,
   onEnded,
   className,
+  align = "center",
   label,
   children
 }: StageProps) {
@@ -208,11 +211,11 @@ export function Stage({
         style={{
           position: "absolute",
           left: "50%",
-          top: "50%",
+          top: align === "top" ? 0 : "50%",
           width,
           height,
-          transform: `translate(-50%, -50%) scale(${scale || 0.0001})`,
-          transformOrigin: "center",
+          transform: `translate(-50%, ${align === "top" ? "0" : "-50%"}) scale(${scale || 0.0001})`,
+          transformOrigin: align === "top" ? "top center" : "center",
           visibility: scale ? "visible" : "hidden"
         }}
       >

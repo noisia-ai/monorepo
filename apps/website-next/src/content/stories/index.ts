@@ -6,7 +6,8 @@ import { storySchema, type Story } from "./schema";
 /**
  * Stories live as JSON files. `public/` is committed (Noisia's own editorial work).
  * `_local/` is gitignored and only exists on machines that hold client-derived test
- * content; the site works without it.
+ * content; the site works without it. `demo/` holds invented stories that test a
+ * format (for example a collection tab) and only load outside production or in UAT.
  */
 const ROOT = join(process.cwd(), "src/content/stories");
 
@@ -36,7 +37,8 @@ export function getStories(): Story[] {
     // Client-derived test stories never load in production unless explicitly enabled.
     const allowLocal = process.env.NODE_ENV !== "production" || process.env.NOISIA_LOCAL_STORIES === "1";
     const local = allowLocal ? readDir("_local") : [];
-    const published = readDir("public");
+    const allowDemo = process.env.NODE_ENV !== "production" || process.env.NOISIA_DEMO_STORIES === "1";
+    const published = [...readDir("public"), ...(allowDemo ? readDir("demo") : [])];
     // Interleave so the feed alternates sources instead of showing one block after another.
     const merged: Story[] = [];
     const max = Math.max(local.length, published.length);

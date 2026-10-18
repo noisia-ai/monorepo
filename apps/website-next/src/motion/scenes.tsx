@@ -1,7 +1,9 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
+import { Calendar } from "iconoir-react";
 import type { Scene } from "@/content/stories/schema";
+import { SourceIcon, sourceLabel } from "@/components/brand/SourceMark";
 import { interpolate, useCurrentFrame, useVideoConfig } from "./runtime";
 import { color, font, SAFE } from "./theme";
 import { clamp, countUp, enter, formatNumber, rise } from "./util";
@@ -200,17 +202,43 @@ export function SplitScene({ scene, locale, bottomSafe }: SceneProps<"split">) {
   );
 }
 
+/** Words that get crossed out one by one, so the strike follows the text across line breaks. */
+function StruckWords({ value, size, delay, strikeAt }: { value: string; size: number; delay: number; strikeAt: number }) {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const words = value.split(" ");
+  return (
+    <p style={text(size, 500, { display: "flex", flexWrap: "wrap", columnGap: size * 0.26, rowGap: size * 0.04 })}>
+      {words.map((word, i) => {
+        const strike = interpolate(frame, [strikeAt + i * 3, strikeAt + i * 3 + 10], [0, 1], clamp);
+        return (
+          <span
+            key={`${word}-${i}`}
+            style={{
+              display: "inline-block",
+              color: strike > 0.5 ? color.muted : color.ink,
+              backgroundImage: `linear-gradient(${color.coral}, ${color.coral})`,
+              backgroundRepeat: "no-repeat",
+              backgroundPosition: "0 56%",
+              backgroundSize: `${Math.round(strike * 100)}% ${Math.round(size * 0.07)}px`,
+              ...rise(frame, fps, delay + i * 3, size * 0.4)
+            }}
+          >
+            {word}
+          </span>
+        );
+      })}
+    </p>
+  );
+}
+
 export function TensionScene({ scene, locale, bottomSafe }: SceneProps<"tension">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const strike = interpolate(frame, [44, 62], [0, 1], clamp);
   return (
     <Shell bottomSafe={bottomSafe}>
       <div style={{ display: "flex", flexDirection: "column", gap: 36 }}>
-        <div style={{ position: "relative", alignSelf: "flex-start" }}>
-          <Words value={scene.want} size={100} delay={2} />
-          <div style={{ position: "absolute", left: 0, top: "54%", height: 8, width: `${strike * 100}%`, background: color.coral, borderRadius: 4 }} />
-        </div>
+        <StruckWords value={scene.want} size={100} delay={2} strikeAt={44} />
         <Words value={scene.but} size={100} delay={30} color={color.coral} />
         {scene.value != null ? (
           <p style={text(56, 500, { color: color.muted, ...rise(frame, fps, 64) })}>
@@ -222,19 +250,34 @@ export function TensionScene({ scene, locale, bottomSafe }: SceneProps<"tension"
   );
 }
 
-export function QuoteScene({ scene, bottomSafe }: SceneProps<"quote">) {
+/** A mention as it was posted: chat bubble, then the platform's logo and when it was said. */
+export function QuoteScene({ scene, locale, bottomSafe }: SceneProps<"quote">) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
-  const size = scene.text.length > 150 ? 66 : scene.text.length > 90 ? 78 : 92;
+  const size = scene.text.length > 150 ? 62 : scene.text.length > 90 ? 72 : 84;
   return (
     <Shell bottomSafe={bottomSafe}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 34 }}>
-        <span style={text(220, 500, { color: color.teal, lineHeight: 0.6, height: 110, ...rise(frame, fps, 0, 20) })}>“</span>
-        <p style={text(size, 400, { color: color.ink, lineHeight: 1.22, ...rise(frame, fps, 6) })}>{scene.text}</p>
-        {scene.translation ? <p style={text(40, 400, { color: color.muted, ...rise(frame, fps, 20) })}>{scene.translation}</p> : null}
-        <div style={{ display: "flex", gap: 18, alignItems: "center", ...rise(frame, fps, 26) }}>
-          <span style={text(36, 500, { padding: "12px 26px", borderRadius: 999, background: color.tealSoft, color: color.teal })}>{scene.platform}</span>
-          {scene.meta ? <span style={text(36, 400, { color: color.muted })}>{scene.meta}</span> : null}
+      <div style={{ display: "flex", flexDirection: "column", gap: 30 }}>
+        <div style={{ position: "relative", marginLeft: 22, ...rise(frame, fps, 0, 30) }}>
+          <svg width={44} height={40} viewBox="0 0 18 16" style={{ position: "absolute", left: -21, bottom: 0 }} aria-hidden>
+            <path d="M18 0 C18 9 13 15 0 16 C8 12 9 6 9 0 Z" fill={color.bubble} />
+          </svg>
+          <div style={{ background: color.bubble, borderRadius: "56px 56px 56px 16px", padding: "48px 56px" }}>
+            <p style={text(size, 400, { color: color.ink, lineHeight: 1.24 })}>{scene.text}</p>
+            {scene.translation ? <p style={text(40, 400, { color: color.muted, lineHeight: 1.3, marginTop: 24 })}>{scene.translation}</p> : null}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 36, alignItems: "center", marginLeft: 22, ...rise(frame, fps, 16) }}>
+          <span style={text(38, 500, { display: "inline-flex", alignItems: "center", gap: 14, color: color.fg })}>
+            <SourceIcon name={scene.platform} size={46} />
+            {sourceLabel(scene.platform, locale)}
+          </span>
+          {scene.meta ? (
+            <span style={text(38, 400, { display: "inline-flex", alignItems: "center", gap: 12, color: color.muted })}>
+              <Calendar width={40} height={40} strokeWidth={1.7} aria-hidden />
+              {scene.meta}
+            </span>
+          ) : null}
         </div>
       </div>
     </Shell>

@@ -1,0 +1,254 @@
+[
+  {
+    "id": "buen-fin-precio-de-antes",
+    "industry": "retail",
+    "kind": "demo",
+    "collection": "buen-fin-2026",
+    "market": "MX",
+    "method": "Journey Friction Mapping",
+    "sources": ["TikTok", "X", "Facebook", "Reddit", "Reviews"],
+    "period": "oct–nov 2026",
+    "notes": "DATOS INVENTADOS. Historia de prueba para la colección Buen Fin; no sale a producción.",
+    "es": {
+      "title": "En el Buen Fin, la gente compara contra el precio de octubre",
+      "dek": "Antes de comprar, muchos toman captura del precio semanas antes para comprobar que el descuento es real.",
+      "scenes": [
+        { "type": "hook", "text": "¿Tu descuento sobrevive a una captura de pantalla de octubre?" },
+        {
+          "type": "stat",
+          "value": 38,
+          "suffix": "%",
+          "label": "de las menciones sobre descuentos duda de que el precio sea real",
+          "context": "Conversación sobre el Buen Fin en México"
+        },
+        {
+          "type": "compare",
+          "unit": "%",
+          "items": [
+            { "label": "Precio inflado antes", "value": 38, "highlight": true },
+            { "label": "Envío que no llega", "value": 24 },
+            { "label": "Meses sin intereses", "value": 21 },
+            { "label": "Sin stock", "value": 17 }
+          ]
+        },
+        {
+          "type": "quote",
+          "text": "Le tomé captura al precio desde octubre y el 'descuento' del Buen Fin es el mismo precio. Ya no me la creo.",
+          "platform": "TikTok",
+          "meta": "MX · nov 2026"
+        },
+        { "type": "takeaway", "text": "Muestra el precio de las semanas previas junto al descuento, antes de que lo hagan tus clientes." }
+      ],
+      "takeaway": "Publicar el historial de precio de cada producto en oferta y usarlo como prueba de que el descuento es real.",
+      "evidence": [
+        { "quote": "Le tomé captura al precio desde octubre y el 'descuento' del Buen Fin es el mismo precio. Ya no me la creo.", "platform": "TikTok", "date": "2026-11" },
+        { "quote": "Tip para el Buen Fin: guarden el link y revisen el precio desde ahorita, luego lo suben y te lo 'rebajan'.", "platform": "X", "date": "2026-10" },
+        { "quote": "Compré la pantalla porque vi el precio de antes en la página. Eso me dio confianza.", "platform": "Facebook", "date": "2026-11" }
+      ]
+    },
+    "en": {
+      "title": "During Buen Fin, shoppers check prices against October",
+      "dek": "Before buying, many people screenshot prices weeks ahead to check that the discount is real.",
+      "scenes": [
+        { "type": "hook", "text": "Does your discount survive a screenshot from October?" },
+        {
+          "type": "stat",
+          "value": 38,
+          "suffix": "%",
+          "label": "of the mentions about discounts doubt the price is real",
+          "context": "Conversation about Buen Fin in Mexico"
+        },
+        {
+          "type": "compare",
+          "unit": "%",
+          "items": [
+            { "label": "Price raised beforehand", "value": 38, "highlight": true },
+            { "label": "Delivery that never comes", "value": 24 },
+            { "label": "Interest-free months", "value": 21 },
+            { "label": "Out of stock", "value": 17 }
+          ]
+        },
+        {
+          "type": "quote",
+          "text": "Le tomé captura al precio desde octubre y el 'descuento' del Buen Fin es el mismo precio. Ya no me la creo.",
+          "translation": "I screenshotted the price back in October and the Buen Fin 'discount' is the same price. I don't buy it anymore.",
+          "platform": "TikTok",
+          "meta": "MX · Nov 2026"
+        },
+        { "type": "takeaway", "text": "Show the price from the weeks before next to the discount, before your customers do it for you." }
+      ],
+      "takeaway": "Publish the price history of every product on sale and use it as proof that the discount is real.",
+      "evidence": [
+        { "quote": "Le tomé captura al precio desde octubre y el 'descuento' del Buen Fin es el mismo precio. Ya no me la creo.", "translation": "I screenshotted the price back in October and the Buen Fin 'discount' is the same price. I don't buy it anymore.", "platform": "TikTok", "date": "2026-11" },
+        { "quote": "Tip para el Buen Fin: guarden el link y revisen el precio desde ahorita, luego lo suben y te lo 'rebajan'.", "translation": "Buen Fin tip: save the link and check the price now, they raise it later and then 'discount' it.", "platform": "X", "date": "2026-10" },
+        { "quote": "Compré la pantalla porque vi el precio de antes en la página. Eso me dio confianza.", "translation": "I bought the TV because the page showed the previous price. That gave me confidence.", "platform": "Facebook", "date": "2026-11" }
+      ]
+    }
+  },
+  {
+    "id": "buen-fin-meses-sin-intereses",
+    "industry": "tecnologia-de-consumo",
+    "kind": "demo",
+    "collection": "buen-fin-2026",
+    "market": "MX",
+    "method": "Triggers & Barriers",
+    "sources": ["YouTube", "TikTok", "Reddit", "Facebook"],
+    "period": "oct–nov 2026",
+    "notes": "DATOS INVENTADOS. Historia de prueba para la colección Buen Fin; no sale a producción.",
+    "es": {
+      "title": "En electrónica, los meses sin intereses pesan más que el descuento",
+      "dek": "Para pantallas y celulares, la conversación decide por la mensualidad antes que por el porcentaje de rebaja.",
+      "scenes": [
+        { "type": "hook", "text": "Para comprar una pantalla en el Buen Fin, la gente divide antes de restar." },
+        {
+          "type": "split",
+          "left": { "label": "habla de meses sin intereses", "value": 61, "suffix": "%" },
+          "right": { "label": "habla del porcentaje de descuento", "value": 27, "suffix": "%" },
+          "caption": "Menciones de compra de electrónica durante el Buen Fin"
+        },
+        {
+          "type": "tension",
+          "want": "Quiero estrenar este año",
+          "but": "Que la mensualidad no me ahorque",
+          "value": null
+        },
+        {
+          "type": "quote",
+          "text": "No me importa si está 20% más barata en otro lado, aquí me la dan a 18 meses y eso sí lo puedo pagar.",
+          "platform": "YouTube",
+          "meta": "MX · nov 2026"
+        },
+        { "type": "takeaway", "text": "Lleva la mensualidad al titular y deja el porcentaje como apoyo." }
+      ],
+      "takeaway": "Comunicar la oferta de electrónica por mensualidad y plazo, y usar el descuento como argumento secundario.",
+      "evidence": [
+        { "quote": "No me importa si está 20% más barata en otro lado, aquí me la dan a 18 meses y eso sí lo puedo pagar.", "platform": "YouTube", "date": "2026-11" },
+        { "quote": "Alguien sabe qué tienda tiene el iPhone a 24 meses? El descuento me da igual.", "platform": "Reddit", "date": "2026-11" },
+        { "quote": "Ya saqué la cuenta y con los meses me sale en 900 al mes, va.", "platform": "TikTok", "date": "2026-11" }
+      ]
+    },
+    "en": {
+      "title": "In electronics, interest-free months beat the discount",
+      "dek": "For TVs and phones, people decide on the monthly payment before the percentage off.",
+      "scenes": [
+        { "type": "hook", "text": "To buy a TV during Buen Fin, people divide before they subtract." },
+        {
+          "type": "split",
+          "left": { "label": "talk about interest-free months", "value": 61, "suffix": "%" },
+          "right": { "label": "talk about the discount percentage", "value": 27, "suffix": "%" },
+          "caption": "Mentions about buying electronics during Buen Fin"
+        },
+        {
+          "type": "tension",
+          "want": "I want something new this year",
+          "but": "As long as the payment doesn't choke me",
+          "value": null
+        },
+        {
+          "type": "quote",
+          "text": "No me importa si está 20% más barata en otro lado, aquí me la dan a 18 meses y eso sí lo puedo pagar.",
+          "translation": "I don't care if it's 20% cheaper somewhere else, here I get 18 months and that I can actually pay.",
+          "platform": "YouTube",
+          "meta": "MX · Nov 2026"
+        },
+        { "type": "takeaway", "text": "Put the monthly payment in the headline and keep the percentage as support." }
+      ],
+      "takeaway": "Sell electronics offers by monthly payment and term, and use the discount as the secondary argument.",
+      "evidence": [
+        { "quote": "No me importa si está 20% más barata en otro lado, aquí me la dan a 18 meses y eso sí lo puedo pagar.", "translation": "I don't care if it's 20% cheaper somewhere else, here I get 18 months and that I can actually pay.", "platform": "YouTube", "date": "2026-11" },
+        { "quote": "Alguien sabe qué tienda tiene el iPhone a 24 meses? El descuento me da igual.", "translation": "Does anyone know which store has the iPhone at 24 months? I don't care about the discount.", "platform": "Reddit", "date": "2026-11" },
+        { "quote": "Ya saqué la cuenta y con los meses me sale en 900 al mes, va.", "translation": "Did the math and with the months it comes to 900 a month, deal.", "platform": "TikTok", "date": "2026-11" }
+      ]
+    }
+  },
+  {
+    "id": "buen-fin-la-paqueteria",
+    "industry": "retail",
+    "kind": "demo",
+    "collection": "buen-fin-2026",
+    "market": "MX",
+    "method": "Journey Friction Mapping",
+    "sources": ["X", "Facebook", "Instagram", "Reviews"],
+    "period": "oct–nov 2026",
+    "notes": "DATOS INVENTADOS. Historia de prueba para la colección Buen Fin; no sale a producción.",
+    "es": {
+      "title": "La experiencia del Buen Fin se decide en la paquetería",
+      "dek": "La emoción sube hasta el pago y se cae en la entrega. La marca carga con la culpa de un envío que no controla.",
+      "scenes": [
+        { "type": "hook", "text": "La venta del Buen Fin termina dos semanas después, en la puerta de la casa." },
+        {
+          "type": "journey",
+          "unit": "",
+          "steps": [
+            { "label": "Antes", "value": 42 },
+            { "label": "Comparar", "value": 18 },
+            { "label": "Pagar", "value": 25 },
+            { "label": "Envío", "value": -47 },
+            { "label": "Entrega", "value": -31 }
+          ],
+          "highlightIndex": 3
+        },
+        {
+          "type": "stat",
+          "value": 2.4,
+          "suffix": "x",
+          "label": "más menciones negativas sobre envíos que en una semana normal",
+          "context": "Semana del Buen Fin contra el promedio de octubre"
+        },
+        {
+          "type": "quote",
+          "text": "Compré el lunes del Buen Fin y la guía sigue 'en preparación'. Nunca más con esta tienda.",
+          "platform": "X",
+          "meta": "MX · nov 2026"
+        },
+        { "type": "takeaway", "text": "Promete una fecha de entrega que puedas cumplir y avisa antes de que pregunten." }
+      ],
+      "takeaway": "Dar fecha de entrega realista desde el carrito y avisar del estado del envío antes de que el cliente reclame.",
+      "evidence": [
+        { "quote": "Compré el lunes del Buen Fin y la guía sigue 'en preparación'. Nunca más con esta tienda.", "platform": "X", "date": "2026-11" },
+        { "quote": "Todo bien con la compra, pero tardó 12 días en llegar y nadie me avisaba nada.", "platform": "Reviews", "date": "2026-11" },
+        { "quote": "Me llegó antes de lo que decían y con mensaje de seguimiento. Así sí.", "platform": "Instagram", "date": "2026-11" }
+      ]
+    },
+    "en": {
+      "title": "The Buen Fin experience is decided by the courier",
+      "dek": "Excitement climbs until payment and drops at delivery. The brand takes the blame for shipping it doesn't control.",
+      "scenes": [
+        { "type": "hook", "text": "The Buen Fin sale ends two weeks later, at the front door." },
+        {
+          "type": "journey",
+          "unit": "",
+          "steps": [
+            { "label": "Before", "value": 42 },
+            { "label": "Compare", "value": 18 },
+            { "label": "Pay", "value": 25 },
+            { "label": "Shipping", "value": -47 },
+            { "label": "Delivery", "value": -31 }
+          ],
+          "highlightIndex": 3
+        },
+        {
+          "type": "stat",
+          "value": 2.4,
+          "suffix": "x",
+          "label": "more negative mentions about shipping than in a normal week",
+          "context": "Buen Fin week against the October average"
+        },
+        {
+          "type": "quote",
+          "text": "Compré el lunes del Buen Fin y la guía sigue 'en preparación'. Nunca más con esta tienda.",
+          "translation": "I bought on Buen Fin Monday and the tracking still says 'preparing'. Never again with this store.",
+          "platform": "X",
+          "meta": "MX · Nov 2026"
+        },
+        { "type": "takeaway", "text": "Promise a delivery date you can keep and send updates before people have to ask." }
+      ],
+      "takeaway": "Give a realistic delivery date from the cart and share shipping status before the customer complains.",
+      "evidence": [
+        { "quote": "Compré el lunes del Buen Fin y la guía sigue 'en preparación'. Nunca más con esta tienda.", "translation": "I bought on Buen Fin Monday and the tracking still says 'preparing'. Never again with this store.", "platform": "X", "date": "2026-11" },
+        { "quote": "Todo bien con la compra, pero tardó 12 días en llegar y nadie me avisaba nada.", "translation": "The purchase was fine, but it took 12 days to arrive and nobody told me anything.", "platform": "Reviews", "date": "2026-11" },
+        { "quote": "Me llegó antes de lo que decían y con mensaje de seguimiento. Así sí.", "translation": "It arrived earlier than promised and with tracking messages. That's how it's done.", "platform": "Instagram", "date": "2026-11" }
+      ]
+    }
+  }
+]

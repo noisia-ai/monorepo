@@ -22,7 +22,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   setRequestLocale(locale);
   const lang = locale === "en" ? "en" : "es";
   const c = home[lang];
-  const stories = (await getFeedStories(locale)).slice(0, 4);
+  const stories = (await getFeedStories(locale)).filter((story) => story.kind !== "demo").slice(0, 4);
   const deliverable = { report: c.moments.report, study: c.moments.study, plan: c.moments.plan };
 
   return (
