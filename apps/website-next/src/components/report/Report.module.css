@@ -2390,7 +2390,7 @@
   flex-wrap: wrap;
   justify-content: space-between;
   gap: 12px;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .evidenceSummary {
