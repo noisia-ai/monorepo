@@ -214,7 +214,7 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
     }
     if (current.resume_run_id) {
       if (args.hard_cap_micro_usd !== current.required_cap_micro_usd) return fail("workspace_embedding_resume_budget_changed", 422);
-      if (mfp) {
+      {
         await client.query(`SELECT signal_processing_capacity_v1(workspace_id,actor_user_id,id,processing_admission_id,
           ARRAY['corpus_embeddings'],profile->>'provider',profile->>'model',profile,hard_cap_micro_usd)
           FROM signal_workspace_embedding_runs WHERE id=$1::uuid AND processing_admission_id IS NOT NULL`, [current.resume_run_id]);
@@ -231,10 +231,13 @@ export async function requestSignalWorkspaceEmbeddingsStoreV1(args: {
     }
     const runId = randomUUID();
     let effectiveCap=args.hard_cap_micro_usd,admissionId:string|null=null;
-    if(mfp || effectiveCap===null){
-      const policy=(await client.query<{max_execution_micro_usd:string|null}>(`SELECT a.max_execution_micro_usd::text FROM signal_processing_policy_actions a JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id
-        WHERE p.organization_id=(SELECT organization_id FROM signal_workspaces WHERE id=$1) AND p.status='active' AND p.valid_from<=now() AND p.valid_until>now() AND a.action='corpus_embeddings'`,[args.workspace_id])).rows[0];
-      if(!policy)return fail('workspace_embedding_policy_required');
+    // Classic work uses the same policy admission whenever a policy is active.
+    // A finite request cannot bypass a stricter action, and NULL cannot remove it.
+    const policy=(await client.query<{action:string|null;max_execution_micro_usd:string|null}>(`SELECT a.action,a.max_execution_micro_usd::text FROM signal_processing_policy_versions p
+      LEFT JOIN signal_processing_policy_actions a ON a.policy_version_id=p.id AND a.action='corpus_embeddings'
+      WHERE p.organization_id=(SELECT organization_id FROM signal_workspaces WHERE id=$1) AND p.status='active' AND p.valid_from<=now() AND p.valid_until>now()`,[args.workspace_id])).rows[0];
+    if(mfp || effectiveCap===null || policy){
+      if(!policy?.action)return fail('workspace_embedding_policy_required');
       const policyCap=policy.max_execution_micro_usd===null?null:integer(policy.max_execution_micro_usd);
       if(effectiveCap===null) effectiveCap=policyCap;
       else if(policyCap!==null && effectiveCap>policyCap) return fail("workspace_embedding_budget_exceeds_limit",422);

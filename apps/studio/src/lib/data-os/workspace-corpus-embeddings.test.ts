@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Pool } from "pg";
-import { SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1 } from "@noisia/query-engine";
 import { loadWorkspaceCorpusEmbeddingsForActorV1, quoteWorkspaceCorpusEmbeddingsForActorV1,
   requestWorkspaceCorpusEmbeddingsForActorV1, validateWorkspaceCorpusEmbeddingRequestV1,
   workspaceEmbeddingRuntimeSettingsV1, WorkspaceCorpusEmbeddingsError } from "./workspace-corpus-embeddings";
@@ -34,13 +33,18 @@ test("client import authority never grants paid embedding execution", async () =
   (error: unknown) => error instanceof WorkspaceCorpusEmbeddingsError && error.status === 403);
 });
 test("embedding runtime defaults disabled and refuses malformed, negative and unsafe monetary configuration", () => {
-  assert.deepEqual(workspaceEmbeddingRuntimeSettingsV1({}), { provider_available: false, max_run_cost_micro_usd: 5_000_000 });
+  assert.deepEqual(workspaceEmbeddingRuntimeSettingsV1({}), { provider_available: false, max_run_cost_micro_usd: null });
   assert.equal(workspaceEmbeddingRuntimeSettingsV1({ NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED: "true" }).provider_available, false);
   assert.equal(workspaceEmbeddingRuntimeSettingsV1({ NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED: "false", VOYAGE_API_KEY: "test-only" }).provider_available, false);
   assert.equal(workspaceEmbeddingRuntimeSettingsV1({ NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED: "true", VOYAGE_API_KEY: "test-only" }).provider_available, true);
   for (const raw of ["-1", "", "Infinity", "1e6", "1.5", "9007199254740992"]) {
     assert.throws(() => workspaceEmbeddingRuntimeSettingsV1({ NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: raw }), WorkspaceCorpusEmbeddingsError);
   }
+});
+
+test('classic corpus quote has no inherited five-dollar maximum and preserves explicit runtime maxima',()=>{
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1({}).max_run_cost_micro_usd,null);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1({NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:'6000000'}).max_run_cost_micro_usd,6_000_000);
 });
 test("paid request contains only a preparation identity, quote seal and integer budget", () => {
   assert.equal(validateWorkspaceCorpusEmbeddingRequestV1(body), true);
@@ -98,15 +102,15 @@ test('server recomputes the cache-only plan while disabled and refuses stale, mi
   }
 });
 
-test("MFP omits only the inherited cap, preserving explicitly configured strict maxima", () => {
+test("corpus omits only the inherited cap, preserving explicitly configured strict maxima", () => {
   const mfp = { NOISIA_MENTION_FACETS_ENABLED: "true" };
-  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp).max_run_cost_micro_usd, SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1);
-  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp,true).max_run_cost_micro_usd, null);
-  assert.equal(workspaceEmbeddingRuntimeSettingsV1({...mfp, NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: "123"},true).max_run_cost_micro_usd, 123);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp).max_run_cost_micro_usd, null);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1(mfp).max_run_cost_micro_usd, null);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1({...mfp, NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: "123"}).max_run_cost_micro_usd, 123);
   assert.equal(validateWorkspaceCorpusEmbeddingRequestV1({...body, hard_cap_micro_usd: null}), true);
 });
 
-test("without workspace opt-in, embedding authority and cap stay legacy with the switch on or off",async()=>{
+test("without workspace opt-in, classic authority stays unchanged and missing policy cannot admit NULL with the switch on or off",async()=>{
   const previous=process.env.NOISIA_MENTION_FACETS_ENABLED;
   try {
     for(const flag of ["false","true"]){
@@ -120,14 +124,14 @@ test("without workspace opt-in, embedding authority and cap stay legacy with the
         return {rows:[]};
       };
       const database={query,connect:async()=>({query,release(){}})} as unknown as Pick<Pool,"query"|"connect">;
-      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"workspace",actorUserId:"actor",
+      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"10000000-0000-4000-8000-000000000001",actorUserId:"10000000-0000-4000-8000-000000000002",
         idempotencyKey:"legacy-request",body:{...body,hard_cap_micro_usd:null}}),
       (error:unknown)=>error instanceof WorkspaceCorpusEmbeddingsError&&error.code==="workspace_embedding_forbidden");
       authority={...authority,user_type:"noisia_internal",primary_role:"noisia_admin"};
-      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"workspace",actorUserId:"actor",
+      await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"10000000-0000-4000-8000-000000000001",actorUserId:"10000000-0000-4000-8000-000000000002",
         idempotencyKey:"legacy-request",body:{...body,hard_cap_micro_usd:null}}),
-      (error:unknown)=>error instanceof WorkspaceCorpusEmbeddingsError&&error.code==="workspace_embedding_budget_exceeds_limit");
-      assert.equal(featureReads,flag==="true"?3:0);
+      (error:unknown)=>error instanceof Error&&error.message==="workspace_embedding_preparation_required");
+      assert.equal(featureReads>0,flag==="true");
       assert.equal(writes,0);
     }
   }finally{

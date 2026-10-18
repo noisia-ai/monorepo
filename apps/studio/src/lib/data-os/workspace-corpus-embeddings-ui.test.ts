@@ -160,6 +160,15 @@ for (const locale of ["es-MX", "en-US"]) {
     assert.doesNotMatch(html, /<progress/u);
   });
 
+  test(`${locale}: classic quote above USD5 is executable without an invented maximum`,()=>{
+    const unrestrictedStatus={...status,provider_available:true,optional_strict_cap:true,max_run_cost_micro_usd:null};
+    const costly={...quote,provider_available:true,optional_strict_cap:true,max_run_cost_micro_usd:null,estimated_upper_micro_usd:33_232_724};
+    assert.equal(embeddingQuoteCanExecute(costly,unrestrictedStatus,request.body.preparation_run_id,""),true);
+    const html=render(unrestrictedStatus,costly);
+    assert.ok(html.includes(formatEmbeddingMicroUsd("33232724",locale)));
+    assert.doesNotMatch(html,/class="admin-button admin-button--primary"[^>]*disabled/u);
+    assert.ok(!html.includes(copy.quoteExceedsLimit.replace("{amount}",formatEmbeddingMicroUsd("5000000",locale))));
+  });
   test(`${locale}: a quote above the server limit explains the blocked action`, () => {
     const costly = { ...quote, estimated_upper_micro_usd: 8_328_543 };
     const html = render(status, costly);
