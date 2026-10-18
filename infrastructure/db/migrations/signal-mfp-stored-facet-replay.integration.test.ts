@@ -37,8 +37,8 @@ test('stored facet writer repairs nine from paid raw, is idempotent and rolls ba
   await c.query(`INSERT INTO population(root_id,input_digest,status,labeler_digest) SELECT root_id,input_digest,status,labeler_digest
    FROM jsonb_to_recordset($1) r(root_id uuid,input_digest text,status text,labeler_digest text)`,[JSON.stringify(population)]);
   const validCall=randomUUID();
-  await c.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,settled_micro_usd,budget_date,budget_timezone)
-   VALUES($1,$2,$3,'anthropic','claude-sonnet-5-5','batch',$1,$4,'{}','[]','settled',0,7,current_date,'UTC')`,[validCall,f.runId,f.workspaceId,ld]);
+  await c.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,settled_micro_usd,budget_date,budget_timezone,raw_sha256,raw_storage_key,raw_size_bytes)
+   VALUES($1,$2,$3,'anthropic','claude-sonnet-5-5','batch',$1,$4,'{}','[]','settled',0,7,current_date,'UTC',$4,'private',0)`,[validCall,f.runId,f.workspaceId,ld]);
   await c.query(`INSERT INTO signal_mention_facet_labels(workspace_id,root_id,input_digest,labeler_digest,entity_context_digest,facet_schema_version,status,facets,relevance,effective_entities_digest,call_id)
    SELECT $1,root_id,input_digest,$2,$3,'mention-facets-v1','labeled','{}','unknown',$2,$4 FROM population WHERE status='labeled'`,[f.workspaceId,ld,digest,validCall]);
   for(const row of population.slice(791,800)){
