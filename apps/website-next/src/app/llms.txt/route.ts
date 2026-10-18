@@ -2,6 +2,7 @@ import { getStories } from "@/content/stories";
 import { methodEntries } from "@/content/pages/methods";
 import { solutionEntries } from "@/content/pages/solutions";
 import { compareEntries } from "@/content/pages/compare";
+import { industryEntries } from "@/content/pages/industries";
 import { SITE_URL } from "@/lib/site";
 
 export const dynamic = "force-static";
@@ -27,6 +28,10 @@ ${lines(solutionEntries.map((e) => `[${e.page.en.metaTitle}](${SITE_URL}/en/solu
 ## Methods
 
 ${lines(methodEntries.map((e) => `[${e.page.en.metaTitle}](${SITE_URL}/en/methods/${e.slug.en}): ${e.summary.en}`))}
+
+## Industries
+
+${lines(industryEntries.map((e) => `[${e.en.name}](${SITE_URL}/en/industries/${e.slug.en}): ${e.en.metaDescription}`))}
 
 ## Comparisons
 

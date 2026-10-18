@@ -34,6 +34,9 @@ export function posterFrame(story: StoryLocale): number {
   return Math.max(0, at - 14);
 }
 
+const GRAIN =
+  "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>\")";
+
 const PARTICLES = Array.from({ length: 46 }, (_, i) => {
   const r = (n: number) => {
     const x = Math.sin(i * 12.9898 + n * 78.233) * 43758.5453;
@@ -57,8 +60,8 @@ function Bloom() {
           right: -520 + drift,
           top: -420,
           borderRadius: "50%",
-          background: `radial-gradient(circle at 40% 40%, ${color.cyan}55, ${color.teal}22 45%, transparent 70%)`,
-          filter: "blur(40px)"
+          background: `radial-gradient(circle closest-side, ${color.cyan}50, ${color.cyan}26 40%, ${color.teal}10 70%, transparent 100%)`,
+          willChange: "transform"
         }}
       />
       <div
@@ -69,8 +72,8 @@ function Bloom() {
           left: -480 - drift,
           bottom: -380,
           borderRadius: "50%",
-          background: `radial-gradient(circle at 60% 50%, ${color.red}2e, ${color.coral}14 45%, transparent 70%)`,
-          filter: "blur(50px)"
+          background: `radial-gradient(circle closest-side, ${color.red}2a, ${color.coral}14 45%, ${color.coral}08 72%, transparent 100%)`,
+          willChange: "transform"
         }}
       />
       <svg width={1080} height={1920} style={{ position: "absolute", inset: 0 }} aria-hidden>
@@ -85,12 +88,8 @@ function Bloom() {
           />
         ))}
       </svg>
-      <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, opacity: 0.07, mixBlendMode: "multiply" }} aria-hidden>
-        <filter id="noisia-grain">
-          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
-        </filter>
-        <rect width="100%" height="100%" filter="url(#noisia-grain)" />
-      </svg>
+      {/* Grain as a tiled image: rasterized once by the browser instead of filtered every frame. */}
+      <div style={{ position: "absolute", inset: 0, opacity: 0.07, mixBlendMode: "multiply", backgroundImage: GRAIN, backgroundSize: "240px 240px" }} />
     </AbsoluteFill>
   );
 }

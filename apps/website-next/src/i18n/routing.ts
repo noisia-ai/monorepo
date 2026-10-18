@@ -24,7 +24,9 @@ export const routing = defineRouting({
     "/inteligencia-social": { es: "/inteligencia-social", en: "/social-intelligence" },
     "/comparar": { es: "/comparar", en: "/compare" },
     "/comparar/[slug]": { es: "/comparar/[slug]", en: "/compare/[slug]" },
-    "/privacidad": { es: "/privacidad", en: "/privacy" }
+    "/privacidad": { es: "/privacidad", en: "/privacy" },
+    "/industrias": { es: "/industrias", en: "/industries" },
+    "/industrias/[slug]": { es: "/industrias/[slug]", en: "/industries/[slug]" }
   }
 });
 

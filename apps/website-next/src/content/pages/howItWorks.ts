@@ -54,7 +54,7 @@ export const howItWorks: Localized<PageContent> = {
           { name: "La tecnología recuerda", text: "Conserva las decisiones humanas y las aplica a la conversación que llega después." },
           { name: "El Intelligence Architect define la pregunta", text: "Traduce tu brief en preguntas investigables y decide fuentes, mercados y periodo." },
           { name: "El Intelligence Architect aprueba los temas", text: "Revisa lo que el sistema propone, lo corrige y decide qué entra al reporte." },
-          { name: "El Intelligence Architect corrige la clasificación", text: "Cuando una mención quedó mal asignada, la mueve. El sistema aprende de esa corrección." },
+          { name: "El Intelligence Architect corrige la clasificación", text: "Cuando una mención quedó mal asignada, la mueve. El sistema conserva esa corrección y la aplica a lo que llegue después." },
           { name: "El Intelligence Architect interpreta y firma", text: "Lee con un método, escribe las recomendaciones y responde por ellas frente a ti." }
         ]
       },
@@ -176,7 +176,7 @@ export const howItWorks: Localized<PageContent> = {
           { name: "The technology remembers", text: "It keeps human decisions and applies them to the conversation that arrives later." },
           { name: "The Intelligence Architect defines the question", text: "Translates your brief into researchable questions and decides sources, markets and period." },
           { name: "The Intelligence Architect approves the topics", text: "Reviews what the system proposes, corrects it and decides what goes into the report." },
-          { name: "The Intelligence Architect corrects the classification", text: "When a mention was assigned to the wrong place, they move it. The system learns from that correction." },
+          { name: "The Intelligence Architect corrects the classification", text: "When a mention was assigned to the wrong place, they move it. The system keeps that correction and applies it to what comes next." },
           { name: "The Intelligence Architect interprets and signs off", text: "Reads with a method, writes the recommendations and answers for them in front of you." }
         ]
       },

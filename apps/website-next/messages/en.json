@@ -62,9 +62,21 @@
     "socialIntelligence": "What social intelligence is",
     "compare": "Comparisons",
     "privacy": "Privacy notice",
-    "signature": "noisia · social intelligence architects"
+    "signature": "noisia · social intelligence architects",
+    "industries": "Industries"
   },
   "stickyCta": {
     "label": "Book a free workshop"
+  },
+  "industryPage": {
+    "indexTitle": "What we can understand in your industry",
+    "indexLead": "Questions the conversation can answer, industry by industry. They are questions, not findings: what we find depends on your brand and your moment.",
+    "questions": "Questions we can answer",
+    "where": "Where the conversation lives",
+    "stories": "Insights from this industry",
+    "seeFeed": "See them in the feed",
+    "ctaTitle": "Your question isn't here?",
+    "ctaText": "Bring it to the workshop. If the conversation can answer it, we'll tell you how.",
+    "ctaLabel": "Book a free workshop"
   }
 }

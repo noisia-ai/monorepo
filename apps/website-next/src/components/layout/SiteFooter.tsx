@@ -26,6 +26,7 @@ export function SiteFooter() {
         </nav>
         <nav className={styles.col} aria-label={t("learn")}>
           <p className={styles.colTitle}>{t("learn")}</p>
+          <Link href="/industrias">{t("industries")}</Link>
           <Link href="/inteligencia-social">{t("socialIntelligence")}</Link>
           <Link href="/comparar">{t("compare")}</Link>
           <Link href="/privacidad">{t("privacy")}</Link>

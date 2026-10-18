@@ -19,7 +19,9 @@ export function EvidenceSheet({ story, onClose }: { story: FeedStory; onClose: (
 
   const facts = [
     story.method ? { label: t("method"), value: story.method } : null,
-    story.sources.length ? { label: t("sources"), value: story.sources.join(" · ") } : null,
+    story.sources.length
+      ? { label: t("sources"), value: story.sources.map((s) => (s.length <= 3 ? s.toUpperCase() : s.charAt(0).toUpperCase() + s.slice(1))).join(" · ") }
+      : null,
     story.period ? { label: t("period"), value: story.period } : null,
     { label: t("market"), value: story.market }
   ].filter(Boolean) as { label: string; value: string }[];

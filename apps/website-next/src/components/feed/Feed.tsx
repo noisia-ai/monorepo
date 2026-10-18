@@ -11,7 +11,7 @@ import { EvidenceSheet } from "./EvidenceSheet";
 import type { FeedStory } from "./types";
 import styles from "./Feed.module.css";
 
-type Props = { stories: FeedStory[]; initialId?: string };
+type Props = { stories: FeedStory[]; initialId?: string; initialFilter?: string };
 
 const WINDOW = 2;
 
@@ -32,13 +32,15 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-export function Feed({ stories, initialId }: Props) {
+export function Feed({ stories, initialId, initialFilter }: Props) {
   const t = useTranslations("feed");
   const tIndustry = useTranslations("industries");
   const locale = useLocale();
   const reduced = usePrefersReducedMotion();
   const scrollerRef = useRef<HTMLDivElement>(null);
-  const [filter, setFilter] = useState<string | null>(null);
+  const [filter, setFilter] = useState<string | null>(
+    initialFilter && stories.some((story) => story.industry === initialFilter) ? initialFilter : null
+  );
   const [cycles, setCycles] = useState(1);
   const [active, setActive] = useState(0);
   const [paused, setPaused] = useState(false);

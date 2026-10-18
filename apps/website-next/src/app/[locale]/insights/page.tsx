@@ -12,9 +12,16 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
   };
 }
 
-export default async function InsightsPage({ params }: { params: Promise<{ locale: string }> }) {
+export default async function InsightsPage({
+  params,
+  searchParams
+}: {
+  params: Promise<{ locale: string }>;
+  searchParams: Promise<{ industria?: string }>;
+}) {
   const { locale } = await params;
+  const { industria } = await searchParams;
   setRequestLocale(locale);
   const stories = await getFeedStories(locale);
-  return <Feed stories={stories} />;
+  return <Feed stories={stories} initialFilter={industria} />;
 }
