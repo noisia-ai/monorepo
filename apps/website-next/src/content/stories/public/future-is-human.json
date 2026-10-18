@@ -7,7 +7,7 @@
     "method": "Cultural Foresight",
     "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
     "period": "may 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/future-is-human",
     "notes": "Señal humano_demandado. X 52% / Facebook 22% literales de cultural_headlines. +54% calculado de monthly_pulse: 2026-05 (51,308) vs 2025-05 (33,358) = +53.8%, redondeado.",
     "es": {
       "title": "Antes de probar el bot, México ya pide un humano",
@@ -52,7 +52,7 @@
     "method": "Cultural Foresight",
     "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
     "period": "may 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/future-is-human",
     "notes": "Señal transparencia_IA. Facebook 50% / X 33% literales de cultural_headlines. +457% calculado de monthly_pulse: 2026-05 (89,053) vs 2025-05 (15,993) = +456.8%, redondeado.",
     "es": {
       "title": "La falta de transparencia ya se nombra publicidad engañosa",
@@ -97,7 +97,7 @@
     "method": "Cultural Foresight",
     "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
     "period": "may 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/future-is-human",
     "notes": "Señal responsabilidad. Split calculado de cultural_headlines: 299,900 negativas / 454,700 = 65.96% y 154,800 positivas / 454,700 = 34.04%, redondeados a 66/34 (coincide con el ratio 2:1 del reporte). +355% calculado de monthly_pulse: 2026-05 (66,349) vs 2025-05 (14,587) = +354.9%, redondeado.",
     "es": {
       "title": "La humanidad de una marca se mide cuando algo sale mal",
@@ -142,7 +142,7 @@
     "method": "Cultural Foresight",
     "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
     "period": "may 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/future-is-human",
     "notes": "Señal voz_genérica (emergente, volumen bajo). X 52% literal de cultural_headlines. 49x calculado de monthly_pulse: 2026-05 (4,340) vs 2025-05 (88) = 49.3x, redondeado.",
     "es": {
       "title": "Una respuesta genérica se lee como un caso sin resolver",

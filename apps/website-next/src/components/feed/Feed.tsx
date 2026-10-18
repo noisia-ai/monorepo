@@ -201,6 +201,19 @@ export function Feed({ stories, initialId }: Props) {
                   {story.content.title}
                 </h2>
                 <p className={styles.dek}>{story.content.dek}</p>
+                {near ? (
+                  <ul className={styles.inlineEvidence} aria-label={t("evidenceTitle")}>
+                    {story.content.evidence.slice(0, 2).map((item, i) => (
+                      <li key={i}>
+                        <p className={styles.inlineQuote}>{item.quote}</p>
+                        <p className={styles.quoteMeta}>
+                          {item.platform}
+                          {item.date ? ` · ${item.date}` : ""}
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
                 <div className={styles.actions}>
                   <button type="button" className={styles.action} onClick={() => setSheet(story)}>
                     {t("evidence")}
@@ -220,6 +233,11 @@ export function Feed({ stories, initialId }: Props) {
         })}
       </div>
 
+      {active === 0 && items.length > 1 ? (
+        <p className={styles.hint} aria-hidden>
+          {t("swipeHint")}
+        </p>
+      ) : null}
       {toast ? (
         <div className={styles.toast} role="status">
           {toast}

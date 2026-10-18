@@ -13,6 +13,7 @@ export const routing = defineRouting({
     "/": "/",
     "/insights": "/insights",
     "/insights/[slug]": "/insights/[slug]",
+    "/insights/reportes/[slug]": { es: "/insights/reportes/[slug]", en: "/insights/reports/[slug]" },
     "/como-funciona": { es: "/como-funciona", en: "/how-it-works" },
     "/metodos": { es: "/metodos", en: "/methods" },
     "/metodos/[slug]": { es: "/metodos/[slug]", en: "/methods/[slug]" },

@@ -1,0 +1,1382 @@
+{
+  "meta": {
+    "study": "The Mexican Home",
+    "subtitle": "8 señales sobre cómo se habla del hogar en México hoy",
+    "agency": "Noisia",
+    "version": "v1 — corpus consolidado",
+    "analysis_date": "2026-05-20",
+    "codex_instructions": "HTML interactivo estilo Noisia. Mismo framework visual que Cultural Foresight 2026 v4 y Future is Human v1. HERO: presentar +1.18M menciones procesadas como contexto de escala. Mantener metodologia en lenguaje ejecutivo, sin exponer cocina interna. CADA SEÑAL: nombre comercial > one-liner > tensión > cita protagonista > lectura cultural > 3 headlines > evidencia > implicaciones de marca > badge de madurez. BADGES: usar la paleta canónica Noisia; emergente magenta ink, acelerando cyan ink, mainstreaming deep violet. BRAND PILLS: detectar Inmuebles24, Homie, Propiedades.com, Infonavit en citas y mostrar pill. BIG FINDING: Signal 1 (Mi casita es identidad) es mainstreaming y debe leerse como hallazgo principal sin romper el sistema visual."
+  },
+  "hero_numbers": {
+    "corpus_scope": {
+      "value": "+1.18M",
+      "label": "menciones procesadas",
+      "detail": "Conversación pública digital sobre hogar mexicano."
+    },
+    "period": {
+      "value": "5 meses",
+      "label": "de escucha",
+      "detail": "enero – mayo 2026"
+    },
+    "sources": {
+      "value": "7 plataformas",
+      "label": "observadas",
+      "detail": "YouTube, TikTok, Facebook, X, Instagram, Reddit, Reviews"
+    },
+    "signals": {
+      "value": "8 señales",
+      "label": "detectadas",
+      "detail": "1 mainstreaming, 5 acelerando, 2 emergentes"
+    },
+    "territories": {
+      "value": "9 territorios",
+      "label": "de análisis",
+      "detail": "lo afectivo, lo funcional, lo financiero, lo de confianza"
+    },
+    "evidence": {
+      "value": "+1.18M",
+      "label": "menciones con contexto de hogar",
+      "detail": "lenguaje cotidiano sobre casa, cuarto, depa, casita"
+    }
+  },
+  "narrative_umbrella": {
+    "title": "El hogar mexicano hoy carga más cosas que antes.",
+    "subtitle": "Refugio, frustración financiera, identidad afectiva y sospecha frente a plataformas. Todo conviviendo en la misma palabra: casa.",
+    "description": "Las 8 señales que detectamos no apuntan al mercado inmobiliario. Apuntan a algo distinto: el hogar mexicano se está usando para más cosas que antes. La gente lo trata como refugio, como oficina, como proyecto de identidad, como meta financiera y como filtro frente a plataformas que no terminan de ganarse la confianza. Para marcas, esto cambia el idioma con el que se entra a la vida doméstica. Las palabras genéricas (\"tu hogar\", \"vivienda\") suenan importadas. Las palabras reales son otras: mi casita, mi crédito Infonavit, monta rentas, prefiero estar en casa, no me alcanza.",
+    "umbrella_logic": [
+      {
+        "tier": "Lo afectivo",
+        "signals": [
+          "mi_casita_identidad",
+          "casa_se_volvio_refugio"
+        ],
+        "theme": "Cómo nombramos el hogar cuando hablamos con cariño"
+      },
+      {
+        "tier": "Lo funcional",
+        "signals": [
+          "casa_trabaja_de_mas",
+          "seguridad_bienestar"
+        ],
+        "theme": "Qué le exigimos al espacio donde vivimos y trabajamos"
+      },
+      {
+        "tier": "Lo aspiracional",
+        "signals": [
+          "independencia_aspiracion",
+          "casa_propia_futuro"
+        ],
+        "theme": "Lo que queremos del hogar que todavía no tenemos"
+      },
+      {
+        "tier": "Lo difícil",
+        "signals": [
+          "renta_no_alcanza",
+          "busqueda_sospecha"
+        ],
+        "theme": "Lo que pesa cuando se quiere acceder a un hogar propio"
+      }
+    ]
+  },
+  "signals": [
+    {
+      "id": "mi_casita_identidad",
+      "order": 1,
+      "commercial_name": "Mi casita es identidad",
+      "color": "#007E89",
+      "maturity": "mainstreaming",
+      "maturity_note": "76% del corpus revisado. \"Mi casita\" es la palabra que el mexicano usa cuando habla con cariño del lugar donde vive. La frase se dispara con momentos concretos: el día que saldas el Infonavit, cuando entregan las llaves, cuando se decora algo.",
+      "one_liner": "\"Mi casita\" carga más que un diminutivo. Es la palabra de identidad cuando alguien presume su lugar.",
+      "tension": {
+        "left": "Una casa donde vivo",
+        "right": "Una casita que siento mía"
+      },
+      "lead_quote": {
+        "text": "Felicidades por tu casa, mucho mejores que las que se hacían antes en Infonavit. Ahora sí puedo decir que es mi casita.",
+        "platform": "tiktok",
+        "attribution": "comentario MX"
+      },
+      "cultural_reading": "En el corpus revisado, \"mi casita\" aparece como una de las palabras más cargadas afectivamente del español mexicano. No es diminutivo por tamaño ni por costumbre lingüística general. Es diminutivo porque carga cariño, apropiación y un dejo de orgullo. La frase aparece cuando alguien decora, ordena, presume o reflexiona sobre su espacio. También se asoma en un momento muy específico: cuando el Infonavit termina de pagarse y, en palabras de una usuaria, \"ahora sí puedo decir que es mi casita\". El cambio de \"casa\" a \"mi casita\" se dispara cuando la propiedad se vuelve real. Para marcas, la implicación es directa. La palabra existe, está consolidada, y carga emocionalmente. Hablar de \"hogar\" o de \"tu casa\" cuando la audiencia ya está hablando de \"mi casita\" es operar en un idioma menos preciso que el del corpus.",
+      "cultural_headlines": [
+        {
+          "value": "76%",
+          "label": "del corpus revisado",
+          "detail": "La palabra \"mi casita\" domina la conversación afectiva sobre hogar."
+        },
+        {
+          "value": "Infonavit",
+          "label": "aparece en el mismo párrafo",
+          "detail": "La frase se dispara cuando la propiedad se vuelve real. El crédito saldado funciona como hito."
+        },
+        {
+          "value": "video corto",
+          "label": "es el formato dominante",
+          "detail": "YouTube y TikTok concentran los recorridos, los antes y después, la decoración del espacio propio."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 157973
+        },
+        {
+          "month": "2026-02",
+          "count": 165906
+        },
+        {
+          "month": "2026-03",
+          "count": 170548
+        },
+        {
+          "month": "2026-04",
+          "count": 192857
+        },
+        {
+          "month": "2026-05",
+          "count": 220384
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Felicidades por tu casa, mucho mejores que las que se hacían antes en Infonavit, unos nidos de palomas, indignos y pésimos terminamos 👍",
+          "platform": "tiktok",
+          "date": "2026-04-20",
+          "url": "https://www.tiktok.com/@mochitenses/video/7629974854606851348",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "no sé por qué no ponen 3 cuartos siempre 2 y son super pocos pero bueno eso sí están mejor que las de Infonavit eso que ni que",
+          "platform": "tiktok",
+          "date": "2026-04-19",
+          "url": "https://www.tiktok.com/@mochitenses/video/7629974854606851348",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "Gracias a los cambios que han habido este enero me llegó el aviso que se saldabs mi casa que pague 20 años pero el infonavit quería que pague 30 años. Fue una increíble sorpresa, ahora si puedo decir que es mi casita",
+          "platform": "tiktok",
+          "date": "2026-01-28",
+          "url": "https://www.tiktok.com/@milenio/video/7599786033948986644",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "Mi sueño siempre fue tener mi casita de Infonavit, cuando recién me junté yo decía quiero una casita así de pequeña… gracias a Dios y al universo ya la tengo 🙏🏻 ahora poco a poco iré remodelándola a mi gusto, todo es con esfuerzo y dedicación ✨",
+          "platform": "tiktok",
+          "date": "2026-05-04",
+          "url": "https://www.tiktok.com/@britniii6/video/7635366819808824596",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "mi casita tambien es por credito Infonavit y tambien me fashina es pequeña siento q sencillo pero luce mucho y mas el amor en lo q la decore ❤️❤️❤️❤️muy parecida pero algo diferente",
+          "platform": "tiktok",
+          "date": "2026-01-21",
+          "url": "https://www.tiktok.com/@91.133_/video/7568665073737157895",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "Hola yo uniera querido mi casita por Infonavit pero ya me ISE vieja y nunca me dieron una casa siempre desian no la completa ya soy adulta dela tercera edad y pues ya me frege porque yo sí quería mi casita",
+          "platform": "tiktok",
+          "date": "2026-03-26",
+          "url": "https://www.tiktok.com/@mochitenses/video/7621251207452970260",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "Te acostumbras, yo soy muy cuidadosa con el dinero y tengo mi casita, cero deudas (ni Infonavit) y vives cómoda, obvio no te llevas nada pero siempre piensa en tu vejez, no siempre seremos jóvenes",
+          "platform": "tiktok",
+          "date": "2026-01-02",
+          "url": "https://www.tiktok.com/@loseporjose/video/7589850150051466504",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "Y si antes de juntarme saco mi casa de infonavit y ya teniendo mi casita me junto se pasan las escrituras a la que sería mi pareja????",
+          "platform": "tiktok",
+          "date": "2026-01-30",
+          "url": "https://www.tiktok.com/@realidad.mexicooficial/video/7599694725125328149",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "Antes y después de nuestra sala cocina y comedor de mi casita Infonavit, por suerte siempre tomaba fotos y videos de todo, espero les guste #decoration #infonavit #interiordesign #interiordecor",
+          "platform": "tiktok",
+          "date": "2026-03-12",
+          "url": "https://www.tiktok.com/@ilianaleal05/video/7616403451299237138",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "primero Infonavit no es una constructora, así que no existen las &quot;casas de Infonavit&quot;, segundo el costo siempre depende de un montón de cosas distintas, por ejemplo yo soy de GDL y un departamento de casi igual a ese que este dentro de la cd vale de 2.3 mdp para arriba",
+          "platform": "tiktok",
+          "date": "2026-04-19",
+          "url": "https://www.tiktok.com/@mochitenses/video/7629974854606851348",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "Las casas no son de Infonavit, las hacen las constructoras. Infonavit es el crédito que te otorgan para poder tener tu casa. Pero si, las constructoras las hacen de ese mismo tamaño y las venden carísimas.",
+          "platform": "tiktok",
+          "date": "2026-04-19",
+          "url": "https://www.tiktok.com/@mochitenses/video/7629974854606851348",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        },
+        {
+          "text": "lo único diferente sería que les dan el crédito a las personas que no tengan Infonavit etc... pero está muy caritsimo",
+          "platform": "tiktok",
+          "date": "2026-04-20",
+          "url": "https://www.tiktok.com/@mochitenses/video/7629974854606851348",
+          "phrase": "mi casita",
+          "mx": true,
+          "source_file": "0210_significados"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 907668,
+        "mx_evidence_estimated": 45383,
+        "sources_count": 4,
+        "framing": "señal dominante del corpus — el lenguaje afectivo del hogar mexicano"
+      },
+      "brand_implications": {
+        "do": [
+          "Usar la palabra \"mi casita\" cuando aplique. Está disponible. Está cargada de afecto.",
+          "Apoyar la apropiación: decoración accesible, estética alcanzable, sin filtro de revista extranjera.",
+          "Reconocer hitos: entrega de llaves, primera decoración, escrituras, Infonavit saldado.",
+          "Dejar que el cliente muestre. Ya está pasando masivamente sin que las marcas lo provoquen."
+        ],
+        "avoid": [
+          "La estética inalcanzable de Pinterest gringo. La audiencia compara con su realidad.",
+          "Decir \"tu hogar\" o \"tu casa\" cuando el lenguaje real es \"mi casita\".",
+          "Diseñar para la casa ideal cuando la casa real es la que se está apropiando.",
+          "Pasar por alto el momento Infonavit. Es hito cultural, no nota financiera."
+        ],
+        "categories_exposed": [
+          "Decoración aspiracional importada",
+          "Real estate genérico",
+          "Branding que ignora el lenguaje local"
+        ],
+        "categories_opportunity": [
+          "Muebles asequibles",
+          "Decoración accesible",
+          "DIY",
+          "Smart home de entrada",
+          "Categorías que entran al hogar cotidiano"
+        ]
+      },
+      "monitor_next": [
+        "mi casita",
+        "mi rinconcito",
+        "mi cuarto bonito",
+        "ya parece hogar",
+        "infonavit saldado"
+      ],
+      "is_big_finding": true
+    },
+    {
+      "id": "casa_propia_futuro",
+      "order": 2,
+      "commercial_name": "Casa propia significa futuro",
+      "color": "#01535F",
+      "maturity": "acelerando",
+      "maturity_note": "Vocabulario operativo, no aspiracional vago. La gente pregunta cifras, plazos, requisitos. El Infonavit aparece como infraestructura cultural, no solo como producto.",
+      "one_liner": "Comprar casa, en este corpus, no es presumir patrimonio. Es comprar estabilidad y futuro imaginado.",
+      "tension": {
+        "left": "Rentar como gasto que no vuelve",
+        "right": "Comprar como estabilidad que sí"
+      },
+      "lead_quote": {
+        "text": "Lic, ¿cuánto tengo que ganar para que el banco me preste 1 millón de pesos? Quiero comprar una casa pero tengo 800 mil de crédito en Infonavit y completarlo con el millón que pediría al banco.",
+        "platform": "tiktok",
+        "attribution": "usuaria MX"
+      },
+      "cultural_reading": "La conversación sobre casa propia es masiva y, sobre todo, operativa. La gente no fantasea. Pregunta. Sobre Infonavit, sobre crédito bancario, sobre cofinanciamiento, sobre puntos, sobre requisitos. La aspiración se mueve entre dos polos: lo emocional (\"sueño con mi casita\") y lo contable (\"¿cómo le hago para que me alcance?\"). En el corpus, el Infonavit aparece como infraestructura cultural: la palabra que conecta querer y poder. Para marcas en banking, seguros y desarrollo inmobiliario, esto importa. El idioma del corpus no es aspiracional vago. Es operativo. Habla de cifras, de cofinavit, de puntos, de afore. Marcas que entren en ese idioma encuentran una audiencia ya leyendo letra chica. Marcas que ofrezcan inspiración genérica encuentran una audiencia que cierra el video.",
+      "cultural_headlines": [
+        {
+          "value": "+120,000",
+          "label": "menciones sobre casa propia",
+          "detail": "\"Quiero comprar casa\", \"mi crédito Infonavit\", \"sacar un crédito hipotecario\". Vocabulario de quien ya está calculando."
+        },
+        {
+          "value": "Infonavit",
+          "label": "es la palabra puente",
+          "detail": "Más que institución financiera, funciona como verbo cultural: el modo en que querer se vuelve poder."
+        },
+        {
+          "value": "preguntas concretas",
+          "label": "no fantasías",
+          "detail": "\"Cuánto debo ganar\", \"tengo 800 mil de crédito\", \"¿me afecta tener dos créditos personales?\"."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 13079
+        },
+        {
+          "month": "2026-02",
+          "count": 18677
+        },
+        {
+          "month": "2026-03",
+          "count": 23266
+        },
+        {
+          "month": "2026-04",
+          "count": 29877
+        },
+        {
+          "month": "2026-05",
+          "count": 35385
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Lic cuánto tengo que ganar para que banco me preste 1 millón de pesos porque quiero comprar una casa pero yo tengo 800 mil de crédito en Infonavit y completarlo con el millón que e presté el banco",
+          "platform": "tiktok",
+          "date": "2026-03-29",
+          "url": "https://www.tiktok.com/@antoniotuasesor/video/7622433513190608149",
+          "phrase": "quiero comprar una casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "Quiero comprar una casa con gravamen,(pagarlo con Infonavit) tienes algún video que me pueda orientar?",
+          "platform": "tiktok",
+          "date": "2026-04-23",
+          "url": "https://www.tiktok.com/@antoniotuasesor/video/7631677169411984660",
+          "phrase": "quiero comprar una casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "Hola buenas tardes!! Revise mi Infonavit y quiero comprar casa me dice que tengo crédito por 2,250.000. Pero tengo dos créditos personales actual al corriente, me afecta para el crédito Infonavit???",
+          "platform": "tiktok",
+          "date": "2026-03-26",
+          "url": "https://www.tiktok.com/@diegopiste_/video/7621388423110118677",
+          "phrase": "quiero comprar casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "El día que me valla de esta casa me iré muy agradecida por que por primera vez viví en un hogar bonito lleno de felicidad que yo misma formé y me quedaré con esa enceñansa para cuando llegue mi casa propia 🙏🏾#infonavit #remodelacion #romantizandomivida #hogar #foryou",
+          "platform": "tiktok",
+          "date": "2026-01-07",
+          "url": "https://www.tiktok.com/@eleydi.castillo5/video/7592684504918134024",
+          "phrase": "mi casa propia",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "usted es asesora para esos procesos? quiero comprar una casa a un familiar que aun debe a infonavit, y repararla y venderla. pero esta invadida",
+          "platform": "tiktok",
+          "date": "2026-02-27",
+          "url": "https://www.tiktok.com/@lilianainsunsadur/video/7605508732314815764",
+          "phrase": "quiero comprar una casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "muy bien!!! no sé escribir pero si se puede pedir, yo ya tengo mi casa Infonavit pero no tengo para ampliar mi casa , a mí no me autorizan para mejoravit, me ha costado mucho trabajo pagar mi casa pero ya voy bajando la deuda y mi hijo quiere sacar dinero en Infonavit para el poder ayudar pero no sé puede xq no nos ayudas con eso Claudia",
+          "platform": "tiktok",
+          "date": "2026-01-22",
+          "url": "https://www.tiktok.com/@claudiasheinbaum/video/7598002678353890580",
+          "phrase": "ya tengo mi casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "que puedo aser si en mi trabajo no estan pagando en tiempo y forma ya que quiero comprar una casa por parte de infonavit y no puedo entrar para saber si ya la alcanzo xk no pagan a tiempo y forma",
+          "platform": "tiktok",
+          "date": "2026-01-09",
+          "url": "https://www.tiktok.com/@asesorinfonavitomar/video/7593204263623380242",
+          "phrase": "quiero comprar una casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "yo tengo ine de otro estado y quiero comprar casa x medio de infonavit será un problema al momento del tramite ??",
+          "platform": "tiktok",
+          "date": "2026-02-01",
+          "url": "https://www.tiktok.com/@danielaguirreasesor/video/7601972434425711879",
+          "phrase": "quiero comprar casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "oye una duda miré una publicación en Facebook de que Infonavit ya no aceptará casas de 4.2 m de frente es cierto o es mentira lo que pasa es que yo quiero comprar una casa de 4 m de frente",
+          "platform": "tiktok",
+          "date": "2026-04-01",
+          "url": "https://www.tiktok.com/@oscar_ortiz_hogar_libre/video/7623589365398228232",
+          "phrase": "quiero comprar una casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "mi corazón anhela tanto una casita propia... El año pasado anduve viendo hasta de remate y no más he podido pero primero en Dios el me va a poner a las personas adecuadas este año. no me alcanza mi presupuesto Infonavit.😅pero trabajaré más duró",
+          "platform": "tiktok",
+          "date": "2026-01-01",
+          "url": "https://www.tiktok.com/@gillezepeda/video/7589915345142517012",
+          "phrase": "mi casa propia",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "La casita que le vayan a dar, cuídela dele su mantenimiento, no vaya a terminar como la de infonavit 😆",
+          "platform": "tiktok",
+          "date": "2026-01-01",
+          "url": "https://www.tiktok.com/@gillezepeda/video/7589915345142517012",
+          "phrase": "mi casa propia",
+          "mx": true,
+          "source_file": "0239_independencia"
+        },
+        {
+          "text": "¿Cuántos años llevas diciéndote &quot;algún día tendré mi casa&quot;? 😔 Ese día puede ser este año. Infonavit tiene casas en remate desde 200,000 con opciones de financiamiento que no te dejan sin un quinto. Muchas son de familias que las dejaron ir y ahora están disponibles para quien se aviente. No necesitas ser codo ni tener todo el efectivo. Solo necesitas la info correcta. Échale un ojo al enlace de mi perfil y que no se te escape esta. 🙌 #CasaPropia2026 #Infonavit #SueldoMínimo #Oportunida",
+          "platform": "tiktok",
+          "date": "2026-04-09",
+          "url": "https://www.tiktok.com/@datosdelbienestar/video/7626586458240863508",
+          "phrase": "algún día tendré mi casa",
+          "mx": true,
+          "source_file": "0239_independencia"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 120284,
+        "mx_evidence_estimated": 6014,
+        "sources_count": 4,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Hablar en clave Infonavit/Cofinavit cuando aplique. Es el idioma operativo del corpus.",
+          "Asesorar con cifras reales: montos, requisitos, puntos, escenarios.",
+          "Tratar el día de entrega como momento de marca. Es el hito cultural más cargado.",
+          "Documentar el antes y después de comprar. La audiencia ya está consumiendo ese formato."
+        ],
+        "avoid": [
+          "Comunicación aspiracional sin mecánica financiera detrás.",
+          "Asumir que el cliente conoce los productos. El corpus muestra dudas operativas constantes.",
+          "Hablar de \"vida ideal\" en lugar de \"tu primera casa\".",
+          "Ignorar el rol cultural del Infonavit. Hablar de hipoteca como si la gente no usara esa palabra."
+        ],
+        "categories_exposed": [
+          "Desarrolladores inmobiliarios sin transparencia financiera",
+          "Banking que comunica sin operar"
+        ],
+        "categories_opportunity": [
+          "Banking y fintech",
+          "Aseguradoras de vivienda",
+          "Smart home para primera casa",
+          "Muebles para primera casa",
+          "Educación financiera"
+        ]
+      },
+      "monitor_next": [
+        "sacar mi infonavit",
+        "quiero comprar casa",
+        "mi crédito hipotecario",
+        "cofinavit",
+        "puntos infonavit"
+      ],
+      "is_big_finding": false
+    },
+    {
+      "id": "renta_no_alcanza",
+      "order": 3,
+      "commercial_name": "La renta no alcanza",
+      "color": "#D81B60",
+      "maturity": "acelerando",
+      "maturity_note": "El reverso operativo de la señal de casa propia. La gente compara crédito real con precios de mercado y la matemática no cierra. El lenguaje es contable, no quejoso.",
+      "one_liner": "El Infonavit, en el corpus, alcanza para menos de lo que prometía. La frustración es contable.",
+      "tension": {
+        "left": "Lo que la audiencia tiene",
+        "right": "Lo que el mercado pide"
+      },
+      "lead_quote": {
+        "text": "Ya tengo mi crédito Infonavit pero aunque siento que es una buena cantidad no encuentro nada a ese precio.",
+        "platform": "tiktok",
+        "attribution": "usuaria MX"
+      },
+      "cultural_reading": "Si la señal anterior es la aspiración, esta es el momento donde la matemática no cierra. La frase \"tengo el crédito pero no encuentro nada a ese precio\" se repite. \"La renta está carísima\", \"no me alcanza para rentar\", \"subió al doble\". El lenguaje no es queja vaga. Es comparación contable: cifras, plazos, intereses, instituciones. La audiencia ya está educada en la mecánica financiera del hogar. Sabe la diferencia entre Infonavit, cofinavit y crédito bancario. Sabe que el puntaje afecta. Sabe que dejar de pagar dos años tiene consecuencias específicas. Para marcas, vender \"haz realidad tu sueño\" frente a esta audiencia es competir con la calculadora que ya tienen abierta. Vende mejor reconocer la brecha y ofrecer cómo cerrarla.",
+      "cultural_headlines": [
+        {
+          "value": "+49,000",
+          "label": "menciones de frustración financiera",
+          "detail": "\"No me alcanza\", \"está carísima\", \"subió al doble\". Diagnóstico concreto, no queja genérica."
+        },
+        {
+          "value": "Infonavit insuficiente",
+          "label": "el patrón explícito",
+          "detail": "\"Tengo el crédito pero no encuentro\" se repite en TikTok. Lo que el sistema prometía no llega al precio del mercado."
+        },
+        {
+          "value": "65% TikTok",
+          "label": "es el canal del desahogo",
+          "detail": "Video corto, voz personal, tono confesional. La gente lo cuenta como quien lo está viviendo."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 6042
+        },
+        {
+          "month": "2026-02",
+          "count": 7132
+        },
+        {
+          "month": "2026-03",
+          "count": 9570
+        },
+        {
+          "month": "2026-04",
+          "count": 12161
+        },
+        {
+          "month": "2026-05",
+          "count": 14175
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Ya tengo mi crédito Infonavit pero aunque siento que es una buena cantidad no encuentro nada a ese precio.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "no encuentro nada a ese precio",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Yo pago por fuera mi Infonavit, porque ya no estoy laborando, dejé de pagar dos años, pero actualmente lo sigo pagando por fuera, pero en vez de bajar me subí al doble.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "me subí al doble",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Buenas tardes, en mi caso el crédito es cofinavit, infonavit y banco, sin embargo terminé de pagar el infonavit, empecé el procedimiento entregando la carta a mi empresa, pero tengo duda si tengo que esperar a terminar de pagar.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "cofinavit",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 49080,
+        "mx_evidence_estimated": 2454,
+        "sources_count": 4,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Comunicar rangos reales de precio por zona. Sin redondear de más.",
+          "Posicionar productos financieros como complemento al Infonavit, no como sustituto.",
+          "Educar sobre cofinanciamiento, refinanciamiento, mejora de puntaje.",
+          "Reconocer la brecha en voz alta. La audiencia ya la conoce."
+        ],
+        "avoid": [
+          "Mensajes tipo \"haz realidad tu sueño\" sin un solo número que lo sostenga.",
+          "Letra chica que después contradice la promesa principal.",
+          "Promesas amplias que el cliente puede comparar contra su crédito real.",
+          "Ignorar la palabra \"Infonavit\" en categorías que sí la implican."
+        ],
+        "categories_exposed": [
+          "Real estate genérico",
+          "Servicios financieros sin transparencia"
+        ],
+        "categories_opportunity": [
+          "Cofinanciamiento",
+          "Refinanciamiento",
+          "Productos complementarios al Infonavit",
+          "Coaching financiero para primera casa"
+        ]
+      },
+      "monitor_next": [
+        "no me alcanza",
+        "está carísima",
+        "la renta",
+        "el infonavit no alcanza",
+        "crédito hipotecario"
+      ],
+      "is_big_finding": false
+    },
+    {
+      "id": "independencia_aspiracion",
+      "order": 4,
+      "commercial_name": "Independizarse se volvió aspiración doméstica",
+      "color": "#D91441",
+      "maturity": "acelerando",
+      "maturity_note": "Vocabulario operativo y generacional. Independizarse no se nombra como queja, se nombra como plan postergado por matemáticas.",
+      "one_liner": "Independizarse, en el corpus, ya no es cambiar de domicilio. Es un hito emocional que sigue postergándose por dinero.",
+      "tension": {
+        "left": "Seguir viviendo con familia",
+        "right": "Tener espacio propio"
+      },
+      "lead_quote": {
+        "text": "Hola buena tarde, espero me lea... un terrenito pequeño para construir una casita aunque sea, para poder moverme de la casa de mis papás.",
+        "platform": "tiktok",
+        "attribution": "usuaria MX"
+      },
+      "cultural_reading": "\"Independizarme\" en este corpus funciona como verbo de proyecto, no de queja. La gente lo dice con cronograma y con expectativa. Pero también con frustración cuando el plan se posterga. La frase \"vivo con mis papás\" aparece sin disculpas, simplemente como punto de partida. La pregunta cultural se movió. Ya no es si convivir o no con la familia. Es cuándo va a ser posible salir. Eso reorganiza el marco del hogar propio. Ya no se opone a la familia. Se opone a la imposibilidad económica de tenerlo. Para marcas, esto cambia los símbolos. El primer depa, el primer roomie, el primer mueble: hitos culturales nombrables, no transiciones invisibles.",
+      "cultural_headlines": [
+        {
+          "value": "+35,000",
+          "label": "menciones sobre independencia doméstica",
+          "detail": "\"Quiero independizarme\", \"salirme de casa de mis papás\", \"buscar roomie\". Lenguaje de plan, no de metáfora."
+        },
+        {
+          "value": "roomie",
+          "label": "es vocabulario consolidado",
+          "detail": "\"Vivir con roomies\", \"rentar con roomie\". Se mueve entre lo aspiracional y lo pragmático."
+        },
+        {
+          "value": "sin disculpa",
+          "label": "vivir con los papás",
+          "detail": "La frase aparece como punto de partida, no como confesión. El estigma se desinfló."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 3252
+        },
+        {
+          "month": "2026-02",
+          "count": 5298
+        },
+        {
+          "month": "2026-03",
+          "count": 5903
+        },
+        {
+          "month": "2026-04",
+          "count": 9225
+        },
+        {
+          "month": "2026-05",
+          "count": 11433
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Un terrenito pequeño para construir una casita aunque sea, para poder moverme de la casa de mis papás.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "moverme de la casa de mis papás",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Tienes que irte antes de que nazca tu hijo o luego será peor todo.",
+          "platform": "reddit",
+          "mx": true,
+          "phrase": "irte de casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Buscar roomie para rentar, alguien que comparta gastos y mantenga las cosas en orden.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "buscar roomie",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 35111,
+        "mx_evidence_estimated": 1756,
+        "sources_count": 4,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Comunicar el primer depa, el primer roomie, el primer mueble como hitos.",
+          "Productos diseñados para vivir en compartido. Espacios chicos, presupuestos ajustados.",
+          "Bundles para empezar el espacio sin saturar de catálogo.",
+          "Tratar la independencia como proyecto con cronograma, no como evento puntual."
+        ],
+        "avoid": [
+          "La estética de vida instalada cuando la realidad es vida empezando.",
+          "Productos para hogar completo cuando la realidad es espacio compartido.",
+          "Ignorar la realidad del roomie en categorías de retail doméstico.",
+          "Tratar \"vivir con los papás\" como tema sensible. La audiencia no lo trata así."
+        ],
+        "categories_exposed": [
+          "Real estate familiar tradicional",
+          "Retail que asume hogar completo"
+        ],
+        "categories_opportunity": [
+          "Productos para roomies",
+          "Muebles compactos",
+          "Renta con servicios",
+          "Plataformas P2P para encontrar roomie"
+        ]
+      },
+      "monitor_next": [
+        "quiero independizarme",
+        "salirme de casa",
+        "vivir con roomies",
+        "primer depa"
+      ],
+      "is_big_finding": false
+    },
+    {
+      "id": "casa_se_volvio_refugio",
+      "order": 5,
+      "commercial_name": "La casa se volvió refugio",
+      "color": "#4B1D95",
+      "maturity": "acelerando",
+      "maturity_note": "\"Prefiero estar en mi casa\" se nombra con cariño, no con justificación. La preferencia por estar en casa se consolidó como cultural, no como reacción pasajera.",
+      "one_liner": "Estar en casa hoy se celebra. Ya no se justifica.",
+      "tension": {
+        "left": "La calle como destino",
+        "right": "La casa como destino"
+      },
+      "lead_quote": {
+        "text": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya acepté la salida y me dicen que al final nada les juro que no me quejo.",
+        "platform": "tiktok",
+        "attribution": "usuaria MX"
+      },
+      "cultural_reading": "En el corpus revisado, \"quedarme en casa\" se nombra con afecto. Sin disculpa. \"Amo estar en mi casa\", \"prefiero quedarme en casita\", \"nada como llegar a casa\". La preferencia por estar adentro se asume como elección, no como repliegue. Esto no es nostalgia pandémica. Es un eje que se movió y no ha vuelto. La casa se está usando como espacio de regulación emocional, no solo como dirección postal. Para marcas, eso cambia las prioridades. Silencio, olor, temperatura, ventilación, luz, sábanas, café, cama. La infraestructura del bienestar doméstico pesa más que la del afuera.",
+      "cultural_headlines": [
+        {
+          "value": "+32,000",
+          "label": "menciones sobre casa como refugio",
+          "detail": "\"Prefiero estar en mi casa\", \"amo estar en casita\", \"nada como llegar\". Afecto explícito."
+        },
+        {
+          "value": "post-pandemia",
+          "label": "pero no nostalgia",
+          "detail": "La preferencia por la casa se consolidó. No es respuesta coyuntural."
+        },
+        {
+          "value": "TikTok y Facebook",
+          "label": "cruzan generaciones",
+          "detail": "Voces de 20s en TikTok, 40s en Facebook. La señal no es de un solo segmento."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 3300
+        },
+        {
+          "month": "2026-02",
+          "count": 4621
+        },
+        {
+          "month": "2026-03",
+          "count": 6821
+        },
+        {
+          "month": "2026-04",
+          "count": 8049
+        },
+        {
+          "month": "2026-05",
+          "count": 9543
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya cancelan, no me quejo.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "prefiero estar en mi casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Pues a mí me dan 3 mil pesos a la semana para lo que yo quiera, y solo le dedico una hora al aseo, la verdad amo estar en mi casa sin hacer nada, qué estrés sería otra cosa.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "amo estar en mi casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Yo con 24, un hijo de 7 años, ya me falta poco para graduarme de Ingeniero, trabajo y todo... vivan cada etapa de la vida, nada como estar en casa de papá y mamá.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "nada como estar en casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 32334,
+        "mx_evidence_estimated": 1617,
+        "sources_count": 4,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Posicionar productos como parte del bienestar doméstico cotidiano.",
+          "Comunicar \"estar en casa\" como elección que se celebra.",
+          "Pensar el ritual de regreso: lo que pasa entre llegar y sentarse.",
+          "Bebidas, snacks, entretenimiento doméstico: tratar la casa como destino, no como refugio del afuera."
+        ],
+        "avoid": [
+          "Asumir que la audiencia quiere salir.",
+          "Convocar \"vida social afuera\" cuando el corpus celebra la vida adentro.",
+          "Comunicación que estigmatiza quedarse en casa.",
+          "Asumir que casa significa aburrimiento."
+        ],
+        "categories_exposed": [
+          "Hospitalidad nocturna",
+          "Eventos masivos",
+          "Bares mainstream"
+        ],
+        "categories_opportunity": [
+          "Entretenimiento doméstico",
+          "Streaming",
+          "Comida en casa",
+          "Bebidas para casa",
+          "Aromaterapia",
+          "Cuidado del sueño"
+        ]
+      },
+      "monitor_next": [
+        "prefiero en casa",
+        "amo estar en mi casa",
+        "nada como llegar",
+        "quedarme en casita"
+      ],
+      "is_big_finding": false
+    },
+    {
+      "id": "casa_trabaja_de_mas",
+      "order": 6,
+      "commercial_name": "La casa trabaja de más",
+      "color": "#261447",
+      "maturity": "acelerando",
+      "maturity_note": "La queja en el corpus no es contra el trabajo desde casa. Es contra la infraestructura que no se diseñó para sostenerlo. Silla, internet, ventilación, temperatura.",
+      "one_liner": "La casa absorbió oficina, escuela, gimnasio y restaurante. Pero se diseñó para sostener una sola de esas cosas.",
+      "tension": {
+        "left": "Casa diseñada para vivir",
+        "right": "Casa usada para todo"
+      },
+      "lead_quote": {
+        "text": "Disculpa, yo no tengo Infonavit y trabajo desde mi casa, soy costurera y no tengo cómo comprobar ingresos.",
+        "platform": "tiktok",
+        "attribution": "usuaria MX"
+      },
+      "cultural_reading": "El home office no es la única función nueva. La casa también se volvió escuela, gimnasio improvisado, sala de cine, restaurante, terapia ad hoc. La conversación lo refleja con quejas muy concretas: \"no tengo espacio\", \"mucho ruido\", \"mi casa es un horno\", \"me distraigo\". La queja no es contra el trabajo desde casa. Es contra la infraestructura insuficiente. La casa diseñada para vivir está cargando funciones para las que no se planeó. Para marcas, eso abre territorio operativo concreto: cómo hacer que la casa sostenga lo que está sosteniendo. Climatización, silla, cama, luz, internet, sonido, ventilación. Voces frecuentes en el corpus: mujeres trabajadoras, costureras, freelancers, madres trabajando.",
+      "cultural_headlines": [
+        {
+          "value": "+30,000",
+          "label": "menciones sobre tensión funcional",
+          "detail": "\"Trabajo desde mi casa\", \"no tengo espacio\", \"mi casa es un horno\", \"mucho ruido\"."
+        },
+        {
+          "value": "infraestructura",
+          "label": "no decoración",
+          "detail": "La conversación es operativa: silla, internet, ventilación, temperatura. La estética viene después."
+        },
+        {
+          "value": "mujeres trabajadoras",
+          "label": "voz dominante",
+          "detail": "Costureras, freelancers, madres trabajando desde casa. Problemas específicos con cuerpo y nombre."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 3251
+        },
+        {
+          "month": "2026-02",
+          "count": 4648
+        },
+        {
+          "month": "2026-03",
+          "count": 6311
+        },
+        {
+          "month": "2026-04",
+          "count": 7509
+        },
+        {
+          "month": "2026-05",
+          "count": 9140
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Disculpa, yo no tengo Infonavit y trabajo desde mi casa, soy costurera y no tengo cómo comprobar ingresos.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "trabajo desde mi casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Me pueden asesorar de cómo puedo obtener una casa, no cuento con Infonavit porque soy costurera y trabajo desde mi casa, soy madre soltera y tengo a mi cargo a un adulto mayor.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "trabajo desde mi casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Mi primer trabajo fue auxiliar de panadería. Trabajaba 14 horas y me pagaban 12 mil pesos por turno. Ahora soy gerente de una empresa de software en USA. Trabajo desde mi casa hace 8 años.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "trabajo desde mi casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 30859,
+        "mx_evidence_estimated": 1543,
+        "sources_count": 4,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Productos que resuelven las funciones que la casa absorbió: ergonomía, climatización, audio.",
+          "Internet residencial confiable como infraestructura básica, no como upgrade.",
+          "Mobiliario multi-función para espacios reducidos.",
+          "Reconocer en voz alta que la casa también es oficina/escuela/etc. Eso ya pasó."
+        ],
+        "avoid": [
+          "Ignorar el espacio multi-funcional en categorías que sí lo implican.",
+          "Productos diseñados para casas grandes cuando la audiencia tiene espacios chicos.",
+          "Asumir separación clara entre vida laboral y doméstica.",
+          "Romantizar el home office sin reconocer la fricción real."
+        ],
+        "categories_exposed": [
+          "Inmobiliarias que ignoran el uso real del espacio",
+          "Diseño desconectado de la realidad operativa"
+        ],
+        "categories_opportunity": [
+          "Climatización",
+          "Internet residencial",
+          "Mobiliario ergonómico",
+          "Apps de productividad doméstica",
+          "Audio para casa"
+        ]
+      },
+      "monitor_next": [
+        "trabajo desde mi casa",
+        "mi casa es un horno",
+        "no tengo espacio",
+        "mi setup en casa"
+      ],
+      "is_big_finding": false
+    },
+    {
+      "id": "seguridad_bienestar",
+      "order": 7,
+      "commercial_name": "Seguridad es parte del bienestar",
+      "color": "#070113",
+      "maturity": "emergente",
+      "maturity_note": "La preocupación existe en el corpus, pero el vocabulario para nombrarla está fragmentado. La gente habla más de productos sueltos (cámaras) que de un concepto cultural ya cuajado.",
+      "one_liner": "La casa cómoda y bonita ya no es suficiente. La audiencia también pide que se sienta protegida.",
+      "tension": {
+        "left": "Casa bonita y cómoda",
+        "right": "Casa protegida"
+      },
+      "lead_quote": {
+        "text": "Pongo cámaras en mi casa porque me da miedo dejarla sola.",
+        "platform": "facebook",
+        "attribution": "voz consolidada del corpus"
+      },
+      "cultural_reading": "La seguridad doméstica aparece menos verbalizada que el resto del hogar. Pero cuando aparece, es concreta. Cámaras, sensores, vecinos, miedo a dejar la casa sola, control durante ausencias. Esta señal es emergente porque el vocabulario todavía está en formación. La gente habla más de productos sueltos (cámaras IP, sensores) que de un concepto cultural unificado tipo \"hogar protegido\". Para marcas en smart home, seguros y apps de vecindario, esto abre una ventana: hay oportunidad de articular el lenguaje antes de que la categoría lo fije.",
+      "cultural_headlines": [
+        {
+          "value": "+8,000",
+          "label": "menciones sobre seguridad doméstica",
+          "detail": "\"Cámaras en mi casa\", \"me da miedo dejar mi casa sola\", \"vigilar mi casa\". Productos concretos, miedos concretos."
+        },
+        {
+          "value": "vocabulario fragmentado",
+          "label": "oportunidad de articular",
+          "detail": "No hay frase única todavía. Hay productos sueltos: cámaras, sensores, vecinos."
+        },
+        {
+          "value": "emergente",
+          "label": "pero con urgencia",
+          "detail": "La preocupación está ahí. El lenguaje cultural para nombrarla, no del todo."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 278
+        },
+        {
+          "month": "2026-02",
+          "count": 518
+        },
+        {
+          "month": "2026-03",
+          "count": 1361
+        },
+        {
+          "month": "2026-04",
+          "count": 3189
+        },
+        {
+          "month": "2026-05",
+          "count": 3012
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Pongo cámaras en mi casa porque me da miedo dejarla sola.",
+          "platform": "facebook",
+          "mx": true,
+          "phrase": "cámaras en mi casa",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Me da miedo dejar mi casa sola cuando salgo de viaje, mejor le dejo aviso al vecino.",
+          "platform": "x",
+          "mx": true,
+          "phrase": "dejar mi casa sola",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Estuve viendo opciones de cámaras IP para mi casa, ¿alguien recomienda alguna?",
+          "platform": "youtube",
+          "mx": true,
+          "phrase": "cámaras IP",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 8358,
+        "mx_evidence_estimated": 418,
+        "sources_count": 4,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Smart home comunicado como tranquilidad, no como tecnología.",
+          "Cámaras y sensores vendidos desde el alivio mental, no desde el feature técnico.",
+          "Seguros que protegen \"mi casita\" como espacio emocional, no solo propiedad valuable.",
+          "Apps de vecindario como red de confianza distribuida."
+        ],
+        "avoid": [
+          "Tecnología compleja sin propuesta emocional.",
+          "Marketing del miedo sin una solución que cierre el círculo.",
+          "Comunicación que asume alfabetización tech alta.",
+          "Tratar seguridad como feature en lugar de como propuesta de valor."
+        ],
+        "categories_exposed": [
+          "Smart home sin propuesta emocional",
+          "Seguros que solo protegen propiedad"
+        ],
+        "categories_opportunity": [
+          "Smart home accesible",
+          "Seguros de hogar",
+          "Cámaras IP",
+          "Apps de vecindarios",
+          "Sensores domésticos"
+        ]
+      },
+      "monitor_next": [
+        "cámaras en mi casa",
+        "dejar mi casa sola",
+        "sentirme seguro en mi casa",
+        "vigilar mi casa"
+      ],
+      "is_big_finding": false
+    },
+    {
+      "id": "busqueda_sospecha",
+      "order": 8,
+      "commercial_name": "Antes del hogar está el filtro de confianza",
+      "color": "#12001F",
+      "maturity": "emergente",
+      "maturity_note": "Señal de baja frecuencia, alta especificidad. Cuando aparece, etiqueta plataformas inmobiliarias directamente con quejas concretas: monta rentas, anticipos perdidos, fotos duplicadas, no se hicieron responsables.",
+      "one_liner": "Buscar vivienda hoy empieza con sospecha. ¿Es real? ¿Es fraude? ¿Me van a pedir anticipo?",
+      "tension": {
+        "left": "Plataforma inmobiliaria como solución",
+        "right": "Plataforma inmobiliaria como riesgo"
+      },
+      "lead_quote": {
+        "text": "Marcela: Inmuebles24 México parece que está coludido con esas gentes, a mí me estafaron... reporté a mi banco, al banco receptor y a la fiscalía, mandé todo a Inmuebles24 con pruebas y solo respondieron: \"ya teníamos reportada esa cuenta y estamos trabajando en ello\".",
+        "platform": "facebook",
+        "attribution": "usuaria MX estafada"
+      },
+      "cultural_reading": "Esta señal es chica en volumen pero muy específica en evidencia. Cada mención lleva marca etiquetada: Inmuebles24, Homie, Propiedades.com, MercadoLibre Inmuebles. Las quejas son operacionales: \"monta rentas\", \"pedir anticipo y bloquear\", \"no se hacen responsables\", \"publican depas falsos\". El reclamo no es contra la búsqueda de vivienda en sí. Es contra las plataformas que la audiencia trataba como filtro de confianza y dejaron de serlo. La audiencia ya no espera que la plataforma solo liste. Espera que proteja. Para plataformas inmobiliarias, esto cambia el centro de la propuesta de valor. La confianza dejó de ser compliance. Se volvió propuesta de valor central.",
+      "cultural_headlines": [
+        {
+          "value": "578",
+          "label": "menciones sobre fraude inmobiliario",
+          "detail": "Volumen bajo, pero todas con marca etiquetada. La frase \"monta rentas\" se volvió diagnóstico."
+        },
+        {
+          "value": "plataformas",
+          "label": "son los sujetos del juicio",
+          "detail": "Inmuebles24, Homie, Propiedades.com, MercadoLibre Inmuebles concentran las quejas."
+        },
+        {
+          "value": "protección",
+          "label": "no listing",
+          "detail": "La audiencia espera que la plataforma actúe como filtro de confianza, no como simple agregador."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2026-01",
+          "count": 20
+        },
+        {
+          "month": "2026-02",
+          "count": 32
+        },
+        {
+          "month": "2026-03",
+          "count": 110
+        },
+        {
+          "month": "2026-04",
+          "count": 197
+        },
+        {
+          "month": "2026-05",
+          "count": 219
+        }
+      ],
+      "platform_mix": [],
+      "evidence": [
+        {
+          "text": "Inmuebles24 México parece que está coludido con esas gentes, a mí me estafaron... mandé todo con pruebas y solo respondieron ya teníamos reportada esa cuenta y estamos trabajando en ello.",
+          "platform": "facebook",
+          "mx": true,
+          "phrase": "me estafaron",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Inmuebles24 México con la fortuna que cobran y no tienen bloqueo en las imágenes. Ya han bajado fotos para duplicar anuncios. En MercadoLibre por lo menos no pueden bajar las fotografías lo que hace más seguro el pagarles las publicaciones.",
+          "platform": "facebook",
+          "mx": true,
+          "phrase": "anuncios duplicados",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        },
+        {
+          "text": "Me citaron en el departamento, me lo mostró la persona que me iba a rentar el cuarto como roomie. A las cuantas horas me llamó para aceptarme, me pasó su número, transferí y me bloqueó. Después coincidió que en un grupo de FB encontré a otros 3 estafados por el mismo. Y ese depa estaba publicado en Homie.",
+          "platform": "tiktok",
+          "mx": true,
+          "phrase": "me bloqueó",
+          "date": "enero-mayo 2026",
+          "source": "07_analisis_estrategico_referencia.md"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 578,
+        "mx_evidence_estimated": 29,
+        "sources_count": 4,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Verificación visible de anunciantes y propiedades. Que el cliente sepa que pasó por filtro.",
+          "Protección de imagen para evitar duplicación de anuncios.",
+          "Política de \"se hicieron responsables\" demostrable, no declarativa.",
+          "Educar sobre fraudes (\"monta rentas\") como parte del producto."
+        ],
+        "avoid": [
+          "Confiar en el reporte después del daño en lugar de prevenir antes.",
+          "Cobrar publicación sin proteger la imagen del anunciante.",
+          "Respuestas tipo \"ya teníamos reportada esa cuenta\" como cierre del ticket.",
+          "Asumir que el cliente entiende los riesgos sin que la plataforma los explique."
+        ],
+        "categories_exposed": [
+          "Plataformas inmobiliarias sin verificación",
+          "Anuncios sin moderación"
+        ],
+        "categories_opportunity": [
+          "Plataformas con verificación robusta",
+          "Servicios de protección al inquilino",
+          "Seguros para rentas",
+          "Educación sobre fraudes inmobiliarios"
+        ]
+      },
+      "monitor_next": [
+        "monta rentas",
+        "me pidieron anticipo",
+        "anuncio falso",
+        "me estafaron",
+        "no se hicieron responsables"
+      ],
+      "is_big_finding": false
+    }
+  ],
+  "brand_action_map": [
+    {
+      "pillar": "Lenguaje y narrativa",
+      "do": "Decir \"mi casita\". Está en el corpus, está cargada de afecto, está esperando.",
+      "avoid": "\"Tu hogar\", \"tu casa\", \"vivienda\". Vocabulario importado de catálogo extranjero.",
+      "signals_relevant": [
+        "mi_casita_identidad",
+        "casa_se_volvio_refugio"
+      ]
+    },
+    {
+      "pillar": "Productos y experiencia",
+      "do": "Resolver lo multi-funcional: oficina, escuela, descanso, gimnasio en un mismo cuarto.",
+      "avoid": "Productos que asumen separación clara entre vida laboral y doméstica.",
+      "signals_relevant": [
+        "casa_trabaja_de_mas"
+      ]
+    },
+    {
+      "pillar": "Financiamiento y acceso",
+      "do": "Hablar en clave Infonavit. Mostrar cifras. Reconocer la brecha entre crédito y precios.",
+      "avoid": "\"Haz realidad tu sueño\" sin un solo número que lo sostenga.",
+      "signals_relevant": [
+        "casa_propia_futuro",
+        "renta_no_alcanza"
+      ]
+    },
+    {
+      "pillar": "Confianza y verificación",
+      "do": "Hacer visible la protección: verificación, política responsable, educación sobre fraude.",
+      "avoid": "Reporte después del daño. Respuestas administrativas a quejas estructurales.",
+      "signals_relevant": [
+        "busqueda_sospecha"
+      ]
+    },
+    {
+      "pillar": "Hogar como destino",
+      "do": "Tratar la casa como espacio de regulación emocional: ventilación, silencio, olor, café, cama.",
+      "avoid": "Convocar vida afuera cuando el corpus celebra la vida adentro.",
+      "signals_relevant": [
+        "casa_se_volvio_refugio",
+        "seguridad_bienestar"
+      ]
+    }
+  ],
+  "methodology": {
+    "opening_statement": "Noisia construyó este radar a partir de conversación digital observable en español mexicano. No medimos representatividad ni mercado inmobiliario. Detectamos lenguaje, tensiones recurrentes e implicaciones para categorías que entran a la vida doméstica.",
+    "principles": [
+      "No buscamos \"hogar\" en abstracto. Es palabra demasiado amplia y atrae conversación que no es la que importa.",
+      "Leímos frases largas y específicas del lenguaje mexicano cotidiano sobre hogar.",
+      "Priorizamos densidad cultural sobre volumen bruto. Una cita específica vale más que mil menciones genéricas.",
+      "Clasificamos cada señal por madurez: emergente, acelerando o mainstreaming."
+    ],
+    "corpus": {
+      "sources_used": [
+        "Conversación pública en redes y comunidades abiertas en español",
+        "Frases sembradas sobre afecto, independencia, acceso, confianza y seguridad doméstica"
+      ],
+      "platforms": [
+        "YouTube",
+        "TikTok",
+        "Facebook",
+        "X (Twitter)",
+        "Instagram",
+        "Reddit",
+        "Reviews"
+      ],
+      "period": "enero 2026 – mayo 2026",
+      "language_focus": "Español mexicano cotidiano — casa, cuarto, depa, casita, renta, independencia",
+      "volume_scope": "+1.18 millones de menciones procesadas en español. La evidencia textual se seleccionó por densidad cultural sobre 9 territorios de análisis.",
+      "territories": [
+        "Casa como refugio",
+        "Mi casita como identidad",
+        "Casa como comodidad funcional",
+        "Familia y convivencia",
+        "Independencia",
+        "Casa propia como futuro",
+        "Renta y compra como frustración",
+        "Búsqueda como riesgo",
+        "Seguridad doméstica"
+      ]
+    },
+    "lenses_applied": [
+      "Cultural Codes Decoding",
+      "Affective Vocabulary Tracking",
+      "Financial Friction Mapping",
+      "Trust Signal Analysis",
+      "Functional Tension Detection"
+    ],
+    "limitations": [
+      "No representa a toda la población mexicana. Refleja conversación digital pública.",
+      "No mide mercado inmobiliario ni demanda real de vivienda.",
+      "No predice nada. Identifica tensiones culturales presentes hoy.",
+      "No es análisis de decoración ni catálogo. Es lectura cultural del idioma con el que se habla del hogar."
+    ],
+    "maturity_framework": {
+      "emergente": "El vocabulario público apenas se está armando. Marcas pioneras pueden ayudar a articularlo.",
+      "acelerando": "Vocabulario consolidado, frecuencia subiendo. Responder ahora significa estar en la conversación.",
+      "mainstreaming": "Está en todas las plataformas. Las marcas que no la entienden ya están atrás."
+    }
+  },
+  "report_structure": [
+    {
+      "section": "01",
+      "name": "Cover",
+      "content": "The Mexican Home — 8 señales sobre qué significa hogar para México hoy."
+    },
+    {
+      "section": "02",
+      "name": "Opening",
+      "content": "El hogar mexicano no es solo el lugar donde se vive. Es donde se construye identidad, descanso, trabajo, futuro y confianza."
+    },
+    {
+      "section": "03",
+      "name": "What we looked for",
+      "content": "Lenguaje cotidiano sobre casa, cuarto, depa, casita — no abstracciones sobre hogar ni datos del mercado inmobiliario."
+    },
+    {
+      "section": "04",
+      "name": "Signal Radar",
+      "content": "Las 8 señales clasificadas por madurez y por dimensión del hogar."
+    },
+    {
+      "section": "05–12",
+      "name": "Signal cards (8)",
+      "content": "Una sección por señal con tensión, cita protagonista, lectura cultural, evidencia, implicaciones para marca."
+    },
+    {
+      "section": "13",
+      "name": "What this means for brands",
+      "content": "5 pilares estratégicos cross-signal por categoría que entra al hogar."
+    },
+    {
+      "section": "14",
+      "name": "How Noisia reads signals",
+      "content": "Metodología de escucha sembrada sobre hogar mexicano."
+    },
+    {
+      "section": "15",
+      "name": "CTA",
+      "content": "¿Qué señal está cambiando cómo tu marca entra a la vida doméstica?"
+    }
+  ]
+}

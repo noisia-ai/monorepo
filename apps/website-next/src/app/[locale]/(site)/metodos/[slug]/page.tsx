@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { setRequestLocale } from "next-intl/server";
 import { ContentPage } from "@/components/blocks/Blocks";
+import { SetAlternate } from "@/components/layout/alternate";
 import { methodEntries } from "@/content/pages/methods";
 import { findEntry, pick } from "@/content/pages/registry";
 import { routing } from "@/i18n/routing";
@@ -25,5 +26,11 @@ export default async function Page({ params }: { params: Promise<Params> }) {
   setRequestLocale(locale);
   const entry = findEntry(methodEntries, locale, slug);
   if (!entry) notFound();
-  return <ContentPage page={pick(entry.page, locale)} />;
+  const alternate = locale === "en" ? `/metodos/${entry.slug.es}` : `/en/methods/${entry.slug.en}`;
+  return (
+    <>
+      <SetAlternate href={alternate} />
+      <ContentPage page={pick(entry.page, locale)} />
+    </>
+  );
 }

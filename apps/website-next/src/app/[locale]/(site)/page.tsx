@@ -5,11 +5,17 @@ import { Button } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
 import { Section } from "@/components/ui/Section";
 import { HeroMotion } from "@/components/home/HeroMotion";
+import { ProcessSteps } from "@/components/home/ProcessSteps";
 import { StoryPreview } from "@/components/home/StoryPreview";
 import { getFeedStories } from "@/components/feed/feed-data";
 import { home } from "@/content/pages/home";
 import { moments } from "@/content/moments";
 import styles from "@/components/home/home.module.css";
+
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+  const { locale } = await params;
+  return { alternates: { canonical: locale === "en" ? "/en" : "/", languages: { es: "/", en: "/en" } } };
+}
 
 export default async function HomePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
@@ -74,17 +80,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       ) : null}
 
       <Section title={c.how.title} lead={c.how.lead}>
-        <ol className={styles.steps}>
-          {c.how.steps.map((step, i) => (
-            <Reveal key={step.name} delay={i * 0.06}>
-              <li className={styles.step}>
-                <span className={styles.stepNumber}>{String(i + 1).padStart(2, "0")}</span>
-                <h3 className={styles.stepName}>{step.name}</h3>
-                <p className={styles.stepText}>{step.text}</p>
-              </li>
-            </Reveal>
-          ))}
-        </ol>
+        <ProcessSteps steps={c.how.steps} />
         <p className={styles.human}>
           <Check aria-hidden /> {c.how.human}
         </p>

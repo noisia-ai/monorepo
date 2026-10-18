@@ -212,7 +212,8 @@ export function Stage({
           visibility: scale ? "visible" : "hidden"
         }}
       >
-        <FrameContext.Provider value={value}>{children}</FrameContext.Provider>
+        {/* Compositions mount only in the browser: they are visual, the readable text lives outside. */}
+        {scale ? <FrameContext.Provider value={value}>{children}</FrameContext.Provider> : null}
       </div>
     </div>
   );

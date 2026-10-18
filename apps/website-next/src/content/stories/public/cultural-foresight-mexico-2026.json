@@ -7,7 +7,7 @@
     "method": "Cultural Foresight",
     "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
     "period": "ene 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
     "notes": "Señal descanso_sin_permiso. El +157% viene literal de cultural_headlines (aceleración mensual 2025 a 2026); no se recalculó.",
     "es": {
       "title": "Descansar ya suena a derecho en México",
@@ -52,7 +52,7 @@
     "method": "Cultural Foresight",
     "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
     "period": "ene 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
     "notes": "Señal privacidad_emocional. TikTok 54% / Facebook 13% y las 5 frases vienen literales de cultural_headlines.",
     "es": {
       "title": "Compartir menos ya se lee como inteligencia",
@@ -97,7 +97,7 @@
     "method": "Cultural Foresight",
     "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
     "period": "ene 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
     "notes": "Señal perfeccion_pierde_credibilidad. 58% (YouTube + Reddit) literal de cultural_headlines. +110% calculado de monthly_pulse: promedio mensual ene–may 2026 (50,355.8) vs promedio mensual 2025 (23,990.1) = +109.9%, redondeado.",
     "es": {
       "title": "Lo demasiado pulido empieza a sonar falso",
@@ -142,7 +142,7 @@
     "method": "Cultural Foresight",
     "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
     "period": "ene 2025–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
     "notes": "Señal aspirar_da_cringe. +112% calculado de monthly_pulse: promedio mensual ene–may 2026 (208,037.6) vs promedio mensual 2025 (98,333.2) = +111.6%, redondeado.",
     "es": {
       "title": "En México, presumir de más ya provoca burla",

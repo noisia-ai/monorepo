@@ -7,7 +7,7 @@
     "method": "Cultural Codes",
     "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
     "period": "ene–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/the-mexican-home",
     "notes": "Señal casa_propia_futuro. +171% calculado de monthly_pulse: 2026-05 (35,385) vs 2026-01 (13,079) = +170.5%, redondeado.",
     "es": {
       "title": "Comprar casa en México significa asegurar el futuro",
@@ -52,7 +52,7 @@
     "method": "Cultural Codes",
     "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
     "period": "ene–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/the-mexican-home",
     "notes": "Señal renta_no_alcanza. 65% TikTok literal de cultural_headlines. +135% calculado de monthly_pulse: 2026-05 (14,175) vs 2026-01 (6,042) = +134.6%, redondeado. Evidencia sin mes exacto en la fuente (enero–mayo 2026), por eso date es null.",
     "es": {
       "title": "Tener crédito Infonavit ya no garantiza encontrar casa",
@@ -95,7 +95,7 @@
     "method": "Cultural Codes",
     "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
     "period": "ene–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/the-mexican-home",
     "notes": "Señal casa_se_volvio_refugio. +189% calculado de monthly_pulse: 2026-05 (9,543) vs 2026-01 (3,300) = +189.2%, redondeado. Evidencia sin mes exacto en la fuente (enero–mayo 2026), por eso date es null.",
     "es": {
       "title": "Quedarse en casa ya se celebra sin dar explicaciones",
@@ -138,7 +138,7 @@
     "method": "Cultural Codes",
     "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
     "period": "ene–may 2026",
-    "report": "/insights",
+    "report": "/insights/reportes/the-mexican-home",
     "notes": "Señal busqueda_sospecha (emergente, volumen muy bajo). 11x calculado de monthly_pulse: 2026-05 (219) vs 2026-01 (20) = 10.95x, redondeado. Evidencia sin mes exacto en la fuente (enero–mayo 2026), por eso date es null.",
     "es": {
       "title": "Buscar dónde vivir hoy empieza con sospecha de fraude",

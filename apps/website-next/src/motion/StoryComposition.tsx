@@ -34,10 +34,19 @@ export function posterFrame(story: StoryLocale): number {
   return Math.max(0, at - 14);
 }
 
-/** Brand atmosphere: a slow cyan/red bloom with grain behind white space. */
+const PARTICLES = Array.from({ length: 46 }, (_, i) => {
+  const r = (n: number) => {
+    const x = Math.sin(i * 12.9898 + n * 78.233) * 43758.5453;
+    return x - Math.floor(x);
+  };
+  return { x: r(1) * 1080, y: r(2) * 1920, size: 5 + r(3) * 7, speed: 0.12 + r(4) * 0.3, phase: r(5) * Math.PI * 2 };
+});
+
+/** Brand atmosphere: a slow cyan/red bloom with grain and drifting points of conversation. */
 function Bloom() {
   const frame = useCurrentFrame();
-  const drift = Math.sin(frame / 90) * 40;
+  // Rounded so server and browser math agree to the pixel (avoids hydration mismatches).
+  const drift = Math.round(Math.sin(frame / 90) * 40);
   return (
     <AbsoluteFill style={{ background: color.canvas, overflow: "hidden" }}>
       <div
@@ -64,6 +73,18 @@ function Bloom() {
           filter: "blur(50px)"
         }}
       />
+      <svg width={1080} height={1920} style={{ position: "absolute", inset: 0 }} aria-hidden>
+        {PARTICLES.map((p, i) => (
+          <circle
+            key={i}
+            cx={Math.round((p.x + Math.cos(frame / 60 + p.phase) * 24) % 1080)}
+            cy={Math.round((p.y - frame * p.speed * 2 + 1920) % 1920)}
+            r={Math.round(p.size)}
+            fill={i % 7 === 0 ? color.coral : color.teal}
+            opacity={Math.round((0.08 + 0.06 * Math.sin(frame / 40 + p.phase)) * 100) / 100}
+          />
+        ))}
+      </svg>
       <svg width="100%" height="100%" style={{ position: "absolute", inset: 0, opacity: 0.07, mixBlendMode: "multiply" }} aria-hidden>
         <filter id="noisia-grain">
           <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />

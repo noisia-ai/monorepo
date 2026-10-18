@@ -111,9 +111,29 @@
 }
 
 /* ---------- moments ---------- */
-.moments {
+.moments,
+.compare {
   display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 78%;
   gap: var(--space-3);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  margin-left: calc(-1 * var(--gutter));
+  margin-right: calc(-1 * var(--gutter));
+  padding: 0 var(--gutter) var(--space-2);
+  scroll-padding: 0 var(--gutter);
+  scrollbar-width: none;
+}
+
+.moments::-webkit-scrollbar,
+.compare::-webkit-scrollbar {
+  display: none;
+}
+
+.moments > *,
+.compare > * {
+  scroll-snap-align: start;
 }
 
 .moment {
@@ -121,6 +141,7 @@
   flex-direction: column;
   gap: var(--space-2);
   height: 100%;
+  min-height: 210px;
   padding: var(--space-5);
   border-radius: var(--radius-lg);
   background: var(--surface-1);
@@ -159,7 +180,16 @@
   height: 14px;
 }
 
-@media (min-width: 640px) {
+@media (min-width: 768px) {
+  .moments,
+  .compare {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    overflow: visible;
+    margin: 0;
+    padding: 0;
+  }
+
   .moments {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -183,6 +213,7 @@
   margin: 0 calc(-1 * var(--gutter));
   padding-left: var(--gutter);
   padding-right: var(--gutter);
+  scroll-padding: 0 var(--gutter);
   scrollbar-width: none;
 }
 
@@ -331,8 +362,6 @@
 
 /* ---------- compare ---------- */
 .compare {
-  display: grid;
-  gap: var(--space-3);
   margin-bottom: var(--space-6);
 }
 
@@ -365,6 +394,12 @@
 @media (min-width: 900px) {
   .compare {
     grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (min-width: 768px) and (max-width: 899px) {
+  .compare {
+    grid-template-columns: repeat(2, 1fr);
   }
 }
 
@@ -426,5 +461,61 @@
 @media (min-width: 768px) {
   .startSteps {
     grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ---------- process (scroll-drawn) ---------- */
+.process {
+  position: relative;
+  list-style: none;
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.processTrack {
+  position: absolute;
+  left: 19px;
+  top: 20px;
+  bottom: 20px;
+  width: 2px;
+  background: var(--line);
+}
+
+.processFill {
+  position: absolute;
+  inset: 0;
+  background: var(--teal);
+  transform-origin: top;
+}
+
+.processStep {
+  position: relative;
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+}
+
+.processDot {
+  flex: none;
+  position: relative;
+  z-index: 1;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--canvas);
+  border: 2px solid var(--teal);
+  color: var(--teal);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+@media (min-width: 960px) {
+  .process {
+    max-width: 720px;
   }
 }

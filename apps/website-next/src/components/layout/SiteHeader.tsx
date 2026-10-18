@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Menu, Xmark } from "iconoir-react";
+import { useParams } from "next/navigation";
 import { Link, usePathname } from "@/i18n/navigation";
+import { useAlternateHref } from "./alternate";
 import { mainNav } from "./nav";
 import styles from "./SiteHeader.module.css";
 
@@ -11,6 +13,8 @@ export function SiteHeader() {
   const t = useTranslations("nav");
   const locale = useLocale();
   const pathname = usePathname();
+  const params = useParams();
+  const alternate = useAlternateHref();
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
 
@@ -47,10 +51,16 @@ export function SiteHeader() {
           ))}
         </nav>
         <div className={styles.end}>
-          {/* @ts-expect-error pathname is a valid localized route string at runtime */}
-          <Link href={pathname} locale={other} className={styles.lang} hrefLang={other}>
-            {other.toUpperCase()}
-          </Link>
+          {alternate ? (
+            <a href={alternate} className={styles.lang} hrefLang={other}>
+              {other.toUpperCase()}
+            </a>
+          ) : (
+            // @ts-expect-error pathname and params come from the current route, valid at runtime
+            <Link href={{ pathname, params }} locale={other} className={styles.lang} hrefLang={other}>
+              {other.toUpperCase()}
+            </Link>
+          )}
           <Link href="/taller" className={styles.cta}>
             {t("cta")}
           </Link>
