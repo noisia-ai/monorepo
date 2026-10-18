@@ -1,10 +1,10 @@
 # Lista factual R10 · §15.1 · checkpoint en fichas
 
-Esta lista alimenta al auditor; `QA_FUNDADOR_MFP.md` permanece intacta. **No es todavía un recorrido integral acreditado.** Alta, Brand OS, intereses, load1, preparación y vectores ocurrieron por UI; fichas conserva 791 válidas y110 errores. Descubrimiento, pertenencia, editorial, Signal inicial y load2 no se han ejecutado. No usar los resultados R4/R8 para completar números de R10.
+Esta lista alimenta al auditor; `QA_FUNDADOR_MFP.md` permanece intacta. **No es todavía un recorrido integral acreditado.** Alta, Brand OS, intereses, load1, preparación y vectores ocurrieron por UI; fichas conserva 800 estados semánticos y101 errores tras recuperar nueve respuestas ya pagadas. Descubrimiento, pertenencia, editorial, Signal inicial y load2 no se han ejecutado. No usar los resultados R4/R8 para completar números de R10.
 
 ## Destino y custodia
 
-- Build fijada `44a2e1becebed896d68608678d24ece827b97c63`; deployment `0566a994-0df6-4aa5-b782-1945eedcd50f` SUCCESS, 22 hashes runtime verificados. No redeploy/restart hasta cierre explícito QA-1 del fundador.
+- Build fijada `c1989e799123b36f17b36d04cb59bd2b9cd0034f`; Studio y Runner SUCCESS, 22 hashes runtime verificados en ambos. El fundador eligió opción B: una sola QA final con R10 completa. Respaldo anterior preservado; no redeploy durante import activo del estudio.
 - Marca «Marca QA MFP Oct11 R10»; brand `20c7d12a-57fd-49d9-a97b-7b19bf5f2d8f`, workspace `b466a888-c3f6-4b53-babe-e076be9e82d1`, slug `mfp-qa-r10-20261011`.
 - URL Topics: https://mfp-studio-dev-test.up.railway.app/studio/brands/20c7d12a-57fd-49d9-a97b-7b19bf5f2d8f/topics. Signal propio: `/signal/mfp-qa-r10-20261011/topics-narratives`; aún no servido por este recorrido.
 - CSV: `/Users/brandhon_o/Downloads/noisia-website/.data/dev-corpus/r10/load1.csv` y `load2.csv`; 47 columnas/1,000 y250 filas. Load1 SHA256 `4773f7ff553419422163d89c688cfa86227736844f4c9d5e02d0de3a4fb41d86`; load2 `8817c1fa4a055a807198582f449265d01a38821f6b1b2ecf0fb0e93cf2c213ea`.
@@ -44,9 +44,12 @@ Los tiempos son límites clic→observación, salvo duración worker indicada. C
 | 25 | Pulsar «Completar fichas pendientes» | CotizaciónUSD3.1952;901raíces; reservaUSD23.2034 | Worker17m23.532s; USD2.838194 real | Run4573aba2… único;791válidas (740labeled/51abstained),9invalid_facets+101DNC. |
 | 26 | Esperar actualización automática | Resumen791/901 | TerminalPG02:54:54.333Z/UI02:55:50.478Z | Tabla y poblaciones dependientes siguieron obsoletas; fix local invalida GET, no intención pagada. E2E pendiente de build nueva. |
 | 27 | Pulsar «Completar fichas pendientes» para recuperación focal | EstimaciónUSD0.4016;110raíces exactas;0válidas reenviadas | Worker83.427s; USD0 real | Autorizado una vez03:05:59.494Z; runc6a28ab8…:39callsfailed/110DNC;791válidas intactas. |
-| 28 | Esperar resultado automático | 791válidas/110errores; reserva activa0 | Terminal03:07:23.986Z; USD0 | No tercer intento. Cuerpo/códigoHTTP histórico no preservado. Detener aquí hasta QA-1 y build reparada. |
+| 28 | Esperar resultado automático | 791válidas/110errores; reserva activa0 | Terminal03:07:23.986Z; USD0 | No tercer intento. Cuerpo/códigoHTTP histórico no preservado. Checkpoint histórico; superado por el pin y replay gratuito del 18-oct. |
 
-Estado visible al último refresco ya ejecutado:464 relevantes/254ajenas/160indeterminadas/23spam =901. Son poblaciones completas de la tabla incluyendo errores, **no** 901 fichas válidas. No sustituirlo por el resumen740labeled/51abstained ni por un denominador de análisis todavía inexistente.
+| 29 | Pin Studio+Runner y 0268; reaplicar nueve respuestas almacenadas mediante escritor de producto | 800/901 semánticas;101errores | 18-oct 08:54:43Z; USD0 adicional | Las791 anteriores y ledger intactos; replay posterior sin efecto. Operación interna gratuita, no es un control UI self-service. |
+| 30 | Consultar Topics autenticado sobre pin nuevo | 800/901; cotización recuperación101 USD0.3483 | Lectura gratuita | No se pulsó recuperación; requiere saldo actual. |
+
+Estado visible al último refresco ya ejecutado:472 relevantes/254ajenas/152indeterminadas/23spam =901. Son poblaciones completas de la tabla incluyendo errores, **no** 901 fichas válidas. No sustituirlo por el resumen749labeled/51abstained ni por un denominador de análisis todavía inexistente.
 
 ## Tabla completa de controles y dinero
 
@@ -58,7 +61,7 @@ Las estimaciones preceden al proveedor; son orientativas. Reserva temporal y gas
 | «Calcular costo» | Cotiza vectores/fragmentos reutilizables | Lectura gratuita | Ejecutado:USD1.814885. |
 | «Crear vectores · estimación …» | Importe estimado dentro del botón; máximo sólo si configurado | Clic; sin casilla específica | Ejecutado:USD0.132160 real. |
 | «Completar fichas pendientes» | «Estimación de la próxima ejecución», reserva temporal y máximo separados | Clic; sin casilla específica | Dos admisiones registradas arriba; no repetir ahora. |
-| «Recalcular ficha completa» | «Estimación del recálculo completo» | Clic; si cambia CE puede exigir confirmación ulterior | Sin ejecutar R10; no usar para recuperar110. |
+| «Recalcular ficha completa» | «Estimación del recálculo completo» | Clic; si cambia CE puede exigir confirmación ulterior | Sin ejecutar R10; no usar para recuperar101. |
 | «Confirmar recálculo completo» | Recálculo pendiente y estimación completa vinculados al contexto actual | Clic de segunda confirmación, mismo run | Sólo aparece si el run requiere confirmación; sin ejecutar R10. |
 | «Analizar conversaciones» | Interpretación orientativa por menciones/grupos; no incluye consolidación ni fija límite | Clic; sin casilla editorial en este inicio | Descubrimiento aún sin ejecutar R10; esperar fichas completas. |
 | «Probar definición · 30 raíces» | «Estimación de prueba · 30 raíces» | Clic; sin casilla específica | Sin ejecutar R10; prueba no publica pertenencias ni cambia Signal. |
@@ -72,8 +75,8 @@ Las estimaciones preceden al proveedor; son orientativas. Reserva temporal y gas
 
 ## Bloqueo externo y continuación no ejecutada
 
-Un create independiente en el workspace privado H1 confirmó HTTP400/not_submitted, error_type `invalid_request_error`, firma exacta `credit_balance_insufficient`, coste0. Es compatible con el rechazo R10, **no probado para los110DNC históricos**, cuyo body/status no se preservó. R10 espera saldo Anthropic y cierre explícito QA-1; no tercer intento, importload2 ni despliegue ahora.
+Un create independiente en el workspace privado H1 confirmó HTTP400/not_submitted, error_type `invalid_request_error`, firma exacta `credit_balance_insufficient`, coste0. Es compatible con el rechazo R10, **no probado para los110DNC históricos**, cuyo body/status no se preservó. La QA-1 histórica quedó sustituida por opción B. El pin nuevo y las nueve respuestas gratuitas están aplicados; R10 espera una lectura actual del saldo Anthropic antes de recuperar101. No repetir las800 ni importar load2 antes de Signal inicial.
 
-Después de QA-1 y pin reparado verificado: cerrar fichas mediante recuperación focal autorizada, medir terminal sin refresco manual; descubrir grupos; evaluar pertenencia de los tres intereses; cotizar/confirmar revisión editorial; revisar/adoptar sólo Topics reales y seleccionar en Signal; verificar original y denominadores. **Sólo entonces** importar `load2.csv` una vez con revisión IDs ON, preparar delta, vectores reutilizados/nuevos, fichas afectadas, proyección numérica e interpretación cotizada de unidades nuevas; comparar Signal actualizado. Ninguno de esos resultados existe aún en R10; no se mezclan con R9/R8 ni se rellenan números de otra marca.
+Sobre el pin reparado verificado: leer saldo y cerrar las101 fichas mediante recuperación focal autorizada, medir terminal sin refresco manual; descubrir grupos; evaluar pertenencia de los tres intereses; cotizar/confirmar revisión editorial; revisar/adoptar sólo Topics reales y seleccionar en Signal; verificar original y denominadores. **Sólo entonces** importar `load2.csv` una vez con revisión IDs ON, preparar delta, vectores reutilizados/nuevos, fichas afectadas, proyección numérica e interpretación cotizada de unidades nuevas; comparar Signal actualizado. Ninguno de esos resultados existe aún en R10; no se mezclan con R9/R8 ni se rellenan números de otra marca.
 
 R9 queda exclusivamente como anexo histórico de importación directa. La medición vigente pin44 R8 fue Topics<9.3s/Signal completo<9s/cambioTopic<9.2s en reposo; la corrección humana12.451s y filtro16.647s continúan como incidencias históricas que esta nueva ronda debe corregir y medir. No hay acreditación nueva de esos límites en R10. CSV y recibos privados se conservan; el auditor redacta la guía final cuando cierre el recorrido.
