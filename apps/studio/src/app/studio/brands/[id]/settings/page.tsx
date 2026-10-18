@@ -1,4 +1,5 @@
 import Link from "next/link";
+import {ClassicProcessingPolicyCompletion} from "@/components/brands/ClassicProcessingPolicyCompletion";
 import {signalWorkspaceFeatureEnabledV1} from "@noisia/db";
 import {pool} from "@/lib/db";
 import {MfpMembershipConfiguration} from "@/components/brands/MfpMembershipConfiguration";
@@ -55,6 +56,7 @@ export default async function BrandSettingsPage({ params }: { params: Promise<{ 
       />
 
       <div className="admin-settings-stack admin-settings-stack--workspace">
+        {!membershipEnabled && summary.workspaceId && session.appUser.userType === 'noisia_internal' && ['noisia_admin','founder','admin'].includes(session.appUser.primaryRole) ? <ClassicProcessingPolicyCompletion key={summary.workspaceId} workspaceId={summary.workspaceId}/> : null}
         {membershipEnabled && summary.workspaceId ? <MfpMembershipConfiguration key={summary.workspaceId} workspaceId={summary.workspaceId}/> : null}
         <AdminResourceSection subtitle={t("settings.workspace.subtitle")} title={t("settings.workspace.title")}>
           <div className="admin-settings-list">

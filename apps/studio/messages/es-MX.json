@@ -4774,5 +4774,16 @@
     "previewResults": "Prueba de definición · {count} raíces",
     "scope": "Ámbito",
     "chooseScope": "Elige el ámbito"
+  },
+  "ClassicProcessingPolicy": {
+    "title": "Preparación del análisis",
+    "body": "Completa la configuración que permite preparar el contexto de marca y sus guías de análisis. Esta acción no ejecuta análisis ni genera cargos.",
+    "complete": "Completar configuración",
+    "working": "Completando…",
+    "provisioned": "Configuración completada. Ya puedes continuar desde Topics.",
+    "existing_policy": "La configuración ya está completa.",
+    "configuration_required": "Falta configuración del servicio. Contacta al administrador para completarla.",
+    "active_work": "Hay resultados o trabajos pendientes en esta organización. Termínalos antes de completar la configuración.",
+    "unavailable": "No se pudo completar la configuración. Revisa tus permisos y vuelve a intentarlo."
   }
 }
