@@ -25,3 +25,5 @@ Implementador asignado **GPT-6.1-sol/high**. Revisión focal **GPT-6-astra/mediu
 ## Revisión 12 — guarda previo a fusión (18 de octubre)
 
 La selección de citas excluye errores deterministas `membership_*` / `incomplete_single_root` y agotados antes de reservar otra llamada; coincide con la inmutabilidad del upsert. La aceptación PostgreSQL real se escribió primero en 90376473 y falló en PG201 (39109474231), al seleccionar el error determinista. Comprueba fuente positiva liquidada, error heredado NULL reparable, cinco estados terminales excluidos y recibos sin cambios. Los 12 pares del rescore siguen como proyección técnica privada; no se publican ni se reenvían. Modelo configurado: gpt-6.1-sol/high. Coste proveedor USD0; default estándar intacto. CI/PG verdes requeridos antes de fusionar.
+
+PG204 detectó que filtrar el error proyectado de cualquier ventana excluía también un positivo de otra ventana aún sin verificar. La guarda se acota al estado final persistido e inmutable de la misma pareja y todos sus digests; las proyecciones de ventanas conservan su verificación. El escenario existente `mixed_window_error` conserva esa aceptación. No se altera el upsert.

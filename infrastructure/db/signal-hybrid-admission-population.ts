@@ -1,7 +1,14 @@
 /** Deterministic parser failures are final; at most three governed attempts per unchanged pair and stage. */
 import {hybridCompatibleJevRunSqlV1,hybridJevPositiveSqlV1} from './signal-hybrid-semantic-cache-sql';
 export const hybridPairRetrySqlV1 = (stage:"jev"|"claude"|"citation") => `current.error_code IS DISTINCT FROM 'hybrid_attempts_exhausted'
- AND COALESCE(current.error_code,'') !~ '^(membership_|incomplete_single_root)'
+ ${stage==='citation'?`AND NOT EXISTS(SELECT 1 FROM signal_hybrid_membership_decisions terminal
+  WHERE terminal.workspace_id=current.workspace_id AND terminal.root_id=current.root_id
+   AND terminal.concept_key=current.concept_key AND terminal.route_digest=current.labeler_digest
+   AND terminal.root_fingerprint=current.root_fingerprint AND terminal.definition_digest=current.definition_digest
+   AND terminal.entity_context_digest=current.entity_context_digest AND terminal.effective_entities_digest=current.effective_entities_digest
+   AND terminal.verdict='error' AND (terminal.error_code='hybrid_attempts_exhausted'
+    OR COALESCE(terminal.error_code,'') ~ '^(membership_|incomplete_single_root)'))`
+ :"AND COALESCE(current.error_code,'') !~ '^(membership_|incomplete_single_root)'"}
  AND signal_hybrid_pair_attempts_v1(current.workspace_id,current.labeler_digest,'${stage}',
  current.root_id::text,current.root_fingerprint,current.concept_key,current.definition_digest,
  current.entity_context_digest,current.effective_entities_digest)<3`;
