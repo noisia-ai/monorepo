@@ -1,4 +1,4 @@
-/** USD/MTok verified 2026-10-04: https://platform.claude.com/docs/en/about-claude/pricing .
+/** USD/MTok verified 2026-10-12: https://platform.claude.com/docs/en/about-claude/pricing .
  * Cache multipliers stack with batch's 50% discount. Rates are integer microUSD/MTok. */
 export type LlmUsageV1 = {
   input_tokens: number;
@@ -45,7 +45,7 @@ export function llmPriceV1(
   return {
     input,
     output: input * 5,
-    cache_read: input / 10,
+    cache_read: input / (model === "claude-sonnet-5-5" ? 20 : 10),
     cache_write_5m: input * 1.25,
     cache_write_1h: input * 2,
   };
