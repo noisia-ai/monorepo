@@ -1,21 +1,24 @@
 # Completar configuración clásica en una marca existente
 
-Revisión 12 · PR #67 · agente mfp_estandar · gpt-6.1-sol / medium.
+Revisión 12 · PR #67 · mfp_estandar · gpt-6.1-sol / medium.
 
-Una organización con política MFP puede tener ocho acciones vigentes y carecer de las dos que preparan el contexto semántico y los prototipos de la ruta clásica. El replay de alta devuelve `existing_policy`; habilitar fichas para resolverlo cambiaría la población de descubrimiento. Esta entrega prepara una acción explícita en Configuración de la marca, sin activar features ni ejecutar trabajo.
+Una organización con ocho acciones MFP puede carecer de las dos que preparan contexto semántico y prototipos de la ruta clásica. El replay de alta devuelve `existing_policy`; habilitar fichas para resolverlo cambiaría la población de descubrimiento. Esta reparación añade una acción explícita en Configuración de la marca, sin activar features ni ejecutar análisis.
 
-La acción sólo admite un actor interno activo con rol `noisia_admin`, `founder` o `admin`. El servidor deriva workspace, marca y actor autenticado; el cuerpo vacío rechaza configuración, identidades y dinero suministrados por navegador. El almacén vuelve a comprobar la autoridad bajo lock de la organización y de sus filas. No suplanta al creador original.
+Sólo un actor interno activo con rol `noisia_admin`, `founder` o `admin` puede completarla. Marca, workspace y actor proceden del servidor; el cuerpo vacío rechaza identidades, configuración y dinero del navegador. Se vuelve a comprobar autoridad y tenant bajo locks; no se suplanta al creador original. Un cliente con capacidad de solicitar procesamiento sigue rechazado.
 
-El sucesor conserva exactamente las ocho acciones existentes y sus configuraciones, caps, zona presupuestaria y vencimiento. Añade sólo las acciones clásicas ausentes con configuración del servidor. El replay no crea otra versión. Una configuración incompleta o un propietario activo impide el cambio antes de mutar. Los raw ya pagados que esperan aplicación gratuita también mantienen vigente la política anterior; se reutiliza el lector de bloqueos de producto para distinguirlos de recibos corruptos ya cerrados.
+El sucesor conserva las ocho acciones, configuraciones, caps, zona presupuestaria y vencimiento; añade exclusivamente el par ausente. El replay no crea versiones nuevas. Política futura o vencida, configuración faltante y trabajo activo impiden mutar. Los owners se consultan por organización, incluida historia: procesamiento semántico, embeddings, preparación, Topics y raw pagados pendientes. Se reutiliza el lector de bloqueos para distinguir un raw pendiente de un recibo corrupto cerrado.
 
-## Evidencia y estado
+## Evidencia
 
-- Aceptación escrita primero en `e6f78696`. PostgreSQL 17 real, esquema migrado completo, PG224 (`39112463100`): rojo esperado, `existing_policy` frente a `provisioned`. La fixture revierte su censo y no transporta datos a proveedores.
-- La reparación depende del PR crítico #68, que adapta el contrato clásico sin topes monetarios heredados. La UI y el provisioner explícito pertenecen a #67; la migración y los contratos runtime a #68.
-- Implementación y aceptación ampliada en curso: cliente con capacidad de procesamiento rechazado; revocación, aislamiento, trabajo activo, raw pendiente, preservación y replay. No declarar entrega validada hasta CI y PG integrados verdes.
+- Aceptación primero: `e6f78696`, PostgreSQL 17 con esquema completo, PG224 (`39112463100`) rojo esperado: `existing_policy` frente a `provisioned`.
+- Reparación integrada con el contrato nullable de #68: `471fdf3f`, CI500 (`39113927678`) y PG235 (`39113927673`) verdes.
+- PG real comprueba autoridad, cliente rechazado, grant revocado, queued/running de preparación, queued/running/outcome_unknown de embeddings, queued/processing/validating semánticos, raw pendiente, política futura, preservación, rollback parcial y replay. Fixtures sin transportes y con rollback del censo.
+- El commit de cierre añade al recibo esta evidencia y una comprobación explícita de ausencia de nuevas admisiones o runs. Sus gates se verifican sobre la cabeza final antes de integrar.
 
-## Operación real
+## Operación y límites
 
-La política aún no se ha reemplazado en dev-test. La aplicación gratuita de nueve respuestas de la marca hermana quedó cerrada y la pareja Studio/Runner fijada en `c1989e79`. Estudio real A (cerveza, Brasil) recuperó por UI el archivo almacenado: 480 raíces sin procedencia pasaron a cero, con 349 incluidas y 131 excluidas originales, IDs y hashes intactos. Quedan 10 de 11 archivos y 113,048 de 113,338 filas recibidas. El último archivo de 290 filas no se envió: el selector IAB retorna éxito, pero el campo queda vacío; se confirmó también con copia privada de SHA idéntico. No hay import activo. El resumen Datos recibidos necesita refresco separado del historial, registrado como fricción. Ninguna ficha ni pertenencia se ejecuta para este estudio.
+La política aún no cambió en dev-test. Studio y Runner permanecen fijados en `c1989e79`. Estudio real A (cerveza, Brasil) recuperó por UI el archivo almacenado: 480 raíces sin procedencia → 0; 349 incluidas y 131 excluidas originales, IDs/hashes intactos. Hay 10/11 archivos y 113,048/113,338 filas recibidas; el último archivo de 290 no se envió porque el selector IAB deja vacío el campo, también con copia privada de SHA idéntico. No hay import activo. El resumen Datos recibidos requiere refresco separado del historial.
 
-Costo de proveedor de este corte: USD0; compra de créditos: USD0. No hubo despliegue ni cambio de ruta por defecto. Las etapas pagadas siguen detenidas hasta disponer de una lectura actual verificable del saldo de cada proveedor.
+Proyección offline parcial con el estimador puro H1: para un concepto por raíz, todos los pares positivos y una reparación, pertenencia del corte planeado USD436.57–749.99; corpus teórico completo USD4,005.72–6,881.49. Son escenarios, no cotización ni máximo; excluyen fichas y clustering. Estándar y fichas JEV carecen de estimador puro reusable para esta población sin MFP: extracción propuesta en seguimiento separado; no se inventó costo cero.
+
+Consumo de proveedores del corte: USD0; compra: USD0. No hubo inferencia, cambio de ruta por defecto ni activación de política. Cualquier pago espera saldo actual verificable.

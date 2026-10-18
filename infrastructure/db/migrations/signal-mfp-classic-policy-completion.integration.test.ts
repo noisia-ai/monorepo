@@ -175,6 +175,12 @@ test('explicit classic completion preserves a sibling policy and live actor auth
   assert.equal(next.actions.length,10);
   for(const action of original.actions)assert.deepEqual(next.actions.find((a:{action:string})=>a.action===action.action),action);
   assert.equal((await raw.query('SELECT count(*)::int n FROM signal_workspace_features WHERE workspace_id=$1',[f.second.workspace_id])).rows[0].n,0);
+  const newWork=(await raw.query<{work:number}>(`SELECT
+   (SELECT count(*) FROM signal_processing_admissions WHERE organization_id=$1)+
+   (SELECT count(*) FROM signal_labeling_runs r JOIN signal_workspaces w ON w.id=r.workspace_id WHERE w.organization_id=$1)+
+   (SELECT count(*) FROM signal_semantic_context_proposal_runs r JOIN signal_workspaces w ON w.id=r.workspace_id WHERE w.organization_id=$1)+
+   (SELECT count(*) FROM signal_workspace_embedding_runs r JOIN signal_workspaces w ON w.id=r.workspace_id WHERE w.organization_id=$1) work`,[f.first.organization_id])).rows[0]!;
+  assert.equal(Number(newWork.work),0,'completion creates no admission, run or paid work');
   assert.equal((await invoke(f.actors.internal)).status,'existing_policy');
   assert.deepEqual((await raw.query(snapshotSql,[f.first.organization_id])).rows[0],next);
   await raw.query('ROLLBACK');
