@@ -19,7 +19,7 @@ const requestSchema = z
     full_recalculation: z.boolean().optional(),
   })
   .strict();
-const replaySchema=z.object({action:z.literal("replay_stored"),run_id:z.string().uuid(),idempotency_key:z.string().regex(/^[A-Za-z0-9._:-]{8,200}$/u)}).strict();
+const replaySchema=z.object({action:z.literal("replay_stored"),run_id:z.string().uuid()}).strict();
 const confirmationSchema = z
   .object({
     confirm_run_id: z.string().uuid(),

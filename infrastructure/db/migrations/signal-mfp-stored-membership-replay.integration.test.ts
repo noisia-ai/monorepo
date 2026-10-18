@@ -22,18 +22,19 @@ test('stored membership replay recovers all three decisions atomically without n
   await c.query("INSERT INTO signal_workspace_labelers(workspace_id,kind,labeler_version_id) VALUES($1,'membership',$2)",[f.workspaceId,f.labelerId]);
   await c.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'concept_membership',$2)",[f.workspaceId,f.actorId]);
   const concepts=['one','two','three'].map(concept_key=>({concept_key,label:concept_key,scope:'all_conversations' as const,definition:'A documented experience',inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],definition_digest:ld}));
-  const input:MembershipInputV1={root_id:randomUUID(),input_digest:ld,root_fingerprint:ld,entity_context_digest:digest,effective_entities_digest:ld,text:'A real documented experience.',title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01',language:'en',entities:[],voice:'individual',act:'experience',evaluated_concepts:concepts};
+  const rootId=randomUUID(),fingerprint=(await c.query("SELECT signal_labeling_digest_v1(jsonb_build_object('root_id',$1::uuid,'input_digest',$2::text)) fingerprint",[rootId,ld])).rows[0].fingerprint;
+  const input:MembershipInputV1={root_id:rootId,input_digest:ld,root_fingerprint:fingerprint,entity_context_digest:digest,effective_entities_digest:ld,text:'A real documented experience.',title:null,platform:null,content_type:null,author:null,published_at:'2026-01-01',language:'en',entities:[],voice:'individual',act:'experience',evaluated_concepts:concepts};
   const schema=`membership_replay_${randomUUID().replaceAll('-','')}`;
   await c.query(`CREATE SCHEMA ${schema}; SET LOCAL search_path=${schema},public,extensions;
    CREATE TABLE signal_labeling_runs (LIKE public.signal_labeling_runs INCLUDING ALL);
    CREATE TABLE signal_labeling_calls (LIKE public.signal_labeling_calls INCLUDING ALL);
    CREATE TABLE signal_concept_memberships (LIKE public.signal_concept_memberships INCLUDING ALL);
-   CREATE TABLE signal_membership_concepts_v1(workspace_id uuid,concept_key text,topic jsonb);
+   CREATE TABLE signal_membership_concepts_v1(workspace_id uuid,concept_key text,topic jsonb,definition_digest text GENERATED ALWAYS AS(topic->>'definition_digest') STORED,scope text GENERATED ALWAYS AS(topic->>'scope') STORED);
    CREATE TABLE population(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text,labeler_digest text,verdict text,source text);
    CREATE FUNCTION signal_workspace_concept_memberships_read_v1(uuid) RETURNS SETOF population LANGUAGE sql AS 'SELECT * FROM population';`);
   await c.query('INSERT INTO signal_labeling_runs SELECT * FROM public.signal_labeling_runs WHERE id=$1',[f.runId]);
   await c.query("UPDATE signal_labeling_runs SET entity_context_digest=$1,status='completed',lease_until=NULL,membership_snapshot=$2",[digest,JSON.stringify({preview:false,concepts,sample_root_ids:null})]);
-  for(const concept of concepts){await c.query('INSERT INTO signal_membership_concepts_v1 VALUES($1,$2,$3)',[f.workspaceId,concept.concept_key,JSON.stringify(concept)]);await c.query("INSERT INTO population VALUES($1,$2,$3,$4,$5,$6,$7,'error','machine')",[input.root_id,ld,concept.concept_key,ld,digest,ld,ld]);}
+  for(const concept of concepts){await c.query('INSERT INTO signal_membership_concepts_v1(workspace_id,concept_key,topic) VALUES($1,$2,$3)',[f.workspaceId,concept.concept_key,JSON.stringify(concept)]);await c.query("INSERT INTO population VALUES($1,$2,$3,$4,$5,$6,$7,'error','machine')",[input.root_id,fingerprint,concept.concept_key,ld,digest,ld,ld]);}
   const text=JSON.stringify({contract_version:'concept-membership-judge-v1',roots:{r0:{root_ordinal:0,memberships:concepts.slice(0,2).map((concept,i)=>({concept_key:concept.concept_key,verdict:'belongs',span_ids:['r0c0s0'],rationale:Array(33-i).fill('word').join(' ')}))}}});
   const errors=parseMembershipGroupV1(text,[input]).results;assert.equal(errors.length,3);assert.ok(errors.every(r=>r.verdict==='error'));
   const callId=randomUUID(),custom=`stored-${callId}`,raw=JSON.stringify({custom_id:custom,result:{type:'succeeded',message:{stop_reason:'end_turn',content:[{type:'text',text}],usage:{input_tokens:100,output_tokens:50}}}});
@@ -55,15 +56,29 @@ test('stored membership replay recovers all three decisions atomically without n
 
   await c.query("UPDATE signal_labeling_runs SET status='running'");await assert.rejects(replayStoredMembershipResultsV1(args),/membership_replay_run_invalid/);await c.query("UPDATE signal_labeling_runs SET status='completed'");
   await c.query("UPDATE population SET source='human' WHERE concept_key='one'");await assert.rejects(replayStoredMembershipResultsV1(args),/membership_replay_source_changed/);await c.query("UPDATE population SET source='machine'");
-  await c.query("UPDATE population SET root_fingerprint='changed' WHERE concept_key='two'");await assert.rejects(replayStoredMembershipResultsV1(args),/membership_replay_source_changed/);await c.query('UPDATE population SET root_fingerprint=$1',[ld]);
+  await c.query("UPDATE population SET root_fingerprint='changed' WHERE concept_key='two'");await assert.rejects(replayStoredMembershipResultsV1(args),/membership_replay_source_changed/);await c.query('UPDATE population SET root_fingerprint=$1',[fingerprint]);
   await assert.rejects(replayStoredMembershipResultsV1({...args,loadRaw:async()=>raw+' '}),/membership_replay_receipt_invalid/);
   await c.query(`CREATE FUNCTION reject_repair() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic_write_failure'; END $$; CREATE TRIGGER reject_repair BEFORE UPDATE ON signal_labeling_calls FOR EACH ROW EXECUTE FUNCTION reject_repair()`);
   await assert.rejects(replayStoredMembershipResultsV1(args),/synthetic_write_failure/);assert.equal((await c.query('SELECT count(*)::int n FROM signal_concept_memberships')).rows[0].n,1);
   await c.query('DROP TRIGGER reject_repair ON signal_labeling_calls');
+  // Execute the shipped 0268 SELECT, not a hand-written approximation of its precedence.
+  // Only its source relation is redirected into this rollback-only schema.
+  const nativeBody=(await c.query("SELECT prosrc FROM pg_proc WHERE oid='public.signal_workspace_concept_memberships_read_v1(uuid)'::regprocedure")).rows[0].prosrc as string;
+  await c.query(`CREATE TABLE signal_mention_facets_current_v1 AS SELECT * FROM public.signal_mention_facets_current_v1 WITH NO DATA;
+   CREATE TABLE signal_hybrid_membership_routes (LIKE public.signal_hybrid_membership_routes INCLUDING ALL);
+   CREATE TABLE signal_hybrid_membership_decisions (LIKE public.signal_hybrid_membership_decisions INCLUDING ALL);
+   CREATE TABLE signal_concept_membership_overrides (LIKE public.signal_concept_membership_overrides INCLUDING ALL);`);
+  await c.query(`INSERT INTO signal_mention_facets_current_v1(workspace_id,root_id,input_digest,entity_context_digest,effective_entities_digest,relevance,requires_context_review,facets)
+   VALUES($1,$2,$3,$4,$3,'relevant',false,'{}')`,[f.workspaceId,input.root_id,ld,digest]);
+  await c.query('DROP FUNCTION signal_workspace_concept_memberships_read_v1(uuid)');
+  await c.query(`CREATE FUNCTION signal_workspace_concept_memberships_read_v1(uuid) RETURNS SETOF public.signal_concept_memberships_current_v1 LANGUAGE sql STABLE AS ${"'"+nativeBody.replaceAll('public.','').replace('signal_workspace_mention_facets_read_v1($1)','signal_mention_facets_current_v1').replaceAll("'","''")+"'"}`);
+  assert.deepEqual((await c.query('SELECT verdict FROM signal_workspace_concept_memberships_read_v1($1) ORDER BY concept_key',[f.workspaceId])).rows.map(r=>r.verdict),['error','error','error']);
   const result=await replayStoredMembershipResultsV1(args);assert.equal(result.replayed_pairs,3);assert.equal(result.provider_sends,0);assert.equal(result.additional_settlement_micro_usd,0);
   const rows=(await c.query('SELECT concept_key,verdict,citations,rationale FROM signal_concept_memberships WHERE root_id=$1 ORDER BY concept_key',[input.root_id])).rows;
   const expected=parseMembershipGroupV1(normalizeMembershipRationaleV2(text).text,[input]).results.map(({concept_key,verdict,citations,rationale})=>({concept_key,verdict,citations,rationale})).sort((a,b)=>a.concept_key.localeCompare(b.concept_key));assert.deepEqual(rows,expected);
   const recorded=(await c.query('SELECT results FROM signal_labeling_calls')).rows[0].results;assert.equal(recorded.filter((r:{normalizations?:unknown[]})=>r.normalizations?.length).length,2);
+  assert.deepEqual((await c.query('SELECT concept_key,verdict,error_code FROM signal_workspace_concept_memberships_read_v1($1) ORDER BY concept_key',[f.workspaceId])).rows,expected.map(({concept_key,verdict})=>({concept_key,verdict,error_code:null})));
+  assert.ok(recorded.every((r:{verdict:string;error_code?:string})=>r.verdict!=='error'&&!r.error_code));
   assert.equal((await replayStoredMembershipResultsV1(args)).replayed_pairs,0);assert.equal(await money(),before);assert.equal(await stable(),beforeStable);
  }finally{await c.query('ROLLBACK');c.release();await pool.end();if(previous===undefined)delete process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED;else process.env.NOISIA_CONCEPT_MEMBERSHIP_ENABLED=previous;}
 });

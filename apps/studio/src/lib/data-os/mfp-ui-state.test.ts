@@ -54,3 +54,7 @@ test("direct-root navigation clears corrections from another root or the first p
     assert.deepEqual(mfpSelectionTransition(state,initial).ids,[],"returning must not restore an obsolete selection");
   }
 });
+
+test('stored membership replay is identified by immutable run receipt, without an unused request key',()=>{
+  assert.deepEqual(mfpIntent({action:'replay_stored',run_id:'run'},'POST','unused').body,{action:'replay_stored',run_id:'run'});
+});
