@@ -1,9 +1,34 @@
 /** Deterministic parser failures are final; at most three governed attempts per unchanged pair and stage. */
+import {hybridCompatibleJevRunSqlV1,hybridJevPositiveSqlV1} from './signal-hybrid-semantic-cache-sql';
 export const hybridPairRetrySqlV1 = (stage:"jev"|"claude"|"citation") => `current.error_code IS DISTINCT FROM 'hybrid_attempts_exhausted'
- AND COALESCE(current.error_code,'') !~ '^(membership_|incomplete_single_root)'
+ ${stage==='citation'?`AND NOT EXISTS(SELECT 1 FROM signal_hybrid_membership_decisions terminal
+  WHERE terminal.workspace_id=current.workspace_id AND terminal.root_id=current.root_id
+   AND terminal.concept_key=current.concept_key AND terminal.route_digest=current.labeler_digest
+   AND terminal.root_fingerprint=current.root_fingerprint AND terminal.definition_digest=current.definition_digest
+   AND terminal.entity_context_digest=current.entity_context_digest AND terminal.effective_entities_digest=current.effective_entities_digest
+   AND terminal.verdict='error' AND (terminal.error_code='hybrid_attempts_exhausted'
+    OR COALESCE(terminal.error_code,'') ~ '^(membership_|incomplete_single_root)'))`
+ :"AND COALESCE(current.error_code,'') !~ '^(membership_|incomplete_single_root)'"}
  AND signal_hybrid_pair_attempts_v1(current.workspace_id,current.labeler_digest,'${stage}',
  current.root_id::text,current.root_fingerprint,current.concept_key,current.definition_digest,
  current.entity_context_digest,current.effective_entities_digest)<3`;
+/** A paid confirmation survives a technical verifier failure on the same provenance. */
+export const hybridUnconfirmedPairSqlV1 = `NOT EXISTS (
+ SELECT 1 FROM signal_labeling_calls confirmation
+ JOIN signal_labeling_runs source ON source.id=confirmation.run_id
+ CROSS JOIN LATERAL jsonb_array_elements(confirmation.results) result
+ WHERE confirmation.workspace_id=current.workspace_id AND source.membership_snapshot->>'route_digest'=current.labeler_digest
+ AND source.membership_snapshot->>'hybrid_stage'='claude' AND confirmation.status='settled' AND confirmation.results_applied
+ AND (NOT result ? 'citation_window' OR (SELECT count(DISTINCT item#>>'{citation_window,index}')
+  FROM signal_labeling_calls covered CROSS JOIN LATERAL jsonb_array_elements(covered.results) item
+  WHERE covered.run_id=confirmation.run_id AND covered.status='settled' AND covered.results_applied
+   AND item->>'root_id'=result->>'root_id' AND item->>'concept_key'=result->>'concept_key'
+   AND item#>>'{claude,verdict}' IN('belongs','not_belongs','insufficient','error','refused'))=(result#>>'{citation_window,count}')::int)
+ AND result#>>'{claude,verdict}'='belongs' AND result->>'root_id'=current.root_id::text
+ AND result->>'root_fingerprint'=current.root_fingerprint AND result->>'concept_key'=current.concept_key
+ AND result->>'definition_digest'=current.definition_digest AND result->>'entity_context_digest'=current.entity_context_digest
+ AND result->>'effective_entities_digest'=current.effective_entities_digest
+)`;
 /** Unattributed cost or submission uncertainty cannot authorize another send of the same pair. */
 export const hybridUncertainPairSqlV1 = `NOT EXISTS (
   SELECT 1 FROM signal_labeling_calls uncertain
@@ -28,14 +53,15 @@ export const hybridH1JevAdmissionPopulationSqlV1 = `WITH current_memberships AS 
     AND ${hybridPairRetrySqlV1("jev")}
 ), current_facets AS MATERIALIZED (
   SELECT root_id,full_text FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
-    AND status='labeled' AND relevance='relevant' AND NOT requires_context_review
+    AND status IN('labeled','abstained') AND relevance='relevant' AND NOT requires_context_review
     AND facets#>>'{spam_or_bot,value}'='false'
     AND jsonb_array_length(COALESCE(facets#>'{entities,value}','[]'::jsonb))>0
 ), authorized_roots AS MATERIALIZED (
   SELECT root_id FROM signal_membership_evidence_rights_v1
   WHERE workspace_id=$1 AND metrics AND evidence
 ), applied_results AS MATERIALIZED (
-  SELECT result->>'root_id' root_id,result->>'root_fingerprint' root_fingerprint,
+  SELECT DISTINCT ON(result->>'root_id',result->>'concept_key',result->>'definition_digest',result->>'root_fingerprint',result->>'entity_context_digest',result->>'effective_entities_digest')
+    result->>'root_id' root_id,result->>'root_fingerprint' root_fingerprint,
     result->>'concept_key' concept_key,result->>'definition_digest' definition_digest,
     result->>'entity_context_digest' entity_context_digest,
     result->>'effective_entities_digest' effective_entities_digest
@@ -83,13 +109,13 @@ export const hybridH1ClaudeAdmissionPopulationSqlV1 = `WITH jev_positive AS MATE
   CROSS JOIN LATERAL jsonb_array_elements(call.results) result
   WHERE run.workspace_id=$1 AND run.kind='membership' AND run.status IN('completed','failed')
     AND run.membership_snapshot->>'hybrid_stage'='jev'
-    AND run.membership_snapshot->>'route_digest'=$2
-    AND call.status='settled' AND call.results_applied AND result#>>'{jev,verdict}'='belongs'
+    AND (run.membership_snapshot->>'route_digest'=$2 OR ${hybridCompatibleJevRunSqlV1('run')})
+    AND call.status='settled' AND call.results_applied AND result#>>'{jev,verdict}' IN('belongs','not_belongs') AND ${hybridJevPositiveSqlV1}
 ), current_memberships AS MATERIALIZED (
   SELECT root_id,root_fingerprint,concept_key,definition_digest,entity_context_digest,
     effective_entities_digest FROM signal_concept_memberships_current_v1 current
   WHERE workspace_id=$1 AND labeler_digest=$2 AND verdict IN('pending','error')
-    AND ${hybridUncertainPairSqlV1} AND ${hybridPairRetrySqlV1("claude")}
+    AND ${hybridUncertainPairSqlV1} AND ${hybridPairRetrySqlV1("claude")} AND ${hybridUnconfirmedPairSqlV1}
 ), current_facets AS MATERIALIZED (
   SELECT root_id,full_text FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
 ), authorized_roots AS MATERIALIZED (

@@ -1,0 +1,3643 @@
+{
+  "contract": "mfp-h1-r10-final-evidence-v1",
+  "root_count": 1086,
+  "cost_concepts": 7,
+  "quality_concepts": 5,
+  "gold_concepts": 3,
+  "definitions": "confirmed_v3; reserve/delivery_v2; two_unrelated_preserved",
+  "corpus_sha256": "ac82942638720471851022f39e3733a1d647a434461903d1856b6335eba63f3a",
+  "concept_set_digest": "sha256:8cd9abb5e647d04f374ed2b3b85f7d2f5ef5094222a9dc9822de876a26d253b6",
+  "source_export_sha256": {
+    "standard": "ea31a54e63b821b7d8ccd847d46d2f104ed93c87360aac53b57bf964036e8321",
+    "h1": "3a3e518ae83a4ecdff1069c32ffef32e0eaaec9d20834d68075971ceddf59b1b"
+  },
+  "funding": {
+    "purchase_usd": 20,
+    "initial_available_balance_usd": 17.43,
+    "excluded_from_consumption": true
+  },
+  "ledger_pricing": "historical booked not rewritten; official Sonnet5.5 batch cache-hit5% input, revalue observed usage separately",
+  "comparison": {
+    "standard": {
+      "roots": 1086,
+      "gate_roots": 631,
+      "model_pairs": 2757,
+      "override_excluded": 0,
+      "states": {
+        "belongs": 305,
+        "not_belongs": 2369,
+        "insufficient": 58,
+        "review_required": 0,
+        "refused": 0,
+        "error": 25,
+        "pending": 0
+      },
+      "review_required_per_1000": 0,
+      "cost": {
+        "denominator_concepts": 7,
+        "marginal": {
+          "stages": {
+            "standard_membership": {
+              "calls": 158,
+              "settled_calls": 158,
+              "booked_micro_usd": 2296867,
+              "revalued_micro_usd": 2247372,
+              "input_tokens": 1526453,
+              "output_tokens": 43821,
+              "cache_read_input_tokens": 989160,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 226152,
+              "unreconciled_calls": 0
+            }
+          },
+          "booked_usd": 2.296867,
+          "revalued_usd": 2.247372,
+          "unreconciled_calls": 0
+        },
+        "cold_source_used": {
+          "stages": {
+            "facets": {
+              "calls": 1086,
+              "settled_calls": 1086,
+              "booked_micro_usd": 181641,
+              "revalued_micro_usd": 181641,
+              "input_tokens": 4311377,
+              "output_tokens": 371109,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            },
+            "standard_membership": {
+              "calls": 271,
+              "settled_calls": 271,
+              "booked_micro_usd": 3817329,
+              "revalued_micro_usd": 3741915,
+              "input_tokens": 2660932,
+              "output_tokens": 82543,
+              "cache_read_input_tokens": 1507688,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 296392,
+              "unreconciled_calls": 0
+            }
+          },
+          "booked_usd": 3.99897,
+          "revalued_usd": 3.923556,
+          "unreconciled_calls": 0
+        },
+        "booked_usd_per_1000": 3.6822928176795577,
+        "revalued_usd_per_1000": 3.612850828729282
+      },
+      "gold_dev": {
+        "tp": 27,
+        "fp": 2,
+        "fn": 6,
+        "precision": 0.9310344827586207,
+        "recall": 0.8181818181818182,
+        "f1": 0.8709677419354839,
+        "precision_wilson": {
+          "low": 0.7803541984972431,
+          "high": 0.9808787338305667,
+          "confidence": 0.95
+        },
+        "recall_wilson": {
+          "low": 0.6561176836533009,
+          "high": 0.9138923179105933,
+          "confidence": 0.95
+        },
+        "scoring_denominator": 262,
+        "review_required": 0,
+        "operational_gold_positive": 33,
+        "operational_published_positive": 27
+      },
+      "gold_test": {
+        "tp": 28,
+        "fp": 4,
+        "fn": 3,
+        "precision": 0.875,
+        "recall": 0.9032258064516129,
+        "f1": 0.8888888888888888,
+        "precision_wilson": {
+          "low": 0.7193169451834978,
+          "high": 0.9502986561251991,
+          "confidence": 0.95
+        },
+        "recall_wilson": {
+          "low": 0.7510006155660716,
+          "high": 0.9665353558368026,
+          "confidence": 0.95
+        },
+        "scoring_denominator": 175,
+        "review_required": 0,
+        "operational_gold_positive": 31,
+        "operational_published_positive": 28
+      }
+    },
+    "h1": {
+      "roots": 1086,
+      "gate_roots": 631,
+      "model_pairs": 2757,
+      "override_excluded": 0,
+      "states": {
+        "belongs": 181,
+        "not_belongs": 2427,
+        "insufficient": 0,
+        "review_required": 137,
+        "refused": 0,
+        "error": 12,
+        "pending": 0
+      },
+      "review_required_per_1000": 126.15101289134438,
+      "cost": {
+        "denominator_concepts": 7,
+        "marginal": {
+          "stages": {
+            "JEV": {
+              "calls": 12,
+              "settled_calls": 12,
+              "booked_micro_usd": 632,
+              "revalued_micro_usd": 632,
+              "input_tokens": 14963,
+              "output_tokens": 240,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            },
+            "C": {
+              "calls": 78,
+              "settled_calls": 78,
+              "booked_micro_usd": 398466,
+              "revalued_micro_usd": 398466,
+              "input_tokens": 243662,
+              "output_tokens": 22306,
+              "cache_read_input_tokens": 569184,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 7392,
+              "unreconciled_calls": 0
+            },
+            "V": {
+              "calls": 30,
+              "settled_calls": 30,
+              "booked_micro_usd": 1540,
+              "revalued_micro_usd": 1540,
+              "input_tokens": 36344,
+              "output_tokens": 600,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            },
+            "C_repair": {
+              "calls": 20,
+              "settled_calls": 20,
+              "booked_micro_usd": 114038,
+              "revalued_micro_usd": 114038,
+              "input_tokens": 69574,
+              "output_tokens": 4530,
+              "cache_read_input_tokens": 140448,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 7392,
+              "unreconciled_calls": 0
+            },
+            "V_final": {
+              "calls": 6,
+              "settled_calls": 6,
+              "booked_micro_usd": 374,
+              "revalued_micro_usd": 374,
+              "input_tokens": 8850,
+              "output_tokens": 120,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            }
+          },
+          "booked_usd": 0.51505,
+          "revalued_usd": 0.51505,
+          "unreconciled_calls": 0
+        },
+        "cold_source_used": {
+          "stages": {
+            "facets": {
+              "calls": 1086,
+              "settled_calls": 1086,
+              "booked_micro_usd": 181641,
+              "revalued_micro_usd": 181641,
+              "input_tokens": 4311377,
+              "output_tokens": 371109,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            },
+            "JEV": {
+              "calls": 2757,
+              "settled_calls": 2757,
+              "booked_micro_usd": 258745,
+              "revalued_micro_usd": 258745,
+              "input_tokens": 6128205,
+              "output_tokens": 55140,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            },
+            "C": {
+              "calls": 117,
+              "settled_calls": 117,
+              "booked_micro_usd": 1009316,
+              "revalued_micro_usd": 995256,
+              "input_tokens": 635038,
+              "output_tokens": 57620,
+              "cache_read_input_tokens": 850080,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 14784,
+              "unreconciled_calls": 0
+            },
+            "V": {
+              "calls": 255,
+              "settled_calls": 255,
+              "booked_micro_usd": 13696,
+              "revalued_micro_usd": 13696,
+              "input_tokens": 323136,
+              "output_tokens": 5100,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            },
+            "C_repair": {
+              "calls": 23,
+              "settled_calls": 23,
+              "booked_micro_usd": 188794,
+              "revalued_micro_usd": 187684,
+              "input_tokens": 112750,
+              "output_tokens": 10402,
+              "cache_read_input_tokens": 162624,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 7392,
+              "unreconciled_calls": 0
+            },
+            "V_final": {
+              "calls": 50,
+              "settled_calls": 50,
+              "booked_micro_usd": 2776,
+              "revalued_micro_usd": 2776,
+              "input_tokens": 65479,
+              "output_tokens": 1000,
+              "cache_read_input_tokens": 0,
+              "cache_write_5m_input_tokens": 0,
+              "cache_write_1h_input_tokens": 0,
+              "unreconciled_calls": 0
+            }
+          },
+          "booked_usd": 1.654968,
+          "revalued_usd": 1.639798,
+          "unreconciled_calls": 0
+        },
+        "booked_usd_per_1000": 1.5239116022099448,
+        "revalued_usd_per_1000": 1.5099429097605894
+      },
+      "gold_three_views": {
+        "contract_version": "mfp-hybrid-h1-measure-v1",
+        "status": "experimental_not_approved",
+        "full_corpus": {
+          "roots": 1086,
+          "gate_passed": 631,
+          "pairs": 1893,
+          "unresolved_pairs": 0,
+          "override_excluded_pairs": 0,
+          "pair_coverage": 1,
+          "jev_positive": 278,
+          "review_required": 118,
+          "review_rate_of_jev_positive": 0.4244604316546763,
+          "claude_attempted": 278,
+          "claude_citations": 270,
+          "claude_citations_valid": 270,
+          "claude_citation_valid_rate": 0.9712230215827338,
+          "quoted_span_integrity": 1,
+          "states": {
+            "belongs": 152,
+            "not_belongs": 1615,
+            "review_required": 118,
+            "refused": 0,
+            "error": 8,
+            "pending": 0
+          }
+        },
+        "gold": [
+          {
+            "concept": "concept_1",
+            "partition": "dev",
+            "gold_roots_before_exclusion": 90,
+            "override_excluded": 0,
+            "views": {
+              "claude_evaluated_same_roots": {
+                "roots": 15,
+                "hybrid": {
+                  "roots": 15,
+                  "binary_evaluated": 11,
+                  "scoring_denominator": 11,
+                  "review_required_gold_positive": 3,
+                  "review_required": 4,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 0,
+                    "review_required": 4,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "jev": {
+                  "roots": 15,
+                  "binary_evaluated": 14,
+                  "scoring_denominator": 14,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 15,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 14,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7846891972623643,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7846891972623643,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 15,
+                  "binary_evaluated": 13,
+                  "scoring_denominator": 14,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 13,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 2,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 13,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.9285714285714286,
+                  "f1": 0.9629629629629629,
+                  "precision_wilson": {
+                    "low": 0.7719046276458016,
+                    "high": 0.9999999999999999,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6853129557584889,
+                    "high": 0.9872777847521093,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "review_required": 4
+              },
+              "full_pipeline": {
+                "roots": 90,
+                "hybrid": {
+                  "roots": 90,
+                  "binary_evaluated": 52,
+                  "scoring_denominator": 85,
+                  "review_required_gold_positive": 3,
+                  "review_required": 4,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 41,
+                    "review_required": 4,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 34
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 3,
+                  "precision": 1,
+                  "recall": 0.7857142857142857,
+                  "f1": 0.88,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.524107694133997,
+                    "high": 0.9242861328730683,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 6
+                },
+                "jev": {
+                  "roots": 90,
+                  "binary_evaluated": 55,
+                  "scoring_denominator": 88,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 15,
+                    "not_belongs": 41,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 34
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 14,
+                  "fp": 0,
+                  "fn": 3,
+                  "precision": 1,
+                  "recall": 0.8235294117647058,
+                  "f1": 0.9032258064516129,
+                  "precision_wilson": {
+                    "low": 0.7846891972623643,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5897054143116588,
+                    "high": 0.9380887336237901,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "claude": {
+                  "roots": 90,
+                  "binary_evaluated": 13,
+                  "scoring_denominator": 88,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 13,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 2,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 75
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 13,
+                  "fp": 0,
+                  "fn": 4,
+                  "precision": 1,
+                  "recall": 0.7647058823529411,
+                  "f1": 0.8666666666666667,
+                  "precision_wilson": {
+                    "low": 0.7719046276458016,
+                    "high": 0.9999999999999999,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5273820188043501,
+                    "high": 0.9044495567791988,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 4
+                },
+                "review_required": 4
+              },
+              "common_binary": {
+                "roots": 13,
+                "hybrid": {
+                  "roots": 13,
+                  "binary_evaluated": 11,
+                  "scoring_denominator": 11,
+                  "review_required_gold_positive": 2,
+                  "review_required": 2,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 0,
+                    "review_required": 2,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "jev": {
+                  "roots": 13,
+                  "binary_evaluated": 13,
+                  "scoring_denominator": 13,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 13,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 13,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7719046276458016,
+                    "high": 0.9999999999999999,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7719046276458016,
+                    "high": 0.9999999999999999,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 13,
+                  "binary_evaluated": 13,
+                  "scoring_denominator": 13,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 13,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 13,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7719046276458016,
+                    "high": 0.9999999999999999,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7719046276458016,
+                    "high": 0.9999999999999999,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "review_required": 2
+              }
+            }
+          },
+          {
+            "concept": "concept_1",
+            "partition": "test",
+            "gold_roots_before_exclusion": 60,
+            "override_excluded": 0,
+            "views": {
+              "claude_evaluated_same_roots": {
+                "roots": 11,
+                "hybrid": {
+                  "roots": 11,
+                  "binary_evaluated": 8,
+                  "scoring_denominator": 8,
+                  "review_required_gold_positive": 3,
+                  "review_required": 3,
+                  "states": {
+                    "belongs": 8,
+                    "not_belongs": 0,
+                    "review_required": 3,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 8,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6755924351161198,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6755924351161198,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "jev": {
+                  "roots": 11,
+                  "binary_evaluated": 11,
+                  "scoring_denominator": 11,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 11,
+                  "binary_evaluated": 11,
+                  "scoring_denominator": 11,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "review_required": 3
+              },
+              "full_pipeline": {
+                "roots": 60,
+                "hybrid": {
+                  "roots": 60,
+                  "binary_evaluated": 33,
+                  "scoring_denominator": 55,
+                  "review_required_gold_positive": 3,
+                  "review_required": 3,
+                  "states": {
+                    "belongs": 8,
+                    "not_belongs": 27,
+                    "review_required": 3,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 3,
+                    "pending": 19
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 8,
+                  "fp": 0,
+                  "fn": 3,
+                  "precision": 1,
+                  "recall": 0.7272727272727273,
+                  "f1": 0.8421052631578947,
+                  "precision_wilson": {
+                    "low": 0.6755924351161198,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.43435469882387084,
+                    "high": 0.902539407099751,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 6
+                },
+                "jev": {
+                  "roots": 60,
+                  "binary_evaluated": 39,
+                  "scoring_denominator": 58,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 14,
+                    "not_belongs": 27,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 19
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 14,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7846891972623643,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7846891972623643,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 60,
+                  "binary_evaluated": 11,
+                  "scoring_denominator": 58,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 3,
+                    "pending": 46
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 3,
+                  "precision": 1,
+                  "recall": 0.7857142857142857,
+                  "f1": 0.88,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.524107694133997,
+                    "high": 0.9242861328730683,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "review_required": 3
+              },
+              "common_binary": {
+                "roots": 11,
+                "hybrid": {
+                  "roots": 11,
+                  "binary_evaluated": 8,
+                  "scoring_denominator": 8,
+                  "review_required_gold_positive": 3,
+                  "review_required": 3,
+                  "states": {
+                    "belongs": 8,
+                    "not_belongs": 0,
+                    "review_required": 3,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 8,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6755924351161198,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6755924351161198,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "jev": {
+                  "roots": 11,
+                  "binary_evaluated": 11,
+                  "scoring_denominator": 11,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 11,
+                  "binary_evaluated": 11,
+                  "scoring_denominator": 11,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 11,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 11,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7411670330319684,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "review_required": 3
+              }
+            }
+          },
+          {
+            "concept": "concept_2",
+            "partition": "dev",
+            "gold_roots_before_exclusion": 90,
+            "override_excluded": 0,
+            "views": {
+              "claude_evaluated_same_roots": {
+                "roots": 9,
+                "hybrid": {
+                  "roots": 9,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 2,
+                  "review_required": 2,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 0,
+                    "review_required": 2,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "jev": {
+                  "roots": 9,
+                  "binary_evaluated": 9,
+                  "scoring_denominator": 9,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 9,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 9,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7008549515804559,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7008549515804559,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 9,
+                  "binary_evaluated": 9,
+                  "scoring_denominator": 9,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 2,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 2,
+                  "precision": 1,
+                  "recall": 0.7777777777777778,
+                  "f1": 0.875,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.45258896910698887,
+                    "high": 0.9367748928821533,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "review_required": 2
+              },
+              "full_pipeline": {
+                "roots": 90,
+                "hybrid": {
+                  "roots": 90,
+                  "binary_evaluated": 53,
+                  "scoring_denominator": 85,
+                  "review_required_gold_positive": 2,
+                  "review_required": 2,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 47,
+                    "review_required": 2,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 34
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.875,
+                  "f1": 0.9333333333333333,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5291118177871464,
+                    "high": 0.9775825085499433,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "jev": {
+                  "roots": 90,
+                  "binary_evaluated": 55,
+                  "scoring_denominator": 87,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 9,
+                    "not_belongs": 47,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 34
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 9,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.9,
+                  "f1": 0.9473684210526315,
+                  "precision_wilson": {
+                    "low": 0.7008549515804559,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5958499732047615,
+                    "high": 0.9821237869049271,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "claude": {
+                  "roots": 90,
+                  "binary_evaluated": 9,
+                  "scoring_denominator": 87,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 2,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 81
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 3,
+                  "precision": 1,
+                  "recall": 0.7,
+                  "f1": 0.8235294117647058,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.39677814746114537,
+                    "high": 0.8922087325936989,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "review_required": 2
+              },
+              "common_binary": {
+                "roots": 9,
+                "hybrid": {
+                  "roots": 9,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 2,
+                  "review_required": 2,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 0,
+                    "review_required": 2,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "jev": {
+                  "roots": 9,
+                  "binary_evaluated": 9,
+                  "scoring_denominator": 9,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 9,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 9,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.7008549515804559,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.7008549515804559,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 9,
+                  "binary_evaluated": 9,
+                  "scoring_denominator": 9,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 2,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 2,
+                  "precision": 1,
+                  "recall": 0.7777777777777778,
+                  "f1": 0.875,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.45258896910698887,
+                    "high": 0.9367748928821533,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "review_required": 2
+              }
+            }
+          },
+          {
+            "concept": "concept_2",
+            "partition": "test",
+            "gold_roots_before_exclusion": 60,
+            "override_excluded": 0,
+            "views": {
+              "claude_evaluated_same_roots": {
+                "roots": 7,
+                "hybrid": {
+                  "roots": 7,
+                  "binary_evaluated": 6,
+                  "scoring_denominator": 6,
+                  "review_required_gold_positive": 1,
+                  "review_required": 1,
+                  "states": {
+                    "belongs": 6,
+                    "not_belongs": 0,
+                    "review_required": 1,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "jev": {
+                  "roots": 7,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 7,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 6,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.8571428571428571,
+                  "f1": 0.9230769230769231,
+                  "precision_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.4868721707256811,
+                    "high": 0.9743203756552565,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "review_required": 1
+              },
+              "full_pipeline": {
+                "roots": 60,
+                "hybrid": {
+                  "roots": 60,
+                  "binary_evaluated": 37,
+                  "scoring_denominator": 57,
+                  "review_required_gold_positive": 1,
+                  "review_required": 1,
+                  "states": {
+                    "belongs": 6,
+                    "not_belongs": 33,
+                    "review_required": 1,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 1,
+                    "pending": 19
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 0,
+                  "fn": 2,
+                  "precision": 1,
+                  "recall": 0.75,
+                  "f1": 0.8571428571428571,
+                  "precision_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.40927543031016883,
+                    "high": 0.9285207872478909,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "jev": {
+                  "roots": 60,
+                  "binary_evaluated": 39,
+                  "scoring_denominator": 58,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 8,
+                    "not_belongs": 33,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 19
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 8,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.8888888888888888,
+                  "f1": 0.9411764705882353,
+                  "precision_wilson": {
+                    "low": 0.6755924351161198,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5650002944233439,
+                    "high": 0.9801091123614551,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "claude": {
+                  "roots": 60,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 58,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 6,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 1,
+                    "pending": 52
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 0,
+                  "fn": 3,
+                  "precision": 1,
+                  "recall": 0.6666666666666666,
+                  "f1": 0.8,
+                  "precision_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.3542021355803963,
+                    "high": 0.879416181613089,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 3
+                },
+                "review_required": 1
+              },
+              "common_binary": {
+                "roots": 7,
+                "hybrid": {
+                  "roots": 7,
+                  "binary_evaluated": 6,
+                  "scoring_denominator": 6,
+                  "review_required_gold_positive": 1,
+                  "review_required": 1,
+                  "states": {
+                    "belongs": 6,
+                    "not_belongs": 0,
+                    "review_required": 1,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "jev": {
+                  "roots": 7,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 7,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 6,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.8571428571428571,
+                  "f1": 0.9230769230769231,
+                  "precision_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.4868721707256811,
+                    "high": 0.9743203756552565,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "review_required": 1
+              }
+            }
+          },
+          {
+            "concept": "concept_3",
+            "partition": "dev",
+            "gold_roots_before_exclusion": 90,
+            "override_excluded": 0,
+            "views": {
+              "claude_evaluated_same_roots": {
+                "roots": 7,
+                "hybrid": {
+                  "roots": 7,
+                  "binary_evaluated": 4,
+                  "scoring_denominator": 4,
+                  "review_required_gold_positive": 2,
+                  "review_required": 3,
+                  "states": {
+                    "belongs": 4,
+                    "not_belongs": 0,
+                    "review_required": 3,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 4,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "jev": {
+                  "roots": 7,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 1,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 1,
+                  "fn": 0,
+                  "precision": 0.8571428571428571,
+                  "recall": 1,
+                  "f1": 0.9230769230769231,
+                  "precision_wilson": {
+                    "low": 0.4868721707256811,
+                    "high": 0.9743203756552565,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 7,
+                  "binary_evaluated": 5,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 4,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 2,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 4,
+                  "fp": 0,
+                  "fn": 2,
+                  "precision": 1,
+                  "recall": 0.6666666666666666,
+                  "f1": 0.8,
+                  "precision_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.299993315138392,
+                    "high": 0.9032285888942195,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "review_required": 3
+              },
+              "full_pipeline": {
+                "roots": 90,
+                "hybrid": {
+                  "roots": 90,
+                  "binary_evaluated": 52,
+                  "scoring_denominator": 84,
+                  "review_required_gold_positive": 2,
+                  "review_required": 3,
+                  "states": {
+                    "belongs": 4,
+                    "not_belongs": 49,
+                    "review_required": 3,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 34
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 4,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "jev": {
+                  "roots": 90,
+                  "binary_evaluated": 55,
+                  "scoring_denominator": 87,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 49,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 34
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 1,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 6,
+                  "fp": 1,
+                  "fn": 0,
+                  "precision": 0.8571428571428571,
+                  "recall": 1,
+                  "f1": 0.9230769230769231,
+                  "precision_wilson": {
+                    "low": 0.4868721707256811,
+                    "high": 0.9743203756552565,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6096657120978346,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 90,
+                  "binary_evaluated": 5,
+                  "scoring_denominator": 87,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 4,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 2,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 83
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 4,
+                  "fp": 0,
+                  "fn": 2,
+                  "precision": 1,
+                  "recall": 0.6666666666666666,
+                  "f1": 0.8,
+                  "precision_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.299993315138392,
+                    "high": 0.9032285888942195,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 2
+                },
+                "review_required": 3
+              },
+              "common_binary": {
+                "roots": 5,
+                "hybrid": {
+                  "roots": 5,
+                  "binary_evaluated": 4,
+                  "scoring_denominator": 4,
+                  "review_required_gold_positive": 1,
+                  "review_required": 1,
+                  "states": {
+                    "belongs": 4,
+                    "not_belongs": 0,
+                    "review_required": 1,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 4,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "jev": {
+                  "roots": 5,
+                  "binary_evaluated": 5,
+                  "scoring_denominator": 5,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 5,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 5,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.5655175352168251,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5655175352168251,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 5,
+                  "binary_evaluated": 5,
+                  "scoring_denominator": 5,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 4,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 4,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.8,
+                  "f1": 0.8888888888888888,
+                  "precision_wilson": {
+                    "low": 0.5101091635454027,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.37553462976252533,
+                    "high": 0.9637758913675698,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "review_required": 1
+              }
+            }
+          },
+          {
+            "concept": "concept_3",
+            "partition": "test",
+            "gold_roots_before_exclusion": 60,
+            "override_excluded": 0,
+            "views": {
+              "claude_evaluated_same_roots": {
+                "roots": 8,
+                "hybrid": {
+                  "roots": 8,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 1,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 0,
+                    "review_required": 1,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "jev": {
+                  "roots": 8,
+                  "binary_evaluated": 8,
+                  "scoring_denominator": 8,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 8,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 1,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 1,
+                  "fn": 0,
+                  "precision": 0.875,
+                  "recall": 1,
+                  "f1": 0.9333333333333333,
+                  "precision_wilson": {
+                    "low": 0.5291118177871464,
+                    "high": 0.9775825085499433,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 8,
+                  "binary_evaluated": 8,
+                  "scoring_denominator": 8,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "review_required": 1
+              },
+              "full_pipeline": {
+                "roots": 60,
+                "hybrid": {
+                  "roots": 60,
+                  "binary_evaluated": 38,
+                  "scoring_denominator": 58,
+                  "review_required_gold_positive": 0,
+                  "review_required": 1,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 32,
+                    "review_required": 1,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 1,
+                    "pending": 19
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.875,
+                  "f1": 0.9333333333333333,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5291118177871464,
+                    "high": 0.9775825085499433,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "jev": {
+                  "roots": 60,
+                  "binary_evaluated": 40,
+                  "scoring_denominator": 59,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 9,
+                    "not_belongs": 32,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 19
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 1,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 8,
+                  "fp": 1,
+                  "fn": 0,
+                  "precision": 0.8888888888888888,
+                  "recall": 1,
+                  "f1": 0.9411764705882353,
+                  "precision_wilson": {
+                    "low": 0.5650002944233439,
+                    "high": 0.9801091123614551,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6755924351161198,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 60,
+                  "binary_evaluated": 8,
+                  "scoring_denominator": 59,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 1,
+                    "pending": 51
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 1,
+                  "precision": 1,
+                  "recall": 0.875,
+                  "f1": 0.9333333333333333,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.5291118177871464,
+                    "high": 0.9775825085499433,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 1
+                },
+                "review_required": 1
+              },
+              "common_binary": {
+                "roots": 8,
+                "hybrid": {
+                  "roots": 8,
+                  "binary_evaluated": 7,
+                  "scoring_denominator": 7,
+                  "review_required_gold_positive": 0,
+                  "review_required": 1,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 0,
+                    "review_required": 1,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "jev": {
+                  "roots": 8,
+                  "binary_evaluated": 8,
+                  "scoring_denominator": 8,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 8,
+                    "not_belongs": 0,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 1,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 1,
+                  "fn": 0,
+                  "precision": 0.875,
+                  "recall": 1,
+                  "f1": 0.9333333333333333,
+                  "precision_wilson": {
+                    "low": 0.5291118177871464,
+                    "high": 0.9775825085499433,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "claude": {
+                  "roots": 8,
+                  "binary_evaluated": 8,
+                  "scoring_denominator": 8,
+                  "review_required_gold_positive": 0,
+                  "review_required": 0,
+                  "states": {
+                    "belongs": 7,
+                    "not_belongs": 1,
+                    "review_required": 0,
+                    "insufficient": 0,
+                    "refused": 0,
+                    "error": 0,
+                    "pending": 0
+                  },
+                  "false_positives_by_gold_entity_mix": {
+                    "primary_and_competitor": 0,
+                    "primary_present": 0,
+                    "competitor_without_primary": 0,
+                    "category_without_brand": 0,
+                    "no_gold_entity": 0
+                  },
+                  "tp": 7,
+                  "fp": 0,
+                  "fn": 0,
+                  "precision": 1,
+                  "recall": 1,
+                  "f1": 1,
+                  "precision_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "recall_wilson": {
+                    "low": 0.6456695649333126,
+                    "high": 1,
+                    "confidence": 0.95
+                  },
+                  "operational_unpublished_gold_positive": 0
+                },
+                "review_required": 1
+              }
+            }
+          }
+        ],
+        "cost": {
+          "new_membership_settled_usd": 0.5150499999999999,
+          "new_membership_usd_per_1000": 0.47426335174953943,
+          "reused_facets_settled_usd": 0,
+          "observed_settled_usd": 0.5150499999999999,
+          "observed_usd_per_1000": 0.47426335174953943,
+          "settled_usd_per_1000": 0.47426335174953943,
+          "possible_usd_per_1000_range": null,
+          "unknown_calls": 0,
+          "components": {
+            "facets_settled_usd": 0,
+            "jev_settled_usd": 0.000632,
+            "claude_settled_usd": 0.512504,
+            "citation_settled_usd": 0.001914,
+            "unknown_calls": 0
+          }
+        },
+        "note": "JEV membership noul refers to the complete root. Claude selects up to three literal fragments; a separate JEV noul verifies their support. The ledger includes verification and the single authorized repair. Current overrides are excluded per concept from model quality denominators; they never become model hits."
+      },
+      "gold_dev": {
+        "tp": 22,
+        "fp": 0,
+        "fn": 4,
+        "precision": 1,
+        "recall": 0.8461538461538461,
+        "f1": 0.9166666666666666,
+        "precision_wilson": {
+          "low": 0.8513451253913791,
+          "high": 1,
+          "confidence": 0.95
+        },
+        "recall_wilson": {
+          "low": 0.6646880067178652,
+          "high": 0.9384996627642165,
+          "confidence": 0.95
+        },
+        "scoring_denominator": 254,
+        "review_required": 8,
+        "operational_gold_positive": 33,
+        "operational_published_positive": 22
+      },
+      "gold_test": {
+        "tp": 21,
+        "fp": 0,
+        "fn": 6,
+        "precision": 1,
+        "recall": 0.7777777777777778,
+        "f1": 0.875,
+        "precision_wilson": {
+          "low": 0.8453609810751531,
+          "high": 1,
+          "confidence": 0.95
+        },
+        "recall_wilson": {
+          "low": 0.5924307113336742,
+          "high": 0.8939276054763996,
+          "confidence": 0.95
+        },
+        "scoring_denominator": 170,
+        "review_required": 5,
+        "operational_gold_positive": 31,
+        "operational_published_positive": 21
+      }
+    }
+  },
+  "blind_review": {
+    "packet_sha256": "5679b6e30ac8c645e83fe811416405d5eb40e20774bed8427d8ab97b1d0e0faf",
+    "review_sha256": "9c728806cab4ac33d5ab96d8af214e97407edc6df44d43190226dcaa3df03ba1",
+    "reports": {
+      "standard": {
+        "gold_three": {
+          "n": 50,
+          "membership": {
+            "belongs": 36,
+            "insufficient": 4,
+            "not_belongs": 10
+          },
+          "correct_over_all": 0.72,
+          "correct_wilson": {
+            "low": 0.5833487630404344,
+            "high": 0.8252582933408878,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "correct_among_decisive": 0.782608695652174,
+          "citation_support": {
+            "supported": 36,
+            "insufficient": 4,
+            "unsupported": 10
+          },
+          "supported_over_all": 0.72,
+          "supported_wilson": {
+            "low": 0.5833487630404344,
+            "high": 0.8252582933408878,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "joint_correct_supported": 36,
+          "joint_over_all": 0.72,
+          "ambiguity": 4,
+          "weighted_membership": {
+            "estimate": 0.7184029738377564,
+            "percentile_95": [
+              0.598437794089968,
+              0.8374505928853755
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 72,
+              "cobros_depositos_devoluciones": 62,
+              "reserva_entrega": 119
+            }
+          },
+          "weighted_citation": {
+            "estimate": 0.7184029738377564,
+            "percentile_95": [
+              0.5978025597590815,
+              0.8368153585544891
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 72,
+              "cobros_depositos_devoluciones": 62,
+              "reserva_entrega": 119
+            }
+          }
+        },
+        "discovery_two": {
+          "n": 10,
+          "membership": {
+            "belongs": 7,
+            "not_belongs": 3
+          },
+          "correct_over_all": 0.7,
+          "correct_wilson": {
+            "low": 0.39677814746114537,
+            "high": 0.8922087325936989,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "correct_among_decisive": 0.7,
+          "citation_support": {
+            "unsupported": 4,
+            "supported": 6
+          },
+          "supported_over_all": 0.6,
+          "supported_wilson": {
+            "low": 0.31267376973365824,
+            "high": 0.8318196702937638,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "joint_correct_supported": 6,
+          "joint_over_all": 0.6,
+          "ambiguity": 0,
+          "weighted_membership": {
+            "estimate": 0.703125,
+            "percentile_95": [
+              0.40625,
+              1.0
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 27,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 21
+            }
+          },
+          "weighted_citation": {
+            "estimate": 0.609375,
+            "percentile_95": [
+              0.3125,
+              0.90625
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 27,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 21
+            }
+          }
+        },
+        "all_five": {
+          "n": 60,
+          "membership": {
+            "belongs": 43,
+            "insufficient": 4,
+            "not_belongs": 13
+          },
+          "correct_over_all": 0.7166666666666667,
+          "correct_wilson": {
+            "low": 0.5923271483560882,
+            "high": 0.8149317157156729,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "correct_among_decisive": 0.7678571428571429,
+          "citation_support": {
+            "supported": 42,
+            "insufficient": 4,
+            "unsupported": 14
+          },
+          "supported_over_all": 0.7,
+          "supported_wilson": {
+            "low": 0.5749129205308552,
+            "high": 0.8010183386123089,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "joint_correct_supported": 42,
+          "joint_over_all": 0.7,
+          "ambiguity": 4,
+          "weighted_membership": {
+            "estimate": 0.7159666192058218,
+            "percentile_95": [
+              0.6026736275905711,
+              0.8168604651162791
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 72,
+              "cobros_depositos_devoluciones": 62,
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 27,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 21,
+              "reserva_entrega": 119
+            }
+          },
+          "weighted_citation": {
+            "estimate": 0.7010164530928651,
+            "percentile_95": [
+              0.5869126720455624,
+              0.8026815377313716
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 72,
+              "cobros_depositos_devoluciones": 62,
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 27,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 21,
+              "reserva_entrega": 119
+            }
+          }
+        },
+        "per_concept": {
+          "atencion_reclamaciones": {
+            "n": 14,
+            "membership": {
+              "belongs": 12,
+              "insufficient": 2
+            },
+            "correct_over_all": 0.8571428571428571,
+            "correct_wilson": {
+              "low": 0.6005862050302965,
+              "high": 0.9599060787285351,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 1.0,
+            "citation_support": {
+              "supported": 12,
+              "insufficient": 2
+            },
+            "supported_over_all": 0.8571428571428571,
+            "supported_wilson": {
+              "low": 0.6005862050302965,
+              "high": 0.9599060787285351,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 12,
+            "joint_over_all": 0.8571428571428571,
+            "ambiguity": 2
+          },
+          "cobros_depositos_devoluciones": {
+            "n": 12,
+            "membership": {
+              "not_belongs": 7,
+              "belongs": 5
+            },
+            "correct_over_all": 0.4166666666666667,
+            "correct_wilson": {
+              "low": 0.19326031365875665,
+              "high": 0.6804886874504503,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 0.4166666666666667,
+            "citation_support": {
+              "unsupported": 7,
+              "supported": 5
+            },
+            "supported_over_all": 0.4166666666666667,
+            "supported_wilson": {
+              "low": 0.19326031365875665,
+              "high": 0.6804886874504503,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 5,
+            "joint_over_all": 0.4166666666666667,
+            "ambiguity": 0
+          },
+          "integracion_de_renta_de_autos_en_plataformas_de_viaje": {
+            "n": 6,
+            "membership": {
+              "belongs": 4,
+              "not_belongs": 2
+            },
+            "correct_over_all": 0.6666666666666666,
+            "correct_wilson": {
+              "low": 0.299993315138392,
+              "high": 0.9032285888942195,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 0.6666666666666666,
+            "citation_support": {
+              "unsupported": 3,
+              "supported": 3
+            },
+            "supported_over_all": 0.5,
+            "supported_wilson": {
+              "low": 0.1876163064826506,
+              "high": 0.8123836935173494,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 3,
+            "joint_over_all": 0.5,
+            "ambiguity": 0
+          },
+          "programa_emerald_aisle_y_beneficios_de_estatus_elite": {
+            "n": 4,
+            "membership": {
+              "belongs": 3,
+              "not_belongs": 1
+            },
+            "correct_over_all": 0.75,
+            "correct_wilson": {
+              "low": 0.30064184258240184,
+              "high": 0.9544127391902995,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 0.75,
+            "citation_support": {
+              "supported": 3,
+              "unsupported": 1
+            },
+            "supported_over_all": 0.75,
+            "supported_wilson": {
+              "low": 0.30064184258240184,
+              "high": 0.9544127391902995,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 3,
+            "joint_over_all": 0.75,
+            "ambiguity": 0
+          },
+          "reserva_entrega": {
+            "n": 24,
+            "membership": {
+              "belongs": 19,
+              "insufficient": 2,
+              "not_belongs": 3
+            },
+            "correct_over_all": 0.7916666666666666,
+            "correct_wilson": {
+              "low": 0.5952954674681133,
+              "high": 0.9075517464714814,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 0.8636363636363636,
+            "citation_support": {
+              "supported": 19,
+              "insufficient": 2,
+              "unsupported": 3
+            },
+            "supported_over_all": 0.7916666666666666,
+            "supported_wilson": {
+              "low": 0.5952954674681133,
+              "high": 0.9075517464714814,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 19,
+            "joint_over_all": 0.7916666666666666,
+            "ambiguity": 2
+          }
+        }
+      },
+      "h1": {
+        "gold_three": {
+          "n": 51,
+          "membership": {
+            "belongs": 47,
+            "not_belongs": 1,
+            "insufficient": 3
+          },
+          "correct_over_all": 0.9215686274509803,
+          "correct_wilson": {
+            "low": 0.8150005368740411,
+            "high": 0.9690778032115107,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "correct_among_decisive": 0.9791666666666666,
+          "citation_support": {
+            "supported": 47,
+            "unsupported": 1,
+            "insufficient": 3
+          },
+          "supported_over_all": 0.9215686274509803,
+          "supported_wilson": {
+            "low": 0.8150005368740411,
+            "high": 0.9690778032115107,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "joint_correct_supported": 47,
+          "joint_over_all": 0.9215686274509803,
+          "ambiguity": 4,
+          "weighted_membership": {
+            "estimate": 0.9213988919667591,
+            "percentile_95": [
+              0.842797783933518,
+              0.9806094182825484
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 51,
+              "cobros_depositos_devoluciones": 45,
+              "reserva_entrega": 56
+            }
+          },
+          "weighted_citation": {
+            "estimate": 0.9213988919667591,
+            "percentile_95": [
+              0.842797783933518,
+              0.9806094182825484
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 51,
+              "cobros_depositos_devoluciones": 45,
+              "reserva_entrega": 56
+            }
+          }
+        },
+        "discovery_two": {
+          "n": 9,
+          "membership": {
+            "belongs": 9
+          },
+          "correct_over_all": 1.0,
+          "correct_wilson": {
+            "low": 0.7008549515804559,
+            "high": 1,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "correct_among_decisive": 1.0,
+          "citation_support": {
+            "supported": 9
+          },
+          "supported_over_all": 1.0,
+          "supported_wilson": {
+            "low": 0.7008549515804559,
+            "high": 1,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "joint_correct_supported": 9,
+          "joint_over_all": 1.0,
+          "ambiguity": 0,
+          "weighted_membership": {
+            "estimate": 1.0,
+            "percentile_95": [
+              1.0,
+              1.0
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 15,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 12
+            }
+          },
+          "weighted_citation": {
+            "estimate": 1.0,
+            "percentile_95": [
+              1.0,
+              1.0
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 15,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 12
+            }
+          }
+        },
+        "all_five": {
+          "n": 60,
+          "membership": {
+            "belongs": 56,
+            "not_belongs": 1,
+            "insufficient": 3
+          },
+          "correct_over_all": 0.9333333333333333,
+          "correct_wilson": {
+            "low": 0.8407464268680283,
+            "high": 0.9737713012754938,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "correct_among_decisive": 0.9824561403508771,
+          "citation_support": {
+            "supported": 56,
+            "unsupported": 1,
+            "insufficient": 3
+          },
+          "supported_over_all": 0.9333333333333333,
+          "supported_wilson": {
+            "low": 0.8407464268680283,
+            "high": 0.9737713012754938,
+            "confidence": 0.95,
+            "method": "unweighted Wilson"
+          },
+          "joint_correct_supported": 56,
+          "joint_over_all": 0.9333333333333333,
+          "ambiguity": 4,
+          "weighted_membership": {
+            "estimate": 0.9332549250220523,
+            "percentile_95": [
+              0.8665098500441047,
+              0.9832402234636871
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 51,
+              "cobros_depositos_devoluciones": 45,
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 15,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 12,
+              "reserva_entrega": 56
+            }
+          },
+          "weighted_citation": {
+            "estimate": 0.9332549250220523,
+            "percentile_95": [
+              0.8665098500441047,
+              0.9835342546309909
+            ],
+            "method": "descriptive prevalence weighting; stratified bootstrap10000, no population/generalization claim",
+            "weights_population": {
+              "atencion_reclamaciones": 51,
+              "cobros_depositos_devoluciones": 45,
+              "integracion_de_renta_de_autos_en_plataformas_de_viaje": 15,
+              "programa_emerald_aisle_y_beneficios_de_estatus_elite": 12,
+              "reserva_entrega": 56
+            }
+          }
+        },
+        "per_concept": {
+          "atencion_reclamaciones": {
+            "n": 17,
+            "membership": {
+              "belongs": 14,
+              "insufficient": 3
+            },
+            "correct_over_all": 0.8235294117647058,
+            "correct_wilson": {
+              "low": 0.5897054143116588,
+              "high": 0.9380887336237901,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 1.0,
+            "citation_support": {
+              "supported": 14,
+              "insufficient": 3
+            },
+            "supported_over_all": 0.8235294117647058,
+            "supported_wilson": {
+              "low": 0.5897054143116588,
+              "high": 0.9380887336237901,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 14,
+            "joint_over_all": 0.8235294117647058,
+            "ambiguity": 3
+          },
+          "cobros_depositos_devoluciones": {
+            "n": 15,
+            "membership": {
+              "belongs": 15
+            },
+            "correct_over_all": 1.0,
+            "correct_wilson": {
+              "low": 0.7961166989641515,
+              "high": 1,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 1.0,
+            "citation_support": {
+              "supported": 15
+            },
+            "supported_over_all": 1.0,
+            "supported_wilson": {
+              "low": 0.7961166989641515,
+              "high": 1,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 15,
+            "joint_over_all": 1.0,
+            "ambiguity": 1
+          },
+          "integracion_de_renta_de_autos_en_plataformas_de_viaje": {
+            "n": 5,
+            "membership": {
+              "belongs": 5
+            },
+            "correct_over_all": 1.0,
+            "correct_wilson": {
+              "low": 0.5655175352168251,
+              "high": 1,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 1.0,
+            "citation_support": {
+              "supported": 5
+            },
+            "supported_over_all": 1.0,
+            "supported_wilson": {
+              "low": 0.5655175352168251,
+              "high": 1,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 5,
+            "joint_over_all": 1.0,
+            "ambiguity": 0
+          },
+          "programa_emerald_aisle_y_beneficios_de_estatus_elite": {
+            "n": 4,
+            "membership": {
+              "belongs": 4
+            },
+            "correct_over_all": 1.0,
+            "correct_wilson": {
+              "low": 0.5101091635454027,
+              "high": 1,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 1.0,
+            "citation_support": {
+              "supported": 4
+            },
+            "supported_over_all": 1.0,
+            "supported_wilson": {
+              "low": 0.5101091635454027,
+              "high": 1,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 4,
+            "joint_over_all": 1.0,
+            "ambiguity": 0
+          },
+          "reserva_entrega": {
+            "n": 19,
+            "membership": {
+              "belongs": 18,
+              "not_belongs": 1
+            },
+            "correct_over_all": 0.9473684210526315,
+            "correct_wilson": {
+              "low": 0.753612688331012,
+              "high": 0.9906480059376995,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "correct_among_decisive": 0.9473684210526315,
+            "citation_support": {
+              "supported": 18,
+              "unsupported": 1
+            },
+            "supported_over_all": 0.9473684210526315,
+            "supported_wilson": {
+              "low": 0.753612688331012,
+              "high": 0.9906480059376995,
+              "confidence": 0.95,
+              "method": "unweighted Wilson"
+            },
+            "joint_correct_supported": 18,
+            "joint_over_all": 0.9473684210526315,
+            "ambiguity": 0
+          }
+        }
+      }
+    },
+    "bars": {
+      "blind_gold_precision": {
+        "bar": 0.9,
+        "observed": 0.9215686274509803,
+        "pass": true,
+        "lower_95": 0.8150005368740411
+      },
+      "test_recall": {
+        "bar": 0.8732258064516129,
+        "h1": 0.7777777777777778,
+        "standard": 0.9032258064516129,
+        "difference_pp": -12.54480286738351,
+        "pass": false,
+        "review_exception": "spec10.4; operational publication separately21/31 vs28/31"
+      },
+      "review_per_1000": {
+        "bar": 50,
+        "observed": 126.15101289134438,
+        "pass": false
+      },
+      "source_cost_ratio": {
+        "bar": 0.5,
+        "observed": 0.41793668804523243,
+        "pass": true,
+        "standard_usd_per_1000": 3.612850828729282,
+        "h1_usd_per_1000": 1.5099429097605894,
+        "limitation": "both reuse same JEV facets; observed unique source reconstruction, not new cold run"
+      }
+    },
+    "decision": "keep_standard_default_pause_h1_until_new_idea",
+    "reviewer": {
+      "configured_model": "gpt-6.1-sol",
+      "configured_effort": "medium",
+      "backend_independently_verified": false,
+      "executions": [
+        {
+          "slice": 1,
+          "execution_id": "01a12f95-4a2a-7693-a53d-924341ec1e53",
+          "model_requested": "gpt-6.1-sol",
+          "effort_requested": "medium",
+          "input_sha256": "c3f64d374834ff56727576cfe164996d5c3c3f14e26f4aceacd22c83693326bd",
+          "output_sha256": "bad71fe4649cb0e1aff20f301d384c7cfdcdd53e432c6d76ade63cfc5ddedc45",
+          "usage": {
+            "input_tokens": 361627,
+            "cached_input_tokens": 314880,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2050,
+            "reasoning_output_tokens": 171
+          }
+        },
+        {
+          "slice": 2,
+          "execution_id": "01a12f96-9388-7aa2-af3c-f51b48b16434",
+          "model_requested": "gpt-6.1-sol",
+          "effort_requested": "medium",
+          "input_sha256": "cfe70602401a56155a359b998ea9d919bf62f10a6dffb22e95ea9a707fcfc1fa",
+          "output_sha256": "4e567785518a630beac5563b64486ba52424a22f1a690e65ea8ff6bb1622d77d",
+          "usage": {
+            "input_tokens": 460333,
+            "cached_input_tokens": 396160,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2365,
+            "reasoning_output_tokens": 392
+          }
+        },
+        {
+          "slice": 3,
+          "execution_id": "01a12f96-935c-7c00-9a49-012f47cf80b2",
+          "model_requested": "gpt-6.1-sol",
+          "effort_requested": "medium",
+          "input_sha256": "50f33fa7b98d41db4efbc04e5c2156ab2a8b569fca221417fa98af0f496a0f6e",
+          "output_sha256": "97d1c99d5661fca3faf84690c98adcf8c07d1a39c35479f3cf92be8783b03e98",
+          "usage": {
+            "input_tokens": 437787,
+            "cached_input_tokens": 377344,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2394,
+            "reasoning_output_tokens": 241
+          }
+        },
+        {
+          "slice": 4,
+          "execution_id": "01a12f96-9378-7aa3-ab24-2f85443edd95",
+          "model_requested": "gpt-6.1-sol",
+          "effort_requested": "medium",
+          "input_sha256": "85ec42ade410d46e7f53a96aa43677d19ce8ffb50a431824867576e7958d189a",
+          "output_sha256": "2c30c11b3bb345a8ef0a06f1c02a9a2c2439be391b0ad00a9a638e0dfc57dfd1",
+          "usage": {
+            "input_tokens": 291167,
+            "cached_input_tokens": 206080,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1978,
+            "reasoning_output_tokens": 184
+          }
+        },
+        {
+          "slice": 5,
+          "execution_id": "01a12f96-9355-71c0-88bf-54c7aec5b7d4",
+          "model_requested": "gpt-6.1-sol",
+          "effort_requested": "medium",
+          "input_sha256": "dfdbd145706b38e31ba1e755b7aefe35a23330818b7b5d049f9ea40cd2351930",
+          "output_sha256": "fda273c3be2d61810004b93fc951f8950525be998c16b6e5ec02d0f04a1afe2c",
+          "usage": {
+            "input_tokens": 813850,
+            "cached_input_tokens": 719360,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2329,
+            "reasoning_output_tokens": 249
+          }
+        },
+        {
+          "slice": 6,
+          "execution_id": "01a12f96-9399-7d10-b1fc-7fca18a524db",
+          "model_requested": "gpt-6.1-sol",
+          "effort_requested": "medium",
+          "input_sha256": "ea62bbfcdb7649d410a68cdf19aa86c5e6583f75709c5ff198485582d0b3ff0f",
+          "output_sha256": "7154cc2e81e84431b07253f235fd800424b5c61e4b8deff855e5a0b1949e0b0c",
+          "usage": {
+            "input_tokens": 299926,
+            "cached_input_tokens": 258688,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 2455,
+            "reasoning_output_tokens": 160
+          }
+        }
+      ],
+      "usage_sum": {
+        "input_tokens": 2664690,
+        "cached_input_tokens": 2272512,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 13571,
+        "reasoning_output_tokens": 1397
+      },
+      "independent_new_readonly_slices": 6
+    },
+    "limitations": [
+      "gold dev/test previously exposed",
+      "57 prior reviewed roots excluded; descriptive weighting is not full population inference",
+      "31 cross-arm roots correlated; no independent-sample difference interval",
+      "12 H1 technical errors are not semantic negatives; pending0",
+      "insufficient abstentions excluded only in conditional secondary metrics; primary precision/support uses all reviewed positives",
+      "current source=human overrides0; stale requires_override_review3 remain separate"
+    ],
+    "provider_calls": 0
+  },
+  "free_threshold_sweep": {
+    "gold_exposed": true,
+    "dev_roots": 90,
+    "test_roots": 60,
+    "dev_binary_pairs": 262,
+    "test_binary_pairs": 175,
+    "dev_probability_absent_pairs": 97,
+    "test_probability_absent_pairs": 57,
+    "dev": [
+      {
+        "threshold": 0.3,
+        "tp": 29,
+        "fp": 2,
+        "fn": 4,
+        "f1": 0.90625
+      },
+      {
+        "threshold": 0.35,
+        "tp": 29,
+        "fp": 1,
+        "fn": 4,
+        "f1": 0.920635
+      },
+      {
+        "threshold": 0.4,
+        "tp": 27,
+        "fp": 1,
+        "fn": 6,
+        "f1": 0.885246
+      }
+    ],
+    "selected_only_in_dev": 0.35,
+    "test_selected": {
+      "tp": 30,
+      "fp": 1,
+      "fn": 1,
+      "precision": 0.967742,
+      "recall": 0.967742,
+      "f1": 0.967742,
+      "wilson_lower": 0.838059
+    },
+    "calibration_claim": false
+  },
+  "former_abstained": {
+    "roots": 3,
+    "pairs": 12,
+    "states": {
+      "not_belongs": 12
+    },
+    "same_ids_key": true,
+    "raw_settled_applied": 12,
+    "census": {
+      "active": 0,
+      "flight": 0,
+      "unreconciled": 0
+    },
+    "receipt_sha256": "c7864fc8bf5043128b765ef2be6f8112689d8946dd2e0fd89a52ad14a9a6dee0"
+  },
+  "terminal_errors_h1": [
+    {
+      "code": "incomplete_single_root",
+      "root_characters": 32001,
+      "pairs": 1
+    },
+    {
+      "code": "membership_evidence_invalid",
+      "root_characters": 17192,
+      "pairs": 3
+    },
+    {
+      "code": "membership_evidence_invalid",
+      "root_characters": 18635,
+      "pairs": 1
+    },
+    {
+      "code": "membership_evidence_invalid",
+      "root_characters": 22643,
+      "pairs": 1
+    },
+    {
+      "code": "membership_item_schema_invalid",
+      "root_characters": 23544,
+      "pairs": 3
+    },
+    {
+      "code": "membership_item_schema_invalid",
+      "root_characters": 28722,
+      "pairs": 1
+    },
+    {
+      "code": "membership_item_schema_invalid",
+      "root_characters": 32001,
+      "pairs": 2
+    }
+  ],
+  "terminal_errors_are_semantic_negatives": false,
+  "teardown": {
+    "after": {
+      "active": 0,
+      "flight": 0,
+      "unreconciled": 0,
+      "calls": 11565,
+      "settled_micro_usd": "19205427"
+    },
+    "guard_removed": true,
+    "standard_restored": true,
+    "paid_projection_unchanged": true,
+    "real_pg_rollback_acceptance": true,
+    "other_workspaces_unchanged": true,
+    "receipt_sha256": "32d25ab9bd379105f4b867fd38982ad14c49f28fd2102ae1335715ee0451c4e9"
+  },
+  "implementation_model": {
+    "configured": "gpt-6.1-sol/high",
+    "independent_backend_runtime_id": null
+  },
+  "focal_reviews": [
+    {
+      "configured": "gpt-6-astra/medium",
+      "execution_id": "01a12e0f-33db-7bb3-bb4f-ebf5f793f1f9",
+      "input_tokens": 82874,
+      "cached_input_tokens": 71424,
+      "output_tokens": 1116,
+      "task": "SQL42725 comparison only",
+      "backend_runtime_model_id": null
+    },
+    {
+      "configured": "gpt-6-astra/medium",
+      "execution_id": "01a12f4c-c3ca-74f3-8f7c-16b2466c2267",
+      "input_tokens": 24766,
+      "cached_input_tokens": 12288,
+      "output_tokens": 246,
+      "task": "PG174 negative fixture expectation only",
+      "backend_runtime_model_id": null
+    }
+  ],
+  "acceptance_attempts": [
+    {
+      "pg": 156,
+      "failure": "facet_labels_immutable",
+      "fixture_correction": "new facet provenance; no UPDATE immutable labels"
+    },
+    {
+      "pg": 157,
+      "failure": "SQL42725",
+      "correction": "focal parenthesized comparison"
+    },
+    {
+      "pg": 159,
+      "failure": "23505",
+      "fixture_correction": "reuse canonical identity"
+    },
+    {
+      "pg": 172,
+      "failure": "hybrid_settled_receipt_required",
+      "phase": "RED acceptance before writer fix",
+      "url": "https://github.com/noisia-ai/monorepo/actions/runs/38224093039"
+    },
+    {
+      "pg": 173,
+      "failure": "missing required span in negative fixture",
+      "positive_pipeline_passed": true,
+      "url": "https://github.com/noisia-ai/monorepo/actions/runs/38224842977"
+    },
+    {
+      "pg": 174,
+      "failure": "expected negative; valid JEV+/C- requires review_required",
+      "positive_pipeline_passed": true,
+      "url": "https://github.com/noisia-ai/monorepo/actions/runs/38225354854"
+    },
+    {
+      "pg": 175,
+      "status": "SUCCESS",
+      "url": "https://github.com/noisia-ai/monorepo/actions/runs/38226138748"
+    }
+  ],
+  "validated_product_head": "b2a4c4e1410201b3f4188f19bd80099cfc9c0d9c",
+  "validated_product_ci": "https://github.com/noisia-ai/monorepo/actions/runs/38226138771",
+  "sql0267_apply_count": 1,
+  "provider_new_calls_after_terminal": 0,
+  "reviewer_monetary_cost_usd": null,
+  "reviewer_cost_limitation": "Codex account usage recorded; monetary invoice telemetry unavailable; not charged to Claude/JEV ledger",
+  "pr_url": "https://github.com/noisia-ai/monorepo/pull/58",
+  "decision_proposed": "keep_standard_default_pause_h1_until_new_idea"
+}
