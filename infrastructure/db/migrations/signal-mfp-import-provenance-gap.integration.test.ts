@@ -8,7 +8,7 @@ test("MFP recovers insert-before-provenance interruption without relabeling new 
  skip:process.env.NOISIA_MFP_PG_CI!=="true",timeout:120_000
 },async()=>{
  const {openDatabase}=await import(new URL("../../../scripts/dev-corpus/guard.mjs",import.meta.url).href);
- const pool=await openDatabase(),client=await pool.connect();
+ const pool:pg.Pool=await openDatabase(),client=await pool.connect();
  const censusSql=`SELECT jsonb_build_object('organizations',(SELECT count(*) FROM organizations),
  'mentions',(SELECT count(*) FROM mentions),'memberships',(SELECT count(*) FROM signal_mention_import_memberships),
  'batches',(SELECT count(*) FROM import_batches),'sources',(SELECT count(*) FROM data_sources)) census`;
