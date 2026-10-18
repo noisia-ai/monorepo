@@ -83,6 +83,7 @@ type InsertedMentionRow = {
   already_in_batch: boolean;
   ingestion_disposition: "included" | "excluded" | "duplicate" | null;
   predecessor_disposition: "included" | "excluded" | "duplicate" | null;
+  origin_disposition: "included" | "excluded" | null;
 };
 
 type ImportBatchProvenanceRow = {
@@ -603,6 +604,12 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
       } else if (prior?.predecessor_disposition) {
         disposition=prior.predecessor_disposition;
         metrics.classification.resumed_before_attempt+=1;
+      } else if (prior?.origin_disposition) {
+        // A connection failure can occur after INSERT commits but before the
+        // set-based provenance write. Only this stored import lineage owns
+        // those roots; an unrelated import must remain a duplicate.
+        disposition=prior.origin_disposition;
+        metrics.classification.resumed_before_attempt+=1;
       } else {
         disposition="duplicate";
         metrics.classification.existing_from_other_import+=1;
@@ -638,8 +645,22 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
     if (hashes.length === 0 && providerRecordIds.length === 0) return [];
     const result = await pool.query<InsertedMentionRow>(
       `
+        WITH RECURSIVE recovery_lineage AS (
+          SELECT batch.id,batch.supersedes_import_batch_id,ARRAY[batch.id] AS path
+          FROM import_batches batch
+          WHERE batch.id=$2::uuid AND batch.workspace_id=$1::uuid AND batch.data_source_id=$6::uuid
+          UNION ALL
+          SELECT predecessor.id,predecessor.supersedes_import_batch_id,lineage.path||predecessor.id
+          FROM recovery_lineage lineage JOIN import_batches predecessor
+            ON predecessor.id=lineage.supersedes_import_batch_id
+          WHERE predecessor.workspace_id=$1::uuid AND predecessor.data_source_id=$6::uuid
+            AND NOT predecessor.id=ANY(lineage.path)
+        )
         SELECT mention.id,mention.text_hash,mention.provider_record_id,mention.data_source_id,mention.source_system,
           mention.inclusion_status,
+          CASE WHEN mention.data_source_id=$6::uuid AND mention.source_file_id IN (SELECT id FROM recovery_lineage)
+            AND mention.inclusion_status IN ('included','excluded')
+            THEN mention.inclusion_status ELSE NULL END AS origin_disposition,
           EXISTS (
             SELECT 1
             FROM signal_mention_import_memberships membership

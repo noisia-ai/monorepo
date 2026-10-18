@@ -40,6 +40,31 @@ test("MFP recovers insert-before-provenance interruption without relabeling new 
   const duplicates=await ingest(createSignalSentioneCsvIngester(client),fixture,other.id,source,{chunkSize:2});
   assert.deepEqual(duplicates.stats,{record_count:2,included_count:0,excluded_count:0,duplicate_count:2},
    "another import must still count existing roots as duplicates");
+  const successorSource=csv([["successor-included",long("successor included")],["successor-excluded","short"],
+   ["included-one",long("included one")]]);
+  const failed=await processingBatch(client,fixture,successorSource,"synthetic-successor-gap.csv");
+  failedOnce=false;
+  await assert.rejects(ingest(interrupted,fixture,failed.id,successorSource,{chunkSize:3}),/synthetic_connection_timeout/);
+  await client.query(`SELECT fail_signal_workspace_import_v1($1::uuid,$2,'fixture_abort',
+   '{"recoverable":true}'::jsonb,3,$3)`,[failed.id,failed.job,byteLength(successorSource)]);
+  const successor=(await client.query<{import_batch_id:string;worker_job_id:string}>(`SELECT
+   import_batch_id::text,worker_job_id FROM create_signal_workspace_import_storage_recovery_v1(
+    $1::uuid,$2::uuid,$3,$4,NULL)`,[failed.id,fixture.actor,sha(randomUUID()),sha(randomUUID())])).rows[0]!;
+  await dispatchAndBegin(client,successor.import_batch_id,successor.worker_job_id);
+  await client.query("SELECT seal_signal_workspace_import_storage_hash_v1($1::uuid,$2,$3,$4)",
+   [successor.import_batch_id,successor.worker_job_id,createHash("sha256").update(successorSource).digest("hex"),byteLength(successorSource)]);
+  const successorResult=await ingest(createSignalSentioneCsvIngester(client),fixture,successor.import_batch_id,
+   successorSource,{chunkSize:3},failed.id);
+  assert.deepEqual(successorResult.stats,{record_count:3,included_count:1,excluded_count:1,duplicate_count:1},
+   "append-only successor recovers orphan origins and keeps unrelated prior roots duplicated");
+  const beforeReplay=(await client.query(`SELECT mention_id::text,ingestion_disposition FROM signal_mention_import_memberships
+   WHERE import_batch_id=$1 ORDER BY mention_id`,[successor.import_batch_id])).rows;
+  assert.equal(beforeReplay.length,3);
+  const successorReplay=await ingest(createSignalSentioneCsvIngester(client),fixture,successor.import_batch_id,
+   successorSource,{chunkSize:1},failed.id);
+  assert.deepEqual(successorReplay.stats,successorResult.stats);
+  assert.deepEqual((await client.query(`SELECT mention_id::text,ingestion_disposition FROM signal_mention_import_memberships
+   WHERE import_batch_id=$1 ORDER BY mention_id`,[successor.import_batch_id])).rows,beforeReplay);
   await client.query("ROLLBACK");
   assert.deepEqual((await client.query(censusSql)).rows[0].census,before,"fixture restores exact census");
  }finally{await client.query("ROLLBACK");client.release();await pool.end();}
