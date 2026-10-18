@@ -4383,6 +4383,7 @@
     }
   },
   "ClientBrandContextProcessing": {
+    "noStrictMaximum": "No strict maximum",
     "authorizationRefresh": "Prepare current interests with a maximum of {maximum}. Available today: {available}. Saved vectors will be reused.",
     "title": "Brand semantic preparation",
     "body": "Turn Brand OS context and knowledge sources into a reusable semantic foundation for Topics.",
@@ -4782,5 +4783,16 @@
     "previewResults": "Definition preview · {count} roots",
     "scope": "Scope",
     "chooseScope": "Choose a scope"
+  },
+  "ClassicProcessingPolicy": {
+    "title": "Analysis preparation",
+    "body": "Complete the setup for brand context and analysis guides. This action does not run analysis or incur charges.",
+    "complete": "Complete setup",
+    "working": "Completing…",
+    "provisioned": "Setup completed. You can continue from Topics.",
+    "existing_policy": "Setup is already complete.",
+    "configuration_required": "Service configuration is missing. Contact your administrator to complete it.",
+    "active_work": "This organization has pending results or work. Finish them before completing setup.",
+    "unavailable": "Setup could not be completed. Check your permissions and try again."
   }
 }

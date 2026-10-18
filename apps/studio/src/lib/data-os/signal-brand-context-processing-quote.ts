@@ -71,11 +71,11 @@ type ProcessingRowV1 = {
   observed_at: string;
   receipt_id: string;
   authorization_not_after: string;
-  semantic_cap_micro_usd: string;
-  prototype_cap_micro_usd: string;
-  available_today_micro_usd: string;
+  semantic_cap_micro_usd: string | null;
+  prototype_cap_micro_usd: string | null;
+  available_today_micro_usd: string | null;
   quote_digest?: string;
-  semantic_retry_maximum_micro_usd: string;
+  semantic_retry_maximum_micro_usd: string | null;
   semantic_renewal_idempotency_key: string | null;
   semantic_renewal_quote_expires_at: string | null;
   semantic_renewal_available_today_micro_usd: string | null;
@@ -212,8 +212,8 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
   const canStart = canRetryStage1 || canRenewStage1 || canStartStage1 || canStartStage2;
   const immutableQuote = operation ? {
     reference: null,
-    maximum_micro_usd: (BigInt(operation.semantic_cap_micro_usd)
-      + BigInt(operation.prototype_cap_micro_usd)).toString(),
+    maximum_micro_usd: operation.semantic_cap_micro_usd === null || operation.prototype_cap_micro_usd === null ? null
+      : (BigInt(operation.semantic_cap_micro_usd) + BigInt(operation.prototype_cap_micro_usd)).toString(),
     available_today_micro_usd: operation.available_today_micro_usd,
     expires_at: new Date(operation.authorization_not_after).toISOString()
   } : null;
@@ -232,8 +232,7 @@ export async function loadClientBrandContextProcessingViewForActorV1(args: {
     maximum_micro_usd: operation!.semantic_retry_maximum_micro_usd,
     available_today_micro_usd: immutableQuote!.available_today_micro_usd,
     expires_at: immutableQuote!.expires_at
-  } : canStartStage1 && quote.maximum_micro_usd && quote.available_today_micro_usd
-    && quote.quote_expires_at ? {
+  } : canStartStage1 && quote.quote_expires_at ? {
       reference: quote.quote_reference,
       maximum_micro_usd: quote.maximum_micro_usd,
       available_today_micro_usd: quote.available_today_micro_usd,
@@ -257,7 +256,7 @@ function expectedQuoteMatchesV1(body: ClientBrandContextProcessingConfirmationV1
   quote: { observed_at:string;maximum_micro_usd:string|null;available_today_micro_usd:string|null;
     quote_expires_at:string|null;quote_digest:string|null }) {
   const observed = Date.parse(body.expected_quote.observed_at);
-  return quote.maximum_micro_usd !== null && quote.available_today_micro_usd !== null && quote.quote_expires_at !== null
+  return quote.quote_expires_at !== null
     && body.expected_quote.reference === clientBrandContextProcessingQuoteReferenceV1(quote.quote_digest)
     && body.expected_quote.maximum_micro_usd === quote.maximum_micro_usd
     && body.expected_quote.available_today_micro_usd === quote.available_today_micro_usd
@@ -267,11 +266,11 @@ function expectedQuoteMatchesV1(body: ClientBrandContextProcessingConfirmationV1
 }
 
 type PrototypeRequestReceiptV1 = { parent_receipt_id: string; quote_digest: string; confirmation: string | null;
-  maximum_micro_usd: string; available_today_micro_usd: string; expires_at: string };
+  maximum_micro_usd: string | null; available_today_micro_usd: string | null; expires_at: string };
 async function loadPrototypeRequestReceiptV1(database: Database, workspaceId: string, actorId: string, requestKey: string) {
   return (await database.query<PrototypeRequestReceiptV1>(`SELECT child.parent_receipt_id::text,child.quote_digest,child.confirmation,
     child.execution_cap_micro_usd::text maximum_micro_usd,
-    greatest(policy.daily_cap_micro_usd-(child.quote_snapshot#>>'{exposure,total_micro_usd}')::bigint,0)::text available_today_micro_usd,
+    (CASE WHEN policy.daily_cap_micro_usd IS NULL THEN NULL ELSE greatest(policy.daily_cap_micro_usd-(child.quote_snapshot#>>'{exposure,total_micro_usd}')::bigint,0) END)::text available_today_micro_usd,
     child.quote_snapshot->>'quote_expires_at' expires_at
     FROM signal_brand_context_prototype_receipts child
     JOIN signal_processing_policy_versions policy ON policy.id=child.policy_version_id

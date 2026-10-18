@@ -3170,6 +3170,7 @@ async function exerciseAutomaticDispositionV1(){
     configuration:terminalPreflightConfiguration,
     runtime:{queue_configured:true,worker_alive:true,recovery_alive:true}});
   assert.equal(runtimePreflight.readiness,"ready");
+  assert.ok(terminalPreflightConfiguration.platform_hard_cap_micro_usd !== null, "fixture requires an explicit cap");
   const started=await startSignalSemanticContextProposalRunV1({pool,workspace:dbWorkspace,actor:dbActor,
     idempotency_key:"automatic-policy-run",generation_key:draft.generation_key,
     preflight_digest:runtimePreflight.preflight_digest,confirmation:SIGNAL_SEMANTIC_CONTEXT_PROPOSAL_CONFIRMATION,
@@ -4692,6 +4693,7 @@ async function seedHistoricalResolvedAnnotationWithoutBasis(fixture:Awaited<Retu
 
 function installProviderEnvironment(configuration:SignalSemanticContextProposalRuntimeConfigurationV1,
   overrides:Record<string,string>={}){
+  assert.ok(configuration.platform_hard_cap_micro_usd !== null, "provider environment fixture requires an explicit cap");
   const values:Record<string,string>={
     NOISIA_SEMANTIC_CONTEXT_MODEL:configuration.model,
     NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION:configuration.model_version,

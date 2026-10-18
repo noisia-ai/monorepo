@@ -55,8 +55,8 @@ export type ClientBrandContextProcessingViewV1 = {
   status: ClientBrandContextProcessingQuoteStatusV1;
   quote: null | {
     reference: string | null;
-    maximum_micro_usd: string;
-    available_today_micro_usd: string;
+    maximum_micro_usd: string | null;
+    available_today_micro_usd: string | null;
     expires_at: string;
   };
   operation: null | {
@@ -74,8 +74,8 @@ export type ClientBrandContextProcessingPendingRequestV1 = {
   confirmation: ClientBrandContextProcessingConfirmationKindV1;
   quoteObservedAt: string;
   quoteReference: string;
-  maximumMicroUsd: string;
-  availableTodayMicroUsd: string;
+  maximumMicroUsd: string | null;
+  availableTodayMicroUsd: string | null;
   expiresAt: string;
 };
 
@@ -102,8 +102,8 @@ export type ClientBrandContextProcessingConfirmationV1 = {
   expected_quote: {
     observed_at: string;
     reference: string;
-    maximum_micro_usd: string;
-    available_today_micro_usd: string;
+    maximum_micro_usd: string | null;
+    available_today_micro_usd: string | null;
     expires_at: string;
   };
 };
@@ -148,8 +148,7 @@ export function validClientBrandContextProcessingQuoteViewV1(
     || !timestamp(value.observed_at) || !(value.quote_expires_at === null || timestamp(value.quote_expires_at))
     || !(value.quote_reference === null || quoteReference(value.quote_reference))) return false;
   return value.status === "quote_available"
-    ? value.maximum_micro_usd !== null && value.available_today_micro_usd !== null
-      && value.quote_expires_at !== null && value.quote_reference !== null
+    ? value.quote_expires_at !== null && value.quote_reference !== null
     : value.quote_expires_at === null && value.quote_reference === null;
 }
 
@@ -184,7 +183,7 @@ export function validClientBrandContextProcessingViewV1(value: unknown): value i
     || !(operation === null || validOperation(operation))) return false;
   if (value.quote !== null && (!object(value.quote)
     || Object.keys(value.quote).sort().join(",") !== "available_today_micro_usd,expires_at,maximum_micro_usd,reference"
-    || !money(value.quote.maximum_micro_usd) || !money(value.quote.available_today_micro_usd)
+    || !(value.quote.maximum_micro_usd === null || money(value.quote.maximum_micro_usd)) || !(value.quote.available_today_micro_usd === null || money(value.quote.available_today_micro_usd))
     || !timestamp(value.quote.expires_at)
     || !(value.quote.reference === null || quoteReference(value.quote.reference)))) return false;
   if (value.status === "quote_available" && value.quote === null) return false;
@@ -206,8 +205,7 @@ export function clientBrandContextProcessingViewFromQuoteV1(
     observed_at: quote.observed_at,
     can_start: false,
     status: quote.status,
-    quote: quote.status === "quote_available" && quote.maximum_micro_usd !== null
-      && quote.available_today_micro_usd !== null && quote.quote_expires_at !== null ? {
+    quote: quote.status === "quote_available" && quote.quote_expires_at !== null ? {
       maximum_micro_usd: quote.maximum_micro_usd,
       available_today_micro_usd: quote.available_today_micro_usd,
       expires_at: quote.quote_expires_at,
@@ -352,8 +350,8 @@ export function validClientBrandContextProcessingConfirmationV1(
     || !object(value.expected_quote)
     || Object.keys(value.expected_quote).sort().join(",")
       !== "available_today_micro_usd,expires_at,maximum_micro_usd,observed_at,reference") return false;
-  return money(value.expected_quote.maximum_micro_usd)
-    && money(value.expected_quote.available_today_micro_usd)
+  return (value.expected_quote.maximum_micro_usd === null || money(value.expected_quote.maximum_micro_usd))
+    && (value.expected_quote.available_today_micro_usd === null || money(value.expected_quote.available_today_micro_usd))
     && timestamp(value.expected_quote.observed_at)
     && timestamp(value.expected_quote.expires_at)
     && quoteReference(value.expected_quote.reference);

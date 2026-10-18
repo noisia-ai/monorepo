@@ -97,9 +97,10 @@ export async function readSignalBrandContextProcessingQuoteWithQueryableV1(args:
     && prototype?.kind === "provider" && prototype.provider === "voyage" && prototype.model === "voyage-4-large"
     && prototype.automatic_allowed === true
     && selected.every(action => /^sha256:[0-9a-f]{64}$/u.test(action.configuration_digest)
-      && action.max_execution_micro_usd !== null && /^(0|[1-9][0-9]{0,14})$/u.test(action.max_execution_micro_usd))
-    && BigInt(semantic.max_execution_micro_usd!) > 0n;
-  const maximum = compatible ? BigInt(semantic.max_execution_micro_usd!) + BigInt(prototype.max_execution_micro_usd!) : null;
+      && (action.max_execution_micro_usd === null || /^(0|[1-9][0-9]{0,14})$/u.test(action.max_execution_micro_usd)))
+    && (semantic.max_execution_micro_usd === null || BigInt(semantic.max_execution_micro_usd) > 0n);
+  const maximum = compatible && semantic.max_execution_micro_usd !== null && prototype.max_execution_micro_usd !== null
+    ? BigInt(semantic.max_execution_micro_usd) + BigInt(prototype.max_execution_micro_usd) : null;
   let status: SignalBrandContextProcessingQuoteStatusV1;
   if (!policy.can_request_processing) status = "processing_forbidden";
   else if (!policy.policy) status = "policy_missing";
@@ -110,7 +111,7 @@ export async function readSignalBrandContextProcessingQuoteWithQueryableV1(args:
   else if (sourceBlocked) status = sourceBlocked;
   else if (!semantic || !prototype) status = "action_missing";
   else if (!compatible) status = "action_incompatible";
-  else if (policy.remaining_micro_usd !== null && maximum! > BigInt(policy.remaining_micro_usd)) status = "daily_cap_insufficient";
+  else if (policy.remaining_micro_usd !== null && maximum !== null && maximum > BigInt(policy.remaining_micro_usd)) status = "daily_cap_insufficient";
   else if (prototype.max_execution_micro_usd === "0") status = "cache_coverage_required";
   else if (selected.some(action => !action.available)) status = "action_unavailable";
   else status = "quoted";
@@ -134,7 +135,7 @@ type DatabaseQuoteRowV1 = {
   remaining_micro_usd: string; confirmed_micro_usd: string; reserved_micro_usd: string;
   ambiguous_micro_usd: string; total_micro_usd: string; policy_id: string; policy_version: string;
   policy_digest: string; semantic_configuration_digest: string; prototype_configuration_digest: string;
-  semantic_cap_micro_usd: string; prototype_cap_micro_usd: string; source_authority_digest: string;
+  semantic_cap_micro_usd: string | null; prototype_cap_micro_usd: string | null; source_authority_digest: string;
 };
 
 function databaseBlockedStatus(error: unknown): SignalBrandContextProcessingQuoteStatusV1 | null {
@@ -200,12 +201,13 @@ export async function readSignalBrandContextProcessingDatabaseQuoteWithQueryable
   }
   const exposure = { confirmed_micro_usd: row.confirmed_micro_usd, reserved_micro_usd: row.reserved_micro_usd,
     ambiguous_micro_usd: row.ambiguous_micro_usd, total_micro_usd: row.total_micro_usd };
-  const maximum = BigInt(row.semantic_cap_micro_usd) + BigInt(row.prototype_cap_micro_usd);
+  const maximum = row.semantic_cap_micro_usd === null || row.prototype_cap_micro_usd === null ? null
+    : BigInt(row.semantic_cap_micro_usd) + BigInt(row.prototype_cap_micro_usd);
   return { ...display, quote_digest: row.quote_digest,
     quoted_at: new Date(row.observed_at).toISOString(),
     quote_expires_at: new Date(row.quote_expires_at).toISOString(),
     budget_date: row.budget_date, exposure, remaining_micro_usd: row.remaining_micro_usd,
-    maximum_total_micro_usd: maximum.toString() };
+    maximum_total_micro_usd: maximum?.toString() ?? null };
 }
 
 function composedDigest(value: unknown): value is string {

@@ -42,7 +42,7 @@ function configuredPolicy(env: Record<string, string | undefined>) {
   const prototype = money(env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD
     ?? String(SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1));
   const until = env.NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL;
-  if (!semantic.available || !daily || !prototype || !money(semantic.platform_hard_cap_micro_usd.toString())
+  if (!semantic.available || !daily || !prototype || semantic.platform_hard_cap_micro_usd === null || !money(semantic.platform_hard_cap_micro_usd.toString())
     || !validDeadline(until) || daily < semantic.platform_hard_cap_micro_usd + prototype) return null;
   return { creatorUserId, mfp: false as const, daily: daily.toString(), until,
     semanticCap: semantic.platform_hard_cap_micro_usd.toString(), prototypeCap: prototype.toString(), semanticConfiguration: {
@@ -128,7 +128,7 @@ export async function provisionSignalBrandContextPolicyV1(args: {
       const pending=(await client.query<{pending:boolean}>(`SELECT EXISTS(
         SELECT 1 FROM signal_processing_admissions admission WHERE admission.policy_version_id=$1::uuid
           AND (
-            EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
+            EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND (owner.status IN('queued','processing','validating') OR owner.provider_call_state IN('in_flight','response_persisted','outcome_unknown'))) OR
             EXISTS(SELECT 1 FROM signal_workspace_embedding_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
             EXISTS(SELECT 1 FROM signal_corpus_preparation_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
             EXISTS(SELECT 1 FROM signal_topic_catalog_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
