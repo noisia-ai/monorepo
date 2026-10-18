@@ -31,7 +31,7 @@ test("the page passes the monitoring call lazily and native Topics returns befor
   assert.equal((page.match(/loadSignalBrandMonitoringV1\(\{/g) ?? []).length, 1);
   assert.match(page, /loadMonitoring: \(\) => loadSignalBrandMonitoringV1\(\{/);
   assert.match(page, /loadInitialSignalMonitoringV1\(\{\s+activeModule,/);
-  const native = page.indexOf("const native = await loadNativeSignalTopicsV1");
+  const native = page.indexOf("const bundle = await loadNativeSignalTopicsPageV1");
   const nativeReturn = page.indexOf("return <SignalV2BrandMonitoring activeModule={activeModule}", native);
   const monitoring = page.indexOf("loadMonitoring: () => loadSignalBrandMonitoringV1");
   assert.ok(native > 0 && nativeReturn > native && monitoring > nativeReturn);

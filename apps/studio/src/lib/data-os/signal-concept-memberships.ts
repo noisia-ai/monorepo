@@ -1,5 +1,5 @@
 import {
-  loadConceptMembershipsStatusV1,
+  loadConceptMembershipsStatusV1, replayStoredMembershipResultsV1,
   requestConceptMembershipsV1,
   loadConceptMembershipPreviewV1,
   overrideConceptMembershipsV1,
@@ -56,4 +56,14 @@ export function confirmMembershipsForActorV1(
   args: WithoutDatabase<Parameters<typeof confirmMentionFacetsV1>[0]>,
 ) {
   return confirmMentionFacetsV1({ ...args, database: pool });
+}
+
+/** Authenticated product recovery reads the original private receipt; never calls a model. */
+export async function replayMembershipsForActorV1(args:{workspace_id:string;actor_user_id:string;run_id:string}) {
+  const [{createWorkspaceEngineStorageV1},{readSignalLabelingReceiptV1}]=await Promise.all([
+    import('../../../../../services/workers/src/workers/signal-workspace-engine-storage'),
+    import('../../../../../services/workers/src/workers/signal-labeling-receipt-storage'),
+  ]);
+  const storage=createWorkspaceEngineStorageV1();
+  return replayStoredMembershipResultsV1({...args,database:pool,loadRaw:receipt=>readSignalLabelingReceiptV1({...receipt,storage,storage_key:receipt.storage_key})});
 }

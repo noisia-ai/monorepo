@@ -44,3 +44,31 @@ test('a waiting request expires without running its query', async () => {
   release(); await first;
   assert.equal(called, false);
 });
+
+test('analysis reads from concurrent callers keep the third pool client available', async () => {
+  const read = createMfpPopulationReader(8, 120_000, 2);
+  let occupied = 0, peak = 0;
+  const acquire = () => {
+    if (occupied >= 3) throw new Error('pool checkout timeout');
+    occupied++; peak = Math.max(peak, occupied);
+    return () => { occupied--; };
+  };
+  const release: Array<() => void> = [];
+  const started: number[] = [];
+  const jobs = Array.from({length: 9}, (_, index) => read(async () => {
+    const free = acquire(); started.push(index);
+    await new Promise<void>(resolve => { release.push(resolve); });
+    free(); return index;
+  }));
+  await Promise.resolve();
+  assert.deepEqual(started, [0, 1]);
+  const freeMetadata = acquire();
+  assert.equal(occupied, 3, 'metadata can acquire the reserved client without queuing behind nine reads');
+  freeMetadata();
+  while (started.length < 9 || occupied > 0) {
+    release.splice(0).forEach(resolve => resolve());
+    await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  assert.deepEqual(await Promise.all(jobs), Array.from({length: 9}, (_, index) => index));
+  assert.equal(peak, 3); assert.equal(occupied, 0);
+});

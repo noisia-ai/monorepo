@@ -512,3 +512,29 @@ test("server provider switch limits renewal without erasing paid recovery or its
   assert.equal(stale?.renewal?.blocked_reason, "source_stale", "The switch must not replace a more specific server refusal");
   assert.equal(workspaceIncrementalEditorialExecutionViewV1({ ...run, renewal: null }, true)?.renewal, null);
 });
+
+test("receipt-dependent editorial reads overlap only after accepted admission resolves", async () => {
+  const order: string[] = [];
+  let release!: () => void;
+  const bothStarted = new Promise<void>(resolve => { release = resolve; });
+  const result = await loadWorkspaceIncrementalEditorialForActorV1({ database: {} as Pick<Pool, "query" | "connect">,
+    workspace_id: id, actor_user_id: id }, {
+    admission: async () => { order.push("admission"); return null; },
+    preparation: async () => { order.push("preparation"); await bothStarted; return null; },
+    execution: async () => { assert.deepEqual(order, ["admission", "preparation"]); order.push("execution"); release(); return null; }
+  });
+  assert.equal(result, null);
+});
+
+
+test("bounded analysis resolves receipt-dependent reads sequentially", async () => {
+  const order: string[] = [];
+  const result = await loadWorkspaceIncrementalEditorialForActorV1({ database: {} as Pick<Pool, "query" | "connect">,
+    workspace_id: id, actor_user_id: id }, {
+    admission: async () => { order.push("admission"); return null; },
+    preparation: async () => { order.push("preparation"); await Promise.resolve(); order.push("preparation_done"); return null; },
+    execution: async () => { assert.deepEqual(order, ["admission", "preparation", "preparation_done"]); order.push("execution"); return null; }
+  }, { parallel: false });
+  assert.equal(result, null);
+  assert.deepEqual(order, ["admission", "preparation", "preparation_done", "execution"]);
+});

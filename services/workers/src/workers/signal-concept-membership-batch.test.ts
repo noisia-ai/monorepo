@@ -9,6 +9,7 @@ import type {
   MembershipRunV1,
   ConceptMembershipStoreV1,
 } from "@noisia/db";
+import { labelingCreateFailureReceiptV1 } from "@noisia/db";
 import {
   entityContextDigestV1,
   membershipLabelerIdentityV1,
@@ -129,7 +130,8 @@ function harness() {
         x.provider_batch_id = b;
       });
     },
-    async markFailed(_r, c, u) {
+    async markFailed(_r, c, u, error) {
+      if(error)events.push(labelingCreateFailureReceiptV1(error)!);
       c.forEach((x) => (x.status = u ? "unknown" : "failed"));
     },
     async recoverUnknownBatch(_r, c, id) {
@@ -556,4 +558,18 @@ test('new H1 stops transport splits after three calls per root without changing 
  for(const root of h.inputs)assert.equal(h.calls().filter(c=>c.inputs.some(i=>i.root_id===root.root_id)).length,3);
  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
  assert.equal(h.submitted(),3,'replay does not create a fourth batch');
+});
+
+test("membership creation persists a safe billing rejection and never resends it", async () => {
+  const h = harness(); let sends = 0;
+  h.provider.create = async () => { sends++; throw Object.assign(
+    new AnthropicBatchTransportError("batch_http_400", "not_submitted", 400,"credit_balance_insufficient"),
+    { raw_body: "sk-secret private provider text" }); };
+  await assert.rejects(runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider}));
+  assert.equal(JSON.parse(h.events[0]!).code,"batch_http_400");
+  assert.equal(JSON.parse(h.events[0]!).provider_reason,"credit_balance_insufficient");
+  assert.doesNotMatch(h.events[0]!,/sk-secret|private/);
+  assert.ok(h.calls().every(call=>call.status==="failed" && call.provider_batch_id===null));
+  await runConceptMembershipTickV1({run_id:h.run.id,store:h.store,provider:h.provider});
+  assert.equal(sends,1);
 });

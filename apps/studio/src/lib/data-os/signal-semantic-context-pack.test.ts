@@ -207,7 +207,7 @@ test("management routes keep authority fields and provider proposal writes off t
   assert.match(revalidate,/REVALIDATE_PAID_SEMANTIC_CONTEXT_RESPONSE|parseSignalSemanticContextProposalRevalidationRequestV1/u);
 });
 
-test("Brand OS mounts the canonical semantic context review after Knowledge and keeps authority server-side",async()=>{
+test("Brand OS canonical semantic context manager keeps authority server-side",async()=>{
   const [page,manager,workbench,service,dbWriter,reconcileRoute,esMx,enUs]=await Promise.all([
     readFile(resolve(process.cwd(),"src/app/studio/brands/[id]/brand-os/page.tsx"),"utf8"),
     readFile(resolve(process.cwd(),"src/components/brands/SemanticContextPackManager.tsx"),"utf8"),
@@ -218,7 +218,12 @@ test("Brand OS mounts the canonical semantic context review after Knowledge and 
     readFile(resolve(process.cwd(),"messages/es-MX.json"),"utf8"),
     readFile(resolve(process.cwd(),"messages/en-US.json"),"utf8")
   ]);
-  assert.ok(page.indexOf("<SemanticContextPackManager")>page.indexOf("<KnowledgeBaseManager"));
+  // Rendering and exact non-MFP manager parity are exercised in
+  // brand-os-context-preparation-ui.test.tsx for both ES/EN branches.
+  assert.ok(page.indexOf("<BrandOsContextPreparation")>page.indexOf("<KnowledgeBaseManager"));
+  assert.match(page,/signalWorkspaceFeatureEnabledV1\([\s\S]*feature: "mfp_discovery"/u);
+  assert.ok(page.indexOf("signalWorkspaceFeatureEnabledV1({")>page.indexOf("if (!brand || !workspace)"),
+    "feature selection must follow authorized brand/workspace resolution");
   assert.doesNotMatch(page,/ClientBrandContextProcessingQuote/u);
   assert.match(manager,/WorkspaceDrawer/u);
   assert.match(manager,/WorkspaceConfirmDialog/u);
