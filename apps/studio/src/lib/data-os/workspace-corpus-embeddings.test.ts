@@ -42,6 +42,11 @@ test("embedding runtime defaults disabled and refuses malformed, negative and un
     assert.throws(() => workspaceEmbeddingRuntimeSettingsV1({ NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: raw }), WorkspaceCorpusEmbeddingsError);
   }
 });
+
+test('classic corpus quote has no inherited five-dollar maximum and preserves explicit runtime maxima',()=>{
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1({}).max_run_cost_micro_usd,null);
+  assert.equal(workspaceEmbeddingRuntimeSettingsV1({NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD:'6000000'}).max_run_cost_micro_usd,6_000_000);
+});
 test("paid request contains only a preparation identity, quote seal and integer budget", () => {
   assert.equal(validateWorkspaceCorpusEmbeddingRequestV1(body), true);
   for (const invalid of [null, [], {}, { ...body, hard_cap_micro_usd: "1000000" }, { ...body, hard_cap_micro_usd: NaN },
