@@ -95,6 +95,9 @@ test('classic optional cap composes the real prototype Worker with exact Voyage 
    ]})};
   }}});
   assert.equal(result.status,'completed');assert.equal(calls,1);
+  // Worker COMMIT releases a savepoint here, so restore the next transaction's
+  // default deferred mode before creating the cyclic prototype/admission bundle.
+  await pool.query('SET CONSTRAINTS ALL DEFERRED');
   const parent=(await pool.query('SELECT id::text FROM signal_brand_context_processing_receipts WHERE semantic_run_id=$1',[started.run_id])).rows[0].id;
   const prototype=await prepareSignalBrandContextPrototypeQuoteV1({database:pool,parent_receipt_id:parent,actor_user_id:fixture.clientActorId});
   assert.equal(prototype.maximum_micro_usd,null);assert.equal(prototype.available_today_micro_usd,null);
@@ -131,13 +134,13 @@ test('existing MFP provisioner cannot replace a policy with a live composed sema
   const invoke=()=>provisionSignalBrandContextPolicyV1({database:pool,workspace_id:f.workspaceId,brand_id:f.brandId,initiator_user_id:f.clientActorId,
    env:{NOISIA_MENTION_FACETS_ENABLED:'true',NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:f.internalActorId}});
   for(const status of ['queued','processing','validating']){
-   await pool.query('SAVEPOINT semantic_owner');
+   await client.query('SAVEPOINT semantic_owner');
    try{
     if(status!=='queued')await pool.query(`UPDATE signal_semantic_context_proposal_runs SET status=$2,
      started_at=clock_timestamp(),provider_call_state='in_flight',provider_call_count=1 WHERE id=$1`,[started.run_id,status]);
     assert.equal((await invoke()).status,'configuration_required',`${status} owner retains its exact admitted policy`);
     assert.deepEqual((await pool.query('SELECT to_jsonb(p) policy,(SELECT jsonb_agg(to_jsonb(a) ORDER BY action) FROM signal_processing_policy_actions a WHERE policy_version_id=p.id) actions FROM signal_processing_policy_versions p WHERE organization_id=$1 ORDER BY version',[f.organizationId])).rows,before);
-   }finally{await pool.query('ROLLBACK TO SAVEPOINT semantic_owner');await pool.query('RELEASE SAVEPOINT semantic_owner');}
+   }finally{await client.query('ROLLBACK TO SAVEPOINT semantic_owner');await client.query('RELEASE SAVEPOINT semantic_owner');}
   }
  }});}finally{client.release();await physical.end();}
 });
