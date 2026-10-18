@@ -68,7 +68,9 @@ export async function replayStoredFacetResultsV1(args: {
       FROM signal_labeling_runs r JOIN signal_labeler_versions v ON v.id=r.labeler_version_id
       JOIN signal_entity_context_versions ce ON ce.workspace_id=r.workspace_id AND ce.version_no=r.entity_context_version_no
       WHERE r.id=$1 AND r.workspace_id=$2 AND r.kind='facets' AND r.status IN('completed','failed')
-        AND (r.lease_until IS NULL OR r.lease_until<now()) FOR UPDATE OF r`,[args.run_id,args.workspace_id])).rows[0];
+        AND (r.lease_until IS NULL OR r.lease_until<now())
+        AND NOT EXISTS(SELECT 1 FROM signal_labeling_runs active WHERE active.workspace_id=r.workspace_id
+          AND active.kind='facets' AND active.status IN('queued','running')) FOR UPDATE OF r`,[args.run_id,args.workspace_id])).rows[0];
     if(!run)throw new Error("facet_replay_run_invalid");
     const context=await inspectFacetContextChangeV1(c,args.workspace_id);
     if(context.digest!==run.entity_context_digest)throw new Error("facet_replay_context_changed");

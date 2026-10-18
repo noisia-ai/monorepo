@@ -19,7 +19,7 @@ test('stored facet writer repairs nine from paid raw, is idempotent and rolls ba
   await c.query('UPDATE signal_entity_context_versions SET context=$2,digest=$3 WHERE workspace_id=$1',[f.workspaceId,JSON.stringify(context),digest]);
   await c.query('UPDATE signal_labeler_versions SET identity=$2 WHERE id=$1',[f.labelerId,JSON.stringify(facetLabelerIdentityLegacyV1())]);
   await c.query("INSERT INTO signal_workspace_labelers(workspace_id,kind,labeler_version_id) VALUES($1,'facets',$2) ON CONFLICT(workspace_id,kind) DO UPDATE SET labeler_version_id=excluded.labeler_version_id",[f.workspaceId,f.labelerId]);
-  await c.query("INSERT INTO signal_workspace_features(workspace_id,feature) VALUES($1,'mention_facets') ON CONFLICT DO NOTHING",[f.workspaceId]);
+  await c.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mention_facets',$2) ON CONFLICT DO NOTHING",[f.workspaceId,f.actorId]);
   const schema=`facet_replay_${randomUUID().replaceAll('-','')}`;
   await c.query(`CREATE SCHEMA ${schema}; SET LOCAL search_path=${schema},public,extensions;
    CREATE TABLE signal_labeling_runs (LIKE public.signal_labeling_runs INCLUDING ALL);
@@ -38,7 +38,7 @@ test('stored facet writer repairs nine from paid raw, is idempotent and rolls ba
    FROM jsonb_to_recordset($1) r(root_id uuid,input_digest text,status text,labeler_digest text)`,[JSON.stringify(population)]);
   const validCall=randomUUID();
   await c.query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,status,reserved_micro_usd,settled_micro_usd,budget_date,budget_timezone,raw_sha256,raw_storage_key,raw_size_bytes)
-   VALUES($1,$2,$3,'anthropic','claude-sonnet-5-5','batch',$1,$4,'{}','[]','settled',0,7,current_date,'UTC',$4,'private',0)`,[validCall,f.runId,f.workspaceId,ld]);
+   VALUES($1,$2,$3,'anthropic','claude-sonnet-5-5','batch',$1::text,$4,'{}','[]','settled',0,7,current_date,'UTC',$4,'private',0)`,[validCall,f.runId,f.workspaceId,ld]);
   await c.query(`INSERT INTO signal_mention_facet_labels(workspace_id,root_id,input_digest,labeler_digest,entity_context_digest,facet_schema_version,status,facets,relevance,effective_entities_digest,call_id)
    SELECT $1,root_id,input_digest,$2,$3,'mention-facets-v1','labeled','{}','unknown',$2,$4 FROM population WHERE status='labeled'`,[f.workspaceId,ld,digest,validCall]);
   for(const row of population.slice(791,800)){
@@ -61,6 +61,11 @@ test('stored facet writer repairs nine from paid raw, is idempotent and rolls ba
   const money=async()=>JSON.stringify((await c.query('SELECT id,status,settled_micro_usd,reserved_micro_usd,usage,raw_sha256,raw_storage_key FROM signal_labeling_calls ORDER BY id')).rows);
   const valid=async()=>JSON.stringify((await c.query("SELECT to_jsonb(label) row FROM signal_mention_facet_labels label WHERE root_id=ANY($1::uuid[]) ORDER BY root_id",[ids.slice(0,791)])).rows);
   const beforeMoney=await money(),beforeValid=await valid();
+  await c.query('SAVEPOINT active_run');
+  await c.query(`INSERT INTO signal_labeling_runs SELECT (jsonb_populate_record(NULL::signal_labeling_runs,
+   to_jsonb(r)||jsonb_build_object('id',gen_random_uuid(),'idempotency_key','concurrent-recovery','status','queued'))).* FROM signal_labeling_runs r`);
+  await assert.rejects(replayStoredFacetResultsV1(args),/facet_replay_run_invalid/);
+  await c.query('ROLLBACK TO SAVEPOINT active_run');
   // A changed source prevents any page from applying.
   await c.query("UPDATE population SET input_digest='changed' WHERE root_id=$1",[ids[795]]);
   await assert.rejects(replayStoredFacetResultsV1(args),/facet_replay_source_changed/);
