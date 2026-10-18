@@ -46,7 +46,7 @@ const CASE_DOSSIERS: Record<string, CaseDossier> = {
     client: "Marca de bebidas funcionales entrando a México",
     setup:
       "El equipo tenía tres rutas creativas y un brief global. Lo que faltaba era saber cuál podía sonar local sin volverse cliché.",
-    tools: ["Meta Ads", "TikTok", "Brandwatch", "Google Trends", "Notion"],
+    tools: ["Meta Ads", "TikTok", "Escucha social", "Google Trends", "Notion"],
     sources: ["comentarios de TikTok", "reseñas de retail", "foros de wellness", "videos de consumo"],
     thesis: "La historia con permiso no era la más aspiracional. Era la que nombraba una frustración cotidiana con lenguaje mexicano.",
     editorial:
@@ -150,7 +150,7 @@ const CASE_DOSSIERS: Record<string, CaseDossier> = {
   reposicionamiento: {
     client: "Marca legacy de cuidado personal",
     setup: "La marca quería rejuvenecer. La conversación sugería que el problema no era edad, sino distancia emocional.",
-    tools: ["Talkwalker", "YouTube", "Qualtrics", "Brand tracker", "Miro"],
+    tools: ["Escucha social", "YouTube", "Qualtrics", "Brand tracker", "Miro"],
     sources: ["reviews", "comentarios de campaña", "foros de cuidado", "comparativas de competidores"],
     thesis: "No necesitaba sonar joven. Necesitaba ocupar cuidado confiable sin perder eficiencia.",
     editorial:
@@ -254,7 +254,7 @@ const CASE_DOSSIERS: Record<string, CaseDossier> = {
   "decodificacion-de-crisis": {
     client: "Plataforma de servicios enfrentando conversación crítica",
     setup: "El volumen subía, pero el riesgo real era una frase sencilla que volvía repetible la acusación.",
-    tools: ["X", "TikTok", "Meltwater", "Comms tracker", "Slack"],
+    tools: ["X", "TikTok", "Monitoreo de medios", "Comms tracker", "Slack"],
     sources: ["posts virales", "respuestas de usuarios", "medios digitales", "comunidades afectadas"],
     thesis: "La crisis crecía porque una acusación sencilla se volvió fácil de repetir.",
     editorial:
