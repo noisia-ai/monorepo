@@ -36,7 +36,7 @@ export function buildMembershipRequestV2(inputs:MembershipInputV1[],context:Enti
   return request;
 }
 /** Only a bounded display-metadata overflow is normalized; all semantic fields remain byte-identical. */
-export function normalizeMembershipRationaleV2(text:string){
+function normalizeMembershipRationale(text:string,maximumInputWords:33|60){
   const normalizations:Array<{root_ordinal:number;concept_key:string;before_words:number;after_words:number;before_digest:string;after_digest:string}>=[];
   let value:any;
   try{value=JSON.parse(text);}catch{return {text,normalizations};}
@@ -47,20 +47,23 @@ export function normalizeMembershipRationaleV2(text:string){
     for(const member of root.memberships){
       if(!member||typeof member!=='object'||typeof member.rationale!=='string')continue;
       const words=member.rationale.trim().split(/\s+/u);
-      if(words.length<31||words.length>33)continue;
+      if(words.length<31||words.length>maximumInputWords)continue;
       const before=member.rationale;member.rationale=words.slice(0,30).join(' ')+'…';
       normalizations.push({root_ordinal:Number(root_ordinal),concept_key:member.concept_key,before_words:words.length,after_words:30,before_digest:digest(before),after_digest:digest(member.rationale)});
     }
   }
   return {text:normalizations.length?JSON.stringify(value):text,normalizations};
 }
+/** Preserve the experimental parser's already-measured overflow allowance. */
+export function normalizeMembershipRationaleV2(text:string){return normalizeMembershipRationale(text,33);}
 export function parseMembershipGroupV2(text:string,inputs:MembershipInputV1[],stopReason='end_turn') {
   return parseMembershipGroupV1(normalizeMembershipRationaleV2(text).text,inputs,stopReason,false,{spans:hybridSentenceSpansV1(inputs),max_citations:3});
 }
 
 /** V1 evidence/identity remains unchanged; reuse only bounded display normalization. */
 export function parseMembershipGroupWithRationaleNormalizationV1(text:string,inputs:MembershipInputV1[],stopReason='end_turn',explicit=false) {
-  const normalized=normalizeMembershipRationaleV2(text);
+  // Presentation only, bounded to twice the requested 30 words; the raw stays immutable.
+  const normalized=normalizeMembershipRationale(text,60);
   const parsed=parseMembershipGroupV1(normalized.text,inputs,stopReason,explicit);
   return {...parsed,results:parsed.results.map(result=>{
     const ordinal=inputs.findIndex(input=>input.root_id===result.root_id);
