@@ -105,3 +105,34 @@ test('classic optional cap composes the real prototype Worker with exact Voyage 
   assert.ok(simulator.calls.length>0);
  }});}finally{client.release();await physical.end();}
 });
+
+test('existing MFP provisioner cannot replace a policy with a live composed semantic owner',{
+ skip:process.env.NOISIA_MFP_PG_CI!=='true',timeout:120_000,
+},async()=>{
+ const {provisionSignalBrandContextPolicyV1}=await import('../signal-brand-context-policy-provisioning');
+ const physical=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==='true'});
+ const client=await physical.connect();let baseline:unknown;
+ try{await withBrandContextSyntheticRollbackV1({client,verify:async(c,phase)=>{
+  const census=(await c.query('SELECT (SELECT count(*) FROM organizations) orgs,(SELECT count(*) FROM signal_processing_policy_versions) policies,(SELECT count(*) FROM signal_processing_policy_actions) actions')).rows[0];
+  if(phase==='before')baseline=census;else assert.deepEqual(census,baseline);
+ },run:async({database:pool})=>{
+  const f=await seedComposedFixture(pool,'mfp-keep-semantic-owner',{optionalStrictCaps:true});
+  const quote=await quoteComposedFixture(pool,f);
+  const started=await startComposedFixture(pool,f,quote.quote_digest!,'keep-semantic-owner',{...semanticConfiguration,platform_hard_cap_micro_usd:null});
+  await pool.query(`UPDATE signal_workspaces SET metadata=metadata||jsonb_build_object('created_by_user_id',$2::text,
+   'creation_request_digest','sha256:'||repeat('a',64)) WHERE id=$1`,[f.workspaceId,f.clientActorId]);
+  await pool.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mention_facets',$2)",[f.workspaceId,f.internalActorId]);
+  const before=(await pool.query('SELECT to_jsonb(p) policy,(SELECT jsonb_agg(to_jsonb(a) ORDER BY action) FROM signal_processing_policy_actions a WHERE policy_version_id=p.id) actions FROM signal_processing_policy_versions p WHERE organization_id=$1 ORDER BY version',[f.organizationId])).rows;
+  const invoke=()=>provisionSignalBrandContextPolicyV1({database:pool,workspace_id:f.workspaceId,brand_id:f.brandId,initiator_user_id:f.clientActorId,
+   env:{NOISIA_MENTION_FACETS_ENABLED:'true',NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID:f.internalActorId}});
+  for(const status of ['queued','processing','validating']){
+   await pool.query('SAVEPOINT semantic_owner');
+   try{
+    if(status!=='queued')await pool.query(`UPDATE signal_semantic_context_proposal_runs SET status=$2,
+     started_at=clock_timestamp(),provider_call_state='in_flight',provider_call_count=1 WHERE id=$1`,[started.run_id,status]);
+    assert.equal((await invoke()).status,'configuration_required',`${status} owner retains its exact admitted policy`);
+    assert.deepEqual((await pool.query('SELECT to_jsonb(p) policy,(SELECT jsonb_agg(to_jsonb(a) ORDER BY action) FROM signal_processing_policy_actions a WHERE policy_version_id=p.id) actions FROM signal_processing_policy_versions p WHERE organization_id=$1 ORDER BY version',[f.organizationId])).rows,before);
+   }finally{await pool.query('ROLLBACK TO SAVEPOINT semantic_owner');await pool.query('RELEASE SAVEPOINT semantic_owner');}
+  }
+ }});}finally{client.release();await physical.end();}
+});
