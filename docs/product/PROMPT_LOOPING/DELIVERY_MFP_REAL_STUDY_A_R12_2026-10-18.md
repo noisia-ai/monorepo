@@ -12,6 +12,6 @@
 
 La cotización gratuita de vectores se repitió por UI con idéntica población y máximo estimado USD 33.232724; no creó ejecución. Es un límite estimado conservador, no consumo ni saldo. La preparación no se repitió: su botón desaparece al terminar.
 
-**Bloqueos concretos.** La ruta clásica aplica un máximo histórico de USD 5 por defecto de código, sin configuración explícita del operador; se diagnosticó y su reparación corre aparte. Faltan lecturas actuales de saldo Voyage y Anthropic. No se ejecutará una etapa pagada hasta resolverlo. Las proyecciones del corte y corpus completo son escenarios con tarifas heredadas del estimador, no facturas actuales ni cotizaciones de UI.
+**Bloqueos concretos.** La build fijada durante este corte aplicaba un máximo histórico de USD 5 por defecto de código, sin configuración explícita del operador. #69 lo corrigió en código y PostgreSQL; falta comprobar la build integrada por UI. Faltan lecturas actuales de saldo Voyage y Anthropic. No se ejecutará una etapa pagada hasta resolverlo. Las proyecciones del corte y corpus completo son escenarios con tarifas heredadas del estimador, no facturas actuales ni cotizaciones de UI.
 
 Los nombres, rutas, textos, citas e identificadores originales quedan únicamente en el anexo privado. El siguiente corte será vectores → descubrimiento → consolidación editorial y la comparación pendiente, sin cambiar la ruta por defecto.
