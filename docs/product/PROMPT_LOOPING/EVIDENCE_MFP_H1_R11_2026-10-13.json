@@ -1,0 +1,152 @@
+{
+  "at": "2026-10-13T06:36:11.782Z",
+  "provider_calls": 0,
+  "database_writes": 0,
+  "published_changes": 0,
+  "ledger_unchanged": true,
+  "input_sha256": {
+    "h1": "sha256:3a3e518ae83a4ecdff1069c32ffef32e0eaaec9d20834d68075971ceddf59b1b",
+    "standard": "sha256:ea31a54e63b821b7d8ccd847d46d2f104ed93c87360aac53b57bf964036e8321",
+    "gold": "sha256:c9ea2ebc9075620db6ec80929595463be329adedba076b843bee6d61d070b5e0"
+  },
+  "root_count": 1086,
+  "reparsed_calls": 116,
+  "complete_window_pairs": 31,
+  "changes_by_category": {
+    "error->pending": 12
+  },
+  "before": {
+    "belongs": 181,
+    "not_belongs": 2427,
+    "review_required": 137,
+    "error": 12,
+    "pending": 0,
+    "refused": 0,
+    "insufficient": 0
+  },
+  "rescored": {
+    "belongs": 181,
+    "not_belongs": 2427,
+    "review_required": 137,
+    "error": 0,
+    "pending": 12,
+    "refused": 0,
+    "insufficient": 0
+  },
+  "review_per_1000": 126.15101289134438,
+  "gold": {
+    "dev": {
+      "standard": {
+        "positive_pairs": 33,
+        "published_positive": 27,
+        "false_positive": 2,
+        "recall_common_denominator": 0.8181818181818182,
+        "positive_in_review": 0,
+        "positive_pending": 2,
+        "recall_excluding_review": 0.8181818181818182
+      },
+      "h1_before": {
+        "positive_pairs": 33,
+        "published_positive": 22,
+        "false_positive": 0,
+        "recall_common_denominator": 0.6666666666666666,
+        "positive_in_review": 7,
+        "positive_pending": 2,
+        "recall_excluding_review": 0.8461538461538461
+      },
+      "h1_rescored": {
+        "positive_pairs": 33,
+        "published_positive": 22,
+        "false_positive": 0,
+        "recall_common_denominator": 0.6666666666666666,
+        "positive_in_review": 7,
+        "positive_pending": 2,
+        "recall_excluding_review": 0.8461538461538461
+      }
+    },
+    "test": {
+      "standard": {
+        "positive_pairs": 31,
+        "published_positive": 28,
+        "false_positive": 4,
+        "recall_common_denominator": 0.9032258064516129,
+        "positive_in_review": 0,
+        "positive_pending": 0,
+        "recall_excluding_review": 0.9032258064516129
+      },
+      "h1_before": {
+        "positive_pairs": 31,
+        "published_positive": 21,
+        "false_positive": 0,
+        "recall_common_denominator": 0.6774193548387096,
+        "positive_in_review": 4,
+        "positive_pending": 0,
+        "recall_excluding_review": 0.7777777777777778
+      },
+      "h1_rescored": {
+        "positive_pairs": 31,
+        "published_positive": 21,
+        "false_positive": 0,
+        "recall_common_denominator": 0.6774193548387096,
+        "positive_in_review": 4,
+        "positive_pending": 5,
+        "recall_excluding_review": 0.7777777777777778
+      }
+    }
+  },
+  "limitation": "Offline re-score only; missing verification stays pending. No new blind quality sample or publication.",
+  "window_call_stages": {
+    "claude": 95,
+    "citation": 21
+  },
+  "changed_gold_categories": {
+    "test_belongs": 5,
+    "outside_gold": 7
+  },
+  "implementation": {
+    "configured_model": "gpt-6.1-sol",
+    "configured_effort": "high",
+    "role": "mfp_critico",
+    "independent_backend_attestation": false
+  },
+  "focal_review": {
+    "configured_model": "gpt-6-astra",
+    "configured_effort": "medium",
+    "id": "01a133f4-b73c-7e40-a036-d54534cf5c97",
+    "scope": "Three P1 and window recovery after repeated failing acceptance suite; SQL42725 and mixed-window gate investigated.",
+    "kind": "read_only_static_review",
+    "findings": 2,
+    "findings_resolved": [
+      "outer SQL correlation",
+      "per-concept repair window grouping"
+    ],
+    "input_tokens": 307199,
+    "cached_input_tokens": 251776,
+    "output_tokens": 1440,
+    "reasoning_output_tokens": 201,
+    "cost_usd": null,
+    "independent_backend_attestation": false
+  },
+  "focal_fixture_review": {
+    "configured_model": "gpt-6-astra",
+    "configured_effort": "medium",
+    "id": "01a13402-357f-7863-806f-cf14d8e0a89c",
+    "scope": "Late-offset mixed-window acceptance after PG189 TypeError and PG192 late-offset assertion failure; dispatch hash order was not text order.",
+    "kind": "read_only_consultation",
+    "result": "Error injection fixed to first source sentence; late offsets and exactly one technical error remain required.",
+    "input_tokens": 20123,
+    "cached_input_tokens": 13184,
+    "output_tokens": 148,
+    "reasoning_output_tokens": 0,
+    "cost_usd": null,
+    "independent_backend_attestation": false
+  },
+  "failed_postgres_runs": [
+    181,
+    182,
+    184,
+    189,
+    192,
+    193
+  ]
+}

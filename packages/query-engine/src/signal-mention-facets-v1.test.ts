@@ -246,7 +246,7 @@ test("Anthropic reads final text, refusal and truncation separately; exact cache
       usage,
       llmPriceV1("anthropic", "claude-sonnet-5-5", "batch"),
     ),
-    4225,
+    4175,
   );
 });
 

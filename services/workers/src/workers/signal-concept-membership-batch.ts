@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import type { Job } from "bullmq";
 import {
-  groupMembershipInputsV1,
+  groupMembershipInputsV1, buildMembershipRequestV2, parseMembershipGroupV2,
+  hybridCitationWindowsV1,
   buildMembershipRequestV1, buildHybridCitationRequestV1, parseHybridCitationGroupV1,
   parseMembershipGroupV1,
   parseAnthropicResponseV1,
@@ -54,7 +55,7 @@ export function membershipCallProposalV1(
   retryDepth = 0,
   parent: string | null = null,
 ): LabelingCallProposalV1<MembershipInputV1> {
-  const request = (run.identity.params.hybrid_citation_quality === true ? buildHybridCitationRequestV1 : buildMembershipRequestV1)(
+  const request = (run.identity.params.standard_judge_version === 2 ? buildMembershipRequestV2 : run.identity.params.hybrid_citation_quality === true ? buildHybridCitationRequestV1 : buildMembershipRequestV1)(
       inputs,
       run.context,
       (run as MembershipRunV1).membership_snapshot.concepts,
@@ -130,8 +131,14 @@ export async function runConceptMembershipTickV1(args: {
       for (let page = 0; page < readMfpInFlightPages(); page++) {
         const inputs = await store.inputs(run);
         if (!inputs.length) break;
-        await store.reserve(run, groupMembershipInputsV1(inputs).map((group) =>
-          membershipCallProposalV1(run, group)));
+        const windowed=run.identity.params.hybrid_citation_quality===true
+          ? inputs.filter(input=>!('citation_window' in input)&&input.text.length>Number(run.identity.params.long_root_characters??12000)) : [];
+        const retainedWindows=run.identity.params.hybrid_citation_quality===true?inputs.filter(input=>'citation_window' in input):[];
+        const ordinary=inputs.filter(input=>!windowed.includes(input)&&!retainedWindows.some(window=>window===input));
+        await store.reserve(run, [...groupMembershipInputsV1(ordinary).map(group=>membershipCallProposalV1(run,group)),
+          ...retainedWindows.map(input=>membershipCallProposalV1(run,[input])),
+          ...windowed.flatMap(input=>hybridCitationWindowsV1(input,Number(run.identity.params.window_characters??6000))
+            .map(window=>membershipCallProposalV1(run,[window])))]);
       }
       calls = await store.calls(run);
     }
@@ -292,7 +299,9 @@ export async function runConceptMembershipTickV1(args: {
       const group =
         parsed.status === "split"
           ? { split: true, results: [] }
-          : run.identity.params.hybrid_citation_quality === true
+          : run.identity.params.standard_judge_version === 2
+            ? parseMembershipGroupV2(parsed.text!,call.inputs)
+            : run.identity.params.hybrid_citation_quality === true
             ? parseHybridCitationGroupV1(parsed.text!,call.inputs)
             : parseMembershipGroupV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
       if (group.split) {

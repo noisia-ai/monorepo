@@ -912,8 +912,14 @@ export function createSignalLabelingStoreV1<
       },
     ) {
       const changed = await db.query(
-        `UPDATE signal_labeling_calls SET status='settled',usage=$3::jsonb,settled_micro_usd=$4,stop_reason=$5,refusal_category=$6,updated_at=now()
-   WHERE run_id=$1 AND id=$2 AND raw_sha256 IS NOT NULL AND (status<>'settled' OR settled_micro_usd=$4 AND usage=$3::jsonb) RETURNING id`,
+        // Once booked, the stored amount is the historical tariff receipt.
+        // Replay validates identical usage and leaves that receipt byte-for-byte intact.
+        `UPDATE signal_labeling_calls SET status='settled',usage=$3::jsonb,
+          settled_micro_usd=CASE WHEN status='settled' THEN settled_micro_usd ELSE $4 END,
+          stop_reason=CASE WHEN status='settled' THEN stop_reason ELSE $5 END,
+          refusal_category=CASE WHEN status='settled' THEN refusal_category ELSE $6 END,
+          updated_at=CASE WHEN status='settled' THEN updated_at ELSE now() END
+   WHERE run_id=$1 AND id=$2 AND raw_sha256 IS NOT NULL AND (status<>'settled' OR usage=$3::jsonb) RETURNING id`,
         [
           run.id,
           call.id,
@@ -960,9 +966,13 @@ export function createSignalLabelingStoreV1<
       }>,
     ) {
       const changed = await db.query(
-        `UPDATE signal_labeling_calls c SET status='settled',usage=x.usage,settled_micro_usd=x.cost,stop_reason=x.stop_reason,refusal_category=x.refusal_category,updated_at=now()
+        `UPDATE signal_labeling_calls c SET status='settled',usage=x.usage,
+          settled_micro_usd=CASE WHEN c.status='settled' THEN c.settled_micro_usd ELSE x.cost END,
+          stop_reason=CASE WHEN c.status='settled' THEN c.stop_reason ELSE x.stop_reason END,
+          refusal_category=CASE WHEN c.status='settled' THEN c.refusal_category ELSE x.refusal_category END,
+          updated_at=CASE WHEN c.status='settled' THEN c.updated_at ELSE now() END
    FROM jsonb_to_recordset($2::jsonb) x(id uuid,usage jsonb,cost bigint,stop_reason text,refusal_category text)
-   WHERE c.run_id=$1 AND c.id=x.id AND c.raw_sha256 IS NOT NULL AND (c.status<>'settled' OR c.settled_micro_usd=x.cost AND c.usage=x.usage) RETURNING c.id`,
+   WHERE c.run_id=$1 AND c.id=x.id AND c.raw_sha256 IS NOT NULL AND (c.status<>'settled' OR c.usage=x.usage) RETURNING c.id`,
         [
           run.id,
           JSON.stringify(
@@ -1014,6 +1024,12 @@ export function createSignalLabelingStoreV1<
     async finish(run: LabelingRunV1) {
       return tx(db, async (c) => {
         await lock(c, run);
+        if(options.adapter?.hybrid_stage!==undefined)await c.query(`UPDATE signal_labeling_calls call
+          SET status='unknown',stop_reason='provider_usage_invalid',updated_at=now()
+          WHERE call.run_id=$1 AND call.status IN('submitted','unknown') AND call.results_applied
+          AND call.settled_micro_usd IS NULL AND call.raw_storage_key IS NOT NULL
+          AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
+            WHERE result->>'error_code' IN('provider_usage_invalid','provider_result_missing'))`,[run.id]);
         await c.query(`UPDATE signal_labeling_calls call SET status='failed',
           settled_micro_usd=CASE WHEN $2::boolean THEN call.settled_micro_usd
             ELSE COALESCE(call.settled_micro_usd,call.reserved_micro_usd) END,
@@ -1023,6 +1039,7 @@ export function createSignalLabelingStoreV1<
             WHERE result->>'error_code'='provider_usage_invalid') THEN 'provider_usage_invalid'
             ELSE 'provider_result_missing' END,updated_at=now()
           WHERE call.run_id=$1 AND call.status IN ('submitted','unknown') AND call.results_applied
+          AND (NOT $2::boolean OR call.raw_storage_key IS NULL AND call.raw_sha256 IS NULL)
           AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(call.results,'[]'::jsonb)) result
             WHERE result->>'error_code' IN ('provider_usage_invalid','provider_result_missing'))`,[run.id,options.adapter?.hybrid_stage !== undefined]);
         const calls = (
