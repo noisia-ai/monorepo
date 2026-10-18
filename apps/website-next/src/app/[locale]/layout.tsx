@@ -20,7 +20,9 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
     title: { default: t("defaultTitle"), template: `%s · Noisia` },
     description: t("description"),
     icons: { icon: "/favicon.svg" },
-    openGraph: { siteName: "Noisia", locale: locale === "en" ? "en_US" : "es_MX", type: "website" }
+    openGraph: { siteName: "Noisia", locale: locale === "en" ? "en_US" : "es_MX", type: "website" },
+    // Staging must never be indexed.
+    robots: process.env.NOISIA_UAT === "1" ? { index: false, follow: false } : undefined
   };
 }
 
