@@ -4,12 +4,14 @@ import {createHash,randomUUID} from 'node:crypto';
 import {Pool} from 'pg';
 import {prepareWorkspaceCorpusTextChunksV1,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as profile} from '@noisia/query-engine';
 import {createProcessingPolicyIdentitiesV1} from './signal-processing-policy.fixture';
+import {requestSignalWorkspaceEmbeddingsStoreV1} from '../signal-workspace-embeddings-management';
 import {withBrandContextSyntheticRollbackV1} from './signal-brand-context.rollback.fixture';
-import {quoteWorkspaceCorpusEmbeddingsForActorV1,requestWorkspaceCorpusEmbeddingsForActorV1} from '../../../apps/studio/src/lib/data-os/workspace-corpus-embeddings';
+
 
 test('classic corpus admits PostgreSQL quote above USD5 with no feature and respects explicit maxima',{
  skip:process.env.NOISIA_MFP_PG_CI!=='true',timeout:120_000,
 },async()=>{
+ const {quoteWorkspaceCorpusEmbeddingsForActorV1,requestWorkspaceCorpusEmbeddingsForActorV1}=await import(new URL('../../../apps/studio/src/lib/data-os/workspace-corpus-embeddings.ts',import.meta.url).href);
  const physical=new Pool({connectionString:process.env.DATABASE_URL,ssl:process.env.DATABASE_SSL==='true'}),client=await physical.connect();
  const keys=['NOISIA_MENTION_FACETS_ENABLED','NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD','NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED','VOYAGE_API_KEY'] as const;
  const prior=Object.fromEntries(keys.map(key=>[key,process.env[key]]));let baseline:unknown;
@@ -41,6 +43,21 @@ test('classic corpus admits PostgreSQL quote above USD5 with no feature and resp
   assert.ok(quote.estimated_upper_micro_usd>5_000_000);
   assert.equal(quote.optional_strict_cap,true);assert.equal(quote.max_run_cost_micro_usd,null);assert.equal(quote.can_execute,true);
   assert.equal((await scoped.query('SELECT count(*)::int n FROM signal_workspace_features WHERE workspace_id=$1',[workspace])).rows[0].n,0);
+  await client.query('SAVEPOINT strict_policy');
+  try{
+    const strictPolicy=randomUUID();
+    await scoped.query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+      VALUES($1,$2,2,'draft',clock_timestamp()-interval '1 minute','infinity','UTC',NULL,$3)`,[strictPolicy,org,actor]);
+    await scoped.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd)
+      SELECT $1,action,kind,provider,model,configuration,configuration_digest,5000000 FROM signal_processing_policy_actions WHERE policy_version_id=$2`,[strictPolicy,policy]);
+    await scoped.query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[policy]);
+    await scoped.query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[strictPolicy]);
+    const bounded=await quoteWorkspaceCorpusEmbeddingsForActorV1(args);assert.equal(bounded.max_run_cost_micro_usd,5_000_000);
+    await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({...args,idempotencyKey:'classic-policy-null',body:{preparation_run_id:prep,quote_digest:bounded.quote_digest,hard_cap_micro_usd:null}}),/budget_exceeds_limit/u);
+    await assert.rejects(requestSignalWorkspaceEmbeddingsStoreV1({database,workspace_id:workspace,actor_user_id:actor,profile,
+      preparation_run_id:prep,quote_digest:bounded.quote_digest,idempotency_key:'classic-policy-over',hard_cap_micro_usd:bounded.estimated_upper_micro_usd,provider_available:true}),/budget_exceeds_limit/u);
+    assert.equal((await scoped.query('SELECT count(*)::int n FROM signal_workspace_embedding_runs WHERE workspace_id=$1',[workspace])).rows[0].n,0);
+  }finally{await client.query('ROLLBACK TO SAVEPOINT strict_policy');await client.query('RELEASE SAVEPOINT strict_policy');}
   await requestWorkspaceCorpusEmbeddingsForActorV1({...args,idempotencyKey:'classic-over-five',body:{preparation_run_id:prep,quote_digest:quote.quote_digest,hard_cap_micro_usd:null}});
   const run=(await scoped.query('SELECT id::text,hard_cap_micro_usd::text,processing_admission_id::text FROM signal_workspace_embedding_runs WHERE workspace_id=$1',[workspace])).rows[0];
   assert.equal(run.hard_cap_micro_usd,null);assert.ok(run.processing_admission_id);

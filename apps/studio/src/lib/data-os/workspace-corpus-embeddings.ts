@@ -3,7 +3,7 @@ import type { Pool } from "pg";
 import { loadSignalWorkspaceCapabilitiesStoreV1, loadSignalWorkspaceEmbeddingsStoreV1,
   readSignalProcessingPolicyWithQueryableV1, quoteSignalWorkspaceEmbeddingsStoreV1, requestSignalWorkspaceEmbeddingsStoreV1,
   signalWorkspaceFeatureEnabledV1 } from "@noisia/db";
-import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1 } from "@noisia/query-engine";
+import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 } from "@noisia/query-engine";
 export { SignalWorkspaceEmbeddingsError } from "@noisia/db";
 export class WorkspaceCorpusEmbeddingsError extends Error {
   constructor(readonly code: string, readonly status: number) { super(code); this.name = "WorkspaceCorpusEmbeddingsError"; }
@@ -12,9 +12,9 @@ type Database = Pick<Pool, "query" | "connect">;
 type AccessArgs = { database?: Database; workspaceId: string; actorUserId: string };
 export type WorkspaceCorpusEmbeddingRequestV1 = { preparation_run_id: string; quote_digest: string; hard_cap_micro_usd: number | null };
 
-export function workspaceEmbeddingRuntimeSettingsV1(env: Record<string, string | undefined> = process.env, mfp = false) {
+export function workspaceEmbeddingRuntimeSettingsV1(env: Record<string, string | undefined> = process.env) {
   const raw = env.NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD;
-  const cap = raw === undefined ? (mfp ? null : SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1)
+  const cap = raw === undefined ? null
     : /^\d+$/u.test(raw) ? Number(raw) : NaN;
   if (cap !== null && (!Number.isSafeInteger(cap) || cap < 0)) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_budget_configuration_invalid", 503);
   return { provider_available: env.NOISIA_WORKSPACE_EMBEDDINGS_PROVIDER_ENABLED === "true" && Boolean(env.VOYAGE_API_KEY?.trim()),
@@ -27,21 +27,22 @@ async function authorize(args: AccessArgs, execute: boolean) {
   const mfp = await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id:args.workspaceId,feature:"mention_facets"});
   const allowed = mfp ? caps.can_request_processing : caps.can_execute_topics;
   if (!caps.can_view || execute && !allowed) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_forbidden", 403);
-  const runtime = workspaceEmbeddingRuntimeSettingsV1(process.env,mfp);
+  const runtime = workspaceEmbeddingRuntimeSettingsV1(process.env);
   let maximum = runtime.max_run_cost_micro_usd;
   let policyAllows = true;
-  if (mfp) {
+  {
     const policy = await readSignalProcessingPolicyWithQueryableV1({ queryable: database, workspace_id: args.workspaceId,
       actor_user_id: args.actorUserId, action_availability: { corpus_embeddings: runtime.provider_available } });
     const action = policy.actions.find(item => item.action === "corpus_embeddings");
-    policyAllows = Boolean(action && !["missing", "expired", "revoked"].includes(policy.status));
-    if (action?.max_execution_micro_usd !== undefined && action.max_execution_micro_usd !== null) {
+    const current = Boolean(action && !["missing", "expired", "revoked"].includes(policy.status));
+    if (mfp) policyAllows = current;
+    if (current && action?.max_execution_micro_usd !== undefined && action.max_execution_micro_usd !== null) {
       const policyCap = Number(action.max_execution_micro_usd);
       if (!Number.isSafeInteger(policyCap) || policyCap < 0) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_budget_configuration_invalid", 503);
       maximum = maximum === null ? policyCap : Math.min(maximum, policyCap);
     }
   }
-  return { database, flags: { ...runtime, max_run_cost_micro_usd: maximum, optional_strict_cap: mfp, can_execute: allowed && policyAllows,
+  return { database, flags: { ...runtime, max_run_cost_micro_usd: maximum, optional_strict_cap: true, can_execute: allowed && policyAllows,
     request_scope: `sha256:${createHash("sha256").update(JSON.stringify(["workspace-embeddings-v1", args.workspaceId, args.actorUserId])).digest("hex")}` } };
 }
 export async function loadWorkspaceCorpusEmbeddingsForActorV1(args: AccessArgs & { idempotencyKey?: string }) {
