@@ -7,9 +7,6 @@ export async function verifyStandardV3EvaluationV1(a:{database:Pool;client:PoolC
  const {client}=a;
  await client.query('SAVEPOINT standard_v3_acceptance');
  try{
-  await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
-   SELECT policy_version_id,'concept_membership',kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
-   FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='concept_membership_claude'`,[a.policy]);
   const census=async()=>(await client.query(`SELECT
    (SELECT coalesce(jsonb_agg(w ORDER BY kind),'[]') FROM signal_workspace_labelers w WHERE workspace_id=$1) selectors,
    (SELECT count(*)::int FROM signal_labeling_calls WHERE workspace_id=$1) calls,

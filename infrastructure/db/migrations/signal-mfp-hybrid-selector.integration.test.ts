@@ -229,6 +229,7 @@ test("migrated H1 selection, review queue and explicit unknown-exposure rollback
     for (const [action, provider, modelName] of [
       ["concept_membership_jev", "typesafe", "jev-1.13.0"],
       ["concept_membership_claude", "anthropic", "claude-sonnet-5-5"],
+      ["concept_membership", "anthropic", "claude-sonnet-5-5"],
     ]) {
       const config = JSON.stringify({ provider, model: modelName });
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,
