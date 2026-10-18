@@ -40,7 +40,7 @@ test("MFP recovers insert-before-provenance interruption without relabeling new 
   const duplicates=await ingest(createSignalSentioneCsvIngester(client),fixture,other.id,source,{chunkSize:2});
   assert.deepEqual(duplicates.stats,{record_count:2,included_count:0,excluded_count:0,duplicate_count:2},
    "another import must still count existing roots as duplicates");
-  const successorSource=csv([["successor-included",long("successor included")],["successor-excluded","short"],
+  const successorSource=csv([["successor-included",long("successor included")],["successor-excluded","unique tiny successor"],
    ["included-one",long("included one")]]);
   const failed=await processingBatch(client,fixture,successorSource,"synthetic-successor-gap.csv");
   failedOnce=false;
