@@ -259,3 +259,19 @@ test("H1 requires every positive concept explicitly with rationale and same-root
     assert.ok(parse(malformed).results.every(r => r.verdict === "error"));
   }
 });
+
+// The default V1 spans/identity stay stable; only display rationale length is normalized.
+test('bounded rationale recovery preserves all three semantic decisions and literal citations',async()=>{
+  const {parseMembershipGroupWithRationaleNormalizationV1,normalizeMembershipRationaleV2}=await import('./signal-concept-membership-v2');
+  const input={...root(),evaluated_concepts:[concept('one'),concept('two'),concept('three')]};
+  const text=response([{root_ordinal:0,memberships:['one','two'].map((concept_key,i)=>({concept_key,verdict:'belongs',span_ids:['r0c0s0'],rationale:Array(33-i).fill('word').join(' ')}))}]);
+  assert.ok(parseMembershipGroupV1(text,[input]).results.every(r=>r.verdict==='error'));
+  const parsed=parseMembershipGroupWithRationaleNormalizationV1(text,[input]);
+  const expected=parseMembershipGroupV1(normalizeMembershipRationaleV2(text).text,[input]);
+  assert.deepEqual(parsed.results.map(({normalizations,...r})=>r),expected.results);
+  assert.deepEqual(parsed.results.map(r=>r.verdict),['belongs','belongs','not_belongs']);
+  assert.deepEqual(parsed.results.slice(0,2).map(r=>r.normalizations?.[0]?.before_words),[33,32]);
+  for(const alteration of [text.replace('r0c0s0','r1c0s0'),text.replace('belongs','unknown'),text.replace(Array(33).fill('word').join(' '),Array(34).fill('word').join(' '))]){
+    assert.ok(parseMembershipGroupWithRationaleNormalizationV1(alteration,[input]).results.every(r=>r.verdict==='error'));
+  }
+});

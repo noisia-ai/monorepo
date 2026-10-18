@@ -1,6 +1,6 @@
 import type { MentionFacetsV1, HybridJevDecisionV1, HybridClaudeDecisionV1 } from "@noisia/query-engine";
 
-export type MfpRun = { id:string; status:string; estimated_micro_usd:string|number; settled_micro_usd:string|number;
+export type MfpRun = { stored_replay_available?:boolean; id:string; status:string; estimated_micro_usd:string|number; settled_micro_usd:string|number;
   reserved_micro_usd:string|number; budget_micro_usd:string|number|null; cap_micro_usd:string|number|null;
   waiting_full_confirmation?:boolean; error_code:string|null };
 export type MfpFacetStatus = { contract_version:"mention-facets-status-v1"; enabled:boolean; provider_available:boolean;

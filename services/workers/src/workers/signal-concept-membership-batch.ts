@@ -4,7 +4,7 @@ import {
   groupMembershipInputsV1, buildMembershipRequestV2, parseMembershipGroupV2,
   hybridCitationWindowsV1,
   buildMembershipRequestV1, buildHybridCitationRequestV1, parseHybridCitationGroupV1,
-  parseMembershipGroupV1,
+  parseMembershipGroupWithRationaleNormalizationV1,
   parseAnthropicResponseV1,
   anthropicUsageV1,
   llmPriceV1,
@@ -303,7 +303,7 @@ export async function runConceptMembershipTickV1(args: {
             ? parseMembershipGroupV2(parsed.text!,call.inputs)
             : run.identity.params.hybrid_citation_quality === true
             ? parseHybridCitationGroupV1(parsed.text!,call.inputs)
-            : parseMembershipGroupV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
+            : parseMembershipGroupWithRationaleNormalizationV1(parsed.text!, call.inputs, "end_turn", run.identity.params.explicit_verdicts === true);
       if (group.split) {
         if (run.error_code) {
           apply.push({

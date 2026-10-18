@@ -4632,6 +4632,8 @@
       "exceptions": "Review abstentions"
     },
     "membership": {
+      "replayStored": "Recover stored responses · no cost",
+      "replayStoredHelp": "Revalidates already paid responses and recovers decisions with a slightly oversized explanation, preserving citations. Does not call the provider again.",
       "title": "Concept membership",
       "body": "Evaluate the complete definition and keep citations from the original text.",
       "relevant": "Relevant roots",

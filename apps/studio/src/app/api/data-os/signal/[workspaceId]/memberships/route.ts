@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { loadSignalWorkspaceContextForTopics } from "../topics/_lib";
 import {
-  loadMembershipStatusForActorV1,
+  loadMembershipStatusForActorV1, replayMembershipsForActorV1,
   requestMembershipsForActorV1,
   overrideMembershipsForActorV1,
   selectMembershipForActorV1,
@@ -19,6 +19,7 @@ const requestSchema = z
     full_recalculation: z.boolean().optional(),
   })
   .strict();
+const replaySchema=z.object({action:z.literal("replay_stored"),run_id:z.string().uuid(),idempotency_key:z.string().regex(/^[A-Za-z0-9._:-]{8,200}$/u)}).strict();
 const confirmationSchema = z
   .object({
     confirm_run_id: z.string().uuid(),
@@ -117,6 +118,8 @@ export async function POST(request: Request, context: Context) {
   const raw = await request.json().catch(() => null);
   const confirmation = confirmationSchema.safeParse(raw);
   try {
+    const replay=replaySchema.safeParse(raw);
+    if(replay.success)return Response.json(await replayMembershipsForActorV1({workspace_id:loaded.workspace.id,actor_user_id:loaded.session.appUser.id,run_id:replay.data.run_id}),{headers});
     if (confirmation.success)
       return Response.json(
         await confirmMembershipsForActorV1({

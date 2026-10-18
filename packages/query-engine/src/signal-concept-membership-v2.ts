@@ -57,3 +57,14 @@ export function normalizeMembershipRationaleV2(text:string){
 export function parseMembershipGroupV2(text:string,inputs:MembershipInputV1[],stopReason='end_turn') {
   return parseMembershipGroupV1(normalizeMembershipRationaleV2(text).text,inputs,stopReason,false,{spans:hybridSentenceSpansV1(inputs),max_citations:3});
 }
+
+/** V1 evidence/identity remains unchanged; reuse only bounded display normalization. */
+export function parseMembershipGroupWithRationaleNormalizationV1(text:string,inputs:MembershipInputV1[],stopReason='end_turn',explicit=false) {
+  const normalized=normalizeMembershipRationaleV2(text);
+  const parsed=parseMembershipGroupV1(normalized.text,inputs,stopReason,explicit);
+  return {...parsed,results:parsed.results.map(result=>{
+    const ordinal=inputs.findIndex(input=>input.root_id===result.root_id);
+    const trace=normalized.normalizations.filter(n=>n.root_ordinal===ordinal&&n.concept_key===result.concept_key);
+    return result.verdict!=='error'&&trace.length?{...result,normalizations:trace}:result;
+  })};
+}

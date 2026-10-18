@@ -47,6 +47,10 @@ export function MfpMembershipControls({workspaceId,concept,dirty,canEdit,mention
         {resource.data.latest?.waiting_full_confirmation?<button className="admin-button" disabled={mutation.busy||mutation.pending||!resource.data.can_request_processing} type="button"
           onClick={()=>void submit({confirm_run_id:resource.data!.latest!.id,entity_context_digest:resource.data!.entity_context_digest})}>{t("confirmFull")}</button>:null}
       </div>
+      {resource.data.latest?.stored_replay_available?<><button type="button" className="admin-button"
+        disabled={!resource.data.can_request_processing||active||mutation.busy||mutation.pending||Boolean(resource.error)}
+        onClick={()=>void submit({action:"replay_stored",run_id:resource.data!.latest!.id})}>{t("membership.replayStored")}</button>
+        <p className="admin-drawer-form__hint">{t("membership.replayStoredHelp")}</p></>:null}
       <p className="admin-drawer-form__hint">{t("estimateNotice")}</p>
       {dirty?<p role="status">{t("saveBeforeFull")}</p>:null}
       {current?<div className="mfp-signal-selection"><label><input type="checkbox" checked={current.selected}

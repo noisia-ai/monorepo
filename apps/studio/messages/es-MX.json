@@ -4632,6 +4632,8 @@
       "exceptions": "Revisar abstenciones"
     },
     "membership": {
+      "replayStored": "Recuperar respuestas guardadas · sin costo",
+      "replayStoredHelp": "Revalida respuestas ya pagadas y recupera decisiones con una explicación apenas más larga de lo permitido, conservando las citas. No vuelve a llamar al proveedor.",
       "title": "Pertenencia al concepto",
       "body": "Evalúa la definición completa y conserva citas del texto original.",
       "relevant": "Raíces relevantes",

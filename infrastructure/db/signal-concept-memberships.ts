@@ -273,6 +273,16 @@ export async function requestConceptMembershipsV1(args: {
     },
   });
 }
+/** Shared batched writer for normal application and paid-raw recovery. */
+export async function writeConceptMembershipResultsV1(c:Queryable,run:Pick<LabelingRunV1,'workspace_id'|'labeler_digest'|'id'>,rows:Array<MembershipResultV1&{call_id:string}>) {
+  if(!rows.length)return;
+        await c.query(
+          `INSERT INTO signal_concept_memberships(workspace_id,root_id,root_fingerprint,concept_key,definition_digest,labeler_digest,entity_context_digest,effective_entities_digest,run_id,call_id,verdict,citations,rationale)
+   SELECT $1,r.root_id,r.root_fingerprint,r.concept_key,r.definition_digest,$2,r.entity_context_digest,r.effective_entities_digest,$3,r.call_id,r.verdict,r.citations,r.rationale
+   FROM jsonb_to_recordset($4::jsonb) r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text,call_id uuid,verdict text,citations jsonb,rationale text) ON CONFLICT DO NOTHING`,
+          [run.workspace_id, run.labeler_digest, run.id, JSON.stringify(rows)],
+        );
+}
 export function createConceptMembershipStoreV1(
   options: Omit<Parameters<typeof createSignalLabelingStoreV1>[0], "adapter">,
 ) {
@@ -307,12 +317,7 @@ export function createConceptMembershipStoreV1(
             .map((r) => ({ ...r, call_id: p.call.id })),
         );
         if (!rows.length) return;
-        await c.query(
-          `INSERT INTO signal_concept_memberships(workspace_id,root_id,root_fingerprint,concept_key,definition_digest,labeler_digest,entity_context_digest,effective_entities_digest,run_id,call_id,verdict,citations,rationale)
-   SELECT $1,r.root_id,r.root_fingerprint,r.concept_key,r.definition_digest,$2,r.entity_context_digest,r.effective_entities_digest,$3,r.call_id,r.verdict,r.citations,r.rationale
-   FROM jsonb_to_recordset($4::jsonb) r(root_id uuid,root_fingerprint text,concept_key text,definition_digest text,entity_context_digest text,effective_entities_digest text,call_id uuid,verdict text,citations jsonb,rationale text) ON CONFLICT DO NOTHING`,
-          [run.workspace_id, run.labeler_digest, run.id, JSON.stringify(rows)],
-        );
+        await writeConceptMembershipResultsV1(c,run,rows);
       },
     },
   });
@@ -326,6 +331,15 @@ export type MembershipAccessV1 = {
   actor_user_id: string;
 };
 const latestSql = `SELECT r.id,r.status,r.counts,r.estimated_micro_usd::text,r.budget_micro_usd::text,r.cap_micro_usd::text,r.waiting_full_confirmation,r.entity_context_digest,r.error_code,
+ (r.status IN('completed','failed') AND NOT COALESCE((r.membership_snapshot->>'preview')::boolean,false)
+ AND r.membership_snapshot->>'route_digest' IS NULL
+ AND EXISTS(SELECT 1 FROM signal_labeler_versions version WHERE version.id=r.labeler_version_id
+ AND version.identity#>>'{params,standard_judge_version}' IS DISTINCT FROM '2'
+ AND version.identity#>>'{params,hybrid_citation_quality}' IS DISTINCT FROM 'true')
+ AND NOT EXISTS(SELECT 1 FROM signal_labeling_runs active WHERE active.workspace_id=r.workspace_id AND active.kind='membership' AND active.status IN('queued','running'))
+ AND EXISTS(SELECT 1 FROM signal_labeling_calls stored WHERE stored.run_id=r.id AND stored.status='settled'
+ AND stored.results_applied AND stored.raw_storage_key IS NOT NULL AND EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(stored.results,'[]')) result
+ WHERE result->>'verdict'='error' AND result->>'error_code'='membership_item_schema_invalid'))) stored_replay_available,
  COALESCE((SELECT sum(settled_micro_usd) FROM signal_labeling_calls WHERE run_id=r.id AND status='settled'),0)::text settled_micro_usd,
  COALESCE((SELECT sum(reserved_micro_usd) FROM signal_labeling_calls WHERE run_id=r.id AND status IN('reserved','submitting','submitted','unknown')),0)::text reserved_micro_usd
  FROM signal_labeling_runs r WHERE r.workspace_id=$1 AND r.kind='membership'`;

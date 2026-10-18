@@ -117,3 +117,5 @@ export * from "./signal-workspace-incremental-candidates";
 export * from "./signal-hybrid-citation-runs";
 
 export * from "./signal-facet-stored-replay";
+
+export * from "./signal-membership-stored-replay";
