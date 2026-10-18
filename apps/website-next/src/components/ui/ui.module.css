@@ -49,6 +49,8 @@
 }
 
 .button {
+  align-self: flex-start;
+  justify-self: start;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -80,11 +82,6 @@
   color: var(--ink);
 }
 
-.button-text {
-  height: auto;
-  padding: 0;
-  color: var(--teal-text);
-}
 
 .buttonIcon {
   width: 18px;
@@ -102,30 +99,77 @@
 }
 
 .faqQ {
+  width: 100%;
   cursor: pointer;
-  list-style: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
   padding: var(--space-5) 0;
   font-size: var(--text-lg);
   color: var(--ink);
   font-weight: 500;
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: var(--space-4);
 }
 
-.faqQ::-webkit-details-marker {
-  display: none;
+.faqIcon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  color: var(--ink);
+  transition: transform var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
 }
 
-.faqQ::after {
-  content: "+";
-  color: var(--teal-text);
-  font-weight: 400;
-  transition: transform var(--dur-base) var(--ease-out);
+.faqIcon svg {
+  width: 16px;
+  height: 16px;
 }
 
-.faqItem[open] .faqQ::after {
+.faqItem[data-open="true"] .faqIcon {
   transform: rotate(45deg);
+  background: var(--teal-soft);
+}
+
+/* Height animates through the grid-rows trick; the text stays in the DOM for search engines. */
+.faqPanel {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 380ms var(--ease-out);
+}
+
+.faqItem[data-open="true"] .faqPanel {
+  grid-template-rows: 1fr;
+}
+
+.faqInner {
+  overflow: hidden;
+}
+
+.faqInner > p {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 300ms var(--ease-out), transform 300ms var(--ease-out);
+}
+
+.faqItem[data-open="true"] .faqInner > p {
+  opacity: 1;
+  transform: none;
+  transition-delay: 80ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faqPanel,
+  .faqInner > p,
+  .faqIcon {
+    transition: none;
+  }
 }
 
 .faqA {

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import NextLink from "next/link";
-import { ArrowRight, Pause, Play } from "iconoir-react";
+import { ArrowRight } from "iconoir-react";
+import { PageControl } from "@/components/ui/PageControl";
 import styles from "./SituationGallery.module.css";
 
 export type GalleryItem = {
@@ -21,7 +22,7 @@ const STEP_MS = 6000;
  * the gallery is on screen (Apple Intelligence style). Touching or scrolling it hands
  * control to the reader; the play button gives it back.
  */
-export function SituationGallery({ items, labels }: { items: GalleryItem[]; labels: { more: string; photos: string; play: string; pause: string } }) {
+export function SituationGallery({ items, labels }: { items: GalleryItem[]; labels: { more: string; play: string; pause: string } }) {
   const scroller = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState(0);
   const [auto, setAuto] = useState(true);
@@ -99,32 +100,20 @@ export function SituationGallery({ items, labels }: { items: GalleryItem[]; labe
         ))}
       </div>
 
-      <div className={styles.controls}>
-        <div className={styles.pager}>
-          {items.map((item, i) => (
-            <button
-              key={item.href}
-              type="button"
-              className={styles.dot}
-              data-active={i === active}
-              aria-label={item.name}
-              aria-current={i === active}
-              onClick={() => {
-                takeOver();
-                goTo(i);
-              }}
-            >
-              {i === active ? <span key={`${active}-${playing}`} className={styles.dotFill} data-playing={playing} style={{ animationDuration: `${STEP_MS}ms` }} /> : null}
-            </button>
-          ))}
-        </div>
-        {!reduced ? (
-          <button type="button" className={styles.play} aria-label={playing ? labels.pause : labels.play} onClick={() => setAuto((value) => !value)}>
-            {playing ? <Pause aria-hidden /> : <Play aria-hidden />}
-          </button>
-        ) : null}
-      </div>
-      <p className={styles.credit}>{labels.photos}</p>
+      <PageControl
+        className={styles.controls}
+        count={items.length}
+        active={active}
+        labels={items.map((item) => item.name)}
+        onSelect={(i) => {
+          takeOver();
+          goTo(i);
+        }}
+        duration={reduced ? undefined : STEP_MS}
+        playing={playing}
+        onToggle={reduced ? undefined : () => setAuto((value) => !value)}
+        toggleLabels={{ play: labels.play, pause: labels.pause }}
+      />
     </div>
   );
 }

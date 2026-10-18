@@ -4,6 +4,12 @@
 import type { PlanCopy, ReportCopy, StudyCopy } from "@/motion/OfferCompositions";
 
 type Icon = "brand" | "competitors" | "category" | "campaigns" | "topics";
+export type FormatKey = "live" | "document" | "dashboard" | "stories";
+export type FormatMock = {
+  live: { badge: string; slide: string; bars: [string, string, string] };
+  document: { title: string; trigger: string; barrier: string; quotes: [string, string] };
+  dashboard: { kpis: [string, string, string][]; chart: string; topicsTitle: string; topics: [string, string][] };
+};
 
 export type OfferCopy = {
   title: string;
@@ -28,10 +34,11 @@ export type OfferCopy = {
   formats: {
     title: string;
     lead: string;
-    items: { key: "live" | "document" | "stories"; name: string; text: string }[];
+    items: { key: FormatKey; name: string; text: string }[];
+    mock: FormatMock;
   };
   situations: { title: string; lead: string };
-  labels: { more: string; photos: string; play: string; pause: string; report: string; study: string; plan: string };
+  labels: { more: string; play: string; pause: string; report: string; study: string; plan: string };
 };
 
 export const offer: Record<"es" | "en", OfferCopy> = {
@@ -101,11 +108,30 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       items: [
         { key: "live", name: "Presentación en vivo", text: "Te lo presentamos, respondemos preguntas y dejamos la evidencia abierta para revisarla después." },
         { key: "document", name: "Documento con la evidencia", text: "Cada hallazgo con su cifra, sus citas literales y el método detrás, listo para circular." },
+        { key: "dashboard", name: "Dashboard en línea", text: "Los hallazgos del reporte en un tablero con filtros por tema, fuente y periodo, y cada cifra ligada a lo que la gente dijo." },
         { key: "stories", name: "Historias animadas", text: "Hallazgos cortos como los de nuestro feed, para mandar al equipo o presentar en un minuto." }
-      ]
+      ],
+      mock: {
+        live: { badge: "En vivo", slide: "Lo que cambió en septiembre", bars: ["Precio", "Servicio", "Empaque"] },
+        document: { title: "Lo que acerca y lo que frena", trigger: "Lo que acerca", barrier: "Lo que frena", quotes: ["Si la veo en la tienda, la pruebo", "Se me antoja, pero está carísima"] },
+        dashboard: {
+          kpis: [
+            ["Menciones", "12.480", "+8%"],
+            ["Sentimiento neto", "+14", "+3"],
+            ["Temas activos", "32", "+2"]
+          ],
+          chart: "Conversación por semana",
+          topicsTitle: "Lo que más cambió",
+          topics: [
+            ["Precio", "+38%"],
+            ["Servicio", "−12%"],
+            ["Empaque", "+9%"]
+          ]
+        }
+      }
     },
     situations: { title: "Empieza por tu situación", lead: "Cada momento trae su propia pregunta. Abre el tuyo para ver qué miramos y qué recibes." },
-    labels: { more: "Ver cómo lo resolvemos", photos: "Fotografías de Unsplash", play: "Reproducir", pause: "Pausar", report: "Reporte mensual", study: "Estudio", plan: "Plan anual" }
+    labels: { more: "Ver cómo lo resolvemos", play: "Reproducir", pause: "Pausar", report: "Reporte mensual", study: "Estudio", plan: "Plan anual" }
   },
   en: {
     title: "Answers for every moment of your brand",
@@ -173,10 +199,29 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       items: [
         { key: "live", name: "Live presentation", text: "We present it, answer questions and leave the evidence open to review later." },
         { key: "document", name: "Document with the evidence", text: "Every finding with its number, its verbatim quotes and the method behind it, ready to share." },
+        { key: "dashboard", name: "Online dashboard", text: "The report's findings in a dashboard you can filter by topic, source and period, with every number tied to what people said." },
         { key: "stories", name: "Animated stories", text: "Short findings like the ones in our feed, to send to the team or present in a minute." }
-      ]
+      ],
+      mock: {
+        live: { badge: "Live", slide: "What changed in September", bars: ["Price", "Service", "Packaging"] },
+        document: { title: "What draws people and what holds them back", trigger: "Draws them", barrier: "Holds them back", quotes: ["If I see it in the store, I'll try it", "I want it, but it's way too expensive"] },
+        dashboard: {
+          kpis: [
+            ["Mentions", "12,480", "+8%"],
+            ["Net sentiment", "+14", "+3"],
+            ["Active topics", "32", "+2"]
+          ],
+          chart: "Conversation per week",
+          topicsTitle: "What changed most",
+          topics: [
+            ["Price", "+38%"],
+            ["Service", "−12%"],
+            ["Packaging", "+9%"]
+          ]
+        }
+      }
     },
     situations: { title: "Start from your situation", lead: "Every moment brings its own question. Open yours to see what we look at and what you get." },
-    labels: { more: "See how we solve it", photos: "Photos from Unsplash", play: "Play", pause: "Pause", report: "Monthly report", study: "Study", plan: "Annual plan" }
+    labels: { more: "See how we solve it", play: "Play", pause: "Pause", report: "Monthly report", study: "Study", plan: "Annual plan" }
   }
 };

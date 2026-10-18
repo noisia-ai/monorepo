@@ -3,13 +3,14 @@ import { Button } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
 import { Section } from "@/components/ui/Section";
 import { ApproachTabs } from "@/components/home/ApproachTabs";
-import { CountDown, CountUp } from "@/components/home/Counters";
+import { ReachScroll } from "@/components/home/ReachScroll";
 import { RotatingHero } from "@/components/home/RotatingHero";
 import { SituationGallery } from "@/components/home/SituationGallery";
 import { StoryPreview } from "@/components/home/StoryPreview";
 import { SquareMotion } from "@/components/motion/SquareMotion";
 import { getFeedStories } from "@/components/feed/feed-data";
-import { UNDERSTAND, UnderstandComposition } from "@/motion/UnderstandComposition";
+import { UnderstandComposition } from "@/motion/UnderstandComposition";
+import { UNDERSTAND } from "@/motion/sizes";
 import { home } from "@/content/pages/home";
 import { moments } from "@/content/moments";
 import styles from "@/components/home/home.module.css";
@@ -30,7 +31,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
 
   return (
     <>
-      <RotatingHero copy={c.hero} />
+      <RotatingHero copy={c.hero} labels={{ play: c.moments.play, pause: c.moments.pause }} />
 
       <Section title={c.moments.title} lead={c.moments.lead}>
         <SituationGallery
@@ -42,32 +43,36 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
             deliverable: deliverable[moment.deliverable],
             photo: { src: moment.photo.src, alt: moment.photo.alt[lang], credit: moment.photo.credit }
           }))}
-          labels={{ more: c.moments.more, photos: c.moments.photos, play: c.moments.play, pause: c.moments.pause }}
+          labels={{ more: c.moments.more, play: c.moments.play, pause: c.moments.pause }}
         />
       </Section>
 
       {stories.length ? (
-        <Section title={c.insights.title} lead={c.insights.lead} tone="soft">
+        <Section tone="soft">
+          <div className={styles.insightsHead}>
+            <div>
+              <h2 className={styles.insightsTitle}>{c.insights.title}</h2>
+              <p className={styles.insightsLead}>{c.insights.lead}</p>
+            </div>
+            <Button href="/insights" variant="secondary" arrow>
+              {c.insights.all}
+            </Button>
+          </div>
           <div className={styles.stories}>
             {stories.map((story) => (
               <StoryPreview key={story.id} story={story} locale={locale} />
             ))}
           </div>
-          <div className={styles.more}>
-            <Button href="/insights" variant="secondary" arrow>
-              {c.insights.all}
-            </Button>
-          </div>
         </Section>
       ) : null}
 
       <Section title={c.how.title} lead={c.how.lead}>
-        <ApproachTabs tabs={c.how.tabs} motion={c.how.motion} answersLabel={lang === "en" ? "What it answers" : "Lo que responde"} />
+        <ApproachTabs tabs={c.how.tabs} motion={c.how.motion} answersLabel={lang === "en" ? "What it answers" : "Lo que responde"} label={c.how.title} />
         <div className={styles.links}>
-          <Button href="/como-funciona" variant="text" arrow>
+          <Button href="/como-funciona" variant="secondary" arrow>
             {c.how.link}
           </Button>
-          <Button href="/comparar" variant="text" arrow>
+          <Button href="/comparar" variant="secondary" arrow>
             {c.how.compareLink}
           </Button>
         </div>
@@ -87,21 +92,14 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
                 </div>
               </Reveal>
             ))}
-            <Button href="/metodos" variant="text" arrow>
+            <Button href="/metodos" variant="secondary" arrow>
               {c.methods.link}
             </Button>
           </div>
         </div>
       </Section>
 
-      <Section title={c.reach.title} tone="dark">
-        <div className={styles.stats}>
-          {c.reach.stats.map((stat) => (
-            <CountUp key={stat.label} value={stat.value} suffix={stat.suffix} label={stat.label} />
-          ))}
-          <CountDown steps={c.reach.time.steps} label={c.reach.time.label} />
-        </div>
-      </Section>
+      <ReachScroll copy={c.reach} />
 
       <Section title={c.start.title} lead={c.start.lead}>
         <ol className={styles.startSteps}>

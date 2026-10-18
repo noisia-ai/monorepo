@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 import { setRequestLocale } from "next-intl/server";
-import { ArrowRight, Calendar, Community, Journal, MediaVideo, Megaphone, Page, Presentation, ProfileCircle, StatsUpSquare } from "iconoir-react";
+import { ArrowRight, Calendar, Community, Journal, Megaphone, ProfileCircle, StatsUpSquare } from "iconoir-react";
 import { BlockView } from "@/components/blocks/Blocks";
 import { SituationGallery } from "@/components/home/SituationGallery";
 import { SquareMotion } from "@/components/motion/SquareMotion";
-import { PhoneStory } from "@/components/offer/PhoneStory";
+import { FormatShowcase } from "@/components/offer/FormatShowcase";
 import { getFeedStories } from "@/components/feed/feed-data";
-import { OFFER, PlanComposition, ReportComposition, StudyComposition } from "@/motion/OfferCompositions";
+import { PlanComposition, ReportComposition, StudyComposition } from "@/motion/OfferCompositions";
+import { OFFER } from "@/motion/sizes";
 import { offer } from "@/content/pages/offer";
 import { solutionsIndex } from "@/content/pages/solutions";
 import { moments } from "@/content/moments";
@@ -17,7 +18,6 @@ import styles from "@/components/offer/offer.module.css";
 const paths = { es: "/soluciones", en: "/solutions" };
 
 const WATCH_ICONS = { brand: ProfileCircle, competitors: Community, category: StatsUpSquare, campaigns: Megaphone, topics: Journal } as const;
-const FORMAT_ICONS = { live: Presentation, document: Page, stories: MediaVideo } as const;
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
@@ -126,25 +126,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
           <h2 className={styles.h2}>{c.formats.title}</h2>
           <p className={styles.text}>{c.formats.lead}</p>
         </div>
-        <div className={styles.formatsBody}>
-          <ul className={styles.formatList}>
-            {c.formats.items.map((item) => {
-              const Icon = FORMAT_ICONS[item.key];
-              return (
-                <li key={item.key}>
-                  <span className={styles.icon} aria-hidden>
-                    <Icon />
-                  </span>
-                  <span>
-                    <strong>{item.name}</strong>
-                    {item.text}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          {story ? <PhoneStory story={story} /> : null}
-        </div>
+        <FormatShowcase items={c.formats.items} mock={c.formats.mock} story={story} label={c.formats.title} />
       </section>
 
       {/* situations */}

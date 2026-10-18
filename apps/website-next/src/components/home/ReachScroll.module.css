@@ -1,0 +1,151 @@
+/* Tall section, pinned content: the scroll inside it drives the three beats. */
+.section {
+  position: relative;
+  height: 320vh;
+  background: var(--dark, #061218);
+  color: #fff;
+}
+
+.sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100svh;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+}
+
+.inner {
+  width: 100%;
+  max-width: var(--max-wide);
+  margin: 0 auto;
+  padding: var(--space-8) var(--gutter);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+}
+
+.title {
+  font-size: var(--text-3xl);
+  line-height: 1.08;
+  color: #fff;
+}
+
+.grid {
+  display: grid;
+}
+
+.stat {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 500ms var(--ease-out), transform 500ms var(--ease-out);
+}
+
+.stat[data-on="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+.value {
+  font-size: clamp(4rem, 2.6rem + 7vw, 8rem);
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.6);
+  transition: color 400ms var(--ease-out);
+}
+
+.stat[data-done="true"] .value {
+  color: #fff;
+}
+
+.label {
+  font-size: var(--text-lg);
+  color: rgba(255, 255, 255, 0.74);
+  max-width: 30ch;
+}
+
+.chips {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: 560px;
+}
+
+.chips li {
+  font-size: var(--text-sm);
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: rgba(255, 255, 255, 0.86);
+  opacity: 0;
+  transform: scale(0.85);
+  transition: opacity 260ms var(--ease-out), transform 260ms var(--ease-out);
+}
+
+.chips li[data-in="true"] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Desktop: the three side by side, the active one lit, the others dimmed. */
+@media (min-width: 960px) {
+  .grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-7);
+    align-items: start;
+  }
+
+  .stat {
+    grid-area: auto;
+    opacity: 0.32;
+    transform: none;
+  }
+
+  .stat[data-done="true"] {
+    opacity: 0.55;
+  }
+
+  .stat[data-on="true"] {
+    opacity: 1;
+  }
+
+  .value {
+    font-size: clamp(4rem, 2rem + 4vw, 6.5rem);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .section {
+    height: auto;
+  }
+
+  .sticky {
+    position: static;
+    height: auto;
+  }
+
+  .stat,
+  .chips li {
+    opacity: 1;
+    transform: none;
+  }
+
+  .grid {
+    gap: var(--space-7);
+  }
+
+  .stat {
+    grid-area: auto;
+  }
+}

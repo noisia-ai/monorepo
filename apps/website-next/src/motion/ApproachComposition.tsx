@@ -12,6 +12,8 @@ import { clamp, enter } from "./util";
  */
 
 export const APPROACH = { width: 1080, height: 1080, fps: 30, frames: 300 } as const;
+/** Noisia's reading runs longer: after the topics it opens the approved one to find the why. */
+export const APPROACH_FRAMES = { noisia: 420, listening: 300, ai: 300, agency: 300 } as const;
 export type ApproachMode = "noisia" | "listening" | "ai" | "agency";
 
 export type ApproachCopy = {
@@ -20,6 +22,9 @@ export type ApproachCopy = {
   approved: string;
   answerLabel: string;
   answer: string;
+  quote: string;
+  reasons: [string, string, string];
+  action: string;
   mentions: string;
   sentiment: [string, string, string];
   why: string;
@@ -87,15 +92,20 @@ const card = { background: "#fff", borderRadius: 30, boxShadow: "0 18px 50px rgb
 
 export function ApproachComposition({ mode, copy }: { mode: ApproachMode; copy: ApproachCopy }) {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
-  const fade = interpolate(frame, [APPROACH.frames - 22, APPROACH.frames - 2], [1, 0], clamp);
+  const { fps, durationInFrames } = useVideoConfig();
+  const fade = interpolate(frame, [durationInFrames - 22, durationInFrames - 2], [1, 0], clamp);
+  // Noisia only: the approved topic rises and opens into the reasons behind it.
+  const lift = mode === "noisia" ? interpolate(frame, [204, 240], [0, 1], { ...clamp, easing: ease }) : 0;
+  const shift = -190 * lift;
+  const quote = enter(frame, fps, 236, 18);
+  const answerAt = 318;
 
   // shared
   const gather = interpolate(frame, [60, 130], [0, 1], { ...clamp, easing: ease });
   const labels = enter(frame, fps, 122, 18);
   const focus = enter(frame, fps, 150, 16);
   const approved = enter(frame, fps, 168, 14);
-  const answer = enter(frame, fps, 190, 18);
+  const answer = enter(frame, fps, mode === "noisia" ? answerAt : 190, 18);
   const dash = enter(frame, fps, 138, 18);
   const why = enter(frame, fps, 196, 16);
   const win = enter(frame, fps, 56, 18);
@@ -132,7 +142,7 @@ export function ApproachComposition({ mode, copy }: { mode: ApproachMode; copy: 
       const noise = d.cluster === 5;
       const hi = d.cluster === HI;
       const fill = noise ? color.faint : hi && focus > 0.05 ? color.teal : gather > 0.6 ? "#7cc4c4" : color.muted;
-      const opacity = noise ? 1 - focus * 0.85 : !hi ? 1 - focus * 0.45 : 1;
+      const opacity = noise ? 1 - focus * 0.85 : !hi ? 1 - focus * 0.45 - lift * 0.4 : 1;
       return { fill, opacity, r: hi ? 8 + focus * 2 : 7 };
     }
     if (mode === "listening") return { fill: gather > 0.5 ? "#7cc4c4" : color.muted, opacity: 1, r: 7 };
@@ -150,7 +160,7 @@ export function ApproachComposition({ mode, copy }: { mode: ApproachMode; copy: 
         {SOURCES.map((source, i) => {
           const p = enter(frame, fps, 2 + i * 4, 16);
           return (
-            <span key={source} style={{ width: 70, height: 70, borderRadius: 22, background: "#fff", boxShadow: "0 8px 24px rgba(10,10,10,0.07)", display: "grid", placeItems: "center", opacity: p, transform: `translateY(${(1 - p) * 14}px)` }}>
+            <span key={source} style={{ width: 70, height: 70, borderRadius: 22, background: "#fff", boxShadow: "0 8px 24px rgba(10,10,10,0.07)", display: "grid", placeItems: "center", opacity: p * (1 - lift), transform: `translateY(${(1 - p) * 14}px)` }}>
               <SourceIcon name={source} size={36} />
             </span>
           );
@@ -219,7 +229,7 @@ export function ApproachComposition({ mode, copy }: { mode: ApproachMode; copy: 
         </div>
       ) : null}
 
-      <svg width={1080} height={1080} style={{ position: "absolute", inset: 0 }} aria-hidden>
+      <svg width={1080} height={1080} style={{ position: "absolute", inset: 0, transform: `translateY(${shift}px)` }} aria-hidden>
         {DOTS.map((d, i) => {
           const appear = interpolate(frame, [10 + d.delay, 30 + d.delay], [0, 1], clamp);
           const p = dotPos(d, i);
@@ -231,36 +241,59 @@ export function ApproachComposition({ mode, copy }: { mode: ApproachMode; copy: 
 
       {mode === "noisia" ? (
         <>
-          {CENTERS.slice(0, 5).map((center, i) => (
-            <span
-              key={i}
-              style={{
-                position: "absolute",
-                left: center.x,
-                top: center.y - 120,
-                transform: "translateX(-50%)",
-                fontSize: 32,
-                fontWeight: i === HI ? 500 : 400,
-                color: i === HI && focus > 0.1 ? color.teal : color.fg,
-                background: "rgba(255,255,255,0.88)",
-                padding: "4px 14px",
-                borderRadius: 999,
-                whiteSpace: "nowrap",
-                opacity: labels * (i === HI ? 1 : 1 - focus * 0.5)
-              }}
-            >
-              {copy.clusters[i]}
+          <div style={{ position: "absolute", inset: 0, transform: `translateY(${shift}px)` }}>
+            {CENTERS.slice(0, 5).map((center, i) => (
+              <span
+                key={i}
+                style={{
+                  position: "absolute",
+                  left: center.x,
+                  top: center.y - 120,
+                  transform: "translateX(-50%)",
+                  fontSize: 32,
+                  fontWeight: i === HI ? 500 : 400,
+                  color: i === HI && focus > 0.1 ? color.teal : color.fg,
+                  background: "rgba(255,255,255,0.88)",
+                  padding: "4px 14px",
+                  borderRadius: 999,
+                  whiteSpace: "nowrap",
+                  opacity: labels * (i === HI ? 1 : 1 - focus * 0.5 - lift * 0.4)
+                }}
+              >
+                {copy.clusters[i]}
+              </span>
+            ))}
+            <span style={{ position: "absolute", left: CENTERS[5]!.x, top: CENTERS[5]!.y - 100, transform: "translateX(-50%)", fontSize: 28, color: color.muted, textDecoration: "line-through", opacity: labels * (1 - focus) }}>
+              {copy.noise}
             </span>
-          ))}
-          <span style={{ position: "absolute", left: CENTERS[5]!.x, top: CENTERS[5]!.y - 100, transform: "translateX(-50%)", fontSize: 28, color: color.muted, textDecoration: "line-through", opacity: labels * (1 - focus) }}>
-            {copy.noise}
-          </span>
-          <span style={{ position: "absolute", left: 90, top: 690, fontSize: 30, fontWeight: 500, color: "#fff", background: color.ink, padding: "8px 18px", borderRadius: 999, opacity: approved, transform: `scale(${0.85 + approved * 0.15})`, transformOrigin: "left center" }}>
-            ✓ {copy.approved}
-          </span>
-          <div style={{ ...card, position: "absolute", left: 90, right: 90, top: 770, padding: "28px 34px", background: color.tealSoft, boxShadow: "none", opacity: answer, transform: `translateY(${(1 - answer) * 22}px)` }}>
+            <span style={{ position: "absolute", left: hi.x + 110, top: hi.y - 24, fontSize: 30, fontWeight: 500, color: "#fff", background: color.ink, padding: "8px 18px", borderRadius: 999, whiteSpace: "nowrap", opacity: approved, transform: `scale(${0.85 + approved * 0.15})`, transformOrigin: "left center" }}>
+              ✓ {copy.approved}
+            </span>
+          </div>
+
+          {/* the why: one mention from the topic, read for what is behind it */}
+          <div style={{ position: "absolute", left: 90, right: 90, top: 520, opacity: quote, transform: `translateY(${(1 - quote) * 18}px)` }}>
+            <div style={{ position: "relative", marginLeft: 18 }}>
+              <svg width={40} height={36} viewBox="0 0 18 16" style={{ position: "absolute", left: -19, bottom: 0 }} aria-hidden>
+                <path d="M18 0 C18 9 13 15 0 16 C8 12 9 6 9 0 Z" fill={color.bubble} />
+              </svg>
+              <div style={{ background: color.bubble, borderRadius: "36px 36px 36px 12px", padding: "22px 30px", fontSize: 34, lineHeight: 1.25, color: color.ink }}>{copy.quote}</div>
+            </div>
+          </div>
+          <div style={{ position: "absolute", left: 90, right: 60, top: 676, display: "flex", flexWrap: "wrap", gap: 10 }}>
+            {copy.reasons.map((reason, k) => {
+              const p = enter(frame, fps, 262 + k * 14, 16);
+              return (
+                <span key={reason} style={{ fontSize: 27, fontWeight: 500, padding: "8px 16px", borderRadius: 999, whiteSpace: "nowrap", background: color.coral, color: "#fff", opacity: p, transform: `translateY(${(1 - p) * 12}px)` }}>
+                  ↓ {reason}
+                </span>
+              );
+            })}
+          </div>
+          <div style={{ ...card, position: "absolute", left: 90, right: 90, top: 790, padding: "24px 32px", background: color.tealSoft, boxShadow: "none", opacity: answer, transform: `translateY(${(1 - answer) * 22}px)` }}>
             <p style={{ margin: 0, fontSize: 28, fontWeight: 500, color: color.teal }}>{copy.answerLabel}</p>
-            <p style={{ margin: "8px 0 0", fontSize: 46, lineHeight: 1.12, color: color.ink }}>{copy.answer}</p>
+            <p style={{ margin: "8px 0 0", fontSize: 42, lineHeight: 1.12, color: color.ink }}>{copy.answer}</p>
+            <p style={{ margin: "12px 0 0", fontSize: 30, lineHeight: 1.25, color: color.fg, opacity: enter(frame, fps, answerAt + 22, 18) }}>→ {copy.action}</p>
           </div>
         </>
       ) : null}

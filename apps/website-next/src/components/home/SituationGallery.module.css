@@ -126,80 +126,8 @@
   height: 16px;
 }
 
-/* ---------- pager ---------- */
 .controls {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: var(--space-3);
   margin-top: var(--space-5);
-}
-
-.pager {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 44px;
-  padding: 0 18px;
-  border-radius: var(--radius-pill);
-  background: rgba(10, 10, 10, 0.06);
-}
-
-.dot {
-  position: relative;
-  width: 8px;
-  height: 8px;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: rgba(10, 10, 10, 0.28);
-  cursor: pointer;
-  overflow: hidden;
-  transition: width var(--dur-base) var(--ease-out);
-}
-
-.dot[data-active="true"] {
-  width: 44px;
-}
-
-.dotFill {
-  position: absolute;
-  inset: 0;
-  background: var(--ink);
-  transform-origin: left;
-}
-
-.dotFill[data-playing="true"] {
-  animation: fill linear both;
-}
-
-.play {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  border: 0;
-  display: grid;
-  place-items: center;
-  background: rgba(10, 10, 10, 0.06);
-  cursor: pointer;
-}
-
-.play svg {
-  width: 18px;
-  height: 18px;
-}
-
-.credit {
-  text-align: center;
-  margin-top: var(--space-3);
-  font-size: var(--text-xs);
-  color: var(--fg-muted);
-}
-
-@keyframes fill {
-  from {
-    transform: scaleX(0);
-  }
 }
 
 @media (min-width: 960px) {

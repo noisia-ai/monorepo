@@ -95,7 +95,8 @@
 
 .motion {
   border-radius: var(--radius-lg);
-  background: var(--surface-1);
+  background: var(--canvas);
+  box-shadow: 0 1px 0 var(--line), 0 20px 50px rgba(10, 10, 10, 0.06);
   overflow: hidden;
 }
 
@@ -179,38 +180,90 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
-  padding: var(--space-7) var(--space-5);
-  border-radius: var(--radius-lg);
-  background: var(--surface-1);
 }
 
 .formatsHead {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  align-items: center;
+  text-align: center;
 }
 
-.formatsBody {
+.showcase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.showcaseControl {
+  display: flex;
+  justify-content: center;
+}
+
+.showcaseStage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 6 / 5;
+  max-width: 980px;
+  margin: 0 auto;
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(80% 60% at 50% 0%, rgba(0, 238, 238, 0.1), transparent 70%),
+    var(--surface-1);
+  overflow: hidden;
+}
+
+.showcaseCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+.showcasePanels {
   display: grid;
-  gap: var(--space-6);
-  align-items: center;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.showcasePanel {
+  grid-area: 1 / 1;
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  color: var(--fg-muted);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 420ms var(--ease-out), transform 420ms var(--ease-out);
+  pointer-events: none;
+}
+
+.showcasePanel[data-active="true"] {
+  opacity: 1;
+  transform: none;
+  transition-delay: 120ms;
+  pointer-events: auto;
+}
+
+.showcasePanel strong {
+  display: block;
+  color: var(--ink);
+  font-size: var(--text-md);
+  font-weight: 500;
 }
 
 .phone {
-  position: relative;
-  justify-self: center;
-  width: min(280px, 72vw);
-  aspect-ratio: 9 / 19.5;
-  border-radius: 44px;
-  padding: 10px;
+  position: absolute;
+  inset: 0;
+  border-radius: 64px;
+  padding: 16px;
   background: var(--ink);
   box-shadow: 0 30px 70px rgba(10, 10, 10, 0.18);
 }
 
 .phoneStage {
   position: absolute;
-  inset: 10px;
-  border-radius: 34px;
+  inset: 16px;
+  border-radius: 50px;
   background: #fff;
 }
 
@@ -241,12 +294,4 @@
     order: 2;
   }
 
-  .formats {
-    padding: var(--space-8);
-  }
-
-  .formatsBody {
-    grid-template-columns: 1fr auto;
-    gap: var(--space-8);
-  }
 }

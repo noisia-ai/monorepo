@@ -65,21 +65,79 @@
   height: 100%;
   padding: var(--space-5);
   border-radius: var(--radius-lg);
-  background: var(--surface-1);
+  background: var(--canvas);
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(10, 10, 10, 0.03);
+  color: var(--fg-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  transition: transform var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 34px rgba(10, 10, 10, 0.06);
+}
+
+.cardIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--teal-soft);
+  color: var(--teal-text);
+  margin-bottom: var(--space-2);
+}
+
+.cardIcon svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* Steps: numbered circles joined by a line, like a short timeline. */
+.step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-left: 64px;
   color: var(--fg-muted);
 }
 
-.step {
-  padding-top: var(--space-4);
-  border-top: 1px solid var(--line);
-  color: var(--fg-muted);
+.step::before {
+  content: "";
+  position: absolute;
+  left: 23px;
+  top: 52px;
+  bottom: calc(var(--space-3) * -1);
+  width: 2px;
+  background: var(--line);
+}
+
+li:last-child > .step::before,
+.steps > :last-child .step::before {
+  display: none;
 }
 
 .number {
-  display: block;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--teal-soft);
   color: var(--teal-text);
-  font-size: var(--text-sm);
-  margin-bottom: var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: 500;
+}
+
+.step .h3 {
+  margin-top: 10px;
 }
 
 @media (min-width: 768px) {
@@ -90,6 +148,20 @@
   .steps {
     grid-template-columns: repeat(3, 1fr);
     gap: var(--space-6);
+  }
+
+  .step {
+    padding-left: 0;
+    padding-top: 68px;
+  }
+
+  .step::before {
+    left: 60px;
+    right: calc(var(--space-6) * -1);
+    top: 23px;
+    bottom: auto;
+    width: auto;
+    height: 2px;
   }
 }
 

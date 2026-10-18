@@ -3,13 +3,15 @@
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "./runtime";
 import { color, font } from "./theme";
 import { clamp, enter } from "./util";
+import { OFFER } from "./sizes";
+
+export { OFFER };
 
 /**
  * The three ways of working with Noisia, each as a square 1080 animation for Solutions:
  * the monthly report, the study and the annual plan. Numbers are illustrative.
  */
 
-export const OFFER = { width: 1080, height: 1080, fps: 30, frames: 300 } as const;
 
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
 const fadeOut = (frame: number) => interpolate(frame, [OFFER.frames - 22, OFFER.frames - 2], [1, 0], clamp);

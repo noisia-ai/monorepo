@@ -5,6 +5,9 @@ import { SourceIcon } from "@/components/brand/SourceMark";
 import { AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig } from "./runtime";
 import { color, font } from "./theme";
 import { clamp, enter } from "./util";
+import { UNDERSTAND } from "./sizes";
+
+export { UNDERSTAND };
 
 /**
  * One mention, read the way the methods read it: the reasons behind it sit in layers
@@ -12,7 +15,6 @@ import { clamp, enter } from "./util";
  * or what holds them back. Square 1080 canvas.
  */
 
-export const UNDERSTAND = { width: 1080, height: 1080, fps: 30, frames: 330 } as const;
 
 export type UnderstandCopy = {
   quote: string;

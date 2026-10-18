@@ -1,0 +1,61 @@
+.scroller {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.control {
+  position: relative;
+  display: inline-flex;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(10, 10, 10, 0.05);
+}
+
+.thumb {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+  border-radius: var(--radius-pill);
+  background: var(--canvas);
+  box-shadow: 0 1px 4px rgba(10, 10, 10, 0.14);
+  transition: transform 380ms var(--ease-out), width 380ms var(--ease-out);
+}
+
+.option {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  height: 40px;
+  padding: 0 18px;
+  border: 0;
+  background: none;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 300ms var(--ease-out);
+}
+
+/* Same weight in every state, so no option changes width when chosen. */
+.option[aria-selected="true"] {
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb {
+    transition: none;
+  }
+}
+
+.thumb[data-accent="true"] {
+  background: var(--teal-soft);
+}

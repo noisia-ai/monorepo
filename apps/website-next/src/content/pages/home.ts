@@ -1,6 +1,7 @@
 // Home copy, ES and EN. Rewritten 18 oct 2026 after the UAT review: the hero rotates through
 // situations, the comparison and the process live in one tabbed animation. Examples in the
 // animations are illustrative.
+import type { ReachCopy } from "@/components/home/ReachScroll";
 import type { RotatingHeroCopy } from "@/components/home/RotatingHero";
 import type { ApproachCopy } from "@/motion/ApproachComposition";
 import type { UnderstandCopy } from "@/motion/UnderstandComposition";
@@ -9,15 +10,11 @@ export type ApproachTab = { key: "noisia" | "listening" | "ai" | "agency"; tab: 
 
 type HomeCopy = {
   hero: RotatingHeroCopy;
-  moments: { title: string; lead: string; report: string; study: string; plan: string; more: string; photos: string; play: string; pause: string };
+  moments: { title: string; lead: string; report: string; study: string; plan: string; more: string; play: string; pause: string };
   insights: { title: string; lead: string; all: string };
   how: { title: string; lead: string; tabs: ApproachTab[]; motion: ApproachCopy; link: string; compareLink: string };
   methods: { title: string; lead: string; motion: UnderstandCopy; points: { name: string; text: string }[]; link: string };
-  reach: {
-    title: string;
-    stats: { value: number; suffix: string; label: string }[];
-    time: { steps: string[]; label: string };
-  };
+  reach: ReachCopy;
   start: { title: string; lead: string; steps: { name: string; text: string }[]; cta: string };
 };
 
@@ -81,13 +78,13 @@ export const home: Record<"es" | "en", HomeCopy> = {
       study: "Estudio",
       plan: "Plan anual",
       more: "Ver cómo lo resolvemos",
-      photos: "Fotografías de Unsplash",
+     
       play: "Reproducir",
       pause: "Pausar"
     },
     insights: {
-      title: "Desliza para entender a tu mercado",
-      lead: "Hallazgos cortos y animados, como los de tu feed, cada uno con su evidencia a un toque.",
+      title: "Insights",
+      lead: "Lo que estamos viendo en la conversación, en historias de un minuto con la evidencia detrás.",
       all: "Abrir el feed de insights"
     },
     how: {
@@ -98,7 +95,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
           key: "noisia",
           tab: "Noisia",
           title: "La respuesta, con su evidencia",
-          text: "Toda la conversación se agrupa en temas. Un Intelligence Architect aprueba lo que importa, separa el ruido y firma la respuesta.",
+          text: "Toda la conversación se agrupa en temas. Un Intelligence Architect aprueba lo que importa y lo lee con métodos de antropología y psicología: qué siente la gente, qué la mueve y qué la frena.",
           answers: "Qué pasa, por qué pasa y qué hacer"
         },
         {
@@ -128,7 +125,10 @@ export const home: Record<"es" | "en", HomeCopy> = {
         noise: "Ruido",
         approved: "Intelligence Architect",
         answerLabel: "La respuesta",
-        answer: "La devolución pesa más que el precio",
+        answer: "Devolver se siente como pedir un favor, y por eso no regresan",
+        quote: "Me la cambiaron, pero tardaron tres semanas y me trataron como sospechosa",
+        reasons: ["Pena de reclamar", "Miedo a perder el dinero", "Volver a la tienda"],
+        action: "Cambios sin preguntas, en cualquier tienda",
         mentions: "menciones",
         sentiment: ["Positivo", "Neutral", "Negativo"],
         why: "¿Y por qué?",
@@ -165,10 +165,14 @@ export const home: Record<"es" | "en", HomeCopy> = {
     },
     reach: {
       title: "Leemos como habla la gente",
-      stats: [
-        { value: 16, suffix: "", label: "idiomas de conversación, del español y el portugués al pidgin nigeriano y el isiZulu" },
-        { value: 20, suffix: "+", label: "países en América, Europa y África" }
-      ],
+      languages: {
+        label: "idiomas de conversación, con su jerga y sus modismos",
+        items: ["Español", "Inglés", "Portugués", "Francés", "Pidgin nigeriano", "isiZulu", "Sesotho", "Kinyarwanda", "Alemán", "Neerlandés", "Italiano", "Danés", "Finés", "Polaco", "Sueco", "Noruego"]
+      },
+      countries: {
+        label: "países en América, Europa y África",
+        items: ["México", "Estados Unidos", "Brasil", "Chile", "Argentina", "Colombia", "Bolivia", "Nigeria", "Sudáfrica", "Ruanda", "Reino Unido", "Alemania", "Países Bajos", "Austria", "Suiza", "Bélgica", "Finlandia", "Dinamarca", "Suecia", "España", "Noruega", "Francia", "Italia", "Polonia"]
+      },
       time: { steps: ["6 semanas", "4 semanas", "2 semanas", "1 semana", "Días"], label: "del brief a la primera respuesta" }
     },
     start: {
@@ -241,13 +245,13 @@ export const home: Record<"es" | "en", HomeCopy> = {
       study: "Study",
       plan: "Annual plan",
       more: "See how we solve it",
-      photos: "Photos from Unsplash",
+     
       play: "Play",
       pause: "Pause"
     },
     insights: {
-      title: "Swipe to understand your market",
-      lead: "Short animated findings, like the ones in your feed, each one a tap away from its evidence.",
+      title: "Insights",
+      lead: "What we are seeing in the conversation, in one-minute stories with the evidence behind them.",
       all: "Open the insights feed"
     },
     how: {
@@ -258,7 +262,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
           key: "noisia",
           tab: "Noisia",
           title: "The answer, with its evidence",
-          text: "The whole conversation is grouped into topics. An Intelligence Architect approves what matters, removes the noise and signs the answer.",
+          text: "The whole conversation is grouped into topics. An Intelligence Architect approves what matters and reads it with methods from anthropology and psychology: what people feel, what drives them and what holds them back.",
           answers: "What is happening, why, and what to do"
         },
         {
@@ -288,7 +292,10 @@ export const home: Record<"es" | "en", HomeCopy> = {
         noise: "Noise",
         approved: "Intelligence Architect",
         answerLabel: "The answer",
-        answer: "Returns weigh more than price",
+        answer: "Returning feels like asking a favor, so they don't come back",
+        quote: "They replaced it, but it took three weeks and they treated me like a suspect",
+        reasons: ["Embarrassed to complain", "Afraid to lose the money", "Going back to the store"],
+        action: "No-questions returns, in any store",
         mentions: "mentions",
         sentiment: ["Positive", "Neutral", "Negative"],
         why: "But why?",
@@ -325,10 +332,14 @@ export const home: Record<"es" | "en", HomeCopy> = {
     },
     reach: {
       title: "We read the way people talk",
-      stats: [
-        { value: 16, suffix: "", label: "conversation languages, from Spanish and Portuguese to Nigerian Pidgin and isiZulu" },
-        { value: 20, suffix: "+", label: "countries across the Americas, Europe and Africa" }
-      ],
+      languages: {
+        label: "conversation languages, slang and idioms included",
+        items: ["Spanish", "English", "Portuguese", "French", "Nigerian Pidgin", "isiZulu", "Sesotho", "Kinyarwanda", "German", "Dutch", "Italian", "Danish", "Finnish", "Polish", "Swedish", "Norwegian"]
+      },
+      countries: {
+        label: "countries across the Americas, Europe and Africa",
+        items: ["Mexico", "United States", "Brazil", "Chile", "Argentina", "Colombia", "Bolivia", "Nigeria", "South Africa", "Rwanda", "United Kingdom", "Germany", "Netherlands", "Austria", "Switzerland", "Belgium", "Finland", "Denmark", "Sweden", "Spain", "Norway", "France", "Italy", "Poland"]
+      },
       time: { steps: ["6 weeks", "4 weeks", "2 weeks", "1 week", "Days"], label: "from brief to first answer" }
     },
     start: {

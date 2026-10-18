@@ -6,7 +6,8 @@ import styles from "./ui.module.css";
 
 type Props = {
   href: ComponentProps<typeof Link>["href"];
-  variant?: "primary" | "secondary" | "text";
+  /** The site has exactly two buttons: filled (primary) and outlined (secondary). */
+  variant?: "primary" | "secondary";
   children: ReactNode;
   arrow?: boolean;
   className?: string;

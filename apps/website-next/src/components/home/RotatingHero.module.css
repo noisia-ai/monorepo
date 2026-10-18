@@ -48,65 +48,31 @@
 .text {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: var(--space-6);
 }
 
-.tabs {
-  display: flex;
-  gap: var(--space-4);
-  overflow-x: auto;
-  scrollbar-width: none;
-  margin: 0 calc(var(--gutter) * -1);
-  padding: 0 var(--gutter);
-}
-
-.tabs::-webkit-scrollbar {
-  display: none;
-}
-
-.tab {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 0;
-  border: 0;
-  background: none;
-  font: inherit;
-  font-size: var(--text-sm);
-  color: var(--fg-muted);
-  cursor: pointer;
-  text-align: left;
-  min-width: 72px;
-}
-
-.tab[aria-selected="true"] {
-  color: var(--ink);
-  font-weight: 500;
-}
-
-.track {
-  display: block;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(10, 10, 10, 0.1);
-  overflow: hidden;
-}
-
-.fill {
-  display: block;
-  height: 100%;
-  background: var(--ink);
-  transform: scaleX(0);
-  transform-origin: left;
+.stack {
+  display: grid;
 }
 
 .copy {
+  grid-area: 1 / 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  min-height: 11.5em;
-  animation: swap 520ms var(--ease-out) both;
+  opacity: 0;
+  transform: translateY(14px);
+  filter: blur(4px);
+  transition: opacity 700ms var(--ease-out), transform 700ms var(--ease-out), filter 700ms var(--ease-out);
+  pointer-events: none;
+}
+
+.copy[data-active="true"] {
+  opacity: 1;
+  transform: none;
+  filter: none;
+  transition-delay: 160ms;
+  pointer-events: auto;
 }
 
 .title {
@@ -131,12 +97,27 @@
   gap: var(--space-3);
 }
 
+/* Phones: the buttons go under the animation, centered. */
+.actionsDesktop {
+  display: none;
+}
+
+.actionsMobile {
+  justify-content: center;
+}
+
+.media {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
 .motion {
   position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
   max-width: 600px;
-  justify-self: center;
+  align-self: center;
 }
 
 .stage {
@@ -153,7 +134,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .copy {
-    animation: none;
+    transition: none;
+    filter: none;
   }
 }
 
@@ -168,14 +150,12 @@
     gap: var(--space-8);
   }
 
-  .tabs {
-    margin: 0;
-    padding: 0;
-    gap: var(--space-5);
+  .actionsDesktop {
+    display: flex;
   }
 
-  .copy {
-    min-height: 13em;
+  .actionsMobile {
+    display: none;
   }
 
   .motion {

@@ -8,6 +8,8 @@ import { googleSans } from "@/lib/fonts";
 import { SITE_URL } from "@/lib/site";
 import "@/styles/base.css";
 
+const LANG_FADE_IN = `try{if(sessionStorage.getItem("noisia-lang-switch")){sessionStorage.removeItem("noisia-lang-switch");document.documentElement.dataset.lang="in";setTimeout(function(){delete document.documentElement.dataset.lang},700)}}catch(e){}`;
+
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));
 }
@@ -39,7 +41,11 @@ export default async function LocaleLayout({ children, params }: { children: Rea
   setRequestLocale(locale);
   const messages = await getMessages();
   return (
-    <html lang={locale === "en" ? "en" : "es-MX"} className={googleSans.variable}>
+    <html lang={locale === "en" ? "en" : "es-MX"} className={googleSans.variable} suppressHydrationWarning>
+      <head>
+        {/* Arriving from the language toggle: fade the new language in instead of a hard cut. */}
+        <script dangerouslySetInnerHTML={{ __html: LANG_FADE_IN }} />
+      </head>
       <body>
         <NextIntlClientProvider locale={locale} messages={messages}>
           {children}

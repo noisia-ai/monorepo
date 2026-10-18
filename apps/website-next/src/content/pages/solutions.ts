@@ -25,11 +25,11 @@ export const solutionsIndex: Localized<PageContent> = {
         title: "Qué define el alcance",
         lead: "No publicamos una lista de precios porque dos preguntas que suenan igual pueden pedir trabajos muy distintos. El costo sale de cinco cosas.",
         items: [
-          { name: "La pregunta", text: "Qué vas a decidir y cuántas preguntas investigables hacen falta para responderlo." },
-          { name: "Las fuentes", text: "Redes, reseñas, foros, búsquedas y tus propios datos. Cada una se suma si aporta a la pregunta." },
-          { name: "Los mercados", text: "Cuántos países o regiones, y en qué idiomas habla la gente ahí." },
-          { name: "El periodo", text: "Cuánta historia hace falta leer y si el análisis se repite cada mes." },
-          { name: "La profundidad", text: "Una respuesta directa, un estudio completo con recomendaciones o un plan para el año." }
+          { name: "La pregunta", icon: "question", text: "Qué vas a decidir y cuántas preguntas investigables hacen falta para responderlo." },
+          { name: "Las fuentes", icon: "sources", text: "Redes, reseñas, foros, búsquedas y tus propios datos. Cada una se suma si aporta a la pregunta." },
+          { name: "Los mercados", icon: "markets", text: "Cuántos países o regiones, y en qué idiomas habla la gente ahí." },
+          { name: "El periodo", icon: "period", text: "Cuánta historia hace falta leer y si el análisis se repite cada mes." },
+          { name: "La profundidad", icon: "depth", text: "Una respuesta directa, un estudio completo con recomendaciones o un plan para el año." }
         ]
       },
       {
@@ -73,11 +73,11 @@ export const solutionsIndex: Localized<PageContent> = {
         title: "What defines the scope",
         lead: "We don't publish a price list because two questions that sound alike can call for very different work. The cost comes from five things.",
         items: [
-          { name: "The question", text: "What you are going to decide and how many researchable questions it takes to answer it." },
-          { name: "The sources", text: "Social media, reviews, forums, search and your own data. Each one is added if it contributes to the question." },
-          { name: "The markets", text: "How many countries or regions, and which languages people speak there." },
-          { name: "The period", text: "How much history needs to be read and whether the analysis repeats every month." },
-          { name: "The depth", text: "A direct answer, a full study with recommendations or a plan for the year." }
+          { name: "The question", icon: "question", text: "What you are going to decide and how many researchable questions it takes to answer it." },
+          { name: "The sources", icon: "sources", text: "Social media, reviews, forums, search and your own data. Each one is added if it contributes to the question." },
+          { name: "The markets", icon: "markets", text: "How many countries or regions, and which languages people speak there." },
+          { name: "The period", icon: "period", text: "How much history needs to be read and whether the analysis repeats every month." },
+          { name: "The depth", icon: "depth", text: "A direct answer, a full study with recommendations or a plan for the year." }
         ]
       },
       {

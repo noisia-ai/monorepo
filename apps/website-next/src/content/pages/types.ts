@@ -4,7 +4,7 @@
  */
 export type Block =
   | { type: "text"; title?: string; paragraphs: string[] }
-  | { type: "cards"; title?: string; lead?: string; items: { name: string; text: string }[] }
+  | { type: "cards"; title?: string; lead?: string; items: { name: string; text: string; icon?: BlockIcon }[] }
   | { type: "steps"; title?: string; lead?: string; items: { name: string; text: string }[] }
   | { type: "table"; title?: string; lead?: string; headers: string[]; rows: string[][]; highlightColumn?: number }
   | { type: "quote"; text: string; source?: string }
@@ -37,3 +37,6 @@ export type PageContent = {
 };
 
 export type Localized<T> = { es: T; en: T };
+
+/** Icons a card can carry; Blocks maps each one to an Iconoir icon. */
+export type BlockIcon = "question" | "sources" | "markets" | "period" | "depth";

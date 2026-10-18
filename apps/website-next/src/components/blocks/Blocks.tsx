@@ -1,8 +1,11 @@
-import type { Block, PageContent } from "@/content/pages/types";
+import { Calendar, ChatBubbleQuestion, Database, Depth, Globe } from "iconoir-react";
+import type { Block, BlockIcon, PageContent } from "@/content/pages/types";
 import { Faq } from "@/components/ui/Faq";
 import { Reveal } from "@/components/ui/Reveal";
 import { MotionBlock } from "@/components/motion/MotionBlock";
 import styles from "./blocks.module.css";
+
+const ICONS: Record<BlockIcon, typeof Globe> = { question: ChatBubbleQuestion, sources: Database, markets: Globe, period: Calendar, depth: Depth };
 
 export function BlockView({ block }: { block: Block }) {
   switch (block.type) {
@@ -25,7 +28,15 @@ export function BlockView({ block }: { block: Block }) {
             {block.items.map((item, i) => (
               <Reveal key={item.name} delay={i * 0.04}>
                 <li className={block.type === "steps" ? styles.step : styles.card}>
-                  {block.type === "steps" ? <span className={styles.number}>{String(i + 1).padStart(2, "0")}</span> : null}
+                  {block.type === "steps" ? <span className={styles.number}>{i + 1}</span> : null}
+                  {block.type === "cards" && "icon" in item && item.icon ? (
+                    <span className={styles.cardIcon} aria-hidden>
+                      {(() => {
+                        const Icon = ICONS[item.icon];
+                        return <Icon />;
+                      })()}
+                    </span>
+                  ) : null}
                   <h3 className={styles.h3}>{item.name}</h3>
                   <p>{item.text}</p>
                 </li>
