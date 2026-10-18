@@ -26,6 +26,7 @@ test('classic composed preparation preserves optional strict maxima through quot
     assert.deepEqual(quote.actions.map(x=>x.max_execution_micro_usd),[null,null]);
     const configuration={...semanticConfiguration,platform_hard_cap_micro_usd:null};
     const started=await startComposedFixture(pool,fixture,quote.quote_digest!,'classic-null-cap-start',configuration);
+  await pool.query('SET CONSTRAINTS ALL IMMEDIATE');await pool.query('SET CONSTRAINTS ALL DEFERRED');
     const before=await composedBundleCounts(pool,fixture.workspaceId);
     assert.equal((await startComposedFixture(pool,fixture,quote.quote_digest!,'classic-null-cap-start',configuration)).replayed,true);
     assert.deepEqual(await composedBundleCounts(pool,fixture.workspaceId),before);
@@ -50,6 +51,7 @@ test('classic composed preparation preserves optional strict maxima through quot
     const canceled=await seedComposedFixture(pool,'optional-cancel',{optionalStrictCaps:true});
     const cancelQuote=await quoteComposedFixture(pool,canceled);
     const cancelRun=await startComposedFixture(pool,canceled,cancelQuote.quote_digest!,'classic-null-cap-cancel',configuration);
+  await pool.query('SET CONSTRAINTS ALL IMMEDIATE');await pool.query('SET CONSTRAINTS ALL DEFERRED');
     await pool.query(`UPDATE signal_semantic_context_proposal_runs SET status='stale',stale_at=clock_timestamp(),
       error_code='fixture_source_changed' WHERE id=$1`,[cancelRun.run_id]);
     await pool.query(`UPDATE signal_semantic_context_budget_reservations SET status='released',released_at=clock_timestamp(),
@@ -78,6 +80,7 @@ test('classic optional cap composes the real prototype Worker with exact Voyage 
   const quote=await quoteComposedFixture(pool,fixture);
   const configuration={...semanticConfiguration,platform_hard_cap_micro_usd:null};
   const started=await startComposedFixture(pool,fixture,quote.quote_digest!,'classic-optional-prototype-start',configuration);
+  await pool.query('SET CONSTRAINTS ALL IMMEDIATE');await pool.query('SET CONSTRAINTS ALL DEFERRED');
   const prepared=await prepareSignalSemanticContextProposalInputV1({queryable:pool,workspace:{id:fixture.workspaceId,organization_id:fixture.organizationId,brand_id:fixture.brandId},generation_key:fixture.generationKey});
   const primary=prepared.input.identity.primary;
   const knowledge=prepared.input.knowledge_blocks.find(x=>x.source_kind==='knowledge_source'||x.source_kind==='knowledge_chunk')!;
@@ -98,6 +101,7 @@ test('classic optional cap composes the real prototype Worker with exact Voyage 
   assert.equal(prototype.requires_confirmation,false,'NULL cap inherits exact parent authority');
   const requested=await startSignalBrandContextPrototypeProcessingV1({database:pool,parent_receipt_id:parent,actor_user_id:fixture.clientActorId,
    idempotency_key:'classic-optional-prototype',provider_available:true});
+  await pool.query('SET CONSTRAINTS ALL IMMEDIATE');await pool.query('SET CONSTRAINTS ALL DEFERRED');
   const simulator=createBrandContextSyntheticVoyageProviderV1();
   await executeBrandContextSyntheticPrototypeRunV1({database:pool,run_id:requested.run_id,provider:simulator.provider});
   const completed=(await pool.query('SELECT status,hard_cap_micro_usd::text,settled_micro_usd::text FROM signal_workspace_embedding_runs WHERE id=$1',[requested.run_id])).rows[0];
@@ -119,6 +123,7 @@ test('existing MFP provisioner cannot replace a policy with a live composed sema
   const f=await seedComposedFixture(pool,'mfp-keep-semantic-owner',{optionalStrictCaps:true});
   const quote=await quoteComposedFixture(pool,f);
   const started=await startComposedFixture(pool,f,quote.quote_digest!,'keep-semantic-owner',{...semanticConfiguration,platform_hard_cap_micro_usd:null});
+  await pool.query('SET CONSTRAINTS ALL IMMEDIATE');await pool.query('SET CONSTRAINTS ALL DEFERRED');
   await pool.query(`UPDATE signal_workspaces SET metadata=metadata||jsonb_build_object('created_by_user_id',$2::text,
    'creation_request_digest','sha256:'||repeat('a',64)) WHERE id=$1`,[f.workspaceId,f.clientActorId]);
   await pool.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mention_facets',$2)",[f.workspaceId,f.internalActorId]);

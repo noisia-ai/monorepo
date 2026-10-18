@@ -128,7 +128,7 @@ export async function provisionSignalBrandContextPolicyV1(args: {
       const pending=(await client.query<{pending:boolean}>(`SELECT EXISTS(
         SELECT 1 FROM signal_processing_admissions admission WHERE admission.policy_version_id=$1::uuid
           AND (
-            EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
+            EXISTS(SELECT 1 FROM signal_semantic_context_proposal_runs owner WHERE owner.processing_admission_id=admission.id AND (owner.status IN('queued','processing','validating') OR owner.provider_call_state IN('in_flight','response_persisted','outcome_unknown'))) OR
             EXISTS(SELECT 1 FROM signal_workspace_embedding_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running','outcome_unknown')) OR
             EXISTS(SELECT 1 FROM signal_corpus_preparation_runs owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
             EXISTS(SELECT 1 FROM signal_topic_catalog_executions owner WHERE owner.processing_admission_id=admission.id AND owner.status IN('queued','running')) OR
