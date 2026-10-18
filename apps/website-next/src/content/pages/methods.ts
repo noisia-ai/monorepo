@@ -22,9 +22,9 @@ export const methodsIndex: Localized<PageContent> = {
         type: "cards",
         title: "Las bases",
         items: [
-          { name: "Antropología", text: "Leer la cultura desde adentro: qué significa una categoría en un mercado, qué se admira, qué se ridiculiza y qué da permiso. De aquí viene la lectura de códigos y la descripción densa." },
+          { name: "Antropología", text: "Leer la cultura desde adentro: qué significa una categoría en un mercado, qué se admira, qué se ridiculiza y qué da permiso. De aquí vienen el análisis de códigos y la descripción densa." },
           { name: "Sociología", text: "Cómo se mueven las ideas entre personas y comunidades, quién legitima, quién conecta y por dónde entra lo nuevo. De aquí viene el análisis de redes y de influencia." },
-          { name: "Psicología", text: "Cómo decide una persona: los dos modos de pensar, la aversión a la pérdida, la fatiga de decidir, las fricciones que frenan un cambio. De aquí viene la lectura de motivos, frenos y velocidad." }
+          { name: "Psicología", text: "Cómo decide una persona: los dos modos de pensar, la aversión a la pérdida, la fatiga de decidir, las fricciones que frenan un cambio. De aquí viene el análisis de motivos, frenos y velocidad." }
         ]
       },
       {
@@ -80,9 +80,9 @@ export const methodsIndex: Localized<PageContent> = {
         type: "cards",
         title: "The foundations",
         items: [
-          { name: "Anthropology", text: "Reading culture from the inside: what a category means in a market, what is admired, what is ridiculed and what grants permission. This is where the reading of codes and thick description come from." },
+          { name: "Anthropology", text: "Reading culture from the inside: what a category means in a market, what is admired, what is ridiculed and what grants permission. This is where code analysis and thick description come from." },
           { name: "Sociology", text: "How ideas move between people and communities, who legitimizes, who connects and where the new comes in. This is where network and influence analysis come from." },
-          { name: "Psychology", text: "How a person decides: the two modes of thinking, loss aversion, decision fatigue, the frictions that hold back a change. This is where the reading of motives, obstacles and speed comes from." }
+          { name: "Psychology", text: "How a person decides: the two modes of thinking, loss aversion, decision fatigue, the frictions that hold back a change. This is where the analysis of motives, obstacles and speed comes from." }
         ]
       },
       {
@@ -175,7 +175,7 @@ export const methodEntries: Entry[] = [
         { name: "Dual-Process Theory · Kahneman (2011)", text: "Dos modos de decidir, uno rápido e intuitivo y otro lento y deliberado. Distingue motivos de impulso de motivos de evaluación." },
         { name: "Jobs to be Done · Christensen (2016)", text: "La gente contrata productos para resolver trabajos funcionales, emocionales y sociales. Alimenta las capas psicológica y social." },
         { name: "Self-Determination Theory · Deci y Ryan (1985)", text: "Motivación interna y externa como motores distintos. Separa lo personal de lo social." },
-        { name: "Friction Theory · Nordgren y Schonthal (2021)", text: "Inercia, esfuerzo, emoción y reactancia como las cuatro fuerzas que frenan un cambio. Estructura la lectura de los frenos." }
+        { name: "Friction Theory · Nordgren y Schonthal (2021)", text: "Inercia, esfuerzo, emoción y reactancia como las cuatro fuerzas que frenan un cambio. Estructura el análisis de los frenos." }
       ],
       steps: [
         { name: "Definimos la decisión", text: "Qué intenta resolver la gente en la categoría y qué hipótesis trae tu equipo. Las hipótesis se prueban o se descartan con la conversación." },
@@ -194,7 +194,7 @@ export const methodEntries: Entry[] = [
         "Lanzamientos con una hipótesis de adopción sin validar. Conversión que cae sin que el canal lo explique. Defensa cuando la gente se va por algo distinto al precio. Reposicionamiento en una categoría madura que necesita reabrir el motivo de uso. Comunicación que busca activar un comportamiento, más allá de recordar la marca."
       ],
       limits: [
-        "No estima tamaño de mercado ni cuotas; es direccional y motivacional. No sustituye una prueba cuantitativa de concepto: sirve para diseñar la hipótesis que vale la pena probar. Captura el sistema de motivos en el momento de la lectura; si la conversación tiene más de nueve meses, puede describir algo que ya cambió. Y no diagnostica awareness: si nadie conoce la categoría, no hay decisión que leer."
+        "No estima tamaño de mercado ni cuotas; es direccional y motivacional. No sustituye una prueba cuantitativa de concepto: sirve para diseñar la hipótesis que vale la pena probar. Captura el sistema de motivos en el momento del análisis; si la conversación tiene más de nueve meses, puede describir algo que ya cambió. Y no diagnostica awareness: si nadie conoce la categoría, no hay decisión que leer."
       ]
     },
     {
@@ -212,7 +212,7 @@ export const methodEntries: Entry[] = [
         { name: "Dual-Process Theory · Kahneman (2011)", text: "Two modes of deciding, one fast and intuitive, one slow and deliberate. It separates impulse motives from evaluation motives." },
         { name: "Jobs to be Done · Christensen (2016)", text: "People hire products to get functional, emotional and social jobs done. It feeds the psychological and social layers." },
         { name: "Self-Determination Theory · Deci and Ryan (1985)", text: "Internal and external motivation as distinct drivers. It separates the personal from the social." },
-        { name: "Friction Theory · Nordgren and Schonthal (2021)", text: "Inertia, effort, emotion and reactance as the four forces that hold back a change. It structures the reading of obstacles." }
+        { name: "Friction Theory · Nordgren and Schonthal (2021)", text: "Inertia, effort, emotion and reactance as the four forces that hold back a change. It structures the analysis of obstacles." }
       ],
       steps: [
         { name: "We define the decision", text: "What people are trying to solve in the category and which hypotheses your team brings. Hypotheses are tested or discarded against the conversation." },
@@ -231,7 +231,7 @@ export const methodEntries: Entry[] = [
         "Launches with an untested adoption hypothesis. Conversion that drops without the channel explaining it. Defense when people leave for something other than price. Repositioning in a mature category that needs to reopen the reason to use. Communication meant to activate a behavior, beyond reminding people of the brand."
       ],
       limits: [
-        "It doesn't estimate market size or share; it is directional and motivational. It doesn't replace a quantitative concept test: it helps design the hypothesis worth testing. It captures the system of motives at the time of the reading; if the conversation is older than nine months, it may describe something that has already changed. And it doesn't diagnose awareness: if nobody knows the category, there is no decision to read."
+        "It doesn't estimate market size or share; it is directional and motivational. It doesn't replace a quantitative concept test: it helps design the hypothesis worth testing. It captures the system of motives at the time of the analysis; if the conversation is older than nine months, it may describe something that has already changed. And it doesn't diagnose awareness: if nobody knows the category, there is no decision to read."
       ]
     }
   ),
@@ -271,7 +271,7 @@ export const methodEntries: Entry[] = [
         "Reposicionamiento o redefinición de la propuesta de valor. Defensa de margen frente a un entrante barato. Evaluación después de un lanzamiento, para saber si la propuesta llegó como se diseñó. Detección de huecos defensivos antes de que un competidor los ocupe."
       ],
       limits: [
-        "No mide elasticidad de precio ni dice cuál es el precio óptimo; para eso existen el análisis conjoint y los experimentos. Da posiciones relativas entre las marcas comparadas; una calificación absoluta no sale de aquí. Es sensible al marco competitivo: si falta un competidor relevante, la lectura queda incompleta. Describe el presente, sin proyectar cómo se moverá la matriz si cambias la comunicación. Y no aplica cuando no hay competencia comparable o cuando la categoría es puramente funcional, sin marca que importe."
+        "No mide elasticidad de precio ni dice cuál es el precio óptimo; para eso existen el análisis conjoint y los experimentos. Da posiciones relativas entre las marcas comparadas; una calificación absoluta no sale de aquí. Es sensible al marco competitivo: si falta un competidor relevante, el análisis queda incompleto. Describe el presente, sin proyectar cómo se moverá la matriz si cambias la comunicación. Y no aplica cuando no hay competencia comparable o cuando la categoría es puramente funcional, sin marca que importe."
       ]
     },
     {
@@ -308,7 +308,7 @@ export const methodEntries: Entry[] = [
         "Repositioning or redefining the value proposition. Defending margin against a low-cost entrant. Evaluating after a launch, to know whether the proposition landed as designed. Spotting defensive gaps before a competitor fills them."
       ],
       limits: [
-        "It doesn't measure price elasticity or tell you the optimal price point; conjoint analysis and experiments do that. It gives relative positions among the brands compared; an absolute score doesn't come out of it. It is sensitive to the competitive frame: if a relevant competitor is missing, the reading is incomplete. It describes the present and doesn't project how the matrix will move if you change your communication. And it doesn't apply when there is no comparable competition or when the category is purely functional, with no brand that matters."
+        "It doesn't measure price elasticity or tell you the optimal price point; conjoint analysis and experiments do that. It gives relative positions among the brands compared; an absolute score doesn't come out of it. It is sensitive to the competitive frame: if a relevant competitor is missing, the analysis is incomplete. It describes the present and doesn't project how the matrix will move if you change your communication. And it doesn't apply when there is no comparable competition or when the category is purely functional, with no brand that matters."
       ]
     }
   ),
@@ -316,7 +316,7 @@ export const methodEntries: Entry[] = [
     { es: "cultural-codes-decoding", en: "cultural-codes-decoding" },
     {
       name: "Cultural Codes Decoding",
-      metaDescription: "Qué significa tu categoría en la vida real de la gente de un mercado: qué se admira, qué se ridiculiza, qué da permiso. Una lectura semiótica en tres niveles para elegir un lenguaje que sí pertenezca.",
+      metaDescription: "Qué significa tu categoría en la vida real de la gente de un mercado: qué se admira, qué se ridiculiza, qué da permiso. Un análisis semiótico en tres niveles para elegir un lenguaje que sí pertenezca.",
       question: "¿Qué significa tu categoría en la vida real de la gente de un mercado?",
       lead: "Cultural Codes Decoding hace visibles las reglas no escritas de una categoría en un mercado: qué se admira, qué se ridiculiza, qué da permiso. Lee el lenguaje en tres niveles y detecta las oposiciones que estructuran el significado, para que tu marca elija su lugar con conciencia.",
       summary: "Las reglas no escritas de una categoría en un mercado, y qué lenguaje tiene permiso de existir ahí.",
@@ -328,11 +328,11 @@ export const methodEntries: Entry[] = [
       foundations: [
         { name: "Semiótica estructural · Saussure (1916)", text: "El significado nace de oposiciones dentro de un sistema. Da la lógica para detectar los contrastes que ordenan una categoría." },
         { name: "Mitologías · Barthes (1957)", text: "Los objetos de consumo cargan significados de segundo orden. De aquí vienen los tres niveles: denotación, connotación y mito." },
-        { name: "Descripción densa · Geertz (1973)", text: "La cultura se lee desde adentro, en su propio contexto. Es el marco metodológico de toda la lectura." },
+        { name: "Descripción densa · Geertz (1973)", text: "La cultura se lee desde adentro, en su propio contexto. Es el marco metodológico de todo el análisis." },
         { name: "Bienes como comunicación · Douglas e Isherwood (1979)", text: "Lo que se consume funciona como un sistema de comunicación social, y así se lee." }
       ],
       steps: [
-        { name: "Definimos mercado y categoría", text: "Un país a la vez. Una lectura regional borra justo lo que este método busca." },
+        { name: "Definimos mercado y categoría", text: "Un país a la vez. Un análisis regional borra justo lo que este método busca." },
         { name: "Reunimos conversación densa", text: "Foros, comunidades, comentarios largos y textos personales donde la categoría se explica, con comparativos de mercados vecinos cuando ayuda a ver lo local." },
         { name: "Identificamos palabras, metáforas y comparaciones recurrentes", text: "Y las leemos en los tres niveles, de lo literal al mito." },
         { name: "Detectamos las oposiciones", text: "Qué contrastes ordenan la categoría, qué polo se legitima en cada nivel y dónde los niveles se contradicen." },
@@ -347,12 +347,12 @@ export const methodEntries: Entry[] = [
         "Entrada a un mercado donde la categoría existe pero opera con códigos locales distintos. Reposicionamiento profundo, de significado más que de estética. Lanzamiento en una categoría madura donde lo obvio ya no diferencia. Adaptación de una campaña global a un contexto específico. Detección de tensiones simbólicas que abren espacio para una narrativa nueva."
       ],
       limits: [
-        "Es interpretativo: produce comprensión estructural, con rigor y triangulación, sin porcentajes. No sirve sobre conversación puramente transaccional; la densidad cultural vive en comunidades y texto largo. No opera por demografía: lee sistemas simbólicos, que cruzan edades y segmentos. Captura el sistema en el momento de la lectura; los códigos cambian despacio y conviene revisar cada 18 a 24 meses en una categoría activa. Y no predice si una campaña funcionará: da el territorio simbólico viable, y la ejecución creativa sigue siendo de los creativos."
+        "Es interpretativo: produce comprensión estructural, con rigor y triangulación, sin porcentajes. No sirve sobre conversación puramente transaccional; la densidad cultural vive en comunidades y texto largo. No opera por demografía: lee sistemas simbólicos, que cruzan edades y segmentos. Captura el sistema en el momento del análisis; los códigos cambian despacio y conviene revisar cada 18 a 24 meses en una categoría activa. Y no predice si una campaña funcionará: da el territorio simbólico viable, y la ejecución creativa sigue siendo de los creativos."
       ]
     },
     {
       name: "Cultural Codes Decoding",
-      metaDescription: "What your category means in people's real lives in a market: what is admired, what is ridiculed, what grants permission. A semiotic reading on three levels to choose a language that belongs.",
+      metaDescription: "What your category means in people's real lives in a market: what is admired, what is ridiculed, what grants permission. A semiotic analysis on three levels to choose a language that belongs.",
       question: "What does your category mean in people's real lives in a given market?",
       lead: "Cultural Codes Decoding makes the unwritten rules of a category in a market visible: what is admired, what is ridiculed, what grants permission. It reads language on three levels and detects the oppositions that structure meaning, so your brand can choose its place with awareness.",
       summary: "The unwritten rules of a category in a market, and which language has permission to exist there.",
@@ -364,11 +364,11 @@ export const methodEntries: Entry[] = [
       foundations: [
         { name: "Structural semiotics · Saussure (1916)", text: "Meaning is born from oppositions within a system. It provides the logic for detecting the contrasts that organize a category." },
         { name: "Mythologies · Barthes (1957)", text: "Consumer objects carry second-order meanings. This is where the three levels come from: denotation, connotation and myth." },
-        { name: "Thick description · Geertz (1973)", text: "Culture is read from the inside, in its own context. It is the methodological frame for the whole reading." },
+        { name: "Thick description · Geertz (1973)", text: "Culture is read from the inside, in its own context. It is the methodological frame for the whole analysis." },
         { name: "Goods as communication · Douglas and Isherwood (1979)", text: "What is consumed works as a system of social communication, and that is how it is read." }
       ],
       steps: [
-        { name: "We define market and category", text: "One country at a time. A regional reading erases exactly what this method looks for." },
+        { name: "We define market and category", text: "One country at a time. A regional analysis erases exactly what this method looks for." },
         { name: "We gather dense conversation", text: "Forums, communities, long comments and personal texts where the category is explained, with neighboring markets as a comparison when it helps to see what is local." },
         { name: "We identify recurring words, metaphors and comparisons", text: "And read them on the three levels, from the literal to the myth." },
         { name: "We detect the oppositions", text: "Which contrasts organize the category, which pole is legitimized on each level and where the levels contradict each other." },
@@ -383,7 +383,7 @@ export const methodEntries: Entry[] = [
         "Entering a market where the category exists but runs on different local codes. Deep repositioning, of meaning rather than aesthetics. Launching in a mature category where the obvious no longer differentiates. Adapting a global campaign to a specific context. Detecting symbolic tensions that open room for a new narrative."
       ],
       limits: [
-        "It is interpretive: it produces structural understanding, with rigor and triangulation, and no percentages. It doesn't work on purely transactional conversation; cultural density lives in communities and long text. It doesn't operate by demographics: it reads symbolic systems, which cut across ages and segments. It captures the system at the time of the reading; codes change slowly and are worth revisiting every 18 to 24 months in an active category. And it doesn't predict whether a campaign will work: it gives the viable symbolic territory, and the creative execution remains with the creatives."
+        "It is interpretive: it produces structural understanding, with rigor and triangulation, and no percentages. It doesn't work on purely transactional conversation; cultural density lives in communities and long text. It doesn't operate by demographics: it reads symbolic systems, which cut across ages and segments. It captures the system at the time of the analysis; codes change slowly and are worth revisiting every 18 to 24 months in an active category. And it doesn't predict whether a campaign will work: it gives the viable symbolic territory, and the creative execution remains with the creatives."
       ]
     }
   ),
@@ -414,7 +414,7 @@ export const methodEntries: Entry[] = [
         { name: "Recomendamos la arquitectura de elección", text: "Qué mostrar antes, cuántas opciones, qué dejar por defecto, qué secuencia y en qué momento pedir la acción." }
       ],
       outputs: [
-        { name: "Diagnóstico de velocidad", text: "Si la decisión es lenta o rápida, en qué fase se desbalancea y qué modo de pensar domina en cada una." },
+        { name: "Análisis de velocidad", text: "Si la decisión es lenta o rápida, en qué fase se desbalancea y qué modo de pensar domina en cada una." },
         { name: "Mapa de frenos", text: "Lo que detiene el avance, jerarquizado por fase y con sus citas." },
         { name: "Mapa de aceleradores", text: "Lo que ya empuja la decisión y lo que falta." },
         { name: "Brief de arquitectura de elección", text: "Recomendaciones concretas para el funnel: opciones por defecto, puntos de referencia, secuencia, número de opciones y momento del llamado a la acción." }
@@ -423,7 +423,7 @@ export const methodEntries: Entry[] = [
         "Optimización de conversión cuando el problema no es awareness ni consideración. Rediseño de configuradores, páginas de precio y comparadores. Comercio electrónico con surtido grande donde la gente abandona por exceso de opciones. Categorías donde la decisión es inusualmente lenta o inusualmente rápida. Lanzamientos donde la velocidad esperada y la real no coinciden."
       ],
       limits: [
-        "No sustituye una prueba A/B: entrega hipótesis fuertes y la validación cuantitativa es el paso siguiente. Necesita conversación narrativa; con reseñas cortas no alcanza para reconstruir el proceso. No diagnostica el abandono anterior a la consideración: si la gente nunca llega a decidir, no hay decisión que leer. Y la velocidad normal depende de la categoría, así que la lectura siempre es relativa a la tuya."
+        "No sustituye una prueba A/B: entrega hipótesis fuertes y la validación cuantitativa es el paso siguiente. Necesita conversación narrativa; con reseñas cortas no alcanza para reconstruir el proceso. No diagnostica el abandono anterior a la consideración: si la gente nunca llega a decidir, no hay decisión que leer. Y la velocidad normal depende de la categoría, así que el análisis siempre es relativo a la tuya."
       ]
     },
     {
@@ -451,7 +451,7 @@ export const methodEntries: Entry[] = [
         { name: "We recommend the choice architecture", text: "What to show earlier, how many options, what to set as default, in what sequence and when to ask for the action." }
       ],
       outputs: [
-        { name: "Velocity diagnostic", text: "Whether the decision is slow or fast, in which phase it tips and which mode of thinking dominates each one." },
+        { name: "Velocity analysis", text: "Whether the decision is slow or fast, in which phase it tips and which mode of thinking dominates each one." },
         { name: "Blockers map", text: "What holds the decision back, ranked by phase and with its quotes." },
         { name: "Accelerators map", text: "What already pushes the decision forward and what is missing." },
         { name: "Choice architecture brief", text: "Specific recommendations for the funnel: defaults, reference points, sequence, number of options and timing of the call to action." }
@@ -460,7 +460,7 @@ export const methodEntries: Entry[] = [
         "Conversion optimization when the problem is neither awareness nor consideration. Redesign of configurators, pricing pages and comparison tools. E-commerce with a large assortment where people abandon because of too many options. Categories where the decision is unusually slow or unusually fast. Launches where the expected speed and the real one don't match."
       ],
       limits: [
-        "It doesn't replace an A/B test: it delivers strong hypotheses and quantitative validation is the next step. It needs narrative conversation; short reviews are not enough to reconstruct the process. It doesn't diagnose abandonment before consideration: if people never get to the point of deciding, there is no decision to read. And normal speed depends on the category, so the reading is always relative to yours."
+        "It doesn't replace an A/B test: it delivers strong hypotheses and quantitative validation is the next step. It needs narrative conversation; short reviews are not enough to reconstruct the process. It doesn't diagnose abandonment before consideration: if people never get to the point of deciding, there is no decision to read. And normal speed depends on the category, so the analysis is always relative to yours."
       ]
     }
   ),

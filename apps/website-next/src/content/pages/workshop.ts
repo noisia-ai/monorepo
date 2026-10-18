@@ -51,7 +51,7 @@ export const workshop: Localized<PageContent & { form: WorkshopForm }> = {
         title: "Preguntas frecuentes",
         items: [
           { q: "¿De verdad es gratis?", a: "Sí. El taller y el alcance por escrito no tienen costo ni compromiso. Cobramos cuando decides arrancar un reporte, un estudio o un plan anual." },
-          { q: "¿Quién participa por parte de Noisia?", a: "Un Intelligence Architect, la persona que definiría la pregunta y firmaría la lectura si trabajamos juntos. Por tu lado conviene que esté quien va a tomar la decisión o quien conoce mejor el problema." },
+          { q: "¿Quién participa por parte de Noisia?", a: "Un Intelligence Architect, la persona que definiría la pregunta y firmaría el resultado si trabajamos juntos. Por tu lado conviene que esté quien va a tomar la decisión o quien conoce mejor el problema." },
           { q: "¿Qué pasa si no tengo brief?", a: "Es el caso más común. Con tu situación y la decisión que viene armamos la pregunta en la sesión. El alcance que recibes después funciona como brief." },
           { q: "¿Pueden firmar un acuerdo de confidencialidad?", a: "Sí. Si necesitas un NDA antes de contarnos el contexto, envíanos el tuyo o te mandamos uno nuestro antes del taller." },
           { q: "¿Y si la conversación no puede responder mi pregunta?", a: "Te lo decimos en el taller y, si conocemos a alguien que sí pueda, te lo recomendamos. Preferimos eso a vender un estudio que no sirva." }
@@ -108,7 +108,7 @@ export const workshop: Localized<PageContent & { form: WorkshopForm }> = {
         title: "Frequently asked questions",
         items: [
           { q: "Is it really free?", a: "Yes. The workshop and the written scope have no cost and no commitment. We charge when you decide to start a report, a study or an annual plan." },
-          { q: "Who attends from Noisia?", a: "An Intelligence Architect, the person who would define the question and sign off the reading if we work together. On your side it helps to have whoever will make the decision or knows the problem best." },
+          { q: "Who attends from Noisia?", a: "An Intelligence Architect, the person who would define the question and sign off the analysis if we work together. On your side it helps to have whoever will make the decision or knows the problem best." },
           { q: "What if I don't have a brief?", a: "That is the most common case. From your situation and the decision ahead we build the question in the session. The scope you receive afterwards works as the brief." },
           { q: "Can you sign an NDA?", a: "Yes. If you need an NDA before sharing context, send us yours or we send you ours before the workshop." },
           { q: "What if the conversation can't answer my question?", a: "We tell you in the workshop and, if we know someone who can, we recommend them. We prefer that to selling a study that won't help." }

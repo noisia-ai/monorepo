@@ -56,7 +56,7 @@
     "notes": "Señal transparencia_IA. Facebook 50% / X 33% literales de cultural_headlines. +457% calculado de monthly_pulse: 2026-05 (89,053) vs 2025-05 (15,993) = +456.8%, redondeado.",
     "es": {
       "title": "La falta de transparencia ya se nombra publicidad engañosa",
-      "dek": "La acusación crece contra telcos, retail y delivery. Circula como diagnóstico con peso institucional y escala rápido a Profeco.",
+      "dek": "La acusación crece contra telcos, retail y delivery. Circula como un término con peso institucional y escala rápido a Profeco.",
       "scenes": [
         { "type": "hook", "text": "¿Qué rompe más la confianza que un error?" },
         { "type": "stat", "value": 457, "suffix": "%", "label": "más menciones sobre falta de transparencia en mayo de 2026 que un año antes", "context": "Conversación pública alrededor de marcas mexicanas" },
@@ -73,7 +73,7 @@
     },
     "en": {
       "title": "Opaque brands now get called out for misleading advertising",
-      "dek": "The accusation is growing against telcos, retail and delivery apps. It circulates as a diagnosis with institutional weight and escalates fast to Profeco.",
+      "dek": "The accusation is growing against telcos, retail and delivery apps. It circulates as a term with institutional weight and escalates fast to Profeco.",
       "scenes": [
         { "type": "hook", "text": "What breaks trust faster than a mistake?" },
         { "type": "stat", "value": 457, "suffix": "%", "label": "more mentions about lack of transparency in May 2026 than a year earlier", "context": "Public conversation around Mexican brands" },

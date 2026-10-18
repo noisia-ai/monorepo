@@ -1,6 +1,7 @@
 import type { Block, PageContent } from "@/content/pages/types";
 import { Faq } from "@/components/ui/Faq";
 import { Reveal } from "@/components/ui/Reveal";
+import { MotionBlock } from "@/components/motion/MotionBlock";
 import styles from "./blocks.module.css";
 
 function BlockView({ block }: { block: Block }) {
@@ -105,6 +106,18 @@ function BlockView({ block }: { block: Block }) {
               </li>
             ))}
           </ul>
+        </div>
+      );
+    case "motion":
+      return (
+        <div>
+          {block.title ? <h2 className={styles.h2}>{block.title}</h2> : null}
+          {block.lead ? <p className={styles.lead}>{block.lead}</p> : null}
+          {block.name === "sources-hub" ? (
+            <MotionBlock name="sources-hub" copy={block.copy} label={block.title ?? block.copy.center} />
+          ) : (
+            <MotionBlock name="one-conversation" copy={block.copy} label={block.title ?? block.copy.framework} />
+          )}
         </div>
       );
     case "cta":

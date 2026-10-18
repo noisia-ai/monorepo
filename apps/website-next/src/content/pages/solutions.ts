@@ -37,7 +37,7 @@ export const solutionsIndex: Localized<PageContent> = {
           { name: "La pregunta", text: "Qué vas a decidir y cuántas preguntas investigables hacen falta para responderlo." },
           { name: "Las fuentes", text: "Redes, reseñas, foros, búsquedas y tus propios datos. Cada una se suma si aporta a la pregunta." },
           { name: "Los mercados", text: "Cuántos países o regiones, y en qué idiomas habla la gente ahí." },
-          { name: "El periodo", text: "Cuánta historia hace falta leer y si la lectura se repite cada mes." },
+          { name: "El periodo", text: "Cuánta historia hace falta leer y si el análisis se repite cada mes." },
           { name: "La profundidad", text: "Una respuesta directa, un estudio completo con recomendaciones o un plan para el año." }
         ]
       },
@@ -94,7 +94,7 @@ export const solutionsIndex: Localized<PageContent> = {
           { name: "The question", text: "What you are going to decide and how many researchable questions it takes to answer it." },
           { name: "The sources", text: "Social media, reviews, forums, search and your own data. Each one is added if it contributes to the question." },
           { name: "The markets", text: "How many countries or regions, and which languages people speak there." },
-          { name: "The period", text: "How much history needs to be read and whether the reading repeats every month." },
+          { name: "The period", text: "How much history needs to be read and whether the analysis repeats every month." },
           { name: "The depth", text: "A direct answer, a full study with recommendations or a plan for the year." }
         ]
       },
@@ -170,7 +170,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
     es: {
       situation: [
         "Tu equipo tiene un tablero, o varios, y aun así la pregunta de cada mes sigue abierta: qué pasó, por qué, y si eso importa. Alguien tiene que leer las menciones, decidir qué es ruido y explicar el cambio frente a dirección. Casi nunca hay tiempo para hacerlo bien.",
-        "Un reporte mensual de Noisia hace esa lectura por ti. Compara el mes contra el anterior sobre los mismos temas, explica cada movimiento con sus citas y señala qué conviene vigilar antes de la siguiente reunión."
+        "Un reporte mensual de Noisia hace ese análisis por ti. Compara el mes contra el anterior sobre los mismos temas, explica cada movimiento con sus citas y señala qué conviene vigilar antes de la siguiente reunión."
       ],
       lookAt: [
         { name: "Tu marca y tu categoría", text: "Lo que se dice de ti y de quienes compiten contigo, con el mismo criterio y el mismo periodo." },
@@ -193,14 +193,14 @@ const copy: Record<string, Localized<MomentCopy>> = {
       faq: [
         { q: "¿Qué diferencia hay con el tablero de mi herramienta de listening?", a: "El tablero muestra volumen y sentimiento sobre palabras que alguien eligió. El reporte parte de temas descubiertos desde lo que la gente dice, limpia el ruido, explica el cambio y lo firma una persona. Puedes conservar tu herramienta; el reporte puede leer sus exportaciones." },
         { q: "¿Cada cuánto llega?", a: "Cada mes, en una fecha fija. Si tu categoría se mueve más rápido, se puede acordar otra frecuencia en el alcance." },
-        { q: "¿Puedo pedir que un mes profundicen en algo?", a: "Sí. Cuando un tema pide más lectura, se convierte en un estudio corto dentro del mismo acuerdo o como alcance aparte." },
+        { q: "¿Puedo pedir que un mes profundicen en algo?", a: "Sí. Cuando un tema pide más profundidad, se convierte en un estudio corto dentro del mismo acuerdo o como alcance aparte." },
         { q: "¿Qué pasa si quiero cambiar los temas?", a: "Los temas son editables. Un Intelligence Architect los ajusta contigo y el sistema conserva ese cambio para los meses siguientes." }
       ]
     },
     en: {
       situation: [
         "Your team has a dashboard, or several, and the question of the month is still open: what happened, why, and whether it matters. Someone has to read the mentions, decide what is noise and explain the change to leadership. There is almost never time to do it well.",
-        "A monthly report from Noisia does that reading for you. It compares the month against the previous one on the same topics, explains every movement with its quotes and points out what to watch before the next meeting."
+        "A monthly report from Noisia does that analysis for you. It compares the month against the previous one on the same topics, explains every movement with its quotes and points out what to watch before the next meeting."
       ],
       lookAt: [
         { name: "Your brand and your category", text: "What is said about you and about those competing with you, under the same criteria and the same period." },
@@ -223,7 +223,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
       faq: [
         { q: "How is this different from my listening tool's dashboard?", a: "The dashboard shows volume and sentiment on keywords someone chose. The report starts from topics discovered in what people say, cleans out the noise, explains the change and is signed off by a person. You can keep your tool; the report can read its exports." },
         { q: "How often does it arrive?", a: "Every month, on a fixed date. If your category moves faster, another frequency can be agreed in the scope." },
-        { q: "Can I ask you to go deeper on something one month?", a: "Yes. When a topic calls for more reading, it becomes a short study within the same agreement or as a separate scope." },
+        { q: "Can I ask you to go deeper on something one month?", a: "Yes. When a topic calls for more depth, it becomes a short study within the same agreement or as a separate scope." },
         { q: "What if I want to change the topics?", a: "Topics are editable. An Intelligence Architect adjusts them with you and the system keeps that change for the following months." }
       ]
     }
@@ -374,9 +374,9 @@ const copy: Record<string, Localized<MomentCopy>> = {
         { ...m.es.vpm, text: "Cuando la pelea es de valor percibido frente a precio." }
       ],
       faq: [
-        { q: "¿Pueden leer a mi competidor con el mismo detalle?", a: "Sí, con las mismas fuentes y el mismo periodo. Es lo que hace comparable la lectura. Leemos conversación pública; no accedemos a datos internos de nadie." },
+        { q: "¿Pueden leer a mi competidor con el mismo detalle?", a: "Sí, con las mismas fuentes y el mismo periodo. Es lo que hace comparable el análisis. Leemos conversación pública; no accedemos a datos internos de nadie." },
         { q: "¿Cuánto tarda?", a: "La primera versión llega en días a partir del brief, lo que permite reaccionar dentro del mismo trimestre." },
-        { q: "¿Y si la gente sí se va por precio?", a: "El estudio lo dirá, con cifras y citas. En ese caso la lectura se concentra en qué parte del valor no se está viendo y qué justificaría la diferencia." },
+        { q: "¿Y si la gente sí se va por precio?", a: "El estudio lo dirá, con cifras y citas. En ese caso el análisis se concentra en qué parte del valor no se está viendo y qué justificaría la diferencia." },
         { q: "¿Se puede seguir después del estudio?", a: "Sí. Muchos equipos convierten el estudio en un reporte mensual para ver si las acciones cambian la conversación." }
       ]
     },
@@ -405,9 +405,9 @@ const copy: Record<string, Localized<MomentCopy>> = {
         { ...m.en.vpm, text: "When the fight is about perceived value against price." }
       ],
       faq: [
-        { q: "Can you read my competitor in the same detail?", a: "Yes, with the same sources and the same period. That is what makes the reading comparable. We read public conversation; we don't access anyone's internal data." },
+        { q: "Can you read my competitor in the same detail?", a: "Yes, with the same sources and the same period. That is what makes the analysis comparable. We read public conversation; we don't access anyone's internal data." },
         { q: "How long does it take?", a: "The first version arrives within days of the brief, which allows you to react within the same quarter." },
-        { q: "What if people really do leave over price?", a: "The study will say so, with numbers and quotes. In that case the reading focuses on which part of the value isn't being seen and what would justify the difference." },
+        { q: "What if people really do leave over price?", a: "The study will say so, with numbers and quotes. In that case the analysis focuses on which part of the value isn't being seen and what would justify the difference." },
         { q: "Can we keep going after the study?", a: "Yes. Many teams turn the study into a monthly report to see whether the actions change the conversation." }
       ]
     }
@@ -437,7 +437,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
         { ...m.es.dv, text: "Cuando la pregunta es por qué la decisión se vuelve lenta." }
       ],
       faq: [
-        { q: "¿Necesito compartir mis datos de analítica?", a: "No es obligatorio. El estudio se hace sobre conversación pública. Si compartes datos de funnel, la lectura gana precisión al cruzar lo dicho con lo hecho." },
+        { q: "¿Necesito compartir mis datos de analítica?", a: "No es obligatorio. El estudio se hace sobre conversación pública. Si compartes datos de funnel, el análisis gana precisión al cruzar lo dicho con lo hecho." },
         { q: "¿Cuánto tarda?", a: "La primera versión llega en días a partir del brief. Si el recorrido cruza varios canales o países, el alcance ajusta el tiempo." },
         { q: "¿Me dicen cuánto va a mejorar la conversión?", a: "No. El estudio da prioridades y las hipótesis más fuertes. El efecto en porcentaje se mide después, con un experimento, y el estudio dice cuál correr primero." }
       ]
@@ -466,7 +466,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
         { ...m.en.dv, text: "When the question is why the decision turns slow." }
       ],
       faq: [
-        { q: "Do I need to share my analytics data?", a: "It isn't required. The study is done on public conversation. If you share funnel data, the reading gains precision by crossing what is said with what is done." },
+        { q: "Do I need to share my analytics data?", a: "It isn't required. The study is done on public conversation. If you share funnel data, the analysis gains precision by crossing what is said with what is done." },
         { q: "How long does it take?", a: "The first version arrives within days of the brief. If the journey spans several channels or countries, the scope adjusts the timing." },
         { q: "Will you tell me how much conversion will improve?", a: "No. The study gives priorities and the strongest hypotheses. The effect in percentage terms is measured afterwards, with an experiment, and the study says which one to run first." }
       ]
@@ -536,7 +536,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
     es: {
       situation: [
         "Tu año tiene fechas que ya conoces: lanzamientos, campañas, temporadas, la revisión de presupuesto. Cada una trae una decisión, y la investigación suele llegar tarde o no llegar.",
-        "Un plan anual coloca los estudios antes de cada decisión y mantiene una lectura continua entre ellos, de modo que la respuesta ya exista cuando la reunión llegue."
+        "Un plan anual coloca los estudios antes de cada decisión y mantiene un análisis continuo entre ellos, de modo que la respuesta ya exista cuando la reunión llegue."
       ],
       lookAt: [
         { name: "Tu calendario de decisiones", text: "Qué vas a decidir, cuándo y qué pregunta hay que tener respondida antes." },
@@ -546,19 +546,19 @@ const copy: Record<string, Localized<MomentCopy>> = {
       ],
       receive: [
         { name: "Plan de estudios del año", text: "Cada estudio con su pregunta, su método, sus fuentes y su fecha de entrega, colocado antes de la decisión que alimenta." },
-        { name: "Reporte continuo entre estudios", text: "La lectura mensual que mantiene los temas vivos y detecta lo que cambia." },
+        { name: "Reporte continuo entre estudios", text: "El análisis mensual que mantiene los temas vivos y detecta lo que cambia." },
         { name: "Un espacio de marca permanente", text: "Temas, correcciones y evidencia que se acumulan durante el año, sin empezar de cero en cada estudio." },
-        { name: "Un Intelligence Architect asignado", text: "La misma persona durante el año, que conoce tu categoría y responde por cada lectura." }
+        { name: "Un Intelligence Architect asignado", text: "La misma persona durante el año, que conoce tu categoría y responde por cada análisis." }
       ],
       example:
         "Ejemplo ilustrativo, sin datos de un cliente real. Una marca con dos lanzamientos y una temporada fuerte al año recibía la investigación después de cerrar los briefs. Con el plan, el estudio de territorio llegó antes del brief de campaña, el reporte mensual mostró cuándo empezó a moverse la conversación de temporada y el estudio de defensa se programó para el mes en que el competidor solía lanzar.",
       methods: [
-        { ...m.es.tb, text: "Suele ser la base de la lectura continua." },
+        { ...m.es.tb, text: "Suele ser la base del análisis continuo." },
         { ...m.es.cc, text: "Antes de los lanzamientos y las campañas grandes." },
         { ...m.es.jfm, text: "Cuando una fecha del año depende de que el recorrido funcione." }
       ],
       faq: [
-        { q: "¿Qué pasa si cambian mis fechas?", a: "El plan se mueve con ellas. Lo que se acuerda es un número de estudios y una lectura continua, y el calendario se ajusta cada trimestre." },
+        { q: "¿Qué pasa si cambian mis fechas?", a: "El plan se mueve con ellas. Lo que se acuerda es un número de estudios y un análisis continuo, y el calendario se ajusta cada trimestre." },
         { q: "¿Es más barato que contratar estudio por estudio?", a: "La base de temas y fuentes se construye una vez y se reutiliza, así que cada estudio pide menos trabajo de arranque. El alcance lo muestra por escrito." },
         { q: "¿Puedo empezar con un estudio y pasar al plan después?", a: "Sí. Es la forma más común de llegar al plan anual." },
         { q: "¿Qué recibo entre estudios?", a: "El reporte mensual: qué se movió, por qué y qué vigilar, con los mismos temas que alimentan los estudios." }
@@ -567,7 +567,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
     en: {
       situation: [
         "Your year has dates you already know: launches, campaigns, seasons, the budget review. Each one brings a decision, and research usually arrives late or not at all.",
-        "An annual plan places the studies before each decision and keeps a continuous reading between them, so the answer already exists when the meeting comes."
+        "An annual plan places the studies before each decision and keeps a continuous analysis between them, so the answer already exists when the meeting comes."
       ],
       lookAt: [
         { name: "Your calendar of decisions", text: "What you are going to decide, when, and which question needs to be answered beforehand." },
@@ -577,19 +577,19 @@ const copy: Record<string, Localized<MomentCopy>> = {
       ],
       receive: [
         { name: "The year's plan of studies", text: "Each study with its question, method, sources and delivery date, placed before the decision it feeds." },
-        { name: "Continuous report between studies", text: "The monthly reading that keeps the topics alive and detects what changes." },
+        { name: "Continuous report between studies", text: "The monthly analysis that keeps the topics alive and detects what changes." },
         { name: "A permanent brand space", text: "Topics, corrections and evidence that accumulate throughout the year, without starting from scratch with each study." },
-        { name: "An assigned Intelligence Architect", text: "The same person throughout the year, who knows your category and answers for every reading." }
+        { name: "An assigned Intelligence Architect", text: "The same person throughout the year, who knows your category and answers for every analysis." }
       ],
       example:
         "Illustrative example, with no data from a real client. A brand with two launches and one strong season a year used to receive research after the briefs were closed. With the plan, the territory study arrived before the campaign brief, the monthly report showed when the seasonal conversation started to move, and the defense study was scheduled for the month when the competitor usually launched.",
       methods: [
-        { ...m.en.tb, text: "Usually the base of the continuous reading." },
+        { ...m.en.tb, text: "Usually the base of the continuous analysis." },
         { ...m.en.cc, text: "Before launches and big campaigns." },
         { ...m.en.jfm, text: "When a date in the year depends on the journey working." }
       ],
       faq: [
-        { q: "What if my dates change?", a: "The plan moves with them. What is agreed is a number of studies and a continuous reading, and the calendar is adjusted every quarter." },
+        { q: "What if my dates change?", a: "The plan moves with them. What is agreed is a number of studies and a continuous analysis, and the calendar is adjusted every quarter." },
         { q: "Is it cheaper than hiring study by study?", a: "The base of topics and sources is built once and reused, so each study needs less start-up work. The scope shows it in writing." },
         { q: "Can I start with one study and move to the plan later?", a: "Yes. It is the most common way to get to the annual plan." },
         { q: "What do I receive between studies?", a: "The monthly report: what moved, why and what to watch, with the same topics that feed the studies." }

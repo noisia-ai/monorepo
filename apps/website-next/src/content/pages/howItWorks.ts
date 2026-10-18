@@ -4,7 +4,7 @@ export const howItWorks: Localized<PageContent> = {
   es: {
     metaTitle: "Cómo funciona la inteligencia social de Noisia",
     metaDescription:
-      "Así convertimos tu pregunta en una respuesta con evidencia. El sistema lee redes, búsquedas, reseñas y tus propios datos; un Intelligence Architect aprueba los temas, corrige al sistema y firma la lectura.",
+      "Así convertimos tu pregunta en una respuesta con evidencia. El sistema lee redes, búsquedas, reseñas y tus propios datos; un Intelligence Architect aprueba los temas, corrige al sistema y firma el resultado.",
     title: "Tecnología que lee todo. Personas que deciden qué importa.",
     lead:
       "El sistema hace en horas lo que un equipo tardaría semanas en leer. Un Intelligence Architect dirige cada paso y firma el resultado. Este es el recorrido de tu pregunta a una decisión.",
@@ -19,7 +19,7 @@ export const howItWorks: Localized<PageContent> = {
           },
           {
             name: "Toda la voz",
-            text: "Reunimos conversación social, búsquedas, reseñas y los datos que ya tienes, como tu NPS o tus encuestas, en una sola lectura. Cada fuente aporta un tipo de señal distinto y se leen juntas."
+            text: "Reunimos conversación social, búsquedas, reseñas y los datos que ya tienes, como tu NPS o tus encuestas, en un solo análisis. Cada fuente aporta un tipo de señal distinto y se leen juntas."
           },
           {
             name: "Limpieza de la voz",
@@ -34,7 +34,7 @@ export const howItWorks: Localized<PageContent> = {
             text: "Cada cifra sale de un cálculo sobre la base completa y cada cita es literal, con su fuente y su fecha. Cualquier hallazgo se puede abrir hasta la mención que lo sostiene."
           },
           {
-            name: "Lectura y decisión",
+            name: "Análisis y decisión",
             text: "Con un método de la biblioteca, el Intelligence Architect interpreta lo que pesa, lo que es ruido y lo que tu marca puede mover. Cada hallazgo dice si es medido, direccional o cualitativo, y cada recomendación trae su evidencia."
           },
           {
@@ -59,12 +59,41 @@ export const howItWorks: Localized<PageContent> = {
         ]
       },
       {
+        type: "motion",
+        name: "sources-hub",
+        title: "Toda la voz, en un solo análisis",
+        lead: "Redes, reseñas, foros y búsquedas llegan al mismo análisis. Tus propios datos, como NPS o CRM, se leen con la misma estructura de temas.",
+        copy: {
+          center: "Un solo análisis",
+          sources: ["TikTok", "Instagram", "YouTube", "X", "Facebook", "Reseñas", "Foros", "Búsquedas", "NPS y encuestas", "CRM"],
+          owned: "Tus propios datos"
+        }
+      },
+      {
         type: "text",
         title: "De dónde sale la conversación",
         paragraphs: [
-          "Leemos lo que la gente publica en abierto: redes sociales, foros y comunidades, comentarios en video, reseñas de productos y servicios, preguntas y respuestas en marketplaces, y el volumen de búsquedas de una categoría. Cuando tienes datos propios, como encuestas, NPS o tickets de servicio, los incorporamos a la misma lectura con tu autorización.",
+          "Leemos lo que la gente publica en abierto: redes sociales, foros y comunidades, comentarios en video, reseñas de productos y servicios, preguntas y respuestas en marketplaces, y el volumen de búsquedas de una categoría. Cuando tienes datos propios, como encuestas, NPS o tickets de servicio, los incorporamos al mismo análisis con tu autorización.",
           "Las fuentes se eligen contra la pregunta. Una duda de compra vive en reseñas y foros; un código cultural vive en comunidades y conversación larga; un cambio de reputación vive en redes abiertas. No todas las fuentes sirven para todas las preguntas, y el alcance lo dice."
         ]
+      },
+      {
+        type: "motion",
+        name: "one-conversation",
+        title: "La misma conversación, vista como piensa cada equipo",
+        lead: "Cada mención se guarda una vez. Después se puede cortar por los temas de tu marca, contra tus competidores o con tu propio marco, sin volver a empezar. El ejemplo es ilustrativo.",
+        copy: {
+          views: [
+            { tab: "Se guarda una vez", caption: "Cada mención se guarda una sola vez, con su fuente." },
+            { tab: "Vista de marca", caption: "De qué habla la gente cuando habla de tu marca." },
+            { tab: "Vista competitiva", caption: "Las mismas menciones, separadas por marca y comparadas." },
+            { tab: "Tu propio marco", caption: "Tu forma de ver la categoría, aplicada a la misma conversación." }
+          ],
+          topics: ["Producto", "Servicio", "Precio", "Campañas", "Reputación"],
+          brands: ["Tu marca", "Competidor A", "Competidor B"],
+          framework: "Tu marco",
+          nodes: ["Ocasiones", "Necesidades", "Barreras"]
+        }
       },
       {
         type: "cards",
@@ -98,7 +127,7 @@ export const howItWorks: Localized<PageContent> = {
           },
           {
             q: "¿Necesito tener mi propia herramienta de listening?",
-            a: "No. Nosotros ponemos la tecnología y el acceso a las fuentes. Si ya tienes una herramienta, podemos leer sus exportaciones y sumarlas a la lectura."
+            a: "No. Nosotros ponemos la tecnología y el acceso a las fuentes. Si ya tienes una herramienta, podemos leer sus exportaciones y sumarlas al análisis."
           },
           {
             q: "¿Qué recibo al final?",
@@ -106,7 +135,7 @@ export const howItWorks: Localized<PageContent> = {
           },
           {
             q: "¿Pueden usar mi NPS o mis encuestas?",
-            a: "Sí. Llevamos tus datos a la misma estructura de temas que la conversación para ver dónde coinciden y dónde no. Es una de las lecturas que más cambia una decisión."
+            a: "Sí. Llevamos tus datos a la misma estructura de temas que la conversación para ver dónde coinciden y dónde no. Es uno de los análisis que más cambian una decisión."
           },
           {
             q: "¿En qué idiomas trabajan?",
@@ -126,7 +155,7 @@ export const howItWorks: Localized<PageContent> = {
   en: {
     metaTitle: "How Noisia's social intelligence works",
     metaDescription:
-      "How we turn your question into an answer with evidence. The system reads social media, search, reviews and your own data; an Intelligence Architect approves the topics, corrects the system and signs off the reading.",
+      "How we turn your question into an answer with evidence. The system reads social media, search, reviews and your own data; an Intelligence Architect approves the topics, corrects the system and signs off the analysis.",
     title: "Technology that reads everything. People who decide what matters.",
     lead:
       "The system does in hours what would take a team weeks to read. An Intelligence Architect leads every step and signs off the result. This is the path from your question to a decision.",
@@ -141,7 +170,7 @@ export const howItWorks: Localized<PageContent> = {
           },
           {
             name: "Every voice",
-            text: "We bring together social conversation, search, reviews and the data you already have, such as your NPS or surveys, in a single reading. Each source carries a different kind of signal, and they are read together."
+            text: "We bring together social conversation, search, reviews and the data you already have, such as your NPS or surveys, in a single analysis. Each source carries a different kind of signal, and they are read together."
           },
           {
             name: "Cleaning the voice",
@@ -156,7 +185,7 @@ export const howItWorks: Localized<PageContent> = {
             text: "Every number comes from a calculation over the conversación and every quote is verbatim, with its source and date. Any finding can be opened down to the mention that supports it."
           },
           {
-            name: "Reading and decision",
+            name: "Analysis and decision",
             text: "Using a method from the library, the Intelligence Architect interprets what carries weight, what is noise and what your brand can move. Every finding says whether it is measured, directional or qualitative, and every recommendation comes with its evidence."
           },
           {
@@ -181,12 +210,41 @@ export const howItWorks: Localized<PageContent> = {
         ]
       },
       {
+        type: "motion",
+        name: "sources-hub",
+        title: "Every voice, in a single analysis",
+        lead: "Social media, reviews, forums and search flow into the same analysis. Your own data, like NPS or CRM, is read with the same topic structure.",
+        copy: {
+          center: "One single analysis",
+          sources: ["TikTok", "Instagram", "YouTube", "X", "Facebook", "Reviews", "Forums", "Search", "NPS and surveys", "CRM"],
+          owned: "Your own data"
+        }
+      },
+      {
         type: "text",
         title: "Where the conversation comes from",
         paragraphs: [
-          "We read what people publish in the open: social media, forums and communities, video comments, product and service reviews, questions and answers on marketplaces, and search volume for a category. When you have your own data, such as surveys, NPS or service tickets, we bring it into the same reading with your authorization.",
+          "We read what people publish in the open: social media, forums and communities, video comments, product and service reviews, questions and answers on marketplaces, and search volume for a category. When you have your own data, such as surveys, NPS or service tickets, we bring it into the same analysis with your authorization.",
           "Sources are chosen against the question. A purchase doubt lives in reviews and forums; a cultural code lives in communities and long-form conversation; a shift in reputation lives in open social media. Not every source works for every question, and the scope says so."
         ]
+      },
+      {
+        type: "motion",
+        name: "one-conversation",
+        title: "The same conversation, seen the way each team thinks",
+        lead: "Every mention is stored once. Then it can be cut by your brand's topics, against your competitors or with your own framework, without starting over. The example is illustrative.",
+        copy: {
+          views: [
+            { tab: "Stored once", caption: "Every mention is stored once, with its source." },
+            { tab: "Brand view", caption: "What people talk about when they talk about your brand." },
+            { tab: "Competitive view", caption: "The same mentions, split by brand and compared." },
+            { tab: "Your own framework", caption: "Your way of seeing the category, applied to the same conversation." }
+          ],
+          topics: ["Product", "Service", "Price", "Campaigns", "Reputation"],
+          brands: ["Your brand", "Competitor A", "Competitor B"],
+          framework: "Your framework",
+          nodes: ["Occasions", "Needs", "Barriers"]
+        }
       },
       {
         type: "cards",
@@ -220,7 +278,7 @@ export const howItWorks: Localized<PageContent> = {
           },
           {
             q: "Do I need my own listening tool?",
-            a: "No. We bring the technology and access to the sources. If you already have a tool, we can read its exports and add them to the reading."
+            a: "No. We bring the technology and access to the sources. If you already have a tool, we can read its exports and add them to the analysis."
           },
           {
             q: "What do I receive at the end?",
@@ -228,7 +286,7 @@ export const howItWorks: Localized<PageContent> = {
           },
           {
             q: "Can you use my NPS or my surveys?",
-            a: "Yes. We bring your data into the same topic structure as the conversation to see where they agree and where they don't. It is one of the readings that most changes a decision."
+            a: "Yes. We bring your data into the same topic structure as the conversation to see where they agree and where they don't. It is one of the analyses that most change a decision."
           },
           {
             q: "Which languages do you work in?",

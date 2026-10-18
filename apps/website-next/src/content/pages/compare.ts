@@ -85,7 +85,7 @@ export const compareEntries: Entry[] = [
               ["Qué entrega", "Tablero con volumen, sentimiento, alertas y exportaciones", "Un reporte o un estudio con hallazgos, evidencia y recomendaciones"],
               ["Temas", "Categorías definidas de antemano o resúmenes automáticos", "Descubiertos desde lo que dice la gente y aprobados por una persona"],
               ["Ruido", "Llega al tablero como viene; se filtra a mano", "Prensa, contenido de marca, reventa y spam fuera, con criterio documentado"],
-              ["Quién interpreta", "Tu equipo, con el tiempo que tenga", "Un Intelligence Architect con un método y responsabilidad sobre la lectura"],
+              ["Quién interpreta", "Tu equipo, con el tiempo que tenga", "Un Intelligence Architect con un método y responsabilidad sobre el análisis"],
               ["Tus datos propios", "Fuera del tablero, salvo integraciones", "NPS, encuestas y búsquedas leídos con la misma estructura de temas"],
               ["Evidencia", "Menciones sueltas al alcance de un clic", "Cada cifra con su cálculo y cada cita verificada contra su fuente"],
               ["Velocidad para vigilar", "Inmediata, con alertas", "Mensual, o según el alcance"],
@@ -99,17 +99,17 @@ export const compareEntries: Entry[] = [
             items: [
               { name: "Conviene la herramienta", text: "Cuando necesitas vigilar menciones todos los días, recibir alertas de un pico o una crisis en curso, atender comentarios desde un solo lugar o medir el alcance de una campaña mientras corre. Es trabajo de monitoreo y una buena herramienta lo hace bien." },
               { name: "Conviene Noisia", text: "Cuando tienes una decisión por tomar y necesitas saber por qué pasa algo, qué pesa y qué puedes mover. Cuando nadie en tu equipo tiene tiempo de leer el tablero. Cuando quieres cruzar la conversación con tu NPS o tus encuestas. Cuando la cifra tiene que resistir una pregunta de dirección." },
-              { name: "Convienen las dos", text: "Muchos equipos conservan su herramienta para vigilar y reciben de Noisia el reporte mensual o los estudios. Podemos leer las exportaciones de tu herramienta y sumarlas a la lectura." }
+              { name: "Convienen las dos", text: "Muchos equipos conservan su herramienta para vigilar y reciben de Noisia el reporte mensual o los estudios. Podemos leer las exportaciones de tu herramienta y sumarlas al análisis." }
             ]
           },
           {
             type: "faq",
             title: "Preguntas frecuentes",
             items: [
-              { q: "¿Noisia es una herramienta de social listening?", a: "No. Noisia es una empresa de tecnología que produce investigación. Usamos tecnología propia para leer la conversación completa, y lo que recibes es un reporte o un estudio, con una persona que responde por la lectura." },
+              { q: "¿Noisia es una herramienta de social listening?", a: "No. Noisia es una empresa de tecnología que produce investigación. Usamos tecnología propia para leer la conversación completa, y lo que recibes es un reporte o un estudio, con una persona que responde por el análisis." },
               { q: "¿Tengo que dejar mi herramienta?", a: "No. Puedes conservarla para monitoreo y atención. Nosotros podemos leer sus exportaciones y sumarlas a otras fuentes." },
-              { q: "¿Las herramientas no tienen ya resúmenes con IA?", a: "Varias los tienen, y sirven para una lectura rápida. Suelen trabajar sobre una muestra de menciones, sin limpieza previa del ruido y sin una persona que apruebe los temas. Para vigilar alcanza; para una decisión importante conviene una lectura completa y verificable." },
-              { q: "¿Qué pasa con una crisis?", a: "La herramienta te avisa y te permite responder al momento. Noisia te dice qué la alimenta, qué voces la mueven entre comunidades y qué narrativa conviene, con una lectura en días. Son trabajos distintos y se complementan." }
+              { q: "¿Las herramientas no tienen ya resúmenes con IA?", a: "Varias los tienen, y sirven para un vistazo rápido. Suelen trabajar sobre una muestra de menciones, sin limpieza previa del ruido y sin una persona que apruebe los temas. Para vigilar alcanza; para una decisión importante conviene un análisis completo y verificable." },
+              { q: "¿Qué pasa con una crisis?", a: "La herramienta te avisa y te permite responder al momento. Noisia te dice qué la alimenta, qué voces la mueven entre comunidades y qué narrativa conviene, con un análisis en días. Son trabajos distintos y se complementan." }
             ]
           },
           cta.es
@@ -133,7 +133,7 @@ export const compareEntries: Entry[] = [
               ["What it delivers", "Dashboard with volume, sentiment, alerts and exports", "A report or a study with findings, evidence and recommendations"],
               ["Topics", "Categories defined in advance or automatic summaries", "Discovered from what people say and approved by a person"],
               ["Noise", "Reaches the dashboard as is; filtered by hand", "Press, brand content, resale and spam out, with documented criteria"],
-              ["Who interprets", "Your team, with whatever time it has", "An Intelligence Architect with a method and responsibility for the reading"],
+              ["Who interprets", "Your team, with whatever time it has", "An Intelligence Architect with a method and responsibility for the analysis"],
               ["Your own data", "Outside the dashboard, unless integrated", "NPS, surveys and search read with the same topic structure"],
               ["Evidence", "Loose mentions one click away", "Every number with its calculation and every quote checked against its source"],
               ["Speed for watching", "Immediate, with alerts", "Monthly, or as the scope sets"],
@@ -147,17 +147,17 @@ export const compareEntries: Entry[] = [
             items: [
               { name: "The tool makes sense", text: "When you need to watch mentions every day, get alerts for a spike or an ongoing crisis, handle comments from one place or measure a campaign's reach while it runs. That is monitoring work, and a good tool does it well." },
               { name: "Noisia makes sense", text: "When you have a decision to make and need to know why something is happening, what weighs and what you can move. When nobody on your team has time to read the dashboard. When you want to cross the conversation with your NPS or your surveys. When the number has to survive a question from leadership." },
-              { name: "Both make sense", text: "Many teams keep their tool for watching and receive the monthly report or the studies from Noisia. We can read your tool's exports and add them to the reading." }
+              { name: "Both make sense", text: "Many teams keep their tool for watching and receive the monthly report or the studies from Noisia. We can read your tool's exports and add them to the analysis." }
             ]
           },
           {
             type: "faq",
             title: "Frequently asked questions",
             items: [
-              { q: "Is Noisia a social listening tool?", a: "No. Noisia is a technology company that produces research. We use our own technology to read the whole conversation, and what you receive is a report or a study, with a person who answers for the reading." },
+              { q: "Is Noisia a social listening tool?", a: "No. Noisia is a technology company that produces research. We use our own technology to read the whole conversation, and what you receive is a report or a study, with a person who answers for the analysis." },
               { q: "Do I have to drop my tool?", a: "No. You can keep it for monitoring and community management. We can read its exports and add them to other sources." },
-              { q: "Don't tools already have AI summaries?", a: "Several do, and they are useful for a quick read. They usually work on a sample of mentions, without cleaning the noise first and without a person approving the topics. For watching it is enough; for an important decision a complete, verifiable reading is the better choice." },
-              { q: "What about a crisis?", a: "The tool alerts you and lets you respond in the moment. Noisia tells you what feeds it, which voices move it between communities and which narrative makes sense, with a reading in days. They are different jobs and they complement each other." }
+              { q: "Don't tools already have AI summaries?", a: "Several do, and they are useful for a quick look. They usually work on a sample of mentions, without cleaning the noise first and without a person approving the topics. For watching it is enough; for an important decision a complete, verifiable analysis is the better choice." },
+              { q: "What about a crisis?", a: "The tool alerts you and lets you respond in the moment. Noisia tells you what feeds it, which voices move it between communities and which narrative makes sense, with an analysis in days. They are different jobs and they complement each other." }
             ]
           },
           cta.en
@@ -193,7 +193,7 @@ export const compareEntries: Entry[] = [
               ["Repetir el resultado", "Otra corrida, otro resumen", "Misma base, mismos temas, versiones guardadas"],
               ["El mes siguiente", "Empieza de cero", "Solo procesa lo nuevo y conserva lo aprobado"],
               ["Correcciones", "Se olvidan en la siguiente sesión", "La corrección de la persona se conserva y se aplica después"],
-              ["Tus datos propios", "Si alguien lo arma a mano", "NPS, encuestas y búsquedas en la misma lectura, como parte del método"],
+              ["Tus datos propios", "Si alguien lo arma a mano", "NPS, encuestas y búsquedas en el mismo análisis, como parte del método"],
               ["Qué preguntar", "Responde lo que le pidas", "Traduce tu brief en preguntas investigables y prueba tus hipótesis"],
               ["Cuánto confiar", "Todo suena igual de seguro", "Cada hallazgo dice si es medido, direccional o cualitativo"]
             ]
@@ -241,7 +241,7 @@ export const compareEntries: Entry[] = [
               ["Repeating the result", "Another run, another summary", "Same conversación, same topics, saved versions"],
               ["Next month", "Starts from scratch", "Processes only what's new and keeps what was approved"],
               ["Corrections", "Forgotten in the next session", "The person's correction is kept and applied later"],
-              ["Your own data", "If someone wires it up by hand", "NPS, surveys and search in the same reading, as part of the method"],
+              ["Your own data", "If someone wires it up by hand", "NPS, surveys and search in the same analysis, as part of the method"],
               ["What to ask", "Answers whatever you ask", "Translates your brief into researchable questions and tests your hypotheses"],
               ["How much to trust", "Everything sounds equally certain", "Every finding says whether it is measured, directional or qualitative"]
             ]
@@ -316,7 +316,7 @@ export const compareEntries: Entry[] = [
             title: "Preguntas frecuentes",
             items: [
               { q: "¿La conversación es representativa?", a: "Representa a quienes hablan en público, que no son toda la población. Por eso cada hallazgo de Noisia dice si es medido, direccional o cualitativo, y por eso conviene poner cifra poblacional con una encuesta cuando la decisión lo pide." },
-              { q: "¿Pueden leer mi encuesta o mi NPS junto con la conversación?", a: "Sí. Llevamos tus datos a la misma estructura de temas que la conversación y comparamos. Es una de las lecturas que más cambia una decisión, porque muestra lo que la gente declara frente a lo que dice sin que le pregunten." },
+              { q: "¿Pueden leer mi encuesta o mi NPS junto con la conversación?", a: "Sí. Llevamos tus datos a la misma estructura de temas que la conversación y comparamos. Es uno de los análisis que más cambian una decisión, porque muestra lo que la gente declara frente a lo que dice sin que le pregunten." },
               { q: "¿Y los focus groups?", a: "Son útiles para ir más a fondo y observar reacciones. Trabajan con pocas personas y con un moderador presente. La conversación pública muestra lo mismo a escala y sin moderador; los dos se complementan." },
               { q: "¿Pueden diseñar la encuesta?", a: "Cada estudio cierra con las preguntas que una encuesta debería validar, en las palabras que usa la gente. El campo lo hace tu proveedor de encuestas o uno que te recomendemos." }
             ]
@@ -363,7 +363,7 @@ export const compareEntries: Entry[] = [
             title: "Frequently asked questions",
             items: [
               { q: "Is conversation representative?", a: "It represents those who speak in public, who are not the whole population. That is why every Noisia finding says whether it is measured, directional or qualitative, and why it makes sense to put a population figure on it with a survey when the decision calls for it." },
-              { q: "Can you read my survey or my NPS together with the conversation?", a: "Yes. We bring your data into the same topic structure as the conversation and compare. It is one of the readings that most changes a decision, because it shows what people declare against what they say when nobody asks." },
+              { q: "Can you read my survey or my NPS together with the conversation?", a: "Yes. We bring your data into the same topic structure as the conversation and compare. It is one of the analyses that most change a decision, because it shows what people declare against what they say when nobody asks." },
               { q: "What about focus groups?", a: "They are useful for going deeper and observing reactions. They work with a few people and a moderator present. Public conversation shows the same at scale and without a moderator; the two complement each other." },
               { q: "Can you design the survey?", a: "Every study closes with the questions a survey should validate, in the words people use. The fieldwork is done by your survey provider or one we recommend." }
             ]
@@ -386,7 +386,7 @@ export const compareEntries: Entry[] = [
           "Una agencia o un instituto aportan criterio humano, pero tardan semanas y leen una muestra. Noisia junta criterio humano con tecnología que lee la conversación completa, en días. Cuándo conviene cada opción.",
         title: "¿Agencia, instituto de investigación o Noisia?",
         lead:
-          "Una agencia o un instituto de investigación aportan algo que ninguna herramienta da: criterio humano, conocimiento del cliente y una recomendación con responsable. A cambio, un estudio tradicional tarda semanas y lee a mano una parte de la conversación. Noisia conserva el criterio humano, con un Intelligence Architect que firma cada lectura, y le suma tecnología que lee la conversación completa y entrega en días.",
+          "Una agencia o un instituto de investigación aportan algo que ninguna herramienta da: criterio humano, conocimiento del cliente y una recomendación con responsable. A cambio, un estudio tradicional tarda semanas y lee a mano una parte de la conversación. Noisia conserva el criterio humano, con un Intelligence Architect que firma cada análisis, y le suma tecnología que lee la conversación completa y entrega en días.",
         blocks: [
           {
             type: "table",
@@ -400,7 +400,7 @@ export const compareEntries: Entry[] = [
               ["Método", "Depende del equipo y del proyecto", "Una biblioteca de métodos con base en ciencias sociales y límites escritos"],
               ["Evidencia", "Citas seleccionadas a mano", "Cada cifra con su cálculo y cada cita verificada contra la fuente"],
               ["Repetir el mes siguiente", "Un proyecto nuevo, con arranque desde cero", "La base de temas se conserva y solo se procesa lo nuevo"],
-              ["Tus datos propios", "Según el proyecto", "NPS, encuestas y búsquedas en la misma lectura"],
+              ["Tus datos propios", "Según el proyecto", "NPS, encuestas y búsquedas en el mismo análisis"],
               ["Idiomas y mercados", "Los del equipo", "16 idiomas, más de 20 países"],
               ["Ejecución creativa y de medios", "Parte de su oferta", "Fuera de nuestro trabajo; entregamos el brief con evidencia"]
             ]
@@ -410,7 +410,7 @@ export const compareEntries: Entry[] = [
             title: "Cuándo conviene cada una",
             items: [
               { name: "Conviene la agencia o el instituto", text: "Cuando necesitas ejecución junto con la investigación: estrategia, creatividad, medios o relaciones públicas. Cuando la pregunta pide entrevistas, etnografía en campo o una encuesta con representatividad poblacional. Cuando hay una relación de años que conoce a tu marca por dentro." },
-              { name: "Conviene Noisia", text: "Cuando la decisión no puede esperar semanas. Cuando necesitas leer la conversación completa en lugar de una muestra. Cuando quieres que cada cifra se pueda abrir hasta la mención. Cuando la lectura tiene que repetirse cada mes con los mismos temas. Cuando el mercado habla en un idioma que tu equipo no lee." },
+              { name: "Conviene Noisia", text: "Cuando la decisión no puede esperar semanas. Cuando necesitas leer la conversación completa en lugar de una muestra. Cuando quieres que cada cifra se pueda abrir hasta la mención. Cuando el análisis tiene que repetirse cada mes con los mismos temas. Cuando el mercado habla en un idioma que tu equipo no lee." },
               { name: "Convienen las dos", text: "Muchas agencias trabajan con Noisia: nosotros producimos la investigación y la agencia la lleva a estrategia y ejecución. El estudio se presenta junto con ella o se entrega como insumo de su planning." }
             ]
           },
@@ -420,7 +420,7 @@ export const compareEntries: Entry[] = [
             items: [
               { q: "¿Noisia es una agencia?", a: "No. Noisia es una empresa de tecnología que produce investigación. No hacemos creatividad, medios ni relaciones públicas; entregamos la respuesta y el brief con evidencia para quien sí los hace." },
               { q: "¿Trabajan para agencias?", a: "Sí. Es una de las formas más comunes de trabajar con nosotros. La agencia conserva la relación con su cliente y nosotros producimos la investigación." },
-              { q: "¿Qué pierdo al no tener un equipo leyendo a mano?", a: "Nada en criterio: un Intelligence Architect aprueba los temas, corrige al sistema e interpreta. Lo que cambia es que la lectura cubre la conversación completa y llega en días, con cada cifra calculada y cada cita verificada." },
+              { q: "¿Qué pierdo al no tener un equipo leyendo a mano?", a: "Nada en criterio: un Intelligence Architect aprueba los temas, corrige al sistema e interpreta. Lo que cambia es que el análisis cubre la conversación completa y llega en días, con cada cifra calculada y cada cita verificada." },
               { q: "¿Pueden hacer entrevistas o etnografía?", a: "Nuestro trabajo es la conversación pública y los datos del cliente. Cuando la pregunta pide campo, lo decimos y recomendamos con quién hacerlo; el estudio sirve de guía para ese trabajo." }
             ]
           },
@@ -433,7 +433,7 @@ export const compareEntries: Entry[] = [
           "An agency or a research firm brings human judgment, but takes weeks and reads a sample. Noisia combines human judgment with technology that reads the whole conversation, in days. When each option makes sense.",
         title: "Agency, research firm or Noisia?",
         lead:
-          "An agency or a research firm brings something no tool does: human judgment, knowledge of the client and a recommendation with an owner. In exchange, a traditional study takes weeks and reads part of the conversation by hand. Noisia keeps the human judgment, with an Intelligence Architect who signs off every reading, and adds technology that reads the whole conversation and delivers in days.",
+          "An agency or a research firm brings something no tool does: human judgment, knowledge of the client and a recommendation with an owner. In exchange, a traditional study takes weeks and reads part of the conversation by hand. Noisia keeps the human judgment, with an Intelligence Architect who signs off every analysis, and adds technology that reads the whole conversation and delivers in days.",
         blocks: [
           {
             type: "table",
@@ -447,7 +447,7 @@ export const compareEntries: Entry[] = [
               ["Method", "Depends on the team and the project", "A library of methods grounded in social sciences, with written limits"],
               ["Evidence", "Hand-picked quotes", "Every number with its calculation and every quote checked against the source"],
               ["Repeating next month", "A new project, starting from scratch", "The topic base is kept and only what's new is processed"],
-              ["Your own data", "Depends on the project", "NPS, surveys and search in the same reading"],
+              ["Your own data", "Depends on the project", "NPS, surveys and search in the same analysis"],
               ["Languages and markets", "The team's", "16 languages, more than 20 countries"],
               ["Creative and media execution", "Part of their offer", "Outside our work; we deliver the brief with evidence"]
             ]
@@ -457,7 +457,7 @@ export const compareEntries: Entry[] = [
             title: "When each one makes sense",
             items: [
               { name: "The agency or research firm makes sense", text: "When you need execution on top of research: strategy, creative, media or public relations. When the question calls for interviews, field ethnography or a survey with population representativeness. When there is a years-long relationship that knows your brand from the inside." },
-              { name: "Noisia makes sense", text: "When the decision can't wait weeks. When you need to read the whole conversation rather than a sample. When you want every number to open down to the mention. When the reading has to repeat every month with the same topics. When the market speaks a language your team doesn't read." },
+              { name: "Noisia makes sense", text: "When the decision can't wait weeks. When you need to read the whole conversation rather than a sample. When you want every number to open down to the mention. When the analysis has to repeat every month with the same topics. When the market speaks a language your team doesn't read." },
               { name: "Both make sense", text: "Many agencies work with Noisia: we produce the research and the agency takes it to strategy and execution. The study is presented alongside the agency or delivered as input for its planning." }
             ]
           },
@@ -467,7 +467,7 @@ export const compareEntries: Entry[] = [
             items: [
               { q: "Is Noisia an agency?", a: "No. Noisia is a technology company that produces research. We don't do creative, media or public relations; we deliver the answer and the brief with evidence for those who do." },
               { q: "Do you work for agencies?", a: "Yes. It is one of the most common ways of working with us. The agency keeps the relationship with its client and we produce the research." },
-              { q: "What do I lose by not having a team reading by hand?", a: "Nothing in judgment: an Intelligence Architect approves the topics, corrects the system and interprets. What changes is that the reading covers the whole conversation and arrives in days, with every number calculated and every quote checked." },
+              { q: "What do I lose by not having a team reading by hand?", a: "Nothing in judgment: an Intelligence Architect approves the topics, corrects the system and interprets. What changes is that the analysis covers the whole conversation and arrives in days, with every number calculated and every quote checked." },
               { q: "Can you do interviews or ethnography?", a: "Our work is public conversation and client data. When the question calls for fieldwork, we say so and recommend whom to do it with; the study serves as a guide for that work." }
             ]
           },

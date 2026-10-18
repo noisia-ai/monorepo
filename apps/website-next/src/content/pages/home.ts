@@ -53,11 +53,11 @@ export const home: Record<"es" | "en", HomeCopy> = {
       lead: "El sistema hace en horas lo que un equipo tardaría semanas en leer. Un Intelligence Architect dirige cada paso.",
       steps: [
         { name: "Tu pregunta", text: "La convertimos en preguntas que la conversación sí puede responder." },
-        { name: "Toda la voz", text: "Redes, búsquedas, reseñas y tus datos, en una sola lectura." },
+        { name: "Toda la voz", text: "Redes, búsquedas, reseñas y tus datos, en un solo análisis." },
         { name: "Temas que salen de lo que se dice", text: "El sistema agrupa la conversación completa y separa la voz de la gente del ruido." },
         { name: "Evidencia que se puede abrir", text: "Cada cifra sale de un cálculo y cada cita es literal." }
       ],
-      human: "Un Intelligence Architect aprueba los temas, corrige al sistema y firma la lectura.",
+      human: "Un Intelligence Architect aprueba los temas, corrige al sistema y firma el resultado.",
       link: "Cómo funciona"
     },
     methods: {
@@ -76,7 +76,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
       columns: [
         { name: "Herramienta de social listening", does: "Volumen, sentimiento y tableros.", misses: "Alguien de tu equipo tiene que leerlo y decidir." },
         { name: "Pasarle tus menciones a una IA", does: "Un resumen rápido de lo que alcanza a leer.", misses: "Muestrea, no cuenta bien y cada vez responde distinto." },
-        { name: "Agencia o instituto", does: "Criterio humano.", misses: "Semanas de trabajo y lectura de una parte de la conversación." }
+        { name: "Agencia o instituto", does: "Criterio humano.", misses: "Semanas de trabajo para leer una parte de la conversación." }
       ],
       noisia: { name: "Noisia", does: "La conversación completa, leída por tecnología y aprobada por personas, para responder tu pregunta en días." },
       link: "Ver comparaciones"
@@ -134,11 +134,11 @@ export const home: Record<"es" | "en", HomeCopy> = {
       lead: "The system does in hours what would take a team weeks to read. An Intelligence Architect leads every step.",
       steps: [
         { name: "Your question", text: "We turn it into questions the conversation can actually answer." },
-        { name: "Every voice", text: "Social media, search, reviews and your data, in a single reading." },
+        { name: "Every voice", text: "Social media, search, reviews and your data, in a single analysis." },
         { name: "Topics that come from what people say", text: "The system groups the whole conversation and separates people's voice from the noise." },
         { name: "Evidence you can open", text: "Every number comes from a calculation and every quote is verbatim." }
       ],
-      human: "An Intelligence Architect approves the topics, corrects the system and signs off the reading.",
+      human: "An Intelligence Architect approves the topics, corrects the system and signs off the analysis.",
       link: "How it works"
     },
     methods: {

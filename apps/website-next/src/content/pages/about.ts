@@ -24,7 +24,7 @@ export const about: Localized<PageContent> = {
           { name: "La pregunta antes que el método", text: "Primero entendemos qué vas a decidir. Después elegimos fuentes, método y profundidad. Nunca al revés." },
           { name: "Honestidad antes que promesa comercial", text: "Cada hallazgo dice si es medido, direccional o cualitativo. Cuando la conversación no puede responder algo, lo decimos antes de cobrar por intentarlo." },
           { name: "Decisiones antes que reportes", text: "Un reporte que no cambia una decisión fue un gasto. Cada recomendación trae responsable, indicador y riesgo." },
-          { name: "Muchas fuentes, una lectura clara", text: "Redes, búsquedas, reseñas y tus propios datos se leen juntos. La respuesta llega en una página, con la evidencia detrás." },
+          { name: "Muchas fuentes, una interpretación clara", text: "Redes, búsquedas, reseñas y tus propios datos se leen juntos. La respuesta llega en una página, con la evidencia detrás." },
           { name: "Entender antes de contar", text: "Una mención que aparece doce veces con enojo puede pesar más que una que aparece doscientas. Intensidad, contexto y relación con la decisión cuentan tanto como la frecuencia." }
         ]
       },
@@ -32,8 +32,8 @@ export const about: Localized<PageContent> = {
         type: "text",
         title: "Cómo trabajamos",
         paragraphs: [
-          "Dos piezas producen cada entrega. La primera es el sistema: lee la conversación completa, separa la voz del ruido, descubre los temas desde lo que se dice, verifica cada cita contra su texto original y actualiza la lectura con lo nuevo sin perder lo revisado.",
-          "La segunda es el Intelligence Architect, una persona con formación en investigación, antropología o sociología que opera el sistema para tu proyecto. Define la pregunta y el alcance, aprueba los temas que el sistema propone, corrige la clasificación cuando hace falta, interpreta con un método de la biblioteca y firma la lectura. Cuando presentamos, esa persona está frente a ti respondiendo por cada hallazgo.",
+          "Dos piezas producen cada entrega. La primera es el sistema: lee la conversación completa, separa la voz del ruido, descubre los temas desde lo que se dice, verifica cada cita contra su texto original y actualiza el análisis con lo nuevo sin perder lo revisado.",
+          "La segunda es el Intelligence Architect, una persona con formación en investigación, antropología o sociología que opera el sistema para tu proyecto. Define la pregunta y el alcance, aprueba los temas que el sistema propone, corrige la clasificación cuando hace falta, interpreta con un método de la biblioteca y firma el resultado. Cuando presentamos, esa persona está frente a ti respondiendo por cada hallazgo.",
           "El nombre viene de nuestro tagline. Social Intelligence Architects dejó de ser una frase y pasó a ser el rol que trabaja para cada cliente."
         ]
       },
@@ -52,7 +52,7 @@ export const about: Localized<PageContent> = {
         paragraphs: [
           "La gente ya está diciendo lo que las marcas necesitan saber. Lo dice en reseñas que nadie lee completas, en hilos de foros, en comentarios debajo de un video y en la pregunta que escribe en un buscador a las once de la noche. La materia prima existe. Lo que falta es leerla entera y con criterio.",
           "Contar menciones es fácil. Entender por qué alguien no regresa después de su primera compra es otra cosa. Por eso partimos de la antropología, la sociología y la psicología: queremos saber qué mueve a una persona, qué la frena y qué parte de eso puede tocar una marca.",
-          "Creemos que la tecnología debe leerlo todo y que una persona debe decidir qué importa. Un modelo puede agrupar toda la conversación de una categoría; alguien con formación tiene que mirar los grupos, nombrarlos, descartar los que son ruido y responder por la lectura.",
+          "Creemos que la tecnología debe leerlo todo y que una persona debe decidir qué importa. Un modelo puede agrupar toda la conversación de una categoría; alguien con formación tiene que mirar los grupos, nombrarlos, descartar los que son ruido y responder por el análisis.",
           "Creemos en la evidencia abierta. Cada cifra sale de un cálculo que se puede repetir y cada cita es literal, con fuente y fecha. Si un hallazgo no se puede abrir hasta la mención que lo sostiene, no entra al reporte.",
           "Y creemos en decir los límites. Hay preguntas que la conversación responde bien, otras que solo insinúa y otras que no puede responder. Decirlo antes de empezar es parte del trabajo.",
           "Noisia existe para que una decisión importante se tome con lo que la gente ya dijo, leído completo, en días."
@@ -90,7 +90,7 @@ export const about: Localized<PageContent> = {
           { name: "The question before the method", text: "First we understand what you are going to decide. Then we choose sources, method and depth. Never the other way around." },
           { name: "Honesty before the commercial promise", text: "Every finding says whether it is measured, directional or qualitative. When the conversation cannot answer something, we say so before charging to try." },
           { name: "Decisions before reports", text: "A report that doesn't change a decision was an expense. Every recommendation comes with an owner, an indicator and a risk." },
-          { name: "Many sources, one clear reading", text: "Social media, search, reviews and your own data are read together. The answer arrives on one page, with the evidence behind it." },
+          { name: "Many sources, one clear interpretation", text: "Social media, search, reviews and your own data are read together. The answer arrives on one page, with the evidence behind it." },
           { name: "Understand before you count", text: "A mention that appears twelve times with anger can weigh more than one that appears two hundred times. Intensity, context and the link to the decision count as much as frequency." }
         ]
       },
@@ -98,8 +98,8 @@ export const about: Localized<PageContent> = {
         type: "text",
         title: "How we work",
         paragraphs: [
-          "Two parts produce every delivery. The first is the system: it reads the whole conversation, separates voice from noise, discovers topics from what is said, checks every quote against its original text and updates the reading with new conversation without losing what was already reviewed.",
-          "The second is the Intelligence Architect, a person trained in research, anthropology or sociology who operates the system for your project. They define the question and the scope, approve the topics the system proposes, correct the classification when needed, interpret with a method from the library and sign off the reading. When we present, that person is in front of you answering for every finding.",
+          "Two parts produce every delivery. The first is the system: it reads the whole conversation, separates voice from noise, discovers topics from what is said, checks every quote against its original text and updates the analysis with new conversation without losing what was already reviewed.",
+          "The second is the Intelligence Architect, a person trained in research, anthropology or sociology who operates the system for your project. They define the question and the scope, approve the topics the system proposes, correct the classification when needed, interpret with a method from the library and sign off the analysis. When we present, that person is in front of you answering for every finding.",
           "The name comes from our tagline. Social Intelligence Architects stopped being a phrase and became the role that works for each client."
         ]
       },
@@ -118,7 +118,7 @@ export const about: Localized<PageContent> = {
         paragraphs: [
           "People are already saying what brands need to know. They say it in reviews nobody reads to the end, in forum threads, in comments under a video and in the question they type into a search bar at eleven at night. The raw material exists. What is missing is reading it whole and with judgment.",
           "Counting mentions is easy. Understanding why someone doesn't come back after their first purchase is something else. That is why we start from anthropology, sociology and psychology: we want to know what moves a person, what holds them back and which part of that a brand can touch.",
-          "We believe technology should read everything and a person should decide what matters. A model can group the whole conversation of a category; someone with training has to look at the groups, name them, discard the ones that are noise and answer for the reading.",
+          "We believe technology should read everything and a person should decide what matters. A model can group the whole conversation of a category; someone with training has to look at the groups, name them, discard the ones that are noise and answer for the analysis.",
           "We believe in open evidence. Every number comes from a calculation that can be repeated and every quote is verbatim, with source and date. If a finding cannot be opened down to the mention that supports it, it doesn't go in the report.",
           "And we believe in stating the limits. There are questions the conversation answers well, others it only hints at and others it cannot answer. Saying so before starting is part of the job.",
           "Noisia exists so that an important decision is made with what people already said, read in full, in days."
