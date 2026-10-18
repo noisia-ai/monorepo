@@ -1,0 +1,85 @@
+/*
+ * Noisia design tokens for the public website.
+ * Source of truth for color, type, space, radius and motion. Components read these
+ * variables; nothing hardcodes a hex. Mirrors packages/pitch-kit/engine/noisia-tokens.css
+ * so the site and the decks speak the same visual language.
+ */
+:root {
+  /* Surfaces */
+  --canvas: #ffffff;
+  --surface-1: #fafafa;
+  --surface-2: #f4f4f4;
+  --surface-3: #eeeeee;
+  --line: #eeeeee;
+  --line-strong: #dadada;
+
+  /* Text */
+  --ink: #0a0a0a;
+  --fg: #2b2b2b;
+  --fg-muted: #6d6d6d;
+  --fg-faint: #999999;
+  --fg-inverse: #ffffff;
+
+  /* Brand signal. The bright pair is decorative only (blooms, logo); text and data use the deep inks. */
+  --cyan: #00eeee;
+  --red: #ee0b00;
+  --teal: #008a8a;
+  --teal-soft: #e6f7f7;
+  --coral: #e2543c;
+  --coral-soft: #fdece8;
+  --positive: #008f66;
+  --dark: #061218;
+
+  /* Type */
+  --font-sans: var(--font-google-sans), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.25rem;
+  --text-xl: clamp(1.5rem, 1.2rem + 1.2vw, 2rem);
+  --text-2xl: clamp(2rem, 1.4rem + 2.6vw, 3.25rem);
+  --text-3xl: clamp(2.5rem, 1.6rem + 4.2vw, 5rem);
+  --leading-tight: 1.04;
+  --leading-snug: 1.2;
+  --leading-body: 1.55;
+
+  /* Space (4px base) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+  --gutter: 16px;
+  --section-y: 72px;
+  --max-read: 680px;
+  --max-wide: 1200px;
+
+  /* Shape */
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 160ms;
+  --dur-base: 280ms;
+  --dur-slow: 560ms;
+
+  /* Layers */
+  --z-header: 40;
+  --z-cta: 45;
+  --z-sheet: 60;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --gutter: 32px;
+    --section-y: 112px;
+  }
+}

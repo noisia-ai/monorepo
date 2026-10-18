@@ -1,0 +1,70 @@
+{
+  "meta": {
+    "siteName": "Noisia",
+    "defaultTitle": "Noisia · Inteligencia social",
+    "description": "Noisia es una empresa de tecnología que produce investigación: lee la conversación pública, la búsqueda, las reseñas y tus propios datos para responder preguntas de negocio, con cada hallazgo ligado a lo que la gente dijo."
+  },
+  "nav": {
+    "solutions": "Soluciones",
+    "howItWorks": "Cómo funciona",
+    "methods": "Métodos",
+    "insights": "Insights",
+    "about": "Nosotros",
+    "cta": "Agenda un taller",
+    "menu": "Menú",
+    "close": "Cerrar",
+    "language": "English",
+    "skip": "Saltar al contenido"
+  },
+  "industries": {
+    "all": "Todo",
+    "salud-y-farmacias": "Salud y farmacias",
+    "moda-y-artesania": "Moda y artesanía",
+    "tecnologia-de-consumo": "Tecnología de consumo",
+    "belleza-y-cuidado-personal": "Belleza y cuidado personal",
+    "hogar-y-descanso": "Hogar y descanso",
+    "alimentos-y-bebidas": "Alimentos y bebidas",
+    "deportes-y-entretenimiento": "Deportes y entretenimiento",
+    "telecom": "Telecom",
+    "movilidad": "Movilidad",
+    "apuestas-y-gaming": "Apuestas y gaming",
+    "retail": "Retail",
+    "cultura-y-sociedad": "Cultura y sociedad"
+  },
+  "feed": {
+    "label": "Insights de Noisia",
+    "kindEditorial": "Investigación Noisia",
+    "kindExample": "Ejemplo ilustrativo",
+    "evidence": "Ver la evidencia",
+    "report": "Leer el reporte",
+    "share": "Compartir",
+    "copied": "Liga copiada",
+    "pause": "Pausar",
+    "play": "Reproducir",
+    "filter": "Filtrar por industria",
+    "next": "Siguiente",
+    "evidenceTitle": "La evidencia",
+    "evidenceIntro": "Lo que la gente escribió, tal cual.",
+    "method": "Método",
+    "sources": "Fuentes",
+    "period": "Periodo",
+    "market": "Mercado",
+    "whatToDo": "Qué puede hacer una marca",
+    "closeSheet": "Cerrar",
+    "swipeHint": "Desliza para el siguiente",
+    "backToSite": "Volver"
+  },
+  "footer": {
+    "tagline": "Inteligencia social. Investigación producida con tecnología propia y criterio humano.",
+    "explore": "Explora",
+    "learn": "Aprende",
+    "company": "Noisia",
+    "socialIntelligence": "Qué es la inteligencia social",
+    "compare": "Comparaciones",
+    "privacy": "Aviso de privacidad",
+    "signature": "noisia · social intelligence architects"
+  },
+  "stickyCta": {
+    "label": "Agenda un taller gratis"
+  }
+}

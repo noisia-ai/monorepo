@@ -1,0 +1,180 @@
+[
+  {
+    "id": "quiero-hablar-con-una-persona",
+    "industry": "retail",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
+    "period": "may 2025–may 2026",
+    "report": "/insights",
+    "notes": "Señal humano_demandado. X 52% / Facebook 22% literales de cultural_headlines. +54% calculado de monthly_pulse: 2026-05 (51,308) vs 2025-05 (33,358) = +53.8%, redondeado.",
+    "es": {
+      "title": "Antes de probar el bot, México ya pide un humano",
+      "dek": "La frase hablar con una persona aparece dirigida a marcas concretas desde el primer mensaje, sobre todo en X y Facebook.",
+      "scenes": [
+        { "type": "hook", "text": "¿Cuál es el primer mensaje que recibe tu servicio al cliente?" },
+        { "type": "stat", "value": 54, "suffix": "%", "label": "más menciones pidiendo hablar con un humano en mayo de 2026 que un año antes", "context": "Conversación pública alrededor de marcas mexicanas" },
+        { "type": "split", "left": { "label": "X", "value": 52, "suffix": "%" }, "right": { "label": "Facebook", "value": 22, "suffix": "%" }, "caption": "Canales donde la gente etiqueta a la marca para forzar atención humana" },
+        { "type": "quote", "text": "Que onda con @viajaVolaris a cuantos números tengo que llamar y a cuales opciones tengo que picarle para que me pueda atender una persona y no un bot?", "platform": "X", "meta": "MX · feb 2026" },
+        { "type": "takeaway", "text": "Haz visible la ruta a una persona desde el primer contacto." }
+      ],
+      "takeaway": "Mostrar el camino a un humano desde el primer punto de contacto y dejar de esconder el escalamiento detrás de menús automáticos.",
+      "evidence": [
+        { "quote": "Que onda con @viajaVolaris a cuantos números tengo que llamar y a cuales opciones tengo que picarle para que me pueda atender una persona y no un bot?", "platform": "X", "date": "2026-02" },
+        { "quote": "@DiDi_Mexico necesito ayuda con un pedido en su app. No quiero hablar con bots, quiero hablar con una persona, gracias.", "platform": "X", "date": "2025-08" },
+        { "quote": "SHEIN México cómo puedo hablar con una persona y no con un bot???", "platform": "Facebook", "date": "2025-06" }
+      ]
+    },
+    "en": {
+      "title": "Before trying the bot, Mexico already asks for a human",
+      "dek": "The phrase hablar con una persona (talk to a person) is aimed at specific brands from the very first message, mostly on X and Facebook.",
+      "scenes": [
+        { "type": "hook", "text": "What's the first message your customer service gets?" },
+        { "type": "stat", "value": 54, "suffix": "%", "label": "more mentions asking to talk to a human in May 2026 than a year earlier", "context": "Public conversation around Mexican brands" },
+        { "type": "split", "left": { "label": "X", "value": 52, "suffix": "%" }, "right": { "label": "Facebook", "value": 22, "suffix": "%" }, "caption": "Where people tag the brand to force human attention" },
+        { "type": "quote", "text": "Que onda con @viajaVolaris a cuantos números tengo que llamar y a cuales opciones tengo que picarle para que me pueda atender una persona y no un bot?", "translation": "What's up @viajaVolaris, how many numbers do I have to call and which options do I have to press to get a person and not a bot?", "platform": "X", "meta": "MX · Feb 2026" },
+        { "type": "takeaway", "text": "Make the path to a person visible from the first touchpoint." }
+      ],
+      "takeaway": "Show the way to a human from the first touchpoint and stop hiding escalation behind automated menus.",
+      "evidence": [
+        { "quote": "Que onda con @viajaVolaris a cuantos números tengo que llamar y a cuales opciones tengo que picarle para que me pueda atender una persona y no un bot?", "translation": "What's up @viajaVolaris, how many numbers do I have to call and which options do I have to press to get a person and not a bot?", "platform": "X", "date": "2026-02" },
+        { "quote": "@DiDi_Mexico necesito ayuda con un pedido en su app. No quiero hablar con bots, quiero hablar con una persona, gracias.", "translation": "@DiDi_Mexico I need help with an order in your app. I don't want to talk to bots, I want to talk to a person, thanks.", "platform": "X", "date": "2025-08" },
+        { "quote": "SHEIN México cómo puedo hablar con una persona y no con un bot???", "translation": "SHEIN Mexico, how can I talk to a person and not a bot???", "platform": "Facebook", "date": "2025-06" }
+      ]
+    }
+  },
+  {
+    "id": "publicidad-enganosa",
+    "industry": "telecom",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
+    "period": "may 2025–may 2026",
+    "report": "/insights",
+    "notes": "Señal transparencia_IA. Facebook 50% / X 33% literales de cultural_headlines. +457% calculado de monthly_pulse: 2026-05 (89,053) vs 2025-05 (15,993) = +456.8%, redondeado.",
+    "es": {
+      "title": "La falta de transparencia ya se nombra publicidad engañosa",
+      "dek": "La acusación crece contra telcos, retail y delivery. Circula como diagnóstico con peso institucional y escala rápido a Profeco.",
+      "scenes": [
+        { "type": "hook", "text": "¿Qué rompe más la confianza que un error?" },
+        { "type": "stat", "value": 457, "suffix": "%", "label": "más menciones sobre falta de transparencia en mayo de 2026 que un año antes", "context": "Conversación pública alrededor de marcas mexicanas" },
+        { "type": "split", "left": { "label": "Facebook", "value": 50, "suffix": "%" }, "right": { "label": "X", "value": 33, "suffix": "%" }, "caption": "Facebook concentra el reclamo con etiqueta de marca y X lo amplifica" },
+        { "type": "quote", "text": "por publicidad engañosa no todo México tiene señal, hay zonas sin recepción, no todo México es territorio Telcel", "platform": "Facebook", "meta": "MX · ene 2026" },
+        { "type": "takeaway", "text": "Avisa qué es automático, qué aplica y dónde. La claridad cuida más que la calidez." }
+      ],
+      "takeaway": "Avisar cuando una respuesta o un contenido fue generado por IA y mostrar condiciones completas. La simulación cálida sin aviso cuesta más que el error.",
+      "evidence": [
+        { "quote": "También deberían, por publicidad engañosa no todo México tiene señal, hay zonas sin recepción, no todo México es territorio Telcel", "platform": "Facebook", "date": "2026-01" },
+        { "quote": "suena a publicidad engañosa, por algo Movistar no la hizo en México, aparte de no querer pagar impuestos", "platform": "TikTok", "date": "2026-04" },
+        { "quote": "Pedi por que aparecía que a las 8:04pm si pagaba extra. Lo pague y después cambio a 8:09 después a 8:14 y ahora 8:34pm algo no esta bien, me suena a publicidad engañosa", "platform": "X", "date": "2026-04" }
+      ]
+    },
+    "en": {
+      "title": "Opaque brands now get called out for misleading advertising",
+      "dek": "The accusation is growing against telcos, retail and delivery apps. It circulates as a diagnosis with institutional weight and escalates fast to Profeco.",
+      "scenes": [
+        { "type": "hook", "text": "What breaks trust faster than a mistake?" },
+        { "type": "stat", "value": 457, "suffix": "%", "label": "more mentions about lack of transparency in May 2026 than a year earlier", "context": "Public conversation around Mexican brands" },
+        { "type": "split", "left": { "label": "Facebook", "value": 50, "suffix": "%" }, "right": { "label": "X", "value": 33, "suffix": "%" }, "caption": "Facebook holds the tagged complaint and X amplifies it" },
+        { "type": "quote", "text": "por publicidad engañosa no todo México tiene señal, hay zonas sin recepción, no todo México es territorio Telcel", "translation": "for misleading advertising, not all of Mexico has signal, there are areas with no reception, not all of Mexico is Telcel territory", "platform": "Facebook", "meta": "MX · Jan 2026" },
+        { "type": "takeaway", "text": "Say what's automated, what applies and where. Clarity protects more than warmth." }
+      ],
+      "takeaway": "Disclose when a reply or a piece of content was made with AI and show the full conditions. Warm simulation without notice costs more than the mistake.",
+      "evidence": [
+        { "quote": "También deberían, por publicidad engañosa no todo México tiene señal, hay zonas sin recepción, no todo México es territorio Telcel", "translation": "They should too, for misleading advertising, not all of Mexico has signal, there are areas with no reception, not all of Mexico is Telcel territory", "platform": "Facebook", "date": "2026-01" },
+        { "quote": "suena a publicidad engañosa, por algo Movistar no la hizo en México, aparte de no querer pagar impuestos", "translation": "sounds like misleading advertising, there's a reason Movistar didn't run it in Mexico, besides not wanting to pay taxes", "platform": "TikTok", "date": "2026-04" },
+        { "quote": "Pedi por que aparecía que a las 8:04pm si pagaba extra. Lo pague y después cambio a 8:09 después a 8:14 y ahora 8:34pm algo no esta bien, me suena a publicidad engañosa", "translation": "I ordered because it said 8:04pm if I paid extra. I paid and then it changed to 8:09, then 8:14 and now 8:34pm, something's not right, sounds like misleading advertising to me", "platform": "X", "date": "2026-04" }
+      ]
+    }
+  },
+  {
+    "id": "lo-humano-se-mide-cuando-algo-falla",
+    "industry": "retail",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
+    "period": "may 2025–may 2026",
+    "report": "/insights",
+    "notes": "Señal responsabilidad. Split calculado de cultural_headlines: 299,900 negativas / 454,700 = 65.96% y 154,800 positivas / 454,700 = 34.04%, redondeados a 66/34 (coincide con el ratio 2:1 del reporte). +355% calculado de monthly_pulse: 2026-05 (66,349) vs 2025-05 (14,587) = +354.9%, redondeado.",
+    "es": {
+      "title": "La humanidad de una marca se mide cuando algo sale mal",
+      "dek": "En banca y retail, la gente juzga si la marca asumió y resolvió. Por cada mención positiva aparecen dos negativas.",
+      "scenes": [
+        { "type": "hook", "text": "¿Qué hace tu marca cuando el error ya pasó?" },
+        { "type": "split", "left": { "label": "Se lavó las manos", "value": 66, "suffix": "%" }, "right": { "label": "Asumió y resolvió", "value": 34, "suffix": "%" }, "caption": "Menciones que evalúan la responsabilidad de una marca" },
+        { "type": "stat", "value": 355, "suffix": "%", "label": "más menciones que evalúan responsabilidad en mayo de 2026 que un año antes", "context": "Banamex, BBVA, Liverpool, OXXO, DiDi y Uber Eats concentran el juicio" },
+        { "type": "quote", "text": "lo reporte al número que está en las puertas del Oxxo y si me resolvieron me devolvieron el dinero", "platform": "Facebook", "meta": "MX · abr 2026" },
+        { "type": "takeaway", "text": "Asume el costo antes de discutir la culpa. La respuesta pública se queda en screenshot." }
+      ],
+      "takeaway": "Asumir el costo antes de discutir la culpa y dar seguimiento visible. Lavarse las manos en público circula más rápido que cualquier campaña.",
+      "evidence": [
+        { "quote": "A mí me pasó aquí en Monterrey también olvide mi tarjeta pero no traía mucho, compraron como mil pesos en diferentes recargas hasta que ya no paso, lo reporte al número que está en las puertas del Oxxo y si me resolvieron me devolvieron el dinero", "platform": "Facebook", "date": "2026-04" },
+        { "quote": "Con Banamex 3 veces se tragó mi dinero el cajero 3 veces que no se hicieron responsables hasta que los denuncias con confusef te devuelven el dinero el PEOR servicio de México", "platform": "TikTok", "date": "2026-03" },
+        { "quote": "Tuve que acudir a Profeco y solo así me resolvieron.", "platform": "X", "date": "2026-04" }
+      ]
+    },
+    "en": {
+      "title": "A brand's humanity is measured when something goes wrong",
+      "dek": "In banking and retail, people judge whether the brand owned the problem and fixed it. For every positive mention there are two negative ones.",
+      "scenes": [
+        { "type": "hook", "text": "What does your brand do once the mistake has happened?" },
+        { "type": "split", "left": { "label": "Washed its hands", "value": 66, "suffix": "%" }, "right": { "label": "Owned it and fixed it", "value": 34, "suffix": "%" }, "caption": "Mentions that judge a brand's accountability" },
+        { "type": "stat", "value": 355, "suffix": "%", "label": "more mentions judging accountability in May 2026 than a year earlier", "context": "Banamex, BBVA, Liverpool, OXXO, DiDi and Uber Eats draw most of the judgment" },
+        { "type": "quote", "text": "lo reporte al número que está en las puertas del Oxxo y si me resolvieron me devolvieron el dinero", "translation": "I reported it to the number on the Oxxo doors and they did fix it, they gave me my money back", "platform": "Facebook", "meta": "MX · Apr 2026" },
+        { "type": "takeaway", "text": "Take on the cost before arguing about blame. A public reply lives on as a screenshot." }
+      ],
+      "takeaway": "Take on the cost before arguing about blame and follow up visibly. Washing your hands in public travels faster than any campaign.",
+      "evidence": [
+        { "quote": "A mí me pasó aquí en Monterrey también olvide mi tarjeta pero no traía mucho, compraron como mil pesos en diferentes recargas hasta que ya no paso, lo reporte al número que está en las puertas del Oxxo y si me resolvieron me devolvieron el dinero", "translation": "It happened to me here in Monterrey too, I left my card behind, they bought about a thousand pesos in top-ups until it stopped working, I reported it to the number on the Oxxo doors and they did fix it, they gave me my money back", "platform": "Facebook", "date": "2026-04" },
+        { "quote": "Con Banamex 3 veces se tragó mi dinero el cajero 3 veces que no se hicieron responsables hasta que los denuncias con confusef te devuelven el dinero el PEOR servicio de México", "translation": "With Banamex the ATM swallowed my money 3 times, 3 times they didn't take responsibility until you report them to Condusef, then they give the money back, the WORST service in Mexico", "platform": "TikTok", "date": "2026-03" },
+        { "quote": "Tuve que acudir a Profeco y solo así me resolvieron.", "translation": "I had to go to Profeco and only then did they fix it.", "platform": "X", "date": "2026-04" }
+      ]
+    }
+  },
+  {
+    "id": "respuesta-generica",
+    "industry": "movilidad",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["X", "Facebook", "TikTok", "YouTube", "Reddit", "Instagram", "Reviews"],
+    "period": "may 2025–may 2026",
+    "report": "/insights",
+    "notes": "Señal voz_genérica (emergente, volumen bajo). X 52% literal de cultural_headlines. 49x calculado de monthly_pulse: 2026-05 (4,340) vs 2025-05 (88) = 49.3x, redondeado.",
+    "es": {
+      "title": "Una respuesta genérica se lee como un caso sin resolver",
+      "dek": "Las quejas por respuestas automáticas o copy paste todavía son pocas, pero se multiplicaron en un año y siempre apuntan a una marca concreta.",
+      "scenes": [
+        { "type": "hook", "text": "¿Tu marca responde como una plantilla?" },
+        { "type": "stat", "value": 49, "suffix": "x", "label": "más menciones de respuesta genérica en mayo de 2026 que un año antes", "context": "Una señal emergente que parte de un volumen bajo" },
+        { "type": "stat", "value": 52, "suffix": "%", "label": "de esta queja ocurre en X, con la marca etiquetada", "context": "Ahí se captura el screenshot y se escala" },
+        { "type": "quote", "text": "El sistema lo cerró automáticamente con respuesta genérica y necesito revisión manual", "platform": "X", "meta": "MX · feb 2026" },
+        { "type": "takeaway", "text": "Conserva una voz propia en los flujos automáticos y lee el caso antes de cerrarlo." }
+      ],
+      "takeaway": "Mantener una voz reconocible en los flujos automatizados y retirar plantillas que cierran el ticket sin resolver.",
+      "evidence": [
+        { "quote": "levanté un reporte por cobro mayor al estimado en un viaje con Protección de Tarifa por $205. El sistema lo cerró automáticamente con respuesta genérica y necesito revisión manual", "platform": "X", "date": "2026-02" },
+        { "quote": "Ya existe reclamación formal y respuesta genérica que no atiende los hechos.", "platform": "X", "date": "2026-01" }
+      ]
+    },
+    "en": {
+      "title": "A generic reply reads as an unresolved case",
+      "dek": "Complaints about automated or copy-paste replies are still few, but they multiplied in a year and always point to a specific brand.",
+      "scenes": [
+        { "type": "hook", "text": "Does your brand reply like a template?" },
+        { "type": "stat", "value": 49, "suffix": "x", "label": "more mentions of generic replies in May 2026 than a year earlier", "context": "An emerging signal growing from a low base" },
+        { "type": "stat", "value": 52, "suffix": "%", "label": "of this complaint happens on X, with the brand tagged", "context": "That's where the screenshot gets taken and escalated" },
+        { "type": "quote", "text": "El sistema lo cerró automáticamente con respuesta genérica y necesito revisión manual", "translation": "The system closed it automatically with a generic reply and I need a manual review", "platform": "X", "meta": "MX · Feb 2026" },
+        { "type": "takeaway", "text": "Keep your own voice in automated flows and read the case before closing it." }
+      ],
+      "takeaway": "Keep a recognizable voice in automated flows and retire templates that close the ticket without solving it.",
+      "evidence": [
+        { "quote": "levanté un reporte por cobro mayor al estimado en un viaje con Protección de Tarifa por $205. El sistema lo cerró automáticamente con respuesta genérica y necesito revisión manual", "translation": "I filed a report for a charge higher than estimated on a ride with Fare Protection for $205. The system closed it automatically with a generic reply and I need a manual review", "platform": "X", "date": "2026-02" },
+        { "quote": "Ya existe reclamación formal y respuesta genérica que no atiende los hechos.", "translation": "There's already a formal complaint and a generic reply that doesn't address the facts.", "platform": "X", "date": "2026-01" }
+      ]
+    }
+  }
+]

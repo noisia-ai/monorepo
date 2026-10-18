@@ -1,0 +1,135 @@
+.section {
+  padding: var(--section-y) 0;
+}
+
+.tone-soft {
+  background: var(--surface-1);
+}
+
+.tone-dark {
+  background: var(--dark);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.tone-dark h2,
+.tone-dark h3 {
+  color: #fff;
+}
+
+.container {
+  max-width: var(--max-wide);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+.read {
+  max-width: calc(var(--max-read) + 2 * var(--gutter));
+}
+
+.sectionHead {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  max-width: 760px;
+  margin-bottom: var(--space-7);
+}
+
+.sectionTitle {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+}
+
+.sectionLead {
+  font-size: var(--text-lg);
+  color: var(--fg-muted);
+}
+
+.tone-dark .sectionLead {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 52px;
+  padding: 0 24px;
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+  font-size: var(--text-md);
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.button:active {
+  transform: scale(0.98);
+}
+
+.button-primary {
+  background: var(--ink);
+  color: var(--fg-inverse);
+}
+
+.button-primary:hover {
+  background: #1f1f1f;
+}
+
+.button-secondary {
+  border: 1px solid var(--line-strong);
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+.button-text {
+  height: auto;
+  padding: 0;
+  color: var(--teal);
+}
+
+.buttonIcon {
+  width: 18px;
+  height: 18px;
+}
+
+.faq {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--line);
+}
+
+.faqItem {
+  border-bottom: 1px solid var(--line);
+}
+
+.faqQ {
+  cursor: pointer;
+  list-style: none;
+  padding: var(--space-5) 0;
+  font-size: var(--text-lg);
+  color: var(--ink);
+  font-weight: 500;
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.faqQ::-webkit-details-marker {
+  display: none;
+}
+
+.faqQ::after {
+  content: "+";
+  color: var(--teal);
+  font-weight: 400;
+  transition: transform var(--dur-base) var(--ease-out);
+}
+
+.faqItem[open] .faqQ::after {
+  transform: rotate(45deg);
+}
+
+.faqA {
+  padding: 0 0 var(--space-5);
+  color: var(--fg-muted);
+  max-width: 68ch;
+}

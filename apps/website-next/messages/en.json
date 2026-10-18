@@ -1,0 +1,70 @@
+{
+  "meta": {
+    "siteName": "Noisia",
+    "defaultTitle": "Noisia · Social intelligence",
+    "description": "Noisia is a technology company that produces research: it reads public conversation, search, reviews and your own data to answer business questions, with every finding tied to what people actually said."
+  },
+  "nav": {
+    "solutions": "Solutions",
+    "howItWorks": "How it works",
+    "methods": "Methods",
+    "insights": "Insights",
+    "about": "About",
+    "cta": "Book a workshop",
+    "menu": "Menu",
+    "close": "Close",
+    "language": "Español",
+    "skip": "Skip to content"
+  },
+  "industries": {
+    "all": "All",
+    "salud-y-farmacias": "Health and pharmacies",
+    "moda-y-artesania": "Fashion and craft",
+    "tecnologia-de-consumo": "Consumer tech",
+    "belleza-y-cuidado-personal": "Beauty and personal care",
+    "hogar-y-descanso": "Home and sleep",
+    "alimentos-y-bebidas": "Food and beverage",
+    "deportes-y-entretenimiento": "Sports and entertainment",
+    "telecom": "Telecom",
+    "movilidad": "Mobility",
+    "apuestas-y-gaming": "Betting and gaming",
+    "retail": "Retail",
+    "cultura-y-sociedad": "Culture and society"
+  },
+  "feed": {
+    "label": "Noisia insights",
+    "kindEditorial": "Noisia research",
+    "kindExample": "Illustrative example",
+    "evidence": "See the evidence",
+    "report": "Read the report",
+    "share": "Share",
+    "copied": "Link copied",
+    "pause": "Pause",
+    "play": "Play",
+    "filter": "Filter by industry",
+    "next": "Next",
+    "evidenceTitle": "The evidence",
+    "evidenceIntro": "What people wrote, word for word.",
+    "method": "Method",
+    "sources": "Sources",
+    "period": "Period",
+    "market": "Market",
+    "whatToDo": "What a brand could do",
+    "closeSheet": "Close",
+    "swipeHint": "Swipe for the next one",
+    "backToSite": "Back"
+  },
+  "footer": {
+    "tagline": "Social intelligence. Research produced with our own technology and human judgment.",
+    "explore": "Explore",
+    "learn": "Learn",
+    "company": "Noisia",
+    "socialIntelligence": "What social intelligence is",
+    "compare": "Comparisons",
+    "privacy": "Privacy notice",
+    "signature": "noisia · social intelligence architects"
+  },
+  "stickyCta": {
+    "label": "Book a free workshop"
+  }
+}

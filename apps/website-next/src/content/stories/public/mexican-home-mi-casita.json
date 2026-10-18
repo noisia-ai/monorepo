@@ -1,0 +1,42 @@
+{
+  "id": "mi-casita-es-identidad",
+  "industry": "hogar-y-descanso",
+  "kind": "editorial",
+  "market": "MX",
+  "method": "Cultural Codes",
+  "sources": ["TikTok", "YouTube", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
+  "period": "ene–may 2026",
+  "es": {
+    "title": "En México, \"mi casita\" se dice con orgullo",
+    "dek": "Cuando la gente habla con cariño del lugar donde vive, dice mi casita. La frase se dispara cuando la propiedad se vuelve real.",
+    "scenes": [
+      { "type": "hook", "text": "¿Cómo le dice México al lugar donde vive?" },
+      { "type": "stat", "value": 76, "suffix": "%", "label": "de la conversación afectiva sobre hogar usa \"mi casita\"", "context": "Conversación revisada, enero a mayo de 2026" },
+      { "type": "tension", "want": "Una casa donde vivo", "but": "Una casita que siento mía", "value": null },
+      { "type": "quote", "text": "Fue una increíble sorpresa, ahora si puedo decir que es mi casita", "platform": "TikTok", "meta": "MX · ene 2026" },
+      { "type": "takeaway", "text": "Habla como habla tu cliente: \"tu hogar\" suena ajeno cuando la gente dice \"mi casita\"." }
+    ],
+    "takeaway": "Usar \"mi casita\" donde aplique y reconocer los hitos reales: entrega de llaves, escrituras, el crédito saldado.",
+    "evidence": [
+      { "quote": "Gracias a los cambios que han habido este enero me llegó el aviso que se saldabs mi casa que pague 20 años pero el infonavit quería que pague 30 años. Fue una increíble sorpresa, ahora si puedo decir que es mi casita", "platform": "TikTok", "date": "2026-01" },
+      { "quote": "Mi sueño siempre fue tener mi casita de Infonavit, cuando recién me junté yo decía quiero una casita así de pequeña… gracias a Dios y al universo ya la tengo 🙏🏻 ahora poco a poco iré remodelándola a mi gusto, todo es con esfuerzo y dedicación ✨", "platform": "TikTok", "date": "2026-05" },
+      { "quote": "mi casita tambien es por credito Infonavit y tambien me fashina es pequeña siento q sencillo pero luce mucho y mas el amor en lo q la decore ❤️❤️❤️❤️muy parecida pero algo diferente", "platform": "TikTok", "date": "2026-01" }
+    ]
+  },
+  "en": {
+    "title": "In Mexico, \"mi casita\" is said with pride",
+    "dek": "When people speak fondly of where they live, they say mi casita. The phrase peaks when the property becomes real.",
+    "scenes": [
+      { "type": "hook", "text": "What does Mexico call the place it lives in?" },
+      { "type": "stat", "value": 76, "suffix": "%", "label": "of the affectionate home conversation uses \"mi casita\"", "context": "Reviewed conversation, January to May 2026" },
+      { "type": "tension", "want": "A house I live in", "but": "A little home that feels mine", "value": null },
+      { "type": "quote", "text": "Fue una increíble sorpresa, ahora si puedo decir que es mi casita", "translation": "It was an incredible surprise, now I can say it's my little home", "platform": "TikTok", "meta": "MX · Jan 2026" },
+      { "type": "takeaway", "text": "Speak like your customer: \"your home\" sounds distant when people say \"mi casita\"." }
+    ],
+    "takeaway": "Use \"mi casita\" where it fits and recognize the real milestones: getting the keys, the deeds, the paid-off mortgage.",
+    "evidence": [
+      { "quote": "Gracias a los cambios que han habido este enero me llegó el aviso que se saldabs mi casa que pague 20 años pero el infonavit quería que pague 30 años. Fue una increíble sorpresa, ahora si puedo decir que es mi casita", "translation": "Thanks to the changes this January I got the notice that my house was paid off after 20 years, though the housing fund wanted 30. It was an incredible surprise, now I can say it's my little home", "platform": "TikTok", "date": "2026-01" },
+      { "quote": "Mi sueño siempre fue tener mi casita de Infonavit, cuando recién me junté yo decía quiero una casita así de pequeña… gracias a Dios y al universo ya la tengo 🙏🏻 ahora poco a poco iré remodelándola a mi gusto, todo es con esfuerzo y dedicación ✨", "translation": "My dream was always to have my little Infonavit home... thank God and the universe I have it now, and little by little I'll remodel it my way", "platform": "TikTok", "date": "2026-05" }
+    ]
+  }
+}

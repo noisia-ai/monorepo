@@ -1,0 +1,43 @@
+{
+  "name": "@noisia/website-next",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "NEXT_TEST_WASM_DIR=$PWD/../../node_modules/@next/swc-wasm-nodejs next dev -p 3010",
+    "build": "NEXT_TEST_WASM_DIR=$PWD/../../node_modules/@next/swc-wasm-nodejs next build",
+    "start": "next start -H 0.0.0.0 -p ${PORT:-3000}",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx src/motion/runtime.test.ts src/content/stories/schema.test.ts",
+    "export:story": "node scripts/export-story.mjs"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "iconoir-react": "^7.10.1",
+    "motion": "^12.38.0",
+    "next": "^15.5.15",
+    "next-intl": "^4.12.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "server-only": "^0.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3.3.1",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "@next/swc-wasm-nodejs": "^15.5.15",
+    "@types/node": "^20.14.10",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "eslint": "^9.39.1",
+    "eslint-config-next": "^15.5.15",
+    "puppeteer-core": "^23.11.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.3"
+  }
+}
