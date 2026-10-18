@@ -227,3 +227,7 @@
   max-width: 820px;
   margin-bottom: var(--space-8);
 }
+
+.asideWide {
+  margin-bottom: var(--space-8);
+}
