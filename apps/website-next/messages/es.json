@@ -15,7 +15,15 @@
     "close": "Cerrar",
     "language": "English",
     "skip": "Saltar al contenido",
-    "mainNav": "Navegación principal"
+    "mainNav": "Navegación principal",
+    "solutionsDesc": "Reportes, estudios y plan anual para cada momento de tu marca",
+    "howItWorksDesc": "La tecnología y las personas detrás de cada respuesta",
+    "methodsDesc": "Cómo entendemos por qué la gente hace lo que hace",
+    "insightsDesc": "Hallazgos animados, cada uno con su evidencia",
+    "aboutDesc": "Quiénes somos y cómo trabajamos",
+    "languageLabel": "Idioma",
+    "menuCta": "Agenda un taller gratis",
+    "menuNote": "30 a 60 minutos, sin costo. Si no tienes brief, lo armamos ahí."
   },
   "industries": {
     "all": "Todo",

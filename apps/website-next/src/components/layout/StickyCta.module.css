@@ -14,6 +14,11 @@
   transform: none;
 }
 
+/* The full-screen menu has its own call to action. */
+:global(html[data-menu="open"]) .bar {
+  transform: translateY(110%);
+}
+
 .button {
   display: flex;
   align-items: center;

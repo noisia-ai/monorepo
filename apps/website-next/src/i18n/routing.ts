@@ -7,8 +7,9 @@ export const routing = defineRouting({
   locales: ["es", "en"],
   defaultLocale: "es",
   localePrefix: "as-needed",
-  // Links are shared by the team in Spanish; never bounce a reader to another language on their own.
-  localeDetection: false,
+  // First visit follows the device language (Accept-Language); after that the NEXT_LOCALE cookie,
+  // which the ES/EN toggle sets, wins. Crawlers send no language and get Spanish.
+  localeDetection: true,
   pathnames: {
     "/": "/",
     "/insights": "/insights",

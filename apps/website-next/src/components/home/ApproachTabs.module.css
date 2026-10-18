@@ -1,0 +1,121 @@
+.wrap {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 calc(var(--gutter) * -1);
+  padding: 2px var(--gutter);
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: none;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: var(--canvas);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--fg-inverse);
+}
+
+.tab[data-key="noisia"][aria-selected="true"] {
+  background: var(--teal-text);
+  border-color: var(--teal-text);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  animation: swap 420ms var(--ease-out) both;
+}
+
+.title {
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+}
+
+.text {
+  color: var(--fg-muted);
+  max-width: 44ch;
+}
+
+.answers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.answers span {
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+.answers[data-key="noisia"] {
+  background: var(--teal-soft);
+}
+
+.motion {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+}
+
+@keyframes swap {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@media (min-width: 960px) {
+  .wrap {
+    grid-template-columns: 0.9fr 1.1fr;
+    align-items: center;
+    gap: var(--space-8);
+  }
+
+  .tabs {
+    flex-wrap: wrap;
+    margin: 0;
+    padding: 0;
+  }
+}

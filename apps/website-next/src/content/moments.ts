@@ -8,103 +8,114 @@ export type Moment = {
   deliverable: "report" | "study" | "plan";
   es: { name: string; question: string; summary: string };
   en: { name: string; question: string; summary: string };
+  /** Unsplash photo (free license): the raw id, what it shows, and who took it. */
+  photo: { src: string; alt: { es: string; en: string }; credit: string };
 };
+
+const photo = (id: string, credit: string, es: string, en: string) => ({ src: `https://images.unsplash.com/${id}`, credit, alt: { es, en } });
 
 export const moments: Moment[] = [
   {
     slug: { es: "monitorear", en: "track" },
+    photo: photo("photo-1747717086502-f9b2bc6bf2a2", "Julio Lopez", "Una mujer revisa su teléfono al aire libre", "A woman checks her phone outdoors"),
     deliverable: "report",
     es: {
-      name: "Monitorear",
+      name: "Monitorear tu marca",
       question: "¿Qué está pasando con mi marca y mi categoría, y qué cambió?",
       summary: "Un reporte cada mes con lo que se movió, por qué y qué vigilar, comparado contra el periodo anterior."
     },
     en: {
-      name: "Track",
+      name: "Track your brand",
       question: "What is happening with my brand and category, and what changed?",
       summary: "A monthly report on what moved, why, and what to watch, compared with the previous period."
     }
   },
   {
     slug: { es: "lanzar", en: "launch" },
+    photo: photo("photo-1607687441627-27b17d7e44e4", "Conor Brown", "Unas manos abren una caja de cartón nueva", "Hands opening a new cardboard box"),
     deliverable: "study",
     es: {
-      name: "Lanzar",
+      name: "Lanzar algo nuevo",
       question: "¿Sobre qué territorio construyo sin sonar genérico?",
       summary: "Probamos los territorios contra la conversación real para saber cuál tiene permiso de existir."
     },
     en: {
-      name: "Launch",
+      name: "Launch something new",
       question: "Which territory can I build on without sounding generic?",
       summary: "We test territories against real conversation to learn which one people already grant permission to."
     }
   },
   {
     slug: { es: "entrar", en: "enter" },
+    photo: photo("photo-1584208632661-f8db31bb6489", "Roberto Carlos Román Don", "Un mercado mexicano lleno de puestos y color", "A busy, colorful Mexican market"),
     deliverable: "study",
     es: {
-      name: "Entrar",
+      name: "Entrar a un mercado",
       question: "¿Cómo funciona este mercado o esta categoría que no conozco?",
       summary: "Las reglas no escritas, quién da credibilidad y qué conviene evitar antes de llegar."
     },
     en: {
-      name: "Enter",
+      name: "Enter a market",
       question: "How does this market or category I don't know actually work?",
       summary: "The unwritten rules, who lends credibility and what to avoid before you arrive."
     }
   },
   {
     slug: { es: "defender", en: "defend" },
+    photo: photo("photo-1643116712744-6ee1ee41b740", "Willo Team", "Una caja sin abrir junto a una puerta", "An unopened box by a doorway"),
     deliverable: "study",
     es: {
-      name: "Defender",
+      name: "Defender tu lugar",
       question: "¿Qué está ganando mi competencia y dónde soy vulnerable?",
       summary: "Por qué la gente se va, qué promesa del otro se siente más creíble y qué puedes reparar."
     },
     en: {
-      name: "Defend",
+      name: "Defend your position",
       question: "What is my competitor winning and where am I exposed?",
       summary: "Why people leave, which rival promise feels more credible and what you can fix."
     }
   },
   {
     slug: { es: "optimizar", en: "optimize" },
+    photo: photo("photo-1720827965169-13ba59a6ebc8", "Eriel Ezequiel Reyes Saviñon", "Dos manos se pasan una bolsa de papel en la calle", "Two hands pass a paper bag on the street"),
     deliverable: "study",
     es: {
-      name: "Optimizar",
+      name: "Mejorar la experiencia",
       question: "¿Dónde se rompe el camino entre la intención y la compra?",
       summary: "El recorrido real, momento por momento, y la fricción que conviene quitar primero."
     },
     en: {
-      name: "Optimize",
+      name: "Improve the experience",
       question: "Where does the path from intent to purchase break?",
       summary: "The real journey, moment by moment, and the friction worth removing first."
     }
   },
   {
     slug: { es: "innovar", en: "innovate" },
+    photo: photo("photo-1763951719000-661d3d50d763", "Zoshua Colah", "Manos volteando tortillas en un comal", "Hands turning tortillas on a griddle"),
     deliverable: "study",
     es: {
-      name: "Innovar",
+      name: "Encontrar qué innovar",
       question: "¿Qué necesidad sigue sin resolverse?",
       summary: "Lo que la gente ya intenta resolver mal con lo que existe, y dónde hay espacio para algo nuevo."
     },
     en: {
-      name: "Innovate",
+      name: "Find what to innovate",
       question: "Which need is still unmet?",
       summary: "What people already try to solve badly with what exists, and where there is room for something new."
     }
   },
   {
     slug: { es: "planear", en: "plan" },
+    photo: photo("photo-1586936893354-362ad6ae47ba", "UX Indonesia", "Un equipo acomoda notas adhesivas sobre una mesa", "A team arranging sticky notes on a table"),
     deliverable: "plan",
     es: {
-      name: "Planear",
+      name: "Planear el año",
       question: "¿Cómo tengo una respuesta antes de cada decisión del año?",
       summary: "Un plan de estudios colocado en los momentos que importan: lanzamientos, campañas y temporadas."
     },
     en: {
-      name: "Plan",
+      name: "Plan the year",
       question: "How do I get an answer before every decision this year?",
       summary: "A plan of studies placed at the moments that matter: launches, campaigns and seasons."
     }

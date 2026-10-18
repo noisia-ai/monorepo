@@ -2,13 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Menu, Xmark } from "iconoir-react";
+import { ArrowRight, Book, Compass, Group, MediaVideo, Menu, Network, Xmark } from "iconoir-react";
 import { useParams } from "next/navigation";
 import { Link, getPathname, usePathname } from "@/i18n/navigation";
 import { useAlternateHref } from "./alternate";
+import { LangToggle } from "./LangToggle";
 import { mainNav } from "./nav";
 import styles from "./SiteHeader.module.css";
 import { Logo } from "@/components/brand/Logo";
+
+const MENU_ICONS = { solutions: Compass, howItWorks: Network, methods: Book, insights: MediaVideo, about: Group } as const;
 
 export function SiteHeader() {
   const t = useTranslations("nav");
@@ -32,10 +35,17 @@ export function SiteHeader() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
+  // Lock the page behind the open menu. iOS ignores overflow:hidden on body, so pin it in place.
   useEffect(() => {
-    document.body.style.overflow = open ? "hidden" : "";
+    if (!open) return;
+    const y = window.scrollY;
+    const body = document.body.style;
+    Object.assign(body, { position: "fixed", top: `-${y}px`, left: "0", right: "0", overflow: "hidden" });
+    document.documentElement.dataset.menu = "open";
     return () => {
-      document.body.style.overflow = "";
+      delete document.documentElement.dataset.menu;
+      Object.assign(body, { position: "", top: "", left: "", right: "", overflow: "" });
+      window.scrollTo(0, y);
     };
   }, [open]);
 
@@ -60,7 +70,7 @@ export function SiteHeader() {
   })();
 
   return (
-    <header className={styles.header} data-scrolled={scrolled || open}>
+    <header className={styles.header} data-scrolled={scrolled} data-open={open}>
       <a href="#main" className="visually-hidden">
         {t("skip")}
       </a>
@@ -76,9 +86,9 @@ export function SiteHeader() {
           ))}
         </nav>
         <div className={styles.end}>
-          <a href={switchHref} className={styles.lang} hrefLang={other} lang={other}>
-            {other.toUpperCase()}
-          </a>
+          <div className={styles.langDesktop}>
+            <LangToggle locale={locale} otherHref={switchHref} label={t("languageLabel")} />
+          </div>
           <Link href="/taller" className={styles.cta}>
             {t("cta")}
           </Link>
@@ -89,16 +99,33 @@ export function SiteHeader() {
         </div>
       </div>
       <div id="mobile-menu" className={styles.mobileMenu} data-open={open} hidden={!open}>
-        <nav aria-label={t("mainNav")}>
-          {mainNav.map((item, i) => (
-            <Link key={item.key} href={item.href} className={styles.mobileLink} style={{ animationDelay: `${i * 40}ms` }}>
-              {t(item.key)}
-            </Link>
-          ))}
+        <nav aria-label={t("mainNav")} className={styles.menuList}>
+          {mainNav.map((item, i) => {
+            const Icon = MENU_ICONS[item.key];
+            return (
+              <Link key={item.key} href={item.href} className={styles.menuItem} style={{ animationDelay: `${60 + i * 45}ms` }}>
+                <span className={styles.menuIcon} aria-hidden>
+                  <Icon />
+                </span>
+                <span className={styles.menuText}>
+                  <span className={styles.menuName}>{t(item.key)}</span>
+                  <span className={styles.menuDesc}>{t(`${item.key}Desc`)}</span>
+                </span>
+                <ArrowRight className={styles.menuArrow} aria-hidden />
+              </Link>
+            );
+          })}
         </nav>
-        <Link href="/taller" className={styles.mobileCta}>
-          {t("cta")}
-        </Link>
+        <div className={styles.menuFoot} style={{ animationDelay: `${60 + mainNav.length * 45}ms` }}>
+          <Link href="/taller" className={styles.mobileCta}>
+            {t("menuCta")}
+          </Link>
+          <p className={styles.menuNote}>{t("menuNote")}</p>
+          <div className={styles.menuLang}>
+            <span>{t("languageLabel")}</span>
+            <LangToggle locale={locale} otherHref={switchHref} label={t("languageLabel")} />
+          </div>
+        </div>
       </div>
     </header>
   );

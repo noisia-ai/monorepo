@@ -12,15 +12,6 @@ export const solutionsIndex: Localized<PageContent> = {
       "Cada momento en la vida de una marca trae una pregunta distinta. Elige el tuyo y verás qué miramos, qué recibes y cómo se empieza. Del otro lado siempre hay una de tres cosas: un reporte continuo, un estudio o un plan anual.",
     blocks: [
       {
-        type: "cards",
-        title: "Tres formas de recibir la respuesta",
-        items: [
-          { name: "Reporte", text: "Continuo, cada mes. Qué se movió en tu marca y tu categoría, por qué y qué vigilar, comparado contra el periodo anterior. Para monitorear sin tener que leer un tablero." },
-          { name: "Estudio", text: "Una pregunta concreta, respondida. Lanzar, entrar a un mercado, defender, optimizar o innovar. Del brief a la primera versión en días, con presentación en vivo." },
-          { name: "Plan anual", text: "Los estudios colocados en los momentos del año que importan: lanzamientos, campañas, temporadas. Una respuesta lista antes de cada decisión." }
-        ]
-      },
-      {
         type: "steps",
         title: "Cómo se empieza",
         items: [
@@ -68,15 +59,6 @@ export const solutionsIndex: Localized<PageContent> = {
     lead:
       "Every moment in the life of a brand brings a different question. Pick yours and you will see what we look at, what you receive and how to start. On the other side there is always one of three things: a continuous report, a study or an annual plan.",
     blocks: [
-      {
-        type: "cards",
-        title: "Three ways to receive the answer",
-        items: [
-          { name: "Report", text: "Continuous, every month. What moved in your brand and your category, why, and what to watch, compared with the previous period. For tracking without having to read a dashboard." },
-          { name: "Study", text: "One specific question, answered. Launching, entering a market, defending, optimizing or innovating. From brief to first version in days, with a live presentation." },
-          { name: "Annual plan", text: "Studies placed at the moments of the year that matter: launches, campaigns, seasons. An answer ready before each decision." }
-        ]
-      },
       {
         type: "steps",
         title: "How to start",

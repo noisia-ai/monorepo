@@ -1,0 +1,237 @@
+.gallery {
+  /* Cards start aligned with the page content and bleed past the right edge. */
+  --inset: max(var(--gutter), calc((100vw - var(--max-wide)) / 2 + var(--gutter)));
+  margin: 0 calc(50% - 50vw);
+}
+
+.scroller {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-left: var(--inset);
+  padding: 0 var(--inset);
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+.scroller::-webkit-scrollbar {
+  display: none;
+}
+
+.card {
+  position: relative;
+  flex: 0 0 84vw;
+  aspect-ratio: 4 / 5;
+  max-height: 72svh;
+  border-radius: 28px;
+  overflow: hidden;
+  scroll-snap-align: start;
+  color: #fff;
+  background: var(--surface-3);
+  isolation: isolate;
+}
+
+.photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.04);
+  transition: transform 1.2s var(--ease-out);
+}
+
+.card[data-active="true"] .photo {
+  transform: scale(1);
+}
+
+.shade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0.18) 38%, rgba(0, 0, 0, 0) 55%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.66) 0%, rgba(0, 0, 0, 0.12) 34%, rgba(0, 0, 0, 0) 50%);
+}
+
+.top,
+.bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.top {
+  top: 0;
+}
+
+.bottom {
+  bottom: 0;
+}
+
+.name {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.question {
+  font-size: clamp(1.5rem, 1.1rem + 1.6vw, 2.4rem);
+  line-height: 1.12;
+  font-weight: 500;
+  text-wrap: balance;
+  max-width: 22ch;
+}
+
+.summary {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.88);
+  max-width: 46ch;
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.chip {
+  font-size: var(--text-xs);
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+
+.more {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.more svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---------- pager ---------- */
+.controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  background: rgba(10, 10, 10, 0.06);
+}
+
+.dot {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: rgba(10, 10, 10, 0.28);
+  cursor: pointer;
+  overflow: hidden;
+  transition: width var(--dur-base) var(--ease-out);
+}
+
+.dot[data-active="true"] {
+  width: 44px;
+}
+
+.dotFill {
+  position: absolute;
+  inset: 0;
+  background: var(--ink);
+  transform-origin: left;
+}
+
+.dotFill[data-playing="true"] {
+  animation: fill linear both;
+}
+
+.play {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 10, 10, 0.06);
+  cursor: pointer;
+}
+
+.play svg {
+  width: 18px;
+  height: 18px;
+}
+
+.credit {
+  text-align: center;
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+@keyframes fill {
+  from {
+    transform: scaleX(0);
+  }
+}
+
+@media (min-width: 960px) {
+  .card {
+    flex: 0 0 min(1080px, 78vw);
+    aspect-ratio: 16 / 9;
+    max-height: 76vh;
+    border-radius: 32px;
+  }
+
+  .top,
+  .bottom {
+    padding: var(--space-7);
+  }
+
+  .top {
+    align-items: center;
+    text-align: center;
+  }
+
+  .question {
+    max-width: 26ch;
+  }
+
+  .summary {
+    font-size: var(--text-md);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .photo {
+    transition: none;
+    transform: none;
+  }
+}

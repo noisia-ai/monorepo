@@ -1,0 +1,184 @@
+/* The hero runs under the transparent header so its light never gets cut by the bar. */
+.hero {
+  position: relative;
+  overflow: hidden;
+  margin-top: -60px;
+  padding: calc(60px + var(--space-5)) 0 var(--space-7);
+}
+
+.hero::before,
+.hero::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(40px);
+}
+
+.hero::before {
+  width: 110vw;
+  height: 110vw;
+  max-width: 1100px;
+  max-height: 1100px;
+  right: -35%;
+  top: -30%;
+  background: radial-gradient(circle at 45% 45%, rgba(0, 238, 238, 0.26), rgba(0, 138, 138, 0.08) 48%, transparent 70%);
+}
+
+.hero::after {
+  width: 70vw;
+  height: 70vw;
+  max-width: 700px;
+  max-height: 700px;
+  left: -30%;
+  bottom: -35%;
+  background: radial-gradient(circle, rgba(238, 11, 0, 0.07), transparent 65%);
+}
+
+.inner {
+  position: relative;
+  z-index: 1;
+  max-width: var(--max-wide);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+  display: grid;
+  gap: var(--space-5);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--space-4);
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin: 0 calc(var(--gutter) * -1);
+  padding: 0 var(--gutter);
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  cursor: pointer;
+  text-align: left;
+  min-width: 72px;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.track {
+  display: block;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(10, 10, 10, 0.1);
+  overflow: hidden;
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  background: var(--ink);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 11.5em;
+  animation: swap 520ms var(--ease-out) both;
+}
+
+.title {
+  font-size: clamp(2.4rem, 1.6rem + 4vw, 4.6rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+  color: var(--ink);
+  text-wrap: balance;
+}
+
+.sub {
+  font-size: var(--text-lg);
+  line-height: 1.45;
+  color: var(--fg-muted);
+  max-width: 34ch;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.motion {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-width: 600px;
+  justify-self: center;
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+}
+
+@keyframes swap {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .copy {
+    animation: none;
+  }
+}
+
+@media (min-width: 960px) {
+  .hero {
+    padding: calc(60px + var(--space-8)) 0 var(--space-9);
+  }
+
+  .inner {
+    grid-template-columns: 1fr 1fr;
+    align-items: center;
+    gap: var(--space-8);
+  }
+
+  .tabs {
+    margin: 0;
+    padding: 0;
+    gap: var(--space-5);
+  }
+
+  .copy {
+    min-height: 13em;
+  }
+
+  .motion {
+    max-width: none;
+  }
+}

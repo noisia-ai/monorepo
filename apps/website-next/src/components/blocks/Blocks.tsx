@@ -4,7 +4,7 @@ import { Reveal } from "@/components/ui/Reveal";
 import { MotionBlock } from "@/components/motion/MotionBlock";
 import styles from "./blocks.module.css";
 
-function BlockView({ block }: { block: Block }) {
+export function BlockView({ block }: { block: Block }) {
   switch (block.type) {
     case "text":
       return (

@@ -15,7 +15,15 @@
     "close": "Close",
     "language": "Español",
     "skip": "Skip to content",
-    "mainNav": "Main navigation"
+    "mainNav": "Main navigation",
+    "solutionsDesc": "Reports, studies and an annual plan for every moment of your brand",
+    "howItWorksDesc": "The technology and the people behind every answer",
+    "methodsDesc": "How we understand why people do what they do",
+    "insightsDesc": "Animated findings, each with its evidence",
+    "aboutDesc": "Who we are and how we work",
+    "languageLabel": "Language",
+    "menuCta": "Book a free workshop",
+    "menuNote": "30 to 60 minutes, free. No brief? We build it together."
   },
   "industries": {
     "all": "All",

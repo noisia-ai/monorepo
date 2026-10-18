@@ -1,13 +1,15 @@
 import { setRequestLocale } from "next-intl/server";
-import { ArrowRight, Check } from "iconoir-react";
-import { Link } from "@/i18n/navigation";
 import { Button } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
 import { Section } from "@/components/ui/Section";
-import { HeroMotion } from "@/components/home/HeroMotion";
-import { ProcessSteps } from "@/components/home/ProcessSteps";
+import { ApproachTabs } from "@/components/home/ApproachTabs";
+import { CountDown, CountUp } from "@/components/home/Counters";
+import { RotatingHero } from "@/components/home/RotatingHero";
+import { SituationGallery } from "@/components/home/SituationGallery";
 import { StoryPreview } from "@/components/home/StoryPreview";
+import { SquareMotion } from "@/components/motion/SquareMotion";
 import { getFeedStories } from "@/components/feed/feed-data";
+import { UNDERSTAND, UnderstandComposition } from "@/motion/UnderstandComposition";
 import { home } from "@/content/pages/home";
 import { moments } from "@/content/moments";
 import styles from "@/components/home/home.module.css";
@@ -24,44 +26,24 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const c = home[lang];
   const stories = (await getFeedStories(locale)).filter((story) => story.kind !== "demo").slice(0, 4);
   const deliverable = { report: c.moments.report, study: c.moments.study, plan: c.moments.plan };
+  const solutionsBase = lang === "en" ? "/en/solutions" : "/soluciones";
 
   return (
     <>
-      <section className={styles.hero}>
-        <div className={styles.heroInner}>
-          <div className={styles.heroHead}>
-            <p className={styles.category}>{c.hero.category}</p>
-            <h1 className={styles.heroTitle}>{c.hero.title}</h1>
-          </div>
-          <HeroMotion copy={c.hero.motion} label={c.hero.motion.question} className={styles.heroMotion} />
-          <div className={styles.heroBody}>
-            <p className={styles.heroLead}>{c.hero.lead}</p>
-            <div className={styles.heroActions}>
-              <Button href="/taller" arrow>
-                {c.hero.primary}
-              </Button>
-              <Button href="/insights" variant="secondary">
-                {c.hero.secondary}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </section>
+      <RotatingHero copy={c.hero} />
 
       <Section title={c.moments.title} lead={c.moments.lead}>
-        <div className={styles.moments}>
-          {moments.map((moment, i) => (
-            <Reveal key={moment.slug.es} delay={i * 0.04}>
-              <Link href={{ pathname: "/soluciones/[slug]", params: { slug: moment.slug[lang] } }} className={styles.moment}>
-                <span className={styles.momentName}>{moment[lang].name}</span>
-                <span className={styles.momentQuestion}>{moment[lang].question}</span>
-                <span className={styles.momentFoot}>
-                  {deliverable[moment.deliverable]} <ArrowRight aria-hidden />
-                </span>
-              </Link>
-            </Reveal>
-          ))}
-        </div>
+        <SituationGallery
+          items={moments.map((moment) => ({
+            href: `${solutionsBase}/${moment.slug[lang]}`,
+            name: moment[lang].name,
+            question: moment[lang].question,
+            summary: moment[lang].summary,
+            deliverable: deliverable[moment.deliverable],
+            photo: { src: moment.photo.src, alt: moment.photo.alt[lang], credit: moment.photo.credit }
+          }))}
+          labels={{ more: c.moments.more, photos: c.moments.photos, play: c.moments.play, pause: c.moments.pause }}
+        />
       </Section>
 
       {stories.length ? (
@@ -80,60 +62,44 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       ) : null}
 
       <Section title={c.how.title} lead={c.how.lead}>
-        <ProcessSteps steps={c.how.steps} />
-        <p className={styles.human}>
-          <Check aria-hidden /> {c.how.human}
-        </p>
-        <Button href="/como-funciona" variant="text" arrow>
-          {c.how.link}
-        </Button>
+        <ApproachTabs tabs={c.how.tabs} motion={c.how.motion} answersLabel={lang === "en" ? "What it answers" : "Lo que responde"} />
+        <div className={styles.links}>
+          <Button href="/como-funciona" variant="text" arrow>
+            {c.how.link}
+          </Button>
+          <Button href="/comparar" variant="text" arrow>
+            {c.how.compareLink}
+          </Button>
+        </div>
       </Section>
 
       <Section title={c.methods.title} lead={c.methods.lead} tone="soft">
-        <div className={styles.points}>
-          {c.methods.points.map((point) => (
-            <Reveal key={point.name}>
-              <div className={styles.point}>
-                <h3 className={styles.pointName}>{point.name}</h3>
-                <p>{point.text}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-        <Button href="/metodos" variant="text" arrow>
-          {c.methods.link}
-        </Button>
-      </Section>
-
-      <Section title={c.compare.title} lead={c.compare.lead}>
-        <div className={styles.compare}>
-          {c.compare.columns.map((col) => (
-            <div key={col.name} className={styles.compareCol}>
-              <h3 className={styles.compareName}>{col.name}</h3>
-              <p>{col.does}</p>
-              <p className={styles.compareMiss}>{col.misses}</p>
-            </div>
-          ))}
-          <div className={`${styles.compareCol} ${styles.compareNoisia}`}>
-            <h3 className={styles.compareName}>{c.compare.noisia.name}</h3>
-            <p>{c.compare.noisia.does}</p>
+        <div className={styles.understand}>
+          <SquareMotion frames={UNDERSTAND.frames} poster={300} label={c.methods.motion.caption} className={styles.understandMotion}>
+            <UnderstandComposition copy={c.methods.motion} />
+          </SquareMotion>
+          <div className={styles.points}>
+            {c.methods.points.map((point) => (
+              <Reveal key={point.name}>
+                <div className={styles.point}>
+                  <h3 className={styles.pointName}>{point.name}</h3>
+                  <p>{point.text}</p>
+                </div>
+              </Reveal>
+            ))}
+            <Button href="/metodos" variant="text" arrow>
+              {c.methods.link}
+            </Button>
           </div>
         </div>
-        <Button href="/comparar" variant="text" arrow>
-          {c.compare.link}
-        </Button>
       </Section>
 
       <Section title={c.reach.title} tone="dark">
         <div className={styles.stats}>
           {c.reach.stats.map((stat) => (
-            <Reveal key={stat.label}>
-              <div className={styles.stat}>
-                <span className={styles.statValue}>{stat.value}</span>
-                <span className={styles.statLabel}>{stat.label}</span>
-              </div>
-            </Reveal>
+            <CountUp key={stat.label} value={stat.value} suffix={stat.suffix} label={stat.label} />
           ))}
+          <CountDown steps={c.reach.time.steps} label={c.reach.time.label} />
         </div>
       </Section>
 

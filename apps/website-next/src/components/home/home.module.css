@@ -519,3 +519,41 @@
     max-width: 720px;
   }
 }
+
+/* ---------- comparison links ---------- */
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-5);
+  margin-top: var(--space-6);
+}
+
+/* ---------- understand before counting ---------- */
+.understand {
+  display: grid;
+  gap: var(--space-6);
+}
+
+.understandMotion {
+  border-radius: var(--radius-lg);
+  background: var(--canvas);
+  overflow: hidden;
+  max-width: 620px;
+}
+
+@media (min-width: 960px) {
+  .understand {
+    grid-template-columns: 1.1fr 0.9fr;
+    align-items: center;
+    gap: var(--space-8);
+  }
+
+  .stats {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.understand .points {
+  grid-template-columns: 1fr;
+  margin-bottom: 0;
+}
