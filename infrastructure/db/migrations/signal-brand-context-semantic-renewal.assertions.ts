@@ -9,6 +9,7 @@ import {
 import {
   prepareSignalSemanticContextProposalInputV1,
   processSignalSemanticContextProposalRunV1,
+  type SignalSemanticContextProposalRuntimeConfigurationV1,
   SignalSemanticContextProviderCallError
 } from "../signal-semantic-context-proposal";
 import { retrySignalBrandContextComposedSemanticRunV1 } from "../signal-brand-context-prototype-processing";
@@ -18,7 +19,7 @@ import {
 } from "./signal-brand-context-composed-admission.postgres.test";
 
 type Scope = { database: Pool; parent_receipt_id: string; actor_user_id: string;
-  configuration: typeof semanticConfiguration; runtime: typeof composedRuntime };
+  configuration: SignalSemanticContextProposalRuntimeConfigurationV1; runtime: typeof composedRuntime };
 type Quote = { quote_digest: string; quote_expires_at: string; admission_not_after: string;
   maximum_micro_usd: string; reservation_micro_usd: string; run_id: string };
 type Renewal = { renewal_id: string; run_id: string; status: string; replayed: boolean };

@@ -17,13 +17,13 @@ type Receipt={id:string;parent_receipt_id:string;workspace_id:string;generation_
 type Authorization={replayed:boolean;run_id:string;receipt:Receipt};
 type Quote={quote_digest:string;quote_snapshot:{requires_provider:boolean;requires_confirmation:boolean;
   refreshes_completed_plan?:boolean;
-  authorization_state:string;pack_digest:string;supersedes_receipt_id:string|null;execution_cap_micro_usd:number|string;quote_expires_at:string;
+  authorization_state:string;pack_digest:string;supersedes_receipt_id:string|null;execution_cap_micro_usd:number|string|null;quote_expires_at:string;
   exposure:{confirmed_micro_usd:number|string;reserved_micro_usd:number|string;
     ambiguous_micro_usd:number|string;total_micro_usd:number|string}}};
 
 export type SignalBrandContextPrototypeQuoteV1={contract_version:"brand-context-prototype-quote-v1";
   parent_receipt_id:string;workspace_id:string;supersedes_receipt_id:string|null;quote_digest:string;quoted_at:string;quote_expires_at:string;
-  maximum_micro_usd:string;available_today_micro_usd:string;requires_provider:boolean;requires_confirmation:boolean;
+  maximum_micro_usd:string|null;available_today_micro_usd:string|null;requires_provider:boolean;requires_confirmation:boolean;
   refreshes_completed_plan?:boolean;
   authorization_state:"automatic_ready"|"awaiting_authorization"};
 
@@ -108,14 +108,14 @@ async function loadCompletedSemanticParentV1(database:Database,semanticRunId:str
 }
 
 function prototypeQuoteView(parent:{parent_receipt_id:string;workspace_id:string},quoted:Quote,observedAt:string,
-  dailyCapMicroUsd:string):SignalBrandContextPrototypeQuoteV1{
+  dailyCapMicroUsd:string|null):SignalBrandContextPrototypeQuoteV1{
   const snapshot=quoted.quote_snapshot;const exposure=BigInt(String(snapshot.exposure.total_micro_usd));
-  const dailyCap=BigInt(dailyCapMicroUsd);
+  const dailyCap=dailyCapMicroUsd===null?null:BigInt(dailyCapMicroUsd);
   return{contract_version:"brand-context-prototype-quote-v1",parent_receipt_id:parent.parent_receipt_id,
     workspace_id:parent.workspace_id,supersedes_receipt_id:snapshot.supersedes_receipt_id,
     quote_digest:quoted.quote_digest,quoted_at:new Date(observedAt).toISOString(),
-    quote_expires_at:new Date(snapshot.quote_expires_at).toISOString(),maximum_micro_usd:String(snapshot.execution_cap_micro_usd),
-    available_today_micro_usd:(dailyCap>exposure?dailyCap-exposure:0n).toString(),
+    quote_expires_at:new Date(snapshot.quote_expires_at).toISOString(),maximum_micro_usd:snapshot.execution_cap_micro_usd===null?null:String(snapshot.execution_cap_micro_usd),
+    available_today_micro_usd:dailyCap===null?null:(dailyCap>exposure?dailyCap-exposure:0n).toString(),
     requires_provider:snapshot.requires_provider,requires_confirmation:snapshot.requires_confirmation,
     refreshes_completed_plan:snapshot.refreshes_completed_plan===true,
     authorization_state:snapshot.authorization_state as "automatic_ready"|"awaiting_authorization"};
@@ -123,7 +123,7 @@ function prototypeQuoteView(parent:{parent_receipt_id:string;workspace_id:string
 
 async function quotePreparedPrototypePlanV1(client:PoolClient,parent:{parent_receipt_id:string;workspace_id:string;
   actor_user_id:string},plan:Record<string,unknown>){
-  const row=(await client.query<{value:Quote;observed_at:string;daily_cap_micro_usd:string}>(`WITH quoted AS (
+  const row=(await client.query<{value:Quote;observed_at:string;daily_cap_micro_usd:string|null}>(`WITH quoted AS (
     SELECT quote_signal_brand_context_prototypes_v1($1::uuid,$2::uuid,$3::jsonb) value
   ) SELECT value,clock_timestamp()::text observed_at,policy.daily_cap_micro_usd::text
     FROM quoted JOIN signal_brand_context_processing_receipts receipt ON receipt.id=$1::uuid
@@ -390,7 +390,7 @@ export async function retrySignalBrandContextComposedSemanticRunV1(args:{databas
     if(!scope)return fail("processing_forbidden",403);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-semantic-context:${scope.workspace_id}`]);
     const row=(await client.query<{workspace_id:string;organization_id:string;brand_id:string;actor_user_id:string;
-      run_id:string;run_key:string;admission_id:string;hard_cap_micro_usd:string;admission_not_after:string;
+      run_id:string;run_key:string;admission_id:string;hard_cap_micro_usd:string|null;admission_not_after:string;
       status:string;provider_call_state:string;provider_call_count:number;provider_response_private:string|null;lease_token:string|null;
       provider:string;model:string;configuration:Record<string,unknown>}>(`SELECT receipt.workspace_id::text,receipt.organization_id::text,
       receipt.brand_id::text,receipt.actor_user_id::text,run.id::text run_id,run.run_key,admission.id::text admission_id,
@@ -432,7 +432,7 @@ export async function retrySignalBrandContextComposedSemanticRunV1(args:{databas
     const compatible=(await client.query<{allowed:boolean}>(
       "SELECT signal_processing_configuration_allows_v1('brand_context_proposal',$1::jsonb,$2::jsonb) allowed",
       [JSON.stringify(actual),JSON.stringify(row.configuration)])).rows[0]?.allowed;
-    if(!compatible||BigInt(row.hard_cap_micro_usd)>configuration.platform_hard_cap_micro_usd)
+    if(!compatible||(configuration.platform_hard_cap_micro_usd!==null&&(row.hard_cap_micro_usd===null||BigInt(row.hard_cap_micro_usd)>configuration.platform_hard_cap_micro_usd)))
       return fail("brand_context_processing_runtime_drift");
     try{await client.query(`SELECT signal_processing_capacity_v1($1::uuid,$2::uuid,$3::uuid,$4::uuid,
       ARRAY['brand_context_proposal'],$5,$6,$7::jsonb,$8::bigint)`,[row.workspace_id,args.actor_user_id,row.run_id,

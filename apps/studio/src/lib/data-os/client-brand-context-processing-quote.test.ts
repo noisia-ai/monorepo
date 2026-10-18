@@ -590,6 +590,11 @@ for (const locale of ["es-MX", "en-US"] as const) {
       workspaceId, variant, initial, authorize, ...extra
     })));
 
+  test(`${locale}: absent strict maxima render without a fabricated zero`,()=>{
+    const html=render("full",{...availableView,quote:{...availableView.quote!,maximum_micro_usd:null,available_today_micro_usd:null}});
+    assert.ok(html.includes(copy.noStrictMaximum));
+    assert.doesNotMatch(html,/\$0(?:\.00)?/u);
+  });
   test(`${locale}: the Brand Context quote is read-only, sanitized and distinct from corpus vectors`, () => {
     for (const html of [render("full"), render("compact")]) {
       assert.ok(html.includes(copy.title));
@@ -724,4 +729,17 @@ test("changed interests are a separate explicit preparation, including a cached 
   assert.equal(validClientBrandContextProcessingViewV1({ ...pending, can_start: false,
     status: "processing_paused", quote: null }), true);
   assert.equal(clientBrandContextProcessingCanConfirmV1({ ...pending, can_start: false }), false);
+});
+
+test('optional strict maxima remain null through public quote, confirmation and display',()=>{
+  const quote=toClientBrandContextProcessingQuoteViewV1({...internal,maximum_total_micro_usd:null,remaining_micro_usd:null});
+  assert.equal(validClientBrandContextProcessingQuoteViewV1(quote),true);
+  const view={...clientBrandContextProcessingViewFromQuoteV1(quote),can_start:true};
+  assert.equal(validClientBrandContextProcessingViewV1(view),true);
+  const request=clientBrandContextProcessingRequestV1(null,view,()=>"optional-maxima-key");
+  const body=clientBrandContextProcessingConfirmationV1(request);
+  assert.equal(validClientBrandContextProcessingConfirmationV1(body),true);
+  assert.equal(body.expected_quote.maximum_micro_usd,null);
+  assert.equal(body.expected_quote.available_today_micro_usd,null);
+  assert.equal(validClientBrandContextProcessingConfirmationV1({...body,expected_quote:{...body.expected_quote,maximum_micro_usd:undefined}}),false);
 });
