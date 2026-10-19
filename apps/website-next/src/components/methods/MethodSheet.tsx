@@ -11,18 +11,29 @@ const DURATION = 380;
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 // Scroll lock shared by every sheet, so two quick opens never leave the page locked.
+// iOS Safari ignores overflow:hidden for touch scrolling, and that scroll also grows and shrinks
+// its toolbar, which moves anything anchored to the bottom. Pinning the body in place (like the
+// menu) stops both; the scroll position is restored on close.
 let locks = 0;
+let lockedY = 0;
 function lockScroll() {
   if (locks++ > 0) return;
+  lockedY = window.scrollY;
   const gap = window.innerWidth - document.documentElement.clientWidth;
-  document.documentElement.style.overflow = "hidden";
-  if (gap > 0) document.body.style.paddingRight = `${gap}px`;
+  Object.assign(document.body.style, {
+    position: "fixed",
+    top: `-${lockedY}px`,
+    left: "0",
+    right: "0",
+    overflow: "hidden",
+    paddingRight: gap > 0 ? `${gap}px` : ""
+  });
 }
 function unlockScroll() {
   if (--locks > 0) return;
   locks = 0;
-  document.documentElement.style.overflow = "";
-  document.body.style.paddingRight = "";
+  Object.assign(document.body.style, { position: "", top: "", left: "", right: "", overflow: "", paddingRight: "" });
+  window.scrollTo(0, lockedY);
 }
 
 type Props = {
@@ -80,8 +91,9 @@ export function MethodSheet({ method, locale, open, onClose, returnFocus }: Prop
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!open || !dialog || dialog.open) return;
-    dialog.showModal();
+    // Lock first, so the scroll position is read before the dialog moves focus.
     lockScroll();
+    dialog.showModal();
     closeRef.current?.focus({ preventScroll: true });
     const raf = requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
     return () => cancelAnimationFrame(raf);
