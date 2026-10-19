@@ -15,10 +15,12 @@ import { situationDetails } from "@/content/pages/situation-details";
 import { situationDiagram, situationLabels, situationStepDiagrams } from "@/content/pages/situations";
 import { offer } from "@/content/pages/offer";
 import { moments } from "@/content/moments";
-import { findEntry, pick } from "@/content/pages/registry";
+import { findEntry } from "@/content/pages/registry";
 import { routing } from "@/i18n/routing";
-import { pageMetadata } from "@/lib/page-meta";
 import styles from "@/components/situation/situation.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { pageGraph, serviceNode } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 type Params = { locale: string; slug: string };
 
@@ -32,7 +34,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const { locale, slug } = await params;
   const entry = findEntry(solutionEntries, locale, slug);
   if (!entry) return {};
-  return pageMetadata(pick(entry.page, locale), locale, { es: `/soluciones/${entry.slug.es}`, en: `/solutions/${entry.slug.en}` });
+  return pageMetadata(`/soluciones/${entry.slug.es}`, locale);
 }
 
 export default async function Page({ params }: { params: Promise<Params> }) {
@@ -55,6 +57,9 @@ export default async function Page({ params }: { params: Promise<Params> }) {
   const others = moments.filter((mo) => mo.slug.es !== key);
   const MetaIcon = META_ICONS[moment.deliverable];
   const delay = (ms: number) => ({ "--reveal-delay": `${ms}ms` }) as CSSProperties;
+  const jsonLd = pageGraph(`/soluciones/${key}`, locale, {
+    nodes: [serviceNode(`/soluciones/${key}`, locale, { name: moment[lang].name, description: d.summary ?? moment[lang].summary, serviceType: deliverable[moment.deliverable], category: lang === "en" ? "Social intelligence" : "Inteligencia social" })]
+  });
 
   return (
     <article className={styles.page}>
@@ -200,6 +205,7 @@ export default async function Page({ params }: { params: Promise<Params> }) {
       <section data-reveal>
         <BlockView block={{ type: "cta", title: ml.ctaTitle, text: ml.ctaText, label: ml.ctaLabel, href: ml.ctaHref }} />
       </section>
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </article>
   );
 }

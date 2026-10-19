@@ -13,16 +13,14 @@ import { compareEntries, type CompareKind } from "@/content/pages/compare";
 import { moments } from "@/content/moments";
 import { Link } from "@/i18n/navigation";
 import styles from "@/components/learn/learn.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { absoluteUrl } from "@/lib/seo/config";
+import { pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  const c = socialIntelligence[locale === "en" ? "en" : "es"];
-  return {
-    title: c.metaTitle,
-    description: c.metaDescription,
-    alternates: { canonical: locale === "en" ? "/en/social-intelligence" : "/inteligencia-social", languages: { es: "/inteligencia-social", en: "/en/social-intelligence" } },
-    openGraph: { title: c.metaTitle, description: c.metaDescription }
-  };
+  return pageMetadata("/inteligencia-social", locale);
 }
 
 export default async function SocialIntelligencePage({ params }: { params: Promise<{ locale: string }> }) {
@@ -31,6 +29,27 @@ export default async function SocialIntelligencePage({ params }: { params: Promi
   const lang = locale === "en" ? "en" : "es";
   const c = socialIntelligence[lang];
   const Check = LEARN_ICONS.check;
+  const url = absoluteUrl(lang === "en" ? "/en/social-intelligence" : "/inteligencia-social");
+  const jsonLd = pageGraph("/inteligencia-social", locale, {
+    page: { mainEntity: { "@id": `${url}#term` } },
+    nodes: [
+      {
+        "@type": "DefinedTerm",
+        "@id": `${url}#term`,
+        name: lang === "en" ? "Social intelligence" : "Inteligencia social",
+        description: c.lead,
+        url,
+        inDefinedTermSet: { "@id": `${url}#glossary` }
+      },
+      {
+        "@type": "DefinedTermSet",
+        "@id": `${url}#glossary`,
+        name: c.glossary.title,
+        url,
+        hasDefinedTerm: [{ "@id": `${url}#term` }, ...c.glossary.items.map((item) => ({ "@type": "DefinedTerm", name: item.term, description: item.text }))]
+      }
+    ]
+  });
   const compareHref = (kind: CompareKind) => {
     const entry = compareEntries.find((item) => item.kind === kind)!;
     return { pathname: "/comparar/[slug]" as const, params: { slug: entry.slug[lang] } };
@@ -202,6 +221,7 @@ export default async function SocialIntelligencePage({ params }: { params: Promi
       </section>
 
       <LearnCta title={c.cta.title} text={c.cta.text} label={c.cta.label} />
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </div>
   );
 }

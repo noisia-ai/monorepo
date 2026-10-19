@@ -15,6 +15,9 @@ import { moments } from "@/content/moments";
 import { Link } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
 import styles from "@/components/learn/learn.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 type Params = { locale: string; slug: string };
 
@@ -31,16 +34,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const { locale, slug } = await params;
   const entry = find(locale, slug);
   if (!entry) return {};
-  const copy = locale === "en" ? entry.en : entry.es;
-  return {
-    title: copy.name,
-    description: copy.metaDescription,
-    alternates: {
-      canonical: locale === "en" ? `/en/industries/${entry.slug.en}` : `/industrias/${entry.slug.es}`,
-      languages: { es: `/industrias/${entry.slug.es}`, en: `/en/industries/${entry.slug.en}` }
-    },
-    openGraph: { title: copy.name, description: copy.metaDescription }
-  };
+  return pageMetadata(`/industrias/${entry.slug.es}`, locale);
 }
 
 export default async function IndustryPage({ params }: { params: Promise<Params> }) {
@@ -56,6 +50,7 @@ export default async function IndustryPage({ params }: { params: Promise<Params>
   // The next four industries in the list, wrapping around, so every page links onward.
   const index = industryEntries.indexOf(entry);
   const related = [1, 2, 3, 4].map((k) => industryEntries[(index + k) % industryEntries.length]!);
+  const jsonLd = pageGraph(`/industrias/${entry.slug.es}`, locale, { page: { about: { "@type": "Thing", name: copy.name } } });
 
   return (
     <div className={styles.page}>
@@ -156,6 +151,7 @@ export default async function IndustryPage({ params }: { params: Promise<Params>
       </section>
 
       <LearnCta title={c.ctaTitle} text={c.ctaText} label={c.ctaLabel} />
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </div>
   );
 }

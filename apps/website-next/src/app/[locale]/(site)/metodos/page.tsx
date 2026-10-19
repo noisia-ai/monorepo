@@ -9,21 +9,19 @@ import { MethodLibrary } from "@/components/methods/MethodLibrary";
 import { MethodMotion } from "@/components/methods/MethodMotion";
 import { methodsPage, type RootKey } from "@/content/pages/methods";
 import styles from "@/components/methods/methods.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { methodOrder, methodSheet } from "@/content/pages/method-sheet";
+import { absoluteUrl } from "@/lib/seo/config";
+import { pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
-const paths = { es: "/metodos", en: "/methods" };
 const ROOT_ICONS: Record<RootKey, typeof Globe> = { anthropology: Globe, sociology: Community, psychology: Brain, semiotics: ChatBubbleTranslate };
 const LEVEL_ICONS = [StatsUpSquare, Compass, Quote];
 const delay = (ms: number) => ({ "--reveal-delay": `${ms}ms` }) as CSSProperties;
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  const c = methodsPage[locale === "en" ? "en" : "es"];
-  return {
-    title: c.metaTitle,
-    description: c.metaDescription,
-    alternates: { canonical: locale === "en" ? `/en${paths.en}` : paths.es, languages: { es: paths.es, en: `/en${paths.en}` } },
-    openGraph: { title: c.metaTitle, description: c.metaDescription }
-  };
+  return pageMetadata("/metodos", locale);
 }
 
 export default async function Page({ params }: { params: Promise<{ locale: string }> }) {
@@ -31,6 +29,23 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
   setRequestLocale(locale);
   const lang = locale === "en" ? "en" : "es";
   const c = methodsPage[lang];
+  const url = absoluteUrl(lang === "en" ? "/en/methods" : "/metodos");
+  const jsonLd = pageGraph("/metodos", locale, {
+    page: { mainEntity: { "@id": `${url}#methods` } },
+    nodes: [
+      {
+        "@type": "ItemList",
+        "@id": `${url}#methods`,
+        name: c.library.title,
+        numberOfItems: methodOrder.length,
+        itemListElement: methodOrder.map((key, i) => ({
+          "@type": "ListItem",
+          position: i + 1,
+          item: { "@type": "DefinedTerm", name: methodSheet[key].name, description: `${methodSheet[key][lang].question} ${methodSheet[key][lang].description}`, url: `${url}#${lang === "en" ? "library" : "biblioteca"}` }
+        }))
+      }
+    ]
+  });
 
   return (
     <article className={styles.page}>
@@ -198,6 +213,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
           </div>
         </div>
       </section>
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </article>
   );
 }

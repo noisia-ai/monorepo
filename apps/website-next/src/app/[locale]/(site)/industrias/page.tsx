@@ -4,16 +4,13 @@ import { industriesPage, industryEntries } from "@/content/pages/industries";
 import { IndustryFinder } from "@/components/learn/IndustryFinder";
 import { LearnHero } from "@/components/learn/Learn";
 import styles from "@/components/learn/learn.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { childItems, itemListNode, pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  const c = industriesPage[locale === "en" ? "en" : "es"];
-  return {
-    title: c.metaTitle,
-    description: c.metaDescription,
-    alternates: { canonical: locale === "en" ? "/en/industries" : "/industrias", languages: { es: "/industrias", en: "/en/industries" } },
-    openGraph: { title: c.metaTitle, description: c.metaDescription }
-  };
+  return pageMetadata("/industrias", locale);
 }
 
 export default async function IndustriesPage({ params }: { params: Promise<{ locale: string }> }) {
@@ -21,6 +18,7 @@ export default async function IndustriesPage({ params }: { params: Promise<{ loc
   setRequestLocale(locale);
   const lang = locale === "en" ? "en" : "es";
   const c = industriesPage[lang];
+  const jsonLd = pageGraph("/industrias", locale, { type: "CollectionPage", nodes: [itemListNode("/industrias", locale, childItems("/industrias", locale))] });
   const items = industryEntries.map((entry) => {
     const copy = entry[lang];
     return {
@@ -39,6 +37,7 @@ export default async function IndustriesPage({ params }: { params: Promise<{ loc
         <LearnHero title={c.title} lead={c.lead} />
         <IndustryFinder items={items} label={c.searchLabel} placeholder={c.searchPlaceholder} empty={c.empty} other={{ name: c.ctaTitle, text: c.ctaText, meta: c.ctaLabel }} />
       </div>
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </div>
   );
 }

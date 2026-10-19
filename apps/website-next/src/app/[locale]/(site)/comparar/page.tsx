@@ -8,16 +8,13 @@ import { COMPARE_ICONS } from "@/components/learn/icons";
 import { compareEntries, compareUi } from "@/content/pages/compare";
 import { Link } from "@/i18n/navigation";
 import styles from "@/components/learn/learn.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { childItems, itemListNode, pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  const c = compareUi[locale === "en" ? "en" : "es"];
-  return {
-    title: c.metaTitle,
-    description: c.metaDescription,
-    alternates: { canonical: locale === "en" ? "/en/compare" : "/comparar", languages: { es: "/comparar", en: "/en/compare" } },
-    openGraph: { title: c.metaTitle, description: c.metaDescription }
-  };
+  return pageMetadata("/comparar", locale);
 }
 
 export default async function ComparePage({ params }: { params: Promise<{ locale: string }> }) {
@@ -26,6 +23,7 @@ export default async function ComparePage({ params }: { params: Promise<{ locale
   const lang = locale === "en" ? "en" : "es";
   const c = compareUi[lang];
   const Us = COMPARE_ICONS.us;
+  const jsonLd = pageGraph("/comparar", locale, { type: "CollectionPage", nodes: [itemListNode("/comparar", locale, childItems("/comparar", locale))] });
 
   return (
     <div className={styles.page}>
@@ -83,6 +81,7 @@ export default async function ComparePage({ params }: { params: Promise<{ locale
       </section>
 
       <LearnCta title={c.ctaTitle} text={c.ctaText} label={c.ctaLabel} />
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </div>
   );
 }

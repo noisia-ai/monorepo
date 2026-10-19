@@ -9,18 +9,18 @@ import { FormatShowcase } from "@/components/offer/FormatShowcase";
 import { ProductMotion } from "@/components/offer/ProductMotion";
 import { getFeedStories } from "@/components/feed/feed-data";
 import { offer } from "@/content/pages/offer";
-import { solutionsIndex } from "@/content/pages/solutions";
 import { moments } from "@/content/moments";
-import { pick } from "@/content/pages/registry";
-import { pageMetadata } from "@/lib/page-meta";
 import styles from "@/components/offer/offer.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { ORG_ID, absoluteUrl } from "@/lib/seo/config";
+import { childItems, itemListNode, pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
-const paths = { es: "/soluciones", en: "/solutions" };
 const delay = (ms: number) => ({ "--reveal-delay": `${ms}ms` }) as CSSProperties;
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  return pageMetadata(pick(solutionsIndex, locale), locale, paths);
+  return pageMetadata("/soluciones", locale);
 }
 
 export default async function Page_({ params }: { params: Promise<{ locale: string }> }) {
@@ -31,6 +31,27 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
   const base = lang === "en" ? "/en/solutions" : "/soluciones";
   const story = (await getFeedStories(locale)).find((s) => s.kind === "editorial");
   const deliverable = { report: c.labels.report, study: c.labels.study, plan: c.labels.plan };
+  const url = absoluteUrl(base);
+  const jsonLd = pageGraph("/soluciones", locale, {
+    type: "CollectionPage",
+    page: { mainEntity: { "@id": `${url}#list` } },
+    nodes: [
+      itemListNode("/soluciones", locale, childItems("/soluciones", locale), c.situations.title),
+      {
+        "@type": "OfferCatalog",
+        "@id": `${url}#catalog`,
+        name: c.title,
+        url,
+        provider: { "@id": ORG_ID },
+        itemListElement: (["report", "study", "plan"] as const).map((key, i) => ({
+          "@type": "Offer",
+          position: i + 1,
+          url: `${url}#${{ report: "reporte", study: "estudio", plan: "plan" }[key]}`,
+          itemOffered: { "@type": "Service", name: c[key].name, description: `${c[key].promise} ${c[key].text}`, provider: { "@id": ORG_ID } }
+        }))
+      }
+    ]
+  });
 
   return (
     <article className={styles.page}>
@@ -130,6 +151,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
       <section data-reveal>
         <BlockView block={c.cta} />
       </section>
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </article>
   );
 }

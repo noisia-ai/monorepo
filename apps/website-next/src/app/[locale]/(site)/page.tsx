@@ -1,4 +1,9 @@
+import type { Metadata } from "next";
 import { setRequestLocale } from "next-intl/server";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { ORG_ID } from "@/lib/seo/config";
+import { pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 import { Button } from "@/components/ui/Button";
 import { Reveal } from "@/components/ui/Reveal";
 import { Section } from "@/components/ui/Section";
@@ -15,9 +20,9 @@ import { home } from "@/content/pages/home";
 import { moments } from "@/content/moments";
 import styles from "@/components/home/home.module.css";
 
-export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
+export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  return { alternates: { canonical: locale === "en" ? "/en" : "/", languages: { es: "/", en: "/en" } } };
+  return pageMetadata("/", locale);
 }
 
 export default async function HomePage({ params }: { params: Promise<{ locale: string }> }) {
@@ -28,6 +33,8 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
   const stories = (await getFeedStories(locale)).filter((story) => story.kind !== "demo").slice(0, 4);
   const deliverable = { report: c.moments.report, study: c.moments.study, plan: c.moments.plan };
   const solutionsBase = lang === "en" ? "/en/solutions" : "/soluciones";
+
+  const jsonLd = pageGraph("/", locale, { page: { about: { "@id": ORG_ID }, mainEntity: { "@id": ORG_ID } } });
 
   return (
     <>
@@ -117,6 +124,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
           {c.start.cta}
         </Button>
       </Section>
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </>
   );
 }

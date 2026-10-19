@@ -13,6 +13,9 @@ import { compareEntries, compareMotion, compareUi, findCompare, surveyMotion, ty
 import { Link } from "@/i18n/navigation";
 import { routing } from "@/i18n/routing";
 import styles from "@/components/learn/learn.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { articleNode, pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 type Params = { locale: string; slug: string };
 
@@ -24,16 +27,7 @@ export async function generateMetadata({ params }: { params: Promise<Params> }):
   const { locale, slug } = await params;
   const entry = findCompare(locale, slug);
   if (!entry) return {};
-  const page = entry.page[locale === "en" ? "en" : "es"];
-  return {
-    title: page.metaTitle,
-    description: page.metaDescription,
-    alternates: {
-      canonical: locale === "en" ? `/en/compare/${entry.slug.en}` : `/comparar/${entry.slug.es}`,
-      languages: { es: `/comparar/${entry.slug.es}`, en: `/en/compare/${entry.slug.en}` }
-    },
-    openGraph: { title: page.metaTitle, description: page.metaDescription }
-  };
+  return pageMetadata(`/comparar/${entry.slug.es}`, locale);
 }
 
 function themDiagram(entry: CompareEntry, lang: "es" | "en"): LearnDiagram {
@@ -54,6 +48,10 @@ export default async function CompareDetailPage({ params }: { params: Promise<Pa
   const UsIcon = COMPARE_ICONS.us;
   const BothIcon = COMPARE_ICONS.both;
   const others = compareEntries.filter((other) => other !== entry);
+  const id = `/comparar/${entry.slug.es}`;
+  const jsonLd = pageGraph(id, locale, {
+    nodes: [articleNode(id, locale, { headline: page.title, description: page.lead, about: [{ "@type": "Thing", name: page.them }, { "@type": "Thing", name: "Noisia" }] })]
+  });
 
   return (
     <div className={styles.page}>
@@ -147,6 +145,7 @@ export default async function CompareDetailPage({ params }: { params: Promise<Pa
       </section>
 
       <LearnCta title={c.ctaTitle} text={c.ctaText} label={c.ctaLabel} />
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </div>
   );
 }

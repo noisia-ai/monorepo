@@ -11,26 +11,24 @@ import { MethodChip } from "@/components/methods/MethodChip";
 import { methodOrder } from "@/content/pages/method-sheet";
 import { howItWorks } from "@/content/pages/howItWorks";
 import styles from "@/components/how/how.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { ORG_ID } from "@/lib/seo/config";
+import { pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
-const paths = { es: "/como-funciona", en: "/how-it-works" };
 const POINT_ICONS = [ChatBubbleQuestion, ArrowUnion, UserBadgeCheck];
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  const c = howItWorks[locale === "en" ? "en" : "es"];
-  const canonical = locale === "en" ? `/en${paths.en}` : paths.es;
-  return {
-    title: c.metaTitle,
-    description: c.metaDescription,
-    alternates: { canonical, languages: { es: paths.es, en: `/en${paths.en}` } },
-    openGraph: { title: c.metaTitle, description: c.metaDescription }
-  };
+  return pageMetadata("/como-funciona", locale);
 }
 
 export default async function Page({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
   const c = howItWorks[locale === "en" ? "en" : "es"];
+
+  const jsonLd = pageGraph("/como-funciona", locale, { page: { about: { "@id": ORG_ID } } });
 
   return (
     <article className={styles.page}>
@@ -139,6 +137,7 @@ export default async function Page({ params }: { params: Promise<{ locale: strin
           </div>
         </div>
       </section>
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </article>
   );
 }

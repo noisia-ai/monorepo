@@ -6,16 +6,13 @@ import { LearnHero } from "@/components/learn/Learn";
 import { LEARN_ICONS } from "@/components/learn/icons";
 import { PRIVACY_EMAIL, privacy } from "@/content/pages/privacy";
 import styles from "@/components/learn/learn.module.css";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  const c = privacy[locale === "en" ? "en" : "es"];
-  return {
-    title: c.metaTitle,
-    description: c.metaDescription,
-    alternates: { canonical: locale === "en" ? "/en/privacy" : "/privacidad", languages: { es: "/privacidad", en: "/en/privacy" } },
-    openGraph: { title: c.metaTitle, description: c.metaDescription }
-  };
+  return pageMetadata("/privacidad", locale);
 }
 
 /** The contact address becomes a mail link wherever it appears in the text. */
@@ -36,6 +33,8 @@ export default async function PrivacyPage({ params }: { params: Promise<{ locale
   const { locale } = await params;
   setRequestLocale(locale);
   const c = privacy[locale === "en" ? "en" : "es"];
+
+  const jsonLd = pageGraph("/privacidad", locale);
 
   return (
     <div className={styles.page}>
@@ -79,6 +78,7 @@ export default async function PrivacyPage({ params }: { params: Promise<{ locale
           <p className={styles.updated}>{c.updated}</p>
         </article>
       </div>
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
     </div>
   );
 }

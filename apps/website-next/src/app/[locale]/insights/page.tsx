@@ -1,19 +1,14 @@
 import type { Metadata } from "next";
-import { getTranslations, setRequestLocale } from "next-intl/server";
+import { setRequestLocale } from "next-intl/server";
 import { Feed } from "@/components/feed/Feed";
 import { getFeedCollections, getFeedStories } from "@/components/feed/feed-data";
+import { JsonLd } from "@/components/seo/JsonLd";
+import { childItems, itemListNode, pageGraph } from "@/lib/seo/jsonld";
+import { pageMetadata } from "@/lib/seo/metadata";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  const t = await getTranslations({ locale, namespace: "feed" });
-  return {
-    title: t("label"),
-    description: t("metaDescription"),
-    alternates: {
-      canonical: locale === "en" ? "/en/insights" : "/insights",
-      languages: { es: "/insights", en: "/en/insights", "x-default": "/insights" }
-    }
-  };
+  return pageMetadata("/insights", locale);
 }
 
 export default async function InsightsPage({
@@ -29,11 +24,15 @@ export default async function InsightsPage({
   const stories = await getFeedStories(locale);
   const collection = query.coleccion ?? query.collection;
   const industry = query.industria ?? query.industry;
+  const jsonLd = pageGraph("/insights", locale, { type: "CollectionPage", nodes: [itemListNode("/insights", locale, childItems("/insights", locale))] });
   return (
-    <Feed
-      stories={stories}
-      collections={getFeedCollections(stories, locale)}
-      initialFilter={collection ? { type: "collection", id: collection } : industry ? { type: "industry", id: industry } : undefined}
-    />
+    <>
+      <Feed
+        stories={stories}
+        collections={getFeedCollections(stories, locale)}
+        initialFilter={collection ? { type: "collection", id: collection } : industry ? { type: "industry", id: industry } : undefined}
+      />
+      {jsonLd ? <JsonLd data={jsonLd} /> : null}
+    </>
   );
 }
