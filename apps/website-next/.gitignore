@@ -5,3 +5,4 @@ src/content/stories/_local/*
 !src/content/stories/_local/.gitkeep
 out/
 renders/
+.next-perf/
