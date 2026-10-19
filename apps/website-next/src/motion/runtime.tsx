@@ -148,8 +148,11 @@ export function Stage({
   useEffect(() => {
     const box = boxRef.current;
     if (!box) return;
+    // Layout size, not getBoundingClientRect: a Stage inside a scaled or animating ancestor
+    // (a phone mockup, an entrance animation) must not count that transform twice.
     const measure = () => {
-      const { width: w, height: h } = box.getBoundingClientRect();
+      const w = box.clientWidth;
+      const h = box.clientHeight;
       setScale(Math.min(w / width, h / height));
     };
     measure();
