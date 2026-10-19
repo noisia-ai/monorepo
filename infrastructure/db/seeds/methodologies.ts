@@ -57,6 +57,7 @@ export async function seedMethodologies() {
       });
   }
 
-  const rows = await db.select().from(methodologies).where(eq(methodologies.status, "active"));
-  return { loaded: files.length, active: rows.length };
+  const activeRows = await db.select().from(methodologies).where(eq(methodologies.status, "active"));
+  const betaRows = await db.select().from(methodologies).where(eq(methodologies.status, "beta"));
+  return { loaded: files.length, active: activeRows.length, beta: betaRows.length };
 }

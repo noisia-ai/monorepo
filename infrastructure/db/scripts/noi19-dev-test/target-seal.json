@@ -1,0 +1,14 @@
+{
+  "contract_version": "noi19-private-dev-test-target-v1",
+  "environment_id": "5bad359d-cfa4-4e8f-aa41-98e6f075375a",
+  "environment_name": "dev-test",
+  "database_service_id": "8cc1601e-a87a-4b23-ae7c-9a4dc0a315a0",
+  "host": "pgvector.railway.internal",
+  "port": 5432,
+  "database": "noisia_dev_test",
+  "user": "noisia_dev",
+  "runner_service_id": "fb2b5925-d7aa-4d5d-9353-6e54dfe38c0e",
+  "system_identifier": "7683766906362679330",
+  "schema_sha256": "ff26cd9ba6c0cbe2c8b6e7178b85463a3fa67ecea0f0f91ef672213b0cc3f94b",
+  "table_count": 299
+}

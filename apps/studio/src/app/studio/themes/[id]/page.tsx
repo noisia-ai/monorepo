@@ -1,144 +1,106 @@
+import { ArrowRight, GlobeSimple, SquaresFour, Tag } from "@phosphor-icons/react/dist/ssr";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getLocale, getTranslations } from "next-intl/server";
 
+import {
+  AdminResourceSection,
+  AdminSettingsRow,
+  AdminStatus,
+  AdminWorkspaceHeader,
+  formatAdminDate
+} from "@/components/admin/AdminWorkspacePrimitives";
 import { DeleteThemeButton } from "@/components/brands/AdminEntityActions";
-import { StudioNav } from "@/components/layout/StudioNav";
-import { Icon } from "@/components/ui/Icon";
-import { StatusPill, SuccessPill } from "@/components/ui/StatusPill";
 import { requireStudioUser } from "@/lib/auth/guards";
+import type { AdminOperationalState } from "@/lib/data/admin-workspace";
 import { getThemeDetailForUser } from "@/lib/data/themes";
 
 export const dynamic = "force-dynamic";
 
 export default async function ThemeDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const [locale, t] = await Promise.all([getLocale(), getTranslations("AdminWorkspace.themes")]);
   const session = await requireStudioUser(`/studio/themes/${id}`);
-
   const theme = await getThemeDetailForUser(session.appUser, id);
-
-  if (!theme) {
-    notFound();
-  }
+  if (!theme) notFound();
 
   return (
-    <>
-      <StudioNav
-        activeSection="themes"
-        crumbs={[
-          { label: "Themes", href: "/studio/themes" },
-          { label: theme.name },
-        ]}
-        user={session.appUser}
+    <div className="admin-workspace-page">
+      <AdminWorkspaceHeader
+        actions={<Link className="admin-button" href="/studio/themes" prefetch={false}>{t("detail.back")}</Link>}
+        eyebrow={t("detail.eyebrow")}
+        icon={<SquaresFour aria-hidden />}
+        status={<AdminStatus state={themeState(theme.status)}>{t(`statuses.${theme.status}`)}</AdminStatus>}
+        subtitle={theme.description || t("detail.noDescription")}
+        title={theme.name}
       />
-      <main className="app-content">
-        <div className="studio-page">
-          <header className="vitals">
-            <div className="vitals-main">
-              <p className="vitals-eyebrow">
-                {theme.organizationName ?? theme.organizationSlug ?? "Noisia Internal"}
-              </p>
-              <h1 className="vitals-name">{theme.name}</h1>
-              <div className="brand-hero-pills">
-                {theme.status === "active" || theme.status === "published" ? (
-                  <SuccessPill>{theme.status}</SuccessPill>
-                ) : (
-                  <StatusPill tone="idle">{theme.status}</StatusPill>
-                )}
-                {theme.isPublic && <StatusPill tone="info">Público</StatusPill>}
-                {theme.industryFocus && theme.industryFocus.length > 0 && (
-                  <StatusPill tone="idle">{theme.industryFocus.join(", ")}</StatusPill>
-                )}
-              </div>
-              {theme.description && <p className="theme-description">{theme.description}</p>}
-            </div>
-            <div className="vitals-stats">
-              <Stat label="Corpora" value={String(theme.corpora.length)} sub="estudios" highlight />
-            </div>
-            <div className="brand-hero-actions">
-              <DeleteThemeButton
-                themeId={theme.id}
-                themeName={theme.name}
-                isArchived={theme.status === "archived"}
-              />
-            </div>
-          </header>
 
-          <section className="meta-strip">
-            <div className="meta-strip-item">
-              <span className="meta-strip-label">Slug</span>
-              <code className="meta-strip-value">{theme.slug}</code>
-            </div>
-            <div className="meta-strip-item">
-              <span className="meta-strip-label">Foco geográfico</span>
-              <span className="meta-strip-value">{theme.geoFocus?.join(", ") ?? "—"}</span>
-            </div>
-            <div className="meta-strip-item">
-              <span className="meta-strip-label">Visibilidad</span>
-              <span className="meta-strip-value">{theme.isPublic ? "Pública" : "Privada"}</span>
-            </div>
-          </section>
+      <dl className="admin-summary-strip">
+        <div><dt>{t("detail.summary.status")}</dt><dd>{t(`statuses.${theme.status}`)}</dd></div>
+        <div><dt>{t("detail.summary.visibility")}</dt><dd>{theme.isPublic ? t("detail.public") : t("detail.private")}</dd></div>
+        <div><dt>{t("detail.summary.focus")}</dt><dd>{theme.industryFocus?.length ?? 0}</dd></div>
+        <div><dt>{t("detail.summary.studies")}</dt><dd>{theme.corpora.length}</dd></div>
+      </dl>
 
-          <section className="dash-section">
-            <header className="dash-section-head">
-              <h2>Corpora ({theme.corpora.length})</h2>
-            </header>
-            {theme.corpora.length === 0 ? (
-              <div className="empty-card">
-                <Icon name="info" size={20} className="empty-card-icon" />
-                <p>Todavía no hay corpora derivados de este theme.</p>
-              </div>
-            ) : (
-              <ul className="corpus-grid">
+      <div className="admin-two-column">
+        <AdminResourceSection subtitle={t("detail.metadata.subtitle")} title={t("detail.metadata.title")}>
+          <div className="admin-settings-list">
+            <AdminSettingsRow description={theme.slug} icon={<Tag aria-hidden />} title={t("detail.metadata.slug")} />
+            <AdminSettingsRow
+              description={theme.geoFocus?.length ? theme.geoFocus.join(", ") : t("detail.notConfigured")}
+              icon={<GlobeSimple aria-hidden />}
+              title={t("detail.metadata.geo")}
+            />
+            <AdminSettingsRow
+              description={theme.organizationName ?? theme.organizationSlug ?? t("internal")}
+              icon={<SquaresFour aria-hidden />}
+              title={t("detail.metadata.organization")}
+            />
+            <AdminSettingsRow
+              description={formatAdminDate(theme.createdAt?.toISOString(), locale)}
+              title={t("detail.metadata.created")}
+            />
+          </div>
+        </AdminResourceSection>
+
+        <AdminResourceSection className="admin-section--danger" subtitle={t("detail.remove.subtitle")} title={t("detail.remove.title")}>
+          <div className="admin-section__body">
+            <DeleteThemeButton themeId={theme.id} themeName={theme.name} isArchived={theme.status === "archived"} />
+          </div>
+        </AdminResourceSection>
+      </div>
+
+      <AdminResourceSection subtitle={t("detail.studies.subtitle")} title={t("detail.studies.title", { count: theme.corpora.length })}>
+        {theme.corpora.length === 0 ? (
+          <div className="admin-empty">
+            <strong>{t("detail.studies.emptyTitle")}</strong>
+            <p>{t("detail.studies.emptyBody")}</p>
+          </div>
+        ) : (
+          <div className="admin-table-wrap">
+            <table className="admin-table">
+              <thead><tr><th>{t("detail.studies.columns.study")}</th><th>{t("detail.studies.columns.method")}</th><th>{t("detail.studies.columns.status")}</th><th>{t("detail.studies.columns.updated")}</th><th /></tr></thead>
+              <tbody>
                 {theme.corpora.map((corpus) => (
-                  <li key={corpus.id}>
-                    <Link prefetch={false} href={`/studio/corpora/${corpus.id}/engine`} className="corpus-card">
-                      <div className="corpus-card-head">
-                        <div>
-                          <p className="corpus-card-eyebrow">{corpus.methodologyName}</p>
-                          {corpus.name && <h3 className="corpus-card-title">{corpus.name}</h3>}
-                          <h3 className="corpus-card-question">
-                            {corpus.businessQuestion ?? `Ventana objetivo: ${corpus.targetWindowMonths} meses`}
-                          </h3>
-                        </div>
-                        {corpus.status === "corpus_approved" ? (
-                          <SuccessPill>Aprobado</SuccessPill>
-                        ) : (
-                          <StatusPill tone="idle">{corpus.status}</StatusPill>
-                        )}
-                      </div>
-                      <footer className="corpus-card-foot">
-                        <span className="corpus-card-cta">
-                          Abrir engine <Icon name="arrow-right" size={13} />
-                        </span>
-                      </footer>
-                    </Link>
-                  </li>
+                  <tr key={corpus.id}>
+                    <td><div className="admin-table__primary"><strong>{corpus.name ?? t("detail.studies.unnamed")}</strong><small>{corpus.businessQuestion ?? t("detail.studies.window", { months: corpus.targetWindowMonths ?? 0 })}</small></div></td>
+                    <td>{corpus.methodologyName}</td>
+                    <td><AdminStatus state={corpus.status === "corpus_approved" ? "good" : "warning"}>{corpus.status}</AdminStatus></td>
+                    <td className="admin-table__muted">{formatAdminDate(corpus.updatedAt?.toISOString(), locale)}</td>
+                    <td><Link className="admin-button admin-button--icon" href={`/studio/corpora/${corpus.id}/engine`} prefetch={false} title={t("detail.studies.open")}><ArrowRight aria-hidden size={15} /></Link></td>
+                  </tr>
                 ))}
-              </ul>
-            )}
-          </section>
-        </div>
-      </main>
-    </>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </AdminResourceSection>
+    </div>
   );
 }
 
-function Stat({
-  label,
-  value,
-  sub,
-  highlight,
-}: {
-  label: string;
-  value: string;
-  sub?: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className={`vital-stat${highlight ? " vital-stat--hi" : ""}`}>
-      <span className="vital-stat-label">{label}</span>
-      <span className="vital-stat-value">{value}</span>
-      {sub && <span className="vital-stat-sub">{sub}</span>}
-    </div>
-  );
+function themeState(status: string): AdminOperationalState {
+  if (status === "active" || status === "published") return "good";
+  if (status === "archived") return "not_available";
+  return "warning";
 }

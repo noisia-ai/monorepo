@@ -1,0 +1,832 @@
+import { createHash } from "node:crypto";
+
+import { SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1,
+  parseSignalSemanticContextProviderLineageV1,
+  signalSemanticContextProviderFullLineageMatchesV1,
+  type SignalSemanticContextProviderLineageV1 } from "@noisia/query-engine";
+import {
+  resolveSignalBrandContextAuthorityV1,
+  appendSignalSemanticContextProposalsV1 as appendSignalSemanticContextProposalsDbV1,
+  buildSignalSemanticContextProposalRuntimeLineageV1,
+  loadLatestSignalSemanticContextProposalRunForGenerationV1,
+  loadSignalSemanticContextProposalPreflightRuntimeV1,
+  loadSignalSemanticContextProposalRunV1,
+  planSignalSemanticContextProposalCapacityForAuthorityV1,
+  revalidateSignalSemanticContextPaidResponseV1,
+  retrySignalSemanticContextProposalRunV1,
+  signalSemanticContextProposalRuntimeConfigurationFromEnvV1,
+  startSignalSemanticContextProposalRunV1,
+  type SignalSemanticContextProposalRuntimeConfigurationV1
+} from "@noisia/db";
+
+import type { SignalBrandPolicyQueryable } from "@/lib/data-os/signal-governed-brand-policy";
+import { withSignalAcquisitionTransactionV1 } from "@/lib/data-os/signal-acquisition-plan";
+import {
+  beginSignalProductOperationV1,
+  completeSignalProductOperationV1
+} from "@/lib/data-os/signal-product-operation";
+import type { ResolvedSignalWorkspace, SignalWorkspaceUser } from "@/lib/data-os/signal-workspace";
+
+export const SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION = "signal-semantic-context-pack-v1" as const;
+export const SIGNAL_SEMANTIC_CONTEXT_PREFLIGHT_CONTRACT_VERSION =
+  "signal-semantic-context-pack-preflight-v1" as const;
+
+export const SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS = [
+  "identity_term","alias","product","feature","surface","category","need","benefit",
+  "friction","usage_occasion","competitor_term","locale_variant","exclusion","homonym",
+  "ambiguous_term","abstention_rule","positive_anchor","negative_anchor","boundary_anchor",
+  "typed_relation"
+] as const;
+export const SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS = [
+  "is_a","part_of","surface_of","competes_with","associated_with"
+] as const;
+export const SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS = [
+  "brand_os_drift","knowledge_drift","locale_market_drift","provider_lineage_missing",
+  "provider_lineage_changed","operator_requested_reconciliation","terminal_provider_run"
+] as const;
+export const SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES = [
+  "brand_os_profile","brand_os_product","brand_os_competitor","brand_os_seed_term",
+  "knowledge_source","knowledge_chunk","knowledge_assertion"
+] as const;
+
+export type SignalSemanticContextElementKindV1 = typeof SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS[number];
+export type SignalSemanticContextRelationKindV1 = typeof SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS[number];
+export type SignalSemanticContextReconciliationReasonV1 =
+  typeof SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS[number];
+export type SignalSemanticContextSourceTypeV1 = typeof SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES[number];
+export type SignalSemanticContextSourceRefV1 = {
+  source_type: SignalSemanticContextSourceTypeV1;
+  source_id: string;
+  relation_type: "supports" | "limits" | "contradicts";
+};
+export type SignalSemanticContextProposalV1 = {
+  element_key: string;
+  element_kind: SignalSemanticContextElementKindV1;
+  canonical_key: string;
+  display_text: string;
+  scope: string | null;
+  entity_type: string | null;
+  entity_id: string | null;
+  locale: string | null;
+  relation_kind: SignalSemanticContextRelationKindV1 | null;
+  relation_target_key: string | null;
+  confidence: number | null;
+  origin_kind: "server_projection" | "provider_proposal";
+  source_refs: SignalSemanticContextSourceRefV1[];
+};
+
+type Authority = {
+  brandOsProfileId:string;brandOsProfileVersion:number;brandOsDigest:string;
+  knowledgeGenerationKey:string;knowledgeDigest:string;localeContextDigest:string;
+  primaryLocale:string;localeVariants:string[];markets:string[];timezone:string;
+  sourceAuthorityDigest:string;
+};
+type GenerationRow = {
+  id:string;artifact_id:string;generation_key:string;generation_version:number;status:"draft"|"published";
+  supersedes_generation_id:string|null;supersession_reason:SignalSemanticContextReconciliationReasonV1|null;
+  brand_os_profile_id:string;brand_os_profile_version:number;
+  brand_os_digest:string;knowledge_generation_key:string;knowledge_digest:string;
+  locale_context_digest:string;primary_locale:string;locale_variants:string[];markets:string[];
+  timezone:string;draft_digest:string;pack_digest:string|null;created_at:Date|string;published_at:Date|string|null;
+  proposal_model:string|null;proposal_model_version:string|null;proposal_prompt_digest:string|null;
+  proposal_pricing_version:string|null;publication_counts:{quarantined_exceptions?:number}|null;
+  automatic_activation:boolean;
+  proposal_provider_lineage:SignalSemanticContextProviderLineageV1|null;
+  proposal_provider_lineage_digest:string|null;
+};
+type SignalSemanticContextGenerationProviderLineageV1 = SignalSemanticContextProviderLineageV1 | {
+  model:string;model_version:string;prompt_digest:string;pricing_version:string;
+};
+type ElementRow = {
+  id:string;artifact_id:string;evidence_group_id:string;element_key:string;element_version:number;
+  element_kind:SignalSemanticContextElementKindV1;canonical_key:string;display_text:string;
+  scope:string|null;entity_type:string|null;entity_id:string|null;locale:string|null;
+  relation_kind:SignalSemanticContextRelationKindV1|null;relation_target_key:string|null;
+  confidence:string|null;disposition:"pending"|"approved"|"rejected"|"merged";origin_kind:string;
+  supersedes_element_id:string|null;original_proposal_element_id:string|null;
+  source_refs_digest:string;element_digest:string;source_ref_count:number;
+  proposed_by_user_id:string|null;decided_by_user_id:string|null;
+  proposed_at:Date|string;decided_at:Date|string|null;created_at:Date|string;
+};
+
+export class SignalSemanticContextPackError extends Error {
+  constructor(public readonly code:string,public readonly status=409){super(code);}
+}
+
+export function signalSemanticContextPublishedContentReadyV1(args:{
+  approved:number;pending:number;quarantinedExceptions:number;automaticActivation:boolean;
+}){
+  return args.pending===args.quarantinedExceptions
+    &&(args.approved>0||args.automaticActivation);
+}
+
+export async function loadSignalSemanticContextReadinessV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+}){
+  assertInternal(args.actor);
+  const [live,generations]=await Promise.all([
+    resolveLiveSignalSemanticContextAuthorityV1(args),
+    args.queryable.query<GenerationRow>(`${generationSelect}
+      WHERE generation.workspace_id=$1::uuid AND NOT EXISTS(
+        SELECT 1 FROM signal_semantic_context_generations successor
+        WHERE successor.supersedes_generation_id=generation.id)
+      ORDER BY generation.generation_version DESC`,[args.workspace.id])
+  ]);
+  const published=generations.rows.find((row)=>row.status==="published");
+  const draft=generations.rows.find((row)=>row.status==="draft");
+  const selected=published??draft??null;
+  const counts=selected?await loadCurrentCounts(args.queryable,selected.id):emptyCounts();
+  const drift=selected?compareAuthority(selected,live):[];
+  const ready=Boolean(published&&selected===published&&drift.length===0&&published.pack_digest
+    &&signalSemanticContextPublishedContentReadyV1({approved:counts.approved,pending:counts.pending,
+      quarantinedExceptions:published.publication_counts?.quarantined_exceptions??0,
+      automaticActivation:published.automatic_activation}));
+  return{
+    contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
+    brand_os_digest:live.brandOsDigest,
+    knowledge_digest:live.knowledgeDigest,
+    semantic_context_pack_digest:published?.pack_digest??null,
+    lifecycle_state:selected?.status??"not_available",
+    generation:selected?publicGeneration(selected,counts):null,
+    open_draft:draft?{generation_key:draft.generation_key,generation_version:draft.generation_version,
+      counts:await loadCurrentCounts(args.queryable,draft.id)}:null,
+    counts,locale_market_coverage:{primary_locale:live.primaryLocale,
+      locales:live.localeVariants,markets:live.markets,timezone:live.timezone},
+    drift_state:selected?(drift.length===0?"current":"stale"):"not_available",
+    drift_reasons:drift,
+    ready_for_context_aware_discovery:ready,
+    limitations:ready?[]:[published?"semantic_context_pack_not_reconciled":"published_context_pack_required"]
+  } as const;
+}
+
+export async function loadSignalSemanticContextGenerationV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  generationKey?:string;includeElements?:boolean;
+}){
+  assertInternal(args.actor);
+  const generation=await loadGeneration(args.queryable,args.workspace.id,args.generationKey);
+  if(!generation)throw new SignalSemanticContextPackError("semantic_context_generation_not_found",404);
+  const includeElements=args.includeElements!==false;
+  const current=includeElements?await loadCurrentElements(args.queryable,generation.id):[];
+  const links=current.length?await args.queryable.query<{evidence_group_id:string;source_type:string;
+    source_id:string;relation_type:string}>(`SELECT evidence_group_id::text,source_type,
+      source_id::text,relation_type FROM analysis_evidence_links
+    WHERE evidence_group_id=ANY($1::uuid[]) ORDER BY evidence_group_id,position,id`,
+  [current.map((element)=>element.evidence_group_id)]):{rows:[],rowCount:0};
+  const refsByGroup=new Map<string,Array<{source_type:string;source_ref:string;relation_type:string}>>();
+  for(const link of links.rows){const refs=refsByGroup.get(link.evidence_group_id)??[];
+    refs.push({source_type:link.source_type,source_ref:sha256(link.source_id),relation_type:link.relation_type});
+    refsByGroup.set(link.evidence_group_id,refs);}
+  const latestProposalRun=await loadLatestSignalSemanticContextProposalRunForGenerationV1({
+    queryable:args.queryable as never,workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
+    generation_key:generation.generation_key});
+  return{contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
+    generation:publicGeneration(generation,includeElements?countRows(current):await loadCurrentCounts(args.queryable,generation.id)),
+    elements:current.map((element)=>publicElement(element,refsByGroup.get(element.evidence_group_id)??[])),
+    latest_proposal_run:latestProposalRun,
+    source_authority:{brand_os_digest:generation.brand_os_digest,
+      knowledge_digest:generation.knowledge_digest,locale_context_digest:generation.locale_context_digest}} as const;
+}
+
+export async function loadSignalSemanticContextDiffV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  generationKey?:string;
+}){
+  assertInternal(args.actor);
+  const generation=await loadGeneration(args.queryable,args.workspace.id,args.generationKey);
+  const live=await resolveLiveSignalSemanticContextAuthorityV1(args);
+  return{contract_version:"signal-semantic-context-diff-v1",generation_key:generation?.generation_key??null,
+    drift_state:generation&&compareAuthority(generation,live).length===0?"current":"stale",
+    reasons:generation?compareAuthority(generation,live):["generation_missing"],
+    current:{brand_os_digest:live.brandOsDigest,knowledge_digest:live.knowledgeDigest,
+      locale_context_digest:live.localeContextDigest},
+    sealed:generation?{brand_os_digest:generation.brand_os_digest,
+      knowledge_digest:generation.knowledge_digest,locale_context_digest:generation.locale_context_digest}:null};
+}
+
+export async function loadSignalSemanticContextProposalPreflightV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  configuration:SignalSemanticContextProviderConfigurationV1;
+}){
+  const [readiness,live]=await Promise.all([
+    loadSignalSemanticContextReadinessV1(args),resolveLiveSignalSemanticContextAuthorityV1(args)
+  ]);
+  const draft=await loadGeneration(args.queryable,args.workspace.id,undefined,"draft");
+  const config=validateProviderConfiguration(args.configuration);
+  const estimated=((config.max_input_tokens*config.input_usd_per_million_tokens)
+    +(config.max_output_tokens*config.output_usd_per_million_tokens))/1_000_000;
+  const blockers:string[]=[];
+  if(!draft)blockers.push("semantic_context_draft_required");
+  if(!config.available)blockers.push("provider_configuration_unavailable");
+  if(draft&&compareAuthority(draft,live).length)blockers.push("semantic_context_draft_stale");
+  if(draft&&(!draft.proposal_model||!draft.proposal_model_version||!draft.proposal_prompt_digest
+      ||!draft.proposal_pricing_version))blockers.push("provider_lineage_required");
+  if(draft&&config.available&&(draft.proposal_model!==config.model
+      ||draft.proposal_model_version!==config.model_version
+      ||draft.proposal_prompt_digest!==config.prompt_template_digest
+      ||draft.proposal_pricing_version!==config.pricing_version))blockers.push("provider_lineage_drift");
+  if(estimated>config.hard_cap_usd)blockers.push("hard_cap_insufficient");
+  return{contract_version:SIGNAL_SEMANTIC_CONTEXT_PREFLIGHT_CONTRACT_VERSION,
+    readiness:blockers.length===0?"ready":"blocked",blockers,
+    generation_key:draft?.generation_key??null,context_authority:{
+      brand_os_digest:readiness.brand_os_digest,knowledge_digest:readiness.knowledge_digest,
+      locale_context_digest:draft?.locale_context_digest??null},maximum_provider_calls:1,
+    provider:{key:config.provider,model:config.model,model_version:config.model_version,
+      pricing_version:config.pricing_version,prompt_template_digest:config.prompt_template_digest},
+    budget:{estimated_max_cost_usd:estimated.toFixed(6),hard_cap_usd:config.hard_cap_usd.toFixed(6),
+      within_hard_cap:estimated<=config.hard_cap_usd},writes_performed:false,provider_calls:0};
+}
+
+export type SignalSemanticContextProviderConfigurationV1={
+  available:boolean;provider:string;model:string;model_version:string;pricing_version:string;
+  prompt_template_digest:string;max_input_tokens:number;max_output_tokens:number;
+  input_usd_per_million_tokens:number;output_usd_per_million_tokens:number;hard_cap_usd:number;
+};
+
+export function signalSemanticContextProviderConfigurationFromEnvV1(
+  env:Record<string,string|undefined>=process.env
+):SignalSemanticContextProviderConfigurationV1{
+  const provider=env.NOISIA_SEMANTIC_CONTEXT_PROVIDER?.trim()??"anthropic";
+  const model=env.NOISIA_SEMANTIC_CONTEXT_MODEL?.trim()??"";
+  const modelVersion=env.NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION?.trim()??"";
+  const pricing=env.NOISIA_SEMANTIC_CONTEXT_PRICING_VERSION?.trim()??"";
+  const prompt=SIGNAL_SEMANTIC_CONTEXT_CURRENT_PROVIDER_CONTRACT_V1.prompt_digest;
+  const numeric=(key:string)=>{const value=Number(env[key]);return Number.isFinite(value)?value:0;};
+  const config={available:false,provider,model,model_version:modelVersion,pricing_version:pricing,
+    prompt_template_digest:prompt,max_input_tokens:numeric("NOISIA_SEMANTIC_CONTEXT_MAX_INPUT_TOKENS"),
+    max_output_tokens:numeric("NOISIA_SEMANTIC_CONTEXT_MAX_OUTPUT_TOKENS"),
+    input_usd_per_million_tokens:numeric("NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS"),
+    output_usd_per_million_tokens:numeric("NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS"),
+    hard_cap_usd:numeric("NOISIA_SEMANTIC_CONTEXT_HARD_CAP_USD")};
+  return{...config,available:Boolean(model&&modelVersion&&pricing&&digestPattern.test(prompt)
+    &&config.max_input_tokens>0&&config.max_output_tokens>0
+    &&config.input_usd_per_million_tokens>=0&&config.output_usd_per_million_tokens>=0
+    &&config.hard_cap_usd>0)};
+}
+
+export async function createSignalSemanticContextDraftV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;proposalLineage?:SignalSemanticContextGenerationProviderLineageV1;
+}){
+  assertInternal(args.actor);
+  if(args.proposalLineage&&!validGenerationProviderLineageV1(args.proposalLineage))
+    throw new SignalSemanticContextPackError("semantic_context_provider_lineage_invalid",422);
+  await lockWorkspace(args.queryable,args.workspace.id);
+  const operation=await beginSignalProductOperationV1<{generation_key:string;generation_version:number;status:"draft"}>({
+    ...args,action:"create-semantic-context-draft",input:{contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
+      proposal_lineage:args.proposalLineage??null}
+  });
+  if(operation.replay)return operation.replay;
+  const live=await resolveLiveSignalSemanticContextAuthorityV1(args);
+  const existing=await loadGeneration(args.queryable,args.workspace.id);
+  if(existing)throw new SignalSemanticContextPackError("semantic_context_draft_exists");
+  const inserted=await insertDraftGenerationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    actorId:args.actor.id,operationId:operation.operationId,live,proposalLineage:args.proposalLineage,
+    predecessor:null,reason:null});
+  await insertEvent(args.queryable,{workspaceId:args.workspace.id,generationId:inserted.rows[0]!.id,
+    operationId:operation.operationId,eventIndex:0,eventKind:"generation_created",previous:null,
+    next:inserted.rows[0]!.draft_digest,actorId:args.actor.id});
+  const result={generation_key:inserted.rows[0]!.generation_key,
+    generation_version:inserted.rows[0]!.generation_version,status:"draft" as const};
+  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    key:operation.key,result});return result;
+}
+
+export async function reconcileSignalSemanticContextGenerationV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;reason:SignalSemanticContextReconciliationReasonV1;
+  proposalLineage:SignalSemanticContextGenerationProviderLineageV1;
+}){
+  assertInternal(args.actor);
+  if(!validGenerationProviderLineageV1(args.proposalLineage)){
+    throw new SignalSemanticContextPackError("semantic_context_reconciliation_invalid",422);
+  }
+  if(!SIGNAL_SEMANTIC_CONTEXT_RECONCILIATION_REASONS.includes(args.reason)){
+    throw new SignalSemanticContextPackError("semantic_context_reconciliation_invalid",422);
+  }
+  await lockWorkspace(args.queryable,args.workspace.id);
+  const operation=await beginSignalProductOperationV1<{outcome:"created"|"noop";
+    generation_key:string;generation_version:number;status:"draft"|"published"}>({...args,
+      action:"reconcile-semantic-context-generation",input:{
+        contract_version:"signal-semantic-context-reconciliation-v1",reason:args.reason}
+  });
+  if(operation.replay)return operation.replay;
+  const live=await resolveLiveSignalSemanticContextAuthorityV1(args);
+  const current=await loadGeneration(args.queryable,args.workspace.id);
+  if(!current)throw new SignalSemanticContextPackError("semantic_context_generation_not_found",404);
+  const runState=await loadGenerationRunStateV1(args.queryable,args.workspace.id,current.id);
+  if(runState&&["queued","processing","validating"].includes(runState.status)){
+    throw new SignalSemanticContextPackError("semantic_context_proposal_run_active");
+  }
+  if(args.reason==="terminal_provider_run"){
+    if(current.status!=="draft"){
+      throw new SignalSemanticContextPackError("semantic_context_terminal_run_not_eligible");
+    }
+    if(!runState){
+      const result={outcome:"noop" as const,generation_key:current.generation_key,
+        generation_version:current.generation_version,status:current.status};
+      await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+        key:operation.key,result});return result;
+    }
+    assertTerminalRunSuccessorEligibilityV1(runState);
+  }else if(current.status==="draft"&&runState){
+    throw new SignalSemanticContextPackError("semantic_context_terminal_run_successor_required");
+  }
+  const authorityReasons=compareAuthority(current,live);
+  const providerReason=!current.proposal_model||!current.proposal_model_version
+      ||!current.proposal_prompt_digest||!current.proposal_pricing_version
+      ||!current.proposal_provider_lineage||!current.proposal_provider_lineage_digest
+    ?"provider_lineage_missing"
+    :(isFullProviderLineageV1(args.proposalLineage)
+      ?!signalSemanticContextProviderFullLineageMatchesV1(current,args.proposalLineage)
+      :current.proposal_model!==args.proposalLineage.model
+        ||current.proposal_model_version!==args.proposalLineage.model_version
+        ||current.proposal_prompt_digest!==args.proposalLineage.prompt_digest
+        ||current.proposal_pricing_version!==args.proposalLineage.pricing_version)
+      ?"provider_lineage_changed":null;
+  const actualReasons=[...authorityReasons,...(providerReason?[providerReason]:[])];
+  if(args.reason!=="terminal_provider_run"&&actualReasons.length===0){const result={outcome:"noop" as const,
+      generation_key:current.generation_key,generation_version:current.generation_version,
+      status:current.status};
+    await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+      key:operation.key,result});return result;}
+  if(args.reason!=="terminal_provider_run"&&args.reason!=="operator_requested_reconciliation"
+      &&!actualReasons.includes(args.reason)){
+    throw new SignalSemanticContextPackError("semantic_context_reconciliation_reason_mismatch",422);
+  }
+  const inserted=await insertDraftGenerationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    actorId:args.actor.id,operationId:operation.operationId,live,
+    proposalLineage:args.proposalLineage,predecessor:current,reason:args.reason});
+  await insertEvent(args.queryable,{workspaceId:args.workspace.id,generationId:inserted.rows[0]!.id,
+    operationId:operation.operationId,eventIndex:0,eventKind:"generation_reconciled",
+    previous:current.pack_digest??current.draft_digest,next:inserted.rows[0]!.draft_digest,
+    actorId:args.actor.id});
+  const result={outcome:"created" as const,generation_key:inserted.rows[0]!.generation_key,
+    generation_version:inserted.rows[0]!.generation_version,status:"draft" as const};
+  await completeSignalProductOperationV1({queryable:args.queryable,workspaceId:args.workspace.id,
+    key:operation.key,result});return result;
+}
+
+type GenerationRunStateV1={
+  status:string;provider_call_state:string;provider_call_count:number;
+  provider_response_digest:string|null;reviewable_elements:boolean;
+  executable_outbox:boolean;reserved_budget:boolean;
+};
+
+async function loadGenerationRunStateV1(queryable:SignalBrandPolicyQueryable,workspaceId:string,
+  generationId:string){
+  const result=await queryable.query<GenerationRunStateV1>(`SELECT run.status,
+    run.provider_call_state,run.provider_call_count,run.provider_response_digest,
+    EXISTS(SELECT 1 FROM signal_semantic_context_element_versions element
+      WHERE element.generation_id=run.generation_id AND NOT EXISTS(
+        SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)) reviewable_elements,
+    EXISTS(SELECT 1 FROM signal_semantic_context_proposal_outbox outbox
+      WHERE outbox.run_id=run.id
+        AND outbox.status IN ('pending','failed','dispatching','dispatched')) executable_outbox,
+    EXISTS(SELECT 1 FROM signal_semantic_context_budget_reservations reservation
+      WHERE reservation.run_id=run.id AND reservation.status='reserved') reserved_budget
+    FROM signal_semantic_context_proposal_runs run
+    WHERE run.workspace_id=$1::uuid AND run.generation_id=$2::uuid LIMIT 1`,
+  [workspaceId,generationId]);
+  return result.rows[0]??null;
+}
+
+function assertTerminalRunSuccessorEligibilityV1(run:GenerationRunStateV1){
+  if(["in_flight","response_persisted","outcome_unknown"].includes(run.provider_call_state)){
+    throw new SignalSemanticContextPackError("semantic_context_provider_outcome_ambiguous");
+  }
+  if(run.reviewable_elements){
+    throw new SignalSemanticContextPackError("semantic_context_generation_review_required");
+  }
+  if(run.executable_outbox||run.reserved_budget){
+    throw new SignalSemanticContextPackError("semantic_context_proposal_run_active");
+  }
+  const safelyTerminal=(run.status==="failed"&&run.provider_call_state==="settled"
+      &&run.provider_call_count===1&&Boolean(run.provider_response_digest))
+    ||(run.status==="stale"&&["not_started","settled"].includes(run.provider_call_state))
+    ||(run.status==="dead_letter"&&run.provider_call_state==="not_started"
+      &&run.provider_call_count===0);
+  if(!safelyTerminal){
+    throw new SignalSemanticContextPackError(run.status==="failed"
+      &&run.provider_call_state==="not_started"
+      ?"semantic_context_terminal_run_retry_required"
+      :"semantic_context_terminal_run_not_eligible");
+  }
+}
+
+async function insertDraftGenerationV1(args:{queryable:SignalBrandPolicyQueryable;workspaceId:string;
+  actorId:string;operationId:string;live:Authority;
+  proposalLineage?:SignalSemanticContextGenerationProviderLineageV1;
+  predecessor:GenerationRow|null;reason:SignalSemanticContextReconciliationReasonV1|null;
+}){
+  const history=await args.queryable.query<{version:number}>(`
+    SELECT COALESCE(max(generation_version),0)::int version
+    FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid`,[args.workspaceId]);
+  const version=(history.rows[0]?.version??0)+1;
+  if(args.predecessor&&args.predecessor.generation_version!==version-1){
+    throw new SignalSemanticContextPackError("semantic_context_generation_conflict");
+  }
+  const generationKey=`semantic-context-v${version}`;
+  const draftDigest=sha256(stableJson({contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
+    generation_key:generationKey,source_authority_digest:args.live.sourceAuthorityDigest,elements:[]}));
+  const fullLineage=isFullProviderLineageV1(args.proposalLineage)?args.proposalLineage:null;
+  const legacyLineage=args.proposalLineage?providerGenerationProjectionV1(args.proposalLineage):null;
+  const artifact=await args.queryable.query<{id:string}>(`
+    INSERT INTO analysis_artifacts(workspace_id,workspace_artifact_kind,workspace_authority_digest,
+      artifact_key,artifact_type,content,review_status,revision,metadata)
+    VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_pack_generation',$4::jsonb,
+      'needs_review',1,$5::jsonb) RETURNING id::text`,[args.workspaceId,args.live.sourceAuthorityDigest,
+      generationKey,JSON.stringify({contract_version:SIGNAL_SEMANTIC_CONTEXT_PACK_CONTRACT_VERSION,
+        generation_version:version,lifecycle_state:"draft"}),JSON.stringify({authority_only:true})]);
+  return args.queryable.query<{id:string;generation_key:string;generation_version:number;draft_digest:string}>(`
+    INSERT INTO signal_semantic_context_generations(workspace_id,artifact_id,generation_key,
+      generation_version,status,supersedes_generation_id,supersession_reason,brand_os_profile_id,
+      brand_os_profile_version,brand_os_digest,knowledge_generation_key,knowledge_digest,
+      locale_context_digest,primary_locale,locale_variants,markets,timezone,proposal_model,
+      proposal_model_version,proposal_prompt_digest,proposal_pricing_version,
+      proposal_provider_lineage,proposal_provider_lineage_digest,draft_digest,
+      created_operation_id,created_by_user_id)
+    VALUES($1::uuid,$2::uuid,$3,$4,'draft',$5::uuid,$6,$7::uuid,$8,$9,$10,$11,$12,$13,
+      $14::text[],$15::text[],$16,$17,$18,$19,$20,$21::jsonb,$22,$23,$24::uuid,$25::uuid)
+    RETURNING id::text,generation_key,generation_version,draft_digest`,[args.workspaceId,
+      artifact.rows[0]!.id,generationKey,version,args.predecessor?.id??null,args.reason,
+      args.live.brandOsProfileId,args.live.brandOsProfileVersion,args.live.brandOsDigest,
+      args.live.knowledgeGenerationKey,args.live.knowledgeDigest,args.live.localeContextDigest,
+      args.live.primaryLocale,args.live.localeVariants,args.live.markets,args.live.timezone,
+      legacyLineage?.model??null,legacyLineage?.model_version??null,
+      legacyLineage?.prompt_digest??null,legacyLineage?.pricing_version??null,
+      fullLineage?JSON.stringify(fullLineage):null,fullLineage?.lineage_digest??null,
+      draftDigest,args.operationId,args.actorId]);
+}
+
+/** Server-owned boundary for deterministic projections or a future bounded provider adapter. */
+export async function appendSignalSemanticContextProposalsV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;generationKey:string;proposals:SignalSemanticContextProposalV1[];
+}){
+  assertInternal(args.actor);validateProposals(args.proposals);
+  if(args.workspace.subject.type!=="brand")throw new SignalSemanticContextPackError("brand_workspace_required",422);
+  try{return await appendSignalSemanticContextProposalsDbV1({queryable:args.queryable as never,
+    workspace:{id:args.workspace.id,organization_id:args.workspace.organizationId,
+      brand_id:args.workspace.subject.id},actor:{id:args.actor.id,user_type:"noisia_internal"},
+    idempotency_key:args.idempotencyKey,generation_key:args.generationKey,
+    proposals:args.proposals});}
+  catch(error){if(error instanceof Error&&"code" in error)throw new SignalSemanticContextPackError(
+    String((error as {code:unknown}).code),"status" in error?Number((error as {status:unknown}).status):409);
+    throw error;}
+}
+
+export async function decideSignalSemanticContextElementV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;generationKey:string;elementKey:string;action:"approve"|"reject"|"edit";
+  edit?:{canonical_key:string;display_text:string;scope?:string|null;entity_type?:string|null;
+    entity_id?:string|null;locale:string|null;relation_kind:SignalSemanticContextRelationKindV1|null;
+    relation_target_key:string|null};
+}){
+  void args;
+  throw new SignalSemanticContextPackError("semantic_context_decision_v1_retired",410);
+}
+
+export async function bulkApproveSignalSemanticContextElementsV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;generationKey:string;elementKeys:string[];
+}){
+  void args;
+  throw new SignalSemanticContextPackError("semantic_context_bulk_approval_v1_retired",410);
+}
+
+export async function publishSignalSemanticContextGenerationV1(args:{
+  queryable:SignalBrandPolicyQueryable;workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;
+  idempotencyKey:string;generationKey:string;
+}):Promise<{generation_key:string;generation_version:number;lifecycle_state:"published";
+  semantic_context_pack_digest:string}>{
+  void args;
+  throw new SignalSemanticContextPackError("semantic_context_publish_v1_retired",410);
+}
+
+export async function createSignalSemanticContextDraftProductV1(args:Omit<Parameters<typeof createSignalSemanticContextDraftV1>[0],"queryable"|"proposalLineage">){
+  const config=signalSemanticContextProposalRuntimeConfigurationFromEnvV1();
+  return withSignalAcquisitionTransactionV1(async(queryable)=>{
+    await lockWorkspace(queryable,args.workspace.id);
+    const live=await resolveLiveSignalSemanticContextAuthorityV1({...args,queryable});
+    const proposalLineage=config.available?await buildProductProviderLineageV1({queryable,
+      workspace:args.workspace,live,config}):undefined;
+    return createSignalSemanticContextDraftV1({...args,queryable,proposalLineage});
+  });
+}
+export async function reconcileSignalSemanticContextGenerationProductV1(args:Omit<
+  Parameters<typeof reconcileSignalSemanticContextGenerationV1>[0],"queryable"|"proposalLineage">){
+  const config=signalSemanticContextProposalRuntimeConfigurationFromEnvV1();
+  if(!config.available)throw new SignalSemanticContextPackError("provider_configuration_unavailable");
+  return withSignalAcquisitionTransactionV1(async(queryable)=>{
+    await lockWorkspace(queryable,args.workspace.id);
+    const live=await resolveLiveSignalSemanticContextAuthorityV1({...args,queryable});
+    const proposalLineage=await buildProductProviderLineageV1({queryable,
+      workspace:args.workspace,live,config});
+    return reconcileSignalSemanticContextGenerationV1({...args,queryable,proposalLineage});
+  });
+}
+export async function decideSignalSemanticContextElementProductV1(args:Omit<Parameters<typeof decideSignalSemanticContextElementV1>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>decideSignalSemanticContextElementV1({...args,queryable}));
+}
+export async function bulkApproveSignalSemanticContextElementsProductV1(args:Omit<Parameters<typeof bulkApproveSignalSemanticContextElementsV1>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>bulkApproveSignalSemanticContextElementsV1({...args,queryable}));
+}
+export async function publishSignalSemanticContextGenerationProductV1(args:Omit<Parameters<typeof publishSignalSemanticContextGenerationV1>[0],"queryable">){
+  return withSignalAcquisitionTransactionV1((queryable)=>publishSignalSemanticContextGenerationV1({...args,queryable}));
+}
+export async function loadSignalSemanticContextReadinessProductV1(args:Omit<Parameters<typeof loadSignalSemanticContextReadinessV1>[0],"queryable">){
+  const{pool}=await import("@/lib/db");return loadSignalSemanticContextReadinessV1({...args,queryable:pool});
+}
+export async function loadSignalSemanticContextGenerationProductV1(args:Omit<Parameters<typeof loadSignalSemanticContextGenerationV1>[0],"queryable">){
+  const{pool}=await import("@/lib/db");return loadSignalSemanticContextGenerationV1({...args,queryable:pool});
+}
+export async function loadSignalSemanticContextDiffProductV1(args:Omit<Parameters<typeof loadSignalSemanticContextDiffV1>[0],"queryable">){
+  const{pool}=await import("@/lib/db");return loadSignalSemanticContextDiffV1({...args,queryable:pool});
+}
+export async function loadSignalSemanticContextProposalPreflightProductV1(args:Omit<Parameters<typeof loadSignalSemanticContextProposalPreflightV1>[0],"queryable"|"configuration">){
+  const [{pool},{loadSemanticContextProposalRuntimeReadiness}]=await Promise.all([
+    import("@/lib/db"),import("@/lib/queue/data-os")]);
+  const configuration=signalSemanticContextProposalRuntimeConfigurationFromEnvV1();
+  const preflight=await loadSignalSemanticContextProposalPreflightRuntimeV1({queryable:pool,
+    workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
+    configuration,
+    runtime:await loadSemanticContextProposalRuntimeReadiness()});
+  return{...preflight,provider:{...preflight.provider,
+    pricing_unit:"usd_per_million_tokens" as const,
+    input_usd_per_million_tokens:configuration.input_usd_per_million_tokens,
+    output_usd_per_million_tokens:configuration.output_usd_per_million_tokens}};
+}
+
+export async function startSignalSemanticContextProposalRunProductV1(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;
+  generationKey:string;preflightDigest:string;confirmation:string;hardCapMicroUsd:bigint;
+}){
+  const[{pool},{loadSemanticContextProposalRuntimeReadiness}]=await Promise.all([
+    import("@/lib/db"),import("@/lib/queue/data-os")]);
+  return startSignalSemanticContextProposalRunV1({pool,workspace:proposalWorkspace(args.workspace),
+    actor:proposalActor(args.actor),idempotency_key:args.idempotencyKey,
+    generation_key:args.generationKey,preflight_digest:args.preflightDigest,
+    confirmation:args.confirmation,hard_cap_micro_usd:args.hardCapMicroUsd,
+    configuration:signalSemanticContextProposalRuntimeConfigurationFromEnvV1(),
+    runtime:await loadSemanticContextProposalRuntimeReadiness()});
+}
+
+export async function loadSignalSemanticContextProposalRunProductV1(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;runKey:string;
+}){
+  const{pool}=await import("@/lib/db");return loadSignalSemanticContextProposalRunV1({queryable:pool,
+    workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),run_key:args.runKey});
+}
+
+export async function retrySignalSemanticContextProposalRunProductV1(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;runKey:string;
+}){
+  const{pool}=await import("@/lib/db");return retrySignalSemanticContextProposalRunV1({pool,
+    workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
+    idempotency_key:args.idempotencyKey,run_key:args.runKey});
+}
+
+export async function revalidateSignalSemanticContextPaidResponseProductV1(args:{
+  workspace:ResolvedSignalWorkspace;actor:SignalWorkspaceUser;idempotencyKey:string;
+  runKey:string;confirmation:string;
+}){
+  return withSignalAcquisitionTransactionV1(async(queryable)=>{
+    const diff=await loadSignalSemanticContextDiffV1({queryable,workspace:args.workspace,actor:args.actor});
+    if(diff.drift_state!=="current")throw new SignalSemanticContextPackError(
+      "semantic_context_paid_response_authority_drift",409
+    );
+    return revalidateSignalSemanticContextPaidResponseV1({queryable:queryable as never,
+      workspace:proposalWorkspace(args.workspace),actor:proposalActor(args.actor),
+      idempotency_key:args.idempotencyKey,run_key:args.runKey,confirmation:args.confirmation});
+  });
+}
+
+function proposalWorkspace(workspace:ResolvedSignalWorkspace){
+  if(workspace.subject.type!=="brand")throw new SignalSemanticContextPackError("brand_workspace_required",422);
+  return{id:workspace.id,organization_id:workspace.organizationId,brand_id:workspace.subject.id};
+}
+function proposalActor(actor:SignalWorkspaceUser){
+  if(actor.userType!=="noisia_internal")throw new SignalSemanticContextPackError("semantic_context_forbidden",403);
+  return{id:actor.id,user_type:"noisia_internal" as const};
+}
+
+async function buildProductProviderLineageV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace;live:Authority;
+  config:SignalSemanticContextProposalRuntimeConfigurationV1}){
+  const history=await args.queryable.query<{version:number}>(`SELECT
+    COALESCE(max(generation_version),0)::int version
+    FROM signal_semantic_context_generations WHERE workspace_id=$1::uuid`,[args.workspace.id]);
+  const generationKey=`semantic-context-v${(history.rows[0]?.version??0)+1}`;
+  const capacity=await planSignalSemanticContextProposalCapacityForAuthorityV1({
+    queryable:args.queryable as never,workspace:proposalWorkspace(args.workspace),authority:{
+      generation_key:generationKey,brand_os_profile_id:args.live.brandOsProfileId,
+      brand_os_digest:args.live.brandOsDigest,knowledge_digest:args.live.knowledgeDigest,
+      locale_context_digest:args.live.localeContextDigest,primary_locale:args.live.primaryLocale,
+      locale_variants:args.live.localeVariants,markets:args.live.markets,timezone:args.live.timezone
+    }});
+  return buildSignalSemanticContextProposalRuntimeLineageV1(args.config,capacity);
+}
+
+export async function resolveLiveSignalSemanticContextAuthorityV1(args:{queryable:SignalBrandPolicyQueryable;
+  workspace:ResolvedSignalWorkspace}):Promise<Authority>{
+  if(args.workspace.subject.type!=="brand")throw new SignalSemanticContextPackError("brand_workspace_required",422);
+  return resolveSignalBrandContextAuthorityV1({queryable:args.queryable,workspace:{id:args.workspace.id,
+    organizationId:args.workspace.organizationId,subject:{type:'brand',id:args.workspace.subject.id},timezone:args.workspace.timezone}});
+}
+
+const generationSelect=`SELECT generation.id::text,generation.artifact_id::text,generation.generation_key,
+  generation.generation_version,generation.status,generation.supersedes_generation_id::text,
+  generation.supersession_reason,
+  generation.brand_os_profile_id::text,generation.brand_os_profile_version,generation.brand_os_digest,
+  generation.knowledge_generation_key,generation.knowledge_digest,generation.locale_context_digest,
+  generation.primary_locale,generation.locale_variants,generation.markets,generation.timezone,
+  generation.draft_digest,generation.pack_digest,generation.created_at,generation.published_at,
+  generation.proposal_model,generation.proposal_model_version,generation.proposal_prompt_digest,
+  generation.proposal_pricing_version,generation.proposal_provider_lineage,
+  generation.proposal_provider_lineage_digest,generation.publication_counts,
+  signal_brand_context_automatic_generation_v1(generation.id) automatic_activation
+  FROM signal_semantic_context_generations generation`;
+
+async function loadGeneration(queryable:SignalBrandPolicyQueryable,workspaceId:string,
+  generationKey?:string,status?:"draft"|"published",effectiveOnly=generationKey===undefined){
+  const result=await queryable.query<GenerationRow>(`${generationSelect}
+    WHERE generation.workspace_id=$1::uuid
+      AND ($2::text IS NULL OR generation.generation_key=$2)
+      AND ($3::text IS NULL OR generation.status=$3)
+      AND (NOT $4::boolean OR NOT EXISTS(
+        SELECT 1 FROM signal_semantic_context_generations successor
+        WHERE successor.supersedes_generation_id=generation.id))
+    ORDER BY generation.generation_version DESC LIMIT 1`,[workspaceId,generationKey??null,
+      status??null,effectiveOnly]);
+  return result.rows[0]??null;
+}
+async function loadCurrentElements(queryable:SignalBrandPolicyQueryable,generationId:string){
+  const result=await queryable.query<ElementRow>(`${elementSelect}
+    WHERE element.generation_id=$1::uuid AND NOT EXISTS(
+      SELECT 1 FROM signal_semantic_context_element_versions successor
+      WHERE successor.supersedes_element_id=element.id)
+    ORDER BY element.element_key`,[generationId]);return result.rows;
+}
+const elementSelect=`SELECT element.id::text,element.artifact_id::text,element.evidence_group_id::text,
+  element.element_key,element.element_version,element.element_kind,element.canonical_key,element.display_text,
+  element.scope,element.entity_type,element.entity_id::text,element.locale,element.relation_kind,
+  element.relation_target_key,element.confidence::text,element.disposition,element.origin_kind,
+  element.supersedes_element_id::text,element.original_proposal_element_id::text,
+  element.source_refs_digest,element.element_digest,element.proposed_by_user_id::text,
+  element.decided_by_user_id::text,element.proposed_at,element.decided_at,element.created_at,
+  (SELECT count(*)::int FROM analysis_evidence_links link
+    WHERE link.evidence_group_id=element.evidence_group_id) source_ref_count
+  FROM signal_semantic_context_element_versions element`;
+
+async function createElementGraph(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;generation:GenerationRow;
+  proposal:Omit<SignalSemanticContextProposalV1,"source_refs"|"origin_kind">;version:number;disposition:"pending"|"approved"|"rejected";
+  originKind:string;supersedes:string|null;originalProposal:string|null;sourceRefsDigest:string;elementDigest:string;
+  operationId:string;actorId:string;sourceRefs:SignalSemanticContextSourceRefV1[]}){
+  const artifact=await queryable.query<{id:string}>(`INSERT INTO analysis_artifacts(
+    workspace_id,workspace_artifact_kind,workspace_authority_digest,artifact_key,artifact_type,
+    content,confidence,review_status,revision,metadata)
+    VALUES($1::uuid,'semantic_context',$2,$3,'semantic_context_element',$4::jsonb,$5,$6,$7,$8::jsonb)
+    RETURNING id::text`,[args.workspaceId,args.elementDigest,args.proposal.element_key,
+      JSON.stringify({element_kind:args.proposal.element_kind,canonical_key:args.proposal.canonical_key,
+        display_text:args.proposal.display_text,scope:args.proposal.scope,locale:args.proposal.locale,
+        relation_kind:args.proposal.relation_kind,relation_target_key:args.proposal.relation_target_key}),
+      args.proposal.confidence===null?null:String(args.proposal.confidence),
+      args.disposition==="pending"?"needs_review":args.disposition==="approved"?"accepted":"rejected",
+      args.version,JSON.stringify({authority_only:true,confidence_authoritative:false})]);
+  const group=await queryable.query<{id:string}>(`INSERT INTO analysis_evidence_groups(
+    artifact_id,group_key,role,label,summary,position,metadata)
+    VALUES($1::uuid,'source-authority','supporting','Source authority',NULL,0,$2::jsonb) RETURNING id::text`,
+  [artifact.rows[0]!.id,JSON.stringify({source_refs_digest:args.sourceRefsDigest})]);
+  await queryable.query(`INSERT INTO analysis_evidence_links(evidence_group_id,source_type,source_id,
+    relation_type,evidence_role,quote,locator,position,metadata)
+    SELECT $1::uuid,input.source_type,input.source_id,input.relation_type,'supporting',NULL,
+      '{}'::jsonb,input.position,'{}'::jsonb FROM unnest($2::text[],$3::uuid[],$4::text[],$5::int[])
+      AS input(source_type,source_id,relation_type,position)`,[group.rows[0]!.id,
+      args.sourceRefs.map((ref)=>ref.source_type),args.sourceRefs.map((ref)=>ref.source_id),
+      args.sourceRefs.map((ref)=>ref.relation_type),args.sourceRefs.map((_,position)=>position)]);
+  const inserted=await queryable.query<{id:string}>(`INSERT INTO signal_semantic_context_element_versions(
+    workspace_id,generation_id,artifact_id,evidence_group_id,element_key,element_version,element_kind,
+    canonical_key,display_text,scope,entity_type,entity_id,locale,relation_kind,relation_target_key,
+    confidence,disposition,origin_kind,supersedes_element_id,original_proposal_element_id,
+    source_refs_digest,element_digest,operation_id,proposed_by_user_id,decided_by_user_id,decided_at)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9,$10,$11,$12::uuid,$13,$14,$15,
+      $16,$17,$18,$19::uuid,$20::uuid,$21,$22,$23::uuid,$24::uuid,$25::uuid,
+      CASE WHEN $17='pending' THEN NULL ELSE clock_timestamp() END) RETURNING id::text`,[
+      args.workspaceId,args.generation.id,artifact.rows[0]!.id,group.rows[0]!.id,args.proposal.element_key,
+      args.version,args.proposal.element_kind,args.proposal.canonical_key,args.proposal.display_text,
+      args.proposal.scope,args.proposal.entity_type,args.proposal.entity_id,args.proposal.locale,
+      args.proposal.relation_kind,args.proposal.relation_target_key,args.proposal.confidence,
+      args.disposition,args.originKind,args.supersedes,args.originalProposal,args.sourceRefsDigest,
+      args.elementDigest,args.operationId,args.actorId,args.disposition==="pending"?null:args.actorId]);
+  return inserted.rows[0]!;
+}
+
+
+async function loadCurrentCounts(queryable:SignalBrandPolicyQueryable,generationId:string){
+  const result=await queryable.query<{pending:number;approved:number;rejected:number;merged:number}>(`SELECT
+    count(*) FILTER(WHERE element.disposition='pending')::int pending,
+    count(*) FILTER(WHERE element.disposition='approved')::int approved,
+    count(*) FILTER(WHERE element.disposition='rejected')::int rejected,
+    count(*) FILTER(WHERE element.disposition='merged')::int merged
+    FROM signal_semantic_context_element_versions element WHERE element.generation_id=$1::uuid
+      AND NOT EXISTS(SELECT 1 FROM signal_semantic_context_element_versions successor
+        WHERE successor.supersedes_element_id=element.id)`,[generationId]);return result.rows[0]??emptyCounts();
+}
+function countRows(rows:ElementRow[]){return{pending:rows.filter((row)=>row.disposition==="pending").length,
+  approved:rows.filter((row)=>row.disposition==="approved").length,
+  rejected:rows.filter((row)=>row.disposition==="rejected").length,
+  merged:rows.filter((row)=>row.disposition==="merged").length};}
+function emptyCounts(){return{pending:0,approved:0,rejected:0,merged:0};}
+function compareAuthority(generation:GenerationRow,live:Authority){const drift:string[]=[];
+  if(generation.brand_os_digest!==live.brandOsDigest)drift.push("brand_os_drift");
+  if(generation.knowledge_digest!==live.knowledgeDigest)drift.push("knowledge_drift");
+  if(generation.locale_context_digest!==live.localeContextDigest)drift.push("locale_market_drift");return drift;}
+function publicGeneration(row:GenerationRow,counts:ReturnType<typeof emptyCounts>){return{
+  generation_key:row.generation_key,generation_version:row.generation_version,lifecycle_state:row.status,
+  semantic_context_pack_digest:row.pack_digest,counts,primary_locale:row.primary_locale,
+  locale_variants:row.locale_variants,markets:row.markets,timezone:row.timezone,
+  created_at:new Date(row.created_at).toISOString(),published_at:row.published_at?new Date(row.published_at).toISOString():null};}
+function publicElement(row:ElementRow,sourceRefs:Array<{source_type:string;source_ref:string;relation_type:string}>){return{element_key:row.element_key,element_version:row.element_version,
+  element_kind:row.element_kind,canonical_key:row.canonical_key,display_text:row.display_text,
+  scope:row.scope,entity_type:row.entity_type,entity_ref:row.entity_id?sha256(row.entity_id):null,
+  locale:row.locale,relation_kind:row.relation_kind,
+  relation_target_key:row.relation_target_key,confidence:row.confidence===null?null:Number(row.confidence),
+  confidence_authoritative:false,disposition:row.disposition,origin:row.origin_kind,
+  lineage:{supersedes_element_ref:row.supersedes_element_id?sha256(row.supersedes_element_id):null,
+    original_proposal_ref:row.original_proposal_element_id?sha256(row.original_proposal_element_id):null},
+  provenance:{proposed_by_ref:row.proposed_by_user_id?sha256(row.proposed_by_user_id):null,
+    decided_by_ref:row.decided_by_user_id?sha256(row.decided_by_user_id):null,
+    proposed_at:new Date(row.proposed_at).toISOString(),
+    decided_at:row.decided_at?new Date(row.decided_at).toISOString():null,
+    created_at:new Date(row.created_at).toISOString()},source_refs:sourceRefs,
+  source_ref_count:row.source_ref_count};}
+function elementDefinitionDigest(args:{proposal:Omit<SignalSemanticContextProposalV1,"source_refs"|"origin_kind">;
+  version:number;disposition:string;sourceRefsDigest:string}){return sha256(stableJson({
+    contract_version:"signal-semantic-context-element-v1",...args.proposal,element_version:args.version,
+    disposition:args.disposition,source_refs_digest:args.sourceRefsDigest,confidence_authoritative:false}));}
+function validateProposals(proposals:SignalSemanticContextProposalV1[]){if(proposals.length<1||proposals.length>250)
+  throw new SignalSemanticContextPackError("semantic_context_proposal_scope_invalid",422);
+  const keys=new Set<string>();for(const proposal of proposals){validateProposalShape(proposal);
+    if(keys.has(proposal.element_key))throw new SignalSemanticContextPackError("semantic_context_duplicate_element_key",422);
+    keys.add(proposal.element_key);}}
+function validateProposalShape(proposal:SignalSemanticContextProposalV1){
+  if(!keyPattern.test(proposal.element_key)||!keyPattern.test(proposal.canonical_key)
+      ||!SIGNAL_SEMANTIC_CONTEXT_ELEMENT_KINDS.includes(proposal.element_kind)
+      ||proposal.display_text.trim().length<1||proposal.display_text.length>500
+      ||proposal.source_refs.length<1||proposal.source_refs.length>50)
+    throw new SignalSemanticContextPackError("semantic_context_proposal_invalid",422);
+  if(proposal.confidence!==null&&(!Number.isFinite(proposal.confidence)||proposal.confidence<0||proposal.confidence>1))
+    throw new SignalSemanticContextPackError("semantic_context_confidence_invalid",422);
+  if((proposal.entity_type===null)!==(proposal.entity_id===null))
+    throw new SignalSemanticContextPackError("semantic_context_entity_pair_invalid",422);
+  const relation=proposal.element_kind==="typed_relation";
+  if(relation!==Boolean(proposal.relation_kind&&proposal.relation_target_key)
+      ||(proposal.relation_kind&&!SIGNAL_SEMANTIC_CONTEXT_RELATION_KINDS.includes(proposal.relation_kind)))
+    throw new SignalSemanticContextPackError("semantic_context_relation_invalid",422);
+  for(const ref of proposal.source_refs)if(!SIGNAL_SEMANTIC_CONTEXT_SOURCE_TYPES.includes(ref.source_type)
+      ||!uuidPattern.test(ref.source_id)||!["supports","limits","contradicts"].includes(ref.relation_type))
+    throw new SignalSemanticContextPackError("semantic_context_source_ref_invalid",422);
+}
+async function insertEvent(queryable:SignalBrandPolicyQueryable,args:{workspaceId:string;generationId:string;
+  elementId?:string;operationId:string;eventIndex:number;eventKind:string;previous:string|null;next:string;actorId:string}){
+  await queryable.query(`INSERT INTO signal_semantic_context_events(workspace_id,generation_id,element_id,
+    operation_id,event_index,event_kind,previous_state_digest,next_state_digest,actor_user_id)
+    VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,$8,$9::uuid)`,[args.workspaceId,args.generationId,
+      args.elementId??null,args.operationId,args.eventIndex,args.eventKind,args.previous,args.next,args.actorId]);}
+async function lockWorkspace(queryable:SignalBrandPolicyQueryable,workspaceId:string){await queryable.query(
+  "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-semantic-context:${workspaceId}`]);}
+function assertInternal(actor:SignalWorkspaceUser){if(actor.userType!=="noisia_internal")
+  throw new SignalSemanticContextPackError("semantic_context_forbidden",403);}
+function validateProviderConfiguration(value:SignalSemanticContextProviderConfigurationV1){
+  if(!value.provider.trim()||[value.max_input_tokens,value.max_output_tokens,value.input_usd_per_million_tokens,
+    value.output_usd_per_million_tokens,value.hard_cap_usd].some((entry)=>!Number.isFinite(entry)||entry<0))
+    throw new SignalSemanticContextPackError("semantic_context_provider_configuration_invalid",500);
+  if(value.available&&(!value.model.trim()||!value.model_version.trim()||!value.pricing_version.trim()
+      ||!digestPattern.test(value.prompt_template_digest)||value.max_input_tokens<=0
+      ||value.max_output_tokens<=0||value.hard_cap_usd<=0))
+    throw new SignalSemanticContextPackError("semantic_context_provider_configuration_invalid",500);
+  return value;}
+function isFullProviderLineageV1(value:SignalSemanticContextGenerationProviderLineageV1|undefined):
+  value is SignalSemanticContextProviderLineageV1{
+  return Boolean(value&&"lineage_digest" in value);
+}
+function providerGenerationProjectionV1(value:SignalSemanticContextGenerationProviderLineageV1){
+  return isFullProviderLineageV1(value)?{model:value.model,model_version:value.model_version,
+    prompt_digest:value.prompt.digest,pricing_version:value.pricing.version}:value;
+}
+function validGenerationProviderLineageV1(value:SignalSemanticContextGenerationProviderLineageV1){
+  if(isFullProviderLineageV1(value))try{parseSignalSemanticContextProviderLineageV1(value);return true;}
+  catch{return false;}
+  return Boolean(value.model.trim()&&value.model_version.trim()&&digestPattern.test(value.prompt_digest)
+    &&value.pricing_version.trim());
+}
+function sha256(value:string){return`sha256:${createHash("sha256").update(value,"utf8").digest("hex")}`;}
+function stableJson(value:unknown):string{if(Array.isArray(value))return`[${value.map(stableJson).join(",")}]`;
+  if(value&&typeof value==="object")return`{${Object.entries(value as Record<string,unknown>)
+    .sort(([a],[b])=>a.localeCompare(b)).map(([key,entry])=>`${JSON.stringify(key)}:${stableJson(entry)}`).join(",")}}`;
+  return JSON.stringify(value);}
+const digestPattern=/^sha256:[0-9a-f]{64}$/u;
+const uuidPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const keyPattern=/^[a-z0-9]+(?:[._:-][a-z0-9]+)*$/u;

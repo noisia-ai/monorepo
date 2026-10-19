@@ -17,7 +17,7 @@ import { Icon } from "@/components/ui/Icon";
 export type SignalShellSection = {
   key: string;
   label: string;
-  icon?: "platform" | "layers" | "message" | "info" | "wave";
+  icon?: "platform" | "layers" | "message" | "info" | "wave" | "sparkle";
 };
 
 export type SignalShellGroup = {
@@ -28,8 +28,12 @@ export type SignalShellGroup = {
 type SignalReportShellProps = {
   children: ReactNode;
   defaultUiLanguage?: SignalUiLanguage;
+  defaultDateFrom?: string;
+  defaultDateTo?: string;
   defaultSection: string;
   groups: SignalShellGroup[];
+  maxDate?: string;
+  minDate?: string;
 };
 
 export type SignalUiLanguage = "en" | "es";
@@ -52,7 +56,12 @@ type SignalCopyKey =
   | "settingsEnglishSub"
   | "settingsSpanish"
   | "settingsSpanishSub"
-  | "settingsActive";
+  | "settingsActive"
+  | "globalDateLabel"
+  | "globalDateFrom"
+  | "globalDateTo"
+  | "globalDateAll"
+  | "globalDateLastMonth";
 
 const SIGNAL_UI_COPY: Record<SignalUiLanguage, Record<SignalCopyKey, string>> = {
   en: {
@@ -74,6 +83,11 @@ const SIGNAL_UI_COPY: Record<SignalUiLanguage, Record<SignalCopyKey, string>> = 
     settingsSpanish: "Español",
     settingsSpanishSub: "Usar textos de interfaz en español.",
     settingsActive: "Active",
+    globalDateLabel: "Live date range",
+    globalDateFrom: "From",
+    globalDateTo: "To",
+    globalDateAll: "All",
+    globalDateLastMonth: "Last month",
   },
   es: {
     asideLogo: "Volver a Signal",
@@ -94,11 +108,25 @@ const SIGNAL_UI_COPY: Record<SignalUiLanguage, Record<SignalCopyKey, string>> = 
     settingsSpanish: "Español",
     settingsSpanishSub: "Usar textos de interfaz en español.",
     settingsActive: "Activo",
+    globalDateLabel: "Rango vivo",
+    globalDateFrom: "Desde",
+    globalDateTo: "Hasta",
+    globalDateAll: "Todo",
+    globalDateLastMonth: "Último mes",
   },
 };
 
 const SIGNAL_LABELS_ES: Record<string, string> = {
+  "Live Report": "Reporte vivo",
+  "Live Corpus": "Corpus vivo",
+  "Signal History": "Historia",
+  Composer: "Composer",
+  "T&B Detail": "Detalle T&B",
+  "Methodology Lenses": "Lentes metodológicos",
   Overview: "Overview",
+  Signals: "Señales",
+  "Marketing Moves": "Marketing Moves",
+  Sources: "Fuentes",
   "Triggers & Barriers": "Triggers & Barriers",
   "Decision Field": "Decision Field",
   Opportunities: "Oportunidades",
@@ -108,11 +136,13 @@ const SIGNAL_LABELS_ES: Record<string, string> = {
   "Emerging Patterns": "Emerging Patterns",
   "Source Patterns": "Source Patterns",
   Corpus: "Corpus",
+  "Corpus Tools": "Herramientas Corpus",
   "Corpus View": "Corpus View",
   "Corpus Chat": "Corpus Chat",
   Quality: "Calidad",
   Boundaries: "Límites",
   Settings: "Configuración",
+  "Add Data": "Nuevo corte",
 };
 
 type SignalUiLanguageContextValue = {
@@ -121,7 +151,21 @@ type SignalUiLanguageContextValue = {
   uiLanguage: SignalUiLanguage;
 };
 
+type SignalDateRangeContextValue = {
+  dateFrom: string;
+  dateTo: string;
+  maxDate: string;
+  minDate: string;
+  queryString: string;
+  resetDateRange: () => void;
+  setDateFrom: (value: string) => void;
+  setDateRange: (from: string, to: string) => void;
+  setDateTo: (value: string) => void;
+  setLastMonth: () => void;
+};
+
 const SignalUiLanguageContext = createContext<SignalUiLanguageContextValue | null>(null);
+const SignalDateRangeContext = createContext<SignalDateRangeContextValue | null>(null);
 
 export function useSignalUiLanguage() {
   const context = useContext(SignalUiLanguageContext);
@@ -131,16 +175,30 @@ export function useSignalUiLanguage() {
   return context;
 }
 
+export function useSignalDateRange() {
+  const context = useContext(SignalDateRangeContext);
+  if (!context) {
+    throw new Error("useSignalDateRange must be used inside SignalReportShell");
+  }
+  return context;
+}
+
 export function SignalReportShell({
   children,
+  defaultDateFrom = "",
+  defaultDateTo = "",
   defaultUiLanguage = "en",
   defaultSection,
   groups,
+  maxDate = defaultDateTo,
+  minDate = defaultDateFrom,
 }: SignalReportShellProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const flatSections = useMemo(() => groups.flatMap((group) => group.sections), [groups]);
   const sectionKeys = useMemo(() => new Set(flatSections.map((section) => section.key)), [flatSections]);
   const [activeSection, setActiveSection] = useState(defaultSection);
+  const [dateFrom, setDateFromState] = useState(defaultDateFrom);
+  const [dateTo, setDateToState] = useState(defaultDateTo);
   const [uiLanguage, setUiLanguage] = useState<SignalUiLanguage>(defaultUiLanguage);
 
   useEffect(() => {
@@ -204,57 +262,125 @@ export function SignalReportShell({
     () => ({ setUiLanguage, t, uiLanguage }),
     [t, uiLanguage],
   );
+  const normalizedMinDate = normalizeIsoDate(minDate);
+  const normalizedMaxDate = normalizeIsoDate(maxDate);
+  const setDateFrom = useCallback((value: string) => {
+    const normalized = normalizeIsoDate(value);
+    setDateFromState(normalized);
+    setDateToState((current) => current && normalized && current < normalized ? normalized : current);
+  }, []);
+  const setDateTo = useCallback((value: string) => {
+    const normalized = normalizeIsoDate(value);
+    setDateToState(normalized);
+    setDateFromState((current) => current && normalized && current > normalized ? normalized : current);
+  }, []);
+  const setDateRange = useCallback((from: string, to: string) => {
+    const normalizedFrom = normalizeIsoDate(from);
+    const normalizedTo = normalizeIsoDate(to);
+    setDateFromState(normalizedFrom && normalizedTo && normalizedFrom > normalizedTo ? normalizedTo : normalizedFrom);
+    setDateToState(normalizedFrom && normalizedTo && normalizedFrom > normalizedTo ? normalizedFrom : normalizedTo);
+  }, []);
+  const resetDateRange = useCallback(() => setDateRange(defaultDateFrom, defaultDateTo), [defaultDateFrom, defaultDateTo, setDateRange]);
+  const setLastMonth = useCallback(() => {
+    const basis = parseIsoDate(normalizedMaxDate) ?? parseIsoDate(dateTo) ?? new Date();
+    const first = new Date(Date.UTC(basis.getUTCFullYear(), basis.getUTCMonth(), 1));
+    const last = new Date(Date.UTC(basis.getUTCFullYear(), basis.getUTCMonth() + 1, 0));
+    setDateRange(formatIsoDate(first), formatIsoDate(last));
+  }, [dateTo, normalizedMaxDate, setDateRange]);
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams();
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    return params.toString();
+  }, [dateFrom, dateTo]);
+  const dateRangeContextValue = useMemo(
+    () => ({
+      dateFrom,
+      dateTo,
+      maxDate: normalizedMaxDate,
+      minDate: normalizedMinDate,
+      queryString,
+      resetDateRange,
+      setDateFrom,
+      setDateRange,
+      setDateTo,
+      setLastMonth
+    }),
+    [dateFrom, dateTo, normalizedMaxDate, normalizedMinDate, queryString, resetDateRange, setDateFrom, setDateRange, setDateTo, setLastMonth]
+  );
 
   return (
     <SignalUiLanguageContext.Provider value={contextValue}>
-      <div
-        className="signal-report signal-report--sectioned"
-        data-active-section={activeSection}
-        data-ui-language={uiLanguage}
-        ref={rootRef}
-      >
-        <aside className="signal-aside">
-          <Link prefetch={false} href="/signal" className="signal-aside-logo" aria-label={t("asideLogo")}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/assets/logos/logo_black.svg" alt="Noisia" width={92} height={32} />
-            <span>Signal</span>
-          </Link>
-          <nav className="signal-aside-nav signal-aside-nav--grouped" aria-label={t("navAria")}>
-            {groups.map((group, groupIndex) => (
-              <div className="signal-aside-group" key={group.label ?? groupIndex}>
-                {group.label ? <span>{labelFor(group.label)}</span> : null}
-                {group.sections.map((section) => (
-                  <button
-                    aria-current={activeSection === section.key ? "page" : undefined}
-                    className={activeSection === section.key ? "is-active" : undefined}
-                    key={section.key}
-                    onClick={() => navigate(section.key)}
-                    type="button"
-                  >
-                    {section.icon ? <Icon name={section.icon} size={14} /> : null}
-                    {labelFor(section.label)}
-                  </button>
-                ))}
-              </div>
-            ))}
-          </nav>
-        </aside>
+      <SignalDateRangeContext.Provider value={dateRangeContextValue}>
+        <div
+          className="signal-report signal-report--sectioned"
+          data-active-section={activeSection}
+          data-ui-language={uiLanguage}
+          ref={rootRef}
+        >
+          <aside className="signal-aside">
+            <Link prefetch={false} href="/signal" className="signal-aside-logo" aria-label={t("asideLogo")}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/assets/logos/logo_black.svg" alt="Noisia" width={92} height={32} />
+              <span>Signal</span>
+            </Link>
+            <nav className="signal-aside-nav signal-aside-nav--grouped" aria-label={t("navAria")}>
+              {groups.map((group, groupIndex) => (
+                <div className="signal-aside-group" key={group.label ?? groupIndex}>
+                  {group.label ? <span>{labelFor(group.label)}</span> : null}
+                  {group.sections.map((section) => (
+                    <button
+                      aria-current={activeSection === section.key ? "page" : undefined}
+                      className={activeSection === section.key ? "is-active" : undefined}
+                      key={section.key}
+                      onClick={() => navigate(section.key)}
+                      type="button"
+                    >
+                      {section.icon ? <Icon name={section.icon} size={14} /> : null}
+                      {labelFor(section.label)}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </nav>
+          </aside>
 
-        <main className="signal-main">
-          {children}
-          <footer className="signal-section-footer" aria-label={t("footerAria")}>
-            <button disabled={!previousSection} onClick={() => previousSection && navigate(previousSection.key)} type="button">
-              <span>{t("previous")}</span>
-              <strong>{previousSection ? labelFor(previousSection.label) : t("start")}</strong>
-            </button>
-            <button disabled={!nextSection} onClick={() => nextSection && navigate(nextSection.key)} type="button">
-              <span>{t("next")}</span>
-              <strong>{nextSection ? labelFor(nextSection.label) : t("endOfReport")}</strong>
-            </button>
-          </footer>
-        </main>
-      </div>
+          <main className="signal-main">
+            {children}
+            <footer className="signal-section-footer" aria-label={t("footerAria")}>
+              <button disabled={!previousSection} onClick={() => previousSection && navigate(previousSection.key)} type="button">
+                <span>{t("previous")}</span>
+                <strong>{previousSection ? labelFor(previousSection.label) : t("start")}</strong>
+              </button>
+              <button disabled={!nextSection} onClick={() => nextSection && navigate(nextSection.key)} type="button">
+                <span>{t("next")}</span>
+                <strong>{nextSection ? labelFor(nextSection.label) : t("endOfReport")}</strong>
+              </button>
+            </footer>
+          </main>
+        </div>
+      </SignalDateRangeContext.Provider>
     </SignalUiLanguageContext.Provider>
+  );
+}
+
+export function SignalGlobalDateFilter() {
+  const { dateFrom, dateTo, resetDateRange, setDateFrom, setDateTo, setLastMonth } = useSignalDateRange();
+  const { t } = useSignalUiLanguage();
+  return (
+    <div className="signal-global-date-filter" aria-label={t("globalDateLabel")}>
+      <span>{t("globalDateLabel")}</span>
+      <label>
+        {t("globalDateFrom")}
+        <input onChange={(event) => setDateFrom(event.target.value)} type="date" value={dateFrom} />
+      </label>
+      <label>
+        {t("globalDateTo")}
+        <input onChange={(event) => setDateTo(event.target.value)} type="date" value={dateTo} />
+      </label>
+      <button onClick={setLastMonth} type="button">{t("globalDateLastMonth")}</button>
+      <button onClick={resetDateRange} type="button">{t("globalDateAll")}</button>
+    </div>
   );
 }
 
@@ -315,4 +441,18 @@ export function SignalSettingsPanel() {
 export function SignalLocalizedText({ en, es }: { en: ReactNode; es: ReactNode }) {
   const { uiLanguage } = useSignalUiLanguage();
   return <>{uiLanguage === "es" ? es : en}</>;
+}
+
+function normalizeIsoDate(value: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+}
+
+function parseIsoDate(value: string) {
+  if (!normalizeIsoDate(value)) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatIsoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
 }

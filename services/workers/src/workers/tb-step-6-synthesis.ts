@@ -18,14 +18,28 @@ import {
   type TbMobility
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { safeJsonStringifyForPostgres, sanitizeUnicodeForPostgresJson, sanitizeUnicodeForPostgresText } from "./postgres-json";
 import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
+  replaceTbAnalysisArtifactGraph,
+  type TbAnalysisArtifactGraphResult
+} from "./tb-analysis-artifact-persistence";
+import {
+  assertTbAnalysisAcceptsSynthesisWrite,
+  assertTbServingFindingLinksResolved,
+  replaceTbSignalServingEntities
+} from "./tb-signal-serving-persistence";
+import { enqueueSelectedEngineLensesAfterTb } from "./engine-selected-lenses";
+import {
   enqueueStep,
+  isGovernedStrategicRun,
+  loadTbPinnedModel,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  runTbGovernedProviderCall
 } from "./tb-shared";
 
 type StepJobData = {
@@ -105,7 +119,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     }
 
     const promptFindings = selectFindingsForSynthesis(findings);
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
     const prompt = buildSynthesisPrompt({
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
@@ -124,6 +138,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     await job.updateProgress(32);
 
     let synthesis = await generateAndParseSynthesis({
+      tbAnalysisId,
       model,
       prompt,
       parser: parseSynthesisResponse,
@@ -137,6 +152,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     const beforeHumanizer = JSON.stringify(synthesis, null, 2);
     const humanizerPrompt = buildHumanizerPrompt({ jsonText: beforeHumanizer, outputLanguage });
     const humanizer = await generateAndParseHumanizer({
+      tbAnalysisId,
       model,
       prompt: humanizerPrompt,
       parser: parseHumanizerResponse,
@@ -148,9 +164,7 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
     synthesis = humanizer.synthesis;
     console.log(
       `[tb-step6] humanizer applied=${humanizer.applied} finish=${humanizer.finishReason ?? "unknown"} ` +
-      `chars=${humanizer.outputChars} error="${humanizer.errorMessage ?? ""}" ` +
-      `before="${beforeHumanizer.slice(0, 180).replace(/\s+/g, " ")}" ` +
-      `after="${JSON.stringify(synthesis).slice(0, 180).replace(/\s+/g, " ")}"`
+      `chars=${humanizer.outputChars} error="${humanizer.errorMessage ?? ""}"`
     );
     await job.updateProgress(76);
 
@@ -198,6 +212,15 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
         humanizer_output_chars: humanizer.outputChars,
         humanizer_error: humanizer.errorMessage,
         recommendations_inserted: persistResult.recommendationsInserted,
+        strategic_opportunities_inserted: persistResult.strategicOpportunitiesInserted,
+        opportunity_finding_links_inserted: persistResult.opportunityFindingLinksInserted,
+        action_studio_inserted: persistResult.actionStudioInserted,
+        action_finding_links_inserted: persistResult.actionFindingLinksInserted,
+        analysis_artifacts: persistResult.artifactGraph.artifacts,
+        analysis_evidence_groups: persistResult.artifactGraph.evidenceGroups,
+        analysis_evidence_links: persistResult.artifactGraph.evidenceLinks,
+        analysis_artifact_relations: persistResult.artifactGraph.artifactRelations,
+        analysis_artifact_lineage_edges: persistResult.artifactGraph.lineageEdges,
         unmatched_recommendation_ids: persistResult.unmatchedFindingIds,
         humanizer_preview: {
           before: beforeHumanizer.slice(0, 300),
@@ -225,6 +248,9 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[tb-step6] failed: ${msg}`);
+    if (!await isGovernedStrategicRun(tbAnalysisId)) {
+      await enqueueSelectedEngineLensesAfterStep6Failure(tbAnalysisId, msg);
+    }
     if (process.env.TB_ALLOW_DUPLICATE_STEP6_SKIP === "true" && await hasCompletedSynthesis(tbAnalysisId)) {
       await markStepSkipped({
         pipelineStepId,
@@ -242,7 +268,42 @@ export async function tbStep6SynthesisJob(job: Job<StepJobData>) {
   }
 }
 
+async function enqueueSelectedEngineLensesAfterStep6Failure(tbAnalysisId: string, failureReason: string) {
+  try {
+    const result = await enqueueSelectedEngineLensesAfterTb(tbAnalysisId, {
+      launchSurface: "tb_step6_failure_auto_selected_lenses",
+      resultMetaKey: "selected_engine_lenses_after_tb_step6_failure",
+      triggerReason: failureReason.slice(0, 300)
+    });
+    console.log(
+      `[tb-step6] selected engine lenses auto-launch after failure: ` +
+      `${JSON.stringify(result).slice(0, 600)}`
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await pool.query(
+      `UPDATE tb_analyses
+       SET meta_json = COALESCE(meta_json, '{}'::jsonb) || $1::jsonb,
+           updated_at = NOW()
+       WHERE id = $2`,
+      [
+        JSON.stringify({
+          selected_engine_lenses_after_tb_step6_failure: {
+            status: "failed",
+            launch_surface: "tb_step6_failure_auto_selected_lenses",
+            trigger_reason: failureReason.slice(0, 300),
+            reason
+          }
+        }),
+        tbAnalysisId
+      ]
+    );
+    console.error("[tb-step6] selected engine lenses auto-launch after failure failed", reason);
+  }
+}
+
 async function generateAndParseSynthesis(args: {
+  tbAnalysisId: string;
   model: string;
   prompt: string;
   parser: (raw: string) => SynthesisResponse;
@@ -251,16 +312,24 @@ async function generateAndParseSynthesis(args: {
   maxOutputTokens: number;
   timeout: number;
 }): Promise<SynthesisResponse> {
-  const run = async (prompt: string) => generateText({
-    model: anthropic(args.model),
-    prompt,
-    temperature: args.temperature,
-    maxOutputTokens: args.maxOutputTokens,
-    timeout: args.timeout,
-    maxRetries: 1
+  const run = async (prompt: string, operationKey: string) => {
+    return runTbGovernedProviderCall({
+      tbAnalysisId: args.tbAnalysisId,
+      operationKey,
+      prompt,
+      maxOutputTokens: args.maxOutputTokens,
+      invoke: (maxOutputTokens) => generateText({
+        model: anthropic(args.model),
+        prompt,
+        temperature: args.temperature,
+        maxOutputTokens,
+        timeout: args.timeout,
+        maxRetries: 0
+      })
   });
+  };
 
-  const first = await run(args.prompt);
+  const first = await run(args.prompt, `step6-${args.phase}-first`);
   try {
     return args.parser(first.text);
   } catch (error) {
@@ -280,11 +349,12 @@ async function generateAndParseSynthesis(args: {
     "Your first character must be { and your last character must be }.",
     "Do not include markdown fences or prose outside JSON."
   ].join("\n");
-  const second = await run(retryPrompt);
+  const second = await run(retryPrompt, `step6-${args.phase}-retry`);
   return args.parser(second.text);
 }
 
 async function generateAndParseHumanizer(args: {
+  tbAnalysisId: string;
   model: string;
   prompt: string;
   parser: (raw: string) => SynthesisResponse;
@@ -293,13 +363,19 @@ async function generateAndParseHumanizer(args: {
   timeout: number;
   fallbackSynthesis: SynthesisResponse;
 }): Promise<HumanizerResult> {
-  const result = await generateText({
-    model: anthropic(args.model),
+  const result = await runTbGovernedProviderCall({
+    tbAnalysisId: args.tbAnalysisId,
+    operationKey: "step6-humanizer",
     prompt: args.prompt,
-    temperature: args.temperature,
     maxOutputTokens: args.maxOutputTokens,
-    timeout: args.timeout,
-    maxRetries: 1
+    invoke: (maxOutputTokens) => generateText({
+      model: anthropic(args.model),
+      prompt: args.prompt,
+      temperature: args.temperature,
+      maxOutputTokens,
+      timeout: args.timeout,
+      maxRetries: 0
+    })
   });
 
   try {
@@ -463,7 +539,15 @@ async function persistSynthesis(args: {
   };
   confidencePerFinding: Record<string, string>;
   findings: FindingRow[];
-}): Promise<{ recommendationsInserted: number; unmatchedFindingIds: string[] }> {
+}): Promise<{
+  recommendationsInserted: number;
+  strategicOpportunitiesInserted: number;
+  opportunityFindingLinksInserted: number;
+  actionStudioInserted: number;
+  actionFindingLinksInserted: number;
+  artifactGraph: TbAnalysisArtifactGraphResult;
+  unmatchedFindingIds: string[];
+}> {
   const client = await pool.connect();
   const findingUuidById = new Map(args.findings.map((f) => [f.finding_id, f.id]));
   const unmatched = new Set<string>();
@@ -474,6 +558,13 @@ async function persistSynthesis(args: {
     // Disable timeout for this transaction — the synthesis UPDATE writes large
     // jsonb payloads and the pooler's 2-min statement_timeout kills it otherwise.
     await client.query("SET LOCAL statement_timeout = 0");
+    const lockedAnalysis = await client.query<{ status: string }>(
+      `SELECT status FROM tb_analyses WHERE id = $1 FOR UPDATE`,
+      [args.tbAnalysisId]
+    );
+    const analysisStatus = lockedAnalysis.rows[0]?.status;
+    if (!analysisStatus) throw new Error(`tb_analyses ${args.tbAnalysisId} not found`);
+    assertTbAnalysisAcceptsSynthesisWrite(analysisStatus);
     await client.query(
       `UPDATE tb_analyses
        SET activation_playbook = $1::jsonb,
@@ -493,25 +584,33 @@ async function persistSynthesis(args: {
            updated_at = NOW()
        WHERE id = $12`,
       [
-        JSON.stringify(args.activationPlaybook),
-        JSON.stringify(args.frictionRemovalPlan),
-        JSON.stringify(args.confidencePerFinding),
-        JSON.stringify(args.actionStudio),
-        JSON.stringify(args.emergingPatterns),
-        JSON.stringify(args.openSignals),
-        JSON.stringify(args.knowledgeImpact),
-        JSON.stringify(args.strategicOpportunities),
-        JSON.stringify(args.futureSignals),
-        JSON.stringify(args.marketAnalysis),
-        JSON.stringify(args.evidenceDeepDives),
+        safeJsonStringifyForPostgres(args.activationPlaybook),
+        safeJsonStringifyForPostgres(args.frictionRemovalPlan),
+        safeJsonStringifyForPostgres(args.confidencePerFinding),
+        safeJsonStringifyForPostgres(args.actionStudio),
+        safeJsonStringifyForPostgres(args.emergingPatterns),
+        safeJsonStringifyForPostgres(args.openSignals),
+        safeJsonStringifyForPostgres(args.knowledgeImpact),
+        safeJsonStringifyForPostgres(args.strategicOpportunities),
+        safeJsonStringifyForPostgres(args.futureSignals),
+        safeJsonStringifyForPostgres(args.marketAnalysis),
+        safeJsonStringifyForPostgres(args.evidenceDeepDives),
         args.tbAnalysisId,
-        JSON.stringify(args.humanizerMeta)
+        safeJsonStringifyForPostgres(args.humanizerMeta)
       ]
     );
 
     await client.query(`DELETE FROM tb_recommendations WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
     await client.query(`DELETE FROM tb_insights WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
     await client.query(`DELETE FROM tb_open_signals WHERE tb_analysis_id = $1`, [args.tbAnalysisId]);
+
+    const servingEntities = await replaceTbSignalServingEntities(client, {
+      tbAnalysisId: args.tbAnalysisId,
+      strategicOpportunities: args.strategicOpportunities,
+      actionStudio: args.actionStudio,
+      findingUuidByHumanId: findingUuidById
+    });
+    assertTbServingFindingLinksResolved(servingEntities.unmatchedFindingIds);
 
     for (const [position, rec] of args.activationPlaybook.por_trigger_recomendacion.entries()) {
       const findingUuid = findingUuidById.get(rec.trigger_id) ?? null;
@@ -568,9 +667,18 @@ async function persistSynthesis(args: {
       tbAnalysisId: args.tbAnalysisId,
       openSignals: args.openSignals
     });
+    const artifactGraph = await replaceTbAnalysisArtifactGraph(client, args.tbAnalysisId);
 
     await client.query("COMMIT");
-    return { recommendationsInserted: inserted, unmatchedFindingIds: Array.from(unmatched) };
+    return {
+      recommendationsInserted: inserted,
+      strategicOpportunitiesInserted: servingEntities.strategicOpportunitiesInserted,
+      opportunityFindingLinksInserted: servingEntities.opportunityFindingLinksInserted,
+      actionStudioInserted: servingEntities.actionStudioInserted,
+      actionFindingLinksInserted: servingEntities.actionFindingLinksInserted,
+      artifactGraph,
+      unmatchedFindingIds: Array.from(unmatched).sort()
+    };
   } catch (err) {
     await client.query("ROLLBACK");
     throw err;
@@ -670,12 +778,12 @@ async function persistInsights(
         args.tbAnalysisId,
         pattern.pattern_id,
         pattern.pattern_type,
-        pattern.title,
-        pattern.why_it_matters,
-        pattern.related_finding_ids,
-        pattern.data_basis,
-        JSON.stringify(pattern.source_breakdown),
-        pattern.evidence_quotes,
+        sanitizeUnicodeForPostgresText(pattern.title),
+        sanitizeUnicodeForPostgresText(pattern.why_it_matters),
+        sanitizeUnicodeForPostgresJson(pattern.related_finding_ids),
+        sanitizeUnicodeForPostgresJson(pattern.data_basis),
+        safeJsonStringifyForPostgres(pattern.source_breakdown),
+        sanitizeUnicodeForPostgresJson(pattern.evidence_quotes),
         pattern.confidence,
         position
       ]
@@ -722,14 +830,14 @@ async function persistOpenSignals(
       [
         args.tbAnalysisId,
         signal.pattern_id,
-        signal.title,
+        sanitizeUnicodeForPostgresText(signal.title),
         signal.pattern_type,
-        signal.why_it_matters,
-        signal.data_basis,
+        sanitizeUnicodeForPostgresText(signal.why_it_matters),
+        sanitizeUnicodeForPostgresJson(signal.data_basis),
         signal.evidence_count,
-        JSON.stringify(signal.source_breakdown),
-        JSON.stringify({ data_basis: signal.data_basis, related_finding_ids: signal.related_finding_ids }),
-        signal.evidence_quotes,
+        safeJsonStringifyForPostgres(signal.source_breakdown),
+        safeJsonStringifyForPostgres({ data_basis: signal.data_basis, related_finding_ids: signal.related_finding_ids }),
+        sanitizeUnicodeForPostgresJson(signal.evidence_quotes),
         signal.confidence,
         position
       ]
@@ -802,7 +910,7 @@ function normalizeLoose(value: string) {
 }
 
 function stringFromUnknown(value: unknown) {
-  return typeof value === "string" ? value : value === null || value === undefined ? "" : String(value);
+  return sanitizeUnicodeForPostgresText(typeof value === "string" ? value : value === null || value === undefined ? "" : String(value));
 }
 
 function numberFromUnknown(value: unknown) {

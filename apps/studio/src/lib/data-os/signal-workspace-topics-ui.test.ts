@@ -1,0 +1,294 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import React, { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { NextIntlClientProvider } from "next-intl";
+import test from "node:test";
+import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1,
+  SignalWorkspaceDefinedInterestOverviewV1 } from "@noisia/query-engine";
+import { todayForSignalTimezone } from "../../components/signal-v2/SignalAnalyticsFilter";
+import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
+import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
+import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
+import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "../../components/signal-v2/SignalTopicChartOptions";
+Object.assign(globalThis, { React });
+const data: SignalWorkspaceTopicsOverviewV1 = {
+  contract_version: "signal-workspace-topics-serving-v1", source: "workspace_computed", workspace_id: "workspace", corpus_id: null,
+  scope: "all_conversations", generation_id: "generation", source_engine_execution_id: "engine", is_current: true, is_processing: false, selection_revision: 3,
+  filters: { date_from: null, date_to: null }, available_dates: { date_from: "2026-09-01", date_to: "2026-09-08" },
+  scope_digest: "sha256:scope", observed_at: "2026-09-08T00:00:00.000000Z", denominator: 10,
+  coverage: { processed: 10, assigned_unique: 8, abstained: 1, noise: null, unresolved: 1, withheld: 2 }, interpretation_coverage: { interpreted_unit_count: 32, expected_unit_count: 357, complete: false }, quality: "not_calibrated",
+  terms: ["Delivery", "Support"].map((label, index) => ({ term_key: `topic${index}`, label, definition: `${label} experiences`,
+    kind: "topic" as const, definition_revision: 1, definition_digest: "sha256:def", selected: true, mention_count: 7, share_of_corpus: 0.7, basis: "computed_cluster" })),
+  series: [], limitations: ["computed_memberships_not_semantic_precision"]
+};
+async function render(locale: string, payload: SignalWorkspaceOverviewV1 = data, surface: "summary" | "topics" = "topics", refreshFailed = false) {
+  const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+  return renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+    createElement(SignalV2WorkspaceTopics, { brandName: "Alexa Plus", data: payload, loading: false, surface, refreshFailed,
+      onRefresh: async () => true, onOpenTopics: () => undefined, onOpenMentions: () => undefined,
+      manageTopicsHref: "/studio/brands/brand/topics", onApplyFilter: async () => true, workspaceTimezone: "America/Mexico_City" })));
+}
+test("native Signal renders computed multilabel counts without claiming calibrated quality or a study corpus", async () => {
+  const html = await render("es-MX");
+  assert.match(html, /Pertenencia calculada/); assert.match(html, /no está calibrada/);
+  assert.match(html, /sumar más de 100%/); assert.match(html, /Delivery/); assert.match(html, /Support/);
+  assert.match(html, /En Topics seleccionados/); assert.match(html, /Zona horaria del workspace: America\/Mexico_City/);
+  assert.match(html, /Datos: Alexa Plus/);
+  assert.doesNotMatch(html, /Precisión:|studio\/corpora|Investigar insights/);
+  assert.ok(html.indexOf("Topics seleccionados") < html.indexOf("Pertenencia calculada"));
+});
+test("empty completed catalogue is actionable without creating synthetic Topics or narratives", async () => {
+  const html = await render("en-US", { ...data, terms: [] });
+  assert.match(html, /No Topics selected/); assert.match(html, /Manage Topics/);
+  assert.match(html, /Narratives and insights are not yet available/); assert.doesNotMatch(html, /topic0|topic1/);
+});
+test("a defined interest labels settled citations and never presents cluster evidence as its decision", async () => {
+  const interest: SignalWorkspaceDefinedInterestOverviewV1 = {
+    ...data, source: "workspace_defined_interest", classification_state: "ready", generation_id: null,
+    source_engine_execution_id: null, interest_generation_ids: ["interest-generation"],
+    interest_selection_digest: "sha256:selection", evidence_visible_total: 10,
+    coverage: { processed: 10, assigned_unique: 2, abstained: null, noise: null, unresolved: null, withheld: 0 },
+    terms: [{ ...data.terms[0]!, term_key: "activation", label: "Unrequested activation", kind: "topic",
+      basis: "defined_interest", interest_generation_id: "interest-generation", evidence_available: true,
+      mention_count: 2, share_of_corpus: 0.2 }]
+  };
+  const cited = await render("en-US", interest);
+  assert.match(cited, /Defined interests/);
+  assert.match(cited, /Membership evidence/);
+  const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  assert.match(source, /item\.evidence_origin === "human_correction" \? t\("humanCorrection"\)/u);
+  assert.match(source, /item\.decision_citation \? t\("citedDecision"\)/u);
+  assert.doesNotMatch(cited, /Clusters were computed from the mentions/);
+  const pending = await render("en-US", { ...interest,
+    terms: [{ ...interest.terms[0]!, evidence_available: false }] });
+  assert.match(pending, /Decision citations are not available here yet/);
+  const evidenceButton = pending.match(/<button\b[^>]*>(?:(?!<\/button>)[\s\S])*View evidence<\/button>/)?.[0];
+  assert.ok(evidenceButton); assert.match(evidenceButton, /disabled=""/);
+});
+test("consolidated Signal separates Topics and narratives and exposes real editorial dispositions", async () => {
+  const consolidated = { ...data,
+    coverage: { ...data.coverage, abstained: 3, noise: 3, unresolved: 2 },
+    terms: [...data.terms, { ...data.terms[0]!, term_key: "narrative0", kind: "narrative" as const,
+      label: "Alexa+ changes daily routines", definition: "People describe Alexa+ as changing recurring household routines.", mention_count: 4, share_of_corpus: 0.4 }]
+  };
+  const html = await render("en-US", consolidated);
+  assert.match(html, /Topics<span>2<\/span>/); assert.match(html, /Narratives<span>1<\/span>/);
+  assert.match(html, /Noise<span>3<\/span>/); assert.match(html, /Unresolved<span>2<\/span>/);
+  assert.doesNotMatch(html, /Narratives and insights are not yet available/);
+  assert.deepEqual(workspaceTermsForSectionV1(consolidated, "topics").map(term => term.term_key), ["topic0", "topic1"]);
+  assert.deepEqual(workspaceTermsForSectionV1(consolidated, "narratives").map(term => term.term_key), ["narrative0"]);
+  const narrativeDisposition = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale: "en-US", messages: JSON.parse(await readFile(new URL("../../../messages/en-US.json", import.meta.url), "utf8")), timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+    createElement(SignalWorkspaceTopicDisposition, { section: "noise", data: consolidated })));
+  assert.match(narrativeDisposition, /data-availability="available"/); assert.match(narrativeDisposition, /<strong>3<\/strong>/);
+  assert.match(narrativeDisposition, /classified as Noise/);
+});
+
+test("native Topic and Narrative panels request evidence through their matching kind route", async () => {
+  const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  assert.match(source, /topics-narratives\/\$\{sectionKind\}\/\$\{encodeURIComponent\(term\.term_key\)\}\/evidence/u);
+  assert.match(source, /body\.kind !== sectionKind/u);
+  assert.match(source, /page\.kind === sectionKind/u);
+});
+test("the Topics calendar uses the workspace timezone on both sides of UTC midnight", t => {
+  const cases = [
+    { instant: "2026-09-27T04:30:00.000Z", expected: { mexico: "2026-09-26", london: "2026-09-27" } },
+    { instant: "2026-09-27T06:30:00.000Z", expected: { mexico: "2026-09-27", london: "2026-09-27" } }
+  ];
+  for (const item of cases) {
+    t.mock.timers.enable({ apis: ["Date"], now: new Date(item.instant) });
+    try {
+      assert.equal(todayForSignalTimezone("America/Mexico_City").toString(), item.expected.mexico);
+      assert.equal(todayForSignalTimezone("Europe/London").toString(), item.expected.london);
+    } finally { t.mock.timers.reset(); }
+  }
+  assert.equal(todayForSignalTimezone("not/a-timezone").toString(), todayForSignalTimezone("UTC").toString());
+});
+test("native Topics pass the workspace timezone into the calendar filter", async () => {
+  const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  assert.match(source, /date_range: \{ start: dateFrom, end: dateTo \}[\s\S]*timezone: workspaceTimezone/u);
+});
+test("native Signal routes preserve workspace timezone from initial load through filtering and navigation", async () => {
+  const monitoring = await readFile(new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url), "utf8");
+  const page = await readFile(new URL("../../components/signal-v2/SignalV2WorkspacePage.tsx", import.meta.url), "utf8");
+  const topics = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  const evidenceDrawer = await readFile(new URL("../../components/signal-v2/SignalEvidenceDrawer.tsx", import.meta.url), "utf8");
+  const commandsRoute = await readFile(new URL("../../app/api/data-os/signal/[workspaceId]/topics/[termKey]/commands/route.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(monitoring, /timezone(?::|",\s*)\s*"UTC"/u);
+  assert.match(monitoring, /timezone: data\.workspace\.timezone/u);
+  assert.match(monitoring, /params\.set\("timezone", data\.workspace\.timezone\)/u);
+  assert.match(monitoring, /query\.set\("timezone", data\.workspace\.timezone\)/u);
+  assert.match(page, /timezone: workspace\.timezone, date_range/u);
+  assert.match(topics, /<SignalEvidenceDrawer[\s\S]*?timeZone=\{workspaceTimezone\}/u);
+  assert.match(evidenceDrawer, /formatSignalEvidenceDateV1\(record\.occurredAt, locale, timeZone\)/u);
+  assert.equal((commandsRoute.match(/timezone: loaded\.workspace\.timezone/gu) ?? []).length, 2);
+});
+test("stale generation preserves counts while disabling stale evidence access", async () => {
+  const html = await render("en-US", { ...data, is_current: false });
+  assert.match(html, /Previous result/); assert.match(html, /last complete result is retained/);
+  const evidenceButton = html.match(/<button\b[^>]*>(?:(?!<\/button>)[\s\S])*View evidence<\/button>/)?.[0];
+  assert.ok(evidenceButton); assert.match(evidenceButton, /disabled=""/);
+});
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: native summary and Topics share partial unit coverage, overlapping root counts and citations`, async () => {
+    const summary = await render(locale, data, "summary"), topics = await render(locale);
+    const expected = locale === "es-MX" ? "Interpretación parcial: 32 de 357" : "Partial interpretation: 32 of 357";
+    for (const html of [summary, topics]) {
+      assert.ok(html.includes(expected)); assert.match(html, /Delivery|Support/);
+      assert.ok(html.includes(locale === "es-MX" ? "conteos pueden superponerse" : "counts can overlap"));
+      assert.match(html, /<strong>10<\/strong>/); assert.match(html, /<strong>8<\/strong>/);
+      assert.doesNotMatch(html, /Precisión:|precision:|1,000|1000/);
+    }
+    assert.ok(summary.includes(locale === "es-MX" ? "Resumen" : "Overview"));
+    assert.ok(summary.includes(locale === "es-MX" ? "Ver todos los Topics" : "View all Topics"));
+  });
+  test(`${locale}: refresh remains available before dated projection and complete/unknown coverage stays honest`, async () => {
+    const pending = await render(locale, { ...data, terms: [], generation_id: null, interpretation_coverage: null,
+      is_current: false, is_processing: true, available_dates: { date_from: null, date_to: null } }, "summary");
+    assert.ok(pending.includes(locale === "es-MX" ? "Preparando el resultado" : "Preparing the Topics result"));
+    assert.ok(pending.includes(locale === "es-MX" ? ">Actualizar</button>" : ">Refresh</button>"));
+    assert.doesNotMatch(pending, /32[^]*357/);
+    const complete = await render(locale, { ...data, interpretation_coverage: { interpreted_unit_count: 357, expected_unit_count: 357, complete: true } });
+    assert.ok(complete.includes(locale === "es-MX" ? "Interpretación completa" : "Interpretation is complete"));
+    const unknown = await render(locale, { ...data, interpretation_coverage: null });
+    assert.ok(unknown.includes(locale === "es-MX" ? "avance de interpretación" : "Interpretation progress"));
+    assert.doesNotMatch(unknown, /32[^]*357/);
+  });
+}
+
+test("failed refresh remains visible in native summary while preserving counts and manual recovery", async () => {
+  for (const locale of ["es-MX", "en-US"]) {
+    const html = await render(locale, data, "summary", true);
+    assert.match(html, /role="alert"/);
+    assert.ok(html.includes(locale === "es-MX" ? "No se pudo actualizar" : "could not be refreshed"));
+    assert.match(html, /<strong>10<\/strong>/); assert.match(html, /Delivery/);
+    assert.ok(html.includes(locale === "es-MX" ? ">Actualizar</button>" : ">Refresh</button>"));
+  }
+});
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: native Topics reuse ranking and detail with unavailable editorial dimensions instead of invented zeroes`, async () => {
+    const html = await render(locale);
+    assert.equal((html.match(/role="tab"/g) ?? []).length, 4);
+    assert.equal((html.match(/role="tabpanel"/g) ?? []).length, 1);
+    assert.equal((html.match(/aria-selected="true"/g) ?? []).length, 1);
+    assert.ok(html.includes(locale === "es-MX" ? "Noise<span>No disponible</span>" : "Noise<span>Unavailable</span>"));
+    assert.ok(html.includes(locale === "es-MX" ? "Narrativas<span>No disponible</span>" : "Narratives<span>Unavailable</span>"));
+    assert.match(html, /signal-v2-tn__ranking-metrics--native/);
+    assert.match(html, /signal-v2-tn__definition/);
+    assert.ok(html.includes(locale === "es-MX" ? "Presencia de este concepto" : "This concept over time"));
+    assert.ok(html.includes(locale === "es-MX" ? "Versión de la definición" : "Definition version"));
+    assert.doesNotMatch(html, /claude|voyage|sha256:|input_tokens|workspace_computed|Investigar insights|Research insights/i);
+  });
+  for (const section of ["narratives", "noise", "unresolved"] as const) {
+    test(`${locale}: ${section} explains only the dimension the native contract proves`, async () => {
+      const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+      const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+        { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+        createElement(SignalWorkspaceTopicDisposition, { section, data })));
+      assert.match(html, new RegExp(`data-availability="${section === "unresolved" ? "available" : "not_available"}"`));
+      assert.doesNotMatch(html, /Delivery|Support|<button|<strong>0<\/strong>/);
+      if (section === "noise") assert.ok(html.includes(locale === "es-MX" ? "no equivale" : "is not an editorial"));
+      if (section === "unresolved") { assert.match(html, /<strong>1<\/strong>/); assert.ok(html.includes(locale === "es-MX" ? "superponerse" : "overlap")); }
+    });
+  }
+}
+
+test("the shared ranking retains governed comparison and renders true zero volumes without synthetic minimum bars", () => {
+  const html = renderToStaticMarkup(createElement(SignalTopicsRankingList, {
+    entries: [{ key: "zero", label: "No evidence", count: 0, formattedCount: "0", share: "0%", change: createElement("span", { className: "signal-v2-tn__delta" }, "—") }],
+    labels: { term: "Topic", count: "Mentions", share: "Share", change: "Change" }, selectedKey: "zero", onSelect: () => undefined
+  }));
+  assert.match(html, /width:0%/); assert.match(html, /<span>Change<\/span>/); assert.match(html, /signal-v2-tn__delta/);
+  assert.match(html, /aria-pressed="true"/); assert.doesNotMatch(html, /ranking-metrics--native/);
+});
+
+test("the shared ranking card preserves the Laika view switch for native catalogues", () => {
+  const html = renderToStaticMarkup(createElement(SignalTopicsRankingCard, {
+    activeView: "list", eyebrow: "Presence", title: "Selected Topics", viewLabel: "Topics view",
+    views: [{ key: "chart", label: "Chart" }, { key: "list", label: "List" }], onViewChange: () => undefined
+  }, createElement("p", null, "Real catalogue")));
+  assert.match(html, /signal-v2-tn__ranking/); assert.match(html, /aria-label="Topics view"/);
+  assert.match(html, /aria-pressed="true"[^>]*>List/); assert.match(html, /Real catalogue/);
+});
+
+test("shared Laika chart primitives preserve real values for governed and native Topics", () => {
+  const trend = buildSignalTopicTrendOption([{ label: "1 Sep", value: 0 }, { label: "2 Sep", value: 12 }], "Mentions", false) as {
+    animation: boolean; xAxis: { data: string[] }; series: Array<{ areaStyle: { opacity: number }; data: number[] }>;
+  };
+  assert.equal(trend.animation, false); assert.deepEqual(trend.xAxis.data, ["1 Sep", "2 Sep"]);
+  assert.deepEqual(trend.series[0]!.data, [0, 12]); assert.equal(trend.series[0]!.areaStyle.opacity, 0.18);
+  const sentiment = buildSignalTopicSentimentOption({ positive: 3, neutral: 2, negative: 5 },
+    { positive: "Positive", neutral: "Neutral", negative: "Negative" }, false) as {
+      animation: boolean; graphic: Array<{ style: { text: string } }>;
+      series: Array<{ data: Array<{ value: number }> }>;
+    };
+  assert.equal(sentiment.animation, false); assert.equal(sentiment.graphic[0]!.style.text, "10");
+  assert.deepEqual(sentiment.series[0]!.data.map(item => item.value), [3, 2, 5]);
+});
+
+test("the real native Topics route opens one evidence mention through the enriched Mentions view", async () => {
+  const source = await readFile(
+    new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /<SignalV2WorkspaceTopics[\s\S]*brandName=\{brandName\}[\s\S]*workspaceTimezone=\{data\.workspace\.timezone\}/u);
+  assert.match(source, /onOpenMentions=\{\(\) => void navigateToModule\("mentions"\)\}/u);
+  assert.match(source, /onOpenMention=\{mentionId => \{[\s\S]*new URLSearchParams\(\{ view: "all_conversations", mention: mentionId \}\)[\s\S]*navigateToModule\("mentions", "push", params\)/u);
+  assert.match(source, /initialMention=\{mentionsData\.native \? mentionsData\.record \?\? null : initialMention\}/u);
+});
+
+test("native volume chart preserves exact keys and counts, with no fabricated sentiment or proximity", () => {
+  const terms = [{ ...data.terms[0]!, mention_count: 0 }, { ...data.terms[1]!, label: "Same name", mention_count: 12 }];
+  const option = nativeTopicsVolumeChartV1(terms, "topic1", "Mentions");
+  assert.deepEqual(option.series[0]!.data.map(item => [item.name, item.value]), [["topic0", 0], ["topic1", 12]]);
+  assert.equal(option.yAxis.axisLabel.formatter("topic1"), "Same name");
+  assert.equal(option.series[0]!.data[1]!.itemStyle.color, "#1689f5");
+  assert.equal(option.animation, false); assert.equal(option.tooltip.renderMode, "richText");
+  assert.doesNotMatch(JSON.stringify(option), /sentiment|positive|negative|scatter/);
+});
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: evidence without an occurrence date stays unavailable instead of becoming Unix epoch`, async () => {
+    const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
+    const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+      { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+      createElement(SignalEvidenceDrawer, {
+        ariaLabel: "Evidence",
+        closeLabel: "Close",
+        eyebrow: "Topic",
+        intro: "Source evidence",
+        loading: false,
+        loadingLabel: "Loading",
+        onClose: () => undefined,
+        openOriginalLabel: "Open original",
+        openingEnrichedLabel: "Opening",
+        records: [{ body: "Real mention without a published date", id: "mention", occurredAt: null, platform: "reddit",
+          provenanceLabel: "Human correction, not a Claude citation" }],
+        title: "Topic",
+        viewEnrichedLabel: "Open mention"
+      })));
+    assert.match(html, /<time>—<\/time>/);
+    assert.match(html, /Human correction, not a Claude citation/);
+    assert.doesNotMatch(html, /1970|Jan 1|1 ene|1 de ene/i);
+  });
+}
+
+
+for (const locale of ["es-MX", "en-US"]) {
+  test(`${locale}: first import has a pending Topics state without Noise or fictitious classification counts`, async () => {
+    const imported: SignalWorkspaceImportedOverviewV1 = { ...data, source: "workspace_imported", classification_state: "pending",
+      generation_id: null, source_engine_execution_id: null, quality: "not_analyzed", evidence_visible_total: 7,
+      terms: [], series: [], interpretation_coverage: null,
+      coverage: { processed: null, assigned_unique: null, abstained: null, noise: null, unresolved: null, withheld: null } };
+    const html = await render(locale, imported);
+    assert.ok(html.includes(locale === "es-MX" ? "Tus conversaciones ya están disponibles" : "Your conversations are available"));
+    assert.ok(html.includes(locale === "es-MX" ? "10 menciones" : "10 mentions"));
+    assert.ok(html.includes(locale === "es-MX" ? "pendiente" : "pending"));
+    assert.doesNotMatch(html, /Noise|Pertenencia calculada|Computed membership|<span>0<\/span>|topic0|topic1/);
+    assert.match(html, /signal-v2-module-header|signal-v2-page-head/);
+  });
+}

@@ -1,0 +1,43 @@
+slug: audience-segment-lens
+name: Audience / Segment Lens
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Cómo cambian los hallazgos por segmento o audiencia sin duplicar la
+  metodología principal?
+
+inputs:
+  corpus:
+    minimum_viable: 1000
+    ideal: 4000
+  segment_metadata:
+    required: true
+
+outputs:
+  - id: segment_matrix
+    name: Segment Matrix
+    type: heatmap
+  - id: segment_profiles
+    name: Segment Profiles
+    type: structured
+  - id: segment_skew
+    name: Segment Skew
+    type: bar_ranking
+
+default_dashboard_blocks:
+  - block_id: segment_matrix
+  - block_id: segment_profiles
+  - block_id: segment_skew
+  - block_id: confidence_layer
+
+quality_gates:
+  - id: segment_source_required
+    description: "Segmentos deben venir de metadata, brief o evidencia segura."
+  - id: no_sensitive_inference
+    description: "No se infieren atributos sensibles de personas."
+  - id: confidence_calibrated
+    description: "Cada celda lleva confianza."
+
+ai_prompts:
+  engine_spec: audience-segment-lens

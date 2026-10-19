@@ -4,6 +4,22 @@
  */
 
 export const TB_ANALYSIS_QUEUE_NAME = "noisia-tb-analysis";
+
+/**
+ * Runtime-owned queue identity. Deployments must override this when sharing
+ * code across isolated Redis environments; the browser never chooses it.
+ */
+export function resolveTbAnalysisQueueName(
+  env: Record<string, string | undefined> = process.env
+) {
+  const configured = env.NOISIA_TB_ANALYSIS_QUEUE_NAME?.trim();
+  if (env.NOISIA_RUNTIME_PROFILE?.trim() === "uat") {
+    if (!configured || !configured.endsWith("-uat")) {
+      throw new Error("uat_tb_queue_name_must_end_in_uat");
+    }
+  }
+  return configured || TB_ANALYSIS_QUEUE_NAME;
+}
 export const TB_PIPELINE_VERSION = "tb-engine-2026.05.25";
 export const TB_METHODOLOGY_VERSION = "1.0";
 
@@ -82,6 +98,7 @@ export type TbRagPromptContext = {
   query_strategy_brief?: unknown | null;
   knowledge_sources?: unknown[];
   corpus_intelligence?: unknown | null;
+  structured_observations?: unknown | null;
 };
 
 export function buildPreflightPrompt(input: PreflightInput): string {
@@ -552,6 +569,8 @@ export type EvaluatedCluster = {
   protagonist_sample_index: number;
   /** Indices of additional supporting verbatims (max 4). */
   supporting_sample_indices: number[];
+  /** Governed tokens from the RAG packet: observation:<uuid> or record:<uuid>. */
+  structured_evidence_refs: string[];
 };
 
 export function buildHierarchyPrompt(args: {
@@ -602,6 +621,9 @@ export function buildHierarchyPrompt(args: {
     "Confidence: 'alta' (sample es robusto y consistente) | 'media' (señal clara pero sample limitado) | 'baja_direccional' (apenas para reportar como hipotesis).",
     "",
     "Por cada cluster tambien debes elegir UN verbatim protagonista (el mas representativo) y 1-4 verbatims de apoyo. Los indices son las posiciones en el array samples (0-based).",
+    "Si una observacion o fila estructurada sostiene ESTE finding, incluye su token exacto en `structured_evidence_refs`.",
+    "Solo usa tokens `observation:<uuid>` o `record:<uuid>` presentes en el contexto. No cites assets agregados como evidencia claim-specific.",
+    "Si la fuente sólo da contexto general, deja `structured_evidence_refs` vacío.",
     "",
     "Formato JSON obligatorio:",
     JSON.stringify(
@@ -615,7 +637,8 @@ export function buildHierarchyPrompt(args: {
             confidence: "alta",
             reason: "Verbatims muestran tono de traicion y abandono activo de aseguradora tras descubrir clausulas.",
             protagonist_sample_index: 2,
-            supporting_sample_indices: [0, 4, 7]
+            supporting_sample_indices: [0, 4, 7],
+            structured_evidence_refs: ["observation:11111111-1111-4111-8111-111111111111"]
           }
         ]
       },
@@ -667,6 +690,14 @@ export function parseHierarchyResponse(raw: string): { evaluated: EvaluatedClust
           const supporting = Array.isArray(e.supporting_sample_indices)
             ? e.supporting_sample_indices.map(Number).filter((n) => Number.isFinite(n) && n >= 0).slice(0, 4)
             : [];
+          const structuredEvidenceRefs = Array.isArray(e.structured_evidence_refs)
+            ? Array.from(new Set(e.structured_evidence_refs
+                .filter((value): value is string => typeof value === "string")
+                .map((value) => value.trim().toLowerCase())
+                .filter((value) => /^(?:observation|record):[0-9a-f-]{36}$/u.test(value))))
+              .sort()
+              .slice(0, 24)
+            : [];
           return {
             key: String(e.key ?? ""),
             nombre_comercial: typeof e.nombre_comercial === "string" ? e.nombre_comercial.slice(0, 80) : "Sin nombre",
@@ -679,12 +710,26 @@ export function parseHierarchyResponse(raw: string): { evaluated: EvaluatedClust
             protagonist_sample_index: Number.isFinite(Number(e.protagonist_sample_index))
               ? Math.max(0, Number(e.protagonist_sample_index))
               : 0,
-            supporting_sample_indices: supporting
+            supporting_sample_indices: supporting,
+            structured_evidence_refs: structuredEvidenceRefs
           };
         })
         .filter((e) => e.key.length > 0)
     : [];
   return { evaluated };
+}
+
+export function validateTbStructuredEvidenceRefs(
+  refs: string[],
+  availableTokens: string[]
+) {
+  const available = new Set(availableTokens.map((value) => value.toLowerCase()));
+  const normalized = Array.from(new Set(refs.map((value) => value.toLowerCase()))).sort();
+  const unknown = normalized.filter((value) => !available.has(value));
+  if (unknown.length > 0) {
+    throw new Error(`unknown_structured_evidence_ref:${unknown.join(",")}`);
+  }
+  return normalized;
 }
 
 /**
@@ -1300,7 +1345,7 @@ export function buildSynthesisPrompt(args: {
             why_it_matters: "Aparece como tema transversal que no sólo frena compra; también define expectativa de experiencia.",
             data_basis: ["corpus", "customer_service_csv"],
             evidence_count: 42,
-            source_breakdown: [{ source: "customer_service_csv", count: 28 }, { source: "sentione", count: 14 }],
+            source_breakdown: [{ source: "customer_service_csv", count: 28 }, { source: "social_listening", count: 14 }],
             related_finding_ids: ["B-PER-01"],
             confidence: "media",
             evidence_quotes: ["La gente no sabe con quién resolver cuando algo falla."]
@@ -1328,24 +1373,85 @@ export function buildSynthesisPrompt(args: {
 
 function compactJson(value: unknown, maxChars: number): string {
   if (!value) return "";
-  try {
-    return JSON.stringify(value, null, 2).slice(0, maxChars);
-  } catch {
-    return "";
+  const profiles: JsonCompactionProfile[] = [
+    { stringChars: 2_400, arrayItems: 80, knowledgeSources: 8, sourceInventory: 80, monthlySeries: 180 },
+    { stringChars: 1_200, arrayItems: 40, knowledgeSources: 8, sourceInventory: 80, monthlySeries: 120 },
+    { stringChars: 600, arrayItems: 24, knowledgeSources: 6, sourceInventory: 80, monthlySeries: 72 },
+    { stringChars: 320, arrayItems: 12, knowledgeSources: 4, sourceInventory: 80, monthlySeries: 36 },
+    { stringChars: 160, arrayItems: 8, knowledgeSources: 2, sourceInventory: 80, monthlySeries: 18 }
+  ];
+
+  for (const profile of profiles) {
+    try {
+      const serialized = JSON.stringify(compactJsonValue(value, profile, []));
+      if (serialized.length <= maxChars) return serialized;
+    } catch {
+      return "";
+    }
   }
+
+  return JSON.stringify({
+    truncated: true,
+    reason: "Context exceeded the governed prompt budget after structured compaction.",
+    top_level_keys: value && typeof value === "object" && !Array.isArray(value)
+      ? Object.keys(value as Record<string, unknown>)
+      : []
+  });
 }
 
-function renderTbRagContext(context: TbRagPromptContext | undefined): string {
+type JsonCompactionProfile = {
+  stringChars: number;
+  arrayItems: number;
+  knowledgeSources: number;
+  sourceInventory: number;
+  monthlySeries: number;
+};
+
+function compactJsonValue(
+  value: unknown,
+  profile: JsonCompactionProfile,
+  path: string[]
+): unknown {
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized.length <= profile.stringChars
+      ? normalized
+      : `${normalized.slice(0, Math.max(0, profile.stringChars - 12))} [truncated]`;
+  }
+  if (value === null || typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) {
+    const key = path.at(-1);
+    const limit = key === "source_inventory"
+      ? profile.sourceInventory
+      : key === "monthly_series"
+        ? profile.monthlySeries
+        : key === "knowledge_sources"
+          ? profile.knowledgeSources
+          : profile.arrayItems;
+    return value.slice(0, limit).map((item) => compactJsonValue(item, profile, [...path, "[]"]));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, item]) => item !== undefined)
+        .map(([key, item]) => [key, compactJsonValue(item, profile, [...path, key])])
+    );
+  }
+  return String(value);
+}
+
+export function renderTbRagContext(context: TbRagPromptContext | undefined): string {
   if (!context) return "(sin contexto Knowledge Base disponible)";
   const text = compactJson(
     {
+      structured_observations: context.structured_observations ?? null,
       query_strategy_brief: context.query_strategy_brief ?? null,
       knowledge_sources: Array.isArray(context.knowledge_sources)
         ? context.knowledge_sources.slice(0, 8)
         : [],
       corpus_intelligence: context.corpus_intelligence ?? null
     },
-    10_000
+    36_000
   );
   return text || "(sin contexto Knowledge Base disponible)";
 }

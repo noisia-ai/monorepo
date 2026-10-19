@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useLocale, useTranslations } from "next-intl";
 import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -38,6 +39,7 @@ type Props = {
   };
   searchTerm?: string;
   filterControls: FilterControl[];
+  hasActiveFilters?: boolean;
 };
 
 export function MentionsBrowser({
@@ -47,7 +49,10 @@ export function MentionsBrowser({
   pageHref,
   searchTerm,
   filterControls,
+  hasActiveFilters = false,
 }: Props) {
+  const locale = useLocale();
+  const t = useTranslations("AdminWorkspace.studySurfaces.mentions.browser");
   const router = useRouter();
   const searchParams = useSearchParams();
   const searchSignature = searchParams.toString();
@@ -115,7 +120,7 @@ export function MentionsBrowser({
     const payload = await res.json();
 
     if (!res.ok) {
-      setError(payload.message ?? "No se pudo aplicar la exclusion manual.");
+      setError(payload.message ?? t("errors.exclude"));
       setIsSubmitting(false);
       return;
     }
@@ -131,27 +136,27 @@ export function MentionsBrowser({
     <section className={filterOpen ? "mentions-browser mentions-browser--filter-open" : "mentions-browser"}>
       <ReportFilterPanel
         controls={filterControls}
-        eyebrow="Corpus browser"
+        eyebrow={t("eyebrow")}
         onApplyStart={() => setIsFiltering(true)}
         onClose={() => setFilterOpen(false)}
         open={filterOpen}
         resultCount={pagination.total}
-        resultLabel="menciones filtradas"
-        title="Filter & Sort"
+        resultLabel={t("filteredResults")}
+        title={t("filters")}
       />
       <header className="mentions-browser-head">
         <div>
           <p className="vitals-eyebrow">
             <Icon name="message" size={13} />
-            Corpus browser
+            {t("eyebrow")}
           </p>
-          <h2>Revisión manual de menciones</h2>
+          <h2>{t("title")}</h2>
         </div>
         <div className="mentions-browser-actions">
           {lastResult !== null ? (
-            <SuccessPill>{fmt(lastResult)} excluidas</SuccessPill>
+            <SuccessPill>{t("excludedCount", { count: lastResult })}</SuccessPill>
           ) : (
-            <StatusPill tone="info">{fmt(pagination.total)} total</StatusPill>
+            <StatusPill tone="info">{t("total", { count: pagination.total })}</StatusPill>
           )}
           <label className="mention-select-page">
             <input
@@ -160,11 +165,11 @@ export function MentionsBrowser({
               onChange={togglePage}
               type="checkbox"
             />
-            <span>Seleccionar página</span>
+            <span>{t("selectPage")}</span>
           </label>
           <button className="mention-filter-toggle" onClick={() => setFilterOpen(true)} type="button">
             <Icon name="filter" size={15} />
-            Filter & Sort
+            {t("filters")}
           </button>
         </div>
       </header>
@@ -173,15 +178,15 @@ export function MentionsBrowser({
         {isFiltering ? (
           <div className="mentions-filter-progress" role="status">
             <Icon name="spinner" size={16} />
-            <strong>Filtrando menciones</strong>
-            <span>Actualizando búsqueda, fuentes y orden.</span>
+            <strong>{t("filtering.title")}</strong>
+            <span>{t("filtering.body")}</span>
           </div>
         ) : null}
         {mentions.length === 0 ? (
           <div className="empty-card">
             <Icon className="empty-card-icon" name="info" size={22} />
-            <strong>No hay menciones con esos filtros</strong>
-            <span>Ajusta búsqueda, fuentes o status para volver a revisar el corpus.</span>
+            <strong>{t(hasActiveFilters ? "empty.filteredTitle" : "empty.corpusTitle")}</strong>
+            <span>{t(hasActiveFilters ? "empty.filteredBody" : "empty.corpusBody")}</span>
           </div>
         ) : (
           <div className="mention-card-list">
@@ -203,7 +208,7 @@ export function MentionsBrowser({
                   style={{ "--mention-delay": `${Math.min(index, 12) * 28}ms` } as CSSProperties}
                 >
                   <div className="mention-card-topline">
-                    <label className="mention-card-check" title="Seleccionar mención">
+                    <label className="mention-card-check" title={t("selectMention")}>
                       <input
                         checked={isSelected}
                         disabled={isExcluded}
@@ -212,7 +217,7 @@ export function MentionsBrowser({
                       />
                     </label>
                     <StatusPill tone={statusTone(mention.inclusionStatus)}>
-                      {statusLabel(mention.inclusionStatus)}
+                      {t(`status.${mention.inclusionStatus === "included" || mention.inclusionStatus === "excluded" ? mention.inclusionStatus : "pending"}`)}
                     </StatusPill>
                   </div>
 
@@ -223,11 +228,11 @@ export function MentionsBrowser({
                       </span>
                       <span>
                         <Icon name="clock" size={12} />
-                        {formatDate(mention.publishedAt)}
+                        {formatDate(mention.publishedAt, locale)}
                       </span>
                       <span>
                         <Icon name="sentiment" size={12} />
-                        {formatSentiment(mention)}
+                        {formatSentiment(mention, t("sentiment.none"), t("sentiment.score", { score: Number(mention.sentimentScore ?? 0).toFixed(2) }))}
                       </span>
                     </div>
 
@@ -246,7 +251,7 @@ export function MentionsBrowser({
                       <p className="mention-card-reason">
                         {mention.cleanupActionKind ? (
                           <span className="mention-card-reason-kind">
-                            {cleanupKindLabel(mention.cleanupActionKind)}
+                            {cleanupKindLabel(mention.cleanupActionKind, t("cleanup.manual"), t("cleanup.ai"))}
                           </span>
                         ) : null}
                         <HighlightedText text={trimMentionText(mention.exclusionReason, 140)} term={searchTerm} />
@@ -263,34 +268,34 @@ export function MentionsBrowser({
           {pageHref.previous ? (
             <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href={pageHref.previous}>
               <Icon className="icon--flip" name="arrow-right" size={14} />
-              Anterior
+              {t("pagination.previous")}
             </Link>
           ) : null}
           <span className="pagination-position">
-            Página {pagination.page} de {Math.max(1, Math.ceil(pagination.total / pagination.pageSize))}
+            {t("pagination.position", { page: pagination.page, total: Math.max(1, Math.ceil(pagination.total / pagination.pageSize)) })}
           </span>
           {pageHref.next ? (
             <Link prefetch={false} className="wizard-cta wizard-cta--ghost" href={pageHref.next}>
-              Siguiente <Icon name="arrow-right" size={14} />
+              {t("pagination.next")} <Icon name="arrow-right" size={14} />
             </Link>
           ) : null}
         </footer>
       </div>
 
       {selected.length > 0 ? (
-        <div className="mention-bulk-bar" role="region" aria-label="Acciones bulk">
+        <div className="mention-bulk-bar" role="region" aria-label={t("bulk.label")}>
           <div className="mention-bulk-summary">
-            <StatusPill tone="warn">Selección manual</StatusPill>
-            <strong>{fmt(selected.length)} menciones</strong>
-            <span>Se puede revertir desde Historial.</span>
+            <StatusPill tone="warn">{t("bulk.selection")}</StatusPill>
+            <strong>{t("bulk.count", { count: selected.length })}</strong>
+            <span>{t("bulk.reversible")}</span>
           </div>
           <input
-            aria-label="Motivo de exclusión"
+            aria-label={t("bulk.reasonLabel")}
             className="mention-bulk-reason"
             disabled={isSubmitting}
             maxLength={240}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Motivo breve, opcional"
+            placeholder={t("bulk.reasonPlaceholder")}
             value={reason}
           />
           <div className="mention-bulk-actions">
@@ -300,11 +305,11 @@ export function MentionsBrowser({
               onClick={() => setSelected([])}
               type="button"
             >
-              Limpiar
+              {t("bulk.clear")}
             </button>
             <button className="wizard-cta" disabled={isSubmitting} onClick={excludeSelected} type="button">
               {isSubmitting ? <Icon name="spinner" size={14} /> : <Icon name="x" size={14} />}
-              Excluir {fmt(selected.length)}
+              {t("bulk.exclude", { count: selected.length })}
             </button>
           </div>
           {error ? <p className="mention-bulk-error">{error}</p> : null}
@@ -318,12 +323,6 @@ function statusTone(status: string) {
   if (status === "included") return "success";
   if (status === "excluded") return "warn";
   return "idle";
-}
-
-function statusLabel(status: string) {
-  if (status === "included") return "Incluida";
-  if (status === "excluded") return "Excluida";
-  return "Pendiente";
 }
 
 function HighlightedText({ text, term }: { text: string; term?: string }) {
@@ -351,18 +350,14 @@ function HighlightedText({ text, term }: { text: string; term?: string }) {
   return <>{parts}</>;
 }
 
-function formatDate(date: string) {
-  return new Intl.DateTimeFormat("es-MX", { dateStyle: "medium" }).format(new Date(date));
+function formatDate(date: string, locale: string) {
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(date));
 }
 
-function formatSentiment(mention: BrowserMention) {
+function formatSentiment(mention: BrowserMention, emptyLabel: string, scoreLabel: string) {
   if (mention.sentimentSource) return mention.sentimentSource;
-  if (mention.sentimentScore === null) return "Sin sentimiento";
-  return `Score ${Number(mention.sentimentScore).toFixed(2)}`;
-}
-
-function fmt(value: number) {
-  return new Intl.NumberFormat("es-MX").format(value);
+  if (mention.sentimentScore === null) return emptyLabel;
+  return scoreLabel;
 }
 
 function trimMentionText(value: string, maxLength = 260) {
@@ -370,8 +365,8 @@ function trimMentionText(value: string, maxLength = 260) {
   return clean.length > maxLength ? `${clean.slice(0, maxLength - 1).trim()}...` : clean;
 }
 
-function cleanupKindLabel(value: string) {
-  if (value === "manual_bulk") return "Manual";
-  if (value === "claude_instruction") return "AI";
+function cleanupKindLabel(value: string, manualLabel: string, aiLabel: string) {
+  if (value === "manual_bulk") return manualLabel;
+  if (value === "claude_instruction") return aiLabel;
   return value;
 }

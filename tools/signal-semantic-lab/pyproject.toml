@@ -1,0 +1,52 @@
+[project]
+name = "noisia-signal-semantic-lab"
+version = "0.1.0"
+description = "Private, reproducible benchmark harness for Signal multilingual embeddings and topic discovery."
+requires-python = "==3.12.*"
+dependencies = [
+  "bertopic==0.17.4",
+  "fastopic==1.0.1",
+  "gensim==4.4.0",
+  "hdbscan==0.8.44",
+  "jupyter==1.1.1",
+  "matplotlib==3.10.8",
+  "nbclient==0.10.4",
+  "nbformat==5.10.4",
+  "numpy==2.4.3",
+  "pandas==3.0.1",
+  "psutil==7.2.2",
+  "pyarrow==23.0.1",
+  "pydantic==2.12.5",
+  "scikit-learn==1.9.0",
+  "scipy==1.17.1",
+  "sentence-transformers[onnx]==5.7.0",
+  "torch==2.13.0",
+  "umap-learn==0.5.12",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest==9.0.2",
+  "ruff==0.15.5",
+]
+
+[project.scripts]
+signal-semantic-lab = "signal_semantic_lab.cli:main"
+
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/signal_semantic_lab"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]

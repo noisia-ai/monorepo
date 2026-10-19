@@ -4,6 +4,7 @@ import { pool } from "../db/client";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
+  isGovernedStrategicRun,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
@@ -139,10 +140,31 @@ export async function rebuildAndPersistComparativeBrief(tbAnalysisId: string) {
 }
 
 async function loadEntityCounts(tbAnalysisId: string): Promise<EntityCountRow[]> {
-  // Use the per-batch included_count already persisted at ingest instead of
-  // re-counting every mention with a full-corpus JOIN. On large corpora the old
-  // COUNT(mentions) scan timed out; the stored counts are equivalent and read
-  // just a handful of import_batches rows.
+  if (await isGovernedStrategicRun(tbAnalysisId)) {
+    const governed = await pool.query<EntityCountRow>(
+      `SELECT CASE WHEN semantic.scope='competitor' THEN semantic.entity_id::text END AS competitor_id,
+         CASE WHEN semantic.scope IN ('primary_brand','competitor','category')
+           THEN semantic.scope ELSE 'unknown' END AS entity_kind,
+         COALESCE(NULLIF(semantic.entity_label,''),semantic.scope) AS entity_label,
+         COUNT(DISTINCT sealed.mention_id)::int AS mention_count
+       FROM signal_strategic_run_controls control
+       JOIN signal_strategic_sealed_sample_items sealed ON sealed.run_control_id=control.id
+       JOIN signal_mention_attributions semantic
+         ON semantic.workspace_id=control.workspace_id
+        AND semantic.mention_id=sealed.mention_id
+        AND semantic.attribution_basis='mention_semantic'
+        AND semantic.is_current=true
+        AND semantic.review_status='approved'
+        AND semantic.eligibility_status='eligible'
+       WHERE control.tb_analysis_id=$1::uuid
+       GROUP BY 1,2,3 ORDER BY mention_count DESC,3`,
+      [tbAnalysisId]
+    );
+    return governed.rows;
+  }
+  // Strategic comparisons must remain bound to the exact analysis snapshot.
+  // Import-batch counters describe the live corpus and would let later
+  // operational ingestion rewrite a historical brief.
   const r = await pool.query<EntityCountRow>(
     `SELECT
        ib.competitor_id,
@@ -164,12 +186,12 @@ async function loadEntityCounts(tbAnalysisId: string): Promise<EntityCountRow[]>
            ELSE 'Sin atribucion'
          END
        ) AS entity_label,
-       SUM(COALESCE(ib.included_count, 0))::int AS mention_count
+       COUNT(DISTINCT snapshot_mention.mention_id)::int AS mention_count
      FROM tb_analyses ta
-     JOIN study_corpora sc ON sc.id = ta.study_corpus_id
-     JOIN import_batches ib
-       ON (ib.study_corpus_id = ta.study_corpus_id OR ib.study_corpus_id = sc.base_corpus_id)
-      AND ib.status = 'completed'
+     JOIN corpus_snapshot_mentions snapshot_mention
+       ON snapshot_mention.snapshot_id = ta.snapshot_id
+     JOIN mentions mention ON mention.id = snapshot_mention.mention_id
+     LEFT JOIN import_batches ib ON ib.id = mention.source_file_id
      WHERE ta.id = $1
      GROUP BY ib.competitor_id, 2, 3
      ORDER BY mention_count DESC`,
@@ -179,6 +201,41 @@ async function loadEntityCounts(tbAnalysisId: string): Promise<EntityCountRow[]>
 }
 
 async function loadFindingEntityPresence(tbAnalysisId: string): Promise<PresenceRow[]> {
+  if (await isGovernedStrategicRun(tbAnalysisId)) {
+    const governed = await pool.query<PresenceRow>(
+      `WITH attributed_mentions AS (
+         SELECT sealed.mention_id,
+           CASE WHEN semantic.scope='competitor' THEN semantic.entity_id::text END AS competitor_id,
+           CASE WHEN semantic.scope IN ('primary_brand','competitor','category')
+             THEN semantic.scope ELSE 'unknown' END AS resolved_entity_kind,
+           COALESCE(NULLIF(semantic.entity_label,''),semantic.scope) AS resolved_entity_label
+         FROM signal_strategic_run_controls control
+         JOIN signal_strategic_sealed_sample_items sealed ON sealed.run_control_id=control.id
+         JOIN signal_mention_attributions semantic
+           ON semantic.workspace_id=control.workspace_id
+          AND semantic.mention_id=sealed.mention_id
+          AND semantic.attribution_basis='mention_semantic'
+          AND semantic.is_current=true
+          AND semantic.review_status='approved'
+          AND semantic.eligibility_status='eligible'
+         WHERE control.tb_analysis_id=$1::uuid
+       )
+       SELECT f.finding_id,f.id AS finding_uuid,f.nombre_comercial AS finding_name,
+         f.polarity,f.layer,f.movilidad,am.competitor_id,
+         am.resolved_entity_kind AS entity_kind,am.resolved_entity_label AS entity_label,
+         COUNT(DISTINCT coding.mention_id)::int AS mention_count
+       FROM tb_mention_codings coding
+       JOIN tb_findings f ON f.id=coding.finding_id
+       JOIN attributed_mentions am ON am.mention_id=coding.mention_id
+       WHERE coding.tb_analysis_id=$1::uuid AND coding.finding_id IS NOT NULL
+         AND coding.polarity!='irrelevant'
+       GROUP BY f.finding_id,f.id,f.nombre_comercial,f.polarity,f.layer,f.movilidad,
+         am.competitor_id,am.resolved_entity_kind,am.resolved_entity_label
+       ORDER BY f.finding_id,mention_count DESC`,
+      [tbAnalysisId]
+    );
+    return governed.rows;
+  }
   const r = await pool.query<PresenceRow>(
     `WITH attributed_mentions AS (
        SELECT
@@ -203,15 +260,16 @@ async function loadFindingEntityPresence(tbAnalysisId: string): Promise<Presence
            END
          ) AS resolved_entity_label
        FROM mentions m
+       JOIN corpus_snapshot_mentions snapshot_mention
+         ON snapshot_mention.mention_id = m.id
        LEFT JOIN import_batches ib ON ib.id = m.source_file_id
-       LEFT JOIN tb_analyses ta_scope ON ta_scope.id = $1
-       LEFT JOIN study_corpora sc_scope ON sc_scope.id = ta_scope.study_corpus_id
-       WHERE (m.study_corpus_id = ta_scope.study_corpus_id
-          OR m.study_corpus_id = sc_scope.base_corpus_id)
-         -- Only coded mentions are ever used (the outer query joins on
-         -- tb_mention_codings), so restrict the scan to them. Avoids
-         -- materializing the entire corpus on large studies.
-         AND m.id IN (
+       JOIN tb_analyses ta_scope
+         ON ta_scope.id = $1
+        AND ta_scope.snapshot_id = snapshot_mention.snapshot_id
+       -- Only coded mentions are ever used (the outer query joins on
+       -- tb_mention_codings), so restrict the scan to them. Avoids
+       -- materializing the entire corpus on large studies.
+       WHERE m.id IN (
            SELECT mention_id FROM tb_mention_codings
            WHERE tb_analysis_id = $1 AND mention_id IS NOT NULL
          )

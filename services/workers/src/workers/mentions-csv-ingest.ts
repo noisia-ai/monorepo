@@ -1,91 +1,157 @@
-import crypto from "node:crypto";
 import { createReadStream } from "node:fs";
 import { Readable } from "node:stream";
 
 import type { Job } from "bullmq";
 
+import {
+  createSignalSentioneCsvIngester,
+  recordSignalDataAcceptance,
+  recordSignalWorkspaceDataAcceptance,
+  SentioneTimestampError
+} from "@noisia/db";
 import { pool } from "../db/client";
-
-type CsvRow = Record<string, string>;
-
-type NormalizedMention = {
-  externalId: string;
-  textRaw: string;
-  textClean: string;
-  textSnippet: string;
-  title: string | null;
-  textLength: number;
-  language: string | null;
-  publishedAt: Date;
-  platform: string;
-  contentType: string | null;
-  url: string | null;
-  country: string | null;
-  engagement: Record<string, number>;
-  sentimentSource: string | null;
-  sentimentScore: string | null;
-  inclusionStatus: "included" | "excluded";
-  exclusionReason: string | null;
-  qualityFlags: Record<string, boolean>;
-  rawMetadata: Record<string, unknown>;
-  textHash: string;
-};
+import { advanceCorpusRevision } from "./corpus-revision";
+import { reconcileListeningDataOs } from "./listening-data-os";
+import { completePreviouslyAcceptedWorkspaceImport } from "./workspace-import-duplicate";
 
 type IngestMentionsCsvJobData = {
-  corpusId: string;
+  workspaceId?: string;
+  dataSourceId?: string;
+  corpusId?: string | null;
   importBatchId: string;
   sourceFileName: string;
-  storagePath: string;
+  storagePath?: string;
+  storageBucket?: string;
+  storageObjectKey?: string;
+  storagePartCount?: number;
+  storagePartSizeBytes?: number;
   entityLabel?: string | null;
+  testFailAfterRecords?: number;
+  testCrashAfterRecords?: number;
 };
 
-export type CsvImportStats = {
-  record_count: number;
-  included_count: number;
-  excluded_count: number;
-  duplicate_count: number;
-};
-
-const textKeys = ["text", "content", "body", "mention", "snippet", "description", "post content", "content of posts"];
-const titleKeys = ["title", "headline", "subject"];
-const dateKeys = ["date", "published at", "published_at", "created at", "created_at", "created", "time"];
-const urlKeys = ["url", "link", "source url", "source_url", "link to the source"];
-const platformKeys = ["platform", "channel", "network", "social network", "service", "domain group", "source", "source type", "medium", "specific type"];
-const contentTypeKeys = ["content type", "type", "source type", "specific type", "media type", "post type", "kind"];
-const authorKeys = ["author", "author name", "author_name", "user", "username", "handle"];
-const sentimentKeys = ["sentiment", "sentiment label", "sentiment_label"];
-const sentimentScoreKeys = ["sentiment score", "sentiment_score", "score"];
-const languageKeys = ["language", "lang"];
-const countryKeys = ["country", "location country", "country_code"];
-const idKeys = ["id", "mention id", "mention_id", "external id", "external_id", "url"];
-const engagementKeys = [
-  "likes",
-  "comments",
-  "shares",
-  "reposts",
-  "views",
-  "engagement",
-  "interactions",
-  "reach"
-];
-
-// Larger batch for the streaming path: 500 rows × ~22 cols ≈ 11k params, well
-// under Postgres' 65535 limit, and fewer round-trips to the remote pooler.
-const STREAM_BATCH_SIZE = 500;
+const { ingestSentioneCsvStream,inspectSentioneCsvStream } = createSignalSentioneCsvIngester(pool);
 
 export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
   await job.updateProgress(5);
+  const existingBatch = await pool.query<{
+    workspace_id: string;
+    data_source_id: string;
+    study_corpus_id: string | null;
+    status: string;
+    record_count: number | null;
+    included_count: number | null;
+    excluded_count: number | null;
+    duplicate_count: number | null;
+    ingestion_phase: string;
+    storage_bucket: string | null;
+    storage_object_key: string | null;
+    expected_file_size_bytes: string | number | null;
+    storage_part_count: number | null;
+    storage_part_size_bytes: string | number | null;
+    processed_bytes: string | number;
+    worker_job_id: string | null;
+    supersedes_import_batch_id: string | null;
+    storage_source_import_batch_id: string | null;
+    storage_content_hash: string | null;
+    capture_timezone: string | null;
+    processing_metrics: unknown;
+  }>(
+    `
+      SELECT workspace_id, data_source_id, study_corpus_id,
+        status, record_count, included_count, excluded_count, duplicate_count,
+        ingestion_phase,storage_bucket,storage_object_key,expected_file_size_bytes,
+        storage_part_count,storage_part_size_bytes,processed_bytes,worker_job_id,
+        supersedes_import_batch_id,storage_source_import_batch_id,storage_content_hash,
+        capture_timezone,processing_metrics
+      FROM import_batches
+      WHERE id = $1::uuid
+      LIMIT 1
+    `,
+    [job.data.importBatchId]
+  );
+  const existing = existingBatch.rows[0];
+  if (!existing) throw new Error("Import batch was not found.");
+  const ingestion = {
+    workspaceId: job.data.workspaceId ?? existing.workspace_id,
+    dataSourceId: job.data.dataSourceId ?? existing.data_source_id,
+    corpusId: job.data.corpusId ?? existing.study_corpus_id
+  };
+  if (existing.status === "completed" && existing.ingestion_phase !== "legacy") {
+    // Async completion is atomic in complete_signal_workspace_import_v1: the
+    // counters, acceptance, watermark, sync run, invalidation and outbox are
+    // already durable. A late BullMQ replay must therefore be a pure read and
+    // must not publish a second acceptance or advance a corpus revision.
+    await job.updateProgress(100);
+    return {
+      import_batch_id: job.data.importBatchId,
+      stats: {
+        record_count: existing.record_count ?? 0,
+        included_count: existing.included_count ?? 0,
+        excluded_count: existing.excluded_count ?? 0,
+        duplicate_count: existing.duplicate_count ?? 0
+      },
+      status: "completed",
+      accepted: true,
+      replayed: true
+    };
+  }
+  if (existing?.status === "completed") {
+    const dataOs = ingestion.corpusId
+      ? await reconcileListeningDataOs({
+          corpusId: ingestion.corpusId,
+          importBatchId: job.data.importBatchId
+        })
+      : null;
+    const acceptances = ingestion.corpusId
+      ? await recordSignalDataAcceptance(pool, {
+          studyCorpusId: ingestion.corpusId,
+          sourceKey: "listening_csv",
+          importBatchId: job.data.importBatchId,
+          materializedAt: new Date()
+        })
+      : [];
+    const workspaceAcceptance = await recordSignalWorkspaceDataAcceptance(pool, {
+      workspaceId: ingestion.workspaceId,
+      sourceKey: `source-${ingestion.dataSourceId}`,
+      dataSourceId: ingestion.dataSourceId,
+      importBatchId: job.data.importBatchId,
+      materializedAt: new Date()
+    });
+    await job.updateProgress(100);
+    return {
+      import_batch_id: job.data.importBatchId,
+      stats: {
+        record_count: existing.record_count ?? 0,
+        included_count: existing.included_count ?? 0,
+        excluded_count: existing.excluded_count ?? 0,
+        duplicate_count: existing.duplicate_count ?? 0
+      },
+      corpus_revision: null,
+      data_os: dataOs,
+      signal_data_acceptances: acceptances.length,
+      workspace_data_acceptance: workspaceAcceptance,
+      reconciliation_only: true
+    };
+  }
+
+  if (existing.ingestion_phase !== "legacy") {
+    return ingestWorkspaceAsyncImportJob(job,existing,ingestion);
+  }
+
   await pool.query(
     `UPDATE import_batches SET status = 'processing' WHERE id = $1::uuid`,
     [job.data.importBatchId]
   );
 
   try {
+    if (!job.data.storagePath) throw new Error("Legacy CSV storage path is required.");
     const webStream = Readable.toWeb(createReadStream(job.data.storagePath)) as unknown as ReadableStream<Uint8Array>;
     const { stats, fileHash: hash } = await ingestSentioneCsvStream({
-      corpusId: job.data.corpusId,
+      ...ingestion,
       importBatchId: job.data.importBatchId,
       sourceFileName: job.data.sourceFileName,
+      sourceTimezone: legacySourceTimezone(existing.processing_metrics),
       entityLabel: job.data.entityLabel ?? null,
       stream: webStream,
       onProgress: async (progress) => {
@@ -114,551 +180,310 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
         hash
       ]
     );
+    const persistedCount = stats.included_count + stats.excluded_count;
+    const corpusRevision = persistedCount > 0 && ingestion.corpusId
+      ? await advanceCorpusRevision(ingestion.corpusId)
+      : null;
+    const dataOs = ingestion.corpusId
+      ? await reconcileListeningDataOs({
+          corpusId: ingestion.corpusId,
+          importBatchId: job.data.importBatchId
+        })
+      : null;
+    const acceptances = ingestion.corpusId
+      ? await recordSignalDataAcceptance(pool, {
+          studyCorpusId: ingestion.corpusId,
+          sourceKey: "listening_csv",
+          importBatchId: job.data.importBatchId,
+          corpusRevision,
+          materializedAt: new Date()
+        })
+      : [];
+    const workspaceAcceptance = await recordSignalWorkspaceDataAcceptance(pool, {
+      workspaceId: ingestion.workspaceId,
+      sourceKey: `source-${ingestion.dataSourceId}`,
+      dataSourceId: ingestion.dataSourceId,
+      importBatchId: job.data.importBatchId,
+      materializedAt: new Date()
+    });
     await job.updateProgress(100);
-    return { import_batch_id: job.data.importBatchId, stats };
+    return {
+      import_batch_id: job.data.importBatchId,
+      stats,
+      corpus_revision: corpusRevision,
+      data_os: dataOs,
+      signal_data_acceptances: acceptances.length,
+      workspace_data_acceptance: workspaceAcceptance,
+      reconciliation_only: false
+    };
   } catch (error) {
     await pool.query(
-      `UPDATE import_batches SET status = 'failed' WHERE id = $1::uuid`,
-      [job.data.importBatchId]
+      `UPDATE import_batches SET status = 'failed', failure_code=$2, failure_detail=$3::jsonb
+       WHERE id = $1::uuid AND status <> 'completed'`,
+      [job.data.importBatchId, classifyImportFailure(error), JSON.stringify(importFailureDetail(error))]
     );
     throw error;
   }
 }
 
-// Streaming ingest for very large CSVs (hundreds of MB). The whole-string
-// ingestSentioneCsv buffers the file + parsed array in memory and OOMs the
-// server on ~0.5GB exports. This variant consumes the upload as a byte stream,
-// parses row-by-row, and inserts in bounded batches — memory stays flat
-// regardless of file size. It also computes the file hash incrementally.
-export async function ingestSentioneCsvStream(params: {
-  corpusId: string;
-  importBatchId: string;
-  sourceFileName: string;
-  entityLabel?: string | null;
-  stream: ReadableStream<Uint8Array>;
-  onProgress?: (stats: CsvImportStats) => void | Promise<void>;
-}): Promise<{ stats: CsvImportStats; fileHash: string }> {
-  const hash = crypto.createHash("sha256");
-  const decoder = new TextDecoder("utf-8");
-  const seenHashes = new Set<string>();
-  // mentions has TWO unique constraints: (study_corpus_id, text_hash) and
-  // (source_system, external_id). ON CONFLICT can only target one, so we also
-  // dedup external_id in-file — otherwise a CSV with repeated mention IDs makes
-  // the whole batch INSERT fail on uq_mentions_source_external.
-  const seenExternalIds = new Set<string>();
-  const stats: CsvImportStats = {
-    record_count: 0,
-    included_count: 0,
-    excluded_count: 0,
-    duplicate_count: 0
-  };
-
-  let normalizedHeader: string[] | null = null;
-  let delimiter = "";
-  let headBuffer = "";
-  let delimiterReady = false;
-
-  // Cross-chunk CSV parser state.
-  let cell = "";
-  let row: string[] = [];
-  let inQuotes = false;
-  let heldQuote = false; // saw a `"`, deferring escaped-vs-toggle decision
-  let lastWasCR = false;
-  let bomStripped = false;
-
-  // Insert batches concurrently — a single connection to the remote pooler tops
-  // out near ~600 rows/s (latency-bound); a handful in parallel reaches a few
-  // thousand rows/s, which is what makes ~0.5GB files finish in minutes.
-  const INSERT_CONCURRENCY = 6;
-  let batch: NormalizedMention[] = [];
-  const inFlight = new Set<Promise<void>>();
-
-  function dispatch(rows: NormalizedMention[]) {
-    const task = insertMentionChunk(rows, params, stats).finally(() => {
-      inFlight.delete(task);
-    });
-    inFlight.add(task);
-  }
-
-  async function dispatchBatch() {
-    if (batch.length === 0) return;
-    const rows = batch;
-    batch = [];
-    dispatch(rows);
-    if (inFlight.size >= INSERT_CONCURRENCY) await Promise.race(inFlight);
-  }
-
-  async function emitRow(cells: string[]) {
-    if (normalizedHeader === null) {
-      normalizedHeader = cells.map((cssll) => normalizeKey(cssll));
-      return;
-    }
-    if (!cells.some((value) => value.trim().length > 0)) return;
-    stats.record_count += 1;
-    const header = normalizedHeader;
-    const rowObj = header.reduce<CsvRow>((acc, key, index) => {
-      acc[key || `column_${index + 1}`] = cells[index]?.trim() ?? "";
-      return acc;
-    }, {});
-    const mention = normalizeMention(rowObj, params.sourceFileName);
-    // Dedup on either unique key before it can blow up a batch insert.
-    if (seenHashes.has(mention.textHash) || seenExternalIds.has(mention.externalId)) {
-      stats.duplicate_count += 1;
-      return;
-    }
-    seenHashes.add(mention.textHash);
-    seenExternalIds.add(mention.externalId);
-    batch.push(mention);
-    if (stats.record_count % 5000 === 0) await params.onProgress?.(stats);
-    if (batch.length >= STREAM_BATCH_SIZE) await dispatchBatch();
-  }
-
-  async function feed(text: string) {
-    for (let index = 0; index < text.length; index += 1) {
-      const char = text[index] as string;
-
-      if (!bomStripped) {
-        bomStripped = true;
-        if (char === "﻿") continue;
-      }
-
-      if (heldQuote) {
-        heldQuote = false;
-        if (char === '"') {
-          cell += '"'; // escaped quote ("")
-          continue;
-        }
-        inQuotes = !inQuotes; // the held quote was a real toggle
-      }
-
-      if (lastWasCR) {
-        lastWasCR = false;
-        if (char === "\n") continue; // swallow the \n of a \r\n pair
-      }
-
-      if (char === '"') {
-        heldQuote = true;
-        continue;
-      }
-
-      if (!inQuotes && char === delimiter) {
-        row.push(cell);
-        cell = "";
-        continue;
-      }
-
-      if (!inQuotes && (char === "\n" || char === "\r")) {
-        row.push(cell);
-        await emitRow(row);
-        row = [];
-        cell = "";
-        if (char === "\r") lastWasCR = true;
-        continue;
-      }
-
-      cell += char;
-    }
-  }
-
-  const reader = params.stream.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (!value || value.length === 0) continue;
-    hash.update(value);
-    const text = decoder.decode(value, { stream: true });
-    if (text.length === 0) continue;
-
-    if (!delimiterReady) {
-      headBuffer += text;
-      const newlineIndex = headBuffer.search(/\r|\n/);
-      if (newlineIndex >= 0 || headBuffer.length > 16_384) {
-        delimiter = detectDelimiter(headBuffer);
-        delimiterReady = true;
-        const pending = headBuffer;
-        headBuffer = "";
-        await feed(pending);
-      }
-      continue;
-    }
-
-    await feed(text);
-  }
-
-  // Flush decoder + any buffered head that never hit a newline (single-line file).
-  const tail = decoder.decode();
-  if (!delimiterReady) {
-    headBuffer += tail;
-    delimiter = detectDelimiter(headBuffer || ",");
-    delimiterReady = true;
-    await feed(headBuffer);
-    headBuffer = "";
-  } else if (tail.length > 0) {
-    await feed(tail);
-  }
-
-  // Resolve a deferred trailing quote and emit the final row if present.
-  if (heldQuote) {
-    heldQuote = false;
-    inQuotes = !inQuotes;
-  }
-  if (cell.length > 0 || row.length > 0) {
-    row.push(cell);
-    await emitRow(row);
-  }
-
-  if (batch.length > 0) {
-    dispatch(batch);
-    batch = [];
-  }
-  await Promise.all(inFlight);
-
-  return { stats, fileHash: hash.digest("hex") };
-}
-
-// Shared chunk-insert used by both the buffered and streaming ingest paths.
-function toInsertValue(
-  m: NormalizedMention,
-  params: { corpusId: string; importBatchId: string; entityLabel?: string | null }
+async function ingestWorkspaceAsyncImportJob(
+  job: Job<IngestMentionsCsvJobData>,
+  existing: {
+    workspace_id: string;data_source_id: string;study_corpus_id: string | null;
+    status: string;record_count: number | null;included_count: number | null;
+    excluded_count: number | null;duplicate_count: number | null;
+    ingestion_phase: string;storage_bucket: string | null;storage_object_key: string | null;
+    expected_file_size_bytes: string | number | null;processed_bytes: string | number;
+    storage_part_count: number | null;storage_part_size_bytes: string | number | null;
+    worker_job_id: string | null;
+    supersedes_import_batch_id: string | null;
+    storage_source_import_batch_id: string | null;
+    storage_content_hash: string | null;
+    capture_timezone: string | null;
+  },
+  ingestion: { workspaceId: string;dataSourceId: string;corpusId: string | null }
 ) {
-  return {
-    studyCorpusId: params.corpusId,
-    externalId: `${params.corpusId}:${m.externalId}`.slice(0, 500),
-    sourceSystem: "sentione_csv",
-    sourceFileId: params.importBatchId,
-    textHash: m.textHash,
-    textRaw: m.textRaw,
-    textClean: m.textClean,
-    textSnippet: m.textSnippet,
-    title: m.title,
-    textLength: m.textLength,
-    language: m.language,
-    publishedAt: m.publishedAt,
-    platform: m.platform,
-    // Materialized columns for fast Signal aggregates (see migration 0023).
-    resolvedPlatform: m.platform,
-    contentType: m.contentType,
-    batchEntityLabel: params.entityLabel ?? null,
-    url: m.url,
-    country: m.country,
-    engagement: m.engagement,
-    sentimentSource: m.sentimentSource,
-    sentimentScore: m.sentimentScore,
-    qualityScore: m.inclusionStatus === "included" ? 7 : 2,
-    inclusionStatus: m.inclusionStatus,
-    exclusionReason: m.exclusionReason,
-    qualityFlags: m.qualityFlags,
-    rawMetadata: m.rawMetadata
-  };
-}
-
-async function insertMentionChunk(
-  chunk: NormalizedMention[],
-  params: { corpusId: string; importBatchId: string; entityLabel?: string | null },
-  stats: CsvImportStats
-) {
-  if (chunk.length === 0) return;
-  const values = chunk.map((m) => toInsertValue(m, params));
-
-  try {
-    const inserted = await insertMentionValues(values);
-
-    stats.duplicate_count += chunk.length - inserted.length;
-    for (const inserted_row of inserted) {
-      if (inserted_row.inclusion_status === "included") stats.included_count += 1;
-      else stats.excluded_count += 1;
-    }
-  } catch (err) {
-    // A batch can fail on the OTHER unique constraint (source_system,
-    // external_id) when an id already exists in the DB. Don't lose the whole
-    // chunk — retry row by row so only the genuinely conflicting rows are skipped.
-    const msg = err instanceof Error ? err.message.slice(0, 160) : String(err).slice(0, 160);
-    console.warn(`[csv-ingest] batch failed, retrying ${chunk.length} rows individually: ${msg}`);
-    for (const m of chunk) {
-      try {
-        const inserted = await insertMentionValues([toInsertValue(m, params)]);
-        if (inserted.length === 0) {
-          stats.duplicate_count += 1;
-        } else if (inserted[0]?.inclusion_status === "included") {
-          stats.included_count += 1;
-        } else {
-          stats.excluded_count += 1;
-        }
-      } catch {
-        // Conflicts with the source/external unique key or a bad row — skip it.
-        stats.duplicate_count += 1;
-      }
-    }
+  const workerJobId = String(job.id ?? existing.worker_job_id ?? "");
+  if (!workerJobId || workerJobId!==existing.worker_job_id) {
+    throw new Error("Workspace import worker identity mismatch.");
   }
-}
-
-type InsertMentionValue = ReturnType<typeof toInsertValue>;
-
-const mentionInsertColumns = [
-  ["study_corpus_id", "studyCorpusId"],
-  ["external_id", "externalId"],
-  ["source_system", "sourceSystem"],
-  ["source_file_id", "sourceFileId"],
-  ["text_hash", "textHash"],
-  ["text_raw", "textRaw"],
-  ["text_clean", "textClean"],
-  ["text_snippet", "textSnippet"],
-  ["title", "title"],
-  ["text_length", "textLength"],
-  ["language", "language"],
-  ["published_at", "publishedAt"],
-  ["platform", "platform"],
-  ["resolved_platform", "resolvedPlatform"],
-  ["content_type", "contentType"],
-  ["batch_entity_label", "batchEntityLabel"],
-  ["url", "url"],
-  ["country", "country"],
-  ["engagement", "engagement"],
-  ["sentiment_source", "sentimentSource"],
-  ["sentiment_score", "sentimentScore"],
-  ["quality_score", "qualityScore"],
-  ["inclusion_status", "inclusionStatus"],
-  ["exclusion_reason", "exclusionReason"],
-  ["quality_flags", "qualityFlags"],
-  ["raw_metadata", "rawMetadata"]
-] as const satisfies ReadonlyArray<readonly [string, keyof InsertMentionValue]>;
-
-async function insertMentionValues(values: InsertMentionValue[]) {
-  if (values.length === 0) return [];
-
-  const params: unknown[] = [];
-  const tuples = values.map((value) => {
-    const placeholders = mentionInsertColumns.map(([, key]) => {
-      const rawValue = value[key];
-      params.push(
-        key === "engagement" || key === "qualityFlags" || key === "rawMetadata"
-          ? JSON.stringify(rawValue)
-          : rawValue
-      );
-      return `$${params.length}`;
-    });
-    return `(${placeholders.join(", ")})`;
-  });
-
-  const result = await pool.query<{ id: string; inclusion_status: string }>(
-    `
-      INSERT INTO mentions (${mentionInsertColumns.map(([column]) => column).join(", ")})
-      VALUES ${tuples.join(", ")}
-      ON CONFLICT (study_corpus_id, text_hash) DO NOTHING
-      RETURNING id, inclusion_status
-    `,
-    params
+  const begun = await pool.query<{ begun: boolean }>(
+    "SELECT begin_signal_workspace_import_processing_v1($1::uuid,$2) AS begun",
+    [job.data.importBatchId,workerJobId]
   );
-
-  return result.rows;
+  if (begun.rows[0]?.begun===false) {
+    await job.updateProgress(100);
+    return {
+      import_batch_id: job.data.importBatchId,
+      status: "completed",
+      replayed: true
+    };
+  }
+  let lastRecords = 0;
+  let lastBytes = 0;
+  let parserMetrics: Record<string,unknown> | null=null;
+  const processingStartedAt=performance.now();
+  try {
+    const verificationStartedAt=performance.now();
+    const verified=await inspectSentioneCsvStream({ sourceTimezone: existing.capture_timezone,
+      stream: openWorkspaceImportObjects({
+        bucket: job.data.storageBucket ?? existing.storage_bucket,
+        objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
+        partCount: job.data.storagePartCount ?? existing.storage_part_count
+      })
+    });
+    const expectedBytes = Number(existing.expected_file_size_bytes ?? 0);
+    if (verified.sizeBytes !== expectedBytes) throw new Error("Workspace import storage verification size mismatch.");
+    if (existing.storage_source_import_batch_id) {
+      await pool.query(`
+        SELECT seal_signal_workspace_import_storage_hash_v1($1::uuid,$2,$3,$4)
+      `,[job.data.importBatchId,workerJobId,verified.fileHash,verified.sizeBytes]);
+    }
+    const storageVerificationMs=Math.round((performance.now()-verificationStartedAt)*1000)/1000;
+    const duplicate = await completePreviouslyAcceptedWorkspaceImport({ pool,
+      importBatchId: job.data.importBatchId, workerJobId,
+      verifiedHash: verified.fileHash, verifiedBytes: verified.sizeBytes });
+    if (duplicate) {
+      // SQL has durably resolved this replay; transient progress transport cannot turn it back into a retryable failure.
+      await job.updateProgress(100).catch(() => undefined);
+      return { import_batch_id: job.data.importBatchId, ...duplicate,
+        corpus_revision: null, data_os: null, signal_data_acceptances: 0,
+        workspace_data_acceptance: false };
+    }
+    // The full verification read validates dates before any canonical writes. A
+    // late invalid row must not leave old timestamps behind for a corrected upload.
+    if (verified.validationError) throw verified.validationError;
+    const stream = openWorkspaceImportObjects({
+      bucket: job.data.storageBucket ?? existing.storage_bucket,
+      objectPrefix: job.data.storageObjectKey ?? existing.storage_object_key,
+      partCount: job.data.storagePartCount ?? existing.storage_part_count
+    });
+    const { stats,fileHash,metrics } = await ingestSentioneCsvStream({
+      ...ingestion,
+      importBatchId: job.data.importBatchId,
+      supersedesImportBatchId: existing.supersedes_import_batch_id,
+      sourceFileName: job.data.sourceFileName,
+      sourceTimezone: existing.capture_timezone,
+      entityLabel: job.data.entityLabel ?? null,
+      stream,
+      onProgress: async (progress,processedBytes) => {
+        lastRecords = progress.record_count;
+        lastBytes = processedBytes;
+        if (job.data.testFailAfterRecords
+            && progress.record_count>=job.data.testFailAfterRecords) {
+          throw new IntentionalWorkspaceImportAbort();
+        }
+        if (job.data.testCrashAfterRecords
+            && progress.record_count>=job.data.testCrashAfterRecords) {
+          throw new IntentionalWorkspaceWorkerCrash();
+        }
+        await pool.query(`
+          SELECT record_signal_workspace_import_progress_v1($1::uuid,$2,$3,$4)
+        `,[job.data.importBatchId,workerJobId,progress.record_count,processedBytes]);
+        const pct = expectedBytes>0
+          ? Math.min(99,Math.max(1,Math.floor((processedBytes/expectedBytes)*100)))
+          : Math.min(99,10+Math.floor(progress.record_count/500));
+        await job.updateProgress(pct);
+      }
+    });
+    parserMetrics=metrics;
+    if (fileHash !== verified.fileHash || lastBytes !== verified.sizeBytes) {
+      throw new Error("Workspace import storage changed during ingestion.");
+    }
+    const closureStartedAt=performance.now();
+    const completion = await pool.query<{
+      import_batch_id: string;accepted: boolean;accepted_batch_id: string;
+    }>(`
+      SELECT import_batch_id::text,accepted,accepted_batch_id::text
+      FROM complete_signal_workspace_import_v1(
+        $1::uuid,$2,$3,$4,$5,$6,$7,$8
+      )
+    `,[job.data.importBatchId,workerJobId,fileHash,stats.record_count,
+      stats.included_count,stats.excluded_count,stats.duplicate_count,lastBytes]);
+    const closureMs=performance.now()-closureStartedAt;
+    await pool.query(`
+      SELECT record_signal_workspace_import_metrics_v1($1::uuid,$2,$3::jsonb)
+    `,[job.data.importBatchId,workerJobId,JSON.stringify({
+      ...metrics,
+      closure_ms: Math.round(closureMs*1000)/1000,
+      worker_total_ms: Math.round((performance.now()-processingStartedAt)*1000)/1000,
+      persistence_mode: "set-based-chunk-v1",
+      row_fallback_count: 0,
+      storage_verification_ms: storageVerificationMs
+    })]);
+    const accepted = completion.rows[0]?.accepted===true;
+    let corpusRevision: number | null = null;
+    let dataOs: unknown = null;
+    let acceptanceCount = 0;
+    if (accepted && ingestion.corpusId) {
+      const persistedCount = stats.included_count+stats.excluded_count;
+      corpusRevision = persistedCount>0 ? await advanceCorpusRevision(ingestion.corpusId) : null;
+      dataOs = await reconcileListeningDataOs({
+        corpusId: ingestion.corpusId,importBatchId: job.data.importBatchId
+      });
+      const acceptances = await recordSignalDataAcceptance(pool,{
+        studyCorpusId: ingestion.corpusId,
+        sourceKey: `source-${ingestion.dataSourceId}`,
+        dataSourceId: ingestion.dataSourceId,
+        importBatchId: job.data.importBatchId,
+        corpusRevision,materializedAt: new Date()
+      });
+      acceptanceCount = acceptances.length;
+    }
+    await job.updateProgress(100);
+    return {
+      import_batch_id: job.data.importBatchId,
+      accepted_batch_id: completion.rows[0]?.accepted_batch_id ?? null,
+      accepted,stats,corpus_revision: corpusRevision,data_os: dataOs,
+      signal_data_acceptances: acceptanceCount,
+      workspace_data_acceptance: accepted
+    };
+  } catch (error) {
+    // A real process loss cannot persist a failure. The durable batch remains
+    // processing and the deterministic BullMQ identity may resume it. This
+    // branch is reachable only from the local rehearsal-only job field.
+    if (error instanceof IntentionalWorkspaceWorkerCrash) throw error;
+    const failureCode = error instanceof IntentionalWorkspaceImportAbort
+      ? "intentional_rehearsal_abort" : classifyImportFailure(error);
+    if (parserMetrics) {
+      await pool.query(`
+        SELECT record_signal_workspace_import_metrics_v1($1::uuid,$2,$3::jsonb)
+      `,[job.data.importBatchId,workerJobId,JSON.stringify({
+        ...parserMetrics,
+        closure_failed: true,
+        worker_total_ms: Math.round((performance.now()-processingStartedAt)*1000)/1000,
+        persistence_mode: "set-based-chunk-v1",
+        row_fallback_count: 0
+      })]).catch(() => undefined);
+    }
+    await pool.query(`
+      SELECT fail_signal_workspace_import_v1($1::uuid,$2,$3,$4::jsonb,$5,$6)
+    `,[job.data.importBatchId,workerJobId,failureCode,
+      JSON.stringify({ ...importFailureDetail(error),kind: failureCode }),lastRecords,lastBytes]);
+    throw error;
+  }
 }
 
-function normalizeMention(row: CsvRow, sourceFileName: string): NormalizedMention {
-  const textRaw = pick(row, textKeys) || pick(row, titleKeys) || "";
-  const textClean = cleanText(textRaw);
-  const textHash = hashText(textClean);
-  const title = pick(row, titleKeys) || null;
-  const publishedAt = parseDate(pick(row, dateKeys)) ?? new Date(0);
-  const url = pick(row, urlKeys) || null;
-  const platform = normalizePlatform(row, url);
-  const contentType = normalizeContentType(pick(row, contentTypeKeys));
-  const sentimentSource = normalizeSentiment(pick(row, sentimentKeys));
-  const sentimentScore = parseSentimentScore(pick(row, sentimentScoreKeys) || sentimentSource);
-  const country = normalizeCountry(pick(row, countryKeys));
-  const language = normalizeLanguage(pick(row, languageKeys));
-  const tooShort = textClean.length < 30;
-
-  return {
-    externalId: buildExternalId(row, textHash),
-    textRaw,
-    textClean,
-    textSnippet: textClean.slice(0, 220),
-    title,
-    textLength: textClean.length,
-    language,
-    publishedAt,
-    platform,
-    contentType,
-    url,
-    country,
-    engagement: extractEngagement(row),
-    sentimentSource,
-    sentimentScore,
-    inclusionStatus: tooShort ? "excluded" : "included",
-    exclusionReason: tooShort ? "text_under_30_chars" : null,
-    qualityFlags: {
-      text_under_30_chars: tooShort,
-      missing_date: publishedAt.getTime() === 0,
-      missing_platform: platform === "unknown"
-    },
-    rawMetadata: {
-      source_file_name: sourceFileName,
-      author: pick(row, authorKeys) || null,
-      content_type: contentType,
-      row
-    },
-    textHash
+function openWorkspaceImportObjects(args: {
+  bucket: string | null;objectPrefix: string | null;partCount: number | null;
+}) {
+  const baseUrl = process.env.SUPABASE_URL?.trim().replace(/\/$/u,"");
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
+  if (!baseUrl || !serviceRoleKey || !args.bucket || !args.objectPrefix
+      || !Number.isSafeInteger(args.partCount) || !args.partCount || args.partCount<1) {
+    throw new Error("Workspace import storage is unavailable.");
+  }
+  const encoded = (value: string) => value.split("/").map(encodeURIComponent).join("/");
+  const headers = {
+    apikey: serviceRoleKey,
+    ...(serviceRoleKey.startsWith("eyJ") ? { Authorization: `Bearer ${serviceRoleKey}` } : {})
   };
-}
-
-function detectDelimiter(input: string) {
-  const firstLine = input.split(/\r?\n/, 1)[0] ?? "";
-  const semicolons = (firstLine.match(/;/g) ?? []).length;
-  const commas = (firstLine.match(/,/g) ?? []).length;
-  return semicolons >= commas ? ";" : ",";
-}
-
-function pick(row: CsvRow, keys: string[]) {
-  for (const key of keys) {
-    const value = row[normalizeKey(key)];
-    if (value) {
-      return value;
+  let partNumber = 1;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        while (true) {
+          if (!reader) {
+            if (partNumber>args.partCount!) { controller.close();return; }
+            const objectKey = `${args.objectPrefix}.part-${String(partNumber).padStart(5,"0")}`;
+            const response = await fetch(
+              `${baseUrl}/storage/v1/object/authenticated/${encoded(args.bucket!)}/${encoded(objectKey)}`,
+              { headers }
+            );
+            if (!response.ok || !response.body) {
+              throw new Error(`Workspace import object unavailable (${response.status}).`);
+            }
+            reader=response.body.getReader();partNumber+=1;
+          }
+          const next = await reader.read();
+          if (next.done) { reader.releaseLock();reader=null;continue; }
+          controller.enqueue(next.value);return;
+        }
+      } catch (error) { controller.error(error); }
+    },
+    async cancel(reason) {
+      await reader?.cancel(reason).catch(() => undefined);
+      reader=null;
     }
+  });
+}
+
+function classifyImportFailure(error: unknown) {
+  if (error instanceof SentioneTimestampError) return error.code;
+  if (error instanceof Error && /storage|object unavailable/iu.test(error.message)) {
+    return "storage_read_failed";
   }
-
-  return "";
-}
-
-function normalizeKey(key: string) {
-  return key
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ");
-}
-
-function cleanText(text: string) {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function hashText(text: string) {
-  return crypto.createHash("sha256").update(text.toLowerCase()).digest("hex");
-}
-
-function buildExternalId(row: CsvRow, textHash: string) {
-  const sourceId = pick(row, idKeys);
-  return sourceId ? sourceId.slice(0, 500) : `csv_${textHash.slice(0, 24)}`;
-}
-
-function parseDate(value: string) {
-  if (!value) {
-    return null;
+  if (error instanceof Error && /CSV|delimiter|header|date/iu.test(error.message)) {
+    return "csv_validation_failed";
   }
-
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return "processing_failed";
 }
 
-function normalizePlatform(row: CsvRow, url: string | null) {
-  const haystack = [
-    url ?? "",
-    ...platformKeys.map((key) => pick(row, [key])),
-    ...Object.values(row)
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-
-  const known = detectKnownPlatform(haystack);
-  if (known) return known;
-
-  const candidate = pick(row, platformKeys);
-  const normalized = normalizeToken(candidate);
-  if (!normalized || isContentTypeToken(normalized)) return "unknown";
-  return normalized;
+function importFailureDetail(error: unknown) {
+  return error instanceof SentioneTimestampError
+    ? { kind: error.code,recoverable: false,field: error.field ?? null }
+    : { kind: classifyImportFailure(error),recoverable: true };
 }
 
-function detectKnownPlatform(value: string) {
-  const rules: Array<[RegExp, string]> = [
-    [/\btik\s*tok\b|tiktok\.com|douyin/i, "tiktok"],
-    [/\btwitter\b|\bx\b|x\.com|twitter\.com/i, "x"],
-    [/\binstagram\b|instagram\.com/i, "instagram"],
-    [/\bfacebook\b|facebook\.com|fb\.com/i, "facebook"],
-    [/\byoutube\b|youtu\.be|youtube\.com/i, "youtube"],
-    [/\breddit\b|reddit\.com/i, "reddit"],
-    [/\blinkedin\b|linkedin\.com/i, "linkedin"],
-    [/\bthreads\b|threads\.net/i, "threads"],
-    [/\btelegram\b|t\.me/i, "telegram"],
-    [/\bwhatsapp\b|wa\.me/i, "whatsapp"],
-    [/\btrustpilot\b|trustpilot\./i, "trustpilot"],
-    [/\bgoogle\b|google\./i, "google"],
-    [/\bnews\b|newspaper|article|press|media outlet/i, "news"],
-    [/\bblog\b|blogspot|wordpress|medium\.com/i, "blog"],
-    [/\bforum\b|community/i, "forum"]
-  ];
-  return rules.find(([regex]) => regex.test(value))?.[1] ?? null;
-}
-
-function normalizeContentType(value: string) {
-  const token = normalizeToken(value);
-  return token || null;
-}
-
-function normalizeToken(value: string) {
-  return value
-    ? value
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9]+/g, "_")
-        .replace(/^_+|_+$/g, "")
-    : "";
-}
-
-function isContentTypeToken(value: string) {
-  return /^(comment|comments|comentario|comentarios|video|short|shorts|post|posts|tweet|tweets|article|articles|news|reel|reels|story|stories|image|photo|photos|forum_post)$/.test(value);
-}
-
-function normalizeSentiment(value: string) {
-  return value ? value.toLowerCase() : null;
-}
-
-function parseSentimentScore(value: string | null) {
-  if (!value) {
-    return null;
+// Legacy imports have no acquisition seal. Their explicit source declaration is
+// durable batch metadata; a job payload or the machine timezone cannot override it.
+function legacySourceTimezone(metrics: unknown): string | null {
+  if (!metrics || typeof metrics!=="object" || !("source_timestamp_context" in metrics)) return null;
+  const context=metrics.source_timestamp_context;
+  if (!context || typeof context!=="object"
+      || !("contract_version" in context) || context.contract_version!=="source-timestamp-context-v1"
+      || !("origin" in context) || context.origin!=="operator_declared"
+      || !("timezone" in context) || typeof context.timezone!=="string" || !context.timezone.trim()) {
+    throw new SentioneTimestampError("source_timezone_invalid");
   }
-
-  const normalized = value.toLowerCase();
-  const numeric = Number(normalized.replace(",", "."));
-
-  if (Number.isFinite(numeric)) {
-    return String(Math.max(-1, Math.min(1, numeric)));
-  }
-
-  if (normalized.includes("positive") || normalized.includes("positivo")) {
-    return "1";
-  }
-
-  if (normalized.includes("negative") || normalized.includes("negativo")) {
-    return "-1";
-  }
-
-  if (normalized.includes("neutral")) {
-    return "0";
-  }
-
-  return null;
+  return context.timezone;
 }
 
-function normalizeCountry(value: string) {
-  return value ? value.trim().slice(0, 2).toUpperCase() : null;
+class IntentionalWorkspaceImportAbort extends Error {
+  constructor() { super("Intentional workspace import rehearsal abort."); }
 }
 
-function normalizeLanguage(value: string) {
-  return value ? value.trim().slice(0, 2).toLowerCase() : null;
-}
-
-function extractEngagement(row: CsvRow) {
-  return engagementKeys.reduce<Record<string, number>>((acc, key) => {
-    const value = row[normalizeKey(key)];
-    const parsed = Number(value?.replace(/,/g, ""));
-
-    if (Number.isFinite(parsed)) {
-      acc[normalizeKey(key).replace(/\s+/g, "_")] = parsed;
-    }
-
-    return acc;
-  }, {});
+class IntentionalWorkspaceWorkerCrash extends Error {
+  constructor() { super("Intentional workspace import worker crash rehearsal."); }
 }

@@ -32,7 +32,9 @@
 | 16 | [`16_evidence-confidence-layer.md`](16_evidence-confidence-layer.md) | Evidence Quality / Confidence (transversal) | Alta |
 | 99 | [`99_BUILD_SPEC_FOR_CODEX.md`](99_BUILD_SPEC_FOR_CODEX.md) | **Spec de ingeniería build-ready** (DDL, tipos, pipeline, adapter, PRs) | — |
 
-> Para **implementar**: lee `99_BUILD_SPEC_FOR_CODEX.md`. Define migración `0021`, schema Drizzle, tipos en `@noisia/query-engine`, pipeline de workers, contrato de payload + adapter, banco de charts, quality gates, seeds y orden de PRs — todo calzado a las firmas reales del repo. Los `.md` 01–16 son la referencia de diseño (marco de 6 piezas, charts, output contract) que el build spec parametriza.
+> Para **implementar la infraestructura**: `99_BUILD_SPEC_FOR_CODEX.md` (ya implementado por Codex como migración `0025` + pipeline `engine_*`).
+> Para **el render en /signal + Composer + query packs**: **`97_SIGNAL_RENDER_AND_COMPOSER_SPEC.md`** — las 7 cosas por método (señales, query packs, clasificación, charts/módulos, Composer, qué se publica, pruebas), con el estado real del build y el close-the-gap. **Este es el doc activo de trabajo.**
+> Los `.md` 01–16 son la referencia de diseño (marco de 6 piezas, charts, output contract) que ambos specs parametrizan.
 
 ## Principios de toda la familia
 

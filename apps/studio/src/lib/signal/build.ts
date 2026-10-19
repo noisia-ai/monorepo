@@ -1,7 +1,14 @@
 import type { getTbAnalysisForCorpus } from "@/lib/data/corpora";
 import {
+  buildEngineMethodologyBlock,
+  normalizeEngineMethodologyBlock
+} from "@noisia/query-engine";
+import {
   SIGNAL_PAYLOAD_VERSION,
+  type CompetitiveOwnership,
+  type CompetitiveTbMatrixBlock,
   type EmergingPattern,
+  type EngineMethodologyBlock,
   type EvidenceDeepDive,
   type FutureSignal,
   type MarketAnalysis,
@@ -33,6 +40,47 @@ type BuildSignalPayloadArgs = {
     baseCorpusName?: string | null;
     baseCorpusThemeName?: string | null;
   };
+  manifest?: Partial<SignalOutputManifest> | Record<string, unknown>;
+  headline?: string | null;
+  summary?: string | null;
+};
+
+type BuildEngineSignalPayloadArgs = {
+  corpus: {
+    id: string;
+    brandName: string | null;
+    themeName: string | null;
+    methodologyName: string | null;
+    methodologySlug: string | null;
+    businessQuestion: string | null;
+    baseCorpusId?: string | null;
+    baseCorpusName?: string | null;
+    baseCorpusThemeName?: string | null;
+  };
+  analysis: {
+    id: string;
+    methodologySlug: string;
+    methodologyVersion: string;
+    businessQuestion: string | null;
+    metaJson: unknown;
+    limitations: unknown;
+  };
+  findings: Array<{
+    id: string;
+    findingKey: string;
+    name: string;
+    dimensions: Record<string, unknown>;
+    frequency: number;
+    intensity: number | null;
+    sentiment: number | null;
+    sharePct: number | null;
+    compositeScore: number | null;
+    ownership: CompetitiveOwnership | null;
+    confidence: PublicTbFinding["confidence"];
+    evidenceCount: number;
+    mentionIds: string[];
+    quote: string | null;
+  }>;
   manifest?: Partial<SignalOutputManifest> | Record<string, unknown>;
   headline?: string | null;
   summary?: string | null;
@@ -97,6 +145,7 @@ export function buildSignalPayload(args: BuildSignalPayloadArgs) {
     ),
     competitive: normalizeCompetitivePayload(analysis.comparativeBrief),
     methodology_blocks: buildMethodologyComparativeBlocks(analysis.comparativeBrief),
+    engine_block: null,
     emerging_patterns: buildEmergingPatternsFromAnalysis(analysis.metaJson),
     knowledge_impact: buildKnowledgeImpact({
       metaJson: analysis.metaJson,
@@ -148,6 +197,99 @@ export function buildSignalPayload(args: BuildSignalPayloadArgs) {
     // top findings by share-of-voice, and the verbatim explorer.
     aggregates: aggregates ?? null
   };
+}
+
+export function buildEngineSignalPayload(args: BuildEngineSignalPayloadArgs) {
+  const manifest = normalizeSignalModuleFlags(args.manifest);
+  const brandName = args.corpus.brandName ?? args.corpus.themeName ?? "el sujeto";
+  const synthesis = recordValue(recordValue(args.analysis.metaJson).synthesis);
+  const limitations = stringArray(args.analysis.limitations);
+  const persistedEngineBlock = normalizeEngineMethodologyBlock(recordValue(args.analysis.metaJson).engine_block);
+  const engineBlock = (persistedEngineBlock ?? buildEngineMethodologyBlock({
+    methodologySlug: args.analysis.methodologySlug,
+    methodologyVersion: args.analysis.methodologyVersion,
+    findings: args.findings,
+    summary: stringValue(synthesis.headline) || args.summary,
+    limitations
+  })) as EngineMethodologyBlock;
+
+  return {
+    schema_version: SIGNAL_PAYLOAD_VERSION,
+    generated_at: new Date().toISOString(),
+    report: {
+      brand_name: brandName,
+      methodology_name: prettifyKey(args.analysis.methodologySlug),
+      methodology_slug: args.analysis.methodologySlug,
+      business_question: args.analysis.businessQuestion ?? args.corpus.businessQuestion,
+      baseline_corpus_id: args.corpus.baseCorpusId ?? null,
+      baseline_corpus_name: args.corpus.baseCorpusName ?? args.corpus.baseCorpusThemeName ?? null,
+      headline: args.headline?.trim() || `${prettifyKey(args.analysis.methodologySlug)} para ${brandName}`,
+      summary: args.summary?.trim() || engineBlock.summary
+    },
+    manifest,
+    metrics: {
+      findings_total: args.findings.length,
+      barriers_total: countEngineSignals(args.findings, "barrier"),
+      triggers_total: countEngineSignals(args.findings, "trigger"),
+      movable_total: args.findings.filter((finding) => finding.confidence !== "baja_direccional").length
+    },
+    findings: [],
+    tb_decision_field_nodes: [],
+    tb_decision_field_edges: [],
+    action_cards: [],
+    competitive: normalizeCompetitivePayload(null),
+    methodology_blocks: buildMethodologyComparativeBlocks(null),
+    engine_block: engineBlock,
+    emerging_patterns: [],
+    knowledge_impact: null,
+    strategic_opportunities: buildEngineOpportunities(args.findings, args.analysis.methodologySlug),
+    future_signals: [],
+    market_analysis: null,
+    evidence_deep_dives: [],
+    overview: {
+      top_barriers: [],
+      editorial_note: null
+    },
+    barriers: [],
+    triggers: [],
+    actions: {
+      best_move: null,
+      alternatives: [],
+      structural_notes: []
+    },
+    client_boundaries: [
+      ...engineBlock.limitations.slice(0, 4),
+      "Este output engine usa findings persistidos y no re-lee el corpus completo al publicar."
+    ],
+    aggregates: null
+  };
+}
+
+function buildEngineOpportunities(findings: BuildEngineSignalPayloadArgs["findings"], methodologySlug: string): StrategicOpportunity[] {
+  return findings
+    .slice()
+    .sort((a, b) => Number(b.compositeScore ?? 0) - Number(a.compositeScore ?? 0) || b.frequency - a.frequency)
+    .slice(0, 6)
+    .map((finding, index) => ({
+      opportunity_id: `ENG-${String(index + 1).padStart(2, "0")}`,
+      title: finding.name,
+      decision: `Usar ${prettifyKey(methodologySlug)} para priorizar esta señal con evidencia trazable.`,
+      why_now: `${finding.frequency} unidades y confianza ${finding.confidence}.`,
+      level: "brand",
+      source_mix: ["engine_findings", "live_intelligence"],
+      related_finding_ids: [finding.findingKey],
+      evidence_summary: finding.quote ?? "",
+      what_to_do: "Revisar evidencia y decidir si entra al reporte compuesto.",
+      success_signal: "La señal mantiene o aumenta frecuencia/confianza en el siguiente corte.",
+      confidence: finding.confidence
+    }));
+}
+
+function countEngineSignals(findings: BuildEngineSignalPayloadArgs["findings"], token: string) {
+  return findings.filter((finding) => {
+    const haystack = `${finding.findingKey} ${finding.name} ${JSON.stringify(finding.dimensions)}`.toLowerCase();
+    return haystack.includes(token);
+  }).length;
 }
 
 function buildPublicFindings(findings: AnalysisState["findings"]): PublicTbFinding[] {
@@ -250,7 +392,7 @@ function normalizeCompetitivePayload(value: unknown) {
   };
 }
 
-function buildTbComparativeDashboard(source: Record<string, unknown>) {
+export function buildTbComparativeDashboard(source: Record<string, unknown>) {
   const entities = arrayRecords(source.entities);
   const presence = arrayRecords(source.finding_entity_presence);
   if (entities.length === 0) return null;
@@ -280,16 +422,21 @@ function buildTbComparativeDashboard(source: Record<string, unknown>) {
       .flatMap((finding) => {
         const match = arrayRecords(finding.entities).find((item) => stringValue(item.entity_id) === entity.entity_id);
         if (!match) return [];
+        const peers = arrayRecords(finding.entities).filter((item) => stringValue(item.entity_id) !== entity.entity_id);
+        const maxOtherShare = peers.reduce((max, item) => Math.max(max, numberValue(item.share_pct)), 0);
+        const mentionCount = numberValue(match.mention_count);
+        const sharePct = numberValue(match.share_pct);
         return [{
           finding_id: stringValue(finding.finding_id),
           finding_name: stringValue(finding.finding_name),
-          mention_count: numberValue(match.mention_count),
-          share_pct: numberValue(match.share_pct),
-          ownership: stringValue(finding.ownership)
+          mention_count: mentionCount,
+          share_pct: sharePct,
+          ownership: coerceOwnership(finding.ownership),
+          differentiation_index: round3(sharePct / 100 - maxOtherShare / 100),
+          confidence: confidenceFromCount(mentionCount)
         }];
       })
       .sort((a, b) => b.mention_count - a.mention_count)
-      .slice(0, 8)
   }));
 
   const brandMentions = sumEntityKind(entitySummaries, "primary_brand");
@@ -297,6 +444,14 @@ function buildTbComparativeDashboard(source: Record<string, unknown>) {
   const categoryMentions = sumEntityKind(entitySummaries, "category");
   const strongestEntity = entitySummaries.slice().sort((a, b) => b.mention_count - a.mention_count)[0] ?? null;
   const strongestOwnership = ownershipRankings.slice().sort((a, b) => b.findings_count - a.findings_count)[0]?.ownership ?? null;
+  const dashboardConfidence = confidenceFromCount(Math.max(brandMentions, competitorMentions, categoryMentions));
+  const conclusions = {
+    brand_owned_triggers: arrayRecords(source.brand_owned_triggers),
+    competitor_owned_triggers: arrayRecords(source.competitor_owned_triggers),
+    category_wide_barriers: arrayRecords(source.category_wide_barriers),
+    whitespace: arrayRecords(source.whitespace),
+    gaps_accionables: arrayRecords(source.gaps_accionables)
+  };
 
   return {
     kind: "tb_comparative_dashboard" as const,
@@ -309,6 +464,30 @@ function buildTbComparativeDashboard(source: Record<string, unknown>) {
       competitor_mentions: competitorMentions,
       category_mentions: categoryMentions
     },
+    charts: [
+      {
+        chart_id: "tb-comparative-heatmap",
+        type: "heatmap" as const,
+        title: "Finding x entity ownership heatmap",
+        data: entityFindingMatrix,
+        confidence: dashboardConfidence
+      },
+      {
+        chart_id: "tb-comparative-ownership-ranking",
+        type: "bar_ranking" as const,
+        title: "Ownership ranking",
+        data: ownershipRankings,
+        confidence: dashboardConfidence
+      },
+      {
+        chart_id: "tb-comparative-trigger-barrier-split",
+        type: "diverging_bar" as const,
+        title: "Triggers vs barriers by entity",
+        data: buildTriggerBarrierSplit(presence),
+        confidence: dashboardConfidence
+      }
+    ],
+    conclusions,
     ownership_rankings: ownershipRankings,
     entity_finding_matrix: entityFindingMatrix
   };
@@ -320,6 +499,7 @@ function buildMethodologyComparativeBlocks(comparativeBrief: unknown): Methodolo
   const matrix = buildTbComparativeDashboard(source)?.entity_finding_matrix ?? [];
 
   return {
+    competitive_tb_matrix: buildCompetitiveTbMatrixBlock(source),
     vpm: {
       title: "VPM · Matriz de valor por entidad",
       rows: matrix.map((entity) => ({
@@ -366,6 +546,137 @@ function buildMethodologyComparativeBlocks(comparativeBrief: unknown): Methodolo
       }))
     }
   };
+}
+
+export function buildCompetitiveTbMatrixBlock(source: Record<string, unknown>): CompetitiveTbMatrixBlock {
+  const entities = arrayRecords(source.entities)
+    .map((entity) => ({
+      entity_id: stringValue(entity.entity_id),
+      entity_name: stringValue(entity.entity_name),
+      entity_kind: stringValue(entity.entity_kind),
+      mention_count: numberValue(entity.mention_count)
+    }))
+    .filter((entity) => entity.entity_id && entity.entity_name);
+  const presence = arrayRecords(source.finding_entity_presence);
+  const findings = presence
+    .map((finding) => {
+      const sourceEntities = arrayRecords(finding.entities);
+      const byEntity = sourceEntities
+        .map((entity) => {
+          const entityId = stringValue(entity.entity_id);
+          const peers = sourceEntities.filter((peer) => stringValue(peer.entity_id) !== entityId);
+          const maxOtherShare = peers.reduce((max, peer) => Math.max(max, numberValue(peer.share_pct)), 0);
+          const mentionCount = numberValue(entity.mention_count);
+          const sharePct = numberValue(entity.share_pct);
+          return {
+            entity_id: entityId,
+            entity_name: stringValue(entity.entity_name),
+            entity_kind: stringValue(entity.entity_kind),
+            mention_count: mentionCount,
+            share_pct: sharePct,
+            ownership: coerceOwnership(finding.ownership),
+            differentiation_index: round3(sharePct / 100 - maxOtherShare / 100),
+            confidence: confidenceFromCount(mentionCount),
+            evidence_ids: stringArray(entity.evidence_ids)
+          };
+        })
+        .filter((entity) => entity.entity_id && entity.entity_name)
+        .sort((a, b) => b.mention_count - a.mention_count);
+      const dominant = byEntity[0] ?? null;
+      const totalMentions = numberValue(finding.total_mentions) ||
+        byEntity.reduce((sum, entity) => sum + entity.mention_count, 0);
+      return {
+        finding_id: stringValue(finding.finding_id),
+        finding_name: stringValue(finding.finding_name),
+        polarity: coercePolarity(finding.polarity),
+        layer: stringValue(finding.layer) || "unmapped",
+        mobility: stringValue(finding.mobility) || null,
+        total_mentions: totalMentions,
+        ownership: coerceOwnership(finding.ownership),
+        dominant_entity_id: dominant?.entity_id ?? null,
+        dominant_entity_name: dominant?.entity_name || stringValue(finding.dominant_entity_name) || null,
+        confidence: confidenceFromCount(totalMentions),
+        by_entity: byEntity
+      };
+    })
+    .filter((finding) => finding.finding_id && finding.finding_name)
+    .sort((a, b) => b.total_mentions - a.total_mentions);
+
+  const rankings = entities
+    .map((entity) => {
+      const owned = findings
+        .filter((finding) => finding.dominant_entity_id === entity.entity_id && finding.ownership !== "insufficient_evidence")
+        .sort((a, b) => b.total_mentions - a.total_mentions);
+      return {
+        entity_id: entity.entity_id,
+        entity_name: entity.entity_name,
+        owned_findings_count: owned.length,
+        strongest_findings: owned.slice(0, 5).map((finding) => finding.finding_name)
+      };
+    })
+    .sort((a, b) => b.owned_findings_count - a.owned_findings_count);
+  const disputable = findings
+    .filter((finding) => {
+      const brand = finding.by_entity.find((entity) => entity.entity_kind === "primary_brand");
+      return Boolean(brand && brand.share_pct >= 30 && brand.share_pct < 45 && finding.ownership !== "brand_owned");
+    })
+    .slice(0, 8)
+    .map((finding) => ({
+      finding_id: finding.finding_id,
+      finding_name: finding.finding_name,
+      dominant_entity_name: finding.dominant_entity_name,
+      reason: "La marca tiene presencia suficiente para disputar, pero no domina el finding."
+    }));
+  const doNotCopy = findings
+    .filter((finding) => finding.ownership === "competitor_owned")
+    .slice(0, 8)
+    .map((finding) => ({
+      finding_id: finding.finding_id,
+      finding_name: finding.finding_name,
+      dominant_entity_name: finding.dominant_entity_name,
+      reason: "Competidor o pool competitivo domina la señal; copiarla sin permiso de marca sería débil."
+    }));
+  const exclusiveBarriers = findings
+    .filter((finding) => finding.polarity === "barrier" && finding.ownership === "brand_owned")
+    .slice(0, 8)
+    .map((finding) => ({
+      finding_id: finding.finding_id,
+      finding_name: finding.finding_name,
+      reason: "La barrera aparece principalmente conectada a la marca; requiere corrección propia antes que comunicación."
+    }));
+
+  return {
+    kind: "competitive_tb_matrix",
+    title: "Competitive T&B Matrix · Triggers y barriers por entidad",
+    summary: "Matriz densa de findings por entidad con share, ownership, diferencial y confianza. Las celdas con evidencia baja se mantienen visibles en lugar de ocultarse.",
+    findings,
+    rankings,
+    disputable,
+    do_not_copy: doNotCopy,
+    exclusive_barriers: exclusiveBarriers,
+    limitations: stringArray(source.limitations)
+  };
+}
+
+function buildTriggerBarrierSplit(presence: Record<string, unknown>[]) {
+  const map = new Map<string, { entity_id: string; entity_name: string; triggers: number; barriers: number }>();
+  for (const finding of presence) {
+    const polarity = stringValue(finding.polarity);
+    for (const entity of arrayRecords(finding.entities)) {
+      const entityId = stringValue(entity.entity_id);
+      if (!entityId) continue;
+      const row = map.get(entityId) ?? {
+        entity_id: entityId,
+        entity_name: stringValue(entity.entity_name),
+        triggers: 0,
+        barriers: 0
+      };
+      if (polarity === "trigger") row.triggers += numberValue(entity.mention_count);
+      if (polarity === "barrier") row.barriers += numberValue(entity.mention_count);
+      map.set(entityId, row);
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => (b.triggers + b.barriers) - (a.triggers + a.barriers));
 }
 
 function sumEntityKind(entities: Array<{ entity_kind: string; mention_count: number }>, kind: string) {
@@ -738,7 +1049,9 @@ function extractStrategicConstraints(sources: Record<string, unknown>[]) {
 }
 
 function prettifyKey(value: unknown) {
-  return stringValue(value).replace(/_/g, " ") || "sin clasificar";
+  const text = stringValue(value).replace(/[-_]+/g, " ").trim();
+  if (!text) return "sin clasificar";
+  return text.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
 function recordValue(value: unknown): Record<string, unknown> {
@@ -802,4 +1115,28 @@ function coerceMobility(value: unknown): PublicTbFinding["mobility"] {
 
 function coerceConfidence(value: unknown): PublicTbFinding["confidence"] {
   return value === "alta" || value === "baja_direccional" ? value : "media";
+}
+
+function coerceOwnership(value: unknown): CompetitiveOwnership {
+  if (
+    value === "brand_owned" ||
+    value === "competitor_owned" ||
+    value === "category_wide" ||
+    value === "shared" ||
+    value === "insufficient_evidence"
+  ) {
+    return value;
+  }
+  return "insufficient_evidence";
+}
+
+function confidenceFromCount(count: number): PublicTbFinding["confidence"] {
+  if (count >= 30) return "alta";
+  if (count >= 2) return "media";
+  return "baja_direccional";
+}
+
+function round3(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return Math.round(value * 1000) / 1000;
 }

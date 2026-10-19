@@ -1,16 +1,23 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { normalizeEngineMethodologyBlock } from "@noisia/query-engine";
 import { SessionBadge } from "@/components/layout/SessionBadge";
+import { SignalV2WorkspacePage } from "@/components/signal-v2/SignalV2WorkspacePage";
 import { SignalCorpusChat } from "@/components/signal/SignalCorpusChat";
 import { FindingDetailWorkspace } from "@/components/signal/FindingDetailWorkspace";
 import { SignalCorpusExplorer } from "@/components/signal/SignalCorpusExplorer";
 import { SignalDeckButton } from "@/components/signal/SignalDeckButton";
 import { SignalDashboardCharts } from "@/components/signal/SignalDashboardCharts";
+import { SignalDataOsTimeline } from "@/components/signal/SignalDataOsTimeline";
 import { SignalEmergingPatternsExplorer } from "@/components/signal/SignalEmergingPatternsExplorer";
+import { SignalHistoricalOverview } from "@/components/signal/SignalHistoricalOverview";
+import { SignalLiveComposer } from "@/components/signal/SignalLiveComposer";
+import { SignalMonthlyDataPanel } from "@/components/signal/SignalMonthlyDataPanel";
 import { SignalOpportunitiesExplorer } from "@/components/signal/SignalOpportunitiesExplorer";
 import {
   SignalLocalizedText,
+  SignalGlobalDateFilter,
   SignalReportShell,
   SignalSettingsPanel,
   type SignalShellGroup,
@@ -19,14 +26,33 @@ import { SignalTriggerExplorer } from "@/components/signal/SignalTriggerExplorer
 import { Icon } from "@/components/ui/Icon";
 import { SourceIcon } from "@/components/ui/SourceIcon";
 import { requirePortalUser } from "@/lib/auth/guards";
+import { canManageCorpus } from "@/lib/auth/roles";
+import { validateEnginePublishReadiness } from "@/lib/engine/publish-guards";
+import { pool } from "@/lib/db";
 import { getSignalOutputForUser } from "@/lib/data/signal";
+import {
+  loadPublishedSignalOverview,
+  type PublishedSignalOverview,
+} from "@/lib/data-os/published-signal-overview";
+import {
+  assessSignalServingReadiness,
+  getSignalServingReadiness,
+  type SignalServingReadinessIssue,
+} from "@/lib/data-os/signal-serving";
+import { loadSignalDataOsTimeline } from "@/lib/data-os/signal-timeline";
 import { adaptTbSignalPayload } from "@/lib/signal/adapters/tb";
-import type { EmergingPattern, PublicActionCard, PublicTbFinding, TbDecisionFieldNode } from "@/lib/signal/contracts";
-import { normalizeSignalDemoMode, signalModuleMeta, type SignalModuleKey } from "@/lib/signal/manifest";
+import { filterEngineBlocksForComposerSelection, type ComposerRenderSelection } from "@/lib/signal/composer-render";
+import type { EmergingPattern, EngineChart, EngineMethodologyBlock, PublicActionCard, PublicTbFinding, TbDecisionFieldNode } from "@/lib/signal/contracts";
+import { defaultSignalManifest, normalizeSignalDemoMode, signalModuleMeta, type SignalModuleKey } from "@/lib/signal/manifest";
+import { hasSignalServingContract } from "@/lib/signal/semantics";
+import { buildTbDecisionFieldNodes } from "@/lib/signal/tb-decision-field";
+
+import "../../signal-v2/signal-v2.css";
 
 export const dynamic = "force-dynamic";
 
 type JsonRecord = Record<string, unknown>;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 /* ============================================================
    Noisia Signal — Client report.
@@ -36,56 +62,201 @@ type JsonRecord = Record<string, unknown>;
 
 export default async function SignalOutputPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ outputId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { outputId } = await params;
+  if (!UUID_PATTERN.test(outputId)) {
+    const query = await searchParams;
+    if (firstSearchValue(query.study)) {
+      const canonical = new URLSearchParams();
+      for (const [key, rawValue] of Object.entries(query)) {
+        if (key === "study") continue;
+        for (const value of Array.isArray(rawValue) ? rawValue : [rawValue]) {
+          if (value != null) canonical.append(key, value);
+        }
+      }
+      const suffix = canonical.size > 0 ? `?${canonical.toString()}` : "";
+      redirect(`/signal/${outputId}/reports/triggers-barriers${suffix}`);
+    }
+    return (
+      <SignalV2WorkspacePage
+        searchParams={searchParams}
+        workspaceSlug={outputId}
+      />
+    );
+  }
   const session = await requirePortalUser(`/signal/${outputId}`);
   const output = await getSignalOutputForUser(session.appUser, outputId);
   if (!output) notFound();
 
   const payload = asRecord(output.payload);
-  const viewModel = adaptTbSignalPayload(payload);
   const manifest = asRecord(output.manifest);
-  const metrics = asRecord(payload.metrics);
+  const strictRelational = hasSignalServingContract(manifest);
+  let relationalOverview: PublishedSignalOverview | null = null;
+  let relationalIssues: SignalServingReadinessIssue[] = [];
+
+  if (strictRelational) {
+    if (!output.snapshotId || !output.tbAnalysisId) {
+      relationalIssues = [{
+        code: "published_snapshot_contract_incomplete",
+        message: "El output no tiene un snapshot y un analisis publicados.",
+      }];
+    } else {
+      try {
+        const readiness = await getSignalServingReadiness({
+          analysisId: output.tbAnalysisId,
+          outputId: output.id,
+          requireDataRefs: true,
+          snapshotId: output.snapshotId,
+        });
+        const assessment = assessSignalServingReadiness(readiness);
+        relationalIssues = assessment.hardBlocks;
+
+        if (assessment.ready) {
+          relationalOverview = await loadPublishedSignalOverview({
+            analysisId: output.tbAnalysisId,
+            corpusId: output.studyCorpusId,
+            outputId: output.id,
+            requireGovernedRef: true,
+            snapshotId: output.snapshotId,
+          });
+        }
+      } catch (error) {
+        console.error("[signal] relational serving failed", { error, outputId: output.id });
+        relationalIssues = [{
+          code: "relational_serving_failed",
+          message: "No fue posible cargar el corte publicado desde Data OS.",
+        }];
+      }
+    }
+  }
+
+  if (strictRelational && !relationalOverview) {
+    return <SignalServingUnavailable issues={relationalIssues} />;
+  }
+
+  const rawViewModel = adaptTbSignalPayload(payload);
+  const brandLabel = output.brandName ?? output.brandFallbackName ?? output.themeName ?? rawViewModel.report.brand_name;
+  const relationalFindings = relationalOverview?.findings ?? rawViewModel.findings;
+  const viewModel = {
+    ...rawViewModel,
+    decisionFieldNodes: relationalOverview
+      ? buildTbDecisionFieldNodes(relationalFindings)
+      : rawViewModel.decisionFieldNodes,
+    findings: relationalFindings,
+    report: {
+      ...rawViewModel.report,
+      brand_name: brandLabel
+    },
+    actionCards: relationalOverview
+      ? relationalOverview.action_studio
+      : rawViewModel.actionCards,
+    strategicOpportunities: relationalOverview
+      ? relationalOverview.opportunities
+      : rawViewModel.strategicOpportunities,
+  };
+  const metrics = relationalOverview ? asRecord(relationalOverview.metrics) : asRecord(payload.metrics);
   const overview = asRecord(payload.overview);
   const actions = asRecord(payload.actions);
   const limitations = asRecord(payload.limitations);
   const aggregates = asRecord(payload.aggregates);
-  const barriers = arrayValue(payload.barriers).map(asRecord);
-  const triggers = arrayValue(payload.triggers).map(asRecord);
+  const barriers = relationalOverview
+    ? relationalOverview.findings.filter((finding) => finding.polarity === "barrier").map(asRecord)
+    : arrayValue(payload.barriers).map(asRecord);
+  const triggers = relationalOverview
+    ? relationalOverview.findings.filter((finding) => finding.polarity === "trigger").map(asRecord)
+    : arrayValue(payload.triggers).map(asRecord);
   const structuralNotes = arrayValue(actions.structural_notes).map(asRecord);
-  const topBarriers = arrayValue(overview.top_barriers).map(asRecord);
+  const topBarriers = relationalOverview
+    ? relationalOverview.top_barriers.map(asRecord)
+    : arrayValue(overview.top_barriers).map(asRecord);
   const hasV2Manifest = signalModuleMeta.some((module) => Object.prototype.hasOwnProperty.call(manifest, module.key));
   const moduleEnabled = (key: SignalModuleKey) => isSignalModuleEnabled(manifest, key, hasV2Manifest);
   const demoMode = normalizeSignalDemoMode(manifest.demo_mode);
   const demoBlurredSections = new Set(demoMode.blurredSections);
   const demoLocked = (key: SignalModuleKey) => demoMode.enabled && moduleEnabled(key) && demoBlurredSections.has(key);
-  const brandLabel = output.brandName ?? output.brandFallbackName ?? "Brand";
+  const liveEngineBlocks = await getLiveEngineBlocks(output.studyCorpusId);
+  const composerRenderSelection = await getComposerRenderSelection(output.id);
+  const dataOsTimeline = relationalOverview?.cross_source_timeline ?? (
+    strictRelational
+      ? null
+      : await loadSignalDataOsTimeline({
+          corpusId: output.studyCorpusId,
+          outputId: output.id,
+          requireGovernedRef: false,
+        })
+  );
+  const engineBlocks = filterEngineBlocksForComposerSelection(mergeEngineBlocks([
+    ...(viewModel.engineBlock ? [viewModel.engineBlock] : []),
+    ...liveEngineBlocks
+  ]), composerRenderSelection);
+  const engineEditorialActive = composerRenderSelection?.active === true;
+  const canManageLiveCorpus = canManageCorpus(session.appUser.primaryRole);
   const bestMove = asRecord(actions.best_move);
   const fmtNum = (v: unknown) => new Intl.NumberFormat("es-MX").format(Number(v ?? 0));
 
   // Aggregates (already calculated in data layer)
   const corpusAgg = asRecord(aggregates.corpus);
-  const corpusWindow = asRecord(corpusAgg.window);
-  const corpusTotal = Number(corpusAgg.total_mentions ?? 0);
-  const windowMonths = Number(corpusWindow.months ?? 0);
-  const polarityDist = arrayValue(aggregates.polarity_distribution).map(asRecord);
-  const layerDist = arrayValue(aggregates.layer_distribution).map(asRecord);
-  const mobilityDist = arrayValue(aggregates.mobility_distribution).map(asRecord);
-  const platformDist = arrayValue(aggregates.platform_distribution).map(asRecord);
-  const contentTypeDist = arrayValue(aggregates.content_type_distribution).map(asRecord);
-  const volumeTimeline = arrayValue(aggregates.volume_timeline).map(asRecord);
-  const findingTimeSeries = arrayValue(aggregates.finding_time_series).map(asRecord);
-  const polarityTimeSeries = arrayValue(aggregates.polarity_time_series).map(asRecord);
-  const findingsScatter = arrayValue(aggregates.findings_scatter).map(asRecord);
-  const topVoice = arrayValue(aggregates.top_findings_by_voice).map(asRecord);
-  const mentionsSample = arrayValue(aggregates.mentions_sample).map(asRecord);
-  const shellGroups = buildSignalShellGroups(moduleEnabled);
+  const corpusWindow = relationalOverview
+    ? asRecord(relationalOverview.corpus.window)
+    : asRecord(corpusAgg.window);
+  const payloadCorpusTotal = relationalOverview?.corpus.total_mentions ?? Number(corpusAgg.total_mentions ?? 0);
+  const payloadWindowMonths = relationalOverview
+    ? countMonthsInclusive(toDateInput(corpusWindow.start), toDateInput(corpusWindow.end))
+    : Number(corpusWindow.months ?? 0);
+  const liveBounds = strictRelational
+    ? null
+    : await getLiveCorpusBounds([output.studyCorpusId, output.baseCorpusId].flatMap((id) => id ? [id] : []));
+  const defaultDateFrom = liveBounds?.start ?? toDateInput(corpusWindow.start);
+  const defaultDateTo = liveBounds?.end ?? toDateInput(corpusWindow.end);
+  const corpusTotal = liveBounds?.totalMentions ?? payloadCorpusTotal;
+  const windowMonths = liveBounds?.months ?? payloadWindowMonths;
+  const polarityDist = relationalOverview
+    ? relationalOverview.polarity_distribution.map(asRecord)
+    : arrayValue(aggregates.polarity_distribution).map(asRecord);
+  const layerDist = relationalOverview
+    ? relationalOverview.layer_distribution.map(asRecord)
+    : arrayValue(aggregates.layer_distribution).map(asRecord);
+  const mobilityDist = relationalOverview
+    ? relationalOverview.mobility_distribution.map(asRecord)
+    : arrayValue(aggregates.mobility_distribution).map(asRecord);
+  const platformDist = relationalOverview
+    ? relationalOverview.platform_distribution.map(asRecord)
+    : arrayValue(aggregates.platform_distribution).map(asRecord);
+  const contentTypeDist = relationalOverview
+    ? relationalOverview.content_type_distribution.map(asRecord)
+    : arrayValue(aggregates.content_type_distribution).map(asRecord);
+  const volumeTimeline = relationalOverview
+    ? relationalOverview.volume_timeline.map(asRecord)
+    : arrayValue(aggregates.volume_timeline).map(asRecord);
+  const findingTimeSeries = relationalOverview
+    ? relationalOverview.finding_time_series.map(asRecord)
+    : arrayValue(aggregates.finding_time_series).map(asRecord);
+  const polarityTimeSeries = relationalOverview
+    ? relationalOverview.polarity_time_series.map(asRecord)
+    : arrayValue(aggregates.polarity_time_series).map(asRecord);
+  const findingsScatter = relationalOverview
+    ? relationalOverview.findings_scatter.map(asRecord)
+    : arrayValue(aggregates.findings_scatter).map(asRecord);
+  const topVoice = relationalOverview
+    ? relationalOverview.top_findings_by_voice.map(asRecord)
+    : arrayValue(aggregates.top_findings_by_voice).map(asRecord);
+  const mentionsSample = strictRelational ? [] : arrayValue(aggregates.mentions_sample).map(asRecord);
+  const shellGroups = buildSignalShellGroups(moduleEnabled, engineBlocks, canManageLiveCorpus, strictRelational);
   const defaultSection = shellGroups[0]?.sections[0]?.key ?? "overview";
 
   return (
-    <SignalReportShell defaultSection={defaultSection} groups={shellGroups}>
+    <SignalReportShell
+      defaultDateFrom={defaultDateFrom}
+      defaultDateTo={defaultDateTo}
+      defaultSection={defaultSection}
+      groups={shellGroups}
+      maxDate={defaultDateTo}
+      minDate={defaultDateFrom}
+    >
         {/* TOP UTILITY BAR — period chip + profile */}
         <div className="signal-topbar">
           <div className="signal-topbar-left">
@@ -100,13 +271,17 @@ export default async function SignalOutputPage({
               <Icon name="calendar" size={14} />
               {windowMonths > 0 ? (
                 <SignalLocalizedText
-                  en={`Published cut · ${windowMonths} months`}
-                  es={`Corte publicado · ${windowMonths} meses`}
+                  en={`${strictRelational ? "Published snapshot" : "Live corpus"} · ${windowMonths} months`}
+                  es={`${strictRelational ? "Snapshot publicado" : "Corpus vivo"} · ${windowMonths} meses`}
                 />
               ) : (
-                <SignalLocalizedText en="Published snapshot" es="Snapshot publicado" />
+                <SignalLocalizedText
+                  en={strictRelational ? "Published snapshot" : "Live corpus"}
+                  es={strictRelational ? "Snapshot publicado" : "Corpus vivo"}
+                />
               )}
             </span>
+            <SignalGlobalDateFilter />
             {demoMode.enabled ? (
               <span className="signal-demo-top-pill">
                 <Icon name="info" size={14} />
@@ -120,6 +295,7 @@ export default async function SignalOutputPage({
             </button>
           </div>
         </div>
+        <SignalReadingGuide canManageLiveCorpus={canManageLiveCorpus} strictRelational={strictRelational} />
 
         {moduleEnabled("overview") ? (
           <div className="signal-view-panel" data-signal-section="overview" id="overview">
@@ -136,6 +312,7 @@ export default async function SignalOutputPage({
                   barriersTotal: Number(metrics.barriers_total ?? 0),
                   triggersTotal: Number(metrics.triggers_total ?? 0),
                   movableTotal: Number(metrics.movable_total ?? 0),
+                  opportunitiesTotal: Number(metrics.opportunities_total ?? viewModel.strategicOpportunities.length),
                 }}
                 mobilityDist={mobilityDist}
                 platformDist={platformDist}
@@ -143,17 +320,78 @@ export default async function SignalOutputPage({
                 polarityDist={polarityDist}
                 findingTimeSeries={findingTimeSeries}
                 polarityTimeSeries={polarityTimeSeries}
+                outputId={output.id}
                 topBarriers={topBarriers}
                 topVoice={topVoice}
                 volumeTimeline={volumeTimeline}
                 windowLabel={
                   windowMonths > 0
-                    ? `${fmtDateRange(corpusWindow.start, corpusWindow.end, "en-US")} · ${windowMonths} months`
-                    : "Published snapshot"
+                    ? `${fmtDateRange(defaultDateFrom, defaultDateTo, "en-US")} · ${windowMonths} months${strictRelational ? " · published snapshot" : ""}`
+                    : strictRelational ? "Published snapshot" : "Live corpus"
                 }
               />
+              {dataOsTimeline ? <SignalDataOsTimeline model={dataOsTimeline} /> : null}
             </DemoModeSection>
           </div>
+        ) : null}
+
+        {moduleEnabled("overview") ? (
+          <section className="signal-section" data-signal-section="signal-history" hidden id="signal-history">
+            <SectionHead
+              eyebrow="Live Intelligence"
+              title={<SignalLocalizedText en="Signal history" es="Historia de señales" />}
+              sub={
+                <SignalLocalizedText
+                  en="Track persistent signals by month. The global range controls this view and month clicks update the whole report."
+                  es="Da seguimiento mensual a señales persistentes. El rango global gobierna esta vista y cada mes actualiza todo el reporte."
+                />
+              }
+            />
+            <DemoModeSection locked={demoLocked("overview")} label="Signal History">
+              <SignalHistoricalOverview outputId={output.id} />
+            </DemoModeSection>
+          </section>
+        ) : null}
+
+        {engineBlocks.map((block) => {
+          const moduleKey = engineModuleKeyFor(block.methodology_slug ?? block.kind ?? null);
+          const sectionKey = engineSectionKey(block);
+          const locked = demoLocked("engine_methodology") || (moduleKey ? demoLocked(moduleKey) : false);
+          return (
+            <section className="signal-section" data-signal-section={sectionKey} hidden id={sectionKey} key={sectionKey}>
+              <SectionHead
+                eyebrow="Engine beta"
+                title={engineDisplayLabel(block)}
+                sub={
+                  <SignalLocalizedText
+                    en="Beta lens output with deterministic scores, charts, evidence links and explicit limitations."
+                    es="Output beta del lente con scores determinísticos, charts, evidencia y limitaciones explícitas."
+                  />
+                }
+              />
+              <DemoModeSection locked={locked} label={engineDisplayLabel(block)}>
+                <EngineMethodologyPanel block={block} editorialActive={engineEditorialActive} />
+              </DemoModeSection>
+            </section>
+          );
+        })}
+
+        {moduleEnabled("live_composer") ? (
+          <section className="signal-section" data-signal-section="live-composer" hidden id="live-composer">
+            <SectionHead
+              eyebrow="Live Intelligence"
+              title={<SignalLocalizedText en="Composer across methods" es="Composer entre métodos" />}
+              sub={
+                <SignalLocalizedText
+                  en="Persistent signals are deduped across lenses so the final report can combine methods without repeating the same evidence."
+                  es="Las señales persistentes se deduplican entre lentes para que el reporte final combine métodos sin repetir la misma evidencia."
+                />
+              }
+            />
+            <DemoModeSection locked={demoLocked("live_composer")} label="Live Composer">
+              <SignalLiveComposer outputId={output.id} />
+            </DemoModeSection>
+          </section>
         ) : null}
 
         {moduleEnabled("tb_decision_field") ? (
@@ -221,6 +459,58 @@ export default async function SignalOutputPage({
           </section>
         ) : null}
 
+        {moduleEnabled("tb_comparative_dashboard") ? (
+          <section className="signal-section" data-signal-section="tb-comparative-dashboard" hidden id="tb-comparative-dashboard">
+            <SectionHead
+              eyebrow="T&B Comparative"
+              title={<SignalLocalizedText en="Comparative dashboard" es="Dashboard comparativo" />}
+              sub={
+                <SignalLocalizedText
+                  en="Output #01 reads the existing T&B comparative brief: heatmap, ownership ranking and trigger/barrier split by entity."
+                  es="El output #01 lee el comparativo T&B existente: heatmap, ownership ranking y split trigger/barrier por entidad."
+                />
+              }
+            />
+            <DemoModeSection locked={demoLocked("tb_comparative_dashboard")} label="T&B Comparative">
+              {viewModel.competitive.dashboard ? (
+                <ComparativeDashboard dashboard={viewModel.competitive.dashboard} />
+              ) : (
+                <FindingNotice
+                  icon="layers"
+                  title="Comparative dashboard pendiente."
+                  body="Este módulo aparece cuando el análisis T&B trae comparative_brief con entidades y presencia de findings."
+                />
+              )}
+            </DemoModeSection>
+          </section>
+        ) : null}
+
+        {moduleEnabled("competitive_tb_matrix") ? (
+          <section className="signal-section" data-signal-section="competitive-tb-matrix" hidden id="competitive-tb-matrix">
+            <SectionHead
+              eyebrow="Competitive T&B Matrix"
+              title={<SignalLocalizedText en="Triggers and barriers by entity" es="Triggers y barreras por entidad" />}
+              sub={
+                <SignalLocalizedText
+                  en="Output #11 keeps the dense competitive matrix separate from the broader intelligence narrative."
+                  es="El output #11 mantiene la matriz competitiva densa separada de la narrativa general de inteligencia."
+                />
+              }
+            />
+            <DemoModeSection locked={demoLocked("competitive_tb_matrix")} label="Competitive T&B Matrix">
+              {viewModel.methodologyBlocks.competitive_tb_matrix.findings.length > 0 ? (
+                <CompetitiveTbMatrix block={viewModel.methodologyBlocks.competitive_tb_matrix} />
+              ) : (
+                <FindingNotice
+                  icon="layers"
+                  title="Competitive T&B Matrix pendiente."
+                  body="La matriz necesita findings comparativos atribuidos por entidad en el comparative_brief."
+                />
+              )}
+            </DemoModeSection>
+          </section>
+        ) : null}
+
         {moduleEnabled("action_studio") ? (
           <section className="signal-section" data-signal-section="tb-action-studio" hidden id="tb-action-studio">
             <SectionHead
@@ -275,7 +565,11 @@ export default async function SignalOutputPage({
               }
             />
             <DemoModeSection locked={demoLocked("corpus_view")} label="Corpus View">
-              <SignalCorpusExplorer mentions={mentionsSample} outputId={output.id} />
+              <SignalCorpusExplorer
+                mentions={mentionsSample}
+                outputId={output.id}
+                strictRelational={strictRelational}
+              />
             </DemoModeSection>
           </section>
         ) : null}
@@ -489,7 +783,7 @@ export default async function SignalOutputPage({
               <QualityBoundariesPanel
                 clientBoundaries={viewModel.clientBoundaries}
                 limitations={limitations}
-                publishedEvidenceCount={mentionsSample.length}
+                publishedEvidenceCount={relationalOverview?.evidence.finding_citations ?? mentionsSample.length}
                 totalMentions={corpusTotal}
               />
             </DemoModeSection>
@@ -499,13 +793,116 @@ export default async function SignalOutputPage({
         <section className="signal-section" data-signal-section="settings" hidden id="settings">
           <SignalSettingsPanel />
         </section>
+
+        {canManageLiveCorpus ? (
+          <section className="signal-section" data-signal-section="monthly-data" hidden id="monthly-data">
+            <SectionHead
+              eyebrow={<SignalLocalizedText en="Live corpus admin" es="Admin de corpus vivo" />}
+              title={<SignalLocalizedText en="Add monthly data" es="Agregar nuevo corte mensual" />}
+              sub={
+                <SignalLocalizedText
+                  en="Use this to append CSV data to the live corpus before QA. It does not query an external provider or run a costly analysis by itself."
+                  es="Úsalo para sumar CSVs al corpus vivo antes de QA. No consulta un proveedor externo ni corre un análisis costoso por sí solo."
+                />
+              }
+            />
+            <SignalMonthlyDataPanel
+              baseCorpusId={output.baseCorpusId}
+              brandLabel={brandLabel}
+              outputId={output.id}
+              studyCorpusId={output.studyCorpusId}
+              subjectType={output.themeId && !output.brandId ? "theme" : "brand"}
+            />
+          </section>
+        ) : null}
     </SignalReportShell>
   );
+}
+
+function firstSearchValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
 }
 
 /* ============================================================
    Sub-components
    ============================================================ */
+
+function SignalServingUnavailable({ issues }: { issues: SignalServingReadinessIssue[] }) {
+  const visibleIssues = issues.length > 0
+    ? issues
+    : [{ code: "signal_serving_unavailable", message: "El corte publicado no esta listo para servir desde Data OS." }];
+
+  return (
+    <main className="signal-report signal-report--unavailable">
+      <section className="signal-section signal-serving-unavailable">
+        <SectionHead
+          eyebrow="Data OS"
+          title={<SignalLocalizedText en="Published snapshot unavailable" es="Snapshot publicado no disponible" />}
+          sub={
+            <SignalLocalizedText
+              en="Signal stopped before rendering because the governed relational contract is incomplete. The legacy JSON was not used as a fallback."
+              es="Signal se detuvo antes de renderizar porque el contrato relacional gobernado esta incompleto. No se uso el JSON legado como fallback."
+            />
+          }
+        />
+        <div className="signal-serving-warning" role="alert">
+          <Icon name="alert" size={18} />
+          <div>
+            {visibleIssues.map((issue) => (
+              <p key={issue.code}>
+                <strong>{issue.message}</strong>
+                {issue.detail ? <span>{issue.detail}</span> : null}
+              </p>
+            ))}
+          </div>
+        </div>
+      </section>
+    </main>
+  );
+}
+
+function SignalReadingGuide({
+  canManageLiveCorpus,
+  strictRelational,
+}: {
+  canManageLiveCorpus: boolean;
+  strictRelational: boolean;
+}) {
+  return (
+    <section className="signal-reading-guide" aria-label="Signal reading flow">
+      <div>
+        <span>1</span>
+        <strong>Overview</strong>
+        <small>Lectura ejecutiva y métricas del rango activo.</small>
+      </div>
+      <div>
+        <span>2</span>
+        <strong>{strictRelational ? "Snapshot publicado" : "Corpus vivo"}</strong>
+        <small>
+          {strictRelational
+            ? "Menciones, dimensiones y evidencia del corte inmutable."
+            : "Búsqueda real en DB: marca, baseline, fecha y evidencia."}
+        </small>
+      </div>
+      <div>
+        <span>3</span>
+        <strong>Historia</strong>
+        <small>Señales persistentes por mes, no snapshots sueltos.</small>
+      </div>
+      <div>
+        <span>4</span>
+        <strong>Composer</strong>
+        <small>Oportunidades y riesgos deduplicados entre métodos.</small>
+      </div>
+      {canManageLiveCorpus ? (
+        <a href="#monthly-data">
+          <Icon name="upload" size={14} />
+          Nuevo corte
+        </a>
+      ) : null}
+    </section>
+  );
+}
 
 function SectionHead({ eyebrow, title, sub }: { eyebrow: ReactNode; title: ReactNode; sub?: ReactNode }) {
   return (
@@ -721,6 +1118,338 @@ function OpportunitiesPanel({
   return <SignalOpportunitiesExplorer findings={findings} opportunities={opportunities} />;
 }
 
+function EngineMethodologyPanel({
+  block,
+  editorialActive = false
+}: {
+  block: ReturnType<typeof adaptTbSignalPayload>["engineBlock"];
+  editorialActive?: boolean;
+}) {
+  if (!block) return null;
+  const topFindings = block.findings.slice(0, 6);
+  const topCharts = block.charts.slice(0, 6);
+  return (
+    <section className="engine-methodology-panel">
+      <header>
+        <div>
+          <p className="signal-eyebrow">{prettifyKey(block.methodology_slug)}</p>
+          <h3>{block.title}</h3>
+          {block.summary ? <p>{block.summary}</p> : null}
+        </div>
+        <dl>
+          <div><dt>Findings</dt><dd>{block.findings.length}</dd></div>
+          <div><dt>Charts</dt><dd>{block.charts.length}</dd></div>
+        </dl>
+      </header>
+      {block.methodology_view && !editorialActive ? <EngineMethodologyViewPanel view={block.methodology_view} /> : null}
+      {topCharts.length > 0 ? (
+        <div className="engine-methodology-charts">
+          {topCharts.map((chart) => (
+            <EngineChartPreview chart={chart} key={chart.chart_id} />
+          ))}
+        </div>
+      ) : editorialActive ? (
+        <FindingNotice
+          icon="info"
+          title="No charts selected for this lens."
+          body="The Composer editorial cut keeps this lens available but hides its charts from the published reading."
+        />
+      ) : null}
+      {topFindings.length > 0 ? (
+        <div className="engine-methodology-findings">
+          {topFindings.map((finding) => (
+            <article key={finding.finding_id}>
+              <header>
+                <strong>{finding.title}</strong>
+                <span>{confidenceLabel(finding.confidence)}</span>
+              </header>
+              <p>{Object.entries(finding.dimensions).slice(0, 3).map(([key, value]) => `${prettifyKey(key)}: ${String(value)}`).join(" · ")}</p>
+              <small>{finding.evidence_count} evidence · score {finding.score ?? "n/a"}</small>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <FindingNotice icon="info" title="Engine block without findings yet." body={block.limitations[0] || "This methodology did not publish enough findings for the selected corpus."} />
+      )}
+    </section>
+  );
+}
+
+function EngineMethodologyViewPanel({
+  view
+}: {
+  view: NonNullable<NonNullable<ReturnType<typeof adaptTbSignalPayload>["engineBlock"]>["methodology_view"]>;
+}) {
+  return (
+    <div className="engine-methodology-view">
+      <header>
+        <div>
+          <span>{prettifyKey(view.readiness.status)}</span>
+          <strong>{view.title}</strong>
+          {view.primary_question ? <p>{view.primary_question}</p> : null}
+        </div>
+        {view.readiness.missing.length > 0 ? (
+          <small>Missing: {view.readiness.missing.join(", ")}</small>
+        ) : (
+          <small>{view.readiness.reason}</small>
+        )}
+      </header>
+      {view.cards.length > 0 ? (
+        <div className="engine-methodology-view__cards">
+          {view.cards.map((card) => (
+            <article key={card.label}>
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+              <small>{card.detail}</small>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {view.rows.length > 0 ? (
+        <div className="engine-methodology-view__rows">
+          {view.rows.slice(0, 8).map((row, index) => (
+            <article key={`${row.label}-${row.axis ?? "axis"}-${index}`}>
+              <div>
+                <strong>{row.label}</strong>
+                <span>{row.axis ?? row.entity ?? "sin eje"}</span>
+              </div>
+              <small>{row.evidence_count} ev. · score {row.score ?? "n/a"} · {confidenceLabel(row.confidence)}</small>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {view.conclusions.length > 0 ? (
+        <div className="engine-methodology-view__conclusions">
+          {view.conclusions.slice(0, 4).map((item, index) => (
+            <article key={`${item.kind}-${index}`}>
+              <span>{prettifyKey(item.kind)}</span>
+              <strong>{item.title}</strong>
+              <p>{item.detail}</p>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function EngineChartPreview({ chart }: { chart: EngineChart }) {
+  const rows = arrayValue(chart.data).map(asRecord);
+  const confidenceCounts = asRecord(chart.data);
+  const maxScore = Math.max(1, ...rows.map((row) => Number(row.score ?? row.frequency ?? row.share_pct ?? 0)));
+
+  if (chart.type === "confidence_badge") {
+    const total = Number(confidenceCounts.alta ?? 0) + Number(confidenceCounts.media ?? 0) + Number(confidenceCounts.baja_direccional ?? 0);
+    const segments = [
+      { key: "alta", label: "High", count: Number(confidenceCounts.alta ?? 0) },
+      { key: "media", label: "Medium", count: Number(confidenceCounts.media ?? 0) },
+      { key: "baja_direccional", label: "Directional", count: Number(confidenceCounts.baja_direccional ?? 0) }
+    ].filter((segment) => segment.count > 0);
+    return (
+      <article className="engine-chart-preview engine-chart-preview--confidence">
+        <EngineChartPreviewHeader chart={chart} />
+        <div className="engine-confidence-strip">
+          {segments.map((segment) => (
+            <span
+              className={`engine-confidence-strip__segment engine-confidence-strip__segment--${segment.key}`}
+              key={segment.key}
+              style={{ width: `${Math.max(10, (segment.count / Math.max(1, total)) * 100)}%` }}
+            >
+              {segment.label} · {segment.count}
+            </span>
+          ))}
+        </div>
+      </article>
+    );
+  }
+
+  if (chart.type === "stacked_share") {
+    const groups = groupRows(rows, (row) => stringValue(row.narrative) || stringValue(row.entity) || stringValue(row.name) || "signal");
+    return (
+      <article className="engine-chart-preview engine-chart-preview--stacked">
+        <EngineChartPreviewHeader chart={chart} />
+        <div className="engine-stacked-preview">
+          {groups.slice(0, 5).map(([group, groupRows]) => {
+            const total = Math.max(1, groupRows.reduce((sum, row) => sum + Number(row.share_pct ?? row.frequency ?? 0), 0));
+            return (
+              <div key={group}>
+                <strong>{truncate(group, 44)}</strong>
+                <span>
+                  {groupRows.slice(0, 4).map((row, index) => {
+                    const value = Number(row.share_pct ?? row.frequency ?? 0);
+                    return (
+                      <i
+                        className={`engine-stacked-segment engine-stacked-segment--${index % 4}`}
+                        key={`${group}-${stringValue(row.entity)}-${index}`}
+                        style={{ width: `${Math.max(8, (value / total) * 100)}%` }}
+                        title={`${stringValue(row.entity) || stringValue(row.advocacy_class) || "segment"} · ${value.toFixed(value > 10 ? 0 : 1)}`}
+                      />
+                    );
+                  })}
+                </span>
+                <small>{groupRows.length} segments · {fmtCompact(total)} total</small>
+              </div>
+            );
+          })}
+        </div>
+      </article>
+    );
+  }
+
+  if (chart.type === "diverging_bar") {
+    const maxAbs = Math.max(1, ...rows.map((row) => Math.abs(Number(row.advocacy_proxy ?? row.risk_score ?? row.score ?? 0))));
+    return (
+      <article className="engine-chart-preview engine-chart-preview--diverging">
+        <EngineChartPreviewHeader chart={chart} />
+        <div className="engine-diverging-preview">
+          {rows.slice(0, 7).map((row, index) => {
+            const value = Number(row.advocacy_proxy ?? row.risk_score ?? row.score ?? 0);
+            return (
+              <div key={`${stringValue(row.finding_key)}-${index}`}>
+                <span>{truncate(stringValue(row.theme) || stringValue(row.name), 36)}</span>
+                <b>
+                  <i
+                    className={value < 0 ? "is-negative" : "is-positive"}
+                    style={{ width: `${Math.max(6, (Math.abs(value) / maxAbs) * 50)}%` }}
+                  />
+                </b>
+                <small>{Number.isFinite(value) ? value.toFixed(value > 10 ? 0 : 1) : "n/a"}</small>
+              </div>
+            );
+          })}
+        </div>
+      </article>
+    );
+  }
+
+  if (chart.type === "gauge") {
+    return (
+      <article className="engine-chart-preview engine-chart-preview--gauge">
+        <EngineChartPreviewHeader chart={chart} />
+        <div className="engine-gauge-preview">
+          {rows.slice(0, 5).map((row, index) => {
+            const trust = Math.max(0, Math.min(100, Number(row.trust_score ?? row.score ?? 0)));
+            const risk = Math.max(0, Number(row.risk_score ?? 0));
+            return (
+              <div key={`${stringValue(row.finding_key)}-${index}`}>
+                <header>
+                  <strong>{truncate(stringValue(row.entity) || stringValue(row.name), 42)}</strong>
+                  <small>{trust.toFixed(0)} trust · {fmtCompact(risk)} risk</small>
+                </header>
+                <span><i style={{ width: `${trust}%` }} /></span>
+              </div>
+            );
+          })}
+        </div>
+      </article>
+    );
+  }
+
+  if (chart.type === "timeline") {
+    return (
+      <article className="engine-chart-preview engine-chart-preview--timeline">
+        <EngineChartPreviewHeader chart={chart} />
+        <div className="engine-timeline-preview">
+          {rows.slice(0, 8).map((row, index) => (
+            <div key={`${stringValue(row.finding_key)}-${index}`}>
+              <span>{stringValue(row.period) || String(index + 1)}</span>
+              <i style={{ height: `${Math.max(8, (Number(row.frequency ?? 0) / maxScore) * 100)}%` }} />
+              <small>{fmtCompact(Number(row.frequency ?? 0))}</small>
+            </div>
+          ))}
+        </div>
+      </article>
+    );
+  }
+
+  if (chart.type === "waterfall") {
+    return (
+      <article className="engine-chart-preview engine-chart-preview--waterfall">
+        <EngineChartPreviewHeader chart={chart} />
+        <div className="engine-waterfall-preview">
+          {rows.slice(0, 7).map((row, index) => {
+            const blocker = Number(row.choke_score ?? row.frequency ?? 0);
+            const accelerator = Number(row.accelerator_score ?? 0);
+            const max = Math.max(1, blocker, accelerator);
+            return (
+              <div key={`${stringValue(row.finding_key)}-${index}`}>
+                <span>{truncate(stringValue(row.phase) || stringValue(row.name), 38)}</span>
+                <b><i className="is-blocker" style={{ width: `${Math.max(4, (blocker / max) * 100)}%` }} /></b>
+                <b><i className="is-accelerator" style={{ width: `${Math.max(4, (accelerator / max) * 100)}%` }} /></b>
+              </div>
+            );
+          })}
+        </div>
+      </article>
+    );
+  }
+
+  if (["matrix_2x2", "heatmap", "radar", "radial", "wave_plot", "scatter_effort_impact", "bubble_field"].includes(chart.type)) {
+    return (
+      <article className="engine-chart-preview engine-chart-preview--matrix">
+        <EngineChartPreviewHeader chart={chart} />
+        <div className="engine-matrix-preview">
+          {rows.slice(0, 9).map((row, index) => {
+            const score = Number(row.value_score ?? row.choke_score ?? row.risk_score ?? row.score ?? row.intensity ?? row.frequency ?? 0);
+            return (
+              <span
+                key={`${stringValue(row.finding_key)}-${index}`}
+                style={{ opacity: Math.max(0.35, Math.min(1, score / maxScore)) }}
+                title={stringValue(row.name)}
+              >
+                <strong>{truncate(stringValue(row.benefit) || stringValue(row.phase) || stringValue(row.name), 34)}</strong>
+                <small>{stringValue(row.cost) || stringValue(row.friction_type) || stringValue(row.y) || `${fmtCompact(Number(row.frequency ?? row.evidence_count ?? 0))} ev.`}</small>
+              </span>
+            );
+          })}
+        </div>
+      </article>
+    );
+  }
+
+  if (chart.type === "evidence_list" || chart.type === "tension_card") {
+    return (
+      <article className="engine-chart-preview engine-chart-preview--list">
+        <EngineChartPreviewHeader chart={chart} />
+        {rows.slice(0, 4).map((row, index) => (
+          <p key={`${stringValue(row.finding_key)}-${index}`}>
+            <strong>{truncate(stringValue(row.name), 48)}</strong>
+            <span>{Object.entries(asRecord(row.dimensions)).slice(0, 2).map(([key, value]) => `${prettifyKey(key)}: ${String(value)}`).join(" · ")}</span>
+          </p>
+        ))}
+      </article>
+    );
+  }
+
+  return (
+    <article className="engine-chart-preview engine-chart-preview--bars">
+      <EngineChartPreviewHeader chart={chart} />
+      <div className="engine-bar-preview">
+        {rows.slice(0, 6).map((row, index) => {
+          const value = Number(row.score ?? row.share_pct ?? row.frequency ?? 0);
+          return (
+            <div key={`${stringValue(row.finding_key)}-${index}`}>
+              <span>{truncate(stringValue(row.name), 42)}</span>
+              <i style={{ width: `${Math.max(6, (value / maxScore) * 100)}%` }} />
+              <small>{Number.isFinite(value) ? value.toFixed(value > 10 ? 0 : 2) : "n/a"}</small>
+            </div>
+          );
+        })}
+      </div>
+    </article>
+  );
+}
+
+function EngineChartPreviewHeader({ chart }: { chart: EngineChart }) {
+  return (
+    <header>
+      <span>{prettifyKey(chart.type)}</span>
+      <strong>{chart.title}</strong>
+      <small>{confidenceLabel(chart.confidence)} · {chart.evidence_ids.length} evidence links</small>
+    </header>
+  );
+}
+
 function CompetitivePanel({
   brandName,
   competitive,
@@ -746,7 +1475,6 @@ function CompetitivePanel({
 
   const presence = competitive.finding_entity_presence.map(asRecord);
   const gaps = competitive.gaps.map(asRecord);
-  const dashboard = competitive.dashboard;
   const brandCount = competitive.entities.find((entity) => entity.entity_kind === "primary_brand")?.mention_count ?? 0;
   const competitorCount = competitive.entities.find((entity) => entity.entity_kind === "competitor_pool")?.mention_count ?? 0;
   const categoryCount = competitive.entities.find((entity) => entity.entity_kind === "category")?.mention_count ?? 0;
@@ -760,7 +1488,7 @@ function CompetitivePanel({
     {
       key: "brand_owned",
       title: "Brand-owned",
-      description: "Where first direct is visibly implicated or can credibly own the move.",
+      description: `Where ${brandName} is visibly implicated or can credibly own the move.`,
       items: presence.filter((item) => stringValue(item.ownership) === "brand_owned" || Number(item.brand_mentions ?? 0) > Number(item.competitor_mentions ?? 0))
     },
     {
@@ -828,10 +1556,6 @@ function CompetitivePanel({
           {ownershipInsight}
         </p>
       </section>
-
-      {dashboard ? (
-        <ComparativeDashboard dashboard={dashboard} />
-      ) : null}
 
       <section className="competitive-answer competitive-answer--benchmark">
         <div>
@@ -952,6 +1676,19 @@ function CompetitivePanel({
 function ComparativeDashboard({ dashboard }: { dashboard: NonNullable<ReturnType<typeof adaptTbSignalPayload>["competitive"]["dashboard"]> }) {
   const topEntities = dashboard.entity_finding_matrix.slice(0, 8);
   const ownershipRows = dashboard.ownership_rankings.slice(0, 5);
+  const splitChart = dashboard.charts.find((chart) => chart.chart_id === "tb-comparative-trigger-barrier-split");
+  const triggerBarrierRows = arrayValue(splitChart?.data).map(asRecord).slice(0, 8);
+  const maxSplit = Math.max(
+    1,
+    ...triggerBarrierRows.flatMap((row) => [Number(row.triggers ?? 0), Number(row.barriers ?? 0)])
+  );
+  const conclusionCards = [
+    { label: "Brand owned triggers", items: dashboard.conclusions.brand_owned_triggers },
+    { label: "Competitor owned triggers", items: dashboard.conclusions.competitor_owned_triggers },
+    { label: "Category-wide barriers", items: dashboard.conclusions.category_wide_barriers },
+    { label: "Whitespace", items: dashboard.conclusions.whitespace },
+    { label: "Actionable gaps", items: dashboard.conclusions.gaps_accionables }
+  ].filter((card) => card.items.length > 0);
 
   return (
     <section className="comparative-dashboard">
@@ -982,7 +1719,9 @@ function ComparativeDashboard({ dashboard }: { dashboard: NonNullable<ReturnType
                   <p key={`${entity.entity_id}-${finding.finding_id}`}>
                     <span style={{ width: `${Math.max(8, Math.min(100, finding.share_pct))}%` }} />
                     <strong>{finding.finding_name}</strong>
-                    <em>{fmtCompact(finding.mention_count)} · {Math.round(finding.share_pct)}%</em>
+                    <em>
+                      {fmtCompact(finding.mention_count)} · {Math.round(finding.share_pct)}% · {confidenceLabel(finding.confidence)}
+                    </em>
                   </p>
                 ))}
               </div>
@@ -1000,13 +1739,144 @@ function ComparativeDashboard({ dashboard }: { dashboard: NonNullable<ReturnType
             </article>
           ))}
         </section>
+
+        {triggerBarrierRows.length > 0 ? (
+          <section className="comparative-trigger-split">
+            <h4>Trigger / barrier split</h4>
+            {triggerBarrierRows.map((row) => {
+              const triggers = Number(row.triggers ?? 0);
+              const barriers = Number(row.barriers ?? 0);
+              const entityName = stringValue(row.entity_name) || "Entity";
+              return (
+                <article key={stringValue(row.entity_id) || entityName}>
+                  <header>
+                    <span>{entityName}</span>
+                    <small>{fmtCompact(triggers + barriers)}</small>
+                  </header>
+                  <div>
+                    <i style={{ width: `${Math.max(4, (triggers / maxSplit) * 100)}%` }} />
+                    <b style={{ width: `${Math.max(4, (barriers / maxSplit) * 100)}%` }} />
+                  </div>
+                  <footer>
+                    <span>{fmtCompact(triggers)} triggers</span>
+                    <span>{fmtCompact(barriers)} barriers</span>
+                  </footer>
+                </article>
+              );
+            })}
+          </section>
+        ) : null}
       </div>
+      {conclusionCards.length > 0 ? (
+        <div className="comparative-conclusions">
+          {conclusionCards.slice(0, 5).map((card) => (
+            <article key={card.label}>
+              <span>{card.label}</span>
+              <strong>{card.items.length}</strong>
+              <p>
+                {card.items
+                  .slice(0, 2)
+                  .map((item) => stringValue(asRecord(item).finding_name))
+                  .filter(Boolean)
+                  .join(" · ") || "Evidence is directional."}
+              </p>
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function CompetitiveTbMatrix({ block }: { block: ReturnType<typeof adaptTbSignalPayload>["methodologyBlocks"]["competitive_tb_matrix"] }) {
+  if (!block.findings.length) return null;
+  const topFindings = block.findings.slice(0, 10);
+  const topRankings = block.rankings.filter((ranking) => ranking.owned_findings_count > 0).slice(0, 5);
+  const playbookCards = [
+    { label: "Disputable", items: block.disputable },
+    { label: "Do not copy", items: block.do_not_copy },
+    { label: "Exclusive barriers", items: block.exclusive_barriers }
+  ].filter((card) => card.items.length > 0);
+
+  return (
+    <section className="competitive-tb-matrix">
+      <header>
+        <div>
+          <p className="signal-eyebrow">Competitive T&B Matrix</p>
+          <h3>{block.title}</h3>
+          <p>{block.summary}</p>
+        </div>
+        <dl>
+          <div><dt>Findings</dt><dd>{block.findings.length}</dd></div>
+          <div><dt>Rankings</dt><dd>{topRankings.length}</dd></div>
+        </dl>
+      </header>
+      <div className="competitive-tb-layout">
+        <div className="competitive-tb-table" role="table" aria-label="Competitive trigger and barrier matrix">
+          <div className="competitive-tb-row competitive-tb-row--head" role="row">
+            <span>Finding</span>
+            <span>Dominant entity</span>
+            <span>Share</span>
+            <span>Diff</span>
+            <span>Confidence</span>
+          </div>
+          {topFindings.map((finding) => {
+            const dominant = finding.by_entity[0] ?? null;
+            return (
+              <a className="competitive-tb-row" href={`#${findingAnchor(finding.finding_id)}`} key={finding.finding_id} role="row">
+                <span>
+                  <strong>{finding.finding_name}</strong>
+                  <small>{prettifyKey(finding.polarity)} · {prettifyKey(finding.layer)} · {prettifyKey(finding.ownership)}</small>
+                </span>
+                <span>{dominant?.entity_name ?? finding.dominant_entity_name ?? "Sin entidad"}</span>
+                <span>{dominant ? `${Math.round(dominant.share_pct)}%` : "0%"}</span>
+                <span>{dominant ? formatSignedPct(dominant.differentiation_index) : "0%"}</span>
+                <span>{confidenceLabel(finding.confidence)}</span>
+              </a>
+            );
+          })}
+        </div>
+        <aside className="competitive-tb-rankings">
+          <h4>Dominance ranking</h4>
+          {topRankings.length > 0 ? topRankings.map((ranking) => (
+            <article key={ranking.entity_id}>
+              <strong>{ranking.entity_name}</strong>
+              <span>{ranking.owned_findings_count} owned findings</span>
+              <p>{ranking.strongest_findings.slice(0, 3).join(" · ") || "Sin findings dominantes."}</p>
+            </article>
+          )) : (
+            <p className="competitive-empty">No dominant entity with enough evidence yet.</p>
+          )}
+        </aside>
+      </div>
+      {playbookCards.length > 0 ? (
+        <div className="competitive-tb-playbook">
+          {playbookCards.map((card) => (
+            <article key={card.label}>
+              <span>{card.label}</span>
+              {card.items.slice(0, 3).map((item, index) => {
+                const record = asRecord(item);
+                return (
+                  <p key={`${card.label}-${stringValue(record.finding_id)}-${index}`}>
+                    <strong>{stringValue(record.finding_name) || `Signal ${index + 1}`}</strong>
+                    {stringValue(record.reason)}
+                  </p>
+                );
+              })}
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {block.limitations.length > 0 ? (
+        <p className="competitive-tb-limit">{block.limitations[0]}</p>
+      ) : null}
     </section>
   );
 }
 
 function GenericMethodologyBlocks({ blocks }: { blocks: ReturnType<typeof adaptTbSignalPayload>["methodologyBlocks"] }) {
   const cards = [
+    { key: "competitive_tb", title: blocks.competitive_tb_matrix.title, count: blocks.competitive_tb_matrix.findings.length, copy: "Matriz competitiva de triggers/barriers por entidad." },
     { key: "vpm", title: blocks.vpm.title, count: blocks.vpm.rows.length, copy: "Matriz valor por entidad." },
     { key: "jfm", title: blocks.jfm.title, count: blocks.jfm.rows.length, copy: "Fricciones por fase y entidad." },
     { key: "cultural", title: blocks.cultural_codes.title, count: blocks.cultural_codes.rows.length, copy: "Códigos por categoría y marca." },
@@ -1794,6 +2664,21 @@ function fmtCompact(value: number): string {
   return new Intl.NumberFormat("es-MX", { notation: "compact", maximumFractionDigits: 1 }).format(Number.isFinite(value) ? value : 0);
 }
 
+function groupRows<T>(rows: T[], keyFn: (row: T) => string) {
+  const grouped = new Map<string, T[]>();
+  for (const row of rows) {
+    const key = keyFn(row) || "signal";
+    grouped.set(key, [...(grouped.get(key) ?? []), row]);
+  }
+  return Array.from(grouped.entries());
+}
+
+function formatSignedPct(value: number): string {
+  if (!Number.isFinite(value)) return "0%";
+  const pct = Math.round(value * 100);
+  return `${pct > 0 ? "+" : ""}${pct}%`;
+}
+
 function normalizeConfidence(value: unknown): "alta" | "media" | "baja" {
   const s = String(value ?? "").toLowerCase();
   if (s.startsWith("alt")) return "alta";
@@ -1805,12 +2690,242 @@ function prettifyKey(key: unknown): string {
   return String(key ?? "").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function engineModuleKeyFor(slugOrKind: string | null): SignalModuleKey | null {
+  const normalized = String(slugOrKind ?? "").replace(/_/g, "-");
+  const map: Record<string, SignalModuleKey> = {
+    "competitive-wave": "competitive_wave",
+    "narrative-ownership": "narrative_ownership",
+    "value-perception-matrix": "value_perception",
+    "brand-positioning-map": "brand_positioning",
+    "category-opportunity-map": "category_opportunity",
+    "white-space-analysis": "white_space",
+    "journey-friction-mapping": "journey_friction",
+    "decision-velocity": "decision_velocity",
+    "cultural-codes-decoding": "cultural_codes",
+    "sentiment-advocacy-proxy": "advocacy_proxy",
+    "audience-segment-lens": "audience_segment",
+    "influence-architecture": "influence_architecture",
+    "trust-risk-benchmark": "trust_risk",
+    "evidence-confidence-layer": "evidence_confidence"
+  };
+  return map[normalized] ?? null;
+}
+
+function engineSectionKey(block: EngineMethodologyBlock): string {
+  const slug = String(block.methodology_slug || block.kind || "methodology").replace(/_/g, "-");
+  return `engine-${slug}`;
+}
+
+function engineDisplayLabel(block: EngineMethodologyBlock): string {
+  const slug = String(block.methodology_slug || block.kind || "");
+  const labels: Record<string, string> = {
+    "competitive-wave": "Competitive Wave",
+    "narrative-ownership": "Narrative Ownership",
+    "value-perception-matrix": "VPM",
+    "brand-positioning-map": "Brand Positioning",
+    "category-opportunity-map": "Category Opportunity",
+    "white-space-analysis": "White Space",
+    "journey-friction-mapping": "JFM",
+    "decision-velocity": "Decision Velocity",
+    "cultural-codes-decoding": "Cultural Codes",
+    "sentiment-advocacy-proxy": "Sentiment / Advocacy",
+    "audience-segment-lens": "Audience Segment",
+    "influence-architecture": "Influence Architecture",
+    "trust-risk-benchmark": "Trust & Risk",
+    "evidence-confidence-layer": "Evidence Confidence"
+  };
+  return labels[slug.replace(/_/g, "-")] ?? block.title ?? prettifyKey(slug || "Methodology");
+}
+
+function mergeEngineBlocks(blocks: EngineMethodologyBlock[]): EngineMethodologyBlock[] {
+  const bySlug = new Map<string, EngineMethodologyBlock>();
+  for (const block of blocks) {
+    const slug = String(block.methodology_slug || block.kind || "").replace(/_/g, "-");
+    if (!slug || bySlug.has(slug)) continue;
+    bySlug.set(slug, block);
+  }
+  const priority = [
+    "competitive-wave",
+    "narrative-ownership",
+    "value-perception-matrix",
+    "brand-positioning-map",
+    "category-opportunity-map",
+    "white-space-analysis",
+    "trust-risk-benchmark",
+    "sentiment-advocacy-proxy",
+    "journey-friction-mapping",
+    "decision-velocity",
+    "cultural-codes-decoding",
+    "audience-segment-lens",
+    "influence-architecture",
+    "evidence-confidence-layer"
+  ];
+  return Array.from(bySlug.values()).sort((a, b) => {
+    const aIndex = priority.indexOf(String(a.methodology_slug || a.kind || "").replace(/_/g, "-"));
+    const bIndex = priority.indexOf(String(b.methodology_slug || b.kind || "").replace(/_/g, "-"));
+    return (aIndex === -1 ? 999 : aIndex) - (bIndex === -1 ? 999 : bIndex);
+  });
+}
+
+async function getLiveEngineBlocks(studyCorpusId: string): Promise<EngineMethodologyBlock[]> {
+  try {
+    const result = await pool.query<{
+      methodology_slug: string;
+      meta_json: JsonRecord | null;
+    }>(
+      `
+        SELECT DISTINCT ON (methodology_slug)
+          methodology_slug,
+          meta_json
+        FROM engine_analyses ea
+        WHERE ea.study_corpus_id = $1
+          AND status IN ('needs_review', 'approved')
+          AND meta_json ? 'engine_block'
+          AND COALESCE(meta_json->'engine_coding'->>'fixture', 'false') <> 'true'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM engine_cost_events ece
+            WHERE ece.engine_analysis_id = ea.id
+              AND ece.provider = 'fixture'
+          )
+        ORDER BY methodology_slug, created_at DESC
+      `,
+      [studyCorpusId]
+    );
+
+    return result.rows.flatMap((row) => {
+      if (!isLiveEngineBlockSignalReady(row.meta_json)) return [];
+      const block = normalizeEngineMethodologyBlock(asRecord(row.meta_json).engine_block);
+      return block ? [block as unknown as EngineMethodologyBlock] : [];
+    });
+  } catch (error) {
+    if (isMissingEngineLiveDataError(error)) return [];
+    throw error;
+  }
+}
+
+async function getComposerRenderSelection(outputId: string): Promise<ComposerRenderSelection | null> {
+  try {
+    const result = await pool.query<{
+      selection: JsonRecord | null;
+      draft: JsonRecord | null;
+    }>(
+      `
+        SELECT selection, draft
+        FROM signal_composer_edits
+        WHERE output_id = $1
+        LIMIT 1
+      `,
+      [outputId]
+    );
+    const selection = asRecord(result.rows[0]?.selection);
+    const draft = asRecord(result.rows[0]?.draft);
+    if (Object.keys(selection).length === 0 && Object.keys(draft).length === 0) return null;
+    const selectionHasSignals = Object.prototype.hasOwnProperty.call(selection, "canonicalSignalIds");
+    const draftHasSignals = Object.prototype.hasOwnProperty.call(draft, "selected_canonical_signal_ids");
+    const canonicalSignalIds = selectionHasSignals
+      ? arrayValue(selection.canonicalSignalIds).map(stringValue).filter(Boolean)
+      : arrayValue(draft.selected_canonical_signal_ids).map(stringValue).filter(Boolean);
+    const signalFindingKeys = await loadComposerSignalFindingKeys(canonicalSignalIds);
+    return {
+      active: true,
+      chartKeys: arrayValue(selection.chartKeys).map(stringValue).filter(Boolean),
+      canonicalSignalIds,
+      signalFilteringActive: selectionHasSignals || draftHasSignals,
+      signalFindingKeys,
+      modules: arrayValue(selection.modules).map(stringValue).filter(Boolean)
+    };
+  } catch (error) {
+    if (isMissingEngineLiveDataError(error)) return null;
+    throw error;
+  }
+}
+
+async function loadComposerSignalFindingKeys(canonicalSignalIds: string[]): Promise<string[]> {
+  if (canonicalSignalIds.length === 0) return [];
+  const result = await pool.query<{ finding_key: string | null }>(
+    `
+      SELECT DISTINCT COALESCE(
+        dimensions->>'finding_key',
+        semantic_key,
+        id::text
+      ) AS finding_key
+      FROM canonical_signals
+      WHERE id::text = ANY($1::text[])
+    `,
+    [canonicalSignalIds]
+  );
+  return result.rows.map((row) => stringValue(row.finding_key)).filter(Boolean);
+}
+
+function isLiveEngineBlockSignalReady(metaJson: unknown) {
+  // Delegate to the canonical publish guard so the rendered Signal stays in
+  // lockstep with /api publish checks. This also blocks directional/insufficient
+  // engine blocks (readiness.status !== "beta_ready") that the previous local
+  // check let through, so a thin/directional lens no longer renders client-ready.
+  return validateEnginePublishReadiness(metaJson).ok;
+}
+
+function isMissingEngineLiveDataError(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? (error as { code?: unknown }).code : null;
+  return code === "42P01" || code === "42703";
+}
+
 function fmtDateRange(start: unknown, end: unknown, locale = "es-MX"): string {
   const s = String(start ?? "");
   const e = String(end ?? "");
   const opts: Intl.DateTimeFormatOptions = { month: "short", year: "2-digit" };
   const fmt = (d: string) => (d ? new Date(d).toLocaleDateString(locale, opts) : "");
   return [fmt(s), fmt(e)].filter(Boolean).join(" → ");
+}
+
+function toDateInput(value: unknown) {
+  const raw = String(value ?? "");
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const date = raw ? new Date(raw) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toISOString().slice(0, 10) : "";
+}
+
+async function getLiveCorpusBounds(scopedCorpusIds: string[]) {
+  if (scopedCorpusIds.length === 0) return null;
+  try {
+    const result = await pool.query<{
+      window_start: string | null;
+      window_end: string | null;
+      total_mentions: number;
+    }>(
+      `
+        SELECT
+          min(m.published_at)::date::text AS window_start,
+          max(m.published_at)::date::text AS window_end,
+          count(*)::int AS total_mentions
+        FROM mentions m
+        WHERE m.study_corpus_id = ANY($1::uuid[])
+          AND COALESCE(m.inclusion_status, 'included') <> 'excluded'
+      `,
+      [scopedCorpusIds]
+    );
+    const row = result.rows[0];
+    const start = toDateInput(row?.window_start);
+    const end = toDateInput(row?.window_end);
+    if (!start || !end) return null;
+    return {
+      end,
+      months: countMonthsInclusive(start, end),
+      start,
+      totalMentions: Number(row?.total_mentions ?? 0)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function countMonthsInclusive(start: string, end: string) {
+  const s = new Date(`${start}T00:00:00Z`);
+  const e = new Date(`${end}T00:00:00Z`);
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0;
+  return Math.max(1, (e.getUTCFullYear() - s.getUTCFullYear()) * 12 + e.getUTCMonth() - s.getUTCMonth() + 1);
 }
 
 function truncate(text: string, max: number): string {
@@ -1823,22 +2938,43 @@ function findingAnchor(findingId: string) {
   return `finding-${findingId.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
 }
 
-function buildSignalShellGroups(moduleEnabled: (key: SignalModuleKey) => boolean): SignalShellGroup[] {
+function buildSignalShellGroups(
+  moduleEnabled: (key: SignalModuleKey) => boolean,
+  engineBlocks: EngineMethodologyBlock[] = [],
+  canManageLiveCorpus = false,
+  strictRelational = false
+): SignalShellGroup[] {
   const groups: SignalShellGroup[] = [
     {
+      label: "Live Report",
       sections: [
-        moduleEnabled("overview") ? { key: "overview", label: "Overview", icon: "platform" } : null
+        moduleEnabled("overview") ? { key: "overview", label: "Overview", icon: "platform" } : null,
+        moduleEnabled("corpus_view")
+          ? { key: "corpus-view", label: strictRelational ? "Published Corpus" : "Live Corpus", icon: "message" }
+          : null,
+        moduleEnabled("overview") ? { key: "signal-history", label: "Signal History", icon: "clock" } : null,
+        moduleEnabled("live_composer") ? { key: "live-composer", label: "Composer", icon: "layers" } : null
       ].filter(Boolean) as SignalShellGroup["sections"]
     },
     {
-      label: "Triggers & Barriers",
+      label: "T&B Detail",
       sections: [
         moduleEnabled("tb_decision_field") ? { key: "tb-decision-field", label: "Decision Field" } : null,
         moduleEnabled("opportunities") ? { key: "tb-opportunities", label: "Opportunities" } : null,
         moduleEnabled("competitive_intelligence") ? { key: "competitive", label: "Competitive Intelligence" } : null,
+        moduleEnabled("tb_comparative_dashboard") ? { key: "tb-comparative-dashboard", label: "T&B Comparative" } : null,
+        moduleEnabled("competitive_tb_matrix") ? { key: "competitive-tb-matrix", label: "Competitive T&B Matrix" } : null,
         moduleEnabled("action_studio") ? { key: "tb-action-studio", label: "Action Studio" } : null,
         moduleEnabled("evidence") ? { key: "finding-detail", label: "Evidence" } : null
       ].filter(Boolean) as SignalShellGroup["sections"]
+    },
+    {
+      label: "Methodology Lenses",
+      sections: engineBlocks.map((block) => ({
+        key: engineSectionKey(block),
+        label: engineDisplayLabel(block),
+        icon: "sparkle"
+      }))
     },
     {
       label: "Emerging Patterns",
@@ -1847,9 +2983,8 @@ function buildSignalShellGroups(moduleEnabled: (key: SignalModuleKey) => boolean
       ].filter(Boolean) as SignalShellGroup["sections"]
     },
     {
-      label: "Corpus",
+      label: "Corpus Tools",
       sections: [
-        moduleEnabled("corpus_view") ? { key: "corpus-view", label: "Corpus View", icon: "message" } : null,
         moduleEnabled("corpus_chat") ? { key: "corpus-chat", label: "Corpus Chat", icon: "message" } : null
       ].filter(Boolean) as SignalShellGroup["sections"]
     },
@@ -1862,8 +2997,9 @@ function buildSignalShellGroups(moduleEnabled: (key: SignalModuleKey) => boolean
     {
       label: "Settings",
       sections: [
+        canManageLiveCorpus ? { key: "monthly-data", label: "Add Data", icon: "upload" } : null,
         { key: "settings", label: "Settings", icon: "info" }
-      ]
+      ].filter(Boolean) as SignalShellGroup["sections"]
     }
   ];
 
@@ -1872,9 +3008,27 @@ function buildSignalShellGroups(moduleEnabled: (key: SignalModuleKey) => boolean
 
 const legacySignalModuleAliases: Record<SignalModuleKey, string[]> = {
   overview: ["overview"],
+  live_composer: ["overview"],
+  engine_methodology: ["engine_methodology"],
+  competitive_wave: ["engine_methodology"],
+  narrative_ownership: ["engine_methodology"],
+  value_perception: ["engine_methodology"],
+  brand_positioning: ["engine_methodology"],
+  category_opportunity: ["engine_methodology"],
+  white_space: ["engine_methodology"],
+  journey_friction: ["engine_methodology"],
+  decision_velocity: ["engine_methodology"],
+  cultural_codes: ["engine_methodology"],
+  advocacy_proxy: ["engine_methodology"],
+  audience_segment: ["engine_methodology"],
+  influence_architecture: ["engine_methodology"],
+  trust_risk: ["engine_methodology"],
+  evidence_confidence: ["engine_methodology"],
   tb_decision_field: ["tension_map"],
   opportunities: ["overview", "barriers", "triggers"],
   competitive_intelligence: ["compare"],
+  tb_comparative_dashboard: ["compare"],
+  competitive_tb_matrix: ["compare"],
   action_studio: ["actions"],
   evidence: ["verbatims"],
   quality_boundaries: [],
@@ -1887,7 +3041,7 @@ function isSignalModuleEnabled(manifest: JsonRecord, key: SignalModuleKey, hasV2
   if (hasV2Manifest) return manifest[key] !== false;
   const aliases = legacySignalModuleAliases[key];
   const legacyKey = aliases.find((alias) => Object.prototype.hasOwnProperty.call(manifest, alias));
-  return legacyKey ? manifest[legacyKey] !== false : true;
+  return legacyKey ? manifest[legacyKey] !== false : defaultSignalManifest[key];
 }
 
 function legacyModuleEnabled(manifest: JsonRecord, key: string) {

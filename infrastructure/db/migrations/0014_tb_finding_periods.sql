@@ -21,5 +21,5 @@ FROM (
   GROUP BY c.tb_analysis_id, c.finding_id
 ) stats
 WHERE f.tb_analysis_id = stats.tb_analysis_id
-  AND f.finding_id = stats.finding_id
+  AND f.id = stats.finding_id
   AND (f.period_start IS NULL OR f.period_end IS NULL);

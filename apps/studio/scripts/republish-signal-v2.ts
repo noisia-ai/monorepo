@@ -55,6 +55,11 @@ async function main() {
 
   let regenerated = 0;
   for (const output of candidates) {
+    if (!output.tbAnalysisId) {
+      console.warn(`[skip] ${output.id} is not a T&B output (no tb_analysis_id)`);
+      continue;
+    }
+
     const corpus = await loadCorpusForBuild(output.studyCorpusId);
     if (!corpus) {
       console.warn(`[skip] ${output.id} corpus not found (${output.studyCorpusId})`);
@@ -71,13 +76,13 @@ async function main() {
       ...defaultSignalManifest,
       ...(output.manifest && typeof output.manifest === "object" ? output.manifest : {})
     });
-    const payload = buildSignalPayload({
+    const payload = preserveLiveIntelligenceBlock(buildSignalPayload({
       state,
       corpus,
       manifest,
       headline: output.headline,
       summary: output.summary
-    });
+    }), output.payload);
 
     if (options.apply) {
       await db
@@ -100,6 +105,20 @@ async function main() {
   console.log(
     `${options.apply ? "Republished" : "Would republish"} ${regenerated}/${outputs.length} loaded outputs to Signal payload v${signalPayloadVersion}.`
   );
+}
+
+function preserveLiveIntelligenceBlock<TPayload extends Record<string, unknown>>(
+  nextPayload: TPayload,
+  previousPayload: unknown
+) {
+  const previous = previousPayload && typeof previousPayload === "object"
+    ? previousPayload as Record<string, unknown>
+    : {};
+  const live = previous.live_intelligence && typeof previous.live_intelligence === "object"
+    ? previous.live_intelligence as Record<string, unknown>
+    : {};
+  if (!live.status) return nextPayload;
+  return { ...nextPayload, live_intelligence: live };
 }
 
 async function loadCandidateOutputs(options: CliOptions) {

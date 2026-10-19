@@ -1,0 +1,44 @@
+slug: brand-positioning-map
+name: Brand Positioning Map
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Dónde está posicionada cada marca en la percepción real y qué espacios
+  están saturados o abiertos?
+
+inputs:
+  corpus:
+    minimum_viable: 1200
+    ideal: 4200
+  competitive_corpus:
+    required: true
+    minimum_entities: 3
+
+outputs:
+  - id: perceptual_map
+    name: Perceptual Map
+    type: matrix_2x2
+  - id: attribute_radar
+    name: Attribute Radar
+    type: radar
+  - id: gap_ranking
+    name: Positioning Gaps
+    type: bar_ranking
+
+default_dashboard_blocks:
+  - block_id: perceptual_map
+  - block_id: attribute_radar
+  - block_id: gap_ranking
+  - block_id: evidence_list_top
+
+quality_gates:
+  - id: axis_defined
+    description: "Los ejes perceptuales se declaran y se sostienen con evidencia."
+  - id: attribute_evidence_required
+    description: "Cada atributo publicado tiene citas de soporte."
+  - id: confidence_calibrated
+    description: "Cada posicion lleva confianza."
+
+ai_prompts:
+  engine_spec: brand-positioning-map

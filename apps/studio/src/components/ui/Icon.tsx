@@ -25,6 +25,10 @@ export type IconName =
   | "chevron-down"
   | "play"
   | "upload"
+  | "save"
+  | "trash"
+  | "maximize"
+  | "minimize"
   | "info"
   | "wave"
   | "star";
@@ -228,6 +232,42 @@ export function Icon({ name, size = 16, className, ...props }: IconProps) {
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
           <polyline points="17 8 12 3 7 8" />
           <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+      );
+    case "save":
+      return (
+        <svg {...common} {...props}>
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+          <polyline points="17 21 17 13 7 13 7 21" />
+          <polyline points="7 3 7 8 15 8" />
+        </svg>
+      );
+    case "trash":
+      return (
+        <svg {...common} {...props}>
+          <path d="M3 6h18" />
+          <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+          <path d="M10 11v6" />
+          <path d="M14 11v6" />
+        </svg>
+      );
+    case "maximize":
+      return (
+        <svg {...common} {...props}>
+          <path d="M15 3h6v6" />
+          <path d="M9 21H3v-6" />
+          <path d="M21 3l-7 7" />
+          <path d="M3 21l7-7" />
+        </svg>
+      );
+    case "minimize":
+      return (
+        <svg {...common} {...props}>
+          <path d="M4 14h6v6" />
+          <path d="M20 10h-6V4" />
+          <path d="M14 10l7-7" />
+          <path d="M3 21l7-7" />
         </svg>
       );
     case "info":

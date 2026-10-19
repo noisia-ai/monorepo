@@ -14,5 +14,5 @@ export function getSearchParam(
 
 export function getPositiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Number.isSafeInteger(parsed) && parsed > 0 && parsed <= 2_147_483_647 ? parsed : fallback;
 }

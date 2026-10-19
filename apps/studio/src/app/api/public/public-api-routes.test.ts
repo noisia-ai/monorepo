@@ -10,6 +10,7 @@ console.error = (...args: unknown[]) => {
 };
 
 const routeHandlers = await import("@/lib/reporting/public-route-handlers");
+const publicApi = await import("@/lib/reporting/public-api");
 const openApiRoute = await import("./openapi.yaml/route");
 const readmePersonalizedDocsRoute = await import("../readme/personalized-docs/route");
 
@@ -28,6 +29,7 @@ const output = {
   updatedAt: new Date("2026-06-01T00:00:00.000Z"),
   brandName: "Noisia",
   brandFallbackName: "Noisia",
+  themeName: null,
   methodologyName: "Triggers & Barriers",
   methodologySlug: "triggers-barriers"
 };
@@ -206,11 +208,20 @@ test("public v2 report returns section aliases", async () => {
     getOutput: async () => output,
     buildSection: (_output: unknown, section: string) => ({ section })
   } as never);
+  const engineResponse = await routeHandlers.handlePublicV2ReportGET(request(), params(["sections", "lens-view"]), {
+    authorize: async () => okAuth(),
+    getOutput: async () => output,
+    buildSection: (_output: unknown, section: string) => ({ section })
+  } as never);
   const body = await json(response);
+  const engineBody = await json(engineResponse);
 
   assert.equal(response.status, 200);
   assert.equal((body.meta as Record<string, unknown>).section, "action-cards");
   assert.deepEqual(body.data, { section: "action-cards" });
+  assert.equal(engineResponse.status, 200);
+  assert.equal((engineBody.meta as Record<string, unknown>).section, "methodology-view");
+  assert.deepEqual(engineBody.data, { section: "methodology-view" });
 });
 
 test("public v2 report handles unknown section, not found and build errors", async () => {
@@ -238,6 +249,263 @@ test("public v2 report handles unknown section, not found and build errors", asy
   assert.equal((await json(notFoundResponse)).error, "report_not_found");
   assert.equal(serverResponse.status, 500);
   assert.equal((await json(serverResponse)).error, "server_error");
+});
+
+test("public reporting uses theme name for brandless industry reports", () => {
+  const themeOutput = {
+    ...output,
+    brandName: null,
+    brandFallbackName: null,
+    themeName: "Telefonía Móvil México",
+    payload: {
+      schema_version: 4,
+      report: {
+        headline: "Telefonía móvil en México",
+        methodology_name: "Triggers & Barriers",
+        methodology_slug: "triggers-barriers"
+      },
+      metrics: {},
+      aggregates: { corpus: { window: {} } }
+    }
+  };
+
+  const summary = publicApi.buildReportingDataset(themeOutput as never, "summary")[0] as Record<string, unknown>;
+  const document = publicApi.buildReportingV2Document(themeOutput as never) as Record<string, unknown>;
+  const metadata = document.metadata as Record<string, unknown>;
+  const sections = document.sections as Record<string, Record<string, unknown>>;
+  const overview = sections.overview as Record<string, unknown>;
+  const report = overview.report as Record<string, unknown>;
+
+  assert.equal(summary.brand_name, "Telefonía Móvil México");
+  assert.equal(metadata.brand_name, "Telefonía Móvil México");
+  assert.equal(report.brand_name, "Telefonía Móvil México");
+});
+
+test("public v1 Signal Pulse datasets expose safe legacy rows", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: {},
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse", business_question: "Que movemos?" },
+      executive_read: { headline: "Mover el claim principal", body: "Hay traccion." },
+      periods: [
+        { label: "2026-05", period_start: "2026-05-01", period_end: "2026-05-31", coverage: { conversation: 42, by_source: { tiktok: 30, instagram: 12 }, performance: 18 } }
+      ],
+      signals: [{ id: "s1", title: "Confianza en entrega", signal_type: "opportunity", lifecycle_state: "accelerating", impact_v1: "71", volume: 42, evidence_count: 3, confidence: "alta" }],
+      marketing_moves: [{ id: "m1", move_type: "amplify", action_text: "Probar claim de entrega", signal_refs: ["s1"], owner_suggestion: "Brand", confidence: "alta", measurement_suggestion: "CTR" }],
+      evidence: [{ evidence_id: "e1", mention_id: "mention-1", signal_id: "s1", quote: "Llego rapido", platform: "tiktok", is_protagonist: true }],
+      performance: { campaigns: [{ external_id: "ad-1", spend: 1000 }] }
+    }
+  };
+
+  const summary = publicApi.buildReportingDataset(signalPulseOutput as never, "summary");
+  const findings = publicApi.buildReportingDataset(signalPulseOutput as never, "findings");
+  const recommendations = publicApi.buildReportingDataset(signalPulseOutput as never, "recommendations");
+  const timeline = publicApi.buildReportingDataset(signalPulseOutput as never, "time-series-monthly");
+  const summaryRow = summary[0] as Record<string, unknown>;
+  const findingRow = findings[0] as Record<string, unknown>;
+  const recommendationRow = recommendations[0] as Record<string, unknown>;
+
+  assert.equal(summaryRow.headline, "Mover el claim principal");
+  assert.equal(findingRow.finding_name, "Confianza en entrega");
+  assert.equal(recommendationRow.recommendation_text, "Probar claim de entrega");
+  assert.deepEqual(timeline, [{ output_id: "out_123", month: "2026-05", mention_count: 42 }]);
+  assert.doesNotMatch(JSON.stringify([summary, findings, recommendations, timeline]), /performance|spend|campaign/i);
+});
+
+test("public v1 Signal Pulse evidence obeys client visibility", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: { evidence: false },
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse" },
+      periods: [],
+      signals: [],
+      marketing_moves: [],
+      evidence: [{ evidence_id: "e1", quote: "No deberia salir" }]
+    }
+  };
+
+  const evidence = publicApi.buildReportingDataset(signalPulseOutput as never, "evidence-sample");
+
+  assert.deepEqual(evidence, []);
+});
+
+test("public v2 document exposes engine methodology sections", () => {
+  const engineOutput = {
+    ...output,
+    manifest: { engine_methodology: true },
+    methodologySlug: "narrative-ownership",
+    payload: {
+      schema_version: 4,
+      report: {
+        headline: "Narrativas de telefonía",
+        methodology_name: "Narrative Ownership",
+        methodology_slug: "narrative-ownership"
+      },
+      metrics: {},
+      aggregates: { corpus: { window: {} } },
+      engine_block: {
+        kind: "narrative-ownership",
+        title: "Narrative Ownership",
+        methodology_slug: "narrative-ownership",
+        summary: "Narrativas listas",
+        methodology_view: {
+          kind: "narrative-ownership",
+          title: "Narrative ownership board",
+          primary_question: "Quien posee cada narrativa?",
+          readiness: { status: "directional", reason: "QA pendiente", missing: ["diversidad"] },
+          cards: [],
+          rows: [{ finding_id: "narrative-1", label: "cobertura", axis: "positiva", evidence_count: 2, confidence: "media", dimensions: {} }],
+          conclusions: []
+        },
+        charts: [],
+        findings: [],
+        evidence_index: [],
+        limitations: []
+      }
+    }
+  };
+
+  const document = publicApi.buildReportingV2Document(engineOutput as never) as Record<string, unknown>;
+  const sections = document.sections as Record<string, unknown>;
+  const methodologyView = publicApi.buildReportingV2Section(engineOutput as never, "methodology-view") as Record<string, unknown>;
+
+  assert.equal((sections.engine_methodology as Record<string, unknown>).methodology_slug, "narrative-ownership");
+  assert.equal(methodologyView.title, "Narrative ownership board");
+});
+
+test("public v2 section inventory only advertises engine sections when engine block exists", () => {
+  const normalSections = publicApi.getEnabledV2Sections({}, { schema_version: 4, report: {} });
+  const engineSections = publicApi.getEnabledV2Sections(
+    { engine_methodology: true },
+    { schema_version: 4, engine_block: { kind: "narrative-ownership" } }
+  );
+
+  assert.equal(normalSections.includes("engine-methodology"), false);
+  assert.equal(engineSections.includes("engine-methodology"), true);
+  assert.equal(engineSections.includes("methodology-view"), true);
+});
+
+test("public v2 section inventory honors method-specific engine module keys", () => {
+  for (const moduleKey of [
+    "competitive_wave",
+    "narrative_ownership",
+    "value_perception",
+    "brand_positioning",
+    "category_opportunity",
+    "white_space",
+    "journey_friction",
+    "decision_velocity",
+    "cultural_codes",
+    "advocacy_proxy",
+    "audience_segment",
+    "influence_architecture",
+    "trust_risk",
+    "evidence_confidence"
+  ]) {
+    const sections = publicApi.getEnabledV2Sections(
+      { [moduleKey]: true },
+      { schema_version: 4, engine_block: { methodology_slug: "narrative-ownership" } }
+    );
+
+    assert.equal(sections.includes("engine-methodology"), true, moduleKey);
+    assert.equal(sections.includes("methodology-view"), true, moduleKey);
+  }
+});
+
+test("public v2 Signal Pulse document hides paid data and internal support by default", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: {},
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse", business_question: "Que movemos?" },
+      executive_read: { headline: "Mover el claim principal", body: "Hay traccion.", action: "Probar contenido." },
+      periods: [{
+        id: "p1",
+        period_start: "2026-05-01",
+        period_end: "2026-05-31",
+        coverage: {
+          conversation: 42,
+          performance: 18,
+          spend: 1000,
+          impressions: 9000,
+          by_source: { tiktok: 30 }
+        }
+      }],
+      signals: [{ id: "s1", title: "Confianza en entrega" }],
+      marketing_moves: [{ id: "m1", action_text: "Probar claim de entrega" }],
+      evidence: [{ evidence_id: "e1", quote: "Llego rapido" }],
+      performance: { campaigns: [{ external_id: "ad-1", spend: 1000 }] },
+      chart_refs: {
+        source_coverage_strip: {
+          rows: [{ source: "TikTok", coverage: { conversation: 42, performance: 18, spend: 1000 } }]
+        },
+        paid_performance: {
+          rows: [{ campaign: "ad-1", spend: 1000 }]
+        }
+      },
+      sources: [{ id: "src-1", name: "Meta export" }],
+      quality_gates: [{ id: "performance_structured", passed: true }],
+      cost: { estimated_cost_usd: 1.2 }
+    }
+  };
+
+  const document = publicApi.buildReportingV2Document(signalPulseOutput as never) as Record<string, unknown>;
+  const sections = document.sections as Record<string, unknown>;
+  const paid = publicApi.buildReportingV2Section(signalPulseOutput as never, "paid-organic") as Record<string, unknown>;
+  const sources = publicApi.buildReportingV2Section(signalPulseOutput as never, "sources") as Record<string, unknown>;
+  const overview = publicApi.buildReportingV2Section(signalPulseOutput as never, "overview") as Record<string, unknown>;
+  const enabled = publicApi.getEnabledV2Sections(signalPulseOutput.manifest, signalPulseOutput.payload, signalPulseOutput.visibilityConfig);
+
+  assert.equal(enabled.includes("paid-organic"), false);
+  assert.equal(enabled.includes("sources"), false);
+  assert.equal((sections.paid_organic as Record<string, unknown>).locked, true);
+  assert.equal((sections.sources as Record<string, unknown>).locked, true);
+  assert.equal(paid.reason, "not_authorized_for_client_export");
+  assert.equal(sources.reason, "not_authorized_for_client_export");
+  assert.doesNotMatch(JSON.stringify(overview), /performance|spend|impressions|paid_performance|estimated_cost_usd/i);
+});
+
+test("public v2 Signal Pulse document exposes paid data only with explicit visibility", () => {
+  const signalPulseOutput = {
+    ...output,
+    outputType: "signal_pulse_dashboard",
+    kind: "signal_pulse",
+    methodologyName: "Signal Pulse",
+    methodologySlug: "signal-pulse",
+    visibilityConfig: { paid_data: true },
+    payload: {
+      kind: "signal_pulse",
+      report: { title: "Pulse" },
+      periods: [],
+      signals: [],
+      marketing_moves: [],
+      evidence: [],
+      performance: { campaigns: [{ external_id: "ad-1", spend: 1000 }] }
+    }
+  };
+
+  const paid = publicApi.buildReportingV2Section(signalPulseOutput as never, "paid-organic") as Record<string, unknown>;
+  const enabled = publicApi.getEnabledV2Sections(signalPulseOutput.manifest, signalPulseOutput.payload, signalPulseOutput.visibilityConfig);
+
+  assert.equal(enabled.includes("paid-organic"), true);
+  assert.deepEqual(paid, { campaigns: [{ external_id: "ad-1", spend: 1000 }] });
 });
 
 test("public OpenAPI route serves the YAML specification", async () => {

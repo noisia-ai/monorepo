@@ -1,11 +1,12 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 import { corpusSnapshots } from "@noisia/db";
 import { forbidden, unauthorized } from "@/lib/api/responses";
 import { canManageCorpus } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
+import { advanceCorpusRevision } from "@/lib/corpus/revision";
 import { getCorpusForUser } from "@/lib/data/corpora";
-import { db } from "@/lib/db";
+import { db, pool } from "@/lib/db";
 
 /**
  * Restore a snapshot: rewrite inclusion_status for every mention in the
@@ -37,25 +38,56 @@ export async function POST(
     return Response.json({ error: "not_found", message: "Snapshot no encontrado." }, { status: 404 });
   }
 
-  // Two updates in sequence — could be wrapped in a transaction but for an MVP
-  // the brief inconsistency window is acceptable on a single-tenant workspace.
-  await db.execute(sql`
-    UPDATE mentions
-    SET inclusion_status = 'included',
-        exclusion_reason = NULL,
-        cleanup_action_id = NULL
-    WHERE study_corpus_id = ${corpus.id}::uuid
-      AND id IN (SELECT mention_id FROM corpus_snapshot_mentions WHERE snapshot_id = ${snapshotId}::uuid)
-  `);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const restored = await client.query(
+      `
+        WITH target AS (
+          SELECT m.id,
+                 EXISTS (
+                   SELECT 1 FROM corpus_snapshot_mentions csm
+                   WHERE csm.snapshot_id = $2::uuid AND csm.mention_id = m.id
+                 ) AS should_include
+          FROM mentions m
+          WHERE m.study_corpus_id = $1::uuid
+        )
+        UPDATE mentions m
+        SET inclusion_status = CASE WHEN target.should_include THEN 'included' ELSE 'excluded' END,
+            exclusion_reason = CASE WHEN target.should_include THEN NULL ELSE $3 END,
+            cleanup_action_id = NULL,
+            updated_at = now()
+        FROM target
+        WHERE m.id = target.id
+          AND (
+            m.inclusion_status IS DISTINCT FROM CASE WHEN target.should_include THEN 'included' ELSE 'excluded' END
+            OR m.cleanup_action_id IS NOT NULL
+            OR (NOT target.should_include AND m.exclusion_reason IS DISTINCT FROM $3)
+          )
+        RETURNING m.id
+      `,
+      [corpus.id, snapshotId, `restored-from-snapshot: ${snap.label}`]
+    );
+    const changedCount = restored.rowCount ?? 0;
+    const corpusRevision = changedCount > 0
+      ? await advanceCorpusRevision(corpus.id, client)
+      : null;
+    await client.query("COMMIT");
 
-  await db.execute(sql`
-    UPDATE mentions
-    SET inclusion_status = 'excluded',
-        exclusion_reason = ${`restored-from-snapshot: ${snap.label}`},
-        cleanup_action_id = NULL
-    WHERE study_corpus_id = ${corpus.id}::uuid
-      AND id NOT IN (SELECT mention_id FROM corpus_snapshot_mentions WHERE snapshot_id = ${snapshotId}::uuid)
-  `);
-
-  return Response.json({ ok: true, snapshot_id: snapshotId });
+    return Response.json({
+      ok: true,
+      snapshot_id: snapshotId,
+      changed_count: changedCount,
+      corpus_revision: corpusRevision
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("[snapshot-restore] failed", error);
+    return Response.json(
+      { error: "restore_failed", message: "No se pudo restaurar el snapshot." },
+      { status: 500 }
+    );
+  } finally {
+    client.release();
+  }
 }

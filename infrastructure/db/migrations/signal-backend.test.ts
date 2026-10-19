@@ -1,0 +1,545 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import test from "node:test";
+
+test("SB-02 migration establishes stable Signal workspace identity and governed corpus scope", async () => {
+  const migration = await readFile(resolve(process.cwd(), "migrations/0047_signal_workspace_identity.sql"), "utf8");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS signal_workspaces/);
+  assert.match(migration, /signal_workspaces_exactly_one_subject/);
+  assert.match(migration, /uq_signal_workspaces_org_slug/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS signal_workspace_corpora/);
+  assert.match(migration, /'operational', 'strategic', 'legacy'/);
+  assert.match(migration, /uq_signal_workspace_corpora_active/);
+  assert.match(migration, /enforce_signal_workspace_subject_organization/);
+  assert.match(migration, /enforce_signal_workspace_corpus_scope/);
+});
+
+test("SB-02 backfill is dry-run by default, remote guarded, redacted and idempotent", async () => {
+  const script = await readFile(resolve(process.cwd(), "../../apps/studio/scripts/backfill-signal-workspaces.ts"), "utf8");
+  assert.match(script, /NOISIA_SIGNAL_WORKSPACE_BACKFILL_ALLOW_REMOTE/);
+  assert.match(script, /requireSafeDatabaseReadTarget/);
+  assert.match(script, /requireSafeDatabaseWriteTarget/);
+  assert.match(script, /ON CONFLICT DO NOTHING/);
+  assert.match(script, /identifiers_redacted: true/);
+  assert.match(script, /sw\.organization_id = ec\.organization_id/);
+  assert.match(script, /COUNT\(DISTINCT \(ec\.organization_id, ec\.brand_id, ec\.theme_id\)\)/);
+});
+
+test("SB-03 persists disabled refresh policy, independent freshness and idempotent invalidation", async () => {
+  const migration = await readFile(resolve(process.cwd(), "migrations/0048_signal_recurring_refresh.sql"), "utf8");
+  for (const table of [
+    "signal_refresh_policies",
+    "signal_data_watermarks",
+    "signal_refresh_runs",
+    "signal_data_invalidations",
+    "signal_interpretation_freshness"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /enabled boolean NOT NULL DEFAULT false/);
+  assert.match(migration, /source_freshness_state/);
+  assert.match(migration, /data_freshness_state/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION record_signal_data_acceptance/);
+  assert.match(migration, /Completed import batch does not belong to the corpus/);
+  assert.match(migration, /ON CONFLICT \(workspace_id, study_corpus_id, source_key\)/);
+  assert.match(migration, /ON CONFLICT \(idempotency_key\) DO NOTHING/);
+  assert.match(migration, /'targets', jsonb_build_array\('metric_materializations', 'interpretation_freshness'\)/);
+});
+
+test("operational membership transitions invalidate caches and persist shadow work durably", async () => {
+  const migration = await readFile(
+    resolve(
+      process.cwd(),
+      "migrations/0061_signal_operational_membership_invalidation_shadow_outbox.sql"
+    ),
+    "utf8"
+  );
+  assert.match(migration, /invalidate_signal_population_membership_change/);
+  assert.match(migration, /operational_population_membership_changed/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS signal_operational_shadow_requests/);
+  assert.match(migration, /idx_signal_operational_shadow_requests_recovery/);
+  assert.match(migration, /enforce_signal_operational_shadow_request_scope/);
+  assert.doesNotMatch(migration, /DROP COLUMN|DELETE FROM/u);
+});
+
+test("SB-03 wires existing imports and source syncs to the shared acceptance function", async () => {
+  const [workerImport, knowledgeSync, studioImport, performanceSync, refreshWorker, envExample] = await Promise.all([
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/mentions-csv-ingest.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/process-knowledge-sources.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/corpora/[id]/mentions/csv-upload/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/corpora/[id]/sources/performance-upload/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-refresh.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/.env.example"), "utf8")
+  ]);
+  for (const source of [workerImport, knowledgeSync, studioImport, performanceSync]) {
+    assert.match(source, /recordSignalDataAcceptance/);
+  }
+  assert.match(refreshWorker, /pg_try_advisory_lock/);
+  assert.match(refreshWorker, /FOR UPDATE(?: OF policy)? SKIP LOCKED/);
+  assert.match(refreshWorker, /materialization\.period_id IS NULL/);
+  assert.match(refreshWorker, /dead_letter/);
+  assert.match(envExample, /NOISIA_SIGNAL_REFRESH_SCHEDULER_ENABLED=false/);
+});
+
+test("SB-04 versions the canonical metric registry and blocks silent formula changes", async () => {
+  const migration = await readFile(resolve(process.cwd(), "migrations/0049_signal_metric_catalog_v1.sql"), "utf8");
+  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS signal_metric/u);
+  assert.match(migration, /ALTER TABLE metric_definitions/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1/);
+  assert.match(migration, /uq_metric_definitions_key_version UNIQUE \(metric_key, version\)/);
+  assert.match(migration, /CREATE OR REPLACE FUNCTION protect_metric_definition_formula_version/);
+  assert.match(migration, /Metric formula changes require a new metric version/);
+  assert.match(migration, /idx_metric_definitions_group_version/);
+});
+
+test("SB-04 seed reuses metric_definitions and semantic_models idempotently", async () => {
+  const [seed, backfill, listening, knowledge] = await Promise.all([
+    readFile(resolve(process.cwd(), "seeds/signal-metric-catalog.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/data-os-backfill.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../packages/query-engine/src/listening-data-os.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/process-knowledge-sources.ts"), "utf8")
+  ]);
+  assert.match(seed, /SIGNAL_METRIC_DEFINITIONS_V1/);
+  assert.match(seed, /INSERT INTO metric_definitions/);
+  assert.match(seed, /INSERT INTO semantic_models/);
+  assert.match(seed, /signal_social_listening_v1/);
+  assert.match(seed, /ON CONFLICT \(metric_key, version\) DO UPDATE/);
+  for (const writer of [backfill, listening, knowledge]) {
+    assert.match(writer, /ON CONFLICT \(metric_key, version\)/);
+    assert.doesNotMatch(writer, /ON CONFLICT \(metric_key\)(?!,)/u);
+  }
+});
+
+test("SB-05 extends canonical materializations with typed deterministic Signal state", async () => {
+  const migration = await readFile(resolve(process.cwd(), "migrations/0050_signal_metric_materializations_v1.sql"), "utf8");
+  assert.match(migration, /ALTER TABLE metric_materializations/);
+  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS signal_metric_material/u);
+  for (const field of [
+    "workspace_id", "materialization_key", "metric_version", "period_start",
+    "normalized_filter", "typed_payload", "denominator", "sample_size",
+    "quality_state", "data_watermark_hash", "materialization_state", "cache_scope"
+  ]) {
+    assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${field}`));
+  }
+  assert.match(migration, /'fresh', 'stale', 'pending', 'partial', 'not_available'/);
+  assert.match(migration, /uq_metric_materializations_signal_key/);
+  assert.match(migration, /idx_metric_materializations_signal_series/);
+  assert.match(migration, /idx_mentions_signal_materialization/);
+  assert.match(migration, /chart_aggregates is legacy projection only/);
+});
+
+test("SB-05 worker recalculates selective periods from accepted watermarks without payload or Claude", async () => {
+  const [materializer, invalidator, queue] = await Promise.all([
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-materialization.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-refresh.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/queues/data-os.ts"), "utf8")
+  ]);
+  assert.match(materializer, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(materializer, /SIGNAL_METRIC_DEFINITIONS_V1/);
+  assert.match(materializer, /INSERT INTO metric_materializations/);
+  assert.match(materializer, /ON CONFLICT \(materialization_key\)/);
+  assert.match(materializer, /dataWatermarkHashV1/);
+  assert.match(materializer, /\["day", "week", "month"\]/);
+  assert.match(materializer, /SELECT DISTINCT normalized_filter/);
+  assert.match(materializer, /period_end >= \$3::date/);
+  assert.doesNotMatch(materializer, /published_outputs|chart_aggregates|Claude|Anthropic/u);
+  assert.match(invalidator, /materialization\.period_end >= \$2::date/);
+  assert.match(invalidator, /materialization_state = CASE/);
+  assert.match(invalidator, /SIGNAL_MATERIALIZE_JOB_NAME/);
+  assert.match(queue, /signalMaterializationJob/);
+});
+
+test("post-SB-06 hardening adds a durable refresh outbox, policy freshness and one operational corpus", async () => {
+  const [migration, scheduler, fixture, backfill] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0051_signal_backend_foundation_hardening.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-refresh.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "fixtures/signal-materialization-reconciliation.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/scripts/backfill-signal-workspaces.ts"), "utf8")
+  ]);
+  assert.match(migration, /uq_signal_workspace_corpora_one_operational/);
+  assert.match(migration, /idx_signal_refresh_runs_outbox_recovery/);
+  assert.match(migration, /signal_refresh_freshness_tolerance/);
+  assert.match(migration, /derive_signal_watermark_freshness/);
+  assert.match(scheduler, /enqueueRecoverableSignalRefreshRun/);
+  assert.match(scheduler, /error_code = 'enqueue_failed'/);
+  assert.match(scheduler, /conversation_velocity_dependency_through/);
+  assert.match(backfill, /row_number\(\) OVER/);
+  assert.match(backfill, /superseded_operational_corpus/);
+  assert.match(fixture, /aggregate\/drill-down reconciliation failed/);
+  assert.match(fixture, /governed topic quality reconciliation failed/);
+});
+
+test("SB-07 persists versioned, budget-bounded interpretations without weakening analysis artifacts", async () => {
+  const [migration, worker, runner, contract, serving, analysisMigration] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0052_signal_metric_interpretations_v1.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/signal-interpretation.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/scripts/run-signal-home-interpretations.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../packages/query-engine/src/signal-interpretation-v1.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-serving.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "migrations/0046_analysis_artifact_evidence_graph.sql"), "utf8")
+  ]);
+  for (const table of [
+    "metric_interpretation_runs",
+    "metric_interpretations",
+    "metric_interpretation_evidence"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /actual_cost_usd <= budget_cap_usd/);
+  assert.match(migration, /materialization_id uuid NOT NULL REFERENCES metric_materializations/);
+  assert.match(worker, /FROM metric_materializations/);
+  assert.match(worker, /executeSignalInterpretationV1/);
+  assert.match(runner, /NOISIA_SIGNAL_INTERPRETATION_TOTAL_BUDGET_USD/);
+  assert.match(runner, /NOISIA_SIGNAL_INTERPRETATION_RUN_APPROVED/);
+  assert.match(runner, /signalDefaultWorkspaceHomeFilterV1/);
+  assert.match(runner, /Persisted interpretation cost or budget exceeded the authorized total/);
+  assert.match(contract, /Every number written in a claim must have an exact numeric_ref/);
+  assert.match(serving, /FROM metric_interpretations interpretation/);
+  assert.match(analysisMigration, /analysis_artifacts_exactly_one_analysis/);
+  assert.doesNotMatch(migration, /ALTER TABLE analysis_artifacts/);
+});
+
+test("SB-08 enforces exact governed T&B evidence and immutable published review", async () => {
+  const [migration, hierarchy, persistence, reviewWriter] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0053_tb_structured_evidence_review.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-step-3-hierarchy.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-analysis-artifact-persistence.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/analysis-artifact-graph.ts"), "utf8")
+  ]);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS tb_finding_structured_evidence_refs/);
+  assert.match(migration, /evidence_quality_status <> 'accepted'/);
+  assert.match(migration, /structured_evidence_cross_corpus/);
+  assert.match(migration, /published_analysis_artifact_immutable/);
+  assert.match(hierarchy, /validateTbStructuredEvidenceRefs/);
+  assert.match(hierarchy, /'claim_specific'/);
+  assert.match(persistence, /governed_ref\.source_type/);
+  assert.match(persistence, /'storage_ref'/);
+  assert.match(persistence, /'source_sync_run'/);
+  assert.match(reviewWriter, /current\.revision \+ 1/);
+  assert.match(reviewWriter, /supersedes_artifact_id/);
+});
+
+test("SB-09 freezes T&B scope and human-promotes immutable strategic releases", async () => {
+  const [migration, temporalWorker, comparativeWorker, releaseServing, invarianceFixture] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0054_tb_temporal_strategic_releases.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-temporal-materialization.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/tb-step-5-comparative.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-strategic-releases.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "fixtures/tb-temporal-release-invariance.sql"), "utf8")
+  ]);
+
+  for (const table of [
+    "tb_temporal_metrics",
+    "tb_finding_temporal_comparisons",
+    "signal_workspace_releases",
+    "signal_workspace_release_artifacts",
+    "signal_workspace_current_releases"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /protect_tb_analysis_frozen_scope/);
+  assert.match(migration, /signal_release_human_reviewer_required/);
+  assert.match(migration, /published_signal_workspace_release_immutable/);
+  assert.match(migration, /released_tb_temporal_materialization_immutable/);
+  assert.match(temporalWorker, /JOIN corpus_snapshot_mentions/);
+  assert.match(temporalWorker, /evaluateTbComparisonCompatibilityV1/);
+  assert.match(comparativeWorker, /ta_scope\.snapshot_id = snapshot_mention\.snapshot_id/);
+  assert.doesNotMatch(comparativeWorker, /SUM\(COALESCE\(ib\.included_count/);
+  assert.match(releaseServing, /promote_signal_workspace_report_release/);
+  assert.doesNotMatch(releaseServing, /published_outputs|payload/);
+  assert.match(invarianceFixture, /not a member of snapshot 1/);
+  assert.match(invarianceFixture, /recomputed_value <> published_value/);
+});
+
+test("SB-10 freezes one protected facade, targeted backfill and runtime front-ready gate", async () => {
+  const [
+    migration,
+    home,
+    rootRoute,
+    fixture,
+    backfill,
+    reconcile,
+    explain,
+    shadow,
+    gate,
+    stagingShadow,
+    openapi
+  ] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0055_signal_v2_front_ready_indexes.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-home.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/data-os/signal/[workspaceId]/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-fixtures.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/scripts/backfill-signal-v2.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/signal-v2-reconcile.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/signal-v2-explain.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/scripts/signal-v2-shadow.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/signal-v2-backend-gate.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../scripts/data-os-staging-shadow.sh"), "utf8"),
+    readFile(resolve(process.cwd(), "../../docs/api/openapi.yaml"), "utf8")
+  ]);
+
+  for (const index of [
+    "idx_metric_materializations_signal_facade",
+    "idx_mentions_signal_facets",
+    "idx_record_tags_signal_approved_subject"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE INDEX IF NOT EXISTS ${index}`));
+  }
+  assert.match(home, /loadSignalBootstrapV1/);
+  assert.match(home, /loadSignalMetricGroupsV1/);
+  assert.match(home, /loadSignalInterpretationsV1/);
+  assert.match(home, /loadSignalStrategicReleasesV1/);
+  assert.doesNotMatch(home, /published_outputs|chart_aggregates/);
+  assert.match(rootRoute, /loadSignalWorkspace(?:Module)?Context/);
+  assert.match(rootRoute, /loadSignalWorkspaceHomeV1/);
+  assert.match(fixture, /satisfies SignalWorkspaceHomeV1/);
+  assert.match(backfill, /NOISIA_SIGNAL_V2_BACKFILL_APPROVED/);
+  assert.match(backfill, /requireSafeDatabaseWriteTarget/);
+  assert.match(backfill, /payload_preserved/);
+  assert.match(backfill, /row\.methodology_slug === "signal-pulse"/);
+  assert.match(backfill, /row\.methodology_slug === "triggers-barriers"/);
+  assert.match(backfill, /row\.corpus_methodology_slug === "triggers-barriers"/);
+  assert.match(backfill, /row\.output_kind === "signal"/);
+  assert.doesNotMatch(backfill, /UPDATE\s+published_outputs/iu);
+  assert.match(reconcile, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(reconcile, /buildSignalMentionDrillDownPlanV1/);
+  assert.match(reconcile, /series_periods_checked/);
+  assert.match(reconcile, /breakdown_payloads_match/);
+  assert.match(explain, /EXPLAIN \(\$\{analyze/);
+  assert.match(explain, /operationalChartingEligible/);
+  assert.match(explain, /blocks_charting: !operationalChartingEligible/);
+  assert.match(shadow, /output\.methodology_slug = 'signal-pulse'/);
+  assert.match(shadow, /output\.methodology_slug = 'triggers-barriers'/);
+  assert.match(shadow, /output\.kind = 'signal'/);
+  assert.match(shadow, /five_metric_groups_materialized/);
+  assert.match(shadow, /\(group\.metrics\?\.length \?\? 0\) > 0/);
+  assert.match(shadow, /five_claude_interpretations_reviewed/);
+  assert.match(shadow, /capability_checks: capabilityChecks/);
+  assert.match(shadow, /capability_gaps: capabilityGaps/);
+  assert.match(shadow, /run\.filters_hash = \$3/);
+  assert.match(shadow, /legacy_coverage_reconciled/);
+  assert.match(shadow, /analysis\.comparison_compatibility_state = 'compatible'/);
+  assert.doesNotMatch(shadow, /comparison\.compatible/);
+  assert.match(shadow, /client_flags_off/);
+  assert.match(gate, /backend_ready_for_signal_v2/);
+  assert.match(gate, /serving-smoke\.json/);
+  assert.match(gate, /legacy_payload_parity_preserved/);
+  assert.match(gate, /signal-v2-reconcile\.json/);
+  assert.match(stagingShadow, /NOISIA_SIGNAL_WORKSPACE_ID/);
+  assert.match(stagingShadow, /backend-ready-signal-v2\.json/);
+  assert.match(openapi, /SignalWorkspaceHomeV1/);
+  assert.match(openapi, /\/api\/data-os\/signal\/\{workspaceId\}:/);
+});
+
+test("Signal workspace navigation automatically attaches every new named study", async () => {
+  const migration = await readFile(
+    resolve(process.cwd(), "migrations/0056_signal_workspace_auto_membership.sql"),
+    "utf8"
+  );
+  assert.match(migration, /CREATE OR REPLACE FUNCTION attach_study_corpus_to_signal_workspace/);
+  assert.match(migration, /uq_signal_workspaces_brand|ON CONFLICT DO NOTHING/);
+  assert.match(migration, /methodology_slug = 'triggers-barriers' THEN 'strategic'/);
+  assert.match(migration, /methodology_slug = 'signal-pulse'/);
+  assert.match(migration, /navigation_title_source', 'study_corpora\.name'/);
+  assert.match(migration, /AFTER INSERT\s+ON study_corpora/u);
+  assert.doesNotMatch(migration, /DELETE FROM|published_outputs\.payload/u);
+});
+
+test("TN-01 adds one versioned active topic or narrative profile without parallel stores", async () => {
+  const migration = await readFile(
+    resolve(process.cwd(), "migrations/0057_signal_topics_narratives_profiles.sql"),
+    "utf8"
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS signal_taxonomy_profiles/);
+  assert.match(migration, /kind IN \('topic', 'narrative'\)/);
+  assert.match(migration, /uq_signal_taxonomy_profiles_active_kind/);
+  assert.match(migration, /activate_signal_taxonomy_profile/);
+  assert.match(migration, /Human reviewer is required/);
+  assert.match(migration, /validate_signal_taxonomy_record_tag/);
+  assert.match(migration, /uq_record_tags_signal_profile_assignment/);
+  assert.match(migration, /ALTER TABLE signal_refresh_runs/);
+  assert.match(migration, /run_type IN \('source_refresh', 'taxonomy_enrichment'\)/);
+  assert.match(migration, /idx_signal_refresh_runs_taxonomy_recovery/);
+  assert.doesNotMatch(migration, /CREATE TABLE IF NOT EXISTS (topic_tags|narrative_tags|signal_enrichment_runs)/);
+});
+
+test("TN-08 applies migration 0057 through a guarded, targeted and verified remote path", async () => {
+  const source = await readFile(
+    resolve(
+      process.cwd(),
+      "scripts/apply-signal-topics-narratives-migration.ts"
+    ),
+    "utf8"
+  );
+  assert.match(source, /0057_signal_topics_narratives_profiles\.sql/);
+  assert.match(source, /requireSafeDatabaseWriteTarget/);
+  assert.match(source, /NOISIA_DB_APPLY_SIGNAL_TAXONOMY_ALLOW_REMOTE/);
+  assert.match(source, /NOISIA_SIGNAL_TAXONOMY_SCHEMA_APPLY_APPROVED/);
+  assert.match(source, /pg_advisory_xact_lock/);
+  assert.match(source, /BEGIN/);
+  assert.match(source, /ROLLBACK/);
+  assert.match(source, /signal_taxonomy_profiles/);
+  assert.match(source, /uq_record_tags_signal_profile_assignment/);
+  assert.doesNotMatch(source, /drizzle-kit generate/);
+});
+
+test("Signal workspace data plane separates ownership, provenance, population and report identity", async () => {
+  const [migration, applyScript, brandRoute, csvRoute, csvWorker, csvIngest, populationResolver] = await Promise.all([
+    readFile(resolve(process.cwd(), "migrations/0059_signal_workspace_owned_data_plane.sql"), "utf8"),
+    readFile(resolve(process.cwd(), "scripts/apply-signal-workspace-data-plane-migration.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/brands/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/app/api/corpora/[id]/mentions/csv-upload/route.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../services/workers/src/workers/mentions-csv-ingest.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "sentione-csv-ingest.ts"), "utf8"),
+    readFile(resolve(process.cwd(), "../../apps/studio/src/lib/data-os/signal-workspace-population.ts"), "utf8")
+  ]);
+  for (const field of [
+    "data_sources[\\s\\S]*workspace_id",
+    "import_batches[\\s\\S]*workspace_id",
+    "mentions[\\s\\S]*workspace_id",
+    "mentions[\\s\\S]*canonical_mention_id",
+    "mentions[\\s\\S]*provider_record_id"
+  ]) {
+    assert.match(migration, new RegExp(`ALTER TABLE ${field}`));
+  }
+  for (const table of [
+    "signal_population_definitions",
+    "signal_workspace_population_pointers",
+    "signal_population_memberships",
+    "signal_mention_import_memberships",
+    "signal_mention_study_memberships",
+    "signal_mention_attributions",
+    "signal_snapshot_watermarks",
+    "signal_workspace_reports",
+    "signal_workspace_report_current_releases"
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
+  }
+  assert.match(migration, /ALTER COLUMN study_corpus_id DROP NOT NULL/);
+  assert.match(migration, /uq_mentions_workspace_text_canonical/);
+  assert.match(migration, /canonical_mention_id = id/);
+  assert.match(migration, /contributed_by_study_corpus_id/);
+  assert.match(migration, /'primary_brand', 'competitor', 'category', 'reference', 'unattributed'/);
+  assert.match(migration, /record_signal_workspace_data_acceptance/);
+  assert.match(migration, /population_definition_hash/);
+  assert.match(migration, /workspace_id, report_key, report_revision/);
+  assert.doesNotMatch(migration, /DELETE FROM mentions|DELETE FROM published_outputs|UPDATE published_outputs/iu);
+  assert.match(applyScript, /requireSafeDatabaseWriteTarget/);
+  assert.match(applyScript, /NOISIA_SIGNAL_WORKSPACE_DATA_PLANE_SCHEMA_APPLY_APPROVED/);
+  assert.match(applyScript, /pg_advisory_xact_lock/);
+  assert.match(applyScript, /Refusing to continue a partially applied/);
+  assert.match(applyScript, /BEGIN/);
+  assert.match(applyScript, /ROLLBACK/);
+  assert.match(brandRoute, /initializeBrandSignalWorkspace/);
+  assert.match(brandRoute, /primary-brand-operational/);
+  assert.match(brandRoute, /reportKey: "triggers-barriers"/);
+  for (const ingest of [csvRoute, csvWorker]) {
+    assert.match(ingest, /recordSignalWorkspaceDataAcceptance/);
+    assert.match(ingest, /workspaceId/);
+    assert.match(ingest, /dataSourceId/);
+  }
+  assert.match(csvWorker, /createSignalSentioneCsvIngester/);
+  assert.doesNotMatch(csvWorker, /function ingestSentioneCsvStream/);
+  assert.match(csvIngest, /record_signal_workspace_import_provenance_set_v1/);
+  assert.doesNotMatch(csvIngest, /record_signal_workspace_import_provenance_v1/);
+  assert.equal((csvIngest.match(/function ingestSentioneCsvStream/g) ?? []).length, 1);
+  const workspacePrestate = csvIngest.indexOf("const before=await findCanonicalMentionRows(");
+  const workspaceInsert = csvIngest.indexOf("const inserted=await insertMentionValues(candidates)", workspacePrestate);
+  const workspacePoststate = csvIngest.indexOf("const after=await findCanonicalMentionRows(", workspaceInsert);
+  const workspaceProvenance = csvIngest.indexOf(
+    "const provenanceQueryCount=await attachMentionQueryProvenance({",
+    workspacePoststate
+  );
+  assert.ok(workspacePrestate >= 0);
+  assert.ok(workspaceInsert > workspacePrestate);
+  assert.ok(workspacePoststate > workspaceInsert);
+  assert.ok(workspaceProvenance > workspacePoststate,
+    "workspace ingestion must classify pre-existing and newly inserted rows before attaching set-based provenance");
+  assert.match(migration, /INSERT INTO signal_mention_import_memberships/);
+  assert.match(migration, /INSERT INTO signal_mention_study_memberships/);
+  assert.match(migration, /governed_scope/);
+  assert.match(migration, /reconcile_signal_operational_population_mention/);
+  assert.match(csvIngest, /ON CONFLICT DO NOTHING/);
+  assert.doesNotMatch(csvIngest, /ON CONFLICT \(study_corpus_id, text_hash\)/);
+  assert.match(populationResolver, /mode: "shadow"/);
+  assert.match(populationResolver, /"scope", "quality", "period", "dedup"/);
+});
+
+test("strategic run outbox recovery adds leases without rewriting the Phase 5 contract", async () => {
+  const migration = await readFile(
+    resolve(process.cwd(), "migrations/0063_signal_strategic_run_outbox_recovery.sql"),
+    "utf8"
+  );
+  for (const field of [
+    "bullmq_job_id",
+    "locked_at",
+    "lease_expires_at",
+    "lease_token",
+    "dead_lettered_at"
+  ]) {
+    assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${field}`));
+  }
+  assert.match(migration, /status IN \('pending', 'failed', 'dispatching'\)/u);
+  assert.match(migration, /idx_signal_strategic_run_outbox_recovery/u);
+  assert.match(migration, /WHERE status = 'dispatching'/u);
+  assert.doesNotMatch(migration, /DROP TABLE|DROP COLUMN|DELETE FROM/iu);
+});
+
+test("TN operational hardening persists recoverable runs, policy provenance and safe activation", async () => {
+  const migration = await readFile(
+    resolve(
+      process.cwd(),
+      "migrations/0058_signal_taxonomy_operational_hardening.sql"
+    ),
+    "utf8"
+  );
+  assert.match(migration, /'partial', 'blocked'/);
+  assert.match(migration, /approval_source IN \('human', 'policy'\)/);
+  assert.match(migration, /approval_policy_version/);
+  assert.match(migration, /status = 'activating'/);
+  assert.match(migration, /complete_signal_taxonomy_profile_activation/);
+  assert.match(migration, /Activating profile backfill is incomplete/);
+  assert.doesNotMatch(migration, /DROP TABLE|DELETE FROM/);
+});
+
+test("TN runtime smoke applies canonical SQL, exact drill-down reconciliation and EXPLAIN ANALYZE", async () => {
+  const source = await readFile(
+    resolve(
+      process.cwd(),
+      "scripts/signal-topics-narratives-runtime-smoke.ts"
+    ),
+    "utf8"
+  );
+  assert.match(source, /buildSignalMetricMaterializationPlanV1/);
+  assert.match(source, /buildSignalMentionDrillDownPlanV1/);
+  assert.match(source, /EXPLAIN \(ANALYZE, BUFFERS, FORMAT JSON\)/);
+  assert.match(source, /fixture_mentions: FIXTURE_SIZE/);
+  assert.match(source, /exact_ids: true/);
+  assert.match(source, /pending_excluded/);
+  assert.match(source, /paid_provider_invoked: false/);
+  assert.doesNotMatch(source, /published_outputs|chart_aggregates/);
+});
+
+test("TN backend gate requires real Laika review, runtime, authZ and release evidence", async () => {
+  const source = await readFile(
+    resolve(process.cwd(), "scripts/signal-topics-narratives-backend-gate.ts"),
+    "utf8"
+  );
+  for (const artifact of [
+    "laika-taxonomy-backfill.json",
+    "signal-topics-narratives-worker.json",
+    "signal-topics-narratives-reconcile.json",
+    "signal-topics-narratives-serving.json",
+    "release-gate.json"
+  ]) {
+    assert.match(source, new RegExp(artifact.replaceAll(".", "\\.")));
+  }
+  assert.match(source, /human_approved/);
+  assert.match(source, /topic_exact_ids/);
+  assert.match(source, /narrative_exact_ids/);
+  assert.match(source, /authz_negative_passed/);
+  assert.match(source, /published_payload_read === false/);
+  assert.match(source, /ready_for_production_review === true/);
+  assert.match(source, /client_activation: false/);
+});

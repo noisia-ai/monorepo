@@ -1,0 +1,2890 @@
+"use client";
+
+import Link from "next/link";
+import dynamic from "next/dynamic";
+import { useTranslations } from "next-intl";
+import {
+  ArrowDownRight,
+  ArrowRight,
+  ArrowUpRight,
+  CaretDown,
+  Database,
+  DotsThree,
+  FileText,
+  Funnel,
+  Gauge,
+  List,
+  ListMagnifyingGlass,
+  MagnifyingGlass,
+  Megaphone,
+  Pulse,
+  SlidersHorizontal,
+  Sparkle,
+  SpinnerGap,
+  Target,
+  Warning,
+  X
+} from "@phosphor-icons/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
+import type { EChartsCoreOption } from "echarts/core";
+import type {
+  SignalComparisonV1,
+  SignalFilterV1,
+  SignalTopicsNarrativesOverviewV1,
+  SignalWorkspaceOverviewV1
+} from "@noisia/query-engine";
+
+import type {
+  BrandMonitoringBreakdown,
+  BrandMonitoringHighlight,
+  BrandMonitoringThreadDriver,
+  SignalBrandMonitoringV1
+} from "@/lib/signal-v2/brand-monitoring";
+import type { SignalWorkspaceOption } from "@/lib/data-os/signal-workspace";
+import type { SignalMentionRecordV1 } from "@/lib/data-os/signal-workspace-serving";
+import type { SignalStrategicStudyNavigationItem } from "@/lib/signal-v2/workspace-navigation";
+import type { SignalTriggersBarriersOverviewV2 } from "@/lib/data-os/signal-triggers-barriers-serving";
+import type { SignalClientSettingsV1 } from "@/lib/data-os/signal-client-settings";
+import { buildNativeSignalMonitoringV1, isNativeSignalTopicsOverviewV1 } from "@/lib/data-os/signal-workspace-monitoring-native";
+import {
+  SignalAnalyticsFilter,
+  type SignalAnalyticsFilterSelection
+} from "@/components/signal-v2/SignalAnalyticsFilter";
+import { SignalEChart } from "@/components/signal-v2/SignalEChart";
+import { SignalDataScopeFilter } from "@/components/signal-v2/SignalDataScopeFilter";
+import { SignalFilterControls } from "@/components/signal-v2/SignalFilterControls";
+import {
+  SignalMetricHelp as MetricHelp,
+  type SignalMetricHelpContent as MetricHelpContent
+} from "@/components/signal-v2/SignalMetricHelp";
+import type { SignalMentionsViewData } from "@/components/signal-v2/SignalV2Mentions";
+import { MonthlyInsightCarousel } from "@/components/signal-v2/MonthlyInsightCarousel";
+import { SignalV2ModuleHeader } from "@/components/signal-v2/SignalV2ModuleHeader";
+import { SignalV2Settings } from "@/components/signal-v2/SignalV2Settings";
+import { SignalV2ModuleSkeleton } from "@/components/signal-v2/SignalV2RouteSkeleton";
+import {
+  WorkspaceGlobalSidebar,
+  WorkspaceAccount,
+  WorkspaceMain,
+  WorkspaceNavLink,
+  WorkspaceProductBrand,
+  WorkspaceSearchTrigger,
+  WorkspaceOverlay,
+  WorkspaceShell,
+  WorkspaceSkipLink,
+  WorkspaceTopbar,
+  WorkspaceTopbarActions
+} from "@/components/workspace/WorkspaceShell";
+
+const loadSignalV2WorkspaceTopics = () => import("@/components/signal-v2/SignalV2WorkspaceTopics");
+const SignalV2WorkspaceTopics = dynamic(() => loadSignalV2WorkspaceTopics().then(module => module.SignalV2WorkspaceTopics), { loading: () => null });
+const loadSignalV2Mentions = () => import("@/components/signal-v2/SignalV2Mentions");
+const loadSignalV2TopicsNarratives = () => import("@/components/signal-v2/SignalV2TopicsNarratives");
+const loadSignalV2TriggersBarriers = () => import("@/components/signal-v2/SignalV2TriggersBarriers");
+const SignalV2Mentions = dynamic(
+  () => loadSignalV2Mentions().then((module) => module.SignalV2Mentions),
+  { loading: () => null }
+);
+const SignalV2TopicsNarratives = dynamic(
+  () => loadSignalV2TopicsNarratives().then((module) => module.SignalV2TopicsNarratives),
+  { loading: () => null }
+);
+const SignalV2TriggersBarriers = dynamic(
+  () => loadSignalV2TriggersBarriers().then((module) => module.SignalV2TriggersBarriers),
+  {
+    loading: () => (
+      <SignalV2ModuleSkeleton brandName="" showBody variant="triggersBarriers" />
+    )
+  }
+);
+
+const CHART_BLUE = "#1689f5";
+const CHART_BLUE_SOFT = "#8fcef9";
+const GRID = "#ebebeb";
+const TEXT = "#303030";
+const MUTED = "#737373";
+const CHART_PURPLE = "#7157d9";
+const CHART_TEAL = "#008060";
+
+type ConversationMetric = "mentions" | "conversations" | "root_posts" | "comments";
+type SignalStandardModule = "monitoring" | "mentions" | "topics";
+type SignalWorkspaceModule = SignalStandardModule | "settings" | "study";
+type SignalWorkspaceModulePayload = (
+  SignalBrandMonitoringV1
+  | SignalMentionsViewData
+  | SignalTopicsNarrativesOverviewV1
+  | SignalWorkspaceOverviewV1
+  | SignalTriggersBarriersOverviewV2
+);
+const CHART_TOOLTIP_STYLE = {
+  appendToBody: true,
+  confine: false,
+  transitionDuration: 0,
+  backgroundColor: "#ffffff",
+  borderColor: "#d3d3d3",
+  borderWidth: 1,
+  padding: [9, 10],
+  textStyle: {
+    color: TEXT,
+    fontFamily: "Product Sans, Google Sans, sans-serif",
+    fontSize: 12,
+    lineHeight: 17
+  },
+  extraCssText: [
+    "border-radius:8px",
+    "box-shadow:0 7px 22px rgba(0,0,0,.16)",
+    "max-width:290px",
+    "white-space:normal"
+  ].join(";")
+} as const;
+
+export function SignalV2BrandMonitoring({
+  activeModule,
+  activeStudy,
+  brandName,
+  canRefreshInsights,
+  emptyWorkspace = false,
+  emptyWorkspaceReason = "source_missing",
+  initialData,
+  initialMention,
+  initialMentions,
+  initialNativeMentionsUnavailable = false,
+  initialSettings,
+  initialTopicsNarratives,
+  initialTriggersBarriers,
+  legacyOutputId,
+  manageTopicsHref,
+  strategicStudies,
+  userName,
+  workspaceOptions,
+  workspaceSubjectId,
+  viewKey = "brand"
+}: {
+  activeModule: "monitoring" | "mentions" | "topics" | "settings";
+  activeStudy: SignalStrategicStudyNavigationItem | null;
+  brandName: string;
+  canRefreshInsights: boolean;
+  emptyWorkspace?: boolean;
+  emptyWorkspaceReason?: "source_missing" | "population_unavailable" | "empty_result";
+  initialData: SignalBrandMonitoringV1;
+  initialMention: SignalMentionRecordV1 | null;
+  initialMentions: SignalMentionsViewData | null;
+  initialNativeMentionsUnavailable?: boolean;
+  initialSettings: SignalClientSettingsV1 | null;
+  initialTopicsNarratives: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1 | null;
+  initialTriggersBarriers: SignalTriggersBarriersOverviewV2 | null;
+  legacyOutputId: string | null;
+  manageTopicsHref: string | null;
+  strategicStudies: SignalStrategicStudyNavigationItem[];
+  userName: string;
+  workspaceOptions: SignalWorkspaceOption[];
+  workspaceSubjectId: string;
+  viewKey?: "brand" | "competition" | "category" | "all-governed" | "all_conversations";
+}) {
+  const t = useTranslations("SignalV2");
+  const [data, setData] = useState(initialData);
+  const [mentionsData, setMentionsData] = useState(initialMentions);
+  const [nativeMentionsUnavailable, setNativeMentionsUnavailable] = useState(initialNativeMentionsUnavailable);
+  const hasNativeMentions = Boolean(mentionsData?.native);
+  const [topicsNarrativesData, setTopicsNarrativesData] = useState(initialTopicsNarratives);
+  const [triggersBarriersData, setTriggersBarriersData] = useState(initialTriggersBarriers);
+  const [currentStudy, setCurrentStudy] = useState(activeStudy);
+  const [currentModule, setCurrentModule] = useState<SignalWorkspaceModule>(
+    activeStudy ? "study" : activeModule
+  );
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [pendingModule, setPendingModule] = useState<SignalStandardModule | "study" | null>(null);
+  const [showPendingModuleBody, setShowPendingModuleBody] = useState(false);
+  const [contentArriving, setContentArriving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [conversationMetric, setConversationMetric] = useState<ConversationMetric>("mentions");
+  const [insightRunState, setInsightRunState] = useState<
+    "idle" | "queued" | "running" | "completed" | "failed"
+  >("idle");
+  const [insightRunError, setInsightRunError] = useState<string | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const moduleCacheRef = useRef(new Map<string, SignalWorkspaceModulePayload>());
+  const filterRequestRef = useRef<AbortController | null>(null);
+  const filterSequenceRef = useRef(0);
+  const navigationRequestRef = useRef<AbortController | null>(null);
+  const navigationSequenceRef = useRef(0);
+  const contentArrivalTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setSearchOpen(true);
+      }
+      if (event.key === "Escape") {
+        setSearchOpen(false);
+        setSidebarOpen(false);
+        setWorkspaceMenuOpen(false);
+        setControlsOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (searchOpen) window.setTimeout(() => searchRef.current?.focus(), 0);
+  }, [searchOpen]);
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!workspaceMenuRef.current?.contains(event.target as Node)) {
+        setWorkspaceMenuOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => window.removeEventListener("pointerdown", onPointerDown);
+  }, [workspaceMenuOpen]);
+
+  useEffect(() => {
+    setCurrentModule(activeStudy ? "study" : moduleFromPathname(window.location.pathname));
+    setCurrentStudy(activeStudy);
+    setTriggersBarriersData(initialTriggersBarriers);
+    setPendingModule(null);
+  }, [activeModule, activeStudy, initialTriggersBarriers]);
+
+  useEffect(() => {
+    setShowPendingModuleBody(false);
+    if (!pendingModule || pendingModule === currentModule) return;
+    const timer = window.setTimeout(() => setShowPendingModuleBody(true), 200);
+    return () => window.clearTimeout(timer);
+  }, [currentModule, pendingModule]);
+
+  useEffect(() => () => {
+    filterRequestRef.current?.abort();
+    navigationRequestRef.current?.abort();
+    if (contentArrivalTimerRef.current != null) {
+      window.clearTimeout(contentArrivalTimerRef.current);
+    }
+  }, []);
+
+  const beginContentArrival = useCallback(() => {
+    if (contentArrivalTimerRef.current != null) {
+      window.clearTimeout(contentArrivalTimerRef.current);
+    }
+    setContentArriving(true);
+    contentArrivalTimerRef.current = window.setTimeout(() => {
+      setContentArriving(false);
+      contentArrivalTimerRef.current = null;
+    }, 170);
+  }, []);
+
+  const applyModulePayload = useCallback((
+    target: SignalWorkspaceModule,
+    payload: SignalWorkspaceModulePayload
+  ) => {
+    beginContentArrival();
+    if (target === "study") {
+      const studyPayload = payload as SignalTriggersBarriersOverviewV2;
+      setTriggersBarriersData(studyPayload);
+      setCurrentStudy(
+        strategicStudies.find((study) => study.id === studyPayload.study.id) ?? null
+      );
+      return;
+    }
+    setCurrentStudy(null);
+    if (target === "mentions") {
+      const mentions = payload as SignalMentionsViewData;
+      setNativeMentionsUnavailable(false);
+      if (mentions.native) {
+        setTopicsNarrativesData(current => current?.contract_version === "signal-workspace-topics-serving-v1"
+          && current.generation_id !== mentions.native!.generation_id ? { ...current, is_current: false } : current);
+      }
+      setMentionsData(mentions);
+      setData((current) => ({
+        ...current,
+        filter: mentions.filter,
+        comparison: mentions.comparison
+      }));
+      return;
+    }
+    if ((target === "monitoring" || target === "topics") && payload.contract_version === "signal-workspace-topics-serving-v1") {
+      setMentionsData(current => current?.native && current.native.generation_id !== payload.generation_id
+        ? { ...current, records: [], record: null, native: { ...current.native, is_current: false } } : current);
+      setTopicsNarrativesData(payload);
+      if (target === "monitoring") setData(current => buildNativeSignalMonitoringV1(current, payload));
+      const start = payload.filters.date_from ?? payload.available_dates.date_from;
+      const end = payload.filters.date_to ?? payload.available_dates.date_to;
+      if (target !== "monitoring" && start && end) setData(current => ({ ...current, filter: { ...current.filter,
+        date_range: { start, end }, timezone: data.workspace.timezone, granularity: "day", dimensions: {}, search_query: undefined },
+        comparison: { ...current.comparison, mode: "none", date_range: null },
+        coverage: { date_from: payload.available_dates.date_from, date_through: payload.available_dates.date_to, mentions: payload.denominator } }));
+      return;
+    }
+    if (target === "topics") {
+      setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1);
+      return;
+    }
+    setData(payload as SignalBrandMonitoringV1);
+  }, [beginContentArrival, data.workspace.timezone, strategicStudies]);
+
+  const updateMentionsData = useCallback((next: SignalMentionsViewData) => {
+    beginContentArrival();
+    setMentionsData(next);
+    setData(current => ({ ...current, filter: next.filter, comparison: next.comparison,
+      ...(next.native ? { coverage: { date_from: next.native.available_dates.date_from,
+        date_through: next.native.available_dates.date_to, mentions: next.native.metric_denominator } } : {}) }));
+  }, [beginContentArrival]);
+
+  const invalidateNativeTopicEvidence = useCallback(() => {
+    setMentionsData(current => current?.native ? { ...current, records: [], record: null,
+      native: { ...current.native, is_current: false } } : current);
+    setTopicsNarrativesData(current => current?.contract_version === "signal-workspace-topics-serving-v1"
+      ? { ...current, is_current: false } : current);
+    for (const [key, value] of moduleCacheRef.current) {
+      if (value.contract_version === "signal-workspace-topics-serving-v1" || "native" in value) moduleCacheRef.current.delete(key);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewKey !== "all_conversations" && !hasNativeMentions) return;
+    const clear = () => {
+      navigationSequenceRef.current++; navigationRequestRef.current?.abort();
+      filterSequenceRef.current++; filterRequestRef.current?.abort();
+      flushSync(invalidateNativeTopicEvidence);
+    };
+    window.addEventListener("pagehide", clear);
+    return () => window.removeEventListener("pagehide", clear);
+  }, [viewKey, hasNativeMentions, invalidateNativeTopicEvidence]);
+
+  const readNativeTopics = useCallback(async (selection?: SignalAnalyticsFilterSelection) => {
+    if (topicsNarrativesData?.contract_version !== "signal-workspace-topics-serving-v1"
+      || !["monitoring", "topics"].includes(currentModule) || pendingModule) return false;
+    filterRequestRef.current?.abort(); const controller = new AbortController(); filterRequestRef.current = controller;
+    const ticket = ++filterSequenceRef.current; setLoading(true); setError(null);
+    const params = new URLSearchParams({ view: "all_conversations", timezone: data.workspace.timezone, granularity: "day", compare: "none" });
+    const from = selection?.start ?? topicsNarrativesData.filters.date_from;
+    const to = selection?.end ?? topicsNarrativesData.filters.date_to;
+    if (from) params.set("date_from", from); if (to) params.set("date_to", to);
+    try {
+      const response = await fetch(`/api/data-os/signal/${data.workspace.id}/topics-narratives?${params}`, { cache: "no-store", signal: controller.signal });
+      if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
+      if (!response.ok) {
+        if ([401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
+        throw new Error(t("errors.load"));
+      }
+      const payload = await response.json() as SignalWorkspaceOverviewV1;
+      if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
+      if (payload.contract_version !== "signal-workspace-topics-serving-v1" || payload.workspace_id !== data.workspace.id) {
+        invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+      }
+      applyModulePayload(currentModule, payload); moduleCacheRef.current.set(moduleCacheKey(currentModule, params), payload);
+      const next = new URL(window.location.href); next.search = params.toString(); window.history.replaceState(null, "", next);
+      return true;
+    } catch (cause) {
+      if (!controller.signal.aborted && ticket === filterSequenceRef.current) setError(cause instanceof Error ? cause.message : t("errors.load"));
+      return false;
+    } finally { if (ticket === filterSequenceRef.current) { filterRequestRef.current = null; setLoading(false); } }
+  }, [topicsNarrativesData, currentModule, pendingModule, data.workspace.id, data.workspace.timezone, invalidateNativeTopicEvidence, t, applyModulePayload]);
+
+  const loadFilter = useCallback(async (selection: SignalAnalyticsFilterSelection) => {
+    if (topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && ["monitoring", "topics"].includes(currentModule)) return readNativeTopics(selection);
+    filterRequestRef.current?.abort();
+    const controller = new AbortController();
+    filterRequestRef.current = controller;
+    const sequence = filterSequenceRef.current + 1;
+    filterSequenceRef.current = sequence;
+    setLoading(true);
+    setError(null);
+    try {
+      const nativeMentions = currentModule === "mentions" ? mentionsData?.native : undefined;
+      const params = new URLSearchParams({
+        start: selection.start,
+        end: selection.end,
+        timezone: data.workspace.timezone,
+        granularity: preferredGranularity(selection.start, selection.end),
+        compare: selection.comparisonMode
+      });
+      if (selection.comparisonMode === "custom") {
+        if (selection.comparisonStart) params.set("compareStart", selection.comparisonStart);
+        if (selection.comparisonEnd) params.set("compareEnd", selection.comparisonEnd);
+      }
+      const dimensions = selection.dimensions ?? data.filter.dimensions;
+      const searchQuery = selection.searchQuery === undefined
+        ? data.filter.search_query
+        : selection.searchQuery.trim();
+      if (searchQuery) params.set("q", searchQuery);
+      for (const [dimension, values] of Object.entries(dimensions)) {
+        for (const value of values ?? []) params.append(`dimension.${dimension}`, value);
+      }
+      if (nativeMentions) {
+        if (Object.entries(dimensions).some(([key, values]) => key !== "platform" && values?.length)) throw new Error(t("errors.load"));
+        params.set("view", "all_conversations"); params.set("timezone", data.workspace.timezone); params.set("granularity", "day"); params.set("compare", "none");
+        params.set("sort", "published"); params.set("direction", nativeMentions.sort_direction);
+        params.delete("compareStart"); params.delete("compareEnd"); params.delete("dimension.platform");
+        for (const value of dimensions.platform ?? []) params.append("platform", value);
+      }
+      const endpoint = currentModule === "mentions"
+        ? `/api/data-os/signal/${data.workspace.id}/mentions`
+        : currentModule === "topics"
+          ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
+          : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
+      if (currentModule === "topics") {
+        addTaxonomyComparisonParams(params);
+        if (topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1") {
+          params.set("view", "all_conversations"); params.set("timezone", data.workspace.timezone); params.set("granularity", "day"); params.set("compare", "none");
+          params.delete("comparison_start"); params.delete("comparison_end");
+        }
+      }
+      const response = await fetch(`${endpoint}?${params}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      if (filterSequenceRef.current !== sequence || controller.signal.aborted) return false;
+      if (!response.ok && nativeMentions && [401, 403, 404, 409].includes(response.status)) {
+        invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+      }
+      const payload = await response.json() as (
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1
+      ) & { message?: string };
+      if (filterSequenceRef.current !== sequence) return false;
+      if (!response.ok) {
+        if (currentModule === "topics" && [401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
+        throw new Error(payload.message ?? t("errors.load"));
+      }
+      applyModulePayload(currentModule, payload);
+      if (currentModule === "topics") {
+        setTopicsNarrativesData(payload as SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1);
+        const parsed = localSignalAnalyticsSelection({
+          comparisonMode: selection.comparisonMode,
+          comparisonStart: selection.comparisonStart,
+          comparisonEnd: selection.comparisonEnd,
+          dimensions,
+          end: selection.end,
+          granularity: preferredGranularity(selection.start, selection.end),
+          searchQuery: searchQuery ?? "",
+          start: selection.start,
+          timezone: data.workspace.timezone
+        });
+        setData((current) => ({
+          ...current,
+          filter: parsed.filter,
+          comparison: parsed.comparison
+        }));
+      }
+      moduleCacheRef.current.set(moduleCacheKey(currentModule, params), payload);
+      const next = new URL(window.location.href);
+      next.search = params.toString();
+      window.history.replaceState(null, "", next);
+      return true;
+    } catch (loadError) {
+      if (loadError instanceof DOMException && loadError.name === "AbortError") return false;
+      if (filterSequenceRef.current !== sequence) return false;
+      setError(loadError instanceof Error ? loadError.message : t("errors.load"));
+      return false;
+    } finally {
+      if (filterSequenceRef.current === sequence) {
+        filterRequestRef.current = null;
+        setLoading(false);
+      }
+    }
+  }, [
+    applyModulePayload,
+    currentModule,
+    data.filter.dimensions,
+    data.filter.search_query,
+    data.workspace.id,
+    data.workspace.timezone,
+    invalidateNativeTopicEvidence,
+    mentionsData?.native,
+    readNativeTopics,
+    t,
+    topicsNarrativesData?.contract_version
+  ]);
+
+  const navigateToModule = useCallback(async (
+    target: SignalStandardModule,
+    historyMode: "push" | "none" = "push",
+    requestedQuery?: URLSearchParams
+  ) => {
+    if (pendingModule === target || (target === currentModule && !pendingModule && historyMode !== "none")) return;
+    filterRequestRef.current?.abort(); filterSequenceRef.current++; setLoading(false);
+    navigationRequestRef.current?.abort();
+    const controller = new AbortController();
+    navigationRequestRef.current = controller;
+    const sequence = navigationSequenceRef.current + 1;
+    navigationSequenceRef.current = sequence;
+
+    const previousModule = currentModule;
+    preloadSignalWorkspaceModule(target);
+    if ((target === "monitoring" || target === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1") void loadSignalV2WorkspaceTopics();
+    const previousQuery = previousModule === "study"
+      ? buildStudyQuery(window.location.search)
+      : previousModule === "settings"
+        ? new URLSearchParams()
+        : (previousModule === "mentions" && mentionsData?.native)
+          || (previousModule === "monitoring" || previousModule === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+          ? new URLSearchParams(window.location.search) : buildModuleQuery(window.location.search, data, previousModule);
+    const currentPayload = currentModulePayload(
+      previousModule,
+      data,
+      mentionsData,
+      topicsNarrativesData,
+      triggersBarriersData
+    );
+    if (currentPayload) {
+      moduleCacheRef.current.set(moduleCacheKey(previousModule, previousQuery), currentPayload);
+    }
+
+    const nativeTarget = (target === "monitoring" || target === "topics" || target === "mentions")
+      && (viewKey === "all_conversations" || Boolean(mentionsData?.native) || topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1");
+    const query = requestedQuery ?? (nativeTarget ? new URLSearchParams() : buildModuleQuery(window.location.search, data, target));
+    if (nativeTarget) {
+      if (!requestedQuery) {
+        const filters = currentModule === "mentions" ? mentionsData?.native?.filters
+          : topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? topicsNarrativesData.filters : undefined;
+        if (filters?.date_from) query.set("date_from", filters.date_from);
+        if (filters?.date_to) query.set("date_to", filters.date_to);
+      }
+      query.set("view", "all_conversations"); query.set("timezone", data.workspace.timezone); query.set("granularity", "day"); query.set("compare", "none");
+      query.delete("comparison_start"); query.delete("comparison_end"); query.delete("compareStart"); query.delete("compareEnd");
+      if (target !== "mentions" && target !== currentModule) {
+        for (const key of ["q", "platform", "sort", "direction", "cursor", "limit", "mention", "scope_digest", "offset"]) query.delete(key);
+      }
+    }
+    // Native data is never restored from the navigation cache before the
+    // workspace contract and current authorization are revalidated.
+    const cachedPayload = nativeTarget ? undefined : moduleCacheRef.current.get(moduleCacheKey(target, query));
+    setPendingModule(target);
+    setSidebarOpen(false);
+    setError(null);
+
+    if (historyMode === "push") {
+      window.history.pushState(null, "", moduleHref(data.workspace.slug, target, query));
+    }
+    if (cachedPayload) {
+      applyModulePayload(target, cachedPayload);
+      setCurrentModule(target);
+    }
+
+    try {
+      const endpoint = target === "mentions"
+        ? `/api/data-os/signal/${data.workspace.id}/mentions`
+        : target === "topics" || nativeTarget
+          ? `/api/data-os/signal/${data.workspace.id}/topics-narratives`
+          : `/api/data-os/signal/${data.workspace.id}/brand-monitoring`;
+      const requestQuery = new URLSearchParams(query);
+      const focus = nativeTarget && target === "mentions" ? requestQuery.get("mention") : null;
+      const response = await fetch(`${endpoint}?${requestQuery}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
+      if (!response.ok) {
+        if ((target === "topics" || nativeTarget) && [401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
+        throw new Error(t("errors.load"));
+      }
+      const payload = await response.json() as (
+        SignalBrandMonitoringV1 | SignalMentionsViewData | SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1
+      );
+      if (sequence !== navigationSequenceRef.current || controller.signal.aborted) return;
+      if (nativeTarget && target === "mentions") {
+        const mentions = payload as SignalMentionsViewData;
+        if (!mentions.native || mentions.native.workspace_id !== data.workspace.id) {
+          invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+        }
+        if (focus) {
+          if (mentions.record?.subject_id.toLowerCase() !== focus.toLowerCase()) {
+            invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+          }
+        }
+      }
+      if (nativeTarget && target !== "mentions") {
+        if (!isNativeSignalTopicsOverviewV1(payload, data.workspace.id)) {
+          invalidateNativeTopicEvidence(); throw new Error(t("errors.load"));
+        }
+      }
+      moduleCacheRef.current.set(moduleCacheKey(target, query), payload);
+      applyModulePayload(target, payload);
+      setCurrentModule(target);
+      if (historyMode === "none") window.history.replaceState(null, "", moduleHref(data.workspace.slug, target, query));
+    } catch (navigationError) {
+      if (controller.signal.aborted || sequence !== navigationSequenceRef.current) return;
+      setError(navigationError instanceof Error ? navigationError.message : t("errors.load"));
+      if (nativeTarget && target === "mentions") {
+        setNativeMentionsUnavailable(true); setCurrentModule("mentions");
+      } else if (!cachedPayload) {
+        window.history.replaceState(
+          null,
+          "",
+          moduleHref(data.workspace.slug, previousModule, previousQuery)
+        );
+      }
+    } finally {
+      if (sequence === navigationSequenceRef.current) {
+        setPendingModule(null);
+        navigationRequestRef.current = null;
+      }
+    }
+  }, [
+    applyModulePayload,
+    currentModule,
+    data,
+    invalidateNativeTopicEvidence,
+    mentionsData,
+    pendingModule,
+    t,
+    topicsNarrativesData,
+    triggersBarriersData,
+    viewKey
+  ]);
+
+  const navigateToStudy = useCallback(async (
+    study: SignalStrategicStudyNavigationItem,
+    historyMode: "push" | "none" = "push"
+  ) => {
+    if (
+      pendingModule === "study"
+      || (currentModule === "study" && currentStudy?.id === study.id && !pendingModule)
+    ) return;
+    navigationRequestRef.current?.abort();
+    const controller = new AbortController();
+    navigationRequestRef.current = controller;
+    const sequence = navigationSequenceRef.current + 1;
+    navigationSequenceRef.current = sequence;
+
+    const previousModule = currentModule;
+    preloadSignalWorkspaceModule("study");
+    const previousQuery = previousModule === "study"
+      ? buildStudyQuery(window.location.search)
+      : previousModule === "settings"
+        ? new URLSearchParams()
+        : (previousModule === "monitoring" || previousModule === "topics") && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+          ? new URLSearchParams(window.location.search) : buildModuleQuery(window.location.search, data, previousModule);
+    const currentPayload = currentModulePayload(
+      previousModule,
+      data,
+      mentionsData,
+      topicsNarrativesData,
+      triggersBarriersData
+    );
+    if (currentPayload) {
+      moduleCacheRef.current.set(
+        moduleCacheKey(previousModule, previousQuery),
+        currentPayload
+      );
+    }
+
+    const query = historyMode === "none"
+      ? buildStudyQuery(window.location.search)
+      : new URLSearchParams();
+    const cachedPayload = moduleCacheRef.current.get(moduleCacheKey("study", query));
+    setPendingModule("study");
+    setSidebarOpen(false);
+    setError(null);
+
+    if (historyMode === "push") {
+      window.history.pushState(null, "", moduleHref(data.workspace.slug, "study", query));
+    }
+    if (cachedPayload) {
+      applyModulePayload("study", cachedPayload);
+      setCurrentModule("study");
+    }
+
+    try {
+      const endpoint = `/api/data-os/signal/${data.workspace.id}/triggers-barriers`;
+      const response = await fetch(`${endpoint}?${query}`, {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      const payload = await response.json() as SignalTriggersBarriersOverviewV2 & {
+        message?: string;
+      };
+      if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
+      if (sequence !== navigationSequenceRef.current) return;
+      moduleCacheRef.current.set(moduleCacheKey("study", query), payload);
+      applyModulePayload("study", payload);
+      setCurrentModule("study");
+    } catch (navigationError) {
+      if (controller.signal.aborted || sequence !== navigationSequenceRef.current) return;
+      setError(navigationError instanceof Error ? navigationError.message : t("errors.load"));
+      if (!cachedPayload) {
+        window.history.replaceState(
+          null,
+          "",
+          moduleHref(data.workspace.slug, previousModule, previousQuery)
+        );
+      }
+    } finally {
+      if (sequence === navigationSequenceRef.current) {
+        setPendingModule(null);
+        navigationRequestRef.current = null;
+      }
+    }
+  }, [
+    applyModulePayload,
+    currentModule,
+    currentStudy?.id,
+    data,
+    mentionsData,
+    pendingModule,
+    t,
+    topicsNarrativesData,
+    triggersBarriersData
+  ]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const requestedStudy = window.location.pathname.endsWith("/reports/triggers-barriers")
+        ? strategicStudies.find((study) => study.reportKey === "triggers-barriers")
+        : null;
+      if (requestedStudy) {
+        void navigateToStudy(requestedStudy, "none");
+        return;
+      }
+      const requestedModule = moduleFromPathname(window.location.pathname);
+      if (requestedModule === "settings") {
+        setCurrentModule("settings");
+        setCurrentStudy(null);
+        setPendingModule(null);
+        return;
+      }
+      void navigateToModule(requestedModule, "none", new URLSearchParams(window.location.search));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [navigateToModule, navigateToStudy, strategicStudies]);
+
+  const goToCorpus = useCallback(() => {
+    void navigateToModule("mentions");
+  }, [navigateToModule]);
+
+  const goToStudyCorpus = useCallback(() => {
+    const studyFilter = triggersBarriersData?.filter;
+    if (!studyFilter) {
+      void navigateToModule("mentions");
+      return;
+    }
+    const query = new URLSearchParams({
+      compare: "none",
+      end: studyFilter.date_range.end,
+      granularity: studyFilter.granularity,
+      start: studyFilter.date_range.start,
+      timezone: studyFilter.timezone
+    });
+    void navigateToModule("mentions", "push", query);
+  }, [navigateToModule, triggersBarriersData?.filter]);
+
+  const reloadCurrentData = useCallback(async () => {
+    const query = new URLSearchParams(window.location.search);
+    if (!query.has("start")) query.set("start", data.filter.date_range.start);
+    if (!query.has("end")) query.set("end", data.filter.date_range.end);
+    if (!query.has("timezone")) query.set("timezone", data.workspace.timezone);
+    if (!query.has("granularity")) query.set("granularity", data.filter.granularity);
+    if (!query.has("compare")) query.set("compare", data.comparison.mode);
+    if (!query.has("q") && data.filter.search_query) query.set("q", data.filter.search_query);
+    if (data.comparison.mode === "custom" && data.comparison.date_range) {
+      if (!query.has("compareStart")) query.set("compareStart", data.comparison.date_range.start);
+      if (!query.has("compareEnd")) query.set("compareEnd", data.comparison.date_range.end);
+    }
+    for (const [dimension, values] of Object.entries(data.filter.dimensions)) {
+      if (query.has(`dimension.${dimension}`)) continue;
+      for (const value of values ?? []) query.append(`dimension.${dimension}`, value);
+    }
+    const response = await fetch(`/api/data-os/signal/${data.workspace.id}/brand-monitoring?${query}`, {
+      cache: "no-store"
+    });
+    const payload = await response.json() as SignalBrandMonitoringV1 & { message?: string };
+    if (!response.ok) throw new Error(payload.message ?? t("errors.load"));
+    setData(payload);
+  }, [data.comparison, data.filter, data.workspace.id, data.workspace.timezone, t]);
+
+  const refreshMonthlyInsights = useCallback(async () => {
+    setInsightRunError(null);
+    setInsightRunState("queued");
+    try {
+      if (!legacyOutputId) throw new Error(t("errors.noOperationalOutput"));
+      const response = await fetch(`/api/signal-v2/${legacyOutputId}/monthly-insights`, {
+        method: "POST",
+        cache: "no-store",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ budget_cap_usd: 2 })
+      });
+      const payload = await response.json() as {
+        message?: string;
+        reused?: boolean;
+        run?: { status?: string };
+      };
+      if (!response.ok) throw new Error(payload.message ?? t("monthlyInsights.refresh.error"));
+      if (payload.reused || payload.run?.status === "completed") {
+        await reloadCurrentData();
+        setInsightRunState("completed");
+        return;
+      }
+      setInsightRunState("running");
+    } catch (runError) {
+      setInsightRunError(
+        runError instanceof Error ? runError.message : t("monthlyInsights.refresh.error")
+      );
+      setInsightRunState("failed");
+    }
+  }, [legacyOutputId, reloadCurrentData, t]);
+
+  useEffect(() => {
+    if (insightRunState !== "queued" && insightRunState !== "running") return;
+    const poll = window.setInterval(async () => {
+      try {
+        if (!legacyOutputId) throw new Error(t("errors.noOperationalOutput"));
+        const response = await fetch(`/api/signal-v2/${legacyOutputId}/monthly-insights`, {
+          cache: "no-store"
+        });
+        const payload = await response.json() as {
+          run?: { status?: string; error_summary?: { message?: string } };
+        };
+        const status = payload.run?.status;
+        if (status === "completed") {
+          window.clearInterval(poll);
+          await reloadCurrentData();
+          setInsightRunState("completed");
+        } else if (status === "failed" || status === "dead_letter") {
+          window.clearInterval(poll);
+          setInsightRunError(
+            payload.run?.error_summary?.message ?? t("monthlyInsights.refresh.error")
+          );
+          setInsightRunState("failed");
+        } else if (status === "running") {
+          setInsightRunState("running");
+        }
+      } catch {
+        // A transient polling error should not discard a running worker job.
+      }
+    }, 2_000);
+    return () => window.clearInterval(poll);
+  }, [insightRunState, legacyOutputId, reloadCurrentData, t]);
+
+  const comparisonFilter = data.comparison_filter;
+  const hasComparison = comparisonFilter != null;
+  const nativeVolumeOnly = data.freshness.data.unit === "canonical_mention";
+  const nativeSentimentPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.sentiment.state);
+  const nativeAttentionPending = nativeVolumeOnly && ["not_available", "pending"].includes(data.attention.state);
+  const nativeHighlightsPending = nativeVolumeOnly && !data.highlights.positive.length && !data.highlights.negative.length;
+  const effectiveConversationMetric: ConversationMetric = nativeVolumeOnly ? "mentions" : conversationMetric;
+  const currentStructure = data.conversation_structure.summary;
+  const previousStructure = data.conversation_structure.previous_summary;
+  const currentConversationValue = nativeVolumeOnly ? data.volume.current_value : currentStructure[effectiveConversationMetric];
+  const previousConversationValue = nativeVolumeOnly ? data.volume.previous_value : previousStructure?.[effectiveConversationMetric] ?? null;
+  const conversationTrend = currentConversationValue == null || previousConversationValue == null
+    ? null
+    : comparisonDelta(currentConversationValue, previousConversationValue);
+
+  const volumeOption = useMemo<EChartsCoreOption>(() => ({
+    color: [CHART_BLUE, CHART_BLUE_SOFT],
+    tooltip: {
+      ...CHART_TOOLTIP_STYLE,
+      trigger: "axis",
+      axisPointer: { type: "line", lineStyle: { color: "#b8b8b8", width: 1 } }
+    },
+    legend: {
+      bottom: 2,
+      itemGap: 16,
+      itemWidth: 8,
+      itemHeight: 8,
+      icon: "circle",
+      textStyle: { color: MUTED, fontFamily: "Product Sans", fontSize: 11 }
+    },
+    grid: { top: 8, right: 10, bottom: 48, left: 38 },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: (nativeVolumeOnly ? data.volume.points : data.conversation_structure.points)
+        .map((point) => shortDate(point.period_start)),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11, hideOverlap: true }
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      splitLine: { lineStyle: { color: GRID } },
+      axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11 },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    series: [
+      {
+        name: t("charts.current"),
+        type: "line",
+        smooth: 0.28,
+        showSymbol: false,
+        lineStyle: { width: 2, color: CHART_BLUE },
+        emphasis: { disabled: true },
+        data: nativeVolumeOnly
+          ? data.volume.points.map((point) => point.value)
+          : data.conversation_structure.points.map((point) => point[effectiveConversationMetric])
+      },
+      ...(hasComparison ? [{
+        name: t("charts.previous"),
+        type: "line",
+        smooth: 0.28,
+        showSymbol: false,
+        lineStyle: { width: 2, type: "dotted", color: CHART_BLUE_SOFT },
+        emphasis: { disabled: true },
+        data: alignStructuredPrevious(
+          data.conversation_structure.previous_points,
+          data.conversation_structure.points.length,
+          effectiveConversationMetric
+        )
+      }] : [])
+    ]
+  }), [
+    effectiveConversationMetric,
+    data.volume.points,
+    data.conversation_structure.points,
+    data.conversation_structure.previous_points,
+    hasComparison,
+    nativeVolumeOnly,
+    t
+  ]);
+
+  const platformOption = useMemo<EChartsCoreOption>(() => {
+    const allBuckets = [...data.platforms.buckets].sort(
+      (a, b) => b.sample_size - a.sample_size
+    );
+    const total = allBuckets.reduce((sum, bucket) => sum + bucket.sample_size, 0);
+    const buckets = allBuckets.slice(0, 7).reverse();
+    return {
+      color: [CHART_BLUE],
+      tooltip: {
+        ...CHART_TOOLTIP_STYLE,
+        trigger: "item",
+        formatter: (params: unknown) => platformTooltip(params, buckets, total, t)
+      },
+      grid: { top: 6, right: 20, bottom: 8, left: 82 },
+      xAxis: {
+        type: "value",
+        splitLine: { lineStyle: { color: GRID } },
+        axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11 },
+        axisLine: { show: false },
+        axisTick: { show: false }
+      },
+      yAxis: {
+        type: "category",
+        data: buckets.map((bucket) => prettify(bucket.label)),
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: TEXT, fontFamily: "Product Sans", fontSize: 12, width: 72, overflow: "truncate" }
+      },
+      series: [{
+        type: "bar",
+        barWidth: 10,
+        itemStyle: { borderRadius: [0, 4, 4, 0] },
+        data: buckets.map((bucket) => bucket.sample_size)
+      }]
+    };
+  }, [data.platforms.buckets, t]);
+
+  const compositionOption = useMemo<EChartsCoreOption>(() => ({
+    color: [CHART_PURPLE, CHART_BLUE_SOFT],
+    tooltip: {
+      ...CHART_TOOLTIP_STYLE,
+      trigger: "axis",
+      axisPointer: { type: "line", lineStyle: { color: "#b8b8b8", width: 1 } }
+    },
+    legend: {
+      bottom: 2,
+      itemGap: 16,
+      itemWidth: 8,
+      itemHeight: 8,
+      icon: "circle",
+      textStyle: { color: MUTED, fontFamily: "Product Sans", fontSize: 11 }
+    },
+    grid: { top: 12, right: 10, bottom: 48, left: 38 },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: data.conversation_structure.points.map((point) => shortDate(point.period_start)),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11, hideOverlap: true }
+    },
+    yAxis: {
+      type: "value",
+      minInterval: 1,
+      splitLine: { lineStyle: { color: GRID } },
+      axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11 },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    series: [
+      {
+        name: t("cards.composition.roots"),
+        type: "line",
+        stack: "conversation",
+        smooth: 0.18,
+        showSymbol: false,
+        lineStyle: { width: 1.5, color: CHART_PURPLE },
+        areaStyle: { color: CHART_PURPLE, opacity: 0.74 },
+        emphasis: { disabled: true },
+        data: data.conversation_structure.points.map((point) => point.root_posts)
+      },
+      {
+        name: t("cards.composition.comments"),
+        type: "line",
+        stack: "conversation",
+        smooth: 0.18,
+        showSymbol: false,
+        lineStyle: { width: 1.5, color: CHART_BLUE_SOFT },
+        areaStyle: { color: CHART_BLUE_SOFT, opacity: 0.72 },
+        emphasis: { disabled: true },
+        data: data.conversation_structure.points.map((point) => point.comments)
+      }
+    ]
+  }), [data.conversation_structure.points, t]);
+
+  const sentimentTrendOption = useMemo<EChartsCoreOption>(() => ({
+    color: [CHART_TEAL],
+    tooltip: {
+      ...CHART_TOOLTIP_STYLE,
+      trigger: "axis",
+      axisPointer: { type: "line", lineStyle: { color: "#b8b8b8", width: 1 } },
+      valueFormatter: (value: unknown) => `${formatNumber(Number(value))} pp`
+    },
+    grid: { top: 12, right: 12, bottom: 30, left: 42 },
+    xAxis: {
+      type: "category",
+      boundaryGap: false,
+      data: data.conversation_structure.points.map((point) => shortDate(point.period_start)),
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11, hideOverlap: true }
+    },
+    yAxis: {
+      type: "value",
+      splitLine: { lineStyle: { color: GRID } },
+      axisLabel: {
+        color: MUTED,
+        fontFamily: "Product Sans",
+        fontSize: 11,
+        formatter: (value: number) => `${value}%`
+      },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    series: [{
+      name: t("cards.sentimentTrend.net"),
+      type: "line",
+      smooth: 0.22,
+      showSymbol: false,
+      connectNulls: false,
+      lineStyle: { width: 2, color: CHART_TEAL },
+      areaStyle: { color: CHART_TEAL, opacity: 0.08 },
+      data: data.conversation_structure.points.map((point) => {
+        if (point.sentiment.classified === 0) return null;
+        return Math.round(
+          ((point.sentiment.positive - point.sentiment.negative) / point.sentiment.classified) * 1000
+        ) / 10;
+      })
+    }]
+  }), [data.conversation_structure.points, t]);
+
+  const driverOption = useMemo<EChartsCoreOption>(() => {
+    const items = [...data.conversation_drivers.items].slice(0, 5).reverse();
+    return {
+      color: [CHART_BLUE],
+      tooltip: {
+        ...CHART_TOOLTIP_STYLE,
+        trigger: "item",
+        formatter: (params: unknown) => driverTooltip(params, items, t)
+      },
+      grid: { top: 6, right: 24, bottom: 10, left: 108 },
+      xAxis: {
+        type: "value",
+        minInterval: 1,
+        splitLine: { lineStyle: { color: GRID } },
+        axisLabel: { color: MUTED, fontFamily: "Product Sans", fontSize: 11 },
+        axisLine: { show: false },
+        axisTick: { show: false }
+      },
+      yAxis: {
+        type: "category",
+        data: items.map((item) => driverLabel(item)),
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: {
+          color: TEXT,
+          fontFamily: "Product Sans",
+          fontSize: 11,
+          width: 98,
+          overflow: "truncate"
+        }
+      },
+      series: [{
+        type: "bar",
+        barWidth: 12,
+        itemStyle: { borderRadius: [0, 4, 4, 0] },
+        label: {
+          show: true,
+          position: "right",
+          color: MUTED,
+          fontFamily: "Product Sans",
+          fontSize: 11
+        },
+        data: items.map((item) => item.mention_count)
+      }]
+    };
+  }, [data.conversation_drivers.items, t]);
+
+  const viewSuffix = viewKey === "brand" || viewKey === "all_conversations" ? "" : `?view=${encodeURIComponent(viewKey)}`;
+  const canonicalHome = `/signal/${data.workspace.slug}${viewSuffix}`;
+  const canonicalMentions = `/signal/${data.workspace.slug}/mentions${viewSuffix}`;
+  const canonicalTopicsNarratives = `/signal/${data.workspace.slug}/topics-narratives${viewKey === "all_conversations" ? "?view=all_conversations" : viewSuffix}`;
+  const canonicalSettings = `/signal/${data.workspace.slug}/settings${viewSuffix}`;
+  const legacyReport = legacyOutputId ? `/signal/${legacyOutputId}` : canonicalHome;
+  const firstStrategicStudy = strategicStudies[0] ?? null;
+  const activeGlobalFilterCount = Object.values(data.filter.dimensions)
+    .reduce((total, values) => total + (values?.length ?? 0), 0)
+    + Number(Boolean(data.filter.search_query));
+
+  return (
+    <WorkspaceShell className={[
+      "signal-v2-shell",
+      sidebarOpen ? "signal-v2-shell--nav-open" : "",
+      controlsOpen ? "signal-v2-shell--controls-open" : ""
+    ].filter(Boolean).join(" ")}>
+      <WorkspaceSkipLink className="signal-v2-skip" href="#signal-v2-content">{t("a11y.skip")}</WorkspaceSkipLink>
+
+      <WorkspaceTopbar className="signal-v2-topbar">
+        <button
+          aria-controls="signal-v2-sidebar"
+          aria-expanded={sidebarOpen}
+          aria-label={t("nav.open")}
+          className="signal-v2-topbar__mobile-menu"
+          onClick={() => setSidebarOpen((open) => !open)}
+          type="button"
+        >
+          <List size={19} weight="bold" />
+        </button>
+        <WorkspaceProductBrand href={canonicalHome} product="Signal" />
+        <WorkspaceSearchTrigger onClick={() => setSearchOpen(true)}>
+          {t("search.placeholder")}
+        </WorkspaceSearchTrigger>
+        <WorkspaceTopbarActions>
+          <WorkspaceAccount label={initials(userName)} name={brandName} tone="brand" />
+        </WorkspaceTopbarActions>
+      </WorkspaceTopbar>
+
+      <WorkspaceGlobalSidebar className="signal-v2-sidebar" aria-label={t("nav.label")} id="signal-v2-sidebar">
+        <div className="signal-v2-workspace-picker" ref={workspaceMenuRef}>
+          <button
+            aria-expanded={workspaceMenuOpen}
+            aria-haspopup="menu"
+            className="signal-v2-sidebar__workspace"
+            onClick={() => setWorkspaceMenuOpen((open) => !open)}
+            type="button"
+          >
+            <span>{initials(brandName)}</span>
+            <div>
+              <strong>{brandName}</strong>
+              <small>{t("nav.workspace")}</small>
+            </div>
+            <CaretDown className={workspaceMenuOpen ? "signal-v2-caret--open" : ""} size={14} />
+          </button>
+          {workspaceMenuOpen ? (
+            <div className="signal-v2-workspace-menu" role="menu">
+              <small>{t("workspaceSwitcher.title")}</small>
+              {workspaceOptions.map((workspace) => (
+                <Link
+                  aria-current={workspace.id === data.workspace.id ? "page" : undefined}
+                  href={`/signal/${workspace.slug}`}
+                  key={workspace.id}
+                  onClick={() => {
+                    setWorkspaceMenuOpen(false);
+                    setSidebarOpen(false);
+                  }}
+                  prefetch={false}
+                  role="menuitem"
+                >
+                  <span>{initials(workspace.name)}</span>
+                  <span>
+                    <strong>{workspace.name}</strong>
+                    <small>{workspace.subjectType === "brand"
+                      ? t("workspaceSwitcher.brand")
+                      : t("workspaceSwitcher.theme")}</small>
+                  </span>
+                  {workspace.id === data.workspace.id ? <span>✓</span> : null}
+                </Link>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <nav className="signal-v2-nav">
+          <NavLink
+            active={(pendingModule ?? currentModule) === "monitoring"}
+            href={canonicalHome}
+            icon={<Gauge />}
+            label={t("nav.monitoring")}
+            onNavigate={emptyWorkspace ? undefined : () => void navigateToModule("monitoring")}
+            pending={pendingModule === "monitoring"}
+          />
+          <NavLink
+            active={(pendingModule ?? currentModule) === "mentions"}
+            href={canonicalMentions}
+            icon={<ListMagnifyingGlass />}
+            label={t("nav.mentions")}
+            onNavigate={emptyWorkspace ? undefined : () => void navigateToModule("mentions")}
+            pending={pendingModule === "mentions"}
+          />
+          <NavLink
+            active={(pendingModule ?? currentModule) === "topics"}
+            href={canonicalTopicsNarratives}
+            icon={<Pulse />}
+            label={t("nav.topics")}
+            onNavigate={emptyWorkspace ? undefined : () => void navigateToModule("topics")}
+            pending={pendingModule === "topics"}
+          />
+          <NavLink
+            active={(pendingModule ?? currentModule) === "study"}
+            href={firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`}
+            icon={<FileText />}
+            label={t("nav.reports")}
+            onNavigate={firstStrategicStudy
+              ? () => void navigateToStudy(firstStrategicStudy)
+              : undefined}
+            pending={pendingModule === "study"}
+          />
+        </nav>
+        <div className="signal-v2-sidebar__footer">
+          <NavLink
+            active={(pendingModule ?? currentModule) === "settings"}
+            href={canonicalSettings}
+            icon={<SlidersHorizontal />}
+            label={t("nav.settings")}
+          />
+        </div>
+      </WorkspaceGlobalSidebar>
+      <WorkspaceOverlay
+        aria-hidden={!sidebarOpen}
+        aria-label={t("nav.close")}
+        className="signal-v2-nav-scrim"
+        onClick={() => setSidebarOpen(false)}
+        tabIndex={sidebarOpen ? 0 : -1}
+      />
+
+      <WorkspaceMain
+        aria-busy={loading || Boolean(pendingModule)}
+        className={`signal-v2-main${loading ? " signal-v2-main--loading" : ""}${pendingModule ? " signal-v2-main--updating" : ""}`}
+        id="signal-v2-content"
+      >
+        {pendingModule && currentModule !== pendingModule
+          && !(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+            && ["monitoring", "topics"].includes(currentModule) && ["monitoring", "topics"].includes(pendingModule)) ? (
+          <SignalV2ModuleSkeleton
+            brandName={brandName}
+            showBody={showPendingModuleBody}
+            variant={pendingModule === "study" ? "triggersBarriers" : pendingModule}
+          />
+        ) : (
+        <div className={`signal-v2-module-content${contentArriving ? " signal-v2-module-content--arriving" : ""}`}>
+        {currentModule === "settings" && initialSettings ? (
+          <SignalV2Settings data={initialSettings} />
+        ) : currentModule === "topics" && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
+          <SignalV2WorkspaceTopics brandName={brandName} data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
+            surface="topics" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
+            workspaceTimezone={data.workspace.timezone}
+            onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenTopics={() => void navigateToModule("topics")}
+            onOpenMentions={() => void navigateToModule("mentions")}
+            onOpenMention={mentionId => {
+              const params = new URLSearchParams({ view: "all_conversations", mention: mentionId });
+              if (topicsNarrativesData.filters.date_from) params.set("start", topicsNarrativesData.filters.date_from);
+              if (topicsNarrativesData.filters.date_to) params.set("end", topicsNarrativesData.filters.date_to);
+              void navigateToModule("mentions", "push", params);
+            }} />
+        ) : emptyWorkspace ? (
+          <SignalV2EmptyWorkspace
+            brandName={brandName}
+            canManage={Boolean(manageTopicsHref) || canRefreshInsights}
+            manageTopicsHref={manageTopicsHref}
+            reason={emptyWorkspaceReason}
+            workspaceSubjectId={workspaceSubjectId}
+          />
+        ) : currentModule === "study" && currentStudy && triggersBarriersData ? (
+          <SignalV2TriggersBarriers
+            brandName={brandName}
+            data={triggersBarriersData}
+            key={`${triggersBarriersData.cut.analysis_id}:${triggersBarriersData.filter.date_range.start}:${triggersBarriersData.filter.date_range.end}`}
+            onOpenMentions={goToStudyCorpus}
+            workspaceSlug={data.workspace.slug}
+          />
+        ) : currentModule === "study" && currentStudy ? (
+          <StrategicStudyContent canonicalHome={canonicalHome} study={currentStudy} />
+        ) : currentModule === "mentions" && nativeMentionsUnavailable ? (
+          <section className="signal-v2-mentions-page">
+            <SignalV2ModuleHeader title={t("mentions.title")} subtitle={t("mentions.native.subtitle")} status={t("mentions.native.unavailable")}
+              icon={<ListMagnifyingGlass size={20} />} controls={<button className="signal-v2-filter" type="button" disabled={Boolean(pendingModule)}
+                onClick={() => { const params = new URLSearchParams(window.location.search);
+                  for (const key of ["mention", "cursor", "scope_digest", "offset"]) params.delete(key);
+                  void navigateToModule("mentions", "none", params);
+                }}>{t("workspaceTopics.refresh")}</button>} />
+            <div className="signal-v2-error" role="alert">{t("mentions.native.unavailableBody")}</div>
+          </section>
+        ) : currentModule === "mentions" && mentionsData ? (
+          <SignalV2Mentions
+            brandName={brandName}
+            coverage={data.coverage}
+            data={mentionsData}
+            initialMention={mentionsData.native ? mentionsData.record ?? null : initialMention}
+            loading={loading || Boolean(pendingModule)}
+            onApplyFilter={loadFilter}
+            onDataChange={updateMentionsData}
+            onInvalidate={invalidateNativeTopicEvidence}
+            onOpenControls={() => setControlsOpen(true)}
+            workspaceId={data.workspace.id}
+          />
+        ) : currentModule === "topics" && topicsNarrativesData?.contract_version !== "signal-workspace-topics-serving-v1" && topicsNarrativesData ? (
+          <SignalV2TopicsNarratives
+            brandName={brandName}
+            canRefreshInsights={canRefreshInsights}
+            comparison={data.comparison}
+            coverage={data.coverage}
+            data={topicsNarrativesData}
+            filter={data.filter}
+            loading={loading}
+            manageTopicsHref={manageTopicsHref}
+            onApplyFilter={loadFilter}
+            onOpenControls={() => setControlsOpen(true)}
+            onOpenMentions={goToCorpus}
+            workspaceSlug={data.workspace.slug}
+          />
+        ) : (
+          <>
+        <SignalV2ModuleHeader
+          aside={<button className="signal-v2-tertiary-button" type="button">
+            <DotsThree size={18} weight="bold" />
+          </button>}
+          controls={<>
+          <SignalAnalyticsFilter
+            showComparison={!nativeVolumeOnly}
+            boundedToCoverage={nativeVolumeOnly}
+            comparison={data.comparison}
+            coverage={data.coverage}
+            filter={data.filter}
+            loading={loading}
+            onApply={loadFilter}
+          />
+
+          <SignalDataScopeFilter
+            brandName={brandName}
+            coverageFrom={data.coverage.date_from ?? data.filter.date_range.start}
+            coverageThrough={data.coverage.date_through ?? data.filter.date_range.end}
+            mentionCount={data.coverage.mentions}
+            onOpenMentions={goToCorpus}
+          />
+          {!nativeVolumeOnly ? <button
+            aria-expanded={controlsOpen}
+            className={`signal-v2-filter${controlsOpen ? " signal-v2-filter--active" : ""}`}
+            onClick={() => setControlsOpen((open) => !open)}
+            type="button"
+          >
+            <Funnel size={15} />
+            {t("filters.more")}
+            {activeGlobalFilterCount > 0 ? (
+              <span className="signal-v2-filter__count">{activeGlobalFilterCount}</span>
+            ) : null}
+          </button> : null}
+          {canRefreshInsights ? (
+            <button
+              className="signal-v2-filter signal-v2-filter--insights"
+              disabled={insightRunState === "queued" || insightRunState === "running"}
+              onClick={refreshMonthlyInsights}
+              title={t("monthlyInsights.refresh.help")}
+              type="button"
+            >
+              {insightRunState === "queued" || insightRunState === "running"
+                ? <SpinnerGap className="signal-v2-spin" size={15} />
+                : <Sparkle size={15} weight="fill" />}
+              {insightRunState === "queued"
+                ? t("monthlyInsights.refresh.queued")
+                : insightRunState === "running"
+                  ? t("monthlyInsights.refresh.running")
+                  : insightRunState === "completed"
+                    ? t("monthlyInsights.refresh.updated")
+                    : t("monthlyInsights.refresh.action")}
+            </button>
+          ) : null}
+          <span className={`signal-v2-freshness signal-v2-freshness--${data.freshness.state}`}>
+            <span />
+            {freshnessLabel(data.freshness.state, t)}
+          </span>
+          </>}
+          icon={<Megaphone size={20} weight="fill" />}
+          status={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+            ? topicsNarrativesData.source === "workspace_imported" ? "imported.status"
+              : topicsNarrativesData.source === "workspace_defined_interest" ? "definedInterest.status" : "status.beta"
+            : "status.beta")}
+          subtitle={t(topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1"
+            ? topicsNarrativesData.source === "workspace_imported" ? "imported.classificationPending"
+              : topicsNarrativesData.source === "workspace_defined_interest" ? "definedInterest.subtitle" : "subtitle"
+            : "subtitle")}
+          title={t("title")}
+        />
+
+        {error ? (
+          <div className="signal-v2-error" role="alert">
+            <Warning size={18} />
+            <span>{error}</span>
+            <button onClick={() => setError(null)} type="button"><X size={15} /></button>
+          </div>
+        ) : null}
+        {insightRunError ? (
+          <div className="signal-v2-error" role="alert">
+            <Warning size={18} />
+            <span>{insightRunError}</span>
+            <button onClick={() => setInsightRunError(null)} type="button"><X size={15} /></button>
+          </div>
+        ) : null}
+
+        <MonthlyInsightCarousel
+          insights={data.monthly_insights}
+          onOpenEvidence={goToCorpus}
+        />
+
+        <div
+          aria-busy={loading}
+          className={`signal-v2-dashboard-stage${loading ? " signal-v2-dashboard-stage--loading" : ""}`}
+        >
+          <ConversationKpis
+            current={data.conversation_structure.summary}
+            hasComparison={hasComparison}
+            nativeVolume={nativeVolumeOnly ? {
+              current: data.volume.current_value ?? 0,
+              previous: data.volume.previous_value
+            } : null}
+            previous={data.conversation_structure.previous_summary}
+          />
+
+          <section className="signal-v2-grid" aria-label={t("sections.metrics")}>
+          <MetricCard
+            className="signal-v2-card--wide"
+            dataState={nativeVolumeOnly ? data.volume.state : data.conversation_structure.state}
+            eyebrow={t("cards.volume.eyebrow")}
+            headingAction={(
+              nativeVolumeOnly ? null : <ConversationMetricSwitch
+                onChange={setConversationMetric}
+                value={conversationMetric}
+              />
+            )}
+            help={translatedHelp(t, "cards.volume.help")}
+            metric={currentConversationValue}
+            title={t("cards.volume.titleByUnit", {
+              unit: t(`cards.volume.units.${effectiveConversationMetric}`)
+            })}
+            trend={conversationTrend}
+          >
+            {(nativeVolumeOnly ? data.volume.points : data.conversation_structure.points).length > 0 ? (
+              <SignalEChart
+                ariaLabel={hasComparison
+                  ? t("cards.volume.aria")
+                  : t("cards.volume.ariaNoComparison")}
+                onActivate={goToCorpus}
+                option={volumeOption}
+              />
+            ) : (
+              <EmptyMetric message={metricEmptyMessage(nativeVolumeOnly ? data.volume.state : data.conversation_structure.state, t)} />
+            )}
+          </MetricCard>
+
+            <MetricCard
+              dataState={data.sentiment.state}
+              eyebrow={t("cards.sentiment.eyebrow")}
+              help={translatedHelp(t, "cards.sentiment.help")}
+              title={t("cards.sentiment.title")}
+            >
+              {data.sentiment.buckets.length > 0 ? (
+                <SentimentDonut
+                  buckets={data.sentiment.buckets}
+                  hasComparison={hasComparison}
+                  previousBuckets={data.sentiment.previous_buckets}
+                />
+              ) : (
+                <EmptyMetric message={nativeSentimentPending ? t("metricsPending.sentiment") : metricEmptyMessage(data.sentiment.state, t)} />
+              )}
+              {!nativeSentimentPending ? <p className="signal-v2-card__coverage-note">
+                {t("cards.sentiment.coverage", {
+                  classified: formatNumber(data.conversation_structure.summary.classified_sentiment),
+                  total: formatNumber(data.conversation_structure.summary.mentions)
+                })}
+              </p> : null}
+            </MetricCard>
+
+          <MetricCard
+            className="signal-v2-card--wide"
+            dataState={data.conversation_structure.state}
+            eyebrow={t("cards.composition.eyebrow")}
+            help={translatedHelp(t, "cards.composition.help")}
+            title={t("cards.composition.title")}
+          >
+            {data.conversation_structure.points.length > 0 ? (
+              <SignalEChart
+                ariaLabel={t("cards.composition.aria")}
+                onActivate={goToCorpus}
+                option={compositionOption}
+              />
+            ) : (
+              <EmptyMetric message={metricEmptyMessage(data.conversation_structure.state, t)} />
+            )}
+          </MetricCard>
+
+          <MetricCard
+            dataState={data.conversation_structure.state}
+            eyebrow={t("cards.sentimentTrend.eyebrow")}
+            help={{
+              ...translatedHelp(t, "cards.sentimentTrend.help"),
+              formula: t("cards.sentimentTrend.help.formula")
+            }}
+            title={t("cards.sentimentTrend.title")}
+          >
+            {data.conversation_structure.points.some((point) => point.sentiment.classified > 0) ? (
+              <SignalEChart
+                ariaLabel={t("cards.sentimentTrend.aria")}
+                onActivate={goToCorpus}
+                option={sentimentTrendOption}
+              />
+            ) : (
+              <EmptyMetric message={metricEmptyMessage(data.conversation_structure.state, t)} />
+            )}
+          </MetricCard>
+
+          <MetricCard
+            dataState={data.platforms.state}
+            eyebrow={t("cards.platforms.eyebrow")}
+            help={translatedHelp(t, "cards.platforms.help")}
+            title={t("cards.platforms.title")}
+          >
+            {data.platforms.buckets.length > 0 ? (
+              <SignalEChart
+                ariaLabel={t("cards.platforms.aria")}
+                onActivate={goToCorpus}
+                option={platformOption}
+              />
+            ) : (
+              <EmptyMetric message={metricEmptyMessage(data.platforms.state, t)} />
+            )}
+          </MetricCard>
+
+          <article className="signal-v2-card signal-v2-engagement-card">
+            <CardHeading
+              dataState={data.attention.state}
+              eyebrow={t("cards.attention.eyebrow")}
+              help={translatedHelp(t, "cards.attention.help")}
+              title={t("cards.attention.title")}
+            />
+            {nativeAttentionPending ? <EmptyMetric message={t("metricsPending.attention")} /> : <>
+            <div className="signal-v2-attention-metrics">
+              <div>
+                <small>{t("cards.attention.totalInteractions")}</small>
+                <strong>{formatCompact(data.attention.total_interactions)}</strong>
+                <AttentionComparison
+                  current={data.attention.total_interactions}
+                  hasComparison={hasComparison}
+                  previous={data.attention.previous?.total_interactions ?? null}
+                />
+              </div>
+              <div>
+                <small>{t("cards.attention.median")}</small>
+                <strong>{formatCompact(data.attention.median_interactions)}</strong>
+                <AttentionComparison
+                  current={data.attention.median_interactions}
+                  hasComparison={hasComparison}
+                  previous={data.attention.previous?.median_interactions ?? null}
+                />
+              </div>
+              <div>
+                <small>{t("cards.attention.p90")}</small>
+                <strong>{formatCompact(data.attention.p90_interactions)}</strong>
+                <AttentionComparison
+                  current={data.attention.p90_interactions}
+                  hasComparison={hasComparison}
+                  previous={data.attention.previous?.p90_interactions ?? null}
+                />
+              </div>
+              <div>
+                <small>{t("cards.attention.active")}</small>
+                <strong>{formatPercent(data.attention.active_ratio)}</strong>
+                <AttentionComparison
+                  current={data.attention.active_ratio}
+                  hasComparison={hasComparison}
+                  mode="points"
+                  previous={data.attention.previous?.active_ratio ?? null}
+                />
+              </div>
+              <div>
+                <small>{t("cards.attention.views")}</small>
+                <strong>{formatCompact(data.attention.total_views)}</strong>
+                <AttentionComparison
+                  current={data.attention.total_views}
+                  hasComparison={hasComparison}
+                  previous={data.attention.previous?.total_views ?? null}
+                />
+              </div>
+              <div>
+                <small>{t("cards.attention.viewedPosts")}</small>
+                <strong>
+                  {formatNumber(data.attention.viewed_root_posts)}
+                  <span> / {formatNumber(data.attention.root_posts)}</span>
+                </strong>
+                <CoverageIndicator
+                  measured={data.attention.viewed_root_posts}
+                  total={data.attention.root_posts}
+                />
+              </div>
+            </div>
+            <p>{t("cards.attention.note", { count: formatNumber(data.attention.root_posts) })}</p>
+            </>}
+            <button onClick={goToCorpus} type="button">{t("actions.openMentions")}<ArrowRight size={14} /></button>
+          </article>
+
+          {data.emotions.buckets.length > 0 ? <article className="signal-v2-card">
+            <CardHeading
+              dataState={data.emotions.state}
+              eyebrow={t("cards.emotions.eyebrow")}
+              help={translatedHelp(t, "cards.emotions.help")}
+              title={t("cards.emotions.title")}
+            />
+            {data.emotions.buckets.length > 0 ? (
+              <DistributionBars buckets={data.emotions} />
+            ) : (
+              <EmptyMetric message={metricEmptyMessage(data.emotions.state, t)} />
+            )}
+          </article> : null}
+
+          {mergeTopicBuckets(data.topics, data.narratives).length > 0 ? (
+          <article className="signal-v2-card signal-v2-card--wide signal-v2-topics-card">
+            <CardHeading
+              dataState={worstBreakdownState(data.topics.state, data.narratives.state)}
+              eyebrow={t("cards.topics.eyebrow")}
+              help={translatedHelp(t, "cards.topics.help")}
+              title={t("cards.topics.title")}
+            />
+            <TopicTable topics={mergeTopicBuckets(data.topics, data.narratives)} />
+          </article>
+          ) : null}
+
+          <MetricCard
+            className="signal-v2-drivers-card"
+            dataState={data.conversation_drivers.state}
+            eyebrow={t("cards.drivers.eyebrow")}
+            help={translatedHelp(t, "cards.drivers.help")}
+            title={t("cards.drivers.title")}
+          >
+            {data.conversation_drivers.items.length > 0 ? (
+              <SignalEChart
+                ariaLabel={t("cards.drivers.aria")}
+                onActivate={goToCorpus}
+                option={driverOption}
+              />
+            ) : (
+              <EmptyMetric message={metricEmptyMessage(data.conversation_drivers.state, t)} />
+            )}
+          </MetricCard>
+
+          <article className="signal-v2-card signal-v2-card--full signal-v2-conversations">
+            <CardHeading
+              dataState={nativeHighlightsPending ? "not_available" : "fresh"}
+              eyebrow={t("cards.conversations.eyebrow")}
+              help={translatedHelp(t, "cards.conversations.help")}
+              title={t("cards.conversations.title")}
+            />
+            {nativeHighlightsPending ? <EmptyMetric message={t("metricsPending.highlights")} /> : <div className="signal-v2-conversation-columns">
+              <ConversationColumn
+                empty={t("cards.conversations.emptyPositive")}
+                items={data.highlights.positive}
+                label={t("cards.conversations.positive")}
+                tone="positive"
+              />
+              <ConversationColumn
+                empty={t("cards.conversations.emptyNegative")}
+                items={data.highlights.negative}
+                label={t("cards.conversations.negative")}
+                tone="negative"
+              />
+            </div>}
+          </article>
+          </section>
+
+          <footer className="signal-v2-data-footer">
+            <Database size={17} />
+            <p>
+              <strong>{t("coverage.title")}</strong>
+              {t("coverage.body", {
+                count: formatNumber(data.coverage.mentions),
+                start: formatDate(data.coverage.date_from),
+                end: formatDate(data.coverage.date_through)
+              })}
+            </p>
+            <button onClick={goToCorpus} type="button">{t("coverage.open")}</button>
+          </footer>
+        </div>
+          </>
+        )}
+        </div>
+        )}
+      </WorkspaceMain>
+
+      <SignalFilterControls
+        comparison={data.comparison}
+        filter={data.filter}
+        loading={loading}
+        onApply={loadFilter}
+        onClose={() => setControlsOpen(false)}
+        open={controlsOpen}
+        workspaceId={data.workspace.id}
+      />
+
+      {searchOpen ? (
+        <div className="signal-v2-command-layer" role="presentation">
+          <button aria-label={t("search.close")} className="signal-v2-command-scrim" onClick={() => setSearchOpen(false)} type="button" />
+          <div aria-label={t("search.label")} aria-modal="true" className="signal-v2-command" role="dialog">
+            <div className="signal-v2-command__input">
+              <MagnifyingGlass size={19} />
+              <input placeholder={t("search.placeholder")} ref={searchRef} />
+              <kbd>Esc</kbd>
+            </div>
+            <div className="signal-v2-command__scope">
+              <span>{t("search.quick")}</span>
+              <Link href={canonicalMentions} onClick={() => setSearchOpen(false)} prefetch={false}>
+                <ListMagnifyingGlass size={16} />{t("nav.mentions")}
+              </Link>
+              <Link href={firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`} onClick={() => setSearchOpen(false)} prefetch={false}>
+                <FileText size={16} />{t("nav.reports")}
+              </Link>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </WorkspaceShell>
+  );
+}
+
+function SignalV2EmptyWorkspace({
+  brandName,
+  canManage,
+  manageTopicsHref,
+  reason,
+  workspaceSubjectId
+}: {
+  brandName: string;
+  canManage: boolean;
+  manageTopicsHref: string | null;
+  reason: "source_missing" | "population_unavailable" | "empty_result";
+  workspaceSubjectId: string;
+}) {
+  const t = useTranslations("SignalV2");
+  const contentKey = reason === "source_missing" ? "source" : reason === "empty_result" ? "empty" : "population";
+  const actionHref = reason === "population_unavailable" && manageTopicsHref
+    ? manageTopicsHref
+    : `/studio/brands/${workspaceSubjectId}`;
+  return (
+    <div className="signal-v2-empty-workspace">
+      <SignalV2ModuleHeader
+        icon={<Gauge size={20} weight="fill" />}
+        status={t(`emptyWorkspace.${contentKey}.status`)}
+        subtitle={t("emptyWorkspace.subtitle", { brand: brandName })}
+        title={t("title")}
+      />
+      <section className="signal-v2-empty-workspace__body">
+        <div className="signal-v2-empty-workspace__lead">
+          <Database aria-hidden="true" size={22} weight="duotone" />
+          <small>{t(`emptyWorkspace.${contentKey}.eyebrow`)}</small>
+          <h2>{t(`emptyWorkspace.${contentKey}.title`)}</h2>
+          <p>{t(`emptyWorkspace.${contentKey}.body`)}</p>
+          {canManage ? (
+            <Link
+              className="signal-v2-primary-link"
+              href={actionHref}
+              prefetch={false}
+            >
+              {t(`emptyWorkspace.${contentKey}.action`)}
+              <ArrowRight aria-hidden="true" size={15} weight="bold" />
+            </Link>
+          ) : null}
+        </div>
+        <ol className="signal-v2-empty-workspace__steps">
+          <li>
+            <span>1</span>
+            <div>
+              <strong>{t(`emptyWorkspace.${contentKey}.firstTitle`)}</strong>
+              <p>{t(`emptyWorkspace.${contentKey}.firstBody`)}</p>
+            </div>
+          </li>
+          <li>
+            <span>2</span>
+            <div>
+              <strong>{t(`emptyWorkspace.${contentKey}.secondTitle`)}</strong>
+              <p>{t(`emptyWorkspace.${contentKey}.secondBody`)}</p>
+            </div>
+          </li>
+        </ol>
+      </section>
+    </div>
+  );
+}
+
+function StrategicStudyContent({
+  canonicalHome,
+  study
+}: {
+  canonicalHome: string;
+  study: SignalStrategicStudyNavigationItem;
+}) {
+  const t = useTranslations("SignalV2");
+  const release = study.currentRelease;
+  const movementEntries = release
+    ? Object.entries(release.movement_counts)
+      .filter(([, count]) => count > 0)
+      .sort((left, right) => right[1] - left[1])
+    : [];
+
+  return (
+    <div className="signal-v2-strategic-page">
+      <SignalV2ModuleHeader
+        aside={<Link className="signal-v2-secondary-link" href={canonicalHome} prefetch={false}>
+          {t("strategicStudy.backToMonitoring")}
+        </Link>}
+        icon={<Target size={20} weight="fill" />}
+        status={t("strategicStudy.status")}
+        subtitle={t("strategicStudy.subtitle")}
+        title={study.title}
+      />
+
+      {release ? (
+        <>
+          <section className="signal-v2-strategic-hero">
+            <div>
+              <small>{t("strategicStudy.currentRelease")}</small>
+              <h2>{release.title}</h2>
+              <p>
+                {t("strategicStudy.period", {
+                  start: formatDate(release.period_start),
+                  end: formatDate(release.period_end)
+                })}
+              </p>
+            </div>
+            <div className="signal-v2-strategic-hero__metrics">
+              <div>
+                <strong>{formatNumber(release.artifact_count)}</strong>
+                <span>{t("strategicStudy.artifacts")}</span>
+              </div>
+              <div>
+                <strong>{formatNumber(release.temporal_metric_count)}</strong>
+                <span>{t("strategicStudy.temporalMetrics")}</span>
+              </div>
+              <div>
+                <strong>{formatNumber(release.corpus_revision)}</strong>
+                <span>{t("strategicStudy.corpusRevision")}</span>
+              </div>
+            </div>
+          </section>
+
+          <section className="signal-v2-strategic-grid">
+            <article className="signal-v2-strategic-card">
+              <div className="signal-v2-strategic-card__heading">
+                <div>
+                  <small>{t("strategicStudy.analysisContents")}</small>
+                  <h2>{t("strategicStudy.reviewedArtifacts")}</h2>
+                </div>
+                <span>{prettify(release.status)}</span>
+              </div>
+              {release.artifacts.length > 0 ? (
+                <ul className="signal-v2-strategic-artifacts">
+                  {release.artifacts.map((artifact) => (
+                    <li key={`${artifact.artifact_id}:${artifact.artifact_revision}`}>
+                      <FileText size={16} />
+                      <div>
+                        <strong>{artifact.title ?? prettify(artifact.artifact_type)}</strong>
+                        {artifact.summary ? <p>{artifact.summary}</p> : null}
+                      </div>
+                      <span>{prettify(artifact.review_status)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="signal-v2-strategic-empty">{t("strategicStudy.noClientArtifacts")}</p>
+              )}
+            </article>
+
+            <aside className="signal-v2-strategic-card">
+              <div className="signal-v2-strategic-card__heading">
+                <div>
+                  <small>{t("strategicStudy.temporalReading")}</small>
+                  <h2>{t("strategicStudy.movements")}</h2>
+                </div>
+              </div>
+              {movementEntries.length > 0 ? (
+                <dl className="signal-v2-strategic-movements">
+                  {movementEntries.map(([movement, count]) => (
+                    <div key={movement}>
+                      <dt>{prettify(movement)}</dt>
+                      <dd>{formatNumber(count)}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className="signal-v2-strategic-empty">{t("strategicStudy.noComparison")}</p>
+              )}
+              {study.legacyOutputId ? (
+                <Link
+                  className="signal-v2-primary-link"
+                  href={`/signal/${study.legacyOutputId}#tb-decision-field`}
+                  prefetch={false}
+                >
+                  {t("strategicStudy.openCurrentView")} <ArrowRight size={14} />
+                </Link>
+              ) : null}
+            </aside>
+          </section>
+        </>
+      ) : (
+        <section className="signal-v2-strategic-empty-state">
+          <Target size={28} />
+          <div>
+            <small>{t("strategicStudy.linkedStudy")}</small>
+            <h2>{t("strategicStudy.pendingTitle")}</h2>
+            <p>{t("strategicStudy.pendingBody")}</p>
+          </div>
+          {study.legacyOutputId ? (
+            <Link
+              className="signal-v2-primary-link"
+              href={`/signal/${study.legacyOutputId}#tb-decision-field`}
+              prefetch={false}
+            >
+              {t("strategicStudy.openCurrentView")} <ArrowRight size={14} />
+            </Link>
+          ) : null}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function moduleFromPathname(pathname: string): SignalStandardModule | "settings" {
+  if (pathname.endsWith("/mentions")) return "mentions";
+  if (pathname.endsWith("/topics-narratives")) return "topics";
+  if (pathname.endsWith("/settings")) return "settings";
+  return "monitoring";
+}
+
+function preloadSignalWorkspaceModule(module: SignalWorkspaceModule) {
+  if (module === "mentions") {
+    void loadSignalV2Mentions();
+    return;
+  }
+  if (module === "topics") {
+    void loadSignalV2TopicsNarratives();
+    return;
+  }
+  if (module === "study") void loadSignalV2TriggersBarriers();
+}
+
+function currentModulePayload(
+  module: SignalWorkspaceModule,
+  monitoring: SignalBrandMonitoringV1,
+  mentions: SignalMentionsViewData | null,
+  topics: SignalTopicsNarrativesOverviewV1 | SignalWorkspaceOverviewV1 | null,
+  triggersBarriers: SignalTriggersBarriersOverviewV2 | null
+): SignalWorkspaceModulePayload | null {
+  if (module === "mentions") return mentions;
+  if (module === "topics" || module === "monitoring" && topics?.contract_version === "signal-workspace-topics-serving-v1") return topics;
+  if (module === "study") return triggersBarriers;
+  if (module === "settings") return null;
+  return monitoring;
+}
+
+function buildModuleQuery(
+  currentSearch: string,
+  data: SignalBrandMonitoringV1,
+  target: SignalStandardModule
+) {
+  const query = new URLSearchParams(currentSearch);
+  query.delete("study");
+  query.delete("mention");
+  query.delete("comparison_start");
+  query.delete("comparison_end");
+  if (!query.has("start")) query.set("start", data.filter.date_range.start);
+  if (!query.has("end")) query.set("end", data.filter.date_range.end);
+  if (!query.has("timezone")) query.set("timezone", data.workspace.timezone);
+  if (!query.has("granularity")) query.set("granularity", data.filter.granularity);
+  if (!query.has("compare")) query.set("compare", data.comparison.mode);
+  if (!query.has("q") && data.filter.search_query) query.set("q", data.filter.search_query);
+  for (const [dimension, values] of Object.entries(data.filter.dimensions)) {
+    if (query.has(`dimension.${dimension}`)) continue;
+    for (const value of values ?? []) query.append(`dimension.${dimension}`, value);
+  }
+  if (target === "topics") {
+    if (query.get("view") !== "all_conversations") addTaxonomyComparisonParams(query);
+  } else if (query.get("view") === "all_conversations") query.delete("view");
+  return query;
+}
+
+function buildStudyQuery(currentSearch: string) {
+  const current = new URLSearchParams(currentSearch);
+  const query = new URLSearchParams();
+  for (const key of ["start", "end", "timezone"] as const) {
+    const value = current.get(key);
+    if (value) query.set(key, value);
+  }
+  return query;
+}
+
+function moduleCacheKey(module: SignalWorkspaceModule, query: URLSearchParams) {
+  return `${module}:${query.toString()}`;
+}
+
+function moduleHref(
+  workspaceSlug: string,
+  module: SignalWorkspaceModule,
+  query: URLSearchParams
+) {
+  const base = `/signal/${workspaceSlug}`;
+  const pathname = module === "mentions"
+    ? `${base}/mentions`
+    : module === "topics"
+      ? `${base}/topics-narratives`
+      : module === "study"
+        ? `${base}/reports/triggers-barriers`
+        : module === "settings"
+          ? `${base}/settings`
+        : base;
+  const search = query.toString();
+  return search ? `${pathname}?${search}` : pathname;
+}
+
+function NavLink({
+  active = false,
+  href,
+  icon,
+  label,
+  onNavigate,
+  pending = false
+}: {
+  active?: boolean;
+  href: string;
+  icon: React.ReactNode;
+  label: string;
+  onNavigate?: () => void;
+  pending?: boolean;
+}) {
+  return (
+    <WorkspaceNavLink
+      active={active}
+      href={href}
+      icon={icon}
+      label={label}
+      onNavigate={onNavigate}
+      pending={pending}
+      pendingIconClassName="signal-v2-nav__pending"
+    />
+  );
+}
+
+function ConversationKpis({
+  current,
+  hasComparison,
+  nativeVolume,
+  previous
+}: {
+  current: SignalBrandMonitoringV1["conversation_structure"]["summary"];
+  hasComparison: boolean;
+  nativeVolume: { current: number; previous: number | null } | null;
+  previous: SignalBrandMonitoringV1["conversation_structure"]["previous_summary"];
+}) {
+  const t = useTranslations("SignalV2");
+  const items: Array<{
+    key: ConversationMetric;
+    value: number;
+    previousValue: number | null;
+  }> = nativeVolume ? [
+    { key: "mentions", value: nativeVolume.current, previousValue: nativeVolume.previous }
+  ] : [
+    { key: "mentions", value: current.mentions, previousValue: previous?.mentions ?? null },
+    { key: "conversations", value: current.conversations, previousValue: previous?.conversations ?? null },
+    { key: "root_posts", value: current.root_posts, previousValue: previous?.root_posts ?? null },
+    { key: "comments", value: current.comments, previousValue: previous?.comments ?? null }
+  ];
+  return (
+    <section aria-label={t("kpis.label")} className="signal-v2-kpi-strip">
+      {items.map((item) => {
+        const change = item.previousValue == null
+          ? null
+          : comparisonDelta(item.value, item.previousValue);
+        return (
+          <article key={item.key}>
+            <span className="signal-v2-kpi-strip__label">
+              <MetricHelp
+                content={translatedHelp(t, `kpis.help.${item.key}`)}
+                label={t(`kpis.${item.key}`)}
+              />
+            </span>
+            <strong>{formatNumber(item.value)}</strong>
+            <small className={change == null || change === 0
+              ? undefined
+              : change > 0
+                ? "signal-v2-trend--up"
+                : "signal-v2-trend--down"}
+            >
+              {hasComparison ? formatDelta(change) : t("cards.sentiment.noComparison")}
+            </small>
+          </article>
+        );
+      })}
+    </section>
+  );
+}
+
+function ConversationMetricSwitch({
+  onChange,
+  value
+}: {
+  onChange: (value: ConversationMetric) => void;
+  value: ConversationMetric;
+}) {
+  const t = useTranslations("SignalV2");
+  const options: ConversationMetric[] = ["mentions", "conversations", "root_posts", "comments"];
+  return (
+    <div aria-label={t("cards.volume.selector")} className="signal-v2-metric-switch" role="group">
+      {options.map((option) => (
+        <button
+          aria-pressed={value === option}
+          key={option}
+          onClick={() => onChange(option)}
+          type="button"
+        >
+          {t(`cards.volume.units.${option}`)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MetricCard({
+  children,
+  className = "",
+  dataState,
+  eyebrow,
+  headingAction,
+  help,
+  metric,
+  title,
+  trend
+}: {
+  children: React.ReactNode;
+  className?: string;
+  dataState: string;
+  eyebrow: string;
+  headingAction?: React.ReactNode;
+  help?: MetricHelpContent;
+  metric?: number | null;
+  title: string;
+  trend?: number | null;
+}) {
+  return (
+    <article className={`signal-v2-card ${className}`}>
+      <CardHeading
+        action={headingAction}
+        dataState={dataState}
+        eyebrow={eyebrow}
+        help={help}
+        title={title}
+      />
+      {metric != null ? (
+        <div className="signal-v2-card__metric">
+          <strong>{formatNumber(metric)}</strong>
+          {trend != null ? (
+            <span className={trend >= 0 ? "signal-v2-trend--up" : "signal-v2-trend--down"}>
+              {trend >= 0 ? <ArrowUpRight /> : <ArrowDownRight />}
+              {formatDelta(trend)}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+      {children}
+    </article>
+  );
+}
+
+function CardHeading({
+  action,
+  dataState,
+  eyebrow,
+  help,
+  title
+}: {
+  action?: React.ReactNode;
+  dataState: string;
+  eyebrow: string;
+  help?: MetricHelpContent;
+  title: string;
+}) {
+  const t = useTranslations("SignalV2");
+  return (
+    <header className={`signal-v2-card__heading${action ? " signal-v2-card__heading--with-action" : ""}`}>
+      <div>
+        <small>{eyebrow}</small>
+        <h2>
+          {help ? <MetricHelp content={help} label={title} /> : title}
+        </h2>
+      </div>
+      <div className="signal-v2-card__heading-actions">
+        {action}
+        <span className={`signal-v2-state signal-v2-state--${dataState}`}>
+          {stateShortLabel(dataState, t)}
+        </span>
+      </div>
+    </header>
+  );
+}
+
+function AttentionComparison({
+  current,
+  hasComparison,
+  mode = "ratio",
+  previous
+}: {
+  current: number | null;
+  hasComparison: boolean;
+  mode?: "points" | "ratio";
+  previous: number | null;
+}) {
+  const t = useTranslations("SignalV2");
+  if (!hasComparison || current == null || previous == null) {
+    return <em className="signal-v2-attention-indicator signal-v2-attention-indicator--neutral">—</em>;
+  }
+  const delta = mode === "points"
+    ? current - previous
+    : comparisonDelta(current, previous);
+  if (delta == null) {
+    return (
+      <em className="signal-v2-attention-indicator signal-v2-attention-indicator--neutral">
+        {t("cards.attention.noComparableBaseline")}
+      </em>
+    );
+  }
+  const tone = delta > 0 ? "up" : delta < 0 ? "down" : "neutral";
+  return (
+    <em className={`signal-v2-attention-indicator signal-v2-attention-indicator--${tone}`}>
+      {delta > 0 ? <ArrowUpRight aria-hidden /> : delta < 0 ? <ArrowDownRight aria-hidden /> : null}
+      <span>
+        {mode === "points" ? formatPointDelta(delta) : formatDelta(delta)}
+        {" "}
+        {t("cards.attention.vsPrevious")}
+      </span>
+    </em>
+  );
+}
+
+function CoverageIndicator({ measured, total }: { measured: number; total: number }) {
+  const t = useTranslations("SignalV2");
+  const ratio = total > 0 ? measured / total : null;
+  const tone = ratio == null
+    ? "neutral"
+    : ratio === 1
+      ? "up"
+      : ratio > 0
+        ? "caution"
+        : "down";
+  return (
+    <em className={`signal-v2-attention-indicator signal-v2-attention-indicator--${tone}`}>
+      {ratio == null
+        ? "—"
+        : t("cards.attention.coverage", { value: formatPercent(ratio) })}
+    </em>
+  );
+}
+
+function EmptyMetric({ message }: { message: string }) {
+  return (
+    <div className="signal-v2-empty">
+      <Pulse size={22} />
+      <p>{message}</p>
+    </div>
+  );
+}
+
+function SentimentDonut({
+  buckets,
+  hasComparison,
+  previousBuckets
+}: {
+  buckets: BrandMonitoringBreakdown["buckets"];
+  hasComparison: boolean;
+  previousBuckets: BrandMonitoringBreakdown["buckets"];
+}) {
+  const t = useTranslations("SignalV2");
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const items = useMemo(() => {
+    const currentByKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+    const previousByKey = new Map(previousBuckets.map((bucket) => [bucket.key, bucket]));
+    const keys = Array.from(new Set([
+      ...buckets.map((bucket) => bucket.key),
+      ...previousBuckets.map((bucket) => bucket.key)
+    ]));
+    return keys.map((key) => {
+      const current = currentByKey.get(key);
+      const previous = previousByKey.get(key);
+      const count = current?.sample_size ?? 0;
+      const previousCount = previous?.sample_size ?? 0;
+      return {
+        key,
+        label: sentimentLabel(key, t),
+        count,
+        previousCount,
+        delta: comparisonDelta(count, previousCount),
+        color: sentimentColor(key)
+      };
+    });
+  }, [buckets, previousBuckets, t]);
+  const total = items.reduce((sum, item) => sum + item.count, 0);
+  const previousTotal = items.reduce((sum, item) => sum + item.previousCount, 0);
+  const activeKey = hoveredKey ?? selectedKey;
+  const activeItem = items.find((item) => item.key === activeKey) ?? null;
+  const activeValue = activeItem?.count ?? total;
+  const activeDelta = activeItem?.delta ?? comparisonDelta(total, previousTotal);
+  const activeLabel = activeItem?.label ?? t("cards.sentiment.total");
+  const option = useMemo<EChartsCoreOption>(() => ({
+    color: items.map((item) => item.color),
+    tooltip: {
+      ...CHART_TOOLTIP_STYLE,
+      trigger: "item",
+      formatter: (params: unknown) => sentimentTooltip(params, items, total, hasComparison, t)
+    },
+    series: [{
+      type: "pie",
+      radius: ["62%", "83%"],
+      center: ["50%", "50%"],
+      selectedMode: "single",
+      selectedOffset: 5,
+      avoidLabelOverlap: true,
+      label: { show: false },
+      labelLine: { show: false },
+      emphasis: { scale: true, scaleSize: 4 },
+      itemStyle: { borderColor: "#fff", borderWidth: 2 },
+      data: items.map((item) => ({
+        name: item.label,
+        value: item.count,
+        selected: item.key === selectedKey,
+        itemStyle: {
+          color: item.color,
+          opacity: activeKey && activeKey !== item.key ? 0.22 : 1
+        }
+      }))
+    }]
+  }), [activeKey, hasComparison, items, selectedKey, t, total]);
+  const resolveKey = (name: string) => items.find((item) => item.label === name)?.key ?? null;
+
+  return (
+    <div className="signal-v2-sentiment">
+      <div className="signal-v2-sentiment__donut">
+        <SignalEChart
+          ariaLabel={t("cards.sentiment.aria")}
+          className="signal-v2-chart--sentiment"
+          onDatumClick={(name) => {
+            const key = resolveKey(name);
+            if (key) setSelectedKey((current) => current === key ? null : key);
+          }}
+          onDatumHover={(name) => setHoveredKey(name ? resolveKey(name) : null)}
+          option={option}
+        />
+        <div className="signal-v2-sentiment__center">
+          <span>{activeLabel}</span>
+          <strong>{formatNumber(activeValue)}</strong>
+          <small className={sentimentDeltaClass(activeDelta)}>
+            {hasComparison ? formatSentimentDelta(activeDelta) : t("cards.sentiment.noComparison")}
+          </small>
+        </div>
+      </div>
+      <div aria-label={t("cards.sentiment.legend")} className="signal-v2-sentiment__legend">
+        {items.map((item) => (
+          <button
+            aria-pressed={selectedKey === item.key}
+            className={activeKey === item.key ? "signal-v2-sentiment__legend-row--active" : undefined}
+            key={item.key}
+            onBlur={() => setHoveredKey(null)}
+            onClick={() => setSelectedKey((current) => current === item.key ? null : item.key)}
+            onFocus={() => setHoveredKey(item.key)}
+            onMouseEnter={() => setHoveredKey(item.key)}
+            onMouseLeave={() => setHoveredKey(null)}
+            type="button"
+          >
+            <i style={{ backgroundColor: item.color }} />
+            <span>{item.label}</span>
+            <strong>{formatNumber(item.count)}</strong>
+            <small className={sentimentDeltaClass(item.delta)}>
+              {hasComparison ? formatSentimentDelta(item.delta) : "—"}
+            </small>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DistributionBars({ buckets }: { buckets: BrandMonitoringBreakdown }) {
+  const maximum = Math.max(...buckets.buckets.map((bucket) => bucket.value ?? 0), 1);
+  return (
+    <div className="signal-v2-distribution">
+      {buckets.buckets.slice(0, 6).map((bucket) => (
+        <div className="signal-v2-distribution__row" key={bucket.key}>
+          <span>{prettify(bucket.label)}</span>
+          <div><i style={{ width: `${Math.max(3, ((bucket.value ?? 0) / maximum) * 100)}%` }} /></div>
+          <strong>{formatCompact(bucket.value ?? 0)}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TopicTable({
+  topics
+}: {
+  topics: Array<{ key: string; label: string; value: number; kind: "topic" | "narrative" }>;
+}) {
+  const t = useTranslations("SignalV2");
+  if (topics.length === 0) return <EmptyMetric message={t("cards.topics.empty")} />;
+  const total = topics.reduce((sum, item) => sum + item.value, 0);
+  return (
+    <div className="signal-v2-topic-table" role="table">
+      <div className="signal-v2-topic-table__head" role="row">
+        <span role="columnheader">{t("cards.topics.columnName")}</span>
+        <span role="columnheader">{t("cards.topics.columnType")}</span>
+        <span role="columnheader">{t("cards.topics.columnMentions")}</span>
+        <span role="columnheader">{t("cards.topics.columnShare")}</span>
+      </div>
+      {topics.slice(0, 8).map((topic) => (
+        <div className="signal-v2-topic-table__row" key={`${topic.kind}:${topic.key}`} role="row">
+          <strong role="cell">{prettify(topic.label)}</strong>
+          <span role="cell">{topic.kind === "topic" ? t("cards.topics.topic") : t("cards.topics.narrative")}</span>
+          <span role="cell">{formatNumber(topic.value)}</span>
+          <div role="cell">
+            <i><b style={{ width: `${total > 0 ? (topic.value / total) * 100 : 0}%` }} /></i>
+            <span>{total > 0 ? `${Math.round((topic.value / total) * 100)}%` : "—"}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ConversationColumn({
+  empty,
+  items,
+  label,
+  tone
+}: {
+  empty: string;
+  items: BrandMonitoringHighlight[];
+  label: string;
+  tone: "positive" | "negative";
+}) {
+  const t = useTranslations("SignalV2");
+  return (
+    <section>
+      <h3><span className={`signal-v2-tone-dot signal-v2-tone-dot--${tone}`} />{label}</h3>
+      {items.length === 0 ? <p className="signal-v2-conversation-empty">{empty}</p> : (
+        <div className="signal-v2-conversation-list">
+          {items.map((item, index) => (
+            <article key={item.id}>
+              <span>{index + 1}</span>
+              <div>
+                <small>{prettify(item.platform)} · {formatDate(item.occurred_at)}</small>
+                <p>{item.text}</p>
+                <em>{localizedHighlightExplanation(item, t)}</em>
+              </div>
+              {item.url ? (
+                <a aria-label={t("cards.conversations.openOriginal")} href={item.url} rel="noreferrer" target="_blank">
+                  <ArrowUpRight size={15} />
+                </a>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function mergeTopicBuckets(topics: BrandMonitoringBreakdown, narratives: BrandMonitoringBreakdown) {
+  return [
+    ...topics.buckets.map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      value: bucket.value ?? 0,
+      kind: "topic" as const
+    })),
+    ...narratives.buckets.map((bucket) => ({
+      key: bucket.key,
+      label: bucket.label,
+      value: bucket.value ?? 0,
+      kind: "narrative" as const
+    }))
+  ].sort((a, b) => b.value - a.value);
+}
+
+function worstBreakdownState(first: string, second: string) {
+  const order = ["fresh", "stale", "partial", "pending", "not_available"];
+  return order[Math.max(order.indexOf(first), order.indexOf(second))] ?? "partial";
+}
+
+function translatedHelp(
+  t: ReturnType<typeof useTranslations>,
+  prefix: string
+): MetricHelpContent {
+  return {
+    title: t(`${prefix}.title`),
+    body: t(`${prefix}.body`),
+    reading: t(`${prefix}.reading`)
+  };
+}
+
+function preferredGranularity(start: string, end: string) {
+  const days = Math.round((new Date(`${end}T12:00:00Z`).getTime() - new Date(`${start}T12:00:00Z`).getTime()) / 86_400_000) + 1;
+  if (days <= 90) return "day";
+  if (days <= 365) return "week";
+  return "month";
+}
+
+function addTaxonomyComparisonParams(params: URLSearchParams) {
+  const comparison = resolveLocalSignalComparison({
+    mode: params.get("compare") ?? "previous_period",
+    start: params.get("start") ?? "",
+    end: params.get("end") ?? "",
+    customStart: params.get("compareStart"),
+    customEnd: params.get("compareEnd")
+  });
+  if (!comparison.date_range) return;
+  params.set("comparison_start", comparison.date_range.start);
+  params.set("comparison_end", comparison.date_range.end);
+}
+
+function localSignalAnalyticsSelection(args: {
+  comparisonMode: SignalComparisonV1["mode"];
+  comparisonStart?: string | null;
+  comparisonEnd?: string | null;
+  dimensions: SignalFilterV1["dimensions"];
+  end: string;
+  granularity: SignalFilterV1["granularity"];
+  searchQuery: string;
+  start: string;
+  timezone: string;
+}): { filter: SignalFilterV1; comparison: SignalComparisonV1 } {
+  const filter: SignalFilterV1 = {
+    contract_version: "signal-backend-v1",
+    date_range: { start: args.start, end: args.end },
+    timezone: args.timezone,
+    granularity: args.granularity,
+    dimensions: args.dimensions,
+    ...(args.searchQuery ? { search_query: args.searchQuery } : {})
+  };
+  return {
+    filter,
+    comparison: resolveLocalSignalComparison({
+      mode: args.comparisonMode,
+      start: args.start,
+      end: args.end,
+      customStart: args.comparisonStart,
+      customEnd: args.comparisonEnd
+    })
+  };
+}
+
+function resolveLocalSignalComparison(args: {
+  mode: string;
+  start: string;
+  end: string;
+  customStart?: string | null;
+  customEnd?: string | null;
+}): SignalComparisonV1 {
+  const mode = args.mode as SignalComparisonV1["mode"];
+  if (mode === "none") return { mode, date_range: null };
+  if (mode === "custom") {
+    return {
+      mode,
+      date_range: args.customStart && args.customEnd
+        ? { start: args.customStart, end: args.customEnd }
+        : null
+    };
+  }
+  if (mode === "previous_year") {
+    const start = shiftCalendarYear(args.start, -1);
+    return {
+      mode,
+      date_range: {
+        start,
+        end: addCalendarDays(start, inclusiveCalendarDays(args.start, args.end) - 1)
+      }
+    };
+  }
+  if (mode === "previous_year_same_weekday") {
+    return {
+      mode,
+      date_range: {
+        start: addCalendarDays(args.start, -364),
+        end: addCalendarDays(args.end, -364)
+      }
+    };
+  }
+  const duration = inclusiveCalendarDays(args.start, args.end);
+  const end = addCalendarDays(args.start, -1);
+  return {
+    mode: "previous_period",
+    date_range: {
+      start: addCalendarDays(end, -(duration - 1)),
+      end
+    }
+  };
+}
+
+function inclusiveCalendarDays(start: string, end: string) {
+  return Math.round((epochDay(end) - epochDay(start)) / 86_400_000) + 1;
+}
+
+function addCalendarDays(value: string, amount: number) {
+  return new Date(epochDay(value) + amount * 86_400_000).toISOString().slice(0, 10);
+}
+
+function shiftCalendarYear(value: string, amount: number) {
+  const date = new Date(epochDay(value));
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const shifted = new Date(Date.UTC(date.getUTCFullYear() + amount, month, 1));
+  const lastDay = new Date(Date.UTC(shifted.getUTCFullYear(), month + 1, 0)).getUTCDate();
+  shifted.setUTCDate(Math.min(day, lastDay));
+  return shifted.toISOString().slice(0, 10);
+}
+
+function epochDay(value: string) {
+  return Date.parse(`${value}T00:00:00.000Z`);
+}
+
+function alignStructuredPrevious(
+  points: SignalBrandMonitoringV1["conversation_structure"]["previous_points"],
+  length: number,
+  metric: ConversationMetric
+) {
+  const values = points.map((point) => point[metric]);
+  if (values.length >= length) return values.slice(values.length - length);
+  return [...Array.from({ length: length - values.length }, () => null), ...values];
+}
+
+function platformTooltip(
+  params: unknown,
+  buckets: BrandMonitoringBreakdown["buckets"],
+  total: number,
+  t: ReturnType<typeof useTranslations>
+) {
+  if (!params || typeof params !== "object" || !("name" in params)) return "";
+  const name = String((params as { name: unknown }).name);
+  const bucket = buckets.find((candidate) => prettify(candidate.label) === name);
+  if (!bucket) return "";
+  const share = total > 0 ? bucket.sample_size / total : 0;
+  return [
+    `<div class="signal-v2-chart-tooltip__title">${escapeHtml(name)}</div>`,
+    `<div class="signal-v2-chart-tooltip__row">`,
+    `<span>${formatNumber(bucket.sample_size)} ${t("cards.platforms.mentions")}</span>`,
+    `<strong>${formatPercent(share)}</strong>`,
+    `</div>`
+  ].join("");
+}
+
+function driverLabel(item: BrandMonitoringThreadDriver) {
+  const candidate = [item.title, item.text]
+    .map((value) => value?.replace(/\s+/g, " ").trim() ?? "")
+    .find((value) => value.replace(/["'`´“”‘’.,:;!?()[\]{}\-–—_/\\|]/g, "").trim().length >= 8)
+    ?? `${prettify(item.platform)} · ${item.comment_count}`;
+  return candidate.length > 42 ? `${candidate.slice(0, 39)}…` : candidate;
+}
+
+function driverTooltip(
+  params: unknown,
+  items: BrandMonitoringThreadDriver[],
+  t: ReturnType<typeof useTranslations>
+) {
+  if (!params || typeof params !== "object" || !("name" in params)) return "";
+  const name = String((params as { name: unknown }).name);
+  const item = items.find((candidate) => driverLabel(candidate) === name);
+  if (!item) return "";
+  return [
+    `<div class="signal-v2-chart-tooltip__title">${escapeHtml(driverLabel(item))}</div>`,
+    `<div class="signal-v2-chart-tooltip__stack">`,
+    `<span>${formatNumber(item.mention_count)} ${t("cards.drivers.mentions")}</span>`,
+    `<span>${formatNumber(item.comment_count)} ${t("cards.drivers.comments")}</span>`,
+    `<span>${formatCompact(item.interaction_count)} ${t("cards.drivers.interactions")}</span>`,
+    `</div>`
+  ].join("");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\"", "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function sentimentLabel(key: string, t: ReturnType<typeof useTranslations>) {
+  const normalized = key.toLowerCase();
+  if (normalized === "positive") return t("sentiment.positive");
+  if (normalized === "negative") return t("sentiment.negative");
+  if (normalized === "neutral") return t("sentiment.neutral");
+  return t("sentiment.unknown");
+}
+
+function metricEmptyMessage(state: string, t: ReturnType<typeof useTranslations>) {
+  if (state === "pending") return t("states.pending");
+  if (state === "stale") return t("states.stale");
+  if (state === "partial") return t("states.partial");
+  return t("states.notAvailable");
+}
+
+function freshnessLabel(state: string, t: ReturnType<typeof useTranslations>) {
+  if (state === "fresh") return t("freshness.fresh");
+  if (state === "stale") return t("freshness.stale");
+  if (state === "pending") return t("freshness.pending");
+  if (state === "partial") return t("freshness.partial");
+  return t("freshness.notAvailable");
+}
+
+function stateShortLabel(state: string, t: ReturnType<typeof useTranslations>) {
+  if (state === "fresh") return t("stateShort.fresh");
+  if (state === "pending") return t("stateShort.pending");
+  if (state === "partial") return t("stateShort.partial");
+  if (state === "stale") return t("stateShort.stale");
+  return t("stateShort.notAvailable");
+}
+
+function sentimentColor(key: string) {
+  const normalized = key.toLowerCase();
+  if (normalized === "positive") return "#008060";
+  if (normalized === "negative") return "#d82c0d";
+  if (normalized === "neutral") return "#d8d8d8";
+  return "#9aa0a6";
+}
+
+function comparisonDelta(current: number, previous: number) {
+  if (previous === 0) return current === 0 ? 0 : null;
+  return (current - previous) / previous;
+}
+
+function formatSentimentDelta(delta: number | null) {
+  if (delta == null) return "—";
+  const percentage = new Intl.NumberFormat("es-MX", {
+    maximumFractionDigits: 1
+  }).format(Math.abs(delta) * 100);
+  if (delta > 0) return `↑ ${percentage}%`;
+  if (delta < 0) return `↓ ${percentage}%`;
+  return "→ 0%";
+}
+
+function sentimentDeltaClass(delta: number | null) {
+  if (delta == null || delta === 0) return undefined;
+  return delta > 0 ? "signal-v2-trend--up" : "signal-v2-trend--down";
+}
+
+function sentimentTooltip(
+  params: unknown,
+  items: Array<{
+    label: string;
+    count: number;
+    delta: number | null;
+  }>,
+  total: number,
+  hasComparison: boolean,
+  t: ReturnType<typeof useTranslations>
+) {
+  if (!params || typeof params !== "object" || !("name" in params)) return "";
+  const name = String((params as { name: unknown }).name);
+  const item = items.find((candidate) => candidate.label === name);
+  if (!item) return "";
+  const share = total > 0 ? (item.count / total) * 100 : 0;
+  const shareLabel = new Intl.NumberFormat("es-MX", {
+    maximumFractionDigits: 1
+  }).format(share);
+  const comparison = hasComparison
+    ? `<small class="signal-v2-chart-tooltip__comparison">${formatSentimentDelta(item.delta)} ${t("cards.sentiment.vsPrevious")}</small>`
+    : "";
+  return [
+    `<div class="signal-v2-chart-tooltip__title">${escapeHtml(item.label)}</div>`,
+    `<div class="signal-v2-chart-tooltip__row">`,
+    `<span>${formatNumber(item.count)} ${t("cards.sentiment.mentions")}</span>`,
+    `<strong>${shareLabel}%</strong>`,
+    `</div>`,
+    comparison
+  ].join("");
+}
+
+function localizedHighlightExplanation(
+  item: BrandMonitoringHighlight,
+  t: ReturnType<typeof useTranslations>
+) {
+  const tone = item.sentiment > 0
+    ? t("cards.conversations.tonePositive")
+    : t("cards.conversations.toneNegative");
+  if (item.engagement > 0) {
+    return t("cards.conversations.explanationEngagement", {
+      tone,
+      count: formatNumber(item.engagement)
+    });
+  }
+  if (item.reach && item.reach > 0) {
+    return t("cards.conversations.explanationReach", { tone });
+  }
+  return t("cards.conversations.explanationRecency", { tone });
+}
+
+function shortDate(value: string) {
+  return new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short" })
+    .format(new Date(`${value.slice(0, 10)}T12:00:00Z`));
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("es-MX", { day: "numeric", month: "short", year: "numeric" })
+    .format(new Date(value.length === 10 ? `${value}T12:00:00Z` : value));
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatCompact(value: number) {
+  return new Intl.NumberFormat("es-MX", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+function formatPercent(value: number | null) {
+  if (value == null) return "—";
+  return new Intl.NumberFormat("es-MX", {
+    style: "percent",
+    maximumFractionDigits: 1
+  }).format(value);
+}
+
+function formatDelta(value: number | null) {
+  if (value == null) return "—";
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("es-MX", { style: "percent", maximumFractionDigits: 1 }).format(value)}`;
+}
+
+function formatPointDelta(value: number) {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("es-MX", { maximumFractionDigits: 1 }).format(value * 100)} pp`;
+}
+
+function prettify(value: string) {
+  return value.replace(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function initials(value: string) {
+  return value.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "N";
+}

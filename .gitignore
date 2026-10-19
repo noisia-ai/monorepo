@@ -1,6 +1,7 @@
 .DS_Store
 node_modules
 .next
+.next-dev
 .vercel
 .railway
 .turbo
@@ -8,21 +9,15 @@ dist
 out
 coverage
 .data
+.codex/
+.codex-artifacts/
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-# Secrets — keep ALL env variants out of git (broad match first, then explicit).
-# Only .env.example is allowed (it is force-unignored below).
-.env
-.env.*
-*.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-# Catch ad-hoc backups/dumps of env files (e.g. .env.production-local-backup-YYYYMMDD)
+.env*
+# Also catch ad-hoc copies that move "env" away from the leading dot.
 *env*backup*
 *.env.bak
 !.env.example
@@ -30,5 +25,21 @@ pnpm-debug.log*
 tsconfig.tsbuildinfo
 *.swp
 
+# Local Python benchmark/runtime caches
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local screenshots, audit captures, and scratch artifacts
+/tmp/
+
 # Pitch kit: local working decks (may contain client data — never commit)
 packages/pitch-kit/examples/_local/
+
+# KB Comercial (precios + discusión interna) — vive en Drive, NUNCA en este repo público.
+# Red de seguridad: aunque se copie una carpeta/documento comercial al árbol, git lo ignora.
+*.docx
+**/noisia-kb-comercial*/
+**/*KB Comercial*/

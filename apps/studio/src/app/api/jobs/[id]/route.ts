@@ -1,8 +1,10 @@
 import { Job } from "bullmq";
+import { isEngineRuntimeEnabled } from "@noisia/query-engine";
 
 import { forbidden, unauthorized } from "@/lib/api/responses";
 import { canAccessStudio } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
+import { getEngineAnalysisQueue } from "@/lib/queue/engine-analysis";
 import { getQueryEngineQueue, isQueryEngineWorkerAlive } from "@/lib/queue/query-engine";
 import { getTbAnalysisQueue } from "@/lib/queue/tb-analysis";
 
@@ -20,7 +22,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const { id } = await context.params;
   const url = new URL(request.url);
   const queueName = url.searchParams.get("queue");
-  const queue = queueName === "tb-analysis" ? getTbAnalysisQueue() : getQueryEngineQueue();
+  const queue = queueName === "tb-analysis"
+    ? getTbAnalysisQueue()
+    : queueName === "engine-analysis"
+      ? getEngineAnalysisQueue()
+      : getQueryEngineQueue();
   const job = await Job.fromId(queue, id);
 
   if (!job) {
@@ -34,7 +40,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   // heartbeat key written by the worker because getWorkers()/CLIENT LIST is
   // unreliable on managed Redis (Upstash returns 0 even with a live worker).
   // tb-analysis is not instrumented, so we only assert liveness for query-engine.
-  const workerAlive = queueName === "tb-analysis" ? true : await isQueryEngineWorkerAlive();
+  const workerAlive = queueName === "tb-analysis"
+    ? true
+    : queueName === "engine-analysis"
+      ? isEngineRuntimeEnabled()
+      : await isQueryEngineWorkerAlive();
 
   return Response.json({
     id: job.id,

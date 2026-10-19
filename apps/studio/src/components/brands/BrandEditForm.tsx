@@ -1,11 +1,18 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
+import { type FormEvent, type KeyboardEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
+import { useBrandContextPreparation } from "./BrandContextPreparationNotice";
+import { DEFAULT_WORKSPACE_TIMEZONE, isIanaTimezone } from "@/lib/timezone-catalog";
+import { WorkspaceTimezoneField } from "@/components/admin/WorkspaceTimezoneField";
 import { Icon } from "@/components/ui/Icon";
-import { INDUSTRY_OPTIONS, subindustriesForIndustry } from "@/lib/industry-catalog";
+import { WorkspaceSelect, WorkspaceSelectField } from "@/components/admin/WorkspaceSelect";
+import { COUNTRY_OPTIONS } from "@/lib/country-catalog";
+import { INDUSTRY_OPTIONS, INDUSTRY_SEARCH_ALIASES, subindustriesForIndustry } from "@/lib/industry-catalog";
+import { slugify } from "@/lib/slug";
+import { CatalogCombobox, ExpandableTextareaField, TokenCatalogField, TokenInputField, type ComboOption } from "./BrandOsForm";
 
 type EditableBrand = {
   id: string;
@@ -19,6 +26,7 @@ type EditableBrand = {
   description: string | null;
   brandSeedHandles: string[] | null;
   status: string;
+  timezone: string;
 };
 
 type OrganizationOption = {
@@ -26,16 +34,25 @@ type OrganizationOption = {
   name: string;
 };
 
+const industryOptions: ComboOption[] = INDUSTRY_OPTIONS.map((industry) => ({
+  value: industry,
+  label: industry,
+  keywords: INDUSTRY_SEARCH_ALIASES.get(industry) ?? []
+}));
+
 export function BrandEditForm({
   brand,
-  organizations
+  organizations,
+  clientContext
 }: {
   brand: EditableBrand;
   organizations: OrganizationOption[];
+  clientContext?: { workspaceSlug: string; organizationName: string };
 }) {
   const t = useTranslations("BrandEdit");
   const brandT = useTranslations("BrandOs.form");
   const router = useRouter();
+  const preparation = useBrandContextPreparation(false);
   const [organizationOptions, setOrganizationOptions] = useState(organizations);
   const [selectedOrgId, setSelectedOrgId] = useState(brand.organizationId);
   const [showOrgCreate, setShowOrgCreate] = useState(false);
@@ -45,8 +62,24 @@ export function BrandEditForm({
   const [isCreatingOrg, setIsCreatingOrg] = useState(false);
   const [orgCreateError, setOrgCreateError] = useState<string | null>(null);
   const [industryValue, setIndustryValue] = useState(brand.industry ?? "");
+  const [timezoneValue, setTimezoneValue] = useState(isIanaTimezone(brand.timezone) ? brand.timezone : DEFAULT_WORKSPACE_TIMEZONE);
+  const [statusValue, setStatusValue] = useState(brand.status);
+  const [subindustryValues, setSubindustryValues] = useState(splitList(brand.industrySub ?? ""));
+  const [countryValues, setCountryValues] = useState(brand.countries ?? ["MX"]);
+  const [aliasValues, setAliasValues] = useState(brand.brandSeedHandles ?? []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const subindustryOptions = useMemo(
+    () => subindustriesForIndustry(industryValue).map((subindustry) => ({ value: subindustry, label: subindustry })),
+    [industryValue]
+  );
+
+  function preventImplicitSubmit(event: KeyboardEvent<HTMLFormElement>) {
+    const target = event.target as HTMLElement | null;
+    if (event.key !== "Enter") return;
+    if (target?.tagName === "TEXTAREA" || target?.tagName === "BUTTON") return;
+    event.preventDefault();
+  }
 
   async function createOrganization() {
     setOrgCreateError(null);
@@ -54,7 +87,7 @@ export function BrandEditForm({
 
     const legalName = newOrgLegalName.trim();
     const displayName = newOrgDisplayName.trim();
-    const slug = (newOrgSlug.trim() || slugify(legalName)).slice(0, 80);
+    const slug = slugify(newOrgSlug.trim() || legalName);
 
     try {
       const res = await fetch("/api/organizations", {
@@ -97,28 +130,39 @@ export function BrandEditForm({
     setIsSubmitting(true);
 
     const form = new FormData(event.currentTarget);
-    const payload = {
-      organization_id: selectedOrgId,
-      slug: String(form.get("slug") ?? "").trim(),
+    const editablePayload = {
       name: String(form.get("name") ?? "").trim(),
       display_name: String(form.get("display_name") ?? "").trim(),
-      industry: String(form.get("industry") ?? "").trim(),
-      industry_sub: String(form.get("industry_sub") ?? "").trim(),
-      countries: splitList(String(form.get("countries") ?? "MX")).map((item) => item.toUpperCase()),
+      industry: industryValue.trim(),
+      industry_sub: subindustryValues.join(", "),
+      countries: countryValues.map((item) => item.toUpperCase()),
       description: String(form.get("description") ?? "").trim(),
-      brand_seed_handles: splitList(String(form.get("brand_seed_handles") ?? "")),
+      brand_seed_handles: aliasValues,
+      timezone: String(form.get("timezone") ?? brand.timezone)
+    };
+    const payload = clientContext ? editablePayload : {
+      ...editablePayload,
+      organization_id: selectedOrgId,
+      slug: slugify(String(form.get("slug") ?? "").trim()),
       status: String(form.get("status") ?? "active")
     };
 
     try {
+      const action = `edit-brand:${brand.id}`;
+      const intent = preparation.forUnfundedRequest(action, payload);
       const res = await fetch(`/api/brands/${brand.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
+        headers: { "Content-Type": "application/json", "Idempotency-Key": intent.idempotency_key },
+        body: JSON.stringify({ ...payload, preparation: intent })
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(formatApiError(json, t("fallbackSaveError"), brandT("fieldFallback"), brandT("invalidFallback")));
-      router.push(`/studio/brands/${brand.id}`);
+      preparation.accepted(action);
+      router.push(clientContext
+        ? `/signal/${encodeURIComponent(clientContext.workspaceSlug)}/manage/brand-os`
+        : json?.brand_context_preparation?.error_code
+          ? `/studio/brands/${brand.id}/brand-os`
+          : `/studio/brands/${brand.id}`);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("fallbackSaveError"));
@@ -127,58 +171,64 @@ export function BrandEditForm({
   }
 
   return (
-    <form className="new-study-shell brand-os-shell" onSubmit={onSubmit}>
-      <section className="new-study-panel">
-        <div className="new-study-section-head">
-          <p className="vitals-eyebrow">{brandT("identityEyebrow")}</p>
-          <h2>{t("formTitle")}</h2>
-        </div>
-
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("organization")}</span>
-            <select
-              className="filter-input new-study-input"
-              name="organization_id"
-              required
-              value={selectedOrgId}
-              onChange={(event) => setSelectedOrgId(event.target.value)}
-            >
-              {organizationOptions.map((organization) => (
-                <option key={organization.id} value={organization.id}>
-                  {organization.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="new-study-field">
-            <span>{t("organizationTools")}</span>
-            <button
-              className="wizard-cta wizard-cta--secondary"
-              type="button"
-              onClick={() => setShowOrgCreate((value) => !value)}
-            >
-              <Icon name={showOrgCreate ? "x" : "sparkle"} size={14} />{" "}
-              {showOrgCreate ? t("cancelCreateOrganization") : t("newOrganization")}
-            </button>
+    <form className="workspace-form" onKeyDown={preventImplicitSubmit} onSubmit={onSubmit}>
+      <section className="admin-section workspace-form__section">
+        <header className="admin-section__head">
+          <div>
+            <p className="workspace-form__eyebrow">{brandT("identityEyebrow")}</p>
+            <h2>{t("formTitle")}</h2>
           </div>
-          <label className="new-study-field">
+        </header>
+        <div className="workspace-form__body">
+
+        <div className="workspace-form__grid">
+          <div className="workspace-field workspace-field--wide">
+            <span>{brandT("organization")}</span>
+            {clientContext ? <span className="workspace-control" aria-readonly="true">{clientContext.organizationName}</span> : <div className="workspace-connected-control">
+              <WorkspaceSelect
+                ariaLabel={brandT("organization")}
+                className="workspace-connected-control__select"
+                name="organization_id"
+                options={organizationOptions.map((organization) => ({
+                  label: organization.name,
+                  value: organization.id
+                }))}
+                value={selectedOrgId}
+                onChange={setSelectedOrgId}
+              />
+              <button
+                className="admin-button workspace-connected-control__action"
+                type="button"
+                onClick={() => setShowOrgCreate((value) => !value)}
+              >
+                <Icon name={showOrgCreate ? "x" : "sparkle"} size={14} />{" "}
+                {showOrgCreate ? t("cancelCreateOrganization") : t("newOrganization")}
+              </button>
+            </div>}
+          </div>
+          <label className="workspace-field">
             <span>{brandT("brand")}</span>
-            <input className="filter-input new-study-input" name="name" required minLength={2} maxLength={160} defaultValue={brand.name} />
+            <input className="workspace-control" name="name" required minLength={2} maxLength={160} defaultValue={brand.name} />
           </label>
+
+          <label className="workspace-field">
+            <span>{brandT("displayName")}</span>
+            <input className="workspace-control" name="display_name" maxLength={160} defaultValue={brand.displayName ?? ""} />
+          </label>
+          <WorkspaceTimezoneField value={timezoneValue} onChange={setTimezoneValue} disabled={isSubmitting} />
         </div>
 
-        {showOrgCreate ? (
-          <div className="org-form">
-            <div className="new-study-section-head">
-              <p className="vitals-eyebrow">{t("createOrganizationEyebrow")}</p>
-              <h2>{t("createOrganizationTitle")}</h2>
+        {!clientContext && showOrgCreate ? (
+          <div className="workspace-form__nested">
+            <div className="workspace-form__nested-head">
+              <p className="workspace-form__eyebrow">{t("createOrganizationEyebrow")}</p>
+              <strong>{t("createOrganizationTitle")}</strong>
             </div>
-            <div className="new-study-grid">
-              <label className="new-study-field">
+            <div className="workspace-form__grid">
+              <label className="workspace-field">
                 <span>{t("orgLegalName")}</span>
                 <input
-                  className="filter-input new-study-input"
+                  className="workspace-control"
                   minLength={2}
                   maxLength={180}
                   value={newOrgLegalName}
@@ -188,139 +238,139 @@ export function BrandEditForm({
                   }}
                 />
               </label>
-              <label className="new-study-field">
+              <label className="workspace-field">
                 <span>{t("orgDisplayName")}</span>
                 <input
-                  className="filter-input new-study-input"
+                  className="workspace-control"
                   maxLength={180}
                   value={newOrgDisplayName}
                   onChange={(event) => setNewOrgDisplayName(event.target.value)}
                 />
               </label>
-              <label className="new-study-field">
+              <label className="workspace-field">
                 <span>{t("orgSlug")}</span>
                 <input
-                  className="filter-input new-study-input"
+                  className="workspace-control"
                   pattern="[a-z0-9]+(-[a-z0-9]+)*"
                   value={newOrgSlug}
-                  onChange={(event) => setNewOrgSlug(event.target.value)}
+                  onChange={(event) => setNewOrgSlug(slugify(event.target.value))}
                 />
               </label>
             </div>
-            <div className="team-form-actions">
+            <div className="workspace-form__actions">
               <button
-                className="wizard-cta"
+                className="admin-button admin-button--primary"
                 type="button"
                 disabled={isCreatingOrg || newOrgLegalName.trim().length < 2}
                 onClick={createOrganization}
               >
                 {isCreatingOrg ? <><Icon name="spinner" size={14} /> {t("creatingOrganization")}</> : <><Icon name="check" size={14} /> {t("createOrganization")}</>}
               </button>
-              {orgCreateError ? <span className="team-msg team-msg--error">{orgCreateError}</span> : null}
+              {orgCreateError ? <span className="workspace-form__error" role="alert">{orgCreateError}</span> : null}
             </div>
           </div>
         ) : null}
 
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("displayName")}</span>
-            <input className="filter-input new-study-input" name="display_name" maxLength={160} defaultValue={brand.displayName ?? ""} />
-          </label>
-        </div>
-
-        <div className="new-study-grid">
-          <label className="new-study-field">
+        {!clientContext ? <div className="workspace-form__grid">
+          <label className="workspace-field">
             <span>{brandT("slug")}</span>
-            <input className="filter-input new-study-input" name="slug" required defaultValue={brand.slug} />
+            <input className="workspace-control" name="slug" required defaultValue={brand.slug} />
           </label>
-          <label className="new-study-field">
-            <span>{t("status")}</span>
-            <select className="filter-input new-study-input" name="status" defaultValue={brand.status}>
-              <option value="active">{t("active")}</option>
-              <option value="paused">{t("paused")}</option>
-              <option value="archived">{t("archived")}</option>
-            </select>
-          </label>
-        </div>
+          <WorkspaceSelectField
+            ariaLabel={t("status")}
+            label={t("status")}
+            name="status"
+            onChange={setStatusValue}
+            options={[
+              { label: t("active"), value: "active" },
+              { label: t("paused"), value: "paused" },
+              { label: t("archived"), value: "archived" }
+            ]}
+            value={statusValue}
+          />
+        </div> : null}
 
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("industry")}</span>
-            <input
-              className="filter-input new-study-input"
-              name="industry"
-              list="edit-industry-options"
-              value={industryValue}
-              onChange={(event) => setIndustryValue(event.target.value)}
-            />
-            <datalist id="edit-industry-options">
-              {INDUSTRY_OPTIONS.map((industry) => <option key={industry} value={industry} />)}
-            </datalist>
-          </label>
-          <label className="new-study-field">
-            <span>{brandT("subindustry")}</span>
-            <input className="filter-input new-study-input" name="industry_sub" list="edit-subindustry-options" defaultValue={brand.industrySub ?? ""} />
-            <datalist id="edit-subindustry-options">
-              {subindustriesForIndustry(industryValue).map((subindustry) => (
-                <option key={subindustry} value={subindustry} />
-              ))}
-            </datalist>
-          </label>
+        <div className="workspace-form__grid">
+          <CatalogCombobox
+            label={brandT("industry")}
+            name="industry"
+            options={industryOptions}
+            placeholder={brandT("industryPlaceholder")}
+            surface="workspace"
+            value={industryValue}
+            onChange={setIndustryValue}
+          />
+          <TokenCatalogField
+            allowCustom
+            disabled={!industryValue.trim()}
+            disabledHint={brandT("subindustryDisabled")}
+            label={brandT("subindustry")}
+            name="industry_sub"
+            options={subindustryOptions}
+            placeholder={brandT("subindustryPlaceholder")}
+            surface="workspace"
+            values={subindustryValues}
+            onChange={setSubindustryValues}
+          />
         </div>
-
-        <label className="new-study-field new-study-field--wide">
-          <span>{brandT("description")}</span>
-          <textarea className="filter-input new-study-textarea" name="description" maxLength={12000} defaultValue={brand.description ?? ""} />
-        </label>
-      </section>
-
-      <section className="new-study-panel">
-        <div className="new-study-section-head">
-          <p className="vitals-eyebrow">{t("relationsEyebrow")}</p>
-          <h2>{t("relationsTitle")}</h2>
-        </div>
-        <div className="new-study-grid">
-          <label className="new-study-field">
-            <span>{brandT("countries")}</span>
-            <input className="filter-input new-study-input" name="countries" defaultValue={(brand.countries ?? ["MX"]).join(", ")} />
-          </label>
-          <label className="new-study-field">
-            <span>{brandT("aliases")}</span>
-            <textarea
-              className="filter-input new-study-textarea new-study-textarea--short"
-              name="brand_seed_handles"
-              defaultValue={(brand.brandSeedHandles ?? []).join("\n")}
-              placeholder="@sephoramx&#10;sephora mexico"
-            />
-          </label>
         </div>
       </section>
 
-      <footer className="new-study-actions">
-        {error && (
-          <p className="new-study-error">
-            <Icon name="alert" size={14} /> {error}
-          </p>
-        )}
-        <button className="wizard-cta wizard-cta--ghost" type="button" onClick={() => router.push(`/studio/brands/${brand.id}`)}>
-          {t("cancel")}
-        </button>
-        <button className="wizard-cta" type="submit" disabled={isSubmitting}>
-          {isSubmitting ? <><Icon name="spinner" size={14} /> {t("saving")}</> : <><Icon name="check" size={14} /> {t("save")}</>}
-        </button>
-      </footer>
+      <section className="admin-section workspace-form__section">
+        <header className="admin-section__head">
+          <div>
+            <p className="workspace-form__eyebrow">{t("relationsEyebrow")}</p>
+            <h2>{t("relationsTitle")}</h2>
+          </div>
+        </header>
+        <div className="workspace-form__body">
+        <div className="workspace-form__grid">
+          <TokenCatalogField
+            label={brandT("countries")}
+            name="countries"
+            options={COUNTRY_OPTIONS}
+            placeholder={brandT("countryPlaceholder")}
+            surface="workspace"
+            values={countryValues}
+            onChange={setCountryValues}
+          />
+          <TokenInputField
+            label={brandT("aliases")}
+            name="brand_seed_handles"
+            placeholder={brandT("aliasesPlaceholder")}
+            surface="workspace"
+            values={aliasValues}
+            onChange={setAliasValues}
+          />
+        </div>
+
+        <ExpandableTextareaField
+          defaultValue={brand.description ?? ""}
+          label={brandT("description")}
+          maxLength={12000}
+          name="description"
+          surface="workspace"
+        />
+        </div>
+
+        <footer className="workspace-form__section-footer">
+          {error && (
+            <p className="workspace-form__error" role="alert">
+              <Icon name="alert" size={14} /> {error}
+            </p>
+          )}
+          <button className="admin-button" type="button" onClick={() => router.push(clientContext
+            ? `/signal/${encodeURIComponent(clientContext.workspaceSlug)}`
+            : `/studio/brands/${brand.id}`)}>
+            {t("cancel")}
+          </button>
+          <button className="admin-button admin-button--primary" type="submit" disabled={isSubmitting}>
+            {isSubmitting ? <><Icon name="spinner" size={14} /> {t("saving")}</> : <><Icon name="check" size={14} /> {t("save")}</>}
+          </button>
+        </footer>
+      </section>
     </form>
   );
-}
-
-function slugify(value: string) {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
 }
 
 function splitList(value: string) {

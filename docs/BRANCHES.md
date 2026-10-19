@@ -1,106 +1,162 @@
-# BRANCHES & ISSUES — unmerged work and where the rest of the history lives
+# Noisia Branch State
 
-> **History/Intent, not Canon.** None of this is in prod. `main` is the only thing that
-> deploys. Two large feature branches carry months of work that has **not** been merged.
-> Read this before you branch, so you don't rebuild something that already exists on a branch.
+> Historical branch inventory as of 2026-08-03. Verify with
+> `git branch -vv --all` before release decisions. On 2026-10-03 a separate
+> `codex/noisia-release-integration-2026-10-03` branch was created from
+> `origin/main` to combine the UAT product line; it is not deployed or approved
+> for production. The earlier main-side branch inventory remains in Git at
+> `eccc356`.
 
-## TL;DR of the branch topology
+## Production Branch
 
-```
-main (prod, HEAD 7637d8f)
- └─ codex/live-intelligence-store   ← Engine multimétodo (16 lenses). PAUSED. 11 commits over main.
-      └─ codex/signal-pulse         ← Signal Pulse (one simpler report). Built ON TOP of the above.
-                                      Contains all of live-intelligence-store + ~93 commits of its own.
-```
+### `main`
 
-Verified with `git rev-list --left-right --count`:
-- `main…live-intelligence-store` = 1 / 11 (branch is 11 ahead; main's 1 is a later doc tweak).
-- `live-intelligence-store…signal-pulse` = 0 / 93 → **signal-pulse is a strict superset** of live-intelligence-store.
+- Purpose: production deploy branch.
+- Rule: do not work directly on `main`; branch, open PR, review, then merge.
+- Current local note: local `main` can lag `origin/main`; always fetch before comparing
+  prod readiness.
 
-So the infra/migrations of the Engine live on `live-intelligence-store`; `signal-pulse`
-inherits all of it and adds the tactical report on top. **Neither is merged → nothing in prod.**
+## Foundation Branches
 
----
+### `codex/live-intelligence-store`
 
-## Branch A — `codex/live-intelligence-store` · "varios métodos a medio implementar" · ⏸️ PAUSED
+- Purpose: reusable live intelligence substrate.
+- Contains the live intelligence store, workers, composer, corpus explorer, persistent
+  signals/observations, query pack provenance, monthly cuts and related specs.
+- Status: frozen as the base for Signal Pulse work. Do not expand product surface here
+  unless explicitly resuming that line.
 
-The **Engine multimétodo**: a family of 16 reusable comparative methodologies ("lentes")
-that all consume the same base model (`corpus + entities + baseline + findings + citations`)
-and only differ in how they group / score / visualize.
+### `codex/signal-pulse`
 
-- **Status:** PAUSED **2026-06-09** by a direction change (a new, simpler methodology was
-  designed instead → that became Signal Pulse). Pushed to origin, **not merged to main**.
-- **Source of truth to resume (read before touching the Engine):**
-  `docs/product/10_methodology_seeds/engine_comparative/98_PROD_READINESS_TRACKER.md`
-  and **Issue #2** (checkboxes + ops runbook + money-trap accounting).
-- **What's built & validated** (real end-to-end run on the Takis corpus, Claude live):
-  wizard (lens selection) → `analysis_plan` → per-lens/scope query packs → CSV provenance +
-  fan-out → retrieve → resilient batch coding → score → editorial synthesize → quality gates →
-  live signals (`canonical_signals` + observations + evidence) → Live Composer.
-  Two lenses fully in `needs_review`: **narrative-ownership** (1,136 findings) and
-  **sentiment-advocacy** (1,071), 2,207 live signals with cited evidence.
-- **Known gaps at pause:** `engine-step-synthesize.ts` is partly a stub for some methods;
-  3 lenses (VPM / trust-risk / JFM) weren't run for lack of Anthropic budget; method-specific
-  render in `/signal` and per-lens query packs are incomplete. Spec to close the gap:
-  `engine_comparative/97_SIGNAL_RENDER_AND_COMPOSER_SPEC.md`.
-- **Key commits on the branch:** `88989cb` DB (migrations 0025–0033) · `2c6e47b` query-engine
-  runtime + resilient parser · `6eaa551` workers 6-step pipeline · `37d24ae` Studio wizard/APIs/Live
-  Composer · `708528c` docs + readiness tracker.
-- **Design docs:** `docs/product/10_methodology_seeds/engine_comparative/` (`00_FAMILY_FRAMEWORK`,
-  `01`–`16` per-method, `99_BUILD_SPEC_FOR_CODEX`).
+- Purpose: tactical marketing Signal Pulse product branch.
+- Base: created from `codex/live-intelligence-store`.
+- Contains Signal Pulse output kind, performance/source foundation, runtime contracts,
+  report periods, canonical signals, signal metrics, chart aggregates and the
+  `/pulse/[outputId]` dashboard path.
+- Status: base branch for Data OS Cut 1.
 
-**Principle for this engine:** *Opus interprets, SQL scores, Voyage retrieves* — dashboard
-numbers are always deterministic. Engine LLM = `claude-opus-4-8` via `ANTHROPIC_MODEL_ENGINE`.
+## Current Production-Bound Work
 
-## Branch B — `codex/signal-pulse` · "un método más simple" · Issue #4 (pre-prod validation)
+### `codex/noisia-data-os-cut-1-wip`
 
-**Signal Pulse**: a tactical, marketing-first report (the buyer is Marketing — KAM / Brand
-Manager / Insights Mgr — who wants creative ammunition: what to post, trends, reinvented
-wordcloud/donut), **not** a product/CX improvement. It does **not** replace T&B; it's the
-tactical layer. It is the **current priority** (since 2026-06-12), which is why the 16-lens
-engine was paused.
+- Purpose: first production-bound Noisia Data OS cut.
+- Base: `codex/signal-pulse`.
+- Fork point: `e329136` (`Add Signal Pulse source health context`), the tip of
+  `codex/signal-pulse` when Data OS Cut 1 work began.
+- Previous recovery checkpoint: `48ef71d` (`Implement T&B relational serving layer`).
+  Subsequent focused commits add the Analysis Artifact Graph; use `git log` to resolve
+  the exact remote tip instead of treating this document as a branch pointer.
+- Status: active WIP. The checkpoint is locally validated but does not claim feature
+  completion, staging readiness or production readiness. No PR is open.
+- Product North Star: `docs/product/31_SIGNAL_PRODUCT_NORTH_STAR.md`. Signal evolves
+  toward one stable client dashboard where almost always-on Social Listening and
+  reviewed strategic reports coexist; the current `outputId` surface is transitional.
+- Backend execution: `docs/product/32_SIGNAL_BACKEND_EXECUTION_ROADMAP.md`. Execute
+  SB-01 through SB-10 sequentially; do not begin the Signal V2 frontend before the
+  Backend Ready gate in SB-10.
 
-- **Built on top of** `codex/live-intelligence-store` (the engine infra/migrations live there).
-- **Spec package:** `docs/product/10_methodology_seeds/signal_pulse/` (audited; docs 43–45 have
-  precedence: 43 = decisions, 44 = data contract vs real schema, 45 = Production Cut 1).
-- **Closed decisions (don't reopen):** SP signals in `canonical_signals`
-  (`methodology_slug='signal-pulse'`); runs reuse `engine_analyses` (queue/ledger/locks);
-  **cluster-first** detection (embeddings+clustering in a worker, Claude only names/interprets
-  clusters → <$5/run instead of ~$470 per-mention); fixed versioned `impact_v1`; galaxy layout
-  precomputed to `chart_aggregates`; output = `published_outputs.kind='signal_pulse'` at
-  `/pulse/[outputId]`; new tables in migration `0034+` (`report_periods`,
-  `signal_period_metrics`, `marketing_moves`, `chart_aggregates`).
-- **Status (Issue #4):** implementation complete + audited (235 tests green). Remaining is
-  **validation, not construction**: real-data run (Takis + 12-mo performance, <$5,
-  `sp_metrics` <5min — watch the known N+1 of 1 query per signal×period), human visual QA,
-  PR to main + `/code-review`, deploy (migrations 0025–0034, seeds, envs, ANALYZE).
-- **Local dev state:** this branch currently has uncommitted WIP (new Pulse chart/filter
-  components, worker tests). As of 2026-06-24 that WIP was stashed to work on `main`.
+Cut 1 adds:
 
-### Adjacent in-flight idea: Entel NPS bridge
-A tab "Índice de Escucha Digital · NPS Bridge" that crosses (simulated) NPS with digital
-listening on a −100/+100 scale, aggregating `signal_period_metrics`. The metric already exists
-in code (`scoreSentimentAdvocacy()` in `packages/query-engine/src/engine-aggregation.ts`).
-Built on the `signal-pulse` branch.
+- governed Data Catalog tables: `data_assets`, `data_asset_fields`,
+  `data_contracts`, `data_quality_rules`, `data_quality_results`, `lineage_edges`;
+- Brand OS catalog tables for profiles, objectives, audiences, seeds and future
+  campaign/claim/product entities;
+- Knowledge Catalog tables for chunks, assertions, assertion links and usage events;
+- taxonomy/entity/tag/feature store tables;
+- semantic layer tables and `dashboard_data_refs`;
+- a shared T&B Analysis Serving Layer for Review and Signal, with canonical strategic
+  opportunities, Action Studio, immutable published revisions and guarded historical
+  reconciliation;
+- an additive `analysis-artifacts-v1` registry and evidence graph connecting typed
+  analytical units, mention citations, contextual Study assets, editorial state and
+  the exact artifact revisions frozen into a published output;
+- the documented target architecture for live metric groups, versioned Claude
+  interpretations, periodic T&B releases and a stable Signal home;
+- feature-flagged `/api/data-os/*` serving APIs;
+- local/staging gates: `data-os:verify`, `data-os:candidates`,
+  `data-os:shadow-run`, `data-os:serving-smoke`, `data-os:evidence`;
+- Pulse dashboard internal shadow badge while clients continue reading
+  `published_outputs.payload`.
 
----
+Subsequent work on the same branch also adds or has active local WIP for:
 
-## Issues = the running history (GitHub `noisia-ai/website`)
+- one stable `/signal/{workspaceSlug}` client workspace;
+- Brand Monitoring, Mentions and Topics & Narratives on relational serving;
+- governed and incremental topic/narrative profiles and assignments;
+- Signal V2 filters, charts, evidence drawers, skeletons and navigation behavior based
+  on direct Shopify Admin inspection;
+- T&B relational releases, Decision Field, finding reading and evidence UI;
+- taxonomy insight research and persistent mention enrichment;
+- a cleaned client navigation organized around operational modules, Reports and
+  Settings.
 
-The repo has no `gh` configured locally; read issues via the GitHub web UI or the API. The
-ones that carry real context:
+### Current local architecture state
 
-- **#1 — Research note: Live Corpus / Store Experience Intelligence (Sephora).** Proposal to
-  separate *infrastructure* (live corpus sources: connectors, syncs, normalization, snapshots)
-  from *product* (store-experience methodology pack). Sources strategy: Google Business Profile
-  Reviews API (official) with Apify backfill fallback; TikTok via per-store seeds, not full
-  scrape; Tinyfish only for discovery/edge cases. **Future work, not started.**
-- **#2 — ⏸️ Engine multimétodo PAUSED — status, pending, resume guide.** The source of truth
-  for Branch A: what's built & validated, the money traps to fix before reactivating, and the
-  ops runbook. Pairs with `engine_comparative/98_PROD_READINESS_TRACKER.md`.
-- **#4 — ✅ Signal Pulse pre-prod validation checklist.** The closing checklist for Branch B.
-  Acceptance: real-data run + human visual QA + PR merged. Pairs with
-  `signal_pulse/50_VALIDATION_BEFORE_PROD.md`.
+The workspace-owned ingestion boundary and **Phase 4A primary-brand operational
+serving** are implemented locally in additive migrations 0059–0061. Canonical mentions,
+source/import provenance, scope attribution, current operational population, materializations, invalidations,
+watermarks and the Brand Monitoring/Mentions/Topics & Narratives readers can now resolve
+the workspace population without a study corpus. Client rollout is controlled by one
+closed-by-default `legacy | shadow | governed` read mode; shadow does not alter the
+visible payload, writes comparisons to a durable deduplicated outbox and rollback
+requires only returning the configuration to `legacy`.
+Topics & Narratives derives its private overview ETag from the served semantic body,
+so membership changes cannot reuse a validator from an older denominator while an
+equivalent rematerialization keeps the same validator.
 
-When you pause or hand off non-trivial work, **write an issue like #2/#4** (state + pending +
-runbook) and link it from here. That's how the next agent picks up cold.
+Phase 4 is not declared complete: competitor/category exploration remains explicitly
+deferred until it has a server-owned governed population contract. Staging handoff is
+blocked until that scope decision and a separate authorization/configuration step; no
+remote migration or cutover has been run.
+
+**Phase 5 Strategic Consumption** is structurally closed and locally exercised in
+additive migrations 0062–0063. A workspace/report run now creates an explicit approved analysis
+population, freezes IDs/watermarks into an immutable relational snapshot, reuses the
+existing T&B pipeline behind containment gates, promotes only selected reviewed tags
+to canonical mention enrichment and publishes append-only revisions under one
+`(workspace_id, report_key='triggers-barriers')` current pointer. The client uses one
+stable `/signal/{workspaceSlug}/reports/triggers-barriers` surface; corpus routes and
+legacy URLs remain adapters, not product identity. PostgreSQL fixtures cover two runs,
+releases 1→2, alias lineage, concurrency and snapshot/release invariance without an LLM
+or paid pipeline run. Workers owns recoverable dispatch: startup/periodic drains claim
+due rows with leases and `SKIP LOCKED`, use deterministic BullMQ IDs, reconcile a job
+accepted before PostgreSQL ACK, and dead-letter bounded repeated failures.
+
+This is local evidence only. Migrations 0062–0063 have not been applied remotely, no staging
+run or cutover occurred, and production accessibility/build identity remains
+unverified. Phase 4A's deferred exploration-scope contract is unaffected.
+
+Canon and handoff:
+
+- `docs/adr/014-signal-workspace-owned-data-plane.md`;
+- `docs/product/42_SIGNAL_WORKSPACE_DATA_OWNERSHIP.md`;
+- `docs/product/43_SIGNAL_V2_FRONTEND_SYSTEM.md`;
+- `docs/product/44_SIGNAL_WORKSPACE_DATA_PLANE_HANDOFF.md`.
+
+Local PostgreSQL and browser evidence is recorded in
+`docs/product/45_SIGNAL_WORKSPACE_DATA_PLANE_IMPLEMENTATION_AUDIT.md`. Staging, remote
+migration and client cutover remain explicitly unexecuted. Do not infer production
+readiness from the local governed gate, and do not pursue blind equality with a legacy
+reader that includes non-primary scopes.
+
+## Merge Order
+
+1. Continue Data OS Cut 1 implementation on `codex/noisia-data-os-cut-1-wip` with
+   focused commits by subsystem.
+2. Finish the complete local gate set on `codex/noisia-data-os-cut-1-wip`.
+3. Run staging/prod-shadow checklist in `docs/product/23_NOISIA_DATA_OS_STAGING_RUNBOOK.md`.
+4. Open PR from `codex/noisia-data-os-cut-1-wip` to `main` only after staging/preview
+   evidence shows: `ready_for_live_api_shadow: true`,
+   `ready_for_serving_shadow: true`, `ready_for_pr_review: true` and
+   `release-gate.json` with `ready_for_production_review: true`,
+   `database_format: "postgres_url"` and gate `database_format_postgres_url`.
+5. Keep live serving flags off for clients until internal shadow mode passes on a real
+   Signal Pulse corpus/output.
+
+## Do Not Merge From
+
+- Do not branch Data OS directly from `main`; it would miss Signal Pulse/live
+  intelligence substrate.
+- Do not cherry-pick Data OS tables without the flags, verifier, smoke and rollback
+  docs.
+- Do not turn on `NOISIA_DATA_OS_TAGGING_ENABLED` for LLM enrichment in Cut 1.

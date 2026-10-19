@@ -1,0 +1,39 @@
+slug: evidence-confidence-layer
+name: Evidence Quality / Confidence Layer
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué tan confiable es cada hallazgo o chart y qué factores suben o bajan
+  esa confianza?
+
+inputs:
+  corpus:
+    minimum_viable: 1
+    ideal: 100
+  evidence_links:
+    required: true
+
+outputs:
+  - id: confidence_badges
+    name: Confidence Badges
+    type: confidence_badge
+  - id: confidence_breakdown
+    name: Confidence Breakdown
+    type: bar_ranking
+
+default_dashboard_blocks:
+  - block_id: confidence_badges
+  - block_id: confidence_breakdown
+  - block_id: limitations_section
+
+quality_gates:
+  - id: traceability
+    description: "Nada se publica sin evidencia trazable."
+  - id: confidence_calibrated
+    description: "La confianza se calcula con volumen, diversidad, consistencia, recencia y calidad de cita."
+  - id: limitations_section
+    description: "Cada output explica qué baja la confianza."
+
+ai_prompts:
+  engine_spec: evidence-confidence-layer

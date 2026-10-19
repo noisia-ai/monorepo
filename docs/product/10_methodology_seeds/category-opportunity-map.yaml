@@ -1,0 +1,43 @@
+slug: category-opportunity-map
+name: Category Opportunity Map
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué necesidades de categoría están mal atendidas, quién está mejor
+  posicionado para capturarlas y con qué evidencia?
+
+inputs:
+  corpus:
+    minimum_viable: 1000
+    ideal: 4500
+  competitive_corpus:
+    required: true
+
+outputs:
+  - id: opportunity_bubbles
+    name: Opportunity Bubble Map
+    type: bubble_field
+  - id: opportunity_ranking
+    name: Opportunity Ranking
+    type: bar_ranking
+  - id: best_positioned_entity
+    name: Best Positioned Entity
+    type: structured
+
+default_dashboard_blocks:
+  - block_id: opportunity_bubbles
+  - block_id: opportunity_ranking
+  - block_id: confidence_layer
+  - block_id: evidence_list_top
+
+quality_gates:
+  - id: demand_evidence_required
+    description: "Cada oportunidad tiene evidencia de demanda."
+  - id: coverage_evidence_required
+    description: "Cada oportunidad tiene evidencia de baja cobertura o saturacion."
+  - id: confidence_calibrated
+    description: "Cada oportunidad lleva confianza."
+
+ai_prompts:
+  engine_spec: category-opportunity-map

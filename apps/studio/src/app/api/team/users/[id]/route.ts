@@ -4,7 +4,7 @@ import { organizations, users } from "@noisia/db";
 import { db } from "@/lib/db";
 import { canManageTeam, getUserType, isInternalRole } from "@/lib/auth/roles";
 import { getAuthenticatedAppUser } from "@/lib/auth/session";
-import { syncClientBrandAccessForOrganization } from "@/lib/auth/org-sync";
+import { revokeAllClientBrandAccess, revokeClientBrandAccessOutsideOrganization } from "@/lib/auth/org-sync";
 import { forbidden, unauthorized, validationError } from "@/lib/api/responses";
 import { updateUserSchema } from "@/lib/validation/team";
 
@@ -71,32 +71,38 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     }
   }
 
-  const [updated] = await db
-    .update(users)
-    .set({
-      primaryRole: nextRole,
-      userType: getUserType(nextRole),
-      organizationId: nextOrganizationId,
-      ...(parsed.data.status ? { status: parsed.data.status } : {})
-    })
-    .where(eq(users.id, id))
-    .returning({
-      id: users.id,
-      email: users.email,
-      primaryRole: users.primaryRole,
-      userType: users.userType,
-      organizationId: users.organizationId,
-      status: users.status
-    });
-
-  // Si quedó como cliente con organización, refresca su acceso a las marcas de esa org.
-  if (updated && !nextInternal && nextOrganizationId) {
-    await syncClientBrandAccessForOrganization({
-      userId: updated.id,
-      role: updated.primaryRole,
-      organizationId: nextOrganizationId
-    });
-  }
+  const updated = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(users)
+      .set({
+        primaryRole: nextRole,
+        userType: getUserType(nextRole),
+        organizationId: nextOrganizationId,
+        ...(parsed.data.status ? { status: parsed.data.status } : {})
+      })
+      .where(eq(users.id, id))
+      .returning({
+        id: users.id,
+        email: users.email,
+        primaryRole: users.primaryRole,
+        userType: users.userType,
+        organizationId: users.organizationId,
+        status: users.status
+      });
+    if (!row) return null;
+    // Moving or internalizing a user invalidates every previous assignment in the
+    // same transaction. New assignments are always explicit per brand.
+    const organizationChanged = target.organizationId !== nextOrganizationId;
+    if (organizationChanged || nextInternal || row.status === "suspended") {
+      await revokeAllClientBrandAccess(row.id, tx);
+    } else {
+      await revokeClientBrandAccessOutsideOrganization({
+        userId: row.id,
+        organizationId: nextOrganizationId
+      }, tx);
+    }
+    return row;
+  });
 
   return Response.json({ data: updated });
 }

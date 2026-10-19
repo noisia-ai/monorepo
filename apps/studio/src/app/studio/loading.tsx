@@ -1,5 +1,5 @@
-import { StudioLoading } from "@/components/layout/StudioLoading";
+import { AdminRouteSkeleton } from "@/components/admin/AdminRouteSkeleton";
 
 export default function Loading() {
-  return <StudioLoading title="Cargando datos del workspace" />;
+  return <AdminRouteSkeleton kind="index" />;
 }

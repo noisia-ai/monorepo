@@ -9,6 +9,9 @@ import {
   type QueryStrategyBrief
 } from "@noisia/query-engine";
 import { pool } from "../db/client";
+import { compactKnowledgeContent } from "./rag-context-compaction";
+
+export { compactKnowledgeContent } from "./rag-context-compaction";
 
 type KnowledgeSourceRow = {
   type: string;
@@ -149,24 +152,6 @@ function extractStrategyBrief(records: MemoryRecord[]): QueryStrategyBrief | nul
   }
 }
 
-function compactKnowledgeContent(title: string, content: unknown, rawText: string | null) {
-  const source = content && typeof content === "object" ? content as Record<string, unknown> : {};
-  if (source.source === "query_strategy_brief" || source.summary || source.priority_topics) {
-    return {
-      title,
-      ...source,
-      raw_text_excerpt: rawText ? rawText.slice(0, 1200) : undefined
-    };
-  }
-
-  return {
-    title,
-    summary: rawText?.slice(0, 1200) ?? "",
-    raw_text_excerpt: rawText?.slice(0, 1800) ?? "",
-    recommended_use: ["analysis_context"]
-  };
-}
-
 function buildFallbackStrategyBrief(input: QueryComposerInput, error: unknown): QueryStrategyBrief {
   const subjectName = input.subject.name;
   const industry = input.subject.industry ?? "la categoria";
@@ -185,8 +170,11 @@ function buildFallbackStrategyBrief(input: QueryComposerInput, error: unknown): 
     competitor_query_role:
       competitors.length > 0
         ? `Capturar menciones de competidores: ${competitors.join(", ")}.`
-        : "Capturar menciones de competidores relevantes.",
-    industry_query_role: `Capturar conversacion de categoria sobre ${industry}.`,
+        : "",
+    industry_query_role:
+      input.subject.industry || input.subject.industrySub
+        ? `Capturar conversacion de categoria sobre ${industry}.`
+        : "",
     must_answer: businessQuestion ? [businessQuestion] : [],
     limitations: [
       `Brief generado por fallback (sin LLM). Motivo: ${
@@ -217,4 +205,3 @@ function renderStrategyBrief(brief: QueryStrategyBrief) {
     `Rol query industria: ${brief.industry_query_role}`
   ].join("\n");
 }
-

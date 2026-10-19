@@ -14,10 +14,12 @@ import { detectTbOutputLanguage } from "./tb-language";
 import { loadTbRagPromptContext } from "./tb-rag-context";
 import {
   enqueueStep,
+  loadTbPinnedModel,
   markStepCompleted,
   markStepFailed,
   markStepRunning,
-  releaseCorpusLock
+  releaseCorpusLock,
+  runTbGovernedProviderCall
 } from "./tb-shared";
 
 type StepJobData = {
@@ -90,7 +92,7 @@ export async function tbStep4MobilityJob(job: Job<StepJobData>) {
         (f.cita_protagonista && typeof f.cita_protagonista === "object" && f.cita_protagonista.text) || ""
     }));
 
-    const model = process.env.ANTHROPIC_MODEL_DEFAULT ?? "claude-sonnet-4-6";
+    const model = await loadTbPinnedModel(tbAnalysisId);
     const prompt = buildMobilityPrompt({
       brandName: ctx.brand_display_name ?? ctx.brand_name ?? "Marca",
       industry: ctx.brand_industry,
@@ -99,11 +101,19 @@ export async function tbStep4MobilityJob(job: Job<StepJobData>) {
       ragContext,
       findings: inputs
     });
-
     let mobilityResult;
     try {
-      const r = await generateText({ model: anthropic(model), prompt, temperature: 0.15 });
-      console.log(`[tb-step4] response first 200: ${r.text.slice(0, 200)}`);
+      const r = await runTbGovernedProviderCall({
+        tbAnalysisId,
+        operationKey: "step4-mobility",
+        prompt,
+        maxOutputTokens: 8000,
+        invoke: (maxOutputTokens) => generateText({
+          model: anthropic(model), prompt, temperature: 0.15,
+          maxOutputTokens, maxRetries: 0
+        })
+      });
+      console.log("[tb-step4] provider response received", { chars: r.text.length });
       mobilityResult = parseMobilityResponse(r.text);
     } catch (err) {
       throw new Error(`Mobility parse failed: ${err instanceof Error ? err.message : err}`);

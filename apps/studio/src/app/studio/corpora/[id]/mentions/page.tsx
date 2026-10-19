@@ -1,5 +1,8 @@
+import { ChatCircleText } from "@phosphor-icons/react/dist/ssr";
 import { notFound } from "next/navigation";
+import { getLocale, getTranslations } from "next-intl/server";
 
+import { AdminStatus, AdminWorkspaceHeader } from "@/components/admin/AdminWorkspacePrimitives";
 import type { FilterControl } from "@/components/filters/ReportFilterPanel";
 import { MentionsBrowser } from "@/components/mentions/MentionsBrowser";
 import { SourceToken, sourceLabel } from "@/components/ui/SourceIcon";
@@ -27,6 +30,10 @@ export default async function CorpusMentionsPage({
   searchParams?: StudioSearchParams;
 }) {
   const { id } = await params;
+  const [locale, t] = await Promise.all([
+    getLocale(),
+    getTranslations("AdminWorkspace.studySurfaces.mentions")
+  ]);
   const session = await requireStudioUser(`/studio/corpora/${id}/mentions`);
 
   const corpus = await getCorpusForUser(session.appUser, id);
@@ -78,43 +85,43 @@ export default async function CorpusMentionsPage({
     {
       type: "search",
       name: "search",
-      label: "Buscar texto",
-      placeholder: "Ej. deducible, fraude, ajustador",
+      label: t("browser.controls.search"),
+      placeholder: t("browser.controls.searchPlaceholder"),
       value: filters.search,
       icon: "search",
     },
     {
       type: "single",
       name: "sort",
-      label: "Ordenar",
-      allLabel: "Más recientes",
+      label: t("browser.controls.sort"),
+      allLabel: t("browser.controls.newest"),
       value: filters.sort === "newest" ? "" : filters.sort,
       icon: "sort",
       options: [
-        { label: "Más antiguas", value: "oldest" },
-        { label: "Texto más largo", value: "longest" },
-        { label: "Texto más corto", value: "shortest" },
-        { label: "Pendientes primero", value: "pending_first" },
+        { label: t("browser.controls.oldest"), value: "oldest" },
+        { label: t("browser.controls.longest"), value: "longest" },
+        { label: t("browser.controls.shortest"), value: "shortest" },
+        { label: t("browser.controls.pendingFirst"), value: "pending_first" },
       ],
     },
     {
       type: "single",
       name: "status",
-      label: "Inclusión",
-      allLabel: "Todas",
+      label: t("browser.controls.inclusion"),
+      allLabel: t("browser.controls.allFeminine"),
       value: filters.status,
       icon: "check",
       options: [
-        { label: "Incluidas", value: "included" },
-        { label: "Excluidas", value: "excluded" },
-        { label: "Pendientes", value: "pending" },
+        { label: t("browser.status.includedPlural"), value: "included" },
+        { label: t("browser.status.excludedPlural"), value: "excluded" },
+        { label: t("browser.status.pendingPlural"), value: "pending" },
       ],
     },
     {
       type: "single",
       name: "platform",
-      label: "Fuentes",
-      allLabel: "Todas",
+      label: t("browser.controls.sources"),
+      allLabel: t("browser.controls.allFeminine"),
       value: filters.platform,
       icon: "layers",
       options: facets.platforms.map((facet) => ({
@@ -127,8 +134,8 @@ export default async function CorpusMentionsPage({
     {
       type: "single",
       name: "sentiment",
-      label: "Sentimiento",
-      allLabel: "Todos",
+      label: t("browser.controls.sentiment"),
+      allLabel: t("browser.controls.all"),
       value: filters.sentiment,
       icon: "sentiment",
       options: facets.sentiments.flatMap((facet) =>
@@ -145,7 +152,7 @@ export default async function CorpusMentionsPage({
     },
     {
       type: "date-range",
-      label: "Fecha",
+      label: t("browser.controls.date"),
       fromName: "date_from",
       toName: "date_to",
       fromValue: filters.dateFrom,
@@ -157,15 +164,15 @@ export default async function CorpusMentionsPage({
     {
       type: "single",
       name: "cleanup_kind",
-      label: "Tipo limpieza",
-      allLabel: "Todos",
+      label: t("browser.controls.cleanupType"),
+      allLabel: t("browser.controls.all"),
       value: filters.cleanupKind,
       icon: "layers",
       options: facets.cleanupKinds.flatMap((facet) =>
         facet.value
           ? [
               {
-                label: cleanupKindLabel(facet.value),
+                label: cleanupKindLabel(facet.value, t("browser.cleanup.manual"), t("browser.cleanup.ai")),
                 value: facet.value,
                 count: facet.count,
               },
@@ -176,12 +183,12 @@ export default async function CorpusMentionsPage({
     {
       type: "single",
       name: "exclusion_reason",
-      label: "Motivo exclusión",
-      allLabel: "Todos",
+      label: t("browser.controls.exclusionReason"),
+      allLabel: t("browser.controls.all"),
       value: filters.exclusionReason,
       icon: "tag",
       options: [
-        { label: "Con motivo", value: "any" },
+        { label: t("browser.controls.withReason"), value: "any" },
         ...facets.exclusionReasons.flatMap((facet) =>
           facet.value
             ? [
@@ -198,32 +205,36 @@ export default async function CorpusMentionsPage({
   ];
 
   return (
-    <div className="studio-page">
-      <header className="vitals mentions-vitals">
-        <div className="vitals-main">
-          <p className="vitals-eyebrow">{corpus.methodologyName}</p>
-          <h1 className="vitals-name">{corpus.name ?? corpus.brandName ?? corpus.themeName ?? "Corpus"}</h1>
-          <div className="mentions-vitals-pills">
-            <StatusPill tone="info">{corpus.status}</StatusPill>
-            {filters.status ? <StatusPill tone="idle">{filters.status}</StatusPill> : null}
-            {filters.platform ? (
-              <StatusPill tone="idle">
-                <SourceToken compact value={filters.platform} />
-              </StatusPill>
-            ) : null}
-            {filters.sentiment ? <StatusPill tone="idle">{filters.sentiment}</StatusPill> : null}
-          </div>
+    <div className="admin-workspace-page admin-study-surface admin-study-mentions">
+      <AdminWorkspaceHeader
+        eyebrow={corpus.methodologyName ?? t("eyebrow")}
+        icon={<ChatCircleText aria-hidden />}
+        status={<AdminStatus state={corpus.status === "corpus_approved" ? "good" : "warning"}>{corpus.status === "corpus_approved" ? t("status.approved") : t("status.pending")}</AdminStatus>}
+        subtitle={t("subtitle")}
+        title={corpus.name ?? corpus.brandName ?? corpus.themeName ?? t("fallbackTitle")}
+      />
+
+      <dl className="admin-summary-strip">
+        <div><dt>{t("summary.mentions")}</dt><dd>{fmt(mentions.pagination.total, locale)}</dd><small>{t("summary.filtered")}</small></div>
+        <div><dt>{t("summary.page")}</dt><dd>{fmt(mentions.pagination.page, locale)}</dd><small>{t("summary.of", { count: pageCount })}</small></div>
+        <div><dt>{t("summary.pageSize")}</dt><dd>{fmt(mentions.pagination.pageSize, locale)}</dd><small>{t("summary.perPage")}</small></div>
+        <div>
+          <dt>{t("summary.filters")}</dt>
+          <dd>{[filters.status, filters.platform, filters.sentiment].filter(Boolean).length}</dd>
+          <small>{t("summary.active")}</small>
         </div>
-        <div className="vitals-stats">
-          <Stat label="Menciones" value={fmt(mentions.pagination.total)} sub="filtradas" highlight />
-          <Stat label="Página" value={fmt(mentions.pagination.page)} sub={`de ${fmt(pageCount)}`} />
-          <Stat label="Tamaño" value={fmt(mentions.pagination.pageSize)} sub="por página" />
-        </div>
-      </header>
+      </dl>
+
+      <div className="admin-study-filter-status">
+        {filters.status ? <StatusPill tone="idle">{filters.status}</StatusPill> : null}
+        {filters.platform ? <StatusPill tone="idle"><SourceToken compact value={filters.platform} /></StatusPill> : null}
+        {filters.sentiment ? <StatusPill tone="idle">{filters.sentiment}</StatusPill> : null}
+      </div>
 
       <MentionsBrowser
         corpusId={corpus.id}
         filterControls={filterControls}
+        hasActiveFilters={Boolean(filters.search || filters.platform || filters.sentiment || filters.dateFrom || filters.dateTo || filters.status || filters.cleanupKind || filters.exclusionReason || (filters.sort && filters.sort !== "newest"))}
         mentions={serializedMentions}
         searchTerm={filters.search}
         pageHref={{
@@ -265,28 +276,8 @@ function pageHref(
   return `?${p.toString()}`;
 }
 
-function Stat({
-  label,
-  value,
-  sub,
-  highlight = false,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div className={`vital-stat${highlight ? " vital-stat--hi" : ""}`}>
-      <span className="vital-stat-label">{label}</span>
-      <span className="vital-stat-value">{value}</span>
-      <span className="vital-stat-sub">{sub}</span>
-    </div>
-  );
-}
-
-function fmt(value: number) {
-  return new Intl.NumberFormat("es-MX").format(value);
+function fmt(value: number, locale: string) {
+  return new Intl.NumberFormat(locale).format(value);
 }
 
 function toYmd(value: Date | string) {
@@ -298,10 +289,10 @@ function toYmd(value: Date | string) {
   return `${year}-${month}-${day}`;
 }
 
-function cleanupKindLabel(value: string | null) {
-  if (value === "manual_bulk") return "Manual";
-  if (value === "claude_instruction") return "AI";
-  return value ?? "Sin tipo";
+function cleanupKindLabel(value: string | null, manualLabel: string, aiLabel: string) {
+  if (value === "manual_bulk") return manualLabel;
+  if (value === "claude_instruction") return aiLabel;
+  return value ?? "—";
 }
 
 function shortReason(value: string | null) {

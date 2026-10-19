@@ -1,0 +1,9 @@
+# Progreso editorial durable en Topics — UAT, 27 septiembre 2026
+
+Studio UAT `64fa4fb` quedó ACTIVE en el despliegue `919eff4c-b516-437f-88f3-8138f4b000ac`. La pantalla de Alexa+ mostró el censo completo y las cubetas disjuntas después de recargar: a las 00:31 UTC del 28 de septiembre había **175/1,652** grupos con decisión (25 Topics, 17 Narrativas, 123 Noise y 10 con evidencia insuficiente), **528 pendientes**, **949 en recuperación** y **0 errores técnicos definitivos**. La suma es 1,652. El costo confirmado era USD 1.462332 y la reserva USD 527.251568; reserva no equivale a consumo.
+
+El GET anterior respondía HTTP 200 pero omitía la cubeta de recuperaciones. El cliente rechazaba 872 frente a 1,652 y mostraba «No se pudo actualizar el estado». Los commits `20464ec` y `64fa4fb` separan recuperaciones de pendientes, conservan la identidad de la ejecución y muestran un estado honesto sin reiniciar ni volver a cobrar las decisiones aceptadas. Las pruebas focales del cambio de UI pasaron 51/51, junto con typecheck y lint. Se comprobó el estado por la interfaz real, no sólo por el endpoint.
+
+La ejecución pagada continúa en **cribado**, no en consolidación final. El primer Message Batch (`msgbatch_017be72aYLwh65ZMEnx6X2XP`) terminó en el proveedor y el Worker importa resultados. Los errores de límite de compilación de gramática cuestan cero y se reintentan en lotes pequeños bajo la misma ejecución. Los 1,652 grupos originales y los 36 Topics parciales anteriores se conservan; **todavía no existe un catálogo consolidado nuevo ni una publicación nueva en Signal**.
+
+Siguiente corte de producto: completar el cribado y sus reintentos, ejecutar la consolidación semántica acotada de todos los grupos, comprobar uniones/no uniones/Noise con citas, materializar un catálogo editable y seleccionarlo desde Topics; verificar las menciones originales y el resultado en Signal. No repetir CSV, embeddings, BERTopic ni SQL0199–0201.

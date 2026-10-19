@@ -46,10 +46,25 @@ export async function runCorpusSql<T extends QueryResultRow = QueryResultRow>({
     const result = await client.query<T>(
       `
         WITH analysis_scope AS (
-          SELECT id AS tb_analysis_id, study_corpus_id, snapshot_id
+          SELECT id AS tb_analysis_id, study_corpus_id, snapshot_id,
+            workspace_id, strategic_contract_version
           FROM tb_analyses
           WHERE id = $1::uuid
           LIMIT 1
+        ),
+        scoped_roots AS (
+          SELECT csm.mention_id
+          FROM analysis_scope s
+          JOIN corpus_snapshot_mentions csm ON csm.snapshot_id=s.snapshot_id
+          WHERE s.strategic_contract_version IS DISTINCT FROM 'signal-tb-strategic-v2'
+          UNION ALL
+          SELECT sealed.mention_id
+          FROM analysis_scope s
+          JOIN signal_strategic_run_controls control
+            ON control.tb_analysis_id=s.tb_analysis_id
+          JOIN signal_strategic_sealed_sample_items sealed
+            ON sealed.run_control_id=control.id
+          WHERE s.strategic_contract_version='signal-tb-strategic-v2'
         ),
         scoped_mentions AS (
           SELECT
@@ -63,17 +78,40 @@ export async function runCorpusSql<T extends QueryResultRow = QueryResultRow>({
             m.language,
             m.sentiment_source,
             m.sentiment_score,
-            ib.mention_type,
-            ib.entity_kind,
-            ib.entity_label,
-            ib.competitor_id,
+            CASE WHEN s.strategic_contract_version='signal-tb-strategic-v2'
+              THEN semantic.scope ELSE ib.mention_type END AS mention_type,
+            CASE WHEN s.strategic_contract_version='signal-tb-strategic-v2'
+              THEN semantic.scope ELSE ib.entity_kind END AS entity_kind,
+            CASE WHEN s.strategic_contract_version='signal-tb-strategic-v2'
+              THEN semantic.entity_label ELSE ib.entity_label END AS entity_label,
+            CASE WHEN s.strategic_contract_version='signal-tb-strategic-v2'
+                   AND semantic.scope='competitor'
+              THEN semantic.entity_id ELSE ib.competitor_id END AS competitor_id,
             m.inclusion_status,
             m.engagement,
             m.raw_metadata
           FROM analysis_scope s
-          JOIN corpus_snapshot_mentions csm ON csm.snapshot_id = s.snapshot_id
-          JOIN mentions m ON m.id = csm.mention_id AND m.study_corpus_id = s.study_corpus_id
-          LEFT JOIN import_batches ib ON ib.id = m.source_file_id
+          JOIN scoped_roots root ON true
+          JOIN mentions m ON m.id = root.mention_id
+          LEFT JOIN import_batches ib
+            ON ib.id=m.source_file_id
+           AND s.strategic_contract_version IS DISTINCT FROM 'signal-tb-strategic-v2'
+          LEFT JOIN LATERAL (
+            SELECT assertion.scope,assertion.entity_id,assertion.entity_label
+            FROM signal_mention_attributions assertion
+            WHERE assertion.workspace_id=s.workspace_id
+              AND assertion.mention_id=m.id
+              AND assertion.attribution_basis='mention_semantic'
+              AND assertion.is_current=true
+              AND assertion.review_status='approved'
+              AND assertion.eligibility_status='eligible'
+              AND s.strategic_contract_version='signal-tb-strategic-v2'
+            ORDER BY CASE assertion.scope
+              WHEN 'primary_brand' THEN 0 WHEN 'competitor' THEN 1
+              WHEN 'category' THEN 2 WHEN 'reference' THEN 3 ELSE 4 END,
+              assertion.entity_id NULLS LAST,assertion.id
+            LIMIT 1
+          ) semantic ON true
         ),
         findings AS (
           SELECT

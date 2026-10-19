@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useState, type CSSProperties, type ErrorInfo, type ReactNode } from "react";
 import {
   Activity,
   BarChart2,
@@ -22,7 +22,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { useSignalUiLanguage, type SignalUiLanguage } from "@/components/signal/SignalReportShell";
+import { useSignalDateRange, useSignalUiLanguage, type SignalUiLanguage } from "@/components/signal/SignalReportShell";
 
 type ChartRecord = Record<string, unknown>;
 
@@ -36,10 +36,12 @@ type SignalDashboardChartsProps = {
     barriersTotal: number;
     triggersTotal: number;
     movableTotal: number;
+    opportunitiesTotal: number;
   };
   polarityDist: ChartRecord[];
   layerDist: ChartRecord[];
   mobilityDist: ChartRecord[];
+  outputId?: string;
   platformDist: ChartRecord[];
   contentTypeDist?: ChartRecord[];
   volumeTimeline: ChartRecord[];
@@ -48,6 +50,27 @@ type SignalDashboardChartsProps = {
   findingsScatter: ChartRecord[];
   topVoice: ChartRecord[];
   topBarriers: ChartRecord[];
+};
+
+type LiveOverviewPayload = {
+  ok: boolean;
+  corpus: {
+    total_mentions: number;
+    window: {
+      start: string | null;
+      end: string | null;
+    };
+  };
+  metrics: SignalDashboardChartsProps["metrics"];
+  polarity_distribution: ChartRecord[];
+  layer_distribution: ChartRecord[];
+  mobility_distribution: ChartRecord[];
+  platform_distribution: ChartRecord[];
+  content_type_distribution: ChartRecord[];
+  volume_timeline: ChartRecord[];
+  finding_time_series: ChartRecord[];
+  polarity_time_series: ChartRecord[];
+  top_findings_by_voice: ChartRecord[];
 };
 
 type SignalChartBoundaryState = {
@@ -84,16 +107,17 @@ const chartCopy = {
     unavailable: "Dashboard temporarily unavailable",
     unavailableBody: "The report is still loaded; a visualization failed in the browser.",
     unavailableHint: "Refresh and try again. If it persists, the team can inspect the console without blocking the rest of Signal.",
+    relationalRefreshFailed: "The governed view could not refresh. The last relational server cut remains visible.",
     contextAria: "Analysis context",
     publishedMentions: "published mentions",
-    cutSummary: "Published cut summary",
+    cutSummary: "Live corpus summary",
     mentions: "Mentions",
     periodCorpus: "Period corpus",
     findings: "Findings",
     clientSafeFindings: "Client-safe findings",
     triggersOfFindings: "of findings",
     opportunities: "Opportunities",
-    movableByBrand: "movable by brand",
+    structuredRecommendations: "Structured recommendations",
     confidence: "Confidence",
     signalsOverTime: "Signals over time",
     temporalFilter: "Date filter",
@@ -153,16 +177,17 @@ const chartCopy = {
     unavailable: "Dashboard temporalmente no disponible",
     unavailableBody: "El reporte sigue cargado; una visualización falló en el navegador.",
     unavailableHint: "Reintenta con refresh. Si persiste, el equipo puede revisar la consola sin bloquear el resto del Signal.",
+    relationalRefreshFailed: "No se pudo actualizar la vista gobernada. Se mantiene visible el último corte relacional del servidor.",
     contextAria: "Contexto del análisis",
-    publishedMentions: "menciones publicadas",
-    cutSummary: "Resumen del corte",
+    publishedMentions: "menciones del corpus",
+    cutSummary: "Resumen vivo del corpus",
     mentions: "Menciones",
     periodCorpus: "Corpus del periodo",
     findings: "Findings",
     clientSafeFindings: "Hallazgos client-safe",
     triggersOfFindings: "de hallazgos",
     opportunities: "Oportunidades",
-    movableByBrand: "movibles por marca",
+    structuredRecommendations: "Recomendaciones estructuradas",
     confidence: "Confianza",
     signalsOverTime: "Señales en el tiempo",
     temporalFilter: "Filtro temporal",
@@ -195,7 +220,7 @@ const chartCopy = {
     value: "Valor",
     noData: "Sin datos",
     month: "Mes",
-    mentionsInCut: "menciones en el corte",
+    mentionsInCut: "menciones del rango",
     averageIntensity: "Intensidad promedio",
     traceableQuotes: "citas trazables",
     high: "Alta",
@@ -273,6 +298,7 @@ function SignalDashboardChartsInner({
   polarityDist,
   layerDist,
   mobilityDist,
+  outputId,
   platformDist,
   contentTypeDist = [],
   volumeTimeline,
@@ -282,28 +308,63 @@ function SignalDashboardChartsInner({
   topBarriers,
 }: SignalDashboardChartsProps) {
   const { uiLanguage } = useSignalUiLanguage();
+  const { dateFrom, dateTo, queryString } = useSignalDateRange();
   const copy = chartCopy[uiLanguage];
-  const polarityTimeline = normalizePolarityTimeline(polarityTimeSeries);
-  const allTimeline = mergeTimelinePolarity(normalizeTimeline(volumeTimeline, uiLanguage), polarityTimeline);
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
+  const [livePayload, setLivePayload] = useState<LiveOverviewPayload | null>(null);
+  const [isLiveLoading, setIsLiveLoading] = useState(false);
+  const [liveError, setLiveError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!outputId) return;
+    const controller = new AbortController();
+    setIsLiveLoading(true);
+    setLiveError(null);
+    fetch(`/api/signal/${outputId}/overview${queryString ? `?${queryString}` : ""}`, { cache: "no-store", signal: controller.signal })
+      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`Overview request failed: ${res.status}`)))
+      .then((data) => {
+        setLivePayload(normalizeLiveOverview(data));
+        setLiveError(null);
+      })
+      .catch((error) => {
+        if (error instanceof Error && error.name === "AbortError") return;
+        setLivePayload(null);
+        setLiveError(copy.relationalRefreshFailed);
+      })
+      .finally(() => setIsLiveLoading(false));
+    return () => controller.abort();
+  }, [copy.relationalRefreshFailed, outputId, queryString]);
+
+  const live = livePayload?.ok ? livePayload : null;
+  const activeCorpusTotal = live?.corpus.total_mentions ?? corpusTotal;
+  const activeMetrics = live?.metrics ?? metrics;
+  const activePolarityDist = live?.polarity_distribution ?? polarityDist;
+  const activeLayerDist = live?.layer_distribution ?? layerDist;
+  const activeMobilityDist = live?.mobility_distribution ?? mobilityDist;
+  const activePlatformDist = live?.platform_distribution ?? platformDist;
+  const activeContentTypeDist = live?.content_type_distribution ?? contentTypeDist;
+  const activeVolumeTimeline = live?.volume_timeline ?? volumeTimeline;
+  const activeFindingTimeSeries = live?.finding_time_series ?? findingTimeSeries;
+  const activePolarityTimeSeries = live?.polarity_time_series ?? polarityTimeSeries;
+  const activeTopVoice = live?.top_findings_by_voice ?? topVoice;
+  const polarityTimeline = normalizePolarityTimeline(activePolarityTimeSeries);
+  const allTimeline = mergeTimelinePolarity(normalizeTimeline(activeVolumeTimeline, uiLanguage), polarityTimeline);
   const timeline = filterTimelineByDate(allTimeline, dateFrom, dateTo);
   const filteredPolarityTimeline = filterPolarityTimelineByDate(polarityTimeline, dateFrom, dateTo);
-  const filteredFindingSeries = filterFindingSeriesByDate(normalizeFindingTimeSeries(findingTimeSeries), dateFrom, dateTo);
-  const layers = normalizeLayerData(layerDist, uiLanguage);
-  const mobility = normalizeMobilityData(mobilityDist, uiLanguage);
-  const platforms = normalizePlatformData(platformDist);
-  const contentTypes = normalizeContentTypeData(contentTypeDist);
-  const voice = normalizeVoiceData(topVoice, uiLanguage);
-  const polarity = normalizePolarityData(polarityDist, uiLanguage);
-  const triggerPct = Math.round((metrics.triggersTotal / Math.max(1, metrics.findingsTotal)) * 100);
-  const barrierPct = Math.round((metrics.barriersTotal / Math.max(1, metrics.findingsTotal)) * 100);
-  const movablePct = Math.round((metrics.movableTotal / Math.max(1, metrics.findingsTotal)) * 100);
-  const markers = buildTimelineMarkers(timeline, [...topBarriers, ...topVoice].slice(0, 4), uiLanguage);
+  const filteredFindingSeries = filterFindingSeriesByDate(normalizeFindingTimeSeries(activeFindingTimeSeries), dateFrom, dateTo);
+  const layers = normalizeLayerData(activeLayerDist, uiLanguage);
+  const mobility = normalizeMobilityData(activeMobilityDist, uiLanguage);
+  const platforms = normalizePlatformData(activePlatformDist);
+  const contentTypes = normalizeContentTypeData(activeContentTypeDist);
+  const voice = normalizeVoiceData(activeTopVoice, uiLanguage);
+  const polarity = normalizePolarityData(activePolarityDist, uiLanguage);
+  const triggerPct = Math.round((activeMetrics.triggersTotal / Math.max(1, activeMetrics.findingsTotal)) * 100);
+  const barrierPct = Math.round((activeMetrics.barriersTotal / Math.max(1, activeMetrics.findingsTotal)) * 100);
+  const markers = buildTimelineMarkers(timeline, [...topBarriers, ...activeTopVoice].slice(0, 4), uiLanguage);
   const filteredMentionTotal = timeline.reduce((sum, row) => sum + row.mentions, 0);
   const topTemporalFindings = buildTopTemporalFindings(filteredFindingSeries);
-  const confidence = buildConfidenceLabel(corpusTotal, metrics.findingsTotal, voice.length, uiLanguage);
-  const balance = buildSignalBalance(metrics.triggersTotal, metrics.barriersTotal, uiLanguage);
+  const confidence = buildConfidenceLabel(activeCorpusTotal, activeMetrics.findingsTotal, voice.length, uiLanguage);
+  const balance = buildSignalBalance(activeMetrics.triggersTotal, activeMetrics.barriersTotal, uiLanguage);
+  const liveWindowLabel = dateRangeLabel(dateFrom, dateTo, windowLabel, uiLanguage);
 
   return (
     <section className="signal-dashboard signal-dashboard--redesign" id="overview">
@@ -315,26 +376,33 @@ function SignalDashboardChartsInner({
       <div className="signal-context-strip" aria-label={copy.contextAria}>
         <span>{methodologyName}</span>
         <strong>{brandLabel}</strong>
-        <span>{windowLabel}</span>
-        <span>{formatNumber(corpusTotal)} {copy.publishedMentions}</span>
+        <span>{liveWindowLabel}</span>
+        <span>{formatNumber(activeCorpusTotal)} {copy.publishedMentions}{isLiveLoading ? " · live..." : ""}</span>
       </div>
+
+      {liveError ? (
+        <div className="signal-serving-warning" role="status">
+          <Activity aria-hidden="true" size={15} />
+          <span>{liveError}</span>
+        </div>
+      ) : null}
 
       <div className="signal-kpi-row signal-kpi-row--six" aria-label={copy.cutSummary}>
         <KpiCard
           label={copy.mentions}
-          value={formatNumber(corpusTotal)}
+          value={formatNumber(activeCorpusTotal)}
           sub={copy.periodCorpus}
           icon={<Grid size={15} />}
         />
         <KpiCard
           label={copy.findings}
-          value={formatNumber(metrics.findingsTotal)}
+          value={formatNumber(activeMetrics.findingsTotal)}
           sub={copy.clientSafeFindings}
           icon={<Activity size={15} />}
         />
         <KpiCard
           label="Triggers"
-          value={formatNumber(metrics.triggersTotal)}
+          value={formatNumber(activeMetrics.triggersTotal)}
           sub={`${triggerPct}% ${copy.triggersOfFindings}`}
           radialValue={triggerPct}
           icon={<TrendingUp size={15} />}
@@ -342,7 +410,7 @@ function SignalDashboardChartsInner({
         />
         <KpiCard
           label="Barriers"
-          value={formatNumber(metrics.barriersTotal)}
+          value={formatNumber(activeMetrics.barriersTotal)}
           sub={`${barrierPct}% ${copy.triggersOfFindings}`}
           radialValue={barrierPct}
           icon={<BarChart2 size={15} />}
@@ -350,11 +418,9 @@ function SignalDashboardChartsInner({
         />
         <KpiCard
           label={copy.opportunities}
-          value={formatNumber(metrics.movableTotal)}
-          sub={`${movablePct}% ${copy.movableByBrand}`}
-          radialValue={movablePct}
+          value={formatNumber(activeMetrics.opportunitiesTotal)}
+          sub={copy.structuredRecommendations}
           icon={<MessageCircle size={15} />}
-          radialTone="signal"
         />
         <KpiCard
           label={copy.confidence}
@@ -369,22 +435,7 @@ function SignalDashboardChartsInner({
         <div className="signal-hero-chart-head">
           <div>
             <span>{copy.signalsOverTime}</span>
-            <strong>{windowLabel}</strong>
-          </div>
-          <div className="signal-date-filter" aria-label={copy.temporalFilter}>
-            <label>
-              {copy.from}
-              <input type="month" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-            </label>
-            <label>
-              {copy.to}
-              <input type="month" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-            </label>
-            {(dateFrom || dateTo) && (
-              <button type="button" onClick={() => { setDateFrom(""); setDateTo(""); }}>
-                {copy.clear}
-              </button>
-            )}
+            <strong>{liveWindowLabel}</strong>
           </div>
         </div>
         <div className="signal-temporal-summary">
@@ -753,12 +804,12 @@ function normalizeTimeline(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
   const locale = uiLanguage === "en" ? "en-US" : "es-MX";
   if (rows.length === 0) return [{ month: "", label: copy.noData, mentions: 0, triggers: 0, barriers: 0, tooltipTitle: copy.noData, hint: copy.noData }];
   return rows.map((row) => {
-    const rawMonth = stringValue(row.month);
+    const rawMonth = stringValue(row.month) || stringValue(row.period);
     const date = rawMonth ? new Date(`${rawMonth}-01T00:00:00Z`) : null;
     const label = date && !Number.isNaN(date.getTime())
       ? date.toLocaleDateString(locale, { month: "short", year: "2-digit", timeZone: "UTC" })
       : rawMonth || copy.month;
-    const mentions = Number(row.count ?? 0);
+    const mentions = numberValue(row.mentions ?? row.total ?? row.count);
     return {
       month: rawMonth,
       label,
@@ -773,11 +824,11 @@ function normalizeTimeline(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
 
 function normalizePolarityTimeline(rows: ChartRecord[]) {
   return rows.map((row) => ({
-    month: stringValue(row.month),
-    trigger: Number(row.trigger ?? 0),
-    barrier: Number(row.barrier ?? 0),
-    mixed: Number(row.mixed ?? 0),
-    total: Number(row.total ?? 0)
+    month: stringValue(row.month) || stringValue(row.period),
+    trigger: numberValue(row.trigger),
+    barrier: numberValue(row.barrier),
+    mixed: numberValue(row.mixed),
+    total: numberValue(row.total)
   })).filter((row) => row.month);
 }
 
@@ -798,12 +849,12 @@ function mergeTimelinePolarity(
 
 function normalizeFindingTimeSeries(rows: ChartRecord[]) {
   return rows.map((row) => ({
-    month: stringValue(row.month),
+    month: stringValue(row.month) || stringValue(row.period),
     findingId: stringValue(row.finding_id),
-    name: stringValue(row.finding_name),
+    name: stringValue(row.finding_name) || stringValue(row.nombre),
     polarity: stringValue(row.polarity),
     layer: stringValue(row.layer),
-    count: Number(row.count ?? 0)
+    count: numberValue(row.mentions ?? row.count)
   })).filter((row) => row.month && row.findingId && row.count > 0);
 }
 
@@ -821,8 +872,10 @@ function filterFindingSeriesByDate(rows: ReturnType<typeof normalizeFindingTimeS
 
 function inMonthRange(month: string, dateFrom: string, dateTo: string) {
   if (!month) return false;
-  if (dateFrom && month < dateFrom) return false;
-  if (dateTo && month > dateTo) return false;
+  const fromMonth = dateFrom ? dateFrom.slice(0, 7) : "";
+  const toMonth = dateTo ? dateTo.slice(0, 7) : "";
+  if (fromMonth && month < fromMonth) return false;
+  if (toMonth && month > toMonth) return false;
   return true;
 }
 
@@ -931,6 +984,61 @@ function normalizeVoiceData(rows: ChartRecord[], uiLanguage: SignalUiLanguage) {
   }).filter((row) => row.count > 0);
 }
 
+function normalizeLiveOverview(input: unknown): LiveOverviewPayload {
+  const value = asRecord(input);
+  const corpus = asRecord(value.corpus);
+  const window = asRecord(corpus.window);
+  const metrics = asRecord(value.metrics);
+  return {
+    ok: value.ok === true,
+    corpus: {
+      total_mentions: numberValue(corpus.total_mentions),
+      window: {
+        start: stringValue(window.start) || null,
+        end: stringValue(window.end) || null
+      }
+    },
+    metrics: {
+      findingsTotal: numberValue(metrics.findings_total ?? metrics.findingsTotal),
+      barriersTotal: numberValue(metrics.barriers_total ?? metrics.barriersTotal),
+      triggersTotal: numberValue(metrics.triggers_total ?? metrics.triggersTotal),
+      movableTotal: numberValue(metrics.movable_total ?? metrics.movableTotal),
+      opportunitiesTotal: numberValue(metrics.opportunities_total ?? metrics.opportunitiesTotal)
+    },
+    polarity_distribution: arrayValue(value.polarity_distribution),
+    layer_distribution: arrayValue(value.layer_distribution),
+    mobility_distribution: arrayValue(value.mobility_distribution),
+    platform_distribution: arrayValue(value.platform_distribution),
+    content_type_distribution: arrayValue(value.content_type_distribution),
+    volume_timeline: arrayValue(value.volume_timeline),
+    finding_time_series: arrayValue(value.finding_time_series),
+    polarity_time_series: arrayValue(value.polarity_time_series),
+    top_findings_by_voice: arrayValue(value.top_findings_by_voice)
+  };
+}
+
+function dateRangeLabel(dateFrom: string, dateTo: string, fallback: string, uiLanguage: SignalUiLanguage) {
+  if (!dateFrom && !dateTo) return fallback;
+  const locale = uiLanguage === "en" ? "en-US" : "es-MX";
+  const format = (value: string) => {
+    if (!value) return uiLanguage === "en" ? "Open" : "Abierto";
+    const date = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleDateString(locale, { day: "2-digit", month: "short", year: "2-digit", timeZone: "UTC" });
+  };
+  return `${format(dateFrom)} → ${format(dateTo)}`;
+}
+
+function arrayValue(value: unknown): ChartRecord[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is ChartRecord => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+}
+
+function asRecord(value: unknown): ChartRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as ChartRecord : {};
+}
+
 function formatNumber(value: number) {
   return new Intl.NumberFormat("es-MX").format(Number.isFinite(value) ? value : 0);
 }
@@ -996,6 +1104,11 @@ function truncateLabel(text: string, max: number) {
 
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown): number {
+  const number = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(number) ? number : 0;
 }
 
 function prettifyKey(key: string): string {

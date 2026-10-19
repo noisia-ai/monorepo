@@ -1,0 +1,43 @@
+slug: sentiment-advocacy-proxy
+name: Sentiment / NPS Proxy
+version: "0.1"
+status: beta
+
+business_question: |
+  ¿Qué entidades tienen más advocacy, qué drivers producen promotores o
+  detractores y cómo cambia el sentimiento en el tiempo?
+
+inputs:
+  corpus:
+    minimum_viable: 1200
+    ideal: 4500
+  competitive_corpus:
+    required: true
+
+outputs:
+  - id: sentiment_benchmark
+    name: Sentiment Benchmark
+    type: diverging_bar
+  - id: advocacy_proxy
+    name: Advocacy Proxy Score
+    type: gauge
+  - id: driver_breakdown
+    name: Advocacy Drivers
+    type: stacked_share
+
+default_dashboard_blocks:
+  - block_id: sentiment_benchmark
+  - block_id: advocacy_proxy
+  - block_id: driver_breakdown
+  - block_id: confidence_layer
+
+quality_gates:
+  - id: no_survey_claim
+    description: "El output se presenta como proxy, no como NPS de encuesta."
+  - id: driver_evidence_required
+    description: "Cada driver tiene evidencia representativa."
+  - id: confidence_calibrated
+    description: "Cada driver lleva confianza."
+
+ai_prompts:
+  engine_spec: sentiment-advocacy-proxy

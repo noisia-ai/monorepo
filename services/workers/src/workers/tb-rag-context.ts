@@ -3,15 +3,44 @@ import type { QueryResultRow } from "pg";
 import { pool } from "../db/client";
 import { loadAnalysisRagContext } from "./analysis-rag-context";
 import { describeCorpusSqlVirtualSchema, runCorpusSql, type CorpusSqlResult } from "./corpus-sql";
+import {
+  DATA_OS_CAPABILITY_ROLLUP_SQL,
+  buildDataOsCapabilities,
+  buildDataOsCapabilityGuardrails,
+  type DataOsCapability,
+  type DataOsCapabilityRow
+} from "./tb-data-os-capabilities";
+import {
+  DATA_OS_SOURCE_INVENTORY_SQL,
+  buildDataOsSourceInventory,
+  type DataOsSourceInventoryItem,
+  type DataOsSourceInventoryRow
+} from "./tb-data-os-source-inventory";
+import { selectTbRagMonthlySeries, type TbRagSeriesRow } from "./tb-rag-series";
 
 type AnalysisScopeRow = {
   study_corpus_id: string;
   brand_id: string | null;
+  snapshot_id: string;
+  scope_frozen_at: string;
+  strategic_contract_version: string | null;
 };
 
 export async function loadTbRagPromptContext(tbAnalysisId: string): Promise<TbRagPromptContext> {
   const scope = await loadAnalysisScope(tbAnalysisId);
+  const strategic = scope.strategic_contract_version?.startsWith("signal-tb-strategic-") === true;
   const rag = await loadAnalysisRagContext(scope.study_corpus_id, scope.brand_id);
+  const structuredObservations = await loadStructuredObservationSnapshot(
+    scope.study_corpus_id,
+    scope.snapshot_id,
+    strategic
+  );
+  structuredObservations.evidence_tokens = await loadGovernedEvidenceTokens(
+    scope.study_corpus_id,
+    strategic
+  );
+  await recordAnalysisContextRefs(tbAnalysisId, scope, structuredObservations);
+  await recordStructuredObservationConsumption(tbAnalysisId, structuredObservations);
 
   return {
     query_strategy_brief: rag.queryStrategyBrief,
@@ -22,13 +51,650 @@ export async function loadTbRagPromptContext(tbAnalysisId: string): Promise<TbRa
         type: source.type,
         content: compactForPrompt(source.content)
       })),
-    corpus_intelligence: await loadCorpusIntelligenceSnapshot(tbAnalysisId)
+    corpus_intelligence: await loadCorpusIntelligenceSnapshot(tbAnalysisId),
+    structured_observations: structuredObservations
   };
+}
+
+type StructuredObservationSummaryRow = {
+  observations: number | string;
+  accepted_observations: number | string;
+  review_observations: number | string;
+  rejected_observations: number | string;
+  records: number | string;
+  accepted_records: number | string;
+  review_records: number | string;
+  rejected_records: number | string;
+  temporal_records: number | string;
+  snapshot_records: number | string;
+  assets: number | string;
+  datasets: number | string;
+  metric_families: number | string;
+  metric_keys: number | string;
+  period_start: string | null;
+  period_end: string | null;
+  temporal_observations: number | string;
+  snapshot_observations: number | string;
+  snapshot_start: string | null;
+  snapshot_end: string | null;
+  listening_observations: number | string;
+  commercial_observations: number | string;
+};
+
+type StructuredMetricFamilyRow = {
+  metric_family: string;
+  observations: number | string;
+  metrics: number | string;
+  assets: number | string;
+  temporal_observations: number | string;
+  snapshot_observations: number | string;
+  period_start: string | null;
+  period_end: string | null;
+  snapshot_start: string | null;
+  snapshot_end: string | null;
+};
+
+type StructuredObservationSnapshot = {
+  source: "data_observations_sql";
+  contract: "noisia_data_os_cut_1";
+  available: boolean;
+  summary: {
+    observations: number;
+    accepted_observations: number;
+    review_observations: number;
+    rejected_observations: number;
+    records: number;
+    accepted_records: number;
+    review_records: number;
+    rejected_records: number;
+    temporal_records: number;
+    snapshot_records: number;
+    temporal_observations: number;
+    snapshot_observations: number;
+    listening_observations: number;
+    commercial_observations: number;
+    assets: number;
+    datasets: number;
+    metric_families: number;
+    metric_keys: number;
+    period_start: string | null;
+    period_end: string | null;
+    snapshot_start: string | null;
+    snapshot_end: string | null;
+  };
+  metric_families: Array<{
+    family: string;
+    observations: number;
+    metrics: number;
+    assets: number;
+    temporal_observations: number;
+    snapshot_observations: number;
+    period_start: string | null;
+    period_end: string | null;
+    snapshot_start: string | null;
+    snapshot_end: string | null;
+  }>;
+  monthly_series: Array<{
+    month: string;
+    metric_family: string;
+    metric_key: string;
+    metric_unit: string | null;
+    value: number;
+    observations: number;
+    source: "data_observations" | "listening_data_os" | "listening_mentions_fallback";
+  }>;
+  listening_source: "listening_data_os" | "listening_mentions_fallback";
+  source_inventory: DataOsSourceInventoryItem[];
+  capabilities: DataOsCapability[];
+  joinability: {
+    observation_months: number;
+    listening_months: number;
+    overlapping_months: number;
+    temporal_join_ready: boolean;
+  };
+  guardrails: string[];
+  evidence_tokens: GovernedEvidenceToken[];
+};
+
+type GovernedEvidenceToken = {
+  token: string;
+  source_type: "data_observation" | "data_asset_record";
+  source_id: string;
+  data_asset_id: string | null;
+  data_source_id: string | null;
+  source_sync_run_id: string | null;
+  dataset_key: string;
+  row_index: number | null;
+  metric_key: string | null;
+  metric_value: number | null;
+  metric_unit: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  entity_key: string | null;
+};
+
+async function loadStructuredObservationSnapshot(
+  corpusId: string,
+  snapshotId: string,
+  strategic: boolean
+): Promise<StructuredObservationSnapshot> {
+  try {
+    const governedListeningSeriesSql = strategic
+      ? `SELECT
+           to_char(date_trunc('month', mention.published_at), 'YYYY-MM') AS month,
+           'mentions'::text AS metric_family,
+           'mentions_monthly'::text AS metric_key,
+           'count'::text AS metric_unit,
+           COUNT(*)::numeric AS metric_value,
+           COUNT(*) AS observations
+         FROM signal_strategic_run_controls control
+         JOIN signal_strategic_sealed_sample_items membership
+           ON membership.run_control_id=control.id
+         JOIN mentions mention ON mention.id=membership.mention_id
+         WHERE control.snapshot_id=$1::uuid AND mention.published_at IS NOT NULL
+         GROUP BY 1 ORDER BY 1 ASC LIMIT 60`
+      : `SELECT
+           to_char(date_trunc('month', mention.published_at), 'YYYY-MM') AS month,
+           'mentions'::text AS metric_family,
+           'mentions_monthly'::text AS metric_key,
+           'count'::text AS metric_unit,
+           COUNT(*)::numeric AS metric_value,
+           COUNT(*) AS observations
+         FROM corpus_snapshot_mentions membership
+         JOIN mentions mention ON mention.id = membership.mention_id
+         WHERE membership.snapshot_id = $1::uuid AND mention.published_at IS NOT NULL
+         GROUP BY 1 ORDER BY 1 ASC LIMIT 60`;
+    const [
+      summaryResult,
+      familyResult,
+      seriesResult,
+      listeningResult,
+      mentionsResult,
+      capabilityResult,
+      sourceInventoryResult
+    ] = await Promise.all([
+      pool.query<StructuredObservationSummaryRow>(
+        `
+          SELECT
+            COUNT(*) AS observations,
+            COUNT(*) FILTER (WHERE quality_status = 'accepted') AS accepted_observations,
+            COUNT(*) FILTER (WHERE quality_status NOT IN ('accepted', 'rejected')) AS review_observations,
+            COUNT(*) FILTER (WHERE quality_status = 'rejected') AS rejected_observations,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS records,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status = 'accepted'
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS accepted_records,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status NOT IN ('accepted', 'rejected')
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS review_records,
+            (SELECT COUNT(*) FROM data_asset_records record WHERE record.study_corpus_id = $1::uuid AND record.quality_status = 'rejected'
+              AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')) AS rejected_records,
+            (SELECT COUNT(*) FROM data_asset_records record
+              WHERE record.study_corpus_id = $1::uuid
+                AND record.quality_status = 'accepted'
+                AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')
+                AND record.period_semantics IN ('measurement', 'event')
+                AND record.period_start IS NOT NULL) AS temporal_records,
+            (SELECT COUNT(*) FROM data_asset_records record
+              WHERE record.study_corpus_id = $1::uuid
+                AND record.quality_status = 'accepted'
+                AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')
+                AND record.period_semantics = 'snapshot'
+                AND record.period_start IS NOT NULL) AS snapshot_records,
+            COUNT(DISTINCT data_asset_id) AS assets,
+            COUNT(DISTINCT dataset_key) AS datasets,
+            COUNT(DISTINCT metric_family) FILTER (WHERE quality_status = 'accepted') AS metric_families,
+            COUNT(DISTINCT metric_key) FILTER (WHERE quality_status = 'accepted') AS metric_keys,
+            MIN(period_start) FILTER (
+              WHERE quality_status = 'accepted' AND period_semantics IN ('measurement', 'event')
+            )::text AS period_start,
+            MAX(COALESCE(period_end, period_start)) FILTER (
+              WHERE quality_status = 'accepted' AND period_semantics IN ('measurement', 'event')
+            )::text AS period_end,
+            COUNT(*) FILTER (
+              WHERE quality_status = 'accepted'
+                AND period_semantics IN ('measurement', 'event')
+                AND period_start IS NOT NULL
+            ) AS temporal_observations,
+            COUNT(*) FILTER (
+              WHERE quality_status = 'accepted'
+                AND period_semantics = 'snapshot'
+                AND period_start IS NOT NULL
+            ) AS snapshot_observations,
+            MIN(period_start) FILTER (
+              WHERE quality_status = 'accepted' AND period_semantics = 'snapshot'
+            )::text AS snapshot_start,
+            MAX(COALESCE(period_end, period_start)) FILTER (
+              WHERE quality_status = 'accepted' AND period_semantics = 'snapshot'
+            )::text AS snapshot_end,
+            COUNT(*) FILTER (
+              WHERE dataset_role = 'social_listening' AND quality_status = 'accepted'
+            ) AS listening_observations,
+            COUNT(*) FILTER (
+              WHERE dataset_role IN (
+                'ecommerce_sales',
+                'web_analytics',
+                'search_demand',
+                'customer_service',
+                'paid_media',
+                'organic_social',
+                'crm_marketing',
+                'reviews_ratings',
+                'pricing_inventory',
+                'competitive_intelligence'
+              )
+                AND quality_status = 'accepted'
+            ) AS commercial_observations
+          FROM data_observations
+          WHERE study_corpus_id = $1::uuid
+            AND (NOT $2::boolean OR COALESCE(dataset_role, '') NOT LIKE 'social_listening%')
+        `,
+        [corpusId, strategic]
+      ),
+      pool.query<StructuredMetricFamilyRow>(
+        `
+          SELECT
+            metric_family,
+            COUNT(*) AS observations,
+            COUNT(DISTINCT metric_key) AS metrics,
+            COUNT(DISTINCT data_asset_id) AS assets,
+            COUNT(*) FILTER (WHERE period_semantics IN ('measurement', 'event')) AS temporal_observations,
+            COUNT(*) FILTER (WHERE period_semantics = 'snapshot') AS snapshot_observations,
+            MIN(period_start) FILTER (WHERE period_semantics IN ('measurement', 'event'))::text AS period_start,
+            MAX(COALESCE(period_end, period_start)) FILTER (WHERE period_semantics IN ('measurement', 'event'))::text AS period_end,
+            MIN(period_start) FILTER (WHERE period_semantics = 'snapshot')::text AS snapshot_start,
+            MAX(COALESCE(period_end, period_start)) FILTER (WHERE period_semantics = 'snapshot')::text AS snapshot_end
+          FROM data_observations
+          WHERE study_corpus_id = $1::uuid
+            AND quality_status = 'accepted'
+            AND COALESCE(dataset_role, '') NOT LIKE 'social_listening%'
+          GROUP BY metric_family
+          ORDER BY observations DESC, metric_family
+          LIMIT 20
+        `,
+        [corpusId]
+      ),
+      pool.query<TbRagSeriesRow>(
+        `
+          SELECT *
+          FROM (
+            SELECT
+              to_char(date_trunc('month', period_start), 'YYYY-MM') AS month,
+              metric_family,
+              metric_key,
+              metric_unit,
+              ROUND((CASE
+                WHEN metric_unit = 'ratio'
+                  OR metric_family IN ('average_order_value', 'margin', 'conversion_rate', 'sentiment', 'score', 'price', 'search_position')
+                  THEN AVG(metric_value)
+                ELSE SUM(metric_value)
+              END)::numeric, 4) AS metric_value,
+              COUNT(*) AS observations
+            FROM data_observations
+            WHERE study_corpus_id = $1::uuid
+              AND quality_status = 'accepted'
+              AND period_semantics IN ('measurement', 'event')
+              AND period_start IS NOT NULL
+              AND COALESCE(dataset_role, '') NOT LIKE 'social_listening%'
+            GROUP BY 1, metric_family, metric_key, metric_unit
+            ORDER BY 1 DESC, metric_family, metric_key
+            LIMIT 120
+          ) series
+          ORDER BY month ASC, metric_family, metric_key
+        `,
+        [corpusId]
+      ),
+      pool.query<TbRagSeriesRow>(
+        `
+          SELECT
+            to_char(date_trunc('month', period_start), 'YYYY-MM') AS month,
+            metric_family,
+            metric_key,
+            metric_unit,
+            metric_value,
+            COALESCE((raw_record ->> 'records')::int, 1) AS observations
+          FROM data_observations
+          WHERE study_corpus_id = $1::uuid
+            AND dataset_role = 'social_listening'
+            AND NOT $2::boolean
+            AND quality_status = 'accepted'
+            AND period_semantics IN ('measurement', 'event')
+            AND period_start IS NOT NULL
+            AND metric_key IN ('mentions_monthly', 'engagement_monthly', 'sentiment_monthly')
+          ORDER BY period_start ASC, metric_key
+          LIMIT 180
+        `,
+        [corpusId, strategic]
+      ),
+      pool.query<TbRagSeriesRow>(
+        governedListeningSeriesSql,
+        [snapshotId]
+      ),
+      pool.query<DataOsCapabilityRow>(
+        DATA_OS_CAPABILITY_ROLLUP_SQL,
+        [corpusId]
+      ),
+      strategic
+        ? Promise.resolve({ rows: [] as DataOsSourceInventoryRow[] })
+        : pool.query<DataOsSourceInventoryRow>(
+            DATA_OS_SOURCE_INVENTORY_SQL,
+            [corpusId, snapshotId]
+          )
+    ]);
+
+    const summaryRow = summaryResult.rows[0];
+    const summary = {
+      observations: numeric(summaryRow?.observations),
+      accepted_observations: numeric(summaryRow?.accepted_observations),
+      review_observations: numeric(summaryRow?.review_observations),
+      rejected_observations: numeric(summaryRow?.rejected_observations),
+      records: numeric(summaryRow?.records),
+      accepted_records: numeric(summaryRow?.accepted_records),
+      review_records: numeric(summaryRow?.review_records),
+      rejected_records: numeric(summaryRow?.rejected_records),
+      temporal_records: numeric(summaryRow?.temporal_records),
+      snapshot_records: numeric(summaryRow?.snapshot_records),
+      temporal_observations: numeric(summaryRow?.temporal_observations),
+      snapshot_observations: numeric(summaryRow?.snapshot_observations),
+      listening_observations: numeric(summaryRow?.listening_observations),
+      commercial_observations: numeric(summaryRow?.commercial_observations),
+      assets: numeric(summaryRow?.assets),
+      datasets: numeric(summaryRow?.datasets),
+      metric_families: numeric(summaryRow?.metric_families),
+      metric_keys: numeric(summaryRow?.metric_keys),
+      period_start: summaryRow?.period_start ?? null,
+      period_end: summaryRow?.period_end ?? null,
+      snapshot_start: summaryRow?.snapshot_start ?? null,
+      snapshot_end: summaryRow?.snapshot_end ?? null
+    };
+    const selectedSeries = selectTbRagMonthlySeries({
+      commercial: seriesResult.rows,
+      canonicalListening: listeningResult.rows,
+      rawListeningFallback: mentionsResult.rows
+    });
+    const capabilities = buildDataOsCapabilities({
+      rows: capabilityResult.rows,
+      rawListeningFallbackObservations: mentionsResult.rows.reduce(
+        (total, row) => total + numeric(row.observations),
+        0
+      )
+    });
+    const sourceInventory = buildDataOsSourceInventory(sourceInventoryResult.rows);
+    const rawListeningRecords = mentionsResult.rows.reduce(
+      (total, row) => total + numeric(row.observations),
+      0
+    );
+
+    return {
+      source: "data_observations_sql",
+      contract: "noisia_data_os_cut_1",
+      available: summary.accepted_observations > 0
+        || summary.accepted_records > 0
+        || rawListeningRecords > 0,
+      summary,
+      metric_families: familyResult.rows.map((row) => ({
+        family: row.metric_family,
+        observations: numeric(row.observations),
+        metrics: numeric(row.metrics),
+        assets: numeric(row.assets),
+        temporal_observations: numeric(row.temporal_observations),
+        snapshot_observations: numeric(row.snapshot_observations),
+        period_start: row.period_start,
+        period_end: row.period_end,
+        snapshot_start: row.snapshot_start,
+        snapshot_end: row.snapshot_end
+      })),
+      monthly_series: selectedSeries.monthlySeries,
+      listening_source: selectedSeries.listeningSource,
+      source_inventory: sourceInventory,
+      capabilities,
+      joinability: {
+        observation_months: selectedSeries.observationMonths,
+        listening_months: selectedSeries.listeningMonths,
+        overlapping_months: selectedSeries.overlappingMonths,
+        temporal_join_ready: selectedSeries.overlappingMonths > 0
+      },
+      evidence_tokens: [],
+      guardrails: [
+        "Treat needs_mapping_review observations as context only, never as scored evidence.",
+        "Canonical source records and static catalogs provide entities, dimensions, and join keys; numeric claims require accepted observations.",
+        "Snapshot observations describe a governed point-in-time capture. Never turn a snapshot capture date into a trend or monthly series.",
+        "A missing optional business source means unknown, not zero. Do not fabricate sales, traffic, search, service, media, CRM, review, price, stock, or competitor performance.",
+        selectedSeries.listeningSource === "listening_data_os"
+          ? "Use the governed listening series; do not recount raw mentions."
+          : "Governed listening aggregates were unavailable, so raw mentions are a declared fallback.",
+        ...buildDataOsCapabilityGuardrails(capabilities),
+        "Do not infer causality from temporal correlation.",
+        "State when sales, search, traffic, service, or listening windows do not overlap."
+      ]
+    };
+  } catch (error) {
+    console.warn("[tb-rag-context] structured observations skipped", {
+      corpusId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return emptyStructuredObservationSnapshot();
+  }
+}
+
+async function recordStructuredObservationConsumption(
+  tbAnalysisId: string,
+  snapshot: StructuredObservationSnapshot
+) {
+  const consumedAt = new Date().toISOString();
+  try {
+    await pool.query(
+      `
+        UPDATE tb_analyses
+        SET meta_json = jsonb_set(
+              COALESCE(meta_json, '{}'::jsonb),
+              '{data_os_context}',
+              $2::jsonb,
+              true
+            ),
+            updated_at = now()
+        WHERE id = $1::uuid
+      `,
+      [
+        tbAnalysisId,
+        JSON.stringify({
+          contract: snapshot.contract,
+          consumed: snapshot.available,
+          consumed_at: consumedAt,
+          observation_count: snapshot.summary.observations,
+          accepted_observation_count: snapshot.summary.accepted_observations,
+          review_observation_count: snapshot.summary.review_observations,
+          rejected_observation_count: snapshot.summary.rejected_observations,
+          canonical_record_count: snapshot.summary.records,
+          accepted_record_count: snapshot.summary.accepted_records,
+          review_record_count: snapshot.summary.review_records,
+          rejected_record_count: snapshot.summary.rejected_records,
+          temporal_record_count: snapshot.summary.temporal_records,
+          snapshot_record_count: snapshot.summary.snapshot_records,
+          temporal_observation_count: snapshot.summary.temporal_observations,
+          snapshot_observation_count: snapshot.summary.snapshot_observations,
+          listening_observation_count: snapshot.summary.listening_observations,
+          commercial_observation_count: snapshot.summary.commercial_observations,
+          listening_source: snapshot.listening_source,
+          capabilities: Object.fromEntries(
+            snapshot.capabilities.map((capability) => [
+              capability.key,
+              {
+                status: capability.status,
+                source: capability.evidence_source,
+                accepted_observations: capability.accepted_observations,
+                review_observations: capability.review_observations,
+                accepted_records: capability.accepted_records,
+                review_records: capability.review_records,
+                temporal_observations: capability.temporal_observations,
+                snapshot_observations: capability.snapshot_observations,
+                temporal_records: capability.temporal_records,
+                snapshot_records: capability.snapshot_records,
+                months: capability.months,
+                period_start: capability.period_start,
+                period_end: capability.period_end,
+                snapshot_start: capability.snapshot_start,
+                snapshot_end: capability.snapshot_end
+              }
+            ])
+          ),
+          missing_domains: snapshot.capabilities
+            .filter((capability) => capability.status === "missing")
+            .map((capability) => capability.key),
+          review_required_domains: snapshot.capabilities
+            .filter((capability) => capability.status === "review_required")
+            .map((capability) => capability.key),
+          metric_families: snapshot.summary.metric_families,
+          source_inventory: {
+            total: snapshot.source_inventory.length,
+            ready: snapshot.source_inventory.filter((source) => source.status === "ready").length,
+            review_required: snapshot.source_inventory.filter((source) => source.status === "review_required").length,
+            blocked: snapshot.source_inventory.filter((source) => source.status === "blocked").length,
+            files: snapshot.source_inventory.map((source) => ({
+              file_name: source.file_name,
+              status: source.status,
+              canonical_record_store: source.canonical_record_store,
+              canonical_records: source.rows.canonical,
+              accepted_records: source.rows.accepted,
+              review_records: source.rows.review_required,
+              temporal_records: source.rows.temporal,
+              snapshot_records: source.rows.snapshot,
+              accepted_observations: source.observations.accepted,
+              review_observations: source.observations.review_required,
+              temporal_observations: source.observations.temporal,
+              snapshot_observations: source.observations.snapshot,
+              period_start: source.semantic.period_start,
+              period_end: source.semantic.period_end,
+              snapshot_start: source.semantic.snapshot_start,
+              snapshot_end: source.semantic.snapshot_end
+            }))
+          },
+          period_start: snapshot.summary.period_start,
+          period_end: snapshot.summary.period_end,
+          snapshot_start: snapshot.summary.snapshot_start,
+          snapshot_end: snapshot.summary.snapshot_end,
+          overlapping_months: snapshot.joinability.overlapping_months
+        })
+      ]
+    );
+  } catch (error) {
+    console.warn("[tb-rag-context] could not persist Data OS consumption marker", {
+      tbAnalysisId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+function emptyStructuredObservationSnapshot(): StructuredObservationSnapshot {
+  return {
+    source: "data_observations_sql",
+    contract: "noisia_data_os_cut_1",
+    available: false,
+    summary: {
+      observations: 0,
+      accepted_observations: 0,
+      review_observations: 0,
+      rejected_observations: 0,
+      records: 0,
+      accepted_records: 0,
+      review_records: 0,
+      rejected_records: 0,
+      temporal_records: 0,
+      snapshot_records: 0,
+      temporal_observations: 0,
+      snapshot_observations: 0,
+      listening_observations: 0,
+      commercial_observations: 0,
+      assets: 0,
+      datasets: 0,
+      metric_families: 0,
+      metric_keys: 0,
+      period_start: null,
+      period_end: null,
+      snapshot_start: null,
+      snapshot_end: null
+    },
+    metric_families: [],
+    monthly_series: [],
+    listening_source: "listening_mentions_fallback",
+    source_inventory: [],
+    capabilities: buildDataOsCapabilities({ rows: [] }),
+    joinability: {
+      observation_months: 0,
+      listening_months: 0,
+      overlapping_months: 0,
+      temporal_join_ready: false
+    },
+    guardrails: ["No governed structured observations were available for this analysis run."],
+    evidence_tokens: []
+  };
+}
+
+async function loadGovernedEvidenceTokens(
+  corpusId: string,
+  strategic: boolean
+): Promise<GovernedEvidenceToken[]> {
+  const result = await pool.query<GovernedEvidenceToken>(`
+    SELECT * FROM (
+      SELECT
+        'observation:' || observation.id::text AS token,
+        'data_observation'::text AS source_type,
+        observation.id::text AS source_id,
+        observation.data_asset_id::text,
+        observation.data_source_id::text,
+        observation.source_sync_run_id::text,
+        observation.dataset_key,
+        observation.row_index,
+        observation.metric_key,
+        observation.metric_value::float8 AS metric_value,
+        observation.metric_unit,
+        observation.period_start::text,
+        observation.period_end::text,
+        observation.entity_key,
+        0 AS source_rank
+      FROM data_observations observation
+      WHERE observation.study_corpus_id = $1::uuid
+        AND observation.quality_status = 'accepted'
+        AND (NOT $2::boolean OR COALESCE(observation.dataset_role, '') NOT LIKE 'social_listening%')
+
+      UNION ALL
+
+      SELECT
+        'record:' || record.id::text,
+        'data_asset_record'::text,
+        record.id::text,
+        record.data_asset_id::text,
+        record.data_source_id::text,
+        record.source_sync_run_id::text,
+        record.dataset_key,
+        record.row_index,
+        NULL::text,
+        NULL::float8,
+        NULL::text,
+        record.period_start::text,
+        record.period_end::text,
+        record.entity_key,
+        1
+      FROM data_asset_records record
+      WHERE record.study_corpus_id = $1::uuid
+        AND record.quality_status = 'accepted'
+        AND (NOT $2::boolean OR COALESCE(record.dataset_role, '') NOT LIKE 'social_listening%')
+    ) evidence
+    ORDER BY source_rank, period_start DESC NULLS LAST, dataset_key, row_index, source_id
+    LIMIT 120
+  `, [corpusId, strategic]);
+  return result.rows;
+}
+
+function numeric(value: number | string | null | undefined) {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 async function loadAnalysisScope(tbAnalysisId: string): Promise<AnalysisScopeRow> {
   const result = await pool.query<AnalysisScopeRow>(
-    `SELECT ta.study_corpus_id, sc.brand_id
+    `SELECT ta.study_corpus_id, sc.brand_id,
+       ta.snapshot_id, ta.scope_frozen_at::text,
+       ta.strategic_contract_version
      FROM tb_analyses ta
      JOIN study_corpora sc ON sc.id = ta.study_corpus_id
      WHERE ta.id = $1`,
@@ -37,6 +703,109 @@ async function loadAnalysisScope(tbAnalysisId: string): Promise<AnalysisScopeRow
   const row = result.rows[0];
   if (!row) throw new Error(`tb_analyses ${tbAnalysisId} not found`);
   return row;
+}
+
+async function recordAnalysisContextRefs(
+  tbAnalysisId: string,
+  scope: AnalysisScopeRow,
+  snapshot: StructuredObservationSnapshot
+) {
+  await pool.query(
+    `INSERT INTO tb_analysis_context_refs (
+       tb_analysis_id, source_type, source_id, source_version,
+       source_digest, context_role, captured_at, metadata
+     )
+     SELECT
+       $1::uuid,
+       CASE WHEN source.study_corpus_id = $2::uuid
+         THEN 'study_knowledge_source' ELSE 'brand_knowledge_source' END,
+       source.id,
+       COALESCE(source.updated_at, source.created_at)::text,
+       'sha256:' || encode(sha256(convert_to(concat_ws('|',
+         source.id::text, source.source_kind, source.status,
+         source.file_hash, source.updated_at::text,
+         source.extracted_payload::text, source.raw_text
+       ), 'UTF8')), 'hex'),
+       'contextual',
+       $3::timestamptz,
+       jsonb_build_object('source_kind', source.source_kind, 'status', source.status)
+     FROM brand_knowledge_sources source
+     JOIN study_corpora corpus ON corpus.id = $2::uuid
+     WHERE source.status IN ('processed', 'processed_truncated')
+       AND (source.study_corpus_id = $2::uuid
+         OR (source.brand_id = corpus.brand_id AND source.study_corpus_id IS NULL))
+     ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+    [tbAnalysisId, scope.study_corpus_id, scope.scope_frozen_at]
+  );
+  await pool.query(
+    `INSERT INTO tb_analysis_context_refs (
+       tb_analysis_id, source_type, source_id, source_version,
+       source_digest, context_role, captured_at, metadata
+     ) VALUES (
+       $1::uuid, 'knowledge_base',
+       '00000000-0000-4000-8000-000000000005'::uuid,
+       'triggers-barriers-methodology-v1',
+       'sha256:' || encode(sha256(convert_to(
+         'packages/kb/01-methodologies/triggers-barriers.md|packages/kb/05-ai-playbooks/run-triggers-barriers.md|v1',
+         'UTF8'
+       )), 'hex'),
+       'contextual', $2::timestamptz,
+       jsonb_build_object('contract_version', 'tb-context-ref-v1')
+     ) ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+    [tbAnalysisId, scope.scope_frozen_at]
+  );
+  const observationIds = snapshot.evidence_tokens
+    .filter((token) => token.source_type === "data_observation")
+    .map((token) => token.source_id);
+  const recordIds = snapshot.evidence_tokens
+    .filter((token) => token.source_type === "data_asset_record")
+    .map((token) => token.source_id);
+  if (observationIds.length > 0) {
+    await pool.query(
+      `INSERT INTO tb_analysis_context_refs (
+         tb_analysis_id, source_type, source_id, source_version,
+         source_digest, context_role, captured_at, metadata
+       )
+       SELECT $1::uuid, 'data_observation', observation.id,
+         observation.materialized_at::text,
+         'sha256:' || encode(sha256(convert_to(concat_ws('|',
+           observation.record_hash, observation.metric_key,
+           observation.metric_value::text, observation.metric_unit,
+           observation.quality_status, observation.materialized_at::text
+         ), 'UTF8')), 'hex'),
+         'structured_evidence', $3::timestamptz,
+         jsonb_build_object('data_asset_id', observation.data_asset_id,
+           'dataset_key', observation.dataset_key, 'row_index', observation.row_index)
+       FROM data_observations observation
+       WHERE observation.id = ANY($2::uuid[])
+         AND observation.study_corpus_id = $4::uuid
+         AND observation.quality_status = 'accepted'
+       ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+      [tbAnalysisId, observationIds, scope.scope_frozen_at, scope.study_corpus_id]
+    );
+  }
+  if (recordIds.length > 0) {
+    await pool.query(
+      `INSERT INTO tb_analysis_context_refs (
+         tb_analysis_id, source_type, source_id, source_version,
+         source_digest, context_role, captured_at, metadata
+       )
+       SELECT $1::uuid, 'data_asset_record', record.id,
+         record.materialized_at::text,
+         'sha256:' || encode(sha256(convert_to(concat_ws('|',
+           record.record_hash, record.quality_status, record.materialized_at::text
+         ), 'UTF8')), 'hex'),
+         'structured_evidence', $3::timestamptz,
+         jsonb_build_object('data_asset_id', record.data_asset_id,
+           'dataset_key', record.dataset_key, 'row_index', record.row_index)
+       FROM data_asset_records record
+       WHERE record.id = ANY($2::uuid[])
+         AND record.study_corpus_id = $4::uuid
+         AND record.quality_status = 'accepted'
+       ON CONFLICT (tb_analysis_id, source_type, source_id) DO NOTHING`,
+      [tbAnalysisId, recordIds, scope.scope_frozen_at, scope.study_corpus_id]
+    );
+  }
 }
 
 function compactForPrompt(value: unknown) {
