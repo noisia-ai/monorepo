@@ -47,6 +47,21 @@ Si una respuesta cambia el universo, no se asume. Se documenta.
 9. Qué idiomas y canales se conservan.
 10. Qué exclusiones, homónimos y ruido se esperan.
 
+**Cuando el usuario no tiene las respuestas, se investigan antes de escribir una query.** Es una fase
+fija entre el brief y las queries, y corre en paralelo mientras se revisa la vara de calidad. En un
+caso, el usuario no sabía qué productos entraban ni si una submarca contaba, y un desk research con
+fuente por afirmación cambió tres decisiones de universo: el grooming de un competidor era la mayor
+parte de su portafolio, una submarca se vendía con el nombre de la marca, y la marca vendía otra
+categoría con la misma palabra. El encargo estándar:
+
+- portafolio por marca en el mercado, con precios de retailer;
+- homónimos y ruido;
+- vocabulario local de la categoría, el que la gente usa y no el del brief;
+- cobertura de las bibliotecas de anuncios (`METHODOLOGY.md` §7);
+- calendario comercial del periodo.
+
+Cada afirmación lleva su URL y su nivel de verificación: fuente primaria, prensa o inferencia.
+
 ## 2.5 Si el corpus no alcanza
 
 Cuando el volumen queda debajo del piso del método, hay **tres salidas**, no dos, y la tercera es
@@ -103,6 +118,14 @@ los paréntesis mal cerrados.
 El razonamiento de por qué cada query quedó así se documenta aparte. Las dos cosas valen, pero la
 que se usa es la lista para pegar.
 
+**Las queries se generan con un script, no se escriben a mano.** Varias queries comparten cláusulas
+largas (un contexto de 50 términos, un NOT común) y escritas a mano se desalinean al primer ajuste;
+esa igualdad es justo lo que hace comparables a las marcas entre sí. El script define cada cláusula
+una vez, arma las queries y escribe el `queries.md` con la tabla de interfaz. Antes de entregarlas,
+`builders/check-queries.py queries.md` valida paréntesis, comillas, comodines, operadores que la
+herramienta no soporta, em dash y el gemelo sin acento de cada término acentuado. Dos casos
+atraparon con eso errores que habrían llegado a la interfaz.
+
 ## 4. Lectura segura del archivo
 
 Configuración típica de una exportación de listening: codificación `utf-8-sig` para absorber el
@@ -127,6 +150,16 @@ dos, la pedida y la entregada, y **el periodo comparable se deriva de la entrega
 
 Si la exportación incluye el día en curso, esas filas se conservan en el inventario, se excluyen
 del análisis comparable y se reporta cuántas fueron.
+
+**Zona horaria: colchón en la interfaz, corte en el ETL.** SentiOne exporta en UTC (verificado con
+un evento real) y Meltwater en hora de la Ciudad de México. Si la ventana de la interfaz se escribe
+en fechas locales, se pierden horas de un extremo y se cuelan del otro. La ventana de la interfaz
+lleva un día de colchón en cada extremo, el corte exacto se hace en el ETL en hora local, y la zona
+de cada herramienta va en el manifiesto. Si no está declarada, se deriva del valle de actividad: en
+un caso, el valle de 9 a 11 h solo tenía sentido como 2 a 4 de la mañana locales.
+
+**En sitios web, la fecha es de captura, no de publicación.** Un mismo id con otra fecha es la misma
+nota recapturada: se conserva la fecha más antigua por id.
 
 ## 6. Perfilado
 
@@ -170,6 +203,11 @@ real, el reparto por canal se calculó sobre el subconjunto codificado en lugar 
 depurado y el titular de la slide salió invertido: 42% contra 68%. La cobertura del clasificador
 es una base válida para lo que se codificó, nunca para describir dónde vive la conversación.
 
+**Un archivo con más filas que el tablero** (de 108% a 119% en un caso) es una diferencia de
+definición, no un error, y se reporta así. Tampoco hay tope fijo: una exportación salió con 226 mil
+filas. Lo que sí pasa es que, después de muchas descargas seguidas, algunas fallan sin aviso; se
+verifica el conteo de cada archivo contra su manifiesto.
+
 **La exportación recortada es un caso esperado, no una anomalía.** Un proveedor puede entregar una
 fracción de lo que su propio tablero reporta, y no avisa: en un caso medido, 87,843 filas contra
 234,930 del tablero, un 37%. Consecuencia operativa: **ningún volumen crudo de archivo se presenta
@@ -203,6 +241,15 @@ la marca en ese país. Una mención sin país y sin ninguna señal **no entra a 
 las que sí traían país y tampoco tenían señal eran del mercado objetivo solo en 60%. Se leen y se
 decide una por una, o quedan fuera.
 
+**Lo mismo vale debajo del país.** En un estudio de un estado, tres de cada cuatro menciones de la
+query principal solo traían el nombre del estado en la publicación que comentaban, casi siempre de
+un medio nacional. El texto propio no alcanzaba: "ya no se puede salir" en la página de un medio
+local es voz local aunque no nombre el estado. El criterio que funcionó fue doble: página local, o
+municipio o primera persona local en el texto propio. Lo que solo menciona el estado desde una
+página nacional se mide aparte, como "el país mirando al estado", y las dos conversaciones se
+comparan: afuera pesaba más el narco en el poder; adentro, también la luz, los hospitales y el
+maíz. La lista de páginas locales es un insumo versionado del caso.
+
 **Las reglas de pertinencia son filtro de candidatos, no juez.** En un estudio, tres versiones de
 reglas llegaron a 82% a 100% de recall, pero con precisión de 43% a 88% según el corpus. Se miden
 las dos leyendo una muestra por corpus (50 bastan para ver el orden de magnitud), se usa la regla
@@ -231,6 +278,10 @@ distinto significa que B puede ser referencia o contexto. Competidores distintos
 suman sin una llave de entidad.
 
 Los queries solapados sirven para leer capas. No sirven para inflar el tamaño de la conversación.
+
+**Los roles se confirman después del traslape, no antes.** Si una query queda contenida en 90% o
+más dentro de otra, se reasignan los roles y se declara en el registro. En un caso, la query
+diseñada como universo principal estaba contenida 96% en otra: el universo pasó a ser la otra.
 
 ## 10. Llave canónica y deduplicación
 
@@ -278,6 +329,19 @@ como aprobación. En un caso real, codificar todas las menciones hacía que los 
 ayuntamiento contaran como opinión ciudadana a favor. La dirección se codificó solo sobre
 comentarios, y la voz institucional se reportó aparte como narrativa emitida.
 
+**Antes de medir postura hacia una persona pública, se separan las campañas y el eco de su página.**
+De 8,021 comentarios que nombraban a una gobernadora, 2,272 traían hashtag de campaña y 2,762
+vivían en su propia página o en las del gobierno. Mezclados, el temor era de 10%; en medios
+independientes, de 28%. Sin el corte, el estudio habría dicho lo contrario de lo que pasaba. El
+procedimiento:
+
+1. marcar los hashtags de elogio y los textos repetidos cinco veces o más;
+2. separar los comentarios en páginas propias de los de páginas independientes;
+3. medir la postura solo en la conversación independiente, y reportar las otras dos aparte, con su
+   propia postura: el eco también es un hallazgo.
+
+El detector por hashtag es un piso: el elogio sin hashtag no se ve, y eso se escribe.
+
 ## 13. Muestreo antes de etiquetar
 
 Antes de escribir una sola regla se lee una muestra que preserve variedad: publicaciones con más
@@ -298,6 +362,12 @@ los falsos positivos, se iteran nombres y límites, y se congela una versión.
 La taxonomía es un artefacto versionado, no una lista informal de palabras.
 
 ## 15. Doble codificación
+
+**Dirección y tema no comparten palabras.** La dirección se lee con palabras de postura y emoción,
+nunca de tema. En un caso, "paz", "inseguridad" y "corrupto" estaban a la vez en un tema y en el
+diccionario de temor, y fabricaban la dirección de su propio tema: uno salía con 82% de temor, y con
+diccionarios disjuntos bajó a 63%. Antes de congelar, una comprobación automática: la intersección
+entre el diccionario de dirección y cada diccionario de tema tiene que estar vacía.
 
 **La dirección necesita blanco.** Empujar y frenar presuponen un sujeto hacia el que se empuja o
 del que se aleja. En un corpus de terreno, donde conviven varios actores, una queja puede ser
@@ -368,6 +438,12 @@ Son evidencia, no decoración. Texto real y legible, liga conservada, fecha y ca
 disponible cuando el contexto cambia el sentido, pertinencia clara al hallazgo, sin duplicados
 textuales, sin datos personales innecesarios y sin corregir ortografía ni tono.
 
+**Las citas se congelan por texto, no por posición.** Se guardan por fragmento literal o por id,
+nunca por su lugar en una lista que se regenera. En un caso, al recodificar se regeneró la bolsa de
+candidatos, la selección por índice tomó citas distintas y una cita sobre otra política quedó
+debajo de un título sobre la gobernadora. El script que congela busca el fragmento en el corpus y
+falla si no lo encuentra.
+
 Un score puede ordenar candidatos combinando reglas activadas, claridad de la dirección, longitud
 legible y diversidad de canal, fecha e hilo. **El score ordena. Una persona verifica la cita en su
 fuente antes de que entre a una slide.**
@@ -407,6 +483,17 @@ sin repetir el nombre.
 dice de qué se habla; las interacciones dicen a qué se reacciona. En un caso, "hablan del rival y
 reaccionan a lo suyo" salió exactamente de comparar las dos, y fue el insight más fuerte del
 estudio. Se reportan juntas, nunca sumadas.
+
+**Comparación entre regiones de un mismo mercado.** Cuatro reglas, de un estudio estatal:
+- una query por región, todas con las mismas ventanas;
+- la región se asigna después de ingerir, no por la query, porque las regionales se traslapan entre
+  sí (notas que enumeran ciudades);
+- una escala de alerta con umbrales declarados;
+- el volumen normalizado por población, porque una región escribe muchas veces menos que otra por
+  habitante. Se lee direccional cuando los medios con comentarios abiertos se concentran en una
+  ciudad.
+
+La región es "conversación anclada en", nunca residencia.
 
 **Junto a cada cifra por partido, por día o por hora, va el total del corpus.** Una cifra por
 evento sin su total no se entiende.

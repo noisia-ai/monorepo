@@ -67,6 +67,23 @@ Hard rules, learned the hard way:
   subcategory's terms)`, so every export maps to one client category. The overlap between those
   exports is measured and deduplicated after ingest (`DATA.md` §9), never by merging queries.
 
+- **`rawText:` demands the subject in the post's own text, at collection time.** In one study 74%
+  of the main query's rows carried the anchor only in the parent post, and the export weighed
+  1.42 GB. Wrapping **only the anchor** in `rawText:(...)` in Advanced Query fixed it; the context
+  can still come from the parent, which is what lets "mine is X" under a category post come in.
+  Two warnings, both confirmed: **Advanced Query ignores the interface's language and country
+  filters** (with Spanish and Mexico ticked, 901 of 1,535 mentions came back in English and 3,407
+  of a category query in Portuguese), so the ETL resolves language and market every time; and the
+  gate C check in the ETL stays as the net. A "with and without country" capture does not catch
+  this, since both give the same total; the language and country profile of the first export does.
+- **TikTok: one word per rule.** Two-word rules ("brand + match") returned 16,286 rows, of which 53
+  named the brand. TikTok carries no country (resolve it in the ETL), its counts are not compared
+  with other sources, and a brand name that is noise on its own in every language stays out; its
+  product-line names go in.
+- **Every non-unique term carries a territorial anchor.** Unique names go alone; common words,
+  acronyms and process terms ("candidate", "2027", a party acronym that is also a common noun) only
+  next to an anchor of the territory. Without it, two party queries brought 292 thousand mentions
+  from the whole country in six weeks; anchored, 55 thousand.
 - **Several markets in one study** add their own rules: one `AND` per query, the country's anchors
   inside the query rather than the tool's country filter, no language filter, one query per
   business question, and exports split by moment. See `DATA.md` §26.
@@ -187,6 +204,42 @@ names of private people are trimmed or dropped.
 Run the quality gates in `DATA.md` §21. A study does not move to deck while a gate that affects
 its main conclusion is failing, and a count without formal validation is called **directional**,
 using that word. The evidence hierarchy (`DATA.md` §20) decides the verb: *shows* vs *suggests*.
+
+## 4.7 Search and paid media, the two layers beside the conversation
+
+Both paid studies of October used them, and in both they produced a central finding: what people
+search, what they talk about and what brands advertise are three different maps, and the gaps
+between them are what a media team can act on ("searched, not talked about"). They are standard
+layers of a paid study now. Neither is coded in T&B, and neither is added to the corpus.
+
+**Search** (Searchbuzz for volume in ranges, 48-month series and Share of Search; Google Trends for
+daily and hourly series and lift against control days):
+- an anchor term rescales between batteries; it does not measure peaks of small terms;
+- topics, not single terms; a mean of at least 10 before a series is read;
+- control for the day of the week; one capture per query, kept in the case folder;
+- evidence levels: proxy for interest, directional for a comparison, exploratory for a new term;
+- the reproducible extraction: the URL builds the search
+  (`/keywords?platform=&query=&country=&language=`), wait for it to load, press Export (a download:
+  ask first), move the CSV to the case folder; the monthly series, which Export leaves out, is read
+  off the page; Share of Search exports its pie and its trend separately. TikTok comes without
+  volume, some seeds return nothing, and the same tool covers Mercado Libre, Amazon, Walmart and
+  Perplexity, useful for purchase-intent searches. Sending page data to a local receiver is blocked
+  in the in-app browser and flagged as exfiltration: do not try it.
+
+**Paid media** (the public ad libraries), coded against the same client hypotheses, so the study can
+set what brands promise against what people ask for. What each library keeps, verified on
+16 Oct 2026 in public browsing; re-check the date before relying on it:
+
+| Library | Outside the EU and UK |
+|---|---|
+| Meta Ad Library | only **active** commercial ads, no history; its API does not cover them |
+| Google Ads Transparency Center | history by country and date range |
+| TikTok Ad Library | does not cover Mexico |
+
+If the study period is over, Meta's paid media is a snapshot of the day of the query, and it is
+said that way. Creatives are downloaded from the public DOM (the image URL or the video poster of the
+chosen cards, from the CDN, with download permission), with each one's Library ID recorded. They
+pass the same Quality Gate as the gallery (`LAYOUTS.md`): in one study, three of six fell out.
 
 ## 5. Provenance + changelog — how the system evolves
 
