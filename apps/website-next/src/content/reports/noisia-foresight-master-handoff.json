@@ -1,0 +1,1877 @@
+{
+  "meta": {
+    "study": "Cultural Foresight México 2026",
+    "subtitle": "8 señales que escuchamos en la conversación mexicana antes de que se vuelvan briefing.",
+    "agency": "Noisia",
+    "version": "v4",
+    "analysis_date": "2026-05-11",
+    "codex_instructions": "HTML interactivo estilo Noisia. Data storytelling sobre charts decorativos. HERO: presentar +245K filas escaneadas como contexto de escala; +15K menciones revisadas; +40 frases. Mantener metodología en lenguaje ejecutivo, sin exponer cocina interna. CADA SEÑAL: nombre comercial > one-liner > tensión > cita protagonista > lectura cultural > 3 headlines culturales > evidencia textual > implicaciones de marca > badge de madurez. BADGES: usar la paleta canónica Noisia; emergente magenta ink, acelerando cyan ink, mainstreaming deep violet. COLORS: cada señal tiene color propio desde la secuencia canónica Noisia. EVIDENCIA: formatear citas con énfasis visual; las citas son el corazón del reporte, no decoración. METODOLOGÍA: framing como método cualitativo serio, no como justificación de volumen."
+  },
+  "hero_numbers": {
+    "corpus_scope": {
+      "value": "+11.4M",
+      "label": "menciones escuchadas en conversación pública",
+      "detail": "Conversación en español, predominantemente mexicana, entre enero 2025 y mayo 2026."
+    },
+    "period": {
+      "value": "17 meses",
+      "label": "de escucha continua",
+      "detail": "Enero 2025 a mayo 2026."
+    },
+    "sources": {
+      "value": "7 plataformas",
+      "label": "observadas",
+      "detail": "YouTube, TikTok, Instagram, Facebook, Reddit, X y LinkedIn."
+    },
+    "signals": {
+      "value": "8 señales",
+      "label": "culturales detectadas",
+      "detail": "Una mainstreaming, cinco acelerando, una emergente y una transversal."
+    },
+    "keywords": {
+      "value": "+40 frases",
+      "label": "rastreadas",
+      "detail": "Elegidas para detectar tensiones culturales, no para sumar volumen."
+    },
+    "evidence": {
+      "value": "+11.4M",
+      "label": "menciones procesadas en español",
+      "detail": "Procesamos todo; nos quedamos con lo que mostraba tensión cultural."
+    }
+  },
+  "narrative_umbrella": {
+    "title": "Del tener que demostrar al poder respirar",
+    "subtitle": "México está escuchando distinto. Muchas marcas siguen hablándole al consumidor que ya cambió de canal.",
+    "description": "Las 8 señales comparten un mismo movimiento: la conversación mexicana está renegociando cómo descansa, cómo se muestra, en quién confía y cómo se nombra. No es rechazo a las marcas; es un oído más entrenado. Las que sigan empujando optimización, exposición y aspiración pulida le están hablando a una audiencia que ya escucha distinto.",
+    "umbrella_logic": [
+      {
+        "tier": "Cómo se vive",
+        "signals": [
+          "descanso_sin_permiso",
+          "decision_necesita_curaduria"
+        ],
+        "theme": "Renegociar cómo se vive lo cotidiano"
+      },
+      {
+        "tier": "Cómo se aparece",
+        "signals": [
+          "privacidad_emocional",
+          "aspirar_da_cringe"
+        ],
+        "theme": "Renegociar cómo se muestra y se vale"
+      },
+      {
+        "tier": "En quién se confía",
+        "signals": [
+          "perfeccion_pierde_credibilidad",
+          "comunidades_confianza"
+        ],
+        "theme": "Renegociar a quién se le cree"
+      },
+      {
+        "tier": "Cómo se siente y se nombra",
+        "signals": [
+          "humor_carga_tension",
+          "local_contemporaneo"
+        ],
+        "theme": "Renegociar cómo se nombra lo propio"
+      }
+    ]
+  },
+  "signals": [
+    {
+      "id": "descanso_sin_permiso",
+      "order": 1,
+      "commercial_name": "El descanso deja de pedir permiso",
+      "color": "#007E89",
+      "one_liner": "En México descansar ya empezó a sonar a derecho, no a permiso.",
+      "tension": {
+        "left": "Productividad obligatoria",
+        "right": "Derecho a existir sin rendir"
+      },
+      "lead_quote": {
+        "text": "Vivimos en una cultura que nos enseñó que mientras más hacemos, más valemos. Que si paramos, somos flojas. Que si descansamos, estamos fallando.",
+        "platform": "tiktok",
+        "attribution": "@psic.jasminguzman"
+      },
+      "cultural_reading": "En México, descansar todavía pide explicación. La distancia entre voy a descansar y me estoy dando permiso para descansar muestra que la culpa sigue ahí. Lo nuevo es que alguien empezó a discutirla en voz alta: ya no como queja, sino como argumento.",
+      "cultural_headlines": [
+        {
+          "value": "+157%",
+          "label": "aceleración mensual 2025 a 2026",
+          "detail": "La frecuencia con la que aparece esta conversación se duplicó con creces entre 2025 y los primeros meses de 2026."
+        },
+        {
+          "value": "agotamiento mental",
+          "label": "la frase que más se repite",
+          "detail": "Aparece miles de veces. La fatiga ya no se nombra como debilidad: se nombra como diagnóstico."
+        },
+        {
+          "value": "sin culpa",
+          "label": "el añadido revelador",
+          "detail": "No quiero descansar sino descansar sin culpa. El modificador delata la norma que se está discutiendo."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Legitimar el descanso sin condicionarlo a recargar para rendir más.",
+          "Crear contenido que da, no que pide esfuerzo.",
+          "Posicionarse como espacio de no-rendimiento: ocio sin gamificación.",
+          "Reconocer el hobby no monetizable como territorio de marca."
+        ],
+        "avoid": [
+          "La mejor versión de ti como único marco aspiracional.",
+          "Gamificar actividades que deberían ser libres.",
+          "Haz más con menos esfuerzo: sigue siendo lógica de rendimiento.",
+          "Contenido de mejora constante sin espacio para pausa."
+        ],
+        "categories_exposed": [
+          "Fitness",
+          "Apps de productividad",
+          "Educación online",
+          "Bebidas energéticas"
+        ],
+        "categories_opportunity": [
+          "Entretenimiento",
+          "Snacks",
+          "Bebidas",
+          "Wellness",
+          "Retail de ocio"
+        ]
+      },
+      "monitor_next": [
+        "burnout",
+        "silencio digital",
+        "hobby sin monetizar",
+        "hacer nada",
+        "vida tranquila"
+      ],
+      "maturity": "acelerando",
+      "maturity_label": "Acelerando",
+      "maturity_note": "Vocabulario consolidado y frecuencia mensual acelerando en 2026. Cruza plataformas y voces en México.",
+      "volume_indicator": {
+        "records_analyzed": 427268,
+        "mx_evidence_estimated": 20520,
+        "sources_count": 3,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "Querer controlar todo muchas veces nace del miedo, no de la paz.\n\nCuando intentas tener todas las respuestas, prever cada escenario o cargar con todo, tu mente vive en alerta constante.\n\nEn terapia cognitivo conductual trabajamos algo importante:\n👉 aprender a tolerar la incertidumbre sin colapsar emocionalmente.\n\nNo necesitas tener la vida resuelta hoy.\nNecesitas herramientas p",
+          "platform": "instagram",
+          "date": "2026-04-25",
+          "url": "https://www.instagram.com/reel/DXihqDYjrTE/",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "ASHTAR ADVIERTE EN VIVO 🚨 OSCURIDAD EMOCIONAL Y DESPERTAR QUE CAMBIARÁ LA HUMANIDAD\nAlgo está ocurriendo en la humanidad… y millones ya lo están sintiendo.\n\nLa presión mental aumenta, la ansiedad colectiva se intensifica y la incertidumbre social parece no tener fin. Pero lo que muchos interpretan como caos… podría ser en realidad el inicio de una transformación profunda de con",
+          "platform": "youtube",
+          "date": "2026-04-24",
+          "url": "http://www.youtube.com/watch?v=Ymhs5bPfGSE",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "A veces no hace falta explicar nada, ni enseñar, ni convencer, ni aconsejar. A veces solo hay que dejar que la belleza nos abrace, que el alma respire, y que el cuerpo —como esta bailarina— gire, cambie, florezca. 🌷 Porque no todo es productividad ni propósito. A veces, mirar algo bonito también sana. ✨ 💫 Regálate un momento para ti. De los que no se miden, pero se sienten. Y s",
+          "platform": "instagram",
+          "date": "2026-01",
+          "url": "https://instagram.com/p/DTdqereDeUy",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Estoy en un born out...ya pasé dos años atrás por un pre infarto, pero no paré y seguí exigiendome, a día de hoy paso días incapacitada, diagnosticada inicialmente con fatiga crónica y luego fibromialgia, adicional a un accidente que me dejo secuelas físicas, Gracias al universo y a ti, este vídeo me hace sentir en Paz, y que no me rinda, que puedo desde mi cama sanarme, descan",
+          "platform": "youtube",
+          "date": "2025-08",
+          "url": "https://youtube.com/watch?v=ibP8C6piuiE?lc=UgyaJNxrCOune1izt9x4AaABAg",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Hoy, en el Día del Trabajador, me miro y me reconozco. Me felicito por no rendirme, por levantarme cada día aun cuando estoy cansada, aun cuando todo pesa. Por apostar a mis sueños, por construir lo mío con esfuerzo, con fe y con el corazón. Nada de lo que tengo fue fácil… pero todo lo que logré tiene mi nombre, mi lucha y mis ganas de salir adelante. Hoy me agradezco por ser c",
+          "platform": "facebook",
+          "date": "2026-05",
+          "url": "https://facebook.com/romina.gonzalez.77920526/posts/pfbid0jWRHqvoPD5YZRtKDTbHyMg11RtsBV9CUuLyBWjDYiUjqqsPfscWaYzmYyEiQ7yVsl",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Roberto es el ejemplo perfecto de que , tener una familia funcional que te apoya , nacer con recursos , en un entorno adecuado , ir alas mejores escuelas de México , ser blanco de ojos azules , de san Pedro , con el apoyo total de sus padres para sus proyectos, y , ahora sí.. echándole ganas puedes salir adelante y volverte alguien muy productivo",
+          "platform": "youtube",
+          "date": "2025-12-22",
+          "url": "https://youtube.com/watch?v=aeTuUa9G7qs?lc=UgxjGZSwOt7l1ZU_uil4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "AQUÍ EN MÉXICO LOS QUE QUIEREN VOLVER A LOS TIEMPOS DE ANTES SON LOS PRIANISTAS QUE QUIEREN VOLVER A VIVIR COMO REYES A COSTILLA DE TODO EL PUEBLO. Y NO SE PRESIONAN COMO ESTOS COREANOS DEL SUR EN ESTUDIAR Y PREPARARSE, BASTA CON DARLE ATOLE CON EL DEDO A TODA LA POBLACIÓN.",
+          "platform": "youtube",
+          "date": "2026-04-20",
+          "url": "https://www.youtube.com/watch?v=YXhAVYK-3_E&amp;lc=Ugy9FcjvDdFZL23L46V4AaABAg",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Tengan cuidado con el agotamiento mental y la ansiedad. Con tantos planetas activando su sistema nervioso, es vital que practiquen estar en el presente y con los pies firmes en este momento (caminar descalzos, contacto con la naturaleza) para no sentirse abrumados.",
+          "platform": "x",
+          "date": "2026-05-02",
+          "url": "https://twitter.com/litenheksnd/statuses/2050621577973170395",
+          "mx": true,
+          "source": "listening_queries"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 8700
+        },
+        {
+          "month": "2025-02",
+          "count": 10346
+        },
+        {
+          "month": "2025-03",
+          "count": 12673
+        },
+        {
+          "month": "2025-04",
+          "count": 14055
+        },
+        {
+          "month": "2025-05",
+          "count": 16019
+        },
+        {
+          "month": "2025-06",
+          "count": 16562
+        },
+        {
+          "month": "2025-07",
+          "count": 20691
+        },
+        {
+          "month": "2025-08",
+          "count": 21419
+        },
+        {
+          "month": "2025-09",
+          "count": 20600
+        },
+        {
+          "month": "2025-10",
+          "count": 25704
+        },
+        {
+          "month": "2025-11",
+          "count": 24756
+        },
+        {
+          "month": "2025-12",
+          "count": 35410
+        },
+        {
+          "month": "2026-01",
+          "count": 38717
+        },
+        {
+          "month": "2026-02",
+          "count": 35203
+        },
+        {
+          "month": "2026-03",
+          "count": 37728
+        },
+        {
+          "month": "2026-04",
+          "count": 46552
+        },
+        {
+          "month": "2026-05",
+          "count": 42133
+        }
+      ]
+    },
+    {
+      "id": "privacidad_emocional",
+      "order": 2,
+      "commercial_name": "La privacidad se vuelve emocional",
+      "color": "#01535F",
+      "one_liner": "Compartir menos empezó a sonar a inteligencia, no a ausencia.",
+      "tension": {
+        "left": "Visibilidad permanente",
+        "right": "Privacidad emocional"
+      },
+      "lead_quote": {
+        "text": "No todo el mundo merece acceso a tu historia, a tus planes ni a tu corazón. Vivir en privado no es esconderse, es proteger tu paz.",
+        "platform": "tiktok",
+        "attribution": "@reprogramatumente7"
+      },
+      "cultural_reading": "Esta señal no es sobre dejar las redes. Es sobre cambiar las reglas de estar ahí. En México empieza a separarse estar en redes de exponerse en redes. La privacidad se lee como criterio, no como falta. Como cuidado, no como aislamiento.",
+      "cultural_headlines": [
+        {
+          "value": "5",
+          "label": "maneras de decir lo mismo",
+          "detail": "No todo se comparte, no todo se sube, ya no publico, vivir en privado, me guardo esto. El vocabulario ya está armado."
+        },
+        {
+          "value": "cruza generaciones",
+          "label": "no es solo Gen Z",
+          "detail": "TikTok 54%, Facebook 13%. La conversación aparece también en voces de 30, 40 y 50 años."
+        },
+        {
+          "value": "principio",
+          "label": "no queja",
+          "detail": "No todo se comparte aparece como posición declarada, no como reacción frustrada."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Tratar la privacidad como atributo emocional, no solo técnico.",
+          "Explorar close friends, grupos cerrados y microcomunidades como canales.",
+          "Diseñar UGC de baja exposición.",
+          "Comunicar discreción como ventaja en categorías sensibles."
+        ],
+        "avoid": [
+          "Exigir exposición pública como condición de participación.",
+          "Campañas que piden compartir vida personal en feed abierto.",
+          "Comparte con tus amigos como mecánica de crecimiento por default.",
+          "Asumir que más visible es más deseado."
+        ],
+        "categories_exposed": [
+          "Creator economy",
+          "Challenges virales",
+          "UGC de beauty",
+          "Retos sociales"
+        ],
+        "categories_opportunity": [
+          "Fintech",
+          "Salud",
+          "Seguros",
+          "Dating apps",
+          "Comunidades cerradas de marca"
+        ]
+      },
+      "monitor_next": [
+        "close friends",
+        "soft launch",
+        "bajarle a redes",
+        "límites digitales",
+        "me guardo esto"
+      ],
+      "maturity": "acelerando",
+      "maturity_label": "Acelerando",
+      "maturity_note": "Vocabulario maduro en cinco frases distintas; cruza generaciones y plataformas en México.",
+      "volume_indicator": {
+        "records_analyzed": 379992,
+        "mx_evidence_estimated": 43710,
+        "sources_count": 3,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "No se merecieron que terminara de ver este segmento de crítica,ESPN,hombres cobardes,no se exponen a apoyar lo que dice chicharito,su trayectoria ya está no se puede borrar, el ser un referente que aporta, aún siendo un hombre con defectos en su vida privada como muchos, tiene derecho a dar su opinión, lo que le falta ala humanidad es matrimonios tradicionales,con principios y ",
+          "platform": "youtube",
+          "date": "2025-07-30",
+          "url": "https://youtube.com/watch?v=ej3izj4beQg?lc=UgxH1KO0AcbIF7u6QZZ4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "🚨 DETENTE… no todo se comparte. Vivimos en una era donde todos quieren mostrarlo todo: planes, metas, movimientos… pero lo verdaderamente grande se construye en silencio. 🌱 Cuando anuncias demasiado pronto lo que quieres hacer, no solo pierdes enfoque… también te expones a dudas, opiniones y energías que no suman. ⚠️ No todos quieren verte crecer, y no todos entienden tu visión",
+          "platform": "facebook",
+          "date": "2026-05",
+          "url": "https://facebook.com/Mmillon2020/posts/pfbid0rKyiMzT5mMNpxBJhJ6Ae4f1cQjFzpxGfKSkwy87qNQtaUD1V92ofLzydL72aVd8Dl",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "No todo se comparte… y no todo el mundo merece acceso. La mayoría habla de más, se expone de más y confía antes de tiempo… luego se sorprende cuando lo que dijo en confianza se usa en su contra. No es mala suerte… es falta de estrategia. Tu debilidad no es el problema… el problema es quién sabe dónde está.Porque hay gente que no busca ayudarte… busca entenderte lo suficiente pa",
+          "platform": "tiktok",
+          "date": "2026-04",
+          "url": "https://tiktok.com/@djrobertotabarez/video/7634705675238591762",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "No todo se comparte. Y no todo el mundo necesita saber en qué punto estás. Durante mucho tiempo creemos que tenemos que contar lo que estamos haciendo, hacia dónde vamos, qué queremos construir… como si compartirlo fuera parte del proceso. Pero llega un momento en el que entiendes que no todo crece mejor con exposición. Hay etapas que necesitan silencio, foco y protección. No p",
+          "platform": "tiktok",
+          "date": "2026-04",
+          "url": "https://tiktok.com/@judit_catala/video/7629403662460210454",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "@alanafloresf Jajajjajaj noooo, de verdad está chica da mucha lastima, tuvo la oportunidad de desaparecer de redes o por lo menos no hablar o generar Hater, pero ahora sale con que perdió porque no estaba al 100%. Que mujer tan PATÉTICA, y sin vergüenza. Viva México pero abajo Alana for ever",
+          "platform": "x",
+          "date": "2026-04-29",
+          "url": "https://twitter.com/anakin1977476/statuses/2049622072247165039",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Eres un gran cantante Nodal y digno representate del regional mexicano ...tu vida privada esa es muy aparte !!",
+          "platform": "youtube",
+          "date": "2025-01-28",
+          "url": "https://youtube.com/watch?v=O0IyU-DkQus?lc=UgxlPpZXpipK2sgMYLJ4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "Si Nmms ya neta siento que no entienden que no todo se comparte…",
+          "platform": "tiktok",
+          "date": "2026-04-22",
+          "url": "https://www.tiktok.com/@elias.saadt/video/7631279470472809749",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Porque se enojan tanto? el mismo público fue creando los shippeos y ellos son creadores de CONTENIDO, por otro lado ellos no tienen la obligación de publicar toda su vida privada, si no fuera porque no respetan la privacidad de los demás tal vez ni siquiera nos hubiéramos dado cuenta. No por lo sucedido tienen derecho a tratar a Carol como una aquí o una allá al igual que a Mar",
+          "platform": "tiktok",
+          "date": "2025-07-12",
+          "url": "https://tiktok.com/@carolcastromx/video/7526018933749550353?_r=1&_d=0&preview_pb=0&sharer_language=en&source=h5_m&u_code=0&comment_author_id=7128529183823086598&share_comment_id=7526054049978041095&share_item_id=7526018933749550353",
+          "mx": false,
+          "source": "case_datashake"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 9063
+        },
+        {
+          "month": "2025-02",
+          "count": 8659
+        },
+        {
+          "month": "2025-03",
+          "count": 12140
+        },
+        {
+          "month": "2025-04",
+          "count": 13563
+        },
+        {
+          "month": "2025-05",
+          "count": 13477
+        },
+        {
+          "month": "2025-06",
+          "count": 16112
+        },
+        {
+          "month": "2025-07",
+          "count": 15774
+        },
+        {
+          "month": "2025-08",
+          "count": 17667
+        },
+        {
+          "month": "2025-09",
+          "count": 20061
+        },
+        {
+          "month": "2025-10",
+          "count": 25040
+        },
+        {
+          "month": "2025-11",
+          "count": 23784
+        },
+        {
+          "month": "2025-12",
+          "count": 32508
+        },
+        {
+          "month": "2026-01",
+          "count": 27027
+        },
+        {
+          "month": "2026-02",
+          "count": 30560
+        },
+        {
+          "month": "2026-03",
+          "count": 31883
+        },
+        {
+          "month": "2026-04",
+          "count": 42330
+        },
+        {
+          "month": "2026-05",
+          "count": 40344
+        }
+      ]
+    },
+    {
+      "id": "perfeccion_pierde_credibilidad",
+      "order": 3,
+      "commercial_name": "La perfección pierde credibilidad",
+      "color": "#D81B60",
+      "one_liner": "Lo demasiado pulido empezó a sonar sospechoso. La imperfección vale como prueba de que es de verdad.",
+      "tension": {
+        "left": "Producción pulida",
+        "right": "Credibilidad imperfecta"
+      },
+      "lead_quote": {
+        "text": "El cine de ahora se siente falso. No es que esté mal hecho, al contrario. Todo está demasiado bien hecho. Pero ahí está el problema.",
+        "platform": "reddit",
+        "attribution": "r/peliculas"
+      },
+      "cultural_reading": "La audiencia mexicana entrenó un instinto: distinguir lo que fue construido para verse real de lo que es real. El mismo radar que rechaza el CGI impostado rechaza testimoniales con guión, contenido de IA sin avisar y feeds editados hasta la asepsia. La autenticidad dejó de medirse en producción.",
+      "cultural_headlines": [
+        {
+          "value": "demasiado perfecto",
+          "label": "el diagnóstico de la conversación",
+          "detail": "Aparece masivamente como crítica. Lo muy pulido se está leyendo como sospechoso."
+        },
+        {
+          "value": "YouTube + Reddit",
+          "label": "58% de la conversación articulada",
+          "detail": "La crítica a la sobreproducción vive donde hay espacio para argumentar largo."
+        },
+        {
+          "value": "IA, el mismo gatillo",
+          "label": "que la sobreproducción",
+          "detail": "El contenido de IA activa la misma respuesta de se siente falso."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Integrar reseñas reales con lenguaje no editado como evidencia central.",
+          "Declarar abiertamente cuando el contenido es patrocinado.",
+          "Explorar formatos de menor producción con mayor sensación de verdad.",
+          "Usar UGC como evidencia, no como decoración."
+        ],
+        "avoid": [
+          "Testimoniales filmados en estudio con iluminación y guión visibles.",
+          "IA generativa en contenido donde la confianza es crítica.",
+          "Asumir que más producción es más credibilidad.",
+          "Disimular la naturaleza comercial del contenido."
+        ],
+        "categories_exposed": [
+          "Publicidad",
+          "Influencer marketing",
+          "Beauty",
+          "Retail de moda"
+        ],
+        "categories_opportunity": [
+          "E-commerce",
+          "Apps",
+          "Alimentos",
+          "Salud",
+          "Fintech"
+        ]
+      },
+      "monitor_next": [
+        "reseña real",
+        "se nota el script",
+        "IA visible",
+        "sin filtro",
+        "muy producido"
+      ],
+      "maturity": "acelerando",
+      "maturity_label": "Acelerando",
+      "maturity_note": "Instinto de detección entrenado; aplica tanto a contenido producido como a IA generativa.",
+      "volume_indicator": {
+        "records_analyzed": 539660,
+        "mx_evidence_estimated": 35699,
+        "sources_count": 3,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "yo sentí la mitad de los episodios innecesarios. como fan si los dos primeros son chidos por que vemos que paso con los personajes. pero cuando se enfocan en la hija de malcom es solitaria se siente falso por que con malcom vimos todo eso de ser marginado y despreciado por su familia y por ser listo , ahora veo que muchos comentan que no era lo que operaban por que al parecer q",
+          "platform": "youtube",
+          "date": "2026-04-13",
+          "url": "https://www.youtube.com/watch?v=Xfp_udQMPN4&amp;lc=UgxH2mM9v6F3_H_NOK54AaABAg",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Yo soy Pro Amlo, pro Sheimbaun y pro 4T. Pero con frecuencia hacen videos Fake. Por ejemplo este vídeo, ya busque en fuentes escritas, en redes sociales, YouTube, inteligencia artificial y no he encontrado nada oficial o cierto respecto a este tema. Considero que lejos de ayudar a nuestra presidenta, este tipo de contenidos la perjudican. Les pido que realicen contenido real, v",
+          "platform": "youtube",
+          "date": "2025-12-26",
+          "url": "https://youtube.com/watch?v=psDrjzrYaOw?lc=UgzbmTWDB-IS4gYl_kl4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "MUCHO TEXTO: En si considero que lo malo de Evelyn no fue su concepto y motivacion, si no que fue mal manejada (mal manejada desde la perspectiva que su plot twits es el tipico de media pelicula y asi) ya que su motivacion en si, es una motivacion tan buena y eficaz como la de Sindrome (Hablando de forma neutral e ignorando lo iconico del persona de Sindrome, la realidad es que",
+          "platform": "youtube",
+          "date": "2025-09",
+          "url": "https://youtube.com/watch?v=03Euo5ABSZY?lc=UgyyizSXy18Hv2kgBx94AaABAg",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "El cine de ahora se siente falso. No es que esté “mal hecho”, al contrario. Todo está demasiado bien hecho. La luz es perfecta, los colores están hiper corregidos, los encuadres parecen medidos con regla. Pero ahí está el problema, ya no parece que estamos viendo algo que está pasando, sino algo que fue armado para verse bonito. Antes, incluso en las películas, había cierta imp",
+          "platform": "reddit",
+          "date": "2026-05",
+          "url": "https://reddit.com/r/peliculas/comments/1t46nho/por_qu%C3%A9_el_cine_de_hoy_se_ve_tan_perfecto_y_aun",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "\"Había intentado de todo. Terapia, libros, conferencias... Nada funcionaba. Hasta que tuve mi sesión con el Dr. Serafín. Por primera vez en años, alguien entendió REALMENTE por lo que estaba pasando.\" María, 42 años ¿Te sientes así? 😔 Tu matrimonio se está cayendo a pedazos 😟 Tu liderazgo se siente falso 😢 Tu familia está destruida 😰 Estás atrapado en los mismos ciclos No tiene",
+          "platform": "facebook",
+          "date": "2025-09",
+          "url": "https://facebook.com/Renuevo.Plenitud/posts/pfbid0Mn136D5uqeGukQsJ8gNuyJ84FdqcW982nzZhgFPhpsP6FajZdQ3wK5H31qBgMppNl",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Te lo digo sin filtro:\nsí está MUY bonito, cuidado y aesthetic ✨\npero si eres amante de las plantas… este lugar te va a obsesionar 🌿\n\nNo es caro, es plan tranqui y diferente.\nPerfecto para cita, plan solo o crear contenido.\n\nAhora dime tú…\n¿lo visitarías o lo saltas? 👀👇\n\nHashtags:\n\n#Cosmovitral #Toluca #ValeLaPena #SinFiltro #ReviewReal #TravelMexico #EscapadasMX",
+          "platform": "youtube",
+          "date": "2026-04-17",
+          "url": "http://www.youtube.com/watch?v=RnwcQQazhmQ",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Pues los mercados siguen al alza !!!. No se si Trump se un loco o un tirano, lo que si se es que es el tipo con más suerte del mundo, según la mayoría de los gurús todo debería ser un desastre y el al revés. Maximos históricos !!!. Saludos desde México. Gracias Diego, continúa con el gran trabajo!!!.",
+          "platform": "youtube",
+          "date": "2026-05-05",
+          "url": "https://www.youtube.com/watch?v=cdTjgUK_38U&amp;lc=UgxqBenjtd-psolUv5B4AaABAg",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "”Me siento completamente vacía, podrían llamarme de México y me daría lo mismo, pienso en que quizás lo de nosotros era demasiado perfecto para ser para siempre.”\n\nhttps://t.co/p6cHm1yVkA",
+          "platform": "x",
+          "date": "2026-05-10",
+          "url": "https://twitter.com/bailandosola__/statuses/2053349765161668751",
+          "mx": true,
+          "source": "listening_queries"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 11137
+        },
+        {
+          "month": "2025-02",
+          "count": 13881
+        },
+        {
+          "month": "2025-03",
+          "count": 13506
+        },
+        {
+          "month": "2025-04",
+          "count": 18013
+        },
+        {
+          "month": "2025-05",
+          "count": 19776
+        },
+        {
+          "month": "2025-06",
+          "count": 20865
+        },
+        {
+          "month": "2025-07",
+          "count": 25135
+        },
+        {
+          "month": "2025-08",
+          "count": 27667
+        },
+        {
+          "month": "2025-09",
+          "count": 26014
+        },
+        {
+          "month": "2025-10",
+          "count": 33618
+        },
+        {
+          "month": "2025-11",
+          "count": 37948
+        },
+        {
+          "month": "2025-12",
+          "count": 40321
+        },
+        {
+          "month": "2026-01",
+          "count": 48635
+        },
+        {
+          "month": "2026-02",
+          "count": 50710
+        },
+        {
+          "month": "2026-03",
+          "count": 49296
+        },
+        {
+          "month": "2026-04",
+          "count": 50594
+        },
+        {
+          "month": "2026-05",
+          "count": 52544
+        }
+      ]
+    },
+    {
+      "id": "humor_carga_tension",
+      "order": 4,
+      "commercial_name": "El humor carga lo que no se puede decir en serio",
+      "color": "#D91441",
+      "one_liner": "El humor en México no es despreocupación. Es la forma de cargar lo que no puede decirse derecho.",
+      "tension": {
+        "left": "Tensión real",
+        "right": "Lenguaje permisible"
+      },
+      "lead_quote": {
+        "text": "Lo cuento en clave de humor, pero pasa mucho: el cliente ve la hora de sesión y no siempre ve todo lo que viene detrás.",
+        "platform": "linkedin",
+        "attribution": "profesional creativa"
+      },
+      "cultural_reading": "La ironía es distancia. Aparece cuando el cansancio, la frustración o la vulnerabilidad no pueden mostrarse en serio. Para una marca eso define registro: la audiencia que procesa tensión con humor recibe mal el contenido empático o solemne, y bien el que reconoce la tensión sin pretender resolverla.",
+      "cultural_headlines": [
+        {
+          "value": "el registro dominante",
+          "label": "de la conversación digital mexicana",
+          "detail": "El humor defensivo aparece miles de veces y atraviesa plataformas y temas."
+        },
+        {
+          "value": "me río para no llorar",
+          "label": "la fórmula central",
+          "detail": "No es chiste: es traducción pública de algo que pesa."
+        },
+        {
+          "value": "63% TikTok",
+          "label": "el hogar nativo",
+          "detail": "El humor defensivo vive en el video corto y los comentarios."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Reconocer la tensión sin pretender resolverla con producto.",
+          "Tono de complicidad antes que empatía solemne.",
+          "Levedad calibrada que no caiga ni en cinismo ni en inspiracional.",
+          "Dejar al consumidor reírse de su situación sin moralizar."
+        ],
+        "avoid": [
+          "Empatía empalagosa cuando el registro de la audiencia es irónico.",
+          "Inspiracional cuando hay frustración real bajo la superficie.",
+          "Pretender resolver con producto lo que es estructural.",
+          "Humor corporativo que no se da cuenta de sí mismo."
+        ],
+        "categories_exposed": [
+          "Servicios financieros",
+          "Salud mental",
+          "Educación",
+          "Trabajo y carrera"
+        ],
+        "categories_opportunity": [
+          "Entretenimiento",
+          "Snacks",
+          "Bebidas",
+          "Apps de vida cotidiana",
+          "Retail"
+        ]
+      },
+      "monitor_next": [
+        "crisis existencial",
+        "mi estabilidad emocional",
+        "humor de crisis",
+        "auto-burla"
+      ],
+      "maturity": "mainstreaming",
+      "maturity_label": "Mainstreaming",
+      "maturity_note": "Es el registro emocional dominante de la conversación digital mexicana. Omnipresente.",
+      "volume_indicator": {
+        "records_analyzed": 2165775,
+        "mx_evidence_estimated": 240855,
+        "sources_count": 2,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "🎥 Bienvenido a tu canal favorito de noticias sin censura, análisis directo y cruda realidad mexicana. Aquí hablamos de lo que muchos callan: el narco, la violencia, la política podrida, los movimientos en el norte, y las historias reales detrás de los grupos criminales. Pero también le metemos comedia, sarcasmo y ese toque que hace todo más digerible (y viral). 🧠 Si te gusta el",
+          "platform": "youtube",
+          "date": "2025-07-25",
+          "url": "https://youtube.com/watch?v=yNA0V8RvII4",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "pero tú estás comparando en este tiempo pero en tiempo de los otros gobiernos aquí no era así si tenías para comer una ves al día ya era ganando nos tocó mucho trabajo para llegar a donde estamos no es culpa del mexicano que tu país esté así y si tú video es insultante y si ahí muchos mexicanos en pobreza extrema y no necesitamos personas extranjeras que vengan a darnos clases ",
+          "platform": "youtube",
+          "date": "2025-11-08",
+          "url": "https://youtube.com/watch?v=wwBbIGNiPiU?lc=UgwtT1wHdwlbNZervxR4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "📸 Expectativa: “solo es una sesión de 60 min” 🧠 Realidad: 60 min + 27 audios + “¿me lo puedes pasar hoy?” + “solo un retoquito más” + “más natural” + “es que mi prima también sale y…” Lo cuento en clave de humor, pero pasa mucho: el cliente ve la hora de sesión… y no siempre ve todo lo que viene detrás. ¿Cuál es la frase que más te persigue en tu trabajo? A) “Solo un cambio” B)",
+          "platform": "linkedin",
+          "date": "2026-02",
+          "url": "https://linkedin.com/posts/felixmezcua_expectativa-solo-es-una-sesi%C3%B3n-de-60-activity-7425214156980707328-F2ek",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "LIMPIANDO y ORGANIZANDO MI CASA🏠ME RIO PARA NO LLORAR😅VLOG Hola hola amigas estoy muy feliz de tenerlas aquí en esta casita, suscribanse y regalenme un like por favor, bendiciones para todos. 🌸SUSCRIBETE 🌸LIKE 🌸COMENTA CANAL DE DECORACIÓN https://www.youtube.com/@silviadelhogar/videos IG: instagram.com/silviadelhogar #limpieza #limpiezadelhogar #organizacion #cocina #nuevacocin",
+          "platform": "youtube",
+          "date": "2025-04",
+          "url": "https://youtube.com/watch?v=lktZbzdivBE",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Que feo es que la mayoria comprendamos la situacion 😢 cuando vivía con el papá de mi hijo me dejó un día sin la cena, no tenía dinero y ese dia él cobraba y quedó de pasar por hamburguesas para cenar, no llegó, dejo de contestarme, me quedé con hambre horrible, sin un peso, llorando desesperada. Cabe destacar que ya empezaban a ser frecuentes las ausencias por días donde se iba",
+          "platform": "tiktok",
+          "date": "2026-04",
+          "url": "https://tiktok.com/@dayanaramenesesluna/video/7622838000845622559?_r=1&_d=0&preview_pb=0&sharer_language=en&source=h5_m&u_code=0&comment_author_id=6817422045459858438&share_comment_id=7624770910184391442&share_item_id=7622838000845622559",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Amo este podcast osea amo sinergeticos 1 más 1 igual 3 compartír ya que si ayudar a otro y tú lo haces Jorge Pero este gran señor lo ame desde el minuto 1 cuando dijo la cagué ya que amo las groserías correctas Cómo la cagué levántate y con huevos Eso es más sincero y llegador Que si te dicen mi niña levántate tu todo bien Si soy mamá soltera y muchas veces digo ser mamá solter",
+          "platform": "youtube",
+          "date": "2025-01-22",
+          "url": "https://youtube.com/watch?v=RnXlxqrtyGo?lc=Ugw1mu4qjm0-eK_emcB4AaABAg",
+          "mx": false,
+          "source": "case_datashake"
+        },
+        {
+          "text": "Que videos tan más perros jaja Pd: le metí 1,000 pesos a lo del juego que dices y no gane nada, me sentí estafado jajajajajajaaja, me río para no llorar 😢",
+          "platform": "youtube",
+          "date": "2025-05-16",
+          "url": "https://youtube.com/watch?v=t8RjVQ9O96M?lc=UgyOUM51hP268y9sCN14AaABAg",
+          "mx": false,
+          "source": "case_datashake"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 110983
+        },
+        {
+          "month": "2025-02",
+          "count": 105560
+        },
+        {
+          "month": "2025-03",
+          "count": 113360
+        },
+        {
+          "month": "2025-04",
+          "count": 116984
+        },
+        {
+          "month": "2025-05",
+          "count": 110678
+        },
+        {
+          "month": "2025-06",
+          "count": 111142
+        },
+        {
+          "month": "2025-07",
+          "count": 124423
+        },
+        {
+          "month": "2025-08",
+          "count": 118032
+        },
+        {
+          "month": "2025-09",
+          "count": 126425
+        },
+        {
+          "month": "2025-10",
+          "count": 140309
+        },
+        {
+          "month": "2025-11",
+          "count": 143352
+        },
+        {
+          "month": "2025-12",
+          "count": 130066
+        },
+        {
+          "month": "2026-01",
+          "count": 132264
+        },
+        {
+          "month": "2026-02",
+          "count": 138523
+        },
+        {
+          "month": "2026-03",
+          "count": 155960
+        },
+        {
+          "month": "2026-04",
+          "count": 139889
+        },
+        {
+          "month": "2026-05",
+          "count": 147825
+        }
+      ]
+    },
+    {
+      "id": "decision_necesita_curaduria",
+      "order": 5,
+      "commercial_name": "La decisión necesita curaduría",
+      "color": "#4B1D95",
+      "one_liner": "Frente a demasiadas opciones, México ya no quiere más libertad de elección. Quiere a alguien que filtre antes.",
+      "tension": {
+        "left": "Saturación de opciones",
+        "right": "Necesidad de curaduría"
+      },
+      "lead_quote": {
+        "text": "Disfruté mi vida en la CDMX en los años que tenía que estar ahí y ahora disfruto mi vida tranquila en una ciudad pequeña. No todos disfrutamos lo mismo y está bien.",
+        "platform": "x",
+        "attribution": "usuario MX"
+      },
+      "cultural_reading": "La frase no sé cuál elegir aparece masivamente, pero no como queja existencial. Aparece como pregunta operativa: ayúdame a decidir. El movimiento mezcla dos cosas: pedir curaduría frente al exceso, y buscar simplificación frente al cansancio (vida tranquila, organizar, bajarle el ritmo). La conversación se mueve de tengo todas las opciones a filtra por mí.",
+      "cultural_headlines": [
+        {
+          "value": "+3.7M",
+          "label": "menciones que piden orden",
+          "detail": "Vida tranquila, organizar mi vida, hacer reset, bajarle el ritmo, plan tranqui. Se repiten miles de veces."
+        },
+        {
+          "value": "producto vs producto",
+          "label": "el formato más común",
+          "detail": "X o Y, qué me recomiendan. Patrón visible en miles de comentarios. La gente compara y le pide a la comunidad romper el empate."
+        },
+        {
+          "value": "curaduría",
+          "label": "no más opciones",
+          "detail": "La demanda no es más variedad. Es alguien que ya filtró."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Curar agresivamente: defaults inteligentes, este es el correcto para ti, recomendaciones de un paso.",
+          "Reducir SKUs visibles, simplificar líneas.",
+          "Vender como el que ya decidió por ti.",
+          "Crear contenido editorial de este o este: cuál."
+        ],
+        "avoid": [
+          "Ampliar catálogo como propuesta de valor.",
+          "Tenemos todas las opciones como mensaje principal.",
+          "Configuradores complejos que se sienten como una decisión más.",
+          "Tablas comparativas exhaustivas como contenido core."
+        ],
+        "categories_exposed": [
+          "Retail",
+          "E-commerce",
+          "Tech",
+          "Seguros",
+          "Servicios financieros"
+        ],
+        "categories_opportunity": [
+          "Suscripciones curadas",
+          "Editorial de producto",
+          "Apps de recomendación",
+          "Hospitalidad",
+          "Travel"
+        ]
+      },
+      "monitor_next": [
+        "no sé qué comprar",
+        "recomiéndame uno",
+        "tantas opciones",
+        "no me decido",
+        "plan tranqui"
+      ],
+      "maturity": "acelerando",
+      "maturity_label": "Acelerando",
+      "maturity_note": "Patrón masivo de preguntarle a la comunidad. La búsqueda activa de curaduría es un comportamiento visible.",
+      "volume_indicator": {
+        "records_analyzed": 3691986,
+        "mx_evidence_estimated": 375551,
+        "sources_count": 2,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "Creo que para mí euphoria está retratando lo mal que está con nuestra sociedad y como puedes acabar si consumes sustancias hay muchas malas decisiones en la dirección pero creo que neta la gente no entiende que esto no es disney channel y que evidentemente si haces sustancias no vas acabar con una vida tranquila o padre para mí le dieron en el blanco en como retrata la sociedad",
+          "platform": "youtube",
+          "date": "2026-04-18",
+          "url": "https://www.youtube.com/watch?v=b-lNo0KJvuo&amp;lc=UgwS_qDG7YaBVwm3QVB4AaABAg",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Desafortunadamente ahora con los videos que muestran la vida tranquila y sin maldad de las personas de pueblo se exponen a peligros de ajenos ,de personas que solo buscan vulnerar a esas maravillas personas ya no se puede confiar ni dar a conocer sus hábitos desafortunadamente te paso cuando asaltaron tu casa antes de venirte a México solo tómalo como consejo para prevenir.",
+          "platform": "youtube",
+          "date": "2026-04-23",
+          "url": "https://www.youtube.com/watch?v=cTKpzu3eRVo&amp;lc=Ugw4QQREf27rPGLREt54AaABAg",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Hola princesa que gusto verte y verte mucho mejor si te estrañamos pero todo sea para tu bien sigue cuidamdote pues vad a tener mucho trabajo ahora en tu nueva casa se qie le vas a dejar hermosa hay algo que si extreñe y es ver el esmeto y el amor que le pones a tu comida hasta se antoja gracias por compartir ahora esperar nuevo video saludos desde el estado de mexico❤❤❤",
+          "platform": "youtube",
+          "date": "2026-04-16",
+          "url": "https://www.youtube.com/watch?v=8h85dNfqnoU&amp;lc=UgwRuT8Dubf1-ht8Kpd4AaABAg",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Hola comunidad, soy una madre mexicana que emigró a USA hace 10 años pero recién ahora me siento presionada a mejorar mi inglés porque mis hijos van a la escuela y tengo reuniones con maestros y la dirección del colegio. Si bien el idioma lo entiendo, no me puedo expresar con facilidad. Qué me recomiendan para practicar la parte hablada y la pronunciación?",
+          "platform": "reddit",
+          "date": "2026-05-11",
+          "url": "https://reddit.com/r/AskMexico/comments/1t9v9sb/madre_mexicana_necesita_mejorar_su_ingl%C3%A9s_oral",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "Los narcos , los asaltantes , los homicidas son hijos de PERZONAS mexicanas que les enseñaron a tener una vida fácil quitándole a la sociedad el bienestar de una vida tranquila , EL RESPONSABLE NO ES EL GOBIERNO , SON LOS PADRES QUE ENSEÑAN A SUS HIJOS A DELINQUIR Y DESPUES SON LOS MISMOS QUE CLAMAN JUSTICIA IPOCRITAMENTE",
+          "platform": "youtube",
+          "date": "2026-04-18",
+          "url": "https://www.youtube.com/watch?v=Aa5nQQi4XAA&amp;lc=UgwMWJZAdG_y4dVzVE54AaABAg",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Yo creo que sí hizo quiso poner tierra de por medio y por eso se fueron a Ciudad de México pero está loca señora no se quedó así estaba tan molesta con ella que decidió ir hasta su casa de ellos y ahí matarla jugones honestamente se lo digo estar en el lugar de ese muchacho para poder decir tal cosa",
+          "platform": "youtube",
+          "date": "2026-04-27",
+          "url": "https://www.youtube.com/watch?v=nbgqi3bt1KY&amp;lc=Ugz2HXq8FZHACLB75vR4AaABAg.AW4DNyzDbX3AW50S5k1LHA",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Disfruté mi vida en la CDMX en los años que tenía que estar ahí y ahora disfruto mi vida tranquila en una ciudad pequeña. No todos disfrutamos lo mismo y está bien.",
+          "platform": "x",
+          "date": "2026-04-20",
+          "url": "https://twitter.com/SailorCaguamas/statuses/2046299256940851369",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Gente, que telefono me recomiendan??? el a35 lo encuentro en 4090, y el a36 en 4399 pesos mexicanos, no se cual elegir",
+          "platform": "youtube",
+          "date": "2025-06-22",
+          "url": "https://youtube.com/watch?v=ZevhIzXMVmI?lc=UgxUURqVpO0ctQoIDsN4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 94836
+        },
+        {
+          "month": "2025-02",
+          "count": 99795
+        },
+        {
+          "month": "2025-03",
+          "count": 107321
+        },
+        {
+          "month": "2025-04",
+          "count": 104072
+        },
+        {
+          "month": "2025-05",
+          "count": 121695
+        },
+        {
+          "month": "2025-06",
+          "count": 153943
+        },
+        {
+          "month": "2025-07",
+          "count": 177449
+        },
+        {
+          "month": "2025-08",
+          "count": 155240
+        },
+        {
+          "month": "2025-09",
+          "count": 181582
+        },
+        {
+          "month": "2025-10",
+          "count": 249436
+        },
+        {
+          "month": "2025-11",
+          "count": 217091
+        },
+        {
+          "month": "2025-12",
+          "count": 280785
+        },
+        {
+          "month": "2026-01",
+          "count": 277312
+        },
+        {
+          "month": "2026-02",
+          "count": 330852
+        },
+        {
+          "month": "2026-03",
+          "count": 379791
+        },
+        {
+          "month": "2026-04",
+          "count": 377869
+        },
+        {
+          "month": "2026-05",
+          "count": 382917
+        }
+      ]
+    },
+    {
+      "id": "comunidades_confianza",
+      "order": 6,
+      "commercial_name": "Comunidades pequeñas, confianza grande",
+      "color": "#261447",
+      "one_liner": "En México, la decisión de compra dejó de pasar por la marca. Pasa por la comunidad que ya probó.",
+      "tension": {
+        "left": "Claim de marca",
+        "right": "Voz de comunidad"
+      },
+      "lead_quote": {
+        "text": "Pido sus opiniones. Gente soy nuevo en autos, haré mi primera compra. ¿Qué me recomiendan? Gracias por sus comentarios.",
+        "platform": "youtube",
+        "attribution": "comentario en review"
+      },
+      "cultural_reading": "Hay un patrón que se repite: antes de decidir, la gente pregunta. No al buscador, no a la marca: a la comunidad. Un comentario en YouTube, un hilo en Reddit, un grupo en Facebook. Lo vi en comentarios pesa más que el claim oficial. Las microcomunidades funcionan como capas distribuidas de confianza.",
+      "cultural_headlines": [
+        {
+          "value": "+108,800",
+          "label": "preguntas explícitas a la comunidad",
+          "detail": "Qué me recomiendan, qué opinan, lo pregunté en. Aparecen como comportamiento generalizado."
+        },
+        {
+          "value": "comentarios > claim",
+          "label": "la nueva jerarquía",
+          "detail": "Lo vi en comentarios pesa más que el mensaje oficial de marca."
+        },
+        {
+          "value": "distribuida",
+          "label": "no centralizada",
+          "detail": "La confianza se mueve de la autoridad de la marca a la red de pares."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Sembrar conversación en comunidades antes que campañas masivas.",
+          "Tratar los comentarios como activo de marca, no como amenaza.",
+          "Habilitar respuesta de comunidad en los propios canales: reviews, Q&A.",
+          "Aliarse con microcomunidades temáticas en vez de mega-influencers."
+        ],
+        "avoid": [
+          "Confiar solo en testimoniales producidos.",
+          "Ignorar comentarios negativos como si fueran ruido.",
+          "Tratar a las comunidades cerradas como canal de broadcast.",
+          "Estrategias que dependen solo del claim oficial."
+        ],
+        "categories_exposed": [
+          "Beauty",
+          "Tech",
+          "Automotive",
+          "Salud",
+          "Servicios financieros"
+        ],
+        "categories_opportunity": [
+          "Categorías de decisión alta: muebles, electrodomésticos, suscripciones, educación"
+        ]
+      },
+      "monitor_next": [
+        "lo pregunté en",
+        "recomiéndenme",
+        "qué opinan",
+        "algún consejo",
+        "foro",
+        "grupo"
+      ],
+      "maturity": "emergente",
+      "maturity_label": "Emergente",
+      "maturity_note": "El comportamiento ya es masivo, pero la conversación apenas le está poniendo nombre. Vocabulario en construcción.",
+      "volume_indicator": {
+        "records_analyzed": 108824,
+        "mx_evidence_estimated": 21409,
+        "sources_count": 1,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "Querida Ruthi ❤ Te recomiendo que cheques lo de tomar malteadas de proteína para lo de tu anemia. Yo consumo unas que son de proteína vegetal, se pueden tomar una o dos veces al día según tu actividad física, tal vez te ayuden 😊 Acá en México hay muchas opciones y hay algunas que las puede tomar toda la familia, tal vez allá también las encuentres. Saludos!! 🫶",
+          "platform": "youtube",
+          "date": "2025-12-06",
+          "url": "https://youtube.com/watch?v=Ii7EstErxyE?lc=UgxmUbKWLSryRwXXBM14AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "está diciendo que la comida es buena y los mexicanos atacando luego dicen que ellos son buenas personas!! ojo esto es con lo de los comentarios 🙄",
+          "platform": "tiktok",
+          "date": "2025-06-29",
+          "url": "https://tiktok.com/@andresbalzan/video/7518649908983909638?_r=1&_d=0&preview_pb=0&sharer_language=en&source=h5_m&u_code=0&comment_author_id=7138470120837399557&share_comment_id=7521363969547158294&share_item_id=7518649908983909638",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "No todos los mexicanos somos cmo los de los comentarios 💔💔",
+          "platform": "tiktok",
+          "date": "2025-06-23",
+          "url": "https://tiktok.com/@andresbalzan/video/7518649908983909638?_r=1&_d=0&preview_pb=0&sharer_language=en&source=h5_m&u_code=0&comment_author_id=6760330013910942725&share_comment_id=7519282177982595847&share_item_id=7518649908983909638",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "Hola comunidad, soy una madre mexicana que emigró a USA hace 10 años pero recién ahora me siento presionada a mejorar mi inglés porque mis hijos van a la escuela y tengo reuniones con maestros y la dirección del colegio. Si bien el idioma lo entiendo, no me puedo expresar con facilidad. Qué me recomiendan para practicar la parte hablada y la pronunciación?",
+          "platform": "reddit",
+          "date": "2026-05-11",
+          "url": "https://reddit.com/r/AskMexico/comments/1t9v9sb/madre_mexicana_necesita_mejorar_su_ingl%C3%A9s_oral",
+          "mx": false,
+          "source": "case_datashake"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 558
+        },
+        {
+          "month": "2025-02",
+          "count": 476
+        },
+        {
+          "month": "2025-03",
+          "count": 612
+        },
+        {
+          "month": "2025-04",
+          "count": 739
+        },
+        {
+          "month": "2025-05",
+          "count": 710
+        },
+        {
+          "month": "2025-06",
+          "count": 1138
+        },
+        {
+          "month": "2025-07",
+          "count": 1394
+        },
+        {
+          "month": "2025-08",
+          "count": 1985
+        },
+        {
+          "month": "2025-09",
+          "count": 3378
+        },
+        {
+          "month": "2025-10",
+          "count": 6074
+        },
+        {
+          "month": "2025-11",
+          "count": 6864
+        },
+        {
+          "month": "2025-12",
+          "count": 11332
+        },
+        {
+          "month": "2026-01",
+          "count": 12259
+        },
+        {
+          "month": "2026-02",
+          "count": 12867
+        },
+        {
+          "month": "2026-03",
+          "count": 15572
+        },
+        {
+          "month": "2026-04",
+          "count": 15981
+        },
+        {
+          "month": "2026-05",
+          "count": 16885
+        }
+      ]
+    },
+    {
+      "id": "aspirar_da_cringe",
+      "order": 7,
+      "commercial_name": "Aspirar demasiado empieza a dar cringe",
+      "color": "#070113",
+      "one_liner": "No todo lo aspiracional genera deseo. En México, ciertas formas de estatus pasaron de envidia a burla.",
+      "tension": {
+        "left": "Aspiración performativa",
+        "right": "Cringe colectivo"
+      },
+      "lead_quote": {
+        "text": "Tanto oro se ve naco la mera verdad. Claro se ve que nomas agarran un poco de dinero y quieren enseñar que ahora tienen mucho.",
+        "platform": "facebook",
+        "attribution": "comentario MX"
+      },
+      "cultural_reading": "La aspiración pulida empezó a leerse como torpe. El vocabulario mexicano (que oso, se cree mucho, naco, buchón) funciona como sistema de calibración social: marca los excesos de estatus que ya no son aspiracionales, son ridiculizables. Las marcas premium tienen que entender qué códigos de consumo están siendo señalados antes de comunicar.",
+      "cultural_headlines": [
+        {
+          "value": "+2.2M",
+          "label": "menciones en español de cringe aspiracional",
+          "detail": "Se cree mucho, me da cringe, se ve naco, que oso. El vocabulario de la calibración social está activo y es mexicano."
+        },
+        {
+          "value": "lenguaje propio",
+          "label": "no traducción",
+          "detail": "Que oso, naco, buchón, se cree son códigos mexicanos específicos. No son traducción de cringe global."
+        },
+        {
+          "value": "detección pública",
+          "label": "no privada",
+          "detail": "No es un sentimiento individual: es señalamiento social compartido en comentarios."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Entender qué códigos de consumo están siendo ridiculizados antes de comunicar.",
+          "Sofisticación cultural: saber qué no presumir.",
+          "Aspiración con autoconciencia, no aspiración ingenua.",
+          "Construir estatus sobre criterios funcionales o estéticos, no sobre ostentación."
+        ],
+        "avoid": [
+          "Lujo forzado y ostentoso.",
+          "Estética buchona o aspiracional torpe sin lectura cultural.",
+          "Influencers que comunican estatus sin filtro.",
+          "Posicionamiento aspiracional sin sustento real."
+        ],
+        "categories_exposed": [
+          "Lujo aspiracional",
+          "Automotive premium",
+          "Real estate",
+          "Restaurantes y nightlife",
+          "Moda aspiracional"
+        ],
+        "categories_opportunity": [
+          "Marcas con confianza tranquila",
+          "Lujo silencioso",
+          "Estatus basado en criterio, no en ostentación"
+        ]
+      },
+      "monitor_next": [
+        "se cree mucho",
+        "me da cringe",
+        "se ve naco",
+        "que oso",
+        "lujo forzado"
+      ],
+      "maturity": "acelerando",
+      "maturity_label": "Acelerando",
+      "maturity_note": "El lenguaje mexicano (que oso, se cree, naco) está operando como sistema activo de calibración social.",
+      "volume_indicator": {
+        "records_analyzed": 2220187,
+        "mx_evidence_estimated": 223897,
+        "sources_count": 3,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "Gracias por el vídeo! Lo de la corona me encantó cuando nos lo fueron mostrando en diferentes actos Nam, Jin y Tae sembrando discordia 🤣 me encantaría verles como reyes en el nuevo álbum pero no creo que sea el concepto general, porque aunque es justo, también se ve pretencioso y ellos 7 son muy humildes, PERO sí que lo veo muy posible en un Cypher de la rap line🔥 Por otro lado",
+          "platform": "youtube",
+          "date": "2025-10",
+          "url": "https://youtube.com/watch?v=fkiV43X6mi0?lc=Ugyvdtr-orTDny5z0yR4AaABAg",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Carlos Jimenez sea lo que sea, aún asi sea un Nokia, todos están de ignorantes, nadie está analizando la imagen, del por que esta diferente la luna, a lo que ven nuestros ojos cuando esta en luna llena, ya sea en mexico o china, nadie capta que es otra partecita de la luna, y que solo se vería si saliéramos de la órbita terrestre 😭😭 me da cringe tanta ignorancia.",
+          "platform": "facebook",
+          "date": "2026-04-05",
+          "url": "https://www.facebook.com/364592975228163/posts/1554113419609440",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Este wey sabe cómo pedir suscripciones sin pedirlas, es un maldito genio. Por algo tiene su éxito Me da cringe la gente que edita sus comentarios para decir \"gracias por los likes\" pero, gracias por los likes 👍🏻 Edito de vuelta para reírme de los incultos que no conocen lo que es el sarcasmo (por lo de arriba)👆🏻",
+          "platform": "youtube",
+          "date": "2025-07-19",
+          "url": "https://youtube.com/watch?v=-h3SrVFsAqo?lc=UgynByp-NCvapU85vMp4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "Mejor México ya no ayude a ningún país y que deporten a todos los migrantes de su país para aver si sigue hablando se cree mucho porque arreglo su rancho no compares un país que tiene aliados potentes como Rusia y la gran China que te hace pensar que salvador es potencia no mms jajaja",
+          "platform": "facebook",
+          "date": "2026-02-27",
+          "url": "https://www.facebook.com/279552700193461/posts/1492526552229397",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Que arrogante ese te Jose del Valle da vergüenza con tal de ceder hace el ridículo se hubiera visto mejor admitiendo que la cago y felicitar a Guatemala!! Orgulloso y terco, se creo Mexicano y Gringo y no lo es! Ojalá nunca venga al país",
+          "platform": "youtube",
+          "date": "2025-07-30",
+          "url": "https://youtube.com/watch?v=mKQL6PbbPxk?lc=UgwpUYqgQ55A5FDtU214AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "Pinche bato, creído se cree mucho y pero no va a ser campeón, veo mucho mejor a Pachuca y a tigres porque pues mi América no creo tiene muchas bajas pero la lucha se le va a hacer😂😂😂",
+          "platform": "facebook",
+          "date": "2026-05-04",
+          "url": "https://www.facebook.com/reel/1333624365252085/",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Tanto oro se ve naco la mera verdad!!! Claro se ve que nomas agarran un poco de dinero y quieren enseñar q ahora tienen mucho. A que gente tan indecente!",
+          "platform": "facebook",
+          "date": "2026-05-01",
+          "url": "https://www.facebook.com/reel/1239979841272858/",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Confiando en los jóvenes *Los dejan a su suerte para hacer el ridículo... Neta, el organigrama de Pumas esta INFESTADO de gente p-deja",
+          "platform": "youtube",
+          "date": "2025-08-15",
+          "url": "https://youtube.com/watch?v=hPBEwkSyAQc?lc=Ugwy-sGh8ibWd4hx7nh4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 52757
+        },
+        {
+          "month": "2025-02",
+          "count": 59890
+        },
+        {
+          "month": "2025-03",
+          "count": 51084
+        },
+        {
+          "month": "2025-04",
+          "count": 76430
+        },
+        {
+          "month": "2025-05",
+          "count": 83690
+        },
+        {
+          "month": "2025-06",
+          "count": 74681
+        },
+        {
+          "month": "2025-07",
+          "count": 105646
+        },
+        {
+          "month": "2025-08",
+          "count": 117983
+        },
+        {
+          "month": "2025-09",
+          "count": 108876
+        },
+        {
+          "month": "2025-10",
+          "count": 151545
+        },
+        {
+          "month": "2025-11",
+          "count": 140028
+        },
+        {
+          "month": "2025-12",
+          "count": 157389
+        },
+        {
+          "month": "2026-01",
+          "count": 182035
+        },
+        {
+          "month": "2026-02",
+          "count": 199529
+        },
+        {
+          "month": "2026-03",
+          "count": 219055
+        },
+        {
+          "month": "2026-04",
+          "count": 205003
+        },
+        {
+          "month": "2026-05",
+          "count": 234566
+        }
+      ]
+    },
+    {
+      "id": "local_contemporaneo",
+      "order": 8,
+      "commercial_name": "Lo local busca verse contemporáneo",
+      "color": "#12001F",
+      "one_liner": "Lo mexicano dejó de ser el sombrero. Ahora es el diseño, el producto, la marca y el contenido, sin tener que explicarse con cliché.",
+      "tension": {
+        "left": "Lo mexicano folclórico",
+        "right": "Lo mexicano contemporáneo"
+      },
+      "lead_quote": {
+        "text": "Que orgullo que los visitantes puedan probar lo mejor de nuestra ciudad, apoyas el consumo local y lo hecho en México es lo máximo.",
+        "platform": "facebook",
+        "attribution": "comentario MX"
+      },
+      "cultural_reading": "El orgullo cultural en México sigue ahí, pero busca expresarse en clave contemporánea: marcas mexicanas, diseño local, fusión en moda, productos hechos en México que compiten con códigos de calidad global. Hecho en México empieza a despegarse de la representación folclórica y a sostenerse en estándar.",
+      "cultural_headlines": [
+        {
+          "value": "+1.9M",
+          "label": "menciones mexicanas sobre identidad local",
+          "detail": "Consumo local, marca mexicana, diseño mexicano, mexicano contemporáneo. El orgullo busca expresión actual."
+        },
+        {
+          "value": "fusión",
+          "label": "no folclor",
+          "detail": "La conversación valora cuando lo mexicano se integra a códigos contemporáneos. Castiga cuando se reduce a sombrero, tequila y mariachi."
+        },
+        {
+          "value": "calidad",
+          "label": "criterio explícito",
+          "detail": "Lo hecho en México está bien hecho. El orgullo busca anclarse en estándar, no solo en identidad."
+        }
+      ],
+      "brand_implications": {
+        "do": [
+          "Comunicar lo mexicano en clave contemporánea: diseño, calidad, criterio.",
+          "Fusionar herencia con códigos globales sin pedir perdón.",
+          "Apoyar la producción local como propuesta de valor real, no decorativa.",
+          "Construir orgullo desde la calidad, no desde el cliché."
+        ],
+        "avoid": [
+          "Estética souvenir aplicada a marcas premium.",
+          "Mexicanidad reducida a paletas de colores típicos sin sustento.",
+          "Folclor instrumentalizado para campañas globales.",
+          "Tratar lo mexicano como tema decorativo en lugar de como criterio."
+        ],
+        "categories_exposed": [
+          "Moda fast fashion",
+          "Turismo de souvenir",
+          "Branding genérico de \"lo mexicano\""
+        ],
+        "categories_opportunity": [
+          "Moda contemporánea local",
+          "Diseño",
+          "Gastronomía",
+          "Bebidas artesanales",
+          "Marcas de identidad"
+        ]
+      },
+      "monitor_next": [
+        "marca mexicana",
+        "diseño mexicano",
+        "sin folclor",
+        "hecho con orgullo",
+        "fusión cultural"
+      ],
+      "maturity": "acelerando",
+      "maturity_label": "Acelerando",
+      "maturity_note": "Orgullo cultural buscando expresión contemporánea; las marcas locales se valoran explícitamente por criterio de calidad.",
+      "volume_indicator": {
+        "records_analyzed": 1944559,
+        "mx_evidence_estimated": 435284,
+        "sources_count": 3,
+        "framing": "Evidencia revisada en español; el conteo orienta el contexto, no la importancia cultural."
+      },
+      "evidence": [
+        {
+          "text": "TopTriper el pollo loco es una marca mexicana exactamente de la ciudad de Guasave Sinaloa y es muy bueno, esa marca es famosa en USA porque lo americanisaron desde 1980 y en 1983 la marca fue vendida, con toda esta informacion es muy claro que pollo asado à la braza o como sea y sabroso HAY EN TODAS PARTES por eso no entiendo como los peruanos se autodenominan como que tienen e",
+          "platform": "facebook",
+          "date": "2026-04-18",
+          "url": "https://www.facebook.com/641565644669701/posts/1386822006810724",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Eso es lo más importante para nuestra gente que el gobierno controle los precios y les de asesoría a todos los campesinos para que ya no aiga más pobreza y aiga más equidad y la riqueza sea compartida para que no solo unos cuantos se ganan ricos y que así sea con todos los productos del campo para tener un México más fuerte y más competitivo y poder exportar a otras naciones po",
+          "platform": "youtube",
+          "date": "2026-01-12",
+          "url": "https://youtube.com/watch?v=MwuzYWvuVX8?lc=Ugx1nNJdmY-RtUqvWUN4AaABAg",
+          "mx": true,
+          "source": "case_datashake"
+        },
+        {
+          "text": "Ahora si empiezan a promover frijol con cereal , en verdad que denigrante ver como apoyan el comer frijol con cereal y dicen todos con Claudia nunca me imaginé que México fuera y hubiera tanta ignorancia",
+          "platform": "facebook",
+          "date": "2026-04-22",
+          "url": "https://www.facebook.com/reel/2025846611305958/",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "@shawolzenni__ Me sorprendí muchísimo ver a las farmacias Simi en Santiago (y en un montón de lados más) jajajaja y luego me di cuenta que había gente que ni si quiera sabía que era marca mexicana.",
+          "platform": "x",
+          "date": "2026-05-02",
+          "url": "https://twitter.com/0MissBrightside/statuses/2050415399498354985",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Al chile coco si está muy bien retratado en todo sin caer en clichés cringe y me gusta, lo único que me gusta del libro de la vida son las calacas gemelas esas que no se como se llaman 👀",
+          "platform": "youtube",
+          "date": "2025-01",
+          "url": "https://youtube.com/watch?v=o7vrSYeOlqw?lc=UgxZg9pldFDtUWRZEt14AaABAg",
+          "mx": true,
+          "source": "listening_normalizado"
+        },
+        {
+          "text": "Antes de opinar vean el video completo, el argentino impide que circule por áreas peatonales. Por seguridad de la gente que anda caminado ahi, La neta estuvo bien el argentino.",
+          "platform": "facebook",
+          "date": "2026-05-11",
+          "url": "https://www.facebook.com/544625687665217/posts/1561366155991160",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Que orgullo que los visitantes puedan probar lo mejor de nuestra ciudad, apoyas el consumo local y lo hecho en Mexico es lo maximo, mucho exito a todos los productores 😎🇲🇽",
+          "platform": "facebook",
+          "date": "2026-04-17",
+          "url": "https://www.facebook.com/reel/1269741321420907/",
+          "mx": true,
+          "source": "listening_queries"
+        },
+        {
+          "text": "Que bonito ver que fusionen la moda con nuestra cultura mexicana los últimos vestidos de gala pero con parte de nuestra historia que chido",
+          "platform": "tiktok",
+          "date": "2025-08-28",
+          "url": "https://tiktok.com/@albertinasacaca1/video/7543408155317914886?_r=1&_d=0&preview_pb=0&sharer_language=en&source=h5_m&u_code=0&comment_author_id=7316061441052165162&share_comment_id=7543669960338998047&share_item_id=7543408155317914886",
+          "mx": true,
+          "source": "case_datashake"
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-01",
+          "count": 40814
+        },
+        {
+          "month": "2025-02",
+          "count": 48750
+        },
+        {
+          "month": "2025-03",
+          "count": 60723
+        },
+        {
+          "month": "2025-04",
+          "count": 62918
+        },
+        {
+          "month": "2025-05",
+          "count": 67603
+        },
+        {
+          "month": "2025-06",
+          "count": 72287
+        },
+        {
+          "month": "2025-07",
+          "count": 76776
+        },
+        {
+          "month": "2025-08",
+          "count": 110641
+        },
+        {
+          "month": "2025-09",
+          "count": 115104
+        },
+        {
+          "month": "2025-10",
+          "count": 109337
+        },
+        {
+          "month": "2025-11",
+          "count": 133643
+        },
+        {
+          "month": "2025-12",
+          "count": 151115
+        },
+        {
+          "month": "2026-01",
+          "count": 173813
+        },
+        {
+          "month": "2026-02",
+          "count": 156966
+        },
+        {
+          "month": "2026-03",
+          "count": 171419
+        },
+        {
+          "month": "2026-04",
+          "count": 177173
+        },
+        {
+          "month": "2026-05",
+          "count": 215477
+        }
+      ]
+    }
+  ],
+  "brand_action_map": [
+    {
+      "pillar": "Producto y portfolio",
+      "do": "Curar y simplificar. Menos SKUs y mejor jerarquía.",
+      "avoid": "Catálogo infinito como propuesta de valor.",
+      "signals_relevant": [
+        "decision_necesita_curaduria",
+        "descanso_sin_permiso"
+      ]
+    },
+    {
+      "pillar": "Comunicación y tono",
+      "do": "Levedad, complicidad, autoconciencia.",
+      "avoid": "Empatía solemne, tono inspiracional, aspiración ingenua.",
+      "signals_relevant": [
+        "humor_carga_tension",
+        "aspirar_da_cringe"
+      ]
+    },
+    {
+      "pillar": "Contenido y producción",
+      "do": "Reseñas reales, formato natural, patrocinio declarado.",
+      "avoid": "Testimoniales con guión visible, IA sin avisar, perfección impostada.",
+      "signals_relevant": [
+        "perfeccion_pierde_credibilidad",
+        "comunidades_confianza"
+      ]
+    },
+    {
+      "pillar": "Participación y comunidad",
+      "do": "Comunidades cerradas, microinfluencia y conversación distribuida.",
+      "avoid": "UGC público obligatorio y mega-influencers como atajo.",
+      "signals_relevant": [
+        "privacidad_emocional",
+        "comunidades_confianza"
+      ]
+    },
+    {
+      "pillar": "Identidad y posicionamiento",
+      "do": "Mexicanidad contemporánea con criterio sobre identidad.",
+      "avoid": "Cliché folclórico e identidad como decoración.",
+      "signals_relevant": [
+        "local_contemporaneo",
+        "aspirar_da_cringe"
+      ]
+    }
+  ],
+  "methodology": {
+    "opening_statement": "Escuchamos durante 17 meses la conversación digital pública mexicana. No buscamos representar a México: buscamos detectar cómo está cambiando lo que la gente dice sobre su descanso, su exposición, su confianza, su aspiración y su humor.",
+    "principles": [
+      "No reportamos conteos como insight: reportamos tensiones culturales con las frases que las sostienen.",
+      "Las señales se eligen por lo que dicen, no por cuánto suben.",
+      "Cada señal trae las citas reales que la sostienen.",
+      "Cada señal viene con su nivel de madurez: emergente, acelerando o ya instalada."
+    ],
+    "corpus": {
+      "sources_used": [
+        "Conversación pública en redes y comunidades abiertas en español",
+        "Captura propia de temas relevantes para marcas en México"
+      ],
+      "platforms": [
+        "YouTube",
+        "TikTok",
+        "Instagram",
+        "Facebook",
+        "Reddit",
+        "X",
+        "LinkedIn"
+      ],
+      "period": "Enero 2025 a mayo 2026",
+      "language_focus": "Español, con foco en conversación mexicana",
+      "volume_scope": "Procesamos +11.4 millones de menciones en español. Los conteos por señal salen de ese universo; las citas que verás fueron elegidas por su carga cultural, no por su volumen."
+    },
+    "lenses_applied": [
+      "Cultural Codes Decoding",
+      "Triggers & Barriers",
+      "Value Perception Matrix",
+      "Journey Friction Mapping",
+      "Influence Architecture"
+    ],
+    "limitations": [
+      "No representamos a México entero: leemos su conversación digital pública.",
+      "No medimos intención de compra ni comportamiento real.",
+      "No predecimos el futuro: identificamos tensiones que ya están pasando.",
+      "El Mundial 2026 se trató como contexto, no como señal."
+    ],
+    "maturity_framework": {
+      "emergente": "La tensión ya existe pero la gente apenas le está poniendo palabras. Una marca puede ayudar a articularla.",
+      "acelerando": "El vocabulario ya está armado y la frecuencia crece. Las marcas que respondan ahora entran a la conversación; las que tarden, reaccionan.",
+      "mainstreaming": "Ya atraviesa plataformas y voces. Las marcas que no la entienden ya están sonando viejas."
+    }
+  },
+  "report_structure": [
+    {
+      "section": "01",
+      "name": "Cover",
+      "content": "Cultural Foresight México 2026 — 8 señales digitales que las marcas deberían leer antes de su siguiente briefing."
+    },
+    {
+      "section": "02",
+      "name": "Opening",
+      "content": "Del Mundial ya hablarán todos. Este reporte mira lo que no está en el calendario."
+    },
+    {
+      "section": "03",
+      "name": "What we looked for",
+      "content": "No buscamos tendencias. Buscamos señales: frases, tensiones, contradicciones, cambios de lenguaje, comportamientos visibles."
+    },
+    {
+      "section": "04",
+      "name": "Signal Radar",
+      "content": "Visual con las 8 señales clasificadas por madurez (emergente / acelerando / mainstreaming)."
+    },
+    {
+      "section": "05–12",
+      "name": "Signal cards (8)",
+      "content": "Una sección por señal: nombre comercial, one-liner, tensión, lectura cultural, cita protagonista, evidencia, implicaciones de marca, madurez."
+    },
+    {
+      "section": "13",
+      "name": "What this means for brands",
+      "content": "5 movimientos estratégicos cross-signal."
+    },
+    {
+      "section": "14",
+      "name": "How Noisia reads signals",
+      "content": "Metodología en una página."
+    },
+    {
+      "section": "15",
+      "name": "CTA",
+      "content": "¿Qué señal está creciendo en tu categoría? — invitación a conversación comercial."
+    }
+  ]
+}

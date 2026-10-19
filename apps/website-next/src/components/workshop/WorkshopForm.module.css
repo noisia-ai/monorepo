@@ -1,0 +1,140 @@
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.row {
+  display: grid;
+  gap: var(--space-5);
+}
+
+@media (min-width: 720px) {
+  .row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border: 0;
+  margin: 0;
+  padding: 0;
+  font-size: var(--text-sm);
+  color: var(--ink);
+}
+
+.field legend {
+  padding: 0;
+  margin-bottom: var(--space-2);
+}
+
+.field small {
+  color: var(--fg-muted);
+}
+
+.field input,
+.field textarea {
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--ink);
+  background: var(--canvas);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  min-height: 48px;
+}
+
+.field textarea {
+  resize: vertical;
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline: none;
+  border-color: var(--teal-text);
+  box-shadow: 0 0 0 3px var(--teal-soft);
+}
+
+.options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.option {
+  position: relative;
+}
+
+.option input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+}
+
+.option span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: var(--canvas);
+  cursor: pointer;
+}
+
+.option input:checked + span {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--fg-inverse);
+}
+
+.option input:focus-visible + span {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.honeypot {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+}
+
+.submit {
+  height: 56px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--fg-inverse);
+  font-weight: 500;
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+
+.submit:disabled {
+  opacity: 0.6;
+}
+
+.error {
+  color: var(--coral);
+}
+
+.privacy {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+.done {
+  padding: var(--space-7) var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--teal-soft);
+  color: var(--ink);
+  font-size: var(--text-lg);
+}

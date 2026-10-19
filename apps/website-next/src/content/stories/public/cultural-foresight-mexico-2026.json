@@ -1,0 +1,182 @@
+[
+  {
+    "id": "descansar-sin-culpa",
+    "industry": "cultura-y-sociedad",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
+    "period": "ene 2025–may 2026",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
+    "notes": "Señal descanso_sin_permiso. El +157% viene literal de cultural_headlines (aceleración mensual 2025 a 2026); no se recalculó.",
+    "es": {
+      "title": "Descansar ya suena a derecho en México",
+      "dek": "La conversación sobre agotamiento mental se aceleró entre 2025 y 2026, y cada vez más gente pide descansar sin culpa.",
+      "scenes": [
+        { "type": "hook", "text": "¿Por qué descansar todavía se siente como fallar?" },
+        { "type": "stat", "value": 157, "suffix": "%", "label": "de aceleración mensual de esta conversación entre 2025 y 2026", "context": "Escucha continua de enero 2025 a mayo 2026" },
+        { "type": "tension", "want": "Productividad obligatoria", "but": "Derecho a existir sin rendir", "value": null },
+        { "type": "quote", "text": "Porque no todo es productividad ni propósito. A veces, mirar algo bonito también sana.", "platform": "Instagram", "meta": "MX · ene 2026" },
+        { "type": "takeaway", "text": "Habla del descanso como algo que la gente ya merece, sin pedir que se lo gane primero." }
+      ],
+      "takeaway": "Presentar el descanso como derecho cotidiano y retirar cualquier mensaje que lo condicione a rendir más.",
+      "evidence": [
+        { "quote": "Porque no todo es productividad ni propósito. A veces, mirar algo bonito también sana.", "platform": "Instagram", "date": "2026-01" },
+        { "quote": "Estoy en un born out...ya pasé dos años atrás por un pre infarto, pero no paré y seguí exigiendome", "platform": "YouTube", "date": "2025-08" },
+        { "quote": "Tengan cuidado con el agotamiento mental y la ansiedad.", "platform": "X", "date": "2026-05" }
+      ]
+    },
+    "en": {
+      "title": "In Mexico, rest is starting to sound like a right",
+      "dek": "Talk about mental exhaustion sped up between 2025 and 2026, and more people now ask to rest without guilt.",
+      "scenes": [
+        { "type": "hook", "text": "Why does resting still feel like failing?" },
+        { "type": "stat", "value": 157, "suffix": "%", "label": "monthly acceleration of this conversation from 2025 to 2026", "context": "Continuous listening, January 2025 to May 2026" },
+        { "type": "tension", "want": "Mandatory productivity", "but": "The right to exist without performing", "value": null },
+        { "type": "quote", "text": "Porque no todo es productividad ni propósito. A veces, mirar algo bonito también sana.", "translation": "Because not everything is productivity or purpose. Sometimes looking at something beautiful also heals.", "platform": "Instagram", "meta": "MX · Jan 2026" },
+        { "type": "takeaway", "text": "Talk about rest as something people already deserve, with no need to earn it first." }
+      ],
+      "takeaway": "Frame rest as an everyday right and drop any message that makes it conditional on doing more.",
+      "evidence": [
+        { "quote": "Porque no todo es productividad ni propósito. A veces, mirar algo bonito también sana.", "translation": "Because not everything is productivity or purpose. Sometimes looking at something beautiful also heals.", "platform": "Instagram", "date": "2026-01" },
+        { "quote": "Estoy en un born out...ya pasé dos años atrás por un pre infarto, pero no paré y seguí exigiendome", "translation": "I'm burned out... two years ago I nearly had a heart attack, but I didn't stop and kept pushing myself", "platform": "YouTube", "date": "2025-08" },
+        { "quote": "Tengan cuidado con el agotamiento mental y la ansiedad.", "translation": "Watch out for mental exhaustion and anxiety.", "platform": "X", "date": "2026-05" }
+      ]
+    }
+  },
+  {
+    "id": "no-todo-se-comparte",
+    "industry": "cultura-y-sociedad",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
+    "period": "ene 2025–may 2026",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
+    "notes": "Señal privacidad_emocional. TikTok 54% / Facebook 13% y las 5 frases vienen literales de cultural_headlines.",
+    "es": {
+      "title": "Compartir menos ya se lee como inteligencia",
+      "dek": "Frases como no todo se comparte o vivir en privado se repiten en TikTok y Facebook, y aparecen también en voces de 30, 40 y 50 años.",
+      "scenes": [
+        { "type": "hook", "text": "¿Qué pasa cuando la gente decide dejar de publicar?" },
+        { "type": "stat", "value": 5, "suffix": "", "label": "maneras de decir lo mismo, de no todo se comparte a me guardo esto", "context": "El vocabulario de la privacidad emocional ya está armado" },
+        { "type": "split", "left": { "label": "TikTok", "value": 54, "suffix": "%" }, "right": { "label": "Facebook", "value": 13, "suffix": "%" }, "caption": "Peso de cada plataforma en la conversación sobre privacidad emocional" },
+        { "type": "quote", "text": "No todo se comparte. Y no todo el mundo necesita saber en qué punto estás.", "platform": "TikTok", "meta": "MX · abr 2026" },
+        { "type": "takeaway", "text": "Invita a participar sin exigir exposición pública. Los espacios cerrados también crean vínculo." }
+      ],
+      "takeaway": "Diseñar participación que no obligue a mostrarse, con comunidades cerradas y beneficios que no piden publicar.",
+      "evidence": [
+        { "quote": "No todo se comparte. Y no todo el mundo necesita saber en qué punto estás.", "platform": "TikTok", "date": "2026-04" },
+        { "quote": "no todo se comparte. Vivimos en una era donde todos quieren mostrarlo todo: planes, metas, movimientos… pero lo verdaderamente grande se construye en silencio.", "platform": "Facebook", "date": "2026-05" },
+        { "quote": "Si Nmms ya neta siento que no entienden que no todo se comparte…", "platform": "TikTok", "date": "2026-04" }
+      ]
+    },
+    "en": {
+      "title": "Sharing less now reads as the smart move",
+      "dek": "Phrases like no todo se comparte (not everything gets shared) repeat across TikTok and Facebook, and show up in voices in their 30s, 40s and 50s.",
+      "scenes": [
+        { "type": "hook", "text": "What happens when people decide to stop posting?" },
+        { "type": "stat", "value": 5, "suffix": "", "label": "ways of saying the same thing, from no todo se comparte to me guardo esto", "context": "The vocabulary of emotional privacy is already in place" },
+        { "type": "split", "left": { "label": "TikTok", "value": 54, "suffix": "%" }, "right": { "label": "Facebook", "value": 13, "suffix": "%" }, "caption": "Share of the emotional privacy conversation by platform" },
+        { "type": "quote", "text": "No todo se comparte. Y no todo el mundo necesita saber en qué punto estás.", "translation": "Not everything gets shared. And not everyone needs to know where you're at.", "platform": "TikTok", "meta": "MX · Apr 2026" },
+        { "type": "takeaway", "text": "Invite participation without demanding public exposure. Closed spaces build bonds too." }
+      ],
+      "takeaway": "Design participation that doesn't force people to show themselves, with closed communities and perks that don't require posting.",
+      "evidence": [
+        { "quote": "No todo se comparte. Y no todo el mundo necesita saber en qué punto estás.", "translation": "Not everything gets shared. And not everyone needs to know where you're at.", "platform": "TikTok", "date": "2026-04" },
+        { "quote": "no todo se comparte. Vivimos en una era donde todos quieren mostrarlo todo: planes, metas, movimientos… pero lo verdaderamente grande se construye en silencio.", "translation": "not everything gets shared. We live in an era where everyone wants to show everything: plans, goals, moves... but what's truly big is built in silence.", "platform": "Facebook", "date": "2026-05" },
+        { "quote": "Si Nmms ya neta siento que no entienden que no todo se comparte…", "translation": "Seriously, I feel like they just don't get that not everything gets shared...", "platform": "TikTok", "date": "2026-04" }
+      ]
+    }
+  },
+  {
+    "id": "lo-perfecto-se-siente-falso",
+    "industry": "deportes-y-entretenimiento",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
+    "period": "ene 2025–may 2026",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
+    "notes": "Señal perfeccion_pierde_credibilidad. 58% (YouTube + Reddit) literal de cultural_headlines. +110% calculado de monthly_pulse: promedio mensual ene–may 2026 (50,355.8) vs promedio mensual 2025 (23,990.1) = +109.9%, redondeado.",
+    "es": {
+      "title": "Lo demasiado pulido empieza a sonar falso",
+      "dek": "La crítica a la sobreproducción crece donde hay espacio para argumentar largo, y el contenido hecho con IA despierta la misma sospecha.",
+      "scenes": [
+        { "type": "hook", "text": "¿Puede algo verse demasiado bien hecho?" },
+        { "type": "stat", "value": 110, "suffix": "%", "label": "más conversación al mes en 2026 que en 2025", "context": "Promedio mensual de enero a mayo de 2026 frente al de 2025" },
+        { "type": "stat", "value": 58, "suffix": "%", "label": "de la conversación articulada vive en YouTube y Reddit", "context": "Ahí la gente argumenta por qué algo se siente falso" },
+        { "type": "quote", "text": "Todo está demasiado bien hecho. La luz es perfecta, los colores están hiper corregidos, los encuadres parecen medidos con regla.", "platform": "Reddit", "meta": "MX · may 2026" },
+        { "type": "takeaway", "text": "Deja ver el proceso y las imperfecciones. Lo que parece real convence más que lo impecable." }
+      ],
+      "takeaway": "Apostar por formato natural, reseñas reales y patrocinio declarado, y avisar cuando hay IA. La imperfección funciona como prueba.",
+      "evidence": [
+        { "quote": "El cine de ahora se siente falso. No es que esté “mal hecho”, al contrario. Todo está demasiado bien hecho. La luz es perfecta, los colores están hiper corregidos, los encuadres parecen medidos con regla.", "platform": "Reddit", "date": "2026-05" },
+        { "quote": "Pero ahí está el problema, ya no parece que estamos viendo algo que está pasando, sino algo que fue armado para verse bonito.", "platform": "Reddit", "date": "2026-05" },
+        { "quote": "cuando se enfocan en la hija de malcom es solitaria se siente falso", "platform": "YouTube", "date": "2026-04" }
+      ]
+    },
+    "en": {
+      "title": "Too much polish is starting to look fake",
+      "dek": "Criticism of overproduction grows where there's room to argue at length, and AI-made content triggers the same suspicion.",
+      "scenes": [
+        { "type": "hook", "text": "Can something look too well made?" },
+        { "type": "stat", "value": 110, "suffix": "%", "label": "more conversation per month in 2026 than in 2025", "context": "Monthly average, January to May 2026 versus 2025" },
+        { "type": "stat", "value": 58, "suffix": "%", "label": "of the long-form conversation lives on YouTube and Reddit", "context": "That's where people explain why something feels fake" },
+        { "type": "quote", "text": "Todo está demasiado bien hecho. La luz es perfecta, los colores están hiper corregidos, los encuadres parecen medidos con regla.", "translation": "Everything is too well made. The lighting is perfect, the colors are over-corrected, the framing looks measured with a ruler.", "platform": "Reddit", "meta": "MX · May 2026" },
+        { "type": "takeaway", "text": "Let the process and the flaws show. What looks real persuades more than what looks flawless." }
+      ],
+      "takeaway": "Lean on natural formats, real reviews and disclosed sponsorships, and say when AI is involved. Imperfection works as proof.",
+      "evidence": [
+        { "quote": "El cine de ahora se siente falso. No es que esté “mal hecho”, al contrario. Todo está demasiado bien hecho. La luz es perfecta, los colores están hiper corregidos, los encuadres parecen medidos con regla.", "translation": "Movies today feel fake. It's not that they're badly made, quite the opposite. Everything is too well made. The lighting is perfect, the colors are over-corrected, the framing looks measured with a ruler.", "platform": "Reddit", "date": "2026-05" },
+        { "quote": "Pero ahí está el problema, ya no parece que estamos viendo algo que está pasando, sino algo que fue armado para verse bonito.", "translation": "But that's the problem, it no longer feels like we're watching something happen, but something assembled to look pretty.", "platform": "Reddit", "date": "2026-05" },
+        { "quote": "cuando se enfocan en la hija de malcom es solitaria se siente falso", "translation": "when they focus on Malcolm's daughter being a loner, it feels fake", "platform": "YouTube", "date": "2026-04" }
+      ]
+    }
+  },
+  {
+    "id": "presumir-de-mas-da-cringe",
+    "industry": "cultura-y-sociedad",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Foresight",
+    "sources": ["YouTube", "TikTok", "Instagram", "Facebook", "Reddit", "X", "LinkedIn"],
+    "period": "ene 2025–may 2026",
+    "report": "/insights/reportes/cultural-foresight-mexico-2026",
+    "notes": "Señal aspirar_da_cringe. +112% calculado de monthly_pulse: promedio mensual ene–may 2026 (208,037.6) vs promedio mensual 2025 (98,333.2) = +111.6%, redondeado.",
+    "es": {
+      "title": "En México, presumir de más ya provoca burla",
+      "dek": "Se cree mucho, se ve naco, qué oso. El vocabulario mexicano para señalar la aspiración exagerada está activo en los comentarios.",
+      "scenes": [
+        { "type": "hook", "text": "¿En qué momento el estatus deja de dar envidia?" },
+        { "type": "stat", "value": 112, "suffix": "%", "label": "más conversación al mes sobre cringe aspiracional en 2026 que en 2025", "context": "Promedio mensual de enero a mayo de 2026 frente al de 2025" },
+        { "type": "tension", "want": "Aspiración performativa", "but": "Cringe colectivo", "value": null },
+        { "type": "quote", "text": "Tanto oro se ve naco la mera verdad!!! Claro se ve que nomas agarran un poco de dinero y quieren enseñar q ahora tienen mucho.", "platform": "Facebook", "meta": "MX · may 2026" },
+        { "type": "takeaway", "text": "Muestra el valor con autoconciencia. El exceso de brillo se señala en público." }
+      ],
+      "takeaway": "Comunicar con levedad y autoconciencia, y dejar el estatus impostado. La calibración social ocurre en los comentarios.",
+      "evidence": [
+        { "quote": "Tanto oro se ve naco la mera verdad!!! Claro se ve que nomas agarran un poco de dinero y quieren enseñar q ahora tienen mucho. A que gente tan indecente!", "platform": "Facebook", "date": "2026-05" },
+        { "quote": "Me da cringe la gente que edita sus comentarios para decir \"gracias por los likes\"", "platform": "YouTube", "date": "2025-07" },
+        { "quote": "Pinche bato, creído se cree mucho y pero no va a ser campeón", "platform": "Facebook", "date": "2026-05" }
+      ]
+    },
+    "en": {
+      "title": "In Mexico, showing off too much now draws mockery",
+      "dek": "Se cree mucho, se ve naco, qué oso. Mexico's own vocabulary for calling out overreaching status is active in the comments.",
+      "scenes": [
+        { "type": "hook", "text": "When does status stop making people jealous?" },
+        { "type": "stat", "value": 112, "suffix": "%", "label": "more monthly conversation about aspirational cringe in 2026 than in 2025", "context": "Monthly average, January to May 2026 versus 2025" },
+        { "type": "tension", "want": "Performed aspiration", "but": "Collective cringe", "value": null },
+        { "type": "quote", "text": "Tanto oro se ve naco la mera verdad!!! Claro se ve que nomas agarran un poco de dinero y quieren enseñar q ahora tienen mucho.", "translation": "So much gold looks tacky, honestly!!! You can tell they got a little money and want to show they have a lot now.", "platform": "Facebook", "meta": "MX · May 2026" },
+        { "type": "takeaway", "text": "Show value with self-awareness. Too much shine gets called out in public." }
+      ],
+      "takeaway": "Communicate with lightness and self-awareness, and drop staged status. Social calibration happens in the comments.",
+      "evidence": [
+        { "quote": "Tanto oro se ve naco la mera verdad!!! Claro se ve que nomas agarran un poco de dinero y quieren enseñar q ahora tienen mucho. A que gente tan indecente!", "translation": "So much gold looks tacky, honestly!!! You can tell they got a little money and want to show they have a lot now. What indecent people!", "platform": "Facebook", "date": "2026-05" },
+        { "quote": "Me da cringe la gente que edita sus comentarios para decir \"gracias por los likes\"", "translation": "People who edit their comments to say \"thanks for the likes\" make me cringe", "platform": "YouTube", "date": "2025-07" },
+        { "quote": "Pinche bato, creído se cree mucho y pero no va a ser campeón", "translation": "That guy is so full of himself, but he won't be champion", "platform": "Facebook", "date": "2026-05" }
+      ]
+    }
+  }
+]

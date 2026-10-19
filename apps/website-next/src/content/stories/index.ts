@@ -1,0 +1,57 @@
+import "server-only";
+import { readdirSync, readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { storySchema, type Story } from "./schema";
+
+/**
+ * Stories live as JSON files. `public/` is committed (Noisia's own editorial work).
+ * `_local/` is gitignored and only exists on machines that hold client-derived test
+ * content; the site works without it. `demo/` holds invented stories that test a
+ * format (for example a collection tab) and only load outside production or in UAT.
+ */
+const ROOT = join(process.cwd(), "src/content/stories");
+
+function readDir(dir: string): Story[] {
+  const full = join(ROOT, dir);
+  if (!existsSync(full)) return [];
+  return readdirSync(full)
+    .filter((file) => file.endsWith(".json"))
+    .sort()
+    .flatMap((file) => {
+      const raw = JSON.parse(readFileSync(join(full, file), "utf8")) as unknown;
+      const list = Array.isArray(raw) ? raw : [raw];
+      return list.map((item) => {
+        const parsed = storySchema.safeParse(item);
+        if (!parsed.success) {
+          throw new Error(`Invalid story in ${dir}/${file}: ${parsed.error.issues.map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}`);
+        }
+        return parsed.data;
+      });
+    });
+}
+
+let cache: Story[] | null = null;
+
+export function getStories(): Story[] {
+  if (!cache) {
+    // Client-derived test stories never load in production unless explicitly enabled.
+    const allowLocal = process.env.NODE_ENV !== "production" || process.env.NOISIA_LOCAL_STORIES === "1";
+    const local = allowLocal ? readDir("_local") : [];
+    const allowDemo = process.env.NODE_ENV !== "production" || process.env.NOISIA_DEMO_STORIES === "1";
+    const published = [...readDir("public"), ...(allowDemo ? readDir("demo") : [])];
+    // Interleave so the feed alternates sources instead of showing one block after another.
+    const merged: Story[] = [];
+    const max = Math.max(local.length, published.length);
+    for (let i = 0; i < max; i++) {
+      if (local[i]) merged.push(local[i]);
+      if (published[i]) merged.push(published[i]);
+    }
+    const seen = new Set<string>();
+    cache = merged.filter((story) => (seen.has(story.id) ? false : (seen.add(story.id), true)));
+  }
+  return cache;
+}
+
+export function getStory(id: string): Story | undefined {
+  return getStories().find((story) => story.id === id);
+}

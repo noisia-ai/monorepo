@@ -1,0 +1,291 @@
+/* Transparent over the hero at the very top; frosted glass as soon as the page scrolls.
+   The glass lives on a pseudo-element: a backdrop-filter on the header itself would trap
+   the fixed full-screen menu inside the 60px bar. */
+.header {
+  --bar-h: var(--header-h);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  height: var(--header-h);
+}
+
+.header[data-compact="true"] {
+  --bar-h: 44px;
+}
+
+/* The glass and the bar shrink together; the header keeps its height so the page never jumps. */
+.header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: var(--bar-h);
+  transition: height 320ms var(--ease-out), background var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+  background: rgba(255, 255, 255, 0);
+  pointer-events: none;
+}
+
+.header[data-scrolled="true"]::before {
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  box-shadow: 0 1px 0 rgba(10, 10, 10, 0.06);
+}
+
+.header[data-open="true"]::before {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+.bar {
+  position: relative;
+  z-index: 2;
+  max-width: var(--max-wide);
+  margin: 0 auto;
+  height: var(--bar-h);
+  padding: 0 var(--gutter);
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  transition: height 320ms var(--ease-out);
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+}
+
+.logo img {
+  display: block;
+  height: 22px;
+  width: auto;
+  transition: height 320ms var(--ease-out);
+}
+
+.header[data-compact="true"] .logo img {
+  height: 19px;
+}
+
+.desktopNav {
+  display: none;
+  gap: var(--space-5);
+  margin-left: var(--space-5);
+}
+
+.navLink {
+  font-size: var(--text-sm);
+  color: var(--fg);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.navLink:hover,
+.navLink[aria-current="page"] {
+  color: var(--teal-text);
+}
+
+.end {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.langDesktop {
+  display: none;
+}
+
+.cta {
+  display: none;
+  height: 40px;
+  align-items: center;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--fg-inverse);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.menuButton {
+  width: 38px;
+  height: 38px;
+  transition: width 320ms var(--ease-out), height 320ms var(--ease-out);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.header[data-compact="true"] .menuButton {
+  width: 34px;
+  height: 34px;
+}
+
+.menuButton svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ---------- full-screen menu (phones and tablets) ---------- */
+.mobileMenu {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  height: 100dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background:
+    radial-gradient(120% 60% at 100% 0%, rgba(0, 238, 238, 0.14), transparent 60%),
+    var(--canvas);
+  padding: calc(var(--header-h) + var(--space-4)) var(--gutter) calc(env(safe-area-inset-bottom) + var(--space-5));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  animation: menuIn var(--dur-base) var(--ease-out) both;
+}
+
+.mobileMenu[hidden] {
+  display: none;
+}
+
+.menuList {
+  display: flex;
+  flex-direction: column;
+}
+
+.menuItem {
+  display: grid;
+  grid-template-columns: 44px 1fr 20px;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  animation: slide var(--dur-slow) var(--ease-out) both;
+}
+
+.menuIcon {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: var(--teal-soft);
+  color: var(--teal-text);
+}
+
+.menuIcon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.menuText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.menuName {
+  font-size: var(--text-xl);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+.menuDesc {
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  line-height: 1.35;
+}
+
+.menuArrow {
+  width: 18px;
+  height: 18px;
+  color: var(--fg-muted);
+}
+
+.menuMore {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  animation: slide var(--dur-slow) var(--ease-out) both;
+}
+
+.menuMore a {
+  color: var(--fg-muted);
+}
+
+.menuFoot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  animation: slide var(--dur-slow) var(--ease-out) both;
+}
+
+.mobileCta {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 56px;
+  border-radius: var(--radius-pill);
+  background: var(--ink);
+  color: var(--fg-inverse);
+  font-weight: 500;
+}
+
+.menuNote {
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+.menuLang {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+
+@keyframes menuIn {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slide {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobileMenu,
+  .menuItem,
+  .menuMore,
+  .menuFoot {
+    animation: none;
+  }
+}
+
+@media (min-width: 960px) {
+  .desktopNav,
+  .cta,
+  .langDesktop {
+    display: flex;
+  }
+
+  .menuButton,
+  .mobileMenu {
+    display: none;
+  }
+}

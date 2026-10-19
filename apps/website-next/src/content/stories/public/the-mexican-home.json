@@ -1,0 +1,178 @@
+[
+  {
+    "id": "casa-propia-es-futuro",
+    "industry": "hogar-y-descanso",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Codes",
+    "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
+    "period": "ene–may 2026",
+    "report": "/insights/reportes/the-mexican-home",
+    "notes": "Señal casa_propia_futuro. +171% calculado de monthly_pulse: 2026-05 (35,385) vs 2026-01 (13,079) = +170.5%, redondeado.",
+    "es": {
+      "title": "Comprar casa en México significa asegurar el futuro",
+      "dek": "La conversación sobre casa propia habla en cifras, plazos y requisitos, con Infonavit como puente entre querer y poder.",
+      "scenes": [
+        { "type": "hook", "text": "¿Cuánto tengo que ganar para tener casa propia?" },
+        { "type": "stat", "value": 171, "suffix": "%", "label": "más menciones sobre casa propia en mayo que en enero de 2026", "context": "Quiero comprar casa, mi crédito Infonavit, sacar un crédito hipotecario" },
+        { "type": "tension", "want": "Rentar como gasto que no vuelve", "but": "Comprar como estabilidad que sí", "value": null },
+        { "type": "quote", "text": "Lic cuánto tengo que ganar para que banco me preste 1 millón de pesos porque quiero comprar una casa pero yo tengo 800 mil de crédito en Infonavit", "platform": "TikTok", "meta": "MX · mar 2026" },
+        { "type": "takeaway", "text": "Habla el idioma del Infonavit y muestra cifras reales. La gente ya está haciendo cuentas." }
+      ],
+      "takeaway": "Hablar el idioma del Infonavit, mostrar cifras y reconocer la brecha entre crédito y precio. Un sueño sin un solo número ya no sostiene la promesa.",
+      "evidence": [
+        { "quote": "Lic cuánto tengo que ganar para que banco me preste 1 millón de pesos porque quiero comprar una casa pero yo tengo 800 mil de crédito en Infonavit y completarlo con el millón que e presté el banco", "platform": "TikTok", "date": "2026-03" },
+        { "quote": "Revise mi Infonavit y quiero comprar casa me dice que tengo crédito por 2,250.000. Pero tengo dos créditos personales actual al corriente, me afecta para el crédito Infonavit???", "platform": "TikTok", "date": "2026-03" },
+        { "quote": "mi corazón anhela tanto una casita propia...", "platform": "TikTok", "date": "2026-01" }
+      ]
+    },
+    "en": {
+      "title": "For Mexicans, buying a home means securing the future",
+      "dek": "The home ownership conversation speaks in figures, terms and requirements, with Infonavit as the bridge between wanting and being able to.",
+      "scenes": [
+        { "type": "hook", "text": "How much do I need to earn to own a home?" },
+        { "type": "stat", "value": 171, "suffix": "%", "label": "more mentions about owning a home in May than in January 2026", "context": "I want to buy a house, my Infonavit credit, getting a mortgage" },
+        { "type": "tension", "want": "Renting as money that never comes back", "but": "Buying as stability that does", "value": null },
+        { "type": "quote", "text": "Lic cuánto tengo que ganar para que banco me preste 1 millón de pesos porque quiero comprar una casa pero yo tengo 800 mil de crédito en Infonavit", "translation": "How much do I need to earn for the bank to lend me 1 million pesos? I want to buy a house but I have 800 thousand in Infonavit credit", "platform": "TikTok", "meta": "MX · Mar 2026" },
+        { "type": "takeaway", "text": "Speak the language of Infonavit and show real numbers. People are already doing the math." }
+      ],
+      "takeaway": "Speak the language of Infonavit, show figures and acknowledge the gap between credit and price. A dream without a single number no longer holds up.",
+      "evidence": [
+        { "quote": "Lic cuánto tengo que ganar para que banco me preste 1 millón de pesos porque quiero comprar una casa pero yo tengo 800 mil de crédito en Infonavit y completarlo con el millón que e presté el banco", "translation": "How much do I need to earn for the bank to lend me 1 million pesos? I want to buy a house but I have 800 thousand in Infonavit credit and would complete it with the bank's million", "platform": "TikTok", "date": "2026-03" },
+        { "quote": "Revise mi Infonavit y quiero comprar casa me dice que tengo crédito por 2,250.000. Pero tengo dos créditos personales actual al corriente, me afecta para el crédito Infonavit???", "translation": "I checked my Infonavit and I want to buy a house, it says I have 2,250,000 in credit. But I have two personal loans that are up to date, does that affect my Infonavit credit???", "platform": "TikTok", "date": "2026-03" },
+        { "quote": "mi corazón anhela tanto una casita propia...", "translation": "my heart longs so much for a little home of my own...", "platform": "TikTok", "date": "2026-01" }
+      ]
+    }
+  },
+  {
+    "id": "el-credito-no-alcanza",
+    "industry": "hogar-y-descanso",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Codes",
+    "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
+    "period": "ene–may 2026",
+    "report": "/insights/reportes/the-mexican-home",
+    "notes": "Señal renta_no_alcanza. 65% TikTok literal de cultural_headlines. +135% calculado de monthly_pulse: 2026-05 (14,175) vs 2026-01 (6,042) = +134.6%, redondeado. Evidencia sin mes exacto en la fuente (enero–mayo 2026), por eso date es null.",
+    "es": {
+      "title": "Tener crédito Infonavit ya no garantiza encontrar casa",
+      "dek": "La gente compara su crédito con los precios del mercado y la cuenta no cierra. La frustración se cuenta en TikTok y con números.",
+      "scenes": [
+        { "type": "hook", "text": "¿Qué pasa cuando el crédito llega y la casa no?" },
+        { "type": "stat", "value": 135, "suffix": "%", "label": "más menciones de frustración financiera en mayo que en enero de 2026", "context": "No me alcanza, está carísima, subió al doble" },
+        { "type": "stat", "value": 65, "suffix": "%", "label": "de esa conversación ocurre en TikTok", "context": "Video corto, voz personal y tono confesional" },
+        { "type": "quote", "text": "Ya tengo mi crédito Infonavit pero aunque siento que es una buena cantidad no encuentro nada a ese precio.", "platform": "TikTok", "meta": "MX · ene–may 2026" },
+        { "type": "takeaway", "text": "Reconoce la brecha entre crédito y precio, y ofrece rutas con montos claros." }
+      ],
+      "takeaway": "Reconocer la brecha entre crédito y precio de mercado y responder con opciones concretas, plazos y montos visibles.",
+      "evidence": [
+        { "quote": "Ya tengo mi crédito Infonavit pero aunque siento que es una buena cantidad no encuentro nada a ese precio.", "platform": "TikTok", "date": null },
+        { "quote": "Yo pago por fuera mi Infonavit, porque ya no estoy laborando, dejé de pagar dos años, pero actualmente lo sigo pagando por fuera, pero en vez de bajar me subí al doble.", "platform": "TikTok", "date": null }
+      ]
+    },
+    "en": {
+      "title": "An Infonavit loan no longer guarantees finding a home",
+      "dek": "People compare their credit with market prices and the math doesn't add up. The frustration gets told on TikTok, in numbers.",
+      "scenes": [
+        { "type": "hook", "text": "What happens when the loan arrives and the house doesn't?" },
+        { "type": "stat", "value": 135, "suffix": "%", "label": "more mentions of financial frustration in May than in January 2026", "context": "It's not enough, it's way too expensive, it doubled" },
+        { "type": "stat", "value": 65, "suffix": "%", "label": "of that conversation happens on TikTok", "context": "Short video, personal voice, confessional tone" },
+        { "type": "quote", "text": "Ya tengo mi crédito Infonavit pero aunque siento que es una buena cantidad no encuentro nada a ese precio.", "translation": "I already have my Infonavit loan, and even though it feels like a good amount, I can't find anything at that price.", "platform": "TikTok", "meta": "MX · Jan–May 2026" },
+        { "type": "takeaway", "text": "Acknowledge the gap between credit and price, and offer paths with clear amounts." }
+      ],
+      "takeaway": "Acknowledge the gap between credit and market price and respond with concrete options, terms and visible amounts.",
+      "evidence": [
+        { "quote": "Ya tengo mi crédito Infonavit pero aunque siento que es una buena cantidad no encuentro nada a ese precio.", "translation": "I already have my Infonavit loan, and even though it feels like a good amount, I can't find anything at that price.", "platform": "TikTok", "date": null },
+        { "quote": "Yo pago por fuera mi Infonavit, porque ya no estoy laborando, dejé de pagar dos años, pero actualmente lo sigo pagando por fuera, pero en vez de bajar me subí al doble.", "translation": "I pay my Infonavit on my own because I'm no longer employed. I stopped paying for two years and I'm paying it again, but instead of going down it doubled.", "platform": "TikTok", "date": null }
+      ]
+    }
+  },
+  {
+    "id": "prefiero-estar-en-mi-casa",
+    "industry": "hogar-y-descanso",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Codes",
+    "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
+    "period": "ene–may 2026",
+    "report": "/insights/reportes/the-mexican-home",
+    "notes": "Señal casa_se_volvio_refugio. +189% calculado de monthly_pulse: 2026-05 (9,543) vs 2026-01 (3,300) = +189.2%, redondeado. Evidencia sin mes exacto en la fuente (enero–mayo 2026), por eso date es null.",
+    "es": {
+      "title": "Quedarse en casa ya se celebra sin dar explicaciones",
+      "dek": "Prefiero estar en mi casa se dice con cariño, y la frase cruza generaciones entre TikTok y Facebook.",
+      "scenes": [
+        { "type": "hook", "text": "¿Desde cuándo quedarse en casa dejó de necesitar excusa?" },
+        { "type": "stat", "value": 189, "suffix": "%", "label": "más menciones sobre la casa como refugio en mayo que en enero de 2026", "context": "Prefiero estar en mi casa, amo estar en casita, nada como llegar" },
+        { "type": "tension", "want": "La calle como destino", "but": "La casa como destino", "value": null },
+        { "type": "quote", "text": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya cancelan, no me quejo.", "platform": "TikTok", "meta": "MX · ene–may 2026" },
+        { "type": "takeaway", "text": "Trata la casa como destino. Silencio, café, cama y buena ventilación también son plan." }
+      ],
+      "takeaway": "Tratar la casa como espacio de regulación emocional y dejar de convocar a salir cuando la conversación celebra la vida adentro.",
+      "evidence": [
+        { "quote": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya cancelan, no me quejo.", "platform": "TikTok", "date": null },
+        { "quote": "la verdad amo estar en mi casa sin hacer nada, qué estrés sería otra cosa.", "platform": "TikTok", "date": null }
+      ]
+    },
+    "en": {
+      "title": "Staying home is now celebrated, no explanation needed",
+      "dek": "Prefiero estar en mi casa (I'd rather be home) is said with affection, and the phrase crosses generations on TikTok and Facebook.",
+      "scenes": [
+        { "type": "hook", "text": "Since when does staying home not need an excuse?" },
+        { "type": "stat", "value": 189, "suffix": "%", "label": "more mentions of home as a refuge in May than in January 2026", "context": "I'd rather be home, I love being at home, nothing like getting home" },
+        { "type": "tension", "want": "Going out as the destination", "but": "Home as the destination", "value": null },
+        { "type": "quote", "text": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya cancelan, no me quejo.", "translation": "Honestly, I love going out with my friends but I'd rather be home, and if they cancel, I'm not complaining.", "platform": "TikTok", "meta": "MX · Jan–May 2026" },
+        { "type": "takeaway", "text": "Treat home as the destination. Quiet, coffee, bed and fresh air count as plans too." }
+      ],
+      "takeaway": "Treat home as a space for emotional regulation and stop pushing people out when the conversation celebrates life indoors.",
+      "evidence": [
+        { "quote": "Yo, neta amo salir con mis amigos pero prefiero estar en mi casa, y si ya cancelan, no me quejo.", "translation": "Honestly, I love going out with my friends but I'd rather be home, and if they cancel, I'm not complaining.", "platform": "TikTok", "date": null },
+        { "quote": "la verdad amo estar en mi casa sin hacer nada, qué estrés sería otra cosa.", "translation": "honestly I love being at home doing nothing, anything else would be stressful.", "platform": "TikTok", "date": null }
+      ]
+    }
+  },
+  {
+    "id": "buscar-depa-empieza-con-sospecha",
+    "industry": "hogar-y-descanso",
+    "kind": "editorial",
+    "market": "MX",
+    "method": "Cultural Codes",
+    "sources": ["YouTube", "TikTok", "Facebook", "X", "Instagram", "Reddit", "Reviews"],
+    "period": "ene–may 2026",
+    "report": "/insights/reportes/the-mexican-home",
+    "notes": "Señal busqueda_sospecha (emergente, volumen muy bajo). 11x calculado de monthly_pulse: 2026-05 (219) vs 2026-01 (20) = 10.95x, redondeado. Evidencia sin mes exacto en la fuente (enero–mayo 2026), por eso date es null.",
+    "es": {
+      "title": "Buscar dónde vivir hoy empieza con sospecha de fraude",
+      "dek": "Las quejas son pocas y muy específicas. Anticipos perdidos, fotos duplicadas y plataformas inmobiliarias etiquetadas con nombre.",
+      "scenes": [
+        { "type": "hook", "text": "¿Es real este anuncio o me van a pedir anticipo?" },
+        { "type": "stat", "value": 11, "suffix": "x", "label": "más menciones de fraude inmobiliario en mayo que en enero de 2026", "context": "Volumen bajo, siempre con la plataforma etiquetada" },
+        { "type": "tension", "want": "Plataforma inmobiliaria como solución", "but": "Plataforma inmobiliaria como riesgo", "value": null },
+        { "type": "quote", "text": "A las cuantas horas me llamó para aceptarme, me pasó su número, transferí y me bloqueó.", "platform": "TikTok", "meta": "MX · ene–may 2026" },
+        { "type": "takeaway", "text": "Haz visible la protección antes del primer pago, con verificación y alertas de fraude." }
+      ],
+      "takeaway": "Hacer visible la protección antes del daño, con verificación de anuncios, educación sobre fraude y respuestas que resuelvan.",
+      "evidence": [
+        { "quote": "Me citaron en el departamento, me lo mostró la persona que me iba a rentar el cuarto como roomie. A las cuantas horas me llamó para aceptarme, me pasó su número, transferí y me bloqueó.", "platform": "TikTok", "date": null },
+        { "quote": "Inmuebles24 México parece que está coludido con esas gentes, a mí me estafaron... mandé todo con pruebas y solo respondieron ya teníamos reportada esa cuenta y estamos trabajando en ello.", "platform": "Facebook", "date": null },
+        { "quote": "Ya han bajado fotos para duplicar anuncios.", "platform": "Facebook", "date": null }
+      ]
+    },
+    "en": {
+      "title": "Looking for a place to live now starts with suspicion",
+      "dek": "Complaints are few and very specific. Lost deposits, duplicated photos and real estate platforms tagged by name.",
+      "scenes": [
+        { "type": "hook", "text": "Is this listing real, or will they ask for a deposit?" },
+        { "type": "stat", "value": 11, "suffix": "x", "label": "more mentions of real estate fraud in May than in January 2026", "context": "Low volume, always with the platform tagged" },
+        { "type": "tension", "want": "Real estate platform as the solution", "but": "Real estate platform as the risk", "value": null },
+        { "type": "quote", "text": "A las cuantas horas me llamó para aceptarme, me pasó su número, transferí y me bloqueó.", "translation": "A few hours later he called to accept me, gave me his number, I transferred the money and he blocked me.", "platform": "TikTok", "meta": "MX · Jan–May 2026" },
+        { "type": "takeaway", "text": "Make protection visible before the first payment, with verification and fraud alerts." }
+      ],
+      "takeaway": "Make protection visible before the damage, with listing verification, fraud education and replies that actually solve.",
+      "evidence": [
+        { "quote": "Me citaron en el departamento, me lo mostró la persona que me iba a rentar el cuarto como roomie. A las cuantas horas me llamó para aceptarme, me pasó su número, transferí y me bloqueó.", "translation": "They met me at the apartment, the person who was going to rent me the room as a roommate showed it to me. A few hours later he called to accept me, gave me his number, I transferred the money and he blocked me.", "platform": "TikTok", "date": null },
+        { "quote": "Inmuebles24 México parece que está coludido con esas gentes, a mí me estafaron... mandé todo con pruebas y solo respondieron ya teníamos reportada esa cuenta y estamos trabajando en ello.", "translation": "Inmuebles24 Mexico seems to be in cahoots with those people, I got scammed... I sent everything with proof and they only replied that the account was already reported and they're working on it.", "platform": "Facebook", "date": null },
+        { "quote": "Ya han bajado fotos para duplicar anuncios.", "translation": "They've already downloaded photos to duplicate listings.", "platform": "Facebook", "date": null }
+      ]
+    }
+  }
+]

@@ -1,0 +1,61 @@
+import type { ComponentType, SVGProps } from "react";
+import {
+  Book,
+  Brain,
+  Calendar,
+  ChatBubbleQuestion,
+  Check,
+  Clock,
+  Community,
+  Database,
+  EditPencil,
+  Eye,
+  Filter,
+  Globe,
+  Group,
+  Journal,
+  Language,
+  Lock,
+  MediaVideo,
+  Megaphone,
+  Network,
+  Page,
+  Presentation,
+  ProfileCircle,
+  Search,
+  ShieldCheck,
+  Sparks,
+  StatsUpSquare
+} from "iconoir-react";
+
+/** Icons an FAQ item can carry. Keep the keys generic so any section can reuse them. */
+export const FAQ_ICONS = {
+  brand: ProfileCircle,
+  competitors: Community,
+  category: StatsUpSquare,
+  campaigns: Megaphone,
+  topics: Journal,
+  signals: Sparks,
+  data: Database,
+  time: Clock,
+  privacy: ShieldCheck,
+  lock: Lock,
+  languages: Language,
+  people: Group,
+  method: Book,
+  system: Network,
+  check: Check,
+  question: ChatBubbleQuestion,
+  markets: Globe,
+  calendar: Calendar,
+  eye: Eye,
+  mind: Brain,
+  document: Page,
+  live: Presentation,
+  video: MediaVideo,
+  search: Search,
+  edit: EditPencil,
+  filter: Filter
+} satisfies Record<string, ComponentType<SVGProps<SVGSVGElement>>>;
+
+export type FaqIcon = keyof typeof FAQ_ICONS;

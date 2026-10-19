@@ -1,0 +1,1681 @@
+{
+  "meta": {
+    "study": "Future is Human",
+    "subtitle": "6 señales que separan una marca eficiente de una marca deshumanizada en México.",
+    "agency": "Noisia",
+    "version": "v1",
+    "analysis_date": "2026-05-13",
+    "codex_instructions": "HTML interactivo estilo Noisia. Mismo framework visual que Cultural Foresight México 2026 v4. HERO: presentar 1.7M líneas escaneadas + 150K menciones procesadas como contexto de escala. Mantener metodología en lenguaje ejecutivo, sin exponer cocina interna. CADA SEÑAL: nombre comercial > one-liner > tensión > cita protagonista > lectura cultural > 3 headlines culturales > evidencia textual > implicaciones de marca > badge de madurez. BADGES: usar la paleta canónica Noisia; emergente magenta ink, acelerando cyan ink, mainstreaming deep violet. EVIDENCIA: las citas son el corazón del reporte — tipografía generosa, atribución clara con plataforma y tag MX cuando aplica."
+  },
+  "hero_numbers": {
+    "corpus_scope": {
+      "value": "+1.7M",
+      "label": "menciones escuchadas con contexto de marca",
+      "detail": "Conversación en español sobre marcas mexicanas, entre mayo 2025 y mayo 2026."
+    },
+    "mentions_reviewed": {
+      "value": "+1.7M",
+      "label": "menciones procesadas en español",
+      "detail": "Normalizadas por contenido, plataforma y fecha."
+    },
+    "period": {
+      "value": "12 meses",
+      "label": "de escucha continua",
+      "detail": "Mayo 2025 a mayo 2026."
+    },
+    "sources": {
+      "value": "7 plataformas",
+      "label": "observadas",
+      "detail": "X, Facebook, TikTok, YouTube, Reddit, Instagram y Reviews."
+    },
+    "signals": {
+      "value": "6 señales",
+      "label": "culturales detectadas",
+      "detail": "Una mainstreaming, dos acelerando, tres emergentes."
+    },
+    "evidence": {
+      "value": "+1.7M",
+      "label": "menciones con contexto de marca",
+      "detail": "Conversación pública alrededor de 80+ marcas mexicanas en seis verticales."
+    }
+  },
+  "narrative_umbrella": {
+    "title": "La IA no deshumaniza. Lo que deshumaniza es la marca que la usa sin criterio.",
+    "subtitle": "¿Qué hace que una marca conserve humanidad cuando todo puede automatizarse?",
+    "description": "Las 6 señales no apuntan a un rechazo a la IA, ni a la automatización, ni a la eficiencia. Apuntan a algo más específico: la audiencia mexicana está entrenada para detectar cuándo una marca dejó de pensar. La humanidad de la marca no depende de si responde rápido, si suena cálida o si simula cercanía. Depende de si conserva voz, contexto, transparencia, craft y responsabilidad en los momentos que importan, sobre todo cuando algo sale mal.",
+    "umbrella_logic": [
+      {
+        "tier": "Lo que la gente ya pide antes de empezar",
+        "signals": [
+          "humano_demandado"
+        ],
+        "theme": "Humano como default explícito"
+      },
+      {
+        "tier": "Cuándo la marca pierde voz",
+        "signals": [
+          "voz_genérica",
+          "craft_humano"
+        ],
+        "theme": "Voz reconocible vs. eficiencia uniforme"
+      },
+      {
+        "tier": "Cuándo la marca pierde criterio",
+        "signals": [
+          "contexto_perdido",
+          "transparencia_IA"
+        ],
+        "theme": "Lectura del momento vs. respuesta procedimental"
+      },
+      {
+        "tier": "Cuándo la marca pierde confianza",
+        "signals": [
+          "responsabilidad"
+        ],
+        "theme": "Tono cálido vs. responsabilidad real"
+      }
+    ]
+  },
+  "signals": [
+    {
+      "id": "humano_demandado",
+      "order": 1,
+      "commercial_name": "El humano se volvió default explícito",
+      "color": "#007E89",
+      "maturity": "mainstreaming",
+      "maturity_note": "Comportamiento ya consolidado en México: la gente etiqueta a la marca con quiero hablar con una persona como entrada al servicio, no como queja final.",
+      "one_liner": "En México, la gente ya pide humano antes de probar el bot. No es queja: es default.",
+      "tension": {
+        "left": "Bot como respuesta por default",
+        "right": "Humano como demanda preventiva"
+      },
+      "lead_quote": {
+        "text": "SHEIN México cómo puedo hablar con una persona y no con un bot??? Tengo un problema que quiero que me solucionen, porque en la paquetería Imile tampoco hay cómo comunicarse con una persona, sino con puros bots.",
+        "platform": "facebook",
+        "attribution": "usuaria mexicana"
+      },
+      "cultural_reading": "Quiero hablar con una persona y no con un bot aparece como apertura, no como conclusión. La gente etiqueta a la marca con la frase antes de explicar su problema. El bot dejó de ser punto de partida neutro y se volvió barrera anticipada. La confianza en el chatbot bajó tanto que ya nadie le da el beneficio de la duda: se asume tiempo perdido antes de intentar.",
+      "cultural_headlines": [
+        {
+          "value": "564,800",
+          "label": "menciones pidiendo humano a marcas concretas",
+          "detail": "La frase no un bot, hablar con un humano aparece dirigida a marcas específicas (SHEIN, Volaris, DiDi, Telcel, BBVA, Liverpool), no como queja genérica."
+        },
+        {
+          "value": "preventivo",
+          "label": "no reactivo",
+          "detail": "La demanda aparece antes de plantear el problema, no después de fallar con el bot. La gente ya no espera para escalar."
+        },
+        {
+          "value": "X + Facebook",
+          "label": "son el canal de demanda",
+          "detail": "X (52%) y Facebook (22%) son donde la gente etiqueta a la marca para forzar atención humana, usando la visibilidad pública como palanca."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-05",
+          "count": 33358
+        },
+        {
+          "month": "2025-06",
+          "count": 35695
+        },
+        {
+          "month": "2025-07",
+          "count": 40276
+        },
+        {
+          "month": "2025-08",
+          "count": 38158
+        },
+        {
+          "month": "2025-09",
+          "count": 44387
+        },
+        {
+          "month": "2025-10",
+          "count": 41846
+        },
+        {
+          "month": "2025-11",
+          "count": 41452
+        },
+        {
+          "month": "2025-12",
+          "count": 46020
+        },
+        {
+          "month": "2026-01",
+          "count": 45411
+        },
+        {
+          "month": "2026-02",
+          "count": 45635
+        },
+        {
+          "month": "2026-03",
+          "count": 49154
+        },
+        {
+          "month": "2026-04",
+          "count": 52124
+        },
+        {
+          "month": "2026-05",
+          "count": 51308
+        }
+      ],
+      "platform_mix": [
+        {
+          "platform": "x",
+          "count": 379128,
+          "pct": 67.1
+        },
+        {
+          "platform": "facebook",
+          "count": 110533,
+          "pct": 19.6
+        },
+        {
+          "platform": "youtube",
+          "count": 22107,
+          "pct": 3.9
+        },
+        {
+          "platform": "tiktok",
+          "count": 17317,
+          "pct": 3.1
+        },
+        {
+          "platform": "reddit",
+          "count": 12527,
+          "pct": 2.2
+        },
+        {
+          "platform": "instagram",
+          "count": 7737,
+          "pct": 1.4
+        },
+        {
+          "platform": "reviews",
+          "count": 7000,
+          "pct": 1.2
+        }
+      ],
+      "evidence": [
+        {
+          "text": "SHEIN México cómo puedo hablar con una persona y no con un bot??? Tengo un problema que quiero que me solucionen, porque en la paquetería Imile tampoco hay cómo comunicarse con una persona, sino con puros bots, como con ustedes 😕🤨",
+          "platform": "facebook",
+          "date": "2025-06-19",
+          "url": "https://www.facebook.com/651720156995987/posts/1173040958197235",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con una persona"
+        },
+        {
+          "text": "Que onda con @viajaVolaris a cuantos números tengo que llamar y a cuales opciones tengo que picarle para que me pueda atender una persona y no un bot?",
+          "platform": "x",
+          "date": "2026-02-22",
+          "url": "https://twitter.com/naniroze/statuses/2025633140547760390",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "no un bot"
+        },
+        {
+          "text": "@DiDi_Mexico necesito ayuda con un pedido en su app. No quiero hablar con bots, quiero hablar con una persona, gracias.",
+          "platform": "x",
+          "date": "2025-08-19",
+          "url": "https://twitter.com/RenGmzW/statuses/1957608736136335529",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con una persona"
+        },
+        {
+          "text": "@RappiMexico pedí comida desde las 3, ya son casi las 6 y no llega. Cancelé la primera porque no había repartidor y después de dos horas nada. En esta segunda ocasión es lo mismo, ya casi una hora y nada. Deberían permitir hablar con un humano, su chat bot no sirve para dar sopor",
+          "platform": "x",
+          "date": "2025-06-13",
+          "url": "https://twitter.com/HHRRmx/statuses/1933308313686716433",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con un humano"
+        },
+        {
+          "text": "Hola @Profeco. Ayer un repartidor de @RappiMexico se robó mi pedido. Parece que no es importante para la plataforma, ya que no hay canal para hablar con un humano y buscar solución. Por X tampoco responden. Mientras tanto, sin pedido y sin mi dinero. ¿Qué puedo hacer?",
+          "platform": "x",
+          "date": "2025-11-18",
+          "url": "https://twitter.com/hek_rmz/statuses/1990825736920256980",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con un humano"
+        },
+        {
+          "text": "@DiDi_Mexico que onda? En los números a los que me piden que me comunique no están disponibles, por correo no contestan, el chatbot de la app no sirve para hablar con un humano. Podrían ayudarme? Gracias!",
+          "platform": "x",
+          "date": "2025-07-04",
+          "url": "https://twitter.com/Alejandroid1904/statuses/1940982036673773784",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con un humano"
+        },
+        {
+          "text": "Que desastre el servicio de atención al cliente de @didi_argentina\nPor la aplicación te dan información errónea del chófer y no hay número telefónico para poder hablar con un humano.",
+          "platform": "x",
+          "date": "2026-05-10",
+          "url": "https://twitter.com/fierrocatorce/statuses/2053289362788409482",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con un humano"
+        },
+        {
+          "text": "Sears México necesito hablar con un supervisor y ustedes se niegan a hablar, todo lo hacen por WhatsApp. Y no me dan soluciones. Quiero saber cómo es que ustedes no saben dónde quedó mi orden. Cómo es que no saben a dónde y a quien se la entregaron ? Quiero mi producto, en las condiciones en las que lo compre. Quiero hablar con una persona, pero no me atienden.",
+          "platform": "facebook",
+          "date": "2025-11-01",
+          "url": "https://www.facebook.com/649785400524957/posts/1265037618999729",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con una persona"
+        },
+        {
+          "text": "@RappiMexico cómo puedo hablar con una persona real? El bot de la aplicación no resuelve nada, pedí un pedido que llegó a otro sitio y tuve que decirle al repartidor que se lo quedara porque no resuelven rápido ni hay con quien hablar",
+          "platform": "x",
+          "date": "2025-06-06",
+          "url": "https://twitter.com/Fer_mn/statuses/1931039567483723916",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con una persona"
+        },
+        {
+          "text": "@searsmexico @Profeco Justo es lo que quiero hacer, pero no les llegan mis mensajes al parecer, necesito hablar con una persona capacitada y que pueda hacer la cancelación y devolución de mi dinero, es increíble que no se pueda hablar con nadie @cecapcarso @arturoelias contrata a un tiburón para esto",
+          "platform": "x",
+          "date": "2026-02-04",
+          "url": "https://twitter.com/MNKIA81/statuses/2019189989934845972",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "hablar con una persona"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 564824,
+        "mx_evidence_estimated": 68899,
+        "sources_count": 5,
+        "framing": "evidencia revisada por densidad cultural; el conteo orienta la calibración, no la importancia cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Hacer visible la ruta a humano desde el primer contacto, no después de fallar con el bot.",
+          "Diseñar el bot para escalar rápido cuando el usuario lo pide explícitamente, no para resistirse.",
+          "Tratar la mención pública pidiendo humano (en X o Facebook) como escalamiento, no como queja.",
+          "Medir tiempo a humano como KPI de servicio, no solo tiempo a primera respuesta."
+        ],
+        "avoid": [
+          "Bots que insisten en resolver antes de escalar. La audiencia ya lo lee como obstáculo.",
+          "Esconder el contacto humano detrás de menús automáticos infinitos.",
+          "Asumir que el self-service sigue siendo aspiracional para todas las categorías.",
+          "Tratar la palabra bot como neutra. En México ya carga negativa preventiva."
+        ],
+        "categories_exposed": [
+          "Banking & Fintech",
+          "Telcos",
+          "E-commerce y Retail",
+          "Aerolíneas",
+          "Delivery"
+        ],
+        "categories_opportunity": [
+          "Categorías donde el humano puede ser diferenciador premium: salud, finanzas, viaje complejo, servicios profesionales"
+        ]
+      },
+      "monitor_next": [
+        "no un bot",
+        "hablar con una persona",
+        "háblame con un humano",
+        "denme una persona",
+        "no más bots"
+      ]
+    },
+    {
+      "id": "transparencia_IA",
+      "order": 2,
+      "commercial_name": "La transparencia humaniza más que la simulación",
+      "color": "#01535F",
+      "maturity": "acelerando",
+      "maturity_note": "Vocabulario consolidado alrededor de publicidad engañosa como diagnóstico estructural. La acusación de simular o no avisar sobre automatización aparece dirigida a marcas concretas con frecuencia creciente.",
+      "one_liner": "Cuando una marca usa IA o automatización sin avisar, la confianza se rompe más fuerte que cuando falla.",
+      "tension": {
+        "left": "Simulación cálida sin avisar",
+        "right": "Transparencia funcional sobre automatización"
+      },
+      "lead_quote": {
+        "text": "Suena a publicidad engañosa, por algo Movistar no la hizo en México, aparte de no querer pagar impuestos.",
+        "platform": "tiktok",
+        "attribution": "usuario MX"
+      },
+      "cultural_reading": "Publicidad engañosa es el vocabulario más consolidado para nombrar la ruptura entre lo que la marca dice y lo que entrega. Aunque buscamos frases explícitas sobre IA (digan que es IA), el reclamo de fondo es más amplio: la audiencia mexicana detecta cuando algo fue construido para convencer en lugar de ser cierto. Transparencia, leída desde estas menciones, no es solo etiquetar contenido como IA. Es no prometer lo que el producto, el servicio o la experiencia no va a entregar. La marca que automatiza sin avisar entra a la misma categoría que la que miente en su publicidad.",
+      "cultural_headlines": [
+        {
+          "value": "619,700",
+          "label": "menciones sobre falta de transparencia",
+          "detail": "Telcos (Telcel, Movistar, AT&T), retail (Mercado Libre, Liverpool, Sears) y delivery (Rappi, Uber Eats) concentran la mayoría."
+        },
+        {
+          "value": "publicidad engañosa",
+          "label": "el vocabulario consolidado",
+          "detail": "No es te mintieron: es una acusación con peso institucional, registrable, escalable a Profeco. Circula como diagnóstico, no como queja personal."
+        },
+        {
+          "value": "Facebook 50%",
+          "label": "el canal del reclamo público",
+          "detail": "Facebook concentra el reclamo público con etiqueta de marca; X (33%) lo usa para amplificar rápido."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-05",
+          "count": 15993
+        },
+        {
+          "month": "2025-06",
+          "count": 19433
+        },
+        {
+          "month": "2025-07",
+          "count": 20418
+        },
+        {
+          "month": "2025-08",
+          "count": 26435
+        },
+        {
+          "month": "2025-09",
+          "count": 35701
+        },
+        {
+          "month": "2025-10",
+          "count": 40860
+        },
+        {
+          "month": "2025-11",
+          "count": 44096
+        },
+        {
+          "month": "2025-12",
+          "count": 54655
+        },
+        {
+          "month": "2026-01",
+          "count": 56607
+        },
+        {
+          "month": "2026-02",
+          "count": 71507
+        },
+        {
+          "month": "2026-03",
+          "count": 74148
+        },
+        {
+          "month": "2026-04",
+          "count": 70817
+        },
+        {
+          "month": "2026-05",
+          "count": 89053
+        }
+      ],
+      "platform_mix": [
+        {
+          "platform": "x",
+          "count": 326441,
+          "pct": 52.7
+        },
+        {
+          "platform": "facebook",
+          "count": 188643,
+          "pct": 30.4
+        },
+        {
+          "platform": "tiktok",
+          "count": 50477,
+          "pct": 8.1
+        },
+        {
+          "platform": "youtube",
+          "count": 25791,
+          "pct": 4.2
+        },
+        {
+          "platform": "instagram",
+          "count": 15475,
+          "pct": 2.5
+        },
+        {
+          "platform": "reviews",
+          "count": 6264,
+          "pct": 1
+        },
+        {
+          "platform": "web",
+          "count": 3316,
+          "pct": 0.5
+        }
+      ],
+      "evidence": [
+        {
+          "text": "Los casmeños en toda nuestra historia nunca hemos poblado esa zona por el salitre y por la alta humedad que existe en aire, en pleno verano se llena de neblina y hace frío, las aguas tienen una corriente muy fuerte que arrastra, ese lugar es conocido como rincón de piños, zona de pescadores de peña.",
+          "platform": "tiktok",
+          "date": "2026-05-01",
+          "url": "https://www.tiktok.com/@elcomerciope/video/7634614010620562695",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "suena a publicidad engañosa, por algo Movistar no la hizo en México, aparte de no querer pagar impuestos",
+          "platform": "tiktok",
+          "date": "2026-04-15",
+          "url": "https://www.tiktok.com/@mtro.carlos.montufar/video/7627278065957195029",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "También deberían, por publicidad engañosa no todo México tiene señal, hay zonas sin recepción, no todo México es territorio Telcel",
+          "platform": "facebook",
+          "date": "2026-01-16",
+          "url": "https://www.facebook.com/632417642250118/posts/1315330223958853",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "Publicidad engañosa checas las funciones si hay antes de las 2pm para agarrar promoción. Después el mero día las desaparecen y solo ponen horarios después de la hora para que no se utilice la promoción. Cinemex plazas outlet Monterrey.",
+          "platform": "facebook",
+          "date": "2026-02-08",
+          "url": "https://www.facebook.com/255169473934007/posts/893898056727809",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "@RappiMexico\nPedi por que aparecía que a las 8:04pm si pagaba extra. Lo pague y después cambio a 8:09 después a 8:14 y ahora 8:34pm algo no esta bien, me suena a publicidad engañosa https://pic.x.com/8Zd34Kmonc",
+          "platform": "x",
+          "date": "2026-04-06",
+          "url": "https://twitter.com/xianguerra/statuses/2040992556713198035",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "@seba_cipolat @FinanzasArgy Temu es la porquería más grande del planeta tierra hay muchísima publicidad engañosa y hay mucha gente que cae",
+          "platform": "x",
+          "date": "2026-01-28",
+          "url": "https://twitter.com/AveMilleRrrrr/statuses/2016597713060606003",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "No sé porqué hacen está publicidad ENGAÑOSA ya que no está en todas las salas de la República Mexicana, era mejor que publicarán las ciudades y las salas de Cinépolis donde SI ofrecen esa promoción.",
+          "platform": "facebook",
+          "date": "2026-04-16",
+          "url": "https://www.facebook.com/619328037037626/posts/1268215275482229",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "Oye @Profeco dice @DidifoodMX que si pides algo por su aplicación y no llega, que no se puede reclamar, porque si pides en @KFC_MEXICO los refrescos son gratis. Entonces quien está incurriendo en fallo, Didi o KFC?. Podría ser publicidad engañosa?",
+          "platform": "x",
+          "date": "2026-04-08",
+          "url": "https://twitter.com/llequvjacker/statuses/2041713689380675663",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "Defensamx aguas aquí llevo tres meses que me bloquearon de la aplicación como repartidor por estar pidiendo un incentivo de $2.500 por subir los sellos fiscales que no me han pagado que se haga justicia no más fraudes por parte de rappi Alos repartidores publicidad engañosa y fraudelenta",
+          "platform": "facebook",
+          "date": "2026-04-06",
+          "url": "https://www.facebook.com/reel/1286797166725751/",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        },
+        {
+          "text": "@El_Vitor_CDF @SKYSportsMX @Profeco @AtencionProfeco Aprovechando @skymexico nos está a mandando mensajes alos los suscriptores que tenemos ahora como beneficio vix premium pero al final no quieran dar la opción para activar dicho beneficio @Profeco ahi que procede por su publicidad engañosa",
+          "platform": "x",
+          "date": "2026-03-31",
+          "url": "https://twitter.com/12CaptainFalcon/statuses/2038775949387317672",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "publicidad engañosa"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 619723,
+        "mx_evidence_estimated": 75163,
+        "sources_count": 3,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Avisar cuando un contenido, asistente o respuesta es generado automáticamente.",
+          "Tratar la promesa publicitaria como contrato verificable, no como tono aspiracional.",
+          "Alinear claims y experiencia real. La audiencia compara y publica la brecha.",
+          "Auditar el lenguaje promocional contra la entrega real antes de salir con campaña."
+        ],
+        "avoid": [
+          "IA invisible en contextos donde la confianza es crítica (banking, salud, atención sensible).",
+          "Promesas amplias que no se sostienen en regiones, segmentos, cobertura o plazos.",
+          "Avatares o influencers virtuales sin avisar.",
+          "Letra chica que contradice la promesa principal."
+        ],
+        "categories_exposed": [
+          "Telcos",
+          "E-commerce y Marketplace",
+          "Delivery",
+          "Retail",
+          "Aerolíneas"
+        ],
+        "categories_opportunity": [
+          "Salud",
+          "Banking transparente",
+          "Educación",
+          "Categorías donde decir es automático puede generar confianza por contraste."
+        ]
+      },
+      "monitor_next": [
+        "publicidad engañosa",
+        "no era lo que anunciaban",
+        "digan que es IA",
+        "avisen que es automático",
+        "no es lo que prometen"
+      ]
+    },
+    {
+      "id": "responsabilidad",
+      "order": 3,
+      "commercial_name": "Lo humano se mide cuando algo sale mal",
+      "color": "#D81B60",
+      "maturity": "acelerando",
+      "maturity_note": "La conversación tiene ambos lados articulados, lo cual indica que el comportamiento esperado ya tiene nombre. Las marcas que sí responden quedan citadas; las que se lavan las manos también.",
+      "one_liner": "No es el tono lo que humaniza a una marca. Es estar dispuesta a hacerse responsable cuando hay un problema.",
+      "tension": {
+        "left": "Tono cálido sin acción",
+        "right": "Responsabilidad con resolución real"
+      },
+      "lead_quote": {
+        "text": "A mí me pasó aquí en Monterrey también olvidé mi tarjeta pero no traía mucho, compraron como mil pesos en diferentes recargas hasta que ya no paso, lo reporté al número que está en las puertas del Oxxo y si me resolvieron me devol[vieron].",
+        "platform": "facebook",
+        "attribution": "usuaria MX"
+      },
+      "cultural_reading": "En México, la humanidad de una marca se mide en el momento de fricción, no en el momento de campaña. La conversación está balanceada: hay marcas citadas como ejemplos de buena resolución (OXXO ante un fraude, Liverpool en ciertos casos) y marcas citadas como ejemplos de se lavaron las manos (Banamex en cajeros, Uber Eats en pagos, varios bancos). La diferencia no está en el tono del primer contacto. Está en lo que pasa después: ¿hay seguimiento? ¿hay reconocimiento del error? ¿hay devolución o solución real? La humanidad se opera en CX, no en marketing.",
+      "cultural_headlines": [
+        {
+          "value": "454,700",
+          "label": "menciones que evalúan responsabilidad de marca",
+          "detail": "154,800 positivas (asumió, resolvió, dio seguimiento) y 299,900 negativas (se lavó las manos, no resolvió). El reverso aparece más, pero el positivo existe."
+        },
+        {
+          "value": "2:1",
+          "label": "ratio negativo a positivo",
+          "detail": "Por cada se hicieron responsables hay aproximadamente dos no se hicieron responsables. El listón está alto: asumir es excepcional, no esperado."
+        },
+        {
+          "value": "banking + retail",
+          "label": "los terrenos del juicio",
+          "detail": "Banamex, BBVA, Liverpool, OXXO, DiDi y Uber Eats concentran las menciones. Son las marcas donde la confianza se rompe por dinero o servicio crítico."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-05",
+          "count": 14587
+        },
+        {
+          "month": "2025-06",
+          "count": 15735
+        },
+        {
+          "month": "2025-07",
+          "count": 17164
+        },
+        {
+          "month": "2025-08",
+          "count": 18912
+        },
+        {
+          "month": "2025-09",
+          "count": 25699
+        },
+        {
+          "month": "2025-10",
+          "count": 32396
+        },
+        {
+          "month": "2025-11",
+          "count": 32015
+        },
+        {
+          "month": "2025-12",
+          "count": 41283
+        },
+        {
+          "month": "2026-01",
+          "count": 36370
+        },
+        {
+          "month": "2026-02",
+          "count": 47797
+        },
+        {
+          "month": "2026-03",
+          "count": 48061
+        },
+        {
+          "month": "2026-04",
+          "count": 58292
+        },
+        {
+          "month": "2026-05",
+          "count": 66349
+        }
+      ],
+      "platform_mix": [
+        {
+          "platform": "youtube",
+          "count": 217382,
+          "pct": 47.8
+        },
+        {
+          "platform": "facebook",
+          "count": 150325,
+          "pct": 33.1
+        },
+        {
+          "platform": "x",
+          "count": 44582,
+          "pct": 9.8
+        },
+        {
+          "platform": "tiktok",
+          "count": 33528,
+          "pct": 7.4
+        },
+        {
+          "platform": "reddit",
+          "count": 3316,
+          "pct": 0.7
+        },
+        {
+          "platform": "reviews",
+          "count": 2579,
+          "pct": 0.6
+        },
+        {
+          "platform": "web",
+          "count": 1842,
+          "pct": 0.4
+        }
+      ],
+      "evidence": [
+        {
+          "text": "Con Banamex 3 veces se tragó mi dinero el cajero 3 veces que no se hicieron responsables hasta que los denuncias con confusef te devuelven el dinero el PEOR servicio de México",
+          "platform": "tiktok",
+          "date": "2026-03-01",
+          "url": "https://www.tiktok.com/@eduardo.ruvalcaba.fin/video/7611635447139159316",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no se hicieron responsables"
+        },
+        {
+          "text": "A mí me pasó aquí en Monterrey también olvide mi tarjeta pero no traía mucho, compraron como mil pesos en diferentes recargas hasta que ya no paso, lo reporte al número que está en las puertas del Oxxo y si me resolvieron me devolvieron el dinero, supongo corrieron al cajero ya no lo volví a ver y tampoco ya frecuente ese Oxxo",
+          "platform": "facebook",
+          "date": "2026-04-20",
+          "url": "https://www.facebook.com/reel/2213480382794114/",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "si me resolvieron"
+        },
+        {
+          "text": "Wey, uber es cero confiable también. Me pasó una vez que pedí comida en uber eats, el chiste que eran mil pesos en comida y el pago era en efectivo. Le pagué y todo, pero el muy maldito le puso a la app que no pague, levante el reporte, les mandé evidencias de que pues recibí la comida, obviamente que pague, si no como me la dio, el chiste que no se hicieron responsables. Mal ahí, yo aprendí de es",
+          "platform": "tiktok",
+          "date": "2026-04-28",
+          "url": "https://www.tiktok.com/@valeriarazo.mp4/video/7633652451995913493",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no se hicieron responsables"
+        },
+        {
+          "text": "@perezdiazmx @liverpoolmexico @Profeco Me pasó con unos tenis, los vi en una pagina y luego los vi en liverpool con promo asi que decidí comprarlos ahí y pasado un tiempo, me cancelaron la compra y ya no habia en la otra tienda. Tuve que acudir a Profeco y solo así me resolvieron.",
+          "platform": "x",
+          "date": "2026-04-08",
+          "url": "https://twitter.com/Miguellcastilla/statuses/2041926313775092154",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "sí me resolvieron"
+        },
+        {
+          "text": "Piensen bien antes de sacar su mesa de regalos en @liverpoolmexico . En mi caso no me dieron el regalo de apertura y, aunque pedí ayuda por DM, no me dieron seguimiento real ni solución. Mucha publicidad, pero muy mala atención postevento.",
+          "platform": "x",
+          "date": "2026-03-27",
+          "url": "https://twitter.com/Roberteerry/statuses/2037591383469445174",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no me dieron seguimiento"
+        },
+        {
+          "text": "@JonSantiago283 @HondaMexico @BBVA_Mex Estoy igual que tristeza de la marca yo estoy con SURA SEGUROS y se lavaron las manos que todo es culpa de Honda por no tener refacciones que vergüenza",
+          "platform": "x",
+          "date": "2026-03-31",
+          "url": "https://twitter.com/CesarNeri7/statuses/2039029509534454232",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "se lavaron las manos"
+        },
+        {
+          "text": "@LuisCardenasMx @Uber_MEX @SATMX @Uber_MEX exigía estar actualizado o si no no te dejaba conducir. Ahora les vale madres. Y @DiDi_Mexico nisiquiera emite comprobantes por los viajes, solo por las comisiones de lo que le corresponde. Y el @SATMX piensa que con la IA ya resolvió su problema.",
+          "platform": "x",
+          "date": "2026-02-12",
+          "url": "https://twitter.com/ImMikeWayne/statuses/2022054378950341016",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "les vale"
+        },
+        {
+          "text": "@searsmexico @marianmadridb Su respuesta genérica solo para “quedar bien” en redes y que se piense que están resolviendo, pero la realidad es que no resuelven nada, ni por whatsapp, ni por teléfono, ni en tienda. Pésimo servicio en Sears",
+          "platform": "x",
+          "date": "2026-01-17",
+          "url": "https://twitter.com/Gabrielle_hz4/statuses/2012357231325409745",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no resuelven nada"
+        },
+        {
+          "text": "Por favor Pumas MX como puedes trabajar con esta empresa que extorsiona a miles de mexicanos con su falsa publicidad y engaños, nos cobraron un paquete que nunca llegó y luego no se hicieron responsables.",
+          "platform": "facebook",
+          "date": "2026-04-29",
+          "url": "https://www.facebook.com/273207651921991/posts/971895198719896",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no se hicieron responsables"
+        },
+        {
+          "text": "@Profeco hice un pedido en @WalmartMexico llegó un whats que venia retrasado y no llegó, me comuniqué y no me dieron seguimiento, hoy aparece entregado en la app, en línea dicen que no pueden hacer nada. Siento que lo hacen para no hacer válidas las promociones, ayuda por favor",
+          "platform": "x",
+          "date": "2026-03-11",
+          "url": "https://twitter.com/MayaGmzz/statuses/2031763453325480163",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no me dieron seguimiento"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 454660,
+        "mx_evidence_estimated": 66320,
+        "sources_count": 3,
+        "framing": "evidencia revisada por densidad cultural"
+      },
+      "brand_implications": {
+        "do": [
+          "Diseñar protocolos de escalamiento donde la marca asume el costo antes de discutir la culpa.",
+          "Documentar y publicar resoluciones positivas. El cliente que sí fue resuelto suele volverse defensor.",
+          "Tratar el momento de error como inversión, no como pérdida operativa.",
+          "Medir tasa de se hicieron responsables como KPI cultural, no solo NPS."
+        ],
+        "avoid": [
+          "Respuestas tipo consulta a tu proveedor o contacta a paquetería cuando la marca es el punto de contacto del cliente.",
+          "Tono empático sin acción material. La audiencia ya distingue ambos.",
+          "Lavarse las manos en público. El screenshot circula más rápido que la disculpa.",
+          "Dejar al cliente sin seguimiento después de una primera respuesta."
+        ],
+        "categories_exposed": [
+          "Banking",
+          "E-commerce",
+          "Delivery",
+          "Telcos",
+          "Aerolíneas"
+        ],
+        "categories_opportunity": [
+          "Cualquier categoría donde el primer error puede convertirse en testimonio público de buena resolución"
+        ]
+      },
+      "monitor_next": [
+        "se hicieron responsables",
+        "no se hicieron responsables",
+        "se lavaron las manos",
+        "me dieron seguimiento",
+        "nadie da la cara"
+      ]
+    },
+    {
+      "id": "voz_genérica",
+      "order": 4,
+      "commercial_name": "Cuando la marca suena a prompt, pierde voz",
+      "color": "#D91441",
+      "maturity": "emergente",
+      "maturity_note": "Vocabulario en formación. Aparece poco como acusación explícita, pero cuando aparece está dirigida a marcas con respuestas automatizadas. La detección está activa; el lenguaje todavía no se ha estabilizado.",
+      "one_liner": "La eficiencia bien hecha empezó a sonar como ChatGPT mal hecho. El copy genérico se detecta más rápido que nunca.",
+      "tension": {
+        "left": "Producción a escala con tono uniforme",
+        "right": "Voz reconocible que sostiene la marca"
+      },
+      "lead_quote": {
+        "text": "@DiDi_Mexico levanté un reporte por cobro mayor al estimado en un viaje con Protección de Tarifa por $205. El sistema lo cerró automáticamente con respuesta genérica y necesito revisión manual.",
+        "platform": "x",
+        "attribution": "usuario MX"
+      },
+      "cultural_reading": "Respuesta genérica aparece como diagnóstico operacional, no como crítica estética. La gente no se queja de que el copy suene bonito o feo: se queja de que la respuesta no resuelve porque está construida para cualquier caso, no para el suyo. El sistema cierra el ticket con respuesta genérica y el problema sigue ahí. La audiencia conecta vocabulario uniforme con resolución ausente. Para una marca eso significa que el copy automatizado dejó de ser eficiencia y se volvió síntoma.",
+      "cultural_headlines": [
+        {
+          "value": "19,500",
+          "label": "menciones con respuesta genérica o copy paste",
+          "detail": "Volumen bajo, pero todas dirigidas a marcas concretas: DiDi, Aeroméxico, Mercado Libre. La frase circula como acusación operacional."
+        },
+        {
+          "value": "genérico = no me resolvió",
+          "label": "la equivalencia detectada",
+          "detail": "Respuesta genérica no es crítica estilística: es síntoma de que el sistema no leyó el caso."
+        },
+        {
+          "value": "X domina",
+          "label": "el canal de la queja pública",
+          "detail": "X (52%) concentra la queja con tag de marca. Permite captura de screenshot y escalamiento."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-05",
+          "count": 88
+        },
+        {
+          "month": "2025-06",
+          "count": 129
+        },
+        {
+          "month": "2025-07",
+          "count": 135
+        },
+        {
+          "month": "2025-08",
+          "count": 148
+        },
+        {
+          "month": "2025-09",
+          "count": 280
+        },
+        {
+          "month": "2025-10",
+          "count": 448
+        },
+        {
+          "month": "2025-11",
+          "count": 888
+        },
+        {
+          "month": "2025-12",
+          "count": 1435
+        },
+        {
+          "month": "2026-01",
+          "count": 2324
+        },
+        {
+          "month": "2026-02",
+          "count": 3157
+        },
+        {
+          "month": "2026-03",
+          "count": 3129
+        },
+        {
+          "month": "2026-04",
+          "count": 3027
+        },
+        {
+          "month": "2026-05",
+          "count": 4340
+        }
+      ],
+      "platform_mix": [
+        {
+          "platform": "x",
+          "count": 9580,
+          "pct": 49.1
+        },
+        {
+          "platform": "youtube",
+          "count": 4053,
+          "pct": 20.8
+        },
+        {
+          "platform": "tiktok",
+          "count": 2211,
+          "pct": 11.3
+        },
+        {
+          "platform": "facebook",
+          "count": 1842,
+          "pct": 9.4
+        },
+        {
+          "platform": "forums",
+          "count": 1105,
+          "pct": 5.7
+        },
+        {
+          "platform": "reviews",
+          "count": 737,
+          "pct": 3.8
+        }
+      ],
+      "evidence": [
+        {
+          "text": "@DiDi_Mexico levanté un reporte por cobro mayor al estimado en un viaje con Protección de Tarifa por $205. El sistema lo cerró automáticamente con respuesta genérica y necesito revisión manual, ya que el ajuste fue de $161.96 adicionales sin que yo cambiara destino ni agregara nd",
+          "platform": "x",
+          "date": "2026-02-19",
+          "url": "https://twitter.com/Cammy24098187/statuses/2024346091878072486",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "respuesta genérica"
+        },
+        {
+          "text": "@Aeromexico muy decepcionada! A una menor de 13 años viajando sola le negaron el check-in aunque llegó con el tiempo requerido, perdió su vuelo y me obligaron a comprar otro.Ya existe reclamación formal y respuesta genérica que no atiende los hechos.\nEspero pronta solución.FQRFFS",
+          "platform": "x",
+          "date": "2026-01-20",
+          "url": "https://twitter.com/pilar_aranda/statuses/2013696477227270182",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "respuesta genérica"
+        },
+        {
+          "text": "Mira si me vienes a decir que me informe mejor hazlo tu primero, la principal causa de el cambio climático en el medio ambiente es por la quema de combustibles fósiles,ya sea en forma de gasolina o en forma de plásticos, además las industrias grandes como Coca-Cola pueden llegar a ocupar el agua de presas para fábricar sus productos, si realmente quieres hacer un cambio significativo cambia tu est",
+          "platform": "tiktok",
+          "date": "2026-01-20",
+          "url": "https://www.tiktok.com/@minynaranja/video/7596124741493132551",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "copian y pegan"
+        },
+        {
+          "text": "Esteban Corona Vyte debo decir que la IA no siempre tiene la información completa.\nEs verdad que los costos operativos pueden ser altos en un local, pero si realizaste un plan de negocios y estás bien ubicado puede ser muy rentable (claro, las plazas están solas, así que el panorama no ayuda en nada)\nY es verdad que a veces buscas los productos en físico y luego los pides en línea o peor, tengo cl",
+          "platform": "facebook",
+          "date": "2026-03-08",
+          "url": "https://www.facebook.com/359752999523389/posts/1392113406287338",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "copian y pegan"
+        },
+        {
+          "text": "Se nota que es IA en el oxxo porque el escudo de la bandera de México nos es el verdadero",
+          "platform": "youtube",
+          "date": "2026-03-13",
+          "url": "https://www.youtube.com/watch?v=AROuZy9t9Yc&amp;lc=UgwSmAx87gyonxDCbCR4AaABAg",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "se nota que es ia"
+        },
+        {
+          "text": "suena falso, yo trabajo en Polanco (calle Euler) cerca de Liverpool y en las calles de los alrededores hay demasiados restaurantes que invaden las banquetas.",
+          "platform": "tiktok",
+          "date": "2026-04-07",
+          "url": "https://www.tiktok.com/@cesarmgarrido/video/7613558256950168852",
+          "mx": false,
+          "polarity": "negative",
+          "phrase": "suena falso"
+        },
+        {
+          "text": "está hablando de este vídeo, el de Pepsi usan CGI pero este se nota que es IA porque a cada rato cambia el diseño del oso",
+          "platform": "tiktok",
+          "date": "2026-02-06",
+          "url": "https://www.tiktok.com/@wesley.ferrel/video/7602361679556644117",
+          "mx": false,
+          "polarity": "negative",
+          "phrase": "se nota que es ia"
+        },
+        {
+          "text": "ya viste videos de ia? se nota que es ia, la calidad de la cámara no significa que sea de tal año, aparte, raro que haya sido clip perfecto, momento perfecto, posición perfecta no?",
+          "platform": "tiktok",
+          "date": "2026-02-26",
+          "url": "https://www.tiktok.com/@willyrubenrmo/video/7559790981109910791",
+          "mx": false,
+          "polarity": "negative",
+          "phrase": "se nota que es ia"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 19528,
+        "mx_evidence_estimated": 4053,
+        "sources_count": 4,
+        "framing": "señal emergente — vocabulario consolidándose"
+      },
+      "brand_implications": {
+        "do": [
+          "Auditar las respuestas automatizadas por tasa de respuesta cerrada sin resolución.",
+          "Mantener voz de marca diferenciada incluso en flujos automatizados.",
+          "Permitir que el copy reconozca el caso específico antes de responder con patrón.",
+          "Monitorear menciones de respuesta genérica como señal temprana de pérdida de voz."
+        ],
+        "avoid": [
+          "Plantillas de respuesta que cierran tickets automáticamente con texto idéntico.",
+          "Asumir que el cliente no detecta cuando una respuesta fue plantilla.",
+          "Copy de campaña que podría aplicar a cualquier categoría. La audiencia ya lo lee como esto lo generó IA.",
+          "Tratar la voz como decoración en lugar de como función."
+        ],
+        "categories_exposed": [
+          "CX automatizado",
+          "Delivery",
+          "Aerolíneas",
+          "Marketplace"
+        ],
+        "categories_opportunity": [
+          "Marcas que pueden defender voz distintiva como ventaja competitiva en categorías saturadas"
+        ]
+      },
+      "monitor_next": [
+        "respuesta genérica",
+        "puro copy paste",
+        "me mandan lo mismo",
+        "parece prompt",
+        "suena a ChatGPT"
+      ]
+    },
+    {
+      "id": "contexto_perdido",
+      "order": 5,
+      "commercial_name": "Velocidad sin contexto no es atención",
+      "color": "#4B1D95",
+      "maturity": "emergente",
+      "maturity_note": "Señal de baja frecuencia pero alta especificidad. Cuando aparece, la queja es clara y enfocada. El comportamiento existe; el vocabulario para nombrarlo todavía no es público.",
+      "one_liner": "Una respuesta técnicamente correcta puede sentirse deshumana si no leyó el problema.",
+      "tension": {
+        "left": "Respuesta rápida y procedimental",
+        "right": "Lectura del contexto y de la emoción"
+      },
+      "lead_quote": {
+        "text": "Santander México el gerente debió de acudir al domicilio de la persona, qué barbaridad, qué poca sensibilidad.",
+        "platform": "facebook",
+        "attribution": "usuaria MX"
+      },
+      "cultural_reading": "Es una señal más rara, pero cuando aparece, aparece clara: la marca respondió rápido, respondió completo, respondió bien según procedimiento, pero no leyó el momento. Le faltó tacto, qué poca sensibilidad, no usaron sentido común. La queja no es por lentitud ni por error técnico. Es porque la respuesta correcta no fue suficiente. Para una parte de la audiencia mexicana, la humanidad se mide por la capacidad de leer contexto antes de responder. Un terreno donde el bot pierde por estructura, pero donde una marca humana también puede fallar si su protocolo aplasta el criterio.",
+      "cultural_headlines": [
+        {
+          "value": "12,200",
+          "label": "menciones sobre falta de contexto",
+          "detail": "Volumen bajo, pero específico: la queja siempre incluye que no entendieron la situación."
+        },
+        {
+          "value": "poca sensibilidad",
+          "label": "el diagnóstico cultural",
+          "detail": "La frase aparece como acusación a la marca, no al empleado. Es crítica al protocolo, no a la persona que lo ejecutó."
+        },
+        {
+          "value": "banking + servicios",
+          "label": "los terrenos sensibles",
+          "detail": "Santander, BBVA y telcos. Ahí el momento del cliente pesa tanto como la respuesta técnica."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-05",
+          "count": 64
+        },
+        {
+          "month": "2025-06",
+          "count": 60
+        },
+        {
+          "month": "2025-07",
+          "count": 85
+        },
+        {
+          "month": "2025-08",
+          "count": 91
+        },
+        {
+          "month": "2025-09",
+          "count": 159
+        },
+        {
+          "month": "2025-10",
+          "count": 256
+        },
+        {
+          "month": "2025-11",
+          "count": 538
+        },
+        {
+          "month": "2025-12",
+          "count": 753
+        },
+        {
+          "month": "2026-01",
+          "count": 1609
+        },
+        {
+          "month": "2026-02",
+          "count": 1498
+        },
+        {
+          "month": "2026-03",
+          "count": 1753
+        },
+        {
+          "month": "2026-04",
+          "count": 2454
+        },
+        {
+          "month": "2026-05",
+          "count": 2839
+        }
+      ],
+      "platform_mix": [
+        {
+          "platform": "facebook",
+          "count": 5158,
+          "pct": 42.4
+        },
+        {
+          "platform": "x",
+          "count": 4421,
+          "pct": 36.4
+        },
+        {
+          "platform": "youtube",
+          "count": 2211,
+          "pct": 18.2
+        },
+        {
+          "platform": "tiktok",
+          "count": 368,
+          "pct": 3
+        }
+      ],
+      "evidence": [
+        {
+          "text": "@Mowgli420 Por que no leen, no analizan, no razonan, no tienen criterio y nada más andan de pinches borregos siguiendo a gente más pendeja con ellos pero con poder en vez de tomarlo, así mismo, si decides tambien hacerlo por tu cuenta, muchas veces terminas como cubeta de KFC o te desap :&apos;)",
+          "platform": "x",
+          "date": "2026-05-06",
+          "url": "https://twitter.com/AlvcardoSG/statuses/2052060517879959721",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no tienen criterio"
+        },
+        {
+          "text": "Santander México el gerente debió de acudir al domicilio del la persona,,que barbaridad que poca .....sensibilidad",
+          "platform": "facebook",
+          "date": "2026-01-29",
+          "url": "https://www.facebook.com/reel/1229009145226498/",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "que poca sensibilidad"
+        },
+        {
+          "text": "Romero Yeiler we se nota que no tienes idea de lo que estás hablando, confundes dropshipping con comprar sin criterio y eso solo demuestra que no revisas marcas no lees reseñas y no evalúas proveedores, yo compro marcas reviso ratings historial del vendedor y comentarios reales y cuando no compro en amazon us compro directo con la marca en sus propias tiendas en línea eso se llama compra informada",
+          "platform": "facebook",
+          "date": "2026-02-02",
+          "url": "https://www.facebook.com/271657788711776/posts/930829352794613",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "sin criterio"
+        },
+        {
+          "text": "No mamen gordos como invitan a un criminal de este tipo a su show? Es que no tienen criterio para escoger invitados? Parece que no aprendieron NADA con la experiencia del nefasto compa camarón que andaba en unos pedillos en Sinaloa, y ahora este vato. Y el papá de tomano estaba allí supongo que fué idea suya, neta asesorense mejor, no escuchen a cualquiera!",
+          "platform": "youtube",
+          "date": "2026-01-24",
+          "url": "https://www.youtube.com/watch?v=tQU3SKCqg1c&amp;lc=UgxWOCe5_sRg1fhVSet4AaABAg",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no tienen criterio"
+        },
+        {
+          "text": "La gente de queja, yo fui a Bogotá y probé el KFC con miel. Si está rico, pero Critican por que los demás critican, no porque lo hayan probado, no tienen criterio.",
+          "platform": "tiktok",
+          "date": "2026-02-21",
+          "url": "https://www.tiktok.com/@djgress/video/7608256234495528213",
+          "mx": false,
+          "polarity": "negative",
+          "phrase": "no tienen criterio"
+        },
+        {
+          "text": "Imagínate que haya un atentado en el interior del AICM, algún robo a mano armanda y estos pinches policías cazando chóferes de aplicación, esta cabron pero bien cabron, no tienen criterio ni sentido común.",
+          "platform": "facebook",
+          "date": "2026-03-13",
+          "url": "https://www.facebook.com/reel/944171468052201/",
+          "mx": true,
+          "polarity": "negative",
+          "phrase": "no tienen criterio"
+        },
+        {
+          "text": "Alejandro Villanueva por ESO.... PUEDEN LEER, SABEN ESCRIBIR Y SOBRE TODO LO MÁS IMPORTANTE PUEDEN RAZONAR....HASTA EN TELCEL TIENEN YA SUS DATOS CUANDO SACAN UN TELÉFONO A CREDITO.... SI SABEN QUE ES LO MISMO CON LAS LÍNEAS FIJAS DE TELMEX Y NO VEO QUE NADIE SE MOLESTE..... Y POR QUE NO ENOJAN CON TODOS LOS DATOS QUE ESTA OPLICACION RECOPILA PARA SU USO EN MARKETING Y CONSUMO, Y QUE CON GUSTO Y S",
+          "platform": "facebook",
+          "date": "2026-01-12",
+          "url": "https://www.facebook.com/1106165088286664/posts/1209261791310326",
+          "mx": false,
+          "polarity": "negative",
+          "phrase": "sin leer"
+        },
+        {
+          "text": "@MartinLitwak Pero mercado libre no te vende nada. Del otro lado de la transacción también hay un comerciante. No entendieron nada",
+          "platform": "x",
+          "date": "2026-03-18",
+          "url": "https://twitter.com/Tecladotoxico/statuses/2034405784990159184",
+          "mx": false,
+          "polarity": "negative",
+          "phrase": "no entendieron nada"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 12159,
+        "mx_evidence_estimated": 1842,
+        "sources_count": 4,
+        "framing": "señal emergente con evidencia muy específica"
+      },
+      "brand_implications": {
+        "do": [
+          "Diseñar rutas de escalamiento por momento emocional, no solo por tipo de problema.",
+          "Entrenar criterio humano para situaciones sensibles, no solo guion.",
+          "Permitir excepciones procedimentales cuando el contexto lo amerita.",
+          "Tratar leer el momento como capacidad de servicio, no como soft skill secundaria."
+        ],
+        "avoid": [
+          "Respuestas de manual a problemas emocionales o complejos.",
+          "Bots que responden con corrección técnica pero sin reconocer el momento.",
+          "Protocolos rígidos sin ruta de excepción para casos sensibles.",
+          "Asumir que velocidad de respuesta es igual a calidad de respuesta."
+        ],
+        "categories_exposed": [
+          "Banking",
+          "Salud",
+          "Seguros",
+          "Aerolíneas en cancelaciones",
+          "Funerarias y categorías sensibles"
+        ],
+        "categories_opportunity": [
+          "Cualquier categoría donde el tacto puede ser diferenciador."
+        ]
+      },
+      "monitor_next": [
+        "no entendieron mi problema",
+        "no leyeron",
+        "les faltó tacto",
+        "poca sensibilidad",
+        "no usan sentido común"
+      ]
+    },
+    {
+      "id": "craft_humano",
+      "order": 6,
+      "commercial_name": "El craft sigue siendo señal de cuidado",
+      "color": "#261447",
+      "maturity": "emergente",
+      "maturity_note": "Señal positiva con vocabulario fragmentado. Tiene personalidad, le echaron cabeza, se nota que alguien lo pensó aparecen sin un término unificador. La audiencia detecta cuidado, pero todavía no tiene un nombre estable para nombrarlo.",
+      "one_liner": "Detalle, paciencia, criterio y personalidad son cada vez más raros. Por eso valen más.",
+      "tension": {
+        "left": "Producción a escala con criterios uniformes",
+        "right": "Cuidado visible en cada momento"
+      },
+      "lead_quote": {
+        "text": "Por fin me contestó una persona que sí tenía paciencia y me explicó las cosas claro, no como con el chat que solo me daba la misma respuesta una y otra vez.",
+        "platform": "facebook",
+        "attribution": "voz consolidada de varias menciones"
+      },
+      "cultural_reading": "El craft no es estética. Es una observación sobre criterio. Cuando alguien dice se tomaron el tiempo, me explicaron bien, tiene personalidad o le echaron cabeza, está nombrando algo que se nota justamente porque ya no es lo esperado. A medida que la automatización se vuelve estándar, el craft se vuelve diferenciador. Pero el vocabulario para nombrarlo está fragmentado: no hay una frase única. La marca que cultive esto puede definir el lenguaje con el que la audiencia mexicana va a describir su experiencia.",
+      "cultural_headlines": [
+        {
+          "value": "29,100",
+          "label": "menciones positivas sobre craft",
+          "detail": "Volumen bajo, pero todas positivas. El reverso de las dimensiones negativas más grandes."
+        },
+        {
+          "value": "fragmentado",
+          "label": "vocabulario sin nombre único",
+          "detail": "Le echaron cabeza, tiene personalidad, se tomaron el tiempo, buen detalle. Múltiples formas de nombrar la misma cualidad."
+        },
+        {
+          "value": "oportunidad",
+          "label": "no riesgo",
+          "detail": "A diferencia de las otras señales, donde la marca puede perder, aquí tiene espacio para definir cómo se nombra el cuidado."
+        }
+      ],
+      "monthly_pulse": [
+        {
+          "month": "2025-05",
+          "count": 152
+        },
+        {
+          "month": "2025-06",
+          "count": 182
+        },
+        {
+          "month": "2025-07",
+          "count": 194
+        },
+        {
+          "month": "2025-08",
+          "count": 247
+        },
+        {
+          "month": "2025-09",
+          "count": 421
+        },
+        {
+          "month": "2025-10",
+          "count": 568
+        },
+        {
+          "month": "2025-11",
+          "count": 1380
+        },
+        {
+          "month": "2025-12",
+          "count": 2044
+        },
+        {
+          "month": "2026-01",
+          "count": 2645
+        },
+        {
+          "month": "2026-02",
+          "count": 4602
+        },
+        {
+          "month": "2026-03",
+          "count": 4393
+        },
+        {
+          "month": "2026-04",
+          "count": 6342
+        },
+        {
+          "month": "2026-05",
+          "count": 5937
+        }
+      ],
+      "platform_mix": [
+        {
+          "platform": "facebook",
+          "count": 11422,
+          "pct": 39.2
+        },
+        {
+          "platform": "youtube",
+          "count": 8843,
+          "pct": 30.4
+        },
+        {
+          "platform": "x",
+          "count": 4421,
+          "pct": 15.2
+        },
+        {
+          "platform": "instagram",
+          "count": 2211,
+          "pct": 7.6
+        },
+        {
+          "platform": "tiktok",
+          "count": 1474,
+          "pct": 5.1
+        },
+        {
+          "platform": "web",
+          "count": 368,
+          "pct": 1.3
+        },
+        {
+          "platform": "reviews",
+          "count": 368,
+          "pct": 1.3
+        }
+      ],
+      "evidence": [
+        {
+          "text": "Hay personas que saben contar historias y está nada más no. Ni para el chisme tiene personalidad me dio una flooooojera sea vdd o no! Tuve que poner velocidad al video! Hay una influencer que cuenta historias igual una “México americana” una flojeraaaa!",
+          "platform": "youtube",
+          "date": "2026-04-20",
+          "url": "https://www.youtube.com/watch?v=kgSptVyOuhs&amp;lc=UgwXwBB2L8GE53_-F4d4AaABAg",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "tiene personalidad"
+        },
+        {
+          "text": "Yo solo quiero decir una cosita chiquita chiquita, funenme si quieren, no es por mamar, me gusta el cast en general creo que siguieron la linea original de elegir a actores y actrices que no tienen bellezas hegemonicas y eso y que se desarrolle en Aguascalientes le da un toque de realidad muy apreciable dentro del hecho de que obviamente es ficción, obviamente se trata de reflejar algunos pequeños",
+          "platform": "facebook",
+          "date": "2026-04-02",
+          "url": "https://www.facebook.com/reel/26554000410904141/",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "tiene personalidad"
+        },
+        {
+          "text": "​​@Álvarouniversal5216 Quieres que yo diga las cosas malas de RE7? Ok\n\nPero antes de empezar, que yo critique los errores de diseño de Resident Evil 6 no me hace fanático de la séptima entrega.\n\nAhora con RE7, tiene fallos graves que cualquier jugador con criterio reconoce. Por ejemplo, el tramo final en el barco es tedioso, rompe totalmente el ritmo del juego y se siente como un relleno de acción",
+          "platform": "youtube",
+          "date": "2026-02-17",
+          "url": "https://www.youtube.com/watch?v=k9rgeKD-wls&amp;lc=UgzxZV8Jbnz-sii9LWR4AaABAg.ATIaNtXgxsbATJF248to1S",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "tiene personalidad"
+        },
+        {
+          "text": "Humor?... Hermano de que hablas!! Nosotros no vemos cómo una broma ni con sentido del humor el personaje del Grande Americano. Va más allá de lo irónico y lo humorístico,\n\nSi lo aceptamos es porqué el hombre se tomó el tiempo para aprender español, modismos mexicanos, historia de la lucha libre y de nuestro país, asimismo es humilde con sus fans y personas en general .. claro que disfrutamos su pe",
+          "platform": "youtube",
+          "date": "2026-03-15",
+          "url": "https://www.youtube.com/watch?v=c1EPKI4lh4U&amp;lc=UgwgReiVl_iVK590yiR4AaABAg.AUMVFjLm5l9AUMvsL8Mr4h",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "se tomó el tiempo"
+        },
+        {
+          "text": "Los que dicen que coca- cola uso IA les pregunto, acaso el oso que uso Pepsi es real y se tomó el tiempo de decidir entre coca y Pepsi?",
+          "platform": "tiktok",
+          "date": "2026-02-05",
+          "url": "https://www.tiktok.com/@videosviralesdelmund0/video/7601247061173980437",
+          "mx": false,
+          "polarity": "positive",
+          "phrase": "se tomó el tiempo"
+        },
+        {
+          "text": "Zara no se robo los memes, y menos se tomo el tiempo de usar IA, no creo q sea copia de concepto, pero ps X",
+          "platform": "tiktok",
+          "date": "2026-02-05",
+          "url": "https://www.tiktok.com/@te.verde.una.delicia/video/7603122812936555797",
+          "mx": false,
+          "polarity": "positive",
+          "phrase": "se tomo el tiempo"
+        },
+        {
+          "text": "Yo creo que finalmente después de usar a las 3 mejores las he llegado a una conclusión y cabe aclarar fue una conclusión de 1 año, menos grok, ella fueron como 4 meses.\nLa conclusión es que\nGéminis: buena IA, suele tener fallos con las indicaciones pero es muy buena para debates no te dará información falsa y si tú le das información falsa te lo dejo ver, es buena para crear fotos pero es limitado",
+          "platform": "youtube",
+          "date": "2026-03-05",
+          "url": "https://www.youtube.com/watch?v=3OVjmvBMj6o&amp;lc=UgxNZtWuzWLVwVcwKxJ4AaABAg",
+          "mx": true,
+          "polarity": "positive",
+          "phrase": "tiene personalidad"
+        },
+        {
+          "text": "Cuanto más contenido consumimos, menos cosas nos hacen sentir algo.\nTodo compite por atención. Todo está optimizado. Todo intenta parecer perfecto.\n\nY aun así… lo que sigue parándonos no es lo más producido.\nEs lo que se siente humano.\nUna mirada real. Una historia sincera. Una marca con alma.\n\nY tu? ¿Eres más de Marketing agresivo o Ético?\n\n#MarketingHumano #MarketingEtico #BrandStrategy #Consume",
+          "platform": "instagram",
+          "date": "2026-05-10",
+          "url": "https://www.instagram.com/reel/DYJ5k33s13i/",
+          "mx": false,
+          "polarity": "positive",
+          "phrase": "se siente humano"
+        }
+      ],
+      "volume_indicator": {
+        "records_analyzed": 29107,
+        "mx_evidence_estimated": 2211,
+        "sources_count": 3,
+        "framing": "señal positiva emergente con vocabulario en formación"
+      },
+      "brand_implications": {
+        "do": [
+          "Cultivar señales explícitas de criterio: copy que reconoce el caso específico, atención que se toma el tiempo.",
+          "Documentar y amplificar los momentos donde el craft fue visible.",
+          "Definir el vocabulario propio para describir lo que la marca hace distinto.",
+          "Tratar el detalle como inversión estratégica, no como gasto evitable."
+        ],
+        "avoid": [
+          "Optimizar todo al promedio. Justamente eso es lo que la audiencia lee como falta de criterio.",
+          "Comunicar humanidad sin demostrarla en interacciones reales.",
+          "Asumir que la audiencia no detecta la diferencia entre plantilla y respuesta pensada.",
+          "Reducir el craft a packaging o estética. La conversación lo asocia con criterio operativo, no con apariencia."
+        ],
+        "categories_exposed": [
+          "Marcas masivas que dependen de uniformidad operativa"
+        ],
+        "categories_opportunity": [
+          "Marcas premium y de servicio profesional",
+          "Categorías donde el criterio puede convertirse en ventaja diferencial",
+          "Servicios donde la experiencia depende del cuidado"
+        ]
+      },
+      "monitor_next": [
+        "tiene personalidad",
+        "le echaron cabeza",
+        "se tomaron el tiempo",
+        "me explicaron bien",
+        "qué buen detalle"
+      ]
+    }
+  ],
+  "brand_action_map": [
+    {
+      "pillar": "Acceso a humano",
+      "do": "Hacer visible la ruta a humano desde el primer punto de contacto.",
+      "avoid": "Esconder el escalamiento detrás de menús automáticos.",
+      "signals_relevant": [
+        "humano_demandado"
+      ]
+    },
+    {
+      "pillar": "Voz y copy",
+      "do": "Mantener voz distintiva incluso en flujos automatizados.",
+      "avoid": "Plantillas de respuesta uniformes que cierran el ticket sin resolver.",
+      "signals_relevant": [
+        "voz_genérica",
+        "craft_humano"
+      ]
+    },
+    {
+      "pillar": "IA y transparencia",
+      "do": "Avisar cuando una respuesta o un contenido fue generado por IA.",
+      "avoid": "Simulación cálida sin avisar.",
+      "signals_relevant": [
+        "transparencia_IA"
+      ]
+    },
+    {
+      "pillar": "Servicio y criterio",
+      "do": "Permitir excepciones cuando el momento del cliente lo amerita.",
+      "avoid": "Respuesta correcta pero sin tacto en momentos sensibles.",
+      "signals_relevant": [
+        "contexto_perdido"
+      ]
+    },
+    {
+      "pillar": "Resolución y responsabilidad",
+      "do": "Asumir el costo antes de discutir la culpa.",
+      "avoid": "Lavarse las manos en público. El screenshot circula más rápido.",
+      "signals_relevant": [
+        "responsabilidad"
+      ]
+    }
+  ],
+  "methodology": {
+    "opening_statement": "Escuchamos doce meses de conversación digital pública alrededor de 80+ marcas mexicanas. No buscamos representar a México: buscamos detectar cuándo una marca se siente humana y cuándo deja de sentirse así para la gente.",
+    "principles": [
+      "No escuchamos conversación abierta sobre IA o humanidad: esos términos generan ruido masivo (política, fandoms, educación, noticias).",
+      "Cruzamos marcas mexicanas con frases que detectan pérdida o construcción de humanidad.",
+      "Las señales se eligen por lo que dicen sobre la marca, no por cuánto suben.",
+      "Cada señal trae su nivel de madurez: emergente, acelerando o ya instalada."
+    ],
+    "corpus": {
+      "sources_used": [
+        "Conversación pública en redes y comunidades abiertas en español",
+        "Frases de fricción cruzadas con marcas mexicanas concretas"
+      ],
+      "platforms": [
+        "X (Twitter)",
+        "Facebook",
+        "TikTok",
+        "YouTube",
+        "Reddit",
+        "Instagram",
+        "Reviews"
+      ],
+      "period": "Mayo 2025 a mayo 2026",
+      "language_focus": "Español, con foco en conversación mexicana",
+      "volume_scope": "Procesamos +1.7 millones de menciones en español alrededor de 80+ marcas mexicanas. Los conteos por señal salen de ese universo.",
+      "brand_seeds": [
+        "Banking & Fintech",
+        "Telcos",
+        "Retail & E-commerce",
+        "Delivery & QSR",
+        "Aerolíneas",
+        "CPG"
+      ]
+    },
+    "lenses_applied": [
+      "Voice & Tone Decoding",
+      "Service Friction Mapping",
+      "Transparency Signal Analysis",
+      "Responsibility Pattern Detection",
+      "Craft Vocabulary Tracking"
+    ],
+    "limitations": [
+      "No representamos a México entero: leemos su conversación digital pública.",
+      "No medimos intención de compra ni comportamiento real.",
+      "No predecimos el futuro: identificamos tensiones que ya están pasando.",
+      "No es un análisis de customer service. Es un análisis de percepción de marca cuando opera en entorno automatizado."
+    ],
+    "maturity_framework": {
+      "emergente": "La tensión ya existe pero la gente apenas le está poniendo palabras. Una marca puede ayudar a articularla.",
+      "acelerando": "El vocabulario ya está armado y la frecuencia crece. Las marcas que respondan ahora entran a la conversación; las que tarden, reaccionan.",
+      "mainstreaming": "Ya atraviesa plataformas y voces. Las marcas que no la entienden ya están sonando viejas."
+    }
+  },
+  "report_structure": [
+    {
+      "section": "01",
+      "name": "Cover",
+      "content": "Future is Human — 6 señales que separan una marca eficiente de una marca deshumanizada."
+    },
+    {
+      "section": "02",
+      "name": "Opening",
+      "content": "¿Qué hace que una marca se sienta humana cuando todo puede ser automatizado? No es la IA. Es el criterio."
+    },
+    {
+      "section": "03",
+      "name": "What we looked for",
+      "content": "Seeded listening sobre 80+ marcas mexicanas. No buscamos \"IA\" en abstracto — buscamos cómo la audiencia detecta cuándo la marca dejó de pensar."
+    },
+    {
+      "section": "04",
+      "name": "Signal Radar",
+      "content": "Las 6 señales organizadas por madurez y por momento de pérdida de humanidad."
+    },
+    {
+      "section": "05–10",
+      "name": "Signal cards (6)",
+      "content": "Una sección por señal con tensión, cita protagonista, lectura cultural, evidencia, implicaciones."
+    },
+    {
+      "section": "11",
+      "name": "What this means for brands",
+      "content": "5 pilares estratégicos cross-signal."
+    },
+    {
+      "section": "12",
+      "name": "How Noisia reads signals",
+      "content": "Metodología seeded listening."
+    },
+    {
+      "section": "13",
+      "name": "CTA",
+      "content": "¿En qué momento tu marca deja de sentirse humana?"
+    }
+  ]
+}

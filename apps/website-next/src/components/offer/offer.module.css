@@ -1,0 +1,525 @@
+/* Solutions page. One idea per section, lots of air, animation first. */
+.page {
+  max-width: var(--max-wide);
+  margin: 0 auto;
+  padding: var(--space-7) var(--gutter) var(--space-9);
+  display: flex;
+  flex-direction: column;
+  gap: 120px;
+}
+
+/* ---------- hero ---------- */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-4);
+  max-width: 900px;
+  margin: 0 auto;
+  padding-top: var(--space-5);
+}
+
+.h1 {
+  font-size: clamp(2.5rem, 1.6rem + 4.4vw, 5rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+  text-wrap: balance;
+}
+
+.lead {
+  font-size: var(--text-lg);
+  color: var(--fg-muted);
+  max-width: 54ch;
+  text-wrap: pretty;
+}
+
+.jump {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.jump a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--ink);
+  background: var(--canvas);
+  transition: border-color var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
+}
+
+.jump a:hover {
+  border-color: var(--teal);
+  background: var(--teal-soft);
+}
+
+.jump svg {
+  width: 18px;
+  height: 18px;
+  color: var(--teal-text);
+}
+
+/* ---------- products ---------- */
+.product {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-7);
+  scroll-margin-top: 72px;
+}
+
+.productHead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-3);
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.productName {
+  font-size: clamp(2.4rem, 1.5rem + 4vw, 4.5rem);
+  line-height: 1.02;
+  letter-spacing: -0.02em;
+  font-weight: 500;
+}
+
+.promise {
+  font-size: clamp(1.35rem, 1.1rem + 1.1vw, 2rem);
+  line-height: 1.2;
+  font-weight: 500;
+  color: var(--teal-text);
+  text-wrap: balance;
+}
+
+.productText {
+  margin-top: var(--space-2);
+  font-size: var(--text-md);
+  line-height: var(--leading-body);
+  color: var(--fg-muted);
+  max-width: 52ch;
+  text-wrap: pretty;
+}
+
+.productStage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1080 / 1300;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background:
+    radial-gradient(70% 55% at 85% 0%, rgba(0, 238, 238, 0.12), transparent 70%),
+    radial-gradient(60% 50% at 0% 100%, rgba(0, 138, 138, 0.07), transparent 70%),
+    var(--surface-1);
+}
+
+.productCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- shared section heads ---------- */
+.sectionHead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-3);
+  max-width: 760px;
+  margin: 0 auto var(--space-7);
+}
+
+.h2 {
+  font-size: var(--text-2xl);
+  line-height: var(--leading-tight);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.sectionLead {
+  font-size: var(--text-lg);
+  color: var(--fg-muted);
+  text-wrap: pretty;
+}
+
+/* ---------- formats ---------- */
+.showcase {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-5);
+}
+
+.showcaseControl {
+  display: flex;
+  justify-content: center;
+}
+
+.rail {
+  display: none;
+}
+
+.showcaseStage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background:
+    radial-gradient(80% 60% at 50% 0%, rgba(0, 238, 238, 0.12), transparent 70%),
+    var(--surface-1);
+  container-type: size;
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  animation: layer-in 620ms var(--ease-out) both;
+}
+
+@keyframes layer-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+}
+
+.showcaseCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+.showcasePanels {
+  display: grid;
+  max-width: 560px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.showcasePanel {
+  grid-area: 1 / 1;
+  color: var(--fg-muted);
+  font-size: var(--text-md);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 420ms var(--ease-out), transform 420ms var(--ease-out);
+  pointer-events: none;
+}
+
+.showcasePanel[data-active="true"] {
+  opacity: 1;
+  transform: none;
+  transition-delay: 120ms;
+  pointer-events: auto;
+}
+
+/* ---------- the phone ---------- */
+.phoneSlot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+/* Sized by the stage height: 9 : 19.5, like a current phone. */
+.phone {
+  position: relative;
+  height: 90cqh;
+  aspect-ratio: 9 / 19.5;
+  container-type: inline-size;
+  border-radius: 15.5cqw;
+  padding: 3.4cqw;
+  background: linear-gradient(145deg, #3a3f44, #16191c 40%, #2a2e32);
+  box-shadow:
+    inset 0 0 0 0.6cqw #4b5157,
+    0 2px 4px rgba(10, 10, 10, 0.12),
+    0 30px 70px rgba(10, 10, 10, 0.22);
+}
+
+/* side buttons */
+.phone::before,
+.phone::after {
+  content: "";
+  position: absolute;
+  width: 1.4cqw;
+  border-radius: 1cqw;
+  background: #2a2e32;
+}
+
+.phone::before {
+  left: -1.1cqw;
+  top: 26%;
+  height: 16%;
+  box-shadow: 0 -12cqw 0 #2a2e32;
+}
+
+.phone::after {
+  right: -1.1cqw;
+  top: 30%;
+  height: 22%;
+}
+
+.screen {
+  position: relative;
+  height: 100%;
+  border-radius: 12.4cqw;
+  overflow: hidden;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
+}
+
+.status {
+  position: relative;
+  flex: none;
+  height: 13.5cqw;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1.6cqw 7.5cqw 0;
+  font-size: 4.6cqw;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.island {
+  position: absolute;
+  left: 50%;
+  top: 2.8cqw;
+  width: 30cqw;
+  height: 8.6cqw;
+  border-radius: 6cqw;
+  background: #0a0a0a;
+  transform: translateX(-50%);
+}
+
+.statusIcons {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.4cqw;
+}
+
+.statusIcons svg {
+  width: auto;
+  height: 3.6cqw;
+}
+
+.storyArea {
+  position: relative;
+  flex: none;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+}
+
+.phoneStage {
+  position: absolute;
+  inset: 0;
+}
+
+.reply {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 3cqw;
+  padding: 0 5cqw 3cqw;
+  background: #f1f9f9;
+}
+
+.replyField {
+  flex: 1;
+  height: 11cqw;
+  display: flex;
+  align-items: center;
+  padding: 0 5cqw;
+  border-radius: 6cqw;
+  border: 0.5cqw solid rgba(10, 10, 10, 0.14);
+  background: #fff;
+  font-size: 4.2cqw;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.replySend {
+  flex: none;
+  width: 11cqw;
+  height: 11cqw;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--teal);
+  color: #fff;
+}
+
+.replySend svg {
+  width: 5.4cqw;
+  height: 5.4cqw;
+}
+
+/* ---------- situations, start, faq ---------- */
+.situations {
+  display: flex;
+  flex-direction: column;
+}
+
+.start {
+  max-width: 100%;
+}
+
+.faq {
+  display: grid;
+  gap: var(--space-6);
+}
+
+@media (min-width: 768px) {
+  .page {
+    gap: 160px;
+  }
+}
+
+@media (min-width: 960px) {
+  .page {
+    padding-top: var(--space-8);
+    gap: 200px;
+  }
+
+  .productHead {
+    gap: var(--space-4);
+  }
+
+  .productStage {
+    aspect-ratio: 1920 / 1000;
+    border-radius: 32px;
+  }
+
+  /* Formats become a list of formats beside a large stage. */
+  .showcase {
+    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-7);
+  }
+
+  .showcaseControl,
+  .showcasePanels {
+    display: none;
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .showcaseStage {
+    aspect-ratio: 6 / 5;
+    border-radius: 32px;
+  }
+
+  .railItem {
+    display: flex;
+    gap: var(--space-4);
+    align-items: flex-start;
+    width: 100%;
+    padding: var(--space-4) var(--space-5);
+    border: 0;
+    border-radius: 20px;
+    background: transparent;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    transition: background var(--dur-base) var(--ease-out);
+  }
+
+  .railItem:hover {
+    background: var(--surface-1);
+  }
+
+  .railItem[data-active="true"] {
+    background: var(--surface-1);
+  }
+
+  .railIcon {
+    flex: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
+    display: grid;
+    place-items: center;
+    background: var(--surface-2);
+    color: var(--fg-muted);
+    transition: background var(--dur-base) var(--ease-out), color var(--dur-base) var(--ease-out);
+  }
+
+  .railItem[data-active="true"] .railIcon {
+    background: var(--teal-soft);
+    color: var(--teal-text);
+  }
+
+  .railIcon svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .railBody {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding-top: 10px;
+  }
+
+  .railName {
+    font-size: var(--text-lg);
+    font-weight: 500;
+    line-height: 1.2;
+    color: var(--fg-muted);
+    transition: color var(--dur-base) var(--ease-out);
+  }
+
+  .railItem[data-active="true"] .railName {
+    color: var(--ink);
+  }
+
+  /* The active format opens to show its description. */
+  .railText {
+    display: grid;
+    grid-template-rows: 0fr;
+    opacity: 0;
+    transition: grid-template-rows 460ms var(--ease-out), opacity 360ms var(--ease-out);
+  }
+
+  .railText > span {
+    overflow: hidden;
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    color: var(--fg-muted);
+  }
+
+  .railItem[data-active="true"] .railText {
+    grid-template-rows: 1fr;
+    opacity: 1;
+    margin-top: var(--space-2);
+  }
+
+  .faq {
+    grid-template-columns: minmax(240px, 1fr) 2fr;
+    gap: var(--space-8);
+    align-items: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .layer {
+    animation: none;
+  }
+}
