@@ -156,6 +156,10 @@ research channel, the complaint channel, and the foreign-planner channel. See th
   methodologies: a cultural layer at 62% and an effort category at 81%, both caused by rules that
   were broader than their neighbours. This is the same check as the single-label guard in
   `DATA.md` §15, arriving from the other direction. The "where to act" kanban falls straight out of this.
+- **A topics layer beside the two axes, in a paid study.** T&B says why and where a motive lives;
+  topics say what people talk about. Without them there is no "topics by channel" and no good "in
+  real life" slide. Topics are coded by two agents like the axes, and never added to them. The
+  approved version of one paid study needed this layer to turn the T&B into a drill-down.
 - **Verbatims are real, linked, and sourced** (platform mark + date + link to the post). Never
   invent one. Imperfections stay — they're information.
 

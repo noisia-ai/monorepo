@@ -198,25 +198,57 @@ What it costs to miss this: a paid study built on that skeleton without its dens
 team could use. Before writing the builder of a paid study, open **all** the reference decks, not
 one.
 
-### The finding block: what every finding of a paid study carries
+### What a paid study carries: the floor, not the ceiling
 
-Each finding, each brand drill-down and each question gets the same four layers, in this order,
-across one or two slides:
+A freebie has a ceiling; a paid study has a floor. The one that came back "super thin" had a
+solid method underneath (gates, a pilot with kappa above 0.9, title asserts); what it lacked was the
+surface: every finding was a claim with one bar, with no time, no channel, no image and no
+consequence for whoever buys media. Its approved version added, in this order:
 
-1. **The number:** how many mentions, a time series over the period, and the cut by channel.
-2. **What it is made of:** its subthemes or topics, with their share.
-3. **In real life:** the posts, videos or ads themselves, as images (gallery tiles, TikTok
-   thumbnails, ad creatives), so the reader sees what kind of content it is. Not playable, visible.
-4. **In their words:** literal quotes, with network, date and link.
+1. **"The answers" on slide 3**, before anything else: one row per question, an icon, the answer
+   in one line and its figure. It is the slide the client forwards; whoever reads one slide reads
+   that one. Then an index by chapter with page numbers computed at build time.
+2. **The panorama**, before or next to the frame: the funnel (collected, unique, analysed), channel
+   share and channel by month, the topics with their curve and topic by channel, and the layers by
+   channel and by month with one real mention per layer. The T&B frame uses `slides/tb-layers-evidence`
+   whenever there are verbatims, and in a paid study there always are.
+3. **Each finding as a block of three slides:**
+   - **in data:** how many mentions, the monthly peak, its subtypes, the channel;
+   - **in real life:** the videos with their capture and reach, the ads with a caption, so the
+     reader sees what kind of content it is (visible, not playable);
+   - **in their words:** four to six quotes in an even grid. Three wide quotes with little text look
+     broken; a 2 × 3 grid does not.
+4. **Every brand comparison over time:** monthly lines on top and share below, for search and for
+   conversation separately, the client in the accent and the rest in grey (`CHARTS.md` §11), a
+   logo on every brand.
+5. **Every brief question answered with a chart, a quote and its "for media" line.** With more than
+   three questions, skip the sub-covers: the question goes as the slide's eyebrow ("Question 2 ·
+   does seeing the result convince more than the spec sheet?") and the title is its answer; the
+   chapter shows in the index. If the conversation cannot answer it, the slide says so and sends it
+   to the questions to validate.
+6. **The "for media" block and the questions to validate** (below), and where to act.
 
-Every brand named carries its logo. A slide that says "when it fails" and shows no count, no
-channel and no example was the most common note of the review.
+If the client's own base is small, its brand funnel goes in the deck before anyone asks, every step
+visible: with the name written, language, country, people, voice, relevant. "Were there really only
+26 comments?" was asked of a deck that did not show it.
 
-The T&B slides carry their evidence too:
-- **the layers slide** shows one real mention per layer, next to the ring diagram, and says in which
-  channel each layer lives and when it peaks;
-- **the category conversation slide** is the drill-down of the corpus: mentions collected, by
-  channel, over time, and the topics by channel. It holds more than it looks like it can.
+**Every image says what it is in a caption**: advertiser or poster, platform, date and what it
+shows. "I don't understand the context at all" was said of a slide of ads with no caption. If it
+cannot be said in one line, the image does not go.
+
+**Before writing the builder, a density table against the reference.** For each slide of each paid
+reference deck, note what it carries: time series, channel cut, images, logos, quotes, implication.
+The first cut is checked against that table, not against the sequence of chapters. Reading one
+reference and taking its skeleton without its density is how the thin cut happened.
+
+**The visual review measures fill, not only overflow.** A card more than a quarter empty asks for a
+chart or more evidence. `qa-render.py` does not catch it, so each slide is looked at, at 1280px and
+on the contact sheet.
+
+**Titles are audited against the chart under them, not only against their number.** Three titles
+of the approved version passed their assert and still said more than the slide showed: one named a
+price theme the slide did not show, one called a brand the most repeated answer when another had
+24 of 63.
 
 ### Search, paid media and the "for media" block
 
@@ -242,7 +274,7 @@ Before choosing a single slide, the agent writes in the chat, and waits for a ye
 The deck is then built from those sentences: the first one opens right after the frame, each one
 gets its proof and its anatomy, and the canonical sequence orders whatever is left. The three
 sentences decide the order and what leads; they do not shrink a paid study. Each one still gets its
-finding block. Two cases set
+three-slide block (see "What a paid study carries"). Two cases set
 this rule side by side. A study that filled the sequence slot by slot, on a thin base, came out
 correct in every rule and flat: its strongest finding sat on slide 11. A proposal built on the
 client's own metric and its own org chart, one block per business unit, with its competitors and
@@ -458,9 +490,10 @@ to thumbnails and to ad creatives alike:
   backgrounds at 480×270 (`builders/gen-backgrounds.py`); every other asset at canvas size.
 
 **Get TikTok thumbnails at the start of the case, not at the end.** With 20 to 45 seconds between
-calls, TikTok's oEmbed still answered 429 almost every time late in a case, from curl and from the
-browser, and the video page exposes nothing without a session. Plan B is a text tile with the
-poster's literal text and the reach the export carries.
+calls, TikTok's oEmbed still answered 429 almost every time late in a case. The plan B that worked:
+a capture of the video's public page in the browser, cropped to the player area (323 × 576, JPEG 82),
+with the reach taken from the export. It passes both gates without oEmbed. The last resort is a text
+tile with the poster's literal text.
 
 **Brand logos at the same optical size, not the same height.** At equal height a wide logo looks
 bigger than a thin one and a list stops reading as a list. Trim each logo to its ink on a

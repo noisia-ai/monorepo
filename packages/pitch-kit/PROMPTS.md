@@ -47,7 +47,9 @@ SI LO QUE VOY A PEDIR ES UNA PRESENTACIÓN INTERNA para el equipo, un status, c�
 estado del producto, detente aquí: no es un entregable de cliente y este cuestionario no aplica.
 Lee packages/pitch-kit/INTERNAL.md y sigue el prompt de decks internos de PROMPTS.md.
 
-PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna:
+PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna. Lo que se puede contestar investigando
+(contra qué se compara, qué tiene ya armado el cliente, el portafolio) no me lo preguntes en
+blanco: investiga y propónme la respuesta para que solo la confirme.
 1. ¿Reporte, estudio, o los dos? Si es estudio, ¿es pagado o freebie? Cambia el tamaño y la
    densidad (LAYOUTS.md, "Paid or freebie").
 2. ¿En qué idiomas? Si son dos, se construyen juntos desde una sola fuente de contenido.
@@ -78,6 +80,9 @@ advisor para cerrar el alcance
   → desk research con fuente por afirmación: portafolio y precios, homónimos, vocabulario local,
     bibliotecas de anuncios, calendario (DATA.md §2). Si es pagado, también el plan de search y
     pauta (METHODOLOGY.md §4.7)
+  → UNA sola aprobación del plan completo (queries, exportaciones, capas, construcción), con la
+    lista de todas las descargas que vas a necesitar (fuentes, dominios, tamaños) para que las
+    apruebe de una vez y no una por una a media sesión
   → queries generadas con script y validadas con builders/check-queries.py, listas para pegar
   → ETL en streaming, nunca licuadora
   → los gates de DATA.md antes de cualquier conclusión, y me dices cuáles fallan
@@ -85,9 +90,11 @@ advisor para cerrar el alcance
     demás lotes. Codebook sin capa por defecto: evidencia literal y "unclear" permitido
   → codificación en dos ejes, con su cobertura y su guard de sesgo
   → mapa de hallazgos con verbatims reales ligados
-  → LAS TRES FRASES, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
+  → LAS TRES FRASES, escritas completas en el chat, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
     junta, cada una con su cifra; la prueba de lo obvio para cada una (¿la pudo escribir antes
     del estudio?); y lo que esta base no da. Ver LAYOUTS.md, "Before the sequence"
+  → si es pagado, la tabla de densidad: qué lleva cada slide de cada deck pagado de referencia
+    (serie, canal, imágenes, logos, citas, implicación), y el primer corte se mide contra ella
   → slides sobre el engine, con los fragmentos de slides/ y un fondo propio por slide
     con builders/gen-backgrounds.py. Si falta Pillow, instálalo; no portes los builders
   → render slide por slide con builders/qa-render.py, y los miras
@@ -125,7 +132,7 @@ NO NEGOCIABLES:
 - En un estudio pagado, cada hallazgo lleva su bloque completo: la cifra (cuántas, serie en el
   tiempo, canal), de qué está hecho, cómo se ve en la vida real (imágenes de posts, videos o
   anuncios) y en sus palabras (citas). Cada marca nombrada lleva su logo. Y cierra con el bloque
-  "para pauta". Un pagado escueto se rechazó entero. LAYOUTS.md, "The finding block".
+  "para pauta". Un pagado escueto se rechazó entero. LAYOUTS.md, "What a paid study carries".
 - La marca cliente va en el acento y las demás en gris; el rojo es solo freno o alerta. CHARTS.md §11.
 - Cada título con un cuantificador ("ninguna", "la mitad", "casi nunca") lleva su assert en el build.
 - La respuesta cabe en una frase que el cliente pueda repetir. Las salvedades van una vez, en la
