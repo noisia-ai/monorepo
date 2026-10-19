@@ -1,9 +1,11 @@
-/* ---------- the dialog fills the viewport; backdrop and panel animate inside it ---------- */
+/* ---------- the dialog covers the viewport; backdrop and panel are fixed to the screen ----------
+   Not height: 100%: iOS Safari measures that with its toolbar expanded, so with the toolbar
+   collapsed the box (and a sheet anchored to its bottom) would stop above the screen's edge. */
 .dialog {
   position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  width: auto;
+  height: auto;
   max-width: none;
   max-height: none;
   margin: 0;
@@ -18,9 +20,11 @@
   background: transparent;
 }
 
+/* Reaches past the screen's edges so a toolbar animation never uncovers the page. */
 .backdrop {
-  position: absolute;
-  inset: 0;
+  position: fixed;
+  inset: -120px 0;
+  touch-action: none;
   background: rgba(10, 10, 10, 0.32);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
@@ -34,11 +38,12 @@
 
 /* Phones: a sheet that rises from the bottom edge. */
 .panel {
-  position: absolute;
+  position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
   max-height: min(88vh, 720px);
+  max-height: min(88dvh, 720px);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--canvas);
@@ -184,6 +189,7 @@
     bottom: auto;
     width: min(540px, calc(100vw - 64px));
     max-height: min(86vh, 760px);
+    max-height: min(86dvh, 760px);
     border-radius: 28px;
     padding-bottom: var(--space-7);
     box-shadow: 0 30px 80px rgba(10, 10, 10, 0.18);

@@ -59,9 +59,7 @@ export function FormatShowcase({ items, mock, story, label, reply }: { items: It
         <div key={`${current}-${wide}`} className={styles.layer}>
           {current === "stories" ? (
             story ? (
-              <div className={styles.phoneSlot}>
-                <PhoneStory story={story} playing={playing} reduced={reduced} reply={reply} />
-              </div>
+              <PhoneStory story={story} playing={playing} reduced={reduced} reply={reply} />
             ) : null
           ) : (
             <Stage durationInFrames={FORMAT_FRAMES} width={canvas.width} height={canvas.height} playing={playing} frame={reduced ? 220 : 0} label={items[active]!.name} className={styles.showcaseCanvas}>
