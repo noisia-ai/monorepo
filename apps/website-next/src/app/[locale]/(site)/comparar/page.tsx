@@ -1,32 +1,88 @@
+import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { setRequestLocale } from "next-intl/server";
-import { ContentPage } from "@/components/blocks/Blocks";
-import { compareIndex, compareEntries } from "@/content/pages/compare";
-import { pick } from "@/content/pages/registry";
-import { pageMetadata } from "@/lib/page-meta";
-
-const paths = { es: "/comparar", en: "/compare" };
+import { Logo } from "@/components/brand/Logo";
+import { Faq } from "@/components/ui/Faq";
+import { LearnCta, LearnHero, SectionHead } from "@/components/learn/Learn";
+import { COMPARE_ICONS } from "@/components/learn/icons";
+import { compareEntries, compareUi } from "@/content/pages/compare";
+import { Link } from "@/i18n/navigation";
+import styles from "@/components/learn/learn.module.css";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
-  return pageMetadata(pick(compareIndex, locale), locale, paths);
+  const c = compareUi[locale === "en" ? "en" : "es"];
+  return {
+    title: c.metaTitle,
+    description: c.metaDescription,
+    alternates: { canonical: locale === "en" ? "/en/compare" : "/comparar", languages: { es: "/comparar", en: "/en/compare" } },
+    openGraph: { title: c.metaTitle, description: c.metaDescription }
+  };
 }
 
-export default async function Page({ params }: { params: Promise<{ locale: string }> }) {
+export default async function ComparePage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   setRequestLocale(locale);
-  const page = pick(compareIndex, locale);
   const lang = locale === "en" ? "en" : "es";
-  const prefix = locale === "en" ? "/en" + paths.en : paths.es;
+  const c = compareUi[lang];
+  const Us = COMPARE_ICONS.us;
+
   return (
-    <ContentPage
-      page={{
-        ...page,
-        blocks: [
-          { type: "links", items: compareEntries.map((entry) => ({ label: entry.page[lang].metaTitle, text: entry.summary[lang], href: `${prefix}/${entry.slug[lang]}` })) },
-          ...page.blocks
-        ]
-      }}
-    />
+    <div className={styles.page}>
+      <div className={styles.intro}>
+        <LearnHero title={c.title} lead={c.lead} />
+        <ul className={styles.tiles}>
+          {compareEntries.map((entry, i) => {
+            const Icon = COMPARE_ICONS[entry.kind];
+            return (
+              <li key={entry.kind} data-reveal style={{ "--reveal-delay": `${i * 50}ms` } as CSSProperties}>
+                <Link href={{ pathname: "/comparar/[slug]", params: { slug: entry.slug[lang] } }} className={styles.tile}>
+                  <span className={styles.tileIcon} aria-hidden>
+                    <Icon />
+                  </span>
+                  <span className={styles.tileName}>{c.names[entry.kind]}</span>
+                  <span className={styles.tileText}>{entry.summary[lang]}</span>
+                  <span className={styles.tileMeta}>{c.open} →</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      <section className={styles.section} data-reveal>
+        <SectionHead title={c.glanceTitle} lead={c.glanceLead} />
+        <ul className={styles.glance}>
+          <li className={styles.glanceUs}>
+            <span className={styles.iconBadge} aria-hidden>
+              <Us />
+            </span>
+            <span className={styles.glanceName}>
+              <Logo height={20} />
+            </span>
+            <span className={styles.glanceAnswer}>{c.glance.us}</span>
+          </li>
+          {compareEntries.map((entry) => {
+            const Icon = COMPARE_ICONS[entry.kind];
+            return (
+              <li key={entry.kind} className={styles.glanceRow}>
+                <span className={styles.iconBadgeMuted} aria-hidden>
+                  <Icon />
+                </span>
+                <span className={styles.glanceName}>{c.names[entry.kind]}</span>
+                <span className={styles.glanceAnswer}>{c.glance[entry.kind]}</span>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className={styles.section} data-reveal>
+        <SectionHead title={c.faqTitle} />
+        <Faq items={c.indexFaq} />
+      </section>
+
+      <LearnCta title={c.ctaTitle} text={c.ctaText} label={c.ctaLabel} />
+    </div>
   );
 }

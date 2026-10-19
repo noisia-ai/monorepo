@@ -1,14 +1,20 @@
 "use client";
 
-import { useId, useState } from "react";
+import { useState } from "react";
 import { Plus } from "iconoir-react";
 import { FAQ_ICONS, type FaqIcon } from "./faq-icons";
 import styles from "./ui.module.css";
 
 /** Each answer opens and closes with a height and fade transition, one or many at a time. */
+/** A stable id from the question text: the same on the server and in the browser (useId was not). */
+function faqId(text: string): string {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  return `faq-${(hash >>> 0).toString(36)}`;
+}
+
 export function FaqList({ items }: { items: { q: string; a: string; icon?: FaqIcon }[] }) {
   const [open, setOpen] = useState<Set<number>>(new Set());
-  const id = useId();
   const toggle = (i: number) =>
     setOpen((current) => {
       const next = new Set(current);
@@ -22,7 +28,7 @@ export function FaqList({ items }: { items: { q: string; a: string; icon?: FaqIc
         const isOpen = open.has(i);
         return (
           <div key={item.q} className={styles.faqItem} data-open={isOpen}>
-            <button type="button" className={styles.faqQ} aria-expanded={isOpen} aria-controls={`${id}-${i}`} onClick={() => toggle(i)}>
+            <button type="button" className={styles.faqQ} aria-expanded={isOpen} aria-controls={faqId(item.q)} onClick={() => toggle(i)}>
               {item.icon ? (
                 <span className={styles.faqLead} aria-hidden>
                   {(() => {
@@ -36,7 +42,7 @@ export function FaqList({ items }: { items: { q: string; a: string; icon?: FaqIc
                 <Plus />
               </span>
             </button>
-            <div id={`${id}-${i}`} className={styles.faqPanel} role="region">
+            <div id={faqId(item.q)} className={styles.faqPanel} role="region">
               <div className={styles.faqInner}>
                 <p className={item.icon ? `${styles.faqA} ${styles.faqAIndented}` : styles.faqA}>{item.a}</p>
               </div>

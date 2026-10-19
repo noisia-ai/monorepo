@@ -15,6 +15,7 @@ const MENU_ICONS = { solutions: Compass, howItWorks: Network, methods: Book, ins
 
 export function SiteHeader() {
   const t = useTranslations("nav");
+  const tf = useTranslations("footer");
   const locale = useLocale();
   const pathname = usePathname();
   const params = useParams();
@@ -125,6 +126,13 @@ export function SiteHeader() {
               </Link>
             );
           })}
+        </nav>
+        {/* Supporting pages, quieter than the three that sell. */}
+        <nav className={styles.menuMore} aria-label={tf("learn")} style={{ animationDelay: `${60 + mainNav.length * 45}ms` }}>
+          <Link href="/metodos">{t("methods")}</Link>
+          <Link href="/nosotros">{t("about")}</Link>
+          <Link href="/industrias">{tf("industries")}</Link>
+          <Link href="/inteligencia-social">{tf("socialIntelligence")}</Link>
         </nav>
         <div className={styles.menuFoot} style={{ animationDelay: `${60 + mainNav.length * 45}ms` }}>
           <Link href="/taller" className={styles.mobileCta}>

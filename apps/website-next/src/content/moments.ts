@@ -30,7 +30,7 @@ export const moments: Moment[] = [
     en: {
       name: "Track your brand",
       question: "What is happening with my brand and category, and what changed?",
-      summary: "A ongoing report on what moved, why, and what to watch, compared with the previous period."
+      summary: "A report on what moved, why and what to watch, every week, two weeks or month, compared with the previous period."
     }
   },
   {
@@ -57,12 +57,12 @@ export const moments: Moment[] = [
     es: {
       name: "Mejorar la experiencia",
       question: "¿Dónde se frustra hoy tu cliente, y qué conviene arreglar primero?",
-      summary: "Cada mes, el recorrido real de tu cliente momento por momento: dónde se frustra, qué cambió contra el mes anterior y qué arreglar primero."
+      summary: "El recorrido real de tu cliente, momento por momento: dónde se frustra, qué cambió contra el periodo anterior y qué arreglar primero."
     },
     en: {
       name: "Improve the experience",
       question: "Where does your customer get frustrated today, and what should you fix first?",
-      summary: "Every month, your customer's real journey moment by moment: where they get frustrated, what changed since last month and what to fix first."
+      summary: "Your customer's real journey, moment by moment: where they get frustrated, what changed since the previous period and what to fix first."
     }
   },
   {

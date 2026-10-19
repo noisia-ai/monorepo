@@ -1,7 +1,8 @@
 "use client";
 
 import { useLayoutEffect, useRef, type ComponentType, type SVGProps } from "react";
-import { ChatBubbleQuestion, Database, Facebook, Instagram, Network, Search, Star, Tiktok, X, Youtube, Group } from "iconoir-react";
+import { ChatBubbleQuestion, Database, Network, Search, Star, Group } from "iconoir-react";
+import { siFacebook, siInstagram, siTiktok, siX, siYoutube } from "simple-icons";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "./runtime";
 import { color, font } from "./theme";
 
@@ -12,7 +13,30 @@ export const HUB_FRAMES = 360;
 
 export type SourcesHubCopy = { center: string; sources: string[]; owned: string };
 
-const ICONS: ComponentType<SVGProps<SVGSVGElement>>[] = [Tiktok, Instagram, Youtube, X, Facebook, Star, ChatBubbleQuestion, Search, Group, Database];
+/** Platforms carry their real mark (Simple Icons, brand color); source types keep an Iconoir icon. */
+function brandMark(icon: { path: string; hex: string }): ComponentType<SVGProps<SVGSVGElement>> {
+  function Mark(props: SVGProps<SVGSVGElement>) {
+    const { width, height } = props;
+    return (
+      <svg width={width} height={height} viewBox="0 0 24 24" aria-hidden>
+        <path d={icon.path} fill={`#${icon.hex}`} />
+      </svg>
+    );
+  }
+  return Mark;
+}
+const ICONS: ComponentType<SVGProps<SVGSVGElement>>[] = [
+  brandMark(siTiktok),
+  brandMark(siInstagram),
+  brandMark(siYoutube),
+  brandMark(siX),
+  brandMark(siFacebook),
+  Star,
+  ChatBubbleQuestion,
+  Search,
+  Group,
+  Database
+];
 const CENTER = { x: 540, y: 540 };
 const RADIUS = 380;
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as const;
@@ -107,9 +131,9 @@ export function SourcesHubComposition({ copy }: { copy: SourcesHubCopy }) {
           >
             <span
               style={{
-                width: 76,
-                height: 76,
-                borderRadius: 22,
+                width: 84,
+                height: 84,
+                borderRadius: 24,
                 display: "grid",
                 placeItems: "center",
                 background: isOwned ? color.coralSoft : "#fff",
@@ -118,9 +142,9 @@ export function SourcesHubComposition({ copy }: { copy: SourcesHubCopy }) {
                 boxShadow: "0 10px 26px rgba(10,10,10,0.06)"
               }}
             >
-              <Icon width={36} height={36} strokeWidth={1.7} />
+              <Icon width={i < 5 ? 34 : 38} height={i < 5 ? 34 : 38} strokeWidth={1.7} />
             </span>
-            <span style={{ fontSize: 28, fontWeight: 500, color: color.fg, whiteSpace: "nowrap" }}>{copy.sources[i]}</span>
+            <span style={{ fontSize: 31, fontWeight: 500, color: color.fg, whiteSpace: "nowrap" }}>{copy.sources[i]}</span>
           </div>
         );
       })}
@@ -147,11 +171,11 @@ export function SourcesHubComposition({ copy }: { copy: SourcesHubCopy }) {
         }}
       >
         <Network width={48} height={48} strokeWidth={1.7} />
-        <span style={{ fontSize: 34, fontWeight: 500, lineHeight: 1.15, padding: "0 30px" }}>{copy.center}</span>
+        <span style={{ fontSize: 38, fontWeight: 500, lineHeight: 1.15, padding: "0 30px" }}>{copy.center}</span>
       </div>
 
       <div style={{ position: "absolute", left: 0, right: 0, bottom: 20, display: "flex", justifyContent: "center", opacity: interpolate(frame, [170, 200], [0, 1], clamp) }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 12, fontSize: 28, color: color.muted }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 12, fontSize: 31, color: color.muted }}>
           <span style={{ width: 16, height: 16, borderRadius: 8, background: color.coral }} />
           {copy.owned}
         </span>

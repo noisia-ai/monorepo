@@ -20,7 +20,6 @@ export const routing = defineRouting({
     "/insights/reportes/[slug]": { es: "/insights/reportes/[slug]", en: "/insights/reports/[slug]" },
     "/como-funciona": { es: "/como-funciona", en: "/how-it-works" },
     "/metodos": { es: "/metodos", en: "/methods" },
-    "/metodos/[slug]": { es: "/metodos/[slug]", en: "/methods/[slug]" },
     "/soluciones": { es: "/soluciones", en: "/solutions" },
     "/soluciones/[slug]": { es: "/soluciones/[slug]", en: "/solutions/[slug]" },
     "/nosotros": { es: "/nosotros", en: "/about" },

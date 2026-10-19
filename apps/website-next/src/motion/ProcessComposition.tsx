@@ -36,7 +36,7 @@ type Layout = {
   spawn: Point;
   answer: { x: number; y: number; w: number };
   trace: (target: Point) => string;
-  stepper: { y: number; x0: number; x1: number; labels: "all" | "active" };
+  stepper: { y: number; x0: number; x1: number; labels: "all" | "active"; icon: number };
   type: { question: number; label: number; step: number; stage: number; cluster: number };
 };
 
@@ -58,28 +58,30 @@ export const LAYOUTS: Record<"wide" | "tall", Layout> = {
     spawn: { x: 300, y: 230 },
     answer: { x: 1336, y: 80, w: 350 },
     trace: (t) => `M 1336 372 C 1290 372, 1300 548, 1100 548 S ${t.x + 40} ${t.y + 120}, ${t.x} ${t.y}`,
-    stepper: { y: 560, x0: 150, x1: 1550, labels: "all" },
+    stepper: { y: 560, x0: 150, x1: 1530, labels: "all", icon: 56 },
     type: { question: 25, label: 17, step: 20, stage: 30, cluster: 19 }
   },
   tall: {
+    // Phones: a taller canvas with a clear band under the stepper, so the last label and
+    // the Intelligence Architect badge never touch the edge or sit under the pause button.
     width: 1080,
-    height: 1440,
-    field: { x: 60, y: 300, w: 960, h: 620 },
+    height: 1560,
+    field: { x: 60, y: 300, w: 960, h: 630 },
     clusters: [
       { x: 230, y: 450 },
       { x: 540, y: 420 },
       { x: 850, y: 455 },
-      { x: 250, y: 740 },
-      { x: 540, y: 715 },
-      { x: 830, y: 750 }
+      { x: 250, y: 745 },
+      { x: 540, y: 720 },
+      { x: 830, y: 755 }
     ],
     spread: 70,
-    question: { x: 60, y: 40, w: 960 },
+    question: { x: 60, y: 30, w: 960 },
     spawn: { x: 540, y: 250 },
-    answer: { x: 60, y: 960, w: 960 },
-    trace: (t) => `M 160 960 C 160 900, ${t.x - 30} ${t.y + 140}, ${t.x} ${t.y}`,
-    stepper: { y: 1290, x0: 130, x1: 950, labels: "active" },
-    type: { question: 44, label: 28, step: 30, stage: 42, cluster: 28 }
+    answer: { x: 60, y: 970, w: 960 },
+    trace: (t) => `M 160 970 C 160 910, ${t.x - 30} ${t.y + 140}, ${t.x} ${t.y}`,
+    stepper: { y: 1350, x0: 140, x1: 940, labels: "active", icon: 68 },
+    type: { question: 46, label: 30, step: 34, stage: 42, cluster: 30 }
   }
 };
 
@@ -380,13 +382,13 @@ export function ProcessComposition({ copy, variant }: { copy: ProcessCopy; varia
         </Card>
 
         {/* stepper */}
-        <div style={{ position: "absolute", left: 0, right: 0, top: steps.y, height: 140 }}>
-          <div style={{ position: "absolute", left: steps.x0, width: steps.x1 - steps.x0, top: 27, height: 2, background: color.line }} />
+        <div style={{ position: "absolute", left: 0, right: 0, top: steps.y, height: 160 }}>
+          <div style={{ position: "absolute", left: steps.x0, width: steps.x1 - steps.x0, top: steps.icon / 2 - 1, height: 2, background: color.line }} />
           <div
             style={{
               position: "absolute",
               left: steps.x0,
-              top: 27,
+              top: steps.icon / 2 - 1,
               height: 2,
               background: color.teal,
               width: interpolate(f, [0, 60, 140, 225, 320, 340], [0, 0, 0.25, 0.5, 0.75, 1], { extrapolateRight: "clamp" }) * (steps.x1 - steps.x0)
@@ -397,15 +399,15 @@ export function ProcessComposition({ copy, variant }: { copy: ProcessCopy; varia
             const done = i < step;
             const Icon = ICONS[i]!;
             const human = HUMAN_STEPS.includes(i);
-            const showLabel = steps.labels === "all" || active;
+            const showLabel = steps.labels === "all";
             return (
               <div key={i} style={{ position: "absolute", left: stepX(i) - 150, width: 300, top: 0, textAlign: "center" }}>
                 <div
                   style={{
                     margin: "0 auto",
-                    width: 56,
-                    height: 56,
-                    borderRadius: 16,
+                    width: steps.icon,
+                    height: steps.icon,
+                    borderRadius: steps.icon * 0.29,
                     background: active ? color.teal : done ? color.tealSoft : "#fff",
                     border: `1.5px solid ${active ? color.teal : done ? "#cdeeee" : color.line}`,
                     color: active ? "#fff" : done ? color.teal : "#9a9a9a",
@@ -414,7 +416,7 @@ export function ProcessComposition({ copy, variant }: { copy: ProcessCopy; varia
                     transform: `scale(${active ? 1.08 : 1})`
                   }}
                 >
-                  <Icon width={26} height={26} strokeWidth={1.8} />
+                  <Icon width={steps.icon * 0.46} height={steps.icon * 0.46} strokeWidth={1.8} />
                 </div>
                 {showLabel ? (
                   <div style={{ marginTop: 12, fontSize: L.type.step, fontWeight: active ? 700 : 500, color: active ? color.ink : color.muted, whiteSpace: "nowrap" }}>{label}</div>
@@ -431,16 +433,56 @@ export function ProcessComposition({ copy, variant }: { copy: ProcessCopy; varia
                       background: active ? color.coralSoft : "#f4f4f4",
                       color: active ? color.coral : color.muted,
                       fontSize: L.type.label - 2,
-                      fontWeight: 500
+                      fontWeight: 500,
+                      whiteSpace: "nowrap"
                     }}
                   >
-                    <UserBadgeCheck width={18} height={18} strokeWidth={1.8} />
+                    <UserBadgeCheck width={L.type.label - 6} height={L.type.label - 6} strokeWidth={1.8} />
                     {copy.human}
                   </div>
                 ) : null}
               </div>
             );
           })}
+          {/* phones: one centered caption for the active step, so nothing crowds the edges */}
+          {steps.labels === "active" ? (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: steps.icon + 26,
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                gap: 16,
+                fontSize: L.type.step,
+                fontWeight: 700,
+                color: color.ink,
+                whiteSpace: "nowrap"
+              }}
+            >
+              {copy.steps[step]}
+              {HUMAN_STEPS.includes(step) ? (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "6px 16px 6px 12px",
+                    borderRadius: 999,
+                    background: color.coralSoft,
+                    color: color.coral,
+                    fontSize: L.type.label - 2,
+                    fontWeight: 500
+                  }}
+                >
+                  <UserBadgeCheck width={L.type.label - 4} height={L.type.label - 4} strokeWidth={1.8} />
+                  {copy.human}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     </AbsoluteFill>

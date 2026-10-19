@@ -8,7 +8,6 @@ import type { PlanCopy, ReportCopy, StudyCopy } from "@/motion/OfferCompositions
 import type { JourneyCopy, TrendCopy } from "@/motion/SignalCompositions";
 import type { UnderstandCopy } from "@/motion/UnderstandComposition";
 import { home } from "./home";
-import { offer } from "./offer";
 
 export type Diagram =
   | { kind: "report"; copy: ReportCopy }
@@ -27,9 +26,28 @@ export type Diagram =
 
 type Lang = "es" | "en";
 
-export const situationLabels: Record<Lang, { always: string; project: string; method: string; step: string; noisia: string; others: string; more: string; play: string; pause: string }> = {
-  es: { always: "Siempre activo", project: "Estudio puntual", method: "Método", step: "Paso", noisia: "Noisia", others: "Otras situaciones", more: "Ver cómo lo resolvemos", play: "Reproducir", pause: "Pausar" },
-  en: { always: "Always on", project: "One-off study", method: "Method", step: "Step", noisia: "Noisia", others: "Other situations", more: "See how we solve it", play: "Play", pause: "Pause" }
+type Deliverable = "report" | "study" | "plan";
+
+export const situationLabels: Record<Lang, { meta: Record<Deliverable, string>; method: string; noisia: string; others: string; more: string; play: string; pause: string }> = {
+  es: {
+    // one quiet line under the summary: what you get and its rhythm
+    meta: { report: "Reporte continuo, con la frecuencia que elijas", study: "Estudio, con la primera versión en días", plan: "Plan anual de estudios y reporte continuo" },
+    method: "Método",
+    noisia: "Noisia",
+    others: "Otras situaciones",
+    more: "Ver cómo lo resolvemos",
+    play: "Reproducir",
+    pause: "Pausar"
+  },
+  en: {
+    meta: { report: "Ongoing report, at the frequency you choose", study: "Study, first version within days", plan: "Annual plan of studies and an ongoing report" },
+    method: "Method",
+    noisia: "Noisia",
+    others: "Other situations",
+    more: "See how we solve it",
+    play: "Play",
+    pause: "Pause"
+  }
 };
 
 
@@ -104,10 +122,113 @@ const innovate: Record<Lang, UnderstandCopy> = {
   }
 };
 
+/* ---------- report, study and plan diagrams, with this page's own words ---------- */
+
+const reportBase: Record<Lang, Omit<ReportCopy, "changes">> = {
+  es: { months: ["Jul", "Ago", "Sep"], brands: ["Tu marca", "Competidor A", "Competidor B"], shareLabel: "Parte de la conversación", changeTitle: "Qué cambió y por qué" },
+  en: { months: ["Jul", "Aug", "Sep"], brands: ["Your brand", "Competitor A", "Competitor B"], shareLabel: "Share of the conversation", changeTitle: "What changed and why" }
+};
+
+const reportChanges: Record<"track" | "defend", Record<Lang, ReportCopy["changes"]>> = {
+  track: {
+    es: [
+      { dir: "up", text: "Empaque reciclable, por las reseñas" },
+      { dir: "down", text: "Entrega a domicilio, por los retrasos" },
+      { dir: "new", text: "Precio por mililitro, tema nuevo" }
+    ],
+    en: [
+      { dir: "up", text: "Recyclable pack, driven by reviews" },
+      { dir: "down", text: "Home delivery, because of delays" },
+      { dir: "new", text: "Price per milliliter, a new topic" }
+    ]
+  },
+  defend: {
+    es: [
+      { dir: "up", text: "Competidor A, por su promesa de entrega" },
+      { dir: "down", text: "Tu servicio, por quejas sin respuesta" },
+      { dir: "new", text: "Cobertura, tema nuevo" }
+    ],
+    en: [
+      { dir: "up", text: "Competitor A, for its delivery promise" },
+      { dir: "down", text: "Your service, for unanswered complaints" },
+      { dir: "new", text: "Coverage, a new topic" }
+    ]
+  }
+};
+
+const report = (lang: Lang, key: "track" | "defend"): Diagram => ({ kind: "report", copy: { ...reportBase[lang], changes: reportChanges[key][lang] } });
+
+const studyLabels: Record<Lang, [string, string, string, string]> = {
+  es: ["Tu decisión", "La pregunta", "El método", "La respuesta"],
+  en: ["Your decision", "The question", "The method", "The answer"]
+};
+
+const studies: Record<string, Record<Lang, { decision: string; question: string; method: string; answer: string; recommendations: [string, string, string] }>> = {
+  lanzar: {
+    es: { decision: "¿Lanzamos la versión sin azúcar?", question: "¿Qué acerca y qué frena a quien ya compra la normal?", method: "Triggers & Barriers", answer: "Hay ganas, pero el precio decide.", recommendations: ["Lanzar al mismo precio que la normal", "Hablar del sabor antes que de la dieta", "Empezar donde ya se vende la normal"] },
+    en: { decision: "Do we launch the sugar-free version?", question: "What draws and what holds back people who buy the regular one?", method: "Triggers & Barriers", answer: "People want it, but price decides.", recommendations: ["Launch at the regular price", "Talk about taste before diet", "Start where the regular one sells"] }
+  },
+  entrar: {
+    es: { decision: "¿Cómo entramos a este mercado?", question: "¿Quién da credibilidad y qué marca a alguien de fuera?", method: "Cultural Codes Decoding", answer: "La familia pesa más que la publicidad.", recommendations: ["Empezar con muestras en tiendas de barrio", "Hablar con el lenguaje local", "Sumar voces locales desde el inicio"] },
+    en: { decision: "How do we enter this market?", question: "Who lends credibility and what marks an outsider?", method: "Cultural Codes Decoding", answer: "Family weighs more than advertising.", recommendations: ["Start with samples at corner stores", "Speak the local language", "Bring in local voices from day one"] }
+  },
+  innovar: {
+    es: { decision: "¿Qué producto nuevo hacemos?", question: "¿Qué necesidad sigue sin resolverse en la categoría?", method: "Value Perception Matrix", answer: "La gente ya rebaja el dulzor por su cuenta.", recommendations: ["Probar una versión menos dulce", "Explorar un sabor cítrico", "Validar con una prueba de concepto"] },
+    en: { decision: "Which new product do we make?", question: "Which need is still unmet in the category?", method: "Value Perception Matrix", answer: "People already cut the sweetness on their own.", recommendations: ["Test a less sweet version", "Explore a citrus flavor", "Validate with a concept test"] }
+  },
+  planear: {
+    es: { decision: "Campaña de regreso a clases", question: "¿Qué cambió este año en lo que buscan las familias?", method: "Triggers & Barriers", answer: "El precio pesa menos que la durabilidad.", recommendations: ["Hablar de cuánto dura", "Mostrar el uso real", "Llegar antes que la competencia"] },
+    en: { decision: "Back-to-school campaign", question: "What changed this year in what families look for?", method: "Triggers & Barriers", answer: "Price weighs less than durability.", recommendations: ["Talk about how long it lasts", "Show real use", "Get there before the competition"] }
+  }
+};
+
+const study = (lang: Lang, key: string): Diagram => {
+  const c = studies[key]![lang];
+  const l = studyLabels[lang];
+  return {
+    kind: "study",
+    copy: {
+      steps: [
+        { label: l[0], text: c.decision },
+        { label: l[1], text: c.question },
+        { label: l[2], text: c.method },
+        { label: l[3], text: c.answer }
+      ],
+      method: c.method,
+      recommendations: c.recommendations
+    }
+  };
+};
+
+const plan: Record<Lang, PlanCopy> = {
+  es: {
+    months: ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
+    reportLabel: "Reporte continuo",
+    studies: [
+      { month: 2, label: "Lanzamiento" },
+      { month: 4, label: "Hot Sale" },
+      { month: 7, label: "Regreso a clases" },
+      { month: 10, label: "Buen Fin" }
+    ],
+    caption: "Cada estudio llega antes de la decisión que alimenta."
+  },
+  en: {
+    months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    reportLabel: "Ongoing report",
+    studies: [
+      { month: 2, label: "Launch" },
+      { month: 4, label: "Hot Sale" },
+      { month: 7, label: "Back to school" },
+      { month: 10, label: "Buen Fin" }
+    ],
+    caption: "Each study arrives before the decision it feeds."
+  }
+};
+
 export function situationDiagram(slug: string, lang: Lang): Diagram | null {
   switch (slug) {
     case "monitorear":
-      return { kind: "report", copy: offer[lang].report.motion };
+      return report(lang, "track");
     case "anticipar":
       return { kind: "trend", copy: home[lang].hero.motion.trend };
     case "optimizar":
@@ -121,7 +242,7 @@ export function situationDiagram(slug: string, lang: Lang): Diagram | null {
     case "innovar":
       return { kind: "understand", copy: innovate[lang] };
     case "planear":
-      return { kind: "plan", copy: offer[lang].plan.motion };
+      return { kind: "plan", copy: plan[lang] };
     default:
       return null;
   }
@@ -213,7 +334,6 @@ const innovarTrend: Record<Lang, TrendCopy> = {
 /** Three diagrams per page, one for each step of "how we solve it". */
 export function situationStepDiagrams(slug: string, lang: Lang): [Diagram, Diagram, Diagram] | null {
   const h = home[lang];
-  const o = offer[lang];
   const ap = (key: string): Diagram => ({ kind: "approach", copy: withApproach(lang, approach[key]?.[lang] ?? {}) });
   switch (slug) {
     case "monitorear":
@@ -223,15 +343,15 @@ export function situationStepDiagrams(slug: string, lang: Lang): [Diagram, Diagr
     case "optimizar":
       return [{ kind: "track", copy: h.hero.motion.track }, { kind: "understand", copy: understandFor.optimizar![lang] }, { kind: "approach", copy: h.how.motion }];
     case "defender":
-      return [ap("defender"), { kind: "report", copy: o.report.motion }, { kind: "understand", copy: understandFor.defender![lang] }];
+      return [ap("defender"), report(lang, "defend"), { kind: "understand", copy: understandFor.defender![lang] }];
     case "lanzar":
-      return [{ kind: "understand", copy: h.methods.motion }, ap("lanzar"), { kind: "study", copy: o.study.motion }];
+      return [{ kind: "understand", copy: h.methods.motion }, ap("lanzar"), study(lang, "lanzar")];
     case "entrar":
-      return [ap("entrar"), { kind: "launch", copy: h.hero.motion.launch }, { kind: "study", copy: o.study.motion }];
+      return [ap("entrar"), { kind: "launch", copy: h.hero.motion.launch }, study(lang, "entrar")];
     case "innovar":
-      return [ap("innovar"), { kind: "trend", copy: innovarTrend[lang] }, { kind: "study", copy: o.study.motion }];
+      return [ap("innovar"), { kind: "trend", copy: innovarTrend[lang] }, study(lang, "innovar")];
     case "planear":
-      return [{ kind: "report", copy: o.report.motion }, { kind: "track", copy: h.hero.motion.track }, { kind: "study", copy: o.study.motion }];
+      return [report(lang, "track"), { kind: "track", copy: h.hero.motion.track }, study(lang, "planear")];
     default:
       return null;
   }

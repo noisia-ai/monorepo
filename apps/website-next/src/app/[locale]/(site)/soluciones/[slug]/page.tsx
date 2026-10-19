@@ -2,16 +2,16 @@ import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { setRequestLocale } from "next-intl/server";
-import { ArrowRight, Calendar, Check, Journal, Xmark } from "iconoir-react";
+import { Calendar, Check, Journal, StatsUpSquare, Xmark } from "iconoir-react";
 import { BlockView } from "@/components/blocks/Blocks";
 import { SetAlternate } from "@/components/layout/alternate";
 import { Button } from "@/components/ui/Button";
 import { SituationGallery } from "@/components/home/SituationGallery";
 import { SituationMotion } from "@/components/situation/SituationMotion";
+import { StepMethod } from "@/components/situation/StepMethod";
 import { LOGO_RATIO } from "@/components/brand/Logo";
 import { momentLabels, situationCopy, solutionEntries } from "@/content/pages/solutions";
 import { situationDetails } from "@/content/pages/situation-details";
-import type { MethodKey } from "@/content/pages/situation-details.types";
 import { situationDiagram, situationLabels, situationStepDiagrams } from "@/content/pages/situations";
 import { offer } from "@/content/pages/offer";
 import { moments } from "@/content/moments";
@@ -22,14 +22,7 @@ import styles from "@/components/situation/situation.module.css";
 
 type Params = { locale: string; slug: string };
 
-const METHODS: Record<MethodKey, { label: string; es: string; en: string }> = {
-  tb: { label: "Triggers & Barriers", es: "/metodos/triggers-y-barriers", en: "/en/methods/triggers-and-barriers" },
-  vpm: { label: "Value Perception Matrix", es: "/metodos/value-perception-matrix", en: "/en/methods/value-perception-matrix" },
-  cc: { label: "Cultural Codes Decoding", es: "/metodos/cultural-codes-decoding", en: "/en/methods/cultural-codes-decoding" },
-  dv: { label: "Decision Velocity", es: "/metodos/decision-velocity", en: "/en/methods/decision-velocity" },
-  jfm: { label: "Journey Friction Mapping", es: "/metodos/journey-friction-mapping", en: "/en/methods/journey-friction-mapping" },
-  ia: { label: "Influence Architecture", es: "/metodos/influence-architecture", en: "/en/methods/influence-architecture" }
-};
+const META_ICONS = { report: Calendar, study: Journal, plan: StatsUpSquare } as const;
 
 export function generateStaticParams() {
   return routing.locales.flatMap((locale) => solutionEntries.map((entry) => ({ locale, slug: entry.slug[locale] })));
@@ -60,31 +53,29 @@ export default async function Page({ params }: { params: Promise<Params> }) {
   const base = lang === "en" ? "/en/solutions" : "/soluciones";
   const alternate = locale === "en" ? `/soluciones/${moment.slug.es}` : `/en/solutions/${moment.slug.en}`;
   const others = moments.filter((mo) => mo.slug.es !== key);
+  const MetaIcon = META_ICONS[moment.deliverable];
   const delay = (ms: number) => ({ "--reveal-delay": `${ms}ms` }) as CSSProperties;
 
   return (
     <article className={styles.page}>
       <SetAlternate href={alternate} />
 
-      {/* hero: title, tags, the diagram, then the summary and the first step */}
+      {/* hero: title, the diagram, then the summary, one quiet line of what you get, and the CTA */}
       <header className={styles.hero}>
         <h1 className={styles.h1} data-reveal>
           {moment[lang].question}
         </h1>
-        <p className={styles.meta} data-reveal style={delay(80)}>
-          <span className={styles.tag}>
-            {moment.rhythm === "always" ? <Calendar aria-hidden /> : <Journal aria-hidden />}
-            {moment.rhythm === "always" ? l.always : l.project}
-          </span>
-          <span className={styles.tagSoft}>{deliverable[moment.deliverable]}</span>
-        </p>
         {hero ? (
-          <div className={styles.heroMotion} data-reveal style={delay(160)}>
+          <div className={styles.heroMotion} data-reveal style={delay(120)}>
             <SituationMotion diagram={hero} label={moment[lang].name} className={styles.motion} />
           </div>
         ) : null}
-        <div className={styles.heroText} data-reveal style={delay(220)}>
-          <p className={styles.lead}>{moment[lang].summary}</p>
+        <div className={styles.heroText} data-reveal style={delay(180)}>
+          <p className={styles.lead}>{d.summary ?? moment[lang].summary}</p>
+          <p className={styles.meta}>
+            <MetaIcon aria-hidden />
+            {l.meta[moment.deliverable]}
+          </p>
           <Button href="/taller" arrow>
             {ml.ctaLabel}
           </Button>
@@ -102,13 +93,7 @@ export default async function Page({ params }: { params: Promise<Params> }) {
               <span className={styles.stepNumber}>{i + 1}</span>
               <h3 className={styles.h3}>{step.title}</h3>
               <p className={styles.text}>{step.text}</p>
-              {step.method ? (
-                <a className={styles.method} href={METHODS[step.method][lang]}>
-                  <span>{l.method}</span>
-                  {METHODS[step.method].label}
-                  <ArrowRight aria-hidden />
-                </a>
-              ) : null}
+              {step.method ? <StepMethod method={step.method} lang={lang} label={l.method} /> : null}
             </div>
             {stepDiagrams ? (
               <div data-reveal style={delay(140)}>

@@ -1,5 +1,5 @@
 import { getStories } from "@/content/stories";
-import { methodEntries } from "@/content/pages/methods";
+import { methodOrder, methodSheet } from "@/content/pages/method-sheet";
 import { solutionEntries } from "@/content/pages/solutions";
 import { compareEntries } from "@/content/pages/compare";
 import { industryEntries } from "@/content/pages/industries";
@@ -27,7 +27,9 @@ ${lines(solutionEntries.map((e) => `[${e.page.en.metaTitle}](${SITE_URL}/en/solu
 
 ## Methods
 
-${lines(methodEntries.map((e) => `[${e.page.en.metaTitle}](${SITE_URL}/en/methods/${e.slug.en}): ${e.summary.en}`))}
+Noisia's methods start from anthropology, sociology, psychology and semiotics to understand people and their reasons before counting. All six are explained at ${SITE_URL}/en/methods
+
+${lines(methodOrder.map((key) => `${methodSheet[key].name}: ${methodSheet[key].en.question} ${methodSheet[key].en.description}`))}
 
 ## Industries
 

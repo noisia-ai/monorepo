@@ -84,16 +84,5 @@
   "stickyCta": {
     "label": "Agenda un taller gratis",
     "top": "Volver arriba"
-  },
-  "industryPage": {
-    "indexTitle": "Lo que podemos entender en tu industria",
-    "indexLead": "Preguntas que la conversación puede responder, industria por industria. Son preguntas, no hallazgos: lo que encontramos depende de tu marca y tu momento.",
-    "questions": "Preguntas que podemos responder",
-    "where": "Dónde vive la conversación",
-    "stories": "Insights de esta industria",
-    "seeFeed": "Ver en el feed",
-    "ctaTitle": "¿Tu pregunta no está aquí?",
-    "ctaText": "Tráela al taller. Si la conversación puede responderla, te decimos cómo.",
-    "ctaLabel": "Agenda un taller gratis"
   }
 }

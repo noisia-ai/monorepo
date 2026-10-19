@@ -14,7 +14,7 @@ const legacyCases = {
   "validacion-de-hipotesis": "/soluciones",
   "anticipacion-de-tendencias": "/soluciones/monitorear",
   "decodificacion-de-crisis": "/soluciones/monitorear",
-  "influencia-de-categoria": "/metodos/influence-architecture"
+  "influencia-de-categoria": "/metodos"
 };
 
 const legacyReports = {
@@ -35,7 +35,10 @@ const nextConfig = {
   async redirects() {
     return [
       { source: "/metodologias", destination: "/metodos", permanent: true },
-      { source: "/metodologias/:slug", destination: "/metodos/:slug", permanent: true },
+      { source: "/metodologias/:slug", destination: "/metodos", permanent: true },
+      // Methods no longer have a page each: every method lives inside the Methods page.
+      { source: "/metodos/:slug", destination: "/metodos", permanent: true },
+      { source: "/en/methods/:slug", destination: "/en/methods", permanent: true },
       { source: "/casos-de-uso", destination: "/soluciones", permanent: true },
       ...Object.entries(legacyCases).map(([from, to]) => ({ source: `/casos-de-uso/${from}`, destination: to, permanent: true })),
       { source: "/servicios", destination: "/soluciones", permanent: true },

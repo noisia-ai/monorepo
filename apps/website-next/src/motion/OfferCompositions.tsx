@@ -189,7 +189,10 @@ export function PlanComposition({ copy }: { copy: PlanCopy }) {
           {month}
         </span>
       ))}
-      <span style={{ position: "absolute", left, top: lineY + 90, fontSize: 30, fontWeight: 500, color: color.teal, opacity: enter(frame, fps, 30, 18) }}>— {copy.reportLabel}</span>
+      <span style={{ position: "absolute", left, top: lineY + 90, fontSize: 30, fontWeight: 500, color: color.teal, opacity: enter(frame, fps, 30, 18), display: "inline-flex", alignItems: "center", gap: 14 }}>
+        <span style={{ width: 40, height: 6, borderRadius: 3, background: color.teal }} />
+        {copy.reportLabel}
+      </span>
 
       {copy.studies.map((study, k) => {
         const p = enter(frame, fps, 90 + k * 26, 16);

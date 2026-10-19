@@ -98,7 +98,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
       all: "Abrir el feed de insights"
     },
     how: {
-      title: "Tecnología que lee todo. Personas que deciden qué importa.",
+      title: "Quién lee la conversación cambia la respuesta",
       lead: "La misma conversación, leída de cuatro maneras. Mira qué te llevas con cada una.",
       tabs: [
         {
@@ -274,7 +274,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
       all: "Open the insights feed"
     },
     how: {
-      title: "Technology that reads everything. People who decide what matters.",
+      title: "Who reads the conversation changes the answer",
       lead: "The same conversation, read four ways. See what you walk away with each time.",
       tabs: [
         {

@@ -2,7 +2,6 @@ import type { MetadataRoute } from "next";
 import { getPathname } from "@/i18n/navigation";
 import { routing, type AppPathname } from "@/i18n/routing";
 import { getStories } from "@/content/stories";
-import { methodEntries } from "@/content/pages/methods";
 import { solutionEntries } from "@/content/pages/solutions";
 import { compareEntries } from "@/content/pages/compare";
 import { industryEntries } from "@/content/pages/industries";
@@ -32,7 +31,6 @@ export default function sitemap(): MetadataRoute.Sitemap {
     ...staticPaths.map((pathname) => entry(pathname as never)),
     ...getStories().filter((story) => story.kind === "editorial").map((story) => entry({ pathname: "/insights/[slug]", params: { slug: story.id } })),
     ...solutionEntries.map((e) => ({ url: `${SITE_URL}/soluciones/${e.slug.es}`, alternates: { languages: { es: `${SITE_URL}/soluciones/${e.slug.es}`, en: `${SITE_URL}/en/solutions/${e.slug.en}` } } })),
-    ...methodEntries.map((e) => ({ url: `${SITE_URL}/metodos/${e.slug.es}`, alternates: { languages: { es: `${SITE_URL}/metodos/${e.slug.es}`, en: `${SITE_URL}/en/methods/${e.slug.en}` } } })),
     ...["cultural-foresight-mexico-2026", "future-is-human", "the-mexican-home"].map((slug) => ({
       url: `${SITE_URL}/insights/reportes/${slug}`,
       alternates: { languages: { es: `${SITE_URL}/insights/reportes/${slug}`, en: `${SITE_URL}/en/insights/reports/${slug}` } }

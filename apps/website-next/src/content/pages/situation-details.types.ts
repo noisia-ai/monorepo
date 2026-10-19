@@ -22,6 +22,8 @@ export type CompareRow = {
 export type DeliverableItem = { name: string; text: string };
 
 export type SituationDetail = {
+  /** Optional hero summary when the shared one in moments.ts does not fit this page. */
+  summary?: string;
   /** Title of the "how we solve it" section (can be the default "Cómo lo resolvemos"). */
   howTitle: string;
   /** Exactly three steps; each gets its own animated diagram on the page. */

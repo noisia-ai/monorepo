@@ -13,11 +13,11 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Los temas salen de lo que dice la gente",
-          text: "El sistema agrupa las menciones por lo que dicen, sin una lista de temas decidida de antemano. Saca la prensa, el contenido de marca, la reventa y el spam, para que lo que se cuenta sea la voz de la gente. Un Intelligence Architect revisa cada tema, corrige lo que quedó mal agrupado y lo aprueba antes de que entre al reporte."
+          text: "Nuestro software agrupa las menciones por lo que dicen, sin una lista de temas decidida de antemano. Saca la prensa, el contenido de marca, la reventa y el spam, para que lo que se cuenta sea la voz de la gente. Un Intelligence Architect revisa cada tema, corrige lo que quedó mal agrupado y lo aprueba antes de que entre al reporte."
         },
         {
-          title: "Mes contra mes, qué cambió y por qué",
-          text: "Cada mes comparamos los mismos temas contra el mes anterior. El reporte dice qué creció, qué se apagó y qué apareció, y explica cada movimiento con citas literales, con su fuente y su fecha. Llegas a la reunión con la razón del cambio, además de la cifra.",
+          title: "En cada reporte, qué cambió y por qué",
+          text: "En cada entrega comparamos los mismos temas contra el periodo anterior, sea una semana, una quincena o un mes, como lo elijas. El reporte dice qué creció, qué se apagó y qué apareció, y explica cada movimiento con citas literales, con su fuente y su fecha. Llegas a la reunión con la razón del cambio, además de la cifra.",
           method: "tb"
         }
       ],
@@ -29,14 +29,14 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "Cómo se ordena", them: "Volumen y sentimiento por palabra o etiqueta", us: "Temas que salen de lo que la gente dice" },
           { label: "El ruido", them: "Filtros que tu equipo configura y mantiene", us: "Prensa, contenido de marca, reventa y spam fuera de la cuenta" },
           { label: "Tus propios datos", them: "Viven en otra herramienta, aparte del dashboard", us: "NPS, encuestas y tickets leídos con los mismos temas" },
-          { label: "Quién explica el cambio", them: "Tu equipo interpreta el dashboard cada mes", us: "Un Intelligence Architect lo explica y firma la lectura" }
+          { label: "Quién explica el cambio", them: "Tu equipo interpreta el dashboard por su cuenta", us: "Un Intelligence Architect lo explica y firma la lectura" }
         ]
       },
       deliverable: {
-        title: "Lo que recibes cada mes",
+        title: "Lo que recibes en cada reporte",
         name: "Reporte de septiembre",
         items: [
-          { name: "Lo que se movió", text: "Los temas de tu marca y tu categoría que crecieron, se apagaron o aparecieron, comparados con el mes anterior." },
+          { name: "Lo que se movió", text: "Los temas de tu marca y tu categoría que crecieron, se apagaron o aparecieron, comparados con el periodo anterior." },
           { name: "Por qué se movió", text: "La explicación de cada cambio, con las citas literales que la sostienen, su fuente y su fecha." },
           { name: "Qué vigilar", text: "Lo que conviene seguir de cerca antes del próximo reporte, con aviso si algo cambia antes." },
           { name: "Evidencia abierta", text: "Cada cifra con su cálculo, para que cualquier persona de tu equipo revise de dónde sale." }
@@ -44,6 +44,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       }
     },
     en: {
+      summary: "An ongoing report on what moved, why and what to watch, compared with the previous period.",
       howTitle: "How we solve it",
       steps: [
         {
@@ -52,11 +53,11 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Topics come from what people say",
-          text: "The system groups mentions by what they say, with no topic list decided in advance. It takes out press, brand content, resale and spam, so what gets counted is people's voice. An Intelligence Architect reviews every topic, fixes what was grouped wrong and approves it before it goes into the report."
+          text: "Our software groups mentions by what they say, with no topic list decided in advance. It takes out press, brand content, resale and spam, so what gets counted is people's voice. An Intelligence Architect reviews every topic, fixes what was grouped wrong and approves it before it goes into the report."
         },
         {
-          title: "Month against month, what changed and why",
-          text: "Every month we compare the same topics against the previous month. The report says what grew, what faded and what appeared, and explains each movement with verbatim quotes, with source and date. You walk into the meeting with the reason for the change, along with the number.",
+          title: "In every report, what changed and why",
+          text: "In every delivery we compare the same topics against the previous period, a week, two weeks or a month, as you choose. The report says what grew, what faded and what appeared, and explains each movement with verbatim quotes, with source and date. You walk into the meeting with the reason for the change, along with the number.",
           method: "tb"
         }
       ],
@@ -68,14 +69,14 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "How it's organized", them: "Volume and sentiment by keyword or tag", us: "Topics that come from what people say" },
           { label: "Noise", them: "Filters your team sets up and maintains", us: "Press, brand content, resale and spam left out of the count" },
           { label: "Your own data", them: "Lives in another tool, apart from the dashboard", us: "NPS, surveys and tickets read with the same topics" },
-          { label: "Who explains the change", them: "Your team reads the dashboard every month", us: "An Intelligence Architect explains it and signs off" }
+          { label: "Who explains the change", them: "Your team reads the dashboard on its own", us: "An Intelligence Architect explains it and signs off" }
         ]
       },
       deliverable: {
-        title: "What you receive every month",
+        title: "What you receive in every report",
         name: "September report",
         items: [
-          { name: "What moved", text: "The topics around your brand and category that grew, faded or appeared, compared with the previous month." },
+          { name: "What moved", text: "The topics around your brand and category that grew, faded or appeared, compared with the previous period." },
           { name: "Why it moved", text: "The explanation for each change, with the verbatim quotes behind it, their source and their date." },
           { name: "What to watch", text: "What is worth following closely before the next report, with a heads-up if something changes sooner." },
           { name: "Open evidence", text: "Every number with its calculation, so anyone on your team can check where it comes from." }
@@ -94,7 +95,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Cada señal tiene una etapa",
-          text: "Colocamos cada señal en una de cuatro etapas (Emergente, Acelerando, Mainstreaming o Saturación). La etapa sale de cuatro criterios medidos cada mes, que son volumen, velocidad de crecimiento, cuántas comunidades la llevan y cuánto tiempo dura. Cuando una señal cambia de etapa entre un reporte y otro, te avisamos."
+          text: "Colocamos cada señal en una de cuatro etapas (Emergente, Acelerando, Mainstreaming o Saturación). La etapa sale de cuatro criterios medidos en cada reporte, que son volumen, velocidad de crecimiento, cuántas comunidades la llevan y cuánto tiempo dura. Cuando una señal cambia de etapa entre un reporte y otro, te avisamos."
         },
         {
           title: "Lo que hay detrás de cada señal",
@@ -110,15 +111,15 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "Qué mide", them: "Qué temas están en el aire hoy", us: "Volumen, velocidad, comunidades y duración de cada señal" },
           { label: "La etapa", them: "Rara vez dice si algo empieza o ya pasó", us: "Emergente, Acelerando, Mainstreaming o Saturación, con criterio medido" },
           { label: "Relación con tu marca", them: "La misma lista sirve para cualquier marca", us: "Qué señales tienen permiso para tu marca y cuáles no" },
-          { label: "Cada cuánto", them: "Una vez al año o por temporada", us: "Cada mes, con aviso cuando una señal cambia de etapa" }
+          { label: "Cada cuánto", them: "Una vez al año o por temporada", us: "Cada semana, quincena o mes, con aviso cuando una señal cambia de etapa" }
         ]
       },
       deliverable: {
-        title: "Lo que recibes cada mes",
+        title: "Lo que recibes en cada reporte",
         name: "Radar de septiembre",
         items: [
           { name: "Mapa de señales", text: "Cada señal colocada por volumen y velocidad, con las comunidades donde aparece." },
-          { name: "La etapa de cada señal", text: "Emergente, Acelerando, Mainstreaming o Saturación, y qué cambió contra el mes anterior." },
+          { name: "La etapa de cada señal", text: "Emergente, Acelerando, Mainstreaming o Saturación, y qué cambió contra el reporte anterior." },
           { name: "Qué mover y qué vigilar", text: "Las señales con permiso para tu marca ahora y las que conviene seguir sin tocar todavía." },
           { name: "Lenguaje y razones", text: "Las palabras que usa la gente y lo que impulsa o frena cada señal, listo para un brief." }
         ]
@@ -133,7 +134,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Every signal gets a stage",
-          text: "We place each signal in one of four stages (Emerging, Accelerating, Mainstreaming or Saturation). The stage comes from four criteria measured every month, which are volume, growth speed, how many communities carry it and how long it lasts. When a signal changes stage between reports, we let you know."
+          text: "We place each signal in one of four stages (Emerging, Accelerating, Mainstreaming or Saturation). The stage comes from four criteria measured in every report, which are volume, growth speed, how many communities carry it and how long it lasts. When a signal changes stage between reports, we let you know."
         },
         {
           title: "What sits behind each signal",
@@ -149,15 +150,15 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "What it measures", them: "Which topics are in the air today", us: "Volume, speed, communities and duration of each signal" },
           { label: "The stage", them: "Rarely says whether something is starting or over", us: "Emerging, Accelerating, Mainstreaming or Saturation, with measured criteria" },
           { label: "Fit with your brand", them: "The same list works for any brand", us: "Which signals your brand has permission to use" },
-          { label: "How often", them: "Once a year or once a season", us: "Every month, with a heads-up when a stage changes" }
+          { label: "How often", them: "Once a year or once a season", us: "Weekly, every two weeks or monthly, with a heads-up when a stage changes" }
         ]
       },
       deliverable: {
-        title: "What you receive every month",
+        title: "What you receive in every report",
         name: "September radar",
         items: [
           { name: "Signal map", text: "Every signal placed by volume and speed, with the communities where it shows up." },
-          { name: "Each signal's stage", text: "Emerging, Accelerating, Mainstreaming or Saturation, and what changed since last month." },
+          { name: "Each signal's stage", text: "Emerging, Accelerating, Mainstreaming or Saturation, and what changed since the last report." },
           { name: "What to act on and what to watch", text: "The signals your brand can use now and the ones worth following without touching yet." },
           { name: "Language and reasons", text: "The words people use and what drives or holds back each signal, ready for a brief." }
         ]
@@ -167,11 +168,12 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
 
   optimizar: {
     es: {
+      summary: "El recorrido real de tu cliente, momento por momento: dónde se frustra, qué cambió contra el periodo anterior y qué arreglar primero.",
       howTitle: "Cómo lo resolvemos",
       steps: [
         {
           title: "El recorrido real, momento por momento",
-          text: "La analítica dice en qué paso se cae la gente. Leemos lo que cuenta en reseñas, foros, redes y quejas, y reconstruimos el recorrido como lo vive, momento por momento. Cada mes ves dónde sube la frustración y si mejoró o empeoró contra el mes anterior.",
+          text: "La analítica dice en qué paso se cae la gente. Leemos lo que cuenta en reseñas, foros, redes y quejas, y reconstruimos el recorrido como lo vive, momento por momento. En cada reporte ves dónde sube la frustración y si mejoró o empeoró contra el anterior.",
           method: "jfm"
         },
         {
@@ -189,17 +191,17 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         them: "NPS y encuestas",
         rows: [
           { label: "Qué te dice", them: "Una calificación y cuánto cambió", us: "Dónde se frustra la gente y por qué" },
-          { label: "Cuándo llega", them: "Después de la experiencia, en la siguiente ola", us: "Cada mes, desde lo que la gente ya contó" },
+          { label: "Cuándo llega", them: "Después de la experiencia, en la siguiente ola", us: "Con la frecuencia que elijas, desde lo que la gente ya contó" },
           { label: "Quién responde", them: "Quien acepta contestar la encuesta", us: "Quien habla por su cuenta en reseñas, foros y redes" },
           { label: "Las preguntas", them: "Las que tu equipo decidió hacer", us: "Los temas que trae la gente, aunque nadie preguntara" },
           { label: "Cómo se usan juntos", them: "El comentario abierto se lee aparte, a mano", us: "Tu NPS leído con los mismos temas que la conversación" }
         ]
       },
       deliverable: {
-        title: "Lo que recibes cada mes",
+        title: "Lo que recibes en cada reporte",
         name: "Recorrido de septiembre",
         items: [
-          { name: "El recorrido del mes", text: "Cada momento de la experiencia con su nivel de frustración, comparado con el mes anterior." },
+          { name: "El recorrido del periodo", text: "Cada momento de la experiencia con su nivel de frustración, comparado con el periodo anterior." },
           { name: "Puntos de quiebre", text: "Los momentos donde la gente abandona o se queja más, con sus razones y las citas que lo muestran." },
           { name: "Cruce con tus datos", text: "Dónde tu NPS o tus encuestas coinciden con la conversación y dónde cuentan otra cosa." },
           { name: "Qué arreglar primero", text: "Las mejoras en orden, separando lo que depende de tu equipo, lo que depende de un tercero y lo que conviene probar." }
@@ -207,11 +209,12 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       }
     },
     en: {
+      summary: "Your customer's real journey, moment by moment: where they get frustrated, what changed since the previous period and what to fix first.",
       howTitle: "How we solve it",
       steps: [
         {
           title: "The real journey, moment by moment",
-          text: "Analytics tells you at which step people drop off. We read what they tell in reviews, forums, social media and complaints, and rebuild the journey as they live it, moment by moment. Every month you see where frustration rises and whether it got better or worse since last month.",
+          text: "Analytics tells you at which step people drop off. We read what they tell in reviews, forums, social media and complaints, and rebuild the journey as they live it, moment by moment. In every report you see where frustration rises and whether it got better or worse since the last one.",
           method: "jfm"
         },
         {
@@ -229,17 +232,17 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         them: "NPS and surveys",
         rows: [
           { label: "What it tells you", them: "A score and how much it moved", us: "Where people get frustrated and why" },
-          { label: "When it arrives", them: "After the experience, in the next wave", us: "Every month, from what people already shared" },
+          { label: "When it arrives", them: "After the experience, in the next wave", us: "At the frequency you choose, from what people already shared" },
           { label: "Who answers", them: "Whoever agrees to take the survey", us: "People speaking on their own in reviews, forums and social" },
           { label: "The questions", them: "The ones your team chose to ask", us: "The topics people bring up, even unasked" },
           { label: "Using them together", them: "Open comments are read separately, by hand", us: "Your NPS read with the same topics as the conversation" }
         ]
       },
       deliverable: {
-        title: "What you receive every month",
+        title: "What you receive in every report",
         name: "September journey",
         items: [
-          { name: "This month's journey", text: "Every moment of the experience with its level of frustration, compared with the previous month." },
+          { name: "The journey for the period", text: "Every moment of the experience with its level of frustration, compared with the previous period." },
           { name: "Break points", text: "The moments where people drop out or complain the most, with their reasons and the quotes that show it." },
           { name: "Your data, side by side", text: "Where your NPS or surveys match the conversation and where they tell a different story." },
           { name: "What to fix first", text: "Improvements in order, split into what your team owns, what depends on a third party and what is worth testing." }
@@ -589,8 +592,8 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           text: "Empezamos por tu calendario de lanzamientos, campañas y temporadas, como Hot Sale, regreso a clases o Buen Fin. El reporte continuo corre todo el año y cada estudio se coloca antes de la decisión que alimenta. La respuesta ya existe cuando llega la reunión."
         },
         {
-          title: "Entre estudios, el reporte de cada mes",
-          text: "Entre un estudio y otro, el reporte compara cada mes contra el anterior sobre los mismos temas. Muestra qué se movió y por qué, y detecta cuándo empieza a moverse la conversación de una temporada. Si aparece una pregunta urgente, hay espacio en el plan para ella.",
+          title: "Entre estudios, el reporte continuo",
+          text: "Entre un estudio y otro, el reporte compara cada periodo contra el anterior sobre los mismos temas, cada semana, quincena o mes, como lo acordemos. Muestra qué se movió y por qué, y detecta cuándo empieza a moverse la conversación de una temporada. Si aparece una pregunta urgente, hay espacio en el plan para ella.",
           method: "tb"
         },
         {
@@ -629,7 +632,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Between studies, the ongoing report",
-          text: "Between one study and the next, the report compares each month against the previous one on the same topics. It shows what moved and why, and catches when a season's conversation starts to move. If an urgent question comes up, the plan has room for it.",
+          text: "Between one study and the next, the report compares each period against the previous one on the same topics, weekly, every two weeks or monthly, as we agree. It shows what moved and why, and catches when a season's conversation starts to move. If an urgent question comes up, the plan has room for it.",
           method: "tb"
         },
         {
@@ -643,7 +646,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         rows: [
           { label: "Starting point", them: "Each study starts from scratch", us: "Each study starts from topics and sources already reviewed" },
           { label: "When they arrive", them: "Ordered when the question comes up", us: "Placed before each decision of the year" },
-          { label: "Between studies", them: "Nobody follows what happens", us: "A ongoing report on what changed" },
+          { label: "Between studies", them: "Nobody follows what happens", us: "An ongoing report on what changed" },
           { label: "Comparing results", them: "Criteria and sources change from study to study", us: "Same topics and criteria all year" },
           { label: "Who does them", them: "Different teams depending on vendor or timing", us: "The same Intelligence Architect all year" }
         ]

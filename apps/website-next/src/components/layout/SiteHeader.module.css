@@ -208,6 +208,18 @@
   color: var(--fg-muted);
 }
 
+.menuMore {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  animation: slide var(--dur-slow) var(--ease-out) both;
+}
+
+.menuMore a {
+  color: var(--fg-muted);
+}
+
 .menuFoot {
   margin-top: auto;
   display: flex;
@@ -259,6 +271,7 @@
 @media (prefers-reduced-motion: reduce) {
   .mobileMenu,
   .menuItem,
+  .menuMore,
   .menuFoot {
     animation: none;
   }
