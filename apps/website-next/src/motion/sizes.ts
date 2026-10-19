@@ -3,3 +3,5 @@
 // reference, not the number, and the animation would never know when to loop.
 export const UNDERSTAND = { width: 1080, height: 1080, fps: 30, frames: 330 } as const;
 export const OFFER = { width: 1080, height: 1080, fps: 30, frames: 300 } as const;
+export const TREND = { frames: 330 } as const;
+export const JOURNEY = { frames: 270 } as const;

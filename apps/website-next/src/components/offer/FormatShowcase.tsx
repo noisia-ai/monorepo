@@ -41,10 +41,11 @@ export function FormatShowcase({ items, mock, story, label }: { items: { key: Fo
           <Layer on={current === "dashboard"}>
             <DashboardMock copy={mock.dashboard} />
           </Layer>
-          <Layer on={current === "stories"}>
-            <div style={{ position: "absolute", left: (W - 430) / 2, top: 40, width: 430, height: 920 }}>{story && current === "stories" ? <PhoneStory story={story} /> : null}</div>
-          </Layer>
         </Stage>
+        {/* The phone lives outside the scaled canvas: a Stage inside a Stage would be scaled twice. */}
+        <div className={styles.phoneSlot} data-active={current === "stories"} aria-hidden={current !== "stories"}>
+          {story && current === "stories" ? <PhoneStory story={story} /> : null}
+        </div>
       </div>
       <div className={styles.showcasePanels}>
         {items.map((item, i) => {
@@ -127,7 +128,7 @@ function DocumentMock({ copy }: { copy: FormatMock["document"] }) {
         ].map((col) => (
           <div key={col.label} style={{ borderRadius: 26, background: col.soft, padding: "28px 30px" }}>
             <p style={{ margin: 0, fontSize: 30, fontWeight: 500, color: col.tone }}>{col.label}</p>
-            <div style={{ marginTop: 20, background: "#fff", borderRadius: "26px 26px 26px 8px", padding: "18px 22px", fontSize: 30, lineHeight: 1.25, color: color.ink }}>{col.quote}</div>
+            <div style={{ marginTop: 20, background: "#fff", borderRadius: "26px 26px 26px 8px", padding: "18px 22px", fontSize: 30, lineHeight: 1.25, color: color.ink, textWrap: "balance" }}>{col.quote}</div>
             <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 18, fontSize: 24, color: color.muted }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
                 <SourceIcon name={col.platform} size={26} />
@@ -150,8 +151,9 @@ function DocumentMock({ copy }: { copy: FormatMock["document"] }) {
 }
 
 function DashboardMock({ copy }: { copy: FormatMock["dashboard"] }) {
-  const points = [30, 34, 31, 38, 44, 41, 52, 60, 57, 66, 72, 70];
-  const path = points.map((v, i) => `${i === 0 ? "M" : "L"} ${30 + i * 52} ${210 - v * 2.4}`).join(" ");
+  const plot = { x: 70, y: 40, w: 560, h: 560 };
+  const tones = { teal: color.teal, coral: color.coral, grey: "#b9c4c4" };
+  const stageTone = (stage: string) => (/emerg/i.test(stage) ? color.teal : /aceler|accel/i.test(stage) ? "#d08a00" : color.muted);
   return (
     <div style={{ ...frame, left: 40, right: 40, top: 70, bottom: 70, background: "#f7f8f8" }}>
       <div style={{ height: 70, background: "#fff", borderBottom: `2px solid ${color.line}`, display: "flex", alignItems: "center", gap: 14, padding: "0 32px" }}>
@@ -160,35 +162,55 @@ function DashboardMock({ copy }: { copy: FormatMock["dashboard"] }) {
         ))}
         <img src="/brand/noisia.svg" alt="" width={120} height={Math.round(120 / LOGO_RATIO)} style={{ marginLeft: 22 }} />
       </div>
-      <div style={{ padding: 32, display: "flex", flexDirection: "column", gap: 24 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 20 }}>
-          {copy.kpis.map(([name, value, delta]) => (
-            <div key={name} style={{ background: "#fff", borderRadius: 22, padding: "22px 26px", border: `2px solid ${color.line}` }}>
-              <p style={{ margin: 0, fontSize: 24, color: color.muted }}>{name}</p>
-              <p style={{ margin: "8px 0 0", fontSize: 50, fontWeight: 500, color: color.ink }}>
-                {value} <span style={{ fontSize: 26, color: delta.startsWith("−") ? color.coral : color.teal }}>{delta}</span>
-              </p>
-            </div>
-          ))}
+      <div style={{ padding: 28, display: "grid", gridTemplateColumns: "1.35fr 1fr", gap: 22, height: "calc(100% - 70px)" }}>
+        <div style={{ background: "#fff", borderRadius: 22, border: `2px solid ${color.line}`, padding: "22px 24px", position: "relative" }}>
+          <p style={{ margin: 0, fontSize: 28, fontWeight: 500, color: color.ink }}>{copy.title}</p>
+          <svg width={680} height={640} viewBox="0 0 680 640" style={{ position: "absolute", left: 10, top: 70 }} aria-hidden>
+            <line x1={plot.x} y1={plot.y + plot.h} x2={plot.x + plot.w} y2={plot.y + plot.h} stroke={color.line} strokeWidth={3} />
+            <line x1={plot.x} y1={plot.y} x2={plot.x} y2={plot.y + plot.h} stroke={color.line} strokeWidth={3} />
+            <line x1={plot.x + plot.w / 2} y1={plot.y} x2={plot.x + plot.w / 2} y2={plot.y + plot.h} stroke={color.track} strokeWidth={2} strokeDasharray="8 8" />
+            <line x1={plot.x} y1={plot.y + plot.h / 2} x2={plot.x + plot.w} y2={plot.y + plot.h / 2} stroke={color.track} strokeWidth={2} strokeDasharray="8 8" />
+            {copy.bubbles.map((b) => {
+              const cx = plot.x + b.x * plot.w;
+              const cy = plot.y + (1 - b.y) * plot.h;
+              const r = 18 + b.size * 46;
+              return (
+                <g key={b.name}>
+                  <circle cx={cx} cy={cy} r={r} fill={tones[b.tone]} opacity={0.22} />
+                  <circle cx={cx} cy={cy} r={Math.max(10, r * 0.32)} fill={tones[b.tone]} />
+                  <text x={cx} y={cy - r - 10} textAnchor="middle" fontSize={24} fill={color.fg} fontFamily="inherit">
+                    {b.name}
+                  </text>
+                </g>
+              );
+            })}
+            <text x={plot.x + plot.w} y={plot.y + plot.h + 34} textAnchor="end" fontSize={22} fill={color.muted}>
+              {copy.xLabel} →
+            </text>
+            <text x={plot.x - 14} y={plot.y + 10} textAnchor="end" fontSize={22} fill={color.muted} transform={`rotate(-90 ${plot.x - 14} ${plot.y + 10})`}>
+              {copy.yLabel} →
+            </text>
+          </svg>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr", gap: 20 }}>
-          <div style={{ background: "#fff", borderRadius: 22, padding: "22px 26px", border: `2px solid ${color.line}` }}>
-            <p style={{ margin: 0, fontSize: 26, color: color.fg, fontWeight: 500 }}>{copy.chart}</p>
-            <svg width={640} height={230} viewBox="0 0 640 230" style={{ marginTop: 14 }} aria-hidden>
-              <path d={`${path} L ${30 + 11 * 52} 220 L 30 220 Z`} fill={color.tealSoft} />
-              <path d={path} fill="none" stroke={color.teal} strokeWidth={5} strokeLinejoin="round" />
-            </svg>
-          </div>
-          <div style={{ background: "#fff", borderRadius: 22, padding: "22px 26px", border: `2px solid ${color.line}` }}>
-            <p style={{ margin: 0, fontSize: 26, color: color.fg, fontWeight: 500 }}>{copy.topicsTitle}</p>
-            <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 18 }}>
-              {copy.topics.map(([topic, delta]) => (
-                <div key={topic} style={{ display: "flex", justifyContent: "space-between", fontSize: 30, color: color.ink, borderBottom: `2px solid ${color.track}`, paddingBottom: 12 }}>
-                  {topic}
-                  <span style={{ fontWeight: 500, color: delta.startsWith("−") ? color.coral : color.teal }}>{delta}</span>
-                </div>
-              ))}
-            </div>
+        <div style={{ background: "#fff", borderRadius: 22, border: `2px solid ${color.line}`, padding: "22px 24px" }}>
+          <p style={{ margin: 0, fontSize: 28, fontWeight: 500, color: color.ink }}>{copy.listTitle}</p>
+          <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+            {copy.items.map(([topic, stage], k) => (
+              <div key={topic} style={{ display: "flex", flexDirection: "column", gap: 8, paddingBottom: 14, borderBottom: `2px solid ${color.track}` }}>
+                <span style={{ fontSize: 28, color: color.ink, lineHeight: 1.15 }}>{topic}</span>
+                <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 22, fontWeight: 500, color: stageTone(stage), padding: "4px 12px", borderRadius: 999, border: `2px solid ${stageTone(stage)}` }}>{stage}</span>
+                  <svg width={120} height={34} viewBox="0 0 120 34" aria-hidden>
+                    <polyline
+                      points={[0, 1, 2, 3, 4, 5].map((i) => `${i * 24},${30 - (i * (4 - k) + [2, 6, 3, 8, 6, 10][i]!) * (k === 3 ? 0.6 : 1)}`).join(" ")}
+                      fill="none"
+                      stroke={color.teal}
+                      strokeWidth={3}
+                    />
+                  </svg>
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>

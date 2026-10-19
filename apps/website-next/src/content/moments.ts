@@ -6,6 +6,8 @@
 export type Moment = {
   slug: { es: string; en: string };
   deliverable: "report" | "study" | "plan";
+  /** always = runs every month as part of the day to day; project = answers one decision. */
+  rhythm: "always" | "project";
   es: { name: string; question: string; summary: string };
   en: { name: string; question: string; summary: string };
   /** Unsplash photo (free license): the raw id, what it shows, and who took it. */
@@ -17,6 +19,7 @@ const photo = (id: string, credit: string, es: string, en: string) => ({ src: `h
 export const moments: Moment[] = [
   {
     slug: { es: "monitorear", en: "track" },
+    rhythm: "always",
     photo: photo("photo-1747717086502-f9b2bc6bf2a2", "Julio Lopez", "Una mujer revisa su teléfono al aire libre", "A woman checks her phone outdoors"),
     deliverable: "report",
     es: {
@@ -31,7 +34,56 @@ export const moments: Moment[] = [
     }
   },
   {
+    slug: { es: "anticipar", en: "anticipate" },
+    rhythm: "always",
+    photo: photo("photo-1733856395780-bc9bcf59c866", "Daniel Pichardo", "Una multitud con paraguas en una calle de Guanajuato", "A crowd with umbrellas on a street in Guanajuato"),
+    deliverable: "report",
+    es: {
+      name: "Anticipar tendencias",
+      question: "¿Qué va a importar antes de que todos hablen de eso?",
+      summary: "Un radar de señales: los temas que crecen, qué tan rápido y en qué comunidades, antes de que se vuelvan masivos."
+    },
+    en: {
+      name: "Anticipate trends",
+      question: "What will matter before everyone talks about it?",
+      summary: "A radar of signals: the topics that grow, how fast and in which communities, before they go mainstream."
+    }
+  },
+  {
+    slug: { es: "optimizar", en: "optimize" },
+    rhythm: "always",
+    photo: photo("photo-1720827965169-13ba59a6ebc8", "Eriel Ezequiel Reyes Saviñon", "Dos manos se pasan una bolsa de papel en la calle", "Two hands pass a paper bag on the street"),
+    deliverable: "report",
+    es: {
+      name: "Mejorar la experiencia",
+      question: "¿Dónde se frustra hoy tu cliente, y qué conviene arreglar primero?",
+      summary: "Cada mes, el recorrido real de tu cliente momento por momento: dónde se frustra, qué cambió contra el mes anterior y qué arreglar primero."
+    },
+    en: {
+      name: "Improve the experience",
+      question: "Where does your customer get frustrated today, and what should you fix first?",
+      summary: "Every month, your customer's real journey moment by moment: where they get frustrated, what changed since last month and what to fix first."
+    }
+  },
+  {
+    slug: { es: "defender", en: "defend" },
+    rhythm: "project",
+    photo: photo("photo-1643116712744-6ee1ee41b740", "Willo Team", "Una caja sin abrir junto a una puerta", "An unopened box by a doorway"),
+    deliverable: "study",
+    es: {
+      name: "Defender tu lugar",
+      question: "¿Qué está ganando mi competencia y dónde soy vulnerable?",
+      summary: "Por qué la gente se va, qué promesa del otro se siente más creíble y qué puedes reparar."
+    },
+    en: {
+      name: "Defend your position",
+      question: "What is my competitor winning and where am I exposed?",
+      summary: "Why people leave, which rival promise feels more credible and what you can fix."
+    }
+  },
+  {
     slug: { es: "lanzar", en: "launch" },
+    rhythm: "project",
     photo: photo("photo-1607687441627-27b17d7e44e4", "Conor Brown", "Unas manos abren una caja de cartón nueva", "Hands opening a new cardboard box"),
     deliverable: "study",
     es: {
@@ -47,6 +99,7 @@ export const moments: Moment[] = [
   },
   {
     slug: { es: "entrar", en: "enter" },
+    rhythm: "project",
     photo: photo("photo-1584208632661-f8db31bb6489", "Roberto Carlos Román Don", "Un mercado mexicano lleno de puestos y color", "A busy, colorful Mexican market"),
     deliverable: "study",
     es: {
@@ -61,37 +114,8 @@ export const moments: Moment[] = [
     }
   },
   {
-    slug: { es: "defender", en: "defend" },
-    photo: photo("photo-1643116712744-6ee1ee41b740", "Willo Team", "Una caja sin abrir junto a una puerta", "An unopened box by a doorway"),
-    deliverable: "study",
-    es: {
-      name: "Defender tu lugar",
-      question: "¿Qué está ganando mi competencia y dónde soy vulnerable?",
-      summary: "Por qué la gente se va, qué promesa del otro se siente más creíble y qué puedes reparar."
-    },
-    en: {
-      name: "Defend your position",
-      question: "What is my competitor winning and where am I exposed?",
-      summary: "Why people leave, which rival promise feels more credible and what you can fix."
-    }
-  },
-  {
-    slug: { es: "optimizar", en: "optimize" },
-    photo: photo("photo-1720827965169-13ba59a6ebc8", "Eriel Ezequiel Reyes Saviñon", "Dos manos se pasan una bolsa de papel en la calle", "Two hands pass a paper bag on the street"),
-    deliverable: "study",
-    es: {
-      name: "Mejorar la experiencia",
-      question: "¿Dónde se rompe el camino entre la intención y la compra?",
-      summary: "El recorrido real, momento por momento, y la fricción que conviene quitar primero."
-    },
-    en: {
-      name: "Improve the experience",
-      question: "Where does the path from intent to purchase break?",
-      summary: "The real journey, moment by moment, and the friction worth removing first."
-    }
-  },
-  {
     slug: { es: "innovar", en: "innovate" },
+    rhythm: "project",
     photo: photo("photo-1763951719000-661d3d50d763", "Zoshua Colah", "Manos volteando tortillas en un comal", "Hands turning tortillas on a griddle"),
     deliverable: "study",
     es: {
@@ -107,6 +131,7 @@ export const moments: Moment[] = [
   },
   {
     slug: { es: "planear", en: "plan" },
+    rhythm: "always",
     photo: photo("photo-1586936893354-362ad6ae47ba", "UX Indonesia", "Un equipo acomoda notas adhesivas sobre una mesa", "A team arranging sticky notes on a table"),
     deliverable: "plan",
     es: {

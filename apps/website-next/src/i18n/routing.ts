@@ -7,9 +7,12 @@ export const routing = defineRouting({
   locales: ["es", "en"],
   defaultLocale: "es",
   localePrefix: "as-needed",
-  // First visit follows the device language (Accept-Language); after that the NEXT_LOCALE cookie,
-  // which the ES/EN toggle sets, wins. Crawlers send no language and get Spanish.
-  localeDetection: true,
+  // Device language is detected only on the home page (see middleware): next-intl's own detection
+  // redirects deep links to untranslated slugs (/soluciones/planear -> /en/solutions/planear, a 404).
+  localeDetection: false,
+  // next-intl's automatic hreflang header can't translate slugs (it would point /soluciones/anticipar
+  // to /en/solutions/anticipar); every page declares its real alternates in its metadata instead.
+  alternateLinks: false,
   pathnames: {
     "/": "/",
     "/insights": "/insights",

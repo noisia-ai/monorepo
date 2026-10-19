@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { PageControl } from "@/components/ui/PageControl";
 import styles from "./ReachScroll.module.css";
 
 export type ReachCopy = {
@@ -14,7 +15,7 @@ export type ReachCopy = {
  * Scroll-driven: the section pins while the reader scrolls through three beats. Languages count
  * up one by one, then countries, then the time drops from weeks to days.
  */
-export function ReachScroll({ copy }: { copy: ReachCopy }) {
+export function ReachScroll({ copy, beats }: { copy: ReachCopy; beats: [string, string, string] }) {
   const ref = useRef<HTMLElement>(null);
   const [p, setP] = useState(1);
 
@@ -37,12 +38,19 @@ export function ReachScroll({ copy }: { copy: ReachCopy }) {
     };
   }, []);
 
-  // Three beats, each with a short hold at the end.
-  const beat = (i: number) => Math.min(1, Math.max(0, (p - i * 0.31) / 0.26));
+  // Three beats in about one and a half screens of scrolling, each with a short hold.
+  const beat = (i: number) => Math.min(1, Math.max(0, (p - i * 0.33) / 0.24));
   const lang = beat(0);
   const country = beat(1);
   const time = beat(2);
-  const stage = p < 0.31 ? 0 : p < 0.62 ? 1 : 2;
+  const stage = p < 0.33 ? 0 : p < 0.66 ? 1 : 2;
+  // The dots also jump: each one scrolls to the start of its beat.
+  const jump = (i: number) => {
+    const el = ref.current;
+    if (!el) return;
+    const run = el.offsetHeight - window.innerHeight;
+    window.scrollTo({ top: el.offsetTop + run * (i * 0.33 + 0.24), behavior: "smooth" });
+  };
   const langCount = Math.round(lang * copy.languages.items.length);
   const countryCount = Math.round(country * copy.countries.items.length);
   const timeIndex = Math.min(copy.time.steps.length - 1, Math.floor(time * copy.time.steps.length));
@@ -85,6 +93,7 @@ export function ReachScroll({ copy }: { copy: ReachCopy }) {
               <span className={styles.label}>{copy.time.label}</span>
             </div>
           </div>
+          <PageControl className={styles.dots} count={3} active={stage} labels={beats} onSelect={jump} />
         </div>
       </div>
     </section>

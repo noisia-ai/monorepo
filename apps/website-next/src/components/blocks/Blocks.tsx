@@ -3,6 +3,7 @@ import type { Block, BlockIcon, PageContent } from "@/content/pages/types";
 import { Faq } from "@/components/ui/Faq";
 import { Reveal } from "@/components/ui/Reveal";
 import { MotionBlock } from "@/components/motion/MotionBlock";
+import ui from "@/components/ui/ui.module.css";
 import styles from "./blocks.module.css";
 
 const ICONS: Record<BlockIcon, typeof Globe> = { question: ChatBubbleQuestion, sources: Database, markets: Globe, period: Calendar, depth: Depth };
@@ -136,7 +137,7 @@ export function BlockView({ block }: { block: Block }) {
         <div className={styles.cta}>
           <h2 className={styles.h2}>{block.title}</h2>
           {block.text ? <p className={styles.lead}>{block.text}</p> : null}
-          <a href={block.href} className={styles.ctaButton}>
+          <a href={block.href} className={`${ui.button} ${ui["button-primary"]}`}>
             {block.label}
           </a>
         </div>

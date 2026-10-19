@@ -251,19 +251,37 @@
   font-weight: 500;
 }
 
+.phoneSlot {
+  position: absolute;
+  top: 4%;
+  bottom: 4%;
+  left: 50%;
+  aspect-ratio: 9 / 19.5;
+  transform: translateX(-50%) translateY(16px) scale(0.98);
+  opacity: 0;
+  transition: opacity 520ms var(--ease-out), transform 620ms var(--ease-out);
+  pointer-events: none;
+}
+
+.phoneSlot[data-active="true"] {
+  opacity: 1;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
 .phone {
   position: absolute;
   inset: 0;
-  border-radius: 64px;
-  padding: 16px;
+  border-radius: 40px;
+  padding: 9px;
   background: var(--ink);
   box-shadow: 0 30px 70px rgba(10, 10, 10, 0.18);
 }
 
 .phoneStage {
   position: absolute;
-  inset: 16px;
-  border-radius: 50px;
+  inset: 9px;
+  border-radius: 32px;
   background: #fff;
 }
 

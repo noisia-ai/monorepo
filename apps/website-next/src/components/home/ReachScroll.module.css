@@ -1,7 +1,7 @@
 /* Tall section, pinned content: the scroll inside it drives the three beats. */
 .section {
   position: relative;
-  height: 320vh;
+  height: 180vh;
   background: var(--dark, #061218);
   color: #fff;
 }
@@ -24,6 +24,22 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-7);
+}
+
+.dots {
+  justify-content: flex-start;
+}
+
+.dots > div {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.dots button {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.dots button span {
+  background: #fff;
 }
 
 .title {
@@ -128,6 +144,10 @@
 @media (prefers-reduced-motion: reduce) {
   .section {
     height: auto;
+  }
+
+  .dots {
+    display: none;
   }
 
   .sticky {

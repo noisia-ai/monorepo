@@ -5,22 +5,24 @@ import { Stage } from "@/motion/runtime";
 import { HERO, HeroComposition, type HeroCopy } from "@/motion/HeroComposition";
 import { EnterComposition, LaunchComposition, SLIDE, TrackComposition, type EnterCopy, type LaunchCopy, type TrackCopy } from "@/motion/HeroSlides";
 import { PageControl } from "@/components/ui/PageControl";
+import { TrendComposition, type TrendCopy } from "@/motion/SignalCompositions";
+import { TREND } from "@/motion/sizes";
 import { usePlayback } from "@/components/motion/usePlayback";
 import { Button } from "@/components/ui/Button";
 import styles from "./RotatingHero.module.css";
 
-export type HeroSlide = { key: "track" | "launch" | "enter" | "defend"; tab: string; title: string; sub: string };
+export type HeroSlide = { key: "track" | "trend" | "launch" | "enter" | "defend"; tab: string; title: string; sub: string };
 export type RotatingHeroCopy = {
   heading: string;
   slides: HeroSlide[];
   primary: string;
   secondary: string;
-  motion: { track: TrackCopy; launch: LaunchCopy; enter: EnterCopy; defend: HeroCopy };
+  motion: { track: TrackCopy; trend: TrendCopy; launch: LaunchCopy; enter: EnterCopy; defend: HeroCopy };
 };
 
-const FRAMES = { track: SLIDE.frames, launch: SLIDE.frames, enter: SLIDE.frames, defend: HERO.durationInFrames } as const;
+const FRAMES = { track: SLIDE.frames, trend: TREND.frames, launch: SLIDE.frames, enter: SLIDE.frames, defend: HERO.durationInFrames } as const;
 // What a still frame shows when motion is reduced: the moment each story is complete.
-const POSTER = { track: 236, launch: 236, enter: 236, defend: 330 } as const;
+const POSTER = { track: 236, trend: 300, launch: 236, enter: 236, defend: 330 } as const;
 
 /**
  * The hero rotates through the situations a brand brings to us. Title, subtitle and
@@ -78,6 +80,8 @@ export function RotatingHero({ copy, labels }: { copy: RotatingHeroCopy; labels:
             >
               {slide.key === "track" ? (
                 <TrackComposition copy={copy.motion.track} />
+              ) : slide.key === "trend" ? (
+                <TrendComposition copy={copy.motion.trend} />
               ) : slide.key === "launch" ? (
                 <LaunchComposition copy={copy.motion.launch} />
               ) : slide.key === "enter" ? (

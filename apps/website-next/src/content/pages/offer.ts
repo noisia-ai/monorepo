@@ -3,12 +3,19 @@
 // stories) apart from the product. Animation numbers are illustrative.
 import type { PlanCopy, ReportCopy, StudyCopy } from "@/motion/OfferCompositions";
 
-type Icon = "brand" | "competitors" | "category" | "campaigns" | "topics";
+type Icon = "brand" | "competitors" | "category" | "campaigns" | "topics" | "signals";
 export type FormatKey = "live" | "document" | "dashboard" | "stories";
 export type FormatMock = {
   live: { badge: string; slide: string; bars: [string, string, string] };
   document: { title: string; trigger: string; barrier: string; quotes: [string, string] };
-  dashboard: { kpis: [string, string, string][]; chart: string; topicsTitle: string; topics: [string, string][] };
+  dashboard: {
+    title: string;
+    xLabel: string;
+    yLabel: string;
+    bubbles: { name: string; x: number; y: number; size: number; tone: "teal" | "coral" | "grey" }[];
+    listTitle: string;
+    items: [string, string][];
+  };
 };
 
 export type OfferCopy = {
@@ -21,6 +28,7 @@ export type OfferCopy = {
     text: string;
     watchTitle: string;
     watch: { icon: Icon; name: string; text: string }[];
+    alwaysTitle: string;
     motion: ReportCopy;
   };
   study: {
@@ -56,8 +64,10 @@ export const offer: Record<"es" | "en", OfferCopy> = {
         { icon: "competitors", name: "Tus competidores", text: "Cuánto ocupan de la conversación y en qué te ganan." },
         { icon: "category", name: "Tu categoría", text: "Los temas que suben o bajan aunque nadie nombre una marca." },
         { icon: "campaigns", name: "Campañas y lanzamientos", text: "Cómo se recibe lo que lanzas tú y lo que lanza el resto." },
-        { icon: "topics", name: "Los temas que te importan", text: "Precio, servicio, sustentabilidad o lo que defina tu negocio." }
+        { icon: "topics", name: "Los temas que te importan", text: "Precio, servicio, sustentabilidad o lo que defina tu negocio." },
+        { icon: "signals", name: "Señales que empiezan", text: "Temas chicos que crecen rápido, antes de que se vuelvan masivos." }
       ],
+      alwaysTitle: "Para el día a día",
       motion: {
         months: ["Jul", "Ago", "Sep"],
         brands: ["Tu marca", "Competidor A", "Competidor B"],
@@ -106,26 +116,32 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       title: "El mismo hallazgo, en el formato que tu equipo usa",
       lead: "Reporte y estudio son lo que respondemos. El formato es cómo te llega, y puede ser más de uno.",
       items: [
+        { key: "stories", name: "Historias animadas", text: "Hallazgos cortos como los de nuestro feed, para mandar al equipo o presentar en un minuto." },
         { key: "live", name: "Presentación en vivo", text: "Te lo presentamos, respondemos preguntas y dejamos la evidencia abierta para revisarla después." },
         { key: "document", name: "Documento con la evidencia", text: "Cada hallazgo con su cifra, sus citas literales y el método detrás, listo para circular." },
-        { key: "dashboard", name: "Dashboard en línea", text: "Los hallazgos del reporte en un tablero con filtros por tema, fuente y periodo, y cada cifra ligada a lo que la gente dijo." },
-        { key: "stories", name: "Historias animadas", text: "Hallazgos cortos como los de nuestro feed, para mandar al equipo o presentar en un minuto." }
+        { key: "dashboard", name: "Dashboard en línea", text: "Los hallazgos del reporte en un tablero con filtros por tema, fuente y periodo, y cada cifra ligada a lo que la gente dijo." }
       ],
       mock: {
         live: { badge: "En vivo", slide: "Lo que cambió en septiembre", bars: ["Precio", "Servicio", "Empaque"] },
         document: { title: "Lo que acerca y lo que frena", trigger: "Lo que acerca", barrier: "Lo que frena", quotes: ["Si la veo en la tienda, la pruebo", "Se me antoja, pero está carísima"] },
         dashboard: {
-          kpis: [
-            ["Menciones", "12.480", "+8%"],
-            ["Sentimiento neto", "+14", "+3"],
-            ["Temas activos", "32", "+2"]
+          title: "Mapa de temas · septiembre",
+          xLabel: "Volumen",
+          yLabel: "Crecimiento",
+          bubbles: [
+            { name: "Precio", x: 0.74, y: 0.72, size: 1, tone: "teal" },
+            { name: "Empaque reciclable", x: 0.22, y: 0.86, size: 0.45, tone: "teal" },
+            { name: "Servicio", x: 0.6, y: 0.18, size: 0.75, tone: "coral" },
+            { name: "Sabor", x: 0.88, y: 0.36, size: 0.85, tone: "grey" },
+            { name: "Entrega", x: 0.42, y: 0.42, size: 0.55, tone: "grey" },
+            { name: "Recetas", x: 0.12, y: 0.6, size: 0.35, tone: "teal" }
           ],
-          chart: "Conversación por semana",
-          topicsTitle: "Lo que más cambió",
-          topics: [
-            ["Precio", "+38%"],
-            ["Servicio", "−12%"],
-            ["Empaque", "+9%"]
+          listTitle: "Temas que suben",
+          items: [
+            ["Empaque reciclable", "Emergente"],
+            ["Precio por mililitro", "Acelerando"],
+            ["Recetas con el producto", "Emergente"],
+            ["Precio", "Mainstream"]
           ]
         }
       }
@@ -147,8 +163,10 @@ export const offer: Record<"es" | "en", OfferCopy> = {
         { icon: "competitors", name: "Your competitors", text: "How much of the conversation they hold and where they beat you." },
         { icon: "category", name: "Your category", text: "The topics that rise or fall even when nobody names a brand." },
         { icon: "campaigns", name: "Campaigns and launches", text: "How people receive what you launch and what everyone else launches." },
-        { icon: "topics", name: "The topics you care about", text: "Price, service, sustainability or whatever defines your business." }
+        { icon: "topics", name: "The topics you care about", text: "Price, service, sustainability or whatever defines your business." },
+        { icon: "signals", name: "Signals that are starting", text: "Small topics growing fast, before they go mainstream." }
       ],
+      alwaysTitle: "For the day to day",
       motion: {
         months: ["Jul", "Aug", "Sep"],
         brands: ["Your brand", "Competitor A", "Competitor B"],
@@ -197,26 +215,32 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       title: "The same finding, in the format your team uses",
       lead: "Report and study are what we answer. The format is how it reaches you, and it can be more than one.",
       items: [
+        { key: "stories", name: "Animated stories", text: "Short findings like the ones in our feed, to send to the team or present in a minute." },
         { key: "live", name: "Live presentation", text: "We present it, answer questions and leave the evidence open to review later." },
         { key: "document", name: "Document with the evidence", text: "Every finding with its number, its verbatim quotes and the method behind it, ready to share." },
-        { key: "dashboard", name: "Online dashboard", text: "The report's findings in a dashboard you can filter by topic, source and period, with every number tied to what people said." },
-        { key: "stories", name: "Animated stories", text: "Short findings like the ones in our feed, to send to the team or present in a minute." }
+        { key: "dashboard", name: "Online dashboard", text: "The report's findings in a dashboard you can filter by topic, source and period, with every number tied to what people said." }
       ],
       mock: {
         live: { badge: "Live", slide: "What changed in September", bars: ["Price", "Service", "Packaging"] },
-        document: { title: "What draws people and what holds them back", trigger: "Draws them", barrier: "Holds them back", quotes: ["If I see it in the store, I'll try it", "I want it, but it's way too expensive"] },
+        document: { title: "What draws people and what holds them back", trigger: "Draws them", barrier: "Holds them back", quotes: ["I'd try it if I saw it at the store", "I want it, but it costs way too much"] },
         dashboard: {
-          kpis: [
-            ["Mentions", "12,480", "+8%"],
-            ["Net sentiment", "+14", "+3"],
-            ["Active topics", "32", "+2"]
+          title: "Topic map · September",
+          xLabel: "Volume",
+          yLabel: "Growth",
+          bubbles: [
+            { name: "Price", x: 0.74, y: 0.72, size: 1, tone: "teal" },
+            { name: "Recyclable pack", x: 0.22, y: 0.86, size: 0.45, tone: "teal" },
+            { name: "Service", x: 0.6, y: 0.18, size: 0.75, tone: "coral" },
+            { name: "Taste", x: 0.88, y: 0.36, size: 0.85, tone: "grey" },
+            { name: "Delivery", x: 0.42, y: 0.42, size: 0.55, tone: "grey" },
+            { name: "Recipes", x: 0.12, y: 0.6, size: 0.35, tone: "teal" }
           ],
-          chart: "Conversation per week",
-          topicsTitle: "What changed most",
-          topics: [
-            ["Price", "+38%"],
-            ["Service", "−12%"],
-            ["Packaging", "+9%"]
+          listTitle: "Topics on the rise",
+          items: [
+            ["Recyclable packaging", "Emerging"],
+            ["Price per milliliter", "Accelerating"],
+            ["Recipes with the product", "Emerging"],
+            ["Price", "Mainstream"]
           ]
         }
       }

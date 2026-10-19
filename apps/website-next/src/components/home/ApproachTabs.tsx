@@ -23,11 +23,17 @@ export function ApproachTabs({ tabs, motion, answersLabel, label }: { tabs: Appr
         <SegmentedControl options={tabs.map((item) => ({ key: item.key, label: item.tab }))} active={active} onChange={setActive} label={label} accent={0} />
       </div>
       <div className={styles.body}>
-        {/* All panels share one cell, so the text block never changes height. */}
-        <div className={styles.panels}>
+        {/* Titles and texts each share one cell, so nothing jumps; on phones the diagram sits between them. */}
+        <div className={`${styles.stack} ${styles.titles}`}>
           {tabs.map((item, i) => (
-            <div key={item.key} className={styles.panel} data-active={i === active} aria-hidden={i !== active} role="tabpanel">
-              <h3 className={styles.title}>{item.title}</h3>
+            <h3 key={item.key} className={`${styles.layer} ${styles.title}`} data-active={i === active} aria-hidden={i !== active}>
+              {item.title}
+            </h3>
+          ))}
+        </div>
+        <div className={`${styles.stack} ${styles.texts}`}>
+          {tabs.map((item, i) => (
+            <div key={item.key} className={`${styles.layer} ${styles.panel}`} data-active={i === active} aria-hidden={i !== active} role="tabpanel">
               <p className={styles.text}>{item.text}</p>
               <p className={styles.answers} data-key={item.key}>
                 <span>{answersLabel}</span>

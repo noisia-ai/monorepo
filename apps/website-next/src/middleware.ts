@@ -5,6 +5,17 @@ import { routing } from "./i18n/routing";
 const intl = createMiddleware(routing);
 
 /**
+ * The home page follows the reader's language: the ES/EN toggle's NEXT_LOCALE cookie first,
+ * then the device language. Deep links keep the language they were shared in.
+ */
+function preferredHomeLocale(request: NextRequest): "es" | "en" {
+  const saved = request.cookies.get("NEXT_LOCALE")?.value;
+  if (saved === "en" || saved === "es") return saved;
+  const first = (request.headers.get("accept-language") ?? "").split(",")[0]?.trim().toLowerCase() ?? "";
+  return first.startsWith("en") ? "en" : "es";
+}
+
+/**
  * Staging (UAT) guard: with UAT_PASSWORD set, every page asks for basic auth (any user,
  * that password); with NOISIA_UAT=1 nothing is indexed. Production sets neither.
  */
@@ -17,6 +28,14 @@ export default function middleware(request: NextRequest) {
     if (supplied !== password) {
       return new NextResponse("Noisia UAT", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Noisia UAT", charset="UTF-8"' } });
     }
+  }
+  if (request.nextUrl.pathname === "/" && preferredHomeLocale(request) === "en") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/en";
+    const redirect = NextResponse.redirect(url, 307);
+    redirect.headers.set("Vary", "Accept-Language, Cookie");
+    if (process.env.NOISIA_UAT === "1") redirect.headers.set("X-Robots-Tag", "noindex, nofollow");
+    return redirect;
   }
   const response = intl(request);
   if (process.env.NOISIA_UAT === "1") response.headers.set("X-Robots-Tag", "noindex, nofollow");

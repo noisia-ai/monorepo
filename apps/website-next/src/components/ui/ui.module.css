@@ -63,6 +63,17 @@
   transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 
+/* Phones: every button sits centered under its content. */
+@media (max-width: 959px) {
+  .button {
+    align-self: center;
+    justify-self: center;
+    display: flex;
+    width: fit-content;
+    margin-inline: auto;
+  }
+}
+
 .button:active {
   transform: scale(0.98);
 }

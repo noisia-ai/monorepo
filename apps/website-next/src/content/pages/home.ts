@@ -4,12 +4,13 @@
 import type { ReachCopy } from "@/components/home/ReachScroll";
 import type { RotatingHeroCopy } from "@/components/home/RotatingHero";
 import type { ApproachCopy } from "@/motion/ApproachComposition";
+import type { TrendCopy } from "@/motion/SignalCompositions";
 import type { UnderstandCopy } from "@/motion/UnderstandComposition";
 
 export type ApproachTab = { key: "noisia" | "listening" | "ai" | "agency"; tab: string; title: string; text: string; answers: string };
 
 type HomeCopy = {
-  hero: RotatingHeroCopy;
+  hero: RotatingHeroCopy & { motion: { trend: TrendCopy } };
   moments: { title: string; lead: string; report: string; study: string; plan: string; more: string; play: string; pause: string };
   insights: { title: string; lead: string; all: string };
   how: { title: string; lead: string; tabs: ApproachTab[]; motion: ApproachCopy; link: string; compareLink: string };
@@ -24,13 +25,22 @@ export const home: Record<"es" | "en", HomeCopy> = {
       heading: "Noisia, inteligencia social: respuestas de negocio a partir de lo que la gente dice",
       slides: [
         { key: "track", tab: "Monitorear", title: "¿Qué cambió este mes con tu marca?", sub: "Cada mes te contamos qué subió, qué bajó y por qué, con lo que la gente dijo como prueba." },
-        { key: "launch", tab: "Lanzar", title: "¿La gente de verdad quiere esto?", sub: "Antes de lanzar, sabes qué acerca a la gente a tu idea y qué la frena." },
-        { key: "enter", tab: "Entrar a un mercado", title: "¿Cómo compra la gente en Colombia?", sub: "Las reglas no escritas de un mercado nuevo, antes de invertir en él." },
-        { key: "defend", tab: "Defender", title: "¿Por qué no regresan después de la primera compra?", sub: "Encontramos el momento en que tu cliente se frustra y qué conviene arreglar primero." }
+        { key: "trend", tab: "Anticipar tendencias", title: "¿Qué va a importar el próximo trimestre?", sub: "Vemos crecer los temas antes de que se vuelvan masivos y te avisamos cuáles conviene mover." },
+        { key: "defend", tab: "Mejorar la experiencia", title: "¿Por qué no regresan después de la primera compra?", sub: "Cada mes encontramos dónde se frustra tu cliente y qué conviene arreglar primero." },
+        { key: "launch", tab: "Lanzar", title: "¿La gente de verdad quiere esto?", sub: "Antes de lanzar, sabes qué acerca a la gente a tu idea y qué la frena." }
       ],
       primary: "Agenda un taller gratis",
       secondary: "Ver insights",
       motion: {
+        trend: {
+            volume: "Volumen",
+            growth: "Crecimiento",
+            signals: ["Descansar sin culpa", "Compartir menos", "Hecho a mano", "Precio por porción", "Comprar usado"],
+            stages: ["Emergente", "Acelerando", "Mainstreaming", "Saturación"],
+            time: "Tiempo",
+            now: "acelerando",
+            payoff: "Te avisamos cuando una señal pasa de emergente a acelerando."
+          },
         track: {
           header: "Tu marca en la conversación",
           previous: "Ago",
@@ -191,13 +201,22 @@ export const home: Record<"es" | "en", HomeCopy> = {
       heading: "Noisia, social intelligence: business answers from what people say",
       slides: [
         { key: "track", tab: "Track", title: "What changed with your brand this month?", sub: "Every month we tell you what rose, what fell and why, with what people said as proof." },
-        { key: "launch", tab: "Launch", title: "Do people actually want this?", sub: "Before you launch, you know what draws people to your idea and what holds them back." },
-        { key: "enter", tab: "Enter a market", title: "How do people shop in Colombia?", sub: "The unwritten rules of a new market, before you invest in it." },
-        { key: "defend", tab: "Defend", title: "Why don't they come back after the first purchase?", sub: "We find the moment your customer gets frustrated and what is worth fixing first." }
+        { key: "trend", tab: "Anticipate trends", title: "What will matter next quarter?", sub: "We see topics grow before they go mainstream and tell you which ones are worth acting on." },
+        { key: "defend", tab: "Improve the experience", title: "Why don't they come back after the first purchase?", sub: "Every month we find where your customer gets frustrated and what is worth fixing first." },
+        { key: "launch", tab: "Launch", title: "Do people actually want this?", sub: "Before you launch, you know what draws people to your idea and what holds them back." }
       ],
       primary: "Book a free workshop",
       secondary: "See insights",
       motion: {
+        trend: {
+            volume: "Volume",
+            growth: "Growth",
+            signals: ["Resting without guilt", "Sharing less", "Handmade", "Price per serving", "Buying used"],
+            stages: ["Emerging", "Accelerating", "Mainstreaming", "Saturation"],
+            time: "Time",
+            now: "accelerating",
+            payoff: "We let you know when a signal moves from emerging to accelerating."
+          },
         track: {
           header: "Your brand in the conversation",
           previous: "Aug",

@@ -101,11 +101,13 @@ export const solutionsIndex: Localized<PageContent> = {
   }
 };
 
-type MomentCopy = {
+export type MomentCopy = {
   situation: string[];
   lookAt: { name: string; text: string }[];
   receive: { name: string; text: string }[];
   example: string;
+  /** Overrides "An illustrative example" when the example is real research. */
+  exampleTitle?: string;
   methods: { label: string; text: string; href: string }[];
   faq: { q: string; a: string }[];
 };
@@ -148,6 +150,68 @@ const m = {
 };
 
 const copy: Record<string, Localized<MomentCopy>> = {
+  anticipar: {
+    es: {
+      situation: [
+        "Cuando una tendencia aparece en una presentación de agencia, ya llegó tarde. Antes de volverse masiva, una idea vive meses en comunidades chicas, con su propio vocabulario, y crece a un ritmo que ningún tablero de volumen muestra porque todavía es pequeña.",
+        "El radar de Noisia sigue esas señales cada mes. Mide cuánto se habla de cada tema, qué tan rápido crece y en cuántas comunidades aparece, y lo coloca en una etapa: emergente, acelerando, mainstreaming o saturación. Así sabes qué conviene mover ahora y qué ya está gastado."
+      ],
+      lookAt: [
+        { name: "Velocidad, no solo volumen", text: "Un tema pequeño que crece rápido pesa más que uno grande que ya se estancó." },
+        { name: "En cuántas comunidades aparece", text: "Una señal que salta de un nicho a otro tiene más futuro que una que se queda en un solo grupo." },
+        { name: "El lenguaje que está naciendo", text: "Palabras, frases y referentes nuevos que la gente empieza a usar para hablar del tema." },
+        { name: "Cuánto dura", text: "Separamos lo que es un pico de una semana de lo que se sostiene mes tras mes." }
+      ],
+      receive: [
+        { name: "Radar mensual de señales", text: "Cada señal con su etapa, su velocidad y las comunidades donde aparece, comparada contra el mes anterior." },
+        { name: "Qué mover ahora", text: "Las señales que ya tienen permiso para tu marca y las que conviene vigilar sin tocar todavía." },
+        { name: "Lenguaje y referentes", text: "Las frases reales con las que la gente habla de cada señal, listas para un brief." },
+        { name: "Aviso cuando algo cambia de etapa", text: "Cuando una señal pasa de emergente a acelerando entre un reporte y otro." }
+      ],
+      exampleTitle: "Un ejemplo de nuestra investigación",
+      example:
+        "En Cultural Foresight México 2026 seguimos ocho señales durante diecisiete meses. Una de ellas, descansar sin culpa, se aceleró entre 2025 y 2026 con un vocabulario propio: descansar dejó de pedir permiso y empezó a sonar a derecho.",
+      methods: [
+        { label: "Cultural Foresight México 2026", href: "/insights/reportes/cultural-foresight-mexico-2026", text: "El reporte donde aplicamos este radar a ocho señales culturales." },
+        { ...m.es.cc, text: "Para leer los códigos y el lenguaje que acompañan a cada señal." }
+      ],
+      faq: [
+        { q: "¿En qué se distingue de una lista de tendencias?", a: "Una lista dice qué está de moda. El radar dice en qué etapa está cada señal, qué tan rápido se mueve y si tiene que ver con tu marca, con la evidencia de dónde lo vimos." },
+        { q: "¿Cada cuánto se actualiza?", a: "Cada mes, junto con el reporte. Si una señal cambia de etapa entre reportes, te avisamos." },
+        { q: "¿Sirve para innovación de producto?", a: "Sí. Muchas señales emergentes son necesidades que todavía nadie resuelve bien. Cuando una pide más profundidad, se convierte en un estudio." }
+      ]
+    },
+    en: {
+      situation: [
+        "When a trend shows up in an agency presentation, it is already late. Before going mainstream, an idea lives for months in small communities, with its own vocabulary, and grows at a pace no volume dashboard shows because it is still small.",
+        "Noisia's radar follows those signals every month. It measures how much each topic is discussed, how fast it grows and in how many communities it appears, and places it in a stage: emerging, accelerating, mainstreaming or saturation. So you know what to act on now and what is already worn out."
+      ],
+      lookAt: [
+        { name: "Speed, not just volume", text: "A small topic growing fast matters more than a big one that has stalled." },
+        { name: "How many communities carry it", text: "A signal that jumps from one niche to another has more future than one that stays in a single group." },
+        { name: "The language being born", text: "New words, phrases and references people start using to talk about the topic." },
+        { name: "How long it lasts", text: "We separate a one-week spike from what holds month after month." }
+      ],
+      receive: [
+        { name: "Monthly signal radar", text: "Every signal with its stage, its speed and the communities where it appears, compared with the previous month." },
+        { name: "What to act on now", text: "The signals your brand already has permission to use and the ones worth watching without touching yet." },
+        { name: "Language and references", text: "The real phrases people use to talk about each signal, ready for a brief." },
+        { name: "A heads-up when a stage changes", text: "When a signal moves from emerging to accelerating between reports." }
+      ],
+      exampleTitle: "An example from our research",
+      example:
+        "In Cultural Foresight Mexico 2026 we followed eight signals for seventeen months. One of them, resting without guilt, sped up between 2025 and 2026 with its own vocabulary: rest stopped asking for permission and started to sound like a right.",
+      methods: [
+        { label: "Cultural Foresight Mexico 2026", href: "/en/insights/reports/cultural-foresight-mexico-2026", text: "The report where we applied this radar to eight cultural signals." },
+        { ...m.en.cc, text: "To read the codes and language that come with each signal." }
+      ],
+      faq: [
+        { q: "How is it different from a trend list?", a: "A list says what is fashionable. The radar says which stage each signal is in, how fast it moves and whether it relates to your brand, with the evidence of where we saw it." },
+        { q: "How often is it updated?", a: "Every month, with the report. If a signal changes stage between reports, we let you know." },
+        { q: "Is it useful for product innovation?", a: "Yes. Many emerging signals are needs nobody solves well yet. When one calls for more depth, it becomes a study." }
+      ]
+    }
+  },
   monitorear: {
     es: {
       situation: [
@@ -579,6 +643,10 @@ const copy: Record<string, Localized<MomentCopy>> = {
     }
   }
 };
+
+/** Raw copy per situation, for the designed situation page. */
+export const situationCopy = copy;
+export { labels as momentLabels };
 
 export const solutionEntries: Entry[] = moments.map((mo) => {
   const c = copy[mo.slug.es];

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { setRequestLocale } from "next-intl/server";
-import { ArrowRight, Calendar, Community, Journal, Megaphone, ProfileCircle, StatsUpSquare } from "iconoir-react";
+import { ArrowRight, Calendar, Community, Journal, Megaphone, ProfileCircle, Sparks, StatsUpSquare } from "iconoir-react";
 import { BlockView } from "@/components/blocks/Blocks";
 import { SituationGallery } from "@/components/home/SituationGallery";
 import { SquareMotion } from "@/components/motion/SquareMotion";
@@ -17,7 +17,7 @@ import styles from "@/components/offer/offer.module.css";
 
 const paths = { es: "/soluciones", en: "/solutions" };
 
-const WATCH_ICONS = { brand: ProfileCircle, competitors: Community, category: StatsUpSquare, campaigns: Megaphone, topics: Journal } as const;
+const WATCH_ICONS = { brand: ProfileCircle, competitors: Community, category: StatsUpSquare, campaigns: Megaphone, topics: Journal, signals: Sparks } as const;
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }): Promise<Metadata> {
   const { locale } = await params;
@@ -34,6 +34,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
   const story = (await getFeedStories(locale)).find((s) => s.kind === "editorial");
   const deliverable = { report: c.labels.report, study: c.labels.study, plan: c.labels.plan };
   const studyMoments = moments.filter((moment) => moment.deliverable === "study");
+  const alwaysMoments = moments.filter((moment) => moment.rhythm === "always" && moment.deliverable === "report");
 
   return (
     <article className={styles.page}>
@@ -75,6 +76,20 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
                 </li>
               );
             })}
+          </ul>
+          <h3 className={styles.h3}>{c.report.alwaysTitle}</h3>
+          <ul className={styles.situations}>
+            {alwaysMoments.map((moment) => (
+              <li key={moment.slug.es}>
+                <a href={`${base}/${moment.slug[lang]}`}>
+                  <span>
+                    <strong>{moment[lang].name}</strong>
+                    {moment[lang].question}
+                  </span>
+                  <ArrowRight aria-hidden />
+                </a>
+              </li>
+            ))}
           </ul>
         </div>
         <SquareMotion frames={OFFER.frames} poster={260} label={c.report.title} className={styles.motion}>
