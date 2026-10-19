@@ -58,7 +58,10 @@ like a vertical short-video feed.
 
 ## Consequences
 
-- Two website apps coexist until cutover; the old one keeps deploying from `main` untouched.
+- Cutover (2026-10-19): the production service `website` (noisia.ai) reads its config from
+  `apps/website/railway.json`. That file now builds and starts `@noisia/website-next`, so the switch
+  is one reviewed change and rolling back is reverting it (or redeploying the previous deployment
+  in Railway). `apps/website` stays in the repo, no longer deployed, until it is removed in its own PR.
 - The motion runtime is ours to maintain (tests for `interpolate` and `spring` are part of the
   definition of done).
 - Copy and stories can be produced by people or agents as data and reviewed in pull requests.
