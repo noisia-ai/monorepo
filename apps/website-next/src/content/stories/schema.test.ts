@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { hasSourceMark } from "../../components/brand/SourceMark";
@@ -30,6 +30,7 @@ test("published copy has no em dashes", () => {
 
 function read(folder: string): Story[] {
   const full = join(process.cwd(), "src/content/stories", folder);
+  if (!existsSync(full)) return [];
   return readdirSync(full)
     .filter((f) => f.endsWith(".json"))
     .flatMap((file) => {

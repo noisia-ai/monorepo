@@ -12,19 +12,47 @@ export type ReachCopy = {
 };
 
 /**
- * Scroll-driven: the section pins while the reader scrolls through three beats. Languages count
- * up one by one, then countries, then the time drops from weeks to days.
+ * Three beats: languages count up one by one, then countries, then the time drops from weeks to
+ * days. Scroll-driven on phones (the section pins); on desktop they play once when in view.
  */
 export function ReachScroll({ copy, beats }: { copy: ReachCopy; beats: [string, string, string] }) {
   const ref = useRef<HTMLElement>(null);
   const [p, setP] = useState(1);
 
+  // Phones: the section pins and the scroll drives the three beats.
+  // Desktop: no pinning; the beats play on their own the first time the section is in view.
+  const [wide, setWide] = useState(false);
   useEffect(() => {
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced) return;
+    const desktop = window.matchMedia("(min-width: 960px)").matches;
+    setWide(desktop);
+    const el = ref.current;
+    if (!el) return;
+    if (desktop) {
+      setP(0);
+      let raf = 0;
+      const observer = new IntersectionObserver(
+        ([entry]) => {
+          if (!entry?.isIntersecting) return;
+          observer.disconnect();
+          const start = performance.now();
+          const tick = (now: number) => {
+            const t = Math.min(1, (now - start) / 6500);
+            setP(t);
+            if (t < 1) raf = requestAnimationFrame(tick);
+          };
+          raf = requestAnimationFrame(tick);
+        },
+        { threshold: 0.45 }
+      );
+      observer.observe(el);
+      return () => {
+        observer.disconnect();
+        cancelAnimationFrame(raf);
+      };
+    }
     const onScroll = () => {
-      const el = ref.current;
-      if (!el) return;
       const box = el.getBoundingClientRect();
       const run = box.height - window.innerHeight;
       setP(Math.min(1, Math.max(0, -box.top / (run || 1))));
@@ -46,6 +74,7 @@ export function ReachScroll({ copy, beats }: { copy: ReachCopy; beats: [string, 
   const stage = p < 0.33 ? 0 : p < 0.66 ? 1 : 2;
   // The dots also jump: each one scrolls to the start of its beat.
   const jump = (i: number) => {
+    if (wide) return setP(Math.min(1, i * 0.33 + 0.26));
     const el = ref.current;
     if (!el) return;
     const run = el.offsetHeight - window.innerHeight;

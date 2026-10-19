@@ -11,4 +11,5 @@ export type Collection = {
   en: { name: string };
 };
 
-export const collections: Collection[] = [{ id: "buen-fin-2026", demo: true, es: { name: "Buen Fin 2026" }, en: { name: "Buen Fin 2026" } }];
+// No collection is published yet; add one here when a study gets its own feed tab.
+export const collections: Collection[] = [];

@@ -115,8 +115,21 @@
   transform: none;
 }
 
-/* Desktop: the three side by side, the active one lit, the others dimmed. */
+/* Desktop: the three side by side, the active one lit, the others dimmed. No pinning. */
 @media (min-width: 960px) {
+  .section {
+    height: auto;
+  }
+
+  .sticky {
+    position: static;
+    height: auto;
+  }
+
+  .inner {
+    padding: var(--space-9) var(--gutter);
+  }
+
   .grid {
     grid-template-columns: repeat(3, 1fr);
     gap: var(--space-7);

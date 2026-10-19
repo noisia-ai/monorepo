@@ -21,7 +21,14 @@ export async function generateMetadata({ params }: { params: Promise<{ locale: s
     metadataBase: new URL(SITE_URL),
     title: { default: t("defaultTitle"), template: `%s · Noisia` },
     description: t("description"),
-    icons: { icon: "/favicon.svg" },
+    icons: {
+      icon: [
+        { url: "/favicon.ico", sizes: "48x48" },
+        { url: "/favicon.svg", type: "image/svg+xml" }
+      ],
+      apple: { url: "/apple-touch-icon.png", sizes: "180x180" }
+    },
+    manifest: "/manifest.webmanifest",
     openGraph: { siteName: "Noisia", locale: locale === "en" ? "en_US" : "es_MX", type: "website" },
     // Staging must never be indexed.
     robots: process.env.NOISIA_UAT === "1" ? { index: false, follow: false } : undefined
