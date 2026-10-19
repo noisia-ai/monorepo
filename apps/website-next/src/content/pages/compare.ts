@@ -70,7 +70,7 @@ export const compareEntries: Entry[] = [
       es: {
         metaTitle: "Herramienta de social listening o investigación de inteligencia social",
         metaDescription:
-          "Una herramienta de social listening monitorea menciones, volumen y sentimiento en un tablero. La investigación de inteligencia social parte de una pregunta y entrega una respuesta con evidencia. Cuándo conviene cada una.",
+          "Una herramienta de social listening monitorea menciones, volumen y sentimiento en un dashboard. La investigación de inteligencia social parte de una pregunta y entrega una respuesta con evidencia. Cuándo conviene cada una.",
         title: "¿Herramienta de social listening o investigación de inteligencia social?",
         lead:
           "Una herramienta de social listening te muestra cuánto se habla de tu marca, con qué sentimiento y cuándo hay un pico; alguien de tu equipo tiene que leerla y decidir. La investigación de inteligencia social parte de una pregunta de negocio, lee la conversación completa, la interpreta con un método y te entrega una respuesta con evidencia. La primera sirve para vigilar; la segunda, para decidir.",
@@ -82,11 +82,11 @@ export const compareEntries: Entry[] = [
             highlightColumn: 2,
             rows: [
               ["Punto de partida", "Palabras y marcas que alguien configura", "Una pregunta de negocio traducida a preguntas investigables"],
-              ["Qué entrega", "Tablero con volumen, sentimiento, alertas y exportaciones", "Un reporte o un estudio con hallazgos, evidencia y recomendaciones"],
+              ["Qué entrega", "Dashboard con volumen, sentimiento, alertas y exportaciones", "Un reporte o un estudio con hallazgos, evidencia y recomendaciones"],
               ["Temas", "Categorías definidas de antemano o resúmenes automáticos", "Descubiertos desde lo que dice la gente y aprobados por una persona"],
-              ["Ruido", "Llega al tablero como viene; se filtra a mano", "Prensa, contenido de marca, reventa y spam fuera, con criterio documentado"],
+              ["Ruido", "Llega al dashboard como viene; se filtra a mano", "Prensa, contenido de marca, reventa y spam fuera, con criterio documentado"],
               ["Quién interpreta", "Tu equipo, con el tiempo que tenga", "Un Intelligence Architect con un método y responsabilidad sobre el análisis"],
-              ["Tus datos propios", "Fuera del tablero, salvo integraciones", "NPS, encuestas y búsquedas leídos con la misma estructura de temas"],
+              ["Tus datos propios", "Fuera del dashboard, salvo integraciones", "NPS, encuestas y búsquedas leídos con la misma estructura de temas"],
               ["Evidencia", "Menciones sueltas al alcance de un clic", "Cada cifra con su cálculo y cada cita verificada contra su fuente"],
               ["Velocidad para vigilar", "Inmediata, con alertas", "Mensual, o según el alcance"],
               ["Velocidad para decidir", "Depende de cuándo alguien lea y analice", "Días del brief a la primera respuesta"],
@@ -98,8 +98,8 @@ export const compareEntries: Entry[] = [
             title: "Cuándo conviene cada una",
             items: [
               { name: "Conviene la herramienta", text: "Cuando necesitas vigilar menciones todos los días, recibir alertas de un pico o una crisis en curso, atender comentarios desde un solo lugar o medir el alcance de una campaña mientras corre. Es trabajo de monitoreo y una buena herramienta lo hace bien." },
-              { name: "Conviene Noisia", text: "Cuando tienes una decisión por tomar y necesitas saber por qué pasa algo, qué pesa y qué puedes mover. Cuando nadie en tu equipo tiene tiempo de leer el tablero. Cuando quieres cruzar la conversación con tu NPS o tus encuestas. Cuando la cifra tiene que resistir una pregunta de dirección." },
-              { name: "Convienen las dos", text: "Muchos equipos conservan su herramienta para vigilar y reciben de Noisia el reporte mensual o los estudios. Podemos leer las exportaciones de tu herramienta y sumarlas al análisis." }
+              { name: "Conviene Noisia", text: "Cuando tienes una decisión por tomar y necesitas saber por qué pasa algo, qué pesa y qué puedes mover. Cuando nadie en tu equipo tiene tiempo de leer el dashboard. Cuando quieres cruzar la conversación con tu NPS o tus encuestas. Cuando la cifra tiene que resistir una pregunta de dirección." },
+              { name: "Convienen las dos", text: "Muchos equipos conservan su herramienta para vigilar y reciben de Noisia el reporte continuo o los estudios. Podemos leer las exportaciones de tu herramienta y sumarlas al análisis." }
             ]
           },
           {
@@ -147,7 +147,7 @@ export const compareEntries: Entry[] = [
             items: [
               { name: "The tool makes sense", text: "When you need to watch mentions every day, get alerts for a spike or an ongoing crisis, handle comments from one place or measure a campaign's reach while it runs. That is monitoring work, and a good tool does it well." },
               { name: "Noisia makes sense", text: "When you have a decision to make and need to know why something is happening, what weighs and what you can move. When nobody on your team has time to read the dashboard. When you want to cross the conversation with your NPS or your surveys. When the number has to survive a question from leadership." },
-              { name: "Both make sense", text: "Many teams keep their tool for watching and receive the monthly report or the studies from Noisia. We can read your tool's exports and add them to the analysis." }
+              { name: "Both make sense", text: "Many teams keep their tool for watching and receive the ongoing report or the studies from Noisia. We can read your tool's exports and add them to the analysis." }
             ]
           },
           {
@@ -213,7 +213,7 @@ export const compareEntries: Entry[] = [
             items: [
               { q: "¿Noisia usa inteligencia artificial?", a: "Sí. Modelos de lenguaje y técnicas de agrupamiento leen, agrupan y clasifican la conversación. Las cifras salen de cálculos sobre la base completa, las citas se verifican contra su fuente y un Intelligence Architect aprueba los temas e interpreta." },
               { q: "¿No puedo hacer lo mismo con un prompt bien hecho?", a: "Con una base chica, en buena medida sí. Con una grande, el modelo muestrea o resume por partes, y ningún prompt lo convierte en una calculadora confiable ni le da memoria entre sesiones." },
-              { q: "¿Por qué importa que el resultado se pueda repetir?", a: "Porque un reporte mensual compara contra el anterior. Si los temas cambian de nombre y de tamaño en cada corrida, no hay comparación posible ni forma de saber qué se movió de verdad." },
+              { q: "¿Por qué importa que el resultado se pueda repetir?", a: "Porque un reporte continuo compara contra el anterior. Si los temas cambian de nombre y de tamaño en cada corrida, no hay comparación posible ni forma de saber qué se movió de verdad." },
               { q: "¿Qué pasa con las citas?", a: "Un modelo puede resumir o parafrasear una cita y presentarla como literal. En Noisia cada cita se recorta del texto original y se verifica antes de entrar al reporte, con su fuente y su fecha." }
             ]
           },
@@ -261,7 +261,7 @@ export const compareEntries: Entry[] = [
             items: [
               { q: "Does Noisia use artificial intelligence?", a: "Yes. Language models and clustering techniques read, group and classify the conversation. Numbers come from calculations over the conversación, quotes are checked against their source and an Intelligence Architect approves the topics and interprets." },
               { q: "Can't I do the same with a well-written prompt?", a: "With a small conversación, largely yes. With a large one, the model samples or summarizes in pieces, and no prompt turns it into a reliable calculator or gives it memory between sessions." },
-              { q: "Why does it matter that the result can be repeated?", a: "Because a monthly report compares against the previous one. If topics change name and size on every run, there is no possible comparison and no way to know what really moved." },
+              { q: "Why does it matter that the result can be repeated?", a: "Because a ongoing report compares against the previous one. If topics change name and size on every run, there is no possible comparison and no way to know what really moved." },
               { q: "What about the quotes?", a: "A model can summarize or paraphrase a quote and present it as verbatim. At Noisia every quote is cut from the original text and checked before it enters the report, with its source and date." }
             ]
           },

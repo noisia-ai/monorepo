@@ -84,7 +84,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
     moments: {
       title: "¿Qué necesitas resolver?",
       lead: "Cada momento de una marca trae su propia pregunta. Empieza por la tuya.",
-      report: "Reporte mensual",
+      report: "Reporte continuo",
       study: "Estudio",
       plan: "Plan anual",
       more: "Ver cómo lo resolvemos",
@@ -111,7 +111,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
         {
           key: "listening",
           tab: "Social listening",
-          title: "Un tablero",
+          title: "Un dashboard",
           text: "Volumen, sentimiento y menciones por día. Sirve para vigilar, pero alguien de tu equipo tiene que leerlo y sacar la conclusión.",
           answers: "Cuánto se habla"
         },
@@ -260,7 +260,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
     moments: {
       title: "What do you need to solve?",
       lead: "Every moment of a brand brings its own question. Start with yours.",
-      report: "Monthly report",
+      report: "Ongoing report",
       study: "Study",
       plan: "Annual plan",
       more: "See how we solve it",

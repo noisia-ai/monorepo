@@ -25,12 +25,12 @@ export const moments: Moment[] = [
     es: {
       name: "Monitorear tu marca",
       question: "¿Qué está pasando con mi marca y mi categoría, y qué cambió?",
-      summary: "Un reporte cada mes con lo que se movió, por qué y qué vigilar, comparado contra el periodo anterior."
+      summary: "Un reporte con lo que se movió, por qué y qué vigilar, cada semana, quincena o mes, comparado contra el periodo anterior."
     },
     en: {
       name: "Track your brand",
       question: "What is happening with my brand and category, and what changed?",
-      summary: "A monthly report on what moved, why, and what to watch, compared with the previous period."
+      summary: "A ongoing report on what moved, why, and what to watch, compared with the previous period."
     }
   },
   {

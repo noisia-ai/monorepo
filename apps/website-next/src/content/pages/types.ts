@@ -8,7 +8,7 @@ export type Block =
   | { type: "steps"; title?: string; lead?: string; items: { name: string; text: string }[] }
   | { type: "table"; title?: string; lead?: string; headers: string[]; rows: string[][]; highlightColumn?: number }
   | { type: "quote"; text: string; source?: string }
-  | { type: "faq"; title?: string; items: { q: string; a: string }[] }
+  | { type: "faq"; title?: string; items: { q: string; a: string; icon?: import("@/components/ui/faq-icons").FaqIcon }[] }
   | { type: "callout"; title: string; text: string }
   | { type: "links"; title?: string; items: { label: string; text?: string; href: string }[] }
   | { type: "cta"; title: string; text?: string; label: string; href: string }

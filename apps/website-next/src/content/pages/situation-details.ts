@@ -28,8 +28,8 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "Qué se lee", them: "Las menciones que contienen las palabras clave elegidas", us: "La conversación de toda tu categoría, aunque no te nombre" },
           { label: "Cómo se ordena", them: "Volumen y sentimiento por palabra o etiqueta", us: "Temas que salen de lo que la gente dice" },
           { label: "El ruido", them: "Filtros que tu equipo configura y mantiene", us: "Prensa, contenido de marca, reventa y spam fuera de la cuenta" },
-          { label: "Tus propios datos", them: "Viven en otra herramienta, aparte del tablero", us: "NPS, encuestas y tickets leídos con los mismos temas" },
-          { label: "Quién explica el cambio", them: "Tu equipo interpreta el tablero cada mes", us: "Un Intelligence Architect lo explica y firma la lectura" }
+          { label: "Tus propios datos", them: "Viven en otra herramienta, aparte del dashboard", us: "NPS, encuestas y tickets leídos con los mismos temas" },
+          { label: "Quién explica el cambio", them: "Tu equipo interpreta el dashboard cada mes", us: "Un Intelligence Architect lo explica y firma la lectura" }
         ]
       },
       deliverable: {
@@ -90,7 +90,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       steps: [
         {
           title: "Medimos la velocidad, además del volumen",
-          text: "Una señal temprana es chica, vive en pocas comunidades y crece rápido. Un tablero de volumen la deja abajo de la lista porque todavía pesa poco. Cruzamos cuánto se habla de cada tema con qué tan rápido crece y en cuántas comunidades aparece, y marcamos las chicas que se mueven rápido."
+          text: "Una señal temprana es chica, vive en pocas comunidades y crece rápido. Un dashboard de volumen la deja abajo de la lista porque todavía pesa poco. Cruzamos cuánto se habla de cada tema con qué tan rápido crece y en cuántas comunidades aparece, y marcamos las chicas que se mueven rápido."
         },
         {
           title: "Cada señal tiene una etapa",
@@ -586,7 +586,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       steps: [
         {
           title: "Tu año, mapeado",
-          text: "Empezamos por tu calendario de lanzamientos, campañas y temporadas, como Hot Sale, regreso a clases o Buen Fin. El reporte mensual corre todo el año y cada estudio se coloca antes de la decisión que alimenta. La respuesta ya existe cuando llega la reunión."
+          text: "Empezamos por tu calendario de lanzamientos, campañas y temporadas, como Hot Sale, regreso a clases o Buen Fin. El reporte continuo corre todo el año y cada estudio se coloca antes de la decisión que alimenta. La respuesta ya existe cuando llega la reunión."
         },
         {
           title: "Entre estudios, el reporte de cada mes",
@@ -604,7 +604,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         rows: [
           { label: "El arranque", them: "Cada estudio empieza de cero", us: "Cada estudio parte de temas y fuentes ya revisados" },
           { label: "Cuándo llegan", them: "Se piden cuando surge la pregunta", us: "Colocados antes de cada decisión del año" },
-          { label: "Entre un estudio y otro", them: "Nadie sigue lo que pasa", us: "Un reporte mensual con lo que cambió" },
+          { label: "Entre un estudio y otro", them: "Nadie sigue lo que pasa", us: "Un reporte continuo con lo que cambió" },
           { label: "Comparar resultados", them: "Criterios y fuentes cambian de un estudio a otro", us: "Mismos temas y criterios durante todo el año" },
           { label: "Quién los hace", them: "Equipos distintos según el proveedor o el momento", us: "El mismo Intelligence Architect durante el año" }
         ]
@@ -614,7 +614,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         name: "Plan anual de investigación",
         items: [
           { name: "Calendario de estudios", text: "Cada estudio con su pregunta, su método y su fecha, colocado antes de la decisión que alimenta." },
-          { name: "Reporte mensual", text: "Lo que se movió, por qué y qué vigilar, con los mismos temas que usan los estudios." },
+          { name: "Reporte continuo", text: "Lo que se movió, por qué y qué vigilar, con los mismos temas que usan los estudios." },
           { name: "Un espacio permanente de tu marca", text: "Temas, correcciones y evidencia que se acumulan durante el año." },
           { name: "Un Intelligence Architect asignado", text: "La misma persona todo el año, que conoce tu categoría y responde por cada análisis." }
         ]
@@ -625,10 +625,10 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       steps: [
         {
           title: "Your year, mapped",
-          text: "We start from your calendar of launches, campaigns and seasons, such as Hot Sale, back to school or Buen Fin. The monthly report runs all year and each study sits right before the decision it feeds. The answer is ready when the meeting comes."
+          text: "We start from your calendar of launches, campaigns and seasons, such as Hot Sale, back to school or Buen Fin. The ongoing report runs all year and each study sits right before the decision it feeds. The answer is ready when the meeting comes."
         },
         {
-          title: "Between studies, the monthly report",
+          title: "Between studies, the ongoing report",
           text: "Between one study and the next, the report compares each month against the previous one on the same topics. It shows what moved and why, and catches when a season's conversation starts to move. If an urgent question comes up, the plan has room for it.",
           method: "tb"
         },
@@ -643,7 +643,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         rows: [
           { label: "Starting point", them: "Each study starts from scratch", us: "Each study starts from topics and sources already reviewed" },
           { label: "When they arrive", them: "Ordered when the question comes up", us: "Placed before each decision of the year" },
-          { label: "Between studies", them: "Nobody follows what happens", us: "A monthly report on what changed" },
+          { label: "Between studies", them: "Nobody follows what happens", us: "A ongoing report on what changed" },
           { label: "Comparing results", them: "Criteria and sources change from study to study", us: "Same topics and criteria all year" },
           { label: "Who does them", them: "Different teams depending on vendor or timing", us: "The same Intelligence Architect all year" }
         ]
@@ -653,7 +653,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         name: "Annual research plan",
         items: [
           { name: "Study calendar", text: "Each study with its question, method and date, placed before the decision it feeds." },
-          { name: "Monthly report", text: "What moved, why and what to watch, with the same topics the studies use." },
+          { name: "Ongoing report", text: "What moved, why and what to watch, with the same topics the studies use." },
           { name: "A permanent space for your brand", text: "Topics, corrections and evidence that build up over the year." },
           { name: "An assigned Intelligence Architect", text: "The same person all year, who knows your category and answers for every analysis." }
         ]

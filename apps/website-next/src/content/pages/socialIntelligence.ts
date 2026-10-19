@@ -13,8 +13,8 @@ export const socialIntelligence: Localized<PageContent> = {
         type: "text",
         title: "¿En qué se diferencia del social listening?",
         paragraphs: [
-          "El social listening es el monitoreo: una herramienta recoge menciones de una marca o de palabras elegidas de antemano y las muestra en un tablero con volumen, sentimiento y alertas. Responde cuánto se habló y si subió o bajó.",
-          "La inteligencia social empieza donde el tablero termina. Parte de una pregunta de negocio, descubre los temas desde lo que la gente dice en lugar de una lista de palabras, limpia el ruido, interpreta con un método y entrega una respuesta con recomendaciones. El listening es una de sus fuentes; el análisis y la decisión son el producto."
+          "El social listening es el monitoreo: una herramienta recoge menciones de una marca o de palabras elegidas de antemano y las muestra en un dashboard con volumen, sentimiento y alertas. Responde cuánto se habló y si subió o bajó.",
+          "La inteligencia social empieza donde el dashboard termina. Parte de una pregunta de negocio, descubre los temas desde lo que la gente dice en lugar de una lista de palabras, limpia el ruido, interpreta con un método y entrega una respuesta con recomendaciones. El listening es una de sus fuentes; el análisis y la decisión son el producto."
         ]
       },
       {
@@ -73,7 +73,7 @@ export const socialIntelligence: Localized<PageContent> = {
         title: "Glosario breve",
         items: [
           { name: "Inteligencia social", text: "Investigación que convierte la conversación pública en respuestas para una decisión, con método y evidencia abierta." },
-          { name: "Social listening", text: "Monitoreo de menciones de una marca o de palabras elegidas, presentado en tableros con volumen, sentimiento y alertas." },
+          { name: "Social listening", text: "Monitoreo de menciones de una marca o de palabras elegidas, presentado en dashboards con volumen, sentimiento y alertas." },
           { name: "Voz del consumidor", text: "Lo que la gente dice sobre una categoría, una marca o una experiencia, ya sea en público o en respuesta a una encuesta." },
           { name: "Dataset", text: "El conjunto completo de publicaciones que se lee para un proyecto, después de limpiar el ruido." },
           { name: "Tema", text: "Un grupo de menciones que hablan de lo mismo, descubierto a partir del lenguaje de la gente y aprobado por una persona." },
@@ -88,7 +88,7 @@ export const socialIntelligence: Localized<PageContent> = {
         items: [
           {
             q: "¿La inteligencia social es lo mismo que el social listening?",
-            a: "No. El social listening monitorea menciones y las muestra en un tablero. La inteligencia social parte de una pregunta de negocio, lee la conversación completa, la interpreta con un método y entrega una respuesta con recomendaciones. El listening puede ser una de sus fuentes."
+            a: "No. El social listening monitorea menciones y las muestra en un dashboard. La inteligencia social parte de una pregunta de negocio, lee la conversación completa, la interpreta con un método y entrega una respuesta con recomendaciones. El listening puede ser una de sus fuentes."
           },
           {
             q: "¿Reemplaza a las encuestas?",

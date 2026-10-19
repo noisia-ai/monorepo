@@ -53,9 +53,9 @@ export const offer: Record<"es" | "en", OfferCopy> = {
   es: {
     title: "Respuestas para cada momento de tu marca",
     lead: "Trabajamos de dos maneras. Un reporte que cada mes te dice qué cambió y por qué, y un estudio que responde una decisión concreta. El plan anual junta las dos.",
-    jump: { report: "Reporte mensual", study: "Estudio", plan: "Plan anual" },
+    jump: { report: "Reporte continuo", study: "Estudio", plan: "Plan anual" },
     report: {
-      name: "Reporte mensual",
+      name: "Reporte continuo",
       title: "Qué cambió este mes y por qué",
       text: "Seguimos lo que la gente dice de tu marca, de tus competidores y de tu categoría. Cada mes recibes lo que se movió, la razón detrás y qué conviene vigilar, comparado contra el mes anterior.",
       watchTitle: "Qué seguimos",
@@ -102,7 +102,7 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       text: "El reporte corre todo el año y los estudios se colocan en los momentos que importan: lanzamientos, campañas y temporadas. Cada decisión llega con su respuesta, y cada estudio parte de lo que el reporte ya vio.",
       motion: {
         months: ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"],
-        reportLabel: "Reporte mensual todo el año",
+        reportLabel: "Reporte continuo todo el año",
         studies: [
           { month: 2, label: "Lanzamiento" },
           { month: 4, label: "Hot Sale" },
@@ -119,7 +119,7 @@ export const offer: Record<"es" | "en", OfferCopy> = {
         { key: "stories", name: "Historias animadas", text: "Hallazgos cortos como los de nuestro feed, para mandar al equipo o presentar en un minuto." },
         { key: "live", name: "Presentación en vivo", text: "Te lo presentamos, respondemos preguntas y dejamos la evidencia abierta para revisarla después." },
         { key: "document", name: "Documento con la evidencia", text: "Cada hallazgo con su cifra, sus citas literales y el método detrás, listo para circular." },
-        { key: "dashboard", name: "Dashboard en línea", text: "Los hallazgos del reporte en un tablero con filtros por tema, fuente y periodo, y cada cifra ligada a lo que la gente dijo." }
+        { key: "dashboard", name: "Dashboard en línea", text: "Los hallazgos del reporte en un dashboard con filtros por tema, fuente y periodo, y cada cifra ligada a lo que la gente dijo." }
       ],
       mock: {
         live: { badge: "En vivo", slide: "Lo que cambió en septiembre", bars: ["Precio", "Servicio", "Empaque"] },
@@ -147,14 +147,14 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       }
     },
     situations: { title: "Empieza por tu situación", lead: "Cada momento trae su propia pregunta. Abre el tuyo para ver qué miramos y qué recibes." },
-    labels: { more: "Ver cómo lo resolvemos", play: "Reproducir", pause: "Pausar", report: "Reporte mensual", study: "Estudio", plan: "Plan anual" }
+    labels: { more: "Ver cómo lo resolvemos", play: "Reproducir", pause: "Pausar", report: "Reporte continuo", study: "Estudio", plan: "Plan anual" }
   },
   en: {
     title: "Answers for every moment of your brand",
     lead: "We work in two ways. A report that tells you every month what changed and why, and a study that answers one specific decision. The annual plan brings both together.",
-    jump: { report: "Monthly report", study: "Study", plan: "Annual plan" },
+    jump: { report: "Ongoing report", study: "Study", plan: "Annual plan" },
     report: {
-      name: "Monthly report",
+      name: "Ongoing report",
       title: "What changed this month, and why",
       text: "We follow what people say about your brand, your competitors and your category. Every month you get what moved, the reason behind it and what to watch, compared with the previous month.",
       watchTitle: "What we follow",
@@ -201,7 +201,7 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       text: "The report runs all year and studies sit at the moments that matter: launches, campaigns and seasons. Every decision arrives with its answer, and every study starts from what the report already saw.",
       motion: {
         months: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-        reportLabel: "Monthly report all year",
+        reportLabel: "Ongoing report all year",
         studies: [
           { month: 2, label: "Launch" },
           { month: 4, label: "Hot Sale" },
@@ -246,6 +246,6 @@ export const offer: Record<"es" | "en", OfferCopy> = {
       }
     },
     situations: { title: "Start from your situation", lead: "Every moment brings its own question. Open yours to see what we look at and what you get." },
-    labels: { more: "See how we solve it", play: "Play", pause: "Pause", report: "Monthly report", study: "Study", plan: "Annual plan" }
+    labels: { more: "See how we solve it", play: "Play", pause: "Pause", report: "Ongoing report", study: "Study", plan: "Annual plan" }
   }
 };

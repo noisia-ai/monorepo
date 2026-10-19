@@ -1,6 +1,8 @@
 import { FaqList } from "./FaqList";
+import type { FaqIcon } from "./faq-icons";
 
-export type FaqItem = { q: string; a: string };
+/** An FAQ entry; `icon` adds a small icon tile before the question. */
+export type FaqItem = { q: string; a: string; icon?: FaqIcon };
 
 /** Animated question list plus FAQPage structured data for search and answer engines. */
 export function Faq({ items }: { items: FaqItem[] }) {

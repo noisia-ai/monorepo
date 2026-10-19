@@ -11,7 +11,7 @@ import { mainNav } from "./nav";
 import styles from "./SiteHeader.module.css";
 import { Logo } from "@/components/brand/Logo";
 
-const MENU_ICONS = { solutions: Compass, howItWorks: Network, methods: Book, insights: MediaVideo, about: Group } as const;
+const MENU_ICONS = { solutions: Compass, howItWorks: Network, methods: Book, insights: MediaVideo, about: Group } as const; // methods/about live in the footer
 
 export function SiteHeader() {
   const t = useTranslations("nav");

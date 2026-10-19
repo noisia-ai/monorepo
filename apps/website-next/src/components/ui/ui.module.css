@@ -126,6 +126,30 @@
   gap: var(--space-4);
 }
 
+.faqLead {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--teal-soft);
+  color: var(--teal-text);
+}
+
+.faqLead svg {
+  width: 20px;
+  height: 20px;
+}
+
+.faqText {
+  flex: 1;
+}
+
+.faqAIndented {
+  padding-left: calc(40px + var(--space-4));
+}
+
 .faqIcon {
   flex: none;
   width: 32px;

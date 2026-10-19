@@ -2,7 +2,7 @@ import { useTranslations } from "next-intl";
 import { ArrowRight, Linkedin, Mail } from "iconoir-react";
 import { Link } from "@/i18n/navigation";
 import { Logo } from "@/components/brand/Logo";
-import { mainNav } from "./nav";
+import { footerNav } from "./nav";
 import styles from "./SiteFooter.module.css";
 
 export function SiteFooter() {
@@ -29,7 +29,7 @@ export function SiteFooter() {
           </div>
           <nav className={styles.col} aria-label={t("explore")}>
             <p className={styles.colTitle}>{t("explore")}</p>
-            {mainNav.map((item) => (
+            {footerNav.map((item) => (
               <Link key={item.key} href={item.href}>
                 {tNav(item.key)}
               </Link>

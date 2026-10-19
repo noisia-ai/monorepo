@@ -41,7 +41,7 @@ export const workshop: Localized<PageContent & { form: WorkshopForm }> = {
         lead: "Nada de esto es obligatorio. Con lo que tengas alcanza para empezar.",
         items: [
           { name: "La decisión que viene", text: "Un lanzamiento, una campaña, un mercado nuevo, una caída que no se explica. Lo que esté sobre la mesa." },
-          { name: "Lo que ya saben", text: "Hipótesis del equipo, un estudio anterior, el tablero de tu herramienta. Sirve para no repetir y para probar lo que creen." },
+          { name: "Lo que ya saben", text: "Hipótesis del equipo, un estudio anterior, el dashboard de tu herramienta. Sirve para no repetir y para probar lo que creen." },
           { name: "Tus datos, si los hay", text: "NPS, encuestas o tickets de servicio que podrían leerse junto con la conversación." },
           { name: "Fechas", text: "Para cuándo necesitas la respuesta y quién la va a usar." }
         ]
