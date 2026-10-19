@@ -176,11 +176,11 @@ export const home: Record<"es" | "en", HomeCopy> = {
     reach: {
       title: "Leemos como habla la gente",
       languages: {
-        label: "idiomas de conversación, con su jerga y sus modismos",
+        label: "16 idiomas de conversación, con su jerga y sus modismos",
         items: ["Español", "Inglés", "Portugués", "Francés", "Pidgin nigeriano", "isiZulu", "Sesotho", "Kinyarwanda", "Alemán", "Neerlandés", "Italiano", "Danés", "Finés", "Polaco", "Sueco", "Noruego"]
       },
       countries: {
-        label: "países en América, Europa y África",
+        label: "20+ países en América, Europa y África",
         items: ["México", "Estados Unidos", "Brasil", "Chile", "Argentina", "Colombia", "Bolivia", "Nigeria", "Sudáfrica", "Ruanda", "Reino Unido", "Alemania", "Países Bajos", "Austria", "Suiza", "Bélgica", "Finlandia", "Dinamarca", "Suecia", "España", "Noruega", "Francia", "Italia", "Polonia"]
       },
       time: { steps: ["6 semanas", "4 semanas", "2 semanas", "1 semana", "Días"], label: "del brief a la primera respuesta" }
@@ -352,11 +352,11 @@ export const home: Record<"es" | "en", HomeCopy> = {
     reach: {
       title: "We read the way people talk",
       languages: {
-        label: "conversation languages, slang and idioms included",
+        label: "16 conversation languages, slang and idioms included",
         items: ["Spanish", "English", "Portuguese", "French", "Nigerian Pidgin", "isiZulu", "Sesotho", "Kinyarwanda", "German", "Dutch", "Italian", "Danish", "Finnish", "Polish", "Swedish", "Norwegian"]
       },
       countries: {
-        label: "countries across the Americas, Europe and Africa",
+        label: "20+ countries across the Americas, Europe and Africa",
         items: ["Mexico", "United States", "Brazil", "Chile", "Argentina", "Colombia", "Bolivia", "Nigeria", "South Africa", "Rwanda", "United Kingdom", "Germany", "Netherlands", "Austria", "Switzerland", "Belgium", "Finland", "Denmark", "Sweden", "Spain", "Norway", "France", "Italy", "Poland"]
       },
       time: { steps: ["6 weeks", "4 weeks", "2 weeks", "1 week", "Days"], label: "from brief to first answer" }

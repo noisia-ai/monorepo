@@ -106,7 +106,7 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
         </div>
       </Section>
 
-      <ReachScroll copy={c.reach} beats={lang === "en" ? ["Languages", "Countries", "Time"] : ["Idiomas", "Países", "Tiempo"]} />
+      <ReachScroll copy={c.reach} beats={lang === "en" ? ["Languages", "Countries", "Time"] : ["Idiomas", "Países", "Tiempo"]} toggleLabels={{ play: c.moments.play, pause: c.moments.pause }} />
 
       <Section title={c.start.title} lead={c.start.lead}>
         <ol className={styles.startSteps}>

@@ -11,120 +11,108 @@ export type ReachCopy = {
   time: { steps: string[]; label: string };
 };
 
-/**
- * Three beats: languages count up one by one, then countries, then the time drops from weeks to
- * days. Scroll-driven on phones (the section pins); on desktop they play once when in view.
- */
-export function ReachScroll({ copy, beats }: { copy: ReachCopy; beats: [string, string, string] }) {
-  const ref = useRef<HTMLElement>(null);
-  const [p, setP] = useState(1);
+/** How long each language or country stays on screen, and how long each column stays lit. */
+const WORD_MS = 1500;
+const SPOT_MS = 4500;
 
-  // Phones: the section pins and the scroll drives the three beats.
-  // Desktop: no pinning; the beats play on their own the first time the section is in view.
-  const [wide, setWide] = useState(false);
+/**
+ * Languages and countries take turns one at a time, in a loop, under their count; the third
+ * column holds "days". The lit column moves on its own (the dots show which one and pause it).
+ * Nothing is tied to scroll; it only runs while the section is on screen.
+ */
+export function ReachScroll({ copy, beats, toggleLabels }: { copy: ReachCopy; beats: [string, string, string]; toggleLabels: { play: string; pause: string } }) {
+  const ref = useRef<HTMLElement>(null);
+  const [tick, setTick] = useState(0);
+  const [spot, setSpot] = useState(0);
+  const [visible, setVisible] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [reduced, setReduced] = useState(false);
+
   useEffect(() => {
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduced) return;
-    const desktop = window.matchMedia("(min-width: 960px)").matches;
-    setWide(desktop);
+    setReduced(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     const el = ref.current;
     if (!el) return;
-    if (desktop) {
-      setP(0);
-      let raf = 0;
-      const observer = new IntersectionObserver(
-        ([entry]) => {
-          if (!entry?.isIntersecting) return;
-          observer.disconnect();
-          const start = performance.now();
-          const tick = (now: number) => {
-            const t = Math.min(1, (now - start) / 6500);
-            setP(t);
-            if (t < 1) raf = requestAnimationFrame(tick);
-          };
-          raf = requestAnimationFrame(tick);
-        },
-        { threshold: 0.45 }
-      );
-      observer.observe(el);
-      return () => {
-        observer.disconnect();
-        cancelAnimationFrame(raf);
-      };
-    }
-    const onScroll = () => {
-      const box = el.getBoundingClientRect();
-      const run = box.height - window.innerHeight;
-      setP(Math.min(1, Math.max(0, -box.top / (run || 1))));
-    };
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-    };
+    const observer = new IntersectionObserver(([entry]) => setVisible(Boolean(entry?.isIntersecting)), { threshold: 0.25 });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, []);
 
-  // Three beats in about one and a half screens of scrolling, each with a short hold.
-  const beat = (i: number) => Math.min(1, Math.max(0, (p - i * 0.33) / 0.24));
-  const lang = beat(0);
-  const country = beat(1);
-  const time = beat(2);
-  const stage = p < 0.33 ? 0 : p < 0.66 ? 1 : 2;
-  // The dots also jump: each one scrolls to the start of its beat.
-  const jump = (i: number) => {
-    if (wide) return setP(Math.min(1, i * 0.33 + 0.26));
-    const el = ref.current;
-    if (!el) return;
-    const run = el.offsetHeight - window.innerHeight;
-    window.scrollTo({ top: el.offsetTop + run * (i * 0.33 + 0.24), behavior: "smooth" });
-  };
-  const langCount = Math.round(lang * copy.languages.items.length);
-  const countryCount = Math.round(country * copy.countries.items.length);
-  const timeIndex = Math.min(copy.time.steps.length - 1, Math.floor(time * copy.time.steps.length));
+  const running = visible && !paused && !reduced;
+
+  useEffect(() => {
+    if (!running) return;
+    const words = window.setInterval(() => setTick((t) => t + 1), WORD_MS);
+    return () => window.clearInterval(words);
+  }, [running]);
+
+  useEffect(() => {
+    if (!running) return;
+    const spots = window.setInterval(() => setSpot((s) => (s + 1) % 3), SPOT_MS);
+    return () => window.clearInterval(spots);
+  }, [running, spot]);
+
+  const days = copy.time.steps[copy.time.steps.length - 1]!;
 
   return (
     <section ref={ref} className={styles.section}>
-      <div className={styles.sticky}>
-        <div className={styles.inner}>
-          <h2 className={styles.title}>{copy.title}</h2>
-          <div className={styles.grid}>
-            <div className={styles.stat} data-on={stage === 0} data-done={lang >= 1}>
-              <span className={styles.value}>{langCount}</span>
-              <span className={styles.label}>{copy.languages.label}</span>
-              <ul className={styles.chips}>
-                {copy.languages.items.map((item, i) => (
-                  <li key={item} data-in={i < langCount}>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className={styles.stat} data-on={stage === 1} data-done={country >= 1}>
-              <span className={styles.value}>
-                {Math.min(20, countryCount)}
-                {countryCount >= 20 ? "+" : ""}
-              </span>
-              <span className={styles.label}>{copy.countries.label}</span>
-              <ul className={styles.chips}>
-                {copy.countries.items.map((item, i) => (
-                  <li key={item} data-in={i < countryCount}>
-                    {item}
-                  </li>
-                ))}
-              </ul>
-            </div>
-            <div className={styles.stat} data-on={stage === 2} data-done={time >= 1}>
-              <span className={styles.value} key={timeIndex}>
-                {copy.time.steps[timeIndex]}
-              </span>
-              <span className={styles.label}>{copy.time.label}</span>
-            </div>
+      <div className={styles.inner}>
+        <h2 className={styles.title}>{copy.title}</h2>
+        <div className={styles.grid}>
+          <div className={styles.stat} data-on={spot === 0}>
+            <Rotator items={copy.languages.items} index={tick} moved={tick > 0} />
+            <span className={styles.label}>{copy.languages.label}</span>
           </div>
-          <PageControl className={styles.dots} count={3} active={stage} labels={beats} onSelect={jump} />
+          <div className={styles.stat} data-on={spot === 1}>
+            {/* Offset by half the list so the two columns never change in step. */}
+            <Rotator items={copy.countries.items} index={tick + Math.floor(copy.countries.items.length / 2)} moved={tick > 0} />
+            <span className={styles.label}>{copy.countries.label}</span>
+          </div>
+          <div className={styles.stat} data-on={spot === 2}>
+            <span className={styles.word}>
+              <span className={styles.wordText} style={fit(days)}>
+                {days}
+              </span>
+            </span>
+            <span className={styles.label}>{copy.time.label}</span>
+          </div>
         </div>
+        {!reduced ? (
+          <PageControl
+            className={styles.dots}
+            count={3}
+            active={spot}
+            labels={beats}
+            onSelect={setSpot}
+            duration={SPOT_MS}
+            playing={running}
+            onToggle={() => setPaused((p) => !p)}
+            toggleLabels={toggleLabels}
+          />
+        ) : null}
       </div>
     </section>
+  );
+}
+
+/** Long words get a smaller size so every word fits its column on one line. */
+function fit(word: string) {
+  return { fontSize: `min(var(--reach-size), calc(100cqi / ${(Math.max(word.length, 5) * 0.56).toFixed(2)}))` };
+}
+
+/** One word at a time: the new one rises in while the previous one leaves upward. */
+function Rotator({ items, index, moved }: { items: string[]; index: number; moved: boolean }) {
+  const current = items[index % items.length]!;
+  const previous = moved ? items[(index - 1) % items.length]! : null;
+  return (
+    <span className={styles.word} aria-live="off">
+      {previous && previous !== current ? (
+        <span key={`out-${index}`} className={styles.wordText} data-out style={fit(previous)} aria-hidden>
+          {previous}
+        </span>
+      ) : null}
+      <span key={`in-${index}`} className={styles.wordText} data-in={moved} style={fit(current)}>
+        {current}
+      </span>
+    </span>
   );
 }
