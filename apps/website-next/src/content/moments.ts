@@ -25,12 +25,12 @@ export const moments: Moment[] = [
     es: {
       name: "Monitorear tu marca",
       question: "¿Qué está pasando con mi marca y mi categoría, y qué cambió?",
-      summary: "Un reporte con lo que se movió, por qué y qué vigilar, cada semana, quincena o mes, comparado contra el periodo anterior."
+      summary: "Cada semana, quincena o mes, qué se movió contra el periodo anterior, por qué se movió y qué conviene vigilar."
     },
     en: {
       name: "Track your brand",
       question: "What is happening with my brand and category, and what changed?",
-      summary: "A report on what moved, why and what to watch, every week, two weeks or month, compared with the previous period."
+      summary: "Every week, two weeks or month, what moved since the last period, why it moved and what to keep an eye on."
     }
   },
   {
@@ -41,12 +41,12 @@ export const moments: Moment[] = [
     es: {
       name: "Anticipar tendencias",
       question: "¿Qué va a importar antes de que todos hablen de eso?",
-      summary: "Un radar de señales: los temas que crecen, qué tan rápido y en qué comunidades, antes de que se vuelvan masivos."
+      summary: "Los temas que empiezan a crecer, a qué velocidad y en qué comunidades, antes de que se vuelvan masivos."
     },
     en: {
       name: "Anticipate trends",
       question: "What will matter before everyone talks about it?",
-      summary: "A radar of signals: the topics that grow, how fast and in which communities, before they go mainstream."
+      summary: "The topics starting to grow, how fast and in which communities, before they go mainstream."
     }
   },
   {
@@ -56,13 +56,13 @@ export const moments: Moment[] = [
     deliverable: "report",
     es: {
       name: "Mejorar la experiencia",
-      question: "¿Dónde se frustra hoy tu cliente, y qué conviene arreglar primero?",
-      summary: "El recorrido real de tu cliente, momento por momento: dónde se frustra, qué cambió contra el periodo anterior y qué arreglar primero."
+      question: "¿Dónde se frustran hoy mis clientes y qué arreglo primero?",
+      summary: "Cada momento del recorrido de tu cliente, con los puntos donde se frustra y lo que cambió desde el periodo anterior."
     },
     en: {
       name: "Improve the experience",
-      question: "Where does your customer get frustrated today, and what should you fix first?",
-      summary: "Your customer's real journey, moment by moment: where they get frustrated, what changed since the previous period and what to fix first."
+      question: "Where do my customers get frustrated today, and what do I fix first?",
+      summary: "Every step of your customer's journey, with the points where they get frustrated and what changed since the last period."
     }
   },
   {
@@ -77,7 +77,7 @@ export const moments: Moment[] = [
     },
     en: {
       name: "Defend your position",
-      question: "What is my competitor winning and where am I exposed?",
+      question: "What is my competition winning, and where am I exposed?",
       summary: "Why people leave, which rival promise feels more credible and what you can fix."
     }
   },
@@ -89,12 +89,12 @@ export const moments: Moment[] = [
     es: {
       name: "Lanzar algo nuevo",
       question: "¿Sobre qué territorio construyo sin sonar genérico?",
-      summary: "Probamos los territorios contra la conversación real para saber cuál tiene permiso de existir."
+      summary: "Probamos cada territorio contra lo que la gente ya dice para saber cuál te van a creer."
     },
     en: {
       name: "Launch something new",
       question: "Which territory can I build on without sounding generic?",
-      summary: "We test territories against real conversation to learn which one people already grant permission to."
+      summary: "We test each territory against what people already say to see which one they will believe from you."
     }
   },
   {
@@ -121,12 +121,12 @@ export const moments: Moment[] = [
     es: {
       name: "Encontrar qué innovar",
       question: "¿Qué necesidad sigue sin resolverse?",
-      summary: "Lo que la gente ya intenta resolver mal con lo que existe, y dónde hay espacio para algo nuevo."
+      summary: "Lo que la gente resuelve a medias con lo que hay hoy, y dónde cabe algo nuevo."
     },
     en: {
       name: "Find what to innovate",
       question: "Which need is still unmet?",
-      summary: "What people already try to solve badly with what exists, and where there is room for something new."
+      summary: "What people make do with today, and where there is room for something new."
     }
   },
   {
@@ -137,12 +137,12 @@ export const moments: Moment[] = [
     es: {
       name: "Planear el año",
       question: "¿Cómo tengo una respuesta antes de cada decisión del año?",
-      summary: "Un plan de estudios colocado en los momentos que importan: lanzamientos, campañas y temporadas."
+      summary: "Estudios listos antes de cada lanzamiento, campaña o temporada, con un reporte continuo entre uno y otro."
     },
     en: {
       name: "Plan the year",
       question: "How do I get an answer before every decision this year?",
-      summary: "A plan of studies placed at the moments that matter: launches, campaigns and seasons."
+      summary: "Studies ready before each launch, campaign or season, with an ongoing report running in between."
     }
   }
 ];

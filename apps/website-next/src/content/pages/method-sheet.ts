@@ -27,7 +27,7 @@ export const methodSheet: Record<MethodKey, MethodSheetEntry> = {
     es: {
       question: "¿Qué empuja y qué frena una decisión?",
       description:
-        "Separa lo que acerca a la gente a tu marca de lo que la detiene, y ubica cada razón en una de cuatro capas: psicológica, personal, social y cultural. Así sabes qué puedes mover con producto o comunicación y con qué te conviene alinearte. Es el método que más usamos.",
+        "Separa lo que acerca a la gente a tu marca de lo que la detiene, y ubica cada razón en una de cuatro capas: psicológica, personal, social y cultural. Te dice qué puedes mover con producto o comunicación y con qué te conviene alinearte. Es el método que más usamos.",
       roots: "Kahneman · Christensen · Deci y Ryan · Nordgren y Schonthal"
     },
     en: {
@@ -59,13 +59,13 @@ export const methodSheet: Record<MethodKey, MethodSheetEntry> = {
     es: {
       question: "¿Qué significa tu categoría en la vida real de un mercado?",
       description:
-        "Hace visibles las reglas no escritas de una categoría, lo que en ese mercado se admira, se ridiculiza o tiene permiso. Con eso tu marca elige qué lenguaje usar y dónde ubicarse, con conciencia de lo que significa.",
+        "Hace visibles las reglas no escritas de una categoría, lo que en ese mercado se admira, se ridiculiza o tiene permiso. Así tu marca sabe qué lenguaje usar y dónde colocarse sin desentonar.",
       roots: "Saussure · Barthes · Geertz · Douglas e Isherwood"
     },
     en: {
       question: "What does your category mean in people's real lives in a market?",
       description:
-        "It makes the unwritten rules of a category visible, what that market admires, ridicules or allows. With that your brand chooses which language to use and where to stand, aware of what it means.",
+        "It makes the unwritten rules of a category visible, what that market admires, ridicules or allows. So your brand knows which language to use and where to stand without sounding out of place.",
       roots: "Saussure · Barthes · Geertz · Douglas and Isherwood"
     }
   },
@@ -113,7 +113,7 @@ export const methodSheet: Record<MethodKey, MethodSheetEntry> = {
     en: {
       question: "Which voices make an idea credible in your category?",
       description:
-        "It maps who defines what a category means, often without knowing it. It classifies each voice by the function it plays in the network, beyond its follower count, and shows where the new enters a community.",
+        "It maps who defines what a category means, often without knowing it. It classifies each voice by the function it plays in the network, beyond its follower count, and shows how new ideas get into a community.",
       roots: "Granovetter · Rogers · Katz and Lazarsfeld · Barabási"
     }
   }

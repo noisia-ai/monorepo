@@ -59,7 +59,7 @@ const journey: Record<Lang, JourneyCopy> = {
     quote: "Pagué el envío exprés y llegó cuatro días después",
     platform: "X",
     fixLabel: "Arreglar primero",
-    fix: "La promesa de entrega: este mes es la fricción que más creció"
+    fix: "La promesa de entrega, la fricción que más creció este mes"
   },
   en: {
     steps: ["Search", "Buy", "Pay", "Receive", "Use"],
@@ -68,7 +68,7 @@ const journey: Record<Lang, JourneyCopy> = {
     quote: "I paid for express shipping and it came four days later",
     platform: "X",
     fixLabel: "Fix first",
-    fix: "The delivery promise: this month it is the friction that grew most"
+    fix: "The delivery promise, the friction that grew most this month"
   }
 };
 
@@ -105,7 +105,7 @@ const innovate: Record<Lang, UnderstandCopy> = {
     ],
     trigger: "Lo que la mueve",
     barrier: "Lo que la frena",
-    caption: "Un arreglo casero también es una necesidad sin resolver."
+    caption: "Cada arreglo casero señala una necesidad sin resolver."
   },
   en: {
     quote: "I add lime and salt because on its own it's too sweet, and I stopped buying it for the kids",
@@ -118,7 +118,7 @@ const innovate: Record<Lang, UnderstandCopy> = {
     ],
     trigger: "What drives her",
     barrier: "What holds her back",
-    caption: "A home fix is also an unmet need."
+    caption: "Every home fix points to an unmet need."
   }
 };
 
@@ -290,8 +290,8 @@ const withApproach = (lang: Lang, over: Partial<ApproachCopy>): ApproachCopy => 
 
 const approach: Record<string, Record<Lang, Partial<ApproachCopy>>> = {
   anticipar: {
-    es: { clusters: ["Descansar sin culpa", "Compartir menos", "Hecho a mano", "Precio por porción", "Comprar usado"], answer: "Descansar sin culpa está pasando de emergente a acelerando", quote: "Este año aprendí a descansar sin sentir que estoy fallando", reasons: ["Agotamiento", "Culpa", "Presión del trabajo"], action: "Hablar del descanso como derecho, no como premio" },
-    en: { clusters: ["Resting without guilt", "Sharing less", "Handmade", "Price per serving", "Buying used"], answer: "Resting without guilt is moving from emerging to accelerating", quote: "This year I learned to rest without feeling like I'm failing", reasons: ["Exhaustion", "Guilt", "Work pressure"], action: "Talk about rest as a right, not a reward" }
+    es: { clusters: ["Descansar sin culpa", "Compartir menos", "Hecho a mano", "Precio por porción", "Comprar usado"], answer: "Descansar sin culpa está pasando de emergente a acelerando", quote: "Este año aprendí a descansar sin sentir que estoy fallando", reasons: ["Agotamiento", "Culpa", "Presión del trabajo"], action: "Presentar el descanso como un derecho" },
+    en: { clusters: ["Resting without guilt", "Sharing less", "Handmade", "Price per serving", "Buying used"], answer: "Resting without guilt is moving from emerging to accelerating", quote: "This year I learned to rest without feeling like I'm failing", reasons: ["Exhaustion", "Guilt", "Work pressure"], action: "Frame rest as a right" }
   },
   defender: {
     es: { clusters: ["Precio", "Promesa", "Servicio", "Cobertura", "Confianza"], answer: "Su promesa de entrega se siente más creíble que la tuya", quote: "Me cambié porque con ellos sí llega cuando dicen", reasons: ["Incertidumbre", "Tiempo perdido", "Lo que dicen mis amigos"], action: "Prometer menos y cumplir con fecha exacta" },
@@ -317,12 +317,12 @@ const understandFor: Record<string, Record<Lang, UnderstandCopy>> = {
     en: { ...home.en.methods.motion, quote: "This year I learned to rest without feeling like I'm failing", chips: [{ text: "Exhaustion", layer: 0, kind: "trigger" }, { text: "Guilt", layer: 1, kind: "barrier" }, { text: "What work will say", layer: 2, kind: "barrier" }, { text: "Rest is a right", layer: 3, kind: "trigger" }], caption: "Behind a signal there are reasons that don't have a name yet." }
   },
   optimizar: {
-    es: { ...home.es.methods.motion, quote: "Pagué el envío exprés y llegó cuatro días después, y nadie me avisó", chips: [{ text: "Ansiedad por la espera", layer: 0, kind: "barrier" }, { text: "Dinero perdido", layer: 1, kind: "barrier" }, { text: "Pena de reclamar", layer: 2, kind: "barrier" }, { text: "Confianza en la marca", layer: 3, kind: "trigger" }], caption: "La fricción duele por lo que la persona siente, no solo por el retraso." },
-    en: { ...home.en.methods.motion, quote: "I paid for express shipping, it came four days later and nobody told me", chips: [{ text: "Anxious waiting", layer: 0, kind: "barrier" }, { text: "Money lost", layer: 1, kind: "barrier" }, { text: "Embarrassed to complain", layer: 2, kind: "barrier" }, { text: "Trust in the brand", layer: 3, kind: "trigger" }], caption: "Friction hurts because of how people feel, not only because of the delay." }
+    es: { ...home.es.methods.motion, quote: "Pagué el envío exprés y llegó cuatro días después, y nadie me avisó", chips: [{ text: "Ansiedad por la espera", layer: 0, kind: "barrier" }, { text: "Dinero perdido", layer: 1, kind: "barrier" }, { text: "Pena de reclamar", layer: 2, kind: "barrier" }, { text: "Confianza en la marca", layer: 3, kind: "trigger" }], caption: "El retraso molesta. Lo que duele es que nadie te avise." },
+    en: { ...home.en.methods.motion, quote: "I paid for express shipping, it came four days later and nobody told me", chips: [{ text: "Anxious waiting", layer: 0, kind: "barrier" }, { text: "Money lost", layer: 1, kind: "barrier" }, { text: "Embarrassed to complain", layer: 2, kind: "barrier" }, { text: "Trust in the brand", layer: 3, kind: "trigger" }], caption: "The delay is annoying. What hurts is that nobody tells you." }
   },
   defender: {
-    es: { ...home.es.methods.motion, quote: "Me cambié porque con ellos sí llega cuando dicen, y mis amigos ya estaban ahí", chips: [{ text: "Certeza", layer: 0, kind: "trigger" }, { text: "Tiempo perdido", layer: 1, kind: "barrier" }, { text: "Mis amigos ya se cambiaron", layer: 2, kind: "trigger" }, { text: "Cumplir lo prometido", layer: 3, kind: "trigger" }], caption: "La gente no se va por una razón, se va por varias a la vez." },
-    en: { ...home.en.methods.motion, quote: "I switched because with them it arrives when they say, and my friends were already there", chips: [{ text: "Certainty", layer: 0, kind: "trigger" }, { text: "Wasted time", layer: 1, kind: "barrier" }, { text: "My friends switched", layer: 2, kind: "trigger" }, { text: "Keeping promises", layer: 3, kind: "trigger" }], caption: "People don't leave for one reason, they leave for several at once." }
+    es: { ...home.es.methods.motion, quote: "Me cambié porque con ellos sí llega cuando dicen, y mis amigos ya estaban ahí", chips: [{ text: "Certeza", layer: 0, kind: "trigger" }, { text: "Tiempo perdido", layer: 1, kind: "barrier" }, { text: "Mis amigos ya se cambiaron", layer: 2, kind: "trigger" }, { text: "Cumplir lo prometido", layer: 3, kind: "trigger" }], caption: "Casi nadie se va por una sola razón." },
+    en: { ...home.en.methods.motion, quote: "I switched because with them it arrives when they say, and my friends were already there", chips: [{ text: "Certainty", layer: 0, kind: "trigger" }, { text: "Wasted time", layer: 1, kind: "barrier" }, { text: "My friends switched", layer: 2, kind: "trigger" }, { text: "Keeping promises", layer: 3, kind: "trigger" }], caption: "Hardly anyone leaves for just one reason." }
   }
 };
 

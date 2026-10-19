@@ -1,5 +1,5 @@
 /**
- * Cultural Foresight México 2026 — Evolución mensual por señal
+ * Cultural Foresight México 2026. Evolución mensual por señal
  *
  * Distribución temporal de menciones por señal a lo largo del periodo
  * analizado. Las curvas reflejan la madurez cultural de cada señal:

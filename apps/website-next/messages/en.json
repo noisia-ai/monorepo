@@ -1,8 +1,8 @@
 {
   "meta": {
     "siteName": "Noisia",
-    "defaultTitle": "Noisia · Social intelligence",
-    "description": "Noisia is a technology company that produces research: it reads public conversation, search, reviews and your own data to answer business questions, with every finding tied to what people actually said."
+    "defaultTitle": "Noisia · Social intelligence and market research",
+    "description": "Social intelligence for brands. We read social media, search, reviews and your own data to answer business questions, with the evidence attached."
   },
   "nav": {
     "solutions": "Solutions",
@@ -16,14 +16,14 @@
     "language": "Español",
     "skip": "Skip to content",
     "mainNav": "Main navigation",
-    "solutionsDesc": "Reports, studies and an annual plan for every moment of your brand",
-    "howItWorksDesc": "The technology and the people behind every answer",
+    "solutionsDesc": "Ongoing report, studies and an annual plan",
+    "howItWorksDesc": "Our software and the people who run it",
     "methodsDesc": "How we understand why people do what they do",
-    "insightsDesc": "Animated findings, each with its evidence",
+    "insightsDesc": "Short video findings, with their evidence",
     "aboutDesc": "Who we are and how we work",
     "languageLabel": "Language",
     "menuCta": "Book a free workshop",
-    "menuNote": "30 to 60 minutes, free. No brief? We build it together."
+    "menuNote": "30 to 60 minutes, free. No brief yet? We'll put one together there."
   },
   "industries": {
     "all": "All",
@@ -42,6 +42,7 @@
   },
   "feed": {
     "label": "Insights",
+    "metaTitle": "Findings from what people say online",
     "kindEditorial": "Noisia research",
     "kindExample": "Illustrative example",
     "evidence": "See the evidence",
@@ -62,17 +63,17 @@
     "closeSheet": "Close",
     "swipeHint": "Swipe for the next one",
     "backToSite": "Back",
-    "metaDescription": "Short findings from Noisia research, in motion and with the evidence behind them. Swipe for the next one.",
+    "metaDescription": "Short findings from Noisia research on what people say online, told in one-minute videos with the quotes that back them up.",
     "heading": "Noisia insights",
     "kindDemo": "Invented data",
     "collection": "Study"
   },
   "footer": {
-    "tagline": "Social intelligence. Research produced with our own technology and human judgment.",
+    "tagline": "Social intelligence. Research built on our own software and people who know how to read it.",
     "explore": "Explore",
     "learn": "Learn",
     "company": "Noisia",
-    "socialIntelligence": "What social intelligence is",
+    "socialIntelligence": "What is social intelligence?",
     "compare": "Comparisons",
     "privacy": "Privacy notice",
     "signature": "noisia · social intelligence architects",

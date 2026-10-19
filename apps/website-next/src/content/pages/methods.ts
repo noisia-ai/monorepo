@@ -34,9 +34,9 @@ export type MethodsPageCopy = {
 
 export const methodsPage: Record<"es" | "en", MethodsPageCopy> = {
   es: {
-    metaTitle: "Métodos: entender a las personas antes de contar menciones",
+    metaTitle: "Métodos de investigación social de Noisia",
     metaDescription:
-      "Los métodos de Noisia parten de la antropología, la sociología, la psicología y la semiótica para entender por qué la gente hace lo que hace. Seis métodos, entre ellos Triggers & Barriers, y una biblioteca que crece.",
+      "Seis métodos con base en antropología, sociología y psicología para entender por qué la gente decide lo que decide, como Triggers & Barriers.",
     hero: {
       title: "Entender antes de contar",
       lead: "Una cifra te dice cuánta gente habla de algo. Para decidir necesitas saber por qué. Nuestros métodos empiezan por las personas y sus razones, y cuentan después.",
@@ -115,7 +115,7 @@ export const methodsPage: Record<"es" | "en", MethodsPageCopy> = {
         ],
         quote: "Tercera vez que me cobran de más. Si pasa otra vez, me cambio",
         platform: "X",
-        caption: "El volumen dice cuántas. El método dice cuánto pesan."
+        caption: "El volumen dice cuántas son, y el método, cuánto pesan."
       },
       levelsTitle: "Y cada hallazgo dice cuánto confiar en él",
       levels: [
@@ -182,12 +182,12 @@ export const methodsPage: Record<"es" | "en", MethodsPageCopy> = {
     }
   },
   en: {
-    metaTitle: "Methods: understanding people before counting mentions",
+    metaTitle: "Noisia's social research methods",
     metaDescription:
-      "Noisia's methods start from anthropology, sociology, psychology and semiotics to understand why people do what they do. Six methods, Triggers & Barriers among them, and a library that grows.",
+      "Six research methods drawn from anthropology, sociology and psychology to understand why people decide what they decide, Triggers & Barriers among them.",
     hero: {
       title: "Understand before you count",
-      lead: "A number tells you how many people talk about something. To decide, you need to know why. Our methods start with people and their reasons, and count after.",
+      lead: "A number tells you how many people talk about something. To decide, you need to know why. Our methods start with people and their reasons, and only then count.",
       label: "One topic, three different reasons",
       motion: {
         header: "What comes up most",
@@ -243,14 +243,14 @@ export const methodsPage: Record<"es" | "en", MethodsPageCopy> = {
       items: [
         { name: "Psychological", text: "What happens inside the person, like desire, relief, anxiety or inertia.", move: "You move it with product and communication." },
         { name: "Personal", text: "Their budget, their time, their habits and who they are.", move: "You move it with price, format and convenience." },
-        { name: "Social", text: "The gaze of others, from recommendation to stigma.", move: "You influence it with community and visible validation." },
+        { name: "Social", text: "What other people think, from recommendations to stigma.", move: "You influence it with community and visible validation." },
         { name: "Cultural", text: "What the category means in that market.", move: "It almost never moves. You align or step aside." }
       ],
       methodIntro: "This reading comes from"
     },
     weight: {
       title: "Twelve can weigh more than two hundred",
-      lead: "Twelve angry mentions from people about to leave can matter more than two hundred that pass by. The method decides what weighs by intensity, context and the link to the decision you are about to make.",
+      lead: "Twelve angry mentions from people about to leave can matter more than two hundred that mention it in passing. The method decides what weighs by intensity, context and the link to the decision you are about to make.",
       label: "Three groups of mentions ranked first by volume and then by weight",
       motion: {
         byCount: "How many",
@@ -263,7 +263,7 @@ export const methodsPage: Record<"es" | "en", MethodsPageCopy> = {
         ],
         quote: "Third time they overcharge me. One more and I'm switching",
         platform: "X",
-        caption: "Volume tells you how many. The method tells you how much they weigh."
+        caption: "Volume tells you how many, and the method how much they weigh."
       },
       levelsTitle: "And every finding says how much to trust it",
       levels: [
@@ -277,7 +277,7 @@ export const methodsPage: Record<"es" | "en", MethodsPageCopy> = {
       lead: "The social sciences have studied for decades why we do what we do. Every method starts from a published theory, with authors and evidence.",
       items: [
         { key: "anthropology", name: "Anthropology", text: "Reads culture from the inside, with what a market admires, ridicules or allows.", authors: "Geertz · Douglas and Isherwood" },
-        { key: "sociology", name: "Sociology", text: "Follows how ideas travel between people and communities, who legitimizes and where the new comes in.", authors: "Granovetter · Rogers · Katz and Lazarsfeld" },
+        { key: "sociology", name: "Sociology", text: "Follows how ideas travel between people and communities, who lends legitimacy and how new things get in.", authors: "Granovetter · Rogers · Katz and Lazarsfeld" },
         { key: "psychology", name: "Psychology", text: "Explains how a person decides, what pushes them, what holds them back and why sometimes they don't change even when they want to.", authors: "Kahneman · Deci and Ryan · Thaler and Sunstein" },
         { key: "semiotics", name: "Semiotics", text: "Decodes what the words, images and objects of a category mean.", authors: "Saussure · Barthes" }
       ]
@@ -309,7 +309,7 @@ export const methodsPage: Record<"es" | "en", MethodsPageCopy> = {
         {
           icon: "mind",
           q: "Who applies the methods?",
-          a: "An Intelligence Architect, an expert in research, anthropology and sociology. They define the question, approve the topics, review the classification and sign the reading. Our software reads the conversation and runs the calculations, and the judgment comes from that person."
+          a: "An Intelligence Architect, an expert in research, anthropology and sociology. They define the question, approve the topics, review the classification and sign off on the read. Our software reads the conversation and runs the calculations, and the judgment comes from that person."
         },
         {
           icon: "check",

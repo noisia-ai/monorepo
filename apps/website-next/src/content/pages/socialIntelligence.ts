@@ -35,9 +35,9 @@ export type SocialIntelligenceCopy = {
 
 export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
   es: {
-    metaTitle: "¿Qué es la inteligencia social? Definición, diferencias y usos",
+    metaTitle: "¿Qué es la inteligencia social?",
     metaDescription:
-      "La inteligencia social es la investigación que convierte la conversación pública en respuestas para una decisión de negocio. Qué la distingue del social listening y de las encuestas, qué puede decirte y qué no.",
+      "La inteligencia social investiga la conversación pública para responder una pregunta de negocio. Qué la distingue del social listening y qué puede decirte.",
     title: "¿Qué es la inteligencia social?",
     lead: "Es investigar lo que la gente dice en público, en redes, búsquedas, reseñas y comunidades, para responder una pregunta de negocio con evidencia.",
     definition: {
@@ -63,7 +63,7 @@ export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
       title: "¿En qué se diferencia del social listening?",
       paragraphs: [
         "El social listening monitorea. Una herramienta recoge las menciones que contienen las palabras que elegiste y las muestra en un dashboard con volumen, sentimiento y alertas. Te dice cuánto se habló y si subió o bajó.",
-        "La inteligencia social parte de una pregunta. Lee también lo que la gente dice sin nombrar tu marca, descubre los temas, limpia el ruido e interpreta con un método. El listening puede ser una de sus fuentes."
+        "La inteligencia social parte de una pregunta. Lee también lo que la gente dice sin nombrar tu marca, encuentra los temas, limpia el ruido e interpreta con un método. El listening puede ser una de sus fuentes."
       ],
       motion: {
         query: "Altura",
@@ -85,7 +85,7 @@ export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
       link: { label: "Ver la comparación completa", compare: "listening" }
     },
     research: {
-      title: "¿Y de la investigación de mercado?",
+      title: "¿Y de la investigación de mercados?",
       lead: "Las dos se complementan. Cambia la forma de llegar a la gente.",
       survey: { name: "La encuesta pregunta", text: "Opinión declarada de una muestra diseñada, en el lenguaje del cuestionario. Es la mejor forma de medir cuántas personas piensan algo." },
       conversation: { name: "La conversación escucha", text: "Lenguaje espontáneo, en el momento y las palabras de cada persona. Encuentra motivos que nadie pensó incluir en un cuestionario y te dice qué preguntar después." },
@@ -189,9 +189,9 @@ export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
     cta: { title: "Trae tu pregunta", text: "En un taller gratis vemos si la conversación puede responderla y cómo.", label: "Agenda un taller gratis" }
   },
   en: {
-    metaTitle: "What is social intelligence? Definition, differences and uses",
+    metaTitle: "What is social intelligence?",
     metaDescription:
-      "Social intelligence is the research that turns public conversation into answers for a business decision. How it differs from social listening and surveys, what it can tell you and what it can't.",
+      "Social intelligence researches public conversation to answer a business question. How it differs from social listening, and what it can tell you.",
     title: "What is social intelligence?",
     lead: "It is researching what people say in public, across social media, search, reviews and communities, to answer a business question with evidence.",
     definition: {
@@ -217,7 +217,7 @@ export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
       title: "How is it different from social listening?",
       paragraphs: [
         "Social listening monitors. A tool collects the mentions that contain the words you chose and shows them on a dashboard with volume, sentiment and alerts. It tells you how much people talked and whether it went up or down.",
-        "Social intelligence starts from a question. It also reads what people say without naming your brand, discovers the topics, cleans out the noise and interprets with a method. Listening can be one of its sources."
+        "Social intelligence starts from a question. It also reads what people say without naming your brand, finds the topics, cleans out the noise and interprets with a method. Listening can be one of its sources."
       ],
       motion: {
         query: "Altura",
@@ -239,7 +239,7 @@ export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
       link: { label: "See the full comparison", compare: "listening" }
     },
     research: {
-      title: "And from market research?",
+      title: "And market research?",
       lead: "The two complement each other. What changes is how they reach people.",
       survey: { name: "A survey asks", text: "Stated opinion from a designed sample, in the language of the questionnaire. It is the best way to measure how many people think something." },
       conversation: { name: "Conversation listens", text: "Spontaneous language, in each person's own moment and words. It finds motives nobody thought to put in a questionnaire and tells you what to ask next." },
@@ -280,14 +280,14 @@ export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
         caption: "One mention, four reasons."
       },
       items: [
-        { name: "Which topics exist and which ones weigh", text: "With numbers calculated over the whole conversation." },
+        { name: "Which topics exist and which matter most", text: "With numbers calculated over the whole conversation." },
         { name: "Why, in their words", text: "Motives, obstacles, comparisons and verbatim language." },
         { name: "What changed and when", text: "Which topic appeared, grew or faded between periods, and what moved it." },
         { name: "How your brand looks next to others", text: "Your brand and your competitors, with the same criteria and the same period." }
       ]
     },
     cannot: {
-      title: "And what can't it?",
+      title: "And what it can't",
       items: [
         { name: "How many people in the population think something", text: "It represents those who speak in public. For a population figure you need a survey." },
         { name: "What people don't say", text: "If a motive is never put into words, it doesn't show up. That is what observation and usability testing are for." },
@@ -328,7 +328,7 @@ export const socialIntelligence: Localized<SocialIntelligenceCopy> = {
         { q: "How reliable is it?", a: "It depends on every number being calculated over the whole conversation and every quote being openable. At Noisia every finding says whether it is measured, directional or qualitative, and the limits are written into the report.", icon: "privacy" },
         { q: "What role does artificial intelligence play?", a: "It reads, groups and classifies the conversation at a scale no person can reach. A trained person approves the topics, corrects the classification and interprets. Numbers are calculated with queries that can be repeated.", icon: "system" },
         { q: "Which teams is it for?", a: "Brand, insights, product, strategy, communications and the agencies that support them. Any team that has to decide on something people are already talking about.", icon: "people" },
-        { q: "How is it hired?", a: "As an ongoing report, weekly, biweekly or monthly, as a study that answers one specific question, or as an annual plan of studies. The entry point is a free workshop where we define the question.", icon: "calendar" }
+        { q: "How do you buy it?", a: "As an ongoing report, weekly, biweekly or monthly, as a study that answers one specific question, or as an annual plan of studies. The entry point is a free workshop where we define the question.", icon: "calendar" }
       ]
     },
     more: {

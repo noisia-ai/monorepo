@@ -31,11 +31,11 @@ export const howItWorks: Localized<HowItWorksCopy> = {
   es: {
     metaTitle: "Cómo funciona la inteligencia social de Noisia",
     metaDescription:
-      "Leemos lo que la gente dice en redes, reseñas, foros y búsquedas, lo ordenamos en temas y un Intelligence Architect lo interpreta con métodos de las ciencias sociales. Recibes una respuesta con la evidencia a la vista.",
+      "Así trabaja Noisia. Leemos redes, reseñas, foros y búsquedas, lo ordenamos en temas y un Intelligence Architect te explica qué significa para tu marca.",
     hero: {
-      title: "Escuchamos a la gente. Respondemos tu pregunta.",
+      title: "Leemos a la gente para responder tu pregunta.",
       lead:
-        "Leemos lo que se dice en público sobre tu marca y tu categoría, lo ordenamos en temas y una persona experta lo interpreta contigo. Recibes una respuesta con la evidencia a la vista.",
+        "Juntamos lo que se dice en público sobre tu marca y tu categoría, lo ordenamos en temas y una persona experta lo interpreta contigo. Recibes una respuesta con la evidencia a la vista.",
       process: {
         asks: "Tu pregunta",
         question: "¿Por qué la gente joven se está saltando el sérum?",
@@ -60,7 +60,7 @@ export const howItWorks: Localized<HowItWorksCopy> = {
     architect: {
       title: "Una persona experta firma cada respuesta.",
       lead:
-        "Nuestro software lee y ordena. Tu Intelligence Architect decide qué significa. Es una persona con formación en investigación y ciencias sociales que trabaja contigo de principio a fin.",
+        "Nuestro software lee y ordena, y tu Intelligence Architect decide qué significa. Es una persona con formación en investigación y ciencias sociales que trabaja contigo de principio a fin.",
       points: [
         { name: "Define la pregunta", text: "Convierte tu brief en preguntas que la conversación sí puede responder." },
         { name: "Revisa cada tema", text: "Une, renombra o descarta lo que propone el software antes de que cuente." },
@@ -79,7 +79,7 @@ export const howItWorks: Localized<HowItWorksCopy> = {
     methods: {
       title: "Métodos que vienen de las ciencias sociales.",
       lead:
-        "Para entender por qué la gente decide lo que decide usamos herramientas de la antropología, la psicología y la sociología. Contar dice cuánto se habla de algo. El método dice qué pesa.",
+        "Para entender por qué la gente decide lo que decide usamos herramientas de la antropología, la psicología y la sociología. Contar te dice cuánto se habla de algo, y el método, qué pesa.",
       link: "Conoce los métodos"
     },
     evidence: {
@@ -126,7 +126,7 @@ export const howItWorks: Localized<HowItWorksCopy> = {
         {
           icon: "search",
           q: "¿Qué fuentes leen?",
-          a: "Conversación pública en redes sociales, foros y comunidades, comentarios en video, reseñas, preguntas en marketplaces y volumen de búsquedas. Elegimos las fuentes según tu pregunta: una duda de compra vive en reseñas y foros, un código cultural en comunidades y conversaciones largas, un cambio de reputación en redes abiertas."
+          a: "Conversación pública en redes sociales, foros y comunidades, comentarios en video, reseñas, preguntas en marketplaces y volumen de búsquedas. Elegimos las fuentes según tu pregunta. Una duda de compra vive en reseñas y foros, un código cultural en comunidades y conversaciones largas, y un cambio de reputación en redes abiertas."
         },
         {
           icon: "filter",
@@ -151,7 +151,7 @@ export const howItWorks: Localized<HowItWorksCopy> = {
         {
           icon: "eye",
           q: "¿La conversación es representativa?",
-          a: "Representa a quienes hablan en público, que no son toda la población. Por eso cada hallazgo dice si es medido, direccional o cualitativo. La conversación se complementa bien con una encuesta: una mide cuántos y la otra muestra con qué palabras y por qué."
+          a: "Representa a quienes hablan en público, que no son toda la población. Por eso cada hallazgo dice si es medido, direccional o cualitativo. La conversación y una encuesta se complementan bien. Una mide cuántos y la otra muestra con qué palabras y por qué."
         },
         {
           icon: "time",
@@ -199,11 +199,11 @@ export const howItWorks: Localized<HowItWorksCopy> = {
   en: {
     metaTitle: "How Noisia's social intelligence works",
     metaDescription:
-      "We read what people say on social media, reviews, forums and search, sort it into topics, and an Intelligence Architect interprets it with methods from the social sciences. You get an answer with the evidence in plain view.",
+      "How Noisia works. We read social media, reviews, forums and search, sort it into topics, and an Intelligence Architect explains what it means for you.",
     hero: {
-      title: "We listen to people. We answer your question.",
+      title: "We read what people say to answer your question.",
       lead:
-        "We read what is said in public about your brand and your category, sort it into topics, and an expert interprets it with you. You get an answer with the evidence in plain view.",
+        "We gather what is said in public about your brand and your category, sort it into topics, and an expert interprets it with you. You get an answer with the evidence in plain view.",
       process: {
         asks: "Your question",
         question: "Why are young people skipping the serum step?",
@@ -226,13 +226,13 @@ export const howItWorks: Localized<HowItWorksCopy> = {
       }
     },
     architect: {
-      title: "An expert signs off every answer.",
+      title: "An expert signs off on every answer.",
       lead:
-        "Our software reads and sorts. Your Intelligence Architect decides what it means. They are a person trained in research and the social sciences who works with you from start to finish.",
+        "Our software reads and sorts, and your Intelligence Architect decides what it means. That is someone trained in research and the social sciences who works with you from start to finish.",
       points: [
         { name: "Defines the question", text: "Turns your brief into questions the conversation can actually answer." },
         { name: "Reviews every topic", text: "Merges, renames or drops what the software proposes before it counts." },
-        { name: "Signs off the reading", text: "Interprets, recommends and answers for it in front of you." }
+        { name: "Signs off on the read", text: "Interprets, recommends and answers for it in front of you." }
       ],
       motion: {
         title: "Proposed topics",
@@ -247,15 +247,15 @@ export const howItWorks: Localized<HowItWorksCopy> = {
     methods: {
       title: "Methods that come from the social sciences.",
       lead:
-        "To understand why people decide what they decide, we use tools from anthropology, psychology and sociology. Counting tells you how much something is talked about. The method tells you what weighs.",
+        "To understand why people decide what they decide, we use tools from anthropology, psychology and sociology. Counting tells you how often something comes up, and the method tells you what matters.",
       link: "Explore the methods"
     },
     evidence: {
-      title: "Every finding opens up.",
+      title: "You can open every finding.",
       lead:
         "Behind every number there are real mentions, with their source and date. If something surprises you, open it and read what people wrote.",
       levels: [
-        { name: "Measured", text: "There is enough base to give a number." },
+        { name: "Measured", text: "The base is big enough to put a number on it." },
         { name: "Directional", text: "The trend is clear, the size not yet." },
         { name: "Qualitative", text: "It explains the why in people's own words." }
       ],
@@ -294,7 +294,7 @@ export const howItWorks: Localized<HowItWorksCopy> = {
         {
           icon: "search",
           q: "Which sources do you read?",
-          a: "Public conversation on social media, forums and communities, video comments, reviews, marketplace questions and search volume. We choose sources for your question: a purchase doubt lives in reviews and forums, a cultural code in communities and long conversations, a reputation shift in open social media."
+          a: "Public conversation on social media, forums and communities, video comments, reviews, marketplace questions and search volume. We choose sources for your question. A purchase doubt lives in reviews and forums, a cultural code in communities and long threads, and a reputation shift on open social media."
         },
         {
           icon: "filter",
@@ -319,12 +319,12 @@ export const howItWorks: Localized<HowItWorksCopy> = {
         {
           icon: "eye",
           q: "Is the conversation representative?",
-          a: "It represents the people who speak in public, who are not the whole population. That is why every finding says whether it is measured, directional or qualitative. Conversation pairs well with a survey: one measures how many, the other shows in what words and why."
+          a: "It represents the people who speak in public, who are not the whole population. That is why every finding says whether it is measured, directional or qualitative. Conversation and a survey work well together. One measures how many, the other shows in what words and why."
         },
         {
           icon: "time",
           q: "How long does it take, and how often do I get results?",
-          a: "A focused question is answered in days, and a study goes from brief to first version in a few days. Continuous reports arrive every week, every two weeks or every month, depending on what you need. The scope sets the dates before we start."
+          a: "A focused question is answered in days, and a study goes from brief to first version in a few days. Ongoing reports arrive every week, every two weeks or every month, depending on what you need. The scope sets the dates before we start."
         },
         {
           icon: "signals",
@@ -344,7 +344,7 @@ export const howItWorks: Localized<HowItWorksCopy> = {
         {
           icon: "live",
           q: "What do I get at the end?",
-          a: "A report or a study presented live, with findings, evidence that opens down to the mention, recommendations with an owner and the questions worth validating next. If it is continuous, you also get a dashboard."
+          a: "A report or a study presented live, with findings, evidence that opens down to the mention, recommendations with an owner and the questions worth validating next. If it is an ongoing report, you also get a dashboard."
         },
         {
           icon: "languages",

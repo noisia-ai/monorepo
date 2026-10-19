@@ -1,5 +1,5 @@
 /**
- * The Mexican Home — Evolución mensual por señal
+ * The Mexican Home. Evolución mensual por señal
  *
  * Distribución temporal de menciones por señal en el periodo
  * analizado. Las curvas reflejan madurez:

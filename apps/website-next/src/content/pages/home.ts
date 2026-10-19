@@ -22,11 +22,11 @@ type HomeCopy = {
 export const home: Record<"es" | "en", HomeCopy> = {
   es: {
     hero: {
-      heading: "Noisia, inteligencia social: respuestas de negocio a partir de lo que la gente dice",
+      heading: "Noisia, inteligencia social. Respuestas de negocio a partir de lo que la gente dice",
       slides: [
-        { key: "track", tab: "Monitorear", title: "¿Qué cambió este mes con tu marca?", sub: "Cada mes te contamos qué subió, qué bajó y por qué, con lo que la gente dijo como prueba." },
-        { key: "trend", tab: "Anticipar tendencias", title: "¿Qué va a importar el próximo trimestre?", sub: "Vemos crecer los temas antes de que se vuelvan masivos y te avisamos cuáles conviene mover." },
-        { key: "defend", tab: "Mejorar la experiencia", title: "¿Por qué no regresan después de la primera compra?", sub: "Cada mes encontramos dónde se frustra tu cliente y qué conviene arreglar primero." },
+        { key: "track", tab: "Monitorear", title: "¿Qué cambió este mes con tu marca?", sub: "En cada reporte te contamos qué subió, qué bajó y por qué, con lo que la gente dijo como prueba." },
+        { key: "trend", tab: "Anticipar tendencias", title: "¿Qué va a importar el próximo trimestre?", sub: "Vemos crecer los temas antes de que se vuelvan masivos y te decimos en cuáles conviene entrar." },
+        { key: "defend", tab: "Mejorar la experiencia", title: "¿Por qué no regresan después de la primera compra?", sub: "En cada reporte vemos dónde se frustra tu cliente y qué conviene arreglar primero." },
         { key: "launch", tab: "Lanzar", title: "¿La gente de verdad quiere esto?", sub: "Antes de lanzar, sabes qué acerca a la gente a tu idea y qué la frena." }
       ],
       primary: "Agenda un taller gratis",
@@ -105,7 +105,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
           key: "noisia",
           tab: "Noisia",
           title: "La respuesta, con su evidencia",
-          text: "Toda la conversación se agrupa en temas. Un Intelligence Architect aprueba lo que importa y lo lee con métodos de antropología y psicología: qué siente la gente, qué la mueve y qué la frena.",
+          text: "Toda la conversación se agrupa en temas. Un Intelligence Architect aprueba lo que importa y lo lee con métodos de antropología y psicología, para entender qué mueve a la gente y qué la frena.",
           answers: "Qué pasa, por qué pasa y qué hacer"
         },
         {
@@ -169,7 +169,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
       points: [
         { name: "Una biblioteca que crece", text: "Triggers & Barriers es uno de varios métodos. Cada teoría sólida sobre comportamiento puede volverse uno nuevo." },
         { name: "Lo que pesa no siempre es lo que más se repite", text: "La intensidad, el contexto y la relación con una decisión cuentan tanto como la frecuencia." },
-        { name: "Límites dichos", text: "Cada hallazgo dice si es medido, direccional o cualitativo." }
+        { name: "Límites a la vista", text: "Cada hallazgo dice si es medido, direccional o cualitativo." }
       ],
       link: "Conoce los métodos"
     },
@@ -198,11 +198,11 @@ export const home: Record<"es" | "en", HomeCopy> = {
   },
   en: {
     hero: {
-      heading: "Noisia, social intelligence: business answers from what people say",
+      heading: "Noisia, social intelligence. Business answers from what people say",
       slides: [
-        { key: "track", tab: "Track", title: "What changed with your brand this month?", sub: "Every month we tell you what rose, what fell and why, with what people said as proof." },
-        { key: "trend", tab: "Anticipate trends", title: "What will matter next quarter?", sub: "We see topics grow before they go mainstream and tell you which ones are worth acting on." },
-        { key: "defend", tab: "Improve the experience", title: "Why don't they come back after the first purchase?", sub: "Every month we find where your customer gets frustrated and what is worth fixing first." },
+        { key: "track", tab: "Track", title: "What changed with your brand this month?", sub: "Every report tells you what went up, what went down and why, with people's own words as proof." },
+        { key: "trend", tab: "Anticipate trends", title: "What will matter next quarter?", sub: "We watch topics grow before they go mainstream and tell you which ones are worth getting into." },
+        { key: "defend", tab: "Improve the experience", title: "Why don't they come back after the first purchase?", sub: "Every report shows where your customers get frustrated and what to fix first." },
         { key: "launch", tab: "Launch", title: "Do people actually want this?", sub: "Before you launch, you know what draws people to your idea and what holds them back." }
       ],
       primary: "Book a free workshop",
@@ -259,7 +259,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
     },
     moments: {
       title: "What do you need to solve?",
-      lead: "Every moment of a brand brings its own question. Start with yours.",
+      lead: "Every stage of a brand comes with its own question. Start with yours.",
       report: "Ongoing report",
       study: "Study",
       plan: "Annual plan",
@@ -281,7 +281,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
           key: "noisia",
           tab: "Noisia",
           title: "The answer, with its evidence",
-          text: "The whole conversation is grouped into topics. An Intelligence Architect approves what matters and reads it with methods from anthropology and psychology: what people feel, what drives them and what holds them back.",
+          text: "The whole conversation is grouped into topics. An Intelligence Architect approves what matters and reads it with methods from anthropology and psychology, to understand what drives people and what holds them back.",
           answers: "What is happening, why, and what to do"
         },
         {
@@ -302,7 +302,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
           key: "agency",
           tab: "Agency or consultancy",
           title: "Judgment on a sample",
-          text: "Experienced people read part of the conversation by hand. The reading is good, but it takes weeks and leaves almost everything out.",
+          text: "Experienced people read part of the conversation by hand. The read is good, but it takes weeks and leaves almost everything out.",
           answers: "A good reading of a part"
         }
       ],
@@ -327,7 +327,7 @@ export const home: Record<"es" | "en", HomeCopy> = {
       compareLink: "Detailed comparisons"
     },
     methods: {
-      title: "Behind every mention there is someone",
+      title: "There's a person behind every mention",
       lead: "Before counting, we look for what they feel, what drives them and what holds them back. Our methods come from anthropology, sociology and psychology.",
       motion: {
         quote: "I really want it, but my mom says it's way too expensive for what it is",
@@ -344,8 +344,8 @@ export const home: Record<"es" | "en", HomeCopy> = {
       },
       points: [
         { name: "A growing library", text: "Triggers & Barriers is one of several methods. Any solid theory of behavior can become a new one." },
-        { name: "What matters is not always what repeats most", text: "Intensity, context and the link to a decision count as much as frequency." },
-        { name: "Limits stated", text: "Every finding says whether it is measured, directional or qualitative." }
+        { name: "What repeats most isn't always what matters", text: "Intensity, context and the link to a decision count as much as frequency." },
+        { name: "Limits up front", text: "Every finding says whether it is measured, directional or qualitative." }
       ],
       link: "Explore the methods"
     },

@@ -1,5 +1,5 @@
 /**
- * Future is Human — Evolución mensual por señal
+ * Future is Human. Evolución mensual por señal
  *
  * Distribución temporal de menciones por señal a lo largo del periodo
  * analizado. Las curvas reflejan la madurez cultural de cada señal:

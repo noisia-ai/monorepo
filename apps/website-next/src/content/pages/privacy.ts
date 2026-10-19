@@ -25,7 +25,7 @@ export const privacy: Localized<PrivacyCopy> = {
   es: {
     metaTitle: "Aviso de privacidad",
     metaDescription:
-      "Aviso de privacidad simplificado de Noisia: qué datos recabamos en el formulario del taller, para qué los usamos, con quién no los compartimos y cómo ejercer tus derechos ARCO.",
+      "Aviso de privacidad simplificado de Noisia. Qué datos recabamos en el formulario del taller, para qué los usamos y cómo ejercer tus derechos ARCO.",
     title: "Aviso de privacidad",
     lead: "Qué datos personales recabamos a través de este sitio, para qué los usamos y cómo puedes ejercer tus derechos. Se lee en unos minutos.",
     summaryTitle: "En resumen",
@@ -100,7 +100,7 @@ export const privacy: Localized<PrivacyCopy> = {
   en: {
     metaTitle: "Privacy notice",
     metaDescription:
-      "Noisia's short privacy notice: which data we collect in the workshop form, what we use it for, whom we don't share it with and how to exercise your rights.",
+      "Noisia's short privacy notice. Which data we collect in the workshop form, what we use it for, and how you can exercise your rights over it.",
     title: "Privacy notice",
     lead: "Which personal data we collect through this site, what we use it for and how you can exercise your rights. It takes a few minutes to read.",
     summaryTitle: "In short",

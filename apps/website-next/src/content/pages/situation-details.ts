@@ -95,11 +95,11 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Cada señal tiene una etapa",
-          text: "Colocamos cada señal en una de cuatro etapas (Emergente, Acelerando, Mainstreaming o Saturación). La etapa sale de cuatro criterios medidos en cada reporte, que son volumen, velocidad de crecimiento, cuántas comunidades la llevan y cuánto tiempo dura. Cuando una señal cambia de etapa entre un reporte y otro, te avisamos."
+          text: "Colocamos cada señal en una de cuatro etapas (Emergente, Acelerando, Mainstreaming o Saturación). Para ubicarla medimos en cada reporte su volumen, qué tan rápido crece, cuántas comunidades la llevan y cuánto tiempo lleva viva. Cuando una señal cambia de etapa entre un reporte y otro, te avisamos."
         },
         {
           title: "Lo que hay detrás de cada señal",
-          text: "Una señal sirve cuando sabes por qué crece. Leemos el lenguaje con el que la gente habla de ella y sus razones en cuatro capas (psicológica, personal, social y cultural), y separamos lo que la impulsa de lo que la frena. Así sabes si tu marca tiene permiso para entrar y con qué palabras.",
+          text: "Una señal sirve cuando sabes por qué crece. Leemos el lenguaje con el que la gente habla de ella y sus razones en cuatro capas (psicológica, personal, social y cultural), y separamos lo que la empuja de lo que la frena. Con eso decides si tu marca puede entrar y con qué palabras.",
           method: "tb"
         }
       ],
@@ -110,7 +110,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "De dónde sale", them: "Observación de expertos, prensa y reportes globales", us: "La conversación pública de tu mercado, leída completa" },
           { label: "Qué mide", them: "Qué temas están en el aire hoy", us: "Volumen, velocidad, comunidades y duración de cada señal" },
           { label: "La etapa", them: "Rara vez dice si algo empieza o ya pasó", us: "Emergente, Acelerando, Mainstreaming o Saturación, con criterio medido" },
-          { label: "Relación con tu marca", them: "La misma lista sirve para cualquier marca", us: "Qué señales tienen permiso para tu marca y cuáles no" },
+          { label: "Relación con tu marca", them: "La misma lista sirve para cualquier marca", us: "Qué señales le quedan a tu marca y cuáles no" },
           { label: "Cada cuánto", them: "Una vez al año o por temporada", us: "Cada semana, quincena o mes, con aviso cuando una señal cambia de etapa" }
         ]
       },
@@ -120,8 +120,8 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         items: [
           { name: "Mapa de señales", text: "Cada señal colocada por volumen y velocidad, con las comunidades donde aparece." },
           { name: "La etapa de cada señal", text: "Emergente, Acelerando, Mainstreaming o Saturación, y qué cambió contra el reporte anterior." },
-          { name: "Qué mover y qué vigilar", text: "Las señales con permiso para tu marca ahora y las que conviene seguir sin tocar todavía." },
-          { name: "Lenguaje y razones", text: "Las palabras que usa la gente y lo que impulsa o frena cada señal, listo para un brief." }
+          { name: "Dónde entrar y qué vigilar", text: "Las señales que le quedan a tu marca hoy y las que conviene seguir sin tocar todavía." },
+          { name: "Lenguaje y razones", text: "Las palabras que usa la gente y lo que empuja o frena cada señal, listo para un brief." }
         ]
       }
     },
@@ -134,11 +134,11 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Every signal gets a stage",
-          text: "We place each signal in one of four stages (Emerging, Accelerating, Mainstreaming or Saturation). The stage comes from four criteria measured in every report, which are volume, growth speed, how many communities carry it and how long it lasts. When a signal changes stage between reports, we let you know."
+          text: "We place each signal in one of four stages (Emerging, Accelerating, Mainstreaming or Saturation). To place it, we measure in every report its volume, how fast it grows, how many communities carry it and how long it has lasted. When a signal changes stage between reports, we let you know."
         },
         {
           title: "What sits behind each signal",
-          text: "A signal is useful once you know why it grows. We read the language people use to talk about it and their reasons in four layers (psychological, personal, social and cultural), and separate what drives it from what holds it back. So you know whether your brand has permission to step in and with which words.",
+          text: "A signal is useful once you know why it grows. We read the language people use to talk about it and their reasons in four layers (psychological, personal, social and cultural), and separate what drives it from what holds it back. Then you can decide whether your brand should step in, and with which words.",
           method: "tb"
         }
       ],
@@ -149,7 +149,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "Where it comes from", them: "Expert observation, press and global reports", us: "The public conversation in your market, read in full" },
           { label: "What it measures", them: "Which topics are in the air today", us: "Volume, speed, communities and duration of each signal" },
           { label: "The stage", them: "Rarely says whether something is starting or over", us: "Emerging, Accelerating, Mainstreaming or Saturation, with measured criteria" },
-          { label: "Fit with your brand", them: "The same list works for any brand", us: "Which signals your brand has permission to use" },
+          { label: "Fit with your brand", them: "The same list works for any brand", us: "Which signals fit your brand and which don't" },
           { label: "How often", them: "Once a year or once a season", us: "Weekly, every two weeks or monthly, with a heads-up when a stage changes" }
         ]
       },
@@ -159,7 +159,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         items: [
           { name: "Signal map", text: "Every signal placed by volume and speed, with the communities where it shows up." },
           { name: "Each signal's stage", text: "Emerging, Accelerating, Mainstreaming or Saturation, and what changed since the last report." },
-          { name: "What to act on and what to watch", text: "The signals your brand can use now and the ones worth following without touching yet." },
+          { name: "Where to step in and what to watch", text: "The signals your brand can use now and the ones worth following without touching yet." },
           { name: "Language and reasons", text: "The words people use and what drives or holds back each signal, ready for a brief." }
         ]
       }
@@ -168,7 +168,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
 
   optimizar: {
     es: {
-      summary: "El recorrido real de tu cliente, momento por momento: dónde se frustra, qué cambió contra el periodo anterior y qué arreglar primero.",
+      summary: "Cada momento del recorrido de tu cliente, con los puntos donde se frustra y lo que cambió desde el periodo anterior.",
       howTitle: "Cómo lo resolvemos",
       steps: [
         {
@@ -209,7 +209,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       }
     },
     en: {
-      summary: "Your customer's real journey, moment by moment: where they get frustrated, what changed since the previous period and what to fix first.",
+      summary: "Every step of your customer's journey, with the points where they get frustrated and what changed since the last period.",
       howTitle: "How we solve it",
       steps: [
         {
@@ -340,7 +340,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       steps: [
         {
           title: "Lo que atrae y lo que frena",
-          text: "Antes de lanzar, leemos lo que la gente ya dice de la categoría y del terreno que quieres ocupar. Separamos lo que la acerca de lo que la detiene, con su lenguaje literal, y un Intelligence Architect resume si ese terreno tiene permiso. Lo que la gente cuenta sin que nadie le pregunte muestra lo que la mueve.",
+          text: "Antes de lanzar, leemos lo que la gente ya dice de la categoría y del terreno que quieres ocupar. Separamos lo que la acerca de lo que la detiene, con su lenguaje literal, y un Intelligence Architect dice si ese terreno es creíble para tu marca. Lo que la gente cuenta sin que nadie le pregunte muestra lo que la mueve.",
           method: "tb"
         },
         {
@@ -349,7 +349,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "De tu decisión a una recomendación",
-          text: "Tu decisión se convierte en una pregunta que la conversación puede responder, como cuál de tus territorios tiene permiso y cuál ya tiene dueño. Elegimos el método que la responde y entregamos una recomendación con la evidencia a favor y en contra. Tu agencia recibe también el lenguaje que conviene usar y el que conviene evitar.",
+          text: "Tu decisión se convierte en una pregunta que la conversación puede responder, como cuál de tus territorios es creíble y cuál ya tiene dueño. Elegimos el método que la responde y entregamos una recomendación con la evidencia a favor y en contra. Tu agencia recibe también el lenguaje que conviene usar y el que conviene evitar.",
           method: "cc"
         }
       ],
@@ -361,7 +361,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "Cuánta gente", them: "Una muestra reclutada para la ocasión", us: "La conversación pública de toda la categoría" },
           { label: "El lenguaje", them: "Pasa por la pregunta y el moderador", us: "Las palabras que la gente usa en su vida diaria" },
           { label: "Tiempo", them: "Semanas entre reclutar, moderar y analizar", us: "Días desde el brief hasta la primera respuesta" },
-          { label: "Lo que mide mejor", them: "La reacción a un estímulo y la intención de compra", us: "El permiso de un territorio y los motivos y frenos que ya existen" }
+          { label: "Lo que mide mejor", them: "La reacción a un estímulo y la intención de compra", us: "Si un territorio es creíble y qué motivos y frenos ya existen" }
         ]
       },
       deliverable: {
@@ -370,7 +370,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         items: [
           { name: "Lo que atrae y lo que frena", text: "Los motivos y los frenos alrededor de tu idea, con su peso y las citas que los sostienen." },
           { name: "Territorio recomendado", text: "Cuál construir, cuál ya tiene dueño en la conversación y por qué." },
-          { name: "Lenguaje con permiso", text: "Las palabras y los tonos que la gente ya usa, y las promesas que la categoría ya gastó." },
+          { name: "El lenguaje que conviene", text: "Las palabras y los tonos que la gente ya usa, y las promesas que la categoría ya gastó." },
           { name: "Brief con fuentes", text: "Un documento que tu agencia puede usar directo, con cada hallazgo ligado a lo que dijo la gente." }
         ]
       }
@@ -380,7 +380,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       steps: [
         {
           title: "What draws people and what holds them back",
-          text: "Before you launch, we read what people already say about the category and the ground you want to take. We separate what pulls them closer from what stops them, in their own words, and an Intelligence Architect sums up whether that ground has permission. What people say when nobody is asking shows what moves them.",
+          text: "Before you launch, we read what people already say about the category and the ground you want to take. We separate what pulls them closer from what stops them, in their own words, and an Intelligence Architect tells you whether that ground is credible for your brand. What people say when nobody is asking shows what moves them.",
           method: "tb"
         },
         {
@@ -389,7 +389,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "From your decision to a recommendation",
-          text: "Your decision becomes a question the conversation can answer, such as which of your territories has permission and which one already has an owner. We pick the method that answers it and deliver a recommendation with the evidence for and against. Your agency also gets the language worth using and the language to avoid.",
+          text: "Your decision becomes a question the conversation can answer, such as which of your territories is credible and which one already has an owner. We pick the method that answers it and deliver a recommendation with the evidence for and against. Your agency also gets the language worth using and the language to avoid.",
           method: "cc"
         }
       ],
@@ -401,7 +401,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
           { label: "How many people", them: "A sample recruited for the occasion", us: "The whole public conversation in the category" },
           { label: "The language", them: "Shaped by the question and the moderator", us: "The words people use in daily life" },
           { label: "Time", them: "Weeks to recruit, moderate and analyze", us: "Days from brief to first answer" },
-          { label: "What it measures best", them: "Reaction to a stimulus and purchase intent", us: "A territory's permission and the drivers and barriers already there" }
+          { label: "What it measures best", them: "Reaction to a stimulus and purchase intent", us: "Whether a territory is credible, and the drivers and barriers already there" }
         ]
       },
       deliverable: {
@@ -410,7 +410,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         items: [
           { name: "What draws and what holds back", text: "The drivers and barriers around your idea, with their weight and the quotes behind them." },
           { name: "Recommended territory", text: "Which one to build on, which one already has an owner in the conversation and why." },
-          { name: "Language with permission", text: "The words and tones people already use, and the promises the category has worn out." },
+          { name: "Language to use", text: "The words and tones people already use, and the promises the category has worn out." },
           { name: "Brief with sources", text: "A document your agency can use as is, with every finding tied to what people said." }
         ]
       }
@@ -428,7 +428,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Quién da credibilidad",
-          text: "En cada mercado hay voces que legitiman, voces que conectan comunidades y voces que articulan la crítica. Las encontramos en la conversación, agrupamos lo que dicen y un Intelligence Architect aprueba el mapa antes de entregarlo. Así sabes con quién empezar y a quién vigilar.",
+          text: "En cada mercado hay quien da credibilidad, quien conecta comunidades y quien encabeza la crítica. Los encontramos en la conversación, agrupamos lo que dicen y un Intelligence Architect aprueba el mapa, con quién empezar y a quién vigilar.",
           method: "ia"
         },
         {
@@ -468,7 +468,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Who lends credibility",
-          text: "Every market has voices that legitimize, voices that connect communities and voices that lead the criticism. We find them in the conversation, group what they say, and an Intelligence Architect approves the map before it is delivered. So you know who to start with and who to watch.",
+          text: "Every market has people who lend credibility, people who connect communities and people who lead the criticism. We find them in the conversation, group what they say, and an Intelligence Architect signs off on the map, with who to start with and who to watch.",
           method: "ia"
         },
         {
@@ -511,7 +511,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Qué necesidades están creciendo",
-          text: "Una necesidad puede ser real y estar estancada. Medimos cuánto se habla de cada una, qué tan rápido crece y en cuántas comunidades aparece, y la colocamos en su etapa, de Emergente a Saturación. Así eliges una que todavía tiene espacio."
+          text: "Una necesidad puede ser real y estar estancada. Medimos cuánto se habla de cada una, qué tan rápido crece y en cuántas comunidades aparece, y la ubicamos en su etapa, de Emergente a Saturación. Conviene elegir una que todavía tenga espacio."
         },
         {
           title: "De tu decisión a una recomendación",
@@ -536,7 +536,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         items: [
           { name: "Mapa de necesidades", text: "Lo que sigue sin resolverse, ordenado por tamaño, crecimiento y relación con una compra." },
           { name: "Arreglos caseros", text: "Cómo la gente compensa hoy lo que falta, con las citas que lo muestran." },
-          { name: "Rutas de concepto", text: "Direcciones de producto con la evidencia a favor y los frenos que tendrían que disolver." },
+          { name: "Rutas de concepto", text: "Direcciones de producto con la evidencia a favor y los frenos que tendrían que resolver." },
           { name: "Preguntas para validar", text: "Lo que una prueba cuantitativa de concepto debería medir después." }
         ]
       }
@@ -551,7 +551,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
         },
         {
           title: "Which needs are growing",
-          text: "A need can be real and still be flat. We measure how much each one is discussed, how fast it grows and how many communities carry it, and place it in its stage, from Emerging to Saturation. So you pick one that still has room."
+          text: "A need can be real and still be flat. We measure how much each one is discussed, how fast it grows and how many communities carry it, and place it in its stage, from Emerging to Saturation. You want one that still has room."
         },
         {
           title: "From your decision to a recommendation",
@@ -588,8 +588,8 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       howTitle: "Cómo lo resolvemos",
       steps: [
         {
-          title: "Tu año, mapeado",
-          text: "Empezamos por tu calendario de lanzamientos, campañas y temporadas, como Hot Sale, regreso a clases o Buen Fin. El reporte continuo corre todo el año y cada estudio se coloca antes de la decisión que alimenta. La respuesta ya existe cuando llega la reunión."
+          title: "Primero, tu calendario",
+          text: "Empezamos por tu calendario de lanzamientos, campañas y temporadas, como Hot Sale, regreso a clases o Buen Fin. El reporte continuo corre todo el año y cada estudio se coloca antes de la decisión que alimenta. Cuando llega la junta, la respuesta ya está lista."
         },
         {
           title: "Entre estudios, el reporte continuo",
@@ -627,7 +627,7 @@ export const situationDetails: Record<string, Record<"es" | "en", SituationDetai
       howTitle: "How we solve it",
       steps: [
         {
-          title: "Your year, mapped",
+          title: "First, your calendar",
           text: "We start from your calendar of launches, campaigns and seasons, such as Hot Sale, back to school or Buen Fin. The ongoing report runs all year and each study sits right before the decision it feeds. The answer is ready when the meeting comes."
         },
         {

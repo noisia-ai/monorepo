@@ -5,9 +5,9 @@ import { moments } from "../moments";
 
 export const solutionsIndex: Localized<PageContent> = {
   es: {
-    metaTitle: "Reportes, estudios y plan anual de inteligencia social",
+    metaTitle: "Soluciones de inteligencia social para marcas",
     metaDescription:
-      "Empieza por tu situación: monitorear, lanzar, entrar, defender, optimizar, innovar o planear. Del otro lado hay un reporte continuo, un estudio que responde una pregunta o un plan anual. Entrada con un taller gratis, sin lista de precios.",
+      "Reporte continuo, estudios y plan anual de inteligencia social para monitorear tu marca, anticipar tendencias, lanzar o entrar a un mercado nuevo.",
     title: "Empieza por lo que necesitas resolver",
     lead:
       "Cada momento en la vida de una marca trae una pregunta distinta. Elige el tuyo y verás qué miramos, qué recibes y cómo se empieza. Del otro lado siempre hay una de tres cosas: un reporte continuo, un estudio o un plan anual.",
@@ -53,9 +53,9 @@ export const solutionsIndex: Localized<PageContent> = {
     ]
   },
   en: {
-    metaTitle: "Reports, studies and an annual plan of social intelligence",
+    metaTitle: "Social intelligence solutions for brands",
     metaDescription:
-      "Start from your situation: track, launch, enter, defend, optimize, innovate or plan. On the other side there is a continuous report, a study that answers one question or an annual plan. Entry through a free workshop, no price list.",
+      "Ongoing reports, studies and an annual plan of social intelligence to track your brand, spot trends early, launch, enter a market or defend your position.",
     title: "Start from what you need to solve",
     lead:
       "Every moment in the life of a brand brings a different question. Pick yours and you will see what we look at, what you receive and how to start. On the other side there is always one of three things: a continuous report, a study or an annual plan.",
@@ -234,7 +234,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
       faq: [
         { icon: "calendar", q: "¿Qué pasa si cambian mis fechas?", a: "El plan se mueve con ellas. Lo que se acuerda es un número de estudios y un reporte continuo, y el calendario se ajusta cada trimestre." },
         { icon: "document", q: "¿Es más barato que contratar estudio por estudio?", a: "La base de temas y fuentes se construye una vez y se reutiliza, así que cada estudio pide menos trabajo de arranque. El alcance lo muestra por escrito." },
-        { icon: "check", q: "¿Puedo empezar con un estudio y pasar al plan después?", a: "Sí. Es la forma más común de llegar al plan anual." },
+        { icon: "check", q: "¿Puedo empezar con un estudio y pasar al plan después?", a: "Sí. Un estudio te deja ver cómo trabajamos antes de planear el año." },
         { icon: "live", q: "¿Qué recibo entre estudios?", a: "El reporte continuo, cada semana, quincena o mes según lo acordemos. Dice qué se movió, por qué y qué vigilar, con los mismos temas que alimentan los estudios." }
       ]
     },
@@ -242,7 +242,7 @@ const copy: Record<string, Localized<MomentCopy>> = {
       faq: [
         { icon: "calendar", q: "What if my dates change?", a: "The plan moves with them. What is agreed is a number of studies and an ongoing report, and the calendar is adjusted every quarter." },
         { icon: "document", q: "Is it cheaper than hiring study by study?", a: "The base of topics and sources is built once and reused, so each study needs less start-up work. The scope shows it in writing." },
-        { icon: "check", q: "Can I start with one study and move to the plan later?", a: "Yes. It is the most common way to get to the annual plan." },
+        { icon: "check", q: "Can I start with one study and move to the plan later?", a: "Yes. A study shows you how we work before you plan the year." },
         { icon: "live", q: "What do I receive between studies?", a: "The ongoing report, weekly, every two weeks or monthly as we agree. It says what moved, why and what to watch, with the same topics that feed the studies." }
       ]
     }
@@ -253,12 +253,24 @@ const copy: Record<string, Localized<MomentCopy>> = {
 export const situationCopy = copy;
 export { labels as momentLabels };
 
+/** Search titles and descriptions for each situation page (the H1 stays the client's question). */
+const situationMeta: Record<string, Localized<{ title: string; description: string }>> = {
+  monitorear: { es: { title: "Monitoreo de marca con inteligencia social", description: "Un reporte continuo, cada semana, quincena o mes, con lo que cambió en la conversación de tu marca y tu categoría, por qué cambió y qué conviene vigilar." }, en: { title: "Brand monitoring with social intelligence", description: "An ongoing report, weekly, every two weeks or monthly, on what changed in the conversation about your brand and category, why, and what to watch." } },
+  anticipar: { es: { title: "Detectar tendencias antes de que sean masivas", description: "Medimos el volumen, la velocidad y las comunidades de cada tema para avisarte qué señales empiezan a crecer y cuáles le quedan a tu marca." }, en: { title: "Spot trends before they go mainstream", description: "We measure the volume, speed and communities behind every topic to tell you which signals are starting to grow and which ones fit your brand." } },
+  optimizar: { es: { title: "Dónde se frustra tu cliente y qué arreglar primero", description: "Leemos reseñas, foros, redes y quejas para reconstruir el recorrido de tu cliente, ver dónde se frustra y decidir qué arreglar primero, junto a tu NPS." }, en: { title: "Where customers get frustrated and what to fix", description: "We read reviews, forums, social media and complaints to rebuild your customer journey, find where people get frustrated and decide what to fix first." } },
+  defender: { es: { title: "Por qué tus clientes se van con la competencia", description: "Un estudio que explica por qué la gente se cambia a tu competencia, qué promesa del otro se siente más creíble y qué conviene responder o reparar." }, en: { title: "Why your customers switch to the competition", description: "A study on why people switch to your competitors, which rival promise feels more credible to them and what you should answer or fix first." } },
+  lanzar: { es: { title: "Estudio antes de lanzar un producto o campaña", description: "Antes de lanzar, leemos lo que la gente ya dice de tu categoría para saber qué la acerca a tu idea, qué la frena y qué territorio te van a creer." }, en: { title: "Research before launching a product or campaign", description: "Before you launch, we read what people already say about your category to learn what draws them to your idea, what holds them back and what rings true." } },
+  entrar: { es: { title: "Estudio de mercado para entrar a un país nuevo", description: "Leemos la conversación del mercado en su idioma para entender sus reglas no escritas, quién da credibilidad y qué conviene evitar antes de llegar." }, en: { title: "Market research for entering a new country", description: "We read the market's conversation in its own language to learn its unwritten rules, who lends credibility and what to avoid before you arrive." } },
+  innovar: { es: { title: "Encontrar oportunidades de innovación de producto", description: "Buscamos en reseñas, foros y redes las necesidades que la gente resuelve a medias con lo que hay hoy, y medimos cuáles crecen y dónde cabe algo nuevo." }, en: { title: "Find product innovation opportunities", description: "We look through reviews, forums and social media for needs people only half solve today, then measure which are growing and where something new fits." } },
+  planear: { es: { title: "Plan anual de investigación de mercados", description: "Estudios listos antes de cada lanzamiento, campaña o temporada, con un reporte continuo entre uno y otro y la misma persona a cargo todo el año." }, en: { title: "Annual market research plan", description: "Studies ready before every launch, campaign or season, an ongoing report in between, and the same Intelligence Architect on your brand all year." } }
+};
+
 /** One entry per situation: slugs for static params and the sitemap, and the words for metadata. */
 export const solutionEntries: Entry[] = moments.map((mo) => ({
   slug: mo.slug,
   summary: { es: mo.es.summary, en: mo.en.summary },
   page: {
-    es: { metaTitle: mo.es.name, metaDescription: mo.es.summary, title: mo.es.question, lead: mo.es.summary, blocks: [] },
-    en: { metaTitle: mo.en.name, metaDescription: mo.en.summary, title: mo.en.question, lead: mo.en.summary, blocks: [] }
+    es: { metaTitle: situationMeta[mo.slug.es]?.es.title ?? mo.es.name, metaDescription: situationMeta[mo.slug.es]?.es.description ?? mo.es.summary, title: mo.es.question, lead: mo.es.summary, blocks: [] },
+    en: { metaTitle: situationMeta[mo.slug.es]?.en.title ?? mo.en.name, metaDescription: situationMeta[mo.slug.es]?.en.description ?? mo.en.summary, title: mo.en.question, lead: mo.en.summary, blocks: [] }
   }
 }));

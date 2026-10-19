@@ -140,7 +140,7 @@ const reportCopy: Record<"foresight" | "futureHuman", InsightPageCopy> = {
       "Frases donde la gente pide humano, criterio, claridad o responsabilidad.",
       "Citas con contexto explícito de marca, plataforma y momento de servicio.",
       "Patrones de lenguaje que revelan cuándo la automatización ayuda o rompe confianza.",
-      "Implicaciones accionables para marca, CX, copy, IA y servicio."
+      "Implicaciones concretas para marca, CX, copy, IA y servicio."
     ],
     cannotTitle: "No es",
     cannotItems: [

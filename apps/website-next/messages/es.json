@@ -1,8 +1,8 @@
 {
   "meta": {
     "siteName": "Noisia",
-    "defaultTitle": "Noisia · Inteligencia social",
-    "description": "Noisia es una empresa de tecnología que produce investigación: lee la conversación pública, la búsqueda, las reseñas y tus propios datos para responder preguntas de negocio, con cada hallazgo ligado a lo que la gente dijo."
+    "defaultTitle": "Noisia · Inteligencia social e investigación de mercados",
+    "description": "Inteligencia social para marcas. Leemos redes, búsquedas, reseñas y tus propios datos para responder preguntas de negocio con evidencia."
   },
   "nav": {
     "solutions": "Soluciones",
@@ -16,14 +16,14 @@
     "language": "English",
     "skip": "Saltar al contenido",
     "mainNav": "Navegación principal",
-    "solutionsDesc": "Reportes, estudios y plan anual para cada momento de tu marca",
-    "howItWorksDesc": "La tecnología y las personas detrás de cada respuesta",
+    "solutionsDesc": "Reporte continuo, estudios y plan anual",
+    "howItWorksDesc": "Nuestro software y las personas que lo operan",
     "methodsDesc": "Cómo entendemos por qué la gente hace lo que hace",
-    "insightsDesc": "Hallazgos animados, cada uno con su evidencia",
+    "insightsDesc": "Hallazgos cortos en video, con su evidencia",
     "aboutDesc": "Quiénes somos y cómo trabajamos",
     "languageLabel": "Idioma",
     "menuCta": "Agenda un taller gratis",
-    "menuNote": "30 a 60 minutos, sin costo. Si no tienes brief, lo armamos ahí."
+    "menuNote": "De 30 a 60 minutos, sin costo. Si no tienes brief, lo armamos ahí."
   },
   "industries": {
     "all": "Todo",
@@ -42,6 +42,7 @@
   },
   "feed": {
     "label": "Insights",
+    "metaTitle": "Hallazgos de lo que la gente dice en redes",
     "kindEditorial": "Investigación Noisia",
     "kindExample": "Ejemplo ilustrativo",
     "evidence": "Ver la evidencia",
@@ -62,13 +63,13 @@
     "closeSheet": "Cerrar",
     "swipeHint": "Desliza para el siguiente",
     "backToSite": "Volver",
-    "metaDescription": "Hallazgos cortos de la investigación de Noisia, en video y con la evidencia detrás. Desliza para el siguiente.",
+    "metaDescription": "Hallazgos cortos de la investigación de Noisia sobre lo que la gente dice en redes, en video de un minuto y con las citas que los sostienen.",
     "heading": "Insights de Noisia",
     "kindDemo": "Datos inventados",
     "collection": "Estudio"
   },
   "footer": {
-    "tagline": "Inteligencia social. Investigación producida con tecnología propia y criterio humano.",
+    "tagline": "Inteligencia social. Investigación hecha con software propio y personas que saben leerla.",
     "explore": "Explora",
     "learn": "Aprende",
     "company": "Noisia",

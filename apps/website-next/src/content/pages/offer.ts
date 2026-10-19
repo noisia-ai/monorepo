@@ -126,12 +126,12 @@ export const offer: Record<"es" | "en", OfferCopy> = {
           { month: 7, label: "Regreso a clases" },
           { month: 10, label: "Buen Fin" }
         ],
-        caption: "Un año de conversación leída, con estudios donde se decide."
+        caption: "El reporte corre todo el año y cada estudio llega antes de decidir."
       }
     },
     formats: {
       title: "El mismo hallazgo, en el formato que tu equipo usa",
-      lead: "Puede llegarte de más de una forma.",
+      lead: "Elige cómo te llega, o combina varios.",
       reply: "Enviar a tu equipo",
       items: [
         { key: "stories", name: "Historias animadas", text: "Hallazgos cortos como los de nuestro feed, para mandar al equipo o presentar en un minuto." },
@@ -320,12 +320,12 @@ export const offer: Record<"es" | "en", OfferCopy> = {
           { month: 7, label: "Back to school" },
           { month: 10, label: "Buen Fin" }
         ],
-        caption: "A year of conversation read, with studies where decisions are made."
+        caption: "The report runs all year, and each study lands before the decision."
       }
     },
     formats: {
       title: "The same finding, in the format your team uses",
-      lead: "It can reach you in more than one way.",
+      lead: "Pick how it reaches you, or mix a few.",
       reply: "Send to your team",
       items: [
         { key: "stories", name: "Animated stories", text: "Short findings like the ones in our feed, to send to the team or present in a minute." },
