@@ -5,7 +5,8 @@ Complementan `COPY_RULES.md` y `AGENTS.md`. **Léelo antes de armar un deck.**
 
 ## Copy y posicionamiento
 - **Nunca "jugadas"** — no es natural en México. Usa **estrategias / decisiones / movimientos**.
-- **Nunca nombres herramientas** en slides de cliente (SentiOne, scrapers, vendors). Al cliente no le interesa el stack.
+- **Nunca nombres herramientas** en slides de cliente (SentiOne, scrapers, vendors). Al cliente no le interesa el stack. La regla es para slides de cliente; la KB nombra herramientas como contexto interno y está bien. La única excepción es un deck para una plataforma socia, donde ella es la audiencia: se nombra a ella y a ninguna otra.
+- **Antes de diagramar cómo trabaja Noisia para un socio técnico, pide el inventario del producto con su estado** (producción, UAT, desarrollo, pausado) a quien lleva el producto. Solo lo que está en producción u operativo se dice como "así trabajamos"; lo demás va como dirección y sin fechas. Así un diagrama se siente computacional sin prometer un conector o una vista que no existen.
 - **No somos "social listening".** El foco es **Voice of the Consumer / la voz del público** (o del electorado). El monitoreo de redes es el medio, no el pitch.
 - **Slides de proceso = cómo trabajamos CON el cliente**, no el método interno. Secuencia probada para política: **Paso 0 Workshop → Diagnóstico → Presentación → Reporteo continuo → Día de la elección (D-Day, acompañamiento en vivo)**.
 - **Títulos en español claro** — nada que un mexicano no entienda o que no sea de la industria. Evita "lectura" como sustantivo → nombra el entregable por su familia: **este estudio, este reporte**. "Diagnóstico" también se corrigió a mano en revisión, así que tampoco.
@@ -142,3 +143,20 @@ tres frases que el cliente va a repetir, con la prueba de lo obvio. Las reglas v
 método del mismo estudio (capa sin default, lote piloto, reglas como filtro de candidatos, páginas
 web completas) están en `METHODOLOGY.md` §1, §4 y §4.6 y en `DATA.md` §8; los del builder
 comercial, en `commercial/COMMERCIAL.md` §3, §5 y §9.
+
+## Pagado no es freebie (octubre 2026)
+
+El ajuste de "Forma contra sustancia" se leyó de más. Un estudio pagado, que arrancó justo después,
+salió con un primer corte de pocas slides, sin series en el tiempo, sin canales, sin imágenes y sin
+nada para el equipo de medios, y el usuario lo rechazó: "súper escueto, no lo puedo mandar así". Las
+reglas de entonces (la secuencia como techo, acortar con base chica, la nota de insight en un tercio
+de las slides) estaban pensadas para un freebie delgado y empujaron a un pagado a parecer uno.
+
+Lo que quedó en el kit: dos tamaños de estudio según si es pagado o freebie (`CANON.md` §3,
+`LAYOUTS.md`), el bloque que lleva cada hallazgo de un pagado, el capítulo de search y pauta con su
+bloque "para pauta", y la vara de un pagado leída con su changelog. Las tres frases y la prueba de lo
+obvio siguen: deciden qué abre y qué es hallazgo, no cuánto mide el deck.
+
+Del mismo caso, la forma de trabajar: el usuario pidió "investiga antes de producir lo que sea", y el
+desk research cambió tres decisiones de universo antes de la primera query. Esa fase ya es fija
+(`DATA.md` §2).

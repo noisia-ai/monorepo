@@ -39,6 +39,14 @@ Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no e
 
 > El contrato que ordena todo el sistema es **`CANON.md`**. Íconos y layouts también son reglas: **`ICONS.md`** (Iconoir para semánticos + Simple Icons para marcas, nada dibujado a mano) y **`LAYOUTS.md`** (las dos formas canónicas: Reporte y Estudio T&B).
 
+### Una palabra vetada por el cliente se cuenta, pero no se escribe
+
+Si el cliente veta una palabra que además es evidencia (en un caso, era exactamente el lenguaje de su
+primera hipótesis), **no se excluye en la query**: excluirla borra la evidencia. Se cuenta y se lee
+como cualquier otra; en el deck se escribe con sinónimos; las citas que la contienen no entran a una
+slide; y la palabra va en el `names.txt` del caso para que `builders/leak-check.py` la encuentre
+también en las notas del orador.
+
 ### Nada del contexto del brief llega al deck, tampoco a las notas
 
 El deck lleva el estudio: datos, hallazgos, citas verificadas, recomendaciones, método, límites y
@@ -155,6 +163,20 @@ afirmación más grande, se usa la más grande; si sostiene una más chica, se b
 casos reales, uno de cada lado: una portada decía "lo hecho a mano" cuando el corpus sostenía
 "textil mexicano", y una slide decía que la conversación ocurre sin la marca cuando la cifra decía
 algo más grande e incómodo, que ocurre **sin ninguna marca**, 1,911 de 1,934.
+
+**Cada título con un cuantificador lleva su `assert`.** "Más que", "la mitad", "ninguna", "casi
+nunca": junto a la slide que lo usa va la condición que lo hace verdadero, y el build se detiene si
+deja de serlo. En un caso, un título decía que "ninguna mención" criticaba a las accesibles por su
+precio; el assert encontró 1 de 33 y paró el build. Era sobre otra marca, pero el título bajó a
+"casi nunca", que es lo que sostiene la cifra. En otro, dos títulos dejaron de ser ciertos al
+recodificar, y el build lo dijo.
+
+### La categoría se nombra como la nombra la gente
+
+El nombre de la categoría en el título sale del vocabulario local del desk research
+(`DATA.md` §2), no del brief ni del catálogo del cliente. "Herramienta para el cabello" es como la
+llama la industria; en México la gente dice secadora, plancha, cepillo secador. Se nombran los
+objetos, o la palabra que la gente sí usa.
 
 ### La cifra no se pega al nombre del motivo
 

@@ -84,7 +84,7 @@ caro.
 | Familia | Pregunta que responde | Arranca de | Largo típico | Secuencia canónica |
 |---|---|---|---|---|
 | **Reporte** | Qué está pasando y qué cambió contra el periodo anterior | Un tablero y un periodo | 9 a 10 slides | `LAYOUTS.md` |
-| **Estudio** | Por qué la gente se acerca o se aleja, y dónde se puede actuar | Una pregunta de investigación | 14 a 18 slides | `LAYOUTS.md` |
+| **Estudio** | Por qué la gente se acerca o se aleja, y dónde se puede actuar | Una pregunta de investigación | Pagado: 25 a 40 slides, multipregunta. Freebie o base chica: 10 a 15 | `LAYOUTS.md` |
 | **Muestra** | Qué tan buena es la lectura de Noisia, con alcance recortado | Una pregunta corta y un corpus acotado | 10 a 14 slides | `LAYOUTS.md`, variante de Estudio |
 | **Comercial** | Qué es Noisia para este cliente, qué proponemos, qué cuesta y qué no incluye | Un lead o un workshop | 1 a 11 slides | `commercial/COMMERCIAL.md` |
 | **Interno** | Qué existe, cómo funciona y qué falta | Una necesidad del equipo | Las que haga falta | `INTERNAL.md` |
@@ -220,9 +220,18 @@ distribución. Si un mercado es chico, se lee completo, y entonces cada porcenta
 ## 6. Ciclo de vida de un entregable
 
 ```text
-brief y alcance  →  datos (DATA.md)  →  hallazgos y verbatims  →  deck (LAYOUTS + COPY + ICONS)
-      →  render slide por slide  →  PDF  →  procedencia y changelog
+brief y alcance  →  desk research  →  datos (DATA.md)  →  hallazgos y verbatims
+      →  deck (LAYOUTS + COPY + ICONS)  →  render slide por slide  →  PDF
+      →  procedencia y changelog  →  PDF a Drive, en Leads/<Cliente>
 ```
+
+**Al terminar, el PDF vigente sube a la carpeta del cliente en Drive**, `Leads/<Cliente>`. Si hay más
+de una carpeta con ese nombre, se pregunta cuál; si no hay ninguna, se pregunta antes de crearla. Se
+sube con su nombre versionado y la liga se anota en `VERSIONS.md`. El conector de Drive manda el
+archivo dentro de la llamada y no sirve para PDFs de varios MB: se sube por el navegador, que acepta
+hasta 10 MB, así que un PDF más pesado primero se aligera recomprimiendo solo sus imágenes y
+revisándolo página por página. Al final se confirma con el conector que el archivo está y que su
+tamaño coincide.
 
 Advisor antes que constructor. Se cierra el alcance, se corre el ETL una vez sobre lo correcto, y
 hasta entonces se abre el HTML. **No se construyen slides antes de que el corpus pase sus gates.**
@@ -365,5 +374,8 @@ Lo que sigue pendiente:
 | Migrar los decks entregados al engine enlazado | Siguen cargando su bloque inline. No urge, pero el siguiente que se toque debería migrarse | Baja |
 | Fragmentos para hipótesis, mapa, espejo y kanban | Los componentes ya están en el engine, falta el fragmento con placeholders | Baja |
 | `qa-render.py` no detecta texto encimado dentro de la slide | Una galería se encimó con el título y el pie y el script dijo "sin desborde". Falta comparar la caja del título contra la del contenido. Mientras tanto, la revisión visual sigue siendo obligatoria | Media |
+| La composición título · bloque · pie en el engine | Tres casos la construyeron con clases propias (`.mid.lay` con `.cblock` y `.pie`, o `flex:1` en línea) para no dejar el contenido arriba con media lámina vacía | Alta |
+| Un helper de logos a tamaño óptico | Recortar cada logo a su tinta y dibujarlo con la misma área visual (`LAYOUTS.md`, galería). Hoy cada caso lo resuelve a mano | Media |
+| Un generador de queries con cláusulas compartidas | `builders/check-queries.py` ya las valida; falta el que las arma desde bloques definidos una vez (`DATA.md` §3). Dos casos tienen el suyo en `work/build_queries.py` | Media |
 | Fragmentos del embudo de corpus, la slide de subtemas y la galería | Salieron de un estudio multimercado y se describen en `LAYOUTS.md`; falta sanitizarlos como fragmentos | Media |
 | Probar el PDF que exporta LibreOffice en el sandbox de claude.ai | Google Slides ya se probó y se ve igual que la vista previa. El PDF del sandbox, con la fuente empaquetada, falta verlo en una corrida real de la skill | Media |
