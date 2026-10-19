@@ -251,11 +251,12 @@
   font-weight: 500;
 }
 
+/* Half a phone, cut by the edge of the stage, large enough to read the story. */
 .phoneSlot {
   position: absolute;
-  top: 4%;
-  bottom: 4%;
+  top: 13%;
   left: 50%;
+  width: 56%;
   aspect-ratio: 9 / 19.5;
   transform: translateX(-50%) translateY(16px) scale(0.98);
   opacity: 0;
@@ -269,19 +270,33 @@
   pointer-events: auto;
 }
 
+.stageLogo {
+  position: absolute;
+  top: 5%;
+  left: 5%;
+  width: 16%;
+  height: auto;
+  opacity: 0;
+  transition: opacity 420ms var(--ease-out);
+}
+
+.stageLogo[data-active="true"] {
+  opacity: 1;
+}
+
 .phone {
   position: absolute;
   inset: 0;
-  border-radius: 40px;
-  padding: 9px;
+  border-radius: 44px;
+  padding: 10px;
   background: var(--ink);
   box-shadow: 0 30px 70px rgba(10, 10, 10, 0.18);
 }
 
 .phoneStage {
   position: absolute;
-  inset: 9px;
-  border-radius: 32px;
+  inset: 10px;
+  border-radius: 35px;
   background: #fff;
 }
 

@@ -23,8 +23,18 @@ export function SiteHeader() {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => setOpen(false), [pathname]);
+  // Like Apple's bar: a little shorter while scrolling down, back to full height on the way up.
+  const [compact, setCompact] = useState(false);
   useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
+    let last = window.scrollY;
+    const onScroll = () => {
+      const y = window.scrollY;
+      setScrolled(y > 8);
+      if (Math.abs(y - last) > 6) {
+        setCompact(y > 120 && y > last);
+        last = y;
+      }
+    };
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
@@ -70,7 +80,7 @@ export function SiteHeader() {
   })();
 
   return (
-    <header className={styles.header} data-scrolled={scrolled} data-open={open}>
+    <header className={styles.header} data-scrolled={scrolled} data-open={open} data-compact={compact && !open}>
       <a href="#main" className="visually-hidden">
         {t("skip")}
       </a>

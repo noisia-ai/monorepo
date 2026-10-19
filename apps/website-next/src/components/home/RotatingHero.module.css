@@ -2,8 +2,8 @@
 .hero {
   position: relative;
   overflow: hidden;
-  margin-top: -60px;
-  padding: calc(60px + var(--space-5)) 0 var(--space-7);
+  margin-top: calc(var(--header-h) * -1);
+  padding: calc(var(--header-h) + var(--space-5)) 0 var(--space-7);
 }
 
 .hero::before,
@@ -141,7 +141,7 @@
 
 @media (min-width: 960px) {
   .hero {
-    padding: calc(60px + var(--space-8)) 0 var(--space-9);
+    padding: calc(var(--header-h) + var(--space-8)) 0 var(--space-9);
   }
 
   .inner {

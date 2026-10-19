@@ -57,10 +57,12 @@ const TREND_DOTS = (() => {
   });
 })();
 
-export function TrendComposition({ copy }: { copy: TrendCopy }) {
-  const frame = useCurrentFrame();
+/** phase "map" plays only the signals on the map; "curve" starts at the lifecycle. */
+export function TrendComposition({ copy, phase = "all" }: { copy: TrendCopy; phase?: "all" | "map" | "curve" }) {
+  const raw = useCurrentFrame();
+  const frame = raw + (phase === "curve" ? 150 : 0);
   const { fps, durationInFrames } = useVideoConfig();
-  const fade = interpolate(frame, [durationInFrames - 22, durationInFrames - 2], [1, 0], clamp);
+  const fade = interpolate(raw, [durationInFrames - 22, durationInFrames - 2], [1, 0], clamp);
   const gather = interpolate(frame, [40, 100], [0, 1], { ...clamp, easing: ease });
   const axes = enter(frame, fps, 60, 18);
   const labels = enter(frame, fps, 96, 18);
@@ -68,7 +70,7 @@ export function TrendComposition({ copy }: { copy: TrendCopy }) {
   const morph = interpolate(frame, [158, 200], [0, 1], { ...clamp, easing: ease });
   const draw = interpolate(frame, [176, 226], [0, 1], clamp);
   const travel = interpolate(frame, [226, 280], [0.06, 0.4], { ...clamp, easing: ease });
-  const payoff = enter(frame, fps, 282, 18);
+  const payoff = phase === "map" ? 0 : enter(frame, fps, 282, 18);
 
   const curvePath = Array.from({ length: 61 }, (_, i) => {
     const t = i / 60;

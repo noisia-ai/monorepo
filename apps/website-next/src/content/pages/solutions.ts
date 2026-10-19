@@ -123,7 +123,6 @@ function momentBlocks(c: MomentCopy, lang: "es" | "en"): Block[] {
     { type: "text", title: l.situation, paragraphs: c.situation },
     { type: "cards", title: l.lookAt, items: c.lookAt },
     { type: "cards", title: l.receive, items: c.receive },
-    { type: "callout", title: l.example, text: c.example },
     { type: "links", title: l.methods, items: c.methods },
     { type: "faq", title: l.faq, items: c.faq },
     { type: "cta", title: l.ctaTitle, text: l.ctaText, label: l.ctaLabel, href: l.ctaHref }

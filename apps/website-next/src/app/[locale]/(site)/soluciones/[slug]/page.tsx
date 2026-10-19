@@ -1,15 +1,18 @@
+import type { CSSProperties } from "react";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { setRequestLocale } from "next-intl/server";
-import { ArrowRight, Calendar, Journal } from "iconoir-react";
+import { ArrowRight, Calendar, Check, Journal, Xmark } from "iconoir-react";
 import { BlockView } from "@/components/blocks/Blocks";
 import { SetAlternate } from "@/components/layout/alternate";
 import { Button } from "@/components/ui/Button";
 import { SituationGallery } from "@/components/home/SituationGallery";
 import { SituationMotion } from "@/components/situation/SituationMotion";
-import { TeamOutputs } from "@/components/situation/TeamOutputs";
+import { LOGO_RATIO } from "@/components/brand/Logo";
 import { momentLabels, situationCopy, solutionEntries } from "@/content/pages/solutions";
-import { situationDiagram, situationLabels, situationTeams, teamNames } from "@/content/pages/situations";
+import { situationDetails } from "@/content/pages/situation-details";
+import type { MethodKey } from "@/content/pages/situation-details.types";
+import { situationDiagram, situationLabels, situationStepDiagrams } from "@/content/pages/situations";
 import { offer } from "@/content/pages/offer";
 import { moments } from "@/content/moments";
 import { findEntry, pick } from "@/content/pages/registry";
@@ -18,6 +21,15 @@ import { pageMetadata } from "@/lib/page-meta";
 import styles from "@/components/situation/situation.module.css";
 
 type Params = { locale: string; slug: string };
+
+const METHODS: Record<MethodKey, { label: string; es: string; en: string }> = {
+  tb: { label: "Triggers & Barriers", es: "/metodos/triggers-y-barriers", en: "/en/methods/triggers-and-barriers" },
+  vpm: { label: "Value Perception Matrix", es: "/metodos/value-perception-matrix", en: "/en/methods/value-perception-matrix" },
+  cc: { label: "Cultural Codes Decoding", es: "/metodos/cultural-codes-decoding", en: "/en/methods/cultural-codes-decoding" },
+  dv: { label: "Decision Velocity", es: "/metodos/decision-velocity", en: "/en/methods/decision-velocity" },
+  jfm: { label: "Journey Friction Mapping", es: "/metodos/journey-friction-mapping", en: "/en/methods/journey-friction-mapping" },
+  ia: { label: "Influence Architecture", es: "/metodos/influence-architecture", en: "/en/methods/influence-architecture" }
+};
 
 export function generateStaticParams() {
   return routing.locales.flatMap((locale) => solutionEntries.map((entry) => ({ locale, slug: entry.slug[locale] })));
@@ -34,100 +46,158 @@ export default async function Page({ params }: { params: Promise<Params> }) {
   const { locale, slug } = await params;
   setRequestLocale(locale);
   const lang = locale === "en" ? "en" : "es";
-  const entry = findEntry(solutionEntries, locale, slug);
   const moment = moments.find((mo) => mo.slug[lang] === slug);
-  if (!entry || !moment) notFound();
+  if (!moment) notFound();
   const key = moment.slug.es;
   const c = situationCopy[key]?.[lang];
-  if (!c) notFound();
+  const d = situationDetails[key]?.[lang];
+  if (!c || !d) notFound();
   const l = situationLabels[lang];
   const ml = momentLabels[lang];
-  const diagram = situationDiagram(key, lang);
-  const teams = situationTeams[key]?.[lang] ?? [];
+  const hero = situationDiagram(key, lang);
+  const stepDiagrams = situationStepDiagrams(key, lang);
   const deliverable = { report: offer[lang].labels.report, study: offer[lang].labels.study, plan: offer[lang].labels.plan };
   const base = lang === "en" ? "/en/solutions" : "/soluciones";
   const alternate = locale === "en" ? `/soluciones/${moment.slug.es}` : `/en/solutions/${moment.slug.en}`;
   const others = moments.filter((mo) => mo.slug.es !== key);
+  const delay = (ms: number) => ({ "--reveal-delay": `${ms}ms` }) as CSSProperties;
 
   return (
     <article className={styles.page}>
       <SetAlternate href={alternate} />
 
-      {/* the same photo as the card that brought the reader here */}
+      {/* hero: title, tags, the diagram, then the summary and the first step */}
       <header className={styles.hero}>
-        <div className={styles.heroText}>
-          <p className={styles.meta}>
-            <span className={styles.tag} data-rhythm={moment.rhythm}>
-              {moment.rhythm === "always" ? <Calendar aria-hidden /> : <Journal aria-hidden />}
-              {moment.rhythm === "always" ? l.always : l.project}
-            </span>
-            <span className={styles.tagSoft}>{deliverable[moment.deliverable]}</span>
-          </p>
-          <h1 className={styles.h1}>{moment[lang].question}</h1>
+        <h1 className={styles.h1} data-reveal>
+          {moment[lang].question}
+        </h1>
+        <p className={styles.meta} data-reveal style={delay(80)}>
+          <span className={styles.tag}>
+            {moment.rhythm === "always" ? <Calendar aria-hidden /> : <Journal aria-hidden />}
+            {moment.rhythm === "always" ? l.always : l.project}
+          </span>
+          <span className={styles.tagSoft}>{deliverable[moment.deliverable]}</span>
+        </p>
+        {hero ? (
+          <div className={styles.heroMotion} data-reveal style={delay(160)}>
+            <SituationMotion diagram={hero} label={moment[lang].name} className={styles.motion} />
+          </div>
+        ) : null}
+        <div className={styles.heroText} data-reveal style={delay(220)}>
           <p className={styles.lead}>{moment[lang].summary}</p>
           <Button href="/taller" arrow>
             {ml.ctaLabel}
           </Button>
         </div>
-        <figure className={styles.photo}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- remote Unsplash image with its own CDN sizing */}
-          <img src={`${moment.photo.src}?w=1400&h=1600&fit=crop&auto=format&q=70`} alt={moment.photo.alt[lang]} />
-          <figcaption>{moment[lang].name}</figcaption>
-        </figure>
       </header>
 
-      {/* how we solve it: the situation, the diagram, the methods */}
-      <section className={styles.how}>
-        <div className={styles.howText}>
-          <h2 className={styles.h2}>{l.how}</h2>
-          {c.situation.map((p, i) => (
-            <p key={i} className={styles.text}>
-              {p}
-            </p>
-          ))}
-          <h3 className={styles.h3}>{l.methods}</h3>
-          <ul className={styles.methods}>
-            {c.methods.map((method) => (
-              <li key={method.label}>
-                <a href={method.href}>
-                  <span>
-                    <strong>{method.label}</strong>
-                    {method.text}
-                  </span>
+      {/* how we solve it: three steps, each with its own diagram */}
+      <section className={styles.steps}>
+        <h2 className={styles.h2} data-reveal>
+          {d.howTitle}
+        </h2>
+        {d.steps.map((step, i) => (
+          <div key={step.title} className={styles.step} data-flip={i % 2 === 1}>
+            <div className={styles.stepText} data-reveal>
+              <span className={styles.stepNumber}>{i + 1}</span>
+              <h3 className={styles.h3}>{step.title}</h3>
+              <p className={styles.text}>{step.text}</p>
+              {step.method ? (
+                <a className={styles.method} href={METHODS[step.method][lang]}>
+                  <span>{l.method}</span>
+                  {METHODS[step.method].label}
                   <ArrowRight aria-hidden />
                 </a>
+              ) : null}
+            </div>
+            {stepDiagrams ? (
+              <div data-reveal style={delay(140)}>
+                <SituationMotion diagram={stepDiagrams[i]!} label={step.title} className={styles.motion} />
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </section>
+
+      {/* the difference, row by row */}
+      <section className={styles.compare}>
+        <h2 className={styles.h2} data-reveal>
+          {d.compare.title}
+        </h2>
+        <div className={styles.table} role="table" aria-label={d.compare.title}>
+          <div className={styles.tableHead} role="row" data-reveal>
+            <span role="columnheader" />
+            <span role="columnheader" className={styles.themHead}>
+              {d.compare.them}
+            </span>
+            <span role="columnheader" className={styles.usHead}>
+              {l.noisia}
+            </span>
+          </div>
+          {d.compare.rows.map((row, i) => (
+            <div key={row.label} className={styles.tableRow} role="row" data-reveal style={delay(i * 70)}>
+              <span role="rowheader" className={styles.rowLabel}>
+                {row.label}
+              </span>
+              <span role="cell" className={styles.them}>
+                <Xmark aria-hidden />
+                <span>
+                  <em className={styles.cellName}>{d.compare.them}</em>
+                  {row.them}
+                </span>
+              </span>
+              <span role="cell" className={styles.us}>
+                <Check aria-hidden />
+                <span>
+                  <em className={styles.cellName}>{l.noisia}</em>
+                  {row.us}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* what you receive: a document mockup and its contents */}
+      <section className={styles.deliverable}>
+        <h2 className={styles.h2} data-reveal>
+          {d.deliverable.title}
+        </h2>
+        <div className={styles.deliverableBody}>
+          <div className={styles.doc} data-reveal aria-hidden>
+            <div className={styles.docTop}>
+              {/* eslint-disable-next-line @next/next/no-img-element -- small static logo */}
+              <img src="/brand/noisia.svg" alt="" width={92} height={Math.round(92 / LOGO_RATIO)} />
+              <span>{moment[lang].name}</span>
+            </div>
+            <p className={styles.docTitle}>{d.deliverable.name}</p>
+            {d.deliverable.items.map((item, i) => (
+              <div key={item.name} className={styles.docRow}>
+                <span className={styles.docIndex}>{String(i + 1).padStart(2, "0")}</span>
+                <span className={styles.docName}>{item.name}</span>
+                <span className={styles.docBar} style={{ width: `${[78, 62, 48, 70][i] ?? 60}%` }} />
+              </div>
+            ))}
+          </div>
+          <ul className={styles.items}>
+            {d.deliverable.items.map((item, i) => (
+              <li key={item.name} data-reveal style={delay(i * 80)}>
+                <span className={styles.itemIndex}>{String(i + 1).padStart(2, "0")}</span>
+                <span>
+                  <strong>{item.name}</strong>
+                  {item.text}
+                </span>
               </li>
             ))}
           </ul>
         </div>
-        {diagram ? <SituationMotion diagram={diagram} label={l.how} className={styles.motion} /> : null}
       </section>
 
-      <section>
-        <BlockView block={{ type: "cards", title: ml.lookAt, items: c.lookAt }} />
-      </section>
-
-      {teams.length ? (
-        <section className={styles.teamsSection}>
-          <h2 className={styles.h2}>{l.teams}</h2>
-          <p className={styles.text}>{l.teamsLead}</p>
-          <TeamOutputs teams={teams} names={teamNames[lang]} labels={{ asks: l.asks, gets: l.gets, title: l.teams }} />
-        </section>
-      ) : null}
-
-      <section>
-        <BlockView block={{ type: "cards", title: ml.receive, items: c.receive }} />
-      </section>
-
-      <section>
-        <BlockView block={{ type: "callout", title: c.exampleTitle ?? ml.example, text: c.example }} />
-      </section>
-
-      <section>
+      <section data-reveal>
         <BlockView block={{ type: "faq", title: ml.faq, items: c.faq }} />
       </section>
 
-      <section className={styles.others}>
+      <section className={styles.others} data-reveal>
         <h2 className={styles.h2}>{l.others}</h2>
         <SituationGallery
           items={others.map((mo) => ({
@@ -142,7 +212,7 @@ export default async function Page({ params }: { params: Promise<Params> }) {
         />
       </section>
 
-      <section>
+      <section data-reveal>
         <BlockView block={{ type: "cta", title: ml.ctaTitle, text: ml.ctaText, label: ml.ctaLabel, href: ml.ctaHref }} />
       </section>
     </article>

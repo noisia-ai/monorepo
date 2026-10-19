@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import clsx from "clsx";
 import styles from "./ui.module.css";
 
@@ -18,12 +18,16 @@ export function Section({ id, title, lead, tone = "default", width = "wide", chi
     <section id={id} className={clsx(styles.section, styles[`tone-${tone}`], className)}>
       <div className={clsx(styles.container, width === "read" && styles.read)}>
         {title || lead ? (
-          <header className={styles.sectionHead}>
+          <header className={styles.sectionHead} data-reveal>
             {title ? <h2 className={styles.sectionTitle}>{title}</h2> : null}
             {lead ? <p className={styles.sectionLead}>{lead}</p> : null}
           </header>
         ) : null}
-        {children}
+        {children ? (
+          <div data-reveal style={{ "--reveal-delay": "120ms" } as CSSProperties}>
+            {children}
+          </div>
+        ) : null}
       </div>
     </section>
   );

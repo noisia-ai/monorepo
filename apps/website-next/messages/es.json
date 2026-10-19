@@ -82,7 +82,8 @@
     "rights": "Noisia. Todos los derechos reservados."
   },
   "stickyCta": {
-    "label": "Agenda un taller gratis"
+    "label": "Agenda un taller gratis",
+    "top": "Volver arriba"
   },
   "industryPage": {
     "indexTitle": "Lo que podemos entender en tu industria",

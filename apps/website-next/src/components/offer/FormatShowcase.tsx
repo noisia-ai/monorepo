@@ -43,6 +43,7 @@ export function FormatShowcase({ items, mock, story, label }: { items: { key: Fo
           </Layer>
         </Stage>
         {/* The phone lives outside the scaled canvas: a Stage inside a Stage would be scaled twice. */}
+        <img src="/brand/noisia.svg" alt="" className={styles.stageLogo} data-active={current === "stories"} />
         <div className={styles.phoneSlot} data-active={current === "stories"} aria-hidden={current !== "stories"}>
           {story && current === "stories" ? <PhoneStory story={story} /> : null}
         </div>

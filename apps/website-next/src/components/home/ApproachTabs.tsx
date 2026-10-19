@@ -15,6 +15,8 @@ export function ApproachTabs({ tabs, motion, answersLabel, label }: { tabs: Appr
   const { playing, reduced, paused, toggle } = usePlayback(ref);
   const [active, setActive] = useState(0);
   const tab = tabs[active]!;
+  const noisia = tabs.find((item) => item.key === "noisia") ?? tabs[0]!;
+  const others = tabs.filter((item) => item.key !== "noisia");
   const frames = APPROACH_FRAMES[tab.key];
 
   return (
@@ -35,10 +37,35 @@ export function ApproachTabs({ tabs, motion, answersLabel, label }: { tabs: Appr
           {tabs.map((item, i) => (
             <div key={item.key} className={`${styles.layer} ${styles.panel}`} data-active={i === active} aria-hidden={i !== active} role="tabpanel">
               <p className={styles.text}>{item.text}</p>
-              <p className={styles.answers} data-key={item.key}>
-                <span>{answersLabel}</span>
-                {item.answers}
-              </p>
+              {/* A side-by-side card makes the comparison explicit: Noisia, vs, the selected option. */}
+              <div className={styles.versus}>
+                <div className={styles.vsUs}>
+                  <span className={styles.vsName}>{noisia.tab}</span>
+                  <span className={styles.vsLabel}>{answersLabel}</span>
+                  <span className={styles.vsAnswer}>{noisia.answers}</span>
+                </div>
+                <span className={styles.vsMark} aria-hidden>
+                  vs
+                </span>
+                <div className={styles.vsThem}>
+                  {item.key === "noisia" ? (
+                    <ul className={styles.vsList}>
+                      {others.map((other) => (
+                        <li key={other.key}>
+                          <span className={styles.vsName}>{other.tab}</span>
+                          <span className={styles.vsAnswerSmall}>{other.answers}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <>
+                      <span className={styles.vsName}>{item.tab}</span>
+                      <span className={styles.vsLabel}>{answersLabel}</span>
+                      <span className={styles.vsAnswer}>{item.answers}</span>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
           ))}
         </div>

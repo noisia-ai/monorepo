@@ -38,7 +38,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
 
   return (
     <article className={styles.page}>
-      <header className={styles.head}>
+      <header className={styles.head} data-reveal>
         <h1 className={styles.h1}>{c.title}</h1>
         <p className={styles.lead}>{c.lead}</p>
         <nav className={styles.jump}>
@@ -55,7 +55,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
       </header>
 
       {/* report */}
-      <section id="reporte" className={styles.row}>
+      <section id="reporte" className={styles.row} data-reveal>
         <div className={styles.copy}>
           <h2 className={styles.h2}>{c.report.name}</h2>
           <p className={styles.tagline}>{c.report.title}</p>
@@ -124,7 +124,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
       </section>
 
       {/* plan */}
-      <section id="plan" className={styles.row}>
+      <section id="plan" className={styles.row} data-reveal>
         <div className={styles.copy}>
           <h2 className={styles.h2}>{c.plan.name}</h2>
           <p className={styles.tagline}>{c.plan.title}</p>
@@ -136,7 +136,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
       </section>
 
       {/* formats */}
-      <section className={styles.formats}>
+      <section className={styles.formats} data-reveal>
         <div className={styles.formatsHead}>
           <h2 className={styles.h2}>{c.formats.title}</h2>
           <p className={styles.text}>{c.formats.lead}</p>
@@ -145,7 +145,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
       </section>
 
       {/* situations */}
-      <section className={styles.block}>
+      <section className={styles.block} data-reveal>
         <h2 className={styles.h2}>{c.situations.title}</h2>
         <p className={styles.text}>{c.situations.lead}</p>
         <div className={styles.gallery}>
@@ -165,7 +165,7 @@ export default async function Page_({ params }: { params: Promise<{ locale: stri
 
       <div className={styles.rest}>
         {rest.map((block, i) => (
-          <section key={i}>
+          <section key={i} data-reveal>
             <BlockView block={block} />
           </section>
         ))}

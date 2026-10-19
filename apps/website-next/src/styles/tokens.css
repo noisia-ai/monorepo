@@ -74,6 +74,7 @@
   --dur-slow: 560ms;
 
   /* Layers */
+  --header-h: 52px;
   --z-header: 40;
   --z-cta: 45;
   --z-sheet: 60;

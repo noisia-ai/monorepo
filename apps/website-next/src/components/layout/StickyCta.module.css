@@ -3,31 +3,70 @@
   z-index: var(--z-cta);
   left: 0;
   right: 0;
-  bottom: 0;
-  padding: var(--space-3) var(--gutter) calc(env(safe-area-inset-bottom) + var(--space-3));
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0), #fff 40%);
-  transform: translateY(110%);
-  transition: transform var(--dur-slow) var(--ease-out);
+  bottom: calc(env(safe-area-inset-bottom) + 14px);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  transform: translateY(140%);
+  opacity: 0;
+  transition: transform var(--dur-slow) var(--ease-out), opacity var(--dur-slow) var(--ease-out);
 }
 
 .bar[data-visible="true"] {
   transform: none;
+  opacity: 1;
 }
 
-/* The full-screen menu has its own call to action. */
-:global(html[data-menu="open"]) .bar {
-  transform: translateY(110%);
+/* A floating glass dock rather than a full-width slab. */
+.dock {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  border: 1px solid rgba(10, 10, 10, 0.06);
+  box-shadow: 0 12px 34px rgba(10, 10, 10, 0.14), 0 0 0 0.5px rgba(255, 255, 255, 0.6) inset;
 }
 
 .button {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 52px;
+  height: 46px;
+  padding: 0 22px;
   border-radius: var(--radius-pill);
   background: var(--ink);
   color: var(--fg-inverse);
   font-weight: 500;
+  font-size: var(--text-sm);
+  white-space: nowrap;
+}
+
+.top {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 10, 10, 0.06);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.top svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* The full-screen menu has its own call to action. */
+:global(html[data-menu="open"]) .bar {
+  transform: translateY(140%);
+  opacity: 0;
 }
 
 @media (min-width: 960px) {

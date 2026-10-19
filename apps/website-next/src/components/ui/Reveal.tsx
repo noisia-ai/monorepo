@@ -1,14 +1,10 @@
 import type { CSSProperties, ReactNode } from "react";
-import styles from "./reveal.module.css";
 
-/**
- * Fades content up as it enters the viewport using CSS scroll-driven animations.
- * No JavaScript: browsers without support (and readers with reduced motion) simply see it.
- */
+/** Wraps content in an Apple-style entrance (see ScrollReveal); `delay` staggers siblings, in seconds. */
 export function Reveal({ children, delay = 0, className }: { children: ReactNode; delay?: number; className?: string }) {
-  const style = { "--reveal-shift": `${Math.round(delay * 100)}%` } as CSSProperties;
+  const style = { "--reveal-delay": `${Math.round(delay * 1500)}ms` } as CSSProperties;
   return (
-    <div className={className ? `${styles.reveal} ${className}` : styles.reveal} style={style}>
+    <div className={className} style={style} data-reveal>
       {children}
     </div>
   );

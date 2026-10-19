@@ -1,7 +1,7 @@
 .footer {
   background: var(--surface-1);
   border-top: 1px solid var(--line);
-  padding: var(--space-7) 0 calc(env(safe-area-inset-bottom) + 96px);
+  padding: var(--space-7) 0 calc(env(safe-area-inset-bottom) + var(--space-6));
 }
 
 .inner {

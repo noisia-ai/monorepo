@@ -160,14 +160,14 @@ export function ContentPage({
 }) {
   return (
     <article className={split ? `${styles.page} ${styles.split}` : styles.page}>
-      <header className={styles.header}>
+      <header className={styles.header} data-reveal>
         <h1 className={styles.h1}>{page.title}</h1>
         {page.lead ? <p className={styles.pageLead}>{page.lead}</p> : null}
       </header>
       {aside ? <div className={split ? styles.asideSplit : wide ? styles.asideWide : styles.aside}>{aside}</div> : null}
       <div className={styles.blocks}>
         {page.blocks.map((block, i) => (
-          <section key={i} className={styles.block}>
+          <section key={i} className={styles.block} data-reveal>
             <BlockView block={block} />
           </section>
         ))}
