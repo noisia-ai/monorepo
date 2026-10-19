@@ -182,7 +182,10 @@ What held up across three markets:
   checked the same way after the fact, failed at 0.43: checking it on the pilot would have saved a
   full recode.
 - **Below about 20 mentions read, a theme is not shown as a percentage**, unless the whole corpus was
-  read. With a census the percentage is real and it goes on the slide.
+  read. With a census the percentage is real and it goes on the slide. **When the useful corpus is
+  small (under about 3,000 posts), code all of it instead of sampling.** It removes the dilemma of
+  inflating a number or showing four mentions: in one market the user, frustrated, asked to "invent
+  the distribution"; coding the full corpus gave real percentages instead, and that is what shipped.
 - **Subthemes are their own layer.** The share of a subtheme inside its theme comes from the reading;
   the monthly curve and the channel split come from the full corpus by word rule (or from the
   reading, in a census).
@@ -193,7 +196,19 @@ What held up across three markets:
   not a weekly ritual.
 - **Intensity of a moment**: posts per day inside the event window against regular days, over the
   months with data. It lets a deck say "the tournament ran at N times its usual pace" without depending on the size of
-  the download.
+  the download. **Download normal days too**, not only the moments: every peak is said as a multiple
+  of a comparable day without the event (same weekday, same hour). "We need a normal day to compare
+  against" was the user's note when a first cut had only the moments.
+- **Read the conversation against the event's clock.** When the category has an event with a time
+  (a match, a launch, an episode, a debate, a sale day), measure before, during, at the close and
+  the day after, in local time and in five-minute blocks around each event. The real schedule can
+  come from public sources (in one case, the automatic match threads of a fan forum carried kickoff
+  and broadcaster). It answered a client's hypothesis with data: fans watch during the match, post
+  after the whistle (3.7x in the next hour), and the day after is the biggest day.
+- **Contradictions are measured, not opined.** When the client senses a paradox ("losing the rival
+  matters more than winning"), it is measured in the same corpus with cuts by moment and by network,
+  and marked directional. Clients asked for exactly this in a later round: "push more into the
+  contradictions".
 
 Agents share the scratch folder, and they overwrote each other's helper files twice, in two
 studies. **Give each agent its own folder**, and have the merge validate ids, order and allowed
@@ -211,7 +226,8 @@ using that word. The evidence hierarchy (`DATA.md` §20) decides the verb: *show
 
 ## 4.7 Search and paid media, the two layers beside the conversation
 
-Both paid studies of October used them, and in both they produced a central finding: what people
+Search is what people do in private; social is what they do in public. Both paid studies of
+October used them, and in both they produced a central finding: what people
 search, what they talk about and what brands advertise are three different maps, and the gaps
 between them are what a media team can act on ("searched, not talked about"). They are standard
 layers of a paid study now. Neither is coded in T&B, and neither is added to the corpus.

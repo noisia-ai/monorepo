@@ -98,6 +98,9 @@ ejemplo y el resto del deck explicando el servicio. Lo que se corrigió en dos r
   valor` que el pipeline aplica.
 - **Con el deck va un guion por slide**: qué decir, la cifra que se dice en voz alta, el paso a la
   siguiente y las preguntas probables con su respuesta.
+- **Una versión nueva por cada ronda grande, con una copia de revisión.** La copia lleva en cada slide
+  que cambió un chip con la hora y el porqué, para que el usuario revise solo lo nuevo. Se hace sin
+  que haya que pedirlo; la versión vigente nunca se edita en su lugar.
 - **Si la audiencia ya vio una versión anterior**, el guion abre con una tabla de qué cambió y la
   frase que explica por qué cambiaron los números. El crédito a quien pidió el cambio se da de
   palabra, nunca en la slide.

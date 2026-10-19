@@ -228,6 +228,16 @@ consequence for whoever buys media. Its approved version added, in this order:
    to the questions to validate.
 6. **The "for media" block and the questions to validate** (below), and where to act.
 
+**T&B is one structure, not the only one.** When the brief brings its own questions or themes, those
+are the chapters, each with its sub-cover in the client's language (plus a line in the market's
+language), closing with what it means for the brand. In a three-market study the structure was the
+client's five themes, and each chapter ran data (monthly bars, subthemes, tone) → subtheme cards →
+the gallery → voices and "for the brand". Forcing the T&B frame on it would have got in the way.
+
+**A three-slide summary ships with every paid study.** The client's strategist asked for "three or
+four top line observations" the next day, every time: three things to know, the markets or
+questions side by side, the main bet.
+
 If the client's own base is small, its brand funnel goes in the deck before anyone asks, every step
 visible: with the name written, language, country, people, voice, relevant. "Were there really only
 26 comments?" was asked of a deck that did not show it.

@@ -240,6 +240,8 @@ igual. Traducir la cita y poner el original abajo invierte cuál es el dato y cu
 
 **Los términos locales van con su glosa corta**, en el idioma del deck, cada vez que aparecen en un
 título o una etiqueta: `zoeira (banter: mocking the rival)`, `secar (rooting against the rival)`.
+Y cuando el estudio escucha en un idioma que el cliente no habla, la portada lleva un dato de censo de
+ese idioma en el mercado que justifica por qué se escuchó así.
 El término se queda, porque es como la gente habla; la glosa evita que el lector se pierda.
 
 **El fragmento de una cita es literal.** Se quitan las @menciones del inicio y las ligas, y nada
@@ -292,6 +294,9 @@ Cuatro capas y una puerta:
 3. **Tensión.** Lo que la hace no obvia: "parece hostilidad, funciona como pertenencia".
 4. **Solidez, en chico.** El número y la frecuencia de la frase, para el estratega, no para el creativo.
 5. **Puerta.** El territorio que abre para la marca, sin ejecución.
+
+Los hooks se buscan a propósito: frases de autodefinición ("it's a … thing", "solo en…", "eso es
+muy de aquí"), contando cuántas veces se repiten. Así salió el mejor de un estudio.
 
 Un hook pasa cuatro filtros: la frase es de ellos; se repite y se contó, no basta un post; habla de
 identidad y no solo de conducta; y sería falsa en otro mercado.

@@ -386,5 +386,8 @@ Lo que sigue pendiente:
 | Helpers de gráficas analíticas en el engine | Series (`lines`), barras verticales, calor, sparkline, logo a tamaño óptico, tarjeta de video con Size Gate y cita con assert literal. Un pagado los hizo todos a mano en SVG dentro de su builder | Alta |
 | Un helper de logos a tamaño óptico | Recortar cada logo a su tinta y dibujarlo con la misma área visual (`LAYOUTS.md`, galería). Hoy cada caso lo resuelve a mano | Media |
 | Un generador de queries con cláusulas compartidas | `builders/check-queries.py` ya las valida; falta el que las arma desde bloques definidos una vez (`DATA.md` §3). Dos casos tienen el suyo en `work/build_queries.py` | Media |
+| Plantilla de video en `video/` | La receta está en `VIDEO.md`; falta el proyecto parametrizado por `scenes.json` con su `audio.py` genérico | Media |
+| Un builder multimercado | Un estudio en tres mercados armó su propio builder por país, alimentado por un módulo de narrativa, más un builder del resumen transversal. La propuesta: un builder por familia con un JSON por mercado | Media |
+| Componentes de la card de recomendación, el mapa de calor día × tema y la marca de bandera | Se pidieron y gustaron en el estudio multimercado; viven como estilos inline de su builder | Media |
 | Fragmentos del embudo de corpus, la slide de subtemas y la galería | Salieron de un estudio multimercado y se describen en `LAYOUTS.md`; falta sanitizarlos como fragmentos | Media |
 | Probar el PDF que exporta LibreOffice en el sandbox de claude.ai | Google Slides ya se probó y se ve igual que la vista previa. El PDF del sandbox, con la fuente empaquetada, falta verlo en una corrida real de la skill | Media |

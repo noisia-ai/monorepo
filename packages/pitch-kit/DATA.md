@@ -342,6 +342,13 @@ procedimiento:
 
 El detector por hashtag es un piso: el elogio sin hashtag no se ve, y eso se escribe.
 
+**Voz, emitido y comercio son tres capas, y su comparación es un hallazgo.** Antes de analizar se
+separa la voz del público de lo que emiten medios, clubes y marcas, y de lo que publica el comercio
+(bares, tiendas, revendedores). El análisis cuantitativo es solo voz; la galería puede mezclarlas a
+propósito. Comparar el vocabulario por cada 1,000 posts de cada capa dio el insight más fuerte de un
+estudio: por cada cerveza que menciona un fan, un bar menciona unas 300, y con el banter pasa al
+revés. Los fans cuentan la noche como rivalidad; las marcas y los bares la venden como cerveza.
+
 ## 13. Muestreo antes de etiquetar
 
 Antes de escribir una sola regla se lee una muestra que preserve variedad: publicaciones con más
