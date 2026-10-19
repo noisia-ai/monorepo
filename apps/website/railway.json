@@ -8,7 +8,8 @@
       "apps/website/railway.json",
       "pnpm-lock.yaml",
       "pnpm-workspace.yaml",
-      "package.json"
+      "package.json",
+      "tsconfig.base.json"
     ]
   },
   "deploy": {

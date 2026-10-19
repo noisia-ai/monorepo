@@ -14,7 +14,7 @@ export function Faq({ items }: { items: FaqItem[] }) {
   return (
     <>
       <FaqList items={items} />
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c") }} />
     </>
   );
 }

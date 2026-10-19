@@ -1,8 +1,12 @@
 import Script from "next/script";
 
-/** Google Analytics 4, only when a measurement id is configured. */
+// The GA4 property noisia.ai has used since the 2026-05 site.
+const DEFAULT_ID = "G-CPCFPVBDTP";
+
+/** Google Analytics 4 in production; staging (NOISIA_UAT=1) and development send nothing. */
 export function Analytics() {
-  const id = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID;
+  if (process.env.NOISIA_UAT === "1" || process.env.NODE_ENV !== "production") return null;
+  const id = process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID || DEFAULT_ID;
   if (!id) return null;
   return (
     <>

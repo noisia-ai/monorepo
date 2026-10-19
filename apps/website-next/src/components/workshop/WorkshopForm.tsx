@@ -10,11 +10,17 @@ type Status = "idle" | "sending" | "done" | "error";
 export function WorkshopForm({ copy }: { copy: Copy }) {
   const locale = useLocale();
   const [status, setStatus] = useState<Status>("idle");
+  // If delivery fails, the error turns into an email with everything the reader already wrote.
+  const [mailto, setMailto] = useState("mailto:hola@noisia.ai");
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setStatus("sending");
     const data = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const lines = Object.entries(data)
+      .filter(([key, value]) => key !== "website" && String(value).trim())
+      .map(([key, value]) => `${key}: ${String(value)}`);
+    setMailto(`mailto:hola@noisia.ai?subject=${encodeURIComponent(`Taller: ${String(data.company ?? "")}`)}&body=${encodeURIComponent(lines.join("\n"))}`);
     try {
       const response = await fetch("/api/taller", {
         method: "POST",
@@ -83,7 +89,9 @@ export function WorkshopForm({ copy }: { copy: Copy }) {
       </button>
       {status === "error" ? (
         <p className={styles.error} role="alert">
-          {copy.error}
+          <a href={mailto} style={{ color: "inherit" }}>
+            {copy.error}
+          </a>
         </p>
       ) : null}
       <p className={styles.privacy}>{copy.privacy}</p>

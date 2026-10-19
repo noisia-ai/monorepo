@@ -19,8 +19,9 @@ like a vertical short-video feed.
    Railway service points to it. Server components by default; client components only for
    interaction and motion.
 2. **i18n with next-intl.** Spanish at the root, English under `/en`, localized slugs per locale
-   (`/como-funciona` ↔ `/en/how-it-works`), `hreflang` alternates on every page, no automatic
-   language redirect (links are shared in Spanish).
+   (`/como-funciona` ↔ `/en/how-it-works`), `hreflang` alternates on every page. Only the home
+   follows the reader's language (toggle cookie, then device language; crawlers always get the
+   canonical Spanish home); deep links keep the language they were shared in.
 3. **Design tokens + CSS Modules.** One `tokens.css` (color, type, space, radius, motion, layers)
    mirrors `packages/pitch-kit/engine/noisia-tokens.css`, a small `base.css`, and one CSS Module
    per component. This departs from the "global CSS, no modules" convention of the repo on

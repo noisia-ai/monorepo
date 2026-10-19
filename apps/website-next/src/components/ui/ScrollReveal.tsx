@@ -18,6 +18,7 @@ export function ScrollReveal() {
   useEffect(() => {
     const root = document.documentElement;
     if (!root.classList.contains("js-reveal")) return;
+    root.dataset.revealReady = "";
     const done = new WeakSet<Element>();
     const reveal = (el: HTMLElement) => {
       if (done.has(el)) return;

@@ -8,7 +8,11 @@ const intl = createMiddleware(routing);
  * The home page follows the reader's language: the ES/EN toggle's NEXT_LOCALE cookie first,
  * then the device language. Deep links keep the language they were shared in.
  */
+const CRAWLER = /bot|crawler|spider|slurp|facebookexternalhit|whatsapp|telegram|discord|preview|google-inspectiontool|chatgpt-user|claude-user|perplexity-user/i;
+
 function preferredHomeLocale(request: NextRequest): "es" | "en" {
+  // Crawlers and link previews read the canonical home (Spanish) and follow hreflang to /en.
+  if (CRAWLER.test(request.headers.get("user-agent") ?? "")) return "es";
   const saved = request.cookies.get("NEXT_LOCALE")?.value;
   if (saved === "en" || saved === "es") return saved;
   const first = (request.headers.get("accept-language") ?? "").split(",")[0]?.trim().toLowerCase() ?? "";
@@ -24,7 +28,12 @@ export default function middleware(request: NextRequest) {
   if (password) {
     const header = request.headers.get("authorization") ?? "";
     const [scheme, encoded] = header.split(" ");
-    const supplied = scheme === "Basic" && encoded ? atob(encoded).split(":").slice(1).join(":") : null;
+    let supplied: string | null = null;
+    try {
+      supplied = scheme === "Basic" && encoded ? atob(encoded).split(":").slice(1).join(":") : null;
+    } catch {
+      supplied = null;
+    }
     if (supplied !== password) {
       return new NextResponse("Noisia UAT", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="Noisia UAT", charset="UTF-8"' } });
     }

@@ -67,9 +67,12 @@ export function SiteHeader() {
     if (alternate) return alternate;
     let href: string;
     try {
-      if (pathname.includes("[slug]") && !pathname.startsWith("/insights/")) {
-        // @ts-expect-error the stripped template is a valid static route
-        href = getPathname({ locale: other, href: pathname.replace("/[slug]", "") });
+      const slug = (params as { slug?: string } | null)?.slug;
+      if (slug && !pathname.startsWith("/insights/")) {
+        // Translated slugs differ per language: point to the section index until SetAlternate runs.
+        const section = pathname.includes("[slug]") ? pathname.replace("/[slug]", "") : pathname.slice(0, pathname.lastIndexOf("/"));
+        // @ts-expect-error the section index is a valid static route
+        href = getPathname({ locale: other, href: section });
       } else {
         // @ts-expect-error pathname and params come from the current route
         href = getPathname({ locale: other, href: { pathname, params } });

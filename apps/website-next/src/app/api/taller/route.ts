@@ -14,7 +14,26 @@ const schema = z.object({
   website: z.string().max(500).optional().default("")
 });
 
+// One Railway instance: an in-memory window is enough to stop a script from flooding the inbox.
+const WINDOW_MS = 10 * 60 * 1000;
+const MAX_PER_WINDOW = 5;
+const recent = new Map<string, number[]>();
+
+function limited(ip: string) {
+  const now = Date.now();
+  const hits = (recent.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
+  hits.push(now);
+  recent.set(ip, hits);
+  if (recent.size > 5000) for (const [key, times] of recent) if (now - times[times.length - 1]! > WINDOW_MS) recent.delete(key);
+  return hits.length > MAX_PER_WINDOW;
+}
+
 export async function POST(request: NextRequest) {
+  if (Number(request.headers.get("content-length") ?? 0) > 16_000) {
+    return NextResponse.json({ ok: false, error: "payload_too_large" }, { status: 413 });
+  }
+  const ip = (request.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim() || "unknown";
+  if (limited(ip)) return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ ok: false, error: "invalid_payload" }, { status: 400 });
   const body = parsed.data;

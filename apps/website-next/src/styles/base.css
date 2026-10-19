@@ -70,6 +70,18 @@ html.js-reveal [data-reveal] {
   transform: translateY(56px) scale(0.985);
 }
 
+/* If the script never starts (slow or failed bundle), show everything after a moment. */
+html.js-reveal:not([data-reveal-ready]) [data-reveal] {
+  animation: reveal-fallback 0s 3s forwards;
+}
+
+@keyframes reveal-fallback {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Language switch: the page fades out, the other language fades in (see LangToggle). */
 html[data-lang="out"] body > * {
   opacity: 0;
@@ -88,7 +100,7 @@ html[data-lang="in"] body > * {
   }
 }
 
-.visually-hidden {
+.visually-hidden:not(:focus) {
   position: absolute;
   width: 1px;
   height: 1px;
