@@ -35,8 +35,10 @@ LEE PRIMERO, en este orden. Es la fuente de verdad, no inventes estructura ni m�
 - LEARNINGS.md    reglas de campo, incluida la terminología por terreno
 - slides/catalog.json   qué slides existen y qué cabe en cada una
 Y antes de escribir, abre examples/_local/INDEX.md y mira renderizado el deck aprobado más cercano
-a esta familia, y también el contraejemplo que lista: es la vara de calidad. Si el índice no existe
-o trabajas en una copia del kit, pídeme la ruta. Un primer borrador con CSS propio y copy genérico
+a esta familia, y también el contraejemplo que lista: es la vara de calidad. Si es un estudio
+pagado, abre todos los pagados del índice, no uno, y lee su PROVENANCE_AND_CHANGELOG.md: la vara es
+el rastro de feedback de la v1 a la final, no solo el PDF. Si el índice no existe o trabajas en una
+copia del kit, pídeme la ruta. Un primer borrador con CSS propio y copy genérico
 ya se rechazó entero una vez.
 Y si el entregable toca lo comercial, la KB manda sobre el contenido:
 packages/kb/00-overview/positioning.md y packages/kb/02-services/product-model.md
@@ -45,8 +47,11 @@ SI LO QUE VOY A PEDIR ES UNA PRESENTACIÓN INTERNA para el equipo, un status, c�
 estado del producto, detente aquí: no es un entregable de cliente y este cuestionario no aplica.
 Lee packages/pitch-kit/INTERNAL.md y sigue el prompt de decks internos de PROMPTS.md.
 
-PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna:
-1. ¿Reporte, estudio, o los dos?
+PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna. Lo que se puede contestar investigando
+(contra qué se compara, qué tiene ya armado el cliente, el portafolio) no me lo preguntes en
+blanco: investiga y propónme la respuesta para que solo la confirme.
+1. ¿Reporte, estudio, o los dos? Si es estudio, ¿es pagado o freebie? Cambia el tamaño y la
+   densidad (LAYOUTS.md, "Paid or freebie").
 2. ¿En qué idiomas? Si son dos, se construyen juntos desde una sola fuente de contenido.
 3. ¿Qué método uso? Se nombra en inglés en la slide del marco. Si el deck va en español, ¿qué
    par de verbos acompaña a los términos? Por ejemplo Motiva / Desmotiva, o Empuja / Detiene si
@@ -60,6 +65,9 @@ PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna:
    métrica propia (un NPS, un tracking), sus unidades de negocio, sus competidores, su calendario?
    El mejor deck que ha salido del kit habló con la métrica y el organigrama del cliente.
 
+Si el brief viene en un Google Doc, sus casillas no se leen por el conector (trae todas las
+opciones sin decir cuál está marcada): confírmamelas aquí.
+
 SI ARRANCAMOS POR LAS QUERIES:
 Entrégamelas listas para copiar y pegar, una por bloque, con su nombre corto arriba y la
 configuración de interfaz al lado: idioma, país, ventana y fuentes. Nunca en piezas para que yo
@@ -69,21 +77,30 @@ sin acento es palabra de otro idioma (portugués y español), ese export se filt
 
 FLUJO:
 advisor para cerrar el alcance
-  → queries listas para pegar
+  → desk research con fuente por afirmación: portafolio y precios, homónimos, vocabulario local,
+    bibliotecas de anuncios, calendario (DATA.md §2). Si es pagado, también el plan de search y
+    pauta (METHODOLOGY.md §4.7)
+  → UNA sola aprobación del plan completo (queries, exportaciones, capas, construcción), con la
+    lista de todas las descargas que vas a necesitar (fuentes, dominios, tamaños) para que las
+    apruebe de una vez y no una por una a media sesión
+  → queries generadas con script y validadas con builders/check-queries.py, listas para pegar
   → ETL en streaming, nunca licuadora
   → los gates de DATA.md antes de cualquier conclusión, y me dices cuáles fallan
   → un lote piloto codificado y recodificado a ciegas, con kappa por eje, antes de lanzar los
     demás lotes. Codebook sin capa por defecto: evidencia literal y "unclear" permitido
   → codificación en dos ejes, con su cobertura y su guard de sesgo
   → mapa de hallazgos con verbatims reales ligados
-  → LAS TRES FRASES, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
+  → LAS TRES FRASES, escritas completas en el chat, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
     junta, cada una con su cifra; la prueba de lo obvio para cada una (¿la pudo escribir antes
     del estudio?); y lo que esta base no da. Ver LAYOUTS.md, "Before the sequence"
+  → si es pagado, la tabla de densidad: qué lleva cada slide de cada deck pagado de referencia
+    (serie, canal, imágenes, logos, citas, implicación), y el primer corte se mide contra ella
   → slides sobre el engine, con los fragmentos de slides/ y un fondo propio por slide
     con builders/gen-backgrounds.py. Si falta Pillow, instálalo; no portes los builders
   → render slide por slide con builders/qa-render.py, y los miras
   → PDF, y lo revisas página por página
   → PROVENANCE_AND_CHANGELOG.md y GUION_POR_SLIDE.md desde templates/
+  → el PDF vigente a Drive, en Leads/<Cliente>, preguntándome si hay duda de carpeta
 
 EL MÉTODO, sea cual sea:
 El patrón es el mismo en las seis metodologías. Cada expresión se clasifica en DOS EJES
@@ -110,7 +127,14 @@ NO NEGOCIABLES:
 - Los assets se entregan al tamaño del canvas, 1920 x 1080, salvo los fondos de
   gen-backgrounds.py, que van a 480 x 270 a propósito.
 - Lo obvio es contexto, no titular. Lo no obvio abre el deck, justo después del marco. Si la
-  respuesta es "casi nada", esa es la respuesta y el deck se acorta. COPY_RULES.md §2.9.
+  respuesta es "casi nada", esa es la respuesta y el deck se construye alrededor de eso.
+  COPY_RULES.md §2.9.
+- En un estudio pagado, cada hallazgo lleva su bloque completo: la cifra (cuántas, serie en el
+  tiempo, canal), de qué está hecho, cómo se ve en la vida real (imágenes de posts, videos o
+  anuncios) y en sus palabras (citas). Cada marca nombrada lleva su logo. Y cierra con el bloque
+  "para pauta". Un pagado escueto se rechazó entero. LAYOUTS.md, "What a paid study carries".
+- La marca cliente va en el acento y las demás en gris; el rojo es solo freno o alerta. CHARTS.md §11.
+- Cada título con un cuantificador ("ninguna", "la mitad", "casi nunca") lleva su assert en el build.
 - La respuesta cabe en una frase que el cliente pueda repetir. Las salvedades van una vez, en la
   slide de método.
 - Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado. La nota de insight en un
@@ -195,7 +219,9 @@ y no deben volverse regla.
 ## Bloque · Estudio de Triggers y Barriers
 
 ```text
-FAMILIA: estudio T&B, hasta 17 slides (con base chica, 10 a 12), secuencia en LAYOUTS.md.
+FAMILIA: estudio T&B. Freebie o base chica: 10 a 15 slides. Pagado: 25 a 40, con el esqueleto
+multipregunta (una subportada, su análisis y su recomendación por pregunta; si el brief trae
+hipótesis, cada una se vuelve pregunta). Secuencia en LAYOUTS.md.
 
 El método, que se nombra en inglés en la slide del marco:
 - Triggers, lo que empuja hacia el sujeto. Barriers, lo que frena.
@@ -205,7 +231,9 @@ El método, que se nombra en inglés en la slide del marco:
   parcialmente, y con lo cultural solo se alinea. De ahí sale la slide de dónde actuar.
 
 El orden lo dan las tres frases: la primera abre justo después del marco, y la secuencia de
-LAYOUTS.md ordena lo que sobra. Si el tema es escaso, la hipótesis se prueba con su peso: menciones
+LAYOUTS.md ordena lo que sobra. Las tres frases deciden qué abre, no achican un pagado. La slide de
+las cuatro capas lleva una mención real por capa, y la de la conversación de categoría lleva el
+desglose completo: recolectadas, por canal, en el tiempo, temas por canal. Si el tema es escaso, la hipótesis se prueba con su peso: menciones
 por cada 10,000 de la conversación de cada marca. Si el query se armó con el vocabulario del
 problema, el balance de dirección es en parte del query, y se dice.
 

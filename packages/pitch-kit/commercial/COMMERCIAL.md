@@ -40,6 +40,9 @@ los mismos del sistema de diseño.
   brief puede fijarla con `"cover_variant": 1..6`.
 - **Las slides de contenido** llevan un bloom chico y tenue que entra por la mitad de un borde, nunca
   por una esquina: en las esquinas viven el logo, `noisia.ai`, el pie y el número.
+- **Una slide cuyo visual es una animación va en blanco liso**, sin fragmento: el grano tenue cubre
+  toda la slide y un GIF con fondo blanco encima se ve como una caja. Alternar slides animadas en
+  blanco con estáticas con bloom le dio ritmo al deck donde se probó.
 - **El bloom se hace por código** (`builder/make_shapes.py`, modo lineal). No es una figura con
   contorno: el color nace en un punto focal del borde y avanza con un frente ondulado. Navy profundo
   junto al foco, cyan `#00EEEE` y rojo `#EE0B00` a media distancia, apagados en el frente, y se
@@ -86,6 +89,18 @@ cada respuesta cambia el deck.
    reglas (eyebrows, contrastes "no es X: es Y", cifras de conversación, índices, precios). La
    persona decide qué se queda. El copy aprobado se respeta palabra por palabra salvo en lo que
    ella decida corregir.
+
+   Tres cosas más cuando el deck ya está en Drive y otra persona lo trabaja:
+   - **Se vuelve a bajar justo antes de construir y otra vez antes de subir**, comparando el
+     `modifiedTime` del archivo con el de la copia. En un caso, otro fundador reescribió un párrafo,
+     cambió una card, borró una slide y reordenó mientras el agente trabajaba, y la primera v2 se
+     armó sobre la versión vieja.
+   - **Se edita ubicando las formas por texto y posición, nunca por ID:** Slides renumera los IDs al
+     guardar. `noisia_pptx.Deck` sirve para editar un PPTX ajeno: se le asigna `prs` y sus primitivas
+     (`text`, `box`, `icobox`, `icon`, `chrome`, `background`) dibujan sobre las slides existentes.
+   - **Los comentarios pueden venir como cajas dentro de las slides**, no en el panel (otro idioma,
+     otro color, tono de nota). Se listan aparte y nunca se tratan como copy; una imagen de
+     referencia pegada junto a un comentario no entra a la slide.
 1. **¿Qué necesitas?** Los seis entregables de §2, con su "cuándo" en una línea. Si no sabe,
    lo ayuda a elegir con esa columna.
 2. **¿En qué idioma?** Español o inglés.
@@ -298,6 +313,32 @@ Desde el repo, en Claude Code, el conector de Drive no sirve para subir: manda e
 dentro de la llamada y un PPTX de unos MB no cabe. Ahí el conector solo busca o crea la carpeta y
 confirma que el archivo quedó; el archivo se sube por el navegador, con el botón de Drive, o por
 Drive para escritorio. Un PPTX en Drive se abre en Slides sin convertirlo.
+
+Con Claude in Chrome, el botón de subir abre el selector nativo del sistema, que no se puede
+operar. Lo que funciona: parchar `HTMLInputElement.prototype.click` para capturar el
+`input[type=file]` que crea Drive, disparar "Subir archivo" desde el menú "Nuevo", llenar ese input
+con `file_upload` y restaurar el `click` al terminar. `file_upload` acepta hasta 10 MB por archivo.
+Un PPTX que pasó por Slides trae Google Sans embebida en cuatro variantes (unos 2.5 MB): si el deck
+no usa cursiva, quitar las dos cursivas es seguro, porque Slides tiene la fuente nativa.
+
+**Animación.** Lo que se probó en Drive y Slides:
+- Un **GIF** dentro del PPTX anima en el editor y en modo presentación, y viaja con el archivo.
+- Un **MP4 embebido** en el PPTX llega como ícono de audio y Slides avisa que lo quitará.
+- Un video **insertado desde Drive** dentro de Slides (Insertar, Video, Google Drive) sí queda y se
+  reproduce, pero es un paso manual en Slides.
+- El PDF que exporta Slides muestra solo el primer cuadro del GIF.
+
+La receta que funcionó, nueve animaciones en 5 MB:
+1. La animación en Remotion con los tokens del kit: Google Sans local y los íconos cortados de los
+   sprites del kit, los mismos glifos que el PPTX.
+2. Un MP4 de cada animación, de respaldo.
+3. El GIF desde una secuencia PNG de Remotion (`--sequence`, cada dos cuadros, 15 fps), con paleta
+   fija de 64 colores, sin dithering y con mapeo exacto en numpy, y después
+   `gifsicle -O3 --lossy=30`. El codec GIF de Remotion pesa cinco veces más, porque el dithering
+   cambia cada píxel entre cuadros; `quantize(palette=)` de Pillow manda el blanco a 252 y en la
+   slide se ve una caja gris; y el ffmpeg que trae Remotion no tiene `fps`, `setpts` ni `palettegen`.
+4. Cada GIF arranca en su cuadro completo, con la línea de tiempo rotada, para que el PDF muestre el
+   diagrama terminado.
 
 El agente entrega el PPTX y, si se pidió, el PDF, con tres cosas dichas en el chat:
 
