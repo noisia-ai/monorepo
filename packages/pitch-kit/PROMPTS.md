@@ -47,6 +47,10 @@ SI LO QUE VOY A PEDIR ES UNA PRESENTACIÓN INTERNA para el equipo, un status, c�
 estado del producto, detente aquí: no es un entregable de cliente y este cuestionario no aplica.
 Lee packages/pitch-kit/INTERNAL.md y sigue el prompt de decks internos de PROMPTS.md.
 
+SI LO QUE VOY A PEDIR SON SOLO DATOS (una muestra en el formato que el sistema del cliente ingiere,
+un paquete de datos, un feed o un conector para un socio), detente aquí también: no hay deck. Sigue
+el prompt de entregas de datos de PROMPTS.md.
+
 PREGÚNTAME ESTO ANTES DE EMPEZAR, y no asumas ninguna. Lo que se puede contestar investigando
 (contra qué se compara, qué tiene ya armado el cliente, el portafolio) no me lo preguntes en
 blanco: investiga y propónme la respuesta para que solo la confirme.
@@ -146,6 +150,100 @@ NO NEGOCIABLES:
 Avísame en cuanto una decisión cambie el universo o la interpretación, y si los datos no dan para
 lo que pedí, dímelo antes de construir, no después. Al final dime qué puede afirmarse, qué solo es
 direccional y qué no permite concluir esta base.
+
+AL TERMINAR, no edites el kit ni hagas commits en el repo desde esta sesión. Escribe lo que
+aprendimos en CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md, en la carpeta del caso, desde
+packages/pitch-kit/templates/, y marca cuáles de nuestras decisiones fueron excepción de este caso
+y no deben volverse regla.
+```
+
+## Prompt para entregas de datos
+
+Para cuando el producto es el archivo: una muestra en el esquema del cliente, el paquete de datos
+de un estudio, o un feed continuo hacia la plataforma de un socio. **No uses el prompt maestro**: su
+cuestionario es de deck.
+
+```text
+Vamos a hacer una ENTREGA DE DATOS de Noisia. No hay deck: el producto es el archivo, o un feed.
+Antes de proponer nada, lee el kit y pregúntame.
+
+EL KIT ESTÁ EN: packages/pitch-kit/, dentro del repo de Noisia. Si no sabes dónde está el repo en
+esta máquina, pregúntame. Trabaja sobre main actualizado (git pull), y si no encuentras
+packages/pitch-kit/DATA_DELIVERY.md estás en una versión vieja del kit: detente y avísame.
+
+LEE PRIMERO:
+- DATA_DELIVERY.md   manda sobre esta entrega: el contrato del archivo, el mapeo, el formato, lo que
+                     nunca sale, los gates H a M y el mail técnico. Completo.
+- CONNECTORS.md      si es un feed continuo: aislamiento, reglas del ciclo, gates, "en producción" y
+                     el runbook. Completo.
+- DATA.md            cómo se procesa el corpus: streaming, texto propio, pertinencia, gates A a G.
+- METHODOLOGY.md §1  queries, rawText, TikTok, acentos, anclas.
+- CANON.md           solo las familias y las reglas transversales.
+
+PREGÚNTAME ESTO ANTES DE EMPEZAR, una cosa a la vez. Lo que se pueda contestar investigando o
+leyendo los archivos que te pase, no me lo preguntes en blanco: propónme la respuesta.
+1. ¿Qué forma es? Muestra o entrega en el esquema del cliente, paquete de datos de un estudio, o
+   feed continuo (conector).
+2. ¿Quién o qué lo consume? Si es un sistema, necesito su archivo actual o su template de
+   importación: ese archivo es el contrato.
+3. Redes, mercados, periodo, y el set completo de términos por mercado (marcas, productos,
+   genéricos, errores ortográficos). ¿Su herramienta actual aplica algún filtro?
+4. ¿Qué columnas alimentan algo en su sistema (un ranking de autores, alertas, transcripción)?
+5. Canal y cadencia: archivo, SFTP, bucket o API; cada cuánto; métricas al recolectar o refrescadas;
+   ¿comentarios o solo posts?
+6. ¿Cuánto histórico, y para cuándo lo necesitan?
+7. ¿De qué cuenta y con qué llave se extrae? Nunca la de otro cliente.
+8. ¿Ya hay exportaciones, o arrancamos por las queries?
+
+ANTES DE EXTRAER, entrégame en texto y espera mi sí:
+- el contrato del archivo: formato, columnas, zona horaria, idioma, quién lo lee y cada cuánto;
+- la auditoría de la recolección, por red: ¿reglas propias en el proyecto?, ¿recolecta hacia atrás
+  o solo hacia adelante?, cupos de la cuenta, permisos de la llave, plan;
+- si el contrato con la fuente permite redistribuir a este destinatario, o que no lo sabes;
+- el volumen estimado con su definición (texto propio, redes, con o sin comentarios). La vista
+  previa de la interfaz es un piso para estimar, nunca una cifra para prometer;
+- la lista de todas las descargas que vas a necesitar, para aprobarlas de una vez.
+
+FLUJO:
+contrato del archivo y auditoría de la recolección, aprobados
+  → queries generadas con script y validadas con builders/check-queries.py
+  → exportaciones a 00_insumos/, intactas, con hashes
+  → ETL en streaming en tres capas (adaptador de origen, núcleo, adaptador de destino)
+  → baldes con nombre que cuadran contra lo leído; RAW y LIMPO si aplica
+  → el mapeo columna por columna con su estado y su llenado medido por red, tipo y mes
+  → builders/check-delivery.py con --ref, --forbid, la serie mensual y el llenado; lees la serie
+    antes de mandar y me explicas cada salto
+  → LEEME y MAIL desde templates/LEEME_DATOS.md y templates/MAIL_TECNICO_DATOS.md; el LEEME se
+    genera con los nombres reales
+  → manifiesto con filas y sha256
+  → PROVENANCE_AND_CHANGELOG.md desde templates/
+
+SI ES UN FEED CONTINUO, además:
+- vive en un repo privado propio y un proyecto de infraestructura aislado; nada de eso entra al
+  monorepo ni al kit, y se despliega desde el repo, no desde una carpeta local;
+- ventanas por fecha de recolección con marca, dedupe por (feed, id), entrega atómica (.part y
+  renombrar), destinos independientes, un solo worker, respaldo propio, heartbeat y alertas;
+- antes de decir "en producción", pasa la lista de CONNECTORS.md §5 y dime cuáles faltan;
+- deja escrito su runbook concreto en el repo privado, con CONNECTORS.md §7 como base.
+
+NO NEGOCIABLES:
+- El proveedor de la escucha nunca aparece en lo que sale: ni su nombre, ni sus nombres de campo, ni
+  sus prefijos de id, ni en nombres de archivo, mapeo o mail. Se verifica con --forbid.
+- El crudo va intacto o no va. Lo transformado va en otra carpeta y con otro nombre.
+- Encabezados idénticos y en el orden del archivo del cliente; las columnas extra, al final.
+- Un solo dialecto CSV en toda la entrega. Vacío cuando no hay dato, cero cuando el dato es cero.
+- Ids estables entre corridas, sin prefijos del proveedor.
+- Zona horaria de la cuenta de origen, con su cambio de horario, nunca un offset fijo.
+- Ningún volumen se cita sin su definición. El total con comentarios heredados nunca se presenta
+  como "menciones de la marca".
+- De una lectura sale la etiqueta final, el peso y la cita; nunca la evidencia por eje, las pasadas
+  ni las columnas de control. Con licencia escrita y sin entrenar modelos.
+- Nada de llaves, datos de cliente ni volúmenes en el repo. Ninguna llave en la carpeta del caso.
+- Ningún compromiso en el mail que no esté verificado.
+
+Si en algún punto los datos no dan para lo que se pidió (una red que no llena un campo, un hueco en
+la serie, una cifra que no cuadra con lo que se dijo en la llamada), dímelo antes de mandar, no
+después. Al final dime qué se entregó, qué no se replica y por qué, y qué queda abierto.
 
 AL TERMINAR, no edites el kit ni hagas commits en el repo desde esta sesión. Escribe lo que
 aprendimos en CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md, en la carpeta del caso, desde
