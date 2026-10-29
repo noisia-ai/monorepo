@@ -84,7 +84,7 @@ caro.
 | Familia | Pregunta que responde | Arranca de | Largo típico | Secuencia canónica |
 |---|---|---|---|---|
 | **Reporte** | Qué está pasando y qué cambió contra el periodo anterior | Un tablero y un periodo | 9 a 10 slides | `LAYOUTS.md` |
-| **Estudio** | Por qué la gente se acerca o se aleja, y dónde se puede actuar | Una pregunta de investigación | 14 a 18 slides | `LAYOUTS.md` |
+| **Estudio** | Por qué la gente se acerca o se aleja, y dónde se puede actuar | Una pregunta de investigación | Pagado: 25 a 40 slides, multipregunta. Freebie o base chica: 10 a 15 | `LAYOUTS.md` |
 | **Muestra** | Qué tan buena es la lectura de Noisia, con alcance recortado | Una pregunta corta y un corpus acotado | 10 a 14 slides | `LAYOUTS.md`, variante de Estudio |
 | **Comercial** | Qué es Noisia para este cliente, qué proponemos, qué cuesta y qué no incluye | Un lead o un workshop | 1 a 11 slides | `commercial/COMMERCIAL.md` |
 | **Interno** | Qué existe, cómo funciona y qué falta | Una necesidad del equipo | Las que haga falta | `INTERNAL.md` |
@@ -150,6 +150,11 @@ Lo que sí se rompió: **casi ningún deck enlaza `deck-components.css`** y en s
   que ya exista en `deck-components.css`.
 - Si una clase de tu bloque inline aparece en un segundo deck, deja de ser específica. Súbela al
   engine con el ciclo de contribución de `AGENTS.md`.
+- **Esta regla no significa "no construyas gráficas".** Series por marca o por canal, mapas de calor,
+  barras con logo, galerías con alcance, tablas de palabras por intención y calendarios con
+  momentos se esperan en un estudio pagado, y se construyen en el builder del caso con las reglas de
+  `CHARTS.md` mientras no estén en el engine. Un caso leyó esta regla como prohibición, se quedó en
+  `.barh`, `.kpi` y `.vq`, y su primer corte se rechazó por escueto.
 
 ### 5.2 Copy
 
@@ -168,7 +173,8 @@ Los conteos crudos y los porcentajes no son intercambiables, y la elección depe
 
 | Audiencia | Qué se muestra |
 |---|---|
-| Cliente final, C-level, freebie o muestra | Participación sobre la conversación depurada. Nada de conteos crudos de menciones |
+| Cliente final, C-level, freebie o muestra | Participación sobre la conversación depurada. Nada de conteos crudos de menciones del archivo |
+| Estudio pagado, en su panorama y sus drill-downs | Conteos depurados y participación juntos: cuántas menciones tiene un hallazgo, su pico mensual, su canal. Cada conteo dice qué es y sobre qué base, y lo no validado va como direccional. Un pagado aprobado mostró 9,538 menciones, un pico de 145 y las 52 de un hallazgo; su primer corte, que los había quitado por "client safe", se rechazó |
 | Agencia, partner o equipo que ya trabaja el marco | Conteos y participación, con el denominador visible |
 | Slide de método y anexo, en cualquier audiencia | El volumen total sí se dice, porque ahí se está explicando el alcance |
 
@@ -220,9 +226,18 @@ distribución. Si un mercado es chico, se lee completo, y entonces cada porcenta
 ## 6. Ciclo de vida de un entregable
 
 ```text
-brief y alcance  →  datos (DATA.md)  →  hallazgos y verbatims  →  deck (LAYOUTS + COPY + ICONS)
-      →  render slide por slide  →  PDF  →  procedencia y changelog
+brief y alcance  →  desk research  →  datos (DATA.md)  →  hallazgos y verbatims
+      →  deck (LAYOUTS + COPY + ICONS)  →  render slide por slide  →  PDF
+      →  procedencia y changelog  →  PDF a Drive, en Leads/<Cliente>
 ```
+
+**Al terminar, el PDF vigente sube a la carpeta del cliente en Drive**, `Leads/<Cliente>`. Si hay más
+de una carpeta con ese nombre, se pregunta cuál; si no hay ninguna, se pregunta antes de crearla. Se
+sube con su nombre versionado y la liga se anota en `VERSIONS.md`. El conector de Drive manda el
+archivo dentro de la llamada y no sirve para PDFs de varios MB: se sube por el navegador, que acepta
+hasta 10 MB, así que un PDF más pesado primero se aligera recomprimiendo solo sus imágenes y
+revisándolo página por página. Al final se confirma con el conector que el archivo está y que su
+tamaño coincide.
 
 Advisor antes que constructor. Se cierra el alcance, se corre el ETL una vez sobre lo correcto, y
 hasta entonces se abre el HTML. **No se construyen slides antes de que el corpus pase sus gates.**
@@ -233,7 +248,9 @@ iconos rotos y texto cortado. Hay herramienta para eso, no hace falta hacerlo a 
 arma hojas de contacto de cuatro para revisarlas en bloque.
 
 **Las cifras no se teclean.** Todo número que aparece en una slide se calcula de la tabla codificada
-al momento de construir el deck. El patrón que funcionó en un estudio de tres mercados: un
+al momento de construir el deck. En un estudio pagado, una sola fuente de datos alimenta el deck: un
+script que produce un JSON con las series por canal, marca, tema y capa por mes, y el builder solo
+lee de ahí. Es la plantilla del paquete de análisis de cualquier T&B pagado. El patrón que funcionó en un estudio de tres mercados: un
 builder por familia de deck, con un módulo de narrativa que lleva el copy y lee los números de las
 tablas, otro que arma el HTML, y la fecha de verificación tomada del reloj del sistema. Los módulos
 compartidos entre builders (banderas, logos) generan ids de SVG únicos por uso: dos `clipPath` con el
@@ -365,5 +382,12 @@ Lo que sigue pendiente:
 | Migrar los decks entregados al engine enlazado | Siguen cargando su bloque inline. No urge, pero el siguiente que se toque debería migrarse | Baja |
 | Fragmentos para hipótesis, mapa, espejo y kanban | Los componentes ya están en el engine, falta el fragmento con placeholders | Baja |
 | `qa-render.py` no detecta texto encimado dentro de la slide | Una galería se encimó con el título y el pie y el script dijo "sin desborde". Falta comparar la caja del título contra la del contenido. Mientras tanto, la revisión visual sigue siendo obligatoria | Media |
+| La composición título · bloque · pie en el engine | Tres casos la construyeron con clases propias (`.mid.lay` con `.cblock` y `.pie`, o `flex:1` en línea) para no dejar el contenido arriba con media lámina vacía | Alta |
+| Helpers de gráficas analíticas en el engine | Series (`lines`), barras verticales, calor, sparkline, logo a tamaño óptico, tarjeta de video con Size Gate y cita con assert literal. Un pagado los hizo todos a mano en SVG dentro de su builder | Alta |
+| Un helper de logos a tamaño óptico | Recortar cada logo a su tinta y dibujarlo con la misma área visual (`LAYOUTS.md`, galería). Hoy cada caso lo resuelve a mano | Media |
+| Un generador de queries con cláusulas compartidas | `builders/check-queries.py` ya las valida; falta el que las arma desde bloques definidos una vez (`DATA.md` §3). Dos casos tienen el suyo en `work/build_queries.py` | Media |
+| Plantilla de video en `video/` | La receta está en `VIDEO.md`; falta el proyecto parametrizado por `scenes.json` con su `audio.py` genérico | Media |
+| Un builder multimercado | Un estudio en tres mercados armó su propio builder por país, alimentado por un módulo de narrativa, más un builder del resumen transversal. La propuesta: un builder por familia con un JSON por mercado | Media |
+| Componentes de la card de recomendación, el mapa de calor día × tema y la marca de bandera | Se pidieron y gustaron en el estudio multimercado; viven como estilos inline de su builder | Media |
 | Fragmentos del embudo de corpus, la slide de subtemas y la galería | Salieron de un estudio multimercado y se describen en `LAYOUTS.md`; falta sanitizarlos como fragmentos | Media |
 | Probar el PDF que exporta LibreOffice en el sandbox de claude.ai | Google Slides ya se probó y se ve igual que la vista previa. El PDF del sandbox, con la fuente empaquetada, falta verlo en una corrida real de la skill | Media |

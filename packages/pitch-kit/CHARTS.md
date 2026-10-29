@@ -189,6 +189,15 @@ datos o de intuición.
 Si la matriz es el visual principal, la portada lleva su versión simple: cuadrada, a la derecha,
 solo puntos, diagonal y dos o tres nombres.
 
+## 11. El color de las marcas
+
+La marca cliente va en el acento (teal, o el verde de la marca si así se acordó) y **todas las demás
+en gris**. El rojo o coral es solo para freno, alerta o algo a lo que hay que poner atención: nunca
+para una marca ni para un pico neutro. En un caso, la marca cliente salió en rojo en una gráfica
+informativa y el usuario lo leyó como que algo estaba mal: "me haces que me espante". Cuando cada
+marca necesita su color (varias líneas que se cruzan), se usa la paleta del brand book de cada una,
+con el logo junto a la línea, nunca el nombre en texto.
+
 ## 10. Semáforo de valencia
 
 Cuando una métrica tiene tres columnas (recomendar, qué mejorar, no recomendar, o motiva, neutral,

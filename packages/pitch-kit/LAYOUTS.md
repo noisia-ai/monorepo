@@ -179,6 +179,98 @@ corpus funnel is the exception: the study is sold by its size, so it stays in th
 arrives confusing after two clear ones is cut and its finding folded into a neighbour. When the
 funnel does appear, it is drawn as a real funnel, decreasing width and centred, not as a list.
 
+### Paid or freebie: the size and the density change
+
+Ask it at the start; it decides the deck. Freebies (a sample, a pilot given away, a pitch study)
+land at **10 to 15 slides** and stop at the diagnosis. A **paid** study, regular size, lands at
+**25 to 40** on the multi-question skeleton below: the October paid studies shipped at 41, 33 and
+30 slides, each with its reason in the record. "The sequence is a ceiling" is a rule for freebies
+and thin bases; a paid study is measured by whether every question got its full block, not by
+being short.
+
+The bar for a paid study is the beer-and-football study (v5), **read together with its changelog**:
+what makes it the standard is the feedback trail from v1 to v5, not only the final PDF.
+`examples/_local/INDEX.md` marks which reference decks were paid and which were freebies, and points
+to each record.
+
+What it costs to miss this: a paid study built on that skeleton without its density came back as
+"super thin, I can't send it like this": no time series, no channels, no images, nothing a media
+team could use. Before writing the builder of a paid study, open **all** the reference decks, not
+one.
+
+### What a paid study carries: the floor, not the ceiling
+
+A freebie has a ceiling; a paid study has a floor. The one that came back "super thin" had a
+solid method underneath (gates, a pilot with kappa above 0.9, title asserts); what it lacked was the
+surface: every finding was a claim with one bar, with no time, no channel, no image and no
+consequence for whoever buys media. Its approved version added, in this order:
+
+1. **"The answers" on slide 3**, before anything else: one row per question, an icon, the answer
+   in one line and its figure. It is the slide the client forwards; whoever reads one slide reads
+   that one. Then an index by chapter with page numbers computed at build time.
+2. **The panorama**, before or next to the frame: the funnel (collected, unique, analysed), channel
+   share and channel by month, the topics with their curve and topic by channel, and the layers by
+   channel and by month with one real mention per layer. The T&B frame uses `slides/tb-layers-evidence`
+   whenever there are verbatims, and in a paid study there always are.
+3. **Each finding as a block of three slides:**
+   - **in data:** how many mentions, the monthly peak, its subtypes, the channel;
+   - **in real life:** the videos with their capture and reach, the ads with a caption, so the
+     reader sees what kind of content it is (visible, not playable);
+   - **in their words:** four to six quotes in an even grid. Three wide quotes with little text look
+     broken; a 2 × 3 grid does not.
+4. **Every brand comparison over time:** monthly lines on top and share below, for search and for
+   conversation separately, the client in the accent and the rest in grey (`CHARTS.md` §11), a
+   logo on every brand.
+5. **Every brief question answered with a chart, a quote and its "for media" line.** With more than
+   three questions, skip the sub-covers: the question goes as the slide's eyebrow ("Question 2 ·
+   does seeing the result convince more than the spec sheet?") and the title is its answer; the
+   chapter shows in the index. If the conversation cannot answer it, the slide says so and sends it
+   to the questions to validate.
+6. **The "for media" block and the questions to validate** (below), and where to act.
+
+**T&B is one structure, not the only one.** When the brief brings its own questions or themes, those
+are the chapters, each with its sub-cover in the client's language (plus a line in the market's
+language), closing with what it means for the brand. In a three-market study the structure was the
+client's five themes, and each chapter ran data (monthly bars, subthemes, tone) → subtheme cards →
+the gallery → voices and "for the brand". Forcing the T&B frame on it would have got in the way.
+
+**A three-slide summary ships with every paid study.** The client's strategist asked for "three or
+four top line observations" the next day, every time: three things to know, the markets or
+questions side by side, the main bet.
+
+If the client's own base is small, its brand funnel goes in the deck before anyone asks, every step
+visible: with the name written, language, country, people, voice, relevant. "Were there really only
+26 comments?" was asked of a deck that did not show it.
+
+**Every image says what it is in a caption**: advertiser or poster, platform, date and what it
+shows. "I don't understand the context at all" was said of a slide of ads with no caption. If it
+cannot be said in one line, the image does not go.
+
+**Before writing the builder, a density table against the reference.** For each slide of each paid
+reference deck, note what it carries: time series, channel cut, images, logos, quotes, implication.
+The first cut is checked against that table, not against the sequence of chapters. Reading one
+reference and taking its skeleton without its density is how the thin cut happened.
+
+**The visual review measures fill, not only overflow.** A card more than a quarter empty asks for a
+chart or more evidence. `qa-render.py` does not catch it, so each slide is looked at, at 1280px and
+on the contact sheet.
+
+**Titles are audited against the chart under them, not only against their number.** Three titles
+of the approved version passed their assert and still said more than the slide showed: one named a
+price theme the slide did not show, one called a brand the most repeated answer when another had
+24 of 63.
+
+### Search, paid media and the "for media" block
+
+A paid study sets what people search and what brands advertise beside what people say
+(`METHODOLOGY.md` §4.7). Two charts that work together: searches over the period, one colour per
+brand, under a timeline of when each brand is searched most; and the same for the conversation.
+
+It closes with a **"for media" block, two standard slides**: searches by intent with their volume;
+then audiences, messages, channels and moments, each tied to a figure of the study. The test is the
+client's own: "how does this help the media team?" A paid study that answers the business question
+in words and gives the media team nothing to use was rejected.
+
 ### Before the sequence: the three sentences
 
 Before choosing a single slide, the agent writes in the chat, and waits for a yes:
@@ -190,7 +282,9 @@ Before choosing a single slide, the agent writes in the chat, and waits for a ye
 3. **What the data does not give**, said before the deck exists, not on the method slide after.
 
 The deck is then built from those sentences: the first one opens right after the frame, each one
-gets its proof and its anatomy, and the canonical sequence orders whatever is left. Two cases set
+gets its proof and its anatomy, and the canonical sequence orders whatever is left. The three
+sentences decide the order and what leads; they do not shrink a paid study. Each one still gets its
+three-slide block (see "What a paid study carries"). Two cases set
 this rule side by side. A study that filled the sequence slot by slot, on a thin base, came out
 correct in every rule and flat: its strongest finding sat on slide 11. A proposal built on the
 client's own metric and its own org chart, one block per business unit, with its competitors and
@@ -201,7 +295,9 @@ what changed was that every slide answered something the client already cared ab
 
 Same study. Every body slide had an eyebrow with an icon, a teal `.note` and a `.foot`, and five
 of them were the same horizontal bar chart. Each slide was fine; seventeen of them read as a
-template filled in. Rules:
+template filled in. These rules are about repetition, not about density: the cure for a template
+feel is varied evidence (series, channel cuts, images, quotes, logos), never fewer slides or less
+content. Rules:
 
 - **No eyebrow on body slides by default.** It goes only to carry a coined name the client will
   reuse (the name of a program or of the method, `LEARNINGS.md`), or to mark sections in a long
@@ -337,6 +433,11 @@ there is no precedent, say so ("open ground"); if a competitor already did it, i
 - **A question works as the headline**, trend-report style: "How can {{BRAND}} win the
   viewing-centre night?", over action cards.
 
+**When the brief brings hypotheses instead of questions, each hypothesis becomes a question**: with
+how it is measured, its sub-cover, its analysis and its recommendation. The broad question stays as
+the umbrella on the cover. That is where the multi-question structure of one paid study came from:
+a broad question and four hypotheses.
+
 **A client's own hypothesis is measured part by part.** When the client brings a brand idea, each
 part gets its quantity per channel. If a part barely appears, say it with the number and show where
 it does appear. The client wants to place its ideas on numbers; it already has the qualitative.
@@ -391,6 +492,24 @@ creatives that also serves measurement and awards entries.
    (hidden below 1K views or 50 interactions); a subtheme chip and a who-posted chip; a two-line
    clamp; the whole tile is an `<a target=_blank>`. Links survive Chrome's PDF, about 140 per deck.
 
+**Quality Gate and Size Gate.** The team calls them by these names, and they apply to the gallery,
+to thumbnails and to ad creatives alike:
+- **Quality Gate:** the image shows what its text says, the quote is literal and verified, and the
+  gallery ships with fewer pieces rather than with a doubtful one.
+- **Size Gate:** reach is shown only from 1K views or 50 interactions; images at 640px, JPEG 82;
+  backgrounds at 480×270 (`builders/gen-backgrounds.py`); every other asset at canvas size.
+
+**Get TikTok thumbnails at the start of the case, not at the end.** With 20 to 45 seconds between
+calls, TikTok's oEmbed still answered 429 almost every time late in a case. The plan B that worked:
+a capture of the video's public page in the browser, cropped to the player area (323 × 576, JPEG 82),
+with the reach taken from the export. It passes both gates without oEmbed. The last resort is a text
+tile with the poster's literal text.
+
+**Brand logos at the same optical size, not the same height.** At equal height a wide logo looks
+bigger than a thin one and a list stops reading as a list. Trim each logo to its ink on a
+transparent background and size it for equal visual area (height proportional to
+`1/sqrt(aspect ratio)`), with a nudge up for thin strokes. The real logo, never the name in text.
+
 ### Composition rules from the same case
 
 - The insight `.note` and the `.foot` sit at the bottom of the slide, and the content block is
@@ -412,6 +531,17 @@ creatives that also serves measurement and awards entries.
   content edge to edge.
 - **Titles stay within two lines** at the deck's scale. Shortening a title means rendering again:
   one shortened after review shipped broken, three lines over a matrix.
+
+### Slides that came out of a state-level political study
+
+Built with deck classes; they go to the engine if a second study needs them:
+- **Thermometer by region**: cells of region × theme with an alert level and its base.
+- **Zones of silence**: comments per 10,000 inhabitants (`DATA.md` §18, regions).
+- **The echo**: a stacked bar of campaign, own page and media, with the stance of each segment
+  (`DATA.md` §12).
+- **The arrival**: a weekly curve of one emotion, each point sized by its base, the worst marked.
+- **The subtheme card without a monthly curve**, when only time windows were read: three mini bars,
+  one per window, instead of inventing months that were not read.
 
 ### Dense decks: `.deck-dense`
 

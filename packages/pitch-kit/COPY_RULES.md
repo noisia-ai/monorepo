@@ -39,6 +39,14 @@ Antes de exportar: lee cada slide como si fueras el cliente. Si una palabra no e
 
 > El contrato que ordena todo el sistema es **`CANON.md`**. Íconos y layouts también son reglas: **`ICONS.md`** (Iconoir para semánticos + Simple Icons para marcas, nada dibujado a mano) y **`LAYOUTS.md`** (las dos formas canónicas: Reporte y Estudio T&B).
 
+### Una palabra vetada por el cliente se cuenta, pero no se escribe
+
+Si el cliente veta una palabra que además es evidencia (en un caso, era exactamente el lenguaje de su
+primera hipótesis), **no se excluye en la query**: excluirla borra la evidencia. Se cuenta y se lee
+como cualquier otra; en el deck se escribe con sinónimos; las citas que la contienen no entran a una
+slide; y la palabra va en el `names.txt` del caso para que `builders/leak-check.py` la encuentre
+también en las notas del orador.
+
 ### Nada del contexto del brief llega al deck, tampoco a las notas
 
 El deck lleva el estudio: datos, hallazgos, citas verificadas, recomendaciones, método, límites y
@@ -156,6 +164,20 @@ casos reales, uno de cada lado: una portada decía "lo hecho a mano" cuando el c
 "textil mexicano", y una slide decía que la conversación ocurre sin la marca cuando la cifra decía
 algo más grande e incómodo, que ocurre **sin ninguna marca**, 1,911 de 1,934.
 
+**Cada título con un cuantificador lleva su `assert`.** "Más que", "la mitad", "ninguna", "casi
+nunca": junto a la slide que lo usa va la condición que lo hace verdadero, y el build se detiene si
+deja de serlo. En un caso, un título decía que "ninguna mención" criticaba a las accesibles por su
+precio; el assert encontró 1 de 33 y paró el build. Era sobre otra marca, pero el título bajó a
+"casi nunca", que es lo que sostiene la cifra. En otro, dos títulos dejaron de ser ciertos al
+recodificar, y el build lo dijo.
+
+### La categoría se nombra como la nombra la gente
+
+El nombre de la categoría en el título sale del vocabulario local del desk research
+(`DATA.md` §2), no del brief ni del catálogo del cliente. "Herramienta para el cabello" es como la
+llama la industria; en México la gente dice secadora, plancha, cepillo secador. Se nombran los
+objetos, o la palabra que la gente sí usa.
+
 ### La cifra no se pega al nombre del motivo
 
 Un trigger es un motivo y un motivo agrupa muchas menciones. **"187 triggers psicológicos" está
@@ -218,6 +240,8 @@ igual. Traducir la cita y poner el original abajo invierte cuál es el dato y cu
 
 **Los términos locales van con su glosa corta**, en el idioma del deck, cada vez que aparecen en un
 título o una etiqueta: `zoeira (banter: mocking the rival)`, `secar (rooting against the rival)`.
+Y cuando el estudio escucha en un idioma que el cliente no habla, la portada lleva un dato de censo de
+ese idioma en el mercado que justifica por qué se escuchó así.
 El término se queda, porque es como la gente habla; la glosa evita que el lector se pierda.
 
 **El fragmento de una cita es literal.** Se quitan las @menciones del inicio y las ligas, y nada
@@ -270,6 +294,9 @@ Cuatro capas y una puerta:
 3. **Tensión.** Lo que la hace no obvia: "parece hostilidad, funciona como pertenencia".
 4. **Solidez, en chico.** El número y la frecuencia de la frase, para el estratega, no para el creativo.
 5. **Puerta.** El territorio que abre para la marca, sin ejecución.
+
+Los hooks se buscan a propósito: frases de autodefinición ("it's a … thing", "solo en…", "eso es
+muy de aquí"), contando cuántas veces se repiten. Así salió el mejor de un estudio.
 
 Un hook pasa cuatro filtros: la frase es de ellos; se repite y se contó, no basta un post; habla de
 identidad y no solo de conducta; y sería falsa en otro mercado.

@@ -27,11 +27,12 @@ PROCESS_ES = ["brief", "alcance acordado", "lo que pediste", "nos pediste", "est
               "en esta lámina", "a continuación", "feedback", "pendiente de alcance",
               "la reunión pasada", "como comentaste", "el tablero",
               # sampling mechanics: the study is sold by corpus size, never by how much was read
-              "muestra aleatoria", "leídos uno por uno", "codificado a mano", "posts leídos",
-              "búsquedas"]
+              "muestra aleatoria", "leídos uno por uno", "codificado a mano", "posts leídos"]
+# "búsquedas" / "searches" used to be here. A study with a search layer uses them legitimately
+# (METHODOLOGY.md §4.7); pass them with --extra in a study that has none.
 PROCESS_EN = ["this slide shows", "as requested", "you asked", "pending scope", "we added",
               "per your feedback", "as discussed", "the brief", "hand off to",
-              "random sample", "read one by one", "coded by hand", "posts read", "searches"]
+              "random sample", "read one by one", "coded by hand", "posts read"]
 
 
 def slide_texts(src):
