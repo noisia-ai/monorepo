@@ -76,6 +76,17 @@ Hard rules, learned the hard way:
   of a category query in Portuguese), so the ETL resolves language and market every time; and the
   gate C check in the ETL stays as the net. A "with and without country" capture does not catch
   this, since both give the same total; the language and country profile of the first export does.
+  (In another case, with `rawText:` in Advanced Query, 99% came back in the right language. Until a
+  controlled test settles it, profile the first export every time.)
+- **Every query in two versions:** without `rawText:` for the total volume, with it for the analysis.
+  One query brought 1,019,192 mentions in the first and 173,214 in the second, with the subject in the
+  post's own text in over 99%. The client needed to see the total; the analysis needed the clean one.
+  The query generator writes both in one document, each with its TikTok words underneath.
+- **What each source does not bring**, from the source's documentation on 19 Oct 2026; re-check the
+  date before relying on it: YouTube is deleted after 30 days; Telegram, Snapchat, WhatsApp and Twitch
+  are not sources; Instagram brings only posts from business accounts, without comments; Facebook
+  groups are no longer collected. In a study about how protests are organised, that defines what can
+  be claimed: the study describes the public layer, not the organisation.
 - **TikTok: one word per rule.** Two-word rules ("brand + match") returned 16,286 rows, of which 53
   named the brand. TikTok carries no country (resolve it in the ETL), its counts are not compared
   with other sources, and a brand name that is noise on its own in every language stays out; its
@@ -144,6 +155,12 @@ research channel, the complaint channel, and the foreign-planner channel. See th
   boycott) will come back mostly barrier. Say it on the slide that shows the balance, and where
   possible compare against the brand's own baseline: how much of everything said about the brand
   is about this at all. That ratio was the strongest number of the study where it happened.
+- **Protest or conflict subjects: the stance on violence is its own field.** Direction is measured
+  toward the mobilisation, with a named target, and a separate field records whether the mention
+  condemns violence, justifies it, or neither. "I only condemn the rioters" was coded barrier by some
+  agents and no direction by others. Split, it gave the central finding: 17% move closer, 19% away,
+  28% condemn violence and 1% justify it, and 78% of those who condemn it do not turn against the
+  movement.
 - **When the subject is an alternative, a barrier to the conventional product is a trigger toward
   it.** Rejecting conventional antiperspirant for health reasons is a barrier relative to its own
   target, and the reason to buy the natural one. Record the target (`alternative` or
@@ -176,6 +193,11 @@ What held up across three markets:
   the theme's words × the share that really talk about it, with a Wilson interval in the internal
   record). A focus sample, matched on a strict experience pattern, is used only for subthemes, tone
   and quotes.
+- **After the full coding, compare the axes by coder on the border themes.** The pilot can pass
+  (kappa 0.81 to 0.94) and nine agents in separate batches can still split border cases differently:
+  barrier ranged from 48% to 66% and no direction from 13% to 30%, by agent. If the spread passes
+  about 15 points, write the rule for those cases and recode only them, blind. In one study that was
+  1,711 mentions.
 - **A pilot batch, blind-recoded, before the agents run.** One batch of about 200 coded by an
   agent and recoded blind by another, with κ per axis. Only when it passes do the other batches
   launch. In one study the pilot passed relevance (κ 0.80) and direction (κ 0.93), and the layer,

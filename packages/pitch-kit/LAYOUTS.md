@@ -238,6 +238,17 @@ the gallery → voices and "for the brand". Forcing the T&B frame on it would ha
 four top line observations" the next day, every time: three things to know, the markets or
 questions side by side, the main bet.
 
+**Slide 4 of a paid study is mentions over time by channel**, with the funnel as a strip of figures
+above it; that is the convention clients expect. No text-only slide outside the cover, the chapter
+covers and the answer; every figure of a front or theme carries its channel cut. Before delivering,
+put the render next to the paid reference and count data panels per slide, not only slides: a
+first cut was rejected with an empty-ish closing trio and a slide of four loose figures.
+
+**The descriptive variant.** When the client must not receive recommendations (a government
+service was one), each chapter closes with "what this means / what to watch" instead of the
+recommendation, and the end carries the dates coming up and the questions to validate by survey.
+Those closings still carry data; three nearly empty closing slides were the main note of its review.
+
 If the client's own base is small, its brand funnel goes in the deck before anyone asks, every step
 visible: with the name written, language, country, people, voice, relevant. "Were there really only
 26 comments?" was asked of a deck that did not show it.
@@ -290,6 +301,11 @@ correct in every rule and flat: its strongest finding sat on slide 11. A proposa
 client's own metric and its own org chart, one block per business unit, with its competitors and
 its calendar in the questions, was the deck the team rated best. The design was the same;
 what changed was that every slide answered something the client already cared about.
+
+**Dark slides on a sensitive subject go without red.** The dark compositions of
+`gen-backgrounds.py` came out reddish, and in a study about violence they read as alarm; they were
+swapped for the teal gradient of the cover. Until the builder has a calm option, pick the dark
+background by hand on those subjects.
 
 ### Rhythm: what made a correct deck read as machine-made
 
@@ -500,10 +516,12 @@ to thumbnails and to ad creatives alike:
   backgrounds at 480×270 (`builders/gen-backgrounds.py`); every other asset at canvas size.
 
 **Get TikTok thumbnails at the start of the case, not at the end.** With 20 to 45 seconds between
-calls, TikTok's oEmbed still answered 429 almost every time late in a case. The plan B that worked:
-a capture of the video's public page in the browser, cropped to the player area (323 × 576, JPEG 82),
-with the reach taken from the export. It passes both gates without oEmbed. The last resort is a text
-tile with the poster's literal text.
+calls, TikTok's oEmbed still answered 429 almost every time late in a case, and in another it
+answered 429 from the first call. **Plan B, first choice:** the video's public page, fetched with a
+browser User-Agent, carries the cover URL and the day's views, likes, comments and shares in its
+`__UNIVERSAL_DATA_FOR_REHYDRATION__` block; 24 of 24 worked with 4 seconds between calls. Next: a
+capture of the page in the browser, cropped to the player area (323 × 576, JPEG 82), with the reach
+taken from the export. The last resort is a text tile with the poster's literal text.
 
 **Brand logos at the same optical size, not the same height.** At equal height a wide logo looks
 bigger than a thin one and a list stops reading as a list. Trim each logo to its ink on a
