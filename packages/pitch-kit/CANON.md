@@ -74,7 +74,8 @@ servicio.
 Dos cosas más que la KB declara y que aquí no se reabren. **Data existe como línea, pero está
 marcada como exploratoria y sin precio**, así que no se pitchea como si estuviera lista ni aparece
 como tercera columna en una slide. Se menciona como capacidad solo cuando el brief la pide y
-Noisia confirma que puede entregarla. Y **Foundation, Intelligence y Strategy son calibración
+Noisia confirma que puede entregarla. **Cuando una entrega de datos ya se vendió**, la familia Data
+de abajo dice cómo se entrega: `DATA_DELIVERY.md` y, para feeds continuos, `CONNECTORS.md`. Y **Foundation, Intelligence y Strategy son calibración
 interna de profundidad**, nunca la historia comercial: no van en una slide. La escalera visible es
 workshop, reporte, estudio y estudios recurrentes.
 
@@ -88,6 +89,7 @@ caro.
 | **Muestra** | Qué tan buena es la lectura de Noisia, con alcance recortado | Una pregunta corta y un corpus acotado | 10 a 14 slides | `LAYOUTS.md`, variante de Estudio |
 | **Comercial** | Qué es Noisia para este cliente, qué proponemos, qué cuesta y qué no incluye | Un lead o un workshop | 1 a 11 slides | `commercial/COMMERCIAL.md` |
 | **Interno** | Qué existe, cómo funciona y qué falta | Una necesidad del equipo | Las que haga falta | `INTERNAL.md` |
+| **Data** | Los datos mismos, en el formato que el cliente o el socio ingiere | Un archivo de referencia del cliente, o el template de importación del socio | No es un deck: archivos, mapeo, LEEME, manifiesto y mail técnico; o un feed continuo | `DATA_DELIVERY.md`, `CONNECTORS.md` |
 
 Dos fronteras que no se cruzan:
 
@@ -99,6 +101,9 @@ Dos fronteras que no se cruzan:
   comercial sale en PPTX nativo, porque el equipo comercial la edita en Google Slides, y el PDF se
   exporta de ese PPTX. Comparte tokens, fuente, iconos y fondos con el engine; no comparte el
   render.
+- **Data no es estudio.** Una entrega de datos no lleva hallazgos ni lectura humana, salvo que se
+  cobre, y su contrato se negocia al principio: el formato que el sistema del cliente ingiere. Lo
+  que sale nunca nombra al proveedor de la escucha, ni por sus campos ni por sus ids.
 - **Interno no es cliente.** Las demás familias se escriben para alguien de fuera; esta, para
   el equipo. Varias de las reglas más fuertes del kit, el título que afirma el hallazgo, la portada
   con ilustración y el cuestionario del prompt de arranque, en un deck interno son justo lo que no
@@ -235,7 +240,10 @@ brief y alcance  →  desk research  →  datos (DATA.md)  →  hallazgos y verb
 de una carpeta con ese nombre, se pregunta cuál; si no hay ninguna, se pregunta antes de crearla. Se
 sube con su nombre versionado y la liga se anota en `VERSIONS.md`. El conector de Drive manda el
 archivo dentro de la llamada y no sirve para PDFs de varios MB: se sube por el navegador, que acepta
-hasta 10 MB, así que un PDF más pesado primero se aligera recomprimiendo solo sus imágenes y
+hasta 10 MB, así que un PDF más pesado primero se aligera recomprimiendo solo sus imágenes **opacas**
+(las que tienen transparencia, PNG o con máscara, se saltan: recomprimirlas convirtió el mapa T&B en
+un rectángulo negro) y guardando con `garbage=4, deflate=True` en PyMuPDF, que llevó un PDF de
+17.8 MB a 8.3 MB sin tocar nada, y
 revisándolo página por página. Al final se confirma con el conector que el archivo está y que su
 tamaño coincide.
 
@@ -266,7 +274,9 @@ difusos, así que el estiramiento no se nota, y pesan kilobytes. No se reescalan
 
 **Los builders necesitan Pillow.** Si la máquina no lo tiene, se instala (`python3 -m pip install
 --user pillow`) antes de tocar nada más. En un caso se portaron los builders a otro lenguaje para
-no instalarlo, y la copia ya no seguía al kit.
+no instalarlo, y la copia ya no seguía al kit. Ojo: `python3 -I`, que se usa para leer datos de
+terceros, ignora el site-packages del usuario, así que un Pillow instalado con `--user` deja de
+importarse; los builders propios que usan Pillow se corren sin `-I`.
 
 ```bash
 # una slide, para revisarla a tamaño real
@@ -386,6 +396,9 @@ Lo que sigue pendiente:
 | Helpers de gráficas analíticas en el engine | Series (`lines`), barras verticales, calor, sparkline, logo a tamaño óptico, tarjeta de video con Size Gate y cita con assert literal. Un pagado los hizo todos a mano en SVG dentro de su builder | Alta |
 | Un helper de logos a tamaño óptico | Recortar cada logo a su tinta y dibujarlo con la misma área visual (`LAYOUTS.md`, galería). Hoy cada caso lo resuelve a mano | Media |
 | Un generador de queries con cláusulas compartidas | `builders/check-queries.py` ya las valida; falta el que las arma desde bloques definidos una vez (`DATA.md` §3). Dos casos tienen el suyo en `work/build_queries.py` | Media |
+| Un `builders/pdf-light.py` | Aligerar un PDF saltando las imágenes con transparencia (§6). Hoy cada caso trae su script | Media |
+| Una paleta oscura sin rojo en `gen-backgrounds.py` | Para temas sensibles, donde el rojo se lee como alarma (`LAYOUTS.md`) | Baja |
+| El núcleo de entrega de datos como builder | Streaming, id estable, zona horaria, baldes, vacío contra cero (`DATA_DELIVERY.md` §11). Se extrae cuando un segundo caso lo use igual; hoy está en el registro de un caso | Media |
 | Plantilla de video en `video/` | La receta está en `VIDEO.md`; falta el proyecto parametrizado por `scenes.json` con su `audio.py` genérico | Media |
 | Un builder multimercado | Un estudio en tres mercados armó su propio builder por país, alimentado por un módulo de narrativa, más un builder del resumen transversal. La propuesta: un builder por familia con un JSON por mercado | Media |
 | Componentes de la card de recomendación, el mapa de calor día × tema y la marca de bandera | Se pidieron y gustaron en el estudio multimercado; viven como estilos inline de su builder | Media |

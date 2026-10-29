@@ -151,8 +151,12 @@ dos, la pedida y la entregada, y **el periodo comparable se deriva de la entrega
 Si la exportación incluye el día en curso, esas filas se conservan en el inventario, se excluyen
 del análisis comparable y se reporta cuántas fueron.
 
-**Zona horaria: colchón en la interfaz, corte en el ETL.** SentiOne exporta en UTC (verificado con
-un evento real) y Meltwater en hora de la Ciudad de México. Si la ventana de la interfaz se escribe
+**Zona horaria: colchón en la interfaz, corte en el ETL.** No se asume la zona de una exportación:
+SentiOne salió en UTC en un caso, en hora de París en otro y en hora de Lisboa en un tercero, así
+que lo más probable es que exporte en la zona del perfil o de la cuenta; Meltwater, en hora de la
+Ciudad de México. La prueba rápida, sin evento: la última `Created` del archivo contra la hora de
+descarga; si la primera queda después, la zona no es UTC. La conversión se hace con la zona de la
+cuenta y su cambio de horario, nunca con un offset fijo. Si la ventana de la interfaz se escribe
 en fechas locales, se pierden horas de un extremo y se cuelan del otro. La ventana de la interfaz
 lleva un día de colchón en cada extremo, el corte exacto se hace en el ETL en hora local, y la zona
 de cada herramienta va en el manifiesto. Si no está declarada, se deriva del valle de actividad: en
@@ -312,6 +316,13 @@ Una fila no siempre significa lo mismo.
 Nunca se dice personas si solo se contaron menciones. Nunca se presenta reach como cambio de
 opinión.
 
+**Cuando el cliente pide el alcance, se lee como concentración y contra las interacciones.** Se
+muestra por frente o por query, **nunca sumado entre queries que se traslapan**, con su concentración
+(en un caso, 82% en medios e instituciones y 37% en el 1% de las menciones) y al lado de las
+interacciones: los medios tenían 88% del alcance potencial de un frente, pero las cuentas
+individuales de menos de 100 mil seguidores atrajeron 56% de las interacciones en TikTok. Esa
+diferencia es el hallazgo, no el total.
+
 ## 12. Texto propio y contexto
 
 Se separan al menos tres campos: el texto escrito en esa mención, el contexto heredado de la
@@ -345,7 +356,10 @@ El detector por hashtag es un piso: el elogio sin hashtag no se ve, y eso se esc
 **Voz, emitido y comercio son tres capas, y su comparación es un hallazgo.** Antes de analizar se
 separa la voz del público de lo que emiten medios, clubes y marcas, y de lo que publica el comercio
 (bares, tiendas, revendedores). El análisis cuantitativo es solo voz; la galería puede mezclarlas a
-propósito. Comparar el vocabulario por cada 1,000 posts de cada capa dio el insight más fuerte de un
+propósito. **Cuando las capas tienen largos distintos, el vocabulario se compara por cada 10,000
+palabras, no por cada 1,000 menciones**: un artículo es mucho más largo que un comentario, y por
+mención los medios parecían decir todo más que la gente. Por palabras, la voz decía un término de la
+protesta 5 veces más que los medios. Comparar el vocabulario de cada capa dio el insight más fuerte de un
 estudio: por cada cerveza que menciona un fan, un bar menciona unas 300, y con el banter pasa al
 revés. Los fans cuentan la noche como rivalidad; las marcas y los bares la venden como cerveza.
 
@@ -641,7 +655,9 @@ volver a ejecutar el proceso sin reconstruir decisiones de memoria.
 Regla comercial: el estudio se cobra por el tamaño del corpus. Todo deck client-facing lleva una
 slide de embudo, al inicio del método o en la slide de corpus:
 
-1. **Menciones recolectadas:** la suma de menciones únicas de cada búsqueda. Una mención que
+1. **Menciones recolectadas:** la suma de menciones únicas de cada búsqueda, **desde la versión sin
+   `rawText:` de cada query** (los totales de la interfaz). La versión con `rawText:` da el resto del
+   embudo. Por eso cada query se corre en dos versiones (`METHODOLOGY.md` §1). Una mención que
    aparece en dos búsquedas cuenta en las dos; una descarga repetida del mismo periodo no cuenta dos veces.
 2. **Menciones únicas** del universo del estudio.
 3. **Posts de fans analizados:** la voz que queda después de la limpieza. Es la base que se vende como analizada.

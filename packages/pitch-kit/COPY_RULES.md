@@ -171,6 +171,14 @@ precio; el assert encontró 1 de 33 y paró el build. Era sobre otra marca, pero
 "casi nunca", que es lo que sostiene la cifra. En otro, dos títulos dejaron de ser ciertos al
 recodificar, y el build lo dijo.
 
+**Y los dos puntos se revisan en el build.** Un assert falla si un título trae dos puntos a media
+frase, igual que con el em dash: un primer corte llegó con doce.
+
+**El vocabulario de proceso no sale de la slide de método.** "Codificado", "ponderado", "base",
+"muestra", "coded", "weighted": nada de eso va en títulos, cuerpos ni notas de las slides del
+cuerpo. Donde un conteo necesita su límite, va en el pie, en palabras llanas, y el pie puede decir
+"direccional" (`METHODOLOGY.md` §4.5).
+
 ### La categoría se nombra como la nombra la gente
 
 El nombre de la categoría en el título sale del vocabulario local del desk research

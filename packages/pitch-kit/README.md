@@ -1,8 +1,9 @@
 # Noisia Pitch Kit
 
-Make on-brand Noisia pitch decks — **PDF and editable PPTX** — from a shared engine and a
-growing library of reusable slides, with a bridge to live Signal insights. Built for the
-commercial team using Codex / Claude Code.
+The starter guide for every Noisia deliverable: studies and reports (HTML engine to PDF), sales
+decks (native PPTX for Google Slides), internal decks, and data deliveries (files and feeds, no
+deck). The name stayed "pitch kit" from when it only made pitches; renaming it would break the
+paths every working chat already uses. Built for the team working with Codex / Claude Code.
 
 **Start here:** read `CANON.md` — the contract for the whole system (families, source hierarchy,
 hard rules, where everything lives). Then invoke the skill `.claude/skills/noisia-pitch/SKILL.md`
@@ -13,7 +14,7 @@ hard rules, where everything lives). Then invoke the skill `.claude/skills/noisi
 ```
 engine/      brand engine: noisia-tokens.css, deck.css, deck-stage.js, deck-template.html
 slides/      reusable slide templates + catalog.json (the index of what's available)
-builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print) · qa-render.py (→ renders every slide, flags overflow, builds contact sheets) · gen-backgrounds.py (→ a background blob per slide, plus the grain tile)
+builders/    build-pdf.mjs (→ PDF, needs Chrome) · build-pptx.py (→ editable PPTX, needs python-pptx) · build-portable.mjs (→ ONE self-contained .html; no repo/Node needed to view+print) · qa-render.py (→ renders every slide, flags overflow, builds contact sheets) · gen-backgrounds.py (→ a background blob per slide, plus the grain tile) · check-queries.py (→ validates queries before pasting) · check-delivery.py (→ data delivery gates and manifest)
 signal/      fetch-insights.mjs (pull metrics/quotes from the Signal public API)
 assets/      brand logos / backgrounds / icons.json (95 Iconoir glyphs + 6 Simple Icons, already extracted)
 templates/   PROVENANCE_AND_CHANGELOG.md + GUION_POR_SLIDE.md, copied into each working folder
@@ -49,6 +50,8 @@ python3 builders/build-pptx.py examples/_local/mydeck/deck.json examples/_local/
 | `DATA.md` | How the corpus is processed: ETL, quality gates, output contracts |
 | `commercial/` | Sales decks in native, editable PPTX: openers, tailored overview, offer with prices, proposal, one-pager. `COMMERCIAL.md` is the rulebook; `build_skill.py` packages it as the claude.ai skill `noisia-comercial` |
 | `INTERNAL.md` | Decks for the team: status, operation, product and its state |
+| `DATA_DELIVERY.md` | The Data family: samples in the client's schema, data packages, what never goes out, the delivery gates |
+| `CONNECTORS.md` | Continuous feeds to a partner: isolation, cycle rules, gates, "in production", runbook |
 | `VIDEO.md` | The study told in a two-minute vertical video: the contract with the deck, the structure, audio and render |
 | `PROMPTS.md` | The parameterized prompt that starts a run |
 
