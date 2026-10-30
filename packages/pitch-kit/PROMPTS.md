@@ -9,7 +9,7 @@
 1. Copia el prompt maestro. No hace falta rellenar nada: el prompt pregunta.
 2. Si ya sabes la familia y quieres ahorrarte la ronda, pega debajo el bloque que corresponda y
    las respuestas que ya tengas.
-4. Si hay un caso anterior del mismo terreno, pasa su `PROVENANCE_AND_CHANGELOG.md` **solo como
+3. Si hay un caso anterior del mismo terreno, pasa su `PROVENANCE_AND_CHANGELOG.md` **solo como
    registro**, para heredar decisiones de alcance y caveats. Nunca para reusar su contenido.
 
 ## Prompt maestro
@@ -63,7 +63,8 @@ blanco: investiga y propónme la respuesta para que solo la confirme.
 4. La pregunta de investigación en una frase, si es estudio. Un reporte no lleva.
 5. Sujeto, mercado y periodo, y qué fecha está completamente cerrada.
 6. Contra qué se compara: competidores, categoría, o nada.
-7. Quién recibe el deck, para calibrar vocabulario.
+7. Quién recibe el deck, para calibrar vocabulario, y si puede recibir recomendaciones. Si no
+   (un servicio de gobierno fue un caso), va la variante descriptiva de LAYOUTS.md.
 8. ¿Ya hay exportaciones, o arrancamos por las queries?
 9. ¿Qué va a decidir el cliente con esto, y qué tiene ya armado que el deck pueda usar: una
    métrica propia (un NPS, un tracking), sus unidades de negocio, sus competidores, su calendario?
@@ -75,7 +76,9 @@ opciones sin decir cuál está marcada): confírmamelas aquí.
 SI ARRANCAMOS POR LAS QUERIES:
 Entrégamelas listas para copiar y pegar, una por bloque, con su nombre corto arriba y la
 configuración de interfaz al lado: idioma, país, ventana y fuentes. Nunca en piezas para que yo
-las combine. El razonamiento de cada query va en un archivo aparte. Recuerda que los acentos no
+las combine. Cada query en dos versiones: sin rawText: para el volumen total (lo que el cliente ve
+en el embudo) y con rawText: sobre el ancla para el análisis, cada una con sus palabras de TikTok
+debajo. El razonamiento de cada query va en un archivo aparte. Recuerda que los acentos no
 están documentados en LQL, así que cada término acentuado va también sin acento, y si la variante
 sin acento es palabra de otro idioma (portugués y español), ese export se filtra por idioma en el ETL.
 
@@ -88,11 +91,15 @@ advisor para cerrar el alcance
     lista de todas las descargas que vas a necesitar (fuentes, dominios, tamaños) para que las
     apruebe de una vez y no una por una a media sesión
   → queries generadas con script y validadas con builders/check-queries.py, listas para pegar
-  → ETL en streaming, nunca licuadora
+  → ETL en streaming, nunca licuadora. La zona horaria de cada exportación se comprueba, no se
+    asume (DATA.md §5), y el perfil de idioma y país del primer archivo se revisa antes de bajar
+    los demás
   → los gates de DATA.md antes de cualquier conclusión, y me dices cuáles fallan
   → un lote piloto codificado y recodificado a ciegas, con kappa por eje, antes de lanzar los
     demás lotes. Codebook sin capa por defecto: evidencia literal y "unclear" permitido
-  → codificación en dos ejes, con su cobertura y su guard de sesgo
+  → codificación en dos ejes, con su cobertura y su guard de sesgo. Al terminar, compara los ejes
+    por codificador en los temas frontera: si la diferencia pasa de unos 15 puntos, escribe la regla
+    de esos casos y recodifícalos a ciegas (METHODOLOGY.md §4.6)
   → mapa de hallazgos con verbatims reales ligados
   → LAS TRES FRASES, escritas completas en el chat, y esperas mi sí: las tres cosas que el cliente va a repetir en su siguiente
     junta, cada una con su cifra; la prueba de lo obvio para cada una (¿la pudo escribir antes
@@ -101,7 +108,8 @@ advisor para cerrar el alcance
     (serie, canal, imágenes, logos, citas, implicación), y el primer corte se mide contra ella
   → slides sobre el engine, con los fragmentos de slides/ y un fondo propio por slide
     con builders/gen-backgrounds.py. Si falta Pillow, instálalo; no portes los builders
-  → render slide por slide con builders/qa-render.py, y los miras
+  → render slide por slide con builders/qa-render.py, y los miras. Si es pagado, pon cada render
+    junto a la referencia y cuenta paneles de datos por slide, no solo slides
   → PDF, y lo revisas página por página
   → PROVENANCE_AND_CHANGELOG.md y GUION_POR_SLIDE.md desde templates/
   → el PDF vigente a Drive, en Leads/<Cliente>, preguntándome si hay duda de carpeta
@@ -138,10 +146,17 @@ NO NEGOCIABLES:
   anuncios) y en sus palabras (citas). Cada marca nombrada lleva su logo. Y cierra con el bloque
   "para pauta". Un pagado escueto se rechazó entero. LAYOUTS.md, "What a paid study carries".
 - La marca cliente va en el acento y las demás en gris; el rojo es solo freno o alerta. CHARTS.md §11.
-- Cada título con un cuantificador ("ninguna", "la mitad", "casi nunca") lleva su assert en el build.
+- Cada título con un cuantificador ("ninguna", "la mitad", "casi nunca") lleva su assert en el build,
+  y otro assert falla si un título trae dos puntos a media frase.
+- El vocabulario de proceso (codificado, ponderado, base, muestra) vive solo en la slide de método.
+  Donde un conteo necesita su límite, va en el pie, en palabras llanas.
+- En un pagado, la slide 4 son las menciones en el tiempo por canal, con el embudo como tira de
+  cifras arriba, y ninguna slide es solo texto fuera de portada, subportadas y respuesta.
+- En un tema sensible (violencia, salud, seguridad), las slides oscuras van sin rojo.
 - La respuesta cabe en una frase que el cliente pueda repetir. Las salvedades van una vez, en la
   slide de método.
-- Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado. La nota de insight en un
+- Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado o, en un pagado con más de
+  tres preguntas, la pregunta del brief sobre la slide que la responde. La nota de insight en un
   tercio de las slides como máximo, el pie solo donde una cifra necesita su base, y nunca tres
   slides seguidas con el mismo layout. LAYOUTS.md, "Rhythm".
 - Verbatims reales, con liga, plataforma y fecha, y sin la liga pegada dentro del texto.
@@ -393,6 +408,14 @@ alinea. No se proyecta intención de voto desde volumen de conversación, y un p
 con su publicación raíz verificada. Si el tema se mueve rápido, un marco de volatilidad,
 incertidumbre, complejidad y ambigüedad ordena la lectura, y se explica en una slide propia antes
 de usarlo.
+
+SUJETO DE PROTESTA O CONFLICTO:
+La dirección se mide hacia la movilización, con blanco nombrado, y la postura frente a la violencia
+es un campo aparte: condena, justifica o ninguna. Mezclarlas hace que "solo condeno a los
+vándalos" caiga en barrier para unos codificadores y sin dirección para otros. Lo que las fuentes
+no traen (mensajería privada, grupos de Facebook, comentarios de Instagram) define lo que se puede
+afirmar: el estudio describe la capa pública, no la organización. Si el cliente pide alcance, se
+lee como concentración y junto a las interacciones, nunca sumado entre queries.
 
 SUJETO DE CATEGORÍA, SIN MARCA:
 El estudio es agnóstico. Ninguna marca es protagonista, y el silencio de una marca en su propio
