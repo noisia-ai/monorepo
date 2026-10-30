@@ -155,7 +155,8 @@ NO NEGOCIABLES:
 - En un tema sensible (violencia, salud, seguridad), las slides oscuras van sin rojo.
 - La respuesta cabe en una frase que el cliente pueda repetir. Las salvedades van una vez, en la
   slide de método.
-- Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado. La nota de insight en un
+- Sin eyebrow en las slides del cuerpo, salvo para un nombre acuñado o, en un pagado con más de
+  tres preguntas, la pregunta del brief sobre la slide que la responde. La nota de insight en un
   tercio de las slides como máximo, el pie solo donde una cifra necesita su base, y nunca tres
   slides seguidas con el mismo layout. LAYOUTS.md, "Rhythm".
 - Verbatims reales, con liga, plataforma y fecha, y sin la liga pegada dentro del texto.
