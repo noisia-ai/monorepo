@@ -141,6 +141,9 @@ NO NEGOCIABLES:
 - Lo obvio es contexto, no titular. Lo no obvio abre el deck, justo después del marco. Si la
   respuesta es "casi nada", esa es la respuesta y el deck se construye alrededor de eso.
   COPY_RULES.md §2.9.
+- Todo estudio y toda muestra lleva imágenes reales desde el primer corte (posts, videos o anuncios
+  con su pie, por el Quality Gate y el Size Gate) y el logo real de cada marca nombrada. No esperes a
+  que te lo pida: un freebie lleva menos, nunca ninguna.
 - En un estudio pagado, cada hallazgo lleva su bloque completo: la cifra (cuántas, serie en el
   tiempo, canal), de qué está hecho, cómo se ve en la vida real (imágenes de posts, videos o
   anuncios) y en sus palabras (citas). Cada marca nombrada lleva su logo. Y cierra con el bloque
@@ -166,10 +169,57 @@ Avísame en cuanto una decisión cambie el universo o la interpretación, y si l
 lo que pedí, dímelo antes de construir, no después. Al final dime qué puede afirmarse, qué solo es
 direccional y qué no permite concluir esta base.
 
-AL TERMINAR, no edites el kit ni hagas commits en el repo desde esta sesión. Escribe lo que
-aprendimos en CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md, en la carpeta del caso, desde
-packages/pitch-kit/templates/, y marca cuáles de nuestras decisiones fueron excepción de este caso
-y no deben volverse regla.
+AL TERMINAR, no edites el kit ni hagas commits en el repo desde esta sesión. Cuando el entregable
+se apruebe, escribe la retrospectiva siguiendo el prompt de retrospectiva de PROMPTS.md, aunque no
+te lo pida.
+```
+
+## Prompt de retrospectiva
+
+Se pega al final de cualquier caso, en el mismo chat, cuando el entregable ya se aprobó. Es el
+pedido que sacó las dos mejores retrospectivas que tiene el kit, de un estudio pagado que salió
+escueto en su primer corte y de un estudio multimercado. Lo importante es la sección 4: lo que el
+usuario tuvo que pedir a mano y el kit ya decía es la señal de una regla que no se lee o no se cumple.
+
+```text
+Vamos a cerrar este caso con su retrospectiva para el kit. No edites el kit ni hagas commits: solo
+escribe, en la carpeta del caso, CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md desde
+packages/pitch-kit/templates/. Si ya existe, complétalo; no lo dupliques.
+
+ANTES DE ESCRIBIR:
+- Relee este chat completo desde mi primer mensaje, no tu resumen. Si hubo compactación, abre el
+  transcript de la sesión.
+- Abre PROVENANCE_AND_CHANGELOG.md y las versiones archivadas del deck, y pon la primera versión
+  junto a la final.
+- Haz git pull y lee el kit en main. Lo que ya está no se propone de nuevo; lo que estaba y no se
+  aplicó es justo lo que más importa.
+
+LO QUE TIENE QUE TRAER, en este orden:
+1. El commit del kit que leíste al empezar y el de main hoy.
+2. La primera versión contra la final, slide por slide: qué tenía la primera, qué le faltaba y qué
+   la hizo pasar.
+3. Cada ronda de mi feedback: qué pedí, con mis palabras textuales, y qué cambiaste.
+4. Lo que te pedí a mano y el kit ya decía (imágenes, logos, series en el tiempo, color de marca,
+   el embudo, lo que sea). Para cada uno: la regla, su archivo y sección, y por qué no la aplicaste
+   desde el primer corte: no la leíste, la leíste como opcional, chocaba con otra regla, o no
+   estaba clara. Esta es la sección más importante.
+5. Lo que harías desde el primer corte sin que nadie lo pida, escrito como reglas.
+6. Dónde te estorbó o te frenó algo, separado en tres: el kit, la plataforma (permisos, descargas,
+   límites de tasa) y tú (preguntas de más, aprobaciones en serie, leer una regla como prohibición).
+7. Lo que hizo excelente la versión final y otro estudio puede copiar.
+8. Las propuestas para el kit, con el formato de la plantilla: qué dice hoy el kit, qué pasó,
+   propuesta, y dónde vive. Ordenadas por lo que más cuesta si no se corrige.
+9. Las excepciones de este caso que no deben volverse regla, lo que funcionó y conviene no tocar, y
+   las contradicciones entre archivos del kit.
+
+REGLAS:
+- En las propuestas, sin nombres de cliente ni de personas: quien integra las pasa a un repo
+  público. Las citas textuales de la sección 3 sí van; marca el archivo como interno.
+- Cifras reales del caso, no adjetivos.
+- Sin em dash.
+
+Al terminar, dime la ruta y las cinco cosas más accionables. Si existe la sesión "Pitch Kit -
+Master", mándale la ruta con SendMessage.
 ```
 
 ## Prompt para entregas de datos

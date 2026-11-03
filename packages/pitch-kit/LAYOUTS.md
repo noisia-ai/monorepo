@@ -188,6 +188,12 @@ land at **10 to 15 slides** and stop at the diagnosis. A **paid** study, regular
 and thin bases; a paid study is measured by whether every question got its full block, not by
 being short.
 
+**Images are not a paid-only feature.** Every study and every sample carries real images from the
+first cut: at least the top finding and the top barrier get their "in real life" slide (posts,
+videos or ads, with caption, through the Quality and Size Gates), and every brand named carries its
+logo. A freebie has fewer images than a paid study, never none. The user kept asking for them by
+hand after the beer-and-football study had made them standard, because the rule only said "paid".
+
 The bar for a paid study is the beer-and-football study (v5), **read together with its changelog**:
 what makes it the standard is the feedback trail from v1 to v5, not only the final PDF.
 `examples/_local/INDEX.md` marks which reference decks were paid and which were freebies, and points
