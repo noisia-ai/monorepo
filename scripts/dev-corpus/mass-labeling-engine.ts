@@ -5,6 +5,7 @@ import {
   loadSignalWorkspaceEngineStatusV1,
   initializeSignalWorkspaceTopicPrototypeCatalogV1,
   retrySignalWorkspaceEngineV1,
+  assertSignalWorkspaceMassLabelingRecoveryReadyV1,
   loadSignalWorkspaceInterpretationAdmissionV1,
   authorizeSignalWorkspaceInterpretationAdmissionV1,
 } from "../../infrastructure/db/index";
@@ -99,6 +100,10 @@ async function main() {
         ).rows[0];
       let owner = await loadOwner();
       if (!owner) throw new Error("mass_engine_execution_unavailable");
+      if (action === "recover") {
+        const recovery=await assertSignalWorkspaceMassLabelingRecoveryReadyV1(scope);
+        if (!recovery.pilot) throw new Error("workspace_engine_interpretation_fit_required");
+      }
       if (action === "execute" && owner.paid && owner.status !== "ready")
         await assertMassLabelingEditorialAccessV1({
           api_key: process.env.ANTHROPIC_API_KEY ?? "",

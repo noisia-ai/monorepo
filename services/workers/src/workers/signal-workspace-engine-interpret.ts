@@ -209,6 +209,7 @@ export async function interpretWorkspaceEngineV1(args: {
           original_response_sha256:originalCall.response.sha256,repair_response_sha256:call.response.sha256,
           batch_digest:signalWorkspaceEmbeddingDigestV1(originalBatch),unit_keys:unitKeys,
           validator_version:"workspace-interpretation-validator-v1"});
+        if (pilot) return fail("workspace_engine_interpretation_output_invalid");
         for(const key of unitKeys)isolatedUnits.add(key);
         return unitKeys;
       }
@@ -288,6 +289,7 @@ export async function interpretWorkspaceEngineV1(args: {
       }
       let effective = batch,
         result = await executeBatch(batch, original);
+      const originalResult=result;
       if (result.response.outcome !== "validated") {
         if (
           result.response.outcome !== "known_response_invalid" ||
@@ -299,10 +301,8 @@ export async function interpretWorkspaceEngineV1(args: {
         );
         const repaired = [...repairs].reverse().find((call) => call.response);
         if (!repaired) {
-          if (repairs.length)
-            return fail(
-              "workspace_engine_interpretation_receipt_recovery_required",
-            );
+          if (repairs.some(call=>!["reserved","definitely_not_sent","terminal_confirmed"].includes(call.state)))
+            return fail("workspace_engine_interpretation_receipt_recovery_required");
           await store.recoveryReview({
             database,
             lease,
@@ -324,8 +324,15 @@ export async function interpretWorkspaceEngineV1(args: {
         if (effective.request_digest !== repaired.request_digest)
           return fail("workspace_engine_interpretation_repair_invalid");
         result = await executeBatch(effective, repaired);
-        if (result.response.outcome !== "validated")
-          return fail("workspace_engine_interpretation_repair_invalid");
+        if (result.response.outcome !== "validated") {
+          if(result.response.outcome!=="known_response_invalid"||!originalResult.call.response?.complete||!result.call.response?.complete)
+            return fail("workspace_engine_interpretation_repair_invalid");
+          await store.quarantine({database,lease,original_call_id:originalResult.call.call_id,repair_call_id:result.call.call_id,
+            original_request_digest:batch.request_digest,repair_request_digest:effective.request_digest,
+            original_response_sha256:originalResult.call.response.sha256,repair_response_sha256:result.call.response.sha256,
+            batch_digest:signalWorkspaceEmbeddingDigestV1(batch),unit_keys:keys,validator_version:"workspace-pilot-reference-validator-v2"});
+          return fail("workspace_engine_interpretation_output_invalid");
+        }
       }
       for (const key of await checkpointResponse(
         effective,

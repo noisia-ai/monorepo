@@ -9,7 +9,7 @@ import {
   readSignalWorkspaceEngineCheckpointV1,
   persistSignalWorkspaceEngineArtifactV1, finishSignalWorkspaceEngineFitV1, failSignalWorkspaceEngineV1,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineCursorV1, type SignalWorkspaceEngineGuideCursorV1,
-  type SignalWorkspaceEngineLeaseV1
+  type SignalWorkspaceEngineLeaseV1, assertSignalWorkspaceMassLabelingRecoveryReadyV1
 } from "@noisia/db";
 import { type SignalWorkspaceEngineChunkV1 as WireChunk, type SignalWorkspaceEngineGuideV1 as WireGuide } from "@noisia/query-engine";
 import { hashWorkspaceEngineFileV1, spoolSignalWorkspaceEngineInputV1 } from "./signal-workspace-engine-files";
@@ -27,7 +27,8 @@ const stores = { claim: claimSignalWorkspaceEngineV1, chunks: readSignalWorkspac
 type Options = { database?: SignalWorkspaceEngineDatabaseV1; stores?: typeof stores; storage?: WorkspaceEngineStorageV1;
   python?: string; module_root?: string; storage_root?: string; timeout_ms?: number;
   process?: typeof runWorkspaceEngineProcessV1; interpret?: typeof interpretWorkspaceEngineV1;
-  incremental?: WorkspaceIncrementalJobOptionsV1; mass_operator?:MassEngineOperatorV1 };
+  incremental?: WorkspaceIncrementalJobOptionsV1; mass_operator?:MassEngineOperatorV1;
+  recovery_preflight?: typeof assertSignalWorkspaceMassLabelingRecoveryReadyV1 };
 const name = /^[a-z][a-z0-9_.-]{0,100}$/u;
 const safe = (error: unknown) => error instanceof Error && /^workspace_engine_[a-z_]{1,100}$/u.test(error.message)
   ? error.message : "workspace_engine_worker_failed";
@@ -38,10 +39,20 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
   options: Options = {}) {
   if (!job.id || typeof job.data?.execution_id !== "string") throw new Error("workspace_engine_job_invalid");
   const database = options.database ?? (await import("../db/client")).pool, store = options.stores ?? stores;
-  if(!options.stores&&!await authorizeMassEngineConsumerV1({database,execution_id:job.data.execution_id,operator:options.mass_operator}))
+  const recoveryOnly = options.mass_operator?.recovery_only === true;
+  if (recoveryOnly) {
+    const admitted = await (options.recovery_preflight ?? assertSignalWorkspaceMassLabelingRecoveryReadyV1)({
+      database, execution_id: job.data.execution_id,
+    });
+    if (!admitted.pilot) throw new Error("workspace_engine_interpretation_fit_required");
+  } else if(!options.stores&&!await authorizeMassEngineConsumerV1({database,execution_id:job.data.execution_id,operator:options.mass_operator}))
     return {execution_id:job.data.execution_id,operator_required:true};
   const lease = await store.claim({ database, execution_id: job.data.execution_id, worker_job_id: job.id });
   if (!lease) return { execution_id: job.data.execution_id, replayed: true };
+  if (recoveryOnly && lease.snapshot.numeric_descriptor) {
+    await store.fail({database,lease,error_code:"workspace_engine_interpretation_fit_required"});
+    throw new Error("workspace_engine_interpretation_fit_required");
+  }
   if (lease.snapshot.numeric_descriptor) return runSignalWorkspaceIncrementalJobV1({ job, database, lease }, {
     storage: options.storage, python: options.python, module_root: options.module_root,
     storage_root: options.storage_root, timeout_ms: options.timeout_ms, process: options.process, ...options.incremental,
@@ -57,6 +68,10 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
   };
   const timer = setInterval(() => { void heartbeat().catch(() => undefined); }, 15000); timer.unref();
   try {
+    const recoveryCheckpoint=recoveryOnly?await store.checkpoint({database,lease}):null;
+    if(recoveryOnly&&(!lease.snapshot.interpretation_config||!(Number(lease.snapshot.claude_cap_micro_usd)>0)
+      ||!["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2","workspace-bertopic-mass-labeling-v3"].includes(String(lease.snapshot.engine_config.profile_version))
+      ||lease.snapshot.numeric_descriptor||!recoveryCheckpoint))throw new Error("workspace_engine_interpretation_fit_required");
     const storage = options.storage ?? createWorkspaceEngineStorageV1();
     const root = resolve(options.storage_root ?? process.env.NOISIA_WORKSPACE_ENGINE_SCRATCH_ROOT ?? join(tmpdir(), "noisia-workspace-engine"));
     await mkdir(root, { recursive: true, mode: 0o700 });
@@ -76,7 +91,7 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
     await store.heartbeat({ database, lease, phase: "fitting", exported: {
       roots: input.records.roots, chunks: input.records.rows, guides: input.guides.rows, stream_digest: inputHash } });
     phase = "fitting";
-    const checkpoint = await store.checkpoint({ database, lease });
+    const checkpoint = recoveryCheckpoint ?? await store.checkpoint({ database, lease });
     let previous: { directory: string; manifest_sha256: string } | null = null;
     let previousHash: string | undefined;
     let restoredBundle: Array<{ name: string; storage_key: string; sha256: string; size_bytes: number; media_type: string }> | null = null;
