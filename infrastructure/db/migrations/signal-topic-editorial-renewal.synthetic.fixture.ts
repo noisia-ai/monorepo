@@ -33,6 +33,7 @@ import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-w
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
   root_count?: number;
+  long_text?: boolean;
   runtime?: SignalBrandContextPreparationRuntimeV1;
   numeric_daily_cap_micro_usd?: number;
   saves?: Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge">;
@@ -91,6 +92,7 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
       const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
         brand_id, initiator_user_id: args.actor_user_id, env: {
           NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID: args.actor_user_id,
+          NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd + BigInt(runtime.prototype.max_run_cost_micro_usd) + 50_000_000n),
           // Synthetic receipts still share the real daily admission ledger.
           // Leave room for every isolated preparation stage in this fixture.
           NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd + BigInt(runtime.prototype.max_run_cost_micro_usd) + 50_000_000n),
@@ -222,7 +224,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   // rollback, including failures. Its numerical records and receipts are real.
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, root_count: args.root_count,
+    identity, root_count: args.root_count, long_text: args.long_text,
     projection: { ...args.projection, cluster_ids: clusterIds,
       ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },
   });

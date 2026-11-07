@@ -18,12 +18,18 @@ async function fixture(){
    expected_context_digest:preflight.expected_context_digest,engine_config:{contract_version:'local-engine-fixture-v1'},claude_cap_micro_usd,parent_execution_id});};
  return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,cleanup};
 }
+async function dailyExposure(f:Awaited<ReturnType<typeof fixture>>){
+ const row=(await f.query(`SELECT total_micro_usd FROM signal_processing_org_exposure_v1(
+  (SELECT organization_id FROM signal_workspaces WHERE id=$1::uuid),(clock_timestamp() AT TIME ZONE 'UTC')::date,'UTC')`,[f.workspace_id])).rows[0];
+ return Number(row?.total_micro_usd??0);
+}
 test('temporal interpretation grants preserve historical evidence, costs, replay and deterministic send authority',{skip:process.env.NOISIA_MFP_PG_CI!=='true',timeout:180000},async()=>{
  const f=await fixture();try{
+  const dailyCap=await dailyExposure(f)+10_000;
   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
   const begun=await engine.beginSignalWorkspaceEngineV1({...f.access,idempotency_key:randomUUID(),embedding_run_id:f.embedding_run_id,
    expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:'admission-only'},claude_cap_micro_usd:10000,
-   interpretation_config:{call_configuration:opus,budget_timezone:'UTC',daily_cap_micro_usd:10000}});
+   interpretation_config:{call_configuration:opus,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap}});
   const scope={...f.access,...begun};
   const claim=async()=>{const value=await engine.claimSignalWorkspaceEngineV1({database:f.database,...begun,worker_job_id:'local-admission-fixture'});assert.ok(value);return value;};
   let lease=await claim();
@@ -39,7 +45,7 @@ test('temporal interpretation grants preserve historical evidence, costs, replay
    interpretation_manifest:{unit_count:2,unit_digest:sha('"open:a"\n"open:b"\n')}});
   const token=(call:money.SignalWorkspaceEngineInterpretationCallV1)=>({database:f.database,call_id:call.call_id,attempt_token:call.attempt_token,execution_token:lease.execution_token});
   const reserve=(key:string,configuration:typeof opus|typeof sonnet=opus,extra:Partial<Parameters<typeof money.reserveSignalWorkspaceEngineInterpretationV1>[0]>={})=>money.reserveSignalWorkspaceEngineInterpretationV1({...scope,
-   idempotency_key:key,request_digest:sha(key),configuration,reserved_micro_usd:1000,budget_timezone:'UTC',daily_cap_micro_usd:10000,execution_token:lease.execution_token,...extra});
+   idempotency_key:key,request_digest:sha(key),configuration,reserved_micro_usd:1000,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap,execution_token:lease.execution_token,...extra});
   const settle=async(call:money.SignalWorkspaceEngineInterpretationCallV1)=>{await money.markSignalWorkspaceEngineInterpretationSentV1(token(call));
    await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token(call),response:{storage_key:`workspace-engine/${f.workspace_id}/${begun.execution_id}/raw-${call.call_id}`,
     sha256:sha(call.call_id),size_bytes:10,http_status:200,provider_request_id:null}});
@@ -51,7 +57,7 @@ test('temporal interpretation grants preserve historical evidence, costs, replay
   await engine.failSignalWorkspaceEngineV1({database:f.database,lease,error_code:'workspace_engine_interpretation_repair_invalid'});
   const deadline=new Date(Date.now()+1100).toISOString();
   const revision=await engine.reviseSignalWorkspaceEngineInterpretationV1({...scope,idempotency_key:randomUUID(),source_call_id:repair.call_id,
-   configuration:{call_configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:10000},admission_not_after:deadline});
+   configuration:{call_configuration:sonnet,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap},admission_not_after:deadline});
   lease=await claim();
   const unsent=await reserve('local-sonnet-never-sent',sonnet,{interpretation_revision_digest:revision.revision_digest});
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,Date.parse(deadline)-Date.now())+40));

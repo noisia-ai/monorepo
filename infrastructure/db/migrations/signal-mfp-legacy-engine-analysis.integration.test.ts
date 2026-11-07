@@ -20,10 +20,13 @@ async function fixture(){
 for(const withRepair of [false,true]) test(`one analysis keeps fit and metered interpretation recoverable, rejects partial completion and preserves semantic input identity across own outputs${withRepair?' with an editorial repair':''}`, {skip:!enabled,timeout:90_000},async()=>{
  const f=await fixture();try{
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1=SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
-  const interpretation_config={call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000};
+  const baseline=Number((await f.query(`SELECT total_micro_usd FROM signal_processing_org_exposure_v1(
+   (SELECT organization_id FROM signal_workspaces WHERE id=$1::uuid),(clock_timestamp() AT TIME ZONE 'America/Mexico_City')::date,'America/Mexico_City')`,[f.workspace_id])).rows[0]!.total_micro_usd);
+  const dailyCap=baseline+30_000_000;
+  const interpretation_config={call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:dailyCap};
   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);assert.equal(preflight.missing_guides,0);
   const request={...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
-   expected_context_digest:preflight.expected_context_digest,engine_config:{fixture:'transition-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,interpretation_config};
+   expected_context_digest:preflight.expected_context_digest,engine_config:{fixture:'transition-only'},parent_execution_id:null,claude_cap_micro_usd:dailyCap,interpretation_config};
   const started=await engine.beginSignalWorkspaceEngineV1(request);assert.equal((await engine.beginSignalWorkspaceEngineV1(request)).execution_id,started.execution_id);
   await assert.rejects(engine.beginSignalWorkspaceEngineV1({...request,interpretation_config:{...interpretation_config,daily_cap_micro_usd:1}}),/idempotency_conflict/u);
   let lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-integrated-analysis'});assert.ok(lease);

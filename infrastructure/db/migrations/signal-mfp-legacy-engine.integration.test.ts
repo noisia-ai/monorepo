@@ -23,6 +23,11 @@ async function fixture(options:{root_count?:number}={}){
    expected_context_digest:preflight.expected_context_digest,engine_config:{contract_version:'local-engine-fixture-v1'},claude_cap_micro_usd,parent_execution_id});};
  return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,cleanup};
 }
+async function dailyExposure(f:Awaited<ReturnType<typeof fixture>>,timezone='UTC'){
+ const row=(await f.query(`SELECT total_micro_usd FROM signal_processing_org_exposure_v1(
+  (SELECT organization_id FROM signal_workspaces WHERE id=$1::uuid),(clock_timestamp() AT TIME ZONE $2)::date,$2)`,[f.workspace_id,timezone])).rows[0];
+ return Number(row?.total_micro_usd??0);
+}
 async function prototypes(f:Awaited<ReturnType<typeof fixture>>){
  const q=await quoteSignalWorkspaceTopicPrototypesV1(f.access);
  const requested=await requestSignalWorkspaceTopicPrototypesV1({...f.access,idempotency_key:randomUUID(),plan_digest:q.plan_digest,quote_digest:q.quote_digest,
@@ -170,7 +175,6 @@ test('explicit context preparation initializes an empty catalog and unblocks exi
   await f.query("UPDATE signal_taxonomy_profiles SET status='retired' WHERE workspace_id=$1::uuid AND kind='topic'",[f.workspace_id]);
   const profiles=async()=>(await f.query("SELECT count(*)::int n FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid AND kind='topic' AND status IN('draft','activating','active') AND metadata->>'contract_version'='signal-topic-catalog-v1'",[f.workspace_id])).rows[0].n;
   assert.equal(await profiles(),0);
-  await f.query("UPDATE brands SET description=description||$2 WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id,` Context bootstrap ${randomUUID()}`]);
   const corpusState=async()=>(await f.query(`SELECT run.id,run.status,run.input_revision,run.counts,run.reserved_micro_usd,run.settled_micro_usd,
     (SELECT count(*)::int FROM signal_workspace_embedding_calls call WHERE call.run_id=run.id) calls
     FROM signal_workspace_embedding_runs run WHERE workspace_id=$1::uuid AND input_contract='corpus' ORDER BY id`,[f.workspace_id])).rows;
@@ -475,11 +479,12 @@ test('editorial repair is a separate bounded metered request with exact receipt 
    FROM pg_proc proc CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl,acldefault('f',proc.proowner))) acl
    WHERE proc.oid='guard_workspace_engine_editorial_repair_v1()'::regprocedure`)).rows[0].permitted,false);
   await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  const dailyCap=await dailyExposure(f,'UTC')+1000;
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('repair-prompt'),schema_digest:sha('repair-schema'),pricing_version:'local-only',
    input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
   const started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
    expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:'editorial-repair'},claude_cap_micro_usd:10_000,
-   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:1000}});
+   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap}});
   const claim=async()=>{const value=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-editorial-repair'});assert.ok(value);return value;};
   const lease=await claim(),coverage={roots:lease.snapshot.expected_roots,chunks:lease.snapshot.expected_chunks,guides:lease.snapshot.expected_guides};
   await engine.heartbeatSignalWorkspaceEngineV1({database:f.database,lease,phase:'persisting',exported:{...coverage,stream_digest:sha('unchanged numerical export')}});
@@ -491,7 +496,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
   await engine.checkpointSignalWorkspaceEngineFitV1({database:f.database,lease,coverage,model_artifact_id:ids.get('model-manifest.json')!,output_artifact_id:ids.get('manifest.json')!,
    result_kind:'computational_grouping',model_configuration:{fixture:'editorial-repair'},runtime_kind:'python',artifact_format:'joblib',license_key:null,
    interpretation_manifest:{unit_count:1,unit_digest:sha('"open:fixture"\n')}});
-  const reserveBase={...f.access,...started,execution_token:lease.execution_token,configuration,budget_timezone:'UTC',daily_cap_micro_usd:1000};
+  const reserveBase={...f.access,...started,execution_token:lease.execution_token,configuration,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap};
   const originalRequest={...reserveBase,idempotency_key:randomUUID(),request_digest:sha('original full packet'),reserved_micro_usd:500};
   const source=await money.reserveSignalWorkspaceEngineInterpretationV1(originalRequest),sourceToken={database:f.database,call_id:source.call_id,attempt_token:source.attempt_token,execution_token:lease.execution_token};
   const response={storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/source-response.parts.json`,sha256:sha('known invalid editorial answer'),size_bytes:29,http_status:200,provider_request_id:null,complete:true};
@@ -574,14 +579,15 @@ test('editorial repair is a separate bounded metered request with exact receipt 
 
 test('interpretation single-send, exact settlement after staleness, retained unknown and real budget limits', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture();let otherCleanup:(()=>Promise<void>)|null=null;try{
-  await prototypes(f);const started=await f.begin(undefined,5000),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-money'});assert.ok(lease);
+  await prototypes(f);const dailyCap=await dailyExposure(f,'America/Mexico_City')+2000;
+  const started=await f.begin(undefined,5000),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-money'});assert.ok(lease);
   const coverage=await consume(f,lease),model=await artifact(f,lease,'engine_model'),output=await artifact(f,lease,'engine_output');
   await engine.finishSignalWorkspaceEngineFitV1({database:f.database,lease,model_artifact_id:model,output_artifact_id:output,result_kind:'computational_grouping',coverage,
    model_configuration:{fixture:true},runtime_kind:'python',artifact_format:'joblib',license_key:'fixture-only'});
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('prompt'),schema_digest:sha('schema'),pricing_version:'local-only',
    input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:500_000,cache_creation_micro_usd_per_million_tokens:1_250_000};
   const reserve=(request:string,amount=1000)=>money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,idempotency_key:request,
-   request_digest:sha(request),configuration,reserved_micro_usd:amount,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:2000});
+   request_digest:sha(request),configuration,reserved_micro_usd:amount,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:dailyCap});
   const key=randomUUID(),call=await reserve(key);assert.equal((await reserve(key)).call_id,call.call_id);
   const token={database:f.database,call_id:call.call_id,attempt_token:call.attempt_token};
   assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1(token)).send_authorized,true);
@@ -624,8 +630,9 @@ test('interpretation single-send, exact settlement after staleness, retained unk
   const nextCoverage=await consume(otherFixture,nextLease),nextModel=await artifact(otherFixture,nextLease,'engine_model'),nextOutput=await artifact(otherFixture,nextLease,'engine_output');
   await engine.finishSignalWorkspaceEngineFitV1({database:other.database,lease:nextLease,model_artifact_id:nextModel,output_artifact_id:nextOutput,result_kind:'computational_grouping',coverage:nextCoverage,
    model_configuration:{fixture:true},runtime_kind:'python',artifact_format:'joblib',license_key:'fixture-only'});
-  const nextRequest=randomUUID();await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...otherAccess,...next,idempotency_key:nextRequest,
-   request_digest:sha(nextRequest),configuration,reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:2000}),/daily_cap_exceeded/u);
+  const nextRequest=randomUUID(),otherDailyCap=await dailyExposure(otherFixture,'America/Mexico_City')+500;
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...otherAccess,...next,idempotency_key:nextRequest,
+   request_digest:sha(nextRequest),configuration,reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:otherDailyCap}),/daily_cap_exceeded/u);
 
  }finally{await otherCleanup?.();await f.cleanup();}
 });
@@ -633,6 +640,7 @@ test('interpretation single-send, exact settlement after staleness, retained unk
 test('interpretation blocks reserved sends after observed overage and retries only an explicit definitely-not-sent predecessor', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture();try{
   await prototypes(f);
+  const baseline=await dailyExposure(f,'America/Mexico_City');
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('prompt'),schema_digest:sha('schema'),pricing_version:'local-only',
    input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
   const ready=async(cap:number)=>{const started=await f.begin(undefined,cap),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-budget-guards'});assert.ok(lease);
@@ -641,7 +649,7 @@ test('interpretation blocks reserved sends after observed overage and retries on
     model_configuration:{},runtime_kind:'python',artifact_format:'none',license_key:null});return started;
   };
   for(const scope of ['run','daily'] as const){await f.query('BEGIN');try{
-   const started=await ready(scope==='run'?2000:5000),daily=scope==='daily'?2000:5000;
+   const started=await ready(scope==='run'?2000:5000),daily=baseline+(scope==='daily'?2000:5000);
    const reserve=(key:string)=>money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,idempotency_key:key,request_digest:sha(key),configuration,
     reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:daily});
    const a=await reserve(randomUUID()),b=await reserve(randomUUID()),token={database:f.database,call_id:a.call_id,attempt_token:a.attempt_token};
@@ -658,7 +666,7 @@ test('interpretation blocks reserved sends after observed overage and retries on
   }finally{await f.query('ROLLBACK');}}
   const started=await ready(5000),key=randomUUID();
   const request={...f.access,...started,idempotency_key:key,request_digest:sha('exact retry payload'),configuration,
-   reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:5000};
+   reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:baseline+5000};
   const original=await money.reserveSignalWorkspaceEngineInterpretationV1(request),token={database:f.database,call_id:original.call_id,attempt_token:original.attempt_token};
   assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1(token)).send_authorized,true);
   await money.failSignalWorkspaceEngineInterpretationV1({...token,outcome:'definitely_not_sent',error_code:'workspace_engine_provider_disabled'});

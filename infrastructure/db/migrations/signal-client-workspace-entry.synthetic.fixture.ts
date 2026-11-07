@@ -22,11 +22,12 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number}={}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean}={}){
  const {database,query}=tx;
  const roots:string[]=[];
- const texts=options.root_count===undefined?NOI19_SYNTHETIC_TEXTS:
+ const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
   Array.from({length:options.root_count},(_,index)=>`Synthetic fixture root ${index.toString().padStart(4,'0')}.`);
+ if(options.long_text&&texts.length)texts[0]=`${texts[0]} ${'Synthetic excerpt continuation. '.repeat(100)}`;
  const org=identity?.organization_id??randomUUID(),brand=identity?.brand_id??randomUUID(),actor_user_id=identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
  if(!identity){
  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic NOI-19 test organization','active')",[org,`noi19-${org}`]);
@@ -82,10 +83,11 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
 export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
+ long_text?:boolean;
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count});
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;

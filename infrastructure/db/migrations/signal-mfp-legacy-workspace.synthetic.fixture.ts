@@ -9,7 +9,7 @@ import type { SyntheticTransactionV1 } from './signal-client-workspace-entry.syn
 /** Migrated PostgreSQL CI fixture for still-live workspace v1 readers/writers.
  * It creates only invented import, preparation, embedding and engine rows inside
  * one physical transaction; all product BEGIN/COMMIT operations are savepoints. */
-export async function signalMfpLegacyWorkspaceFixtureV1(options: { root_count?: number } = {}) {
+export async function signalMfpLegacyWorkspaceFixtureV1(options: { root_count?: number; long_text?: boolean } = {}) {
   assert.equal(process.env.NOISIA_MFP_PG_CI, 'true', 'the fixture is limited to disposable migrated-schema CI');
   const { openDatabase } = await import(new URL('../../../scripts/dev-corpus/guard.mjs', import.meta.url).href);
   const pool: Pool = await openDatabase();
@@ -49,7 +49,7 @@ export async function signalMfpLegacyWorkspaceFixtureV1(options: { root_count?: 
   };
   const transaction: SyntheticTransactionV1 = { database, scoped, query: query as never, cleanup };
   try {
-    const seed = await seedSignalTopicEditorialRenewalSourceV1({ ...transaction, root_count: options.root_count });
+    const seed = await seedSignalTopicEditorialRenewalSourceV1({ ...transaction, root_count: options.root_count, long_text: options.long_text });
     const workspace_id = seed.scope.workspace_id, actor_user_id = seed.scope.actor_user_id;
     const engine = (await query(`SELECT embedding_run_id FROM signal_topic_catalog_executions
       WHERE id=$1::uuid AND input_contract='workspace-topic-engine-v1'`, [seed.source_engine_execution_id])).rows[0];

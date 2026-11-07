@@ -28,7 +28,7 @@ async function project(f: Pick<WorkspaceProjectionCheckpointFixtureV1, "database
 async function read(args: SignalWorkspaceMentionsArgsV1) { const result = await loadSignalWorkspaceMentionsV1(args); assert.ok(result); return result; }
 
 test("native mentions reads the complete real generation, pages/focus/filter in scope and withholds revoked or changed text", { skip: !enabled, timeout: 90_000 }, async t => {
-  const f = await signalMfpLegacyWorkspaceFixtureV1();
+  const f = await signalMfpLegacyWorkspaceFixtureV1({ long_text: true });
   try {
     await f.query("SAVEPOINT mentions_digest_trigger");
     try {

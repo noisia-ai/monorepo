@@ -261,8 +261,18 @@ async function current(client: PoolClient, run: Run, full: boolean) {
     if (invalid) return fail("workspace_engine_inputs_stale");
   }
   if (full) {
-    const identity = await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id,
-      taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id,discovery:!!run.input_snapshot.discovery_population});
+    let identity: Awaited<ReturnType<typeof loadSignalWorkspaceEngineInputIdentityV1>>;
+    try {
+      identity = await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:run.workspace_id,actor_user_id:run.actor_user_id,
+        taxonomy_profile_id:run.input_snapshot.taxonomy_profile_id,discovery:!!run.input_snapshot.discovery_population});
+    } catch (error) {
+      // A changed Brand OS / knowledge source is ordinary stale input for this
+      // execution. Keep the worker's terminal stale-input path consistent with
+      // corpus/catalog revision drift while allowing unrelated failures through.
+      if (error instanceof Error && ['brand_context_source_stale','brand_context_semantic_context_required'].includes(error.message))
+        return fail('workspace_engine_inputs_stale');
+      throw error;
+    }
     if (identity.context_digest !== run.input_snapshot.context_digest || identity.catalog_digest !== run.input_snapshot.catalog_digest) return fail("workspace_engine_inputs_stale");
     if(run.input_snapshot.numeric_descriptor&&(await client.query<{valid:boolean}>(
       'SELECT signal_workspace_incremental_execution_current_v1($1::uuid) valid',[run.id])).rows[0]?.valid!==true)
