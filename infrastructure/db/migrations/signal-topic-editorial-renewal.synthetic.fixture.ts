@@ -33,6 +33,13 @@ import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-w
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
   identity?: { organization_id: string; actor_user_id: string };
+  precreated_brand?: { brand_id: string; workspace_id: string };
+  after_brand_created?: (args: { transaction: SyntheticTransactionV1;
+    identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string };
+    runtime: SignalBrandContextPreparationRuntimeV1 }) => Promise<void>;
+  defer_numeric_policy_activation?: boolean;
+  before_numeric_policy_activation?: (args: { transaction: SyntheticTransactionV1;
+    identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string } }) => Promise<void>;
   root_count?: number;
   long_text?: boolean;
   skip_topic_prototypes?: boolean;
@@ -199,9 +206,12 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
       VALUES($1,$2,'Synthetic editorial renewal actor','noisia_internal','noisia_admin',$3,'active')`,
     [actor_user_id, `${actor_user_id}@example.test`, organization_id]);
   }
-  const created = await saves.createBrand({ database, scoped, organization_id, actor_user_id,
+  const created = args.precreated_brand ?? await saves.createBrand({ database, scoped, organization_id, actor_user_id,
     intake: { ...BRAND_CONTEXT_SYNTHETIC_INTAKE_V1, slug: `interest-review-${randomUUID()}` } });
   const identity = { ...created, organization_id, actor_user_id };
+  if (!args.precreated_brand) await args.after_brand_created?.({
+    transaction: { database, scoped, query: query as never, cleanup: async () => {} }, identity, runtime,
+  });
   const access = { database, workspace_id: created.workspace_id, actor_user_id };
   const knowledge = await saves.saveKnowledge({ database, scoped, ...identity, title: "Synthetic bicycle knowledge",
     raw_text: BRAND_CONTEXT_SYNTHETIC_ADDITIONAL_KB_V1, idempotency_key: randomUUID() });
@@ -258,21 +268,34 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   assert.ok(binding, "actual completed embedding and fit checkpoint must resolve the numerical source binding");
   assert.equal(binding.expected_group_count, 2, "source census contains the two sealed synthetic lanes");
 
+  await args.before_numeric_policy_activation?.({
+    transaction: { database, scoped, query: query as never, cleanup: async () => {} }, identity,
+  });
+
   // New synthetic policy version, preserving all old policy/receipt history.
   // It permits ONLY the free numeric action; no editorial send is authorized.
-  const policy_id = randomUUID();
-  await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,valid_from,valid_until,
+  let policy_id: string;
+  if (!args.defer_numeric_policy_activation) {
+    policy_id = randomUUID();
+    await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,valid_from,valid_until,
     budget_timezone,daily_cap_micro_usd,created_by_user_id)
     SELECT $1,$2,COALESCE(max(version),0)+1,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 day',
       COALESCE((SELECT budget_timezone FROM signal_processing_policy_versions WHERE organization_id=$2 ORDER BY version DESC LIMIT 1),'America/Mexico_City'),$4,$3
     FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id, args.numeric_daily_cap_micro_usd ?? 999_999_999_999_999]);
-  await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
+    await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
     configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
     SELECT $1,'topic_consolidation_numeric','free',NULL,NULL,configuration,
       signal_semantic_context_digest_json_v2(configuration),0,false
     FROM (SELECT signal_topic_consolidation_numeric_configuration_v1() configuration) configuration`, [policy_id]);
-  await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE organization_id=$1 AND status='active'", [organization_id]);
-  await query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [policy_id]);
+    await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE organization_id=$1 AND status='active'", [organization_id]);
+    await query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [policy_id]);
+  } else {
+    const active = (await query(`SELECT id::text FROM signal_processing_policy_versions
+      WHERE organization_id=$1::uuid AND status='active' AND valid_until>clock_timestamp() ORDER BY version DESC LIMIT 1`,
+    [organization_id])).rows[0] as { id: string } | undefined;
+    assert.ok(active, "deferred fixture resolves the active shared organization policy after the sibling activates it");
+    policy_id = active.id;
+  }
   const status = await loadSignalTopicConsolidationStatusV1({ ...access, source_execution_id });
   assert.equal(status.status, "ready_to_prepare", "real source and free policy must permit numeric admission");
   assert.ok(status.quote_reference, "numeric request requires the actual quote reference");

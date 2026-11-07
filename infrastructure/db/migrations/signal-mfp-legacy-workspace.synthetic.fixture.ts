@@ -12,6 +12,10 @@ import type { SyntheticTransactionV1 } from './signal-client-workspace-entry.syn
 export async function signalMfpLegacyWorkspaceFixtureV1(options: {
   root_count?: number; long_text?: boolean; skip_topic_prototypes?: boolean;
   transaction?: SyntheticTransactionV1; identity?: { organization_id: string; actor_user_id: string };
+  precreated_brand?: { brand_id: string; workspace_id: string };
+  after_brand_created?: Parameters<typeof seedSignalTopicEditorialRenewalSourceV1>[0]['after_brand_created'];
+  defer_numeric_policy_activation?: boolean;
+  before_numeric_policy_activation?: Parameters<typeof seedSignalTopicEditorialRenewalSourceV1>[0]['before_numeric_policy_activation'];
 } = {}) {
   assert.equal(process.env.NOISIA_MFP_PG_CI, 'true', 'the fixture is limited to disposable migrated-schema CI');
   let transaction: SyntheticTransactionV1;
@@ -58,9 +62,12 @@ export async function signalMfpLegacyWorkspaceFixtureV1(options: {
   const { database, scoped, query } = transaction;
   const cleanup = async () => { await ownerCleanup?.(); };
   try {
-    const seed = await seedSignalTopicEditorialRenewalSourceV1({ ...transaction, identity: options.identity,
+    const seed = await seedSignalTopicEditorialRenewalSourceV1({ ...transaction, saves: undefined, identity: options.identity,
+      precreated_brand: options.precreated_brand, after_brand_created: options.after_brand_created,
       root_count: options.root_count, long_text: options.long_text,
-      skip_topic_prototypes: options.skip_topic_prototypes });
+      skip_topic_prototypes: options.skip_topic_prototypes,
+      defer_numeric_policy_activation: options.defer_numeric_policy_activation,
+      before_numeric_policy_activation: options.before_numeric_policy_activation });
     const workspace_id = seed.scope.workspace_id, actor_user_id = seed.scope.actor_user_id;
     const engine = (await query(`SELECT embedding_run_id FROM signal_topic_catalog_executions
       WHERE id=$1::uuid AND input_contract='workspace-topic-engine-v1'`, [seed.source_engine_execution_id])).rows[0];

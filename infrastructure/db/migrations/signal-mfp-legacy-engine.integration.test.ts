@@ -12,10 +12,13 @@ import {loadSignalWorkspaceTopicPrototypePlanV1} from '../signal-workspace-topic
 import {quoteSignalWorkspaceTopicPrototypesV1,requestSignalWorkspaceTopicPrototypesV1,loadSignalWorkspaceTopicPrototypesV1,
  initializeSignalWorkspaceTopicPrototypeCatalogV1} from '../signal-workspace-topic-prototypes-management';
 import {signalMfpLegacyWorkspaceFixtureV1} from './signal-mfp-legacy-workspace.synthetic.fixture';
+import {createSignalTopicEditorialRenewalSyntheticSavesV1} from './signal-topic-editorial-renewal.synthetic.fixture';
+import {BRAND_CONTEXT_SYNTHETIC_INTAKE_V1} from './signal-brand-context.synthetic.fixture';
 import {createSignalTopicStoreV1} from '../signal-topic-catalog';
 const enabled=process.env.NOISIA_MFP_PG_CI==='true';
 const sha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf8').digest('hex')}`;
-async function fixture(options:{root_count?:number;skip_topic_prototypes?:boolean}={}){
+type LegacyFixtureOptions=NonNullable<Parameters<typeof signalMfpLegacyWorkspaceFixtureV1>[0]>;
+async function fixture(options:Pick<LegacyFixtureOptions,'root_count'|'skip_topic_prototypes'|'defer_numeric_policy_activation'|'before_numeric_policy_activation'|'precreated_brand'|'after_brand_created'>={}){
  const seeded=await signalMfpLegacyWorkspaceFixtureV1(options);
  const {query,database,workspace_id,actor_user_id,embedding_run_id,catalog,cleanup}=seeded;
  await catalog();
@@ -627,7 +630,21 @@ test('editorial repair is a separate bounded metered request with exact receipt 
 });
 
 test('interpretation single-send, exact settlement after staleness, retained unknown and shared actor budgets across workspaces', {skip:!enabled,timeout:180_000},async()=>{
- const f=await fixture();let otherCleanup:(()=>Promise<void>)|null=null;try{
+ type SiblingSeed=Awaited<ReturnType<typeof signalMfpLegacyWorkspaceFixtureV1>>;
+ let siblingSeed:SiblingSeed|null=null;let siblingBrand:{brand_id:string;workspace_id:string}|null=null;
+ const f=await fixture({defer_numeric_policy_activation:true,after_brand_created:async({transaction,identity,runtime})=>{
+  const saves=createSignalTopicEditorialRenewalSyntheticSavesV1(runtime,{reuse_existing_policy:true});
+  siblingBrand=await saves.createBrand({database:transaction.database,scoped:transaction.scoped,
+   organization_id:identity.organization_id,actor_user_id:identity.actor_user_id,
+   intake:{...BRAND_CONTEXT_SYNTHETIC_INTAKE_V1,slug:`interest-review-${randomUUID()}`}});
+ },before_numeric_policy_activation:async({transaction,identity})=>{
+  assert.ok(siblingBrand,'the second workspace is provisioned before the first context is published');
+  await transaction.query('SET CONSTRAINTS ALL DEFERRED');
+  await transaction.query('DROP TABLE IF EXISTS pg_temp.corpus_preparation_snapshot_roots');
+  await transaction.query('DROP TABLE IF EXISTS pg_temp.corpus_preparation_snapshot_sources');
+  siblingSeed=await signalMfpLegacyWorkspaceFixtureV1({transaction,
+   identity:{organization_id:identity.organization_id,actor_user_id:identity.actor_user_id},precreated_brand:siblingBrand!});
+ }});let otherCleanup:(()=>Promise<void>)|null=null;try{
   await prototypes(f);const dailyCap=await dailyExposure(f,'America/Mexico_City')+2000;
   const started=await f.begin(undefined,5000),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-money'});assert.ok(lease);
   const coverage=await consume(f,lease),model=await artifact(f,lease,'engine_model'),output=await artifact(f,lease,'engine_output');
@@ -663,8 +680,8 @@ test('interpretation single-send, exact settlement after staleness, retained unk
   // Seed the second workspace inside the same rollback-only client. The actor
   // and organization stay shared, so the second reservation must include the
   // first workspace's settled and unknown exposure.
-  const other=await signalMfpLegacyWorkspaceFixtureV1({transaction:f.transaction,
-   identity:{organization_id:f.identity.organization_id,actor_user_id:f.actor_user_id}});
+  assert.ok(siblingSeed,'the sibling context and workspace were prepared before the shared numeric-only policy activation');
+  const other:SiblingSeed=siblingSeed!;
   otherCleanup=other.cleanup;
   const secondWorkspace=other.workspace_id,secondEmbedding=other.embedding_run_id;
   await other.catalog();
