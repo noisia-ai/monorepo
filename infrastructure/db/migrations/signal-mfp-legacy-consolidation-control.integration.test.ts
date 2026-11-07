@@ -146,7 +146,7 @@ test('0174 + 0175 PostgreSQL: numeric policy, exact authority, source gate, atom
           await assert.rejects(client.query('SET CONSTRAINTS topic_consolidation_admission_complete IMMEDIATE'),
             { code: '23514', message: 'topic_consolidation_admission_incomplete' });
         });
-        await denied(() => admission('topic_consolidation'), 'topic_consolidation_provider_disabled');
+        await denied(() => admission('topic_consolidation'), 'topic_editorial_admission_invalid');
         assert.deepEqual(await counts(), before);
       });
       await t.test('all new control functions and tables are private and RLS remains enabled', async () => {

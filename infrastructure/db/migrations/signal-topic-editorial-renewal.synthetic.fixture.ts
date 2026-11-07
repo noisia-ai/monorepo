@@ -91,7 +91,9 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
       const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
         brand_id, initiator_user_id: args.actor_user_id, env: {
           NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID: args.actor_user_id,
-          NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd + BigInt(runtime.prototype.max_run_cost_micro_usd)),
+          // Synthetic receipts still share the real daily admission ledger.
+          // Leave room for every isolated preparation stage in this fixture.
+          NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd + BigInt(runtime.prototype.max_run_cost_micro_usd) + 50_000_000n),
           NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL: new Date(Date.now() + 86_400_000).toISOString(),
           NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: String(runtime.prototype.max_run_cost_micro_usd),
           NOISIA_SEMANTIC_CONTEXT_MODEL: config.model, NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION: config.model_version,
@@ -276,7 +278,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
       strength: 0.8, assignment_digest: digest(assignments.filter(item => item.root_id === root.root_id).map(item => ({ ...item, strength: 0.8 }))) })).sort((a, b) => a.root_id.localeCompare(b.root_id));
     const scope_counts = { brand: 0, competitor: 0, category: 0, unknown: 0 };
     for (const row of metadata) scope_counts[row.scope]++;
-    const evidence = projection.chunks.map(chunk => {
+    const evidence = projection.chunks.slice(0, 10).map(chunk => {
       const item = byRoot.get(chunk.root_id); assert.ok(item, "each governed root must retain actual metadata");
       const locator = { root_id: chunk.root_id, chunk_index: chunk.chunk_index, start: chunk.start, end: chunk.end, chunk_sha256: chunk.chunk_sha256 };
       return { ...locator, ref_id: digest(locator), locale: item.locale, platform: item.platform, occurred_at: item.occurred_at };

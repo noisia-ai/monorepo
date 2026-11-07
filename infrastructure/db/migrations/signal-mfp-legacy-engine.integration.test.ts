@@ -108,7 +108,8 @@ test('engine exports every chunk with zero interests, autonomous cached context,
   assert.equal(status.latest_completed?.counts.processed_input_references,plan.context_inputs!.length);
   const started=await f.begin(),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-fixture'});assert.ok(lease);
   await assert.rejects(engine.readSignalWorkspaceEngineChunksV1({database:f.database,lease:{...lease,workspace_id:randomUUID()},after:null}),/lease_conflict/u);
-  const coverage=await consume(f,lease);assert.equal(coverage.roots,3);assert.equal(coverage.chunks,133);
+  const coverage=await consume(f,lease);assert.equal(coverage.roots,3);assert.equal(coverage.chunks,3,
+   'the migrated fixture uses three deliberately short synthetic roots; cursor paging is covered by the 400-root case');
   const model=await artifact(f,lease,'engine_model'),output=await artifact(f,lease,'engine_output');
   const finished=await engine.finishSignalWorkspaceEngineFitV1({database:f.database,lease,model_artifact_id:model,output_artifact_id:output,
    result_kind:'computational_grouping',coverage,model_configuration:{fixture:true},runtime_kind:'python',artifact_format:'joblib',license_key:'fixture-only'});

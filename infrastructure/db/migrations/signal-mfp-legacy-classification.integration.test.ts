@@ -10,7 +10,8 @@ const enabled=process.env.NOISIA_MFP_PG_CI==="true";
 const sha=(text:string)=>`sha256:${createHash("sha256").update(text).digest("hex")}`;
 async function fixture(){
  const seeded=await signalMfpLegacyWorkspaceFixtureV1();
- const {database,query,workspace_id,actor_user_id,embedding_run_id,cleanup}=seeded;
+ const {database,query,workspace_id,actor_user_id,embedding_run_id,classificationCatalog,cleanup}=seeded;
+ await classificationCatalog();
  const access={database,workspace_id,actor_user_id};
  const input=()=>core.loadSignalWorkspaceClassificationInputV1({queryable:database,workspace_id,actor_user_id});
  const identity=async():Promise<SignalWorkspaceClassificationIdentityV1>=>{const current=await input();return{
