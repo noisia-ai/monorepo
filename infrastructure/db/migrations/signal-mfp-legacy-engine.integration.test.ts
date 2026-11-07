@@ -1,43 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID,createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
-import pg from 'pg';
 import type {Pool,PoolClient} from 'pg';
 import {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as profile,SIGNAL_WORKSPACE_ENGINE_JOB_V1,SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1,SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 as opus,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as sonnet} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
 import * as embeddings from '../signal-workspace-embeddings';
 import * as money from '../signal-workspace-engine-interpretation';
 import {scheduleSignalWorkspaceTopicComputationsV1} from '../signal-workspace-topic-computation';
-import {insertSignalTaxonomyDraftCoreV1} from '../signal-taxonomy-profile';
-import {loadSignalTopicInheritedContextStoreV1} from '../signal-topic-catalog';
 import {loadSignalWorkspaceTopicPrototypePlanV1} from '../signal-workspace-topic-prototype-inputs';
 import {quoteSignalWorkspaceTopicPrototypesV1,requestSignalWorkspaceTopicPrototypesV1,loadSignalWorkspaceTopicPrototypesV1,
  initializeSignalWorkspaceTopicPrototypeCatalogV1} from '../signal-workspace-topic-prototypes-management';
-const enabled=process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED==='true';
+import {signalMfpLegacyWorkspaceFixtureV1} from './signal-mfp-legacy-workspace.synthetic.fixture';
+const enabled=process.env.NOISIA_MFP_PG_CI==='true';
 const sha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf8').digest('hex')}`;
-async function fixture(){
- const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_national_import_test_\d+$/u);
- const pool=new pg.Pool({connectionString:url.href,ssl:false,max:1}),client=await pool.connect();
- await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await client.query('SET LOCAL search_path=public,extensions,pg_temp');
- const stack:string[]=[];let index=0;const query=async(sql:string,params?:unknown[])=>{
-  if(sql.startsWith('BEGIN')){const key=`engine_${++index}`;stack.push(key);return client.query(`SAVEPOINT ${key}`);}
-  if(sql==='COMMIT')return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
-  if(sql==='ROLLBACK'){const key=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${key}`);return client.query(`RELEASE SAVEPOINT ${key}`);}
-  return client.query(sql,params);
- };
- const scoped=Object.create(client) as PoolClient;scoped.query=query as PoolClient['query'];scoped.release=()=>{};
- const database=Object.assign(Object.create(pool) as Pool,{query:query as Pool['query'],connect:async()=>scoped});
- const workspace_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_WORKSPACE_ID!,actor_user_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_ACTOR_ID!,embedding_run_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_EMBEDDING_ID!;
- assert.ok(workspace_id&&actor_user_id&&embedding_run_id);
- const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
- await insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:sha('empty-real-catalog'),terms:[],rules:{topics:[]},rule_set_metadata:{},
-  provider:'operator',model_version:'empty',prompt_hash:sha('empty'),model_metadata:{},profile_metadata:{contract_version:'signal-topic-catalog-v1'},context_refs:context.context_refs});
+async function fixture(options:{root_count?:number}={}){
+ const seeded=await signalMfpLegacyWorkspaceFixtureV1(options);
+ const {query,database,workspace_id,actor_user_id,embedding_run_id,catalog,cleanup}=seeded;
+ await catalog();
  const access={database,workspace_id,actor_user_id};
  const begin=async(parent_execution_id?:string,claude_cap_micro_usd=0)=>{const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);
   return engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
    expected_context_digest:preflight.expected_context_digest,engine_config:{contract_version:'local-engine-fixture-v1'},claude_cap_micro_usd,parent_execution_id});};
- const cleanup=async()=>{await client.query('ROLLBACK');client.release();await pool.end();};
  return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,cleanup};
 }
 async function prototypes(f:Awaited<ReturnType<typeof fixture>>){
@@ -81,13 +64,8 @@ async function artifact(f:Awaited<ReturnType<typeof fixture>>,lease:engine.Signa
  assert.equal((await engine.persistSignalWorkspaceEngineArtifactV1({database:f.database,lease,artifact:a})).artifact_id,saved.artifact_id);return saved.artifact_id;
 }
 test('engine chunk export keeps the EOF sentinel after a completed cursor root',
- {skip:!enabled||process.env.NOISIA_WORKSPACE_ENGINE_EXPORT_TEST_APPROVED!=='true',timeout:120_000},async()=>{
- const f=await fixture();try{
-  // The large preparation fixture predates these forward migrations. Keep its
-  // schema and all test execution rows inside the same outer rollback.
-  for(const name of ['0141_signal_workspace_editorial_repair.sql','0142_signal_workspace_terminal_transport.sql',
-   '0143_signal_workspace_editorial_revision.sql','0144_signal_workspace_engine_progress.sql'])
-   await f.query(readFileSync(new URL(name,import.meta.url),'utf8'));
+ {skip:!enabled,timeout:300_000},async()=>{
+ const f=await fixture({root_count:400});try{
   await prototypes(f);const started=await f.begin();
   const lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-export-cursor'});assert.ok(lease);
   assert.ok(lease.snapshot.expected_roots>384,'use the explicit local large-corpus fixture');
@@ -492,7 +470,6 @@ test('interpretation evidence retry restores only a complete immutable bundle be
 
 test('editorial repair is a separate bounded metered request with exact receipt lineage and checkpoint recovery', {skip:!enabled,timeout:90_000},async()=>{
  const f=await fixture();try{
-  await f.query(readFileSync(new URL('./0141_signal_workspace_editorial_repair.sql',import.meta.url),'utf8'));
   assert.equal((await f.query(`SELECT COALESCE(bool_or(acl.grantee=0 AND acl.privilege_type='EXECUTE'),false) permitted
    FROM pg_proc proc CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl,acldefault('f',proc.proowner))) acl
    WHERE proc.oid='guard_workspace_engine_editorial_repair_v1()'::regprocedure`)).rows[0].permitted,false);
@@ -595,7 +572,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
 });
 
 test('interpretation single-send, exact settlement after staleness, retained unknown and real budget limits', {skip:!enabled,timeout:120_000},async()=>{
- const f=await fixture();try{
+ const f=await fixture();let otherCleanup:(()=>Promise<void>)|null=null;try{
   await prototypes(f);const started=await f.begin(undefined,5000),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-money'});assert.ok(lease);
   const coverage=await consume(f,lease),model=await artifact(f,lease,'engine_model'),output=await artifact(f,lease,'engine_output');
   await engine.finishSignalWorkspaceEngineFitV1({database:f.database,lease,model_artifact_id:model,output_artifact_id:output,result_kind:'computational_grouping',coverage,
@@ -627,25 +604,24 @@ test('interpretation single-send, exact settlement after staleness, retained unk
    outcome:'definitely_not_sent',error_code:'workspace_engine_provider_disabled'});
   const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
   assert.deepEqual(budget,{hard_cap_micro_usd:5000,confirmed_micro_usd:300,reserved_micro_usd:1000,unknown_reserved_micro_usd:1000,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0});
-  const secondWorkspace=process.env.NOISIA_WORKSPACE_ENGINE_SECOND_WORKSPACE_ID!,secondEmbedding=process.env.NOISIA_WORKSPACE_ENGINE_SECOND_EMBEDDING_ID!;
-  assert.ok(secondWorkspace&&secondEmbedding,'second owned local corpus fixture is required for cross-workspace daily budget');
-  const otherAccess={...f.access,workspace_id:secondWorkspace},other={...f,workspace_id:secondWorkspace,embedding_run_id:secondEmbedding,access:otherAccess};
-  const context=await loadSignalTopicInheritedContextStoreV1({queryable:f.database,workspace_id:secondWorkspace,complete_context:true});
-  const connection=await f.database.connect();
-  await insertSignalTaxonomyDraftCoreV1({client:connection,workspace_id:secondWorkspace,kind:'topic',context_hash:sha('second-empty-catalog'),terms:[],rules:{topics:[]},rule_set_metadata:{},
-   provider:'operator',model_version:'empty',prompt_hash:sha('empty'),model_metadata:{},profile_metadata:{contract_version:'signal-topic-catalog-v1'},context_refs:context.context_refs});
-  connection.release();await prototypes(other);
+  const other=await signalMfpLegacyWorkspaceFixtureV1();
+  otherCleanup=other.cleanup;
+  const secondWorkspace=other.workspace_id,secondEmbedding=other.embedding_run_id;
+  await other.catalog();
+  const otherAccess={database:other.database,workspace_id:secondWorkspace,actor_user_id:other.actor_user_id};
+  Object.assign(other,{access:otherAccess});
+  await prototypes(other);
   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(otherAccess);
   const next=await engine.beginSignalWorkspaceEngineV1({...otherAccess,embedding_run_id:secondEmbedding,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
    expected_context_digest:preflight.expected_context_digest,claude_cap_micro_usd:5000,engine_config:{fixture:true},parent_execution_id:null});
-  const nextLease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...next,worker_job_id:'local-second-workspace'});assert.ok(nextLease);
+  const nextLease=await engine.claimSignalWorkspaceEngineV1({database:other.database,...next,worker_job_id:'local-second-workspace'});assert.ok(nextLease);
   const nextCoverage=await consume(other,nextLease),nextModel=await artifact(other,nextLease,'engine_model'),nextOutput=await artifact(other,nextLease,'engine_output');
-  await engine.finishSignalWorkspaceEngineFitV1({database:f.database,lease:nextLease,model_artifact_id:nextModel,output_artifact_id:nextOutput,result_kind:'computational_grouping',coverage:nextCoverage,
+  await engine.finishSignalWorkspaceEngineFitV1({database:other.database,lease:nextLease,model_artifact_id:nextModel,output_artifact_id:nextOutput,result_kind:'computational_grouping',coverage:nextCoverage,
    model_configuration:{fixture:true},runtime_kind:'python',artifact_format:'joblib',license_key:'fixture-only'});
   const nextRequest=randomUUID();await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...otherAccess,...next,idempotency_key:nextRequest,
    request_digest:sha(nextRequest),configuration,reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:2000}),/daily_cap_exceeded/u);
 
- }finally{await f.cleanup();}
+ }finally{await otherCleanup?.();await f.cleanup();}
 });
 
 test('interpretation blocks reserved sends after observed overage and retries only an explicit definitely-not-sent predecessor', {skip:!enabled,timeout:120_000},async()=>{
@@ -700,8 +676,6 @@ test('interpretation blocks reserved sends after observed overage and retries on
 
 test('external provider terminal evidence retains cost reserves and permits one exact transport successor', {skip:!enabled,timeout:90_000},async()=>{
  const f=await fixture();try{
-  await f.query(readFileSync(new URL('./0141_signal_workspace_editorial_repair.sql',import.meta.url),'utf8'));
-  await f.query(readFileSync(new URL('./0142_signal_workspace_terminal_transport.sql',import.meta.url),'utf8'));
   assert.equal((await f.query(`SELECT COALESCE(bool_or(acl.grantee=0 AND acl.privilege_type='EXECUTE'),false) permitted
    FROM pg_proc proc CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl,acldefault('f',proc.proowner))) acl
    WHERE proc.oid='guard_workspace_engine_editorial_repair_v1()'::regprocedure`)).rows[0].permitted,false);
@@ -844,8 +818,6 @@ test('external provider terminal evidence retains cost reserves and permits one 
 
 test('editorial model revision preserves historical checkpoints and terminal reserves in the same execution', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture();try{
-  for(const file of ['0141_signal_workspace_editorial_repair.sql','0142_signal_workspace_terminal_transport.sql','0143_signal_workspace_editorial_revision.sql'])
-   await f.query(readFileSync(new URL(`./${file}`,import.meta.url),'utf8'));
   await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
   const configuration=opus;
   const started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),

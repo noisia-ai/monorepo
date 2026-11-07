@@ -32,6 +32,7 @@ import { syntheticClientWorkspaceFixtureV1, type SyntheticTransactionV1 } from "
 import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-workspace-topic-projection.fixture";
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
+  root_count?: number;
   runtime?: SignalBrandContextPreparationRuntimeV1;
   saves?: Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge">;
   projection?: Pick<WorkspaceProjectionFixtureOptionsV1, "cluster_ids" | "model_configuration" | "onCheckpoint">;
@@ -217,10 +218,12 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   // rollback, including failures. Its numerical records and receipts are real.
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, projection: { ...args.projection, cluster_ids: clusterIds },
+    identity, root_count: args.root_count,
+    projection: { ...args.projection, cluster_ids: clusterIds,
+      ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },
   });
-  assert.equal(projection.roots.length, 3, "exactly three invented canonical roots are used");
-  assert.equal(projection.chunks.length, 3, "the tiny texts each occupy exactly one governed chunk");
+  assert.equal(projection.roots.length, args.root_count ?? 3, "the requested invented canonical root count is used");
+  assert.equal(projection.chunks.length, args.root_count ?? 3, "each synthetic fixture text occupies one governed chunk");
   const source_execution_id = projection.engine_execution_id;
   const binding = (await query("SELECT signal_topic_consolidation_source_binding_v1($1::uuid) value", [source_execution_id])).rows[0]?.value;
   assert.ok(binding, "actual completed embedding and fit checkpoint must resolve the numerical source binding");

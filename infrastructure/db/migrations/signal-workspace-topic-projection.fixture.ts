@@ -15,7 +15,7 @@ export const fixtureSha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf
 export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
-export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;migrations?:string[];
+export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;allow_large_population?:boolean;migrations?:string[];
  interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
  onMaterialized?:(profile_id:string)=>Promise<void>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
@@ -62,7 +62,8 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   expected_context_digest:preflight.expected_context_digest,engine_config:{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
   interpretation_config:{call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000}});
  const lease=await engine.claimSignalWorkspaceEngineV1({database,...started,worker_job_id:'local-projection-fixture'});assert.ok(lease);
- assert.ok(lease.snapshot.expected_roots<=10,'tiny fixture only');
+ assert.ok(lease.snapshot.expected_roots<=10||options.allow_large_population===true&&lease.snapshot.expected_roots<=1000,
+  'fixture population must be explicitly tiny or bounded synthetic-large');
  const chunks:Array<Awaited<ReturnType<typeof engine.readSignalWorkspaceEngineChunksV1>>['items'][number]>=[];
  let after:Parameters<typeof engine.readSignalWorkspaceEngineChunksV1>[0]['after']=null;
  for(;;){const page=await engine.readSignalWorkspaceEngineChunksV1({database,lease,after,limit:128});chunks.push(...page.items);if(page.done)break;after=page.next_cursor;}
