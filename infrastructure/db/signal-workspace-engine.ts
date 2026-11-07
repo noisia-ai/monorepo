@@ -1,3 +1,4 @@
+import {isMassLabelingRecoveryProfileV1,refreshSignalWorkspaceEngineInterpretationRecoverySummaryWithClientV1} from "./signal-workspace-engine-recovery";
 import { signalWorkspaceMassLabelingEnabledV1, loadSignalWorkspaceMassLabelingSeedsV1, loadSignalWorkspaceMassLabelingGuidesV1 } from "./signal-workspace-mass-labeling-profile";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
 import { loadSignalDiscoveryEstimateV1 } from "./signal-workspace-discovery-estimate";
@@ -187,6 +188,19 @@ const editorialRepairRecoveryPredicate = `execution.status='failed'
    AND COALESCE((source.metadata->>'response_complete')::boolean,true) AND NOT (source.metadata ? 'editorial_repair')
    AND source.call_configuration=workspace_engine_interpretation_configuration_v1(execution.id,source.metadata->>'interpretation_revision_digest')
    AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.engine_execution_id=execution.id AND artifact.metadata->>'call_id'=source.id::text))
+ AND (${outputBundlePredicate})`;
+// Offline replay grants no provider authority and keeps the fitted population.
+const pilotReceiptRecoveryPredicate = `execution.status='failed'
+ AND execution.error_code IN('workspace_engine_interpretation_output_invalid','workspace_engine_interpretation_repair_invalid','workspace_engine_interpretation_exceptions_remaining')
+ AND execution.input_snapshot#>>'{engine_config,profile_version}' IN('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2','workspace-bertopic-mass-labeling-v3')
+ AND execution.input_snapshot ? 'interpretation_config' AND execution.result_summary ? 'fit_checkpoint'
+ AND NOT execution.result_summary ? 'analysis_checkpoint'
+ AND EXISTS(SELECT 1 FROM engine_cost_events receipt WHERE receipt.catalog_execution_id=execution.id
+   AND receipt.workspace_id=execution.workspace_id AND receipt.actor_user_id=execution.actor_user_id
+   AND receipt.workspace_contract='workspace-engine-interpretation-v1' AND receipt.call_state='settled'
+   AND receipt.response_http_status=200 AND receipt.response_storage_key IS NOT NULL
+   AND COALESCE((receipt.metadata->>'response_complete')::boolean,true)
+   AND receipt.call_configuration=workspace_engine_interpretation_configuration_v1(execution.id,receipt.metadata->>'interpretation_revision_digest'))
  AND (${outputBundlePredicate})`;
 const interpretationExceptionRecoveryPredicate = `execution.status='failed'
  AND execution.error_code='workspace_engine_interpretation_repair_invalid'
@@ -864,10 +878,10 @@ export async function readSignalWorkspaceEngineInterpretationRecoveryRequestDige
     const rows=(await client.query<{request_digest:string}>(`SELECT DISTINCT call.request_digest FROM engine_cost_events call
       WHERE call.catalog_execution_id=$1::uuid AND call.workspace_id=$2::uuid
         AND call.workspace_contract='workspace-engine-interpretation-v1'
-        AND NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exceptions exception
+        AND ($3::boolean OR NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exceptions exception
           WHERE exception.execution_id=call.catalog_execution_id
             AND (exception.original_request_digest=call.request_digest
-              OR exception.repair_request_digest=call.request_digest))
+              OR exception.repair_request_digest=call.request_digest)))
         AND NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact
           JOIN engine_cost_events final_call ON final_call.id=(artifact.metadata->>'call_id')::uuid
           LEFT JOIN engine_cost_events source_call ON source_call.id::text=lower(final_call.metadata->'editorial_repair'->>'source_call_id')
@@ -876,7 +890,7 @@ export async function readSignalWorkspaceEngineInterpretationRecoveryRequestDige
             AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
             AND (final_call.request_digest=call.request_digest OR source_call.request_digest=call.request_digest))
       ORDER BY call.request_digest`,
-      [run.id,run.workspace_id])).rows;
+      [run.id,run.workspace_id,isMassLabelingRecoveryProfileV1(run.input_snapshot.engine_config.profile_version)])).rows;
     if(rows.some(row=>!digestPattern.test(row.request_digest)))return fail('workspace_engine_interpretation_request_invalid',503);
     return rows.map(row=>row.request_digest);
   });
@@ -891,7 +905,8 @@ export async function readSignalWorkspaceEngineInterpretationExceptionsV1(args:{
    SELECT id exception_id,original_call_id,repair_call_id,original_request_digest,repair_request_digest,original_response_sha256,
     repair_response_sha256,batch_digest,unit_manifest unit_keys,unit_digest,diagnostic_code,
     to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at
-   FROM signal_workspace_interpretation_exceptions WHERE workspace_id=$1::uuid AND execution_id=$2::uuid ORDER BY id`,[run.workspace_id,run.id])).rows;
+   FROM signal_workspace_interpretation_exceptions exception WHERE workspace_id=$1::uuid AND execution_id=$2::uuid
+    AND NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exception_resolutions resolution WHERE resolution.exception_id=exception.id) ORDER BY id`,[run.workspace_id,run.id])).rows;
   const seen=new Set<string>();
   return rows.map(row=>{if(row.diagnostic_code!=='workspace_engine_interpretation_repair_invalid'||!digestPattern.test(row.batch_digest)
     ||!digestPattern.test(row.unit_digest)||!Array.isArray(row.unit_keys)||!row.unit_keys.length||row.unit_keys.length>128
@@ -946,10 +961,7 @@ export async function quarantineSignalWorkspaceEngineInterpretationBatchV1(args:
    RETURNING id exception_id,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') created_at`,
    [id,run.workspace_id,run.id,original.id,repair.id,original.request_digest,repair.request_digest,original.response_sha256,repair.response_sha256,
     run.input_digest,fit.checkpoint_digest,configurationDigest,args.batch_digest,unitDigest,JSON.stringify(unitKeys),args.validator_version,run.actor_user_id])).rows[0]!;
-  await client.query(`UPDATE signal_topic_catalog_executions SET result_summary=result_summary||jsonb_build_object(
-   'interpretation_exceptions',(SELECT count(*)::int FROM signal_workspace_interpretation_exceptions WHERE execution_id=$1::uuid),
-   'interpretation_exception_units',(SELECT COALESCE(sum(jsonb_array_length(unit_manifest)),0)::int FROM signal_workspace_interpretation_exceptions WHERE execution_id=$1::uuid)),
-   updated_at=clock_timestamp() WHERE id=$1::uuid`,[run.id]);
+  await refreshSignalWorkspaceEngineInterpretationRecoverySummaryWithClientV1(client,run.id);
   return{...saved,original_call_id:original.id,repair_call_id:repair.id,original_request_digest:original.request_digest,
    repair_request_digest:repair.request_digest,original_response_sha256:original.response_sha256,repair_response_sha256:repair.response_sha256,
    batch_digest:args.batch_digest,unit_keys:unitKeys,unit_digest:unitDigest,diagnostic_code:'workspace_engine_interpretation_repair_invalid',replayed:false};
@@ -979,7 +991,27 @@ export async function checkpointSignalWorkspaceEngineInterpretationV1(args:{data
       ||signalWorkspaceEmbeddingDigestV1(call.call_configuration)!==signalWorkspaceEmbeddingDigestV1(call.authorized_configuration))return fail('workspace_engine_interpretation_receipt_required');
     const artifact={...args.artifact,metadata:{...args.artifact.metadata,contract_version:'workspace-engine-interpretation-checkpoint-v1',
       execution_id:run.id,fit_checkpoint_digest:fit.checkpoint_digest,call_id:args.call_id,response_sha256:call.response_sha256,unit_keys:[...args.unit_keys].sort()}};
-    const saved=await persistSignalWorkspaceEngineArtifactWithClientV1(client,run,artifact),coverage=await interpretationCoverage(client,run),expected=fit.interpretation_manifest;
+    const saved=await persistSignalWorkspaceEngineArtifactWithClientV1(client,run,artifact);
+    if(isMassLabelingRecoveryProfileV1(run.input_snapshot.engine_config.profile_version)){
+      const claims=(await client.query<{unit_key:string}>(`SELECT claim.unit_key FROM signal_workspace_interpretation_unit_claims claim
+        JOIN engine_cost_events receipt ON receipt.id=$2::uuid
+        WHERE claim.execution_id=$1 AND claim.original_request_digest=COALESCE(receipt.metadata#>>'{editorial_repair,source_request_digest}',receipt.request_digest)
+        ORDER BY claim.unit_key COLLATE "C"`,[run.id,args.call_id])).rows.map(row=>row.unit_key);
+      if(signalWorkspaceEmbeddingDigestV1(claims)!==signalWorkspaceEmbeddingDigestV1([...args.unit_keys].sort()))return fail('workspace_engine_interpretation_unit_claim_invalid');
+      const exceptions=(await client.query<{id:string;original_call_id:string;repair_call_id:string;unit_manifest:string[];original_response_sha256:string;repair_response_sha256:string}>(`SELECT exception.* FROM signal_workspace_interpretation_exceptions exception
+        WHERE exception.execution_id=$1 AND NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exception_resolutions resolution WHERE resolution.exception_id=exception.id)
+          AND (exception.original_call_id=$2 OR exception.repair_call_id=$2 OR exception.unit_manifest ?| $3::text[])`,[run.id,args.call_id,args.unit_keys])).rows;
+      for(const exception of exceptions){
+        if(![exception.original_call_id,exception.repair_call_id].includes(args.call_id)
+          ||signalWorkspaceEmbeddingDigestV1(exception.unit_manifest)!==signalWorkspaceEmbeddingDigestV1([...args.unit_keys].sort()))return fail('workspace_engine_interpretation_exception_resolution_invalid');
+        await client.query(`INSERT INTO signal_workspace_interpretation_exception_resolutions(exception_id,workspace_id,execution_id,artifact_id,call_id,
+          original_response_sha256,repair_response_sha256,resolved_response_sha256,validator_version,created_by_user_id)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,'workspace-interpretation-validator-pilot30-v1',$9)`,
+          [exception.id,run.workspace_id,run.id,saved.artifact_id,args.call_id,exception.original_response_sha256,exception.repair_response_sha256,call.response_sha256,run.actor_user_id]);
+      }
+      await refreshSignalWorkspaceEngineInterpretationRecoverySummaryWithClientV1(client,run.id);
+    }
+    const coverage=await interpretationCoverage(client,run),expected=fit.interpretation_manifest;
     if(coverage.unit_count>expected.unit_count||coverage.unit_count===expected.unit_count&&coverage.unit_digest!==expected.unit_digest)
       return fail('workspace_engine_interpretation_coverage_invalid');
     await client.query(`UPDATE signal_topic_catalog_executions SET result_summary=result_summary||$2::jsonb,progress=$3,updated_at=clock_timestamp() WHERE id=$1::uuid`,
@@ -1039,7 +1071,8 @@ export async function completeSignalWorkspaceEngineAnalysisWithExceptionsV1(args
       AND artifact.artifact_type='engine_proposals' AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
    UNION ALL SELECT unit.key,'exception' source FROM signal_workspace_interpretation_exceptions exception
     CROSS JOIN LATERAL jsonb_array_elements_text(exception.unit_manifest) unit(key)
-    WHERE exception.workspace_id=$1::uuid AND exception.execution_id=$2::uuid`,[run.workspace_id,run.id])).rows;
+    WHERE exception.workspace_id=$1::uuid AND exception.execution_id=$2::uuid
+     AND NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_exception_resolutions resolution WHERE resolution.exception_id=exception.id)`,[run.workspace_id,run.id])).rows;
   const keys=rows.map(row=>row.key).sort(),unique=[...new Set(keys)],exceptionUnits=rows.filter(row=>row.source==='exception').length;
   if(!exceptionUnits||unique.length!==keys.length||unique.length!==fit.interpretation_manifest.unit_count
     ||signalWorkspaceInterpretationUniverseDigestV1(unique)!==fit.interpretation_manifest.unit_digest)
@@ -1079,7 +1112,7 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     if(Boolean(run.input_snapshot.numeric_descriptor)!==Boolean(args.numeric_only))return fail('workspace_engine_incremental_retry_unavailable');
     // A retry key records one accepted dispatch, even if that attempt later
     // fails or its inputs become stale. Replaying it cannot enqueue again.
-    if(args.numeric_only&&prior)return{execution_id:run.id,replayed:true};
+    if(prior&&(args.numeric_only||isMassLabelingRecoveryProfileV1(run.input_snapshot.engine_config.profile_version)))return{execution_id:run.id,replayed:true};
     await current(client,run,true);
     const numericRecovery=args.numeric_only?await readSignalWorkspaceNumericRecoveryWithQueryableV1({queryable:client,
       workspace_id:run.workspace_id,actor_user_id:args.actor_user_id,execution_id:run.id}):null;
@@ -1093,7 +1126,9 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const evidenceRecovery=run.error_code==='workspace_engine_interpretation_cluster_invalid'
       && (await client.query<{eligible:boolean}>(`SELECT (${interpretationEvidenceRecoveryPredicate}) eligible
         FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
-    const editorialRecovery=run.error_code==='workspace_engine_interpretation_output_invalid'
+    const pilotRecovery=isMassLabelingRecoveryProfileV1(run.input_snapshot.engine_config.profile_version)
+      && (await client.query<{eligible:boolean}>(`SELECT (${pilotReceiptRecoveryPredicate}) eligible FROM signal_topic_catalog_executions execution WHERE execution.id=$1`,[run.id])).rows[0]?.eligible===true;
+    const editorialRecovery=pilotRecovery||run.error_code==='workspace_engine_interpretation_output_invalid'
       && (await client.query<{eligible:boolean}>(`SELECT (${editorialRepairRecoveryPredicate}) eligible
         FROM signal_topic_catalog_executions execution WHERE execution.id=$1::uuid`,[run.id])).rows[0]?.eligible===true;
     const exceptionRecovery=run.error_code==='workspace_engine_interpretation_repair_invalid'
@@ -1105,7 +1140,7 @@ export async function retrySignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const capacityRecovery=run.error_code==='workspace_engine_interpretation_batch_capacity_exceeded'
       && (run.result_summary.interpretation_context_contract===undefined
         ||run.result_summary.interpretation_context_contract==='legacy-full-v1');
-    if(run.status!=='failed'||!(args.numeric_only?numericRecovery?.retry_available:isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery,
+    if(run.status!=='failed'||!pilotRecovery&&!(args.numeric_only?numericRecovery?.retry_available:isSignalWorkspaceEngineRetryableErrorV1(run.error_code,{storage_recovery_eligible:storageRecovery,
       interpretation_evidence_recovery_eligible:evidenceRecovery,editorial_repair_recovery_eligible:editorialRecovery,
       interpretation_exception_recovery_eligible:exceptionRecovery,
       interpretation_capacity_recovery_eligible:capacityRecovery,transport_recovery_eligible:transportRecovery})))return fail('workspace_engine_retry_unavailable');
@@ -1155,7 +1190,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         (${signalWorkspaceEngineProgressOwnerPredicateV1}) progress_owner,
         (${storageRecoveryPredicate}) storage_recovery_eligible,
         (${interpretationEvidenceRecoveryPredicate}) interpretation_evidence_recovery_eligible,
-        (${editorialRepairRecoveryPredicate}) editorial_repair_recovery_eligible,
+        ((${editorialRepairRecoveryPredicate}) OR (${pilotReceiptRecoveryPredicate})) editorial_repair_recovery_eligible,
         (${interpretationExceptionRecoveryPredicate}) interpretation_exception_recovery_eligible,
         (execution.error_code='workspace_engine_interpretation_batch_capacity_exceeded'
           AND (NOT execution.result_summary ? 'interpretation_context_contract'
@@ -1364,4 +1399,29 @@ export async function persistSignalWorkspaceEngineProgressArtifactWithClientV1(c
  const {run}=await loadSignalWorkspaceEngineProgressInputWithClientV1(client,scope);
  if(artifact.metadata.contract_version!=='workspace-topic-materialization-progress-v1'||artifact.artifact_type!=='engine_proposals')return fail('workspace_engine_artifact_invalid',422);
  return persistSignalWorkspaceEngineArtifactWithClientV1(client,run,artifact);
+}
+
+/** A recovery invocation must not enter a free fit or create paid authority.
+ * The complete existing bundle is checked before retry/claim touches the run. */
+export async function assertSignalWorkspaceMassLabelingRecoveryReadyV1(args:{database:SignalWorkspaceEngineDatabaseV1;execution_id:string;
+ workspace_id?:string;actor_user_id?:string}):Promise<{pilot:boolean}>{
+ return transaction(args.database,async client=>{
+  const row=(await client.query<{id:string;workspace_id:string;actor_user_id:string;input_contract:string;input_snapshot:SignalWorkspaceEngineSnapshotV1;
+    result_summary:Record<string,unknown>;revision_live:boolean;policy_live:boolean;bundle_valid:boolean}>(`SELECT execution.id,execution.workspace_id,execution.actor_user_id,
+    execution.input_contract,execution.input_snapshot,execution.result_summary,
+    execution.input_revision=state.input_revision revision_live,(execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) policy_live,
+    (${outputBundlePredicate}) bundle_valid
+    FROM signal_topic_catalog_executions execution LEFT JOIN signal_corpus_preparation_input_state state USING(workspace_id) WHERE execution.id=$1`,[args.execution_id])).rows[0];
+  if(!row)return fail('workspace_engine_not_found',404);
+  if(args.workspace_id&&args.workspace_id!==row.workspace_id||args.actor_user_id&&args.actor_user_id!==row.actor_user_id)return fail('workspace_engine_forbidden',403);
+  if(!isMassLabelingRecoveryProfileV1(row.input_snapshot.engine_config?.profile_version))return{pilot:false};
+  await authorize(client,row.workspace_id,row.actor_user_id,true);
+  if(row.input_contract!=='workspace-topic-engine-v1'||!row.input_snapshot.interpretation_config
+    ||!(Number(row.input_snapshot.claude_cap_micro_usd)>0)||!row.result_summary.fit_checkpoint||!row.bundle_valid
+    ||!row.revision_live||!row.policy_live)return fail('workspace_engine_interpretation_recovery_fit_required');
+  const identity=await loadSignalWorkspaceEngineInputIdentityV1({queryable:client,workspace_id:row.workspace_id,actor_user_id:row.actor_user_id,
+    taxonomy_profile_id:row.input_snapshot.taxonomy_profile_id,discovery:!!row.input_snapshot.discovery_population});
+  if(identity.context_digest!==row.input_snapshot.context_digest||identity.catalog_digest!==row.input_snapshot.catalog_digest)return fail('workspace_engine_inputs_stale');
+  return{pilot:true};
+ });
 }
