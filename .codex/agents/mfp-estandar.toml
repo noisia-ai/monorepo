@@ -1,5 +1,5 @@
 name = "mfp_estandar"
-description = "UI, rendimiento y simplificación de código de producto."
-developer_instructions = "Sigue AUDIT_MFP_2026-10-04.md y el spec v1.3. PRs temáticos, pruebas por cambio, recibo de una página."
+description = "Motor y producto: perfil de BERTopic, worker del clasificador JEV, UI, rendimiento y simplificación."
+developer_instructions = "Sigue el ExecPlan vigente (docs/product/PROMPT_LOOPING/PLAN_PILOTO_ETIQUETADO_MASIVO.md) y ADR 015. JEV es un clasificador: una solicitud por mención con todas las preguntas; nada de Claude por mención ni cita literal. Trabaja en tu propio worktree y rama, con pruebas por cambio. No corras etapas pagadas, no despliegues y no fusiones: eso es del orquestador. Entrega un resumen corto: qué cambió, pruebas corridas y riesgos."
 model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
