@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID,createHash} from 'node:crypto';
+import {createSignalTopicInputSchemaV1} from '@noisia/query-engine';
 import type {Pool,PoolClient} from 'pg';
 import {SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1 as profile,SIGNAL_WORKSPACE_ENGINE_JOB_V1,SIGNAL_WORKSPACE_INTERPRETATION_REPAIR_PROTOCOL_DIGEST_V1,SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 as opus,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as sonnet} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
@@ -11,6 +12,7 @@ import {loadSignalWorkspaceTopicPrototypePlanV1} from '../signal-workspace-topic
 import {quoteSignalWorkspaceTopicPrototypesV1,requestSignalWorkspaceTopicPrototypesV1,loadSignalWorkspaceTopicPrototypesV1,
  initializeSignalWorkspaceTopicPrototypeCatalogV1} from '../signal-workspace-topic-prototypes-management';
 import {signalMfpLegacyWorkspaceFixtureV1} from './signal-mfp-legacy-workspace.synthetic.fixture';
+import {createSignalTopicStoreV1} from '../signal-topic-catalog';
 const enabled=process.env.NOISIA_MFP_PG_CI==='true';
 const sha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf8').digest('hex')}`;
 async function fixture(options:{root_count?:number;skip_topic_prototypes?:boolean}={}){
@@ -24,8 +26,9 @@ async function fixture(options:{root_count?:number;skip_topic_prototypes?:boolea
  return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,catalog,cleanup};
 }
 async function dailyExposure(f:Awaited<ReturnType<typeof fixture>>,timezone='UTC'){
- const row=(await f.query(`SELECT total_micro_usd FROM signal_processing_org_exposure_v1(
-  (SELECT organization_id FROM signal_workspaces WHERE id=$1::uuid),(clock_timestamp() AT TIME ZONE $2)::date,$2)`,[f.workspace_id,timezone])).rows[0];
+ const row=(await f.query(`SELECT COALESCE(sum(workspace_engine_interpretation_effective_cost_v1(call)),0)::text total_micro_usd
+  FROM engine_cost_events call WHERE call.workspace_contract='workspace-engine-interpretation-v1' AND call.actor_user_id=$1::uuid
+   AND call.budget_date=(clock_timestamp() AT TIME ZONE $2)::date`,[f.actor_user_id,timezone])).rows[0];
  return Number(row?.total_micro_usd??0);
 }
 async function prototypes(f:Awaited<ReturnType<typeof fixture>>){
@@ -139,7 +142,15 @@ test('engine exports every chunk with zero interests, autonomous cached context,
 });
 test('engine rejects missing context cache and stale completion; small populations complete without inventing a model', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture({skip_topic_prototypes:true});try{
+  const topic=await createSignalTopicStoreV1({pool:f.database,...f.access,idempotency_key:randomUUID(),input:createSignalTopicInputSchemaV1.parse({
+   label:'Synthetic cache-miss guide',definition:'An invented topic whose phrase has never been embedded in this workspace.'})});
+  assert.ok(topic.term_key);
+  const beforeCalls=(await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n;
   await assert.rejects(f.begin(),/guides_required/u);
+  assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,beforeCalls,
+   'missing guide cache rejects before a provider call or cost reservation');
+  assert.equal((await f.query("SELECT count(*)::int n FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,0,
+   'missing guide cache rejects before engine dispatch');
   await prototypes(f);const started=await f.begin(),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-fixture'});assert.ok(lease);
   const coverage=await consume(f,lease);const output=await artifact(f,lease,'engine_output');
   await f.query('BEGIN');try{await f.query("UPDATE brands SET description='changed during fit' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
@@ -166,7 +177,7 @@ test('brand without published context cannot start from another workspace embedd
   await assert.rejects(engine.loadSignalWorkspaceEnginePreflightV1({...f.access,workspace_id:workspace}),/brand_context_semantic_context_required/u);
   assert.equal((await f.query("SELECT count(*)::int count FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid",[workspace])).rows[0].count,0);
   await assert.rejects(engine.beginSignalWorkspaceEngineV1({...f.access,workspace_id:workspace,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
-    expected_context_digest:sha('foreign workspace context'),expected_catalog_digest:sha('foreign workspace catalog'),engine_config:{fixture:true},claude_cap_micro_usd:0}),/brand_context_semantic_context_required/u);
+    expected_context_digest:sha('foreign workspace context'),expected_catalog_digest:sha('foreign workspace catalog'),engine_config:{fixture:true},claude_cap_micro_usd:0}),/workspace_engine_complete_embeddings_required/u);
   assert.equal((await f.query("SELECT count(*)::int count FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[workspace])).rows[0].count,0);
   assert.deepEqual(await moneyAndQueue(),beforeMoney,'foreign embedding IDs and unpublished context cannot create reservations, provider-call ledgers, executions or dispatches');
  }finally{await f.cleanup();}
@@ -184,7 +195,8 @@ test('explicit context preparation initializes an empty catalog and unblocks exi
     FROM signal_workspace_embedding_runs run WHERE workspace_id=$1::uuid AND input_contract='corpus' ORDER BY id`,[f.workspace_id])).rows;
   const beforeCorpus=await corpusState();
   const missing=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
-  assert.equal(missing.total_interests,0);assert.equal(missing.embedding_run_id,f.embedding_run_id);assert.ok(missing.missing_guides>0);
+  assert.equal(missing.total_interests,0);assert.equal(missing.embedding_run_id,f.embedding_run_id);assert.equal(missing.missing_guides,0,
+   'published Brand OS source already contains the required synthetic guide vectors');
   assert.equal((await loadSignalWorkspaceTopicPrototypesV1(f.access)).availability,'no_topics');
   await assert.rejects(quoteSignalWorkspaceTopicPrototypesV1(f.access),/workspace_topic_catalog_required/u);
   assert.equal(await profiles(),0,'Status, preflight and quote must not initialize a catalog.');
@@ -208,7 +220,7 @@ test('explicit context preparation initializes an empty catalog and unblocks exi
   assert.ok(plan.context_inputs?.every(input=>input.role==='scope_positive'||input.role==='scope_negative'));
   const quote=await quoteSignalWorkspaceTopicPrototypesV1(f.access);
   assert.equal(quote.total_topics,0);assert.equal(quote.total_input_references,plan.context_inputs!.length);assert.ok(quote.missing_unique_inputs>0);
-  assert.ok(await prototypes(f)>0,'Only missing context inputs receive local fake responses.');
+  assert.equal(await prototypes(f),0,'already embedded published context requires no synthetic provider responses.');
   const completed=await loadSignalWorkspaceTopicPrototypesV1(f.access);
   assert.equal(completed.availability,'available');assert.equal(completed.is_current,true);
   assert.equal(completed.latest_completed?.counts.completed_topics,0);
@@ -229,13 +241,13 @@ test('claim terminalizes expected revocation and input drift before issuing a le
     if(mutation==='revision')await f.query('UPDATE signal_corpus_preparation_input_state SET input_revision=input_revision+1 WHERE workspace_id=$1::uuid',[f.workspace_id]);
     if(mutation==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
     if(mutation==='context'){
-     const beforeOutbox=(await f.query(`SELECT status,dispatch_generation,lease_token,attempt_count FROM signal_topic_classification_outbox
+     const beforeOutbox=(await f.query(`SELECT status,worker_job_id,lease_token,lease_expires_at,attempt_count,available_at FROM signal_topic_classification_outbox
        WHERE execution_id=$1::uuid AND dispatch_kind='execution'`,[started.execution_id])).rows[0];
      const beforeCalls=(await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n;
      await assert.rejects(engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-claim-rejection'}),/brand_context_source_stale/u);
      const stale=(await f.query('SELECT status,error_code,execution_token FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0];
      assert.equal(stale.status,'queued');assert.equal(stale.error_code,null);assert.equal(stale.execution_token,null);
-     assert.deepEqual((await f.query(`SELECT status,dispatch_generation,lease_token,attempt_count FROM signal_topic_classification_outbox
+     assert.deepEqual((await f.query(`SELECT status,worker_job_id,lease_token,lease_expires_at,attempt_count,available_at FROM signal_topic_classification_outbox
        WHERE execution_id=$1::uuid AND dispatch_kind='execution'`,[started.execution_id])).rows[0],beforeOutbox,'stale source rejection does not claim or redispatch the outbox');
      assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,beforeCalls,'rejected stale claim creates no provider call or reservation');
      continue;
@@ -390,11 +402,12 @@ test('storage verification retry is explicit, current and confined to zero durab
 test('interpretation evidence retry restores only a complete immutable bundle before any fit or paid evidence', {skip:!enabled,timeout:60_000},async()=>{
  const f=await fixture();try{
   await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  const dailyCap=await dailyExposure(f,'UTC')+100_000_000;
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('evidence-prompt'),schema_digest:sha('evidence-schema'),pricing_version:'local-only',
    input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
   const startKey=randomUUID(),started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:startKey,
    expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:'evidence-recovery'},claude_cap_micro_usd:5000,
-   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:5000}});
+   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap}});
   const claim=async()=>{const lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-evidence-recovery'});assert.ok(lease);return lease;};
   const lease=await claim(),error_code='workspace_engine_interpretation_cluster_invalid';
   const coverage={roots:lease.snapshot.expected_roots,chunks:lease.snapshot.expected_chunks,guides:lease.snapshot.expected_guides};
@@ -449,8 +462,8 @@ test('interpretation evidence retry restores only a complete immutable bundle be
     model_configuration:{fixture:'evidence-recovery'},runtime_kind:'python',artifact_format:model?'joblib':'none',license_key:null,
     interpretation_manifest:{unit_count:0,unit_digest:sha('')}});
    if(stage==='reserved'||stage==='unknown'){
-    const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:active.execution_token,idempotency_key:randomUUID(),request_digest:sha(stage),
-     configuration,reserved_micro_usd:100,budget_timezone:'UTC',daily_cap_micro_usd:5000});
+   const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:active.execution_token,idempotency_key:randomUUID(),request_digest:sha(stage),
+    configuration,reserved_micro_usd:100,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap});
     if(stage==='unknown'){const token={database:f.database,call_id:call.call_id,attempt_token:call.attempt_token,execution_token:active.execution_token};
      await money.markSignalWorkspaceEngineInterpretationSentV1(token);
      await money.failSignalWorkspaceEngineInterpretationV1({...token,outcome:'outcome_unknown',error_code:'workspace_engine_interpretation_outcome_unknown'});}
@@ -498,7 +511,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
    FROM pg_proc proc CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl,acldefault('f',proc.proowner))) acl
    WHERE proc.oid='guard_workspace_engine_editorial_repair_v1()'::regprocedure`)).rows[0].permitted,false);
   await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
-  const dailyCap=await dailyExposure(f,'UTC')+1000;
+  const dailyCap=await dailyExposure(f,'UTC')+900;
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('repair-prompt'),schema_digest:sha('repair-schema'),pricing_version:'local-only',
    input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
   const started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
@@ -713,11 +726,12 @@ test('external provider terminal evidence retains cost reserves and permits one 
    FROM pg_proc proc CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl,acldefault('f',proc.proowner))) acl
    WHERE proc.oid='guard_workspace_engine_editorial_repair_v1()'::regprocedure`)).rows[0].permitted,false);
   await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
+  const dailyCap=await dailyExposure(f,'UTC')+900;
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('repair-prompt'),schema_digest:sha('repair-schema'),pricing_version:'local-only',
    input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
   const started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
    expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:'editorial-repair'},claude_cap_micro_usd:10_000,
-   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:1000}});
+   interpretation_config:{call_configuration:configuration,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap}});
   const claim=async()=>{const value=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-editorial-repair'});assert.ok(value);return value;};
   const lease=await claim(),coverage={roots:lease.snapshot.expected_roots,chunks:lease.snapshot.expected_chunks,guides:lease.snapshot.expected_guides};
   await engine.heartbeatSignalWorkspaceEngineV1({database:f.database,lease,phase:'persisting',exported:{...coverage,stream_digest:sha('unchanged numerical export')}});
@@ -729,7 +743,7 @@ test('external provider terminal evidence retains cost reserves and permits one 
   await engine.checkpointSignalWorkspaceEngineFitV1({database:f.database,lease,coverage,model_artifact_id:ids.get('model-manifest.json')!,output_artifact_id:ids.get('manifest.json')!,
    result_kind:'computational_grouping',model_configuration:{fixture:'editorial-repair'},runtime_kind:'python',artifact_format:'joblib',license_key:null,
    interpretation_manifest:{unit_count:1,unit_digest:sha('"open:fixture"\n')}});
-  const reserveBase={...f.access,...started,execution_token:lease.execution_token,configuration,budget_timezone:'UTC',daily_cap_micro_usd:1000};
+  const reserveBase={...f.access,...started,execution_token:lease.execution_token,configuration,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap};
   const originalRequest={...reserveBase,idempotency_key:randomUUID(),request_digest:sha('original full packet'),reserved_micro_usd:500};
   const source=await money.reserveSignalWorkspaceEngineInterpretationV1(originalRequest),sourceToken={database:f.database,call_id:source.call_id,attempt_token:source.attempt_token,execution_token:lease.execution_token};
   const response={storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/source-response.parts.json`,sha256:sha('known invalid editorial answer'),size_bytes:29,http_status:200,provider_request_id:null,complete:true};

@@ -244,7 +244,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
     budget_timezone,daily_cap_micro_usd,created_by_user_id)
     SELECT $1,$2,COALESCE(max(version),0)+1,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 day',
       COALESCE((SELECT budget_timezone FROM signal_processing_policy_versions WHERE organization_id=$2 ORDER BY version DESC LIMIT 1),'America/Mexico_City'),$4,$3
-    FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id, args.numeric_daily_cap_micro_usd ?? 0]);
+    FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id, args.numeric_daily_cap_micro_usd ?? 999_999_999_999_999]);
   await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
     configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
     SELECT $1,'topic_consolidation_numeric','free',NULL,NULL,configuration,

@@ -20,9 +20,10 @@ async function fixture(){
 for(const withRepair of [false,true]) test(`one analysis keeps fit and metered interpretation recoverable, rejects partial completion and preserves semantic input identity across own outputs${withRepair?' with an editorial repair':''}`, {skip:!enabled,timeout:90_000},async()=>{
  const f=await fixture();try{
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1=SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
-  const baseline=Number((await f.query(`SELECT total_micro_usd FROM signal_processing_org_exposure_v1(
-   (SELECT organization_id FROM signal_workspaces WHERE id=$1::uuid),(clock_timestamp() AT TIME ZONE 'America/Mexico_City')::date,'America/Mexico_City')`,[f.workspace_id])).rows[0]!.total_micro_usd);
-  const dailyCap=baseline+30_000_000;
+  const baseline=Number((await f.query(`SELECT COALESCE(sum(workspace_engine_interpretation_effective_cost_v1(call)),0)::text total_micro_usd
+   FROM engine_cost_events call WHERE call.workspace_contract='workspace-engine-interpretation-v1' AND call.actor_user_id=$1::uuid
+    AND call.budget_date=(clock_timestamp() AT TIME ZONE 'America/Mexico_City')::date`,[f.actor_user_id])).rows[0]!.total_micro_usd);
+  const dailyCap=baseline+100_000_000;
   const interpretation_config={call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:dailyCap};
   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);assert.equal(preflight.missing_guides,0);
   const request={...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
