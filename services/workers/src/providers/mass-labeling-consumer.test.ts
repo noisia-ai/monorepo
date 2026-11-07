@@ -74,3 +74,8 @@ test("raw-only engine recovery needs no provider and JEV invalid credentials can
   await consume(200);
   assert.equal(claims, 1);
 });
+
+test('completed paid pilot receipt replays without credentials',async()=>{
+ const database={query:async()=>({rows:[{paid_pilot:true,status:'ready'}]})} as never;
+ assert.equal(await authorizeMassEngineConsumerV1({database,execution_id:crypto.randomUUID()}),true);
+});

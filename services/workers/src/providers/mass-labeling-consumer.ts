@@ -15,15 +15,15 @@ export async function authorizeMassEngineConsumerV1(args: {
   operator?: MassEngineOperatorV1;
 }) {
   const row = (
-    await args.database.query<{ paid_pilot: boolean }>(
-      `SELECT
+    await args.database.query<{ paid_pilot: boolean; status?: string }>(
+      `SELECT status,
     input_snapshot#>>'{engine_config,profile_version}'='workspace-bertopic-mass-labeling-v1'
       AND input_snapshot ? 'interpretation_config' paid_pilot
     FROM signal_topic_catalog_executions WHERE id=$1::uuid`,
       [args.execution_id],
     )
   ).rows[0];
-  if (!row?.paid_pilot) return true;
+  if (!row?.paid_pilot || row.status === "ready") return true;
   if (!args.operator) return false;
   if (!args.operator.recovery_only)
     await assertAnthropicProviderAccessV1({
