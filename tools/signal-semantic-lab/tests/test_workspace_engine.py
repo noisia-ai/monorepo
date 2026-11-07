@@ -514,3 +514,106 @@ def test_previous_runtime_change_refits_full_population_without_loading_pickle(
     assert len(read_lines(tmp_path / "refit" / "assignments.open.jsonl")) == 42
     edges = json.loads((tmp_path / "refit" / "lineage.json").read_text())
     assert len(edges) == 1 and edges[0]["kind"] == "continuation"
+
+
+def test_mass_labeling_profile_scales_and_samples_thirty_distinct_roots():
+    from signal_semantic_lab.workspace_engine import mass_labeling_config
+
+    config = mass_labeling_config(83_962)
+    assert config["hdbscan_min_cluster_size"] == 84
+    assert config["cluster_selection_method"] == "eom"
+    assert config["maximum_topics"] == 200
+    assert "pt" in config["language_families"]
+    records, indexes, strengths = representative_fixture(
+        [(root, [0.9, 0.8]) for root in range(40)]
+    )
+    selected = _select_representatives(records, indexes, strengths, 30)
+    assert len(selected) == len({item["root_id"] for item in selected}) == 30
+    assert selected[-1]["selection_reason"] == "low_affiliation_boundary"
+
+
+def test_portuguese_tokens_remove_stopwords_and_preserve_negation():
+    from signal_semantic_lab.preprocess import LocalePreprocessPolicy, locale_tokens
+
+    tokens = locale_tokens(
+        "Eu não gosto desta cerveja sem álcool e nunca compro aquela promoção",
+        LocalePreprocessPolicy(("pt",), ngram_max=1),
+    )
+    assert "eu" not in tokens
+    assert "não" in tokens and "sem" in tokens and "nunca" in tokens
+    assert "cerveja" in tokens
+
+
+def test_mass_labeling_fit_reduces_assignments_before_export(monkeypatch, tmp_path):
+    import sys
+    from types import SimpleNamespace
+
+    import joblib
+
+    from signal_semantic_lab.workspace_engine import _fit, mass_labeling_config
+
+    reductions = []
+
+    class Model:
+        def __init__(self, **kwargs):
+            self.topics_ = [-1, *range(300)]
+            self.probabilities_ = np.ones(301)
+
+        def fit_transform(self, texts, **kwargs):
+            return self.topics_, self.probabilities_
+
+        def reduce_topics(self, texts, nr_topics):
+            reductions.append(nr_topics)
+            self.topics_ = [-1, *[index % 200 for index in range(300)]]
+
+        def get_topic(self, topic):
+            return [(f"term-{topic}", 1.0)]
+
+    monkeypatch.setitem(sys.modules, "bertopic", SimpleNamespace(BERTopic=Model))
+    monkeypatch.setitem(sys.modules, "hdbscan", SimpleNamespace(HDBSCAN=lambda **kw: kw))
+    monkeypatch.setitem(sys.modules, "umap", SimpleNamespace(UMAP=lambda **kw: kw))
+    monkeypatch.setattr(joblib, "dump", lambda model, path, **kw: path.write_bytes(b"synthetic"))
+    labels, strengths, terms = _fit(
+        ["cerveja sintética"] * 301,
+        np.ones((301, 1024)),
+        mass_labeling_config(83_962),
+        None,
+        tmp_path / "model.joblib",
+    )
+    assert reductions == [201]
+    assert len(set(labels) - {-1}) == len(terms) == 200
+    assert labels[0] == -1 and strengths.shape == (301,)
+
+
+def test_mass_labeling_real_fit_guidance_and_reduction(real_runs, tmp_path):
+    from signal_semantic_lab.workspace_engine import _fit, mass_labeling_config
+
+    # Use the exact pilot manifest through the normal exporter/runner contract.
+    original = real_runs["first_input"]
+    source = {}
+    matrix = np.load(original / "vectors.npy")
+    for row in read_lines(original / "chunks.jsonl"):
+        source.setdefault(row["root_id"], []).append((row["text"], matrix[row["ordinal"]]))
+    directory = tmp_path / "pilot-input"
+    manifest = input_fixture(directory, source)
+    manifest["config"] = mass_labeling_config(manifest["records"]["roots"])
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    result = run_workspace_engine(directory, tmp_path / "pilot-output", tmp_path)
+    assert result["config"] == manifest["config"]
+    assert {lane["lane"] for lane in result["lanes"]} == {"open", "guided"}
+    assert all(lane["clusters"] <= 200 for lane in result["lanes"])
+    for lane in result["lanes"]:
+        clusters = json.loads((tmp_path / "pilot-output" / lane["clusters_file"]).read_text())
+        assert all(len(cluster["representatives"]) == min(30, cluster["root_count"]) for cluster in clusters)
+
+    # Exercise BERTopic's actual reduction on a smaller cap, keeping the same
+    # algorithm parameters. This avoids manufacturing hundreds of large topics.
+    labels, _, terms = _fit(
+        [row["text"] for row in read_lines(original / "chunks.jsonl")],
+        matrix,
+        {**manifest["config"], "maximum_topics": 2},
+        None,
+        tmp_path / "reduced.joblib",
+    )
+    assert 0 < len(set(labels) - {-1}) <= 2
+    assert len(terms) <= 2

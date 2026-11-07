@@ -47,6 +47,23 @@ DEFAULT_WORKSPACE_ENGINE_CONFIG = {
     "lineage_min_fraction": 0.5,
     "memory_budget_bytes": 4_294_967_296,
 }
+MASS_LABELING_PROFILE = "workspace-bertopic-mass-labeling-v1"
+
+
+def mass_labeling_config(roots: int) -> dict[str, Any]:
+    return {
+        **DEFAULT_WORKSPACE_ENGINE_CONFIG,
+        "profile_version": MASS_LABELING_PROFILE,
+        "language_families": ["pt", "es", "en"],
+        "hdbscan_min_cluster_size": max(40, (roots + 999) // 1000),
+        "cluster_selection_method": "eom",
+        "maximum_topics": 200,
+        "representatives": 30,
+        "output_locale": "pt-BR",
+        "guidance_policy": "brand-competitors-category-corpus-centroids-v1",
+        "editorial_lane": "guided-or-open-v1",
+    }
+
 _HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,100}$")
 _ROLES = {"topic_positive", "topic_negative", "scope_positive", "scope_negative"}
@@ -202,7 +219,10 @@ def _load_input(
     manifest = _read_json(directory / "manifest.json")
     if (
         manifest.get("contract_version") != INPUT_CONTRACT
-        or manifest.get("config") != DEFAULT_WORKSPACE_ENGINE_CONFIG
+        or manifest.get("config") not in (
+            DEFAULT_WORKSPACE_ENGINE_CONFIG,
+            mass_labeling_config(_natural(manifest.get("records", {}).get("roots"))),
+        )
     ):
         return _fail("input_profile_invalid")
     for key in ["workspace_id", "preparation_run_id", "embedding_run_id"]:
@@ -485,6 +505,13 @@ def _fit(
         top_n_words=config["top_n_words"],
     )
     assigned, strengths = model.fit_transform(texts, embeddings=matrix, y=labels)
+    if config.get("maximum_topics") and len(set(assigned) - {-1}) > config["maximum_topics"]:
+        # BERTopic counts its outlier topic in nr_topics. Preserve room for it
+        # while keeping at most the declared number of non-outlier topics.
+        model.reduce_topics(texts, nr_topics=config["maximum_topics"] + int(-1 in assigned))
+        assigned, strengths = model.topics_, model.probabilities_
+    if config.get("maximum_topics") and len(set(assigned) - {-1}) > config["maximum_topics"]:
+        _fail("topic_limit_exceeded")
     assigned = np.asarray(assigned, dtype=np.int32)
     values = (
         np.asarray(strengths, dtype=np.float32)
@@ -518,7 +545,7 @@ def _root_sets(records: list[dict[str, Any]], labels: np.ndarray) -> dict[int, s
 
 
 def _select_representatives(
-    records: list[dict[str, Any]], indexes: np.ndarray, strengths: np.ndarray
+    records: list[dict[str, Any]], indexes: np.ndarray, strengths: np.ndarray, limit: int = 10
 ) -> list[dict[str, Any]]:
     """Select evidence references only; never alter membership or fitted models.
 
@@ -542,7 +569,7 @@ def _select_representatives(
         default=None,
     )
     boundary_root = records[boundary]["root_id"] if boundary is not None else None
-    capacity = 9 if boundary is not None else 10
+    capacity = limit - 1 if boundary is not None else limit
     selected: dict[str, int] = {}
     for raw_index in indexes:
         index = int(raw_index)
@@ -971,7 +998,7 @@ def run_workspace_engine(
                     "chunk_count": len(indexes),
                     "terms": terms.get(label, []),
                     "representative_selection_policy": REPRESENTATIVE_SELECTION_POLICY,
-                    "representatives": _select_representatives(records, indexes, strengths),
+                    "representatives": _select_representatives(records, indexes, strengths, config.get("representatives", 10)),
                 }
             )
         _write_json(stage / clusters_name, sorted(clusters, key=lambda value: value["local_label"]))

@@ -1682,8 +1682,14 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
     if(!prior)throw new SignalTopicCatalogError("workspace_engine_operational_profile_required");
     if(progress&&prior?.id!==args.expected_catalog_profile_id)throw new SignalTopicCatalogError("workspace_engine_progress_catalog_changed");
     const priorDefinitions = prior ? (await loadProfileTerms(client, prior.id)).map(readDefinition) : [];
-    const inherited = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true,
+    const inheritedSource = await loadSignalTopicInheritedContextStoreV1({ queryable: client, workspace_id: lease.workspace_id, complete_context: true,
       ...(run.input_snapshot.discovery_population ? {context_mode:"workspace-discovery-v1" as const} : {}) });
+    // The Portuguese pilot owns its output locale in the sealed engine profile.
+    // This projection cannot publish a semantic generation or edit Brand OS.
+    const pilotLocale = run.input_snapshot.engine_config.profile_version === "workspace-bertopic-mass-labeling-v1"
+      ? canonicalSignalWorkspaceTopicLocaleV1(run.input_snapshot.engine_config.output_locale) : null;
+    const inherited = pilotLocale ? {...inheritedSource, locale: {...inheritedSource.locale,
+      primary_locale:pilotLocale,languages:[pilotLocale]}} : inheritedSource;
     const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: priorDefinitions, interpretations: proposals,
       execution_id: lease.execution_id, now: new Date().toISOString(), locale: canonicalSignalWorkspaceTopicLocaleV1(inherited.locale.primary_locale) });
     const mappingDigest = sha256(stableJson(merged.mapping));

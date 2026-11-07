@@ -14,7 +14,7 @@ import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspac
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   SignalTopicCatalogError,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
-import { signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
+import { signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
@@ -239,13 +239,15 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     let effectiveCap: number | null;
     try { effectiveCap = discoveryStrictCapV1(args.body.claude_cap_micro_usd,policy.maximum_cap_micro_usd); }
     catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid",422); }
+    const enginePreflight = await signalWorkspaceFeatureEnabledV1({queryable:access.database,workspace_id:args.workspaceId,feature:"mass_labeling"})
+      ? await loadSignalWorkspaceEnginePreflightV1(access) : null;
     await beginSignalWorkspaceEngineV1({ ...access, idempotency_key: args.idempotencyKey,
       embedding_run_id: args.body.embedding_run_id, expected_context_digest: args.body.expected_context_digest,
       expected_catalog_digest: args.body.expected_catalog_digest, claude_cap_micro_usd: effectiveCap,
       discovery_request_intent_digest: intentDigest,
       discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
-      engine_config: SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
-        call_configuration: SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
+      engine_config: enginePreflight?.engine_configuration ?? SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
+        call_configuration: enginePreflight?.engine_configuration ? SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1 : SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
   } else if (args.body.action === "prepare_incremental_editorial") {
     await requestSignalWorkspaceIncrementalEditorialPreparationV1({ ...access, numeric_execution_id: args.body.run_id,

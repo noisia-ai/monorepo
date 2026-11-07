@@ -54,6 +54,7 @@ export async function validateWorkspaceEngineOutputV1(args: {
     if (!object(lane) || !["open", "guided"].includes(String(lane.lane)) || lanes.has(String(lane.lane))
       || lane.occurrences !== args.input.records.rows || lane.roots !== args.input.records.roots
       || !Number.isSafeInteger(lane.clusters) || Number(lane.clusters) < 0
+      || args.input.config.profile_version === "workspace-bertopic-mass-labeling-v1" && Number(lane.clusters) > 200
       || !names.has(String(lane.assignments_file)) || !names.has(String(lane.clusters_file))
       || (lane.model_file !== null && !names.has(String(lane.model_file)))) return fail("output_lane_invalid");
     lanes.add(String(lane.lane));

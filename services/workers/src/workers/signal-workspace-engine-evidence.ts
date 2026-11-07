@@ -33,10 +33,14 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
   input_directory: string; output_directory: string; output: WorkspaceEngineOutputV1;
 }): Promise<SignalWorkspaceInterpretationClusterV1[]> {
   const result: SignalWorkspaceInterpretationClusterV1[] = [];
+  const pilot = args.output.config.profile_version === "workspace-bertopic-mass-labeling-v1";
+  const representatives = pilot ? 30 : 10;
+  const selectedLane = pilot && args.output.lanes.some(lane => lane.lane === "guided") ? "guided" : "open";
   const lanes = new Set<string>();
   for (const lane of args.output.lanes) {
     if (!["open", "guided"].includes(lane.lane) || lanes.has(lane.lane)) fail();
     lanes.add(lane.lane);
+    if (pilot && lane.clusters > 200) fail();
     if (lane.assignments_file !== `assignments.${lane.lane}.jsonl` || lane.clusters_file !== `clusters.${lane.lane}.json`) fail();
     const path = join(args.output_directory, lane.clusters_file);
     // Capacity failure is explicit; it never drops groups to fit a prompt.
@@ -46,7 +50,7 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
     const census = new Map(clusters.map(cluster => {
       if (cluster.lane !== lane.lane || cluster.representative_selection_policy !== "distinct-roots-affiliation-boundary-v1"
         || !Number.isSafeInteger(cluster.local_label) || cluster.local_label < 0
-        || !Array.isArray(cluster.representatives) || cluster.representatives.length !== Math.min(10, cluster.root_count)
+        || !Array.isArray(cluster.representatives) || cluster.representatives.length !== Math.min(representatives, cluster.root_count)
         || cluster.representatives.filter(rep => rep.selection_reason === "low_affiliation_boundary").length !== (cluster.root_count > 1 ? 1 : 0)) fail();
       return [cluster.stable_cluster_id, { cluster, hash: createHash("sha256"), chunks: 0, roots: 0,
         lastRoot: "", refs: new Map<number, SignalWorkspaceInterpretationReferenceV1>() }] as [string, { cluster: Cluster; hash: ReturnType<typeof createHash>; chunks: number; roots: number; lastRoot: string; refs: Map<number, SignalWorkspaceInterpretationReferenceV1> }];
@@ -87,6 +91,7 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
     } finally { await source.return(undefined); }
     for (const { cluster, hash, roots, chunks, refs } of census.values()) {
       if (roots !== cluster.root_count || chunks !== cluster.chunk_count || refs.size !== cluster.representatives.length) fail();
+      if (pilot && lane.lane !== selectedLane) continue;
       result.push(parseSignalWorkspaceInterpretationClusterV1({ cluster_id: `${lane.lane}:${cluster.stable_cluster_id}`,
         lane: lane.lane, cluster_digest: `sha256:${hash.digest("hex")}`, root_count: roots, chunk_count: chunks,
         // BERTopic pads a short vocabulary with empty terms. Keep the sealed
@@ -94,7 +99,7 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
         terms: Array.isArray(cluster.terms)
           ? cluster.terms.filter(term => typeof term !== "string" || term.trim().length > 0)
           : cluster.terms,
-        representatives: cluster.representatives.map(rep => refs.get(rep.ordinal)) }));
+        representatives: cluster.representatives.map(rep => refs.get(rep.ordinal)) }, representatives));
     }
   }
   if (!lanes.has("open")) fail();
