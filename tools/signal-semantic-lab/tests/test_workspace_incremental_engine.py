@@ -11,6 +11,22 @@ import pytest
 from test_workspace_engine import WORKSPACE, file_sha, read_lines, root_id, sha
 from test_workspace_engine import input_fixture as legacy_input_fixture
 
+# The deployed-runtime workflow executes this suite. Re-export the pilot's real
+# fit/reduction acceptance tests and its shared fixture into that same harness.
+from test_workspace_engine import real_runs as real_runs
+from test_workspace_engine import (
+    test_mass_labeling_real_fit_guidance_and_reduction as test_mass_labeling_real_fit_guidance_and_reduction,
+)
+from test_workspace_engine import (
+    test_mass_labeling_fit_reduces_assignments_before_export as test_mass_labeling_fit_reduces_assignments_before_export,
+)
+from test_workspace_engine import (
+    test_mass_labeling_profile_scales_and_samples_thirty_distinct_roots as test_mass_labeling_profile_scales_and_samples_thirty_distinct_roots,
+)
+from test_workspace_engine import (
+    test_portuguese_tokens_remove_stopwords_and_preserve_negation as test_portuguese_tokens_remove_stopwords_and_preserve_negation,
+)
+
 from signal_semantic_lab import workspace_engine as base
 from signal_semantic_lab import workspace_incremental_engine as inc
 

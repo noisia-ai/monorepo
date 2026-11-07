@@ -12,6 +12,7 @@ test("mass-labeling profile scales on canonical roots and keeps historical ident
   assert.equal(signalWorkspaceMassLabelingConfigV1(1).hdbscan_min_cluster_size, 40);
   assert.equal(signalWorkspaceMassLabelingConfigV1(1_000_001).hdbscan_min_cluster_size, 1001);
   assert.equal(signalWorkspaceMassLabelingConfigV1(83962).maximum_topics, 200);
+  assert.equal(signalWorkspaceMassLabelingConfigV1(83962).output_locale, "pt-BR");
   assert.equal(signalWorkspaceMassLabelingConfigV1(83962).cluster_selection_method, "eom");
   assert.equal(SIGNAL_WORKSPACE_ENGINE_CONFIG_V1.cluster_selection_method, "leaf");
   assert.throws(() => signalWorkspaceMassLabelingConfigV1(-1));

@@ -23,8 +23,8 @@ export function signalWorkspaceMassLabelingConfigV1(roots: number) {
     profile_version: SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1,
     language_families: ["pt", "es", "en"],
     hdbscan_min_cluster_size: Math.max(40, Math.ceil(roots / 1000)),
-    cluster_selection_method: "eom", maximum_topics: 200, representatives: 30,
-    guidance_policy: "brand-competitors-category-v1", editorial_lane: "guided-or-open-v1",
+    cluster_selection_method: "eom", maximum_topics: 200, representatives: 30, output_locale: "pt-BR",
+    guidance_policy: "brand-competitors-category-corpus-centroids-v1", editorial_lane: "guided-or-open-v1",
   });
 }
 export function isSignalWorkspaceMassLabelingConfigV1(config: Record<string, unknown>): boolean {

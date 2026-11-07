@@ -1,4 +1,4 @@
-import { signalWorkspaceMassLabelingEnabledV1, loadSignalWorkspaceMassLabelingSeedsV1 } from "./signal-workspace-mass-labeling-profile";
+import { signalWorkspaceMassLabelingEnabledV1, loadSignalWorkspaceMassLabelingSeedsV1, loadSignalWorkspaceMassLabelingGuidesV1 } from "./signal-workspace-mass-labeling-profile";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
 import { loadSignalDiscoveryEstimateV1 } from "./signal-workspace-discovery-estimate";
 export { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1 } from "./signal-workspace-discovery-policy";
@@ -234,7 +234,7 @@ async function completeDispatch(client: PoolClient, execution_id: string) {
     lease_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp() WHERE dispatch_kind='execution' AND execution_id=$1::uuid`,[execution_id]);
 }
 type Run = { interpretation_admission:SignalWorkspaceInterpretationAdmissionV1|null; interpretation_revision: SignalWorkspaceEngineInterpretationRevisionV1 | null; id: string; workspace_id: string; actor_user_id: string; status: string; input_digest: string;
-  input_snapshot: SignalWorkspaceEngineSnapshotV1 & { guides: Array<Omit<SignalWorkspaceEngineGuideV1, "vector">> };
+  input_snapshot: SignalWorkspaceEngineSnapshotV1 & { guides: Array<Omit<SignalWorkspaceEngineGuideV1, "vector"> & { vector?: number[] }> };
   execution_token: string | null; lease_live: boolean; revision_live: boolean; policy_live: boolean;
   result_summary: Record<string, unknown>; error_code: string | null; processed_roots: number; processed_chunks: string };
 async function lockedRun(client: PoolClient, id: string): Promise<Run> {
@@ -288,9 +288,16 @@ const leaseView = (run: Run, token: string): SignalWorkspaceEngineLeaseV1 => ({e
 function publicSnapshot(snapshot: Run["input_snapshot"]): SignalWorkspaceEngineSnapshotV1 { const {guides:_guides,...rest}=snapshot; return rest; }
 async function buildInput(client: Pick<PoolClient,'query'>, workspace: string, actor: string, taxonomy_profile_id?: string, discovery=false) {
   if (await signalWorkspaceMassLabelingEnabledV1({ queryable: client, workspace_id: workspace })) {
-    const plan = await loadSignalWorkspaceTopicPrototypePlanV1({ queryable: client, workspace_id: workspace, actor_user_id: actor, taxonomy_profile_id });
-    return { plan, guides: plan.context_inputs ?? [], catalog_digest: signalWorkspaceEmbeddingDigestV1([]),
-      context_digest: plan.context_digest, context_refs: [] };
+    const profile = taxonomy_profile_id
+      ? (await client.query<{id:string}>("SELECT id FROM signal_taxonomy_profiles WHERE id=$1::uuid AND workspace_id=$2::uuid AND kind='topic'", [taxonomy_profile_id, workspace])).rows[0]
+      : await loadSignalTopicWorkingProfileWithQueryableV1({queryable:client,workspace_id:workspace});
+    if (!profile) throw new SignalTopicCatalogError("workspace_topic_catalog_required");
+    const seeds = await loadSignalWorkspaceMassLabelingGuidesV1({queryable:client,workspace_id:workspace});
+    const plan = buildSignalWorkspaceTopicPrototypePlanV1({taxonomy_profile_id:profile.id,
+      embedding_profile:SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,context_digest:seeds.context_digest,
+      topics:[],texts:{},context_inputs:[]});
+    return {plan,guides:seeds.guides,catalog_digest:signalWorkspaceEmbeddingDigestV1([]),
+      context_digest:seeds.context_digest,context_refs:[]};
   }
   if(discovery){
     const context=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:workspace,complete_context:true,context_mode:"workspace-discovery-v1"});
@@ -329,6 +336,12 @@ export async function loadSignalWorkspaceEngineInputIdentityV1(args:{queryable:P
       WHERE execution.id=$1::uuid AND execution.workspace_id=$2::uuid`,[args.execution_id,args.workspace_id])).rows[0];
     if(!row?.profile_id||taxonomy_profile_id&&taxonomy_profile_id!==row.profile_id)return fail('workspace_engine_operational_profile_required');
     taxonomy_profile_id=row.profile_id;discovery=row.discovery===true;
+  }
+  if (await signalWorkspaceMassLabelingEnabledV1(args)) {
+    if (taxonomy_profile_id && !(await args.queryable.query("SELECT id FROM signal_taxonomy_profiles WHERE id=$1::uuid AND workspace_id=$2::uuid AND kind='topic'", [taxonomy_profile_id,args.workspace_id])).rows.length)
+      return fail('workspace_engine_operational_profile_required');
+    const seeds=await loadSignalWorkspaceMassLabelingSeedsV1(args);
+    return {context_digest:seeds.context_digest,catalog_digest:signalWorkspaceEmbeddingDigestV1([])};
   }
   const input=await buildInput(args.queryable,args.workspace_id,args.actor_user_id,taxonomy_profile_id,discovery);
   return {context_digest:input.context_digest,catalog_digest:input.catalog_digest};
@@ -369,7 +382,7 @@ export async function readSignalWorkspaceEngineInterpretationContextV1(args:{dat
       const seeds = await loadSignalWorkspaceMassLabelingSeedsV1({ queryable: client, workspace_id: run.workspace_id });
       if (seeds.context_digest !== run.input_snapshot.context_digest) return fail('workspace_engine_inputs_stale');
       return { actor_user_id: run.actor_user_id, context: { workspace_id: run.workspace_id, execution_id: run.id,
-        context_digest: seeds.context_digest, data: { brand_os: { context_digest: seeds.context_digest, seeds: seeds.seeds }, interests: [] } } };
+        context_digest: seeds.context_digest, data: { brand_os: { context_digest: seeds.context_digest, seeds: seeds.seeds, locale: {primary_locale:run.input_snapshot.engine_config.output_locale} }, interests: [] } } };
     }
     // Send a bounded, explicit projection of the same governed Brand OS
     // authority used by the numerical guides. The complete serving object has
@@ -434,8 +447,8 @@ export async function loadSignalWorkspaceEnginePreflightV1(args:{database:Signal
     try{const input=await buildInput(client,args.workspace_id,args.actor_user_id,args.taxonomy_profile_id,discoveryEnabled);context_digest=input.context_digest;catalog_digest=input.catalog_digest;guides=input.guides;total_interests=input.plan.topics.length;}
     catch(error){if(args.taxonomy_profile_id||!(error instanceof Error)||error.message!=='workspace_topic_catalog_required')throw error;
       if (await signalWorkspaceMassLabelingEnabledV1({queryable:client,workspace_id:args.workspace_id})) {
-        const seeds = await loadSignalWorkspaceMassLabelingSeedsV1({queryable:client,workspace_id:args.workspace_id});
-        context_digest=seeds.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=seeds.context_inputs;total_interests=0;
+        const seeds = await loadSignalWorkspaceMassLabelingGuidesV1({queryable:client,workspace_id:args.workspace_id});
+        context_digest=seeds.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=seeds.guides;total_interests=0;
       } else {
         const input=discoveryEnabled
           ?{context:await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true,context_mode:"workspace-discovery-v1"}),context_inputs:[]}
@@ -457,10 +470,12 @@ export async function loadSignalWorkspaceEnginePreflightV1(args:{database:Signal
         ?await loadSignalDiscoveryEstimateV1({queryable:client,workspace_id:args.workspace_id,preparation_run_id:embedded.preparation_run_id}):null};
   });
 }
-async function missingGuides(client:PoolClient,workspace:string,config:string,guides:Array<Omit<SignalWorkspaceEngineGuideV1,"vector">>) {
+async function missingGuides(client:PoolClient,workspace:string,config:string,guides:Array<Omit<SignalWorkspaceEngineGuideV1,"vector"> & {vector?:number[]}>) {
+  const cacheGuides=guides.filter(guide=>guide.vector===undefined);
+  if (!cacheGuides.length) return 0;
   return natural((await client.query<{missing:string}>(`SELECT count(*)::text missing FROM jsonb_to_recordset($3::jsonb) guide(input_digest text,text_sha256 text)
    LEFT JOIN signal_workspace_chunk_embeddings cache ON cache.workspace_id=$1::uuid AND cache.config_digest=$2 AND cache.chunk_sha256=guide.text_sha256
-   WHERE cache.chunk_sha256 IS NULL`,[workspace,config,JSON.stringify(guides)])).rows[0]!.missing);
+   WHERE cache.chunk_sha256 IS NULL`,[workspace,config,JSON.stringify(cacheGuides)])).rows[0]!.missing);
 }
 /** Read-only ACK recovery uses the original request intent, never a newly derived policy cap.
  * Grant/tenant authority stays locked through the scoped receipt read. No work is queued. */
@@ -583,6 +598,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     }
     const input=await buildInput(client,args.workspace_id,args.actor_user_id,taxonomy_profile_id,discoveryEnabled);
     if(input.context_digest!==args.expected_context_digest||input.catalog_digest!==args.expected_catalog_digest)return fail('workspace_engine_inputs_stale');
+    if(pilot&&!input.guides.length)return fail('workspace_engine_brand_seed_evidence_required');
     if(await missingGuides(client,args.workspace_id,embedded.profile.config_digest,input.guides))return fail('workspace_engine_guides_required');
     if(!discoveryEnabled&&(embedded.counts.eligible_roots!==embedded.counts.completed_roots||embedded.counts.total_chunk_references!==embedded.counts.processed_chunk_references))
       return fail('workspace_engine_corpus_embeddings_incomplete');
@@ -722,6 +738,14 @@ function vectorOf(raw:string|null):number[]{if(raw===null)return fail('workspace
 export async function readSignalWorkspaceEngineGuidesV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1;
   after:SignalWorkspaceEngineGuideCursorV1|null;limit?:number}):Promise<SignalWorkspaceEngineGuidePageV1>{
   const limit=limitOf(args.limit);return transaction(args.database,async client=>{const run=await requireLease(client,args.lease);
+    if (isSignalWorkspaceMassLabelingConfigV1(run.input_snapshot.engine_config)) {
+      const ordered=run.input_snapshot.guides.filter(guide=>!args.after || guide.guide_key>args.after.guide_key
+        || guide.guide_key===args.after.guide_key && guide.input_digest>args.after.input_digest)
+        .sort((left,right)=>left.guide_key.localeCompare(right.guide_key)||left.input_digest.localeCompare(right.input_digest));
+      const items=ordered.slice(0,limit).map(guide=>({...guide,vector:vectorOf(JSON.stringify(guide.vector??null))}));
+      const last=items.at(-1);
+      return {items,next_cursor:last?{guide_key:last.guide_key,input_digest:last.input_digest}:args.after,done:ordered.length<=limit};
+    }
     const rows=(await client.query<Omit<SignalWorkspaceEngineGuideV1,'vector'>&{vector:string|null}>(`SELECT guide.*,cache.embedding::text vector
       FROM signal_topic_catalog_executions execution CROSS JOIN LATERAL jsonb_to_recordset(execution.input_snapshot->'guides')
        guide(guide_key text,role text,input_digest text,text_sha256 text)
@@ -992,7 +1016,7 @@ export async function completeSignalWorkspaceEngineAnalysisV1(args:{database:Sig
     // Persist the next computational step with the completed analysis. If this
     // transaction is retried or its ACK is lost, the same durable outbox survives;
     // a completed engine job never depends on an ephemeral post-commit enqueue.
-    await requestSignalWorkspaceTopicProjectionWithClientV1(client, { workspace_id: run.workspace_id,
+    if (!isSignalWorkspaceMassLabelingConfigV1(run.input_snapshot.engine_config)) await requestSignalWorkspaceTopicProjectionWithClientV1(client, { workspace_id: run.workspace_id,
       actor_user_id: run.actor_user_id, engine_execution_id: run.id,
       idempotency_key: `workspace-projection:${run.id}` });
     return{execution_id:run.id,model_version_id:fit.model_version_id,output_catalog_profile_id:String(materialization.output_catalog_profile_id),topic_count:natural(profile.topic_count)};

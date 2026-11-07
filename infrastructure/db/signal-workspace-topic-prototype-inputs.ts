@@ -1,4 +1,3 @@
-import { signalWorkspaceMassLabelingEnabledV1, loadSignalWorkspaceMassLabelingSeedsV1 } from "./signal-workspace-mass-labeling-profile";
 import { createHash } from "node:crypto";
 import { buildSignalWorkspaceTopicPrototypePlanV1, prepareWorkspaceCorpusTextChunksV1,
   signalWorkspaceEmbeddingDigestV1, canonicalSignalWorkspaceTopicLocaleV1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, type SignalWorkspaceAutonomousContextInputV1 } from "@noisia/query-engine";
@@ -11,20 +10,6 @@ import { loadSignalWorkspaceTopicInputSnapshotWithQueryableV1,
 export async function loadSignalWorkspaceTopicPrototypePlanV1(args: {
   queryable: SignalWorkspaceTopicQueryableV1; workspace_id: string; actor_user_id: string; input_interests_only?: boolean; taxonomy_profile_id?: string;
 }) {
-  if (await signalWorkspaceMassLabelingEnabledV1(args)) {
-    const { loadSignalTopicWorkingProfileWithQueryableV1 } = await import("./signal-topic-catalog");
-    const profile = args.taxonomy_profile_id
-      ? (await args.queryable.query<{ id: string }>("SELECT id FROM signal_taxonomy_profiles WHERE id=$1::uuid AND workspace_id=$2::uuid AND kind='topic'", [args.taxonomy_profile_id, args.workspace_id])).rows[0]
-      : await loadSignalTopicWorkingProfileWithQueryableV1(args);
-    if (!profile) {
-      const { SignalWorkspaceTopicComputationError } = await import("./signal-workspace-topic-computation");
-      throw new SignalWorkspaceTopicComputationError("workspace_topic_catalog_required");
-    }
-    const seeds = await loadSignalWorkspaceMassLabelingSeedsV1(args);
-    return buildSignalWorkspaceTopicPrototypePlanV1({ taxonomy_profile_id: profile.id,
-      embedding_profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, context_digest: seeds.context_digest,
-      topics: [], texts: seeds.texts, context_inputs: seeds.context_inputs });
-  }
   const snapshot = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({ ...args, allow_empty: true, input_interests_only: args.input_interests_only ?? true });
   const autonomous = await loadSignalWorkspaceAutonomousContextInputsV1(args);
   if (snapshot.input.context_digest !== autonomous.context.context_digest) {

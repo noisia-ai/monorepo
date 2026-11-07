@@ -583,3 +583,37 @@ def test_mass_labeling_fit_reduces_assignments_before_export(monkeypatch, tmp_pa
     assert reductions == [201]
     assert len(set(labels) - {-1}) == len(terms) == 200
     assert labels[0] == -1 and strengths.shape == (301,)
+
+
+def test_mass_labeling_real_fit_guidance_and_reduction(real_runs, tmp_path):
+    from signal_semantic_lab.workspace_engine import _fit, mass_labeling_config
+
+    # Use the exact pilot manifest through the normal exporter/runner contract.
+    original = real_runs["first_input"]
+    source = {}
+    matrix = np.load(original / "vectors.npy")
+    for row in read_lines(original / "chunks.jsonl"):
+        source.setdefault(row["root_id"], []).append((row["text"], matrix[row["ordinal"]]))
+    directory = tmp_path / "pilot-input"
+    manifest = input_fixture(directory, source)
+    manifest["config"] = mass_labeling_config(manifest["records"]["roots"])
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    result = run_workspace_engine(directory, tmp_path / "pilot-output", tmp_path)
+    assert result["config"] == manifest["config"]
+    assert {lane["lane"] for lane in result["lanes"]} == {"open", "guided"}
+    assert all(lane["clusters"] <= 200 for lane in result["lanes"])
+    for lane in result["lanes"]:
+        clusters = json.loads((tmp_path / "pilot-output" / lane["clusters_file"]).read_text())
+        assert all(len(cluster["representatives"]) == min(30, cluster["root_count"]) for cluster in clusters)
+
+    # Exercise BERTopic's actual reduction on a smaller cap, keeping the same
+    # algorithm parameters. This avoids manufacturing hundreds of large topics.
+    labels, _, terms = _fit(
+        [row["text"] for row in read_lines(original / "chunks.jsonl")],
+        matrix,
+        {**manifest["config"], "maximum_topics": 2},
+        None,
+        tmp_path / "reduced.joblib",
+    )
+    assert 0 < len(set(labels) - {-1}) <= 2
+    assert len(terms) <= 2

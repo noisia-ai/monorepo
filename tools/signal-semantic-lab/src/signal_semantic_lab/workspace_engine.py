@@ -59,7 +59,8 @@ def mass_labeling_config(roots: int) -> dict[str, Any]:
         "cluster_selection_method": "eom",
         "maximum_topics": 200,
         "representatives": 30,
-        "guidance_policy": "brand-competitors-category-v1",
+        "output_locale": "pt-BR",
+        "guidance_policy": "brand-competitors-category-corpus-centroids-v1",
         "editorial_lane": "guided-or-open-v1",
     }
 
