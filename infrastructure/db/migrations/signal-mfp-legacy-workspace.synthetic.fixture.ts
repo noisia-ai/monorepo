@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import type { Pool, PoolClient } from 'pg';
 import { insertSignalTaxonomyDraftCoreV1 } from '../signal-taxonomy-profile';
 import { loadSignalTopicInheritedContextStoreV1 } from '../signal-topic-catalog';
-import { fixtureSha } from './signal-workspace-topic-projection.fixture';
+import { fixtureSha, workspaceProjectionFixtureBodyV1 } from './signal-workspace-topic-projection.fixture';
 import { seedSignalTopicEditorialRenewalSourceV1 } from './signal-topic-editorial-renewal.synthetic.fixture';
 import type { SyntheticTransactionV1 } from './signal-client-workspace-entry.synthetic.fixture';
 
@@ -49,6 +49,7 @@ export async function signalMfpLegacyWorkspaceFixtureV1(options: { root_count?: 
       WHERE id=$1::uuid AND input_contract='workspace-topic-engine-v1'`, [seed.source_engine_execution_id])).rows[0];
     assert.ok(engine?.embedding_run_id, 'the source engine execution retains its actual embedding run');
     const embedding_run_id = engine.embedding_run_id as string;
+    const projection = seed.projection;
     const access = { database, workspace_id, actor_user_id };
     const catalog = async () => {
       const context = await loadSignalTopicInheritedContextStoreV1({ queryable: database, workspace_id, complete_context: true });
@@ -57,7 +58,11 @@ export async function signalMfpLegacyWorkspaceFixtureV1(options: { root_count?: 
         provider: 'operator', model_version: 'synthetic-test', prompt_hash: fixtureSha('synthetic'), model_metadata: {},
         profile_metadata: { contract_version: 'signal-topic-catalog-v1' }, context_refs: context.context_refs });
     };
-    return { ...transaction, ...seed, database, query, workspace_id, actor_user_id, embedding_run_id, access, catalog, cleanup };
+    const runProjection = (projectionOptions: Parameters<typeof workspaceProjectionFixtureBodyV1>[1] = {}) =>
+      workspaceProjectionFixtureBodyV1({ ...transaction, workspace_id, actor_user_id, embedding_run_id,
+        cleanup: async () => {} }, projectionOptions);
+    return { ...transaction, ...seed, ...projection, database, query, workspace_id, actor_user_id, embedding_run_id,
+      engine_execution_id: seed.source_engine_execution_id, access, catalog, runProjection, cleanup };
   } catch (error) {
     await cleanup();
     throw error;

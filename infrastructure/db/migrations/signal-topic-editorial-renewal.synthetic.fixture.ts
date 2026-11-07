@@ -311,6 +311,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
     true, "real control owner must complete against the guarded materialized census");
 
   return { scope: { ...access, numeric_run_id: numeric.consolidation_run_id }, identity,
+    projection,
     source_engine_execution_id: source_execution_id, numeric_execution_id: requested.execution_id,
     initial_policy_id: policy_id, semantic_generation_id: prepared.generation_id,
     knowledge_source_id: knowledge.source_id, saves,
