@@ -32,7 +32,7 @@ test('admin corpus receipt aggregation uses migrated PostgreSQL data and live au
       existingBatch.included_count, existingBatch.excluded_count, existingBatch.duplicate_count, existingBatch.imported_by_user_id]);
     await f.query(`UPDATE mentions SET inclusion_status='excluded' WHERE id=(SELECT mention_id FROM signal_mention_import_memberships
       WHERE workspace_id=$1::uuid ORDER BY mention_id LIMIT 1)`, [workspaceId]);
-    await f.query(`UPDATE mentions SET published_at=NULL WHERE id=(SELECT mention_id FROM signal_mention_import_memberships
+    await f.query(`UPDATE mentions SET published_at='infinity'::timestamptz WHERE id=(SELECT mention_id FROM signal_mention_import_memberships
       WHERE workspace_id=$1::uuid ORDER BY mention_id DESC LIMIT 1)`, [workspaceId]);
     await f.query("UPDATE signal_workspaces SET timezone='Pacific/Kiritimati' WHERE id=$1::uuid", [workspaceId]);
     for (const connectionMethod of ['manual-csv', 'api']) {

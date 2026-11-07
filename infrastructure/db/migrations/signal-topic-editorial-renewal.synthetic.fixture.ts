@@ -62,7 +62,7 @@ export const SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1: SignalBrandCon
  * remain real; the main fixture then runs the normal semantic transitions. */
 export function createSignalTopicEditorialRenewalSyntheticSavesV1(
   runtime = SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1,
-  options: {brand_name?: string} = {},
+  options: {brand_name?: string; allow_existing_policy?: boolean} = {},
 ): Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge"> {
   const refreshSnapshot = async (args: Parameters<BrandContextSyntheticSaveBindingsV1["saveKnowledge"]>[0]) => {
     const snapshot = await readSignalBrandOsCanonicalSnapshotV1({ queryable: args.scoped,
@@ -108,7 +108,8 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
           NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS: config.output_usd_per_million_tokens,
           NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd),
         } });
-      assert.equal(policy.status, "provisioned", "real policy service must seal the explicit synthetic context allowance");
+      assert.ok(policy.status === "provisioned" || options.allow_existing_policy && policy.status === "existing_policy",
+        "the first synthetic organization provisions its policy; a shared-workspace fixture reuses that organization policy");
       return { brand_id, workspace_id: workspace.id };
     },
     async saveKnowledge(args) {
@@ -168,7 +169,8 @@ export async function snapshotSignalTopicEditorialRenewalSyntheticHistoryV1(tx: 
 export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicEditorialRenewalSyntheticSeedArgsV1) {
   const { database, scoped, query } = args;
   const runtime = args.runtime ?? SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1;
-  const saves = args.saves ?? createSignalTopicEditorialRenewalSyntheticSavesV1(runtime);
+  const sharedIdentity = args.identity !== undefined;
+  const saves = args.saves ?? createSignalTopicEditorialRenewalSyntheticSavesV1(runtime, { allow_existing_policy: sharedIdentity });
   assert.equal((await query("SHOW transaction_isolation")).rows[0]?.transaction_isolation, "read committed",
     "real processing admission requires the runner's READ COMMITTED rollback harness");
   const organization_id = args.identity?.organization_id ?? randomUUID();
