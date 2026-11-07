@@ -609,13 +609,18 @@ test('interpretation single-send, exact settlement after staleness, retained unk
   const secondWorkspace=other.workspace_id,secondEmbedding=other.embedding_run_id;
   await other.catalog();
   const otherAccess={database:other.database,workspace_id:secondWorkspace,actor_user_id:other.actor_user_id};
-  Object.assign(other,{access:otherAccess});
-  await prototypes(other);
+  const otherFixture=Object.assign(other,{access:otherAccess,begin:async(parent_execution_id?:string,claude_cap_micro_usd=0)=>{
+   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(otherAccess);
+   return engine.beginSignalWorkspaceEngineV1({...otherAccess,embedding_run_id:secondEmbedding,idempotency_key:randomUUID(),
+    expected_catalog_digest:preflight.expected_catalog_digest,expected_context_digest:preflight.expected_context_digest,
+    engine_config:{contract_version:'local-engine-fixture-v1'},claude_cap_micro_usd,parent_execution_id});
+  }});
+  await prototypes(otherFixture);
   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(otherAccess);
   const next=await engine.beginSignalWorkspaceEngineV1({...otherAccess,embedding_run_id:secondEmbedding,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
    expected_context_digest:preflight.expected_context_digest,claude_cap_micro_usd:5000,engine_config:{fixture:true},parent_execution_id:null});
   const nextLease=await engine.claimSignalWorkspaceEngineV1({database:other.database,...next,worker_job_id:'local-second-workspace'});assert.ok(nextLease);
-  const nextCoverage=await consume(other,nextLease),nextModel=await artifact(other,nextLease,'engine_model'),nextOutput=await artifact(other,nextLease,'engine_output');
+  const nextCoverage=await consume(otherFixture,nextLease),nextModel=await artifact(otherFixture,nextLease,'engine_model'),nextOutput=await artifact(otherFixture,nextLease,'engine_output');
   await engine.finishSignalWorkspaceEngineFitV1({database:other.database,lease:nextLease,model_artifact_id:nextModel,output_artifact_id:nextOutput,result_kind:'computational_grouping',coverage:nextCoverage,
    model_configuration:{fixture:true},runtime_kind:'python',artifact_format:'joblib',license_key:'fixture-only'});
   const nextRequest=randomUUID();await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...otherAccess,...next,idempotency_key:nextRequest,
