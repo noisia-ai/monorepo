@@ -621,7 +621,8 @@ from test_workspace_engine import (
 
 
 @pytest.mark.parametrize("incoming_root_profile", [True, False])
-def test_direct_incremental_rejects_root_profile_in_both_directions(tmp_path, monkeypatch, incoming_root_profile):
+@pytest.mark.parametrize("root_config", ["mass_labeling_root_config", "mass_labeling_terms_config"])
+def test_direct_incremental_rejects_root_profile_in_both_directions(tmp_path, monkeypatch, incoming_root_profile, root_config):
     source = {root_id(1): [("Synthetic discussion. ", np.eye(1024)[0])]}
     parent_input, parent = tmp_path / "parent-input", tmp_path / "parent"
     input_fixture(parent_input, source, guides=False)
@@ -630,12 +631,12 @@ def test_direct_incremental_rejects_root_profile_in_both_directions(tmp_path, mo
     config = prepare(current, source, parent, root_id(100), root_id(101), guides=False)
     if incoming_root_profile:
         manifest = base._read_json(current / "manifest.json")
-        manifest["config"] = base.mass_labeling_root_config(1)
+        manifest["config"] = getattr(base, root_config)(1)
         base._write_json(current / "manifest.json", manifest)
         config["current_input_manifest"] = inc.descriptor(current / "manifest.json")
     else:
         manifest = base._read_json(parent / "manifest.json")
-        manifest["config"] = base.mass_labeling_root_config(1)
+        manifest["config"] = getattr(base, root_config)(1)
         base._write_json(parent / "manifest.json", manifest)
         config["parent"]["manifest_sha256"] = file_sha(parent / "manifest.json")
     base._write_json(current / "incremental.json", config)
@@ -645,3 +646,8 @@ def test_direct_incremental_rejects_root_profile_in_both_directions(tmp_path, mo
         inc.run_workspace_incremental_engine(current, output, tmp_path, parent,
                                              config["parent"]["manifest_sha256"])
     assert not output.exists()
+
+from test_workspace_engine import (
+    test_pilot_df_units_preserve_shared_vocabulary_without_changing_reduced_groups as test_pilot_df_units_preserve_shared_vocabulary_without_changing_reduced_groups,
+    test_pilot_terms_keep_wordless_group_and_explain_empty_representation as test_pilot_terms_keep_wordless_group_and_explain_empty_representation,
+)

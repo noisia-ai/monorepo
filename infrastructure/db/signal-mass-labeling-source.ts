@@ -55,7 +55,7 @@ export async function verifyMassLabelingSourceCheckpointsWithClientV1(client:Pic
       JOIN signal_corpus_preparation_runs prep ON prep.workspace_id=execution.workspace_id AND prep.id=execution.preparation_run_id
         AND prep.status='completed' AND (prep.policy_valid_until IS NULL OR prep.policy_valid_until>now())
       WHERE execution.workspace_id=$1 AND execution.id=$2
-        AND execution.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2')`,
+        AND execution.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2','workspace-bertopic-mass-labeling-v3')`,
     [args.workspace_id,args.source_engine_execution_id])).rows[0];
   if(!engine||engine.actor_user_id!==args.actor_user_id||!engine.fit
     ||Number(engine.fit.interpretation_manifest.unit_count)!==keys.length

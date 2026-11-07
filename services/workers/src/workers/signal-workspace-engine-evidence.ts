@@ -12,7 +12,7 @@ type Occurrence = { ordinal: number; root_id: string; chunk_index: number; start
   chunk_sha256: string; text?: string; stable_cluster_id?: string | null; local_label?: number; strength?: number };
 type Representative = Occurrence & { strength: number; selection_reason: SignalWorkspaceInterpretationReferenceV1["selection_reason"] };
 type Cluster = { stable_cluster_id: string; local_label: number; lane: "open" | "guided"; root_count: number;
-  chunk_count: number; terms: string[]; representatives: Representative[]; representative_selection_policy: string };
+  chunk_count: number; lexical_representation?:SignalWorkspaceInterpretationClusterV1["lexical_representation"]; terms: string[]; representatives: Representative[]; representative_selection_policy: string };
 async function* records(path: string): AsyncGenerator<Occurrence> {
   const stream = createReadStream(path), lines = createInterface({ input: stream, crlfDelay: Infinity });
   try { for await (const line of lines) {
@@ -40,8 +40,8 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
   input_directory: string; output_directory: string; output: WorkspaceEngineOutputV1;
 }): Promise<SignalWorkspaceInterpretationClusterV1[]> {
   const result: SignalWorkspaceInterpretationClusterV1[] = [];
-  const pilot = ["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2"].includes(String(args.output.config.profile_version));
-  const rootFit=args.output.config.profile_version === "workspace-bertopic-mass-labeling-v2";
+  const pilot = ["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2","workspace-bertopic-mass-labeling-v3"].includes(String(args.output.config.profile_version));
+  const rootFit=["workspace-bertopic-mass-labeling-v2","workspace-bertopic-mass-labeling-v3"].includes(String(args.output.config.profile_version));
   const representatives = pilot ? 30 : 10;
   const selectedLane = pilot && args.output.lanes.some(lane => lane.lane === "guided") ? "guided" : "open";
   const lanes = new Set<string>();
@@ -109,6 +109,7 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
         terms: Array.isArray(cluster.terms)
           ? cluster.terms.filter(term => typeof term !== "string" || term.trim().length > 0)
           : cluster.terms,
+        ...(cluster.lexical_representation ? {lexical_representation:cluster.lexical_representation}:{}),
         representatives: cluster.representatives.map(rep => refs.get(rep.ordinal)) }, representatives));
     }
   }

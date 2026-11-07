@@ -34,8 +34,15 @@ export function signalWorkspaceMassLabelingConfigV2(roots: number) {
     profile_version:SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V2,
     fit_unit:"canonical-root-centroid-v1",minimum_editorial_roots:20});
 }
+export const SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V3 = "workspace-bertopic-mass-labeling-v3" as const;
+/** JSON numbers do not preserve Python int/float semantics. Freeze the units. */
+export function signalWorkspaceMassLabelingConfigV3(roots: number) {
+  return Object.freeze({...signalWorkspaceMassLabelingConfigV2(roots),
+    profile_version:SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V3,
+    vectorizer_min_df_unit:"document-count",vectorizer_max_df_unit:"document-proportion"});
+}
 export function isSignalWorkspaceMassLabelingConfigV1(config: Record<string, unknown>): boolean {
-  return [SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1,SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V2].includes(config.profile_version as typeof SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1);
+  return [SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1,SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V2,SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V3].includes(config.profile_version as typeof SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1);
 }
 
 export type SignalWorkspaceEngineChunkV1 = {
