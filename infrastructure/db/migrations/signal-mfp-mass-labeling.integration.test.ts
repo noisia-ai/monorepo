@@ -13,6 +13,7 @@ import {loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
   loadSignalWorkspaceTopicDetailV1} from "../signal-workspace-topics-serving";
 import * as editorialMoney from "../signal-workspace-engine-interpretation";
 import {SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1 as globalConfiguration,buildMassLabelingConsolidationRequestV1} from "@noisia/query-engine";
+import {verifyMassLabelingSourceCheckpointsV1,type MassLabelingSourceCheckpointV1} from "../signal-mass-labeling-source";
 import {persistSignalWorkspaceEngineArtifactV1} from "../signal-workspace-engine";
 import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-labeling-page";
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
@@ -38,20 +39,35 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const scoped = Object.assign(Object.create(raw), {query, release() {}});
     const database = Object.assign(Object.create(pool), {query, connect: async () => scoped}) as Pool;
     let consolidationArtifactId="",consolidationRaw="";
+    let sourceCheckpoints:MassLabelingSourceCheckpointV1[]=[];
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
       saves:syntheticSaves,
-      numeric_daily_cap_micro_usd: 10_000_000, projection: {interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      numeric_daily_cap_micro_usd: 10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
-          const group_id=`guided:${JSON.parse(assignment.trim().split("\n")[0]!).stable_cluster_id}`;
-          const sourceGroups=[{group_id,cluster_digest:digest({group_id}),name:"Synthetic repair conversation",
-            definition:"Experiences repairing bicycles.",status:"coherent" as const,source_artifact_id:fixture.proposals[1]!.artifact_id}];
+          const group_ids=[...new Set(assignment.trim().split("\n").map(line=>`guided:${JSON.parse(line).stable_cluster_id}`))].sort();
+          sourceCheckpoints=[...fixture.proposals];
+          const sourceArgs={...fixture.access,source_engine_execution_id:fixture.lease.execution_id,
+            source_checkpoints:sourceCheckpoints,lease:fixture.lease,expected_group_ids:group_ids};
+          const verified=await verifyMassLabelingSourceCheckpointsV1(sourceArgs);
+          const sourceGroups=verified.source_groups;
+          const beforeCalls=(await query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1",[fixture.lease.execution_id])).rows[0]!.n;
+          await assert.rejects(verifyMassLabelingSourceCheckpointsV1({...sourceArgs,
+            claimed_source_groups:sourceGroups.map(group=>({...group,name:"Delivered baseline category",definition:"A substituted baseline definition."}))}),
+            /mass_labeling_source_checkpoint_invalid/,"valid IDs cannot carry substituted baseline summary text");
+          await assert.rejects(verifyMassLabelingSourceCheckpointsV1({...sourceArgs,source_checkpoints:sourceCheckpoints.slice(1)}),
+            /mass_labeling_source_checkpoint_invalid/,"a source group cannot be omitted before the global call");
+          await assert.rejects(verifyMassLabelingSourceCheckpointsV1({...sourceArgs,
+            source_checkpoints:sourceCheckpoints.map(packet=>({...packet,body:packet.body+" "}))}),
+            /mass_labeling_source_checkpoint_invalid/,"source bytes must match their durable SHA");
+          assert.equal((await query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1",[fixture.lease.execution_id])).rows[0]!.n,beforeCalls,
+            "invalid source groups never reserve a global paid call");
           const batch=buildMassLabelingConsolidationRequestV1({workspace_id:fixture.access.workspace_id,
             source_engine_execution_id:fixture.lease.execution_id,source_groups:sourceGroups});
           const sourceGroupsDigest=batch.source_groups_digest;
-          const output={topics:[{topic_key:"bicycle_repairs",name:"Bicycle repairs",definition:"Experiences repairing bicycles.",group_ids:[group_id]}],excluded_groups:[]};
+          const output={topics:[{topic_key:"bicycle_repairs",name:"Bicycle repairs",definition:"Experiences repairing bicycles.",group_ids}],excluded_groups:[]};
           const rawResponse=JSON.stringify({id:"msg_synthetic_global",type:"message",role:"assistant",model:globalConfiguration.model,
             stop_reason:"end_turn",content:[{type:"text",text:JSON.stringify(output)}],usage:{input_tokens:100,output_tokens:50}});
           consolidationRaw=JSON.stringify({contract_version:"workspace-mass-labeling-consolidation-v1",workspace_id:fixture.access.workspace_id,
@@ -89,13 +105,14 @@ test("mass labeling seals full population, bills once, and serves probability pa
       WHERE engine_execution_id=$1 AND artifact_key='assignments.guided.jsonl'`, [seed.source_engine_execution_id])).rows[0]!;
     const assignmentsRaw = seed.projection.bodies.get(artifact.content.storage_key)!;
     assert.ok(assignmentsRaw);
-    const groupId = `guided:${JSON.parse(assignmentsRaw.trim().split("\n")[0]!).stable_cluster_id}`;
+    const groupIds=[...new Set(assignmentsRaw.trim().split("\n").map(line=>`guided:${JSON.parse(line).stable_cluster_id}`))].sort();
     const mapArgs = {...access, source_engine_execution_id: seed.source_engine_execution_id,
       assignments_artifact_id: artifact.id, assignments_raw: assignmentsRaw,
-      consolidation_artifact_id:consolidationArtifactId,consolidation_raw:consolidationRaw,
-      catalog: [{topic_key: "bicycle_repairs", name: "Bicycle repairs", definition: "Experiences repairing bicycles.", group_ids: [groupId]}]};
+      consolidation_artifact_id:consolidationArtifactId,consolidation_raw:consolidationRaw,source_checkpoints:sourceCheckpoints,
+      catalog: [{topic_key: "bicycle_repairs", name: "Bicycle repairs", definition: "Experiences repairing bicycles.", group_ids:groupIds}]};
     await assert.rejects(createMassLabelingMapV1({...mapArgs, actor_user_id: foreignActor}), /mass_labeling_forbidden/);
     await assert.rejects(createMassLabelingMapV1({...mapArgs, assignments_raw: assignmentsRaw+" "}), /mass_labeling_source_invalid/);
+    await assert.rejects(createMassLabelingMapV1({...mapArgs,source_checkpoints:[]}),/mass_labeling_source_checkpoint_invalid/);
     const map = await createMassLabelingMapV1(mapArgs);
     assert.equal((await createMassLabelingMapV1(mapArgs)).map_id, map.map_id);
     assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_items WHERE map_id=$1", [map.map_id])).rows[0].n, 3);

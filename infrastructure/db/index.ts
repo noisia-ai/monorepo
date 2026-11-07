@@ -121,3 +121,5 @@ export * from "./signal-facet-stored-replay";
 export * from "./signal-membership-stored-replay";
 
 export * from "./signal-mass-labeling";
+
+export * from "./signal-mass-labeling-source";
