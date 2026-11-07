@@ -21,7 +21,7 @@ async function fixture(options:{root_count?:number}={}){
  const begin=async(parent_execution_id?:string,claude_cap_micro_usd=0)=>{const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);
   return engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
    expected_context_digest:preflight.expected_context_digest,engine_config:{contract_version:'local-engine-fixture-v1'},claude_cap_micro_usd,parent_execution_id});};
- return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,cleanup};
+ return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,catalog,cleanup};
 }
 async function dailyExposure(f:Awaited<ReturnType<typeof fixture>>,timezone='UTC'){
  const row=(await f.query(`SELECT total_micro_usd FROM signal_processing_org_exposure_v1(
@@ -139,13 +139,13 @@ test('engine exports every chunk with zero interests, autonomous cached context,
 });
 test('engine rejects missing context cache and stale completion; small populations complete without inventing a model', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture();try{
-  await f.query("UPDATE brands SET description=$2 WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id,`new local unembedded context ${randomUUID()}`]);
+  await f.catalog();
   await assert.rejects(f.begin(),/guides_required/u);
   await prototypes(f);const started=await f.begin(),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-fixture'});assert.ok(lease);
   const coverage=await consume(f,lease);const output=await artifact(f,lease,'engine_output');
   await f.query('BEGIN');try{await f.query("UPDATE brands SET description='changed during fit' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
    await assert.rejects(engine.finishSignalWorkspaceEngineFitV1({database:f.database,lease,model_artifact_id:null,output_artifact_id:output,result_kind:'insufficient_population',coverage,
-    model_configuration:{},runtime_kind:'python',artifact_format:'none',license_key:null}),/inputs_stale/u);
+    model_configuration:{},runtime_kind:'python',artifact_format:'none',license_key:null}),/brand_context_source_stale/u);
   }finally{await f.query('ROLLBACK');}
   const finished=await engine.finishSignalWorkspaceEngineFitV1({database:f.database,lease,model_artifact_id:null,output_artifact_id:output,result_kind:'insufficient_population',coverage,
    model_configuration:{},runtime_kind:'python',artifact_format:'none',license_key:null});assert.equal(finished.model_version_id,null);
@@ -224,6 +224,12 @@ test('claim terminalizes expected revocation and input drift before issuing a le
     if(mutation==='context')await f.query("UPDATE brands SET description='new context before claim' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
     if(mutation==='revision')await f.query('UPDATE signal_corpus_preparation_input_state SET input_revision=input_revision+1 WHERE workspace_id=$1::uuid',[f.workspace_id]);
     if(mutation==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
+    if(mutation==='context'){
+     await assert.rejects(engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-claim-rejection'}),/brand_context_source_stale/u);
+     const stale=(await f.query('SELECT status,error_code,execution_token FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0];
+     assert.equal(stale.status,'queued');assert.equal(stale.error_code,null);assert.equal(stale.execution_token,null);
+     continue;
+    }
     assert.equal(await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-claim-rejection'}),null);
     const row=(await f.query('SELECT status,error_code,execution_token FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0];
     assert.equal(row.status,'failed');assert.equal(row.execution_token,null);assert.equal(row.error_code,mutation==='actor'?'workspace_engine_forbidden':'workspace_engine_inputs_stale');
@@ -301,8 +307,11 @@ test('engine begin dispatches atomically and the real outbox recovers lost jobs 
   await f.query("UPDATE signal_topic_catalog_executions SET execution_expires_at=clock_timestamp()-interval '1 second' WHERE id=$1::uuid",[failed.execution_id]);
   await f.query("UPDATE brands SET description='changed after hard crash' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
   await scheduleSignalWorkspaceTopicComputationsV1({database:f.database});
-  assert.equal(await engine.claimSignalWorkspaceEngineV1({database:f.database,...failed,worker_job_id:(await row(failed.execution_id)).worker_job_id}),null);
-  assert.equal((await row(failed.execution_id)).status,'failed');assert.equal((await row(failed.execution_id)).dispatch_status,'completed');
+  const beforeStaleClaim=await row(failed.execution_id);
+  await assert.rejects(engine.claimSignalWorkspaceEngineV1({database:f.database,...failed,worker_job_id:(await row(failed.execution_id)).worker_job_id}),/brand_context_source_stale/u);
+  const afterStaleClaim=await row(failed.execution_id);
+  assert.equal(afterStaleClaim.status,'running');assert.equal(afterStaleClaim.execution_token,beforeStaleClaim.execution_token,
+   'the rejected claim does not issue a new execution lease');
  }finally{await f.cleanup();}
 });
 
@@ -329,7 +338,7 @@ test('storage verification retry is explicit, current and confined to zero durab
   await f.query('SAVEPOINT storage_revoked');await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
   await assert.rejects(retry(),/forbidden/u);await f.query('ROLLBACK TO SAVEPOINT storage_revoked');await f.query('RELEASE SAVEPOINT storage_revoked');
   await f.query('SAVEPOINT storage_stale');await f.query("UPDATE brands SET description='changed storage recovery context' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
-  assert.equal((await status()).is_current,false);await assert.rejects(retry(),/inputs_stale/u);
+  await assert.rejects(status(),/brand_context_source_stale/u);await assert.rejects(retry(),/brand_context_source_stale/u);
   await f.query('ROLLBACK TO SAVEPOINT storage_stale');await f.query('RELEASE SAVEPOINT storage_stale');
   // Each negative retains real evidence within its own rollback; no guard or
   // ledger is disabled to manufacture a retryable provider outcome.
@@ -418,7 +427,7 @@ test('interpretation evidence retry restores only a complete immutable bundle be
   for(const invalid of ['actor','context'] as const){await f.query('SAVEPOINT no_authority');
    if(invalid==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
    else await f.query("UPDATE brands SET description='changed after numerical output' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
-   await assert.rejects(retry(),invalid==='actor'?/forbidden/u:/inputs_stale/u);
+   await assert.rejects(retry(),invalid==='actor'?/forbidden/u:/brand_context_source_stale/u);
    await f.query('ROLLBACK TO SAVEPOINT no_authority');await f.query('RELEASE SAVEPOINT no_authority');
   }
   for(const stage of ['fit','model','reserved','unknown'] as const){await f.query('SAVEPOINT later_evidence');
@@ -526,7 +535,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
   for(const invalid of ['actor','context'] as const){await f.query('SAVEPOINT repair_authority');
    if(invalid==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
    else await f.query("UPDATE brands SET description='changed before repair' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
-   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(request),invalid==='actor'?/forbidden/u:/inputs_stale/u);
+   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(request),invalid==='actor'?/forbidden/u:/brand_context_source_stale/u);
    await f.query('ROLLBACK TO SAVEPOINT repair_authority');await f.query('RELEASE SAVEPOINT repair_authority');}
   await f.query('SAVEPOINT unknown_other');
   const unknown=await money.reserveSignalWorkspaceEngineInterpretationV1({...reserveBase,idempotency_key:randomUUID(),request_digest:sha('unknown other batch'),reserved_micro_usd:100});
@@ -597,7 +606,7 @@ test('interpretation single-send, exact settlement after staleness, retained unk
    await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/response.json`,sha256:sha('raw'),size_bytes:3,http_status:200,provider_request_id:'fixture'}});
    const settled=await money.settleSignalWorkspaceEngineInterpretationV1({...token,usage:{input_tokens:100,output_tokens:200,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
    assert.equal(settled.settled_micro_usd,300);assert.equal(settled.state,'settled');
-   await assert.rejects(reserve(randomUUID()),/inputs_stale/u);
+   await assert.rejects(reserve(randomUUID()),/brand_context_source_stale/u);
   }finally{await f.query('ROLLBACK');}
   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/response.json`,sha256:sha('raw'),size_bytes:3,http_status:200,provider_request_id:'fixture'}});
   const usage={input_tokens:100,output_tokens:200,cache_read_input_tokens:0,cache_creation_input_tokens:0};
@@ -783,7 +792,7 @@ test('external provider terminal evidence retains cost reserves and permits one 
    if(mutation==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
    if(mutation==='context')await f.query("UPDATE brands SET description='stale before terminal retry' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
    if(mutation==='bundle')await artifact(f,recovered,'engine_output');
-   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(successorRequest),/forbidden|inputs_stale|checkpoint_invalid/u);
+   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1(successorRequest),/forbidden|brand_context_source_stale|checkpoint_invalid/u);
    await f.query('ROLLBACK TO SAVEPOINT terminal_authority');await f.query('RELEASE SAVEPOINT terminal_authority');
   }
   const successor=await money.reserveSignalWorkspaceEngineInterpretationV1(successorRequest);
