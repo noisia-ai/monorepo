@@ -18,6 +18,8 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     labeled(result:Result):boolean;
     invalidUsage?(failure:JevProviderErrorV1):JevResponseV1["usage"]|undefined;
     fail_on_error?:boolean;
+    durable_raw_per_response?:boolean;
+    recovery_only?:boolean;
   };
 }){
   const {store,provider,hooks}=args,run=await store.claim(args.run_id);
@@ -36,8 +38,9 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
       await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
     }
-    let calls=pending.slice(0,200);
-    if(!calls.length&&!run.error_code){
+    let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,200);
+    if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
+    if(!calls.length&&!run.error_code&&!hooks.recovery_only){
       const proposals=hooks.propose(run,await store.inputs(run));
       if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,200);
     }
@@ -47,10 +50,12 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     const errors:Array<{call:LabelingCallV1<Input>;unknown:boolean;code:string;transport?:boolean}>=[];
     await Promise.all(reserved.map(async call=>{
       try{const raw=await provider.evaluate(call.request as JevRequestV1,{signal:cancellation.signal});
-        rawPage.push({call,raw:JSON.stringify(raw)});}
+        const encoded=JSON.stringify(raw);
+        if(hooks.durable_raw_per_response)await store.persistRaw(run,call,encoded);
+        rawPage.push({call,raw:encoded});}
       catch(error){const failure=jevProviderErrorV1(error);errors.push({call,unknown:failure.outcome!=="definitely_not_sent",code:failure.code,transport:true});}
     }));
-    try{if(rawPage.length)await store.persistRawPage(run,rawPage);}
+    try{if(rawPage.length&&!hooks.durable_raw_per_response)await store.persistRawPage(run,rawPage);}
     catch(error){if(hooks.fail_on_error){await store.markFailed(run,rawPage.map(page=>page.call),true);
       await store.fail(run,"labeling_outcome_unknown");}throw error;}
     if(renewal)await renewal;

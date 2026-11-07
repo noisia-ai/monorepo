@@ -45,6 +45,8 @@ const referenceSchema = z.object({
 const clusterSchema = z.object({
   cluster_id: unitKey, lane: z.enum(["open", "guided"]), cluster_digest: digest,
   root_count: natural.refine(value => value > 0), chunk_count: natural.refine(value => value > 0),
+  lexical_representation: z.object({status:z.enum(["available","no_terms"]),
+    reason:z.literal("no_lexical_terms_after_preprocessing").nullable()}).strict().optional(),
   terms: z.array(text(256)).max(100), representatives: z.array(referenceSchema).max(30),
 }).strict();
 export type SignalWorkspaceInterpretationReferenceV1 = z.infer<typeof referenceSchema>;
@@ -179,6 +181,11 @@ function validUnicode(value: string) {
 export function parseSignalWorkspaceInterpretationClusterV1(value: unknown, maximumRepresentatives: 10 | 30 = 10): SignalWorkspaceInterpretationClusterV1 {
   const parsed = clusterSchema.safeParse(value); if (!parsed.success) return fail("cluster_invalid");
   if (parsed.data.representatives.length > maximumRepresentatives) return fail("cluster_invalid");
+  if(parsed.data.lexical_representation) {
+    const lexical=parsed.data.lexical_representation;
+    if((lexical.status === "available") !== Boolean(parsed.data.terms.length)
+      ||(lexical.status === "available") !== (lexical.reason === null)) return fail("cluster_invalid");
+  }
   const cluster = parsed.data, roots = new Set<string>(), refs = new Set<string>();
   if (!cluster.cluster_id.startsWith(`${cluster.lane}:`) || cluster.chunk_count < cluster.root_count
     || cluster.representatives.length > cluster.root_count) return fail("cluster_identity_invalid");
@@ -314,17 +321,25 @@ export function signalWorkspaceInterpretationUniverseDigestV1(keys: Iterable<str
   }
   return `sha256:${hash.digest("hex")}`;
 }
-const citations = z.array(digest).max(10).refine(values => new Set(values).size === values.length);
-const condition = z.object({ text: text(240), citations: citations.refine(values => values.length > 0) }).strict();
-const interpretationSchema = z.object({
-  cluster_id: unitKey, cluster_digest: digest, status: z.enum(["coherent", "mixed", "insufficient"]),
-  name: text(160).nullable(), definition: text(1200).nullable(),
-  inclusion: z.array(condition).max(8), exclusion: z.array(condition).max(8), citations,
-}).strict();
+function interpretationSchemaFor(maximumReferences: 10 | 30) {
+  const citations = z.array(digest).max(maximumReferences).refine(values => new Set(values).size === values.length);
+  const condition = z.object({ text: text(240), citations: citations.refine(values => values.length > 0) }).strict();
+  return z.object({
+    cluster_id: unitKey, cluster_digest: digest, status: z.enum(["coherent", "mixed", "insufficient"]),
+    name: text(160).nullable(), definition: text(1200).nullable(),
+    inclusion: z.array(condition).max(8), exclusion: z.array(condition).max(8), citations,
+  }).strict();
+}
+const interpretationSchema = interpretationSchemaFor(10);
+/** Pilot references remain bounded by the exact, sealed sample configuration. */
+export function signalWorkspaceInterpretationReferenceLimitV1(configuration: SignalWorkspaceInterpretationConfigurationV1): 10 | 30 {
+  return "representative_count" in parseSignalWorkspaceInterpretationConfigurationV1(configuration) ? 30 : 10;
+}
 export type SignalWorkspaceInterpretationV1 = z.infer<typeof interpretationSchema>;
 /** Shape validation only; citation authority is checked against the sealed batch separately. */
-export function parseSignalWorkspaceInterpretationV1(value: unknown): SignalWorkspaceInterpretationV1 {
-  const parsed = interpretationSchema.safeParse(value);
+export function parseSignalWorkspaceInterpretationV1(value: unknown,
+  configuration: SignalWorkspaceInterpretationConfigurationV1 = SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1): SignalWorkspaceInterpretationV1 {
+  const parsed = interpretationSchemaFor(signalWorkspaceInterpretationReferenceLimitV1(configuration)).safeParse(value);
   if (!parsed.success) return fail("output_invalid");
   const result = parsed.data;
   if (result.status !== "insufficient" && (!result.name || !result.definition || !result.citations.length)
@@ -332,7 +347,8 @@ export function parseSignalWorkspaceInterpretationV1(value: unknown): SignalWork
   return result;
 }
 export function validateSignalWorkspaceInterpretationResultV1(batch: SignalWorkspaceInterpretationBatchV1, value: unknown): SignalWorkspaceInterpretationV1[] {
-  const parsed = z.object({ interpretations: z.array(interpretationSchema).max(4) }).strict().safeParse(value);
+  const schema = interpretationSchemaFor(signalWorkspaceInterpretationReferenceLimitV1(batch.configuration));
+  const parsed = z.object({ interpretations: z.array(schema).max(4) }).strict().safeParse(value);
   if (!parsed.success || parsed.data.interpretations.length !== batch.clusters.length) return fail("output_invalid");
   const expected = new Map(batch.clusters.map(cluster => [cluster.cluster_id, cluster]));
   for (const result of parsed.data.interpretations) {
@@ -356,9 +372,10 @@ export function decodeSignalWorkspaceInterpretationProviderResultV1(batch: Signa
   value: unknown): SignalWorkspaceInterpretationV1[] {
   const config = parseSignalWorkspaceInterpretationConfigurationV1(batch.configuration);
   if (config.model === "claude-opus-5") return validateSignalWorkspaceInterpretationResultV1(batch, value);
-  const labels = z.array(z.string().regex(/^r[1-9][0-9]?$/u)).max(10).refine(items => new Set(items).size === items.length);
+  const limit = signalWorkspaceInterpretationReferenceLimitV1(config);
+  const labels = z.array(z.string().regex(/^r[1-9][0-9]?$/u)).max(limit).refine(items => new Set(items).size === items.length);
   const wireCondition = z.object({ text: text(240), citations: labels.refine(items => items.length > 0) }).strict();
-  const wireInterpretation = interpretationSchema.extend({ citations: labels,
+  const wireInterpretation = interpretationSchemaFor(limit).extend({ citations: labels,
     inclusion: z.array(wireCondition).max(8), exclusion: z.array(wireCondition).max(8) });
   const parsed = z.object({ interpretations: z.array(wireInterpretation).max(4) }).strict().safeParse(value);
   if (!parsed.success || parsed.data.interpretations.length !== batch.clusters.length) return fail("output_invalid");

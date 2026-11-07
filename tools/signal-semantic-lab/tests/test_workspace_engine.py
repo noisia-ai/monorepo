@@ -617,3 +617,142 @@ def test_mass_labeling_real_fit_guidance_and_reduction(real_runs, tmp_path):
     )
     assert 0 < len(set(labels) - {-1}) <= 2
     assert len(terms) <= 2
+
+
+def test_root_density_preserves_all_chunks_and_model_assignments(real_runs, tmp_path):
+    from joblib import load
+    from signal_semantic_lab.workspace_engine import mass_labeling_root_config, _root_fit_population
+
+    original = real_runs["first_input"]
+    original_vectors = np.load(original / "vectors.npy")
+    source = {}
+    for row in read_lines(original / "chunks.jsonl"):
+        # Many duplicate fragments within each root must not multiply density.
+        source.setdefault(row["root_id"], []).extend(
+            [(row["text"], original_vectors[row["ordinal"]])] * (6 if row["ordinal"] < 12 else 2))
+    directory, output = tmp_path / "root-input", tmp_path / "root-output"
+    manifest = input_fixture(directory, source)
+    manifest["config"] = mass_labeling_root_config(len(source))
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    result = run_workspace_engine(directory, output, tmp_path)
+    fit_roots = read_lines(output / "fit-roots.jsonl")
+    assert len(fit_roots) == len(source)
+    records = read_lines(directory / "chunks.jsonl")
+    _, vectors, _ = _root_fit_population(records, np.load(directory / "vectors.npy"))
+    population = json.loads((output / "fit-population.json").read_text())
+    assert population["vectors_sha256"] == sha(vectors.astype("<f4").tobytes())
+    assert population["roots_sha256"] == file_sha(output / "fit-roots.jsonl")
+    assert not (output / "fit-root-vectors.npy").exists()
+    assert all(row["vector_sha256"] == sha(vectors[index].astype("<f4").tobytes())
+               for index, row in enumerate(fit_roots))
+    assert vectors.shape == (len(source), 1024)
+    np.testing.assert_allclose(np.linalg.norm(vectors, axis=1), 1, atol=1e-6)
+    for lane in result["lanes"]:
+        model = load(output / lane["model_file"])
+        assignments = read_lines(output / lane["assignments_file"])
+        clusters = json.loads((output / lane["clusters_file"]).read_text())
+        assert lane["fit_rows"] == len(model.topics_) == len(source)
+        assert len(assignments) == sum(map(len, source.values()))
+        assert 0 < len(clusters) <= 200
+        by_root = {row["root_id"]: model.topics_[index] for index, row in enumerate(fit_roots)}
+        assert all(row["local_label"] == by_root[row["root_id"]] for row in assignments)
+        assert all(cluster["root_count"] >= manifest["config"]["hdbscan_min_cluster_size"] for cluster in clusters)
+        assert all(len(cluster["representatives"]) == 30
+                   and len({row["root_id"] for row in cluster["representatives"]}) == 30 for cluster in clusters)
+
+
+def test_nineteen_long_roots_cannot_form_a_density_group(tmp_path):
+    from signal_semantic_lab.workspace_engine import mass_labeling_root_config
+
+    source = {root_id(index + 1): [("Synthetic Portuguese discussion. ", np.eye(1024)[0])] * 12
+              for index in range(19)}
+    directory, output = tmp_path / "sparse-input", tmp_path / "sparse-output"
+    manifest = input_fixture(directory, source, guides=False)
+    manifest["config"] = mass_labeling_root_config(19)
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    result = run_workspace_engine(directory, output, tmp_path)
+    assert result["status"] == "insufficient_population"
+    assignments = read_lines(output / "assignments.open.jsonl")
+    assert len(assignments) == 19 * 12
+    assert all(row["local_label"] == -1 for row in assignments)
+    assert result["lanes"][0]["clusters"] == 0
+
+
+@pytest.mark.parametrize("incoming_root_profile", [True, False])
+@pytest.mark.parametrize("root_config", ["mass_labeling_root_config", "mass_labeling_terms_config"])
+def test_root_profile_rejects_previous_before_loading_or_predicting(tmp_path, monkeypatch, incoming_root_profile, root_config):
+    import signal_semantic_lab.workspace_engine as engine
+
+    directory, previous = tmp_path / "input", tmp_path / "previous"
+    previous.mkdir()
+    manifest = input_fixture(directory, {root_id(1): [("Synthetic discussion. ", np.eye(1024)[0])]}, guides=False)
+    if incoming_root_profile:
+        manifest["config"] = getattr(engine, root_config)(1)
+        (directory / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(engine, "_verified_previous", lambda *args: {
+        "config": getattr(engine, root_config)(1)})
+    monkeypatch.setattr(engine, "_predict_previous", lambda *args: pytest.fail("must not predict a root model by chunk"))
+    with pytest.raises(engine.WorkspaceEngineError, match="previous_profile_unsupported"):
+        engine.run_workspace_engine(directory, tmp_path / "output", tmp_path,
+                                    previous, "sha256:" + "a" * 64)
+    assert not (tmp_path / "output").exists()
+
+
+def test_pilot_df_units_preserve_shared_vocabulary_without_changing_reduced_groups(real_runs, tmp_path):
+    from joblib import load
+    from signal_semantic_lab.workspace_engine import _fit, mass_labeling_root_config, mass_labeling_terms_config
+
+    original = real_runs["first_input"]
+    records = read_lines(original / "chunks.jsonl")
+    vectors = np.load(original / "vectors.npy")
+    texts = ["cerveja consumo conversa " + row["text"] for row in records]
+    historical = {**mass_labeling_root_config(len(records)), "maximum_topics": 2, "ngram_max": 1,
+                  "vectorizer_min_df": 1, "vectorizer_max_df": 1}
+    current = {**mass_labeling_terms_config(len(records)), "maximum_topics": 2, "ngram_max": 1,
+               "vectorizer_min_df": 1, "vectorizer_max_df": 1}
+    old_labels, old_strengths, _ = _fit(texts, vectors, historical, None, tmp_path / "old.joblib")
+    labels, strengths, terms = _fit(texts, vectors, current, None, tmp_path / "current.joblib")
+    old, model = load(tmp_path / "old.joblib"), load(tmp_path / "current.joblib")
+    assert type(old.vectorizer_model.max_df) is int
+    assert type(model.vectorizer_model.min_df) is int and model.vectorizer_model.min_df == 1
+    assert type(model.vectorizer_model.max_df) is float and model.vectorizer_model.max_df == 1.0
+    assert "cerveja" not in old.vectorizer_model.vocabulary_
+    assert "cerveja" in model.vectorizer_model.vocabulary_
+    assert sum("cerveja" in words for words in terms.values()) >= 2
+    assert all(word.strip() for words in terms.values() for word in words)
+    np.testing.assert_array_equal(labels, old_labels)
+    np.testing.assert_array_equal(strengths, old_strengths)
+    np.testing.assert_array_equal(model.topic_embeddings_, old.topic_embeddings_)
+    assert model.topic_mapper_.get_mappings() == old.topic_mapper_.get_mappings()
+    assert len(set(labels) - {-1}) == 2
+
+
+def test_pilot_terms_keep_wordless_group_and_explain_empty_representation(real_runs, tmp_path):
+    from joblib import load
+    from signal_semantic_lab.workspace_engine import mass_labeling_terms_config
+
+    original = real_runs["first_input"]
+    vectors = np.load(original / "vectors.npy")
+    source = {}
+    for row in read_lines(original / "chunks.jsonl"):
+        vector = vectors[row["ordinal"]]
+        text = "🍻🌞🎉 " if np.argmax(vector[:3]) == 2 else "cerveja consumo conversa " + row["text"]
+        source.setdefault(row["root_id"], []).append((text, vector))
+    directory, output = tmp_path / "terms-input", tmp_path / "terms-output"
+    manifest = input_fixture(directory, source)
+    manifest["config"] = mass_labeling_terms_config(len(source))
+    # Match JSON written by TypeScript: max_df is the integer number 1.
+    manifest["config"]["vectorizer_max_df"] = 1
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    result = run_workspace_engine(directory, output, tmp_path)
+    for lane in result["lanes"]:
+        clusters = json.loads((output / lane["clusters_file"]).read_text())
+        empty = [group for group in clusters if not group["terms"]]
+        assert empty
+        assert all(group["lexical_representation"] == {
+            "status": "no_terms", "reason": "no_lexical_terms_after_preprocessing"} for group in empty)
+        assert all(len(group["representatives"]) == 30 for group in empty)
+        assert all(word.strip() for group in clusters for word in group["terms"])
+        model = load(output / lane["model_file"])
+        assert all(word.strip() for words in model.topic_representations_.values() for word, _score in words)
+        assert len(read_lines(output / lane["assignments_file"])) == manifest["records"]["rows"]

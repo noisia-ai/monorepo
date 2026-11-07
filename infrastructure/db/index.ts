@@ -123,3 +123,5 @@ export * from "./signal-membership-stored-replay";
 export * from "./signal-mass-labeling";
 
 export * from "./signal-mass-labeling-source";
+
+export * from "./signal-workspace-engine-recovery";

@@ -189,3 +189,5 @@ export async function sendWorkspaceInterpretationV1(args: {
       ? { ...result, error_code: "workspace_engine_interpretation_timeout_outcome_unknown" } : result;
   } finally { cancelTimeout(); }
 }
+
+export { readReceipt as readWorkspaceInterpretationReceiptV1 };

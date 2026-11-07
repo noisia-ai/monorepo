@@ -175,7 +175,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
     complete: async () => { completed++; states.push("complete"); return { execution_id: lease.execution_id }; },
     completePartial: async () => { partialCompleted++; states.push("complete_partial"); return { execution_id: lease.execution_id }; },
   } as unknown as NonNullable<Args["stores"]>;
-  const execute = async (authorization_expires_at?: string, batchOnly=false) => {
+  const execute = async (authorization_expires_at?: string, batchOnly=false,recovery_only=false) => {
     const run=batchOnly ? async (args:Args)=>{
       const context=await stores.context({database:args.database,lease});
       return executeWorkspaceInterpretationBatchV1({database:args.database,
@@ -184,7 +184,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
         actor_user_id:context.actor_user_id,config:lease.snapshot.interpretation_config!,
         batch:buildSignalWorkspaceInterpretationBatchV1(context.context,[cluster],configuration),
         directory:args.directory,storage:args.storage,stores,send:args.send,api_key:args.api_key,
-        provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at});
+        provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at,recovery_only});
     } : interpretWorkspaceEngineV1;
     const attempt = await mkdtemp(join(directory, "attempt-"));
     return run({ database: {} as Args["database"], lease, stores, directory: attempt,
@@ -213,7 +213,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       } }); },
     });
   };
-  return { execute, executeBatchOnly:(expires?:string)=>execute(expires,true), cleanup: () => rm(directory, { recursive: true, force: true }),
+  return { execute, executeBatchOnly:(expires?:string,recoveryOnly=false)=>execute(expires,true,recoveryOnly), cleanup: () => rm(directory, { recursive: true, force: true }),
     admission: (receipt: SignalWorkspaceEngineLeaseV1["interpretation_admission"]) => { lease.interpretation_admission = receipt; },
     callAdmission: (receipt: SignalWorkspaceEngineInterpretationCallV1["admission"]) => { callAdmission = receipt; },
     providerEnabled: (value: boolean) => { providerEnabled = value; },
@@ -842,4 +842,18 @@ test("checkpoint recovery cannot bypass a rejected lease or current context", as
       assert.equal(s.get().reserved, 0); assert.equal(s.get().sends, 0); assert.equal(s.get().complete, 0);
     } finally { await s.cleanup(); }
   }
+});
+
+test("raw-only recovery refuses a terminal partial receipt without a successor reservation or send",async()=>{
+ const s=await scenario();try{
+  await s.executeBatchOnly();const before=s.get();
+  const reservationCount=before.reservations.length;
+  const terminal=before.calls[0]!;terminal.state="terminal_confirmed";
+  terminal.response={...terminal.response!,complete:false};
+  const retained=structuredClone(terminal);
+  await assert.rejects(s.executeBatchOnly(undefined,true),/receipt_recovery_required/u);
+  const after=s.get();assert.equal(after.reservations.length,reservationCount);
+  assert.equal(after.calls.length,1);assert.equal(after.sends,1);
+  assert.deepEqual(after.calls[0],retained);
+ }finally{await s.cleanup();}
 });

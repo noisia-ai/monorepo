@@ -177,3 +177,37 @@ test("short citation labels resolve only within the exact sealed group and never
   assert.deepEqual(decodeSignalWorkspaceInterpretationProviderResultV1(historical, { interpretations: [answer(a)] })[0]!.citations,
     a.representatives.map(ref => ref.ref_id));
 });
+
+test("pilot receipts keep thirty distinct references per field while historical profiles keep ten", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot,
+    parseSignalWorkspaceInterpretationV1 } = await import("./signal-workspace-interpretation-v1.js");
+  const group = cluster(1, "guided");
+  group.representatives = Array.from({ length: 30 }, (_, index) => cluster(index + 10, "guided").representatives[0]!);
+  const batch = buildSignalWorkspaceInterpretationBatchV1(context, [group], pilot);
+  const labels = group.representatives.map((_, index) => `r${index + 1}`);
+  const wire = { interpretations: [{ ...answer(group), citations: labels,
+    inclusion: [{ text: "Discussion represented by all supplied roots", citations: labels }],
+    exclusion: [{ text: "Boundary supported by the supplied roots", citations: labels }] }] };
+  const requestDigest = batch.request_digest, raw = JSON.stringify(wire);
+  const decoded = decodeSignalWorkspaceInterpretationProviderResultV1(batch, wire);
+  assert.equal(decoded[0]!.citations.length, 30);
+  assert.equal(decoded[0]!.inclusion[0]!.citations.length, 30);
+  assert.equal(decoded[0]!.exclusion[0]!.citations.length, 30);
+  assert.deepEqual(validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: decoded }), decoded);
+  assert.deepEqual(parseSignalWorkspaceInterpretationV1(decoded[0], pilot), decoded[0]);
+  assert.throws(() => parseSignalWorkspaceInterpretationV1(decoded[0]), /output_invalid/u);
+  assert.equal(JSON.stringify(wire), raw);
+  assert.equal(batch.request_digest, requestDigest);
+  for (const change of [
+    { citations: [...labels, "r31"] },
+    { citations: [...labels.slice(0, 29), "r1"] },
+    { citations: ["r31"] },
+    { cluster_digest: sha("another sealed group") },
+    { citations: [] },
+  ]) assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch,
+    { interpretations: [{ ...wire.interpretations[0], ...change }] }), /output|citation|evidence/u);
+  const shorter = { ...group, representatives: group.representatives.slice(0, 20) };
+  const shorterBatch = buildSignalWorkspaceInterpretationBatchV1(context, [shorter], pilot);
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(shorterBatch,
+    { interpretations: [{ ...wire.interpretations[0], citations: ["r21"], inclusion: [], exclusion: [] }] }), /citation_invalid/u);
+});

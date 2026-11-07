@@ -122,3 +122,20 @@ test("mass-labeling selects guided evidence once and uses every available distin
   assert.equal(evidence[0]!.representatives.length, 12);
   assert.equal(new Set(evidence[0]!.representatives.map(row => row.root_id)).size, 12);
 });
+
+test("root-density profile rejects 12 roots repeated across many chunks before editorial admission",async()=>{
+  const f=fixture();f.output.config={profile_version:"workspace-bertopic-mass-labeling-v2"};
+  f.clusters[0]!.representatives=f.assignments.filter(row=>row.chunk_index===0&&row.stable_cluster_id!==null)
+    .map(row=>({...row,selection_reason:row.root_id===id(12)?"low_affiliation_boundary":"high_affiliation"}));
+  await assert.rejects(execute(f),/workspace_engine_editorial_population_invalid/u);
+});
+
+test("empty lexical evidence preserves its explicit reason and all representatives",async()=>{
+ const f=fixture();f.clusters[0]!.terms=[];
+ const cluster=f.clusters[0]! as typeof f.clusters[0] & {lexical_representation:unknown};
+ cluster.lexical_representation={status:"no_terms",reason:"no_lexical_terms_after_preprocessing"};
+ const evidence=await execute(f);
+ assert.deepEqual(evidence[0]!.terms,[]);
+ assert.deepEqual(evidence[0]!.lexical_representation,cluster.lexical_representation);
+ assert.equal(evidence[0]!.representatives.length,10);
+});

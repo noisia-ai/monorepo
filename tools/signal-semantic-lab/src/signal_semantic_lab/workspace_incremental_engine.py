@@ -232,6 +232,8 @@ def _parent(directory, expected_hash, execution, workspace, identity):
     if base._hash_file(directory / "manifest.json") != expected_hash:
         fail("previous_manifest_hash_mismatch")
     manifest = base._read_json(directory / "manifest.json")
+    if manifest.get("config", {}).get("profile_version") in base.ROOT_FIT_PROFILES:
+        fail("previous_profile_unsupported")
     if manifest.get("workspace_id") != workspace:
         fail("previous_workspace_mismatch")
     refs = {}
@@ -606,6 +608,8 @@ def run_workspace_incremental_engine(
     if checked(input_dir, config["current_input_manifest"]).name != "manifest.json":
         fail("input_manifest_invalid")
     manifest, records, matrix, guides, guide_vectors = base._load_input(input_dir)
+    if manifest["config"]["profile_version"] in base.ROOT_FIT_PROFILES:
+        fail("previous_profile_unsupported")
     identity = compatibility(manifest, guides, manifest["guide_vectors"]["sha256"])
     if manifest["workspace_id"] != config["workspace_id"] or identity != config["compatibility"]:
         fail("input_identity_invalid")

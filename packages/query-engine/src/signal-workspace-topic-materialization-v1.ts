@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { signalTopicDefinitionSchemaV1, signalTopicDefinitionDigestV1, type SignalTopicDefinitionV1 } from "./signal-topic-catalog-v1";
-import { parseSignalWorkspaceInterpretationV1, type SignalWorkspaceInterpretationV1 } from "./signal-workspace-interpretation-v1";
+import { parseSignalWorkspaceInterpretationV1, type SignalWorkspaceInterpretationV1, type SignalWorkspaceInterpretationConfigurationV1 } from "./signal-workspace-interpretation-v1";
 
 export type SignalWorkspaceTopicMaterializationMappingV1 = {
   unit_key: string; term_key: string; status: SignalWorkspaceInterpretationV1["status"];
@@ -40,6 +40,7 @@ export function mergeSignalWorkspaceTopicMaterializationV1(args: {
   prior: SignalTopicDefinitionV1[];
   interpretations: Array<{ result: SignalWorkspaceInterpretationV1; artifact_id: string }>;
   execution_id: string; now: string; locale: string;
+  interpretation_configuration?: SignalWorkspaceInterpretationConfigurationV1;
 }): { definitions: SignalTopicDefinitionV1[]; mapping: SignalWorkspaceTopicMaterializationMappingV1[]; topic_count: number; discovered_topic_count: number } {
   const locale = canonicalSignalWorkspaceTopicLocaleV1(args.locale);
   if (!z.string().uuid().safeParse(args.execution_id).success || !z.string().datetime().safeParse(args.now).success) throw new Error("workspace_engine_materialization_context_invalid");
@@ -55,7 +56,7 @@ export function mergeSignalWorkspaceTopicMaterializationV1(args: {
   }
   const mapping: SignalWorkspaceTopicMaterializationMappingV1[] = [], seen = new Set<string>();
   for (const proposal of args.interpretations) {
-    const result = parseSignalWorkspaceInterpretationV1(proposal.result);
+    const result = parseSignalWorkspaceInterpretationV1(proposal.result, args.interpretation_configuration);
     if (!z.string().uuid().safeParse(proposal.artifact_id).success || seen.has(result.cluster_id)) throw new Error("workspace_engine_materialization_proposal_invalid");
     seen.add(result.cluster_id);
     if (result.status !== "insufficient" && (!result.name || !result.definition || !result.citations.length)) throw new Error("workspace_engine_materialization_evidence_missing");

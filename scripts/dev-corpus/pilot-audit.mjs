@@ -525,6 +525,9 @@ export function buildBlindSamples(snapshot, summary, secret) {
     answerKey[samples.at(-1).case_id].decision = answer.selected;
     answerKey[samples.at(-1).case_id].confidence = answer.confidence;
   }
+  const blindedOrder = (sample) => createHmac('sha256', secret)
+    .update(`blind-order\0${sample.case_id}`).digest('hex');
+  samples.sort((left, right) => blindedOrder(left).localeCompare(blindedOrder(right)));
   return { samples, answerKey };
 }
 
