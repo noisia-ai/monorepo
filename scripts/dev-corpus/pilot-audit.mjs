@@ -8,6 +8,8 @@ const OPERATOR_STAGES = ['voyage', 'bertopic', 'claude', 'jev_smoke', 'jev_full'
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+const normalizedIdentity = (value) => String(value).normalize('NFKD').replace(/[\u0300-\u036f]/gu, '')
+  .toLocaleLowerCase('en-US').replace(/[^a-z0-9]+/gu, ' ').trim();
 
 export function validatePilotSnapshot(snapshot) {
   const frozenTime = Date.parse(snapshot?.map?.created_at);
@@ -16,8 +18,9 @@ export function validatePilotSnapshot(snapshot) {
     || !snapshot.map.map_digest || !Number.isFinite(frozenTime)
     || !Array.isArray(snapshot.map.catalog) || !Array.isArray(snapshot.items)
     || !Number.isSafeInteger(snapshot.map.root_count) || snapshot.map.root_count !== snapshot.items.length
-    || !record(snapshot.run) || snapshot.run.status !== 'completed' || !Number.isSafeInteger(snapshot.run.smoke_root_limit)
-    || snapshot.run.smoke_root_limit < 1 || snapshot.run.smoke_root_limit >= snapshot.map.root_count
+    || !record(snapshot.run) || snapshot.run.status !== 'completed' || snapshot.run.smoke_root_limit !== null
+    || !record(snapshot.run.smoke_metrics) || !Number.isSafeInteger(snapshot.run.smoke_metrics.root_count)
+    || snapshot.run.smoke_metrics.root_count < 1 || snapshot.run.smoke_metrics.root_count >= snapshot.map.root_count
     || !Array.isArray(snapshot.calls)
     || !record(snapshot.stage_receipts) || !record(snapshot.stage_receipts.embeddings)
     || !record(snapshot.stage_receipts.engine) || !Array.isArray(snapshot.stage_receipts.editorial_calls)) {
@@ -67,9 +70,39 @@ export function validateOperatorReceipt(snapshot, receipt) {
       || !nullableCount(stage.charged_micro_usd) || !nullableCount(stage.usage_value_micro_usd)
       || !nullableCount(stage.free_tokens_used) || !nullableCount(stage.input_tokens)
       || !Array.isArray(stage.ledger_call_ids)
+      || (stage.group_count !== undefined && (!Number.isSafeInteger(stage.group_count) || stage.group_count < 1))
       || !Number.isFinite(Date.parse(stage.started_at)) || !Number.isFinite(Date.parse(stage.completed_at))
       || Date.parse(stage.completed_at) < Date.parse(stage.started_at))) {
     throw new Error('pilot_audit_operator_stages_incomplete');
+  }
+  const publicCatalog = receipt.public_catalog;
+  const identityTerms = publicCatalog?.private_identity_terms;
+  const publicTopics = publicCatalog?.topics;
+  if (!record(publicCatalog) || publicCatalog.map_digest !== snapshot.map.map_digest
+    || !Array.isArray(identityTerms) || identityTerms.some((term) => typeof term !== 'string' || !normalizedIdentity(term))
+    || !Array.isArray(publicTopics) || publicTopics.length !== snapshot.map.catalog.length) {
+    throw new Error('pilot_audit_public_catalog_required');
+  }
+  const rawTopics = new Map(snapshot.map.catalog.map((topic) => [topic.topic_key, topic]));
+  const publicKeys = new Set();
+  for (const topic of publicTopics) {
+    if (!record(topic) || !rawTopics.has(topic.topic_key) || publicKeys.has(topic.topic_key)
+      || typeof topic.public_name !== 'string' || !topic.public_name.trim()
+      || typeof topic.public_definition !== 'string' || !topic.public_definition.trim()) {
+      throw new Error('pilot_audit_public_catalog_invalid');
+    }
+    publicKeys.add(topic.topic_key);
+    const display = normalizedIdentity(`${topic.public_name} ${topic.public_definition}`);
+    if (identityTerms.some((term) => display.includes(normalizedIdentity(term)))) {
+      throw new Error('pilot_audit_public_catalog_private_identity_leak');
+    }
+  }
+  const engineGroupCount = snapshot.stage_receipts.engine.result_summary?.fit_checkpoint?.interpretation_manifest?.unit_count;
+  const suppliedGroupCount = stages.get('bertopic')?.group_count;
+  if ((engineGroupCount !== undefined && (!Number.isSafeInteger(engineGroupCount) || engineGroupCount < 1))
+    || (engineGroupCount !== undefined && suppliedGroupCount !== undefined && engineGroupCount !== suppliedGroupCount)
+    || (engineGroupCount === undefined && suppliedGroupCount === undefined)) {
+    throw new Error('pilot_audit_bertopic_group_census_required');
   }
   return receipt;
 }
@@ -120,6 +153,10 @@ function reconcileJevLedger(snapshot, operatorReceipt) {
     itemCallIds.set(item.call_id, item.ordinal);
   }
   const assigned = new Set();
+  const smokeStage = operatorReceipt.stages.find((stage) => stage.name === 'jev_smoke');
+  if (smokeStage.input_count !== snapshot.run.smoke_metrics.root_count) {
+    throw new Error('pilot_audit_smoke_metric_count_mismatch');
+  }
   for (const stage of operatorReceipt.stages.filter((row) => row.name.startsWith('jev_'))) {
     const stageCallIds = new Set(stage.ledger_call_ids);
     const stageItems = [...stageCallIds].map((id) => itemCallIds.get(id));
@@ -127,7 +164,7 @@ function reconcileJevLedger(snapshot, operatorReceipt) {
     if (stageRootCount !== stage.input_count || stageRootCount !== stage.ledger_call_ids.length) {
       throw new Error('pilot_audit_jev_input_count_mismatch');
     }
-    const smokeLimit = snapshot.run.smoke_root_limit;
+    const smokeLimit = snapshot.run.smoke_metrics.root_count;
     if (stageItems.some((ordinal) => stage.name === 'jev_smoke' ? ordinal > smokeLimit : ordinal <= smokeLimit)) {
       throw new Error('pilot_audit_jev_smoke_full_overlap');
     }
@@ -274,6 +311,9 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
   }
 
   const rootCount = snapshot.items.length;
+  const publicCatalog = new Map(operatorReceipt.public_catalog.topics.map((topic) => [topic.topic_key, topic]));
+  const engineGroupCount = snapshot.stage_receipts.engine.result_summary?.fit_checkpoint?.interpretation_manifest?.unit_count;
+  const groupCount = engineGroupCount ?? operatorReceipt.stages.find((stage) => stage.name === 'bertopic').group_count;
   const rate = (count, denominator) => denominator === 0 ? null : count / denominator * 100;
   const costs = [];
   const chargedValues = [];
@@ -352,6 +392,12 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
       unresolved_percent: rate(triggerBarrier.unresolved, rootCount),
     },
     topics: topicRows.map(({ rootIds: _rootIds, ...topic }) => topic),
+    public_topics: topicRows.map((topic) => {
+      const publicTopic = publicCatalog.get(topic.topic_key);
+      return { topic_key: topic.topic_key, name: publicTopic.public_name,
+        definition: publicTopic.public_definition, volume: topic.volume };
+    }),
+    bertopic_group_count: groupCount,
     stages: costs,
     charged_micro_usd: totalChargedMicroUsd,
     usage_value_micro_usd: totalUsageValueMicroUsd,
@@ -435,9 +481,10 @@ export function buildBlindSamples(snapshot, summary, secret) {
   validatePilotSnapshot(snapshot);
   if (!Buffer.isBuffer(secret) || secret.length < 32) throw new Error('pilot_audit_sample_secret_invalid');
   const items = new Map(snapshot.items.map((item) => [item.root_id, item]));
+  const rootId = (value) => typeof value === 'string' ? value : value.root_id;
   const ranked = (rows, salt) => [...rows].sort((left, right) => {
-    const a = createHmac('sha256', secret).update(`${salt}\0${left.root_id}`).digest('hex');
-    const b = createHmac('sha256', secret).update(`${salt}\0${right.root_id}`).digest('hex');
+    const a = createHmac('sha256', secret).update(`${salt}\0${rootId(left)}`).digest('hex');
+    const b = createHmac('sha256', secret).update(`${salt}\0${rootId(right)}`).digest('hex');
     return a.localeCompare(b);
   });
   const samples = [];
@@ -446,7 +493,7 @@ export function buildBlindSamples(snapshot, summary, secret) {
     const item = items.get(rootId);
     if (!item) throw new Error('pilot_audit_sample_root_missing');
     const caseId = createHmac('sha256', secret).update(`case\0${cohort}\0${rootId}`).digest('hex').slice(0, 20);
-    samples.push({ case_id: caseId, cohort, text: item.text, ...details });
+    samples.push({ case_id: caseId, text: item.text });
     answerKey[caseId] = { root_id: rootId, cohort, ...details };
   };
   const rows = new Map(summary.private_rows.map((row) => [row.root_id, row]));
@@ -459,7 +506,7 @@ export function buildBlindSamples(snapshot, summary, secret) {
     if (roots.length !== 50) throw new Error('pilot_audit_topic_sample_insufficient');
     for (const rootId of roots) {
       const cohort = `topic-${index + 1}`;
-      addSample(rootId, cohort, { topic_name: topic.name, topic_definition: topic.definition });
+      addSample(rootId, cohort, {});
       answerKey[samples.at(-1).case_id].topic_key = topic.topic_key;
       answerKey[samples.at(-1).case_id].probability = rows.get(rootId)?.probabilities
         .find((entry) => entry.topic_key === topic.topic_key)?.probability ?? null;
@@ -500,17 +547,17 @@ export function renderPublicReceipt(summary, comparisonDate) {
   if (typeof comparisonDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(comparisonDate)) {
     throw new Error('pilot_audit_receipt_date_invalid');
   }
-  const groupCount = new Set(summary.topics.flatMap((topic) => topic.group_ids ?? [])).size;
+  const groupCount = summary.bertopic_group_count;
   const stageRows = summary.stages.map((stage) =>
     `| ${markdownCell(stage.name)} | ${stage.input_count} ${stage.input_unit} | ${dollars(stage.usage_value_micro_usd)} | ${dollars(stage.charged_micro_usd)} | ${stage.name === 'claude' ? dollars(stage.charged_per_input_unit_micro_usd) : '—'} | ${stage.free_tokens_used ?? 'n/d'} | ${stage.duration_seconds.toFixed(1)} s |`);
-  const topicRows = summary.topics.map((topic) =>
+  const topicRows = summary.public_topics.map((topic) =>
     `| ${markdownCell(topic.name)} | ${markdownCell(topic.definition)} | ${topic.volume} |`);
   return [
     '# Piloto de etiquetado masivo · Estudio real A (cerveza, Brasil)',
     '',
     `Fecha de corte: ${comparisonDate}. Mapa congelado antes de comparar con el estudio entregado.`,
     '',
-    `Raíces: ${summary.root_count}. Grupos: ${groupCount}. Tópicos finales: ${summary.topics.length}.`,
+    `Raíces: ${summary.root_count}. Grupos BERTopic totales (incluye Noise y grupos no adoptados): ${groupCount}. Tópicos finales: ${summary.public_topics.length}.`,
     `Universo de menciones: ${summary.population.unique_roots.toLocaleString('en-US')} únicas, ${summary.population.excluded_roots.toLocaleString('en-US')} excluidas y ${summary.population.eligible_roots.toLocaleString('en-US')} elegibles.`,
     '',
     '## Costos y tiempos',
@@ -531,7 +578,7 @@ export function renderPublicReceipt(summary, comparisonDate) {
     '',
     '## Mapa de tópicos',
     '',
-    `<details><summary>${summary.topics.length} tópicos, ${groupCount} grupos</summary>`,
+    `<details><summary>${summary.public_topics.length} tópicos, ${groupCount} grupos BERTopic</summary>`,
     '',
     '| Tópico | Definición | Raíces con probabilidad > 0.7 |',
     '|---|---|---:|',

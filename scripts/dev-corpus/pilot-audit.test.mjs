@@ -44,47 +44,73 @@ const result = (root_id, topic0, topic1, decision, decisionProbability) => ({
 function fixture() {
   return {
     contract_version: 'mass-labeling-private-export-v1',
+    exported_at: '2026-11-07T12:02:00.000Z',
     map: {
+      id: 'synthetic-map-id',
       map_digest: 'sha256:synthetic-map-digest',
       created_at: '2026-11-07T12:00:00.000Z',
       root_count: 5,
+      source_engine_execution_id: 'synthetic-engine-run',
+      preparation_run_id: 'synthetic-preparation-run',
+      input_revision: 7,
       catalog: [
         { topic_key: 'product-a', name: 'Synthetic topic A', definition: 'Synthetic definition A', group_ids: ['g1'] },
         { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', group_ids: ['g2'] },
       ],
     },
-    run: { status: 'completed', smoke_root_limit: 1, continued_at: '2026-11-07T12:01:00.000Z' },
+    run: { id: 'synthetic-label-run', run_id: 'synthetic-label-run', map_id: 'synthetic-map-id',
+      status: 'completed', smoke_root_limit: null, smoke_metrics: { root_count: 1, technical_failure: false },
+      smoke_metrics_digest: 'sha256:synthetic-smoke-digest', continued_at: '2026-11-07T12:01:00.000Z' },
     items: [
-      { root_id: 'root-1', ordinal: 1, text: 'Synthetic mention one', status: 'labeled', call_id: 'call-smoke',
+      { map_id: 'synthetic-map-id', root_id: 'root-1', ordinal: 1, input_digest: 'sha256:synthetic-input-1',
+        chunk_index: 0, text: 'Synthetic mention one', status: 'labeled', call_id: 'call-smoke',
         probabilities: result('root-1', 0.8, 0.1, 'trigger', 0.9).probabilities,
-        candidates: [{ ordinal: 0, topic_key: 'product-a' }, { ordinal: 1, topic_key: 'product-b' }] },
-      { root_id: 'root-2', ordinal: 2, text: 'Synthetic mention two', status: 'labeled', call_id: 'call-full-root-2',
+        candidates: [{ topic_key: 'product-a', name: 'Synthetic topic A', definition: 'Synthetic definition A', similarity: 0.9 },
+          { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', similarity: 0.8 }],
+        error_code: null, result_created_at: '2026-11-07T12:01:01.000Z' },
+      { map_id: 'synthetic-map-id', root_id: 'root-2', ordinal: 2, input_digest: 'sha256:synthetic-input-2',
+        chunk_index: 0, text: 'Synthetic mention two', status: 'labeled', call_id: 'call-full-root-2',
         probabilities: result('root-2', 0.7, 0.2, 'none', 0.55).probabilities,
-        candidates: [{ ordinal: 0, topic_key: 'product-a' }, { ordinal: 1, topic_key: 'product-b' }] },
-      { root_id: 'root-3', ordinal: 3, text: 'Synthetic mention three', status: 'abstained', call_id: 'call-full-root-3',
+        candidates: [{ topic_key: 'product-a', name: 'Synthetic topic A', definition: 'Synthetic definition A', similarity: 0.9 },
+          { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', similarity: 0.8 }],
+        error_code: null, result_created_at: '2026-11-07T12:01:02.000Z' },
+      { map_id: 'synthetic-map-id', root_id: 'root-3', ordinal: 3, input_digest: 'sha256:synthetic-input-3',
+        chunk_index: 0, text: 'Synthetic mention three', status: 'abstained', call_id: 'call-full-root-3',
         probabilities: result('root-3', 0.1, 0.3, 'barrier', 0.8).probabilities,
-        candidates: [{ ordinal: 0, topic_key: 'product-a' }, { ordinal: 1, topic_key: 'product-b' }] },
-      { root_id: 'root-4', ordinal: 4, text: 'Synthetic mention four', status: null, call_id: null, probabilities: null,
-        candidates: [{ ordinal: 0, topic_key: 'product-a' }, { ordinal: 1, topic_key: 'product-b' }] },
-      { root_id: 'root-5', ordinal: 5, text: 'Synthetic mention five', status: 'labeled', call_id: 'call-full-root-5',
+        candidates: [{ topic_key: 'product-a', name: 'Synthetic topic A', definition: 'Synthetic definition A', similarity: 0.9 },
+          { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', similarity: 0.8 }],
+        error_code: null, result_created_at: '2026-11-07T12:01:03.000Z' },
+      { map_id: 'synthetic-map-id', root_id: 'root-4', ordinal: 4, input_digest: 'sha256:synthetic-input-4',
+        chunk_index: 0, text: 'Synthetic mention four', status: null, call_id: null, probabilities: null,
+        candidates: [{ topic_key: 'product-a', name: 'Synthetic topic A', definition: 'Synthetic definition A', similarity: 0.9 },
+          { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', similarity: 0.8 }],
+        error_code: null, result_created_at: null },
+      { map_id: 'synthetic-map-id', root_id: 'root-5', ordinal: 5, input_digest: 'sha256:synthetic-input-5',
+        chunk_index: 0, text: 'Synthetic mention five', status: 'labeled', call_id: 'call-full-root-5',
         probabilities: result('root-5', 0.2, 0.29, 'none', 0.8).probabilities,
-        candidates: [{ ordinal: 0, topic_key: 'product-a' }, { ordinal: 1, topic_key: 'product-b' }] },
+        candidates: [{ topic_key: 'product-a', name: 'Synthetic topic A', definition: 'Synthetic definition A', similarity: 0.9 },
+          { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', similarity: 0.8 }],
+        error_code: null, result_created_at: '2026-11-07T12:01:05.000Z' },
     ],
     calls: [
-      { id: 'call-smoke', settled_micro_usd: '0', usage: { input_tokens: 1000 } },
-      { id: 'call-full-root-2', settled_micro_usd: '0', usage: { input_tokens: 3000 } },
-      { id: 'call-full-root-3', settled_micro_usd: '12340', usage: { input_tokens: 3000 } },
-      { id: 'call-full-root-5', settled_micro_usd: '0', usage: { input_tokens: 4000 } },
+      { id: 'call-smoke', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 1000 } },
+      { id: 'call-full-root-2', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 3000 } },
+      { id: 'call-full-root-3', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
+        reserved_micro_usd: '10000', settled_micro_usd: '12340', terminal_exposure_micro_usd: '12340', usage: { input_tokens: 3000 } },
+      { id: 'call-full-root-5', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 4000 } },
     ],
     stage_receipts: {
       embeddings: { input_tokens: '5000' },
-      engine: {},
+      engine: { id: 'synthetic-engine-run', status: 'completed', result_summary: { fit_checkpoint: { interpretation_manifest: { unit_count: 12 } } } },
       editorial_calls: [{ id: 'editorial-call', settled_micro_usd: '0', input_tokens: 0, usage: { input_tokens: 0 } }],
     },
   };
 }
 
-function operatorReceipt() {
+function operatorReceipt(snapshot = fixture()) {
   const timing = (name, input_count, duration, charged_micro_usd, usage_value_micro_usd,
     free_tokens_used, input_tokens, ledger_call_ids = []) => ({
     name,
@@ -101,11 +127,17 @@ function operatorReceipt() {
   return {
     contract_version: 'signal-mass-labeling-operator-receipt-v1',
     map_digest: 'sha256:synthetic-map-digest',
-    snapshot_sha256: computeSnapshotDigest(fixture()),
+    snapshot_sha256: computeSnapshotDigest(snapshot),
     population: { unique_roots: 6, excluded_roots: 1, eligible_roots: 5 },
+    public_catalog: {
+      map_digest: snapshot.map.map_digest,
+      private_identity_terms: ['confidential brand zeta', 'private competitor omega'],
+      topics: snapshot.map.catalog.map((topic) => ({ topic_key: topic.topic_key,
+        public_name: `Public alias ${topic.topic_key}`, public_definition: `Public definition ${topic.topic_key}` })),
+    },
     stages: [
       timing('voyage', 5, 2, 0, 10000, 5000, 5000),
-      timing('bertopic', 5, 5, 0, 0, 0, 0),
+      { ...timing('bertopic', 5, 5, 0, 0, 0, 0), group_count: 12 },
       timing('claude', 2, 3, 0, 0, 0, 0, ['editorial-call']),
       timing('jev_smoke', 1, 2, 0, 0, 0, 1000, ['call-smoke']),
       timing('jev_full', 3, 5, 12340, 12340, 0, 10000,
@@ -127,6 +159,18 @@ test('rejects snapshots without a frozen map before baseline comparison can be r
   const snapshot = fixture();
   snapshot.map.created_at = null;
   assert.throws(() => validatePilotSnapshot(snapshot), /map_not_frozen/u);
+});
+
+test('accepts the H2 full export with null smoke_root_limit and partitions calls by persisted smoke_metrics.root_count', () => {
+  const snapshot = fixture();
+  assert.equal(snapshot.run.smoke_root_limit, null);
+  assert.equal(snapshot.run.smoke_metrics.root_count, 1);
+  const summary = summarizePilotSnapshot(snapshot, operatorReceipt(snapshot));
+  assert.equal(summary.stages.find((stage) => stage.name === 'jev_smoke').input_count, 1);
+  assert.equal(summary.stages.find((stage) => stage.name === 'jev_full').input_count, 3);
+  const invalidLegacyLimit = structuredClone(snapshot);
+  invalidLegacyLimit.run.smoke_root_limit = 1;
+  assert.throws(() => validatePilotSnapshot(invalidLegacyLimit), /map_not_frozen/u);
 });
 
 test('reads no baseline content until both frozen map and operator receipt match', async () => {
@@ -166,6 +210,7 @@ test('summarizes threshold coverage, calls, timing, and cost projections', () =>
   assert.equal(summary.usage_value_micro_usd, 22_340);
   assert.equal(summary.free_tokens_used, 5_000);
   assert.equal(summary.stages[0].duration_seconds, 2);
+  assert.equal(summary.bertopic_group_count, 12);
   const duplicateCall = operatorReceipt();
   duplicateCall.stages[4].ledger_call_ids = ['call-smoke'];
   assert.throws(() => summarizePilotSnapshot(fixture(), duplicateCall), /input_count_mismatch/u);
@@ -217,6 +262,8 @@ test('selects exactly 50 distinct roots per leading topic and 100 for trigger/ba
   snapshot.map.root_count = 105;
   const receipt = operatorReceipt();
   receipt.population = { unique_roots: 106, excluded_roots: 1, eligible_roots: 105 };
+  receipt.public_catalog.topics = snapshot.map.catalog.map((topic) => ({ topic_key: topic.topic_key,
+    public_name: `Public alias ${topic.topic_key}`, public_definition: `Public definition ${topic.topic_key}` }));
   for (let index = 0; index < 105; index += 1) {
     const root_id = `synthetic-root-${index}`;
     const candidateKeys = Array.from({ length: 8 }, (_, offset) => `product-${(index + offset) % 10}`);
@@ -241,17 +288,25 @@ test('selects exactly 50 distinct roots per leading topic and 100 for trigger/ba
   receipt.stages[4].input_tokens = 0;
   receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
   const { samples, answerKey } = buildBlindSamples(snapshot, summarizePilotSnapshot(snapshot, receipt), Buffer.alloc(32, 9));
+  const reordered = { ...snapshot, items: [...snapshot.items].reverse() };
+  const reorderedReceipt = { ...receipt, snapshot_sha256: computeSnapshotDigest(reordered) };
+  const reorderedResult = buildBlindSamples(reordered, summarizePilotSnapshot(reordered, reorderedReceipt), Buffer.alloc(32, 9));
+  const idsFor = (sampleRows, key, cohort) => sampleRows.map((sample) => sample.case_id)
+    .filter((caseId) => key[caseId].cohort === cohort);
+  assert.deepEqual(idsFor(reorderedResult.samples, reorderedResult.answerKey, 'topic-1'),
+    idsFor(samples, answerKey, 'topic-1'));
   assert.equal(renderBlindSamples(samples).includes('synthetic-root-0'), false);
-  const topicSamples = samples.filter((sample) => sample.cohort.startsWith('topic-'));
+  const topicSamples = Object.values(answerKey).filter((entry) => entry.cohort.startsWith('topic-'));
   assert.equal(topicSamples.length, 500);
   for (let index = 1; index <= 10; index += 1) {
-    assert.equal(new Set(topicSamples.filter((sample) => sample.cohort === `topic-${index}`).map((sample) => sample.case_id)).size, 50);
+    assert.equal(new Set(topicSamples.filter((entry) => entry.cohort === `topic-${index}`).map((entry) => entry.root_id)).size, 50);
   }
-  const triggerBarrierSamples = samples.filter((sample) => sample.cohort === 'trigger-barrier');
+  const triggerBarrierSamples = Object.values(answerKey).filter((entry) => entry.cohort === 'trigger-barrier');
   assert.equal(triggerBarrierSamples.length, 100);
-  assert.equal(new Set(triggerBarrierSamples.map((sample) => sample.case_id)).size, 100);
+  assert.equal(new Set(triggerBarrierSamples.map((entry) => entry.root_id)).size, 100);
+  assert.equal(samples.length, 600);
   assert.ok(samples.every((sample) => !Object.hasOwn(sample, 'root_id') && !Object.hasOwn(sample, 'probability')));
-  assert.ok(samples.every((sample) => !Object.hasOwn(sample, 'topic_key')));
+  assert.ok(samples.every((sample) => !Object.hasOwn(sample, 'topic_key') && !Object.hasOwn(sample, 'cohort')));
   assert.ok(Object.values(answerKey).some((entry) => entry.root_id === 'synthetic-root-0'));
 });
 
@@ -260,8 +315,21 @@ test('public receipt contains aggregate metrics and excludes mention text and ID
   const receipt = renderPublicReceipt(summary, '2026-11-07');
   assert.match(receipt, /Estudio real A \(cerveza, Brasil\)/u);
   assert.match(receipt, /USD 2\.468000/u);
+  assert.match(receipt, /Grupos BERTopic totales .*: 12/u);
+  assert.match(receipt, /Public alias product-a/u);
+  assert.doesNotMatch(receipt, /Synthetic topic A|Synthetic definition A/u);
   assert.doesNotMatch(receipt, /Synthetic mention/u);
   assert.doesNotMatch(receipt, /root-[1-4]/u);
+});
+
+test('requires an explicitly sanitized public catalog and rejects private identity terms', () => {
+  const snapshot = fixture();
+  const receipt = operatorReceipt(snapshot);
+  receipt.public_catalog.topics[0].public_name = 'Confidential Brand Zeta';
+  assert.throws(() => summarizePilotSnapshot(snapshot, receipt), /private_identity_leak/u);
+  const missing = operatorReceipt(snapshot);
+  delete missing.public_catalog;
+  assert.throws(() => summarizePilotSnapshot(snapshot, missing), /public_catalog_required/u);
 });
 
 test('keeps unverified charges unknown instead of reporting free provider usage', () => {
@@ -273,7 +341,7 @@ test('keeps unverified charges unknown instead of reporting free provider usage'
   assert.match(renderPublicReceipt(summary, '2026-11-07'), /Cargo total confirmado: n\/d/u);
 });
 
-test('refuses to write a partial packet when synthetic data cannot fill the required blind samples', async () => {
+test('exports the H2 JSON contract into private audit files and sanitized public receipt', async () => {
   const { chmod, mkdir, readFile, rm, stat, writeFile } = await import('node:fs/promises');
   const { spawnSync } = await import('node:child_process');
   const { dirname, join, relative, resolve } = await import('node:path');
@@ -287,9 +355,41 @@ test('refuses to write a partial packet when synthetic data cannot fill the requ
     await chmod(privateRoot, 0o700);
     await mkdir(fixtureDirectory, { mode: 0o700 });
     const snapshot = fixture();
+    snapshot.map.catalog = Array.from({ length: 10 }, (_, index) => ({
+      topic_key: `product-${index}`, name: `Synthetic topic ${index}`, definition: `Synthetic definition ${index}`,
+    }));
+    snapshot.items = [];
+    snapshot.calls = [];
+    snapshot.map.root_count = 105;
     const receipt = operatorReceipt();
+    receipt.population = { unique_roots: 106, excluded_roots: 1, eligible_roots: 105 };
+    receipt.public_catalog.topics = snapshot.map.catalog.map((topic) => ({ topic_key: topic.topic_key,
+      public_name: `Public alias ${topic.topic_key}`, public_definition: `Public definition ${topic.topic_key}` }));
+    for (let index = 0; index < 105; index += 1) {
+      const root_id = `synthetic-root-${index}`;
+      const candidateKeys = Array.from({ length: 8 }, (_, offset) => `product-${(index + offset) % 10}`);
+      const decision = index < 50 ? 'trigger' : index < 100 ? 'barrier' : 'none';
+      const resultRow = result(root_id, 0.9, 0.85, decision, decision === 'none' ? 0.95 : 0.9);
+      for (const [ordinal] of candidateKeys.entries()) resultRow.probabilities[`topic_${ordinal}`] = topicAnswer(0.9);
+      resultRow.call_id = `synthetic-call-${index}`;
+      snapshot.items.push({ root_id, ordinal: index + 1, text: `Synthetic auditor text ${index}`,
+        status: 'labeled', call_id: resultRow.call_id, probabilities: resultRow.probabilities,
+        candidates: candidateKeys.map((topic_key) => ({ topic_key })) });
+      snapshot.calls.push({ id: resultRow.call_id, run_id: snapshot.run.run_id, model: 'synthetic-jev-v1', status: 'succeeded',
+        settled_micro_usd: '0', usage: { input_tokens: 0 } });
+    }
+    receipt.stages[1].input_count = 105;
+    receipt.stages[3].input_count = 1;
+    receipt.stages[3].input_tokens = 0;
+    receipt.stages[3].ledger_call_ids = ['synthetic-call-0'];
+    receipt.stages[4].input_count = 104;
+    receipt.stages[4].ledger_call_ids = snapshot.calls.slice(1).map((call) => call.id);
+    receipt.stages[4].usage_value_micro_usd = 0;
+    receipt.stages[4].charged_micro_usd = 0;
+    receipt.stages[4].input_tokens = 0;
     receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
-    const comparisonSnapshot = { ...comparison };
+    const comparisonSnapshot = { ...comparison, topic_matches: [],
+      new_product_topic_keys: snapshot.map.catalog.map((topic) => topic.topic_key), study_triggers: [], study_barriers: [] };
     const paths = {
       snapshot: join(fixtureDirectory, 'snapshot.json'),
       receipt: join(fixtureDirectory, 'operator-receipt.json'),
@@ -311,11 +411,19 @@ test('refuses to write a partial packet when synthetic data cannot fill the requ
       '--public-receipt', relative(repositoryRoot, publicReceiptPath),
     ];
     const run = spawnSync(process.execPath, args, { cwd: repositoryRoot, encoding: 'utf8' });
-    assert.notEqual(run.status, 0);
-    assert.match(run.stderr, /top_ten_topics_insufficient/u);
+    assert.equal(run.status, 0, run.stderr);
     const outputDirectory = join(fixtureDirectory, 'output');
-    await assert.rejects(stat(join(outputDirectory, 'answer-key.json')));
-    await assert.rejects(readFile(publicReceiptPath));
+    const blindSamples = await readFile(join(outputDirectory, 'blind-samples.jsonl'), 'utf8');
+    const key = JSON.parse(await readFile(join(outputDirectory, 'answer-key.json'), 'utf8'));
+    const publicReceipt = await readFile(publicReceiptPath, 'utf8');
+    assert.equal(blindSamples.trim().split('\n').length, 600);
+    assert.doesNotMatch(blindSamples, /synthetic-root|topic_key|probability|cohort/u);
+    assert.doesNotMatch(publicReceipt, /Synthetic topic [0-9]|Synthetic definition/u);
+    assert.doesNotMatch(publicReceipt, /confidential brand zeta|private competitor omega/iu);
+    assert.match(publicReceipt, /Public alias product-0/u);
+    assert.match(publicReceipt, /Grupos BERTopic totales .*: 12/u);
+    assert.equal(verifyAnswerKeySeal(key), true);
+    assert.equal((await stat(join(outputDirectory, 'answer-key.json'))).mode & 0o077, 0);
   } finally {
     await rm(fixtureDirectory, { recursive: true, force: true });
     await rm(publicReceiptPath, { force: true });
