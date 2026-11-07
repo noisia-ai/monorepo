@@ -26,7 +26,7 @@ export type LabelingRunV1 = {
   id: string;
   workspace_id: string;
   actor_user_id: string;
-  kind: "facets" | "membership";
+  kind: "facets" | "membership" | "mass_labeling";
   labeler_digest: string;
   identity: LabelerIdentity;
   entity_context_digest: string;
@@ -273,7 +273,7 @@ export async function requestMentionFacetsV1(args: {
   adapter?: {
     request_identity: unknown;
     /** A provider-specific membership stage must use its own governed action. */
-    policy_action?: "concept_membership_jev" | "concept_membership_claude";
+    policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     feature?: SignalWorkspaceFeatureV1;
     validateIdentity: (identity: LabelerIdentity) => void;
     prepare: (
@@ -512,9 +512,11 @@ export function createSignalLabelingStoreV1<
   Result = FacetResult,
 >(options: {
   adapter?: {
-    kind: "facets" | "membership";
+    kind: "facets" | "membership" | "mass_labeling";
     hybrid_stage?: "jev" | "claude" | "citation";
-    policy_action?: "concept_membership_jev" | "concept_membership_claude";
+    feature?: SignalWorkspaceFeatureV1;
+    pending_calls_only?: boolean;
+    policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     /** H1 verifies each decision against this call's results in the same transaction. */
     persist_results_before_write?: boolean;
     inputs: (
@@ -597,7 +599,7 @@ export function createSignalLabelingStoreV1<
       policy.budget_date,
     ]);
     await authorize(c, run.workspace_id, run.actor_user_id, true,
-      run.kind === "membership" ? "concept_membership" : "mention_facets");
+      options.adapter?.feature ?? (run.kind === "membership" ? "concept_membership" : "mention_facets"));
     const current = await inspectFacetContextChangeV1(c, run.workspace_id);
     if (current.digest !== run.entity_context_digest)
       fail("labeling_context_changed");
@@ -767,7 +769,9 @@ export function createSignalLabelingStoreV1<
     async calls(run: LabelingRunV1): Promise<LabelingCallV1<Input>[]> {
       const calls = (
         await db.query<LabelingCallV1<Input>>(
-          "SELECT * FROM signal_labeling_calls WHERE run_id=$1 ORDER BY created_at,id",
+          `SELECT * FROM signal_labeling_calls WHERE run_id=$1
+           ${options.adapter?.pending_calls_only ? "AND NOT results_applied" : ""}
+           ORDER BY created_at,id ${options.adapter?.pending_calls_only ? "LIMIT 200" : ""}`,
           [run.id],
         )
       ).rows.map((call) => ({ ...call, raw_body: call.raw_body ?? null }));
