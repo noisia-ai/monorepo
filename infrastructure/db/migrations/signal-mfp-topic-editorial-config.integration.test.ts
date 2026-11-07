@@ -9,7 +9,10 @@ test('migrated topic editorial configuration is exact, provider sends stay disab
   const pool: pg.Pool = await openDatabase();
   const client = await pool.connect();
   try {
-    await client.query('BEGIN READ ONLY');
+    // Provider/lease functions acquire row locks even when their configured
+    // behavior is to reject the operation. Keep the transaction rollback-only
+    // instead of marking it READ ONLY so the lock path itself is exercised.
+    await client.query('BEGIN');
     const configuration = (await client.query('SELECT signal_topic_editorial_configuration_v1() body')).rows[0].body;
     assert.equal(configuration.screening.model, 'claude-sonnet-4-6');
     assert.equal(configuration.screening_batch_size, 40);
