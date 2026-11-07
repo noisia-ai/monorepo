@@ -109,7 +109,7 @@ export async function createMassLabelingMapV1(args: {
         AND artifact.engine_execution_id=engine.id AND artifact.artifact_type='engine_output'
         AND artifact.content->>'sha256'=$4
       WHERE engine.workspace_id=$1 AND engine.id=$2 AND engine.status='ready'
-        AND engine.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2')
+        AND engine.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2','workspace-bertopic-mass-labeling-v3')
         AND artifact.artifact_key IN('assignments.open.jsonl','assignments.guided.jsonl')
         AND (artifact.artifact_key='assignments.guided.jsonl' OR NOT EXISTS(
           SELECT 1 FROM analysis_artifacts guided WHERE guided.engine_execution_id=engine.id

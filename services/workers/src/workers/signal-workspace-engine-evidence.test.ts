@@ -129,3 +129,13 @@ test("root-density profile rejects 12 roots repeated across many chunks before e
     .map(row=>({...row,selection_reason:row.root_id===id(12)?"low_affiliation_boundary":"high_affiliation"}));
   await assert.rejects(execute(f),/workspace_engine_editorial_population_invalid/u);
 });
+
+test("empty lexical evidence preserves its explicit reason and all representatives",async()=>{
+ const f=fixture();f.clusters[0]!.terms=[];
+ const cluster=f.clusters[0]! as typeof f.clusters[0] & {lexical_representation:unknown};
+ cluster.lexical_representation={status:"no_terms",reason:"no_lexical_terms_after_preprocessing"};
+ const evidence=await execute(f);
+ assert.deepEqual(evidence[0]!.terms,[]);
+ assert.deepEqual(evidence[0]!.lexical_representation,cluster.lexical_representation);
+ assert.equal(evidence[0]!.representatives.length,10);
+});

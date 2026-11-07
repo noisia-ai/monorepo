@@ -45,6 +45,8 @@ const referenceSchema = z.object({
 const clusterSchema = z.object({
   cluster_id: unitKey, lane: z.enum(["open", "guided"]), cluster_digest: digest,
   root_count: natural.refine(value => value > 0), chunk_count: natural.refine(value => value > 0),
+  lexical_representation: z.object({status:z.enum(["available","no_terms"]),
+    reason:z.literal("no_lexical_terms_after_preprocessing").nullable()}).strict().optional(),
   terms: z.array(text(256)).max(100), representatives: z.array(referenceSchema).max(30),
 }).strict();
 export type SignalWorkspaceInterpretationReferenceV1 = z.infer<typeof referenceSchema>;
@@ -179,6 +181,11 @@ function validUnicode(value: string) {
 export function parseSignalWorkspaceInterpretationClusterV1(value: unknown, maximumRepresentatives: 10 | 30 = 10): SignalWorkspaceInterpretationClusterV1 {
   const parsed = clusterSchema.safeParse(value); if (!parsed.success) return fail("cluster_invalid");
   if (parsed.data.representatives.length > maximumRepresentatives) return fail("cluster_invalid");
+  if(parsed.data.lexical_representation) {
+    const lexical=parsed.data.lexical_representation;
+    if((lexical.status === "available") !== Boolean(parsed.data.terms.length)
+      ||(lexical.status === "available") !== (lexical.reason === null)) return fail("cluster_invalid");
+  }
   const cluster = parsed.data, roots = new Set<string>(), refs = new Set<string>();
   if (!cluster.cluster_id.startsWith(`${cluster.lane}:`) || cluster.chunk_count < cluster.root_count
     || cluster.representatives.length > cluster.root_count) return fail("cluster_identity_invalid");

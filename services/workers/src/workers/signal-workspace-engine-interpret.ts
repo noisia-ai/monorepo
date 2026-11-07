@@ -79,7 +79,7 @@ export async function interpretWorkspaceEngineV1(args: {
   const config = lease.effective_interpretation_config ?? lease.snapshot.interpretation_config
     ?? fail("workspace_engine_interpretation_not_requested");
   const configuration = parseSignalWorkspaceInterpretationConfigurationV1(config.call_configuration);
-  if(["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2"].includes(String(lease.snapshot.engine_config.profile_version)))
+  if(["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2","workspace-bertopic-mass-labeling-v3"].includes(String(lease.snapshot.engine_config.profile_version)))
     assertMassLabelingEditorialPopulationV1(args.clusters);
   const universe = signalWorkspaceInterpretationUniverseDigestV1(args.clusters.map(item => item.cluster_id));
   await store.fit({ database, lease, ...args.fit, interpretation_manifest: { unit_count: args.clusters.length, unit_digest: universe } });

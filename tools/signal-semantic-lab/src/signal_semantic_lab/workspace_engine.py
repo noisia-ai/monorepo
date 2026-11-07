@@ -72,6 +72,15 @@ def mass_labeling_root_config(roots: int) -> dict[str, Any]:
             "fit_unit": "canonical-root-centroid-v1", "minimum_editorial_roots": 20}
 
 
+TERMS_MASS_LABELING_PROFILE = "workspace-bertopic-mass-labeling-v3"
+ROOT_FIT_PROFILES = {ROOT_MASS_LABELING_PROFILE, TERMS_MASS_LABELING_PROFILE}
+
+
+def mass_labeling_terms_config(roots: int) -> dict[str, Any]:
+    return {**mass_labeling_root_config(roots), "profile_version": TERMS_MASS_LABELING_PROFILE,
+            "vectorizer_min_df_unit": "document-count", "vectorizer_max_df_unit": "document-proportion"}
+
+
 def _root_fit_population(records: list[dict[str, Any]], matrix: np.ndarray
                          ) -> tuple[list[dict[str, Any]], np.ndarray, np.ndarray]:
     """One deterministic normalized original-space centroid per canonical root.
@@ -258,6 +267,7 @@ def _load_input(
             DEFAULT_WORKSPACE_ENGINE_CONFIG,
             mass_labeling_config(_natural(manifest.get("records", {}).get("roots"))),
             mass_labeling_root_config(_natural(manifest.get("records", {}).get("roots"))),
+            mass_labeling_terms_config(_natural(manifest.get("records", {}).get("roots"))),
         )
     ):
         return _fail("input_profile_invalid")
@@ -510,6 +520,12 @@ def _fit(
             tuple(config["language_families"]), config["ngram_min"], config["ngram_max"]
         )
     )
+    # CountVectorizer sees one pseudo-document per topic. JSON's number 1
+    # must mean an absolute minimum count, but a 100% maximum proportion.
+    # Historical profiles retain their original runtime interpretation.
+    pilot_df = config["profile_version"] == TERMS_MASS_LABELING_PROFILE
+    minimum_df = int(config["vectorizer_min_df"]) if pilot_df else config["vectorizer_min_df"]
+    maximum_df = float(config["vectorizer_max_df"]) if pilot_df else config["vectorizer_max_df"]
     model = BERTopic(
         embedding_model=None,
         calculate_probabilities=False,
@@ -534,8 +550,8 @@ def _fit(
         vectorizer_model=CountVectorizer(
             analyzer=analyzer,
             lowercase=False,
-            min_df=config["vectorizer_min_df"],
-            max_df=config["vectorizer_max_df"],
+            min_df=minimum_df,
+            max_df=maximum_df,
             max_features=config["vectorizer_max_features"],
         ),
         top_n_words=config["top_n_words"],
@@ -560,6 +576,11 @@ def _fit(
         or not np.isfinite(values).all()
     ):
         _fail("algorithm_output_invalid")
+    if config["profile_version"] == TERMS_MASS_LABELING_PROFILE:
+        # BERTopic pads sparse topic rows with ("", 0). They are not evidence.
+        model.topic_representations_ = {
+            topic: [(word, score) for word, score in words if isinstance(word, str) and word.strip()]
+            for topic, words in model.topic_representations_.items()}
     terms = {
         int(topic): [word for word, _score in model.get_topic(topic)]
         for topic in sorted(set(assigned))
@@ -833,7 +854,7 @@ def run_workspace_engine(
     if input_dir == output_dir:
         _fail("artifact_path_invalid")
     manifest, records, matrix, guides, guide_matrix = _load_input(input_dir)
-    if previous_dir is not None and manifest["config"]["profile_version"] == ROOT_MASS_LABELING_PROFILE:
+    if previous_dir is not None and manifest["config"]["profile_version"] in ROOT_FIT_PROFILES:
         _fail("previous_profile_unsupported")
     input_hash = _hash_file(input_dir / "manifest.json")
     if output_dir.exists():
@@ -855,7 +876,7 @@ def run_workspace_engine(
         previous = _verified_previous(
             previous_dir, previous_manifest_sha256 or "", manifest["workspace_id"]
         )
-        if previous.get("config", {}).get("profile_version") == ROOT_MASS_LABELING_PROFILE:
+        if previous.get("config", {}).get("profile_version") in ROOT_FIT_PROFILES:
             _fail("previous_profile_unsupported")
         previous_roots = {row["root_id"]: row for row in _jsonl(previous_dir / "roots.jsonl")}
     output_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -937,7 +958,7 @@ def run_workspace_engine(
                 "guided": [],
             },
         )
-    root_fit = config.get("profile_version") == ROOT_MASS_LABELING_PROFILE
+    root_fit = config.get("profile_version") in ROOT_FIT_PROFILES
     fit_records, fit_matrix, inverse = records, matrix, None
     if root_fit:
         fit_records, fit_matrix, inverse = _root_fit_population(records, matrix)
@@ -1057,6 +1078,10 @@ def run_workspace_engine(
                     "root_count": len(roots),
                     "chunk_count": len(indexes),
                     "terms": terms.get(label, []),
+                    **({"lexical_representation": {
+                        "status": "available" if terms.get(label) else "no_terms",
+                        "reason": None if terms.get(label) else "no_lexical_terms_after_preprocessing"}}
+                       if config["profile_version"] == TERMS_MASS_LABELING_PROFILE else {}),
                     "representative_selection_policy": REPRESENTATIVE_SELECTION_POLICY,
                     "representatives": _select_representatives(records, indexes, strengths, config.get("representatives", 10)),
                 }

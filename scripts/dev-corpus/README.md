@@ -172,7 +172,12 @@ El daemon deja el editorial pagado del piloto pendiente para el operador CLI. El
 fit gratuito conserva su outbox normal. El perfilv2 ajusta una fila por raíz
 (centroide Voyage de sus chunks), conserva todas las asignaciones y sella SHA
 de la población y el mapeo en fit-population.json/fit-roots.jsonl sin duplicar la
-matriz persistida. Las ejecucionesv1 históricas siguen legibles. Una ejecución editorial nueva usa `editorial`, con `idempotency_key`,
+matriz persistida. Las ejecuciones v1/v2 históricas siguen legibles. El perfil v3 congela
+min_df como conteo absoluto y max_df como proporción del 100% de grupos.
+Los términos compartidos se conservan y las posiciones vacías de BERTopic se
+excluyen. Un grupo sin palabras tras el preprocesamiento conserva todas sus
+asignaciones y representantes, con razón explícita en lexical_representation
+del artefacto de clusters; no se fabrican términos ni etiquetas. Una ejecución editorial nueva usa `editorial`, con `idempotency_key`,
 `cap_micro_usd`, `daily_cap_micro_usd` y `budget_timezone` explícitos. Después se
 invoca `execute` con su ejecución. El proceso necesita una clave Anthropic válida
 en su entorno efímero y `NOISIA_WORKSPACE_INTERPRETATION_ENABLED=true`.

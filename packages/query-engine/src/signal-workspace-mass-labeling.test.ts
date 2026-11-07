@@ -44,3 +44,14 @@ test("root-density pilot has a new sealed identity while historical v1 remains r
   assert.notEqual(signalWorkspaceEmbeddingDigestV1(old),signalWorkspaceEmbeddingDigestV1(current));
   assert.ok(isSignalWorkspaceMassLabelingConfigV1(old));assert.ok(isSignalWorkspaceMassLabelingConfigV1(current));
 });
+
+test("shared-vocabulary pilot freezes document-frequency units with a distinct identity",async()=>{
+ const {signalWorkspaceMassLabelingConfigV2,signalWorkspaceMassLabelingConfigV3,
+  signalWorkspaceEmbeddingDigestV1,isSignalWorkspaceMassLabelingConfigV1}=await import("./index");
+ const old=signalWorkspaceMassLabelingConfigV2(83962),current=signalWorkspaceMassLabelingConfigV3(83962);
+ assert.equal(current.profile_version,"workspace-bertopic-mass-labeling-v3");
+ assert.equal(current.vectorizer_min_df_unit,"document-count");
+ assert.equal(current.vectorizer_max_df_unit,"document-proportion");
+ assert.notEqual(signalWorkspaceEmbeddingDigestV1(old),signalWorkspaceEmbeddingDigestV1(current));
+ assert.ok(isSignalWorkspaceMassLabelingConfigV1(old));assert.ok(isSignalWorkspaceMassLabelingConfigV1(current));
+});

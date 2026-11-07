@@ -1686,7 +1686,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
       ...(run.input_snapshot.discovery_population ? {context_mode:"workspace-discovery-v1" as const} : {}) });
     // The Portuguese pilot owns its output locale in the sealed engine profile.
     // This projection cannot publish a semantic generation or edit Brand OS.
-    const pilotLocale = ["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2"].includes(String(run.input_snapshot.engine_config.profile_version))
+    const pilotLocale = ["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2","workspace-bertopic-mass-labeling-v3"].includes(String(run.input_snapshot.engine_config.profile_version))
       ? canonicalSignalWorkspaceTopicLocaleV1(run.input_snapshot.engine_config.output_locale) : null;
     const inherited = pilotLocale ? {...inheritedSource, locale: {...inheritedSource.locale,
       primary_locale:pilotLocale,languages:[pilotLocale]}} : inheritedSource;

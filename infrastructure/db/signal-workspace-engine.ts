@@ -13,7 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceTopicPrototypePlanV1,
   SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
   signalTopicDefinitionSchemaV1, signalTopicGuidesDiscoveryV1, signalWorkspaceInterpretationUniverseDigestV1,
-  signalWorkspaceMassLabelingConfigV2, isSignalWorkspaceMassLabelingConfigV1,
+  signalWorkspaceMassLabelingConfigV3, isSignalWorkspaceMassLabelingConfigV1,
   type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { ensureSignalTopicCatalogStoreV1, loadSignalTopicWorkingProfileWithQueryableV1, loadSignalTopicInheritedContextStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
@@ -465,7 +465,7 @@ export async function loadSignalWorkspaceEnginePreflightV1(args:{database:Signal
     return {embedding_run_id:embedded?.id??null,expected_context_digest:context_digest,expected_catalog_digest:catalog_digest,
       expected_guides:guides.length,missing_guides:missing,total_interests,
       engine_configuration: await signalWorkspaceMassLabelingEnabledV1({queryable:client,workspace_id:args.workspace_id})
-        ? signalWorkspaceMassLabelingConfigV2(embedded?.counts.eligible_roots ?? 0) : undefined,
+        ? signalWorkspaceMassLabelingConfigV3(embedded?.counts.eligible_roots ?? 0) : undefined,
       advisory_estimate:discoveryEnabled&&embedded
         ?await loadSignalDiscoveryEstimateV1({queryable:client,workspace_id:args.workspace_id,preparation_run_id:embedded.preparation_run_id}):null};
   });
@@ -565,7 +565,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     const pilot = await signalWorkspaceMassLabelingEnabledV1({ queryable: client, workspace_id: args.workspace_id });
     if (pilot !== isSignalWorkspaceMassLabelingConfigV1(args.engine_config)
       || pilot && (discoveryEnabled || args.incremental_options || args.parent_execution_id
-        || signalWorkspaceEmbeddingDigestV1(args.engine_config) !== signalWorkspaceEmbeddingDigestV1(signalWorkspaceMassLabelingConfigV2(embedded.counts.eligible_roots))))
+        || signalWorkspaceEmbeddingDigestV1(args.engine_config) !== signalWorkspaceEmbeddingDigestV1(signalWorkspaceMassLabelingConfigV3(embedded.counts.eligible_roots))))
       return fail('workspace_engine_profile_invalid', 422);
     if (pilot && args.interpretation_config && ![
       SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1,
