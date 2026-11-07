@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   buildBlindSamples,
@@ -295,6 +296,19 @@ test('selects exactly 50 distinct roots per leading topic and 100 for trigger/ba
     .filter((caseId) => key[caseId].cohort === cohort);
   assert.deepEqual(idsFor(reorderedResult.samples, reorderedResult.answerKey, 'topic-1'),
     idsFor(samples, answerKey, 'topic-1'));
+  const orderFor = (sample) => createHmac('sha256', Buffer.alloc(32, 9))
+    .update(`blind-order\0${sample.case_id}`).digest('hex');
+  assert.deepEqual(samples.map((sample) => sample.case_id),
+    [...samples].sort((left, right) => orderFor(left).localeCompare(orderFor(right)))
+      .map((sample) => sample.case_id));
+  const serializedCohorts = samples.map((sample) => answerKey[sample.case_id].cohort);
+  let longestVisibleRun = 1, currentRun = 1;
+  for (let index = 1; index < serializedCohorts.length; index += 1) {
+    if (serializedCohorts[index] === serializedCohorts[index - 1]) currentRun += 1;
+    else currentRun = 1;
+    longestVisibleRun = Math.max(longestVisibleRun, currentRun);
+  }
+  assert.ok(longestVisibleRun < 20);
   assert.equal(renderBlindSamples(samples).includes('synthetic-root-0'), false);
   const topicSamples = Object.values(answerKey).filter((entry) => entry.cohort.startsWith('topic-'));
   assert.equal(topicSamples.length, 500);
@@ -418,6 +432,21 @@ test('exports the H2 JSON contract into private audit files and sanitized public
     const publicReceipt = await readFile(publicReceiptPath, 'utf8');
     assert.equal(blindSamples.trim().split('\n').length, 600);
     assert.doesNotMatch(blindSamples, /synthetic-root|topic_key|probability|cohort/u);
+    const serializedSamples = blindSamples.trim().split('\n').map((line) => JSON.parse(line));
+    const sampleSecret = await readFile(join(outputDirectory, 'sample-seed.bin'));
+    const serializedOrder = (sample) => createHmac('sha256', sampleSecret)
+      .update(`blind-order\0${sample.case_id}`).digest('hex');
+    assert.deepEqual(serializedSamples.map((sample) => sample.case_id),
+      [...serializedSamples].sort((left, right) => serializedOrder(left).localeCompare(serializedOrder(right)))
+        .map((sample) => sample.case_id));
+    const sampleCohorts = serializedSamples.map((sample) => key.answer_key[sample.case_id].cohort);
+    let longestVisibleRun = 1, currentRun = 1;
+    for (let index = 1; index < sampleCohorts.length; index += 1) {
+      if (sampleCohorts[index] === sampleCohorts[index - 1]) currentRun += 1;
+      else currentRun = 1;
+      longestVisibleRun = Math.max(longestVisibleRun, currentRun);
+    }
+    assert.ok(longestVisibleRun < 20);
     assert.doesNotMatch(publicReceipt, /Synthetic topic [0-9]|Synthetic definition/u);
     assert.doesNotMatch(publicReceipt, /confidential brand zeta|private competitor omega/iu);
     assert.match(publicReceipt, /Public alias product-0/u);
