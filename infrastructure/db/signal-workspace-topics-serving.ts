@@ -510,9 +510,9 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
     mention.published_at,NULL::boolean has_unresolved_topics,
     COALESCE(rights.metrics,false) metrics,COALESCE(rights.evidence,false) evidence
   FROM received_roots received JOIN mentions mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
+    AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
     LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id` : ""}
-    AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   LEFT JOIN root_rights rights ON rights.root_id=mention.id` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
     COALESCE(rights.metrics,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id metrics,

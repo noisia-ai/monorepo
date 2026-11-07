@@ -8,7 +8,7 @@ import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 import {inspectFacetContextChangeV1, type LabelingDatabaseV1} from "./signal-mention-facets";
 import {createSignalLabelingStoreV1, requestMentionFacetsV1, SignalLabelingError,
   type LabelingRunV1} from "./signal-labeling-runs";
-import {readMfpPolicySwitchBlockersV1} from "./signal-labeling-policy-action-switch";
+import {readClassicPolicyActiveWorkV1} from "./signal-classic-policy-completion";
 
 export const MASS_LABELING_REQUEST_VERSION_V1 = "mass-labeling-jev-v1";
 export type MassLabelingTopicV1 = {
@@ -112,6 +112,10 @@ export async function createMassLabelingMapV1(args: {
         AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
         AND call.request_digest=artifact.metadata->>'request_digest'
         AND call.response_sha256=artifact.metadata->>'response_sha256' AND call.call_state='settled'
+        AND call.actor_user_id=(SELECT actor_user_id FROM signal_topic_catalog_executions WHERE id=artifact.engine_execution_id)
+        AND call.metadata#>>'{mass_labeling_stage,stage}'='global-consolidation-v1'
+        AND call.metadata#>>'{mass_labeling_stage,source_groups_digest}'=artifact.metadata->>'source_groups_digest'
+        AND call.call_configuration=workspace_engine_interpretation_configuration_v1(artifact.engine_execution_id,call.metadata->>'interpretation_revision_digest')
       WHERE artifact.workspace_id=$1 AND artifact.engine_execution_id=$2 AND artifact.id=$3
         AND artifact.artifact_key='mass-labeling-consolidation.json' AND artifact.artifact_type='engine_proposals'
         AND artifact.metadata->>'contract_version'='workspace-mass-labeling-consolidation-v1'
@@ -192,13 +196,13 @@ export async function createMassLabelingMapV1(args: {
         ORDER BY chunk.root_id,chunk.embedding<=>topic.centroid,chunk.chunk_index,topic.topic_key
       ), candidates AS (
         SELECT root_id,jsonb_agg(jsonb_build_object('topic_key',ranked.topic_key,'name',catalog->>'name',
-          'definition',catalog->>'definition','similarity',similarity) ORDER BY position) values
+          'definition',catalog->>'definition','similarity',similarity) ORDER BY position) candidate_list
         FROM mass_scores ranked CROSS JOIN LATERAL jsonb_array_elements($3::jsonb) catalog
         WHERE catalog->>'topic_key'=ranked.topic_key GROUP BY root_id
       ) SELECT $1,$2,chunk.root_id,row_number() OVER(ORDER BY chunk.root_id)::int,
         signal_labeling_digest_v1(jsonb_build_object('root_fingerprint',chunk.fingerprint,'chunk_sha256',chunk.chunk_sha256,
           'map_digest',$4::text)),chunk.fingerprint,chunk.chunk_index,chunk.chunk_sha256,
-        signal_topic_utf16_fragment_v1(chunk.full_text,chunk.start_offset,chunk.end_offset),candidates.values
+        signal_topic_utf16_fragment_v1(chunk.full_text,chunk.start_offset,chunk.end_offset),candidates.candidate_list
       FROM best_chunk best JOIN mass_chunks chunk USING(root_id,chunk_index) JOIN candidates USING(root_id)`,
       [args.workspace_id, mapId, JSON.stringify(catalog), mapDigest]);
     return {map_id: mapId, map_digest: mapDigest, replayed: false, root_count: c.roots, topic_count: catalog.length};
@@ -383,8 +387,7 @@ export async function provisionMassLabelingPolicyV1(args: {
         fail("mass_labeling_policy_action_conflict");
       return {status: "existing_policy", policy_id: prior.id};
     }
-    const blockers = await readMfpPolicySwitchBlockersV1(client, scope.organization_id);
-    if (Object.values(blockers).some(count => count > 0)) fail("mass_labeling_policy_active_work");
+    if (await readClassicPolicyActiveWorkV1(client, scope.organization_id)) fail("mass_labeling_policy_active_work");
     const next = (await client.query<{id: string}>(`INSERT INTO signal_processing_policy_versions
       (organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
       SELECT organization_id,(SELECT max(version)+1 FROM signal_processing_policy_versions WHERE organization_id=$2),

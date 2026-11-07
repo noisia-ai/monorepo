@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
-import {randomUUID} from "node:crypto";
+import {randomUUID,createHash} from "node:crypto";
 import test from "node:test";
 import type {Pool} from "pg";
 import {buildMassLabelingJevRequestV1, mapMassLabelingJevResponseV1, massLabelingJevIdentityV1,
   signalWorkspaceEmbeddingDigestV1 as digest, llmPriceV1, llmCostMicroUsdV1} from "@noisia/query-engine";
+import {seedComposedFixture,quoteComposedFixture,startComposedFixture,semanticConfiguration} from "./signal-brand-context-composed.fixture";
 import {seedSignalTopicEditorialRenewalSourceV1, snapshotSignalTopicEditorialRenewalSyntheticHistoryV1} from "./signal-topic-editorial-renewal.synthetic.fixture";
 import {createMassLabelingMapV1, createMassLabelingStoreV1, requestMassLabelingV1,
   continueMassLabelingV1, provisionMassLabelingPolicyV1, selectMassLabelingTopicsV1,
   correctMassLabelingTopicV1, exportMassLabelingSnapshotV1, measureMassLabelingSmokeV1} from "../signal-mass-labeling";
 import {loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
   loadSignalWorkspaceTopicDetailV1} from "../signal-workspace-topics-serving";
+import * as editorialMoney from "../signal-workspace-engine-interpretation";
+import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1} from "@noisia/query-engine";
 import {persistSignalWorkspaceEngineArtifactV1} from "../signal-workspace-engine";
 import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-labeling-page";
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
@@ -41,18 +44,35 @@ test("mass labeling seals full population, bills once, and serves probability pa
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
           const group_id=`guided:${JSON.parse(assignment.trim().split("\n")[0]!).stable_cluster_id}`;
+          const sourceGroups=[{group_id,cluster_digest:digest({group_id}),name:"Synthetic repair conversation",
+            definition:"Experiences repairing bicycles.",status:"coherent",source_artifact_id:fixture.proposals[1]!.artifact_id}];
+          const sourceGroupsDigest=digest(sourceGroups);
+          const output={topics:[{topic_key:"bicycle_repairs",name:"Bicycle repairs",definition:"Experiences repairing bicycles.",group_ids:[group_id]}],excluded_groups:[]};
+          const rawResponse=JSON.stringify({id:"msg_synthetic_global",type:"message",role:"assistant",model:SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1.model,
+            stop_reason:"end_turn",content:[{type:"text",text:JSON.stringify(output)}],usage:{input_tokens:100,output_tokens:50}});
           consolidationRaw=JSON.stringify({contract_version:"workspace-mass-labeling-consolidation-v1",workspace_id:fixture.access.workspace_id,
-            source_engine_execution_id:fixture.lease.execution_id,source_groups_digest:digest({group_id}),
-            output:{topics:[{topic_key:"bicycle_repairs",name:"Bicycle repairs",definition:"Experiences repairing bicycles.",group_ids:[group_id]}],excluded_groups:[]}});
-          const call=(await query(`SELECT id,request_digest,response_sha256 FROM engine_cost_events
-            WHERE catalog_execution_id=$1 AND call_state='settled' ORDER BY created_at DESC LIMIT 1`,[fixture.lease.execution_id])).rows[0]!;
+            source_engine_execution_id:fixture.lease.execution_id,source_groups:sourceGroups,source_groups_digest:sourceGroupsDigest,
+            raw_response:rawResponse,output});
+          const call=await editorialMoney.reserveSignalWorkspaceEngineInterpretationV1({...fixture.access,execution_id:fixture.lease.execution_id,
+            idempotency_key:randomUUID(),request_digest:digest({stage:"global-consolidation-v1",source_groups:sourceGroups}),
+            configuration:SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,reserved_micro_usd:10000,
+            budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,execution_token:fixture.lease.execution_token,
+            mass_labeling_stage:{stage:"global-consolidation-v1",source_groups_digest:sourceGroupsDigest}});
+          const token={database,call_id:call.call_id,attempt_token:call.attempt_token};
+          await editorialMoney.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:fixture.lease.execution_token});
+          const responseSha=`sha256:${createHash("sha256").update(rawResponse).digest("hex")}`;
+          await editorialMoney.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{
+            storage_key:`workspace-engine/${fixture.access.workspace_id}/${fixture.lease.execution_id}/global-raw.json`,
+            sha256:responseSha,size_bytes:Buffer.byteLength(rawResponse),http_status:200,provider_request_id:null}});
+          await editorialMoney.settleSignalWorkspaceEngineInterpretationV1({...token,usage:{input_tokens:100,output_tokens:50,
+            cache_read_input_tokens:0,cache_creation_input_tokens:0}});
           const artifact=await persistSignalWorkspaceEngineArtifactV1({database,lease:fixture.lease,
             artifact:{artifact_key:"mass-labeling-consolidation.json",artifact_type:"engine_proposals",title:"Synthetic global consolidation",
               storage_key:`workspace-engine/${fixture.access.workspace_id}/${fixture.lease.execution_id}/mass-labeling-consolidation.json`,
-              sha256:`sha256:${(await import("node:crypto")).createHash("sha256").update(consolidationRaw).digest("hex")}`,
+              sha256:`sha256:${createHash("sha256").update(consolidationRaw).digest("hex")}`,
               size_bytes:Buffer.byteLength(consolidationRaw),media_type:"application/json",metadata:{
                 contract_version:"workspace-mass-labeling-consolidation-v1",source_engine_execution_id:fixture.lease.execution_id,
-                stage:"global-consolidation-v1",call_id:call.id,request_digest:call.request_digest,response_sha256:call.response_sha256}}});
+                stage:"global-consolidation-v1",source_groups_digest:sourceGroupsDigest,call_id:call.call_id,request_digest:call.request_digest,response_sha256:responseSha}}});
           consolidationArtifactId=artifact.artifact_id;
         }}});
     const access = {database, workspace_id: seed.scope.workspace_id, actor_user_id: seed.scope.actor_user_id};
@@ -75,6 +95,29 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const map = await createMassLabelingMapV1(mapArgs);
     assert.equal((await createMassLabelingMapV1(mapArgs)).map_id, map.map_id);
     assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_items WHERE map_id=$1", [map.map_id])).rows[0].n, 3);
+    await query("SAVEPOINT semantic_sibling");
+    const semantic=await seedComposedFixture(database,"mass-policy-sibling",{optionalStrictCaps:true});
+    const semanticQuote=await quoteComposedFixture(database,semantic);
+    assert.ok(semanticQuote.quote_digest);
+    const semanticRun=await startComposedFixture(database,semantic,semanticQuote.quote_digest,randomUUID(),
+      {...semanticConfiguration,platform_hard_cap_micro_usd:null});
+    await query("SET CONSTRAINTS ALL IMMEDIATE");await query("SET CONSTRAINTS ALL DEFERRED");
+    const pilotBrand=randomUUID();
+    await query(`INSERT INTO brands(id,organization_id,slug,name,status) VALUES($1,$2,$3,'Synthetic pilot sibling','active')`,
+      [pilotBrand,semantic.organizationId,`mass-pilot-${pilotBrand}`]);
+    const pilotWorkspace=(await query("SELECT id FROM signal_workspaces WHERE brand_id=$1",[pilotBrand])).rows[0]!.id;
+    await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2)",
+      [pilotWorkspace,semantic.internalActorId]);
+    const policyCount=(await query("SELECT count(*)::int n FROM signal_processing_policy_versions WHERE organization_id=$1",[semantic.organizationId])).rows[0]!.n;
+    for(const status of ["queued","processing","validating"]) {
+      await query("SAVEPOINT semantic_status");
+      await query("UPDATE signal_semantic_context_proposal_runs SET status=$2 WHERE id=$1",[semanticRun.run_id,status]);
+      await assert.rejects(provisionMassLabelingPolicyV1({database,workspace_id:pilotWorkspace,
+        actor_user_id:semantic.internalActorId,cap_micro_usd:1_000_000}),/mass_labeling_policy_active_work/);
+      assert.equal((await query("SELECT count(*)::int n FROM signal_processing_policy_versions WHERE organization_id=$1",[semantic.organizationId])).rows[0]!.n,policyCount);
+      await query("ROLLBACK TO SAVEPOINT semantic_status");await query("RELEASE SAVEPOINT semantic_status");
+    }
+    await query("ROLLBACK TO SAVEPOINT semantic_sibling");await query("RELEASE SAVEPOINT semantic_sibling");
     const beforeActions = (await query(`SELECT action,configuration,configuration_digest,max_execution_micro_usd::text
       FROM signal_processing_policy_actions WHERE policy_version_id=(SELECT id FROM signal_processing_policy_versions
       WHERE organization_id=$1 AND status='active') ORDER BY action`, [seed.identity.organization_id])).rows;
@@ -183,6 +226,12 @@ test("mass labeling seals full population, bills once, and serves probability pa
     await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({...evidenceArgs,expected_scope_digest:changed!.scope_digest}),
       /workspace_topics_evidence_stale|workspace_topics_scope_changed/);
     await query("ROLLBACK TO SAVEPOINT rights_revoked");
+    await query("SAVEPOINT excluded_root");
+    await query("UPDATE mentions SET inclusion_status='excluded' WHERE workspace_id=$1 AND id=$2",[access.workspace_id,page2.items[0]!.mention_id]);
+    const excluded=await loadSignalWorkspaceTopicsOverviewV1(access);
+    assert.equal(excluded?.denominator,2);
+    assert.equal(excluded?.terms[0]!.mention_count,0,"excluded canonical roots cannot retain mass topic membership");
+    await query("ROLLBACK TO SAVEPOINT excluded_root");
     const exported = await exportMassLabelingSnapshotV1({...access, map_id: map.map_id});
     assert.equal(exported.items.length, 3); assert.equal(exported.calls.length, 3);
     await assert.rejects(exportMassLabelingSnapshotV1({...access, actor_user_id: foreignActor, map_id: map.map_id}), /mass_labeling_forbidden/);
