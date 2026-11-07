@@ -56,10 +56,12 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   prompt_hash:fixtureSha('local'),model_metadata:{},profile_metadata:{contract_version:'signal-topic-catalog-v1',...metadata},context_refs:context.context_refs});
  if(!options.preserve_catalog)await catalog();
  const access={database,workspace_id,actor_user_id};
+ const pilot=options.engine_config?.profile_version==='workspace-bertopic-mass-labeling-v1';
+ if(pilot)await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2) ON CONFLICT DO NOTHING",[workspace_id,actor_user_id]);
  const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);assert.equal(preflight.missing_guides,0);
  const configuration=options.interpretation_configuration??SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
  const started=await engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
-  expected_context_digest:preflight.expected_context_digest,engine_config:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
+  expected_context_digest:preflight.expected_context_digest,engine_config:pilot?preflight.engine_configuration!:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
   interpretation_config:{call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000}});
  const lease=await engine.claimSignalWorkspaceEngineV1({database,...started,worker_job_id:'local-projection-fixture'});assert.ok(lease);
  assert.ok(lease.snapshot.expected_roots<=10,'tiny fixture only');

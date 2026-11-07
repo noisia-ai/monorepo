@@ -81,7 +81,7 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const foreignActor = randomUUID();
     await query(`INSERT INTO users(id,email,user_type,primary_role,status)
       VALUES($1,$2,'client','client_admin','active')`, [foreignActor, `${foreignActor}@example.invalid`]);
-    await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2)",
+    await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2) ON CONFLICT DO NOTHING",
       [access.workspace_id, access.actor_user_id]);
     const artifact = (await query(`SELECT id,content FROM analysis_artifacts
       WHERE engine_execution_id=$1 AND artifact_key='assignments.guided.jsonl'`, [seed.source_engine_execution_id])).rows[0]!;
@@ -108,7 +108,7 @@ test("mass labeling seals full population, bills once, and serves probability pa
     await query(`INSERT INTO brands(id,organization_id,slug,name,status) VALUES($1,$2,$3,'Synthetic pilot sibling','active')`,
       [pilotBrand,semantic.organizationId,`mass-pilot-${pilotBrand}`]);
     const pilotWorkspace=(await query("SELECT id FROM signal_workspaces WHERE brand_id=$1",[pilotBrand])).rows[0]!.id;
-    await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2)",
+    await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2) ON CONFLICT DO NOTHING",
       [pilotWorkspace,semantic.internalActorId]);
     const policyCount=(await query("SELECT count(*)::int n FROM signal_processing_policy_versions WHERE organization_id=$1",[semantic.organizationId])).rows[0]!.n;
     for(const status of ["queued","processing","validating"]) {
