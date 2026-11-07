@@ -34,3 +34,13 @@ test("only the sealed pilot interpretation profile accepts thirty distinct roots
   assert.equal(buildSignalWorkspaceInterpretationBatchV1(context, [group], pilot).clusters[0]!.representatives.length, 30);
   assert.throws(() => buildSignalWorkspaceInterpretationBatchV1(context, [group]), /cluster_invalid/u);
 });
+
+test("root-density pilot has a new sealed identity while historical v1 remains readable",async()=>{
+  const {signalWorkspaceMassLabelingConfigV2,isSignalWorkspaceMassLabelingConfigV1,
+    signalWorkspaceEmbeddingDigestV1}=await import("./index");
+  const old=signalWorkspaceMassLabelingConfigV1(83962),current=signalWorkspaceMassLabelingConfigV2(83962);
+  assert.equal(current.profile_version,"workspace-bertopic-mass-labeling-v2");
+  assert.equal(current.fit_unit,"canonical-root-centroid-v1");assert.equal(current.hdbscan_min_cluster_size,84);
+  assert.notEqual(signalWorkspaceEmbeddingDigestV1(old),signalWorkspaceEmbeddingDigestV1(current));
+  assert.ok(isSignalWorkspaceMassLabelingConfigV1(old));assert.ok(isSignalWorkspaceMassLabelingConfigV1(current));
+});

@@ -169,7 +169,10 @@ coinciden con marca, competidores o categoría gobernados. No requiere propuesta
 Claude de Brand OS. El perfil congela locale `pt-BR` sin modificar Brand OS.
 
 El daemon deja el editorial pagado del piloto pendiente para el operador CLI. El
-fit gratuito conserva su outbox normal. Una ejecución editorial nueva usa `editorial`, con `idempotency_key`,
+fit gratuito conserva su outbox normal. El perfilv2 ajusta una fila por raíz
+(centroide Voyage de sus chunks), conserva todas las asignaciones y sella SHA
+de la población y el mapeo en fit-population.json/fit-roots.jsonl sin duplicar la
+matriz persistida. Las ejecucionesv1 históricas siguen legibles. Una ejecución editorial nueva usa `editorial`, con `idempotency_key`,
 `cap_micro_usd`, `daily_cap_micro_usd` y `budget_timezone` explícitos. Después se
 invoca `execute` con su ejecución. El proceso necesita una clave Anthropic válida
 en su entorno efímero y `NOISIA_WORKSPACE_INTERPRETATION_ENABLED=true`.

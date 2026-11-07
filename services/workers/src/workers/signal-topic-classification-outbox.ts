@@ -53,7 +53,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
         lease_token=NULL,lease_expires_at=NULL,updated_at=now()
       WHERE NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions pilot
         WHERE pilot.id=signal_topic_classification_outbox.execution_id
-          AND pilot.input_snapshot#>>'{engine_config,profile_version}'='workspace-bertopic-mass-labeling-v1'
+          AND pilot.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2')
           AND pilot.input_snapshot ? 'interpretation_config')
         AND attempt_count >= $1 AND status IN('pending','failed','dispatching')
         AND (dispatch_kind<>'incremental_editorial_evidence' OR preparation_token IS NULL)
@@ -76,7 +76,7 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       SELECT id FROM signal_topic_classification_outbox
       WHERE NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions pilot
         WHERE pilot.id=signal_topic_classification_outbox.execution_id
-          AND pilot.input_snapshot#>>'{engine_config,profile_version}'='workspace-bertopic-mass-labeling-v1'
+          AND pilot.input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2')
           AND pilot.input_snapshot ? 'interpretation_config')
         AND attempt_count<$1
         AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial

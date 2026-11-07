@@ -27,8 +27,15 @@ export function signalWorkspaceMassLabelingConfigV1(roots: number) {
     guidance_policy: "brand-competitors-category-corpus-centroids-v1", editorial_lane: "guided-or-open-v1",
   });
 }
+export const SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V2 = "workspace-bertopic-mass-labeling-v2" as const;
+/** Density is measured over canonical roots, never over their chunk count. */
+export function signalWorkspaceMassLabelingConfigV2(roots: number) {
+  return Object.freeze({...signalWorkspaceMassLabelingConfigV1(roots),
+    profile_version:SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V2,
+    fit_unit:"canonical-root-centroid-v1",minimum_editorial_roots:20});
+}
 export function isSignalWorkspaceMassLabelingConfigV1(config: Record<string, unknown>): boolean {
-  return config.profile_version === SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1;
+  return [SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1,SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V2].includes(config.profile_version as typeof SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1);
 }
 
 export type SignalWorkspaceEngineChunkV1 = {

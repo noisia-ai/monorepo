@@ -608,3 +608,40 @@ def test_mfp_residual_keeps_prediction_for_new_belonging_roots_and_fits_only_unc
     assert receipt["operations"]["fit"] == []  # one-root residue is below the real fit minimum
     assert {row["root_id"] for row in read_lines(output / "pending-cohort.jsonl")} == {new_ids[1]}
     assert receipt["counts"]["roots"] == len(prior_ids) + 2
+
+# Root-density acceptance also runs in the deployed Python harness.
+from test_workspace_engine import (
+    test_root_density_preserves_all_chunks_and_model_assignments as test_root_density_preserves_all_chunks_and_model_assignments,
+    test_nineteen_long_roots_cannot_form_a_density_group as test_nineteen_long_roots_cannot_form_a_density_group,
+)
+
+from test_workspace_engine import (
+    test_root_profile_rejects_previous_before_loading_or_predicting as test_root_profile_rejects_previous_before_loading_or_predicting,
+)
+
+
+@pytest.mark.parametrize("incoming_root_profile", [True, False])
+def test_direct_incremental_rejects_root_profile_in_both_directions(tmp_path, monkeypatch, incoming_root_profile):
+    source = {root_id(1): [("Synthetic discussion. ", np.eye(1024)[0])]}
+    parent_input, parent = tmp_path / "parent-input", tmp_path / "parent"
+    input_fixture(parent_input, source, guides=False)
+    base.run_workspace_engine(parent_input, parent, tmp_path)
+    current, output = tmp_path / "current", tmp_path / "output"
+    config = prepare(current, source, parent, root_id(100), root_id(101), guides=False)
+    if incoming_root_profile:
+        manifest = base._read_json(current / "manifest.json")
+        manifest["config"] = base.mass_labeling_root_config(1)
+        base._write_json(current / "manifest.json", manifest)
+        config["current_input_manifest"] = inc.descriptor(current / "manifest.json")
+    else:
+        manifest = base._read_json(parent / "manifest.json")
+        manifest["config"] = base.mass_labeling_root_config(1)
+        base._write_json(parent / "manifest.json", manifest)
+        config["parent"]["manifest_sha256"] = file_sha(parent / "manifest.json")
+    base._write_json(current / "incremental.json", config)
+    monkeypatch.setattr(inc, "_transform", lambda *args: pytest.fail("must not transform a root-profile model by chunk"))
+    monkeypatch.setattr(base, "_fit", lambda *args: pytest.fail("must not fit an unsupported incremental root profile"))
+    with pytest.raises(base.WorkspaceEngineError, match="previous_profile_unsupported"):
+        inc.run_workspace_incremental_engine(current, output, tmp_path, parent,
+                                             config["parent"]["manifest_sha256"])
+    assert not output.exists()
