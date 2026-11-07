@@ -43,7 +43,7 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
     ...(lease.interpretation_admission ? { admission_operation_id: lease.interpretation_admission.operation_id } : {}),
     ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
   let call = await store.reserve(reservation);
-  if(args.recovery_only&&!call.response)return fail("workspace_engine_interpretation_receipt_recovery_required");
+  if(args.recovery_only&&(!call.response||["definitely_not_sent","terminal_confirmed"].includes(call.state)))return fail("workspace_engine_interpretation_receipt_recovery_required");
   let transportAttempts = 0, confirmedTerminals = 0;
   while (call.state === "definitely_not_sent" || call.state === "terminal_confirmed") {
     if (++transportAttempts > 128) return fail("workspace_engine_interpretation_retry_unavailable");
@@ -65,6 +65,7 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
     response = validateWorkspaceInterpretationReceiptV1(batch, { bytes: await readFile(path), sha256: call.response.sha256,
       http_status: call.response.http_status, provider_request_id: call.response.provider_request_id, complete: call.response.complete });
   } else if (call.state === "reserved") {
+    if(args.recovery_only)return fail("workspace_engine_interpretation_receipt_recovery_required");
     try {
       response = await (args.send ?? sendWorkspaceInterpretationV1)({ batch,
         api_key: args.api_key ?? process.env.ANTHROPIC_API_KEY ?? "",
