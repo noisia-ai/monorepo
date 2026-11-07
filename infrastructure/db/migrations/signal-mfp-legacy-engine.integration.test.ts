@@ -140,18 +140,23 @@ test('engine exports every chunk with zero interests, autonomous cached context,
 
  }finally{await f.cleanup();}
 });
-test('engine rejects missing context cache and stale completion; small populations complete without inventing a model', {skip:!enabled,timeout:120_000},async()=>{
+test('engine rejects missing context cache and stale completion; small populations complete without inventing a model', {skip:!enabled,timeout:60_000},async()=>{
  const f=await fixture({skip_topic_prototypes:true});try{
+  await f.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s'");
+  console.error('mfp-cache-guard: fixture-ready');
   const topic=await createSignalTopicStoreV1({pool:f.database,...f.access,idempotency_key:randomUUID(),input:createSignalTopicInputSchemaV1.parse({
    label:'Synthetic cache-miss guide',definition:'An invented topic whose phrase has never been embedded in this workspace.'})});
+  console.error('mfp-cache-guard: topic-created');
   assert.ok(topic.term_key);
   const beforeCalls=(await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n;
   await assert.rejects(f.begin(),/guides_required/u);
+  console.error('mfp-cache-guard: missing-cache-rejected');
   assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,beforeCalls,
    'missing guide cache rejects before a provider call or cost reservation');
   assert.equal((await f.query("SELECT count(*)::int n FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,0,
    'missing guide cache rejects before engine dispatch');
-  await prototypes(f);const started=await f.begin(),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-fixture'});assert.ok(lease);
+  await prototypes(f);console.error('mfp-cache-guard: cache-prepared');
+  const started=await f.begin(),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-fixture'});assert.ok(lease);
   const coverage=await consume(f,lease);const output=await artifact(f,lease,'engine_output');
   await f.query('BEGIN');try{await f.query("UPDATE brands SET description='changed during fit' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
    await assert.rejects(engine.finishSignalWorkspaceEngineFitV1({database:f.database,lease,model_artifact_id:null,output_artifact_id:output,result_kind:'insufficient_population',coverage,
