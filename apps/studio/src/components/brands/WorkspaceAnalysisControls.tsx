@@ -141,6 +141,7 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
         {preflight.state !== "missing_context" ? <> <Link href={`/studio/brands/${encodeURIComponent(brandId)}/data#corpus-readiness`} prefetch={false}>{t("openData")}</Link></> : null}
       </p> : null}
       {update && run ? <strong>{t("update.editorial")}</strong> : null}
+      {status?.execution_mode === "operator_cli" ? <p role="status" className="admin-drawer-form__hint">{t("operatorCli")}</p> : null}
       {status?.active_run ? <div className="topics-manager__progress" role="status">
         <span>{t(`phases.${status.active_run.phase}`)}</span>
         <progress aria-label={t(`phases.${status.active_run.phase}`)} max={100} value={status.active_run.progress} />

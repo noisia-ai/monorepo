@@ -52,7 +52,11 @@ export async function sendMassLabelingConsolidationV1(args: {
     rebuilt.request_body !== args.batch.request_body
   )
     throw denied();
-  if (!(await args.authorize_send())) throw denied();
+  if (!(await args.authorize_send()))
+    throw new WorkspaceInterpretationTransportErrorV1(
+      "workspace_engine_mass_consolidation_send_not_authorized",
+      "outcome_unknown",
+    );
   let response: Response;
   try {
     response = await (args.fetch_impl ?? fetch)(

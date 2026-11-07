@@ -261,3 +261,31 @@ test(
     assert.equal(f.results.length, 2);
   },
 );
+
+test("raw-only recovery never selects or reserves a new mention", async () => {
+  const f = fixture(1);
+  let inputs = 0,
+    reservations = 0;
+  f.store.inputs = async () => {
+    inputs++;
+    throw new Error("must_not_select");
+  };
+  f.store.reserve = async () => {
+    reservations++;
+    throw new Error("must_not_reserve");
+  };
+  const result = await processMassLabelingJevV1({
+    run_id: f.run.id,
+    store: f.store,
+    provider: {
+      evaluate: async () => {
+        throw new Error("must_not_send");
+      },
+    },
+    recovery_only: true,
+  });
+  assert.equal(result.status, "recovery_unavailable");
+  assert.equal(inputs, 0);
+  assert.equal(reservations, 0);
+  assert.equal(f.transports(), 0);
+});

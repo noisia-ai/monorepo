@@ -204,6 +204,7 @@ async function loadAuthorizedWorkspaceAnalysisV1(args: Access & { idempotencyKey
   const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1() } : null;
   const latest = view(raw.latest_run);
   const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
+    ...(preflight?.engine_configuration?.profile_version === "workspace-bertopic-mass-labeling-v1" ? {execution_mode:"operator_cli" as const}:{}),
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: discoveryEnabled ? access.capabilities.can_request_processing : access.capabilities.can_execute_topics, discovery_enabled: discoveryEnabled,
     latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),

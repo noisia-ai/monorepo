@@ -72,7 +72,7 @@ export async function interpretWorkspaceEngineV1(args: {
   clusters: SignalWorkspaceInterpretationClusterV1[]; directory: string; storage: WorkspaceEngineStorageV1;
   heartbeat: (phase: "interpreting" | "materializing") => Promise<void>;
   stores?: typeof stores; send?: typeof sendWorkspaceInterpretationV1;
-  api_key?: string; provider_enabled?: boolean; authorization_expires_at?: string;
+  recovery_only?:boolean; api_key?: string; provider_enabled?: boolean; authorization_expires_at?: string;
 }) {
   const store = args.stores ?? stores, { database, lease, storage } = args;
   const config = lease.effective_interpretation_config ?? lease.snapshot.interpretation_config
@@ -82,10 +82,13 @@ export async function interpretWorkspaceEngineV1(args: {
   await store.fit({ database, lease, ...args.fit, interpretation_manifest: { unit_count: args.clusters.length, unit_digest: universe } });
   await args.heartbeat("interpreting");
   const context = await store.context({ database, lease });
-  const executeBatch=(batch:SignalWorkspaceInterpretationBatchV1)=>executeWorkspaceInterpretationBatchV1({
+  const executeBatch=(batch:SignalWorkspaceInterpretationBatchV1)=>{
+    if(args.recovery_only&&!recoveryRequests.has(batch.request_digest))
+      return fail("workspace_engine_interpretation_receipt_recovery_required");
+    return executeWorkspaceInterpretationBatchV1({
     database,execution:lease,config,batch,actor_user_id:context.actor_user_id,directory:args.directory,storage,stores:store,
-    send:args.send,api_key:args.api_key,provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at,
-  });
+    recovery_only:args.recovery_only,send:args.send,api_key:args.api_key,provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at,
+  });};
   const proposals: Array<{ artifact_id: string; file: string }> = [];
   const completedUnits = await restoreCheckpoints();
   const isolatedUnits = new Set<string>();
@@ -111,6 +114,7 @@ export async function interpretWorkspaceEngineV1(args: {
     for(const key of recovered)completedUnits.add(key);
   }
   const remaining = args.clusters.filter(cluster => !completedUnits.has(cluster.cluster_id));
+  if(args.recovery_only&&remaining.length)return fail("workspace_engine_interpretation_receipt_recovery_required");
   // Validate the complete pending plan before reserving or sending its first
   // batch. A late oversized group must never leave an avoidable partially paid
   // execution merely because the generator had not reached it yet.
@@ -125,7 +129,7 @@ export async function interpretWorkspaceEngineV1(args: {
   if ("consolidation_contract_version" in configuration && args.clusters.length) {
     await args.heartbeat("interpreting");
     await consolidateMassLabelingGroupsV1({database,lease,actor_user_id:context.actor_user_id,
-      proposals,expected_group_ids:args.clusters.map(c=>c.cluster_id),
+      recovery_only:args.recovery_only,proposals,expected_group_ids:args.clusters.map(c=>c.cluster_id),
       expected_cluster_digests:Object.fromEntries(args.clusters.map(c=>[c.cluster_id,c.cluster_digest])),
       directory:args.directory,storage,api_key:args.api_key,provider_enabled:args.provider_enabled});
   }

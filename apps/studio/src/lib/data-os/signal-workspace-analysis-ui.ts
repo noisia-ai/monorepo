@@ -14,7 +14,7 @@ export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["la
 };
 export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "latest_run" | "latest_complete"> & {
   contract_version: "signal-workspace-analysis-v1";
-  request_scope: string; can_execute: boolean; discovery_enabled?: boolean;
+  request_scope: string; execution_mode?: "operator_cli"; can_execute: boolean; discovery_enabled?: boolean;
   update?: WorkspaceAnalysisUpdate | null;
   numeric_readiness?: WorkspaceNumericReadiness | null;
   admission?: WorkspaceInterpretationAdmission | null;

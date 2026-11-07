@@ -57,7 +57,10 @@ test("a denied lease sends nothing and a completed global response is persisted 
       },
       fetch_impl,
     }),
-    /not_sent/u,
+    (error: unknown) =>
+      error instanceof Error &&
+      "outcome" in error &&
+      error.outcome === "outcome_unknown",
   );
   assert.equal(requests, 0);
   assert.equal(persisted, false);

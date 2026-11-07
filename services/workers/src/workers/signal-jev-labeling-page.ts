@@ -19,6 +19,7 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     invalidUsage?(failure:JevProviderErrorV1):JevResponseV1["usage"]|undefined;
     fail_on_error?:boolean;
     durable_raw_per_response?:boolean;
+    recovery_only?:boolean;
   };
 }){
   const {store,provider,hooks}=args,run=await store.claim(args.run_id);
@@ -37,8 +38,9 @@ export async function processJevLabelingPageV1<Input extends FacetInput,Result>(
     if(hooks.fail_on_error&&pending.some(call=>call.status==="unknown"&&!call.raw_body)){
       await store.fail(run,"labeling_outcome_unknown");return {status:"outcome_unknown"};
     }
-    let calls=pending.slice(0,200);
-    if(!calls.length&&!run.error_code){
+    let calls=(hooks.recovery_only?pending.filter(call=>Boolean(call.raw_body)):pending).slice(0,200);
+    if(hooks.recovery_only&&!calls.length)return {status:"recovery_unavailable"};
+    if(!calls.length&&!run.error_code&&!hooks.recovery_only){
       const proposals=hooks.propose(run,await store.inputs(run));
       if(proposals.length)calls=(await store.reserve(run,proposals)).slice(0,200);
     }

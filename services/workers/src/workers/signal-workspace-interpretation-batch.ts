@@ -24,7 +24,7 @@ export type WorkspaceInterpretationBatchExecutionV1={
  config:NonNullable<SignalWorkspaceEngineLeaseV1["snapshot"]["interpretation_config"]>;
  batch:SignalWorkspaceInterpretationBatchV1; directory:string; storage:WorkspaceEngineStorageV1;
  stores?:typeof stores; send?:typeof sendWorkspaceInterpretationV1;
- api_key?:string; provider_enabled?:boolean; authorization_expires_at?:string;
+ recovery_only?:boolean; api_key?:string; provider_enabled?:boolean; authorization_expires_at?:string;
 };
 
 /** Execute one sealed editorial request with the existing cost/receipt protocol.
@@ -43,6 +43,7 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
     ...(lease.interpretation_admission ? { admission_operation_id: lease.interpretation_admission.operation_id } : {}),
     ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
   let call = await store.reserve(reservation);
+  if(args.recovery_only&&!call.response)return fail("workspace_engine_interpretation_receipt_recovery_required");
   let transportAttempts = 0, confirmedTerminals = 0;
   while (call.state === "definitely_not_sent" || call.state === "terminal_confirmed") {
     if (++transportAttempts > 128) return fail("workspace_engine_interpretation_retry_unavailable");

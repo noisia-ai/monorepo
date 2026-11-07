@@ -117,9 +117,12 @@ async function main() {
         },
         {
           database,
+          mass_operator:{recovery_only:action==="recover",api_key:process.env.ANTHROPIC_API_KEY,
+            enabled:process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED==="true"},
           interpret: (args: Record<string, unknown>) =>
             interpretWorkspaceEngineV1({
               ...args,
+              recovery_only: action === "recover",
               api_key: process.env.ANTHROPIC_API_KEY,
               provider_enabled:
                 action === "execute" &&

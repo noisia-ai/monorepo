@@ -1,3 +1,4 @@
+import { sendMassLabelingConsolidationV1 } from "../providers/mass-labeling-consolidation";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
@@ -306,6 +307,38 @@ test("unverified source lineage stops before reserving or sending global work", 
     );
     assert.equal(reserves, 0);
     assert.equal(f.sends(), 0);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test("failed send CAS preserves unknown exposure without fetching", async () => {
+  const f = await fixture();
+  let fetches = 0;
+  try {
+    f.args.stores = {
+      ...f.args.stores!,
+      sent: async () => {
+        f.call.state = "in_flight";
+        return { call: f.call, send_authorized: false };
+      },
+    };
+    f.args.send = async (args) =>
+      sendMassLabelingConsolidationV1({
+        ...args,
+        fetch_impl: async () => {
+          fetches++;
+          return new Response("{}");
+        },
+      });
+    await assert.rejects(
+      consolidateMassLabelingGroupsV1(f.args),
+      /send_not_authorized/u,
+    );
+    assert.equal(fetches, 0);
+    assert.equal(f.call.state, "in_flight");
+    assert.equal(f.call.reserved_micro_usd, 1);
+    assert.equal(f.charges(), 0);
   } finally {
     await f.cleanup();
   }

@@ -168,7 +168,8 @@ para el run devuelto. Las guías se derivan gratis de centroides de menciones qu
 coinciden con marca, competidores o categoría gobernados. No requiere propuesta
 Claude de Brand OS. El perfil congela locale `pt-BR` sin modificar Brand OS.
 
-Una ejecución editorial nueva usa `editorial`, con `idempotency_key`,
+El daemon deja el editorial pagado del piloto pendiente para el operador CLI. El
+fit gratuito conserva su outbox normal. Una ejecución editorial nueva usa `editorial`, con `idempotency_key`,
 `cap_micro_usd`, `daily_cap_micro_usd` y `budget_timezone` explícitos. Después se
 invoca `execute` con su ejecución. El proceso necesita una clave Anthropic válida
 en su entorno efímero y `NOISIA_WORKSPACE_INTERPRETATION_ENABLED=true`.
@@ -194,9 +195,10 @@ exactos de los artefactos privados; checkpoints es un array de
 `{artifact_id,body}`. DB verifica SHA, ledger global liquidado, request, salida y
 linaje individual. `policy` fija `cap_micro_usd`; `request` añade `map_id`,
 `idempotency_key` y cap explícito, comprueba JEV y admite primero smoke de1000.
-`step`, `smoke`, `continue` y `export` usan `run_id`. Con JEV habilitado, el drainer
+`step`, `recover`, `smoke` y `continue` usan `run_id`; `export` usa `map_id`. Con JEV habilitado, el drainer
 puede procesar runs admitidos en workers. `continue` expande el mismo run después
-del smoke. `select` añade `map_id`, `topic_keys` y `expected_revision`; `status`
+del smoke. `recover` procesa exclusivamente raws existentes con el proveedor
+deshabilitado y no selecciona menciones ni crea nuevas reservas. `select` añade `map_id`, `topic_keys` y `expected_revision`; `status`
 lee la selección. `export` produce snapshot privado con textos, probabilidades,
 candidatos y ledger, sin llamar proveedores. La clave JEV permanece en el entorno
 mediante `TYPESAFE_API_KEY` y requiere `NOISIA_JEV_PROVIDER_ENABLED=true`.

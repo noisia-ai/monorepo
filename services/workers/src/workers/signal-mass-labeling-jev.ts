@@ -1,3 +1,4 @@
+import {assertMassJevConsumerV1} from "../providers/mass-labeling-consumer";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -51,6 +52,7 @@ export function processMassLabelingJevV1(args: {
   store: Store;
   provider: JevProviderV1;
   lease_renewal_ms?: number;
+  recovery_only?: boolean;
 }) {
   return processJevLabelingPageV1<MassLabelingInputV1, MassLabelingResultV1>({
     ...args,
@@ -105,6 +107,7 @@ export function processMassLabelingJevV1(args: {
         })),
       labeled: (result) => result.status === "labeled",
       durable_raw_per_response: true,
+      recovery_only: args.recovery_only,
     },
   });
 }
@@ -159,6 +162,8 @@ export async function signalMassLabelingJevJobV1(job: {
     process.env.NOISIA_JEV_PROVIDER_ENABLED !== "true"
   )
     throw new Error("mass_labeling_provider_disabled");
+  await assertMassJevConsumerV1({api_key:process.env.TYPESAFE_API_KEY??"",
+    enabled:process.env.NOISIA_JEV_PROVIDER_ENABLED==="true"});
   const { pool } = await import("../db/client");
   const run = (
     await pool.query<{ workspace_id: string }>(

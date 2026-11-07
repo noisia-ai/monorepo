@@ -51,6 +51,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
   storage: WorkspaceEngineStorageV1;
   stores?: typeof stores;
   send?: typeof sendMassLabelingConsolidationV1;
+  recovery_only?: boolean;
   api_key?: string;
   provider_enabled?: boolean;
 }): Promise<{
@@ -94,6 +95,18 @@ export async function consolidateMassLabelingGroupsV1(args: {
     return invalid();
   if (digest(batch.configuration) !== digest(config.call_configuration))
     return invalid();
+  if (args.recovery_only) {
+    const cached = await database.query(
+      `SELECT 1 FROM engine_cost_events
+      WHERE workspace_id=$1::uuid AND catalog_execution_id=$2::uuid AND request_digest=$3
+        AND response_storage_key IS NOT NULL`,
+      [lease.workspace_id, lease.execution_id, batch.request_digest],
+    );
+    if (!cached.rows.length)
+      throw new Error(
+        "workspace_engine_interpretation_receipt_recovery_required",
+      );
+  }
   await storage.assertReady?.();
   const call = await store.reserve({
     database,
@@ -179,6 +192,14 @@ export async function consolidateMassLabelingGroupsV1(args: {
       if (!receipt.complete || receipt.http_status !== 200) return invalid();
       raw = new TextDecoder("utf-8", { fatal: true }).decode(receipt.bytes);
     } catch (error) {
+      // A failed send CAS belongs to another attempt. Preserve its exact state
+      // and exposure, including a response that may have arrived meanwhile.
+      if (
+        error instanceof WorkspaceInterpretationTransportErrorV1 &&
+        error.message ===
+          "workspace_engine_mass_consolidation_send_not_authorized"
+      )
+        throw error;
       const outcome =
         error instanceof WorkspaceInterpretationTransportErrorV1
           ? error.outcome

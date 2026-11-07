@@ -22,6 +22,7 @@ async function main() {
       "policy",
       "request",
       "step",
+      "recover",
       "smoke",
       "continue",
       "select",
@@ -115,12 +116,10 @@ async function main() {
         provider_available: true,
         cap_micro_usd: Number(input.cap_micro_usd),
       });
-    } else if (action === "step") {
-      if (
-        process.env.NOISIA_JEV_PROVIDER_ENABLED !== "true" ||
-        !process.env.TYPESAFE_API_KEY?.trim()
-      )
-        throw new Error("mass_run_provider_disabled");
+    } else if (action === "step" || action === "recover") {
+      const {assertMassJevConsumerV1} = await import(new URL("../../services/workers/src/providers/mass-labeling-consumer.ts",import.meta.url).href);
+      if(action==="step") await assertMassJevConsumerV1({api_key:process.env.TYPESAFE_API_KEY??"",
+        enabled:process.env.NOISIA_JEV_PROVIDER_ENABLED==="true"});
       const { createMassLabelingRuntimeStoreV1, processMassLabelingJevV1 } =
         await import(
           new URL(
@@ -143,10 +142,11 @@ async function main() {
       if (!actor) throw new Error("mass_run_unavailable");
       result = await processMassLabelingJevV1({
         run_id: input.run_id,
+        recovery_only: action === "recover",
         store: createMassLabelingRuntimeStoreV1(database),
         provider: createTypesafeJevClientV1({
           api_key: process.env.TYPESAFE_API_KEY,
-          enabled: true,
+          enabled: action === "step",
         }),
       });
     } else if (action === "smoke")
