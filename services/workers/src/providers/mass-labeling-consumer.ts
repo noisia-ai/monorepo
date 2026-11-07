@@ -1,5 +1,8 @@
 import { assertAnthropicProviderAccessV1 } from "@noisia/query-engine";
-import type { SignalWorkspaceEngineDatabaseV1 } from "@noisia/db";
+import {
+  assertSignalWorkspaceMassLabelingRecoveryReadyV1,
+  type SignalWorkspaceEngineDatabaseV1,
+} from "@noisia/db";
 
 export type MassEngineOperatorV1 = {
   recovery_only: boolean;
@@ -13,7 +16,17 @@ export async function authorizeMassEngineConsumerV1(args: {
   database: SignalWorkspaceEngineDatabaseV1;
   execution_id: string;
   operator?: MassEngineOperatorV1;
+  recovery_preflight?: typeof assertSignalWorkspaceMassLabelingRecoveryReadyV1;
 }) {
+  if (args.operator?.recovery_only) {
+    const recovery = await (
+      args.recovery_preflight ??
+      assertSignalWorkspaceMassLabelingRecoveryReadyV1
+    )(args);
+    if (!recovery.pilot)
+      throw new Error("workspace_engine_interpretation_fit_required");
+    return true;
+  }
   const row = (
     await args.database.query<{ paid_pilot: boolean; status?: string }>(
       `SELECT status,

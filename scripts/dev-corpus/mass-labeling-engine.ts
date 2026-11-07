@@ -5,6 +5,7 @@ import {
   loadSignalWorkspaceEngineStatusV1,
   initializeSignalWorkspaceTopicPrototypeCatalogV1,
   retrySignalWorkspaceEngineV1,
+  assertSignalWorkspaceMassLabelingRecoveryReadyV1,
   loadSignalWorkspaceInterpretationAdmissionV1,
   authorizeSignalWorkspaceInterpretationAdmissionV1,
 } from "../../infrastructure/db/index";
@@ -99,9 +100,9 @@ async function main() {
         ).rows[0];
       let owner = await loadOwner();
       if (!owner) throw new Error("mass_engine_execution_unavailable");
-      if (action === "recover" && owner.status === "failed") {
-        await retrySignalWorkspaceEngineV1({ ...scope, idempotency_key: key });
-        owner = await loadOwner();
+      if (action === "recover") {
+        const recovery=await assertSignalWorkspaceMassLabelingRecoveryReadyV1(scope);
+        if (!recovery.pilot) throw new Error("workspace_engine_interpretation_fit_required");
       }
       if (action === "execute" && owner.paid && owner.status !== "ready")
         await assertMassLabelingEditorialAccessV1({
@@ -109,6 +110,10 @@ async function main() {
           enabled:
             process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
         });
+      if (owner.status === "failed") {
+        await retrySignalWorkspaceEngineV1({ ...scope, idempotency_key: key });
+        owner = await loadOwner();
+      }
       result = await signalWorkspaceEngineJobV1(
         {
           id: owner.worker_job_id,
