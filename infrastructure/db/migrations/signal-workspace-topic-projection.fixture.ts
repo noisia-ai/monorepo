@@ -16,7 +16,7 @@ export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:str
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
 export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;migrations?:string[];
- interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
+ interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;engine_config?:Record<string,unknown>;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
  onMaterialized?:(profile_id:string)=>Promise<void>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
 export async function workspaceProjectionFixtureV1(options:WorkspaceProjectionFixtureOptionsV1={}){
@@ -59,7 +59,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);assert.equal(preflight.missing_guides,0);
  const configuration=SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
  const started=await engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
-  expected_context_digest:preflight.expected_context_digest,engine_config:{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
+  expected_context_digest:preflight.expected_context_digest,engine_config:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
   interpretation_config:{call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000}});
  const lease=await engine.claimSignalWorkspaceEngineV1({database,...started,worker_job_id:'local-projection-fixture'});assert.ok(lease);
  assert.ok(lease.snapshot.expected_roots<=10,'tiny fixture only');

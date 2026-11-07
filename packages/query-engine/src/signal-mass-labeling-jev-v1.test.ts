@@ -31,7 +31,7 @@ test("threshold endpoints abstain and complete distributions are retained", () =
   const request = buildMassLabelingJevRequestV1(input, context);
   const response: JevResponseV1 = { model: request.model, usage: { input_tokens: 10, output_tokens: 0 }, answers: Object.fromEntries(
     Object.entries(request.questions).map(([key, question]) => [key, question.type === "noul" ? { type: "noul", noul: 0.5 }
-      : { type: "choice", choice: Object.keys(question.criteria)[0], confidence: 0.8,
+      : { type: "choice", choice: Object.keys(question.criteria)[0]!, confidence: 0.8,
         probabilities: Object.fromEntries(Object.keys(question.criteria).map((key, index, all) => [key, index === 0 ? 0.8 : 0.2 / (all.length - 1)])) }])) };
   const result = mapMassLabelingJevResponseV1(input, context, response);
   assert.deepEqual(result.probabilities, response.answers);

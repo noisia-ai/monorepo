@@ -1,3 +1,4 @@
+import {loadMassLabelingServingContextV1, type MassLabelingMapV1} from "./signal-mass-labeling";
 import { facetForcedAbstentionsSqlV1 } from "./signal-facet-normalizations";
 import {signalDiscoveryProjectionContextCurrentV1} from "./signal-workspace-discovery-projection-current";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
@@ -69,7 +70,7 @@ type Context = { generation: Generation | null; topics: CatalogTerm[]; selection
   facet_enabled?: boolean;
   /** Private proof produced only after context() in the same RR transaction. */
   checked_projection_source?: { generation_id: string; current: boolean };
-  defined_interests?: DefinedInterest[]; concept_membership?: boolean; membership_concept_keys?: Set<string>; membership_run_id?: string | null; membership_state_digest?: string };
+  defined_interests?: DefinedInterest[]; concept_membership?: boolean; membership_concept_keys?: Set<string>; membership_run_id?: string | null; membership_state_digest?: string; mass_labeling?: MassLabelingMapV1 };
 
 /** A defined interest has its own durable selection, separate from SQL0181's
  * consolidated concepts. Currentness and authority are rechecked at read. */
@@ -298,6 +299,23 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
   if (!capabilities.can_view || args.include_unselected && !capabilities.can_edit_topics) return fail("workspace_topics_forbidden", 403);
   const filters = { date_from: parseDate(args.date_from), date_to: parseDate(args.date_to), timezone: parseTimezone(args.timezone) };
   if (filters.date_from && filters.date_to && filters.date_from > filters.date_to) return fail("workspace_topics_date_invalid", 422);
+  const mass = await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,feature:"mass_labeling"})
+    ? await loadMassLabelingServingContextV1(client,args.workspace_id) : null;
+  if (mass) {
+    const topics = mass.map.catalog.map(topic => ({...signalTopicDefinitionSchemaV1.parse({
+      term_key:topic.topic_key,label:topic.name,definition:topic.definition,scope:"all_conversations",
+      inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],lifecycle:"draft",
+      origin:"workspace_discovery",discovery_guidance:false,definition_revision:1,definition_digest:topic.definition_digest,
+      source:{run_key:`workspace-mass:${mass.map.id}`,candidate_key:topic.topic_key,candidate_digest:mass.map.map_digest},
+      created_at:new Date(mass.map.created_at).toISOString(),updated_at:new Date(mass.map.created_at).toISOString()
+    }),kind:"topic" as const}));
+    return {generation:null,topics,selection:{revision:mass.revision,items:Object.fromEntries(topics.map(topic =>
+      [topic.term_key,{selected:mass.selected_topic_keys.includes(topic.term_key),definition_digest:topic.definition_digest,
+        definition_revision:1,generation_id:null}]))},is_current:mass.is_current,is_processing:false,filters,
+      native:true,consolidated:false,concept_membership:true,membership_concept_keys:new Set(topics.map(topic=>topic.term_key)),
+      membership_run_id:mass.run_id,membership_state_digest:mass.state_digest,mass_labeling:mass.map,
+      imported:{receipt_digest:mass.map.map_digest,input_revision:mass.map.input_revision},facet_enabled:false};
+  }
   const base = await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,feature:"concept_membership"})
     ? await membershipContext(client,args,filters) : await publishedContext(client, args, filters);
   return {...base,facet_enabled:await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,feature:"mention_facets"})};
@@ -441,7 +459,7 @@ export const signalConsolidationRootsSourceV1 = (facetEnabled: boolean) => facet
     WHERE s.workspace_id=$1::uuid
     GROUP BY s.id,s.workspace_id,p.root_id)`;
 const populationSql = (imported = false, definedInterest = false, consolidated = false, membership = false, facetEnabled = false,
-  checkedProjectionSource?: boolean) => `WITH source_generation AS MATERIALIZED (
+  checkedProjectionSource?: boolean, massLabeling = false) => `WITH source_generation AS MATERIALIZED (
   SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
     FROM signal_classification_generations generation WHERE generation.id=$2::uuid
     AND generation.workspace_id=$1::uuid AND ${checkedProjectionSource === undefined
@@ -486,9 +504,14 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
     AND path.data_source_id=batch.data_source_id AND path.workspace_id=$1::uuid
   JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
 ), all_roots AS MATERIALIZED (
-  ${imported ? `SELECT mention.id root_id,NULL::text resolution_state,mention.published_at,NULL::boolean has_unresolved_topics,
+  ${imported ? `SELECT mention.id root_id,${massLabeling ? `CASE WHEN mass_outcome.status='labeled' THEN
+      CASE WHEN EXISTS(SELECT 1 FROM signal_mass_labeling_memberships_v1 member WHERE member.map_id=$2::uuid
+        AND member.root_id=mention.id AND member.belongs) THEN 'resolved' ELSE 'abstained' END ELSE 'error' END` : "NULL::text"} resolution_state,
+    mention.published_at,NULL::boolean has_unresolved_topics,
     COALESCE(rights.metrics,false) metrics,COALESCE(rights.evidence,false) evidence
   FROM received_roots received JOIN mentions mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
+  ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
+    LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id` : ""}
     AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   LEFT JOIN root_rights rights ON rights.root_id=mention.id` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
@@ -511,10 +534,20 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
 ), visible_terms AS MATERIALIZED (
   SELECT * FROM jsonb_to_recordset($6::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean${membership ? ",membership_concept boolean" : ""}${definedInterest ? ",interest_generation_id uuid,interest_taxonomy_term_id uuid" : ""})
 ), ${membership ? `mfp_memberships AS MATERIALIZED (
-  SELECT root_id,concept_key,definition_digest,citations FROM signal_workspace_concept_memberships_read_v1($1::uuid)
-  WHERE workspace_id=$1::uuid AND verdict='belongs'
+  ${massLabeling ? `SELECT root_id,concept_key,definition_digest,'[]'::jsonb citations,probability
+    FROM signal_mass_labeling_memberships_v1 WHERE workspace_id=$1::uuid AND map_id=$2::uuid AND belongs`
+    : `SELECT root_id,concept_key,definition_digest,citations,NULL::double precision probability
+      FROM signal_workspace_concept_memberships_read_v1($1::uuid) WHERE workspace_id=$1::uuid AND verdict='belongs'`}
 ), mfp_facets AS MATERIALIZED (
-  SELECT f.workspace_id,f.root_id,f.input_digest,f.labeler_digest,f.entity_context_digest,f.facets,f.relevance FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE f.workspace_id=$1::uuid
+  ${massLabeling ? `SELECT item.workspace_id,item.root_id,item.input_digest,NULL::text labeler_digest,NULL::text entity_context_digest,
+    NULL::jsonb facets,CASE WHEN (result.probabilities#>>'{spam,noul}')::double precision>0.7 THEN 'spam'
+      WHEN (result.probabilities#>>'{relevance,noul}')::double precision>0.7 THEN 'relevant'
+      WHEN (result.probabilities#>>'{relevance,noul}')::double precision<0.3 THEN 'unrelated' ELSE 'unknown' END relevance
+    FROM signal_mass_labeling_items item LEFT JOIN signal_mass_labeling_results result
+      ON result.map_id=item.map_id AND result.root_id=item.root_id AND result.status='labeled'
+    WHERE item.workspace_id=$1::uuid AND item.map_id=$2::uuid`
+    : `SELECT f.workspace_id,f.root_id,f.input_digest,f.labeler_digest,f.entity_context_digest,f.facets,f.relevance
+      FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE f.workspace_id=$1::uuid`}
 ), mfp_roots_with_concept AS MATERIALIZED (
   SELECT DISTINCT root_id FROM mfp_memberships
 ), ` : ""}legacy_memberships AS MATERIALIZED (
@@ -622,7 +655,7 @@ function displayedTopics(ctx: Context, includeUnselected = false) {
 function populationParams(args: Args, ctx: Context) {
   const visible = new Set(displayedTopics(ctx, args.include_unselected).map(topic => topic.term_key));
   const interests = new Map(ctx.defined_interests?.map(item => [item.topic.term_key, item]) ?? []);
-  return [args.workspace_id, ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, ctx.filters.timezone,
+  return [args.workspace_id, ctx.mass_labeling?.id ?? ctx.generation?.id ?? null, ctx.filters.date_from, ctx.filters.date_to, ctx.filters.timezone,
     JSON.stringify(ctx.topics.map(topic => ({ term_key: topic.term_key, visible: visible.has(topic.term_key),
       definition_digest: topic.definition_digest, definition_revision: topic.definition_revision,
       ...(ctx.concept_membership ? { membership_concept: ctx.membership_concept_keys?.has(topic.term_key) ?? false } : {}),
@@ -639,9 +672,9 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
   const interestOnly = Boolean(ctx.imported && ctx.defined_interests?.length && !ctx.concept_membership);
   const params: unknown[] = populationParams(args, ctx);
   if (interestOnly) params.push(ctx.defined_interests!.map(item => item.generation_id));
-  const summary = (await client.query<Aggregate>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx))}
+  const summary = (await client.query<Aggregate>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling))}
     SELECT count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total,
-      count(*) FILTER(WHERE root.metrics)::int denominator,count(*) FILTER(WHERE root.metrics)::int processed,
+      count(*) FILTER(WHERE root.metrics)::int denominator,count(*) FILTER(WHERE root.metrics${ctx.mass_labeling ? " AND root.resolution_state<>'error'" : ""})::int processed,
       count(*) FILTER(WHERE root.metrics AND root.visible)::int assigned_unique,
       count(*) FILTER(WHERE root.metrics AND root.resolution_state='abstained')::int abstained,
       count(*) FILTER(WHERE root.metrics AND root.resolution_state='noise')::int noise,
@@ -681,7 +714,7 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     ...(interestKeys.has(topic.term_key) ? { interest_generation_id: ctx.defined_interests!.find(item => item.topic.term_key === topic.term_key)!.generation_id } : {}) }));
   const computed: SignalWorkspaceTopicsOverviewV1 = { contract_version: "signal-workspace-topics-serving-v1", source: "workspace_computed", workspace_id: args.workspace_id,
     corpus_id: null, scope: "all_conversations", generation_id: ctx.generation?.id ?? null,
-    source_engine_execution_id: ctx.generation?.source_engine_execution_id ?? null, is_current: ctx.is_current, is_processing: ctx.is_processing,
+    source_engine_execution_id: ctx.mass_labeling?.source_engine_execution_id ?? ctx.generation?.source_engine_execution_id ?? null, is_current: ctx.is_current, is_processing: ctx.is_processing,
     selection_revision: ctx.selection.revision, filters: ctx.filters,
     available_dates: { date_from: summary.date_from, date_to: summary.date_to },
     scope_digest: hash({ workspace: args.workspace_id, actor: args.actor_user_id, generation: ctx.generation?.finalized_digest,
@@ -696,6 +729,7 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
     interpretation_coverage: workspaceTopicsInterpretationCoverageV1(ctx.generation?.interpretation_coverage),
     quality: "not_calibrated", terms, series: summary.series,
     limitations: ["computed_memberships_not_semantic_precision", "multilabel_counts_are_not_additive",
+      ...(ctx.mass_labeling ? ["jev_probabilities_not_calibrated","candidate_topics_only","mass_labeling_frozen_population"] : []),
       ...(!ctx.generation && !ctx.concept_membership ? ["classification_required"] : !ctx.is_current ? ["last_complete_generation_stale"] : []),
       ...(summary.withheld ? ["current_rights_withhold_mentions"] : [])] };
   if (interestOnly) {
@@ -771,7 +805,7 @@ async function detailWithin(client: PoolClient, args: DetailArgs, ctx: Context, 
   const summary = (await client.query<{ mention_count: number; undated_mentions: number;
     positive: number; neutral: number; negative: number; unclassified: number;
     series: SignalWorkspaceTopicDetailV1["series"];
-    related: Array<{ term_key: string; shared_mentions: number }> }>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx))},
+    related: Array<{ term_key: string; shared_mentions: number }> }>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling))},
     topic_roots AS MATERIALIZED (
       SELECT DISTINCT root.root_id,root.published_at,mention.sentiment_score
       FROM period_roots root JOIN memberships member ON member.root_id=root.root_id AND member.term_key=$7
@@ -840,8 +874,34 @@ async function evidenceWithin(client: PoolClient, args: EvidenceArgs, ctx: Conte
       after = decoded.root_id;
     } catch (error) { if (error instanceof SignalWorkspaceTopicsServingError) throw error; return fail("workspace_topics_cursor_invalid", 422); }
   }
+  if (ctx.mass_labeling) {
+    let afterProbability: number | null = null;
+    if (args.cursor) {
+      const decoded = JSON.parse(Buffer.from(args.cursor,"base64url").toString("utf8")) as {probability?:unknown};
+      if (typeof decoded.probability!=="number" || !Number.isFinite(decoded.probability)
+        || decoded.probability<0 || decoded.probability>1) return fail("workspace_topics_cursor_invalid",422);
+      afterProbability=decoded.probability;
+    }
+    const rows=(await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]&{probability:number}>(
+      `${populationSql(true,false,false,true,false,undefined,true)}
+       SELECT root.root_id mention_id,mention.text_clean text,NULL::text quote,'[]'::jsonb forced_abstentions,
+         NULL::jsonb evidence_fragment,mention.platform,
+         to_char(mention.published_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') occurred_at,mention.url,member.probability
+       FROM period_roots root JOIN mfp_memberships member ON member.root_id=root.root_id AND member.concept_key=$7
+       JOIN mentions mention ON mention.id=root.root_id AND mention.workspace_id=$1::uuid
+       WHERE root.evidence AND ($8::uuid IS NULL OR member.probability<$9::double precision
+         OR member.probability=$9::double precision AND root.root_id>$8::uuid)
+       ORDER BY member.probability DESC,root.root_id LIMIT $10`,
+      [...populationParams(args,ctx),args.term_key,after,afterProbability,limit+1])).rows;
+    const page=rows.slice(0,limit),last=page.at(-1);
+    return {contract_version:"signal-workspace-topic-evidence-v1",workspace_id:args.workspace_id,
+      generation_id:null,kind,term_key:args.term_key,scope_digest:view.scope_digest,
+      items:page.map(({probability: _probability,...item})=>item),
+      next_cursor:rows.length>limit&&last?Buffer.from(JSON.stringify({root_id:last.mention_id,probability:last.probability,
+        scope:view.scope_digest,term:args.term_key,kind})).toString("base64url"):null};
+  }
   if (ctx.concept_membership) {
-    const rows=(await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql(Boolean(ctx.imported),false,ctx.consolidated,true,ctx.facet_enabled,checkedProjectionSource(ctx))}
+    const rows=(await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql(Boolean(ctx.imported),false,ctx.consolidated,true,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling))}
       SELECT DISTINCT ON(root.root_id) root.root_id mention_id,
         mention.text_clean text,
         CASE WHEN member.evidence_fragment IS NOT NULL THEN signal_topic_utf16_fragment_v1(mention.text_clean,(member.evidence_fragment->>'start')::int,(member.evidence_fragment->>'end')::int) ELSE NULL END quote,
@@ -856,7 +916,7 @@ async function evidenceWithin(client: PoolClient, args: EvidenceArgs, ctx: Conte
       next_cursor:rows.length>limit?Buffer.from(JSON.stringify({root_id:items.at(-1)!.mention_id,scope:view.scope_digest,term:args.term_key,kind})).toString("base64url"):null};
   }
   if (interest) {
-    const rows = (await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql(Boolean(ctx.imported),true,ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx))}
+    const rows = (await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql(Boolean(ctx.imported),true,ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling))}
       SELECT root.root_id mention_id,
         CASE WHEN assignment.resolution_method='human' THEN left(mention.text_clean,2000)
           ELSE cited.citation->>'quote' END text,NULL::jsonb evidence_fragment,
@@ -908,7 +968,7 @@ async function evidenceWithin(client: PoolClient, args: EvidenceArgs, ctx: Conte
       next_cursor: rows.length > limit ? Buffer.from(JSON.stringify({ root_id: items.at(-1)!.mention_id,
         scope: view.scope_digest, term: args.term_key, kind })).toString("base64url") : null };
   }
-  const rows = (await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx))}
+  const rows = (await client.query<SignalWorkspaceTopicEvidencePageV1["items"][number]>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling))}
     SELECT root.root_id mention_id,CASE WHEN member.evidence_fragment IS NOT NULL THEN signal_topic_utf16_fragment_v1(mention.text_clean,
       (member.evidence_fragment->>'start')::int,(member.evidence_fragment->>'end')::int) ELSE left(mention.text_clean,2000) END text,
       member.evidence_fragment,mention.platform,
