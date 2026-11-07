@@ -62,7 +62,7 @@ export const SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1: SignalBrandCon
  * remain real; the main fixture then runs the normal semantic transitions. */
 export function createSignalTopicEditorialRenewalSyntheticSavesV1(
   runtime = SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1,
-  options: {brand_name?: string; allow_existing_policy?: boolean} = {},
+  options: {brand_name?: string; reuse_existing_policy?: boolean} = {},
 ): Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge"> {
   const refreshSnapshot = async (args: Parameters<BrandContextSyntheticSaveBindingsV1["saveKnowledge"]>[0]) => {
     const snapshot = await readSignalBrandOsCanonicalSnapshotV1({ queryable: args.scoped,
@@ -91,8 +91,18 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
       await refreshSnapshot({ ...args, brand_id, title: "Synthetic base identity", raw_text: "" });
       const config = runtime.semantic;
       assert.ok(config.platform_hard_cap_micro_usd !== null, "this historical capped fixture requires an explicit maximum");
-      const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
-        brand_id, initiator_user_id: args.actor_user_id, env: {
+      if (options.reuse_existing_policy) {
+        const activePolicy = (await args.scoped.query<{ id: string }>(`SELECT id::text FROM signal_processing_policy_versions
+          WHERE organization_id=$1::uuid AND status='active' AND valid_from<=clock_timestamp() AND valid_until>clock_timestamp()
+          ORDER BY version DESC LIMIT 1`, [args.organization_id])).rows[0];
+        assert.ok(activePolicy, "shared synthetic workspace must reuse a currently active organization policy");
+        const actions = new Set((await args.scoped.query<{ action: string }>(`SELECT action FROM signal_processing_policy_actions
+          WHERE policy_version_id=$1::uuid`, [activePolicy.id])).rows.map(row => row.action));
+        assert.ok(actions.has("brand_context_proposal") && actions.has("topic_prototype_embeddings"),
+          "shared organization policy retains the exact actions required by the context fixture");
+      } else {
+        const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
+          brand_id, initiator_user_id: args.actor_user_id, env: {
           NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID: args.actor_user_id,
           NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD: '999999999999999',
           // Synthetic receipts still share the real daily admission ledger.
@@ -107,9 +117,9 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
           NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS: config.input_usd_per_million_tokens,
           NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS: config.output_usd_per_million_tokens,
           NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd),
-        } });
-      assert.ok(policy.status === "provisioned" || options.allow_existing_policy && policy.status === "existing_policy",
-        "the first synthetic organization provisions its policy; a shared-workspace fixture reuses that organization policy");
+          } });
+        assert.equal(policy.status, "provisioned", "first synthetic workspace provisions its organization policy");
+      }
       return { brand_id, workspace_id: workspace.id };
     },
     async saveKnowledge(args) {
@@ -170,7 +180,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const { database, scoped, query } = args;
   const runtime = args.runtime ?? SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1;
   const sharedIdentity = args.identity !== undefined;
-  const saves = args.saves ?? createSignalTopicEditorialRenewalSyntheticSavesV1(runtime, { allow_existing_policy: sharedIdentity });
+  const saves = args.saves ?? createSignalTopicEditorialRenewalSyntheticSavesV1(runtime, { reuse_existing_policy: sharedIdentity });
   assert.equal((await query("SHOW transaction_isolation")).rows[0]?.transaction_isolation, "read committed",
     "real processing admission requires the runner's READ COMMITTED rollback harness");
   const organization_id = args.identity?.organization_id ?? randomUUID();

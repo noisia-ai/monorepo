@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { loadAdminWorkspaceCorpusSummariesV1 } from '../admin-workspace-corpus-summary';
 import { loadSignalWorkspaceCorpusReadinessStoreV1 } from '../signal-workspace-corpus-readiness';
@@ -40,7 +40,7 @@ test('admin corpus receipt aggregation uses migrated PostgreSQL data and live au
       await f.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key,status)
         VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'social_listening','synthetic',$5,$6,$7,'active')`,
       [sourceId, workspaceId, organization_id, brand_id, connectionMethod, `Synthetic unimported ${connectionMethod}`,
-        `source-sha256-${sourceId.replaceAll('-', '')}`]);
+        `source-sha256-${createHash('sha256').update(sourceId).digest('hex')}`]);
     }
 
     let statements = 0;
