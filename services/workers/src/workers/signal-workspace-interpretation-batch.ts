@@ -1,11 +1,11 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
  reserveSignalWorkspaceEngineInterpretationV1, markSignalWorkspaceEngineInterpretationSentV1,
  persistSignalWorkspaceEngineInterpretationResponseV1, settleSignalWorkspaceEngineInterpretationV1,
  failSignalWorkspaceEngineInterpretationV1, SignalWorkspaceEngineInterpretationError,
- type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1,
+ type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineInterpretationCallV1,
 } from "@noisia/db";
 import { signalWorkspaceEmbeddingDigestV1, type SignalWorkspaceInterpretationBatchV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1, validateWorkspaceInterpretationReceiptV1, WorkspaceInterpretationTransportErrorV1,
@@ -24,7 +24,7 @@ export type WorkspaceInterpretationBatchExecutionV1={
  config:NonNullable<SignalWorkspaceEngineLeaseV1["snapshot"]["interpretation_config"]>;
  batch:SignalWorkspaceInterpretationBatchV1; directory:string; storage:WorkspaceEngineStorageV1;
  stores?:typeof stores; send?:typeof sendWorkspaceInterpretationV1;
- recovery_only?:boolean; api_key?:string; provider_enabled?:boolean; authorization_expires_at?:string;
+ recovery_only?:boolean; recovery_call?:SignalWorkspaceEngineInterpretationCallV1; api_key?:string; provider_enabled?:boolean; authorization_expires_at?:string;
 };
 
 /** Execute one sealed editorial request with the existing cost/receipt protocol.
@@ -41,8 +41,13 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
     reserved_micro_usd: batch.reserved_micro_usd, budget_timezone: config.budget_timezone, daily_cap_micro_usd: config.daily_cap_micro_usd,
     ...(lease.interpretation_revision_digest ? { interpretation_revision_digest: lease.interpretation_revision_digest } : {}),
     ...(lease.interpretation_admission ? { admission_operation_id: lease.interpretation_admission.operation_id } : {}),
-    ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) };
-  let call = await store.reserve(reservation);
+    ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}),
+    ...("representative_count" in batch.configuration ? {unit_keys:batch.clusters.map(group=>group.cluster_id)} : {}) };
+  let call = args.recovery_call ?? await store.reserve(reservation);
+  if (args.recovery_call && (!args.recovery_only || call.workspace_id !== lease.workspace_id
+    || call.execution_id !== lease.execution_id || call.request_digest !== batch.request_digest
+    || signalWorkspaceEmbeddingDigestV1(call.editorial_repair) !== signalWorkspaceEmbeddingDigestV1(batch.editorial_repair ?? null)))
+    return fail("workspace_engine_interpretation_receipt_recovery_required");
   if(args.recovery_only&&(!call.response||["definitely_not_sent","terminal_confirmed"].includes(call.state)))return fail("workspace_engine_interpretation_receipt_recovery_required");
   let transportAttempts = 0, confirmedTerminals = 0;
   while (call.state === "definitely_not_sent" || call.state === "terminal_confirmed") {
@@ -59,7 +64,7 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
   const attempt = { database, call_id: call.call_id, attempt_token: call.attempt_token };
   let response: WorkspaceInterpretationResponseV1;
   if (call.response) {
-    const path = join(args.directory, `response-${call.call_id}.json`);
+    const path = join(args.directory, `response-${call.call_id}-${randomUUID()}.json`);
     await storage.get({ workspace_id: lease.workspace_id, execution_id: lease.execution_id,
       stored: { ...call.response, media_type: "application/json" }, destination: path });
     response = validateWorkspaceInterpretationReceiptV1(batch, { bytes: await readFile(path), sha256: call.response.sha256,

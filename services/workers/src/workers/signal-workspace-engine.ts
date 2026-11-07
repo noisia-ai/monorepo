@@ -135,7 +135,8 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
         clusters: await readWorkspaceEngineInterpretationEvidenceV1({ input_directory: inputDir, output_directory: outputDir, output }),
         directory: attempt, storage, heartbeat: async next => { phase = next; await heartbeat(); } })
       : await store.finish({ database, lease, ...fit });
-    await job.updateProgress(100).catch(() => undefined); return finished;
+    if (!("recovery_status" in finished)) await job.updateProgress(100).catch(() => undefined);
+    return finished;
   } catch (error) { const code = safe(error);
     await store.fail({ database, lease, error_code: code }).catch(() => undefined); throw new Error(code);
   } finally {

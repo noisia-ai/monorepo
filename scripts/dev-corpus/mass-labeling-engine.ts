@@ -99,16 +99,16 @@ async function main() {
         ).rows[0];
       let owner = await loadOwner();
       if (!owner) throw new Error("mass_engine_execution_unavailable");
-      if (action === "recover" && owner.status === "failed") {
-        await retrySignalWorkspaceEngineV1({ ...scope, idempotency_key: key });
-        owner = await loadOwner();
-      }
       if (action === "execute" && owner.paid && owner.status !== "ready")
         await assertMassLabelingEditorialAccessV1({
           api_key: process.env.ANTHROPIC_API_KEY ?? "",
           enabled:
             process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
         });
+      if (owner.status === "failed") {
+        await retrySignalWorkspaceEngineV1({ ...scope, idempotency_key: key });
+        owner = await loadOwner();
+      }
       result = await signalWorkspaceEngineJobV1(
         {
           id: owner.worker_job_id,

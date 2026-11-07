@@ -185,8 +185,15 @@ Studio y CLI verifican acceso antes de admitir nuevo trabajo. Cada grupo usa has
 30 representantes distintos. La consolidación global usa exclusivamente sus
 resúmenes y verifica antes de reservar los checkpoints firmados y el universo del
 lane. Su salida cubre todos los grupos mediante tópicos o exclusiones explícitas.
-`recover` añade `idempotency_key` y sólo recupera respuestas duraderas, sin autorizar
-nuevos envíos. `authorize` se reserva para renovación elegible de un run fallido.
+`recover` añade `idempotency_key` y sólo recupera respuestas duraderas. El piloto
+reconstruye los lotes originales sobre el fit completo y verifica sus unidades
+antes de recuperar. Conserva los checkpoints existentes y registra la resolución
+de cuarentena sin borrar sus recibos. Si una respuesta pagada requiere su primera
+reparación editorial, devuelve `bounded_repair_pending`; los grupos todavía sin
+solicitud devuelven `unprocessed_units_pending`. En ambos casos la ejecución queda
+reanudable con el mismo fit. Después de revisar el recibo offline, `execute` con
+una nueva `idempotency_key` reanuda la ejecución fallida y admite los envíos
+pendientes dentro del presupuesto vigente. `authorize` se reserva para renovación elegible de un run fallido.
 
 ```bash
 node --import tsx scripts/dev-corpus/mass-labeling-run.ts map < .data/pilot-map.json > .data/pilot-map-receipt.json
