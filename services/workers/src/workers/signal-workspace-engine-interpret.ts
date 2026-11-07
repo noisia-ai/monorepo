@@ -12,6 +12,9 @@ import {
   readSignalWorkspaceEngineInterpretationExceptionsV1, quarantineSignalWorkspaceEngineInterpretationBatchV1,
   materializeSignalWorkspaceEngineTopicsV1, persistSignalWorkspaceEngineArtifactV1, completeSignalWorkspaceEngineAnalysisV1,
   completeSignalWorkspaceEngineAnalysisWithExceptionsV1,
+  readSignalWorkspaceEngineInterpretationRecoveryCallsV1, registerSignalWorkspaceEngineInterpretationUnitsV1,
+  recordSignalWorkspaceEngineInterpretationRecoveryReviewV1, pauseSignalWorkspaceEngineInterpretationRecoveryV1,
+  type SignalWorkspaceEngineInterpretationCallV1,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
 import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniverseDigestV1,
@@ -35,6 +38,10 @@ const stores = {
   quarantine: quarantineSignalWorkspaceEngineInterpretationBatchV1,
   materialize: materializeSignalWorkspaceEngineTopicsV1, persist: persistSignalWorkspaceEngineArtifactV1,
   complete: completeSignalWorkspaceEngineAnalysisV1, completePartial: completeSignalWorkspaceEngineAnalysisWithExceptionsV1,
+  recoveryCalls: readSignalWorkspaceEngineInterpretationRecoveryCallsV1,
+  registerUnits: registerSignalWorkspaceEngineInterpretationUnitsV1,
+  recoveryReview: recordSignalWorkspaceEngineInterpretationRecoveryReviewV1,
+  pauseRecovery: pauseSignalWorkspaceEngineInterpretationRecoveryV1,
 };
 const sha = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const fail = (code: string): never => { throw new Error(code); };
@@ -72,7 +79,8 @@ export async function interpretWorkspaceEngineV1(args: {
   fit: Omit<SignalWorkspaceEngineFitArgsV1, "database" | "lease">;
   clusters: SignalWorkspaceInterpretationClusterV1[]; directory: string; storage: WorkspaceEngineStorageV1;
   heartbeat: (phase: "interpreting" | "materializing") => Promise<void>;
-  stores?: typeof stores; send?: typeof sendWorkspaceInterpretationV1;
+  stores?: Omit<typeof stores, "recoveryCalls" | "registerUnits" | "recoveryReview" | "pauseRecovery">
+    & Partial<Pick<typeof stores, "recoveryCalls" | "registerUnits" | "recoveryReview" | "pauseRecovery">>; send?: typeof sendWorkspaceInterpretationV1;
   recovery_only?:boolean; api_key?: string; provider_enabled?: boolean; authorization_expires_at?: string;
 }) {
   const store = args.stores ?? stores, { database, lease, storage } = args;
@@ -85,21 +93,34 @@ export async function interpretWorkspaceEngineV1(args: {
   await store.fit({ database, lease, ...args.fit, interpretation_manifest: { unit_count: args.clusters.length, unit_digest: universe } });
   await args.heartbeat("interpreting");
   const context = await store.context({ database, lease });
-  const executeBatch=(batch:SignalWorkspaceInterpretationBatchV1)=>{
-    if(args.recovery_only&&!recoveryRequests.has(batch.request_digest))
+  const executeBatch=(batch:SignalWorkspaceInterpretationBatchV1,recoveryCall?:SignalWorkspaceEngineInterpretationCallV1)=>{
+    if(args.recovery_only&&!recoveryCall&&!recoveryRequests.has(batch.request_digest))
       return fail("workspace_engine_interpretation_receipt_recovery_required");
     return executeWorkspaceInterpretationBatchV1({
     database,execution:lease,config,batch,actor_user_id:context.actor_user_id,directory:args.directory,storage,stores:store,
-    recovery_only:args.recovery_only,send:args.send,api_key:args.api_key,provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at,
+    recovery_only:args.recovery_only||Boolean(recoveryCall),recovery_call:recoveryCall,send:args.send,api_key:args.api_key,provider_enabled:args.provider_enabled,authorization_expires_at:args.authorization_expires_at,
   });};
+  let pendingRepair=false;
+  let recoveredCalls:Awaited<ReturnType<typeof readSignalWorkspaceEngineInterpretationRecoveryCallsV1>>=[];
   const proposals: Array<{ artifact_id: string; file: string }> = [];
   const completedUnits = await restoreCheckpoints();
+  const recoveryRequests=new Set(await store.recoverable({database,lease}));
+  const pilot = "representative_count" in configuration;
+  const originalPlan = pilot ? [...batchSignalWorkspaceInterpretationV1(context.context,args.clusters,configuration)] : null;
+  if(originalPlan){
+    await recoverPilotReceipts(originalPlan);
+    const globalReceipt=recoveredCalls.some(call=>call.is_global_consolidation&&call.response);
+    const pendingUnits=args.clusters.some(group=>!completedUnits.has(group.cluster_id));
+    if(args.recovery_only&&(pendingUnits||"consolidation_contract_version" in configuration&&!globalReceipt)){
+      if(!store.pauseRecovery)return fail("workspace_engine_interpretation_receipt_recovery_required");
+      return store.pauseRecovery({database,lease,reason:pendingRepair ? "bounded_repair_pending" : "unprocessed_units_pending"});
+    }
+  }
   const isolatedUnits = new Set<string>();
   for(const exception of await store.exceptions({database,lease}))for(const key of exception.unit_keys){
     if(completedUnits.has(key)||isolatedUnits.has(key))return fail("workspace_engine_interpretation_exception_invalid");
     isolatedUnits.add(key);completedUnits.add(key);
   }
-  const recoveryRequests=new Set(await store.recoverable({database,lease}));
   // Finish already-started logical requests before validating any unrelated
   // future send. This tolerant planner can cross an individually oversized
   // legacy group. It only enters batches whose digest is in the DB ledger;
@@ -110,7 +131,7 @@ export async function interpretWorkspaceEngineV1(args: {
   // The historical context contract stays fixed for this invocation; after
   // these receipts become checkpoints, a later retry may safely promote to
   // the bounded context without losing the original request digest.
-  for(const batch of recoverableSignalWorkspaceInterpretationBatchesV1(context.context,
+  for(const batch of pilot ? [] : recoverableSignalWorkspaceInterpretationBatchesV1(context.context,
     args.clusters.filter(cluster=>!completedUnits.has(cluster.cluster_id)),configuration)){
     if(!recoveryRequests.has(batch.request_digest))continue;
     const recovered=await processBatch(batch);
@@ -122,17 +143,20 @@ export async function interpretWorkspaceEngineV1(args: {
   // batch. A late oversized group must never leave an avoidable partially paid
   // execution merely because the generator had not reached it yet.
   let plannedBatches=0;
-  for(const _batch of batchSignalWorkspaceInterpretationV1(context.context,remaining,configuration)){
+  const pendingPlan = originalPlan ? originalPlan.filter(batch=>batch.clusters.some(group=>!completedUnits.has(group.cluster_id)))
+    : [...batchSignalWorkspaceInterpretationV1(context.context,remaining,configuration)];
+  for(const _batch of pendingPlan){
     plannedBatches++;if(plannedBatches%32===0)await args.heartbeat("interpreting");
   }
-  for (const originalBatch of batchSignalWorkspaceInterpretationV1(context.context, remaining, configuration)) {
+  for (const originalBatch of pendingPlan) {
     await processBatch(originalBatch);
   }
   if(isolatedUnits.size){await args.heartbeat("materializing");return store.completePartial({database,lease});}
   if ("consolidation_contract_version" in configuration && args.clusters.length) {
     await args.heartbeat("interpreting");
     await consolidateMassLabelingGroupsV1({database,lease,actor_user_id:context.actor_user_id,
-      recovery_only:args.recovery_only,proposals,expected_group_ids:args.clusters.map(c=>c.cluster_id),
+      recovery_only:args.recovery_only,recovery_call:args.recovery_only?recoveredCalls.find(call=>call.is_global_consolidation&&call.response):undefined,
+      proposals,expected_group_ids:args.clusters.map(c=>c.cluster_id),
       expected_cluster_digests:Object.fromEntries(args.clusters.map(c=>[c.cluster_id,c.cluster_digest])),
       directory:args.directory,storage,api_key:args.api_key,provider_enabled:args.provider_enabled});
   }
@@ -164,6 +188,12 @@ export async function interpretWorkspaceEngineV1(args: {
       if (call.state !== "settled" || call.editorial_repair || !call.response?.complete
         || call.request_digest !== batch.request_digest || call.response.sha256 !== response.receipt_sha256)
         return fail("workspace_engine_interpretation_repair_unavailable");
+      if (pilot) {
+        if (!store.recoveryReview) return fail("workspace_engine_interpretation_receipt_recovery_required");
+        await store.recoveryReview({database,lease,call_id:call.call_id,request_digest:originalBatch.request_digest,
+          response_sha256:call.response.sha256,unit_keys:originalBatch.clusters.map(group=>group.cluster_id),
+          outcome:"needs_repair",validator_version:"workspace-pilot-reference-validator-v2"});
+      }
       batch = buildSignalWorkspaceInterpretationRepairBatchV1(originalBatch, { source_call_id: call.call_id,
         source_response_sha256: call.response.sha256, diagnostic: "output_invalid" });
       await args.heartbeat("interpreting");
@@ -179,10 +209,17 @@ export async function interpretWorkspaceEngineV1(args: {
           original_response_sha256:originalCall.response.sha256,repair_response_sha256:call.response.sha256,
           batch_digest:signalWorkspaceEmbeddingDigestV1(originalBatch),unit_keys:unitKeys,
           validator_version:"workspace-interpretation-validator-v1"});
+        if (pilot) return fail("workspace_engine_interpretation_output_invalid");
         for(const key of unitKeys)isolatedUnits.add(key);
         return unitKeys;
       }
     }
+    return checkpointResponse(batch,call,response);
+  }
+
+  async function checkpointResponse(batch:SignalWorkspaceInterpretationBatchV1,
+    call:SignalWorkspaceEngineInterpretationCallV1,response:Awaited<ReturnType<typeof executeBatch>>["response"]){
+    if(!response.interpretations || response.outcome!=="validated")return fail("workspace_engine_interpretation_output_invalid");
     await args.heartbeat("interpreting");
     const filename = `interpretation-${call.call_id}.json`;
     const body = JSON.stringify({ contract_version: "workspace-engine-interpretation-result-v1", execution_id: lease.execution_id,
@@ -194,6 +231,116 @@ export async function interpretWorkspaceEngineV1(args: {
         artifact_type: "engine_proposals", title: "Topic interpretations", metadata: {} } });
     proposals.push({ artifact_id: checkpoint.artifact_id, file: join(args.directory, filename) });
     return batch.clusters.map(item=>item.cluster_id);
+  }
+
+  async function recoverPilotReceipts(
+    plan: SignalWorkspaceInterpretationBatchV1[],
+  ) {
+    if (!store.recoveryCalls || !store.registerUnits || !store.recoveryReview)
+      return fail("workspace_engine_interpretation_receipt_recovery_required");
+    const calls = await store.recoveryCalls({ database, lease });
+    recoveredCalls=calls;
+    if (calls.some(call => ["in_flight", "outcome_unknown"].includes(call.state) && !call.response))
+      return fail("workspace_engine_interpretation_outcome_unknown");
+    const byRequest = new Map(plan.map((batch) => [batch.request_digest, batch]));
+    // Reconstruct every historical original before checkpoint recovery or a new
+    // reservation. Changing the pending subset cannot change a paid packet.
+    for (const call of calls) {
+      if (call.is_global_consolidation || call.editorial_repair) continue;
+      const batch = byRequest.get(call.request_digest);
+      if (
+        !batch ||
+        signalWorkspaceEmbeddingDigestV1(call.call_configuration) !==
+          signalWorkspaceEmbeddingDigestV1(configuration)
+      )
+        return fail("workspace_engine_interpretation_checkpoint_invalid");
+      await store.registerUnits({
+        database,
+        lease,
+        call_id: call.call_id,
+        request_digest: batch.request_digest,
+        unit_keys: batch.clusters.map((group) => group.cluster_id),
+        batch,
+      });
+    }
+    for (const batch of plan) {
+      const keys = batch.clusters.map((group) => group.cluster_id);
+      const done = keys.filter((key) => completedUnits.has(key)).length;
+      if (done === keys.length) continue;
+      if (done) return fail("workspace_engine_interpretation_checkpoint_invalid");
+      const candidates = calls.filter(
+        (call) =>
+          !call.is_global_consolidation &&
+          !call.editorial_repair &&
+          call.request_digest === batch.request_digest,
+      );
+      const original = [...candidates].reverse().find((call) => call.response);
+      if (!original) {
+        if (
+          candidates.some(
+            (call) =>
+              !["definitely_not_sent", "terminal_confirmed", "reserved"].includes(
+                call.state,
+              ),
+          )
+        )
+          return fail("workspace_engine_interpretation_outcome_unknown");
+        continue;
+      }
+      let effective = batch,
+        result = await executeBatch(batch, original);
+      const originalResult=result;
+      if (result.response.outcome !== "validated") {
+        if (
+          result.response.outcome !== "known_response_invalid" ||
+          !result.call.response?.complete
+        )
+          return fail("workspace_engine_interpretation_output_invalid");
+        const repairs = calls.filter(
+          (call) => call.editorial_repair?.source_call_id === original.call_id,
+        );
+        const repaired = [...repairs].reverse().find((call) => call.response);
+        if (!repaired) {
+          if (repairs.some(call=>!["reserved","definitely_not_sent","terminal_confirmed"].includes(call.state)))
+            return fail("workspace_engine_interpretation_receipt_recovery_required");
+          await store.recoveryReview({
+            database,
+            lease,
+            call_id: original.call_id,
+            request_digest: batch.request_digest,
+            response_sha256: original.response!.sha256,
+            unit_keys: keys,
+            outcome: "needs_repair",
+            validator_version: "workspace-pilot-reference-validator-v2",
+          });
+          pendingRepair = true;
+          continue;
+        }
+        effective = buildSignalWorkspaceInterpretationRepairBatchV1(batch, {
+          source_call_id: original.call_id,
+          source_response_sha256: original.response!.sha256,
+          diagnostic: "output_invalid",
+        });
+        if (effective.request_digest !== repaired.request_digest)
+          return fail("workspace_engine_interpretation_repair_invalid");
+        result = await executeBatch(effective, repaired);
+        if (result.response.outcome !== "validated") {
+          if(result.response.outcome!=="known_response_invalid"||!originalResult.call.response?.complete||!result.call.response?.complete)
+            return fail("workspace_engine_interpretation_repair_invalid");
+          await store.quarantine({database,lease,original_call_id:originalResult.call.call_id,repair_call_id:result.call.call_id,
+            original_request_digest:batch.request_digest,repair_request_digest:effective.request_digest,
+            original_response_sha256:originalResult.call.response.sha256,repair_response_sha256:result.call.response.sha256,
+            batch_digest:signalWorkspaceEmbeddingDigestV1(batch),unit_keys:keys,validator_version:"workspace-pilot-reference-validator-v2"});
+          return fail("workspace_engine_interpretation_output_invalid");
+        }
+      }
+      for (const key of await checkpointResponse(
+        effective,
+        result.call,
+        result.response,
+      ))
+        completedUnits.add(key);
+    }
   }
 
   async function restoreCheckpoints() {

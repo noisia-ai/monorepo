@@ -1190,7 +1190,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         (${signalWorkspaceEngineProgressOwnerPredicateV1}) progress_owner,
         (${storageRecoveryPredicate}) storage_recovery_eligible,
         (${interpretationEvidenceRecoveryPredicate}) interpretation_evidence_recovery_eligible,
-        ((${editorialRepairRecoveryPredicate}) OR (${pilotReceiptRecoveryPredicate})) editorial_repair_recovery_eligible,
+        COALESCE((${editorialRepairRecoveryPredicate}) OR (${pilotReceiptRecoveryPredicate}),false) editorial_repair_recovery_eligible,
         (${interpretationExceptionRecoveryPredicate}) interpretation_exception_recovery_eligible,
         (execution.error_code='workspace_engine_interpretation_batch_capacity_exceeded'
           AND (NOT execution.result_summary ? 'interpretation_context_contract'

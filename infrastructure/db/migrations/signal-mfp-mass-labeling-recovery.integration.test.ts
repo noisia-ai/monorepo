@@ -10,7 +10,7 @@ import * as money from "../signal-workspace-engine-interpretation";
 import {registerSignalWorkspaceEngineInterpretationUnitsV1,recordSignalWorkspaceEngineInterpretationRecoveryReviewV1,
   pauseSignalWorkspaceEngineInterpretationRecoveryV1} from "../signal-workspace-engine-recovery";
 
-for(const mode of ["needs_repair","quarantine_original","quarantine_repair","terminal_successor","unsent_successor","repair_terminal_successor"] as const) test(`paid pilot recovers a failed execution without resending units (${mode})`, {
+for(const mode of ["legacy_boolean","needs_repair","quarantine_original","quarantine_repair","terminal_successor","unsent_successor","repair_terminal_successor"] as const) test(`paid pilot recovers a failed execution without resending units (${mode})`, {
   skip:process.env.NOISIA_MFP_PG_CI!=="true",timeout:300_000,
 },async()=>{
   const {openDatabase}=await import(new URL("../../../scripts/dev-corpus/guard.mjs",import.meta.url).href);
@@ -29,12 +29,20 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
   try{
     await assert.rejects(seedSignalTopicEditorialRenewalSourceV1({database,scoped,query,cleanup:async()=>{},
       saves:createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"}),numeric_daily_cap_micro_usd:10_000_000,
-      projection:{split_guided_groups:mode.endsWith("successor")?3:true,interpretation_configuration:configuration,
-        engine_config:{profile_version:"workspace-bertopic-mass-labeling-v1",fixture:true},
+      projection:{complete_output_bundle:mode==="legacy_boolean",split_guided_groups:mode==="legacy_boolean"?undefined:mode.endsWith("successor")?3:true,interpretation_configuration:configuration,
+        engine_config:mode==="legacy_boolean"?{fixture:true}:{profile_version:"workspace-bertopic-mass-labeling-v1",fixture:true},
         onCheckpoint:async fixture=>{
-          if(fixture.proposals.length!==1)return;
+          if(fixture.proposals.length!==(mode==="legacy_boolean"?2:1))return;
           let lease=fixture.lease;
           const access={...fixture.access,execution_id:lease.execution_id};
+          if(mode==="legacy_boolean"){
+            await engine.failSignalWorkspaceEngineV1({database,lease,error_code:"workspace_engine_interpretation_output_invalid"});
+            const status=await engine.loadSignalWorkspaceEngineStatusV1(access);
+            assert.equal(status.latest_run?.editorial_repair_recovery_eligible,false,
+              "legacy profile absence is false when all receipts already have checkpoints");
+            await assert.rejects(engine.retrySignalWorkspaceEngineV1({...access,idempotency_key:randomUUID()}),/workspace_engine_retry_unavailable/);
+            asserted=true;throw done;
+          }
           assert.equal((await engine.assertSignalWorkspaceMassLabelingRecoveryReadyV1(access)).pilot,true);
           if(mode==="needs_repair"){
             await query("SAVEPOINT nofit_preclaim_gate");
@@ -195,7 +203,11 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
             await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...reserve,idempotency_key:randomUUID(),execution_token:lease.execution_token,
               request_digest:regrouped.request_digest,unit_keys:regrouped.clusters.map(c=>c.cluster_id)}),/workspace_engine_interpretation_unit_already_sent/);
             const paused=await pauseSignalWorkspaceEngineInterpretationRecoveryV1({database,lease,reason:"unprocessed_units_pending"});
-            assert.equal(paused.pending_units,0);asserted=true;throw done;
+            assert.equal(paused.pending_units,0);
+            const status=await engine.loadSignalWorkspaceEngineStatusV1(access);
+            assert.equal(status.latest_run?.editorial_repair_recovery_eligible,true,
+              "an eligible pilot retains its recovery authority after every paid group is checkpointed");
+            asserted=true;throw done;
           }
           const review={database,lease,call_id:original.call_id,request_digest:batch.request_digest,
             response_sha256:digest("paid original"),unit_keys:[secondKey],outcome:"needs_repair" as const,validator_version:"pilot30-v1"};

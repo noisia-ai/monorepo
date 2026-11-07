@@ -211,3 +211,133 @@ test("real job routes a sealed full bundle to interpretation and resumes without
     assert.deepEqual(await signalWorkspaceEngineJobV1(job, options), { execution_id: lease.execution_id, replayed: true });
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+
+test("mass receipt recovery refuses an unadmitted execution before claim, progress or numerical work", async () => {
+  let claims = 0,
+    processes = 0,
+    progress = 0,
+    interpretations = 0;
+  const stores = {
+    claim: async () => {
+      claims++;
+      return null;
+    },
+  } as unknown as NonNullable<WorkerOptions["stores"]>;
+  await assert.rejects(
+    signalWorkspaceEngineJobV1(
+      {
+        id: "recovery-no-fit",
+        data: { execution_id: id(10) },
+        updateProgress: async () => {
+          progress++;
+        },
+      },
+      {
+        database: {} as WorkerOptions["database"],
+        stores,
+        mass_operator: { recovery_only: true },
+        recovery_preflight: async () => ({ pilot: false }),
+        process: async () => {
+          processes++;
+        },
+        interpret: async () => {
+          interpretations++;
+          return { execution_id: id(10) } as never;
+        },
+      },
+    ),
+    /workspace_engine_interpretation_fit_required/u,
+  );
+  assert.deepEqual(
+    { claims, processes, progress, interpretations },
+    { claims: 0, processes: 0, progress: 0, interpretations: 0 },
+  );
+});
+
+test("mass receipt recovery fails closed if its fitted bundle disappears after admission", async () => {
+  const {
+    SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1,
+    signalWorkspaceMassLabelingConfigV1,
+  } = await import("@noisia/query-engine");
+  const lease: SignalWorkspaceEngineLeaseV1 = {
+    execution_id: id(10),
+    workspace_id: id(1),
+    execution_token: id(20),
+    input_digest: sha("sealed"),
+    snapshot: {
+      contract_version: "workspace-topic-engine-v1",
+      workspace_id: id(1),
+      taxonomy_profile_id: id(2),
+      preparation_run_id: id(3),
+      embedding_run_id: id(4),
+      input_revision: "1",
+      embedding_profile: SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
+      context_digest: sha("context"),
+      catalog_digest: sha("catalog"),
+      prototype_plan_digest: sha("guides"),
+      expected_roots: 30,
+      expected_chunks: 30,
+      expected_guides: 0,
+      parent_execution_id: null,
+      context_refs: [],
+      engine_config: signalWorkspaceMassLabelingConfigV1(30),
+      claude_cap_micro_usd: 1_000_000,
+      interpretation_config: {
+        call_configuration:
+          SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1,
+        budget_timezone: "UTC",
+        daily_cap_micro_usd: 1_000_000,
+      },
+    },
+  };
+  let claims = 0,
+    processes = 0,
+    progress = 0,
+    reads = 0,
+    failures = 0;
+  const stores = {
+    claim: async () => {
+      claims++;
+      return lease;
+    },
+    checkpoint: async () => null,
+    chunks: async () => {
+      reads++;
+      throw Error("unexpected corpus read");
+    },
+    fail: async (
+      a: Parameters<NonNullable<WorkerOptions["stores"]>["fail"]>[0],
+    ) => {
+      assert.equal(
+        a.error_code,
+        "workspace_engine_interpretation_fit_required",
+      );
+      failures++;
+    },
+  } as unknown as NonNullable<WorkerOptions["stores"]>;
+  await assert.rejects(
+    signalWorkspaceEngineJobV1(
+      {
+        id: "recovery-lost-fit",
+        data: { execution_id: lease.execution_id },
+        updateProgress: async () => {
+          progress++;
+        },
+      },
+      {
+        database: {} as WorkerOptions["database"],
+        stores,
+        mass_operator: { recovery_only: true },
+        recovery_preflight: async () => ({ pilot: true }),
+        process: async () => {
+          processes++;
+        },
+      },
+    ),
+    /workspace_engine_interpretation_fit_required/u,
+  );
+  assert.deepEqual(
+    { claims, processes, progress, reads, failures },
+    { claims: 1, processes: 0, progress: 0, reads: 0, failures: 1 },
+  );
+});

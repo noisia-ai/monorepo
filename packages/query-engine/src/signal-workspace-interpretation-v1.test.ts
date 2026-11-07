@@ -195,6 +195,11 @@ test("pilot receipts keep thirty distinct references per field while historical 
   assert.equal(decoded[0]!.exclusion[0]!.citations.length, 30);
   assert.deepEqual(validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: decoded }), decoded);
   assert.deepEqual(parseSignalWorkspaceInterpretationV1(decoded[0], pilot), decoded[0]);
+  const {mergeSignalWorkspaceTopicMaterializationV1}=await import("./signal-workspace-topic-materialization-v1.js");
+  const materialization={prior:[],interpretations:[{result:decoded[0]!,artifact_id:context.workspace_id}],
+    execution_id:context.execution_id,now:"2026-11-07T00:00:00.000Z",locale:"pt-BR"};
+  assert.equal(mergeSignalWorkspaceTopicMaterializationV1({...materialization,interpretation_configuration:pilot}).topic_count,1);
+  assert.throws(()=>mergeSignalWorkspaceTopicMaterializationV1(materialization),/output_invalid/u);
   assert.throws(() => parseSignalWorkspaceInterpretationV1(decoded[0]), /output_invalid/u);
   assert.equal(JSON.stringify(wire), raw);
   assert.equal(batch.request_digest, requestDigest);

@@ -11,6 +11,7 @@ import {
   persistSignalWorkspaceEngineArtifactV1,
   type SignalWorkspaceEngineDatabaseV1,
   type SignalWorkspaceEngineLeaseV1,
+  type SignalWorkspaceEngineInterpretationCallV1,
 } from "@noisia/db";
 import {
   buildMassLabelingConsolidationRequestV1,
@@ -52,6 +53,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
   stores?: typeof stores;
   send?: typeof sendMassLabelingConsolidationV1;
   recovery_only?: boolean;
+  recovery_call?: SignalWorkspaceEngineInterpretationCallV1;
   api_key?: string;
   provider_enabled?: boolean;
 }): Promise<{
@@ -95,7 +97,10 @@ export async function consolidateMassLabelingGroupsV1(args: {
     return invalid();
   if (digest(batch.configuration) !== digest(config.call_configuration))
     return invalid();
-  if (args.recovery_only) {
+  if (args.recovery_call && (!args.recovery_only || args.recovery_call.workspace_id !== lease.workspace_id
+    || args.recovery_call.execution_id !== lease.execution_id || args.recovery_call.request_digest !== batch.request_digest
+    || !args.recovery_call.response || args.recovery_call.editorial_repair)) return invalid();
+  if (args.recovery_only && !args.recovery_call) {
     const cached = await database.query(
       `SELECT 1 FROM engine_cost_events
       WHERE workspace_id=$1::uuid AND catalog_execution_id=$2::uuid AND request_digest=$3
@@ -108,7 +113,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
       );
   }
   await storage.assertReady?.();
-  const call = await store.reserve({
+  const call = args.recovery_call ?? await store.reserve({
     database,
     workspace_id: lease.workspace_id,
     actor_user_id: args.actor_user_id,

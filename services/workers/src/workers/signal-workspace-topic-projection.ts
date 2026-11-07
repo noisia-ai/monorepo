@@ -12,7 +12,7 @@ import {
   signalWorkspaceClassificationDecisionSchemaV1, signalWorkspaceClassificationResolutionV1,
   signalWorkspaceClassificationReuseKeyV1, signalWorkspaceClassificationTopicSemanticsDigestV1,
   type SignalTopicDefinitionV1, type SignalWorkspaceClassificationDecisionV1,
-  type SignalWorkspaceTopicMaterializationMappingV1
+  type SignalWorkspaceTopicMaterializationMappingV1, type SignalWorkspaceInterpretationConfigurationV1
 } from "@noisia/query-engine";
 import { hashWorkspaceEngineFileV1 } from "./signal-workspace-engine-files";
 import { createWorkspaceEngineStorageV1, type WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
@@ -33,6 +33,7 @@ export type WorkspaceTopicProjectionArtifactV1 = { artifact_id: string; artifact
   content: { storage_key: string; sha256: string; size_bytes: number; media_type: string }; metadata: unknown };
 export type WorkspaceTopicProjectionSourceV1 = { engine_execution_id: string; materialization_artifact_id: string;
   mapping_digest: string; model_artifact_id: string | null; artifacts: WorkspaceTopicProjectionArtifactV1[];
+  interpretation_configuration?: SignalWorkspaceInterpretationConfigurationV1;
   discovery_population?: { root_ids: string[]; expected_chunks: number };
   interpretation_coverage?: { interpreted_unit_count: number; expected_unit_count: number;
     unit_digest: string; expected_unit_digest: string; complete: boolean } };
@@ -201,11 +202,12 @@ export async function signalWorkspaceTopicProjectionJobV1<Database>(
         if (proposal.contract_version !== "workspace-engine-interpretation-result-v1" || proposal.execution_id !== source.engine_execution_id
           || !Array.isArray(proposal.interpretations)) invalid();
         for (const raw of z.array(z.unknown()).parse(proposal.interpretations)) {
-          const result = parseSignalWorkspaceInterpretationV1(raw);
+          const result = parseSignalWorkspaceInterpretationV1(raw, source.interpretation_configuration);
           if (original.has(result.cluster_id)) invalid();
           // A generic insufficient placeholder supplies no interpreted meaning.
           const fresh = mergeSignalWorkspaceTopicMaterializationV1({ prior: [], interpretations: [{ result, artifact_id: ref.artifact_id }],
-            execution_id: source.engine_execution_id, now: "2000-01-01T00:00:00.000Z", locale: "es-MX" }).definitions[0]!;
+            execution_id: source.engine_execution_id, now: "2000-01-01T00:00:00.000Z", locale: "es-MX",
+            interpretation_configuration: source.interpretation_configuration }).definitions[0]!;
           original.set(result.cluster_id, { semantics: signalWorkspaceClassificationTopicSemanticsDigestV1(fresh),
             artifact_id: ref.artifact_id, cluster_digest: result.cluster_digest, status: result.status });
         }

@@ -46,7 +46,7 @@ export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactio
   runtime?: SignalBrandContextPreparationRuntimeV1;
   numeric_daily_cap_micro_usd?: number;
   saves?: Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge">;
-  projection?: Pick<WorkspaceProjectionFixtureOptionsV1, "cluster_ids" | "split_guided_groups" | "model_configuration" | "engine_config" | "interpretation_configuration" | "onCheckpoint">;
+  projection?: Pick<WorkspaceProjectionFixtureOptionsV1, "cluster_ids" | "complete_output_bundle" | "split_guided_groups" | "model_configuration" | "engine_config" | "interpretation_configuration" | "onCheckpoint">;
 };
 
 /** Explicit synthetic configuration. Passing this literal to the parser never

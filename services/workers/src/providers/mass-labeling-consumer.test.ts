@@ -57,6 +57,7 @@ test("raw-only engine recovery needs no provider and JEV invalid credentials can
       database,
       execution_id: crypto.randomUUID(),
       operator: { recovery_only: true, enabled: false },
+      recovery_preflight:async()=>({pilot:true}),
     }),
     true,
   );
@@ -78,4 +79,14 @@ test("raw-only engine recovery needs no provider and JEV invalid credentials can
 test('completed paid pilot receipt replays without credentials',async()=>{
  const database={query:async()=>({rows:[{paid_pilot:true,status:'ready'}]})} as never;
  assert.equal(await authorizeMassEngineConsumerV1({database,execution_id:crypto.randomUUID()}),true);
+});
+
+
+test("raw-only consumer rejects a missing pilot fit before any provider or claim",async()=>{
+ let probes=0;
+ await assert.rejects(authorizeMassEngineConsumerV1({database:{} as never,execution_id:crypto.randomUUID(),
+   operator:{recovery_only:true,fetch_impl:async()=>{probes++;return new Response("{}");}},
+   recovery_preflight:async()=>({pilot:false}),
+ }),/fit_required/u);
+ assert.equal(probes,0);
 });

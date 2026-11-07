@@ -343,3 +343,30 @@ test("failed send CAS preserves unknown exposure without fetching", async () => 
     await f.cleanup();
   }
 });
+
+test("offline global recovery validates its existing receipt without a reservation or provider send", async () => {
+  const f = await fixture();
+  try {
+    await consolidateMassLabelingGroupsV1(f.args);
+    f.args.recovery_only = true;
+    f.args.recovery_call = structuredClone(f.call);
+    f.args.provider_enabled = false;
+    f.args.stores = {
+      ...f.args.stores!,
+      reserve: async () => {
+        throw new Error("offline_recovery_must_not_reserve");
+      },
+    };
+    f.args.send = async () => {
+      throw new Error("offline_recovery_must_not_send");
+    };
+    const recovered = await consolidateMassLabelingGroupsV1(f.args);
+    assert.equal(recovered.output.topics[0]?.topic_key, "consumo");
+    assert.equal(f.sends(), 1);
+    assert.equal(f.charges(), 1);
+    f.args.recovery_call.request_digest = sha("substituted request");
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /mass_consolidation_invalid/u);
+  } finally {
+    await f.cleanup();
+  }
+});
