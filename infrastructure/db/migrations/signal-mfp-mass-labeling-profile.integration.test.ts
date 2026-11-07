@@ -43,10 +43,10 @@ test("mass-labeling profile selection is workspace-scoped and seeds exclude stud
     await client.query("INSERT INTO signal_corpus_preparation_input_state(workspace_id) VALUES($1) ON CONFLICT DO NOTHING", [workspace_id]);
     const revision = (await client.query("SELECT input_revision FROM signal_corpus_preparation_input_state WHERE workspace_id=$1", [workspace_id])).rows[0].input_revision;
     await client.query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,worker_job_id,status,phase,input_revision)
-      VALUES($1,$2,$3,$1::text,'completed','complete',$4)`, [prep, workspace_id, actor_user_id, revision]);
+      VALUES($1::uuid,$2,$3,$1::text,'completed','complete',$4)`, [prep, workspace_id, actor_user_id, revision]);
     await client.query(`INSERT INTO signal_workspace_embedding_runs(id,workspace_id,preparation_run_id,actor_user_id,input_revision,
       profile,config_digest,quote_digest,request_keys,hard_cap_micro_usd,estimated_upper_micro_usd,status,counts,worker_job_id,input_contract,completed_at)
-      VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,$7,'{}',1,0,'completed','{"eligible_roots":83962}'::jsonb,$1::text,'corpus',clock_timestamp())`,
+      VALUES($1::uuid,$2,$3,$4,$5,$6::jsonb,$7,$7,'{}',1,0,'completed','{"eligible_roots":83962}'::jsonb,$1::text,'corpus',clock_timestamp())`,
       [embeddings, workspace_id, prep, actor_user_id, revision, JSON.stringify(SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1), SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1.config_digest]);
     const savepoints: string[] = [];
     const scoped = Object.create(client) as PoolClient;
