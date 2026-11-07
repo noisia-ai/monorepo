@@ -5,7 +5,7 @@ import type {Pool} from "pg";
 import {buildMassLabelingJevRequestV1, mapMassLabelingJevResponseV1, massLabelingJevIdentityV1,
   signalWorkspaceEmbeddingDigestV1 as digest, llmPriceV1, llmCostMicroUsdV1} from "@noisia/query-engine";
 import {seedComposedFixture,quoteComposedFixture,startComposedFixture,semanticConfiguration} from "./signal-brand-context-composed.fixture";
-import {seedSignalTopicEditorialRenewalSourceV1, snapshotSignalTopicEditorialRenewalSyntheticHistoryV1} from "./signal-topic-editorial-renewal.synthetic.fixture";
+import {seedSignalTopicEditorialRenewalSourceV1,createSignalTopicEditorialRenewalSyntheticSavesV1,snapshotSignalTopicEditorialRenewalSyntheticHistoryV1} from "./signal-topic-editorial-renewal.synthetic.fixture";
 import {createMassLabelingMapV1, createMassLabelingStoreV1, requestMassLabelingV1,
   continueMassLabelingV1, provisionMassLabelingPolicyV1, selectMassLabelingTopicsV1,
   correctMassLabelingTopicV1, exportMassLabelingSnapshotV1, measureMassLabelingSmokeV1} from "../signal-mass-labeling";
@@ -38,8 +38,10 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const scoped = Object.assign(Object.create(raw), {query, release() {}});
     const database = Object.assign(Object.create(pool), {query, connect: async () => scoped}) as Pool;
     let consolidationArtifactId="",consolidationRaw="";
+    const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
-      numeric_daily_cap_micro_usd: 1_000_000, projection: {interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      saves:syntheticSaves,
+      numeric_daily_cap_micro_usd: 10_000_000, projection: {interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
@@ -157,7 +159,13 @@ test("mass labeling seals full population, bills once, and serves probability pa
     assert.deepEqual(afterActions, beforeActions);
     const request = {...access, map_id: map.map_id, idempotency_key: randomUUID(), identity: massLabelingJevIdentityV1(),
       provider_available: true, cap_micro_usd: 1_000_000};
+    await query("SAVEPOINT missing_mass_owner");
+    await query("SELECT admit_signal_processing_v1($1,$2,'mass_labeling_jev',$3,$4,$5,1000000,false)",
+      [access.workspace_id,access.actor_user_id,randomUUID(),randomUUID(),digest({missing_owner:true})]);
+    await assert.rejects(query("SET CONSTRAINTS ALL IMMEDIATE"),/mass_labeling_admission_owner_required/);
+    await query("ROLLBACK TO SAVEPOINT missing_mass_owner");await query("RELEASE SAVEPOINT missing_mass_owner");
     const admitted = await requestMassLabelingV1(request);
+    await query("SET CONSTRAINTS ALL IMMEDIATE");await query("SET CONSTRAINTS ALL DEFERRED");
     assert.equal((await requestMassLabelingV1({...request, provider_available: false})).run_id, admitted.run_id);
     const raws = new Map<string,string>();
     const store = createMassLabelingStoreV1({database,
