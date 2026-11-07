@@ -479,9 +479,9 @@ export async function loadMassLabelingServingContextV1(client: Pick<PoolClient,"
     else throw error;
   }
   const state = (await client.query<{value: string}>(`SELECT signal_labeling_digest_v1(jsonb_build_object(
-    'map',$1::text,'revision',$2::int,'results',(SELECT count(*) FROM signal_mass_labeling_results WHERE map_id=$1),
+    'map',$1::uuid::text,'revision',$2::int,'results',(SELECT count(*) FROM signal_mass_labeling_results WHERE map_id=$1::uuid),
     'overrides',COALESCE((SELECT jsonb_agg(jsonb_build_array(id,root_id,topic_key,belongs) ORDER BY created_at,id)
-      FROM signal_mass_labeling_overrides WHERE map_id=$1),'[]'::jsonb))) value`, [map.id, selected.revision])).rows[0]!.value;
+      FROM signal_mass_labeling_overrides WHERE map_id=$1::uuid),'[]'::jsonb))) value`, [map.id, selected.revision])).rows[0]!.value;
   return {map, revision: selected.revision, selected_topic_keys: selected.selected_topic_keys,
     run_id: selected.run_id, is_current: current, state_digest: state};
 }
