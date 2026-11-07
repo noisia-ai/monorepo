@@ -108,3 +108,17 @@ test("BERTopic empty vocabulary padding is omitted without changing real terms, 
   assert.equal(noTerms[0]!.cluster_digest, original[0]!.cluster_digest);
   assert.deepEqual(noTerms[0]!.representatives, original[0]!.representatives);
 });
+
+test("mass-labeling selects guided evidence once and uses every available distinct representative below thirty", async () => {
+  const f = fixture();
+  f.output.config = { profile_version: "workspace-bertopic-mass-labeling-v1" };
+  f.clusters[0]!.representatives = f.assignments.filter(row => row.chunk_index === 0 && row.stable_cluster_id !== null)
+    .map(row => ({ ...row, selection_reason: row.root_id === id(12) ? "low_affiliation_boundary" : "high_affiliation" }));
+  f.output.lanes.push({ ...f.output.lanes[0]!, lane: "guided", model_file: "model.guided.joblib",
+    assignments_file: "assignments.guided.jsonl", clusters_file: "clusters.guided.json" });
+  const evidence = await execute(f);
+  assert.equal(evidence.length, 1);
+  assert.equal(evidence[0]!.lane, "guided");
+  assert.equal(evidence[0]!.representatives.length, 12);
+  assert.equal(new Set(evidence[0]!.representatives.map(row => row.root_id)).size, 12);
+});
