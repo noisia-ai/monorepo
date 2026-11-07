@@ -10,7 +10,7 @@ import * as money from "../signal-workspace-engine-interpretation";
 import {registerSignalWorkspaceEngineInterpretationUnitsV1,recordSignalWorkspaceEngineInterpretationRecoveryReviewV1,
   pauseSignalWorkspaceEngineInterpretationRecoveryV1} from "../signal-workspace-engine-recovery";
 
-for(const mode of ["needs_repair","quarantine_original","quarantine_repair","terminal_successor","unsent_successor"] as const) test(`paid pilot recovers a failed execution without resending units (${mode})`, {
+for(const mode of ["needs_repair","quarantine_original","quarantine_repair","terminal_successor","unsent_successor","repair_terminal_successor"] as const) test(`paid pilot recovers a failed execution without resending units (${mode})`, {
   skip:process.env.NOISIA_MFP_PG_CI!=="true",timeout:300_000,
 },async()=>{
   const {openDatabase}=await import(new URL("../../../scripts/dev-corpus/guard.mjs",import.meta.url).href);
@@ -29,7 +29,7 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
   try{
     await assert.rejects(seedSignalTopicEditorialRenewalSourceV1({database,scoped,query,cleanup:async()=>{},
       saves:createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"}),numeric_daily_cap_micro_usd:10_000_000,
-      projection:{split_guided_groups:true,interpretation_configuration:configuration,
+      projection:{split_guided_groups:mode.endsWith("successor")?3:true,interpretation_configuration:configuration,
         engine_config:{profile_version:"workspace-bertopic-mass-labeling-v1",fixture:true},
         onCheckpoint:async fixture=>{
           if(fixture.proposals.length!==1)return;
@@ -48,6 +48,7 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
               "preclaim recovery gate cannot claim or fit an unfinished numerical run");
             await query("ROLLBACK TO SAVEPOINT nofit_preclaim_gate");await query("RELEASE SAVEPOINT nofit_preclaim_gate");
           }
+          const fitIdentity=(await query("SELECT input_digest,result_summary->'fit_checkpoint' fit FROM signal_topic_catalog_executions WHERE id=$1",[lease.execution_id])).rows[0];
           const firstPacket=JSON.parse(fixture.proposals[0]!.body);
           const firstBatch=buildSignalWorkspaceInterpretationBatchV1(firstPacket.context,firstPacket.clusters,configuration);
           const callsBefore=await money.readSignalWorkspaceEngineInterpretationRecoveryCallsV1({database,lease});
@@ -94,15 +95,46 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
             assert.equal(afterBudget.reserved_micro_usd,beforeBudget.reserved_micro_usd+successor.reserved_micro_usd,
               "known terminal exposure remains reserved when its one authorized successor is sent");
             assert.equal((await query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1",[lease.execution_id])).rows[0]!.n,3);
+            const successorToken={database,call_id:successor.call_id,attempt_token:successor.attempt_token};
+            await money.persistSignalWorkspaceEngineInterpretationResponseV1({...successorToken,response:{storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/paid-successor.json`,
+              sha256:digest("paid successor"),size_bytes:14,http_status:200,provider_request_id:null}});
+            await money.settleSignalWorkspaceEngineInterpretationV1({...successorToken,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+            await assert.rejects(reserveNextGroup(),/workspace_engine_interpretation_receipt_recovery_required/,
+              "a terminal remains unresolved until its same-request successor owns a valid checkpoint");
+            await checkpointRecovered(successor.call_id,batch,"successor");
+            await reserveNextGroup();
+            assert.deepEqual((await query("SELECT call_state,reserved_micro_usd,settled_micro_usd,metadata FROM engine_cost_events WHERE id=$1",[original.call_id])).rows[0],beforeOriginal);
             asserted=true;throw done;
           }
           await money.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:lease.execution_token});
           await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/paid-original.json`,
             sha256:digest("paid original"),size_bytes:13,http_status:200,provider_request_id:null}});
           await money.settleSignalWorkspaceEngineInterpretationV1({...token,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+          async function checkpointRecovered(callId:string,recoveredBatch:typeof batch,suffix:string){
+            const body=JSON.stringify({contract_version:"workspace-engine-interpretation-result-v1",execution_id:lease.execution_id,
+              context:recoveredBatch.context,clusters:recoveredBatch.clusters,
+              interpretations:firstPacket.interpretations.map((result:Record<string,unknown>)=>({...result,cluster_id:secondKey})),
+              ...(recoveredBatch.editorial_repair?{editorial_repair:recoveredBatch.editorial_repair}:{})});
+            const sha=`sha256:${(await import("node:crypto")).createHash("sha256").update(body).digest("hex")}`;
+            return engine.checkpointSignalWorkspaceEngineInterpretationV1({database,lease,call_id:callId,unit_keys:[secondKey],
+              artifact:{artifact_key:`recovered-${suffix}.json`,artifact_type:"engine_proposals",title:"Synthetic recovered transport response",
+                storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/recovered-${suffix}.json`,sha256:sha,size_bytes:Buffer.byteLength(body),media_type:"application/json",metadata:{}}});
+          }
+          async function reserveNextGroup(){
+            const nextKey=assignments.trim().split("\n").map(line=>`guided:${JSON.parse(line).stable_cluster_id}`)
+              .find(key=>![firstBatch.clusters[0]!.cluster_id,secondKey].includes(key))!;
+            assert.ok(nextKey,"the next unpaid unit belongs to the same sealed fit");
+            const nextBatch=buildSignalWorkspaceInterpretationBatchV1(firstPacket.context,[{...cluster,cluster_id:nextKey}],configuration);
+            const next=await money.reserveSignalWorkspaceEngineInterpretationV1({...reserve,execution_token:lease.execution_token,
+              idempotency_key:nextBatch.batch_key,request_digest:nextBatch.request_digest,unit_keys:[nextKey]});
+            assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1({database,call_id:next.call_id,attempt_token:next.attempt_token,
+              execution_token:lease.execution_token})).send_authorized,true,"a checkpointed transport successor unblocks the next unpaid fit unit");
+            assert.deepEqual((await query("SELECT input_digest,result_summary->'fit_checkpoint' fit FROM signal_topic_catalog_executions WHERE id=$1",[lease.execution_id])).rows[0],fitIdentity,
+              "transport and repair successors keep the same execution input and sealed fit");
+          }
           let paidRepair:Awaited<ReturnType<typeof money.reserveSignalWorkspaceEngineInterpretationV1>>|null=null;
           let repairBatch:ReturnType<typeof buildSignalWorkspaceInterpretationRepairBatchV1>|null=null;
-          if(mode!=="needs_repair"){
+          if(mode.startsWith("quarantine")){
             await recordSignalWorkspaceEngineInterpretationRecoveryReviewV1({database,lease,call_id:original.call_id,request_digest:batch.request_digest,
               response_sha256:digest("paid original"),unit_keys:[secondKey],outcome:"needs_repair",validator_version:"pilot30-v1"});
             repairBatch=buildSignalWorkspaceInterpretationRepairBatchV1(batch,{source_call_id:original.call_id,source_response_sha256:digest("paid original"),diagnostic:"output_invalid"});
@@ -119,7 +151,7 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
           }
           const fitBefore=(await query("SELECT input_digest,result_summary->'fit_checkpoint' fit FROM signal_topic_catalog_executions WHERE id=$1",[lease.execution_id])).rows[0];
           const ledgerBefore=(await query("SELECT id,request_seal,call_state,response_sha256,settled_micro_usd FROM engine_cost_events WHERE catalog_execution_id=$1 ORDER BY id",[lease.execution_id])).rows;
-          if(mode==="needs_repair")await engine.failSignalWorkspaceEngineV1({database,lease,error_code:"workspace_engine_interpretation_output_invalid"});
+          if(!mode.startsWith("quarantine"))await engine.failSignalWorkspaceEngineV1({database,lease,error_code:"workspace_engine_interpretation_output_invalid"});
           else await engine.completeSignalWorkspaceEngineAnalysisWithExceptionsV1({database,lease});
           const retryKey=randomUUID();
           const retried=await engine.retrySignalWorkspaceEngineV1({...access,idempotency_key:retryKey});
@@ -127,8 +159,8 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
           lease=(await engine.claimSignalWorkspaceEngineV1({database,execution_id:lease.execution_id,worker_job_id:"synthetic-offline-recovery"}))!;
           assert.ok(lease);
           const read=await money.readSignalWorkspaceEngineInterpretationRecoveryCallsV1({database,lease});
-          assert.equal(read.length,mode==="needs_repair"?2:3);assert.equal(read.find(c=>c.call_id===original.call_id)!.response!.http_status,200);
-          if(mode!=="needs_repair"){
+          assert.equal(read.length,mode.startsWith("quarantine")?3:2);assert.equal(read.find(c=>c.call_id===original.call_id)!.response!.http_status,200);
+          if(mode.startsWith("quarantine")){
             const beforeException=(await query("SELECT row_to_json(exception) body FROM signal_workspace_interpretation_exceptions exception WHERE execution_id=$1",[lease.execution_id])).rows;
             assert.equal((await engine.readSignalWorkspaceEngineInterpretationExceptionsV1({database,lease})).length,1);
             const recovery=await engine.readSignalWorkspaceEngineInterpretationRecoveryRequestDigestsV1({database,lease});
@@ -188,6 +220,36 @@ for(const mode of ["needs_repair","quarantine_original","quarantine_repair","ter
             request_digest:repair.request_digest,editorial_repair:repair.editorial_repair!};
           const repairCall=await money.reserveSignalWorkspaceEngineInterpretationV1(repairArgs);
           assert.equal((await money.reserveSignalWorkspaceEngineInterpretationV1(repairArgs)).call_id,repairCall.call_id);
+          if(mode==="repair_terminal_successor"){
+            const repairToken={database,call_id:repairCall.call_id,attempt_token:repairCall.attempt_token};
+            await money.markSignalWorkspaceEngineInterpretationSentV1({...repairToken,execution_token:lease.execution_token});
+            await money.failSignalWorkspaceEngineInterpretationV1({...repairToken,outcome:"outcome_unknown",error_code:"workspace_engine_interpretation_outcome_unknown"});
+            await engine.failSignalWorkspaceEngineV1({database,lease,error_code:"workspace_engine_interpretation_outcome_unknown"});
+            const window=(await query("SELECT sent_at FROM engine_cost_events WHERE id=$1",[repairCall.call_id])).rows[0]!.sent_at;
+            await money.reconcileSignalWorkspaceEngineTerminalV1({...repairToken,workspace_id:access.workspace_id,execution_id:lease.execution_id,
+              expected_request_digest:repair.request_digest,verifier_user_id:access.actor_user_id,terminal:{source:"anthropic_console",provider_request_id:"req_synthetic_repair_terminal",provider_model:configuration.model,
+                started_at:new Date(window).toISOString(),ended_at:new Date().toISOString(),http_status:499,reason:"client_disconnected",
+                usage:{input_tokens:100,output_tokens:0,cache_read_input_tokens:0,cache_creation_input_tokens:0},
+                evidence:{storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/synthetic-repair-terminal.json`,sha256:digest("repair console receipt"),size_bytes:22}}});
+            const terminalBefore=(await query("SELECT call_state,reserved_micro_usd,settled_micro_usd,metadata FROM engine_cost_events WHERE id=$1",[repairCall.call_id])).rows[0];
+            await engine.retrySignalWorkspaceEngineV1({...access,idempotency_key:randomUUID()});
+            lease=(await engine.claimSignalWorkspaceEngineV1({database,execution_id:lease.execution_id,worker_job_id:"synthetic-repair-terminal-successor"}))!;
+            assert.ok(lease);
+            const successor=await money.reserveSignalWorkspaceEngineInterpretationV1({...repairArgs,execution_token:lease.execution_token,
+              idempotency_key:`${repair.batch_key}:retry:${repairCall.call_id}`,retry_of_call_id:repairCall.call_id});
+            const successorToken={database,call_id:successor.call_id,attempt_token:successor.attempt_token};
+            assert.equal((await money.markSignalWorkspaceEngineInterpretationSentV1({...successorToken,execution_token:lease.execution_token})).send_authorized,true);
+            await money.persistSignalWorkspaceEngineInterpretationResponseV1({...successorToken,response:{storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/paid-repair-successor.json`,
+              sha256:digest("paid repair successor"),size_bytes:21,http_status:200,provider_request_id:null}});
+            await money.settleSignalWorkspaceEngineInterpretationV1({...successorToken,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+            await assert.rejects(reserveNextGroup(),/workspace_engine_interpretation_receipt_recovery_required/);
+            await checkpointRecovered(successor.call_id,repair,"repair-successor");await reserveNextGroup();
+            assert.deepEqual((await query("SELECT call_state,reserved_micro_usd,settled_micro_usd,metadata FROM engine_cost_events WHERE id=$1",[repairCall.call_id])).rows[0],terminalBefore,
+              "paid repair successor preserves the terminal repair's original exposure and evidence");
+            const receipts=await money.readSignalWorkspaceEngineInterpretationRecoveryCallsV1({database,lease});
+            assert.ok(receipts.find(call=>call.call_id===original.call_id)!.checkpointed_unit_keys.includes(secondKey));
+            asserted=true;throw done;
+          }
           assert.equal((await query("SELECT count(*)::int n FROM engine_cost_events WHERE catalog_execution_id=$1",[lease.execution_id])).rows[0]!.n,3,
             "only one repair is newly reserved after explicit continuation");
           asserted=true;throw done;
