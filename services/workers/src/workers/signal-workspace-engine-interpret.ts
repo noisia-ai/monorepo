@@ -1,3 +1,4 @@
+import { consolidateMassLabelingGroupsV1 } from "./signal-mass-labeling-consolidation";
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -121,6 +122,13 @@ export async function interpretWorkspaceEngineV1(args: {
     await processBatch(originalBatch);
   }
   if(isolatedUnits.size){await args.heartbeat("materializing");return store.completePartial({database,lease});}
+  if ("consolidation_contract_version" in configuration && args.clusters.length) {
+    await args.heartbeat("interpreting");
+    await consolidateMassLabelingGroupsV1({database,lease,actor_user_id:context.actor_user_id,
+      proposals,expected_group_ids:args.clusters.map(c=>c.cluster_id),
+      expected_cluster_digests:Object.fromEntries(args.clusters.map(c=>[c.cluster_id,c.cluster_digest])),
+      directory:args.directory,storage,api_key:args.api_key,provider_enabled:args.provider_enabled});
+  }
   await args.heartbeat("materializing");
   const materialized = await store.materialize({ database, lease, proposals: (async function* () {
     for (const item of proposals) yield { artifact_id: item.artifact_id, body: await readFile(item.file, "utf8") };

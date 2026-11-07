@@ -1,3 +1,4 @@
+import { SIGNAL_MASS_LABELING_JEV_JOB_V1, signalMassLabelingJevJobV1, startMassLabelingJevDrainerV1 } from "../workers/signal-mass-labeling-jev";
 import { SIGNAL_CONCEPT_MEMBERSHIP_JOB_V1, signalConceptMembershipJobV1, startConceptMembershipDrainerV1 } from "../workers/signal-concept-membership-batch";
 import { startHybridMembershipDrainerV1 } from "../workers/signal-hybrid-membership";
 import { SIGNAL_MENTION_FACETS_JOB_V1, signalMentionFacetsJobV1, startMentionFacetsDrainerV1 } from '../workers/signal-mention-facets-batch';
@@ -111,6 +112,7 @@ export function startDataOsWorker() {
       if (job.name === SIGNAL_TOPIC_EDITORIAL_GLOBAL_ADVANCE_JOB_V2) return signalTopicEditorialGlobalAdvanceJobV2(job);
       if (job.name === SIGNAL_CONCEPT_MEMBERSHIP_JOB_V1) return signalConceptMembershipJobV1(job);
       if (job.name === SIGNAL_MENTION_FACETS_JOB_V1) return signalMentionFacetsJobV1(job);
+      if (job.name === SIGNAL_MASS_LABELING_JEV_JOB_V1) return signalMassLabelingJevJobV1(job);
       if (job.name === SIGNAL_MENTION_FACETS_JEV_JOB_V1) return signalMentionFacetsJevJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_BATCH_JOB_V1) return signalWorkspaceInterestDecisionBatchJobV1(job);
       if (job.name === SIGNAL_WORKSPACE_INTEREST_DECISION_PREPARATION_JOB_V1) return signalWorkspaceInterestDecisionPreparationJobV1(job);
@@ -149,6 +151,7 @@ export function startDataOsWorker() {
   // has been installed; PostgreSQL still owns each lease and paid reservation.
   const facetsDrainer = startMentionFacetsDrainerV1();
   const facetsJevDrainer = startMentionFacetsJevDrainerV1();
+  const massLabelingDrainer = startMassLabelingJevDrainerV1();
   const membershipDrainer = startConceptMembershipDrainerV1();
   const hybridMembershipDrainer = startHybridMembershipDrainerV1();
   const batchDrainer = startSignalWorkspaceInterestDecisionBatchDrainerV1();
@@ -161,6 +164,7 @@ export function startDataOsWorker() {
   worker.on("closed", () => {
     void facetsDrainer.close();
     void facetsJevDrainer.close();
+    void massLabelingDrainer.close();
     void membershipDrainer.close();
     void hybridMembershipDrainer.close();
     void batchDrainer.close();
