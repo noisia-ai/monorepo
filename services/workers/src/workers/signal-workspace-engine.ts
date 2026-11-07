@@ -27,6 +27,7 @@ const stores = { claim: claimSignalWorkspaceEngineV1, chunks: readSignalWorkspac
 type Options = { database?: SignalWorkspaceEngineDatabaseV1; stores?: typeof stores; storage?: WorkspaceEngineStorageV1;
   python?: string; module_root?: string; storage_root?: string; timeout_ms?: number;
   process?: typeof runWorkspaceEngineProcessV1; interpret?: typeof interpretWorkspaceEngineV1;
+  interpretation_stores?: Parameters<typeof interpretWorkspaceEngineV1>[0]["stores"];
   incremental?: WorkspaceIncrementalJobOptionsV1; mass_operator?:MassEngineOperatorV1;
   recovery_preflight?: typeof assertSignalWorkspaceMassLabelingRecoveryReadyV1 };
 const name = /^[a-z][a-z0-9_.-]{0,100}$/u;
@@ -148,7 +149,9 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
     const finished = lease.snapshot.interpretation_config
       ? await (options.interpret ?? interpretWorkspaceEngineV1)({ database, lease, fit,
         clusters: await readWorkspaceEngineInterpretationEvidenceV1({ input_directory: inputDir, output_directory: outputDir, output }),
-        directory: attempt, storage, heartbeat: async next => { phase = next; await heartbeat(); } })
+        directory: attempt, storage, stores:options.interpretation_stores,
+        recovery_only:recoveryOnly,...(recoveryOnly?{provider_enabled:false}:{}),
+        heartbeat: async next => { phase = next; await heartbeat(); } })
       : await store.finish({ database, lease, ...fit });
     if (!("recovery_status" in finished)) await job.updateProgress(100).catch(() => undefined);
     return finished;
