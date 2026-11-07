@@ -1,0 +1,30 @@
+{
+  "audit": "AUDIT_MFP_2026-10-04 §15.1.5",
+  "observed_at": "2026-10-12T02:47:44.171242+00:00",
+  "sources": {
+    "uat": {
+      "observer": "orchestrator; Railway/Supabase authenticated UI read-only",
+      "project": "noisia-signal-v02-uat",
+      "environment_id": "13f17965-6ae3-4b5f-bcf3-08b496ff5d54",
+      "service": "studio-uat",
+      "database_binding_matches_verified_staging": true,
+      "binding_check": "boolean comparison in UI; URL never copied or printed; variable remasked",
+      "version_query": "select current_setting('server_version')",
+      "postgres_version": "17.6",
+      "major": 17,
+      "ddl": 0
+    },
+    "dev_test": {
+      "observer": "standard agent; guarded read-only Studio SSH",
+      "environment_id": "5bad359d-cfa4-4e8f-aa41-98e6f075375a",
+      "service_id": "f87fe1ae-5f7e-45e0-9a19-7c162b315b1b",
+      "postgres_version": "17.11 (Debian 17.11-1.pgdg12+1)",
+      "major": 17
+    },
+    "ci": {
+      "workflow": "mfp-postgres.yml",
+      "postgres_major": 17
+    }
+  },
+  "conclusion": "Same PostgreSQL major; conditional cross-major migration rewrite is unnecessary. Preserve SQL0263–0266 files and historically applied hashes. Exact installed view/function preimages must still pass before any future UAT apply. No UAT migration/deploy performed."
+}

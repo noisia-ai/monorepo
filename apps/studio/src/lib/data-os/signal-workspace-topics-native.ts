@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
+import { loadSignalWorkspaceTopicsPageV1, loadSignalWorkspaceTopicReadBundleV1, loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
   loadSignalWorkspaceTopicSelectionV1, selectSignalWorkspaceTopicV1,
   loadSignalWorkspaceCapabilitiesStoreV1, type SignalWorkspaceTopicSelectionStatusV1,
   type SignalWorkspaceCapabilitiesV1 } from "@noisia/db";
@@ -37,6 +37,21 @@ export async function loadNativeSignalTopicsV1(scope: ActorScope & { imported_fa
   const native = await loadSignalWorkspaceTopicsOverviewV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...filter });
   if (native && invalid) throw invalid;
   return native;
+}
+export async function loadNativeSignalTopicsPageV1(scope: ActorScope & { imported_fallback?: boolean }, params = new URLSearchParams()) {
+  if (!nativeTopicsViewV1(params)) return null;
+  let filter: ReturnType<typeof nativeTopicsQueryV1> = {}, invalid: unknown = null;
+  const { pool } = await import("@/lib/db");
+  try { filter = nativeTopicsQueryV1(params); } catch (error) { invalid = error; }
+  const native = await loadSignalWorkspaceTopicsPageV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...filter });
+  if (native && invalid) throw invalid;
+  return native;
+}
+export async function loadNativeSignalTopicReadBundleV1(scope: ActorScope, term_key: string, params: URLSearchParams, kind: "topic" | "narrative") {
+  const limit = params.has("limit") ? Number(params.get("limit")) : 25;
+  const { pool } = await import("@/lib/db");
+  return loadSignalWorkspaceTopicReadBundleV1({ database: pool, ...scope, timezone: scope.timezone ?? "UTC", ...nativeTopicsQueryV1(params), term_key, kind, limit,
+    cursor: params.get("cursor"), expected_scope_digest: params.get("scope_digest") ?? "" });
 }
 export async function loadNativeSignalTopicDetailV1(scope: ActorScope, term_key: string, params: URLSearchParams, kind: "topic" | "narrative" = "topic") {
   const { pool } = await import("@/lib/db");

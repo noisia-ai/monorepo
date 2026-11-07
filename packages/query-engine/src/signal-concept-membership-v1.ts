@@ -52,6 +52,7 @@ export type MembershipResultV1 = {
   rationale: string | null;
   error_code?: string;
   refusal_category?: string;
+  normalizations?: Array<{root_ordinal:number;concept_key:string;before_words:number;after_words:number;before_digest:string;after_digest:string}>;
 };
 export function conceptCompatibleV1(
   concept: Pick<ConceptForJudgeV1, "scope">,

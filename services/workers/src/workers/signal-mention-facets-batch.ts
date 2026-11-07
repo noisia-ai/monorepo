@@ -139,6 +139,7 @@ export async function runMentionFacetsTickV1(args: {
             error instanceof AnthropicBatchTransportError &&
             error.submission === "not_submitted"
           ),
+          error,
         );
         throw error;
       }

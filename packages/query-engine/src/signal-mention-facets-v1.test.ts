@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   diffEntityContextV1,
   isEntityContextAffectedV1,
@@ -402,7 +403,7 @@ test("ordinal grammar preserves legacy identities and requires every input key",
         inputs,
         ce,
         current,
-      ).results.every((row) => row.error_code === "invalid_facets"),
+      ).results.every((row) => row.status === "labeled" && row.facets?.asunto.abstained === true && row.normalizations?.length === 1),
     );
   }
   const incompatible = {
@@ -448,4 +449,32 @@ test("demonstrated grammar partitions all 905 roots without changing facets or i
     buildFacetRequestV1(eight, ce, identity),
     buildFacetRequestV1(eight, ce, previous),
   );
+});
+
+
+test("oversized optional asunto abstains with a durable trace while raw and valid dimensions stay exact", () => {
+  const original = { ...facets(), asunto: dim("word ".repeat(13).trim()) };
+  const raw = JSON.stringify({ roots: [{ root_ordinal: 0, facets: original }] });
+  const hash = createHash("sha256").update(raw).digest("hex");
+  assert.throws(() => validateMentionFacetsV1(original, ce), /asunto_too_long/u);
+  const result = parseFacetGroupV1(raw, [input(0)], ce).results[0]!;
+  assert.equal(result.status, "labeled");
+  assert.deepEqual(result.facets, { ...original, asunto: { value: null, confidence: "low", abstained: true } });
+  assert.deepEqual(result.normalizations, [{ dimension: "asunto", reason: "exceeds_word_limit", action: "abstained", max_words: 12 }]);
+  assert.equal(createHash("sha256").update(raw).digest("hex"), hash);
+  assert.equal(original.asunto.value, "word ".repeat(13).trim());
+  for (const bad of [
+    { ...original, language: dim("es-MX") },
+    { ...original, unexpected: "private" },
+    { ...original, entities: dim([{ entity_id: "unknown", kind: "primary_brand", salience: "main" }]) },
+    { ...original, voice: { value: "individual", confidence: "invalid", abstained: false } },
+  ]) {
+    const rejected = parseFacetGroupV1(JSON.stringify({ roots: [{ root_ordinal: 0, facets: bad }] }), [input(0)], ce).results[0]!;
+    assert.equal(rejected.status, "error");
+    assert.equal(rejected.normalizations, undefined);
+  }
+  const valid = facets();
+  const unchanged = parseFacetGroupV1(JSON.stringify({ roots: [{ root_ordinal: 0, facets: valid }] }), [input(0)], ce).results[0]!;
+  assert.deepEqual(unchanged.facets, valid);
+  assert.equal(unchanged.normalizations, undefined);
 });

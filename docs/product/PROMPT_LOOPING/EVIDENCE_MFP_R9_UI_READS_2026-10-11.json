@@ -1,0 +1,220 @@
+{
+  "contract_version": "mfp-r9-ui-read-evidence-v1",
+  "build_sha": "44a2e1becebed896d68608678d24ece827b97c63",
+  "runtime_commit_sha": "2bf6319afee4f7f3f3d184e0b9a03dc21b81a89f",
+  "deployment_id": "0566a994-0df6-4aa5-b782-1945eedcd50f",
+  "environment": "dev-test",
+  "orchestrator_observed_ui": [
+    {
+      "route": "/studio/brands/7f853d28-c6bf-4ec2-b678-d72750ff7a44/topics",
+      "action": "Topics",
+      "clicked_at": "2026-10-11T22:17:50.610Z",
+      "ready_by": "2026-10-11T22:17:59.903Z",
+      "upper_bound_seconds": 9.293,
+      "alerts": 0
+    },
+    {
+      "route": "/signal/mfp-qa-r8-20261011/topics-narratives",
+      "action": "Signal complete overview/detail/evidence",
+      "clicked_at": "2026-10-11T22:18:06.009Z",
+      "ready_by": "2026-10-11T22:18:14.957Z",
+      "upper_bound_seconds": 8.948,
+      "loaders": 0,
+      "alerts": 0
+    },
+    {
+      "route": "/signal/mfp-qa-r8-20261011/topics-narratives",
+      "action": "Switch to Cobros complete detail/evidence",
+      "clicked_at": "2026-10-11T22:18:17.308Z",
+      "ready_by": "2026-10-11T22:18:26.483Z",
+      "upper_bound_seconds": 9.175,
+      "loaders": 0,
+      "alerts": 0
+    }
+  ],
+  "http": {
+    "signal_ssr": {
+      "status": 200,
+      "duration_ms": 8322
+    },
+    "topic_inspection": {
+      "status": 200,
+      "duration_ms": 7639
+    },
+    "analysis": {
+      "status": 200,
+      "duration_ms": 10697
+    },
+    "brand_overview": {
+      "status": 200,
+      "duration_ms": 13107
+    },
+    "scoped_requests": 16,
+    "all_scoped_requests_status_200": true
+  },
+  "conditions": {
+    "h1_terminal": true,
+    "h1_pg_connections_closed_at": "2026-10-11T22:07:21Z",
+    "manual_refreshes": 0,
+    "mutations": 0,
+    "new_provider_calls": 0,
+    "scope": "single smoke in stable dev-test; not a universal/concurrent load SLO"
+  },
+  "preflight": {
+    "observed_at": "2026-10-11T22:12:33.553597+00:00",
+    "project_id": "b7b7b325-f273-4eb6-80e0-d66e266159b2",
+    "environment_id": "5bad359d-cfa4-4e8f-aa41-98e6f075375a",
+    "service_id": "f87fe1ae-5f7e-45e0-9a19-7c162b315b1b",
+    "autodeploy": {
+      "canEnable": true,
+      "enabled": false,
+      "reason": null
+    },
+    "source_branch": "develop",
+    "replicas": 1,
+    "previous_deployment": {
+      "id": "d4dee934-af21-4aa3-b68a-fc25e666a4c5",
+      "status": "SUCCESS"
+    },
+    "source_preimage_head": "ca9c480e49d747a504dd5bb39e82002b7928c818",
+    "source_preimage_verified": true,
+    "configuration_without_variables_sha256": "00807098eb55b94d3c03120a858694a71d323545b510ee352e745bb9b0baccd8"
+  },
+  "health": {
+    "status": "ok",
+    "timestamp": "2026-10-11T22:17:31.106Z",
+    "runtimeProfile": "default",
+    "checks": {
+      "app": "ok",
+      "env": "ok",
+      "database": "ok",
+      "llm_provider": "ok",
+      "uat_identity": "ok"
+    },
+    "missingEnv": [],
+    "missingCapabilities": []
+  },
+  "checks": {
+    "ci_run_id": 38178578145,
+    "pg_run_id": 38178578187,
+    "pg_pass": 16,
+    "pg_fail": 0,
+    "pg_skip": 0
+  },
+  "runtime_hashes": [
+    {
+      "path": "apps/studio/src/lib/data-os/incremental-editorial-quote.ts",
+      "sha256": "74b6751cec1f689444ebf0ec19aee93aab421af51a689c036fe17b4889fdffb0",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/components/brands/WorkspaceIncrementalEditorialControls.tsx",
+      "sha256": "8f7c43fde44ced9ea0d9db91def116dad7821d42873bdc1d167f7774b94d4c16",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/lib/data-os/signal-workspace-analysis.ts",
+      "sha256": "b961e0d0dff398d8fd703d371ed69efd3610256558bcfc827888c78dad0c0efa",
+      "match": true
+    },
+    {
+      "path": "infrastructure/db/signal-workspace-topic-projection.ts",
+      "sha256": "5679e43b9d9b314d8f3b1e31dea22150c8fffdcc7eae68c31fd343a07838d6ab",
+      "match": true
+    },
+    {
+      "path": "infrastructure/db/signal-concept-memberships.ts",
+      "sha256": "cb6fe2b64179e2603677d8f19946c4eb8353ca9248932ca9676a357ba6c4b093",
+      "match": true
+    },
+    {
+      "path": "infrastructure/db/signal-mention-facets.ts",
+      "sha256": "273c6c95e102450f76502f15b4a359d64db3f72425c2fc47543d55679b2a7ae7",
+      "match": true
+    },
+    {
+      "path": "infrastructure/db/signal-labeling-runs.ts",
+      "sha256": "bda343a998aca981589a132b4a4efd8aeccf6b5f884d85dad3058b87d3c8c2d0",
+      "match": true
+    },
+    {
+      "path": "apps/studio/messages/es-MX.json",
+      "sha256": "48b06528117fd9e15a9003cd8e5432b9dae1e44ddb792d05eaf49dc222e1c26d",
+      "match": true
+    },
+    {
+      "path": "apps/studio/messages/en-US.json",
+      "sha256": "84e38c093d6a645fc92cef21507a6aecc2da617d8390e489b8a9b72e178b5770",
+      "match": true
+    },
+    {
+      "path": "infrastructure/db/signal-workspace-topics-serving.ts",
+      "sha256": "261f887f6fc50f228e81ddc191c2612cde891c7aca28c2d5dd85c33c154f649f",
+      "match": true
+    },
+    {
+      "path": "infrastructure/db/migrations/0265_mfp_factored_unit_census.sql",
+      "sha256": "dd1098d040c54bf0cc677bae879f7d6d4c50aa4347b371cad56695c1c801b9bf",
+      "match": true
+    },
+    {
+      "path": "infrastructure/db/migrations/0266_mfp_scoped_native_reads.sql",
+      "sha256": "82b6e82331a66941a93d566d7d29461565cfc8af95529b34853b5a05e07aa6ce",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/lib/data-os/mfp-population-read.ts",
+      "sha256": "b785d484b128c3e33eda782ffc9460465d1c551dda3a5c794cb52d9006d37c41",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/components/brands/TopicsManager.tsx",
+      "sha256": "6ae586e68d69d599da0fdb78419570e92ae2a191c9b3f3039587f2eae5b86100",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/components/brands/useWorkspaceTopicComputation.ts",
+      "sha256": "8283297f6a6bbe1d59b3d272031114627772c422b4667ceda381ec5161af4396",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/lib/data-os/workspace-analysis-read-sharing.ts",
+      "sha256": "733462da518f57f9a6202e6540353172bb7f15dca5920c412a594d4dc5e34501",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/lib/data-os/signal-workspace-topics-native.ts",
+      "sha256": "924225768a49b4703945779a992cd40f49676f39c8007a0845acb1c35f328a49",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/components/signal-v2/SignalV2WorkspacePage.tsx",
+      "sha256": "aed0e9995e539a9e930a3a3610aca89debdcf35b6699113f1bc700dcad7307b9",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/components/signal-v2/SignalV2BrandMonitoring.tsx",
+      "sha256": "1aeb047bafa6812e4274511f1e45be147c8fe5155271deb5cd10ede994fd2852",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/components/signal-v2/SignalV2WorkspaceTopics.tsx",
+      "sha256": "e18b322e0402f363d2e2357e4848200325368950dcee88adb9b6cddf6b0de5cf",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/app/api/data-os/signal/[workspaceId]/topics-narratives/[kind]/[termKey]/inspection/route.ts",
+      "sha256": "a6b556646dc00afa1b2d9d370ea63c02eadf16e2eee3a9d247048db9fb33dd49",
+      "match": true
+    },
+    {
+      "path": "apps/studio/src/app/api/data-os/signal/[workspaceId]/topics-narratives/page/route.ts",
+      "sha256": "3653c284550f0d908da7fc6874e3d9d3300bf3e39a496fbbf155604398eba9b4",
+      "match": true
+    }
+  ],
+  "runtime_flags": {
+    "NOISIA_MENTION_FACETS_ENABLED": "true",
+    "NOISIA_CONCEPT_MEMBERSHIP_ENABLED": "true"
+  }
+}

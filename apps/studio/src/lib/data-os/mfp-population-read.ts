@@ -2,14 +2,15 @@
  * The other two pool connections remain available to metadata and mutations.
  * This is process-wide, including separate route bundles and browser tabs.
  */
-export function createMfpPopulationReader(maxPending = 8, waitMs = 120_000) {
+export function createMfpPopulationReader(maxPending = 8, waitMs = 120_000, concurrency = 1) {
+  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error("read_concurrency_invalid");
   type Item = { start: () => void; cancel: () => void };
   const queue: Item[] = [];
-  let active = false;
+  let active = 0;
   const pump = () => {
-    if (active) return;
-    const next = queue.shift();
-    if (next) { active = true; next.start(); }
+    while (active < concurrency && queue.length) {
+      const next = queue.shift()!; active++; next.start();
+    }
   };
   return <T>(read: () => Promise<T>, signal?: AbortSignal): Promise<T> => {
     if (signal?.aborted) return Promise.reject(new DOMException('Read aborted', 'AbortError'));
@@ -26,7 +27,7 @@ export function createMfpPopulationReader(maxPending = 8, waitMs = 120_000) {
         start: () => {
           cleanup();
           Promise.resolve().then(read).then(resolve, reject)
-            .finally(() => { active = false; pump(); });
+            .finally(() => { active--; pump(); });
         },
       };
       const timer = setTimeout(() => remove(new Error('population_read_busy')), waitMs);
@@ -38,5 +39,10 @@ export function createMfpPopulationReader(maxPending = 8, waitMs = 120_000) {
 
 const shared = globalThis as typeof globalThis & {
   noisiaMfpPopulationReader?: ReturnType<typeof createMfpPopulationReader>;
+  noisiaWorkspaceAnalysisReader?: ReturnType<typeof createMfpPopulationReader>;
 };
 export const readMfpPopulation = shared.noisiaMfpPopulationReader ??= createMfpPopulationReader();
+
+/** Analysis stores acquire at most two clients; keep a pool slot for metadata,
+ * population reads and recovery rather than queueing nine checkout requests. */
+export const readWorkspaceAnalysis = shared.noisiaWorkspaceAnalysisReader ??= createMfpPopulationReader(8, 120_000, 2);

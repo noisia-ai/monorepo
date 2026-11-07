@@ -1,0 +1,13 @@
+# SQL0265 — censo de unidades, revisión 9
+
+PR de seguimiento #57; aceptación primero `7df8d189`. Perfil configurado `mfp_critico`, `gpt-6.1-sol/high`; sin telemetría independiente del modelo. Presupuesto orientativo; proveedor USD0, coste de infraestructura no desglosado.
+
+Tras completar 7/7 solicitudes editoriales, el censo de unidades cuesta 61 ms, pero `workspace_incremental_editorial_units_v1` lo recalcula en su predicado por cada candidato y tarda 7.852 s para 25 unidades. SQL0265 calcula exactamente el mismo censo en un CTE `MATERIALIZED` una vez por ejecución. Conserva los joins, filtros, identidad, origen y claims; no introduce caché persistente ni modifica datos, autorización, CE, revocación, vistas H1 o Runner.
+
+Aceptación PostgreSQL real: prueba anterior falla en la condición de evaluación única; candidato **1 PASS, 0 skip** (7.08 s). Las pruebas usan exclusivamente funciones y tablas temporales: comparan todas las columnas de las 25 unidades reales, origen emergente, claims, aislamiento de workspace, target inexistente y censos corruptos por cantidad/digest. Todas las modificaciones terminan en `ROLLBACK`. Typecheck DB PASS. CI integrado todavía debe ejecutar este test en el esquema migrado; no se acredita por esta prueba local/remota.
+
+Medición secuencial sobre el mismo target: **6.026 s → 54 ms**, 25 filas completas, mismo SHA256 `abb9e9e40f792981b2234b829f0464fc3a09ae7a7dc4adaba485d9065c2bcb03`. Orden por `census_artifact_id`, sin exclusión ni normalización de campos. La reducción del lector aislado no demuestra todavía el SLO de página ni cierra B2.
+
+SHA256 del archivo: `dd1098d040c54bf0cc677bae879f7d6d4c50aa4347b371cad56695c1c801b9bf`. Preimage de `prosrc`: `c2356d5d9f563e457fd6556c25e18976110d6528fe6a62b13b9640a41b57a7b8`; postimage: `b9b43952f87fa4bae37b6501e4ad829c3362c21a041de4bc227ad7df1ab776d1`. Evidencia pública en `EVIDENCE_MFP_SQL0265_FUNCTION_HASHES_2026-10-11.json`; probes privados `.data/r9-sql/unit-{red,green,measure}-result.txt` y `unit-shadow-readers-result.txt`.
+
+Entrega a estándar para cherry-pick, CI y aplicación focal coordinada. **No se aplicó SQL0265 persistentemente ni se desplegó.** Aplicar exclusivamente 0265 bajo guard de destino MFP/dev-test, lock de migraciones, hash/preimage exactos, transacción e historia; verificar postimage y una sola entrada. No usar el migrador global si 0262 sigue pendiente. Volver a medir DTO con pool real 3 y HTTP Signal overview/detail/evidence antes de fijar build o declarar B2 resuelto. Las vistas de facetas/pertenencias son compartidas con H1 y permanecen intactas durante su ejecución.

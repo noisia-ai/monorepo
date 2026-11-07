@@ -503,11 +503,24 @@ export function parseFacetGroupV1(
         entity_context_digest: entityContextDigestV1(context),
       };
       try {
-        const facets = validateMentionFacetsV1(root.facets, context, input.language);
+        // The optional short summary may safely abstain; all semantic dimensions
+        // and contextual entity/language validation still pass the strict validator.
+        // Never truncate a provider quote or mutate the immutable raw receipt.
+        const checked = mentionFacetsSchemaV1.safeParse(root.facets);
+        const optionalSummaryOnly = !checked.success &&
+          checked.error.issues.length === 1 &&
+          checked.error.issues[0]?.code === "custom" &&
+          checked.error.issues[0]?.message === "asunto_too_long" &&
+          checked.error.issues[0]?.path.join(".") === "asunto.value";
+        const candidate = optionalSummaryOnly
+          ? { ...(root.facets as Record<string, unknown>), asunto: { value: null, confidence: "low", abstained: true } }
+          : root.facets;
+        const facets = validateMentionFacetsV1(candidate, context, input.language);
         return {
           ...base,
           status: facets.entities.abstained ? "abstained" : "labeled",
           facets,
+          ...(optionalSummaryOnly ? { normalizations: [{ dimension: "asunto", reason: "exceeds_word_limit", action: "abstained", max_words: 12 }] } : {}),
         } as FacetResult;
       } catch (error) {
         return {

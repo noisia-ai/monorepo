@@ -12,10 +12,10 @@ export type WorkspaceIncrementalEditorialRequest =
   | { action: "prepare_incremental_editorial"; run_id: string; expected_source_digest: string }
   | { action: "begin_incremental_editorial"; run_id: string; expected_evidence_plan_artifact_id: string;
     expected_numeric_checkpoint_digest: string; expected_target_unit_digest: string; expected_history_cut_digest: string;
-    cap_micro_usd: number|null; admission_not_after: string }
+    cap_micro_usd: number|null; admission_not_after: string; quote_reference?: string; confirmed?: true }
   | { action: "revoke_incremental_editorial"; run_id: string; expected_admission_operation_id: string }
   | { action: "renew_incremental_editorial"; run_id: string; expected_admission_operation_id: string;
-    grant_cap_micro_usd: number|null; admission_not_after: string }
+    grant_cap_micro_usd: number|null; admission_not_after: string; quote_reference?: string; confirmed?: true }
   | { action: "retry_incremental_editorial"; run_id: string; expected_worker_job_id: string };
 type Scope = { workspace_id: string; request_scope: string; observed_at: string; can_execute: boolean;
   incremental_editorial?: WorkspaceIncrementalEditorial | null };
@@ -37,7 +37,11 @@ export function isWorkspaceIncrementalEditorialAction(value: { action: string })
 }
 export function validWorkspaceIncrementalEditorialRequest(value: unknown): value is WorkspaceIncrementalEditorialRequest {
   if (!object(value) || !uuid(value.run_id)) return false;
-  const keys = Object.keys(value).sort().join(",");
+  const paid = value.action === "begin_incremental_editorial" || value.action === "renew_incremental_editorial";
+  if (paid && (value.quote_reference !== undefined || value.confirmed !== undefined)
+    && (value.confirmed !== true || typeof value.quote_reference !== "string"
+      || !/^iq1\.[0-9]{10}\.[a-f0-9]{64}\.[a-f0-9]{64}$/u.test(value.quote_reference))) return false;
+  const keys = Object.keys(value).filter(key => !paid || !["quote_reference", "confirmed"].includes(key)).sort().join(",");
   if (value.action === "prepare_incremental_editorial") return keys === "action,expected_source_digest,run_id" && digest(value.expected_source_digest);
   if (value.action === "revoke_incremental_editorial") return keys === "action,expected_admission_operation_id,run_id" && uuid(value.expected_admission_operation_id);
   if (value.action === "retry_incremental_editorial") return keys === "action,expected_worker_job_id,run_id" && workerJob(value.expected_worker_job_id);

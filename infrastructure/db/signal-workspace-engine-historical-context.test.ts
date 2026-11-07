@@ -53,7 +53,7 @@ function fixture(identityError:Error,denied=false){
       context_digest:sha,catalog_digest:sha,taxonomy_profile_id:operation,operational_profile_id:operation,is_current:true,history_current:true}]};
     if(sql.includes('FROM signal_topic_catalog_operations'))return{rows:[{result_summary:catalogReceipt}]};
     if(sql.includes('SELECT id,engine_request_keys'))return{rows:[{id:numeric,alias:{actor_user_id:actor,request_digest:digest({action:'retry_numeric',execution_id:numeric})}}]};
-    if(sql.includes('WITH runs AS('))return{rows:[{execution_id:owner,generation_id:operation,source_engine_execution_id:numeric,
+    if(sql.includes('WITH runs AS MATERIALIZED('))return{rows:[{execution_id:owner,generation_id:operation,source_engine_execution_id:numeric,
       status:'ready',complete:true,source_current:true,identity:{},correction_digest:sha,generation_version:1,denominator:9,processed_roots:9}]};
     if(sql.includes('SELECT dispatch.status,dispatch.error_code'))return{rows:[{status:'failed',error_code:'workspace_incremental_projection_transport_unavailable',attempt_count:8,profile_current:true}]};
     if(sql.includes('FROM signal_classification_generations WHERE id='))return{rows:[{input_revision:'2',interpretation_coverage:{interpreted_units:4},discovery_coverage:null}]};

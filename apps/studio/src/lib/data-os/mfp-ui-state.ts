@@ -7,7 +7,7 @@ export function mfpHumanMembershipCorrection(rootIds:string[],conceptKey:string,
 }
 /** Snapshot the submitted definition, including nested arrays, before the editor changes. */
 export function mfpIntent(body:Record<string,unknown>,method:string,key:string):MfpIntent {
-  return {method,body:JSON.parse(JSON.stringify(method==="POST"&&!body.confirm_run_id?{...body,idempotency_key:key}:body))};
+  return {method,body:JSON.parse(JSON.stringify(method==="POST"&&!body.confirm_run_id&&body.action!=="replay_stored"?{...body,idempotency_key:key}:body))};
 }
 export async function executeMfpIntent(endpoint:string,intent:MfpIntent,transport:typeof fetch=fetch) {
   const response=await transport(endpoint,{method:intent.method,headers:{"Content-Type":"application/json"},body:JSON.stringify(intent.body)});

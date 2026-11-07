@@ -12,7 +12,9 @@ import {
 import { BrandEditForm } from "@/components/brands/BrandEditForm";
 import { CompetitorManager } from "@/components/brands/CompetitorManager";
 import { KnowledgeBaseManager } from "@/components/brands/KnowledgeBaseManager";
-import { SemanticContextPackManager } from "@/components/brands/SemanticContextPackManager";
+import { BrandOsContextPreparation } from "@/components/brands/BrandOsContextPreparation";
+import { signalWorkspaceFeatureEnabledV1 } from "@noisia/db";
+import { pool } from "@/lib/db";
 import { requireStudioUser } from "@/lib/auth/guards";
 import { getAdminBrandWorkspace } from "@/lib/data/admin-workspace";
 import { getBrandDetailForUser } from "@/lib/data/brands";
@@ -32,6 +34,9 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
     listOrganizationsForPicker()
   ]);
   if (!brand || !workspace) notFound();
+  const mfpEnabled = workspace.summary.workspaceId ? await signalWorkspaceFeatureEnabledV1({
+    queryable: pool, workspace_id: workspace.summary.workspaceId, feature: "mfp_discovery",
+  }) : false;
 
   return (
     <div className="admin-workspace-page">
@@ -60,7 +65,7 @@ export default async function BrandOsWorkspacePage({ params }: { params: Promise
       <KnowledgeBaseManager brandId={brand.id} sources={brand.knowledgeSources} />
       {workspace.summary.workspaceId ? (
         <>
-          <SemanticContextPackManager workspaceId={workspace.summary.workspaceId}
+          <BrandOsContextPreparation brandId={brand.id} workspaceId={workspace.summary.workspaceId} mfpEnabled={mfpEnabled}
             allowProcessingAuthorization={["noisia_admin", "founder", "admin"].includes(session.appUser.primaryRole)} />
           <AdminResourceSection
             actions={<Link className="admin-button admin-button--primary" href={`/studio/brands/${brand.id}/topics`} prefetch={false}>

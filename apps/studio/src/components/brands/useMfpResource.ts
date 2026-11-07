@@ -2,7 +2,7 @@
 import {readMfpResource} from "@/lib/data-os/mfp-resource-read";
 import {useCallback,useEffect,useRef,useState} from "react";
 import {executeMfpIntent,mfpIntent,type MfpIntent} from "@/lib/data-os/mfp-ui-state";
-export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>void,poll=false) {
+export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>void,poll=false,refreshSignal?:string|null) {
   const [data,setData]=useState<T|null>(null),[error,setError]=useState<string|null>(null),[loading,setLoading]=useState(false);
   const live=useRef(true),controller=useRef<AbortController|null>(null),denied=useRef(onDenied);denied.current=onDenied;
   const read=useCallback(async()=>{
@@ -15,7 +15,7 @@ export function useMfpResource<T>(endpoint:string,contract:string,onDenied?:()=>
     }catch(cause){if(!next.signal.aborted&&live.current)setError(cause instanceof Error?cause.message:"request");}
     finally{if(!next.signal.aborted&&live.current)setLoading(false);}
   },[endpoint,contract]);
-  useEffect(()=>{live.current=true;setData(null);void read();return()=>{live.current=false;controller.current?.abort();};},[read]);
+  useEffect(()=>{live.current=true;setData(null);void read();return()=>{live.current=false;controller.current?.abort();};},[read,refreshSignal]);
   useEffect(()=>{const value=data as {latest?:{status:string}|null;run?:{status:string}}|null; if(!poll||loading||!["queued","running"].includes(value?.latest?.status??value?.run?.status??""))return;const timer=setTimeout(()=>void read(),5000);return()=>clearTimeout(timer);},[read,poll,data,loading]);
   return {data,error,loading,read};
 }

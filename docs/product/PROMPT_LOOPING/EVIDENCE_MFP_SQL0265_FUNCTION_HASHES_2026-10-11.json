@@ -1,0 +1,12 @@
+{
+  "migration": "0265_mfp_factored_unit_census.sql",
+  "migration_sha256": "dd1098d040c54bf0cc677bae879f7d6d4c50aa4347b371cad56695c1c801b9bf",
+  "function": "workspace_incremental_editorial_units_v1(uuid)",
+  "preimage_prosrc_sha256": "c2356d5d9f563e457fd6556c25e18976110d6528fe6a62b13b9640a41b57a7b8",
+  "postimage_prosrc_sha256": "b9b43952f87fa4bae37b6501e4ad829c3362c21a041de4bc227ad7df1ab776d1",
+  "unit_rows": 25,
+  "unit_rows_sha256": "abb9e9e40f792981b2234b829f0464fc3a09ae7a7dc4adaba485d9065c2bcb03",
+  "unit_rows_normalization": "none; all columns, ordered by census_artifact_id",
+  "before_ms": 6026,
+  "after_ms": 54
+}

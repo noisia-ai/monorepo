@@ -71,7 +71,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
   const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
   const selectedIsDiscovery = selected?.origin === "workspace_discovery";
   const processingVisible = !navigation || data.capabilities.can_execute;
-  const computation = useWorkspaceTopicComputation({ workspaceId,
+  const computation = useWorkspaceTopicComputation({ workspaceId, enabled: !mfpEnabled,
     termKey: !mfpEnabled && processingVisible && !selectedIsDiscovery ? selectedKey : null,
     catalogVersion: `${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`, initial: initialComputation });
   const workspaceSearch = !mfpEnabled && computation.data?.mode === "workspace";
@@ -131,6 +131,8 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
     : statusTone(topic.status);
 
   const [associationReceipt, setAssociationReceipt] = useState<string | null>(null);
+  const [facetsReceipt,setFacetsReceipt]=useState<string|null>(null);
+  const scopedFacetsReceipt=facetsReceipt?.startsWith(`${workspaceId}:`)?facetsReceipt:null;
 
   const refresh = useCallback(async () => {
     refreshReader.current?.abort(); const controller = new AbortController(); refreshReader.current = controller;
@@ -330,7 +332,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
 
   if (!data.capabilities.can_view) return <p className="team-msg team-msg--error" role="alert">{t("requestErrors.forbidden")}</p>;
   return <div className="topics-manager">
-    {mfpEnabled ? <MfpFacetWorkspace workspaceId={workspaceId} dataHref={dataHref} signalHref={signalHref} onAccessDenied={clearAccess}/> : navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
+    {mfpEnabled ? <MfpFacetWorkspace workspaceId={workspaceId} dataHref={dataHref} signalHref={signalHref} onAccessDenied={clearAccess} onFacetsChanged={setFacetsReceipt}/> : navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
       allowInterestPreparation={data.capabilities.can_request_processing}
       preparationDisabled={editorDirty || busy !== null}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`} /> : null}
@@ -380,6 +382,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
     </section>
 
     {processingVisible || (mfpEnabled && data.capabilities.can_request_processing) ? <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
+      facetsReceipt={scopedFacetsReceipt}
       catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
       suppressLegacyActions={consolidationGroupCount === null || consolidationGroupCount > 0}
       disabled={editorDirty || busy !== null} onCatalogAvailable={refreshAvailableCatalog}
@@ -510,7 +513,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
           {mfpEnabled && (creating || selected?.lifecycle !== "archived") ? <MfpMembershipControls
             key={selectedKey ?? "new-concept"} workspaceId={workspaceId} concept={{...editorPayload(editor),
               concept_key:selected?.term_key ?? "preview-definition",definition_digest:selected?.definition_digest ?? `sha256:${"0".repeat(64)}`}}
-            dirty={Boolean(creating || editorDirty)} canEdit={canEdit} mentionHref="" signalHref={signalHref} onAccessDenied={clearAccess}/> : null}
+            dirty={Boolean(creating || editorDirty)} canEdit={canEdit} mentionHref="" signalHref={signalHref} onAccessDenied={clearAccess} facetsReceipt={scopedFacetsReceipt}/> : null}
           {!mfpEnabled && requiresRecompute ? <div className="topics-manager__cost-notice" role="status">
             <strong>{t("editor.pendingTitle")}</strong><p>{t("editor.pendingBody")}</p>
             {signalHref ? <Link className="admin-button" href={signalHref} prefetch={false}>{t("signalSelection.openSignal")}</Link> : null}
@@ -530,7 +533,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
               workspaceId={workspaceId} termKey={selected.term_key} definitionRevision={selected.definition_revision}
               definitionDigest={selected.definition_digest} dirty={editorDirty} disabled={busy !== null}
               refreshKey={associationReceipt} signalHref={signalHref} onAccessDenied={clearAccess} /> : null} /> : null}
-          {processingVisible && !creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
+          {!mfpEnabled && processingVisible && !creating && !selectedIsDiscovery && computation.error ? <p className="team-msg team-msg--error" role="alert">{t(`computation.errors.${computationErrorKey(computation.error)}`)}</p> : null}
           {processingVisible && !creating && !selectedIsDiscovery && workspaceSearch && computation.data ? <>
             {computation.data.preflight.state !== "ready" ? <p className="topics-manager__cost-notice" role="status">
               {t(`computation.preflight.${computation.data.preflight.state}`, { count: computation.data.preflight.missing_prototypes ?? 0 })}

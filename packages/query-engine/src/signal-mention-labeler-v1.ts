@@ -25,6 +25,12 @@ export type FacetResult = {
   entity_context_digest: string;
   status: "labeled" | "abstained" | "refused" | "error";
   facets?: MentionFacetsV1;
+  normalizations?: Array<{
+    dimension: "asunto";
+    reason: "exceeds_word_limit";
+    action: "abstained";
+    max_words: 12;
+  }>;
   refusal_category?: string;
   error_code?: string;
 };

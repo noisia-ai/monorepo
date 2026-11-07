@@ -71,6 +71,7 @@ export type SignalWorkspaceTopicEvidencePageV1 = {
     evidence_fragment: { chunk_index: number; start: number; end: number; chunk_sha256: string } | null;
     /** A human correction is never presented as a Claude citation. */
     evidence_origin?: "model_decision" | "human_correction";
+    forced_abstentions?: string[];
     /** A cited, settled interest decision. Never substitute a generic excerpt. */
     decision_citation?: { role: "supports"; output_digest: string; decision_digest: string;
       chunk_index: number; quote_start: number; quote_end: number; chunk_sha256: string };

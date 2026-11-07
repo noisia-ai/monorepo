@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { signalTopicDefinitionDigestV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceClassificationInputV1 } from "./signal-workspace-classification";
-import { loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1, loadSignalWorkspaceTopicsOverviewV1,
+import { loadSignalWorkspaceTopicsPageV1, loadSignalWorkspaceTopicReadBundleV1, loadSignalWorkspaceTopicDetailV1, loadSignalWorkspaceTopicEvidenceV1, loadSignalWorkspaceTopicsOverviewV1,
   prepareSignalWorkspaceDefinedInterestOverlayV1 } from "./signal-workspace-topics-serving";
 
 const id = (suffix: string) => `00000000-0000-4000-8000-${suffix.padStart(12, "0")}`;
@@ -110,6 +110,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
   const client = {
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
+      if (sql.includes("signal_workspace_concept_memberships_read_v1") || sql.includes("signal_workspace_mention_facets_read_v1"))
+        assert.equal(params[0], workspaceId, "scoped MFP readers receive the authorized workspace");
       if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
       if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [
         {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a"),mfp_discovery:mfpDiscovery},
@@ -269,6 +271,23 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.match(detailQueries[0]!.sql, /WHERE root.metrics/);
   assert.match(detailQueries[0]!.sql, /published_at>=\(\$3::date::timestamp AT TIME ZONE \$5::text\)/u);
   assert.match(detailQueries[0]!.sql, /published_at<\(\(\$4::date\+1\)::timestamp AT TIME ZONE \$5::text\)/u);
+  const baselineEvidence = await loadSignalWorkspaceTopicEvidenceV1({ ...args, limit: 25 });
+  const bundleStart = statements.length;
+  const bundle = await loadSignalWorkspaceTopicReadBundleV1({ ...args, limit: 25 });
+  assert.deepEqual(bundle.overview, overview);
+  assert.deepEqual(bundle.detail, detail);
+  assert.deepEqual(bundle.evidence, baselineEvidence);
+  assert.equal(statements.slice(bundleStart).filter(sql => sql.startsWith("BEGIN")).length, 1);
+  assert.equal(statements.slice(bundleStart).filter(sql => sql.includes("SELECT count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total")).length, 1,
+    "one overview/digest reconstruction per complete read");
+  assert.equal(statements.slice(bundleStart).filter(sql => sql.includes("signal_workspace_projection_source_current_v1(generation)")).length, 1,
+    "bundle checks the projection source once in its RR context; population retains workspace/generation scope");
+  assert.ok(statements.slice(bundleStart).filter(sql => sql.startsWith("WITH source_generation")).every(sql =>
+    sql.includes("generation.workspace_id=$1::uuid AND true")));
+  const initialBundle = await loadSignalWorkspaceTopicsPageV1(args);
+  assert.deepEqual(initialBundle, bundle);
+  await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, expected_scope_digest: sha("0") }), /workspace_topics_scope_changed/);
+  await assert.rejects(loadSignalWorkspaceTopicReadBundleV1({ ...args, term_key: "foreign" }), /workspace_topics_topic_unavailable/);
   selectedInterest = true;
   const withInterest = await loadSignalWorkspaceTopicsOverviewV1({ database: { async connect() { return client as never; } },
     workspace_id: workspaceId, actor_user_id: actorId, timezone: "America/Mexico_City" });
@@ -414,6 +433,9 @@ test("Signal keeps served semantics while applying a safe working label", async 
     assert.match(additiveSql,/UNION ALL SELECT root_id,term_key,visible,evidence_fragment FROM defined_interest_memberships/u);
     assert.match(additiveSql,/UNION ALL SELECT current.root_id,current.concept_key/u);
     assert.match(additiveSql,/AND visible.membership_concept/u);
+    assert.match(additiveSql,/FROM signal_workspace_concept_memberships_read_v1\(\$1::uuid\)\s+WHERE workspace_id=\$1::uuid AND verdict='belongs'/u);
+    assert.match(additiveSql,/FROM signal_workspace_mention_facets_read_v1\(\$1::uuid\) f WHERE f\.workspace_id=\$1::uuid/u);
+    assert.doesNotMatch(additiveSql,/FROM signal_(concept_memberships|mention_facets)_current_v1/u);
     membershipCollision = false;
     selectedInterest = false;
     consolidatedMode = false;
@@ -442,8 +464,11 @@ test("Signal keeps served semantics while applying a safe working label", async 
   }
   access = false;
   const authorizedDetailQueries=detailQueries.length;
+  const unauthorizedStart=statements.length;
   await assert.rejects(loadSignalWorkspaceTopicDetailV1(args), /workspace_topics_forbidden/);
   assert.equal(detailQueries.length, authorizedDetailQueries, "scope rejection must precede another aggregate query");
+  assert.equal(statements.slice(unauthorizedStart).some(sql=>sql.includes("signal_workspace_concept_memberships_read_v1") || sql.includes("signal_workspace_mention_facets_read_v1")),false,
+    "scope rejection precedes all scoped MFP readers");
 
 });
 

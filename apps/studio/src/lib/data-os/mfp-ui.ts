@@ -1,6 +1,6 @@
 import type { MentionFacetsV1, HybridJevDecisionV1, HybridClaudeDecisionV1 } from "@noisia/query-engine";
 
-export type MfpRun = { id:string; status:string; estimated_micro_usd:string|number; settled_micro_usd:string|number;
+export type MfpRun = { stored_replay_available?:boolean; id:string; status:string; estimated_micro_usd:string|number; settled_micro_usd:string|number;
   reserved_micro_usd:string|number; budget_micro_usd:string|number|null; cap_micro_usd:string|number|null;
   waiting_full_confirmation?:boolean; error_code:string|null };
 export type MfpFacetStatus = { contract_version:"mention-facets-status-v1"; enabled:boolean; provider_available:boolean;
@@ -11,7 +11,7 @@ export type MfpFacetPage = {contract_version:"mention-facets-browser-v1";workspa
   entities:Array<{entity_id:string;name:string;kind:"primary_brand"|"competitor"|"category"}>;
   distributions:Array<{dimension:string;value:string;count:number}>;
   items:Array<{root_id:string;text:string;title:string|null;url:string|null;platform:string|null;status:string;
-    relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];requires_context_review:boolean;pending_context_review:boolean}>;next_cursor:string|null};
+    relevance:string;facets:MentionFacetsV1|null;human_dimensions:string[];forced_abstentions?:string[];requires_context_review:boolean;pending_context_review:boolean}>;next_cursor:string|null};
 export type MfpEvidence = {root_id:string;concept_key:string;definition_digest:string;verdict:string;
   citations:Array<{quote:string;quote_start:number;quote_end:number;chunk_index:number;chunk_sha256:string}>;
   hybrid_review?:{jev:HybridJevDecisionV1;claude:HybridClaudeDecisionV1|null}|null;

@@ -50,6 +50,7 @@ export class AnthropicBatchTransportError extends Error {
     readonly code: string,
     readonly submission: "not_submitted" | "submission_unknown" | "read_failed",
     readonly httpStatus?: number,
+    readonly providerReason?: "credit_balance_insufficient",
   ) {
     // Do not expose provider bodies, prompts, API keys or fetch error causes.
     super(code);
@@ -94,6 +95,7 @@ export function createAnthropicMessageBatchesClient(options: {
         const error = new AnthropicBatchTransportError(
           `batch_http_${response.status}`, creates && rejected ? "not_submitted" : uncertain,
           response.status,
+          creates && batchFailureCode(response.status,raw_body) === "credit_balance_insufficient" ? "credit_balance_insufficient" : undefined,
         );
         errorReceipts.set(error, { http_status: response.status, raw_body, complete: true,
           provider_request_id: response.headers.get("request-id") });
@@ -284,4 +286,17 @@ async function readBoundedText(response: Response, maxBytes: number) {
     await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
+}
+
+/** Classify only a known billing rejection; provider text never becomes a receipt. */
+export function batchFailureCode(status: number, raw: string): string {
+  if (status === 400 || status === 402) {
+    try {
+      const body = JSON.parse(raw);
+      if (body?.error?.type === "invalid_request_error"
+        && typeof body.error.message === "string"
+        && /credit balance is too low/i.test(body.error.message)) return "credit_balance_insufficient";
+    } catch { /* malformed rejection retains its safe HTTP code */ }
+  }
+  return `batch_http_${status}`;
 }

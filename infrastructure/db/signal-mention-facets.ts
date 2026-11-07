@@ -1,3 +1,4 @@
+import { facetForcedAbstentionsSqlV1 } from "./signal-facet-normalizations";
 import type { Pool, PoolClient } from "pg";
 import {
   canonicalEntityContextV1,
@@ -285,8 +286,8 @@ const facetDisplayPopulation = `WITH display_roots AS MATERIALIZED (
   -- Keep the canonical human/context projection, but evaluate it once per workspace.
   -- Joining the expanded view directly to underestimated rights roots caused its
   -- entire population and correlated label lookups to run again for every root.
-  SELECT workspace_id,root_id,full_text,title,platform,status,facets,requires_context_review,pending_context_review
-  FROM signal_mention_facets_current_v1 WHERE workspace_id=$1
+  SELECT f.workspace_id,f.root_id,f.full_text,f.title,f.platform,f.status,f.facets,f.requires_context_review,f.pending_context_review,f.input_digest,f.labeler_digest,f.entity_context_digest
+  FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE workspace_id=$1
 ), scoped AS MATERIALIZED (
   SELECT f.*,m.url,o.patch,
     f.root_id=ANY($2::uuid[]) stale
@@ -303,7 +304,7 @@ const facetDisplayPopulation = `WITH display_roots AS MATERIALIZED (
         WHERE known->>'entity_id'=entity->>'entity_id' AND known->>'kind'=entity->>'kind')) review
   FROM scoped
 ), population AS MATERIALIZED (
-  SELECT root_id,full_text text,title,platform,url,
+  SELECT workspace_id,root_id,input_digest,labeler_digest,entity_context_digest,full_text text,title,platform,url,
     CASE WHEN review THEN 'error' WHEN stale THEN 'pending' ELSE status END status,
     CASE WHEN review THEN 'unknown'
       WHEN NOT COALESCE((effective_facets#>>'{spam_or_bot,abstained}')::boolean,true) AND (effective_facets#>>'{spam_or_bot,value}')::boolean THEN 'spam'
@@ -328,7 +329,14 @@ export async function loadMentionFacetBrowserV1(args: {
     if (!caps.can_view) throw new Error("facets_forbidden");
     const change = await inspectFacetContextChangeV1(client, args.workspace_id);
     const parameters = [args.workspace_id, change.changed ? change.affected : [], JSON.stringify(change.context)];
-    const distributions = (await client.query<{dimension: string; value: string; count: number}>(`${facetDisplayPopulation}
+    const limit = Math.max(1, Math.min(100, args.limit ?? 30));
+    type FacetBrowserItem = {root_id:string;text:string;title:string|null;url:string|null;platform:string|null;
+      status:string;relevance:string;facets:MentionFacetsV1|null;requires_context_review:boolean;pending_context_review:boolean;human_dimensions:string[];forced_abstentions:string[]};
+    const page = (await client.query<{
+      distributions: Array<{dimension: string; value: string; count: number}>;
+      items: FacetBrowserItem[];
+    }>(`${facetDisplayPopulation}, distributions AS (
+
       SELECT dimension,value,count(*)::int count FROM population p CROSS JOIN LATERAL (
         SELECT 'status' dimension,p.status value UNION ALL SELECT 'relevance',p.relevance
         UNION ALL SELECT dimension,CASE WHEN (p.facets->dimension->>'abstained')::boolean THEN 'abstained'
@@ -337,10 +345,9 @@ export async function loadMentionFacetBrowserV1(args: {
         UNION ALL SELECT 'entities',entity->>'entity_id' FROM jsonb_array_elements(COALESCE(p.facets#>'{entities,value}','[]')) entity
         UNION ALL SELECT 'salience',entity->>'salience' FROM jsonb_array_elements(COALESCE(p.facets#>'{entities,value}','[]')) entity
         UNION ALL SELECT 'entities','abstained' WHERE p.facets IS NULL OR (p.facets#>>'{entities,abstained}')::boolean
-      ) dimension_values GROUP BY dimension,value ORDER BY dimension,count DESC,value`, parameters)).rows;
-    const limit = Math.max(1, Math.min(100, args.limit ?? 30));
-    const items = (await client.query<{root_id:string;text:string;title:string|null;url:string|null;platform:string|null;
-      status:string;relevance:string;facets:MentionFacetsV1|null;requires_context_review:boolean;pending_context_review:boolean;human_dimensions:string[]}>(`${facetDisplayPopulation}
+      ) dimension_values GROUP BY dimension,value ORDER BY dimension,count DESC,value
+    ), page AS (
+
       SELECT * FROM population p WHERE ($8::uuid IS NULL OR p.root_id=$8::uuid) AND ($4::uuid IS NULL OR p.root_id>$4::uuid) AND ($5::text IS NULL OR
         CASE WHEN $5='status' THEN p.status=$6 WHEN $5='relevance' THEN p.relevance=$6
           WHEN $5 IN('entities','salience') THEN CASE WHEN $6='abstained' THEN p.facets IS NULL OR (p.facets#>>'{entities,abstained}')::boolean
@@ -348,7 +355,13 @@ export async function loadMentionFacetBrowserV1(args: {
               WHERE e->>(CASE WHEN $5='entities' THEN 'entity_id' ELSE 'salience' END)=$6) END
           WHEN $6='abstained' THEN p.facets IS NULL OR (p.facets->$5->>'abstained')::boolean
           ELSE NOT (p.facets->$5->>'abstained')::boolean AND p.facets->$5->>'value'=$6 END)
-      ORDER BY p.root_id LIMIT $7`, [...parameters, args.cursor ?? null, args.dimension ?? null, args.value ?? null, limit + 1, args.root_id ?? null])).rows;
+      ORDER BY p.root_id LIMIT $7
+    ) SELECT COALESCE((SELECT jsonb_agg(distributions ORDER BY dimension,count DESC,value) FROM distributions),'[]'::jsonb) distributions,
+      COALESCE((SELECT jsonb_agg((to_jsonb(page)-ARRAY['workspace_id','input_digest','labeler_digest','entity_context_digest'])
+        ||jsonb_build_object('forced_abstentions',CASE WHEN page.requires_context_review OR page.status='pending' THEN '[]'::jsonb
+          ELSE ${facetForcedAbstentionsSqlV1("page")} END) ORDER BY root_id) FROM page),'[]'::jsonb) items`,
+      [...parameters, args.cursor ?? null, args.dimension ?? null, args.value ?? null, limit + 1, args.root_id ?? null])).rows[0]!;
+    const { distributions, items } = page;
     const labeler = (await client.query<{status:string}>(`SELECT l.status FROM signal_workspace_labelers w
       JOIN signal_labeler_versions l ON l.id=w.labeler_version_id WHERE w.workspace_id=$1 AND w.kind='facets'`, [args.workspace_id])).rows[0];
     await client.query("COMMIT");

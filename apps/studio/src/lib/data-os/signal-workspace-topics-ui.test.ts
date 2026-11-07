@@ -4,11 +4,12 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
+import type { SignalWorkspaceTopicReadBundleV1 } from "@noisia/db";
 import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1,
   SignalWorkspaceDefinedInterestOverviewV1 } from "@noisia/query-engine";
 import { todayForSignalTimezone } from "../../components/signal-v2/SignalAnalyticsFilter";
 import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
-import { SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
+import { validInitialTopicBundle, SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
 import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
 import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "../../components/signal-v2/SignalTopicChartOptions";
 Object.assign(globalThis, { React });
@@ -88,7 +89,7 @@ test("consolidated Signal separates Topics and narratives and exposes real edito
 
 test("native Topic and Narrative panels request evidence through their matching kind route", async () => {
   const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
-  assert.match(source, /topics-narratives\/\$\{sectionKind\}\/\$\{encodeURIComponent\(term\.term_key\)\}\/evidence/u);
+  assert.match(source, /topics-narratives\/\$\{sectionKind\}\/\$\{encodeURIComponent\(term\.term_key\)\}\/\$\{cursor \? "evidence" : "inspection"\}/u);
   assert.match(source, /body\.kind !== sectionKind/u);
   assert.match(source, /page\.kind === sectionKind/u);
 });
@@ -316,4 +317,34 @@ for(const locale of ["es-MX","en-US"])test(`${locale}: without-concept tab and K
  assert.ok(html.includes(`${label}<span>423</span>`));
  assert.ok((html.match(/>423</gu)??[]).length>=2,"tab and KPI both show423");
  assert.doesNotMatch(html,/>134</u);
+});
+
+const initialBundle: SignalWorkspaceTopicReadBundleV1 = {
+  contract_version: "signal-workspace-topic-read-bundle-v1", overview: data,
+  detail: { contract_version: "signal-workspace-topic-detail-v1", workspace_id: data.workspace_id,
+    generation_id: data.generation_id, scope_digest: data.scope_digest, kind: "topic", term_key: "topic0",
+    mention_count: 7, undated_mentions: 7, series: [],
+    sentiment: { positive: 0, neutral: 0, negative: 0, unclassified: 7, meaning: "evidence_sentiment_not_topic_polarity" },
+    related_topics: [], relationship_meaning: "cooccurrence_not_causality" },
+  evidence: { contract_version: "signal-workspace-topic-evidence-v1", workspace_id: data.workspace_id,
+    generation_id: data.generation_id, scope_digest: data.scope_digest, kind: "topic", term_key: "topic0",
+    items: [{ mention_id: "root", text: "Initial complete evidence", evidence_fragment: null, platform: "web", occurred_at: null, url: null }], next_cursor: null },
+};
+test("initial detail/evidence only hydrate the exact current workspace, digest, generation, term and snapshot", () => {
+  assert.equal(validInitialTopicBundle(initialBundle, data), initialBundle);
+  for (const field of ["workspace_id", "scope_digest", "generation_id", "observed_at"] as const)
+    assert.equal(validInitialTopicBundle(initialBundle, { ...data, [field]: "changed" }), null);
+  assert.equal(validInitialTopicBundle(initialBundle, { ...data, is_current: false }), null);
+  assert.equal(validInitialTopicBundle({ ...initialBundle, detail: { ...initialBundle.detail!, term_key: "topic1" } }, data), null);
+  assert.equal(validInitialTopicBundle({ ...initialBundle, evidence: { ...initialBundle.evidence!, kind: "narrative" } }, data), null);
+  assert.equal(validInitialTopicBundle({ ...initialBundle, evidence: { ...initialBundle.evidence!, workspace_id: "foreign" } }, data), null);
+});
+test("SSR renders selected metrics and evidence together without an initial loading waterfall", async () => {
+  const messages = JSON.parse(await readFile(new URL("../../../messages/es-MX.json", import.meta.url), "utf8"));
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider, { locale: "es-MX", messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+    createElement(SignalV2WorkspaceTopics, { brandName: "QA", data, initialBundle, loading: false,
+      manageTopicsHref: null, onApplyFilter: async () => true, onOpenMentions() {}, workspaceTimezone: "UTC" })));
+  assert.match(html, /Initial complete evidence/);
+  assert.match(html, /Sin sentimiento disponible: 7/);
+  assert.doesNotMatch(html, /Cargando…|Cargando\.\.\./);
 });
