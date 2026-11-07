@@ -145,3 +145,60 @@ La prueba de import usa un flag exclusivo de esa fixture, `--test-fail-import`.
 `node --import tsx /app/scripts/dev-corpus/snapshot-recovery-check.ts`, desde otra
 fixture pequeña sin preparación previa, comprueba fallo anterior al snapshot:
 `input_revision=null` requiere `--retry` y crea sucesor, preservando el run fallido.
+
+## Piloto de etiquetado masivo por etapas
+
+El ExecPlan `docs/product/PROMPT_LOOPING/PLAN_PILOTO_ETIQUETADO_MASIVO.md`
+manda sobre los recorridos anteriores. Sólo el orquestador ejecuta etapas pagadas.
+Ambos comandos usan el guard MFP existente y reciben identidad y rutas privadas por
+stdin. Redirigir siempre stdout a `.data/` privada. No pasar claves ni menciones en
+argumentos, Git o logs. El workspace debe tener opt-in `mass_labeling` y el proceso
+`NOISIA_MASS_LABELING_ENABLED=true`.
+
+```bash
+node --import tsx scripts/dev-corpus/mass-labeling-engine.ts initialize < .data/pilot-access.json > .data/pilot-catalog.json
+node --import tsx scripts/dev-corpus/mass-labeling-engine.ts preflight < .data/pilot-access.json > .data/pilot-preflight.json
+node --import tsx scripts/dev-corpus/mass-labeling-engine.ts fit < .data/pilot-fit.json > .data/pilot-fit-receipt.json
+node --import tsx scripts/dev-corpus/mass-labeling-engine.ts execute < .data/pilot-fit-execute.json > .data/pilot-fit-result.json
+```
+
+`pilot-access.json` contiene `workspace_id` y `actor_user_id`. `fit` añade
+`idempotency_key`; congela cap cero automáticamente (omitir `cap_micro_usd`). `execute` añade `execution_id`
+para el run devuelto. Las guías se derivan gratis de centroides de menciones que
+coinciden con marca, competidores o categoría gobernados. No requiere propuesta
+Claude de Brand OS. El perfil congela locale `pt-BR` sin modificar Brand OS.
+
+El daemon deja el editorial pagado del piloto pendiente para el operador CLI. El
+fit gratuito conserva su outbox normal. Una ejecución editorial nueva usa `editorial`, con `idempotency_key`,
+`cap_micro_usd`, `daily_cap_micro_usd` y `budget_timezone` explícitos. Después se
+invoca `execute` con su ejecución. El proceso necesita una clave Anthropic válida
+en su entorno efímero y `NOISIA_WORKSPACE_INTERPRETATION_ENABLED=true`.
+Studio y CLI verifican acceso antes de admitir nuevo trabajo. Cada grupo usa hasta
+30 representantes distintos. La consolidación global usa exclusivamente sus
+resúmenes y verifica antes de reservar los checkpoints firmados y el universo del
+lane. Su salida cubre todos los grupos mediante tópicos o exclusiones explícitas.
+`recover` añade `idempotency_key` y sólo recupera respuestas duraderas, sin autorizar
+nuevos envíos. `authorize` se reserva para renovación elegible de un run fallido.
+
+```bash
+node --import tsx scripts/dev-corpus/mass-labeling-run.ts map < .data/pilot-map.json > .data/pilot-map-receipt.json
+node --import tsx scripts/dev-corpus/mass-labeling-run.ts policy < .data/pilot-policy.json > .data/pilot-policy-receipt.json
+node --import tsx scripts/dev-corpus/mass-labeling-run.ts request < .data/pilot-request.json > .data/pilot-run-receipt.json
+node --import tsx scripts/dev-corpus/mass-labeling-run.ts step < .data/pilot-run.json > .data/pilot-page.json
+node --import tsx scripts/dev-corpus/mass-labeling-run.ts smoke < .data/pilot-run.json > .data/pilot-smoke.json
+```
+
+Todos incluyen identidad. `map` añade `source_engine_execution_id`,
+`assignments_artifact_id`, `assignments_path`, `consolidation_artifact_id`,
+`consolidation_path` y `source_checkpoints_path`. Los archivos contienen los bytes
+exactos de los artefactos privados; checkpoints es un array de
+`{artifact_id,body}`. DB verifica SHA, ledger global liquidado, request, salida y
+linaje individual. `policy` fija `cap_micro_usd`; `request` añade `map_id`,
+`idempotency_key` y cap explícito, comprueba JEV y admite primero smoke de1000.
+`step`, `recover`, `smoke` y `continue` usan `run_id`; `export` usa `map_id`. Con JEV habilitado, el drainer
+puede procesar runs admitidos en workers. `continue` expande el mismo run después
+del smoke. `recover` procesa exclusivamente raws existentes con el proveedor
+deshabilitado y no selecciona menciones ni crea nuevas reservas. `select` añade `map_id`, `topic_keys` y `expected_revision`; `status`
+lee la selección. `export` produce snapshot privado con textos, probabilidades,
+candidatos y ledger, sin llamar proveedores. La clave JEV permanece en el entorno
+mediante `TYPESAFE_API_KEY` y requiere `NOISIA_JEV_PROVIDER_ENABLED=true`.

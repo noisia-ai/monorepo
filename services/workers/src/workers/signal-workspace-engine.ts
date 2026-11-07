@@ -1,3 +1,4 @@
+import {authorizeMassEngineConsumerV1,type MassEngineOperatorV1} from "../providers/mass-labeling-consumer";
 import type { Job } from "bullmq";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -26,7 +27,7 @@ const stores = { claim: claimSignalWorkspaceEngineV1, chunks: readSignalWorkspac
 type Options = { database?: SignalWorkspaceEngineDatabaseV1; stores?: typeof stores; storage?: WorkspaceEngineStorageV1;
   python?: string; module_root?: string; storage_root?: string; timeout_ms?: number;
   process?: typeof runWorkspaceEngineProcessV1; interpret?: typeof interpretWorkspaceEngineV1;
-  incremental?: WorkspaceIncrementalJobOptionsV1 };
+  incremental?: WorkspaceIncrementalJobOptionsV1; mass_operator?:MassEngineOperatorV1 };
 const name = /^[a-z][a-z0-9_.-]{0,100}$/u;
 const safe = (error: unknown) => error instanceof Error && /^workspace_engine_[a-z_]{1,100}$/u.test(error.message)
   ? error.message : "workspace_engine_worker_failed";
@@ -37,6 +38,8 @@ export async function signalWorkspaceEngineJobV1(job: Pick<Job<{ execution_id: s
   options: Options = {}) {
   if (!job.id || typeof job.data?.execution_id !== "string") throw new Error("workspace_engine_job_invalid");
   const database = options.database ?? (await import("../db/client")).pool, store = options.stores ?? stores;
+  if(!options.stores&&!await authorizeMassEngineConsumerV1({database,execution_id:job.data.execution_id,operator:options.mass_operator}))
+    return {execution_id:job.data.execution_id,operator_required:true};
   const lease = await store.claim({ database, execution_id: job.data.execution_id, worker_job_id: job.id });
   if (!lease) return { execution_id: job.data.execution_id, replayed: true };
   if (lease.snapshot.numeric_descriptor) return runSignalWorkspaceIncrementalJobV1({ job, database, lease }, {

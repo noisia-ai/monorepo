@@ -1276,3 +1276,5 @@ export * from "./signal-hybrid-windows-v1";
 export * from "./signal-mass-labeling-jev-v1";
 
 export * from "./signal-mass-labeling-consolidation-v1";
+
+export * from "./anthropic-provider-access-v1";

@@ -51,7 +51,11 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
       UPDATE signal_topic_classification_outbox
       SET status='dead_letter',error_code=COALESCE(error_code,'dispatch_attempts_exhausted'),
         lease_token=NULL,lease_expires_at=NULL,updated_at=now()
-      WHERE attempt_count >= $1 AND status IN('pending','failed','dispatching')
+      WHERE NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions pilot
+        WHERE pilot.id=signal_topic_classification_outbox.execution_id
+          AND pilot.input_snapshot#>>'{engine_config,profile_version}'='workspace-bertopic-mass-labeling-v1'
+          AND pilot.input_snapshot ? 'interpretation_config')
+        AND attempt_count >= $1 AND status IN('pending','failed','dispatching')
         AND (dispatch_kind<>'incremental_editorial_evidence' OR preparation_token IS NULL)
         AND (status<>'dispatching' OR lease_expires_at<=now())
         AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial
@@ -70,7 +74,11 @@ export async function drainSignalTopicClassificationOutboxV1(options: Options = 
     source_projection: boolean; source_projection_contract: string | null; dispatch_kind: string; actor_user_id: string }>(`
     WITH candidates AS(
       SELECT id FROM signal_topic_classification_outbox
-      WHERE attempt_count<$1
+      WHERE NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions pilot
+        WHERE pilot.id=signal_topic_classification_outbox.execution_id
+          AND pilot.input_snapshot#>>'{engine_config,profile_version}'='workspace-bertopic-mass-labeling-v1'
+          AND pilot.input_snapshot ? 'interpretation_config')
+        AND attempt_count<$1
         AND NOT EXISTS(SELECT 1 FROM signal_topic_catalog_executions editorial
           WHERE editorial.id=signal_topic_classification_outbox.execution_id
             AND editorial.input_contract='workspace-incremental-editorial-v1' AND editorial.status NOT IN('queued','running'))

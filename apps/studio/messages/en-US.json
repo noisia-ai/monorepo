@@ -2806,6 +2806,7 @@
     "monitoringJourney": {"label": "Monitoring journey", "title": "Your brand monitoring", "body": "Manage context and topics; review received data and its preparation.", "steps": {"brand-os": "Brand context", "topics": "Topics and interests", "data": "Import mentions", "signal": "Signal"}},
     "topics": {
       "analysis": {
+        "operatorCli": "Pilot editorial processing requires the operator to continue from CLI. Free numerical fitting and saved progress are retained.",
         "legacyTitle": "Previous analysis",
         "legacyBody": "Review the saved results and costs of the partial interpretation. To turn every group into useful Topics, continue with the editorial review above.",
         "receiptLabels": {"cap": "Interpretation cap", "confirmed": "Confirmed Claude cost", "reserved": "Reserved Claude cost"},
