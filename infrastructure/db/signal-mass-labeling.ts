@@ -444,9 +444,12 @@ export async function exportMassLabelingSnapshotV1(args: {
 }) {
   return transaction(args.database, async client => {
     await client.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
-    await authorize(client, args.workspace_id, args.actor_user_id, false);
-    const map = (await client.query<MassLabelingMapV1>("SELECT * FROM signal_mass_labeling_maps WHERE workspace_id=$1 AND id=$2", [args.workspace_id, args.map_id])).rows[0];
-    if (!map) fail("mass_labeling_map_unavailable", 404);
+    const capability=await authorize(client,args.workspace_id,args.actor_user_id,false);
+    if(!capability.can_edit_topics||!capability.can_request_processing)fail("mass_labeling_private_export_forbidden",403);
+    const operator=await client.query(`SELECT 1 FROM users WHERE id=$1 AND status='active'
+      AND user_type='noisia_internal' AND primary_role IN('noisia_admin','founder','admin')`,[args.actor_user_id]);
+    if(!operator.rows.length)fail("mass_labeling_private_export_forbidden",403);
+    const map=await mapCurrent(client,args.workspace_id,args.map_id);
     const run = (await client.query(`SELECT run.*,mass.smoke_root_limit,mass.continued_at,mass.smoke_metrics,mass.smoke_metrics_digest FROM signal_mass_labeling_runs mass
       JOIN signal_labeling_runs run ON run.id=mass.run_id WHERE mass.workspace_id=$1 AND mass.map_id=$2`, [args.workspace_id, args.map_id])).rows[0] ?? null;
     const items = (await client.query(`SELECT item.*,result.call_id,result.status,result.probabilities,result.error_code,result.created_at result_created_at
@@ -487,9 +490,9 @@ export async function loadMassLabelingServingContextV1(client: Pick<PoolClient,"
     else throw error;
   }
   const state = (await client.query<{value: string}>(`SELECT signal_labeling_digest_v1(jsonb_build_object(
-    'map',$1::text,'revision',$2::int,'results',(SELECT count(*) FROM signal_mass_labeling_results WHERE map_id=$1),
+    'map',$1::uuid::text,'revision',$2::int,'results',(SELECT count(*) FROM signal_mass_labeling_results WHERE map_id=$1::uuid),
     'overrides',COALESCE((SELECT jsonb_agg(jsonb_build_array(id,root_id,topic_key,belongs) ORDER BY created_at,id)
-      FROM signal_mass_labeling_overrides WHERE map_id=$1),'[]'::jsonb))) value`, [map.id, selected.revision])).rows[0]!.value;
+      FROM signal_mass_labeling_overrides WHERE map_id=$1::uuid),'[]'::jsonb))) value`, [map.id, selected.revision])).rows[0]!.value;
   return {map, revision: selected.revision, selected_topic_keys: selected.selected_topic_keys,
     run_id: selected.run_id, is_current: current, state_digest: state};
 }

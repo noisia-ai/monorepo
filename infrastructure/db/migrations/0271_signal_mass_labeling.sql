@@ -101,6 +101,24 @@ CREATE TABLE signal_mass_labeling_runs (
  FOREIGN KEY(workspace_id,map_id) REFERENCES signal_mass_labeling_maps(workspace_id,id),
  FOREIGN KEY(workspace_id,run_id) REFERENCES signal_labeling_runs(workspace_id,id)
 );
+CREATE FUNCTION guard_signal_mass_labeling_admission_owner_v1() RETURNS trigger
+ LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+BEGIN
+ IF NOT EXISTS(SELECT 1 FROM signal_mass_labeling_runs mass
+   JOIN signal_labeling_runs run ON run.id=mass.run_id AND run.workspace_id=mass.workspace_id
+   JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id
+   WHERE mass.workspace_id=NEW.workspace_id AND mass.run_id=NEW.target_id
+     AND run.processing_admission_id=NEW.id AND run.actor_user_id=NEW.actor_user_id
+     AND run.kind='mass_labeling' AND labeler.kind='mass_labeling' AND labeler.provider='typesafe'
+     AND labeler.model='jev-1.13.0' AND labeler.identity#>>'{params,request_version}'='mass-labeling-jev-v1') THEN
+  RAISE EXCEPTION 'mass_labeling_admission_owner_required' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+CREATE CONSTRAINT TRIGGER mass_labeling_admission_owner AFTER INSERT ON signal_processing_admissions
+ DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN(NEW.action='mass_labeling_jev')
+ EXECUTE FUNCTION guard_signal_mass_labeling_admission_owner_v1();
+
 CREATE TABLE signal_mass_labeling_call_roots (
  workspace_id uuid NOT NULL,
  run_id uuid NOT NULL,
@@ -440,11 +458,11 @@ DO $$ DECLARE object_name text; role_name text; BEGIN
   END LOOP;
  END LOOP;
  REVOKE ALL ON signal_mass_labeling_memberships_v1 FROM PUBLIC;
- REVOKE ALL ON FUNCTION guard_signal_mass_labeling_cost_stage_v1(),guard_signal_mass_labeling_call_root_v1(),guard_signal_mass_labeling_admission_v1(),guard_signal_mass_labeling_immutable_v1(),guard_signal_mass_labeling_result_v1(),guard_signal_mass_labeling_run_v1() FROM PUBLIC;
+ REVOKE ALL ON FUNCTION guard_signal_mass_labeling_admission_owner_v1(),guard_signal_mass_labeling_cost_stage_v1(),guard_signal_mass_labeling_call_root_v1(),guard_signal_mass_labeling_admission_v1(),guard_signal_mass_labeling_immutable_v1(),guard_signal_mass_labeling_result_v1(),guard_signal_mass_labeling_run_v1() FROM PUBLIC;
  FOREACH role_name IN ARRAY ARRAY['anon','authenticated'] LOOP
   IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=role_name) THEN
    EXECUTE format('REVOKE ALL ON signal_mass_labeling_memberships_v1 FROM %I',role_name);
-   EXECUTE format('REVOKE ALL ON FUNCTION guard_signal_mass_labeling_cost_stage_v1(),guard_signal_mass_labeling_call_root_v1(),guard_signal_mass_labeling_admission_v1(),guard_signal_mass_labeling_immutable_v1(),guard_signal_mass_labeling_result_v1(),guard_signal_mass_labeling_run_v1() FROM %I',role_name);
+   EXECUTE format('REVOKE ALL ON FUNCTION guard_signal_mass_labeling_admission_owner_v1(),guard_signal_mass_labeling_cost_stage_v1(),guard_signal_mass_labeling_call_root_v1(),guard_signal_mass_labeling_admission_v1(),guard_signal_mass_labeling_immutable_v1(),guard_signal_mass_labeling_result_v1(),guard_signal_mass_labeling_run_v1() FROM %I',role_name);
   END IF;
  END LOOP;
 END $$;

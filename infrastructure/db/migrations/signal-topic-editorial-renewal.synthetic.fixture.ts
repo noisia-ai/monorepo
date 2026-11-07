@@ -58,6 +58,7 @@ export const SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1: SignalBrandCon
  * remain real; the main fixture then runs the normal semantic transitions. */
 export function createSignalTopicEditorialRenewalSyntheticSavesV1(
   runtime = SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1,
+  options: {brand_name?: string} = {},
 ): Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge"> {
   const refreshSnapshot = async (args: Parameters<BrandContextSyntheticSaveBindingsV1["saveKnowledge"]>[0]) => {
     const snapshot = await readSignalBrandOsCanonicalSnapshotV1({ queryable: args.scoped,
@@ -75,7 +76,7 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
     async createBrand(args) {
       const brand_id = randomUUID();
       await args.scoped.query(`INSERT INTO brands(id,organization_id,slug,name,display_name,description,industry,industry_sub,countries,status)
-        VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,'active')`, [brand_id, args.organization_id, args.intake.slug, args.intake.name,
+        VALUES($1,$2,$3,$4,$4,$5,$6,$7,$8,'active')`, [brand_id, args.organization_id, args.intake.slug, options.brand_name ?? args.intake.name,
       args.intake.description, args.intake.industry, args.intake.industry_sub, args.intake.countries]);
       const workspace = (await args.scoped.query<{ id: string }>("SELECT id FROM signal_workspaces WHERE brand_id=$1 AND organization_id=$2",
         [brand_id, args.organization_id])).rows[0];
