@@ -14,7 +14,7 @@ import {
   getEmbeddingProvider,
   hashEmbeddingChunk,
   signalTopicDefinitionDigestV1,
-  buildSignalWorkspaceInterpretationBatchV1, validateSignalWorkspaceInterpretationResultV1,
+  buildSignalWorkspaceInterpretationBatchV1, validateSignalWorkspaceInterpretationResultV1,parseSignalWorkspaceInterpretationConfigurationV1,
   buildSignalWorkspaceInterpretationRepairBatchV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   signalWorkspaceInterpretationUniverseDigestV1, mergeSignalWorkspaceTopicMaterializationV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationV1,
@@ -1691,6 +1691,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
     const inherited = pilotLocale ? {...inheritedSource, locale: {...inheritedSource.locale,
       primary_locale:pilotLocale,languages:[pilotLocale]}} : inheritedSource;
     const merged = mergeSignalWorkspaceTopicMaterializationV1({ prior: priorDefinitions, interpretations: proposals,
+      interpretation_configuration:parseSignalWorkspaceInterpretationConfigurationV1(run.input_snapshot.interpretation_config.call_configuration),
       execution_id: lease.execution_id, now: new Date().toISOString(), locale: canonicalSignalWorkspaceTopicLocaleV1(inherited.locale.primary_locale) });
     const mappingDigest = sha256(stableJson(merged.mapping));
     const replay = (await client.query<{ id: string; version: number; metadata: { source_mapping_digest: string } }>(`
