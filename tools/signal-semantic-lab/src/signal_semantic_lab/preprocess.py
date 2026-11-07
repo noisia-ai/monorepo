@@ -125,6 +125,16 @@ _SPANISH_STOPWORDS = {
     "ya",
     "yo",
 }
+_PORTUGUESE_STOPWORDS = {
+    "a", "ao", "aos", "as", "ate", "com", "como", "da", "das", "de", "dela", "dele",
+    "deles", "do", "dos", "e", "ela", "elas", "ele", "eles", "em", "entre", "era",
+    "essa", "esse", "esta", "este", "eu", "foi", "isso", "isto", "ja", "lhe", "mais",
+    "mas", "me", "mesmo", "meu", "minha", "muito", "na", "nas", "no", "nos", "nossa",
+    "nosso", "o", "os", "ou", "para", "pela", "pelas", "pelo", "pelos", "por", "porque",
+    "qual", "quando", "que", "quem", "se", "seu", "sua", "sobre", "tambem", "te", "tem",
+    "tendo", "tenho", "ter", "um", "uma", "umas", "uns", "voce", "voces",
+}
+
 _NEGATIONS = {
     "no",
     "nunca",
@@ -139,6 +149,11 @@ _NEGATIONS = {
     "nor",
     "without",
     "hardly",
+    "nao",
+    "não",
+    "nem",
+    "sem",
+    "jamais",
 }
 _TECHNICAL_BOILERPLATE = {
     "amp",
@@ -170,7 +185,7 @@ class LocalePreprocessPolicy:
     stopword_policy_version: str = STOPWORD_POLICY_VERSION
 
     def __post_init__(self) -> None:
-        allowed = {"es", "en"}
+        allowed = {"es", "en", "pt"}
         if not self.language_families or not set(self.language_families) <= allowed:
             raise ValueError("benchmark_locale_language_family_unsupported")
         if self.ngram_min < 1 or self.ngram_max < self.ngram_min or self.ngram_max > 3:
@@ -185,7 +200,7 @@ def normalize_text(value: str) -> str:
 
 def locale_stopwords(language_families: Iterable[str]) -> frozenset[str]:
     families = set(language_families)
-    unknown = families - {"es", "en"}
+    unknown = families - {"es", "en", "pt"}
     if unknown:
         raise ValueError("benchmark_locale_language_family_unsupported")
     words: set[str] = set(_TECHNICAL_BOILERPLATE)
@@ -193,6 +208,8 @@ def locale_stopwords(language_families: Iterable[str]) -> frozenset[str]:
         words.update(_SPANISH_STOPWORDS)
     if "en" in families:
         words.update(_ENGLISH_STOPWORDS)
+    if "pt" in families:
+        words.update(_PORTUGUESE_STOPWORDS)
     words.difference_update(_NEGATIONS)
     return frozenset(words)
 
