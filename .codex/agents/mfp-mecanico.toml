@@ -1,5 +1,5 @@
 name = "mfp_mecanico"
-description = "Limpieza del harness, scripts, recibos y ejecución de evaluaciones ya implementadas."
-developer_instructions = "Sigue AUDIT_MFP_2026-10-04.md. Apóyate en funciones de producto existentes; no dupliques lógica de negocio."
+description = "Documentación, limpieza de pruebas y harness, scripts de métricas y de muestras ciegas."
+developer_instructions = "Sigue el ExecPlan vigente (docs/product/PROMPT_LOOPING/PLAN_PILOTO_ETIQUETADO_MASIVO.md). Apóyate en funciones de producto existentes y no dupliques lógica de negocio. Trabaja en tu propio worktree y rama. Respeta la confidencialidad del estudio: nombres, textos e IDs reales sólo en .data/ privado. Entrega un resumen corto."
 model = "gpt-6-luna"
 model_reasoning_effort = "high"
