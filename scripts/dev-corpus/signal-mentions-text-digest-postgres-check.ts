@@ -6,6 +6,7 @@ await main(async () => {
   let phase = 'open_database';
   const pool = await openDatabase();
   const client = await pool.connect();
+  const schema = `mfp_digest_${process.pid}_${Date.now().toString(36)}`;
   const mark = (next: string) => {
     phase = next;
     console.log(JSON.stringify({ gate: 'mentions_text_digest_postgres', phase }));
@@ -13,17 +14,24 @@ await main(async () => {
   try {
     mark('seed_legacy_rows');
     await client.query('BEGIN');
-    await client.query('SET LOCAL search_path=pg_temp,public,extensions');
-    await client.query('CREATE TEMP TABLE mentions(id uuid PRIMARY KEY,text_clean text NOT NULL)');
+    await client.query(`CREATE SCHEMA ${schema}`);
+    await client.query(`SET LOCAL search_path=${schema},public,extensions`);
+    await client.query('CREATE TABLE mentions(id uuid PRIMARY KEY,text_clean text NOT NULL)');
     const legacy = [
       ['00000000-0000-4000-8000-000000000001', 'plain legacy text'],
       ['00000000-0000-4000-8000-000000000002', 'Texto con acento: canción'],
       ['00000000-0000-4000-8000-000000000003', 'NFD: café ☕'],
     ];
     for (const [id, text] of legacy) await client.query('INSERT INTO mentions(id,text_clean) VALUES($1,$2)', [id, text]);
-    const migration = async (name: string) => client.query(await readFile(
-      new URL(`../../infrastructure/db/migrations/${name}`, import.meta.url), 'utf8'));
-    mark('apply_0167');
+    const migration = async (name: string) => {
+      const sql = await readFile(new URL(`../../infrastructure/db/migrations/${name}`, import.meta.url), 'utf8');
+      // The numbered migrations have already run in public. Reapply their exact
+      // DDL in a rollback-only synthetic schema; the function path must resolve
+      // that schema so it operates on these invented rows only.
+      return client.query(sql.replaceAll('SET search_path=pg_catalog,public,extensions',
+        `SET search_path=pg_catalog,${schema},public,extensions`));
+    };
+    mark('apply_initial_migration');
     await migration('0167_signal_mentions_text_digest.sql');
     mark('assert_backfill_acl');
     const missingBeforeBackfill = await client.query('SELECT count(*)::int count FROM mentions WHERE text_clean_sha256 IS NULL');
@@ -59,7 +67,7 @@ await main(async () => {
     };
     await invalidLimit(0);
     await invalidLimit(10001);
-    mark('finalize_0168_0169');
+    mark('finalize_migrations');
     await migration('0168_signal_mentions_text_digest_finalize.sql');
     await migration('0169_signal_mentions_text_digest_validate.sql');
     mark('verify_digest_trigger');
