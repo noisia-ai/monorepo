@@ -31,6 +31,12 @@ async function dailyExposure(f:Awaited<ReturnType<typeof fixture>>,timezone='UTC
    AND call.budget_date=(clock_timestamp() AT TIME ZONE $2)::date`,[f.actor_user_id,timezone])).rows[0];
  return Number(row?.total_micro_usd??0);
 }
+async function workspaceDailyExposure(f:Awaited<ReturnType<typeof fixture>>,workspace_id:string,timezone='UTC'){
+ const row=(await f.query(`SELECT COALESCE(sum(workspace_engine_interpretation_effective_cost_v1(call)),0)::text total_micro_usd
+  FROM engine_cost_events call WHERE call.workspace_contract='workspace-engine-interpretation-v1' AND call.actor_user_id=$1::uuid
+   AND call.workspace_id=$2::uuid AND call.budget_date=(clock_timestamp() AT TIME ZONE $3)::date`,[f.actor_user_id,workspace_id,timezone])).rows[0];
+ return Number(row?.total_micro_usd??0);
+}
 async function prototypes(f:Awaited<ReturnType<typeof fixture>>){
  const q=await quoteSignalWorkspaceTopicPrototypesV1(f.access);
  const requested=await requestSignalWorkspaceTopicPrototypesV1({...f.access,idempotency_key:randomUUID(),plan_digest:q.plan_digest,quote_digest:q.quote_digest,
@@ -678,7 +684,16 @@ test('interpretation single-send, exact settlement after staleness, retained unk
   const nextCoverage=await consume(otherFixture,nextLease),nextModel=await artifact(otherFixture,nextLease,'engine_model'),nextOutput=await artifact(otherFixture,nextLease,'engine_output');
   await engine.finishSignalWorkspaceEngineFitV1({database:other.database,lease:nextLease,model_artifact_id:nextModel,output_artifact_id:nextOutput,result_kind:'computational_grouping',coverage:nextCoverage,
    model_configuration:{fixture:true},runtime_kind:'python',artifact_format:'joblib',license_key:'fixture-only'});
-  const nextRequest=randomUUID(),otherDailyCap=await dailyExposure(otherFixture,'America/Mexico_City')+500;
+  const nextRequest=randomUUID();
+  const secondWorkspaceExposure=await workspaceDailyExposure(otherFixture,secondWorkspace,'America/Mexico_City');
+  const sharedActorExposure=await dailyExposure(otherFixture,'America/Mexico_City');
+  const otherDailyCap=secondWorkspaceExposure+1000;
+  assert.ok(secondWorkspaceExposure+1000<=otherDailyCap,
+   'the requested amount fits when only this workspace’s existing exposure is considered');
+  assert.ok(sharedActorExposure>secondWorkspaceExposure,
+   'the same actor carries settled and unknown exposure from the first workspace');
+  assert.ok(sharedActorExposure+1000>otherDailyCap,
+   'cross-workspace exposure makes that otherwise admissible request exceed the unchanged cap');
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...otherAccess,...next,idempotency_key:nextRequest,
    request_digest:sha(nextRequest),configuration,reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:otherDailyCap}),/daily_cap_exceeded/u);
 
