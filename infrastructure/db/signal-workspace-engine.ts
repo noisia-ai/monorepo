@@ -1,3 +1,4 @@
+import { signalWorkspaceMassLabelingEnabledV1, loadSignalWorkspaceMassLabelingSeedsV1 } from "./signal-workspace-mass-labeling-profile";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
 import { loadSignalDiscoveryEstimateV1 } from "./signal-workspace-discovery-estimate";
 export { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1 } from "./signal-workspace-discovery-policy";
@@ -10,8 +11,9 @@ import {signalWorkspaceFeatureEnabledV1,signalWorkspaceFeatureEnabledWithDatabas
 import { loadSignalDiscoveryResidualRootsV1, buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceTopicPrototypePlanV1,
-  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
+  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
   signalTopicDefinitionSchemaV1, signalTopicGuidesDiscoveryV1, signalWorkspaceInterpretationUniverseDigestV1,
+  signalWorkspaceMassLabelingConfigV1, isSignalWorkspaceMassLabelingConfigV1,
   type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { ensureSignalTopicCatalogStoreV1, loadSignalTopicWorkingProfileWithQueryableV1, loadSignalTopicInheritedContextStoreV1, SignalTopicCatalogError } from "./signal-topic-catalog";
@@ -285,6 +287,11 @@ const leaseView = (run: Run, token: string): SignalWorkspaceEngineLeaseV1 => ({e
   interpretation_revision_digest:run.interpretation_revision?.revision_digest??null});
 function publicSnapshot(snapshot: Run["input_snapshot"]): SignalWorkspaceEngineSnapshotV1 { const {guides:_guides,...rest}=snapshot; return rest; }
 async function buildInput(client: Pick<PoolClient,'query'>, workspace: string, actor: string, taxonomy_profile_id?: string, discovery=false) {
+  if (await signalWorkspaceMassLabelingEnabledV1({ queryable: client, workspace_id: workspace })) {
+    const plan = await loadSignalWorkspaceTopicPrototypePlanV1({ queryable: client, workspace_id: workspace, actor_user_id: actor, taxonomy_profile_id });
+    return { plan, guides: plan.context_inputs ?? [], catalog_digest: signalWorkspaceEmbeddingDigestV1([]),
+      context_digest: plan.context_digest, context_refs: [] };
+  }
   if(discovery){
     const context=await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:workspace,complete_context:true,context_mode:"workspace-discovery-v1"});
     const profile=taxonomy_profile_id?(await client.query<{id:string;taxonomy_id:string}>(`SELECT id,taxonomy_id FROM signal_taxonomy_profiles
@@ -358,6 +365,12 @@ function signalWorkspaceInterpretationInterestSynopsisV1(values:Array<{term_key:
 }
 export async function readSignalWorkspaceEngineInterpretationContextV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1}) {
   return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
+    if (isSignalWorkspaceMassLabelingConfigV1(run.input_snapshot.engine_config)) {
+      const seeds = await loadSignalWorkspaceMassLabelingSeedsV1({ queryable: client, workspace_id: run.workspace_id });
+      if (seeds.context_digest !== run.input_snapshot.context_digest) return fail('workspace_engine_inputs_stale');
+      return { actor_user_id: run.actor_user_id, context: { workspace_id: run.workspace_id, execution_id: run.id,
+        context_digest: seeds.context_digest, data: { brand_os: { context_digest: seeds.context_digest, seeds: seeds.seeds }, interests: [] } } };
+    }
     // Send a bounded, explicit projection of the same governed Brand OS
     // authority used by the numerical guides. The complete serving object has
     // four near-duplicate text views and every source reference; repeating it
@@ -420,11 +433,17 @@ export async function loadSignalWorkspaceEnginePreflightV1(args:{database:Signal
     let context_digest:string,catalog_digest:string,guides:Array<Omit<SignalWorkspaceEngineGuideV1,'vector'>>,total_interests:number;
     try{const input=await buildInput(client,args.workspace_id,args.actor_user_id,args.taxonomy_profile_id,discoveryEnabled);context_digest=input.context_digest;catalog_digest=input.catalog_digest;guides=input.guides;total_interests=input.plan.topics.length;}
     catch(error){if(args.taxonomy_profile_id||!(error instanceof Error)||error.message!=='workspace_topic_catalog_required')throw error;
-      const input=discoveryEnabled
-        ?{context:await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true,context_mode:"workspace-discovery-v1"}),context_inputs:[]}
-        :await loadSignalWorkspaceAutonomousContextInputsV1({queryable:client,workspace_id:args.workspace_id});
-      context_digest=input.context.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=input.context_inputs;total_interests=0;}
-    const embedded=(await client.query<{id:string;preparation_run_id:string}>(`SELECT run.id,run.preparation_run_id FROM signal_workspace_embedding_runs run
+      if (await signalWorkspaceMassLabelingEnabledV1({queryable:client,workspace_id:args.workspace_id})) {
+        const seeds = await loadSignalWorkspaceMassLabelingSeedsV1({queryable:client,workspace_id:args.workspace_id});
+        context_digest=seeds.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=seeds.context_inputs;total_interests=0;
+      } else {
+        const input=discoveryEnabled
+          ?{context:await loadSignalTopicInheritedContextStoreV1({queryable:client,workspace_id:args.workspace_id,complete_context:true,context_mode:"workspace-discovery-v1"}),context_inputs:[]}
+          :await loadSignalWorkspaceAutonomousContextInputsV1({queryable:client,workspace_id:args.workspace_id});
+        context_digest=input.context.context_digest;catalog_digest=signalWorkspaceEmbeddingDigestV1([]);guides=input.context_inputs;total_interests=0;
+      }
+    }
+    const embedded=(await client.query<{id:string;preparation_run_id:string;counts:{eligible_roots:number}}>(`SELECT run.id,run.preparation_run_id,run.counts FROM signal_workspace_embedding_runs run
       JOIN signal_corpus_preparation_input_state state USING(workspace_id)
       WHERE run.workspace_id=$1::uuid AND run.input_contract='corpus' AND run.status='completed'
        AND run.input_revision=state.input_revision AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())
@@ -432,6 +451,8 @@ export async function loadSignalWorkspaceEnginePreflightV1(args:{database:Signal
     const missing = await missingGuides(client,args.workspace_id,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1.config_digest,guides);
     return {embedding_run_id:embedded?.id??null,expected_context_digest:context_digest,expected_catalog_digest:catalog_digest,
       expected_guides:guides.length,missing_guides:missing,total_interests,
+      engine_configuration: await signalWorkspaceMassLabelingEnabledV1({queryable:client,workspace_id:args.workspace_id})
+        ? signalWorkspaceMassLabelingConfigV1(embedded?.counts.eligible_roots ?? 0) : undefined,
       advisory_estimate:discoveryEnabled&&embedded
         ?await loadSignalDiscoveryEstimateV1({queryable:client,workspace_id:args.workspace_id,preparation_run_id:embedded.preparation_run_id}):null};
   });
@@ -526,6 +547,14 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       WHERE run.id=$1::uuid AND run.workspace_id=$2::uuid AND run.input_contract='corpus' AND run.status='completed' AND prep.status='completed'
        AND run.input_revision=state.input_revision AND (run.policy_valid_until IS NULL OR run.policy_valid_until>clock_timestamp())`,[args.embedding_run_id,args.workspace_id])).rows[0];
     if(!embedded)return fail('workspace_engine_complete_embeddings_required');assertSignalWorkspaceEmbeddingProfileV1(embedded.profile);
+    const pilot = await signalWorkspaceMassLabelingEnabledV1({ queryable: client, workspace_id: args.workspace_id });
+    if (pilot !== isSignalWorkspaceMassLabelingConfigV1(args.engine_config)
+      || pilot && (discoveryEnabled || args.incremental_options || args.parent_execution_id
+        || signalWorkspaceEmbeddingDigestV1(args.engine_config) !== signalWorkspaceEmbeddingDigestV1(signalWorkspaceMassLabelingConfigV1(embedded.counts.eligible_roots))))
+      return fail('workspace_engine_profile_invalid', 422);
+    if (pilot && args.interpretation_config && signalWorkspaceEmbeddingDigestV1(args.interpretation_config.call_configuration)
+      !== signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1))
+      return fail('workspace_engine_interpretation_config_invalid', 422);
     if(args.incremental_options?.automatic_admission)
       await (await import('./signal-workspace-numeric-producer')).assertSignalWorkspaceNumericAdmissionWithClientV1({queryable:client,
         workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,input_revision:embedded.input_revision,
@@ -576,7 +605,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       context_digest:input.context_digest,catalog_digest:input.catalog_digest,engine_config:args.engine_config,guides:input.guides,
       ...args.incremental_options,parent_execution_id:numericParentId,discovery:discoveryEnabled,
       residual_root_ids:discovery?await loadSignalDiscoveryResidualRootsV1(client,args.workspace_id,discovery.population.root_ids):undefined}):undefined;
-    const parentId=numericDescriptor?numericDescriptor.parent.execution_id:discoveryEnabled?null:args.parent_execution_id===undefined?(await client.query<{id:string}>(`SELECT prior.id FROM signal_topic_catalog_executions prior
+    const parentId=pilot?null:numericDescriptor?numericDescriptor.parent.execution_id:discoveryEnabled?null:args.parent_execution_id===undefined?(await client.query<{id:string}>(`SELECT prior.id FROM signal_topic_catalog_executions prior
       WHERE prior.workspace_id=$1::uuid AND prior.input_contract='workspace-topic-engine-v1' AND prior.status='ready'
        AND prior.embedding_config_digest=$2 AND prior.input_snapshot->>'context_digest'=$3
        AND prior.result_summary->>'model_version_id' IS NOT NULL
@@ -616,6 +645,22 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     return {execution_id:id,replayed:false};
   });
 }
+/** Operator entrypoint for the pilot. Numeric fits have zero paid authority.
+ * A subsequent deterministic fit may explicitly admit group interpretation. */
+export async function beginSignalWorkspaceMassLabelingEngineV1(args: {
+  database: SignalWorkspaceEngineDatabaseV1; workspace_id: string; actor_user_id: string;
+  idempotency_key: string; claude_cap_micro_usd?: number;
+  interpretation_config?: SignalWorkspaceEngineAnalysisConfigV1;
+}) {
+  const preflight = await loadSignalWorkspaceEnginePreflightV1(args);
+  if (!preflight.engine_configuration || !preflight.embedding_run_id) return fail('workspace_engine_pilot_not_ready');
+  if (Boolean(args.interpretation_config) !== (args.claude_cap_micro_usd !== undefined)) return fail('workspace_engine_request_invalid', 422);
+  return beginSignalWorkspaceEngineV1({ ...args, embedding_run_id: preflight.embedding_run_id,
+    expected_context_digest: preflight.expected_context_digest, expected_catalog_digest: preflight.expected_catalog_digest,
+    engine_config: preflight.engine_configuration, parent_execution_id: null,
+    claude_cap_micro_usd: args.claude_cap_micro_usd ?? 0 });
+}
+
 export async function claimSignalWorkspaceEngineV1(args:{database:SignalWorkspaceEngineDatabaseV1;execution_id:string;worker_job_id:string}):Promise<SignalWorkspaceEngineLeaseV1|null>{
   return transaction(args.database,async client=>{const run=await lockedRun(client,args.execution_id);
     if(run.status==='ready')return null;

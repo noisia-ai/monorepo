@@ -13,6 +13,24 @@ export const SIGNAL_WORKSPACE_ENGINE_CONFIG_V1 = Object.freeze({
   lineage_min_common_roots: 2, lineage_min_fraction: 0.5, memory_budget_bytes: 4294967296
 });
 
+/** Full-population pilot identity. Parameters are derived on the server from
+ * eligible canonical roots, before fitting or submitting representative evidence. */
+export const SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1 = "workspace-bertopic-mass-labeling-v1" as const;
+export function signalWorkspaceMassLabelingConfigV1(roots: number) {
+  if (!Number.isSafeInteger(roots) || roots < 0) throw new Error("workspace_engine_population_invalid");
+  return Object.freeze({
+    ...SIGNAL_WORKSPACE_ENGINE_CONFIG_V1,
+    profile_version: SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1,
+    language_families: ["pt", "es", "en"],
+    hdbscan_min_cluster_size: Math.max(40, Math.ceil(roots / 1000)),
+    cluster_selection_method: "eom", maximum_topics: 200, representatives: 30,
+    guidance_policy: "brand-competitors-category-v1", editorial_lane: "guided-or-open-v1",
+  });
+}
+export function isSignalWorkspaceMassLabelingConfigV1(config: Record<string, unknown>): boolean {
+  return config.profile_version === SIGNAL_WORKSPACE_MASS_LABELING_PROFILE_V1;
+}
+
 export type SignalWorkspaceEngineChunkV1 = {
   root_id: string; root_fingerprint: string; asset_sha256: string; expected_chunks: number;
   chunk_index: number; start: number; end: number; chunk_sha256: string; text: string;
