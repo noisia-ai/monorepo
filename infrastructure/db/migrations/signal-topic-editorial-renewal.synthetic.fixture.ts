@@ -34,6 +34,7 @@ import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-w
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
   root_count?: number;
   long_text?: boolean;
+  skip_topic_prototypes?: boolean;
   runtime?: SignalBrandContextPreparationRuntimeV1;
   numeric_daily_cap_micro_usd?: number;
   saves?: Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge">;
@@ -92,10 +93,10 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
       const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
         brand_id, initiator_user_id: args.actor_user_id, env: {
           NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID: args.actor_user_id,
-          NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd + BigInt(runtime.prototype.max_run_cost_micro_usd) + 50_000_000n),
+          NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD: '999999999999999',
           // Synthetic receipts still share the real daily admission ledger.
           // Leave room for every isolated preparation stage in this fixture.
-          NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd + BigInt(runtime.prototype.max_run_cost_micro_usd) + 50_000_000n),
+          NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD: '999999999999999',
           NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL: new Date(Date.now() + 86_400_000).toISOString(),
           NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: String(runtime.prototype.max_run_cost_micro_usd),
           NOISIA_SEMANTIC_CONTEXT_MODEL: config.model, NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION: config.model_version,
@@ -224,12 +225,13 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   // rollback, including failures. Its numerical records and receipts are real.
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, root_count: args.root_count, long_text: args.long_text,
+    identity, root_count: args.root_count, long_text: args.long_text, skip_topic_prototypes: args.skip_topic_prototypes,
     projection: { ...args.projection, cluster_ids: clusterIds,
       ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },
   });
   assert.equal(projection.roots.length, args.root_count ?? 3, "the requested invented canonical root count is used");
-  assert.equal(projection.chunks.length, args.root_count ?? 3, "each synthetic fixture text occupies one governed chunk");
+  if (args.long_text) assert.ok(projection.chunks.length >= projection.roots.length, "long synthetic text is represented by governed chunks");
+  else assert.equal(projection.chunks.length, args.root_count ?? 3, "each synthetic fixture text occupies one governed chunk");
   const source_execution_id = projection.engine_execution_id;
   const binding = (await query("SELECT signal_topic_consolidation_source_binding_v1($1::uuid) value", [source_execution_id])).rows[0]?.value;
   assert.ok(binding, "actual completed embedding and fit checkpoint must resolve the numerical source binding");

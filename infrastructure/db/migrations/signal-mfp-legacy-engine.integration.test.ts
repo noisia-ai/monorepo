@@ -13,7 +13,7 @@ import {quoteSignalWorkspaceTopicPrototypesV1,requestSignalWorkspaceTopicPrototy
 import {signalMfpLegacyWorkspaceFixtureV1} from './signal-mfp-legacy-workspace.synthetic.fixture';
 const enabled=process.env.NOISIA_MFP_PG_CI==='true';
 const sha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf8').digest('hex')}`;
-async function fixture(options:{root_count?:number}={}){
+async function fixture(options:{root_count?:number;skip_topic_prototypes?:boolean}={}){
  const seeded=await signalMfpLegacyWorkspaceFixtureV1(options);
  const {query,database,workspace_id,actor_user_id,embedding_run_id,catalog,cleanup}=seeded;
  await catalog();
@@ -138,8 +138,7 @@ test('engine exports every chunk with zero interests, autonomous cached context,
  }finally{await f.cleanup();}
 });
 test('engine rejects missing context cache and stale completion; small populations complete without inventing a model', {skip:!enabled,timeout:120_000},async()=>{
- const f=await fixture();try{
-  await f.catalog();
+ const f=await fixture({skip_topic_prototypes:true});try{
   await assert.rejects(f.begin(),/guides_required/u);
   await prototypes(f);const started=await f.begin(),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-fixture'});assert.ok(lease);
   const coverage=await consume(f,lease);const output=await artifact(f,lease,'engine_output');
@@ -153,23 +152,28 @@ test('engine rejects missing context cache and stale completion; small populatio
  }finally{await f.cleanup();}
 });
 
-test('brand without a catalog has read-only preflight and cannot borrow another workspace corpus', {skip:!enabled,timeout:60_000},async()=>{
+test('brand without published context cannot start from another workspace embeddings or create a catalog', {skip:!enabled,timeout:60_000},async()=>{
  const f=await fixture();try{
   const brand=randomUUID(),organization=(await f.query("SELECT organization_id FROM brands WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id])).rows[0].organization_id;
   await f.query("INSERT INTO brands(id,organization_id,slug,name,description,status) VALUES($1::uuid,$2::uuid,$3,'Zero interests','Local Brand OS before imports','active')",[brand,organization,`engine-${brand}`]);
   const workspace=(await f.query("SELECT id FROM signal_workspaces WHERE brand_id=$1::uuid",[brand])).rows[0].id;
   const before=(await f.query("SELECT count(*)::int count FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid",[workspace])).rows[0].count;assert.equal(before,0);
-  const preflight=await engine.loadSignalWorkspaceEnginePreflightV1({...f.access,workspace_id:workspace});
-  assert.equal(preflight.total_interests,0);assert.equal(preflight.embedding_run_id,null);assert.ok(preflight.expected_guides>0);
+  const moneyAndQueue=async()=> (await f.query(`SELECT
+   (SELECT count(*)::int FROM engine_cost_events WHERE workspace_id=$1::uuid) calls,
+   (SELECT count(*)::int FROM signal_processing_admissions WHERE workspace_id=$1::uuid) admissions,
+   (SELECT count(*)::int FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid) executions`,[workspace])).rows[0];
+  const beforeMoney=await moneyAndQueue();
+  await assert.rejects(engine.loadSignalWorkspaceEnginePreflightV1({...f.access,workspace_id:workspace}),/brand_context_semantic_context_required/u);
   assert.equal((await f.query("SELECT count(*)::int count FROM signal_taxonomy_profiles WHERE workspace_id=$1::uuid",[workspace])).rows[0].count,0);
   await assert.rejects(engine.beginSignalWorkspaceEngineV1({...f.access,workspace_id:workspace,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
-    expected_context_digest:preflight.expected_context_digest,expected_catalog_digest:preflight.expected_catalog_digest,engine_config:{fixture:true},claude_cap_micro_usd:0}),/complete_embeddings_required/u);
+    expected_context_digest:sha('foreign workspace context'),expected_catalog_digest:sha('foreign workspace catalog'),engine_config:{fixture:true},claude_cap_micro_usd:0}),/brand_context_semantic_context_required/u);
   assert.equal((await f.query("SELECT count(*)::int count FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[workspace])).rows[0].count,0);
+  assert.deepEqual(await moneyAndQueue(),beforeMoney,'foreign embedding IDs and unpublished context cannot create reservations, provider-call ledgers, executions or dispatches');
  }finally{await f.cleanup();}
 });
 
 test('explicit context preparation initializes an empty catalog and unblocks existing corpus without recomputing it', {skip:!enabled,timeout:60_000},async()=>{
- const f=await fixture();try{
+ const f=await fixture({skip_topic_prototypes:true});try{
   // Keep prior evidence intact. There is no usable catalog, exactly the loader
   // path of a new brand; no corpus fixture is cloned or embedded again.
   await f.query("UPDATE signal_taxonomy_profiles SET status='retired' WHERE workspace_id=$1::uuid AND kind='topic'",[f.workspace_id]);
@@ -225,9 +229,15 @@ test('claim terminalizes expected revocation and input drift before issuing a le
     if(mutation==='revision')await f.query('UPDATE signal_corpus_preparation_input_state SET input_revision=input_revision+1 WHERE workspace_id=$1::uuid',[f.workspace_id]);
     if(mutation==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
     if(mutation==='context'){
+     const beforeOutbox=(await f.query(`SELECT status,dispatch_generation,lease_token,attempt_count FROM signal_topic_classification_outbox
+       WHERE execution_id=$1::uuid AND dispatch_kind='execution'`,[started.execution_id])).rows[0];
+     const beforeCalls=(await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n;
      await assert.rejects(engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-claim-rejection'}),/brand_context_source_stale/u);
      const stale=(await f.query('SELECT status,error_code,execution_token FROM signal_topic_catalog_executions WHERE id=$1::uuid',[started.execution_id])).rows[0];
      assert.equal(stale.status,'queued');assert.equal(stale.error_code,null);assert.equal(stale.execution_token,null);
+     assert.deepEqual((await f.query(`SELECT status,dispatch_generation,lease_token,attempt_count FROM signal_topic_classification_outbox
+       WHERE execution_id=$1::uuid AND dispatch_kind='execution'`,[started.execution_id])).rows[0],beforeOutbox,'stale source rejection does not claim or redispatch the outbox');
+     assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,beforeCalls,'rejected stale claim creates no provider call or reservation');
      continue;
     }
     assert.equal(await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-claim-rejection'}),null);
@@ -310,7 +320,7 @@ test('engine begin dispatches atomically and the real outbox recovers lost jobs 
   const beforeStaleClaim=await row(failed.execution_id);
   await assert.rejects(engine.claimSignalWorkspaceEngineV1({database:f.database,...failed,worker_job_id:(await row(failed.execution_id)).worker_job_id}),/brand_context_source_stale/u);
   const afterStaleClaim=await row(failed.execution_id);
-  assert.equal(afterStaleClaim.status,'running');assert.equal(afterStaleClaim.execution_token,beforeStaleClaim.execution_token,
+  assert.equal(afterStaleClaim.status,'queued');assert.equal(afterStaleClaim.execution_token,beforeStaleClaim.execution_token,
    'the rejected claim does not issue a new execution lease');
  }finally{await f.cleanup();}
 });
@@ -338,7 +348,7 @@ test('storage verification retry is explicit, current and confined to zero durab
   await f.query('SAVEPOINT storage_revoked');await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
   await assert.rejects(retry(),/forbidden/u);await f.query('ROLLBACK TO SAVEPOINT storage_revoked');await f.query('RELEASE SAVEPOINT storage_revoked');
   await f.query('SAVEPOINT storage_stale');await f.query("UPDATE brands SET description='changed storage recovery context' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
-  await assert.rejects(status(),/brand_context_source_stale/u);await assert.rejects(retry(),/brand_context_source_stale/u);
+  assert.equal((await status()).is_current,false);await assert.rejects(retry(),/brand_context_source_stale/u);
   await f.query('ROLLBACK TO SAVEPOINT storage_stale');await f.query('RELEASE SAVEPOINT storage_stale');
   // Each negative retains real evidence within its own rollback; no guard or
   // ledger is disabled to manufacture a retryable provider outcome.

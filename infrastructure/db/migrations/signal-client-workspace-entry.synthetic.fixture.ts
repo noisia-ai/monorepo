@@ -84,6 +84,7 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
  root_count?:number;
  long_text?:boolean;
+ skip_topic_prototypes?:boolean;
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
@@ -102,10 +103,12 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  await insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('synthetic-empty-catalog'),terms:[],rules:{topics:[]},
   rule_set_metadata:{},provider:'operator',model_version:'synthetic-test',prompt_hash:fixtureSha('synthetic'),model_metadata:{},
   profile_metadata:{contract_version:'signal-topic-catalog-v1'},context_refs:context.context_refs});
- const guides=await quoteSignalWorkspaceTopicPrototypesV1(access);
- const requested=await requestSignalWorkspaceTopicPrototypesV1({...access,idempotency_key:randomUUID(),plan_digest:guides.plan_digest,
-  quote_digest:guides.quote_digest,hard_cap_micro_usd:1_000_000,max_run_cost_micro_usd:1_000_000,provider_available:true});
- await embedSyntheticRunV1(tx,requested.run_id);
+ if(!options.skip_topic_prototypes){
+  const guides=await quoteSignalWorkspaceTopicPrototypesV1(access);
+  const requested=await requestSignalWorkspaceTopicPrototypesV1({...access,idempotency_key:randomUUID(),plan_digest:guides.plan_digest,
+   quote_digest:guides.quote_digest,hard_cap_micro_usd:1_000_000,max_run_cost_micro_usd:1_000_000,provider_available:true});
+  await embedSyntheticRunV1(tx,requested.run_id);
+ }
  // No migrations: the private runner requires the restored current schema. The
  // existing projection body uses real guards/receipts with explicit numerical data.
  return workspaceProjectionFixtureBodyV1({...tx,workspace_id,actor_user_id,embedding_run_id:embedded.run_id},options.projection);
