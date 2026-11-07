@@ -15,7 +15,7 @@ export const fixtureSha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf
 export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
-export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;split_guided_groups?:boolean;migrations?:string[];
+export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;split_guided_groups?:boolean|3;migrations?:string[];
  interpretation_configuration?:SignalWorkspaceInterpretationConfigurationV1;interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;engine_config?:Record<string,unknown>;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
  onMaterialized?:(profile_id:string)=>Promise<void>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
@@ -76,7 +76,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   return{artifact_key:key,artifact_type:type,title:'Explicit synthetic projection fixture',storage_key,sha256:fixtureSha(body),size_bytes:Buffer.byteLength(body),media_type:'application/json',metadata};
  };
  const [stableOne,stableTwo]=options.cluster_ids??['stable_one','stable_two'];
- const guidedCluster=(index:number)=>options.split_guided_groups&&index===0?`${stableTwo}_alternate`:stableTwo;
+ const guidedCluster=(index:number)=>options.split_guided_groups&&index===0?`${stableTwo}_alternate`:options.split_guided_groups===3&&index===1?`${stableTwo}_third`:stableTwo;
  const roots=new Map<string,{root_id:string;root_fingerprint:string;chunk_count:number;open:string[];guided:string[]}>();
  for(const [index,row] of chunks.entries()){let root=roots.get(row.root_id);if(!root){root={root_id:row.root_id,root_fingerprint:row.root_fingerprint,chunk_count:0,open:options.empty?[]:[stableOne],guided:options.empty?[]:[guidedCluster(index)]};roots.set(row.root_id,root);}root.chunk_count++;}
  const rootBody=[...roots.values()].map(row=>JSON.stringify(row)+'\n').join('');
@@ -91,7 +91,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  if(pilot)await add('clusters.open.json','[]');
  const model=options.empty?null:await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,artifact:artifact('model-manifest.json','engine_model',JSON.stringify({fixture:true}))});
  const outputBody=JSON.stringify({contract_version:'workspace-topic-engine-output-v1',workspace_id,quality:'uncalibrated',approval_policy:'none',counts:{occurrences:chunks.length,roots:roots.size},
-  lanes:(options.empty?['open']:['open','guided']).map(lane=>({lane,assignments_file:`assignments.${lane}.jsonl`,occurrences:chunks.length,roots:roots.size,clusters:options.empty?0:lane==='guided'&&options.split_guided_groups?2:1,outlier_occurrences:options.empty?chunks.length:0})),artifacts});
+  lanes:(options.empty?['open']:['open','guided']).map(lane=>({lane,assignments_file:`assignments.${lane}.jsonl`,occurrences:chunks.length,roots:roots.size,clusters:options.empty?0:lane==='guided'&&options.split_guided_groups?options.split_guided_groups===3?3:2:1,outlier_occurrences:options.empty?chunks.length:0})),artifacts});
  const outputArtifact=artifact('manifest.json','engine_output',outputBody);
  if(pilot)outputArtifact.metadata!.bundle=[...bodies].map(([storage_key,body])=>({name:storage_key.split('/').at(-1)!,storage_key,
   sha256:fixtureSha(body),size_bytes:Buffer.byteLength(body),media_type:'application/json'}));

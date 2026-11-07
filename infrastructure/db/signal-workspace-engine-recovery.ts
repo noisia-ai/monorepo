@@ -40,6 +40,24 @@ export async function registerSignalWorkspaceEngineInterpretationUnitsWithClient
  [run.workspace_id,run.id,args.call_id,args.request_digest,run.input_digest,fit!.checkpoint_digest,run.actor_user_id,keys]);
  return{replayed:false};
 }
+/** Follow only immutable transport predecessors inside the same logical request.
+ * Editorial repair bindings remain identical throughout their transport chain. */
+export const SIGNAL_WORKSPACE_INTERPRETATION_ANCESTRY_CTE_V1=`WITH RECURSIVE receipt_ancestors AS(
+ SELECT receipt.id descendant_id,receipt.id ancestor_id,receipt.retry_of_call_id parent_id,
+  receipt.workspace_id,receipt.catalog_execution_id,receipt.actor_user_id,receipt.request_digest,
+  receipt.call_configuration,receipt.metadata->'editorial_repair' editorial_repair
+ FROM engine_cost_events receipt WHERE receipt.catalog_execution_id=$1
+  AND receipt.workspace_contract='workspace-engine-interpretation-v1'
+ UNION
+ SELECT chain.descendant_id,parent.id,parent.retry_of_call_id,parent.workspace_id,parent.catalog_execution_id,
+  parent.actor_user_id,parent.request_digest,parent.call_configuration,parent.metadata->'editorial_repair'
+ FROM receipt_ancestors chain JOIN engine_cost_events parent ON parent.id=chain.parent_id
+  AND parent.workspace_contract='workspace-engine-interpretation-v1'
+  AND parent.workspace_id=chain.workspace_id AND parent.catalog_execution_id=chain.catalog_execution_id
+  AND parent.actor_user_id=chain.actor_user_id AND parent.request_digest=chain.request_digest
+  AND parent.call_configuration=chain.call_configuration
+  AND parent.metadata->'editorial_repair' IS NOT DISTINCT FROM chain.editorial_repair
+)`;
 /** Future calls cannot skip unaccounted paid originals. The sole repair lane may
  * consume a reviewed invalid original, under the pre-existing repair authority. */
 export async function assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1(client:Pick<PoolClient,"query">,executionId:string,allowNeedsRepair=false,excludeCallId:string|null=null,terminalRequestDigest:string|null=null){
@@ -47,18 +65,23 @@ export async function assertSignalWorkspaceEngineInterpretationReceiptsRecovered
   AND workspace_contract='workspace-engine-interpretation-v1' AND (call_state IN('in_flight','outcome_unknown')
    OR call_state='response_persisted' AND NOT COALESCE((metadata->>'response_complete')::boolean,true)) LIMIT 1`,[executionId])).rows.length)
   fail("workspace_engine_interpretation_outcome_unknown");
- const blocked=(await client.query(`SELECT call.id FROM engine_cost_events call
+ const blocked=(await client.query(`${SIGNAL_WORKSPACE_INTERPRETATION_ANCESTRY_CTE_V1} SELECT call.id FROM engine_cost_events call
   WHERE call.catalog_execution_id=$1 AND call.workspace_contract='workspace-engine-interpretation-v1'
    AND NOT call.metadata ? 'editorial_repair' AND NOT call.metadata ? 'mass_labeling_stage'
    AND ($3::uuid IS NULL OR call.id<>$3::uuid)
    AND NOT($4::text IS NOT NULL AND call.call_state='terminal_confirmed' AND call.request_digest=$4)
    AND call.call_state<>'definitely_not_sent'
    AND (NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_unit_claims claim WHERE claim.execution_id=$1 AND claim.original_request_digest=call.request_digest)
-    OR NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact LEFT JOIN engine_cost_events repair
-       ON repair.id::text=artifact.metadata->>'call_id' AND repair.metadata#>>'{editorial_repair,source_call_id}'=call.id::text
+    OR NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact
+      JOIN engine_cost_events final ON final.id::text=artifact.metadata->>'call_id'
+       AND final.workspace_id=call.workspace_id AND final.catalog_execution_id=call.catalog_execution_id
+       AND final.actor_user_id=call.actor_user_id AND final.call_state='settled'
+       AND final.response_sha256=artifact.metadata->>'response_sha256'
+      LEFT JOIN engine_cost_events source ON source.id::text=final.metadata#>>'{editorial_repair,source_call_id}'
+      JOIN receipt_ancestors lineage ON lineage.ancestor_id=call.id
+       AND (lineage.descendant_id=final.id OR lineage.descendant_id=source.id)
       WHERE artifact.workspace_id=call.workspace_id AND artifact.engine_execution_id=$1
-       AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
-       AND (artifact.metadata->>'call_id'=call.id::text OR repair.id IS NOT NULL))
+       AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1')
       AND NOT($2::boolean AND EXISTS(SELECT 1 FROM signal_workspace_interpretation_receipt_reviews review WHERE review.call_id=call.id AND review.response_sha256=call.response_sha256)))
   LIMIT 1`,[executionId,allowNeedsRepair,excludeCallId,terminalRequestDigest])).rows[0];
  if(blocked)fail("workspace_engine_interpretation_receipt_recovery_required");

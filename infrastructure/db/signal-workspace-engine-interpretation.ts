@@ -1,4 +1,4 @@
-import {assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1,registerSignalWorkspaceEngineInterpretationUnitsWithClientV1} from './signal-workspace-engine-recovery';
+import {SIGNAL_WORKSPACE_INTERPRETATION_ANCESTRY_CTE_V1,assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1,registerSignalWorkspaceEngineInterpretationUnitsWithClientV1} from './signal-workspace-engine-recovery';
 import {assertSignalWorkspaceInterpretationAdmissionWithClientV1} from './signal-workspace-interpretation-admission';
 import type {Pool,PoolClient} from 'pg';
 import {randomUUID} from 'node:crypto';
@@ -424,11 +424,18 @@ export async function readSignalWorkspaceEngineInterpretationRecoveryCallsV1(arg
   for(const call of calls){
    const key=call.editorial_repair?.source_request_digest??call.request_digest;
    const units=(await c.query<{unit_key:string}>("SELECT unit_key FROM signal_workspace_interpretation_unit_claims WHERE execution_id=$1 AND original_request_digest=$2 ORDER BY unit_key COLLATE \"C\"",[run.id,key])).rows.map(row=>row.unit_key);
-   const checkpoints=(await c.query<{unit_key:string}>(`SELECT DISTINCT unit.key unit_key FROM analysis_artifacts artifact
+   const checkpoints=(await c.query<{unit_key:string}>(`${SIGNAL_WORKSPACE_INTERPRETATION_ANCESTRY_CTE_V1}
+    SELECT DISTINCT unit.key unit_key FROM analysis_artifacts artifact
     JOIN engine_cost_events final ON final.id::text=artifact.metadata->>'call_id'
+     AND final.workspace_id=$2 AND final.catalog_execution_id=$1 AND final.actor_user_id=$4
+     AND final.call_state='settled' AND final.response_sha256=artifact.metadata->>'response_sha256'
+    LEFT JOIN engine_cost_events source ON source.id::text=final.metadata#>>'{editorial_repair,source_call_id}'
+    JOIN receipt_ancestors lineage ON lineage.ancestor_id=$3
+      AND (lineage.descendant_id=final.id OR lineage.descendant_id=source.id)
     CROSS JOIN LATERAL jsonb_array_elements_text(artifact.metadata->'unit_keys') unit(key)
-    WHERE artifact.workspace_id=$1 AND artifact.engine_execution_id=$2 AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
-     AND (final.id=$3 OR final.metadata#>>'{editorial_repair,source_call_id}'=$3::text) ORDER BY unit.key`,[run.workspace_id,run.id,call.id])).rows.map(row=>row.unit_key);
+    WHERE artifact.workspace_id=$2 AND artifact.engine_execution_id=$1
+      AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
+    ORDER BY unit.key`,[run.id,run.workspace_id,call.id,run.actor_user_id])).rows.map(row=>row.unit_key);
    const stage=(await c.query<{stage:boolean}>("SELECT metadata ? 'mass_labeling_stage' stage FROM engine_cost_events WHERE id=$1",[call.id])).rows[0]!.stage;
    result.push({...view(call),call_configuration:call.call_configuration,unit_keys:units,checkpointed_unit_keys:checkpoints,is_global_consolidation:stage});
   }
