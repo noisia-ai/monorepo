@@ -7,6 +7,7 @@ import { createProcessingPolicyIdentitiesV1 } from "./signal-processing-policy.f
 import { insertSignalTaxonomyDraftCoreV1 } from "../signal-taxonomy-profile";
 import { loadSignalWorkspaceMassLabelingSeedsV1, loadSignalWorkspaceMassLabelingGuidesV1 } from "../signal-workspace-mass-labeling-profile";
 import { loadSignalWorkspaceEnginePreflightV1, beginSignalWorkspaceMassLabelingEngineV1, claimSignalWorkspaceEngineV1, readSignalWorkspaceEngineGuidesV1 } from "../signal-workspace-engine";
+import { assertMassLabelingProfileLocaleV1 } from "./signal-mass-labeling-profile.assertions";
 import { signalWorkspaceFeatureEnabledV1 } from "../signal-workspace-features";
 
 // This acceptance test runs on the complete migrated PostgreSQL CI schema.
@@ -96,6 +97,7 @@ test("mass-labeling profile selection is workspace-scoped and seeds exclude stud
     const guides=await readSignalWorkspaceEngineGuidesV1({database:txDatabase,lease,after:null});
     assert.deepEqual(guides.items[0]?.vector,vector);
     assert.equal(guides.items[0]?.input_digest,derived.guides[0]?.input_digest);
+    await assertMassLabelingProfileLocaleV1({database:txDatabase,workspace_id,actor_user_id,numeric_lease:lease});
     process.env.NOISIA_MASS_LABELING_ENABLED = "false";
     assert.equal(await signalWorkspaceFeatureEnabledV1({ ...options, feature: "mass_labeling" }), false);
   } finally {
