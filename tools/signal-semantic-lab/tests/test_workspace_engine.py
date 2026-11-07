@@ -676,3 +676,22 @@ def test_nineteen_long_roots_cannot_form_a_density_group(tmp_path):
     assert len(assignments) == 19 * 12
     assert all(row["local_label"] == -1 for row in assignments)
     assert result["lanes"][0]["clusters"] == 0
+
+
+@pytest.mark.parametrize("incoming_root_profile", [True, False])
+def test_root_profile_rejects_previous_before_loading_or_predicting(tmp_path, monkeypatch, incoming_root_profile):
+    import signal_semantic_lab.workspace_engine as engine
+
+    directory, previous = tmp_path / "input", tmp_path / "previous"
+    previous.mkdir()
+    manifest = input_fixture(directory, {root_id(1): [("Synthetic discussion. ", np.eye(1024)[0])]}, guides=False)
+    if incoming_root_profile:
+        manifest["config"] = engine.mass_labeling_root_config(1)
+        (directory / "manifest.json").write_text(json.dumps(manifest))
+    monkeypatch.setattr(engine, "_verified_previous", lambda *args: {
+        "config": {"profile_version": engine.ROOT_MASS_LABELING_PROFILE}})
+    monkeypatch.setattr(engine, "_predict_previous", lambda *args: pytest.fail("must not predict a root model by chunk"))
+    with pytest.raises(engine.WorkspaceEngineError, match="previous_profile_unsupported"):
+        engine.run_workspace_engine(directory, tmp_path / "output", tmp_path,
+                                    previous, "sha256:" + "a" * 64)
+    assert not (tmp_path / "output").exists()

@@ -614,3 +614,7 @@ from test_workspace_engine import (
     test_root_density_preserves_all_chunks_and_model_assignments as test_root_density_preserves_all_chunks_and_model_assignments,
     test_nineteen_long_roots_cannot_form_a_density_group as test_nineteen_long_roots_cannot_form_a_density_group,
 )
+
+from test_workspace_engine import (
+    test_root_profile_rejects_previous_before_loading_or_predicting as test_root_profile_rejects_previous_before_loading_or_predicting,
+)

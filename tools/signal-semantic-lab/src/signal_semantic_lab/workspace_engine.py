@@ -833,6 +833,8 @@ def run_workspace_engine(
     if input_dir == output_dir:
         _fail("artifact_path_invalid")
     manifest, records, matrix, guides, guide_matrix = _load_input(input_dir)
+    if previous_dir is not None and manifest["config"]["profile_version"] == ROOT_MASS_LABELING_PROFILE:
+        _fail("previous_profile_unsupported")
     input_hash = _hash_file(input_dir / "manifest.json")
     if output_dir.exists():
         receipt = _read_json(output_dir / "manifest.json")
@@ -853,6 +855,8 @@ def run_workspace_engine(
         previous = _verified_previous(
             previous_dir, previous_manifest_sha256 or "", manifest["workspace_id"]
         )
+        if previous.get("config", {}).get("profile_version") == ROOT_MASS_LABELING_PROFILE:
+            _fail("previous_profile_unsupported")
         previous_roots = {row["root_id"]: row for row in _jsonl(previous_dir / "roots.jsonl")}
     output_dir.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     stage = output_dir.parent / f".workspace-engine-{uuid.uuid4()}"
