@@ -3,7 +3,7 @@ import {randomUUID,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import pg,{type Pool,type PoolClient} from 'pg';
 import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,
- type SignalTopicDefinitionV1,type SignalWorkspaceInterpretationClusterV1} from '@noisia/query-engine';
+ type SignalTopicDefinitionV1,type SignalWorkspaceInterpretationClusterV1,type SignalWorkspaceInterpretationConfigurationV1} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
 import * as money from '../signal-workspace-engine-interpretation';
 import {insertSignalTaxonomyDraftCoreV1} from '../signal-taxonomy-profile';
@@ -16,7 +16,7 @@ export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:str
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
 export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;migrations?:string[];
- interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;engine_config?:Record<string,unknown>;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
+ interpretation_configuration?:SignalWorkspaceInterpretationConfigurationV1;interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;engine_config?:Record<string,unknown>;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
  onMaterialized?:(profile_id:string)=>Promise<void>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
 export async function workspaceProjectionFixtureV1(options:WorkspaceProjectionFixtureOptionsV1={}){
@@ -57,7 +57,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  if(!options.preserve_catalog)await catalog();
  const access={database,workspace_id,actor_user_id};
  const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);assert.equal(preflight.missing_guides,0);
- const configuration=SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
+ const configuration=options.interpretation_configuration??SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
  const started=await engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
   expected_context_digest:preflight.expected_context_digest,engine_config:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
   interpretation_config:{call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000}});
@@ -98,7 +98,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   const ref_id=signalWorkspaceInterpretationReferenceIdV1(identity);
   const cluster:SignalWorkspaceInterpretationClusterV1={cluster_id:key,lane:key.startsWith('open')?'open':'guided',cluster_digest:fixtureSha(chunks.map((chunk,ordinal)=>JSON.stringify({ordinal,root_id:chunk.root_id,chunk_index:chunk.chunk_index,start:chunk.start,end:chunk.end,chunk_sha256:chunk.chunk_sha256})+'\n').join('')),root_count:roots.size,chunk_count:chunks.length,terms:['fixture conversation'],
    representatives:[{...identity,ref_id,text:row.text,strength:0.8,selection_reason:'high_affiliation'}]};
-  const batch=buildSignalWorkspaceInterpretationBatchV1(governed.context,[cluster]);
+  const batch=buildSignalWorkspaceInterpretationBatchV1(governed.context,[cluster],configuration);
   const body=JSON.stringify({contract_version:'workspace-engine-interpretation-result-v1',execution_id:started.execution_id,context:batch.context,clusters:batch.clusters,
    interpretations:[{cluster_id:key,cluster_digest:cluster.cluster_digest,status:'coherent',name:`Fixture ${key}`,definition:options.interpretation_definitions?.[key]??'Conversation evidenced by the full numerical fixture.',inclusion:[{text:'The documented conversation.',citations:[ref_id]}],exclusion:[],citations:[ref_id]}]});
   const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...access,...started,idempotency_key:randomUUID(),request_digest:batch.request_digest,configuration,

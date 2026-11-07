@@ -1,6 +1,7 @@
 import {createHash, randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
 import {labelerDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
+  buildMassLabelingConsolidationRequestV1,parseMassLabelingConsolidationResponseV1,type MassLabelingSourceGroupV1,
   type LabelerIdentity} from "@noisia/query-engine";
 import {massLabelingJevIdentityV1, type MassLabelingInputV1, type MassLabelingResultV1} from "@noisia/query-engine/src/signal-mass-labeling-jev-v1";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
@@ -82,7 +83,13 @@ export async function createMassLabelingMapV1(args: {
   }).sort((left, right) => left.topic_key.localeCompare(right.topic_key));
   const assignmentsDigest = sha(args.assignments_raw), consolidationDigest = sha(args.consolidation_raw);
   const consolidation = JSON.parse(args.consolidation_raw) as {workspace_id: string; source_engine_execution_id: string;
+    source_groups:MassLabelingSourceGroupV1[];source_groups_digest:string;raw_response:string;
     output: {topics: Array<Omit<MassLabelingTopicV1,"definition_digest">>}};
+  const batch=buildMassLabelingConsolidationRequestV1({workspace_id:args.workspace_id,
+    source_engine_execution_id:args.source_engine_execution_id,source_groups:consolidation.source_groups});
+  const parsed=parseMassLabelingConsolidationResponseV1(batch,consolidation.raw_response);
+  if(consolidation.source_groups_digest!==batch.source_groups_digest||digest(parsed.output)!==digest(consolidation.output))
+    fail("mass_labeling_consolidation_invalid");
   if (consolidation.workspace_id !== args.workspace_id || consolidation.source_engine_execution_id !== args.source_engine_execution_id
     || digest(consolidation.output?.topics) !== digest(args.catalog)) fail("mass_labeling_consolidation_invalid");
   return transaction(args.database, async client => {
@@ -107,7 +114,8 @@ export async function createMassLabelingMapV1(args: {
             AND guided.workspace_id=engine.workspace_id AND guided.artifact_key='assignments.guided.jsonl'))`,
       [args.workspace_id, args.source_engine_execution_id, args.assignments_artifact_id, assignmentsDigest])).rows[0];
     if (!source) fail("mass_labeling_source_invalid");
-    const editorial = (await client.query(`SELECT 1 FROM analysis_artifacts artifact
+    const editorial = (await client.query<{request_digest:string;response_sha256:string;call_configuration:unknown;usage:unknown}>(
+      `SELECT call.request_digest,call.response_sha256,call.call_configuration,call.metadata->'usage' usage FROM analysis_artifacts artifact
       JOIN engine_cost_events call ON call.id::text=artifact.metadata->>'call_id'
         AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
         AND call.request_digest=artifact.metadata->>'request_digest'
@@ -122,8 +130,16 @@ export async function createMassLabelingMapV1(args: {
         AND artifact.metadata->>'stage'='global-consolidation-v1'
         AND artifact.metadata->>'source_engine_execution_id'=artifact.engine_execution_id::text
         AND artifact.content->>'sha256'=$4`,
-      [args.workspace_id,args.source_engine_execution_id,args.consolidation_artifact_id,consolidationDigest])).rows.length === 1;
-    if (!editorial) fail("mass_labeling_consolidation_receipt_invalid");
+      [args.workspace_id,args.source_engine_execution_id,args.consolidation_artifact_id,consolidationDigest])).rows[0];
+    if (!editorial||editorial.request_digest!==batch.request_digest||editorial.response_sha256!==sha(consolidation.raw_response)
+      ||digest(editorial.call_configuration)!==digest(batch.configuration)||digest(editorial.usage)!==digest(parsed.usage)) fail("mass_labeling_consolidation_receipt_invalid");
+    const badGroup=await client.query(`SELECT 1 FROM jsonb_to_recordset($3::jsonb) source(group_id text,source_artifact_id uuid)
+      WHERE NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.id=source.source_artifact_id
+        AND artifact.workspace_id=$1 AND artifact.engine_execution_id=$2
+        AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
+        AND artifact.metadata->'unit_keys' ? source.group_id) LIMIT 1`,
+      [args.workspace_id,args.source_engine_execution_id,JSON.stringify(batch.source_groups)]);
+    if(badGroup.rows.length)fail("mass_labeling_consolidation_group_lineage_invalid");
     const lane = source.artifact_key === "assignments.guided.jsonl" ? "guided" : "open";
     if ([...groupKeys].some(group => !group.startsWith(`${lane}:`))) fail("mass_labeling_lane_invalid");
     const context = await inspectFacetContextChangeV1(client, args.workspace_id);
@@ -482,13 +498,14 @@ export async function measureMassLabelingSmokeV1(args: {
     if (run.smoke_metrics) return {metrics: run.smoke_metrics, metrics_digest: run.smoke_metrics_digest, replayed: true};
     if (run.smoke_root_limit === null) fail("mass_labeling_smoke_not_configured");
     const map = await mapCurrent(client, args.workspace_id, run.map_id);
-    const rows = (await client.query<{root_id: string; status: string | null; probabilities: Record<string,{type:string;noul?:number;probabilities?:Record<string,number>}> | null}>(
-      `SELECT item.root_id,result.status,result.probabilities FROM signal_mass_labeling_items item
+    const rows = (await client.query<{root_id: string; status: string | null; candidates:Array<{topic_key:string}>;
+      probabilities: Record<string,{type:string;noul?:number;probabilities?:Record<string,number>}> | null}>(
+      `SELECT item.root_id,item.candidates,result.status,result.probabilities FROM signal_mass_labeling_items item
        LEFT JOIN signal_mass_labeling_results result ON result.map_id=item.map_id AND result.root_id=item.root_id
        WHERE item.map_id=$1 AND item.ordinal<=$2 ORDER BY item.ordinal`, [run.map_id, run.smoke_root_limit])).rows;
     const expected = Math.min(1000, map.root_count);
     if (rows.length !== expected || rows.some(row => row.status === null)) fail("mass_labeling_smoke_incomplete");
-    const byQuestion = new Map<string,number[]>();
+    const byQuestion = new Map<string,number[]>(), byTopic = new Map<string,number[]>();
     let errors = 0, positive = 0, intermediate = 0, noTopic = 0;
     for (const row of rows) {
       if (row.status !== "labeled") {errors++; continue;}
@@ -496,7 +513,11 @@ export async function measureMassLabelingSmokeV1(args: {
       for (const [key,answer] of Object.entries(row.probabilities ?? {})) {
         if (answer.type === "noul" && typeof answer.noul === "number") {
           const values = byQuestion.get(key) ?? []; values.push(answer.noul); byQuestion.set(key, values);
-          if (key.startsWith("topic_")) topics.push(answer.noul);
+          if (key.startsWith("topic_")) {
+            topics.push(answer.noul);
+            const topicKey=row.candidates[Number(key.slice(6))]?.topic_key;
+            if(topicKey){const scores=byTopic.get(topicKey)??[];scores.push(answer.noul);byTopic.set(topicKey,scores);}
+          }
         }
         if (answer.type === "choice") for (const [choice,p] of Object.entries(answer.probabilities ?? {})) {
           const question = `${key}.${choice}`, values = byQuestion.get(question) ?? [];
@@ -507,7 +528,7 @@ export async function measureMassLabelingSmokeV1(args: {
       else if (topics.some(p => p>=0.3 && p<=0.7)) intermediate++;
       else noTopic++;
     }
-    const questions = Object.fromEntries([...byQuestion.entries()].map(([key,values]) => {
+    const distributions = (observations:Map<string,number[]>) => Object.fromEntries([...observations.entries()].map(([key,values]) => {
       const mean = values.reduce((sum,p) => sum+p,0)/values.length;
       const histogram = Array.from({length:10},() => 0);
       for (const p of values) histogram[Math.min(9,Math.floor(p*10))]!++;
@@ -519,7 +540,7 @@ export async function measureMassLabelingSmokeV1(args: {
     const metrics = {contract_version:"mass-labeling-smoke-metrics-v1",root_count:expected,error_roots:errors,
       positive_roots:positive,intermediate_roots:intermediate,no_topic_roots:noTopic,
       error_fraction:errors/expected,intermediate_fraction:intermediate/expected,
-      near_half_topic_probability_fraction:nearHalf,questions,
+      near_half_topic_probability_fraction:nearHalf,questions:distributions(byQuestion),topics:distributions(byTopic),
       technical_failure:errors/expected>0.02 || intermediate/expected>0.4 || nearHalf>=0.95};
     const metricsDigest = digest(metrics);
     await client.query("UPDATE signal_mass_labeling_runs SET smoke_metrics=$2::jsonb,smoke_metrics_digest=$3 WHERE run_id=$1",

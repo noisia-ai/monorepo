@@ -12,7 +12,7 @@ import {createMassLabelingMapV1, createMassLabelingStoreV1, requestMassLabelingV
 import {loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
   loadSignalWorkspaceTopicDetailV1} from "../signal-workspace-topics-serving";
 import * as editorialMoney from "../signal-workspace-engine-interpretation";
-import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1} from "@noisia/query-engine";
+import {SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1 as globalConfiguration,buildMassLabelingConsolidationRequestV1} from "@noisia/query-engine";
 import {persistSignalWorkspaceEngineArtifactV1} from "../signal-workspace-engine";
 import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-labeling-page";
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
@@ -39,23 +39,25 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const database = Object.assign(Object.create(pool), {query, connect: async () => scoped}) as Pool;
     let consolidationArtifactId="",consolidationRaw="";
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
-      numeric_daily_cap_micro_usd: 1_000_000, projection: {engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      numeric_daily_cap_micro_usd: 1_000_000, projection: {interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
           const group_id=`guided:${JSON.parse(assignment.trim().split("\n")[0]!).stable_cluster_id}`;
           const sourceGroups=[{group_id,cluster_digest:digest({group_id}),name:"Synthetic repair conversation",
-            definition:"Experiences repairing bicycles.",status:"coherent",source_artifact_id:fixture.proposals[1]!.artifact_id}];
-          const sourceGroupsDigest=digest(sourceGroups);
+            definition:"Experiences repairing bicycles.",status:"coherent" as const,source_artifact_id:fixture.proposals[1]!.artifact_id}];
+          const batch=buildMassLabelingConsolidationRequestV1({workspace_id:fixture.access.workspace_id,
+            source_engine_execution_id:fixture.lease.execution_id,source_groups:sourceGroups});
+          const sourceGroupsDigest=batch.source_groups_digest;
           const output={topics:[{topic_key:"bicycle_repairs",name:"Bicycle repairs",definition:"Experiences repairing bicycles.",group_ids:[group_id]}],excluded_groups:[]};
-          const rawResponse=JSON.stringify({id:"msg_synthetic_global",type:"message",role:"assistant",model:SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1.model,
+          const rawResponse=JSON.stringify({id:"msg_synthetic_global",type:"message",role:"assistant",model:globalConfiguration.model,
             stop_reason:"end_turn",content:[{type:"text",text:JSON.stringify(output)}],usage:{input_tokens:100,output_tokens:50}});
           consolidationRaw=JSON.stringify({contract_version:"workspace-mass-labeling-consolidation-v1",workspace_id:fixture.access.workspace_id,
             source_engine_execution_id:fixture.lease.execution_id,source_groups:sourceGroups,source_groups_digest:sourceGroupsDigest,
             raw_response:rawResponse,output});
           const call=await editorialMoney.reserveSignalWorkspaceEngineInterpretationV1({...fixture.access,execution_id:fixture.lease.execution_id,
-            idempotency_key:randomUUID(),request_digest:digest({stage:"global-consolidation-v1",source_groups:sourceGroups}),
-            configuration:SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,reserved_micro_usd:10000,
+            idempotency_key:randomUUID(),request_digest:batch.request_digest,
+            configuration:batch.configuration,reserved_micro_usd:batch.reserved_micro_usd,
             budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,execution_token:fixture.lease.execution_token,
             mass_labeling_stage:{stage:"global-consolidation-v1",source_groups_digest:sourceGroupsDigest}});
           const token={database,call_id:call.call_id,attempt_token:call.attempt_token};
@@ -132,6 +134,8 @@ test("mass labeling seals full population, bills once, and serves probability pa
       VALUES($1,$2,$3,$4)`,[siblingPrep,sibling,access.actor_user_id,`mass-sibling-${siblingRun}`]);
     await query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity)
       VALUES($1,'facets','anthropic','claude-sonnet-5-5',$2,$2,$3,'{}')`,[siblingLabeler,digest({fixture:true}),digest({siblingLabeler})]);
+    await query(`INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,context,diff,affected_mode,affected_count)
+      VALUES($1,1,$2,'{"entities":[]}'::jsonb,'{}'::jsonb,'targeted',0)`,[sibling,digest({fixture:true})]);
     await query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,preparation_run_id,
       entity_context_digest,entity_context_version_no,estimated_micro_usd,idempotency_key,request_digest,actor_user_id)
       VALUES($1,$2,'facets',$3,$4,$5,1,0,$6,$5,$7)`,[siblingRun,sibling,siblingLabeler,siblingPrep,digest({fixture:true}),randomUUID(),access.actor_user_id]);
