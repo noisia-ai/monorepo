@@ -1,7 +1,7 @@
 import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-v1";
 import type { MentionFacetsV1 } from "./signal-mention-facets-v1";
 export type LabelerIdentity = {
-  kind: "facets" | "membership";
+  kind: "facets" | "membership" | "mass_labeling";
   provider: "anthropic" | "typesafe" | "rules" | "human";
   model: string;
   prompt_digest: string;

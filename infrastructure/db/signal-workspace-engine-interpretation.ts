@@ -118,6 +118,7 @@ const exposureSQL=`CASE WHEN call_state='settled' OR call_state='terminal_confir
 export async function reserveSignalWorkspaceEngineInterpretationV1(args:{database:SignalWorkspaceEngineInterpretationDatabaseV1;
  workspace_id:string;actor_user_id:string;execution_id:string;idempotency_key:string;request_digest:string;
  configuration:SignalWorkspaceEngineInterpretationConfigurationV1;reserved_micro_usd:number;budget_timezone:string;daily_cap_micro_usd:number|null;
+ mass_labeling_stage?:{stage:"global-consolidation-v1";source_groups_digest:string};
  retry_of_call_id?:string;execution_token?:string;interpretation_revision_digest?:string;admission_operation_id?:string;editorial_repair?:SignalWorkspaceEngineEditorialRepairV1}):Promise<SignalWorkspaceEngineInterpretationCallV1>{
  const config=args.configuration;
  if(!validKey(args.idempotency_key)||!digest.test(args.request_digest)||!digest.test(config.prompt_digest)||!digest.test(config.schema_digest)
@@ -125,6 +126,9 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   ||![config.input_micro_usd_per_million_tokens,config.output_micro_usd_per_million_tokens,config.cache_read_micro_usd_per_million_tokens,config.cache_creation_micro_usd_per_million_tokens]
    .every(n=>Number.isSafeInteger(n)&&n>=0)||!Number.isSafeInteger(args.reserved_micro_usd)||args.reserved_micro_usd<=0
   ||args.daily_cap_micro_usd!==null&&(!Number.isSafeInteger(args.daily_cap_micro_usd)||args.daily_cap_micro_usd<=0)||args.budget_timezone.length>100)return fail('workspace_engine_interpretation_request_invalid',422);
+ const massStage=args.mass_labeling_stage;
+ if(massStage&&(massStage.stage!=="global-consolidation-v1"||!digest.test(massStage.source_groups_digest)))
+  return fail("workspace_mass_labeling_stage_invalid",422);
  const repair=args.editorial_repair;
  if(repair&&(Object.keys(repair).sort().join(',')!=='contract_version,diagnostic,protocol_digest,source_call_id,source_request_digest,source_response_sha256'
   ||repair.contract_version!=='workspace-editorial-repair-v1'||repair.diagnostic!=='output_invalid'
@@ -134,7 +138,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
    return fail('workspace_engine_interpretation_repair_invalid',422);
  const sealFor=(admissionId?:string|null)=>signalWorkspaceEmbeddingDigestV1({request_digest:args.request_digest,configuration:config,reserved_micro_usd:args.reserved_micro_usd,
   budget_timezone:args.budget_timezone,daily_cap_micro_usd:args.daily_cap_micro_usd,execution_id:args.execution_id,retry_of_call_id:args.retry_of_call_id??null,
-  ...(admissionId?{admission_operation_id:admissionId}:{}),...(repair?{editorial_repair:repair}:{}),...(args.interpretation_revision_digest?{interpretation_revision_digest:args.interpretation_revision_digest}:{})});
+  ...(massStage?{mass_labeling_stage:massStage}:{}),...(admissionId?{admission_operation_id:admissionId}:{}),...(repair?{editorial_repair:repair}:{}),...(args.interpretation_revision_digest?{interpretation_revision_digest:args.interpretation_revision_digest}:{})});
  const seal=sealFor(args.admission_operation_id);
  return tx(args.database,async c=>{await authorize(c,args.workspace_id,args.actor_user_id,true,args.execution_id);await actorLock(c,args.actor_user_id);
   const byKey=(await c.query<Row>(`${rowSQL} AND workspace_id=$1::uuid AND idempotency_key=$2 FOR UPDATE`,[args.workspace_id,args.idempotency_key])).rows[0];
@@ -193,7 +197,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
    provider,model,operation,idempotency_key,request_digest,request_seal,call_configuration,call_state,attempt_token,reserved_micro_usd,budget_date,budget_timezone,budget_daily_cap_micro_usd,retry_of_call_id,metadata)
    VALUES($1::uuid,'workspace-engine-interpretation-v1',$2::uuid,$3::uuid,$4::uuid,'anthropic',$5,'workspace-engine-interpretation',
     $6,$7,$8,$9::jsonb,'reserved',$10::uuid,$11,$12::date,$13,$14,$15::uuid,$16::jsonb)`,[id,args.workspace_id,args.execution_id,args.actor_user_id,config.model,
-    args.idempotency_key,args.request_digest,seal,JSON.stringify(config),token,args.reserved_micro_usd,date,args.budget_timezone,args.daily_cap_micro_usd,args.retry_of_call_id??null,JSON.stringify({...admission?{interpretation_admission:{operation_id:admission.operation_id,grant_digest:admission.grant_digest}}:{},...repair?{editorial_repair:repair}:{},...args.interpretation_revision_digest?{interpretation_revision_digest:args.interpretation_revision_digest}:{}})]);
+    args.idempotency_key,args.request_digest,seal,JSON.stringify(config),token,args.reserved_micro_usd,date,args.budget_timezone,args.daily_cap_micro_usd,args.retry_of_call_id??null,JSON.stringify({...massStage?{mass_labeling_stage:massStage}:{},...admission?{interpretation_admission:{operation_id:admission.operation_id,grant_digest:admission.grant_digest}}:{},...repair?{editorial_repair:repair}:{},...args.interpretation_revision_digest?{interpretation_revision_digest:args.interpretation_revision_digest}:{}})]);
   return view((await c.query<Row>(`${rowSQL} AND id=$1::uuid`,[id])).rows[0]!);
  });
 }
