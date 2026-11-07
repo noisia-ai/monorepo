@@ -4,7 +4,6 @@ import { buildSignalWorkspaceInterpretationBatchV1, signalWorkspaceInterpretatio
   SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1 as configuration } from "@noisia/query-engine";
 import * as engine from "../signal-workspace-engine";
 import * as money from "../signal-workspace-engine-interpretation";
-import { authorizeSignalWorkspaceInterpretationAdmissionV1, loadSignalWorkspaceInterpretationAdmissionV1 } from "../signal-workspace-interpretation-admission";
 import { insertSignalTaxonomyDraftCoreV1 } from "../signal-taxonomy-profile";
 import { materializeSignalWorkspaceEngineTopicsV1 } from "../signal-topic-catalog";
 
@@ -45,11 +44,8 @@ export async function assertMassLabelingProfileLocaleV1(args: {
     output_artifact_id: output.artifact_id, result_kind: "computational_grouping", coverage,
     model_configuration: lease.snapshot.engine_config, runtime_kind: "python", artifact_format: "workspace-model-bundle-v1",
     license_key: null, interpretation_manifest: units });
-  const admission = await loadSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id });
-  assert.ok(admission?.can_authorize);
-  await authorizeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id, idempotency_key: randomUUID(),
-    expected_admission_operation_id: null, grant_cap_micro_usd: 2_000_000,
-    admission_not_after: admission.maximum_admission_not_after });
+  // A fresh explicitly admitted execution already owns its sealed cap/config.
+  // The separate authorization action renews eligible failed executions only.
   const governed = await engine.readSignalWorkspaceEngineInterpretationContextV1({ database, lease });
   const chunk = (await engine.readSignalWorkspaceEngineChunksV1({ database, lease, after: null, limit: 1 })).items[0]!;
   const ref = { root_id: chunk.root_id, chunk_index: chunk.chunk_index, start: chunk.start, end: chunk.end, chunk_sha256: chunk.chunk_sha256 };
