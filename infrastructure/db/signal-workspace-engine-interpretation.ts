@@ -194,7 +194,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
     const owner=repair?.source_request_digest??args.request_digest;
     if(overlapping.some(row=>row.original_request_digest!==owner))return fail('workspace_engine_interpretation_unit_already_sent');
    }
-   await assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1(c,args.execution_id,!!repair);
+   await assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1(c,args.execution_id,!!repair,null,args.retry_of_call_id?args.request_digest:null);
   }
   const admission=await assertSignalWorkspaceInterpretationAdmissionWithClientV1(c,{execution_id:args.execution_id,admission_operation_id:args.admission_operation_id});
   if(!admission)await assertEditorialAdmission(c,run.interpretation_revision);
@@ -228,7 +228,7 @@ export async function markSignalWorkspaceEngineInterpretationSentV1(args:{databa
     return fail('workspace_engine_interpretation_outcome_unknown');
   if((await c.query(`SELECT 1 FROM signal_topic_catalog_executions WHERE id=$1
    AND input_snapshot#>>'{engine_config,profile_version}' IN('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2','workspace-bertopic-mass-labeling-v3')`,[row.catalog_execution_id])).rows.length)
-   await assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1(c,row.catalog_execution_id,!!row.editorial_repair,row.id);
+   await assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1(c,row.catalog_execution_id,!!row.editorial_repair,row.id,row.retry_of_call_id?row.request_digest:null);
   const admission=await assertSignalWorkspaceInterpretationAdmissionWithClientV1(c,{execution_id:row.catalog_execution_id,admission_operation_id:row.admission?.operation_id});
   if(!admission)await assertEditorialAdmission(c,run.interpretation_revision);
   const today=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[row.budget_timezone])).rows[0]!.date;

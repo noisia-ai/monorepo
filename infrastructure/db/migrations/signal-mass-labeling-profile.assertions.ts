@@ -55,7 +55,7 @@ export async function assertMassLabelingProfileLocaleV1(args: {
       strength: 0.8, selection_reason: "high_affiliation" as const }] };
   const batch = buildSignalWorkspaceInterpretationBatchV1(governed.context, [cluster], configuration);
   const call = await money.reserveSignalWorkspaceEngineInterpretationV1({ ...access, execution_id, idempotency_key: randomUUID(),
-    request_digest: batch.request_digest, configuration, reserved_micro_usd: batch.reserved_micro_usd,
+    unit_keys:[key],request_digest: batch.request_digest, configuration, reserved_micro_usd: batch.reserved_micro_usd,
     budget_timezone: "UTC", daily_cap_micro_usd: 2_000_000, execution_token: lease.execution_token });
   const token = { database, call_id: call.call_id, attempt_token: call.attempt_token };
   await money.markSignalWorkspaceEngineInterpretationSentV1({ ...token, execution_token: lease.execution_token });

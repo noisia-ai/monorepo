@@ -42,7 +42,7 @@ export async function registerSignalWorkspaceEngineInterpretationUnitsWithClient
 }
 /** Future calls cannot skip unaccounted paid originals. The sole repair lane may
  * consume a reviewed invalid original, under the pre-existing repair authority. */
-export async function assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1(client:Pick<PoolClient,"query">,executionId:string,allowNeedsRepair=false,excludeCallId:string|null=null){
+export async function assertSignalWorkspaceEngineInterpretationReceiptsRecoveredV1(client:Pick<PoolClient,"query">,executionId:string,allowNeedsRepair=false,excludeCallId:string|null=null,terminalRequestDigest:string|null=null){
  if((await client.query(`SELECT 1 FROM engine_cost_events WHERE catalog_execution_id=$1
   AND workspace_contract='workspace-engine-interpretation-v1' AND (call_state IN('in_flight','outcome_unknown')
    OR call_state='response_persisted' AND NOT COALESCE((metadata->>'response_complete')::boolean,true)) LIMIT 1`,[executionId])).rows.length)
@@ -51,6 +51,7 @@ export async function assertSignalWorkspaceEngineInterpretationReceiptsRecovered
   WHERE call.catalog_execution_id=$1 AND call.workspace_contract='workspace-engine-interpretation-v1'
    AND NOT call.metadata ? 'editorial_repair' AND NOT call.metadata ? 'mass_labeling_stage'
    AND ($3::uuid IS NULL OR call.id<>$3::uuid)
+   AND NOT($4::text IS NOT NULL AND call.call_state='terminal_confirmed' AND call.request_digest=$4)
    AND call.call_state<>'definitely_not_sent'
    AND (NOT EXISTS(SELECT 1 FROM signal_workspace_interpretation_unit_claims claim WHERE claim.execution_id=$1 AND claim.original_request_digest=call.request_digest)
     OR NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact LEFT JOIN engine_cost_events repair
@@ -59,7 +60,7 @@ export async function assertSignalWorkspaceEngineInterpretationReceiptsRecovered
        AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
        AND (artifact.metadata->>'call_id'=call.id::text OR repair.id IS NOT NULL))
       AND NOT($2::boolean AND EXISTS(SELECT 1 FROM signal_workspace_interpretation_receipt_reviews review WHERE review.call_id=call.id AND review.response_sha256=call.response_sha256)))
-  LIMIT 1`,[executionId,allowNeedsRepair,excludeCallId])).rows[0];
+  LIMIT 1`,[executionId,allowNeedsRepair,excludeCallId,terminalRequestDigest])).rows[0];
  if(blocked)fail("workspace_engine_interpretation_receipt_recovery_required");
 }
 export async function recordSignalWorkspaceEngineInterpretationRecoveryReviewV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1;
@@ -91,4 +92,22 @@ export async function pauseSignalWorkspaceEngineInterpretationRecoveryV1(args:{d
    WHERE execution_id=$1 AND dispatch_kind='execution'`,[run.id]);
   return result;
  });
+}
+
+/** Historical quarantine counts never masquerade as pending after resolution. */
+export async function refreshSignalWorkspaceEngineInterpretationRecoverySummaryWithClientV1(client:Pick<PoolClient,"query">,executionId:string){
+ await client.query(`WITH counts AS(SELECT count(*)::int historical,
+   count(*) FILTER(WHERE resolution.exception_id IS NULL)::int pending,
+   count(*) FILTER(WHERE resolution.exception_id IS NOT NULL)::int resolved,
+   COALESCE(sum(jsonb_array_length(exception.unit_manifest)),0)::int historical_units,
+   COALESCE(sum(jsonb_array_length(exception.unit_manifest)) FILTER(WHERE resolution.exception_id IS NULL),0)::int pending_units,
+   COALESCE(sum(jsonb_array_length(exception.unit_manifest)) FILTER(WHERE resolution.exception_id IS NOT NULL),0)::int resolved_units
+  FROM signal_workspace_interpretation_exceptions exception
+  LEFT JOIN signal_workspace_interpretation_exception_resolutions resolution ON resolution.exception_id=exception.id
+  WHERE exception.execution_id=$1)
+ UPDATE signal_topic_catalog_executions SET result_summary=result_summary||jsonb_build_object(
+  'interpretation_exceptions',counts.pending,'interpretation_exception_units',counts.pending_units,
+  'interpretation_exceptions_historical',counts.historical,'interpretation_exception_units_historical',counts.historical_units,
+  'interpretation_exceptions_resolved',counts.resolved,'interpretation_exception_units_resolved',counts.resolved_units),updated_at=clock_timestamp()
+ FROM counts WHERE id=$1`,[executionId]);
 }

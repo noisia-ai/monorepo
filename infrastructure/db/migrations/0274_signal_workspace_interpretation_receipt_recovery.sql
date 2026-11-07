@@ -70,7 +70,11 @@ BEGIN
    OR receipt.call_configuration IS DISTINCT FROM workspace_engine_interpretation_configuration_v1(run.id,receipt.metadata->>'interpretation_revision_digest')
    OR NEW.unit_manifest IS DISTINCT FROM (SELECT jsonb_agg(claim.unit_key ORDER BY claim.unit_key COLLATE "C")
       FROM signal_workspace_interpretation_unit_claims claim WHERE claim.execution_id=run.id AND claim.original_request_digest=receipt.request_digest)
-   OR EXISTS(SELECT 1 FROM engine_cost_events repair WHERE repair.catalog_execution_id=run.id AND repair.metadata#>>'{editorial_repair,source_call_id}'=receipt.id::text),true) THEN
+   OR EXISTS(SELECT 1 FROM engine_cost_events repair WHERE repair.catalog_execution_id=run.id AND repair.metadata#>>'{editorial_repair,source_call_id}'=receipt.id::text
+     AND NOT COALESCE(repair.call_state IN('reserved','definitely_not_sent','terminal_confirmed') AND repair.response_storage_key IS NULL
+      AND repair.workspace_id=run.workspace_id AND repair.actor_user_id=run.actor_user_id AND repair.call_configuration=receipt.call_configuration
+      AND repair.metadata#>>'{editorial_repair,source_request_digest}'=receipt.request_digest
+      AND repair.metadata#>>'{editorial_repair,source_response_sha256}'=receipt.response_sha256,false)),true) THEN
    RAISE EXCEPTION 'workspace_engine_interpretation_recovery_review_invalid' USING ERRCODE='23514'; END IF;
  ELSE
   SELECT * INTO exception FROM signal_workspace_interpretation_exceptions WHERE id=NEW.exception_id;
