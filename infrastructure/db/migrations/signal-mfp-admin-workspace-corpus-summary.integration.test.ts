@@ -20,14 +20,14 @@ test('admin corpus receipt aggregation uses migrated PostgreSQL data and live au
       [siblingBrand, organization_id])).rows[0]?.id as string;
     assert.ok(siblingWorkspace, 'real brand provisioning creates the sibling workspace');
 
-    const existingBatch = (await f.query(`SELECT id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,
+    const existingBatch = (await f.query(`SELECT id,study_corpus_id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,
       record_count,included_count,excluded_count,duplicate_count,imported_by_user_id
       FROM import_batches WHERE workspace_id=$1::uuid AND status='completed' ORDER BY created_at LIMIT 1`, [workspaceId])).rows[0];
     assert.ok(existingBatch, 'the migrated synthetic source has a completed import receipt');
-    await f.query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,status,
+    await f.query(`INSERT INTO import_batches(id,study_corpus_id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,status,
       record_count,included_count,excluded_count,duplicate_count,imported_by_user_id)
-      VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,'failed',$7,$8,$9,$10,$11::uuid)`,
-    [randomUUID(), existingBatch.workspace_id, existingBatch.data_source_id, existingBatch.source_system,
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,$5,$6,$7,'failed',$8,$9,$10,$11,$12::uuid)`,
+    [randomUUID(), existingBatch.study_corpus_id, existingBatch.workspace_id, existingBatch.data_source_id, existingBatch.source_system,
       'synthetic-failed-import.txt', existingBatch.source_file_hash, existingBatch.record_count,
       existingBatch.included_count, existingBatch.excluded_count, existingBatch.duplicate_count, existingBatch.imported_by_user_id]);
     await f.query(`UPDATE mentions SET inclusion_status='excluded' WHERE id=(SELECT mention_id FROM signal_mention_import_memberships
