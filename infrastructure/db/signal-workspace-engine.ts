@@ -739,12 +739,16 @@ export async function readSignalWorkspaceEngineGuidesV1(args:{database:SignalWor
   after:SignalWorkspaceEngineGuideCursorV1|null;limit?:number}):Promise<SignalWorkspaceEngineGuidePageV1>{
   const limit=limitOf(args.limit);return transaction(args.database,async client=>{const run=await requireLease(client,args.lease);
     if (isSignalWorkspaceMassLabelingConfigV1(run.input_snapshot.engine_config)) {
-      const ordered=run.input_snapshot.guides.filter(guide=>!args.after || guide.guide_key>args.after.guide_key
-        || guide.guide_key===args.after.guide_key && guide.input_digest>args.after.input_digest)
-        .sort((left,right)=>left.guide_key.localeCompare(right.guide_key)||left.input_digest.localeCompare(right.input_digest));
-      const items=ordered.slice(0,limit).map(guide=>({...guide,vector:vectorOf(JSON.stringify(guide.vector??null))}));
+      const rows=(await client.query<Omit<SignalWorkspaceEngineGuideV1,'vector'>&{vector:string|null}>(`SELECT
+        guide.guide_key,guide.role,guide.input_digest,guide.text_sha256,guide.vector::text vector
+        FROM signal_topic_catalog_executions execution CROSS JOIN LATERAL jsonb_to_recordset(execution.input_snapshot->'guides')
+          guide(guide_key text,role text,input_digest text,text_sha256 text,vector jsonb)
+        WHERE execution.id=$1::uuid AND ($2::text IS NULL OR (guide.guide_key COLLATE "C",guide.input_digest COLLATE "C")>($2 COLLATE "C",$3 COLLATE "C"))
+        ORDER BY guide.guide_key COLLATE "C",guide.input_digest COLLATE "C" LIMIT $4`,
+        [run.id,args.after?.guide_key??null,args.after?.input_digest??null,limit+1])).rows;
+      const items=rows.slice(0,limit).map(guide=>({...guide,vector:vectorOf(guide.vector)}));
       const last=items.at(-1);
-      return {items,next_cursor:last?{guide_key:last.guide_key,input_digest:last.input_digest}:args.after,done:ordered.length<=limit};
+      return {items,next_cursor:last?{guide_key:last.guide_key,input_digest:last.input_digest}:args.after,done:rows.length<=limit};
     }
     const rows=(await client.query<Omit<SignalWorkspaceEngineGuideV1,'vector'>&{vector:string|null}>(`SELECT guide.*,cache.embedding::text vector
       FROM signal_topic_catalog_executions execution CROSS JOIN LATERAL jsonb_to_recordset(execution.input_snapshot->'guides')
