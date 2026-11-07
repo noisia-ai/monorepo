@@ -9,6 +9,7 @@ import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 import {inspectFacetContextChangeV1, type LabelingDatabaseV1} from "./signal-mention-facets";
 import {createSignalLabelingStoreV1, requestMentionFacetsV1, SignalLabelingError,
   type LabelingRunV1} from "./signal-labeling-runs";
+import {verifyMassLabelingSourceCheckpointsWithClientV1,type MassLabelingSourceCheckpointV1} from "./signal-mass-labeling-source";
 import {readClassicPolicyActiveWorkV1} from "./signal-classic-policy-completion";
 
 export const MASS_LABELING_REQUEST_VERSION_V1 = "mass-labeling-jev-v1";
@@ -64,6 +65,7 @@ export async function createMassLabelingMapV1(args: {
   database: LabelingDatabaseV1; workspace_id: string; actor_user_id: string;
   source_engine_execution_id: string; assignments_artifact_id: string; assignments_raw: string;
   consolidation_artifact_id: string; consolidation_raw: string;
+  source_checkpoints:MassLabelingSourceCheckpointV1[];
   catalog: Array<Omit<MassLabelingTopicV1, "definition_digest">>;
 }) {
   if (!args.catalog.length || args.catalog.length > 200) fail("mass_labeling_catalog_invalid", 422);
@@ -133,29 +135,35 @@ export async function createMassLabelingMapV1(args: {
       [args.workspace_id,args.source_engine_execution_id,args.consolidation_artifact_id,consolidationDigest])).rows[0];
     if (!editorial||editorial.request_digest!==batch.request_digest||editorial.response_sha256!==sha(consolidation.raw_response)
       ||digest(editorial.call_configuration)!==digest(batch.configuration)||digest(editorial.usage)!==digest(parsed.usage)) fail("mass_labeling_consolidation_receipt_invalid");
-    const badGroup=await client.query(`SELECT 1 FROM jsonb_to_recordset($3::jsonb) source(group_id text,source_artifact_id uuid)
-      WHERE NOT EXISTS(SELECT 1 FROM analysis_artifacts artifact WHERE artifact.id=source.source_artifact_id
-        AND artifact.workspace_id=$1 AND artifact.engine_execution_id=$2
-        AND artifact.metadata->>'contract_version'='workspace-engine-interpretation-checkpoint-v1'
-        AND artifact.metadata->'unit_keys' ? source.group_id) LIMIT 1`,
-      [args.workspace_id,args.source_engine_execution_id,JSON.stringify(batch.source_groups)]);
-    if(badGroup.rows.length)fail("mass_labeling_consolidation_group_lineage_invalid");
     const lane = source.artifact_key === "assignments.guided.jsonl" ? "guided" : "open";
     if ([...groupKeys].some(group => !group.startsWith(`${lane}:`))) fail("mass_labeling_lane_invalid");
+    const groupHashes=new Map<string,ReturnType<typeof createHash>>();
+    const assignments = args.assignments_raw.trim().split("\n").map((line,index) => {
+      const value = JSON.parse(line) as {ordinal:number;root_id:string;chunk_index:number;start:number;end:number;
+        stable_cluster_id:string|null;chunk_sha256:string};
+      if (!uuid.test(value.root_id) || value.ordinal!==index || !Number.isSafeInteger(value.chunk_index) || value.chunk_index < 0
+        || !Number.isSafeInteger(value.start)||value.start<0||!Number.isSafeInteger(value.end)||value.end<value.start
+        || value.stable_cluster_id !== null && typeof value.stable_cluster_id !== "string") fail("mass_labeling_assignments_invalid");
+      const group_id=value.stable_cluster_id===null?null:`${lane}:${value.stable_cluster_id}`;
+      if(group_id!==null) {
+        let hash=groupHashes.get(group_id);if(!hash){hash=createHash("sha256");groupHashes.set(group_id,hash);}
+        hash.update(JSON.stringify({ordinal:value.ordinal,root_id:value.root_id,chunk_index:value.chunk_index,
+          start:value.start,end:value.end,chunk_sha256:value.chunk_sha256})+"\n");
+      }
+      return {root_id:value.root_id,chunk_index:value.chunk_index,chunk_sha256:value.chunk_sha256,group_id};
+    });
+    if (assignments.length !== source.expected_chunks) fail("mass_labeling_assignments_incomplete");
+    await verifyMassLabelingSourceCheckpointsWithClientV1(client,{workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
+      source_engine_execution_id:args.source_engine_execution_id,source_checkpoints:args.source_checkpoints,
+      expected_group_ids:[...groupHashes.keys()],
+      expected_cluster_digests:Object.fromEntries([...groupHashes].map(([key,hash])=>[key,`sha256:${hash.digest("hex")}`])),
+      claimed_source_groups:batch.source_groups});
     const context = await inspectFacetContextChangeV1(client, args.workspace_id);
     const mapDigest = digest({source_execution_id: args.source_engine_execution_id,
       assignments_digest: assignmentsDigest, consolidation_digest: consolidationDigest, context_digest: context.digest, catalog});
     const replay = (await client.query<{id: string}>(`SELECT id FROM signal_mass_labeling_maps
       WHERE workspace_id=$1 AND map_digest=$2`, [args.workspace_id, mapDigest])).rows[0];
     if (replay) return {map_id: replay.id, map_digest: mapDigest, replayed: true};
-    const assignments = args.assignments_raw.trim().split("\n").map(line => {
-      const value = JSON.parse(line) as {root_id: string; chunk_index: number; stable_cluster_id: string | null; chunk_sha256: string};
-      if (!uuid.test(value.root_id) || !Number.isSafeInteger(value.chunk_index) || value.chunk_index < 0
-        || value.stable_cluster_id !== null && typeof value.stable_cluster_id !== "string") fail("mass_labeling_assignments_invalid");
-      return {root_id: value.root_id, chunk_index: value.chunk_index,
-        chunk_sha256: value.chunk_sha256, group_id: value.stable_cluster_id === null ? null : `${lane}:${value.stable_cluster_id}`};
-    });
-    if (assignments.length !== source.expected_chunks) fail("mass_labeling_assignments_incomplete");
     await client.query("DROP TABLE IF EXISTS pg_temp.mass_chunks,pg_temp.mass_assignments,pg_temp.mass_scores");
     await client.query(`CREATE TEMP TABLE mass_chunks ON COMMIT DROP AS
       SELECT item.root_id,item.fingerprint,asset.full_text,(chunk.ordinality-1)::int chunk_index,
