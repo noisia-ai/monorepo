@@ -23,7 +23,7 @@ async function fixture(options:{root_count?:number;skip_topic_prototypes?:boolea
  const begin=async(parent_execution_id?:string,claude_cap_micro_usd=0)=>{const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);
   return engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
    expected_context_digest:preflight.expected_context_digest,engine_config:{contract_version:'local-engine-fixture-v1'},claude_cap_micro_usd,parent_execution_id});};
- return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,catalog,cleanup};
+ return{query,database,access,workspace_id,actor_user_id,embedding_run_id,begin,catalog,cleanup,identity:seeded.identity,transaction:seeded};
 }
 async function dailyExposure(f:Awaited<ReturnType<typeof fixture>>,timezone='UTC'){
  const row=(await f.query(`SELECT COALESCE(sum(workspace_engine_interpretation_effective_cost_v1(call)),0)::text total_micro_usd
@@ -620,8 +620,8 @@ test('editorial repair is a separate bounded metered request with exact receipt 
  }finally{await f.cleanup();}
 });
 
-test('interpretation single-send, exact settlement after staleness, retained unknown and real budget limits', {skip:!enabled,timeout:120_000},async()=>{
- const f=await fixture();let otherCleanup:(()=>Promise<void>)|null=null;let fCleaned=false;try{
+test('interpretation single-send, exact settlement after staleness, retained unknown and shared actor budgets across workspaces', {skip:!enabled,timeout:180_000},async()=>{
+ const f=await fixture();let otherCleanup:(()=>Promise<void>)|null=null;try{
   await prototypes(f);const dailyCap=await dailyExposure(f,'America/Mexico_City')+2000;
   const started=await f.begin(undefined,5000),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-money'});assert.ok(lease);
   const coverage=await consume(f,lease),model=await artifact(f,lease,'engine_model'),output=await artifact(f,lease,'engine_output');
@@ -654,16 +654,17 @@ test('interpretation single-send, exact settlement after staleness, retained unk
    outcome:'definitely_not_sent',error_code:'workspace_engine_provider_disabled'});
   const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
   assert.deepEqual(budget,{hard_cap_micro_usd:5000,confirmed_micro_usd:300,reserved_micro_usd:1000,unknown_reserved_micro_usd:1000,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0});
-  // This synthetic setup uses a separate physical connection for the next
-  // workspace. Release this rollback-only transaction first so its inserts do
-  // not block the next fixture's ANALYZE on shared PostgreSQL tables.
-  await f.cleanup();fCleaned=true;
-  const other=await signalMfpLegacyWorkspaceFixtureV1();
+  // Seed the second workspace inside the same rollback-only client. The actor
+  // and organization stay shared, so the second reservation must include the
+  // first workspace's settled and unknown exposure.
+  const other=await signalMfpLegacyWorkspaceFixtureV1({transaction:f.transaction,
+   identity:{organization_id:f.identity.organization_id,actor_user_id:f.actor_user_id}});
   otherCleanup=other.cleanup;
   const secondWorkspace=other.workspace_id,secondEmbedding=other.embedding_run_id;
   await other.catalog();
   const otherAccess={database:other.database,workspace_id:secondWorkspace,actor_user_id:other.actor_user_id};
-  const otherFixture=Object.assign(other,{access:otherAccess,begin:async(parent_execution_id?:string,claude_cap_micro_usd=0)=>{
+  assert.equal(other.actor_user_id,f.actor_user_id);assert.equal(other.identity.organization_id,f.identity.organization_id);
+  const otherFixture=Object.assign(other,{access:otherAccess,identity:other.identity,transaction:f.transaction,begin:async(parent_execution_id?:string,claude_cap_micro_usd=0)=>{
    const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(otherAccess);
    return engine.beginSignalWorkspaceEngineV1({...otherAccess,embedding_run_id:secondEmbedding,idempotency_key:randomUUID(),
     expected_catalog_digest:preflight.expected_catalog_digest,expected_context_digest:preflight.expected_context_digest,
@@ -681,7 +682,7 @@ test('interpretation single-send, exact settlement after staleness, retained unk
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...otherAccess,...next,idempotency_key:nextRequest,
    request_digest:sha(nextRequest),configuration,reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:otherDailyCap}),/daily_cap_exceeded/u);
 
- }finally{await otherCleanup?.();if(!fCleaned)await f.cleanup();}
+ }finally{await otherCleanup?.();await f.cleanup();}
 });
 
 test('interpretation blocks reserved sends after observed overage and retries only an explicit definitely-not-sent predecessor', {skip:!enabled,timeout:120_000},async()=>{

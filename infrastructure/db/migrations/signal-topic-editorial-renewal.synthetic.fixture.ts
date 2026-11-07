@@ -32,6 +32,7 @@ import { syntheticClientWorkspaceFixtureV1, type SyntheticTransactionV1 } from "
 import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-workspace-topic-projection.fixture";
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
+  identity?: { organization_id: string; actor_user_id: string };
   root_count?: number;
   long_text?: boolean;
   skip_topic_prototypes?: boolean;
@@ -170,14 +171,22 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const saves = args.saves ?? createSignalTopicEditorialRenewalSyntheticSavesV1(runtime);
   assert.equal((await query("SHOW transaction_isolation")).rows[0]?.transaction_isolation, "read committed",
     "real processing admission requires the runner's READ COMMITTED rollback harness");
-  assert.equal((await query("SELECT count(*)::int count FROM organizations")).rows[0]?.count, 0,
-    "positive-source fixture requires an empty synthetic target before its first write");
-  const organization_id = randomUUID(), actor_user_id = randomUUID();
-  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic editorial renewal organization','active')",
-    [organization_id, `interest-review-${organization_id}`]);
-  await query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
-    VALUES($1,$2,'Synthetic editorial renewal actor','noisia_internal','noisia_admin',$3,'active')`,
-  [actor_user_id, `${actor_user_id}@example.test`, organization_id]);
+  const organization_id = args.identity?.organization_id ?? randomUUID();
+  const actor_user_id = args.identity?.actor_user_id ?? randomUUID();
+  if (args.identity) {
+    const actor = (await query(`SELECT actor.organization_id::text organization_id,actor.status,actor.user_type
+      FROM users actor WHERE actor.id=$1::uuid`, [actor_user_id])).rows[0];
+    assert.deepEqual(actor, { organization_id, status: "active", user_type: "noisia_internal" },
+      "shared synthetic workspace fixtures keep the same active internal actor and organization");
+  } else {
+    assert.equal((await query("SELECT count(*)::int count FROM organizations")).rows[0]?.count, 0,
+      "positive-source fixture requires an empty synthetic target before its first write");
+    await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic editorial renewal organization','active')",
+      [organization_id, `interest-review-${organization_id}`]);
+    await query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
+      VALUES($1,$2,'Synthetic editorial renewal actor','noisia_internal','noisia_admin',$3,'active')`,
+    [actor_user_id, `${actor_user_id}@example.test`, organization_id]);
+  }
   const created = await saves.createBrand({ database, scoped, organization_id, actor_user_id,
     intake: { ...BRAND_CONTEXT_SYNTHETIC_INTAKE_V1, slug: `interest-review-${randomUUID()}` } });
   const identity = { ...created, organization_id, actor_user_id };

@@ -9,47 +9,57 @@ import type { SyntheticTransactionV1 } from './signal-client-workspace-entry.syn
 /** Migrated PostgreSQL CI fixture for still-live workspace v1 readers/writers.
  * It creates only invented import, preparation, embedding and engine rows inside
  * one physical transaction; all product BEGIN/COMMIT operations are savepoints. */
-export async function signalMfpLegacyWorkspaceFixtureV1(options: { root_count?: number; long_text?: boolean; skip_topic_prototypes?: boolean } = {}) {
+export async function signalMfpLegacyWorkspaceFixtureV1(options: {
+  root_count?: number; long_text?: boolean; skip_topic_prototypes?: boolean;
+  transaction?: SyntheticTransactionV1; identity?: { organization_id: string; actor_user_id: string };
+} = {}) {
   assert.equal(process.env.NOISIA_MFP_PG_CI, 'true', 'the fixture is limited to disposable migrated-schema CI');
-  const { openDatabase } = await import(new URL('../../../scripts/dev-corpus/guard.mjs', import.meta.url).href);
-  const pool: Pool = await openDatabase();
-  const physical = await pool.connect();
-  await physical.query('BEGIN ISOLATION LEVEL READ COMMITTED');
-  await physical.query('SET LOCAL search_path=public,extensions,pg_temp');
-  const stack: string[] = [];
-  let sequence = 0;
-  const query = async (sql: string, values?: unknown[]) => {
-    if (sql.startsWith('BEGIN')) {
-      const key = `legacy_fixture_${++sequence}`;
-      stack.push(key);
-      await physical.query(`SAVEPOINT ${key}`);
-      // Product readers sometimes begin read-only transactions and set local
-      // planner/session guards in the same query string. Preserve those trailing
-      // statements when the disposable outer transaction maps BEGIN to a savepoint.
-      const separator = sql.indexOf(';');
-      const remainder = separator < 0 ? '' : sql.slice(separator + 1).trim();
-      return remainder ? physical.query(remainder, values) : { rows: [], rowCount: null };
-    }
-    if (sql === 'COMMIT') return physical.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
-    if (sql === 'ROLLBACK') {
-      const key = stack.pop();
-      assert.ok(key, 'the synthetic fixture transaction is balanced');
-      await physical.query(`ROLLBACK TO SAVEPOINT ${key}`);
-      return physical.query(`RELEASE SAVEPOINT ${key}`);
-    }
-    return physical.query(sql, values);
-  };
-  const scoped = Object.assign(Object.create(physical) as PoolClient, { query, release: () => {} });
-  const database = { query, connect: async () => scoped } as unknown as Pool;
-  const cleanup = async () => {
-    assert.equal(stack.length, 0, 'product transactions are closed before physical rollback');
-    await physical.query('ROLLBACK');
-    physical.release();
-    await pool.end();
-  };
-  const transaction: SyntheticTransactionV1 = { database, scoped, query: query as never, cleanup };
+  let transaction: SyntheticTransactionV1;
+  let ownerCleanup: (() => Promise<void>) | null = null;
+  if (options.transaction) {
+    transaction = { ...options.transaction, cleanup: async () => {} };
+  } else {
+    const { openDatabase } = await import(new URL('../../../scripts/dev-corpus/guard.mjs', import.meta.url).href);
+    const pool: Pool = await openDatabase();
+    const physical = await pool.connect();
+    await physical.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+    await physical.query('SET LOCAL search_path=public,extensions,pg_temp');
+    const stack: string[] = [];
+    let sequence = 0;
+    const query = async (sql: string, values?: unknown[]) => {
+      if (sql.startsWith('BEGIN')) {
+        const key = `legacy_fixture_${++sequence}`;
+        stack.push(key);
+        await physical.query(`SAVEPOINT ${key}`);
+        // Keep SQL guards issued after BEGIN within the owned rollback fixture.
+        const separator = sql.indexOf(';');
+        const remainder = separator < 0 ? '' : sql.slice(separator + 1).trim();
+        return remainder ? physical.query(remainder, values) : { rows: [], rowCount: null };
+      }
+      if (sql === 'COMMIT') return physical.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
+      if (sql === 'ROLLBACK') {
+        const key = stack.pop();
+        assert.ok(key, 'the synthetic fixture transaction is balanced');
+        await physical.query(`ROLLBACK TO SAVEPOINT ${key}`);
+        return physical.query(`RELEASE SAVEPOINT ${key}`);
+      }
+      return physical.query(sql, values);
+    };
+    const scoped = Object.assign(Object.create(physical) as PoolClient, { query, release: () => {} });
+    const database = { query, connect: async () => scoped } as unknown as Pool;
+    ownerCleanup = async () => {
+      assert.equal(stack.length, 0, 'product transactions are closed before physical rollback');
+      await physical.query('ROLLBACK');
+      physical.release();
+      await pool.end();
+    };
+    transaction = { database, scoped, query: query as never, cleanup: async () => {} };
+  }
+  const { database, scoped, query } = transaction;
+  const cleanup = async () => { await ownerCleanup?.(); };
   try {
-    const seed = await seedSignalTopicEditorialRenewalSourceV1({ ...transaction, root_count: options.root_count, long_text: options.long_text,
+    const seed = await seedSignalTopicEditorialRenewalSourceV1({ ...transaction, identity: options.identity,
+      root_count: options.root_count, long_text: options.long_text,
       skip_topic_prototypes: options.skip_topic_prototypes });
     const workspace_id = seed.scope.workspace_id, actor_user_id = seed.scope.actor_user_id;
     const engine = (await query(`SELECT embedding_run_id FROM signal_topic_catalog_executions

@@ -1,70 +1,106 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import type pg from 'pg';
 import { loadAdminWorkspaceCorpusSummariesV1 } from '../admin-workspace-corpus-summary';
+import { loadSignalWorkspaceCorpusReadinessStoreV1 } from '../signal-workspace-corpus-readiness';
+import { signalMfpLegacyWorkspaceFixtureV1 } from './signal-mfp-legacy-workspace.synthetic.fixture';
 
-test('admin corpus receipt aggregation runs against synthetic PostgreSQL rows', {
-  skip: process.env.NOISIA_MFP_PG_CI !== 'true', timeout: 30_000,
+test('admin corpus receipt aggregation uses migrated PostgreSQL data and live authorization', {
+  skip: process.env.NOISIA_MFP_PG_CI !== 'true', timeout: 300_000,
 }, async () => {
-  const { openDatabase } = await import(new URL('../../../scripts/dev-corpus/guard.mjs', import.meta.url).href);
-  const pool: pg.Pool = await openDatabase();
-  const client = await pool.connect();
-  const workspaceId = randomUUID(), actorId = randomUUID(), brandId = randomUUID();
+  const f = await signalMfpLegacyWorkspaceFixtureV1();
   try {
-    await client.query('BEGIN');
-    await client.query('SET LOCAL search_path=pg_temp,public,extensions');
-    await client.query(`CREATE TEMP TABLE signal_workspaces(id uuid,timezone text);
-      CREATE TEMP TABLE workspaces(id uuid,timezone text);
-      CREATE TEMP TABLE import_batches(id uuid,workspace_id uuid,data_source_id uuid,record_count int,included_count int,
-        excluded_count int,duplicate_count int,status text,acquisition_slot_id uuid,acquisition_plan_id uuid,acquisition_slot_digest text);
-      CREATE TEMP TABLE data_sources(id uuid,workspace_id uuid,status text,connection_method text);
-      CREATE TEMP TABLE signal_acquisition_slots(id uuid,workspace_id uuid,plan_id uuid,definition_hash text,scope text);
-      CREATE TEMP TABLE signal_mention_import_memberships(workspace_id uuid,import_batch_id uuid,data_source_id uuid,mention_id uuid);
-      CREATE TEMP TABLE mentions(id uuid,workspace_id uuid,canonical_mention_id uuid,inclusion_status text,published_at timestamptz);`);
-    const sourceId = randomUUID(), batchId = randomUUID(), slotId = randomUUID(), planId = randomUUID();
-    const rootIncluded = randomUUID(), rootExcluded = randomUUID();
-    await client.query('INSERT INTO signal_workspaces VALUES($1,$2)', [workspaceId, 'America/Mexico_City']);
-    await client.query('INSERT INTO workspaces VALUES($1,$2)', [workspaceId, 'America/Mexico_City']);
-    await client.query('INSERT INTO data_sources VALUES($1,$2,$3,$4)', [sourceId, workspaceId, 'active', 'manual-csv']);
-    await client.query('INSERT INTO signal_acquisition_slots VALUES($1,$2,$3,$4,$5)',
-      [slotId, workspaceId, planId, 'synthetic-slot-digest', 'competitor']);
-    await client.query(`INSERT INTO import_batches VALUES($1,$2,$3,4,1,1,2,'completed',$4,$5,$6)`,
-      [batchId, workspaceId, sourceId, slotId, planId, 'synthetic-slot-digest']);
-    await client.query(`INSERT INTO mentions VALUES
-      ($1,$3,$1,'included','2026-06-15T12:00:00Z'),($2,$3,$2,'excluded',NULL)`, [rootIncluded, rootExcluded, workspaceId]);
-    await client.query(`INSERT INTO signal_mention_import_memberships VALUES
-      ($1,$2,$3,$4),($1,$2,$3,$5),($1,$2,$3,$4)`,
-      [workspaceId, batchId, sourceId, rootIncluded, rootExcluded]);
+    const { organization_id, brand_id, actor_user_id } = f.identity;
+    const workspaceId = f.workspace_id;
+    const siblingBrand = randomUUID();
+    await f.query(`INSERT INTO brands(id,organization_id,slug,name,description,status)
+      VALUES($1::uuid,$2::uuid,$3,'Synthetic sibling brand','Synthetic authorization fixture','active')`,
+    [siblingBrand, organization_id, `admin-summary-${siblingBrand}`]);
+    const siblingWorkspace = (await f.query('SELECT id FROM signal_workspaces WHERE brand_id=$1::uuid AND organization_id=$2::uuid',
+      [siblingBrand, organization_id])).rows[0]?.id as string;
+    assert.ok(siblingWorkspace, 'real brand provisioning creates the sibling workspace');
+
+    const existingBatch = (await f.query(`SELECT id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,
+      record_count,included_count,excluded_count,duplicate_count,imported_by_user_id
+      FROM import_batches WHERE workspace_id=$1::uuid AND status='completed' ORDER BY created_at LIMIT 1`, [workspaceId])).rows[0];
+    assert.ok(existingBatch, 'the migrated synthetic source has a completed import receipt');
+    await f.query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,status,
+      record_count,included_count,excluded_count,duplicate_count,imported_by_user_id)
+      VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,'failed',$7,$8,$9,$10,$11::uuid)`,
+    [randomUUID(), existingBatch.workspace_id, existingBatch.data_source_id, existingBatch.source_system,
+      'synthetic-failed-import.txt', existingBatch.source_file_hash, existingBatch.record_count,
+      existingBatch.included_count, existingBatch.excluded_count, existingBatch.duplicate_count, existingBatch.imported_by_user_id]);
+    await f.query(`UPDATE mentions SET inclusion_status='excluded' WHERE id=(SELECT mention_id FROM signal_mention_import_memberships
+      WHERE workspace_id=$1::uuid ORDER BY mention_id LIMIT 1)`, [workspaceId]);
+    await f.query(`UPDATE mentions SET published_at=NULL WHERE id=(SELECT mention_id FROM signal_mention_import_memberships
+      WHERE workspace_id=$1::uuid ORDER BY mention_id DESC LIMIT 1)`, [workspaceId]);
+    await f.query("UPDATE signal_workspaces SET timezone='Pacific/Kiritimati' WHERE id=$1::uuid", [workspaceId]);
+    for (const connectionMethod of ['manual-csv', 'api']) {
+      const sourceId = randomUUID();
+      await f.query(`INSERT INTO data_sources(id,workspace_id,organization_id,brand_id,source_type,provider,connection_method,name,source_key,status)
+        VALUES($1::uuid,$2::uuid,$3::uuid,$4::uuid,'social_listening','synthetic',$5,$6,$7,'active')`,
+      [sourceId, workspaceId, organization_id, brand_id, connectionMethod, `Synthetic unimported ${connectionMethod}`,
+        `source-sha256-${sourceId.replaceAll('-', '')}`]);
+    }
 
     let statements = 0;
-    const queryable = {
-      query: async <Row extends Record<string, unknown>>(sql: string, values?: unknown[]) => {
-        statements += 1;
-        if (statements === 1) return { rows: [{ workspace_id: workspaceId, workspace_status: 'active',
-          brand_status: 'active', actor_status: 'active', user_type: 'noisia_internal', primary_role: 'analyst',
-          same_organization: true, brand_access_level: null, brand_same_organization: true }] as unknown as Row[] };
-        return client.query<Row>(sql, values);
-      },
-    };
-    const summaries = await loadAdminWorkspaceCorpusSummariesV1({
-      queryable, workspace_ids: [workspaceId, workspaceId], actor_user_id: actorId,
+    const queryable = { query: async <Row extends Record<string, unknown>>(sql: string, values?: unknown[]) => {
+      statements++;
+      return f.database.query<Row>(sql, values);
+    } };
+    const summaryResult = await loadAdminWorkspaceCorpusSummariesV1({
+      queryable, workspace_ids: [workspaceId, workspaceId, siblingWorkspace, randomUUID()], actor_user_id,
     });
-    const summary = summaries.get(workspaceId);
-    assert.equal(statements, 2, 'one authorization batch and one PostgreSQL aggregate serve the requested workspaces');
+    const summary = summaryResult.get(workspaceId);
+    assert.equal(statements, 2, 'one real authorization batch and one PostgreSQL aggregate serve every requested workspace');
+    assert.equal(summaryResult.size, 2, 'the internal analyst sees both active workspaces, unknown IDs have no result');
     assert.ok(summary);
-    assert.equal(summary.received_unique_roots, 2, 'repeated import links do not duplicate canonical roots');
-    assert.equal(summary.included_roots, 1);
+    assert.equal(summary.received_unique_roots, f.projection.roots.length, 'canonical roots are counted once');
+    assert.equal(summary.included_roots, f.projection.roots.length - 1);
     assert.equal(summary.excluded_roots, 1);
-    assert.equal(summary.accepted_files, 1);
-    assert.equal(summary.records_read, 4);
-    assert.equal(summary.duplicate_rows, 2);
-    assert.equal(summary.capture_scopes.competitor, 1);
-    assert.deepEqual(summary.coverage, { from: '2026-06-15', through: '2026-06-15', timezone: 'America/Mexico_City',
-      dated_roots: 1, unknown_date_roots: 1, state: 'partial' });
+    assert.equal(summary.pending_roots, 0);
+    assert.equal(summary.accepted_files, 1, 'a failed import does not contaminate accepted receipt counts');
+    assert.equal(summary.records_read, Number(existingBatch.record_count));
+    assert.equal(summary.duplicate_rows, Number(existingBatch.duplicate_count));
+    assert.equal(summary.coverage.unknown_date_roots, 1);
+    assert.equal(summary.coverage.state, 'partial');
+    assert.equal(summary.coverage.timezone, 'Pacific/Kiritimati');
+    assert.equal(summary.coverage.from, '2026-09-02', 'observed coverage follows the persisted workspace timezone');
+    assert.equal(summary.unmeasured_sources, 1, 'unimported API sources remain explicitly unmeasured');
+    assert.equal(summary.measurement_state, 'partial');
+    assert.equal(summary.sources_without_accepted_imports, 2, 'manual CSV is known zero while API import remains unmeasured');
+    assert.equal(summaryResult.get(siblingWorkspace)?.received_unique_roots, 0);
+
+    const readiness = await loadSignalWorkspaceCorpusReadinessStoreV1({ queryable: f.database, workspace_id: workspaceId });
+    assert.equal(summary.received_unique_roots, readiness.projection.linked_roots);
+    assert.equal(summary.records_read, readiness.records_read);
+    assert.equal(summary.accepted_files, readiness.accepted_files);
+
+    const clientId = randomUUID();
+    await f.query(`INSERT INTO users(id,email,full_name,user_type,primary_role,status,organization_id)
+      VALUES($1::uuid,$2,'Synthetic corpus summary client','client','client_viewer','active',$3::uuid)`,
+    [clientId, `${clientId}@example.test`, organization_id]);
+    statements = 0;
+    assert.equal((await loadAdminWorkspaceCorpusSummariesV1({ queryable, workspace_ids: [workspaceId, siblingWorkspace], actor_user_id: clientId })).size, 0,
+      'a same-organization client without a brand grant cannot read either workspace');
+    assert.equal(statements, 1, 'denied clients are filtered before the aggregate query');
+
+    await f.query(`INSERT INTO user_brand_access(user_id,brand_id,access_level,granted_by_user_id)
+      VALUES($1::uuid,$2::uuid,'read',$3::uuid)`, [clientId, brand_id, actor_user_id]);
+    statements = 0;
+    const granted = await loadAdminWorkspaceCorpusSummariesV1({
+      queryable, workspace_ids: [workspaceId, siblingWorkspace], actor_user_id: clientId,
+    });
+    assert.deepEqual([...granted.keys()], [workspaceId], 'a read grant reveals only its own brand workspace');
+    assert.equal(statements, 2);
+    await f.query('UPDATE user_brand_access SET revoked_at=clock_timestamp() WHERE user_id=$1::uuid AND brand_id=$2::uuid', [clientId, brand_id]);
+    assert.equal((await loadAdminWorkspaceCorpusSummariesV1({ queryable, workspace_ids: [workspaceId], actor_user_id: clientId })).size, 0,
+      'revoked grants stop revealing the workspace');
+
+    await f.query("UPDATE users SET status='suspended' WHERE id=$1::uuid", [actor_user_id]);
+    assert.equal((await loadAdminWorkspaceCorpusSummariesV1({ queryable, workspace_ids: [workspaceId, siblingWorkspace], actor_user_id })).size, 0,
+      'suspended internal actors receive no workspace summaries');
   } finally {
-    await client.query('ROLLBACK');
-    client.release();
-    await pool.end();
+    await f.cleanup();
   }
 });

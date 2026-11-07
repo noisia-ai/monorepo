@@ -16,7 +16,7 @@ await main(async () => {
     await client.query('BEGIN');
     await client.query(`CREATE SCHEMA ${schema}`);
     await client.query(`SET LOCAL search_path=${schema},public,extensions`);
-    await client.query('CREATE TABLE mentions(id uuid PRIMARY KEY,text_clean text NOT NULL)');
+    await client.query('CREATE TABLE mentions(id uuid PRIMARY KEY,text_clean text NOT NULL,metadata text)');
     const legacy = [
       ['00000000-0000-4000-8000-000000000001', 'plain legacy text'],
       ['00000000-0000-4000-8000-000000000002', 'Texto con acento: canción'],
@@ -47,6 +47,14 @@ await main(async () => {
         aclexplode(COALESCE(relation.relacl,acldefault('r',relation.relowner))) privilege
       WHERE relation.oid='signal_mention_text_digest_backfill_state'::regclass AND privilege.grantee=0) revoked`);
     assert.equal(publicRead.rows[0].revoked, true, 'PUBLIC cannot access backfill state');
+    const apiAcl = await client.query(`SELECT count(*)::int role_count,
+      bool_and(NOT (has_function_privilege(role.oid,'backfill_signal_mention_text_clean_sha256_v1(integer)'::regprocedure,'EXECUTE')
+        OR has_table_privilege(role.oid,'signal_mention_text_digest_backfill_state'::regclass,'SELECT')
+        OR has_table_privilege(role.oid,'signal_mention_text_digest_backfill_state'::regclass,'INSERT')
+        OR has_table_privilege(role.oid,'signal_mention_text_digest_backfill_state'::regclass,'UPDATE')
+        OR has_table_privilege(role.oid,'signal_mention_text_digest_backfill_state'::regclass,'DELETE'))) protected
+      FROM pg_roles role WHERE role.rolname=ANY(ARRAY['anon','authenticated'])`);
+    assert.deepEqual(apiAcl.rows[0], { role_count: 2, protected: true }, 'API roles cannot execute or access backfill state');
     mark('incomplete_finalize_guard');
     await client.query('SAVEPOINT incomplete_backfill');
     await assert.rejects(migration('0168_signal_mentions_text_digest_finalize.sql'), /signal_mentions_text_digest_backfill_incomplete/u);
@@ -67,6 +75,21 @@ await main(async () => {
     };
     await invalidLimit(0);
     await invalidLimit(10001);
+    const behindCursorId = legacy[0]![0];
+    await client.query('ALTER TABLE mentions DISABLE TRIGGER trg_signal_mention_text_clean_sha256');
+    await client.query('UPDATE mentions SET text_clean_sha256=NULL WHERE id=$1::uuid', [behindCursorId]);
+    await client.query('ALTER TABLE mentions ENABLE TRIGGER trg_signal_mention_text_clean_sha256');
+    await client.query("UPDATE mentions SET metadata='repair-null' WHERE id=$1::uuid", [behindCursorId]);
+    assert.notEqual((await client.query('SELECT text_clean_sha256 FROM mentions WHERE id=$1::uuid', [behindCursorId])).rows[0].text_clean_sha256,
+      null, 'ordinary metadata updates repair a legacy NULL digest');
+
+    await client.query('ALTER TABLE mentions DISABLE TRIGGER trg_signal_mention_text_clean_sha256');
+    await client.query('UPDATE mentions SET text_clean_sha256=NULL WHERE id=$1::uuid', [behindCursorId]);
+    await client.query('ALTER TABLE mentions ENABLE TRIGGER trg_signal_mention_text_clean_sha256');
+    assert.equal((await client.query('SELECT backfill_signal_mention_text_clean_sha256_v1(1) changed')).rows[0].changed, 1,
+      'backfill resets its cursor and drains a NULL introduced behind the last ID');
+    assert.equal((await client.query('SELECT backfill_signal_mention_text_clean_sha256_v1(1) changed')).rows[0].changed, 0,
+      'cursor reset reaches completion after the late NULL has been repaired');
     mark('finalize_migrations');
     await migration('0168_signal_mentions_text_digest_finalize.sql');
     await migration('0169_signal_mentions_text_digest_validate.sql');
@@ -83,6 +106,21 @@ await main(async () => {
     const updated = await client.query(`SELECT text_clean_sha256='sha256:'||encode(sha256(convert_to(text_clean,'UTF8')),'hex') exact
       FROM mentions WHERE id='00000000-0000-4000-8000-000000000004'`);
     assert.equal(updated.rows[0].exact, true, 'text updates recalculate the digest');
+    const repaired = await client.query(`UPDATE mentions SET text_clean_sha256=$1 WHERE id='00000000-0000-4000-8000-000000000004'
+      RETURNING text_clean_sha256='sha256:'||encode(sha256(convert_to(text_clean,'UTF8')),'hex') exact`, [`sha256:${'0'.repeat(64)}`]);
+    assert.equal(repaired.rows[0].exact, true, 'the trigger repairs direct digest adulteration');
+    await client.query('SAVEPOINT exact_digest_check');
+    await client.query('ALTER TABLE mentions DISABLE TRIGGER trg_signal_mention_text_clean_sha256');
+    await assert.rejects(client.query("UPDATE mentions SET text_clean_sha256=$1 WHERE id='00000000-0000-4000-8000-000000000004'",
+      [`sha256:${'f'.repeat(64)}`]), (error: unknown) => Boolean(error && typeof error === 'object'
+        && 'constraint' in error && error.constraint === 'mentions_text_clean_sha256_exact'),
+    'the exact CHECK still rejects adulteration when the trigger is disabled');
+    await client.query('ROLLBACK TO SAVEPOINT exact_digest_check');
+    await client.query('RELEASE SAVEPOINT exact_digest_check');
+    assert.equal((await client.query("SELECT to_regprocedure('backfill_signal_mention_text_clean_sha256_v1(integer)') IS NULL removed")).rows[0].removed, true,
+      'finalization removes the bounded helper');
+    assert.equal((await client.query("SELECT to_regclass('signal_mention_text_digest_backfill_state') IS NULL removed")).rows[0].removed, true,
+      'finalization removes private backfill state');
     console.log(JSON.stringify({ status: 'passed', gate: 'mentions_text_digest_postgres', rows: 4, providers: 0 }));
   } catch (error) {
     throw new Error(`mfp_mentions_digest_${phase}`);
