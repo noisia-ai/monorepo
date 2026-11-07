@@ -33,8 +33,9 @@ import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-w
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
   runtime?: SignalBrandContextPreparationRuntimeV1;
+  numeric_daily_cap_micro_usd?: number;
   saves?: Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge">;
-  projection?: Pick<WorkspaceProjectionFixtureOptionsV1, "cluster_ids" | "model_configuration" | "onCheckpoint">;
+  projection?: Pick<WorkspaceProjectionFixtureOptionsV1, "cluster_ids" | "model_configuration" | "engine_config" | "onCheckpoint">;
 };
 
 /** Explicit synthetic configuration. Passing this literal to the parser never
@@ -232,8 +233,8 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,valid_from,valid_until,
     budget_timezone,daily_cap_micro_usd,created_by_user_id)
     SELECT $1,$2,COALESCE(max(version),0)+1,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 day',
-      COALESCE((SELECT budget_timezone FROM signal_processing_policy_versions WHERE organization_id=$2 ORDER BY version DESC LIMIT 1),'America/Mexico_City'),0,$3
-    FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id]);
+      COALESCE((SELECT budget_timezone FROM signal_processing_policy_versions WHERE organization_id=$2 ORDER BY version DESC LIMIT 1),'America/Mexico_City'),$4,$3
+    FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id, args.numeric_daily_cap_micro_usd ?? 0]);
   await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
     configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
     SELECT $1,'topic_consolidation_numeric','free',NULL,NULL,configuration,
@@ -307,7 +308,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   assert.equal(await completeSignalTopicConsolidationExecutionV1({ database, lease, consolidation_run_id: numeric.consolidation_run_id }),
     true, "real control owner must complete against the guarded materialized census");
 
-  return { scope: { ...access, numeric_run_id: numeric.consolidation_run_id }, identity,
+  return { projection, scope: { ...access, numeric_run_id: numeric.consolidation_run_id }, identity,
     source_engine_execution_id: source_execution_id, numeric_execution_id: requested.execution_id,
     initial_policy_id: policy_id, semantic_generation_id: prepared.generation_id,
     knowledge_source_id: knowledge.source_id, saves,

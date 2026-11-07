@@ -10,7 +10,7 @@ export const CLIENT_PROCESSING_ACTIONS_V1 = [
   "brand_context_proposal", "topic_prototype_embeddings", "corpus_preparation", "corpus_embeddings",
   "topic_fit", "topic_interpretation", "topic_fit_incremental", "topic_interpretation_incremental",
   "topic_consolidation_numeric", "topic_consolidation", "interest_decision", "mention_facets", "concept_membership",
-  "concept_membership_jev", "concept_membership_claude"
+  "concept_membership_jev", "concept_membership_claude", "mass_labeling_jev"
 ] as const;
 export type ClientProcessingActionV1 = SignalProcessingActionV1;
 
