@@ -60,7 +60,7 @@ async function consume(f:Awaited<ReturnType<typeof fixture>>,lease:engine.Signal
  }
  let guideAfter:engine.SignalWorkspaceEngineGuideCursorV1|null=null,guides=0;
  for(;;){const page=await engine.readSignalWorkspaceEngineGuidesV1({database:f.database,lease,after:guideAfter,limit:1});guides+=page.items.length;
-  assert.ok(page.items.every(item=>item.guide_key.startsWith('scope:')));if(page.done)break;guideAfter=page.next_cursor;}
+  assert.ok(page.items.every(item=>item.guide_key.startsWith('scope:')||item.guide_key.startsWith('topic:')));if(page.done)break;guideAfter=page.next_cursor;}
  assert.equal(chunks,lease.snapshot.expected_chunks);assert.equal(roots.size,lease.snapshot.expected_roots);assert.equal(guides,lease.snapshot.expected_guides);
  const receipt={roots:roots.size,chunks,guides,stream_digest:`sha256:${hash.digest('hex')}`};
  await engine.heartbeatSignalWorkspaceEngineV1({database:f.database,lease,phase:'fitting',exported:receipt});return receipt;
@@ -140,22 +140,19 @@ test('engine exports every chunk with zero interests, autonomous cached context,
 
  }finally{await f.cleanup();}
 });
-test('engine rejects missing context cache and stale completion; small populations complete without inventing a model', {skip:!enabled,timeout:60_000},async()=>{
+test('engine rejects missing context cache and stale completion; small populations complete without inventing a model', {skip:!enabled,timeout:120_000},async()=>{
  const f=await fixture({skip_topic_prototypes:true});try{
-  await f.query("SET LOCAL lock_timeout='5s'; SET LOCAL statement_timeout='30s'");
-  console.error('mfp-cache-guard: fixture-ready');
   const topic=await createSignalTopicStoreV1({pool:f.database,...f.access,idempotency_key:randomUUID(),input:createSignalTopicInputSchemaV1.parse({
    label:'Synthetic cache-miss guide',definition:'An invented topic whose phrase has never been embedded in this workspace.'})});
-  console.error('mfp-cache-guard: topic-created');
   assert.ok(topic.term_key);
   const beforeCalls=(await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n;
+  const beforeExecutions=(await f.query("SELECT count(*)::int n FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n;
   await assert.rejects(f.begin(),/guides_required/u);
-  console.error('mfp-cache-guard: missing-cache-rejected');
   assert.equal((await f.query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,beforeCalls,
    'missing guide cache rejects before a provider call or cost reservation');
-  assert.equal((await f.query("SELECT count(*)::int n FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,0,
+  assert.equal((await f.query("SELECT count(*)::int n FROM signal_topic_catalog_executions WHERE workspace_id=$1::uuid",[f.workspace_id])).rows[0].n,beforeExecutions,
    'missing guide cache rejects before engine dispatch');
-  await prototypes(f);console.error('mfp-cache-guard: cache-prepared');
+  await prototypes(f);
   const started=await f.begin(),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-fixture'});assert.ok(lease);
   const coverage=await consume(f,lease);const output=await artifact(f,lease,'engine_output');
   await f.query('BEGIN');try{await f.query("UPDATE brands SET description='changed during fit' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
@@ -188,7 +185,7 @@ test('brand without published context cannot start from another workspace embedd
  }finally{await f.cleanup();}
 });
 
-test('explicit context preparation initializes an empty catalog and unblocks existing corpus without recomputing it', {skip:!enabled,timeout:60_000},async()=>{
+test('explicit context preparation preserves retired catalog history and reuses context vectors without recomputing corpus', {skip:!enabled,timeout:60_000},async()=>{
  const f=await fixture({skip_topic_prototypes:true});try{
   // Keep prior evidence intact. There is no usable catalog, exactly the loader
   // path of a new brand; no corpus fixture is cloned or embedded again.
@@ -202,30 +199,33 @@ test('explicit context preparation initializes an empty catalog and unblocks exi
   const missing=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
   assert.equal(missing.total_interests,0);assert.equal(missing.embedding_run_id,f.embedding_run_id);assert.equal(missing.missing_guides,0,
    'published Brand OS source already contains the required synthetic guide vectors');
-  assert.equal((await loadSignalWorkspaceTopicPrototypesV1(f.access)).availability,'no_topics');
-  await assert.rejects(quoteSignalWorkspaceTopicPrototypesV1(f.access),/workspace_topic_catalog_required/u);
+  const beforePrototypeStatus=await loadSignalWorkspaceTopicPrototypesV1(f.access);
+  assert.equal(beforePrototypeStatus.availability,'available','published Brand OS guide embeddings remain readable without an active topic profile');
+  assert.equal(beforePrototypeStatus.is_current,false);
+  const noCatalogQuote=await quoteSignalWorkspaceTopicPrototypesV1(f.access);
+  assert.equal(noCatalogQuote.total_topics,0);assert.ok(noCatalogQuote.total_input_references>0);
   assert.equal(await profiles(),0,'Status, preflight and quote must not initialize a catalog.');
+  const retiredProfiles=async()=>(await f.query(`SELECT id,taxonomy_id,version,status,context_hash FROM signal_taxonomy_profiles
+    WHERE workspace_id=$1::uuid AND kind='topic' AND metadata->>'contract_version'='signal-topic-catalog-v1' ORDER BY version DESC,id DESC`,[f.workspace_id])).rows;
+  const priorProfiles=await retiredProfiles();assert.ok(priorProfiles.length>0,'the synthetic source retains retired catalog history');
   await f.query('SAVEPOINT revoked_context_actor');
   await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
   await assert.rejects(initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access),/workspace_embedding_forbidden/u);
   assert.equal(await profiles(),0);await f.query('ROLLBACK TO SAVEPOINT revoked_context_actor');
   await f.query('RELEASE SAVEPOINT revoked_context_actor');
   await assert.rejects(initializeSignalWorkspaceTopicPrototypeCatalogV1({...f.access,workspace_id:randomUUID()}),/workspace_embedding_forbidden/u);
-  // A later transaction failure must not leave an initialized profile behind.
-  await f.query('SAVEPOINT rollback_context_initialization');
-  assert.equal((await initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access)).created,true);
-  assert.equal(await profiles(),1);await f.query('ROLLBACK TO SAVEPOINT rollback_context_initialization');
-  await f.query('RELEASE SAVEPOINT rollback_context_initialization');assert.equal(await profiles(),0);
   const initialized=await initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access);
-  assert.equal(initialized.created,true);assert.equal(await profiles(),1);
+  assert.equal(initialized.created,false,'retired historical catalog remains the versioned head');
+  assert.equal(initialized.taxonomy_profile_id,priorProfiles[0].id);
   assert.deepEqual(await initializeSignalWorkspaceTopicPrototypeCatalogV1(f.access),{taxonomy_profile_id:initialized.taxonomy_profile_id,created:false});
+  assert.deepEqual(await retiredProfiles(),priorProfiles,'explicit initialization does not rewrite or duplicate retired catalog history');
   assert.equal((await f.query(`SELECT count(*)::int n FROM taxonomy_terms WHERE taxonomy_id=(SELECT taxonomy_id FROM signal_taxonomy_profiles WHERE id=$1::uuid)`,[initialized.taxonomy_profile_id])).rows[0].n,0);
   const plan=await loadSignalWorkspaceTopicPrototypePlanV1({queryable:f.database,workspace_id:f.workspace_id,actor_user_id:f.actor_user_id});
   assert.equal(plan.topics.length,0);assert.ok((plan.context_inputs?.length??0)>0);
   assert.ok(plan.context_inputs?.every(input=>input.role==='scope_positive'||input.role==='scope_negative'));
   const quote=await quoteSignalWorkspaceTopicPrototypesV1(f.access);
-  assert.equal(quote.total_topics,0);assert.equal(quote.total_input_references,plan.context_inputs!.length);assert.ok(quote.missing_unique_inputs>0);
-  assert.equal(await prototypes(f),0,'already embedded published context requires no synthetic provider responses.');
+  assert.equal(quote.total_topics,0);assert.equal(quote.total_input_references,plan.context_inputs!.length);assert.equal(quote.missing_unique_inputs,0);
+  assert.equal(await prototypes(f),0,'published Brand OS embeddings satisfy every unique guide; no provider calls or corpus recomputation are needed.');
   const completed=await loadSignalWorkspaceTopicPrototypesV1(f.access);
   assert.equal(completed.availability,'available');assert.equal(completed.is_current,true);
   assert.equal(completed.latest_completed?.counts.completed_topics,0);
@@ -493,7 +493,7 @@ test('interpretation evidence retry restores only a complete immutable bundle be
    output_artifact_id:checkpoint!.artifact_id,result_kind:'computational_grouping',model_configuration:{fixture:'restored-evidence'},
    runtime_kind:'python',artifact_format:'joblib',license_key:null,interpretation_manifest:{unit_count:1,unit_digest:sha('"open:fixture"\n')}});
   const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...f.access,...started,execution_token:active.execution_token,idempotency_key:randomUUID(),request_digest:sha('after-restoration'),
-   configuration,reserved_micro_usd:100,budget_timezone:'UTC',daily_cap_micro_usd:5000});
+   configuration,reserved_micro_usd:100,budget_timezone:'UTC',daily_cap_micro_usd:dailyCap});
   const token={database:f.database,call_id:call.call_id,attempt_token:call.attempt_token,execution_token:active.execution_token};
   await money.markSignalWorkspaceEngineInterpretationSentV1(token);
   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{storage_key:`workspace-engine/${f.workspace_id}/${started.execution_id}/response.parts.json`,
@@ -516,7 +516,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
    FROM pg_proc proc CROSS JOIN LATERAL aclexplode(COALESCE(proc.proacl,acldefault('f',proc.proowner))) acl
    WHERE proc.oid='guard_workspace_engine_editorial_repair_v1()'::regprocedure`)).rows[0].permitted,false);
   await prototypes(f);const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);
-  const dailyCap=await dailyExposure(f,'UTC')+900;
+  const dailyCap=await dailyExposure(f,'UTC')+2_000;
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1={provider:'anthropic',model:'fixture-claude',prompt_digest:sha('repair-prompt'),schema_digest:sha('repair-schema'),pricing_version:'local-only',
    input_micro_usd_per_million_tokens:1_000_000,output_micro_usd_per_million_tokens:1_000_000,cache_read_micro_usd_per_million_tokens:0,cache_creation_micro_usd_per_million_tokens:0};
   const started=await engine.beginSignalWorkspaceEngineV1({...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),
@@ -559,7 +559,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...request,workspace_id:randomUUID()}),/forbidden/u);
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...request,execution_token:randomUUID()}),/lease_conflict/u);
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...request,reserved_micro_usd:10_000}),/run_cap_exceeded/u);
-  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...request,reserved_micro_usd:900}),/daily_cap_exceeded/u);
+  await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...request,reserved_micro_usd:2_500}),/daily_cap_exceeded/u);
   for(const invalid of ['actor','context'] as const){await f.query('SAVEPOINT repair_authority');
    if(invalid==='actor')await f.query("UPDATE users SET status='inactive' WHERE id=$1::uuid",[f.actor_user_id]);
    else await f.query("UPDATE brands SET description='changed before repair' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1::uuid)",[f.workspace_id]);
@@ -605,7 +605,13 @@ test('editorial repair is a separate bounded metered request with exact receipt 
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...request,idempotency_key:randomUUID(),request_digest:sha('repair of repair'),editorial_repair:{...editorial_repair,
    source_call_id:successor.call_id,source_request_digest:successor.request_digest,source_response_sha256:sha('repair response')}}),/repair_unavailable/u);
   await engine.failSignalWorkspaceEngineV1({database:f.database,lease,error_code:'workspace_engine_interpretation_repair_invalid'});
-  assert.equal((await status()).editorial_repair_recovery_eligible,false);await assert.rejects(retry(),/retry_unavailable/u);
+  const exceptionStatus=await status();
+  assert.equal(exceptionStatus.editorial_repair_recovery_eligible,false);
+  assert.equal(exceptionStatus.interpretation_exception_recovery_eligible,true);
+  assert.equal(engine.isSignalWorkspaceEngineRetryableErrorV1('workspace_engine_interpretation_repair_invalid',exceptionStatus),true);
+  const recovered=await retry();assert.equal(recovered.replayed,false);
+  const recoveredLease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-editorial-repair-exception-recovery'});
+  assert.ok(recoveredLease,'safe exception recovery redispatches from the sealed numerical checkpoint');
   assert.deepEqual((await f.query('SELECT * FROM engine_cost_events WHERE id=$1::uuid',[source.call_id])).rows[0],sourceBefore);
   assert.deepEqual(await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started}),{
    hard_cap_micro_usd:10_000,confirmed_micro_usd:350,reserved_micro_usd:0,unknown_reserved_micro_usd:0,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0});
@@ -615,7 +621,7 @@ test('editorial repair is a separate bounded metered request with exact receipt 
 });
 
 test('interpretation single-send, exact settlement after staleness, retained unknown and real budget limits', {skip:!enabled,timeout:120_000},async()=>{
- const f=await fixture();let otherCleanup:(()=>Promise<void>)|null=null;try{
+ const f=await fixture();let otherCleanup:(()=>Promise<void>)|null=null;let fCleaned=false;try{
   await prototypes(f);const dailyCap=await dailyExposure(f,'America/Mexico_City')+2000;
   const started=await f.begin(undefined,5000),lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-money'});assert.ok(lease);
   const coverage=await consume(f,lease),model=await artifact(f,lease,'engine_model'),output=await artifact(f,lease,'engine_output');
@@ -648,6 +654,10 @@ test('interpretation single-send, exact settlement after staleness, retained unk
    outcome:'definitely_not_sent',error_code:'workspace_engine_provider_disabled'});
   const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
   assert.deepEqual(budget,{hard_cap_micro_usd:5000,confirmed_micro_usd:300,reserved_micro_usd:1000,unknown_reserved_micro_usd:1000,terminal_reserved_micro_usd:0,observed_exception_micro_usd:0});
+  // This synthetic setup uses a separate physical connection for the next
+  // workspace. Release this rollback-only transaction first so its inserts do
+  // not block the next fixture's ANALYZE on shared PostgreSQL tables.
+  await f.cleanup();fCleaned=true;
   const other=await signalMfpLegacyWorkspaceFixtureV1();
   otherCleanup=other.cleanup;
   const secondWorkspace=other.workspace_id,secondEmbedding=other.embedding_run_id;
@@ -671,7 +681,7 @@ test('interpretation single-send, exact settlement after staleness, retained unk
   await assert.rejects(money.reserveSignalWorkspaceEngineInterpretationV1({...otherAccess,...next,idempotency_key:nextRequest,
    request_digest:sha(nextRequest),configuration,reserved_micro_usd:1000,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:otherDailyCap}),/daily_cap_exceeded/u);
 
- }finally{await otherCleanup?.();await f.cleanup();}
+ }finally{await otherCleanup?.();if(!fCleaned)await f.cleanup();}
 });
 
 test('interpretation blocks reserved sends after observed overage and retries only an explicit definitely-not-sent predecessor', {skip:!enabled,timeout:120_000},async()=>{

@@ -225,7 +225,7 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
 });
 
 test("native mentions includes partial interpretation and fully abstained roots without a selected Topic", { skip: !enabled, timeout: 90_000 }, async () => {
-  let partialChecked = false;
+  let partialChecked = false, fCleaned = false;
   const f = await signalMfpLegacyWorkspaceFixtureV1();
   try {
   await f.runProjection({ onCheckpoint: async checkpoint => {
@@ -251,6 +251,9 @@ test("native mentions includes partial interpretation and fully abstained roots 
     partialChecked = true;
   } });
   assert.equal(partialChecked, true);
+  // The rollback-only first workspace holds shared table locks until cleanup.
+  // Release it before preparing the second workspace on a separate connection.
+  await f.cleanup(); fCleaned = true;
   const emptySeed = await signalMfpLegacyWorkspaceFixtureV1();
   await emptySeed.catalog();
   const empty = await emptySeed.runProjection({ empty: true });
@@ -261,7 +264,7 @@ test("native mentions includes partial interpretation and fully abstained roots 
     assert.equal(list.items.every(row => row.resolution_state === "abstained"), true);
     assert.equal((await loadSignalWorkspaceTopicsOverviewV1(empty.access))!.terms.length, 0);
   } finally { await emptySeed.cleanup(); }
-  } finally { await f.cleanup(); }
+  } finally { if (!fCleaned) await f.cleanup(); }
 });
 
 

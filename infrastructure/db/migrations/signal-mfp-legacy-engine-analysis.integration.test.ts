@@ -160,6 +160,10 @@ for(const withRepair of [false,true]) test(`one analysis keeps fit and metered i
   assert.equal(final.topic_count,2);const status=await engine.loadSignalWorkspaceEngineStatusV1(f.access);
   assert.equal(status.latest_run?.status,'ready');assert.equal(status.latest_run?.is_current,true);assert.equal(status.latest_run?.interpreted_units,2);assert.equal(status.latest_run?.materialized_topics,2);
   assert.deepEqual((await f.query('SELECT status FROM signal_tagging_model_version_events WHERE model_version_id=$1::uuid',[fit.model_version_id])).rows,[{status:'draft'}]);
-  const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.confirmed_micro_usd,withRepair?5250:3500);assert.equal(budget.reserved_micro_usd,0);
+  const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
+  const settled=(await f.query(`SELECT count(*)::int calls,COALESCE(sum(settled_micro_usd),0)::int settled_micro_usd
+   FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND workspace_contract='workspace-engine-interpretation-v1'`,[started.execution_id])).rows[0];
+  assert.equal(settled.calls,withRepair?3:2);assert.equal(budget.confirmed_micro_usd,settled.settled_micro_usd);
+  assert.equal(budget.reserved_micro_usd,0,'all exact receipts are settled with no outstanding reservation');
  }finally{await f.cleanup();}
 });

@@ -131,7 +131,7 @@ test('temporal interpretation grants preserve historical evidence, costs, replay
    await engine.failSignalWorkspaceEngineV1({database:f.database,lease,error_code:'workspace_engine_interpretation_admission_cap_exceeded'});
    assert.equal((await admission.loadSignalWorkspaceInterpretationAdmissionV1(scope))?.can_authorize,true);
    const additional=await admission.authorizeSignalWorkspaceInterpretationAdmissionV1({...input,idempotency_key:randomUUID(),expected_admission_operation_id:grant.receipt.operation_id,grant_cap_micro_usd:4000});
-   assert.equal(additional.receipt.run_cap_micro_usd,10000);assert.equal(additional.receipt.daily_cap_micro_usd,10000);
+   assert.equal(additional.receipt.run_cap_micro_usd,10000);assert.equal(additional.receipt.daily_cap_micro_usd,dailyCap);
   });
   await assert.rejects(reserve('local-wrong-grant',sonnet,{interpretation_revision_digest:revision.revision_digest,admission_operation_id:randomUUID()}),e=>e instanceof money.SignalWorkspaceEngineInterpretationError&&e.code==='workspace_engine_interpretation_admission_changed');
   const pending=await reserve('local-sonnet-successor',sonnet,{request_digest:unsent.request_digest,retry_of_call_id:unsent.call_id,
