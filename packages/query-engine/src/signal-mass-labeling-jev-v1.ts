@@ -30,6 +30,19 @@ export const MASS_LABELING_JEV_PROMPT_DIGEST_V1 = signalWorkspaceEmbeddingDigest
   spam: "O texto é spam?", topic: "O texto aborda este tópico?", thresholds: MASS_LABELING_THRESHOLDS_V1,
 });
 
+export function massLabelingJevIdentityV1() {
+  return {
+    kind: "mass_labeling" as const, provider: "typesafe" as const, model: "jev-1.13.0",
+    prompt_digest: MASS_LABELING_JEV_PROMPT_DIGEST_V1,
+    schema_digest: signalWorkspaceEmbeddingDigestV1({ request_version: MASS_LABELING_JEV_REQUEST_VERSION_V1,
+      answers: { relevance: "noul", promotion: "noul", spam: "noul", voice: Object.keys(voice),
+        trigger_barrier: Object.keys(triggerBarrier), topics: "noul-per-candidate" },
+      probabilities: "all-answers-retained-v1" }),
+    params: { request_version: MASS_LABELING_JEV_REQUEST_VERSION_V1, input_usd_per_mtok: 0.042,
+      ...MASS_LABELING_THRESHOLDS_V1 },
+  };
+}
+
 /** One selected fragment and all independent questions form one provider call. */
 export function buildMassLabelingJevRequestV1(input: MassLabelingInputV1, context: EntityContextV1,
   model = "jev-1.13.0"): JevRequestV1 {
