@@ -17,7 +17,7 @@ export async function authorizeMassEngineConsumerV1(args: {
   const row = (
     await args.database.query<{ paid_pilot: boolean; status?: string }>(
       `SELECT status,
-    input_snapshot#>>'{engine_config,profile_version}'='workspace-bertopic-mass-labeling-v1'
+    input_snapshot#>>'{engine_config,profile_version}' IN ('workspace-bertopic-mass-labeling-v1','workspace-bertopic-mass-labeling-v2')
       AND input_snapshot ? 'interpretation_config' paid_pilot
     FROM signal_topic_catalog_executions WHERE id=$1::uuid`,
       [args.execution_id],

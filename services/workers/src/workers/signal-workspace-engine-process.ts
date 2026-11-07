@@ -54,12 +54,25 @@ export async function validateWorkspaceEngineOutputV1(args: {
     if (!object(lane) || !["open", "guided"].includes(String(lane.lane)) || lanes.has(String(lane.lane))
       || lane.occurrences !== args.input.records.rows || lane.roots !== args.input.records.roots
       || !Number.isSafeInteger(lane.clusters) || Number(lane.clusters) < 0
-      || args.input.config.profile_version === "workspace-bertopic-mass-labeling-v1" && Number(lane.clusters) > 200
+      || ["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2"].includes(String(args.input.config.profile_version)) && Number(lane.clusters) > 200
       || !names.has(String(lane.assignments_file)) || !names.has(String(lane.clusters_file))
       || (lane.model_file !== null && !names.has(String(lane.model_file)))) return fail("output_lane_invalid");
+    if(args.input.config.profile_version === "workspace-bertopic-mass-labeling-v2"
+      && (lane.fit_unit!=="canonical-root-centroid-v1"||lane.fit_rows!==args.input.records.roots))
+      return fail("output_root_population_invalid");
     lanes.add(String(lane.lane));
   }
   if (!lanes.has("open") || raw.lanes.length > 2 || !names.has("roots.jsonl") || !names.has("lineage.json")) return fail("output_coverage_invalid");
+  if(args.input.config.profile_version === "workspace-bertopic-mass-labeling-v2") {
+    if(!names.has("fit-population.json")||!names.has("fit-roots.jsonl"))return fail("output_root_population_invalid");
+    const population:unknown=JSON.parse(await readFile(join(directory,"fit-population.json"),"utf8"));
+    if(!object(population)||population.contract_version!=="canonical-root-centroid-v1"
+      ||population.rows!==args.input.records.roots||population.dimensions!==1024||population.dtype!=="little-endian-float32"
+      ||population.source_records_sha256!==args.input.records.sha256||population.source_vectors_sha256!==args.input.vectors.sha256
+      ||population.roots_sha256!==await hashWorkspaceEngineFileV1(join(directory,"fit-roots.jsonl"))
+      ||typeof population.vectors_sha256!=="string"||!/^sha256:[0-9a-f]{64}$/u.test(population.vectors_sha256))
+      return fail("output_root_population_invalid");
+  }
   return raw as WorkspaceEngineOutputV1;
 }
 

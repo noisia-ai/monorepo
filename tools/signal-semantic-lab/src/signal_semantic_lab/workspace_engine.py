@@ -64,6 +64,41 @@ def mass_labeling_config(roots: int) -> dict[str, Any]:
         "editorial_lane": "guided-or-open-v1",
     }
 
+ROOT_MASS_LABELING_PROFILE = "workspace-bertopic-mass-labeling-v2"
+
+
+def mass_labeling_root_config(roots: int) -> dict[str, Any]:
+    return {**mass_labeling_config(roots), "profile_version": ROOT_MASS_LABELING_PROFILE,
+            "fit_unit": "canonical-root-centroid-v1", "minimum_editorial_roots": 20}
+
+
+def _root_fit_population(records: list[dict[str, Any]], matrix: np.ndarray
+                         ) -> tuple[list[dict[str, Any]], np.ndarray, np.ndarray]:
+    """One deterministic normalized original-space centroid per canonical root.
+
+    The inverse index broadcasts fitted root membership to EVERY source chunk.
+    Long mentions cannot satisfy density merely by generating more fragments.
+    """
+    roots: list[dict[str, Any]] = []
+    inverse = np.empty(len(records), dtype=np.int32)
+    vectors = []
+    start = 0
+    while start < len(records):
+        end = start + 1
+        while end < len(records) and records[end]["root_id"] == records[start]["root_id"]:
+            end += 1
+        centroid = np.asarray(matrix[start:end], dtype=np.float64).mean(axis=0)
+        norm = np.linalg.norm(centroid)
+        if not np.isfinite(centroid).all() or norm <= 1e-12:
+            _fail("root_centroid_invalid")
+        vectors.append(np.asarray(centroid / norm, dtype=np.float32))
+        roots.append({"root_id": records[start]["root_id"], "first_ordinal": start,
+                      "chunks": end - start,
+                      "text": "\n".join(row["text"] for row in records[start:end])})
+        inverse[start:end] = len(roots) - 1
+        start = end
+    return roots, np.asarray(vectors, dtype=np.float32).reshape((-1, matrix.shape[1])), inverse
+
 _HASH = re.compile(r"^sha256:[0-9a-f]{64}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,100}$")
 _ROLES = {"topic_positive", "topic_negative", "scope_positive", "scope_negative"}
@@ -222,6 +257,7 @@ def _load_input(
         or manifest.get("config") not in (
             DEFAULT_WORKSPACE_ENGINE_CONFIG,
             mass_labeling_config(_natural(manifest.get("records", {}).get("roots"))),
+            mass_labeling_root_config(_natural(manifest.get("records", {}).get("roots"))),
         )
     ):
         return _fail("input_profile_invalid")
@@ -897,7 +933,22 @@ def run_workspace_engine(
                 "guided": [],
             },
         )
-    insufficient = len(records) <= max(
+    root_fit = config.get("profile_version") == ROOT_MASS_LABELING_PROFILE
+    fit_records, fit_matrix, inverse = records, matrix, None
+    if root_fit:
+        fit_records, fit_matrix, inverse = _root_fit_population(records, matrix)
+        _write_jsonl(stage / "fit-roots.jsonl", (
+            {**{key: row[key] for key in ["root_id", "first_ordinal", "chunks"]},
+             "vector_sha256": _hash_bytes(fit_matrix[index].astype("<f4").tobytes())}
+            for index, row in enumerate(fit_records)))
+        _write_json(stage / "fit-population.json", {
+            "contract_version": config["fit_unit"], "rows": len(fit_records),
+            "dimensions": 1024, "dtype": "little-endian-float32",
+            "vectors_sha256": _hash_bytes(memoryview(fit_matrix.astype("<f4", copy=False))),
+            "roots_sha256": _hash_file(stage / "fit-roots.jsonl"),
+            "source_records_sha256": manifest["records"]["sha256"],
+            "source_vectors_sha256": manifest["vectors"]["sha256"]})
+    insufficient = len(fit_records) <= max(
         config["hdbscan_min_cluster_size"],
         config["hdbscan_min_samples"],
         config["umap_n_neighbors"],
@@ -909,11 +960,11 @@ def run_workspace_engine(
     ):
         phase_started = perf_counter()
         guidance = None
-        lane_matrix, seed_labels = matrix, None
+        lane_matrix, seed_labels = fit_matrix, None
         if lane == "guided":
-            if len(matrix):
+            if len(fit_matrix):
                 lane_matrix, seed_labels, guidance, center = _guide_matrix(
-                    matrix, guides, guide_matrix, stage / "scratch-guided.npy"
+                    fit_matrix, guides, guide_matrix, stage / "scratch-guided.npy"
                 )
             else:
                 center = np.zeros(1024, dtype=np.float32)
@@ -925,7 +976,7 @@ def run_workspace_engine(
                 }
             np.save(stage / "guide-center.npy", center, allow_pickle=False)
             guidance["matrix_sha256"] = (
-                _hash_file(stage / "scratch-guided.npy") if len(matrix) else None
+                _hash_file(stage / "scratch-guided.npy") if len(fit_matrix) else None
             )
         model_name = None if insufficient else f"model.{lane}.joblib"
         if insufficient:
@@ -941,12 +992,17 @@ def run_workspace_engine(
                 contextlib.redirect_stderr(muted),
             ):
                 labels, strengths, terms = _fit(
-                    [record["text"] for record in records],
+                    [record["text"] for record in fit_records],
                     lane_matrix,
                     config,
                     seed_labels,
                     stage / model_name,
                 )
+        if root_fit and not insufficient:
+            if any(np.count_nonzero(labels == label) < config["hdbscan_min_cluster_size"]
+                   for label in set(labels) - {-1}):
+                _fail("root_density_invalid")
+            labels, strengths = labels[inverse], strengths[inverse]
         memberships = _root_sets(records, labels)
         old_memberships: dict[str, set[str]] = defaultdict(set)
         if previous:
@@ -1014,6 +1070,7 @@ def run_workspace_engine(
                 "outlier_occurrences": int((labels < 0).sum()),
                 "guidance": guidance,
                 "fit_seconds": perf_counter() - phase_started,
+                **({"fit_unit": config["fit_unit"], "fit_rows": len(fit_records)} if root_fit else {}),
             }
         )
         _progress("fit_complete", lane=lane, occurrences=len(records), clusters=len(clusters))

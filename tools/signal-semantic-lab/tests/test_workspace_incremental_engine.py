@@ -608,3 +608,9 @@ def test_mfp_residual_keeps_prediction_for_new_belonging_roots_and_fits_only_unc
     assert receipt["operations"]["fit"] == []  # one-root residue is below the real fit minimum
     assert {row["root_id"] for row in read_lines(output / "pending-cohort.jsonl")} == {new_ids[1]}
     assert receipt["counts"]["roots"] == len(prior_ids) + 2
+
+# Root-density acceptance also runs in the deployed Python harness.
+from test_workspace_engine import (
+    test_root_density_preserves_all_chunks_and_model_assignments as test_root_density_preserves_all_chunks_and_model_assignments,
+    test_nineteen_long_roots_cannot_form_a_density_group as test_nineteen_long_roots_cannot_form_a_density_group,
+)

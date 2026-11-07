@@ -26,6 +26,13 @@ async function* records(path: string): AsyncGenerator<Occurrence> {
 const identity = (row: Occurrence) => ({ ordinal: row.ordinal, root_id: row.root_id, chunk_index: row.chunk_index,
   start: row.start, end: row.end, chunk_sha256: row.chunk_sha256 });
 
+/** A paid editorial packet must contain 20–30 different canonical mentions. */
+export function assertMassLabelingEditorialPopulationV1(clusters:SignalWorkspaceInterpretationClusterV1[]) {
+  for(const group of clusters)if(group.root_count<20||group.representatives.length<20
+    ||group.representatives.length>30||new Set(group.representatives.map(row=>row.root_id)).size!==group.representatives.length)
+    throw new Error("workspace_engine_editorial_population_invalid");
+}
+
 /** Join every assignment back to its immutable source occurrence. Memory holds
  * cluster summaries and at most ten texts per cluster, never the corpus matrix.
  * Each group digest includes ALL of its occurrences, including unquoted ones. */
@@ -33,7 +40,8 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
   input_directory: string; output_directory: string; output: WorkspaceEngineOutputV1;
 }): Promise<SignalWorkspaceInterpretationClusterV1[]> {
   const result: SignalWorkspaceInterpretationClusterV1[] = [];
-  const pilot = args.output.config.profile_version === "workspace-bertopic-mass-labeling-v1";
+  const pilot = ["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2"].includes(String(args.output.config.profile_version));
+  const rootFit=args.output.config.profile_version === "workspace-bertopic-mass-labeling-v2";
   const representatives = pilot ? 30 : 10;
   const selectedLane = pilot && args.output.lanes.some(lane => lane.lane === "guided") ? "guided" : "open";
   const lanes = new Set<string>();
@@ -58,13 +66,15 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
     if (census.size !== clusters.length || new Set(clusters.map(cluster => cluster.local_label)).size !== clusters.length) fail();
     const source = records(join(args.input_directory, "chunks.jsonl"));
     let ordinal = 0, populationRoots = 0, lastRoot = "", outliers = 0;
+    let rootLabel:unknown;
     try {
       for await (const assigned of records(join(args.output_directory, lane.assignments_file))) {
         const next = await source.next(), original = next.value;
         if (next.done || assigned.ordinal !== ordinal || JSON.stringify(identity(assigned)) !== JSON.stringify(identity(original))) fail();
         if (assigned.root_id !== lastRoot) {
           if (assigned.root_id <= lastRoot) fail();
-          populationRoots++; lastRoot = assigned.root_id;
+          populationRoots++; lastRoot = assigned.root_id;rootLabel=assigned.local_label;
+        } else if(rootFit&&assigned.local_label!==rootLabel){fail();
         }
         if (!Number.isSafeInteger(assigned.local_label) || !Number.isFinite(assigned.strength)
           || assigned.strength! < 0 || assigned.strength! > 1) fail();
@@ -103,5 +113,6 @@ export async function readWorkspaceEngineInterpretationEvidenceV1(args: {
     }
   }
   if (!lanes.has("open")) fail();
+  if(rootFit)assertMassLabelingEditorialPopulationV1(result);
   return result.sort((a, b) => a.cluster_id < b.cluster_id ? -1 : a.cluster_id > b.cluster_id ? 1 : 0);
 }

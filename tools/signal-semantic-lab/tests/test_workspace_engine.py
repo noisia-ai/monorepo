@@ -617,3 +617,62 @@ def test_mass_labeling_real_fit_guidance_and_reduction(real_runs, tmp_path):
     )
     assert 0 < len(set(labels) - {-1}) <= 2
     assert len(terms) <= 2
+
+
+def test_root_density_preserves_all_chunks_and_model_assignments(real_runs, tmp_path):
+    from joblib import load
+    from signal_semantic_lab.workspace_engine import mass_labeling_root_config, _root_fit_population
+
+    original = real_runs["first_input"]
+    original_vectors = np.load(original / "vectors.npy")
+    source = {}
+    for row in read_lines(original / "chunks.jsonl"):
+        # Many duplicate fragments within each root must not multiply density.
+        source.setdefault(row["root_id"], []).extend(
+            [(row["text"], original_vectors[row["ordinal"]])] * (6 if row["ordinal"] < 12 else 2))
+    directory, output = tmp_path / "root-input", tmp_path / "root-output"
+    manifest = input_fixture(directory, source)
+    manifest["config"] = mass_labeling_root_config(len(source))
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    result = run_workspace_engine(directory, output, tmp_path)
+    fit_roots = read_lines(output / "fit-roots.jsonl")
+    assert len(fit_roots) == len(source)
+    records = read_lines(directory / "chunks.jsonl")
+    _, vectors, _ = _root_fit_population(records, np.load(directory / "vectors.npy"))
+    population = json.loads((output / "fit-population.json").read_text())
+    assert population["vectors_sha256"] == sha(vectors.astype("<f4").tobytes())
+    assert population["roots_sha256"] == file_sha(output / "fit-roots.jsonl")
+    assert not (output / "fit-root-vectors.npy").exists()
+    assert all(row["vector_sha256"] == sha(vectors[index].astype("<f4").tobytes())
+               for index, row in enumerate(fit_roots))
+    assert vectors.shape == (len(source), 1024)
+    np.testing.assert_allclose(np.linalg.norm(vectors, axis=1), 1, atol=1e-6)
+    for lane in result["lanes"]:
+        model = load(output / lane["model_file"])
+        assignments = read_lines(output / lane["assignments_file"])
+        clusters = json.loads((output / lane["clusters_file"]).read_text())
+        assert lane["fit_rows"] == len(model.topics_) == len(source)
+        assert len(assignments) == sum(map(len, source.values()))
+        assert 0 < len(clusters) <= 200
+        by_root = {row["root_id"]: model.topics_[index] for index, row in enumerate(fit_roots)}
+        assert all(row["local_label"] == by_root[row["root_id"]] for row in assignments)
+        assert all(cluster["root_count"] >= manifest["config"]["hdbscan_min_cluster_size"] for cluster in clusters)
+        assert all(len(cluster["representatives"]) == 30
+                   and len({row["root_id"] for row in cluster["representatives"]}) == 30 for cluster in clusters)
+
+
+def test_nineteen_long_roots_cannot_form_a_density_group(tmp_path):
+    from signal_semantic_lab.workspace_engine import mass_labeling_root_config
+
+    source = {root_id(index + 1): [("Synthetic Portuguese discussion. ", np.eye(1024)[0])] * 12
+              for index in range(19)}
+    directory, output = tmp_path / "sparse-input", tmp_path / "sparse-output"
+    manifest = input_fixture(directory, source, guides=False)
+    manifest["config"] = mass_labeling_root_config(19)
+    (directory / "manifest.json").write_text(json.dumps(manifest))
+    result = run_workspace_engine(directory, output, tmp_path)
+    assert result["status"] == "insufficient_population"
+    assignments = read_lines(output / "assignments.open.jsonl")
+    assert len(assignments) == 19 * 12
+    assert all(row["local_label"] == -1 for row in assignments)
+    assert result["lanes"][0]["clusters"] == 0
