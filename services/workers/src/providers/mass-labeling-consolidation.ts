@@ -1,3 +1,4 @@
+import { Agent } from "undici";
 import {
   buildMassLabelingConsolidationRequestV1,
   assertAnthropicProviderAccessV1,
@@ -40,8 +41,12 @@ export async function sendMassLabelingConsolidationV1(args: {
     receipt: WorkspaceInterpretationRawReceiptV1,
   ) => Promise<void>;
   fetch_impl?: typeof fetch;
+  timeout_ms?: number;
+  create_dispatcher?: (options: Agent.Options) => Agent;
 }): Promise<WorkspaceInterpretationRawReceiptV1> {
   if (!args.enabled || !args.api_key.trim()) throw denied();
+  const timeout = args.timeout_ms ?? 600_000;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600_000) throw denied();
   const rebuilt = buildMassLabelingConsolidationRequestV1({
     workspace_id: args.batch.workspace_id,
     source_engine_execution_id: args.batch.source_engine_execution_id,
@@ -57,29 +62,30 @@ export async function sendMassLabelingConsolidationV1(args: {
       "workspace_engine_mass_consolidation_send_not_authorized",
       "outcome_unknown",
     );
-  let response: Response;
+  const dispatcher = (args.create_dispatcher ?? (options => new Agent(options)))({
+    headersTimeout: timeout, bodyTimeout: timeout, connectTimeout: Math.min(10_000, timeout),
+    connections: 1, pipelining: 0, maxRedirections: 0,
+  });
   try {
-    response = await (args.fetch_impl ?? fetch)(
-      "https://api.anthropic.com/v1/messages",
-      {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(600_000),
+    let response: Response;
+    try {
+      const request: RequestInit & { dispatcher: Agent } = {
+        method: "POST", redirect: "error", signal: AbortSignal.timeout(timeout), dispatcher,
         headers: {
-          "x-api-key": args.api_key,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
+          "x-api-key": args.api_key, "anthropic-version": "2023-06-01", "content-type": "application/json",
         },
         body: args.batch.request_body,
-      },
-    );
-  } catch {
-    throw new WorkspaceInterpretationTransportErrorV1(
-      "workspace_engine_mass_consolidation_transport_failed",
-      "outcome_unknown",
-    );
+      };
+      response = await (args.fetch_impl ?? fetch)("https://api.anthropic.com/v1/messages", request);
+    } catch {
+      throw new WorkspaceInterpretationTransportErrorV1("workspace_engine_mass_consolidation_transport_failed", "outcome_unknown");
+    }
+    const receipt = await readWorkspaceInterpretationReceiptV1(response);
+    await args.persist_receipt(receipt);
+    return receipt;
+  } finally {
+    // This Agent owns one request. Finish durable receipt handling before closing
+    // its sockets, including a partial response or an uncertain transport.
+    await dispatcher.destroy().catch(() => undefined);
   }
-  const receipt = await readWorkspaceInterpretationReceiptV1(response);
-  await args.persist_receipt(receipt);
-  return receipt;
 }
