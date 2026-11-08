@@ -115,15 +115,16 @@ export async function SignalV2WorkspacePage({
         workspaceSubjectId={workspace.subject.id} viewKey="all_conversations" />;
     }
   }
-  if ((activeModule === "topics" || activeModule === "monitoring") && !activeReportKey) {
+  if (((activeModule === "topics" || activeModule === "monitoring") && !activeReportKey) || activeReportKey === "triggers-barriers") {
     const params = new URLSearchParams();
     for (const [key, value] of Object.entries(query)) {
       for (const item of Array.isArray(value) ? value : value === undefined ? [] : [value]) params.append(key, item);
     }
+    if (!params.has("conversation_segment")) params.set("conversation_segment", "conversation");
     const bundle = await loadNativeSignalTopicsPageV1({ workspace_id: workspace.id, actor_user_id: session.appUser.id,
       timezone: workspace.timezone, imported_fallback: allowImportedSignalFallbackV1(workspace) }, params);
     const native = bundle?.overview;
-    if (native) {
+    if (native && (!activeReportKey || native.consumer_indicators)) {
       const [workspaceOptions, releases] = await Promise.all([
         listSignalWorkspaceOptionsForUser(session.appUser),
         loadSignalStrategicReleasesV1(workspace, session.appUser.userType === "noisia_internal")
@@ -134,7 +135,7 @@ export async function SignalV2WorkspacePage({
       const filter = dateFrom && dateTo ? { ...empty.filter, timezone: workspace.timezone, date_range: { start: dateFrom, end: dateTo } } : empty.filter;
       const nativeMonitoring = buildNativeSignalMonitoringV1({ ...empty, filter,
         comparison: resolveSignalComparisonV1({ filter, mode: "none" }) }, native);
-      return <SignalV2BrandMonitoring activeModule={activeModule} activeStudy={null} brandName={workspace.name}
+      return <SignalV2BrandMonitoring activeModule={activeReportKey ? "study" : activeModule} activeStudy={null} brandName={workspace.name}
         canRefreshInsights={false} initialData={nativeMonitoring}
         initialMention={null} initialMentions={null} initialSettings={null} initialTopicsNarratives={native} initialNativeTopicBundle={bundle} initialTriggersBarriers={null}
         legacyOutputId={null} manageTopicsHref={manageTopicsHref}

@@ -631,6 +631,27 @@
       "highlights": "Todavía no hay conversaciones destacadas para este periodo. Puedes explorar las menciones."
     },
     "workspaceTopics": {
+      "selectedInterests": "Intereses seleccionados",
+      "corpusOriginal": "Original del corpus ({language})",
+      "conversationSegment": {
+        "label": "Contenido",
+        "conversation": "Conversación",
+        "advertising": "Publicidad",
+        "hashtags": "Publicaciones de sólo hashtags",
+        "all": "Todo el contenido"
+      },
+      "consumers": {
+        "pending": "La revisión de consumidores está pendiente.",
+        "title": "Motivadores y barreras de consumidores",
+        "scope": "Consumidores individuales, excluyendo publicidad y publicaciones de sólo hashtags.",
+        "eligible": "Consumidores elegibles",
+        "processed": "Revisados",
+        "trigger": "Motivadores",
+        "barrier": "Barreras",
+        "none": "Ninguno",
+        "intermediate": "Intermedios",
+        "unresolved": "Pendientes"
+      },
       "mfp": {
         "source": "Conceptos y pertenencias",
         "quality": "Los conceptos adoptados usan decisiones semánticas guardadas para su definición vigente. Los conceptos de discovery conservan su agrupación. Estos resultados experimentales no acreditan precisión ni aprobación humana.",
@@ -690,6 +711,7 @@
       "unavailableDimensionsBody": "Este resultado no incluye sentimiento, relaciones entre Topics ni narrativas verificadas. La pertenencia calculada no demuestra esas dimensiones.",
       "noiseAbstention": "Hay {count, number} menciones sin grupo estable. Esa abstención numérica no equivale a una decisión editorial de Noise.",
       "sections": {
+        "interests": "Intereses definidos",
         "label": "Explorar clasificación",
         "topics": "Topics",
         "narratives": "Narrativas",
