@@ -9,6 +9,7 @@ import {
   settleSignalWorkspaceEngineInterpretationV1,
   failSignalWorkspaceEngineInterpretationV1,
   persistSignalWorkspaceEngineArtifactV1,
+  readSignalWorkspaceMassLabelingGlobalReceiptDecisionV1,
   type SignalWorkspaceEngineDatabaseV1,
   type SignalWorkspaceEngineLeaseV1,
   type SignalWorkspaceEngineInterpretationCallV1,
@@ -16,6 +17,7 @@ import {
 import {
   buildMassLabelingConsolidationRequestV1,
   parseMassLabelingConsolidationResponseV1,
+  recoverMassLabelingConsolidationResponseV1,
   massLabelingConsolidationUsageV1,
   signalWorkspaceEmbeddingDigestV1 as digest,
   type MassLabelingConsolidationOutputV1,
@@ -32,6 +34,7 @@ const stores = {
   settle: settleSignalWorkspaceEngineInterpretationV1,
   fail: failSignalWorkspaceEngineInterpretationV1,
   persist: persistSignalWorkspaceEngineArtifactV1,
+  receiptDecision: readSignalWorkspaceMassLabelingGlobalReceiptDecisionV1,
 };
 const sha = (bytes: Uint8Array | string) =>
   `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
@@ -50,7 +53,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
   expected_cluster_digests: Record<string, string>;
   directory: string;
   storage: WorkspaceEngineStorageV1;
-  stores?: typeof stores;
+  stores?: Omit<typeof stores, "receiptDecision"> & Partial<Pick<typeof stores, "receiptDecision">>;
   send?: typeof sendMassLabelingConsolidationV1;
   recovery_only?: boolean;
   recovery_call?: SignalWorkspaceEngineInterpretationCallV1;
@@ -234,7 +237,24 @@ export async function consolidateMassLabelingGroupsV1(args: {
   }
   // Known usage is settled even if a later schema/coverage check rejects output.
   await store.settle({ ...attempt, usage });
-  const { output } = parseMassLabelingConsolidationResponseV1(batch, raw);
+  let parsed: ReturnType<typeof parseMassLabelingConsolidationResponseV1>;
+  let receiptDecision: Awaited<ReturnType<typeof readSignalWorkspaceMassLabelingGlobalReceiptDecisionV1>> = null;
+  try {
+    parsed = parseMassLabelingConsolidationResponseV1(batch, raw);
+  } catch (error) {
+    if (!args.recovery_only || !store.receiptDecision) throw error;
+    receiptDecision = await store.receiptDecision({ database, lease, call_id: call.call_id });
+    if (!receiptDecision || receiptDecision.workspace_id !== lease.workspace_id || receiptDecision.execution_id !== lease.execution_id
+      || receiptDecision.call_id !== call.call_id || receiptDecision.request_digest !== batch.request_digest
+      || receiptDecision.response_sha256 !== sha(raw) || receiptDecision.source_groups_digest !== batch.source_groups_digest
+      || receiptDecision.decision_digest !== digest(receiptDecision.decision)) return invalid();
+    parsed = recoverMassLabelingConsolidationResponseV1(batch, raw, receiptDecision.decision);
+  }
+  const { output } = parsed;
+  const operatorReceiptRecovery = receiptDecision ? {
+    contract_version: "workspace-mass-labeling-global-receipt-decision-v1",
+    decision_id: receiptDecision.decision_id, decision_digest: receiptDecision.decision_digest,
+  } : null;
   const content = JSON.stringify({
     contract_version: "workspace-mass-labeling-consolidation-v1",
     workspace_id: lease.workspace_id,
@@ -243,6 +263,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
     source_groups_digest: batch.source_groups_digest,
     raw_response: raw,
     output,
+    ...(operatorReceiptRecovery ? { operator_receipt_recovery: operatorReceiptRecovery } : {}),
   });
   const file = join(args.directory, "mass-labeling-consolidation.json");
   await writeFile(file, content, { mode: 0o600 });
@@ -270,6 +291,8 @@ export async function consolidateMassLabelingGroupsV1(args: {
         request_digest: batch.request_digest,
         response_sha256: sha(raw),
         stage: "global-consolidation-v1",
+        ...(receiptDecision ? { recovery_decision_id: receiptDecision.decision_id,
+          recovery_decision_digest: receiptDecision.decision_digest } : {}),
       },
     },
   });

@@ -9,9 +9,11 @@ import {
   loadSignalWorkspaceInterpretationAdmissionV1,
   authorizeSignalWorkspaceInterpretationAdmissionV1,
   recordSignalWorkspaceEngineInsufficiencyDecisionV1,
+  recordSignalWorkspaceMassLabelingGlobalReceiptDecisionV1,
+  readSignalWorkspaceMassLabelingGlobalReceiptDecisionV1,
 } from "../../infrastructure/db/index";
 import { assertMassLabelingEditorialAccessV1 } from "../../services/workers/src/providers/mass-labeling-consolidation";
-import { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, type SignalWorkspaceInterpretationBatchV1 } from "../../packages/query-engine/src/index";
+import { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, parseMassLabelingConsolidationRecoveryDecisionV1, type SignalWorkspaceInterpretationBatchV1, type MassLabelingConsolidationBatchV1 } from "../../packages/query-engine/src/index";
 
 /** Operator-only CLI. Supply private identity/receipt JSON on stdin and redirect
  * stdout to private storage. The existing guard accepts only the MFP target. */
@@ -29,11 +31,14 @@ async function main() {
       "execute",
       "recover",
       "mark-insufficient",
+      "decide-global-receipt",
     ].includes(action ?? "")
   )
     throw new Error("mass_engine_action_invalid");
   const encoded = await readFile("/dev/stdin", "utf8");
-  if (Buffer.byteLength(encoded) > (action === "mark-insufficient" ? 2 * 1024 * 1024 : 16384))
+  const maximumInputBytes = action === "decide-global-receipt" ? 128 * 1024 * 1024
+    : action === "mark-insufficient" ? 2 * 1024 * 1024 : 16384;
+  if (Buffer.byteLength(encoded) > maximumInputBytes)
     throw new Error("mass_engine_input_invalid");
   const input: Record<string, unknown> = JSON.parse(encoded);
   const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u;
@@ -49,6 +54,8 @@ async function main() {
     "expected_admission_operation_id",
     ...(action === "mark-insufficient" ? ["exception_id", "unit_key", "original_response_sha256", "repair_response_sha256",
       "reason", "batch", "original_response", "repair_response"] : []),
+    ...(action === "decide-global-receipt" ? ["call_id", "request_digest", "response_sha256", "source_groups_digest",
+      "decision", "batch", "raw_response", "source_checkpoints"] : []),
   ];
   if (
     !input ||
@@ -79,7 +86,22 @@ async function main() {
       result = await loadSignalWorkspaceEngineStatusV1(access);
     else if (action === "admission")
       result = await loadSignalWorkspaceInterpretationAdmissionV1(scope);
-    else if (action === "mark-insufficient") {
+    else if (action === "decide-global-receipt") {
+      if (!uuid.test(scope.execution_id) || !uuid.test(String(input.call_id))
+        || ![input.request_digest, input.response_sha256, input.source_groups_digest].every(value => /^sha256:[0-9a-f]{64}$/u.test(String(value)))
+        || typeof input.raw_response !== "string" || !Array.isArray(input.source_checkpoints)
+        || input.source_checkpoints.some(value => {
+          if (!value || typeof value !== "object" || Array.isArray(value)) return true;
+          const checkpoint = value as Record<string, unknown>;
+          return !uuid.test(String(checkpoint.artifact_id)) || typeof checkpoint.body !== "string";
+        }))
+        throw new Error("mass_engine_input_invalid");
+      result = await recordSignalWorkspaceMassLabelingGlobalReceiptDecisionV1({ ...scope,
+        call_id: String(input.call_id), request_digest: String(input.request_digest), response_sha256: String(input.response_sha256),
+        source_groups_digest: String(input.source_groups_digest), decision: parseMassLabelingConsolidationRecoveryDecisionV1(input.decision),
+        batch: input.batch as MassLabelingConsolidationBatchV1, raw_response: input.raw_response,
+        source_checkpoints: input.source_checkpoints as Array<{artifact_id: string; body: string}> });
+    } else if (action === "mark-insufficient") {
       if (!uuid.test(scope.execution_id) || !uuid.test(String(input.exception_id))
         || input.reason !== "missing_general_citations" || typeof input.original_response !== "string"
         || typeof input.repair_response !== "string" || typeof input.unit_key !== "string"
@@ -131,7 +153,12 @@ async function main() {
         await retrySignalWorkspaceEngineV1({ ...scope, idempotency_key: key });
         owner = await loadOwner();
       }
-      result = await signalWorkspaceEngineJobV1(
+      if (action === "recover" && owner.status === "ready") {
+        const decision = await readSignalWorkspaceMassLabelingGlobalReceiptDecisionV1(scope);
+        result = { execution_id: scope.execution_id, status: "ready", replayed: true,
+          ...(decision ? { global_receipt_decision_id: decision.decision_id,
+            global_receipt_decision_digest: decision.decision_digest } : {}) };
+      } else result = await signalWorkspaceEngineJobV1(
         {
           id: owner.worker_job_id,
           data: { execution_id: scope.execution_id },
