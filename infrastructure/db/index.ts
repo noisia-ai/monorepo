@@ -132,3 +132,5 @@ export * from "./signal-mass-labeling-global-recovery";
 
 export * from "./signal-mass-labeling-scoped-policy";
 export * from './signal-mass-labeling-r13';
+
+export * from "./signal-mass-labeling-study-policy";
