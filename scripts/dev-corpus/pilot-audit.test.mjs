@@ -314,6 +314,7 @@ function recoveredGlobalEditorialSnapshot() {
     decision_digest: decisionDigest, decision,
     created_by_user_id: '00000000-0000-4000-8000-000000000001', created_at: '2026-11-07T12:00:30.000Z',
   };
+  snapshot.stage_receipts.engine.result_summary.global_receipt_recovery_decision_id = 'synthetic-recovery-decision';
   snapshot.stage_receipts.consolidation_artifact.metadata.recovery_decision_id = 'synthetic-recovery-decision';
   snapshot.stage_receipts.consolidation_artifact.metadata.recovery_decision_digest = decisionDigest;
   const receipt = operatorReceipt(snapshot);
@@ -596,6 +597,8 @@ test('attests recovery decision, normalized keys, retained topics, and duplicate
     ['missing DB decision', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision = null; }, /recovery_decision_invalid/u],
     ['decision digest mismatch', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision_digest = `sha256:${'0'.repeat(64)}`; }, /recovery_decision_invalid/u],
     ['wrong retry linkage', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.call_id = 'synthetic-terminal-call'; }, /recovery_decision_invalid/u],
+    ['decision actor differs from call actor', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.created_by_user_id = '00000000-0000-4000-8000-000000000002'; }, /recovery_decision_invalid/u],
+    ['run recovery binding differs', (copy) => { copy.snapshot.stage_receipts.engine.result_summary.global_receipt_recovery_decision_id = 'other-decision'; }, /recovery_decision_invalid/u],
     ['internal decision workspace bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.workspace_id = 'foreign-workspace'; }, /recovery_decision_invalid/u],
     ['internal decision execution bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.execution_id = 'foreign-execution'; }, /recovery_decision_invalid/u],
     ['internal decision call bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.call_id = 'foreign-call'; }, /recovery_decision_invalid/u],

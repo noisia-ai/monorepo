@@ -626,6 +626,8 @@ function validateGlobalReceiptRecovery(snapshot, artifact, call) {
     || decision.source_groups_digest !== decisionReceipt.source_groups_digest
     || decisionReceipt.decision_id !== artifactDecisionId
     || decisionReceipt.decision_digest !== artifactDecisionDigest
+    || decisionReceipt.created_by_user_id !== call.actor_user_id
+    || engine.result_summary?.global_receipt_recovery_decision_id !== decisionReceipt.decision_id
     || decisionReceipt.workspace_id !== call.workspace_id
     || decisionReceipt.execution_id !== call.catalog_execution_id
     || decisionReceipt.call_id !== call.id
