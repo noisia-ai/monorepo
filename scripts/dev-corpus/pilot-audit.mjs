@@ -15,6 +15,15 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 const canonicalDigest = (value) => `sha256:${sha256(canonicalJson(value))}`;
+function signalCallDigest(value) {
+  function ordered(item) {
+    if (Array.isArray(item)) return item.map(ordered);
+    if (record(item)) return Object.fromEntries(Object.entries(item)
+      .sort(([left], [right]) => left.localeCompare(right)).map(([key, child]) => [key, ordered(child)]));
+    return item;
+  }
+  return canonicalDigest(ordered(value));
+}
 const safeIntegerValue = (value) => (Number.isSafeInteger(value) && value >= 0)
   || (typeof value === 'string' && /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)));
 const normalizedIdentity = (value) => String(value).normalize('NFKD').replace(/[\u0300-\u036f]/gu, '')
@@ -380,7 +389,8 @@ function validateScopedFundingLineage(snapshot, stages) {
   for (const call of snapshot.calls) {
     const ordinal = itemOrdinals.get(call.id);
     const binding = byCall.get(call.id);
-    if (!Number.isSafeInteger(ordinal)
+    if (!Number.isSafeInteger(ordinal) || !/^\d{4}-\d{2}-\d{2}$/u.test(call.budget_date)
+      || typeof call.budget_timezone !== 'string' || !call.budget_timezone
       || binding.funding_receipt_id !== (ordinal <= smokeCount ? null : funding.id)
       || !(ordinal <= smokeCount ? smokeIds : fullIds).has(call.id)) {
       throw new Error('pilot_audit_scoped_call_authority_stage_mismatch');
@@ -406,6 +416,16 @@ function validateScopedFundingLineage(snapshot, stages) {
     || smokeUsage !== BigInt(funding.quote.observed_settled_micro_usd)
     || BigInt(funding.quote.projected_total_usage_micro_usd) < smokeUsage) {
     throw new Error('pilot_audit_funding_quote_not_bound_to_smoke_ledger');
+  }
+  const smokeDigestRows = smokeCalls.map((call) => ({
+    id: call.id, run_id: call.run_id, model: call.model, status: call.status,
+    reserved_micro_usd: String(call.reserved_micro_usd), settled_micro_usd: String(call.settled_micro_usd),
+    terminal_exposure_micro_usd: String(call.terminal_exposure_micro_usd), usage: call.usage,
+    request_digest: call.request_digest, raw_sha256: call.raw_sha256, results_applied: call.results_applied,
+    budget_date: call.budget_date, budget_timezone: call.budget_timezone,
+  })).sort((left, right) => left.id.localeCompare(right.id));
+  if (signalCallDigest(smokeDigestRows) !== funding.smoke_calls_digest) {
+    throw new Error('pilot_audit_smoke_call_digest_mismatch');
   }
   return { funding, exposure_micro_usd: Number(exposure) };
 }

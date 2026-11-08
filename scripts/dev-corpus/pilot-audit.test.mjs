@@ -99,13 +99,21 @@ function fixture() {
     ],
     calls: [
       { id: 'call-smoke', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 1000 } },
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 1000 },
+        request_digest: 'sha256:synthetic-request-1', raw_sha256: 'sha256:synthetic-raw-1', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
       { id: 'call-full-root-2', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 3000 } },
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 3000 },
+        request_digest: 'sha256:synthetic-request-2', raw_sha256: 'sha256:synthetic-raw-2', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
       { id: 'call-full-root-3', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '12340', terminal_exposure_micro_usd: '12340', usage: { input_tokens: 3000 } },
+        reserved_micro_usd: '10000', settled_micro_usd: '12340', terminal_exposure_micro_usd: '12340', usage: { input_tokens: 3000 },
+        request_digest: 'sha256:synthetic-request-3', raw_sha256: 'sha256:synthetic-raw-3', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
       { id: 'call-full-root-5', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 4000 } },
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 4000 },
+        request_digest: 'sha256:synthetic-request-5', raw_sha256: 'sha256:synthetic-raw-5', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
     ],
     stage_receipts: {
       embeddings: { input_tokens: '5000' },
@@ -122,6 +130,13 @@ function syntheticScopedAuthority(snapshot) {
   const admissionId = '00000000-0000-4000-8000-000000000011';
   const fundingId = '00000000-0000-4000-8000-000000000012';
   const digest = (character) => `sha256:${character.repeat(64)}`;
+  const smokeDigestRows = snapshot.calls.filter((call) => call.id === 'call-smoke').map((call) => ({
+    id: call.id, run_id: call.run_id, model: call.model, status: call.status,
+    reserved_micro_usd: String(call.reserved_micro_usd), settled_micro_usd: String(call.settled_micro_usd),
+    terminal_exposure_micro_usd: String(call.terminal_exposure_micro_usd), usage: call.usage,
+    request_digest: call.request_digest, raw_sha256: call.raw_sha256, results_applied: call.results_applied,
+    budget_date: call.budget_date, budget_timezone: call.budget_timezone,
+  }));
   return {
     extension: { id: extensionId, cap_micro_usd: '6970000' },
     admission: {
@@ -138,7 +153,8 @@ function syntheticScopedAuthority(snapshot) {
       labeler_digest: digest('b'), entity_context_digest: digest('c'),
       prior_total_cap_micro_usd: '6970000', total_cap_micro_usd: '9500000',
       smoke_metrics_digest: snapshot.run.smoke_metrics_digest, smoke_root_count: 1, smoke_call_count: 1,
-      smoke_calls_digest: digest('d'), budget_date: '2026-11-07', budget_timezone: 'UTC',
+      smoke_calls_digest: `sha256:${createHash('sha256').update(canonicalForTest(smokeDigestRows)).digest('hex')}`,
+      budget_date: '2026-11-07', budget_timezone: 'UTC',
       admission_not_after: '2026-11-08T12:00:00.000Z',
       quote: {
         contract_version: 'mass-labeling-smoke-usage-quote-v1', basis: 'ledger_usage_at_sealed_tariff',
