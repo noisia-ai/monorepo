@@ -372,7 +372,14 @@ export function decodeSignalWorkspaceInterpretationProviderResultV1(batch: Signa
   value: unknown): SignalWorkspaceInterpretationV1[] {
   const config = parseSignalWorkspaceInterpretationConfigurationV1(batch.configuration);
   if (config.model === "claude-opus-5") return validateSignalWorkspaceInterpretationResultV1(batch, value);
-  const limit = signalWorkspaceInterpretationReferenceLimitV1(config);
+  return validateSignalWorkspaceInterpretationResultV1(batch, {
+    interpretations: resolveSignalWorkspaceInterpretationProviderReferencesV1(batch, value),
+  });
+}
+
+function resolveSignalWorkspaceInterpretationProviderReferencesV1(batch: SignalWorkspaceInterpretationBatchV1,
+  value: unknown): SignalWorkspaceInterpretationV1[] {
+  const limit = signalWorkspaceInterpretationReferenceLimitV1(batch.configuration);
   const labels = z.array(z.string().regex(/^r[1-9][0-9]?$/u)).max(limit).refine(items => new Set(items).size === items.length);
   const wireCondition = z.object({ text: text(240), citations: labels.refine(items => items.length > 0) }).strict();
   const wireInterpretation = interpretationSchemaFor(limit).extend({ citations: labels,
@@ -388,5 +395,65 @@ export function decodeSignalWorkspaceInterpretationProviderResultV1(batch: Signa
       inclusion: item.inclusion.map(condition => ({ ...condition, citations: resolve(condition.citations) })),
       exclusion: item.exclusion.map(condition => ({ ...condition, citations: resolve(condition.citations) })) };
   });
-  return validateSignalWorkspaceInterpretationResultV1(batch, { interpretations });
+  return interpretations;
+}
+
+/** Apply an explicitly authorized pilot decision after the settled source receipt
+ * has been bound to an exception by the operator store. Evidence remains in the
+ * original receipt. Only the selected mixed group may lose its interpretation. */
+export function decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1(
+  batch: SignalWorkspaceInterpretationBatchV1, value: unknown, unit_key: string,
+): SignalWorkspaceInterpretationV1[] {
+  const configuration = parseSignalWorkspaceInterpretationConfigurationV1(batch.configuration);
+  if (!("representative_count" in configuration)) return fail("insufficiency_decision_invalid");
+  const interpretations = resolveSignalWorkspaceInterpretationProviderReferencesV1(batch, value);
+  const selected = interpretations.filter(item => item.cluster_id === unit_key);
+  if (selected.length !== 1 || selected[0]!.status !== "mixed" || selected[0]!.citations.length
+    || selected[0]!.name === null || selected[0]!.definition === null) return fail("insufficiency_decision_invalid");
+  return validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: interpretations.map(item =>
+    item.cluster_id === unit_key ? { cluster_id: item.cluster_id, cluster_digest: item.cluster_digest,
+      status: "insufficient", name: null, definition: null, inclusion: [], exclusion: [], citations: [] } : item) });
+}
+
+
+/** Recover the latest settled result under one stored operator decision. Both
+ * source envelopes must fail only for the selected group's missing general
+ * references. Source bytes remain evidence in the immutable checkpoint. */
+export function recoverSignalWorkspaceInterpretationInsufficiencyV1(args: {
+  batch: SignalWorkspaceInterpretationBatchV1;
+  original_response: string;
+  repair_response: string;
+  unit_key: string;
+}): SignalWorkspaceInterpretationV1[] {
+  const { batch } = args;
+  const source = batch.editorial_repair;
+  if (!source || source.source_response_sha256 !== `sha256:${createHash("sha256").update(args.original_response).digest("hex")}`)
+    return fail("insufficiency_decision_invalid");
+  const original = buildSignalWorkspaceInterpretationBatchV1(batch.context, batch.clusters, batch.configuration);
+  const repair = buildSignalWorkspaceInterpretationRepairBatchV1(original, source);
+  if (signalWorkspaceEmbeddingDigestV1(batch) !== signalWorkspaceEmbeddingDigestV1(repair))
+    return fail("insufficiency_decision_invalid");
+  const parse = (raw: string) => {
+    let body: Record<string, unknown>;
+    try { body = JSON.parse(raw); } catch { return fail("insufficiency_decision_invalid"); }
+    if (!body || typeof body !== "object" || Array.isArray(body) || body.model !== batch.configuration.model
+      || body.type !== "message" || body.role !== "assistant" || body.stop_reason !== "end_turn"
+      || !Array.isArray(body.content)) return fail("insufficiency_decision_invalid");
+    const usage = z.record(z.unknown()).safeParse(body.usage);
+    if (!usage.success || ![usage.data.input_tokens, usage.data.output_tokens,
+      usage.data.cache_read_input_tokens ?? 0, usage.data.cache_creation_input_tokens ?? 0]
+      .every(value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0))
+      return fail("insufficiency_decision_invalid");
+    const cache = z.record(z.unknown()).safeParse(usage.data.cache_creation);
+    if (cache.success && cache.data.ephemeral_1h_input_tokens !== undefined && cache.data.ephemeral_1h_input_tokens !== 0)
+      return fail("insufficiency_decision_invalid");
+    const blocks = z.array(z.object({ type: z.enum(["text", "thinking", "redacted_thinking"]),
+      text: z.string().optional() }).passthrough()).safeParse(body.content);
+    if (!blocks.success) return fail("insufficiency_decision_invalid");
+    const texts = blocks.data.filter(block => block.type === "text");
+    if (texts.length !== 1 || typeof texts[0]!.text !== "string") return fail("insufficiency_decision_invalid");
+    try { return JSON.parse(texts[0]!.text); } catch { return fail("insufficiency_decision_invalid"); }
+  };
+  decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1(original, parse(args.original_response), args.unit_key);
+  return decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1(batch, parse(args.repair_response), args.unit_key);
 }

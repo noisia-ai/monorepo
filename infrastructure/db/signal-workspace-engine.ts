@@ -1,3 +1,4 @@
+import {verifySignalWorkspaceEngineInsufficiencyCheckpointWithClientV1} from "./signal-workspace-engine-insufficiency";
 import {isMassLabelingRecoveryProfileV1,refreshSignalWorkspaceEngineInterpretationRecoverySummaryWithClientV1} from "./signal-workspace-engine-recovery";
 import { signalWorkspaceMassLabelingEnabledV1, loadSignalWorkspaceMassLabelingSeedsV1, loadSignalWorkspaceMassLabelingGuidesV1 } from "./signal-workspace-mass-labeling-profile";
 import { inspectFacetContextChangeV1 } from "./signal-mention-facets";
@@ -74,7 +75,7 @@ export type SignalWorkspaceEngineInterpretationRevisionV1 = {
 };
 export type SignalWorkspaceEngineInterpretationCheckpointV1 = {
   artifact_id: string; artifact_key: string; storage_key: string; sha256: string; size_bytes: number; media_type: string;
-  unit_keys: string[]; call_id: string; request_digest: string; call_configuration: SignalWorkspaceEngineInterpretationConfigurationV1; interpretation_revision_digest: string | null;
+  insufficiency_decision_id?:string|null;unit_keys: string[]; call_id: string; request_digest: string; call_configuration: SignalWorkspaceEngineInterpretationConfigurationV1; interpretation_revision_digest: string | null;
 };
 export type SignalWorkspaceEngineInterpretationExceptionV1 = {
   exception_id: string; original_call_id: string; repair_call_id: string;
@@ -977,7 +978,7 @@ async function interpretationCoverage(client:PoolClient,run:Run):Promise<SignalW
   return{unit_count:natural(row.unit_count),unit_digest:row.unit_digest};
 }
 export async function checkpointSignalWorkspaceEngineInterpretationV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:SignalWorkspaceEngineLeaseV1;
-  call_id:string;artifact:SignalWorkspaceEngineArtifactV1;unit_keys:string[]}):Promise<{artifact_id:string;replayed:boolean;interpreted_units:number}>{
+  call_id:string;artifact:SignalWorkspaceEngineArtifactV1;unit_keys:string[];insufficiency_decision_id?:string;insufficiency_packet?:string}):Promise<{artifact_id:string;replayed:boolean;interpreted_units:number}>{
   if(args.artifact.artifact_type!=='engine_proposals'||!args.unit_keys.length||args.unit_keys.length>128
     ||args.unit_keys.some(key=>!/^[A-Za-z0-9:._-]{1,200}$/u.test(key))||new Set(args.unit_keys).size!==args.unit_keys.length)
     return fail('workspace_engine_interpretation_units_invalid',422);
@@ -989,7 +990,12 @@ export async function checkpointSignalWorkspaceEngineInterpretationV1(args:{data
        AND workspace_contract='workspace-engine-interpretation-v1'`,[args.call_id,run.workspace_id,run.id])).rows[0];
     if(!call||call.call_state!=='settled'||!call.response_sha256
       ||signalWorkspaceEmbeddingDigestV1(call.call_configuration)!==signalWorkspaceEmbeddingDigestV1(call.authorized_configuration))return fail('workspace_engine_interpretation_receipt_required');
-    const artifact={...args.artifact,metadata:{...args.artifact.metadata,contract_version:'workspace-engine-interpretation-checkpoint-v1',
+    if(args.insufficiency_decision_id||args.insufficiency_packet||args.artifact.metadata?.insufficiency_decision_id){
+      if(!args.insufficiency_decision_id||!args.insufficiency_packet)return fail('workspace_engine_insufficiency_checkpoint_invalid');
+      await verifySignalWorkspaceEngineInsufficiencyCheckpointWithClientV1(client,{workspace_id:run.workspace_id,execution_id:run.id,actor_user_id:run.actor_user_id,
+        call_id:args.call_id,decision_id:args.insufficiency_decision_id,body:args.insufficiency_packet,sha256:args.artifact.sha256,size_bytes:args.artifact.size_bytes});
+    }
+    const artifact={...args.artifact,metadata:{...args.artifact.metadata,...(args.insufficiency_decision_id?{insufficiency_decision_id:args.insufficiency_decision_id}:{}),contract_version:'workspace-engine-interpretation-checkpoint-v1',
       execution_id:run.id,fit_checkpoint_digest:fit.checkpoint_digest,call_id:args.call_id,response_sha256:call.response_sha256,unit_keys:[...args.unit_keys].sort()}};
     const saved=await persistSignalWorkspaceEngineArtifactWithClientV1(client,run,artifact);
     if(isMassLabelingRecoveryProfileV1(run.input_snapshot.engine_config.profile_version)){
@@ -1310,8 +1316,8 @@ export async function readSignalWorkspaceEngineInterpretationCheckpointsV1(args:
  return transaction(args.database,async client=>{const run=await requireLease(client,args.lease,true);
   if(!run.result_summary.fit_checkpoint)return fail('workspace_engine_fit_checkpoint_required');
   const rows=(await client.query<{artifact_id:string;artifact_key:string;content:{storage_key:string;sha256:string;size_bytes:number;media_type:string};
-   unit_keys:string[];call_id:string;request_digest:string;call_configuration:SignalWorkspaceEngineInterpretationConfigurationV1;interpretation_revision_digest:string|null;valid:boolean}>(`
-   SELECT artifact.id artifact_id,artifact.artifact_key,artifact.content,artifact.metadata->'unit_keys' unit_keys,
+   unit_keys:string[];call_id:string;request_digest:string;call_configuration:SignalWorkspaceEngineInterpretationConfigurationV1;interpretation_revision_digest:string|null;insufficiency_decision_id:string|null;valid:boolean}>(`
+   SELECT artifact.id artifact_id,artifact.artifact_key,artifact.content,artifact.metadata->'unit_keys' unit_keys,artifact.metadata->>'insufficiency_decision_id' insufficiency_decision_id,
     call.id call_id,call.request_digest,call.call_configuration,call.metadata->>'interpretation_revision_digest' interpretation_revision_digest,
     COALESCE(call.call_state='settled' AND call.response_sha256=artifact.metadata->>'response_sha256'
      AND call.actor_user_id=$3::uuid AND call.call_configuration=workspace_engine_interpretation_configuration_v1(call.catalog_execution_id,call.metadata->>'interpretation_revision_digest')
@@ -1324,7 +1330,7 @@ export async function readSignalWorkspaceEngineInterpretationCheckpointsV1(args:
    [run.workspace_id,run.id,run.actor_user_id,(run.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1).checkpoint_digest,args.after_artifact_id??null,limit+1])).rows;
   if(rows.some(row=>!row.valid))return fail('workspace_engine_interpretation_receipt_required');
   const page=rows.slice(0,limit),items=page.map(row=>({artifact_id:row.artifact_id,artifact_key:row.artifact_key,...row.content,
-   unit_keys:row.unit_keys,call_id:row.call_id,request_digest:row.request_digest,call_configuration:row.call_configuration,interpretation_revision_digest:row.interpretation_revision_digest}));
+   unit_keys:row.unit_keys,call_id:row.call_id,request_digest:row.request_digest,call_configuration:row.call_configuration,interpretation_revision_digest:row.interpretation_revision_digest,insufficiency_decision_id:row.insufficiency_decision_id}));
   return{items,next_artifact_id:items.at(-1)?.artifact_id??null,done:rows.length<=limit};
  });
 }

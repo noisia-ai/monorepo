@@ -14,6 +14,7 @@ import {
   completeSignalWorkspaceEngineAnalysisWithExceptionsV1,
   readSignalWorkspaceEngineInterpretationRecoveryCallsV1, registerSignalWorkspaceEngineInterpretationUnitsV1,
   recordSignalWorkspaceEngineInterpretationRecoveryReviewV1, pauseSignalWorkspaceEngineInterpretationRecoveryV1,
+  readSignalWorkspaceEngineInsufficiencyDecisionsV1,
   type SignalWorkspaceEngineInterpretationCallV1,
   type SignalWorkspaceEngineDatabaseV1, type SignalWorkspaceEngineLeaseV1, type SignalWorkspaceEngineFitArgsV1,
 } from "@noisia/db";
@@ -21,11 +22,24 @@ import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniv
   signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceInterpretationRepairBatchV1, buildSignalWorkspaceInterpretationBatchV1,
   parseSignalWorkspaceInterpretationConfigurationV1,
   validateSignalWorkspaceInterpretationResultV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
-  SignalWorkspaceInterpretationErrorV1,
+  SignalWorkspaceInterpretationErrorV1, recoverSignalWorkspaceInterpretationInsufficiencyV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
 import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
 import { executeWorkspaceInterpretationBatchV1 } from "./signal-workspace-interpretation-batch";
 import type { WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
+
+type OperatorInsufficiencyPacketV1 = {
+  contract_version: "workspace-interpretation-operator-insufficiency-v1";
+  decision_id: string; original_response: string; repair_response: string;
+};
+function isOperatorInsufficiencyPacketV1(value: unknown): value is OperatorInsufficiencyPacketV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const packet = value as Record<string, unknown>;
+  return Object.keys(packet).length === 4
+    && packet.contract_version === "workspace-interpretation-operator-insufficiency-v1"
+    && typeof packet.decision_id === "string" && typeof packet.original_response === "string"
+    && typeof packet.repair_response === "string";
+}
 
 const stores = {
   context: readSignalWorkspaceEngineInterpretationContextV1, fit: checkpointSignalWorkspaceEngineFitV1,
@@ -42,6 +56,7 @@ const stores = {
   registerUnits: registerSignalWorkspaceEngineInterpretationUnitsV1,
   recoveryReview: recordSignalWorkspaceEngineInterpretationRecoveryReviewV1,
   pauseRecovery: pauseSignalWorkspaceEngineInterpretationRecoveryV1,
+  insufficiencyDecisions: readSignalWorkspaceEngineInsufficiencyDecisionsV1,
 };
 const sha = (bytes: Uint8Array | string) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const fail = (code: string): never => { throw new Error(code); };
@@ -79,8 +94,8 @@ export async function interpretWorkspaceEngineV1(args: {
   fit: Omit<SignalWorkspaceEngineFitArgsV1, "database" | "lease">;
   clusters: SignalWorkspaceInterpretationClusterV1[]; directory: string; storage: WorkspaceEngineStorageV1;
   heartbeat: (phase: "interpreting" | "materializing") => Promise<void>;
-  stores?: Omit<typeof stores, "recoveryCalls" | "registerUnits" | "recoveryReview" | "pauseRecovery">
-    & Partial<Pick<typeof stores, "recoveryCalls" | "registerUnits" | "recoveryReview" | "pauseRecovery">>; send?: typeof sendWorkspaceInterpretationV1;
+  stores?: Omit<typeof stores, "recoveryCalls" | "registerUnits" | "recoveryReview" | "pauseRecovery" | "insufficiencyDecisions">
+    & Partial<Pick<typeof stores, "recoveryCalls" | "registerUnits" | "recoveryReview" | "pauseRecovery" | "insufficiencyDecisions">>; send?: typeof sendWorkspaceInterpretationV1;
   recovery_only?:boolean; api_key?: string; provider_enabled?: boolean; authorization_expires_at?: string;
 }) {
   const store = args.stores ?? stores, { database, lease, storage } = args;
@@ -103,9 +118,11 @@ export async function interpretWorkspaceEngineV1(args: {
   let pendingRepair=false;
   let recoveredCalls:Awaited<ReturnType<typeof readSignalWorkspaceEngineInterpretationRecoveryCallsV1>>=[];
   const proposals: Array<{ artifact_id: string; file: string }> = [];
+  const pilot = "representative_count" in configuration;
+  const insufficiencyDecisions = pilot && store.insufficiencyDecisions
+    ? await store.insufficiencyDecisions({ database, lease }) : [];
   const completedUnits = await restoreCheckpoints();
   const recoveryRequests=new Set(await store.recoverable({database,lease}));
-  const pilot = "representative_count" in configuration;
   const originalPlan = pilot ? [...batchSignalWorkspaceInterpretationV1(context.context,args.clusters,configuration)] : null;
   if(originalPlan){
     await recoverPilotReceipts(originalPlan);
@@ -218,15 +235,18 @@ export async function interpretWorkspaceEngineV1(args: {
   }
 
   async function checkpointResponse(batch:SignalWorkspaceInterpretationBatchV1,
-    call:SignalWorkspaceEngineInterpretationCallV1,response:Awaited<ReturnType<typeof executeBatch>>["response"]){
+    call:SignalWorkspaceEngineInterpretationCallV1,response:Awaited<ReturnType<typeof executeBatch>>["response"],
+    operatorInsufficiency?: OperatorInsufficiencyPacketV1){
     if(!response.interpretations || response.outcome!=="validated")return fail("workspace_engine_interpretation_output_invalid");
     await args.heartbeat("interpreting");
     const filename = `interpretation-${call.call_id}.json`;
     const body = JSON.stringify({ contract_version: "workspace-engine-interpretation-result-v1", execution_id: lease.execution_id,
       context: batch.context, clusters: batch.clusters, interpretations: response.interpretations,
-      ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}) });
+      ...(batch.editorial_repair ? { editorial_repair: batch.editorial_repair } : {}),
+      ...(operatorInsufficiency ? { operator_insufficiency: operatorInsufficiency } : {}) });
     const stored = await put(filename, body);
     const checkpoint = await store.checkpoint({ database, lease, call_id: call.call_id,
+      ...(operatorInsufficiency ? { insufficiency_decision_id: operatorInsufficiency.decision_id, insufficiency_packet: body } : {}),
       unit_keys: batch.clusters.map(item => item.cluster_id), artifact: { ...stored, artifact_key: filename,
         artifact_type: "engine_proposals", title: "Topic interpretations", metadata: {} } });
     proposals.push({ artifact_id: checkpoint.artifact_id, file: join(args.directory, filename) });
@@ -287,6 +307,7 @@ export async function interpretWorkspaceEngineV1(args: {
           return fail("workspace_engine_interpretation_outcome_unknown");
         continue;
       }
+      let operatorInsufficiency: OperatorInsufficiencyPacketV1 | undefined;
       let effective = batch,
         result = await executeBatch(batch, original);
       const originalResult=result;
@@ -327,17 +348,37 @@ export async function interpretWorkspaceEngineV1(args: {
         if (result.response.outcome !== "validated") {
           if(result.response.outcome!=="known_response_invalid"||!originalResult.call.response?.complete||!result.call.response?.complete)
             return fail("workspace_engine_interpretation_repair_invalid");
-          await store.quarantine({database,lease,original_call_id:originalResult.call.call_id,repair_call_id:result.call.call_id,
-            original_request_digest:batch.request_digest,repair_request_digest:effective.request_digest,
-            original_response_sha256:originalResult.call.response.sha256,repair_response_sha256:result.call.response.sha256,
-            batch_digest:signalWorkspaceEmbeddingDigestV1(batch),unit_keys:keys,validator_version:"workspace-pilot-reference-validator-v2"});
-          return fail("workspace_engine_interpretation_output_invalid");
+          const decisions = insufficiencyDecisions.filter(decision =>
+            decision.original_call_id === originalResult.call.call_id && decision.repair_call_id === result.call.call_id);
+          if (decisions.length === 1) {
+            const decision = decisions[0]!;
+            if (decision.original_response_sha256 !== originalResult.call.response.sha256
+              || decision.repair_response_sha256 !== result.call.response.sha256)
+              return fail("workspace_engine_interpretation_insufficiency_decision_invalid");
+            operatorInsufficiency = {
+              contract_version: "workspace-interpretation-operator-insufficiency-v1", decision_id: decision.decision_id,
+              original_response: await readInsufficiencyReceipt(originalResult.call),
+              repair_response: await readInsufficiencyReceipt(result.call),
+            };
+            result = { ...result, response: { ...result.response, outcome: "validated", error_code: null,
+              interpretations: recoverSignalWorkspaceInterpretationInsufficiencyV1({ batch: effective,
+                original_response: operatorInsufficiency.original_response,
+                repair_response: operatorInsufficiency.repair_response, unit_key: decision.unit_key }) } };
+          } else {
+            if (decisions.length) return fail("workspace_engine_interpretation_insufficiency_decision_invalid");
+            await store.quarantine({database,lease,original_call_id:originalResult.call.call_id,repair_call_id:result.call.call_id,
+              original_request_digest:batch.request_digest,repair_request_digest:effective.request_digest,
+              original_response_sha256:originalResult.call.response.sha256,repair_response_sha256:result.call.response.sha256,
+              batch_digest:signalWorkspaceEmbeddingDigestV1(batch),unit_keys:keys,validator_version:"workspace-pilot-reference-validator-v2"});
+            return fail("workspace_engine_interpretation_output_invalid");
+          }
         }
       }
       for (const key of await checkpointResponse(
         effective,
         result.call,
         result.response,
+        operatorInsufficiency,
       ))
         completedUnits.add(key);
     }
@@ -364,7 +405,7 @@ export async function interpretWorkspaceEngineV1(args: {
         try {
           const packet = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
           if (!packet || typeof packet !== "object" || Array.isArray(packet)
-            || Object.keys(packet).some(key => !["contract_version", "execution_id", "context", "clusters", "interpretations", "editorial_repair"].includes(key))
+            || Object.keys(packet).some(key => !["contract_version", "execution_id", "context", "clusters", "interpretations", "editorial_repair", "operator_insufficiency"].includes(key))
             || packet.contract_version !== "workspace-engine-interpretation-result-v1" || packet.execution_id !== lease.execution_id
             || !packet.context || typeof packet.context !== "object" || Array.isArray(packet.context)
             || packet.context.workspace_id !== context.context.workspace_id
@@ -395,6 +436,20 @@ export async function interpretWorkspaceEngineV1(args: {
           }
           // Stored proposals already contain canonical SHA citations. Provider
           // aliases never grant authority to a historical artifact or its text.
+          if (packet.operator_insufficiency !== undefined) {
+            const decision = insufficiencyDecisions.find(candidate => candidate.decision_id === packet.operator_insufficiency?.decision_id);
+            if (!decision || item.insufficiency_decision_id !== decision.decision_id
+              || item.call_id !== decision.repair_call_id || !batch.editorial_repair
+              || batch.editorial_repair.source_call_id !== decision.original_call_id
+              || !isOperatorInsufficiencyPacketV1(packet.operator_insufficiency)
+              || sha(packet.operator_insufficiency.original_response) !== decision.original_response_sha256
+              || sha(packet.operator_insufficiency.repair_response) !== decision.repair_response_sha256)
+              throw new Error();
+            const recovered = recoverSignalWorkspaceInterpretationInsufficiencyV1({ batch,
+              original_response: packet.operator_insufficiency.original_response,
+              repair_response: packet.operator_insufficiency.repair_response, unit_key: decision.unit_key });
+            if (signalWorkspaceEmbeddingDigestV1(recovered) !== signalWorkspaceEmbeddingDigestV1(packet.interpretations)) throw new Error();
+          } else if (item.insufficiency_decision_id) throw new Error();
           validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: packet.interpretations });
           for (const key of unitKeys) completed.add(key);
         } catch { return fail("workspace_engine_interpretation_checkpoint_invalid"); }
@@ -402,6 +457,18 @@ export async function interpretWorkspaceEngineV1(args: {
       }
       if (page.done) return completed;
     }
+  }
+
+  async function readInsufficiencyReceipt(call: SignalWorkspaceEngineInterpretationCallV1) {
+    if (call.state !== "settled" || !call.response?.complete || call.response.http_status !== 200)
+      return fail("workspace_engine_interpretation_insufficiency_decision_invalid");
+    const path = join(args.directory, `insufficiency-${call.call_id}.json`);
+    await storage.get({ workspace_id: lease.workspace_id, execution_id: lease.execution_id,
+      stored: { ...call.response, media_type: "application/json" }, destination: path });
+    const bytes = await readFile(path);
+    if (bytes.byteLength !== call.response.size_bytes || sha(bytes) !== call.response.sha256)
+      return fail("workspace_engine_interpretation_insufficiency_decision_invalid");
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
 
   async function put(filename: string, content: Uint8Array | string) {

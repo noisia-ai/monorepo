@@ -21,7 +21,7 @@ const id = (number: number) =>
   `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`;
 const sha = (body: string | Uint8Array) =>
   `sha256:${createHash("sha256").update(body).digest("hex")}`;
-async function fixture(valid = true) {
+async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" = "coherent") {
   const directory = await mkdtemp(join(tmpdir(), "mass-global-test-"));
   const contextDigest = sha("context"),
     workspace = id(1),
@@ -77,9 +77,9 @@ async function fixture(valid = true) {
         {
           cluster_id: group,
           cluster_digest: sha("cluster"),
-          status: "coherent",
-          name: "Consumo",
-          definition: "Motivos de consumo.",
+          status: sourceStatus,
+          name: sourceStatus === "insufficient" ? null : "Consumo",
+          definition: sourceStatus === "insufficient" ? null : "Motivos de consumo.",
         },
       ],
     }),
@@ -366,6 +366,24 @@ test("offline global recovery validates its existing receipt without a reservati
     assert.equal(f.charges(), 1);
     f.args.recovery_call.request_digest = sha("substituted request");
     await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /mass_consolidation_invalid/u);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+
+test("a global response that includes an insufficient group keeps its settled raw and fails replay", async () => {
+  const f = await fixture(true, "insufficient");
+  try {
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /mass_consolidation_contract_invalid/u);
+    assert.equal(f.call.state, "settled");
+    assert.ok(f.call.response?.complete);
+    const receipt = structuredClone(f.call.response);
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /mass_consolidation_contract_invalid/u);
+    assert.deepEqual(f.call.response, receipt);
+    assert.equal(f.sends(), 1);
+    assert.equal(f.charges(), 1);
+    assert.equal(f.persisted(), 0);
   } finally {
     await f.cleanup();
   }

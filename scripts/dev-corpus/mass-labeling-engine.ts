@@ -8,9 +8,10 @@ import {
   assertSignalWorkspaceMassLabelingRecoveryReadyV1,
   loadSignalWorkspaceInterpretationAdmissionV1,
   authorizeSignalWorkspaceInterpretationAdmissionV1,
+  recordSignalWorkspaceEngineInsufficiencyDecisionV1,
 } from "../../infrastructure/db/index";
 import { assertMassLabelingEditorialAccessV1 } from "../../services/workers/src/providers/mass-labeling-consolidation";
-import { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1 } from "../../packages/query-engine/src/index";
+import { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, type SignalWorkspaceInterpretationBatchV1 } from "../../packages/query-engine/src/index";
 
 /** Operator-only CLI. Supply private identity/receipt JSON on stdin and redirect
  * stdout to private storage. The existing guard accepts only the MFP target. */
@@ -27,11 +28,12 @@ async function main() {
       "authorize",
       "execute",
       "recover",
+      "mark-insufficient",
     ].includes(action ?? "")
   )
     throw new Error("mass_engine_action_invalid");
   const encoded = await readFile("/dev/stdin", "utf8");
-  if (Buffer.byteLength(encoded) > 16384)
+  if (Buffer.byteLength(encoded) > (action === "mark-insufficient" ? 2 * 1024 * 1024 : 16384))
     throw new Error("mass_engine_input_invalid");
   const input: Record<string, unknown> = JSON.parse(encoded);
   const uuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/u;
@@ -45,6 +47,8 @@ async function main() {
     "daily_cap_micro_usd",
     "admission_not_after",
     "expected_admission_operation_id",
+    ...(action === "mark-insufficient" ? ["exception_id", "unit_key", "original_response_sha256", "repair_response_sha256",
+      "reason", "batch", "original_response", "repair_response"] : []),
   ];
   if (
     !input ||
@@ -75,7 +79,20 @@ async function main() {
       result = await loadSignalWorkspaceEngineStatusV1(access);
     else if (action === "admission")
       result = await loadSignalWorkspaceInterpretationAdmissionV1(scope);
-    else if (action === "execute" || action === "recover") {
+    else if (action === "mark-insufficient") {
+      if (!uuid.test(scope.execution_id) || !uuid.test(String(input.exception_id))
+        || input.reason !== "missing_general_citations" || typeof input.original_response !== "string"
+        || typeof input.repair_response !== "string" || typeof input.unit_key !== "string"
+        || !/^sha256:[0-9a-f]{64}$/u.test(String(input.original_response_sha256))
+        || !/^sha256:[0-9a-f]{64}$/u.test(String(input.repair_response_sha256)))
+        throw new Error("mass_engine_input_invalid");
+      result = await recordSignalWorkspaceEngineInsufficiencyDecisionV1({ ...scope,
+        exception_id: String(input.exception_id), unit_key: input.unit_key,
+        original_response_sha256: String(input.original_response_sha256),
+        repair_response_sha256: String(input.repair_response_sha256), reason: input.reason,
+        batch: input.batch as SignalWorkspaceInterpretationBatchV1,
+        original_response: input.original_response, repair_response: input.repair_response });
+    } else if (action === "execute" || action === "recover") {
       const { signalWorkspaceEngineJobV1 } = await import(
         new URL(
           "../../services/workers/src/workers/signal-workspace-engine.ts",

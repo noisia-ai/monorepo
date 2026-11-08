@@ -4,6 +4,7 @@ import {
   buildMassLabelingConsolidationRequestV1,
   parseMassLabelingConsolidationResponseV1,
   validateMassLabelingConsolidationOutputV1,
+  massLabelingConsolidationUsageV1,
   type MassLabelingSourceGroupV1,
 } from "./signal-mass-labeling-consolidation-v1";
 
@@ -150,4 +151,31 @@ test("stored provider bytes must match the sealed model and complete structured 
       ),
     /contract_invalid/u,
   );
+});
+
+
+test("insufficient source groups remain excluded when stored provider bytes are parsed for adoption", () => {
+  const source = [groups[0]!, { ...groups[1]!, status: "insufficient" as const, name: null, definition: null }];
+  const batch = buildMassLabelingConsolidationRequestV1({ ...input, source_groups: source });
+  const topic = { topic_key: "consumo", name: "Consumo", definition: "Motivos de consumo.", group_ids: [source[0]!.group_id] };
+  const output = { topics: [topic], excluded_groups: [{ group_id: source[1]!.group_id, reason: "Evidência insuficiente" }] };
+  const raw = (value: unknown) => JSON.stringify({ model: batch.configuration.model, type: "message", role: "assistant",
+    stop_reason: "end_turn", usage: { input_tokens: 100, output_tokens: 80 },
+    content: [{ type: "text", text: JSON.stringify(value) }] });
+  const validRaw = raw(output);
+  assert.deepEqual(parseMassLabelingConsolidationResponseV1(batch, validRaw).output, output);
+  assert.deepEqual(parseMassLabelingConsolidationResponseV1(batch, validRaw).output, output);
+  for (const invalid of [
+    { topics: [{ ...topic, group_ids: source.map(group => group.group_id) }], excluded_groups: [] },
+    { topics: [topic, { ...topic, topic_key: "outro", group_ids: [source[1]!.group_id] }], excluded_groups: [] },
+    { topics: [topic], excluded_groups: [] },
+  ]) {
+    const storedRaw = raw(invalid);
+    assert.throws(() => validateMassLabelingConsolidationOutputV1(source, invalid), /contract_invalid/u);
+    assert.throws(() => parseMassLabelingConsolidationResponseV1(batch, storedRaw), /contract_invalid/u);
+    assert.throws(() => parseMassLabelingConsolidationResponseV1(batch, storedRaw), /contract_invalid/u);
+    assert.deepEqual(massLabelingConsolidationUsageV1(storedRaw), {
+      input_tokens: 100, output_tokens: 80, cache_read_input_tokens: 0, cache_creation_input_tokens: 0,
+    });
+  }
 });

@@ -216,3 +216,74 @@ test("pilot receipts keep thirty distinct references per field while historical 
   assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(shorterBatch,
     { interpretations: [{ ...wire.interpretations[0], citations: ["r21"], inclusion: [], exclusion: [] }] }), /citation_invalid/u);
 });
+
+test("operator insufficiency applies only to one pilot mixed group with missing general evidence", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot,
+    decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1: decide } = await import("./signal-workspace-interpretation-v1.js");
+  const groups = [cluster(1, "guided"), cluster(2, "guided")].map(group => ({ ...group,
+    representatives: Array.from({ length: 30 }, (_, index) => cluster(index + 10, "guided").representatives[0]!) }));
+  const batch = buildSignalWorkspaceInterpretationBatchV1(context, groups, pilot);
+  const wire = { interpretations: groups.map((group, index) => ({ ...answer(group), status: "mixed",
+    citations: index === 0 ? [] as string[] : ["r2"],
+    inclusion: [{ text: "Represented experience", citations: ["r1", "r3"] }],
+    exclusion: [{ text: "Boundary experience", citations: ["r4"] }] })) };
+  const bytes = JSON.stringify(wire), digest = batch.request_digest;
+  const result = decide(batch, wire, groups[0]!.cluster_id);
+  assert.deepEqual(result[0], { cluster_id: groups[0]!.cluster_id, cluster_digest: groups[0]!.cluster_digest,
+    status: "insufficient", name: null, definition: null, inclusion: [], exclusion: [], citations: [] });
+  const siblingBatch = buildSignalWorkspaceInterpretationBatchV1(context, [groups[1]!], pilot);
+  assert.deepEqual(result[1], decodeSignalWorkspaceInterpretationProviderResultV1(siblingBatch,
+    { interpretations: [wire.interpretations[1]] })[0]);
+  assert.equal(JSON.stringify(wire), bytes);
+  assert.equal(batch.request_digest, digest);
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, wire), /evidence_missing/u);
+  assert.throws(() => decide(batch, wire, groups[1]!.cluster_id), /insufficiency_decision_invalid/u);
+  assert.throws(() => decide(batch, wire, "guided:unknown"), /insufficiency_decision_invalid/u);
+  const historical = buildSignalWorkspaceInterpretationBatchV1(context, [cluster(1)]);
+  assert.throws(() => decide(historical, wire, groups[0]!.cluster_id), /insufficiency_decision_invalid/u);
+  for (const change of [
+    { status: "coherent" }, { status: "insufficient" }, { citations: ["r1"] },
+    { cluster_digest: sha("another group") }, { inclusion: [{ text: "Foreign", citations: ["r31"] }] },
+    { inclusion: [{ text: "Duplicate", citations: ["r1", "r1"] }] }, { name: null }, { definition: null },
+    { extra: true },
+  ]) {
+    const invalid = structuredClone(wire);
+    Object.assign(invalid.interpretations[0]!, change);
+    assert.throws(() => decide(batch, invalid, groups[0]!.cluster_id));
+  }
+  const invalidSibling = structuredClone(wire); invalidSibling.interpretations[1]!.citations = [];
+  assert.throws(() => decide(batch, invalidSibling, groups[0]!.cluster_id), /evidence_missing/u);
+});
+
+test("insufficiency recovery binds both source envelopes and uses the repaired sibling", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot,
+    recoverSignalWorkspaceInterpretationInsufficiencyV1: recover } = await import("./signal-workspace-interpretation-v1.js");
+  const groups = [cluster(1, "guided"), cluster(2, "guided")].map(group => ({ ...group,
+    representatives: Array.from({ length: 30 }, (_, index) => cluster(index + 10, "guided").representatives[0]!) }));
+  const original = buildSignalWorkspaceInterpretationBatchV1(context, groups, pilot);
+  const output = { interpretations: groups.map((group, index) => ({ ...answer(group), status: "mixed",
+    citations: index === 0 ? [] as string[] : ["r2"], inclusion: [{ text: "Condition", citations: ["r1"] }], exclusion: [] })) };
+  const envelope = (value: unknown, extra: Record<string, unknown> = {}) => JSON.stringify({
+    model: pilot.model, type: "message", role: "assistant", stop_reason: "end_turn",
+    usage: { input_tokens: 100, output_tokens: 10 }, content: [{ type: "text", text: JSON.stringify(value) }], ...extra });
+  const original_response = envelope(output);
+  const batch = buildSignalWorkspaceInterpretationRepairBatchV1(original, {
+    source_call_id: context.workspace_id, source_response_sha256: sha(original_response), diagnostic: "output_invalid" });
+  const repaired = structuredClone(output); repaired.interpretations[1]!.definition = "Repaired sibling definition";
+  const repair_response = envelope(repaired);
+  const args = { batch, original_response, repair_response, unit_key: groups[0]!.cluster_id };
+  const result = recover(args);
+  assert.equal(result[0]!.status, "insufficient");
+  assert.equal(result[1]!.definition, "Repaired sibling definition");
+  assert.throws(() => recover({ ...args, original_response: original_response + " " }), /insufficiency_decision_invalid/u);
+  assert.throws(() => recover({ ...args, batch: original }), /insufficiency_decision_invalid/u);
+  for (const change of [
+    { model: "another-model" }, { stop_reason: "max_tokens" }, { type: "error" },
+    { usage: { input_tokens: -1, output_tokens: 10 } },
+    { usage: { input_tokens: 100, output_tokens: 10, cache_creation: { ephemeral_1h_input_tokens: 1 } } },
+    { content: [{ type: "text", text: JSON.stringify(repaired) }, { type: "text", text: "{}" }] },
+    { content: [{ type: "tool_use" }] },
+  ]) assert.throws(() => recover({ ...args, repair_response: envelope(repaired, change) }));
+  const different = structuredClone(output); different.interpretations[0]!.citations = ["r1"];
+  assert.throws(() => recover({ ...args, repair_response: envelope(different) }), /insufficiency_decision_invalid/u);
+});
