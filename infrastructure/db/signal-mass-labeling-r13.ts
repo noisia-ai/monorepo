@@ -22,12 +22,27 @@ const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/iu;
 const sha = /^sha256:[a-f0-9]{64}$/u;
 function fail(code: string): never {throw new SignalLabelingError(code,409);}
 const probability = (n: number) => Number.isFinite(n) && n >= 0 && n <= 1;
+function assertNoScopeOverride(row: object, allowInterestKey = false) {
+  const forbidden = ['workspace_id','map_id','created_by_user_id','actor_user_id',...(allowInterestKey ? [] : ['interest_key'])];
+  if (forbidden.some(field => Object.hasOwn(row,field))) fail('r13_scope_override');
+}
+function projectReceipt(row: Receipt) {
+  return {root_id:row.root_id,input_digest:row.input_digest,request_digest:row.request_digest,
+    response_digest:row.response_digest,usage:{input_tokens:row.usage.input_tokens,output_tokens:row.usage.output_tokens}};
+}
+function projectLocalization(row: Omit<MassLabelingLocalizationR13V1,'topic_key'>) {
+  return {original_language:row.original_language,
+    original:{name:row.original.name,definition:row.original.definition},
+    en:{name:row.en.name,definition:row.en.definition},es:{name:row.es.name,definition:row.es.definition}};
+}
 function validateReceipt(row: Receipt) {
+  assertNoScopeOverride(row);
   if (!uuid.test(row.root_id) || ![row.input_digest,row.request_digest,row.response_digest].every(x => sha.test(x))
     || !row.usage || ![row.usage.input_tokens,row.usage.output_tokens].every(x => Number.isSafeInteger(x) && x >= 0))
     fail('r13_receipt_invalid');
 }
 function validateTranslation(row: MassLabelingLocalizationR13V1) {
+  assertNoScopeOverride(row);
   if (!/^[a-z]{2,3}(?:-[A-Za-z]{2,8})?$/u.test(row.original_language)) fail('r13_language_invalid');
   for (const text of [row.original,row.en,row.es]) {
     if (!text || typeof text.name !== 'string' || typeof text.definition !== 'string'
@@ -57,6 +72,7 @@ export async function importMassLabelingR13V1(args: {
   }
   translations.forEach(validateTranslation);
   for (const interest of interests) {
+    assertNoScopeOverride(interest,true);
     if (!/^[a-z][a-z0-9_]{0,119}$/u.test(interest.interest_key) || !interest.name.trim() || interest.name.length > 160
       || !interest.definition.trim() || interest.definition.length > 1200) fail('r13_interest_invalid');
     if (interest.localization) {
@@ -84,17 +100,19 @@ export async function importMassLabelingR13V1(args: {
     }
     for (const interest of interests) if (catalog.has(interest.interest_key)) fail('r13_interest_conflicts_with_topic');
     const scope = {workspace_id:args.workspace_id,map_id:args.map_id,created_by_user_id:args.actor_user_id};
-    await insertReceipts(client,'signal_mass_labeling_localizations',translations.map(({topic_key,...localization}) =>
-      ({...scope,topic_key,localization})), 'topic_key text,localization jsonb', ['topic_key','localization']);
-    await insertReceipts(client,'signal_mass_labeling_r13_results',results.map(row => ({...scope,...row})),
+    await insertReceipts(client,'signal_mass_labeling_localizations',translations.map(row =>
+      ({topic_key:row.topic_key,localization:projectLocalization(row),...scope})), 'topic_key text,localization jsonb', ['topic_key','localization']);
+    await insertReceipts(client,'signal_mass_labeling_r13_results',results.map(row => ({...projectReceipt(row),trigger_barrier:{type:row.trigger_barrier.type,
+      choice:row.trigger_barrier.choice,confidence:row.trigger_barrier.confidence,
+      probabilities:{trigger:row.trigger_barrier.probabilities.trigger,barrier:row.trigger_barrier.probabilities.barrier,none:row.trigger_barrier.probabilities.none}},...scope})),
       'root_id uuid,input_digest text,trigger_barrier jsonb,request_digest text,response_digest text,usage jsonb',
       ['root_id','input_digest','trigger_barrier','request_digest','response_digest','usage']);
     for (const interest of interests) {
       await insertReceipts(client,'signal_mass_labeling_r13_interests',
-        [{...scope,interest_key:interest.interest_key,name:interest.name,definition:interest.definition,localization:interest.localization ?? null}],
+        [{...scope,interest_key:interest.interest_key,name:interest.name,definition:interest.definition,localization:interest.localization ? projectLocalization(interest.localization) : null}],
         'interest_key text,name text,definition text,localization jsonb',['interest_key','name','definition','localization']);
       await insertReceipts(client,'signal_mass_labeling_r13_interest_results',interest.results.map(row =>
-        ({...scope,interest_key:interest.interest_key,...row})),
+        ({...projectReceipt(row),probability:row.probability,...scope,interest_key:interest.interest_key})),
         'interest_key text,root_id uuid,input_digest text,probability double precision,request_digest text,response_digest text,usage jsonb',
         ['interest_key','root_id','input_digest','probability','request_digest','response_digest','usage']);
     }

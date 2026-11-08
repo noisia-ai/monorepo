@@ -587,6 +587,52 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
     }
     assert.equal(await store.finish(run), "completed");
     await store.release(run);
+    if (authorization === "scoped" && sibling) {
+      // A complete, FK-valid sibling item makes the old row-spread override observable.
+      // These invented rows belong to this test's outer rollback transaction.
+      const siblingMap = randomUUID();
+      await query(`INSERT INTO signal_mass_labeling_maps SELECT (jsonb_populate_record(NULL::signal_mass_labeling_maps,
+        to_jsonb(map)||jsonb_build_object('id',$2::uuid,'workspace_id',$3::uuid,
+          'source_engine_execution_id',engine.id,'preparation_run_id',engine.preparation_run_id))).*
+        FROM signal_mass_labeling_maps map CROSS JOIN LATERAL (
+          SELECT id,preparation_run_id FROM signal_topic_catalog_executions WHERE workspace_id=$3::uuid
+            AND preparation_run_id IS NOT NULL LIMIT 1) engine WHERE map.id=$1`,[map.map_id,siblingMap,sibling.workspace_id]);
+      const siblingItem = (await query(`INSERT INTO signal_mass_labeling_items SELECT
+        (jsonb_populate_record(NULL::signal_mass_labeling_items,to_jsonb(item)||jsonb_build_object(
+          'workspace_id',$3::uuid,'map_id',$2::uuid,'root_id',mention.id))).*
+        FROM signal_mass_labeling_items item CROSS JOIN LATERAL (
+          SELECT id FROM mentions WHERE workspace_id=$3::uuid AND canonical_mention_id=id LIMIT 1) mention
+        WHERE item.map_id=$1 AND item.ordinal=1 RETURNING *`,[map.map_id,siblingMap,sibling.workspace_id])).rows[0]!;
+      assert.ok(siblingItem);
+      await query(`INSERT INTO signal_mass_labeling_r13_interests(workspace_id,map_id,interest_key,name,definition,created_by_user_id)
+        VALUES($1,$2,'sibling_interest','Sibling interest','Invented sibling interest',$3)`,
+      [sibling.workspace_id,siblingMap,access.actor_user_id]);
+      const snapshotR13 = async () => (await query(`SELECT
+        (SELECT count(*)::int FROM signal_mass_labeling_r13_results WHERE workspace_id=$1) reviews,
+        (SELECT count(*)::int FROM signal_mass_labeling_r13_interest_results WHERE workspace_id=$1) interest_results,
+        (SELECT jsonb_agg(to_jsonb(i) ORDER BY interest_key) FROM signal_mass_labeling_r13_interests i WHERE workspace_id=$1) interests`,
+      [sibling.workspace_id])).rows[0]!;
+      const before = await snapshotR13();
+      const answer = {type:"choice" as const,choice:"none" as const,confidence:.9,probabilities:{trigger:.05,barrier:.05,none:.9}};
+      const first = calls[0]!.inputs[0]!;
+      const receipt = {root_id:first.root_id,input_digest:first.input_digest,request_digest:digest("scope test request"),
+        response_digest:digest("scope test response"),usage:{input_tokens:30,output_tokens:0}};
+      const copied = JSON.parse(JSON.stringify({...receipt,...siblingItem,trigger_barrier:answer}));
+      await assert.rejects(importMassLabelingR13V1({...access,map_id:map.map_id,results:[copied]}),/r13_scope_override/);
+      for (const override of [{workspace_id:sibling.workspace_id},{map_id:siblingMap},{created_by_user_id:foreignActor},
+        {actor_user_id:foreignActor},{interest_key:"sibling_interest"}]) {
+        await assert.rejects(importMassLabelingR13V1({...access,map_id:map.map_id,
+          results:[JSON.parse(JSON.stringify({...receipt,trigger_barrier:answer,...override}))]}),/r13_scope_override/);
+        await assert.rejects(importMassLabelingR13V1({...access,map_id:map.map_id,interests:[{
+          interest_key:"primary_interest",name:"Primary interest",definition:"Invented primary interest",
+          results:[JSON.parse(JSON.stringify({...receipt,probability:.9,...override}))]}]}),/r13_scope_override/);
+      }
+      await assert.rejects(importMassLabelingR13V1({...access,map_id:map.map_id,interests:[{
+        interest_key:"primary_interest",name:"Primary interest",definition:"Invented primary interest",
+        results:[JSON.parse(JSON.stringify({...receipt,...siblingItem,probability:.9,interest_key:"sibling_interest"}))]}]}),/r13_scope_override/);
+      assert.deepEqual(await snapshotR13(),before,"receipt JSON cannot write any sibling revision or interest");
+      assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_r13_results WHERE workspace_id=$1",[access.workspace_id])).rows[0]!.n,0);
+    }
     const booked = (await query("SELECT id,usage,settled_micro_usd,raw_sha256 FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id", [run.id])).rows;
     await assert.rejects(selectMassLabelingTopicsV1({...access, map_id: map.map_id, topic_keys: ["bicycle_repairs"], expected_revision: 0}), /mass_labeling_full_population_required/);
     const smoke = await measureMassLabelingSmokeV1({...access,run_id:run.id});
