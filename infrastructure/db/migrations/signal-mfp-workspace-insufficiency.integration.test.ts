@@ -3,7 +3,7 @@ import {createHash,randomUUID} from "node:crypto";
 import test from "node:test";
 import type {Pool} from "pg";
 import {buildSignalWorkspaceInterpretationBatchV1,buildSignalWorkspaceInterpretationRepairBatchV1,
- signalWorkspaceEmbeddingDigestV1 as digest,signalWorkspaceInterpretationReferenceIdV1,recoverSignalWorkspaceInterpretationInsufficiencyV1,
+ buildMassLabelingConsolidationRequestV1,signalWorkspaceInterpretationUniverseDigestV1,signalWorkspaceEmbeddingDigestV1 as digest,signalWorkspaceInterpretationReferenceIdV1,recoverSignalWorkspaceInterpretationInsufficiencyV1,
  SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1 as configuration} from "@noisia/query-engine";
 import {seedSignalTopicEditorialRenewalSourceV1,createSignalTopicEditorialRenewalSyntheticSavesV1} from "./signal-topic-editorial-renewal.synthetic.fixture";
 import * as engine from "../signal-workspace-engine";
@@ -11,6 +11,7 @@ import * as money from "../signal-workspace-engine-interpretation";
 import {recordSignalWorkspaceEngineInterpretationRecoveryReviewV1} from "../signal-workspace-engine-recovery";
 import {recordSignalWorkspaceEngineInsufficiencyDecisionV1,readSignalWorkspaceEngineInsufficiencyDecisionsV1} from "../signal-workspace-engine-insufficiency";
 import {verifyMassLabelingSourceCheckpointsV1} from "../signal-mass-labeling-source";
+import {createMassLabelingMapV1} from "../signal-mass-labeling";
 import {materializeSignalWorkspaceEngineTopicsV1} from "../signal-topic-catalog";
 const sha=(text:string)=>`sha256:${createHash("sha256").update(text).digest("hex")}`;
 
@@ -125,6 +126,38 @@ test("operator insufficiency is scoped durable evidence and preserves the valid 
      assert.deepEqual((await query("SELECT to_jsonb(artifact) body FROM analysis_artifacts artifact WHERE id=$1",[first.artifact_id])).rows[0]!.body,beforeCheckpoint);
      assert.deepEqual((await query("SELECT to_jsonb(exception) body FROM signal_workspace_interpretation_exceptions exception WHERE id=$1",[exception.exception_id])).rows[0]!.body,beforeException);
      assert.equal((await recordSignalWorkspaceEngineInsufficiencyDecisionV1(decisionArgs)).decision_id,decision.decision_id);
+     await query("SAVEPOINT bad_global_adoption");
+     const globalBatch=buildMassLabelingConsolidationRequestV1({workspace_id:access.workspace_id,source_engine_execution_id:lease.execution_id,source_groups:verified.source_groups});
+     const badOutput={topics:[{topic_key:"synthetic_combined",name:"Synthetic combined conversation",definition:"Synthetic combined definition.",group_ids:groupKeys}],excluded_groups:[]};
+     const badRaw=JSON.stringify({type:"message",role:"assistant",model:configuration.model,stop_reason:"end_turn",content:[{type:"text",text:JSON.stringify(badOutput)}],usage:{input_tokens:100,output_tokens:50}});
+     const globalCall=await money.reserveSignalWorkspaceEngineInterpretationV1({...access,execution_token:lease.execution_token,idempotency_key:randomUUID(),
+      request_digest:globalBatch.request_digest,configuration:globalBatch.configuration,reserved_micro_usd:globalBatch.reserved_micro_usd,budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,
+      mass_labeling_stage:{stage:"global-consolidation-v1",source_groups_digest:globalBatch.source_groups_digest}});
+     const globalToken={database,call_id:globalCall.call_id,attempt_token:globalCall.attempt_token};
+     await money.markSignalWorkspaceEngineInterpretationSentV1({...globalToken,execution_token:lease.execution_token});
+     await money.persistSignalWorkspaceEngineInterpretationResponseV1({...globalToken,response:{storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/global-bad-raw.json`,sha256:sha(badRaw),size_bytes:Buffer.byteLength(badRaw),http_status:200,provider_request_id:null}});
+     await money.settleSignalWorkspaceEngineInterpretationV1({...globalToken,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
+     const consolidation=JSON.stringify({contract_version:"workspace-mass-labeling-consolidation-v1",workspace_id:access.workspace_id,source_engine_execution_id:lease.execution_id,
+      source_groups:verified.source_groups,source_groups_digest:globalBatch.source_groups_digest,raw_response:badRaw,output:badOutput});
+     const consolidated=await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,artifact:{artifact_key:"mass-labeling-consolidation.json",artifact_type:"engine_proposals",title:"Synthetic invalid global result",
+      storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/mass-labeling-consolidation.json`,sha256:sha(consolidation),size_bytes:Buffer.byteLength(consolidation),media_type:"application/json",metadata:{
+       contract_version:"workspace-mass-labeling-consolidation-v1",source_engine_execution_id:lease.execution_id,stage:"global-consolidation-v1",source_groups_digest:globalBatch.source_groups_digest,
+       call_id:globalCall.call_id,request_digest:globalBatch.request_digest,response_sha256:sha(badRaw)}}});
+     const materializedRaw=JSON.stringify(materialized);
+     const materialization=await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,artifact:{artifact_key:"materialization.json",artifact_type:"engine_proposals",title:"Synthetic complete materialization",
+      storage_key:`workspace-engine/${access.workspace_id}/${lease.execution_id}/materialization.json`,sha256:sha(materializedRaw),size_bytes:Buffer.byteLength(materializedRaw),media_type:"application/json",metadata:{
+       contract_version:"workspace-topic-materialization-v1",execution_id:lease.execution_id,interpretation_units_digest:signalWorkspaceInterpretationUniverseDigestV1(groupKeys),
+       output_catalog_profile_id:materialized.output_catalog_profile_id,output_catalog_revision:materialized.output_catalog_revision,topic_count:materialized.topic_count,mapping_digest:materialized.mapping_digest}}});
+     await engine.completeSignalWorkspaceEngineAnalysisV1({database,lease,materialization_artifact_id:materialization.artifact_id});
+     const assignmentArtifact=(await query("SELECT id FROM analysis_artifacts WHERE engine_execution_id=$1 AND artifact_key='assignments.guided.jsonl'",[lease.execution_id])).rows[0]!;
+     const originalAssignments=[...fixture.bodies].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
+     await assert.rejects(createMassLabelingMapV1({...fixture.access,source_engine_execution_id:lease.execution_id,assignments_artifact_id:assignmentArtifact.id,assignments_raw:originalAssignments,
+      consolidation_artifact_id:consolidated.artifact_id,consolidation_raw:consolidation,source_checkpoints:sources,catalog:badOutput.topics}),/mass_consolidation_contract_invalid/,
+      "even a durable settled raw cannot adopt an insufficient source group as a final topic");
+     assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_maps WHERE source_engine_execution_id=$1",[lease.execution_id])).rows[0]!.n,0);
+     assert.equal((await query("SELECT call_state FROM engine_cost_events WHERE id=$1",[globalCall.call_id])).rows[0]!.call_state,"settled");
+     await query("ROLLBACK TO SAVEPOINT bad_global_adoption");await query("RELEASE SAVEPOINT bad_global_adoption");
+     assert.deepEqual(await ledger(),beforeLedger);
      complete=true;throw stop;
     }}}),error=>{if(error!==stop)console.error(error);return error===stop;});
   assert.ok(complete);
