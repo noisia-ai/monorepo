@@ -10,6 +10,7 @@ import {
   renderPrivateComparisonAnnex,
   renderPublicReceipt,
   renderSealedAnswerKey,
+  readPilotSnapshot,
   sealAnswerKey,
   summarizePilotSnapshot,
   validatePilotSnapshot,
@@ -260,10 +261,97 @@ function enrichedEditorialSnapshot() {
   return { snapshot, receipt };
 }
 
+function recoveredGlobalEditorialSnapshot() {
+  const { snapshot } = enrichedEditorialSnapshot();
+  snapshot.stage_receipts.engine.input_digest = `sha256:${'1'.repeat(64)}`;
+  snapshot.stage_receipts.engine.result_summary.fit_checkpoint.checkpoint_digest = `sha256:${'2'.repeat(64)}`;
+  const catalog = Array.from({ length: 98 }, (_, index) => ({
+    topic_key: `synthetic-topic-${index + 1}`,
+    name: `Synthetic topic ${index + 1}`,
+    definition: `Synthetic definition ${index + 1}`,
+    group_ids: index < 16 ? [`synthetic-group-${index + 1}`] : [],
+  }));
+  catalog[0] = { topic_key: 'acucar', name: 'Synthetic retained topic A',
+    definition: 'Synthetic retained definition A', group_ids: ['synthetic-duplicate-group'] };
+  catalog[1] = { topic_key: 'cafe', name: 'Synthetic retained topic B',
+    definition: 'Synthetic retained definition B', group_ids: [] };
+  snapshot.map.catalog = catalog;
+  for (const item of snapshot.items) {
+    item.candidates[0] = { ...item.candidates[0], topic_key: 'acucar', name: catalog[0].name,
+      definition: catalog[0].definition };
+    item.candidates[1] = { ...item.candidates[1], topic_key: 'cafe', name: catalog[1].name,
+      definition: catalog[1].definition };
+  }
+  const changes = [
+    { from: 'açúcar', to: 'acucar' },
+    { from: 'café', to: 'cafe' },
+    { from: 'bebidasñ', to: 'bebidasn' },
+  ];
+  const decision = {
+    contract_version: 'workspace-mass-labeling-receipt-recovery-v1',
+    workspace_id: 'synthetic-workspace', execution_id: 'synthetic-engine-run',
+    call_id: 'synthetic-successor-call', request_digest: `sha256:${'d'.repeat(64)}`,
+    response_sha256: `sha256:${'f'.repeat(64)}`,
+    source_groups_digest: `sha256:${'a'.repeat(64)}`,
+    topic_key_changes: changes,
+    assignment_resolution: {
+      method: 'source_segments_and_exact_remaining_summary', group_id: 'synthetic-duplicate-group',
+      keep_topic_key: 'açúcar', remove_topic_key: 'café',
+      definition_omission: { unit: 'unicode_code_points', prefix_length: 18, removed_length: 5, suffix_length: 22 },
+    },
+  };
+  const decisionDigest = `sha256:${createHash('sha256').update(canonicalForTest(decision)).digest('hex')}`;
+  snapshot.stage_receipts.global_receipt_recovery_decision = {
+    decision_id: 'synthetic-recovery-decision', workspace_id: decision.workspace_id,
+    execution_id: decision.execution_id, call_id: decision.call_id,
+    request_digest: decision.request_digest, response_sha256: decision.response_sha256,
+    source_groups_digest: decision.source_groups_digest,
+    input_digest: snapshot.stage_receipts.engine.input_digest,
+    fit_checkpoint_digest: snapshot.stage_receipts.engine.result_summary.fit_checkpoint.checkpoint_digest,
+    decision_digest: decisionDigest, decision,
+    created_by_user_id: '00000000-0000-4000-8000-000000000001', created_at: '2026-11-07T12:00:30.000Z',
+  };
+  snapshot.stage_receipts.consolidation_artifact.metadata.recovery_decision_id = 'synthetic-recovery-decision';
+  snapshot.stage_receipts.consolidation_artifact.metadata.recovery_decision_digest = decisionDigest;
+  const receipt = operatorReceipt(snapshot);
+  const claude = receipt.stages.find((row) => row.name === 'claude');
+  claude.ledger_call_ids = snapshot.stage_receipts.editorial_calls.map((call) => call.id);
+  claude.usage_value_micro_usd = 170;
+  claude.input_tokens = 164;
+  claude.input_count = 144;
+  receipt.stages.find((row) => row.name === 'bertopic').group_count = 144;
+  receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  return { snapshot, receipt };
+}
+
 test('rejects snapshots without a frozen map before baseline comparison can be read', async () => {
   const snapshot = fixture();
   snapshot.map.created_at = null;
   assert.throws(() => validatePilotSnapshot(snapshot), /map_not_frozen/u);
+});
+
+test('streams item and call records while preserving JSON.stringify snapshot digest bytes', async () => {
+  const { mkdtemp, readFile, rm, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const directory = await mkdtemp(join(tmpdir(), 'pilot-audit-stream-'));
+  const path = join(directory, 'snapshot.json');
+  try {
+    const snapshot = fixture();
+    snapshot.items.forEach((item) => { item.text = 'synthetic '.repeat(60000); });
+    const serialized = JSON.stringify(snapshot);
+    await writeFile(path, serialized);
+    const parsed = await readPilotSnapshot(path);
+    validatePilotSnapshot(parsed);
+    assert.equal(computeSnapshotDigest(parsed), createHash('sha256').update(serialized).digest('hex'));
+    assert.equal(JSON.stringify(parsed), serialized);
+    await writeFile(path, '{"items":[{} ,],"calls":[]}');
+    await assert.rejects(readPilotSnapshot(path), SyntaxError);
+    await writeFile(path, '{\u00a0"items":[],"calls":[]}');
+    await assert.rejects(readPilotSnapshot(path), SyntaxError);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('accepts the H2 full export with null smoke_root_limit and partitions calls by persisted smoke_metrics.root_count', () => {
@@ -481,6 +569,40 @@ test('reconciles a terminal billed attempt plus its exact successful consolidati
   for (const [name, mutate, pattern] of invalidCases) {
     const copy = structuredClone({ snapshot, receipt });
     mutate(copy);
+    copy.receipt.snapshot_sha256 = computeSnapshotDigest(copy.snapshot);
+    assert.throws(() => summarizePilotSnapshot(copy.snapshot, copy.receipt), pattern, name);
+  }
+});
+
+test('attests recovery decision, normalized keys, retained topics, and duplicate assignment removal', () => {
+  const { snapshot, receipt } = recoveredGlobalEditorialSnapshot();
+  const summary = summarizePilotSnapshot(snapshot, receipt);
+  assert.equal(summary.topics.length, 98);
+  assert.equal(snapshot.map.catalog.some((topic) => topic.topic_key === 'acucar'), true);
+  assert.equal(snapshot.map.catalog.some((topic) => topic.topic_key === 'cafe'), true);
+  const invalidCases = [
+    ['missing DB decision', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision = null; }, /recovery_decision_invalid/u],
+    ['decision digest mismatch', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision_digest = `sha256:${'0'.repeat(64)}`; }, /recovery_decision_invalid/u],
+    ['wrong retry linkage', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.call_id = 'synthetic-terminal-call'; }, /recovery_decision_invalid/u],
+    ['key not NFKD normalized', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.topic_key_changes[0].to = 'açucar'; }, /recovery_key_changes_invalid/u],
+    ['duplicate remains assigned to removed topic', (copy) => { copy.snapshot.map.catalog[1].group_ids = ['synthetic-duplicate-group']; }, /recovery_assignment_mismatch/u],
+    ['retained topic missing', (copy) => { copy.snapshot.map.catalog.splice(1, 1); }, /recovery_topics_missing/u],
+  ];
+  for (const [name, mutate, pattern] of invalidCases) {
+    const copy = structuredClone({ snapshot, receipt });
+    mutate(copy);
+    if (!name.includes('decision digest') && name !== 'wrong retry linkage') {
+      const proof = copy.snapshot.stage_receipts.global_receipt_recovery_decision;
+      if (proof) {
+        const digest = `sha256:${createHash('sha256').update(canonicalForTest(proof.decision)).digest('hex')}`;
+        proof.decision_digest = digest;
+        copy.snapshot.stage_receipts.consolidation_artifact.metadata.recovery_decision_digest = digest;
+      }
+    }
+    copy.receipt.public_catalog.topics = copy.snapshot.map.catalog.map((topic) => ({
+      topic_key: topic.topic_key, public_name: `Public alias ${topic.topic_key}`,
+      public_definition: `Public definition ${topic.topic_key}`,
+    }));
     copy.receipt.snapshot_sha256 = computeSnapshotDigest(copy.snapshot);
     assert.throws(() => summarizePilotSnapshot(copy.snapshot, copy.receipt), pattern, name);
   }
