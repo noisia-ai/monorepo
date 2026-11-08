@@ -251,7 +251,7 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
   reconcileEditorialLedger(snapshot, operatorReceipt);
   indexSnapshot(snapshot);
   const topics = new Map(snapshot.map.catalog.map((topic) => [topic.topic_key, {
-    ...topic, volume: 0, rootIds: [],
+    ...topic, volume: 0,
   }]));
   const coverage = { covered: 0, intermediate: 0, no_topic: 0, unresolved: 0 };
   const promotion = { positive: 0, measured: 0 };
@@ -278,10 +278,10 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
       candidateKeys.add(candidate.topic_key);
       probabilities.push({ topic_key: candidate.topic_key, probability });
       if (probability > POSITIVE_THRESHOLD) {
-        if (!topic.rootIds.includes(item.root_id)) {
-          topic.volume += 1;
-          topic.rootIds.push(item.root_id);
-        }
+        // Snapshot validation guarantees one row per root and candidateKeys
+        // rejects duplicate topics within a row, so this membership check is
+        // redundant. An array scan here made a large topic quadratic.
+        topic.volume += 1;
       }
     }
     const maximum = probabilities.reduce((value, row) => Math.max(value, row.probability), 0);
@@ -391,7 +391,7 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
       intermediate_percent: rate(triggerBarrier.intermediate, rootCount),
       unresolved_percent: rate(triggerBarrier.unresolved, rootCount),
     },
-    topics: topicRows.map(({ rootIds: _rootIds, ...topic }) => topic),
+    topics: topicRows,
     public_topics: topicRows.map((topic) => {
       const publicTopic = publicCatalog.get(topic.topic_key);
       return { topic_key: topic.topic_key, name: publicTopic.public_name,
@@ -482,11 +482,10 @@ export function buildBlindSamples(snapshot, summary, secret) {
   if (!Buffer.isBuffer(secret) || secret.length < 32) throw new Error('pilot_audit_sample_secret_invalid');
   const items = new Map(snapshot.items.map((item) => [item.root_id, item]));
   const rootId = (value) => typeof value === 'string' ? value : value.root_id;
-  const ranked = (rows, salt) => [...rows].sort((left, right) => {
-    const a = createHmac('sha256', secret).update(`${salt}\0${rootId(left)}`).digest('hex');
-    const b = createHmac('sha256', secret).update(`${salt}\0${rootId(right)}`).digest('hex');
-    return a.localeCompare(b);
-  });
+  const ranked = (rows, salt) => rows.map((row) => ({
+    row,
+    rank: createHmac('sha256', secret).update(`${salt}\0${rootId(row)}`).digest('hex'),
+  })).sort((left, right) => left.rank.localeCompare(right.rank)).map(({ row }) => row);
   const samples = [];
   const answerKey = {};
   const addSample = (rootId, cohort, details) => {
