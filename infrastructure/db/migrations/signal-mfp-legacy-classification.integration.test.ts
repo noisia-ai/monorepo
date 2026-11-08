@@ -1,35 +1,21 @@
 import assert from "node:assert/strict";
 import { randomUUID, createHash } from "node:crypto";
 import test from "node:test";
-import pg from "pg";
-import type { Pool, PoolClient } from "pg";
 import { signalWorkspaceClassificationReuseKeyV1, signalTopicDefinitionDigestV1, type SignalWorkspaceClassificationIdentityV1,
  type SignalWorkspaceClassificationOutcomeV1 } from "@noisia/query-engine";
 import * as core from "../signal-workspace-classification";
+import { signalMfpLegacyWorkspaceFixtureV1 } from './signal-mfp-legacy-workspace.synthetic.fixture';
 
-const enabled=process.env.NOISIA_WORKSPACE_CLASSIFICATION_TEST_APPROVED==="true";
+const enabled=process.env.NOISIA_MFP_PG_CI==="true";
 const sha=(text:string)=>`sha256:${createHash("sha256").update(text).digest("hex")}`;
-/** Reuses an explicitly selected prepared local fixture. Every mutation, new
- * generation and correction is rolled back; no provider or migration runner. */
 async function fixture(){
- const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,"127.0.0.1");assert.equal(url.port,"55439");
- assert.match(url.pathname,/^\/noisia_national_import_test_\d+$/u);
- const pool=new pg.Pool({connectionString:url.href,ssl:false,max:1}),client=await pool.connect();
- await client.query("BEGIN");await client.query("SET LOCAL search_path=public,extensions,pg_temp");
- const stack:string[]=[];let serial=0;
- const query=async(sql:string,values?:unknown[])=>{if(sql.startsWith("BEGIN")){const key=`classification_${++serial}`;stack.push(key);return client.query(`SAVEPOINT ${key}`);}
-  if(sql==="COMMIT")return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
-  if(sql==="ROLLBACK"){const key=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${key}`);return client.query(`RELEASE SAVEPOINT ${key}`);}
-  return client.query(sql,values);};
- const scoped=Object.create(client) as PoolClient;scoped.query=query as PoolClient["query"];scoped.release=()=>{};
- const database=Object.assign(Object.create(pool) as Pool,{query:query as Pool["query"],connect:async()=>scoped});
- const workspace_id=process.env.NOISIA_WORKSPACE_CLASSIFICATION_TEST_WORKSPACE_ID!,actor_user_id=process.env.NOISIA_WORKSPACE_CLASSIFICATION_TEST_ACTOR_ID!,
-  embedding_run_id=process.env.NOISIA_WORKSPACE_CLASSIFICATION_TEST_EMBEDDING_ID!;
- assert.ok(workspace_id&&actor_user_id&&embedding_run_id);
+ const seeded=await signalMfpLegacyWorkspaceFixtureV1();
+ const {database,query,workspace_id,actor_user_id,embedding_run_id,classificationCatalog,cleanup}=seeded;
+ await classificationCatalog();
  const access={database,workspace_id,actor_user_id};
  const input=()=>core.loadSignalWorkspaceClassificationInputV1({queryable:database,workspace_id,actor_user_id});
  const identity=async():Promise<SignalWorkspaceClassificationIdentityV1>=>{const current=await input();return{
-  contract_version:"signal-workspace-classification-v1",workspace_id,engine_key:"local-ledger-fixture",engine_version:1,
+  contract_version:"signal-workspace-classification-v1",workspace_id,engine_key:"synthetic-migrated-fixture",engine_version:1,
   engine_artifact_digest:sha("fixture-unvalidated-engine"),decision_policy_digest:sha("fixture-no-automatic-authority"),
   embedding_config_digest:current.embedding_config_digest,catalog_digest:current.catalog_digest,
   compiler_digest:current.compiler_digest,context_digest:current.context_digest};};
@@ -37,7 +23,6 @@ async function fixture(){
  const claim=async(run:Awaited<ReturnType<typeof begin>>)=>{const lease=await core.claimSignalWorkspaceClassificationV1({database,...run});assert.ok(lease);return lease;};
  const rootPage=(lease:core.SignalWorkspaceClassificationLeaseV1)=>core.readSignalWorkspaceClassificationRootPageV1({database,lease,limit:100});
  const rejected=async(sql:string,params:unknown[],pattern:RegExp)=>{await query("BEGIN");try{await assert.rejects(query(sql,params),pattern);}finally{await query("ROLLBACK");}};
- const cleanup=async()=>{await client.query("ROLLBACK");client.release();await pool.end();};
  return{database,query,workspace_id,actor_user_id,access,input,identity,begin,claim,rootPage,rejected,cleanup};
 }
 function outcome(lease:core.SignalWorkspaceClassificationLeaseV1,root:core.SignalWorkspaceClassificationRootV1,

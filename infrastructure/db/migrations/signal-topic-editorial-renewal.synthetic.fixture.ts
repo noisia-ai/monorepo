@@ -32,6 +32,17 @@ import { syntheticClientWorkspaceFixtureV1, type SyntheticTransactionV1 } from "
 import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-workspace-topic-projection.fixture";
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
+  identity?: { organization_id: string; actor_user_id: string };
+  precreated_brand?: { brand_id: string; workspace_id: string };
+  after_brand_created?: (args: { transaction: SyntheticTransactionV1;
+    identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string };
+    runtime: SignalBrandContextPreparationRuntimeV1 }) => Promise<void>;
+  defer_numeric_policy_activation?: boolean;
+  before_numeric_policy_activation?: (args: { transaction: SyntheticTransactionV1;
+    identity: { organization_id: string; actor_user_id: string; brand_id: string; workspace_id: string } }) => Promise<void>;
+  root_count?: number;
+  long_text?: boolean;
+  skip_topic_prototypes?: boolean;
   runtime?: SignalBrandContextPreparationRuntimeV1;
   numeric_daily_cap_micro_usd?: number;
   saves?: Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge">;
@@ -58,7 +69,7 @@ export const SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1: SignalBrandCon
  * remain real; the main fixture then runs the normal semantic transitions. */
 export function createSignalTopicEditorialRenewalSyntheticSavesV1(
   runtime = SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1,
-  options: {brand_name?: string} = {},
+  options: {brand_name?: string; reuse_existing_policy?: boolean} = {},
 ): Pick<BrandContextSyntheticSaveBindingsV1, "createBrand" | "saveKnowledge"> {
   const refreshSnapshot = async (args: Parameters<BrandContextSyntheticSaveBindingsV1["saveKnowledge"]>[0]) => {
     const snapshot = await readSignalBrandOsCanonicalSnapshotV1({ queryable: args.scoped,
@@ -87,10 +98,23 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
       await refreshSnapshot({ ...args, brand_id, title: "Synthetic base identity", raw_text: "" });
       const config = runtime.semantic;
       assert.ok(config.platform_hard_cap_micro_usd !== null, "this historical capped fixture requires an explicit maximum");
-      const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
-        brand_id, initiator_user_id: args.actor_user_id, env: {
+      if (options.reuse_existing_policy) {
+        const activePolicy = (await args.scoped.query<{ id: string }>(`SELECT id::text FROM signal_processing_policy_versions
+          WHERE organization_id=$1::uuid AND status='active' AND valid_from<=clock_timestamp() AND valid_until>clock_timestamp()
+          ORDER BY version DESC LIMIT 1`, [args.organization_id])).rows[0];
+        assert.ok(activePolicy, "shared synthetic workspace must reuse a currently active organization policy");
+        const actions = new Set((await args.scoped.query<{ action: string }>(`SELECT action FROM signal_processing_policy_actions
+          WHERE policy_version_id=$1::uuid`, [activePolicy.id])).rows.map(row => row.action));
+        assert.ok(actions.has("brand_context_proposal") && actions.has("topic_prototype_embeddings"),
+          "shared organization policy retains the exact actions required by the context fixture");
+      } else {
+        const policy = await provisionSignalBrandContextPolicyV1({ database: args.database, workspace_id: workspace.id,
+          brand_id, initiator_user_id: args.actor_user_id, env: {
           NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID: args.actor_user_id,
-          NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd + BigInt(runtime.prototype.max_run_cost_micro_usd)),
+          NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD: '999999999999999',
+          // Synthetic receipts still share the real daily admission ledger.
+          // Leave room for every isolated preparation stage in this fixture.
+          NOISIA_BRAND_CONTEXT_POLICY_DAILY_CAP_MICRO_USD: '999999999999999',
           NOISIA_BRAND_CONTEXT_POLICY_VALID_UNTIL: new Date(Date.now() + 86_400_000).toISOString(),
           NOISIA_WORKSPACE_EMBEDDINGS_MAX_COST_MICRO_USD: String(runtime.prototype.max_run_cost_micro_usd),
           NOISIA_SEMANTIC_CONTEXT_MODEL: config.model, NOISIA_SEMANTIC_CONTEXT_MODEL_VERSION: config.model_version,
@@ -100,8 +124,9 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
           NOISIA_SEMANTIC_CONTEXT_INPUT_USD_PER_MILLION_TOKENS: config.input_usd_per_million_tokens,
           NOISIA_SEMANTIC_CONTEXT_OUTPUT_USD_PER_MILLION_TOKENS: config.output_usd_per_million_tokens,
           NOISIA_SEMANTIC_CONTEXT_HARD_CAP_MICRO_USD: String(config.platform_hard_cap_micro_usd),
-        } });
-      assert.equal(policy.status, "provisioned", "real policy service must seal the explicit synthetic context allowance");
+          } });
+        assert.equal(policy.status, "provisioned", "first synthetic workspace provisions its organization policy");
+      }
       return { brand_id, workspace_id: workspace.id };
     },
     async saveKnowledge(args) {
@@ -161,20 +186,32 @@ export async function snapshotSignalTopicEditorialRenewalSyntheticHistoryV1(tx: 
 export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicEditorialRenewalSyntheticSeedArgsV1) {
   const { database, scoped, query } = args;
   const runtime = args.runtime ?? SIGNAL_TOPIC_EDITORIAL_RENEWAL_SYNTHETIC_RUNTIME_V1;
-  const saves = args.saves ?? createSignalTopicEditorialRenewalSyntheticSavesV1(runtime);
+  const sharedIdentity = args.identity !== undefined;
+  const saves = args.saves ?? createSignalTopicEditorialRenewalSyntheticSavesV1(runtime, { reuse_existing_policy: sharedIdentity });
   assert.equal((await query("SHOW transaction_isolation")).rows[0]?.transaction_isolation, "read committed",
     "real processing admission requires the runner's READ COMMITTED rollback harness");
-  assert.equal((await query("SELECT count(*)::int count FROM organizations")).rows[0]?.count, 0,
-    "positive-source fixture requires an empty synthetic target before its first write");
-  const organization_id = randomUUID(), actor_user_id = randomUUID();
-  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic editorial renewal organization','active')",
-    [organization_id, `interest-review-${organization_id}`]);
-  await query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
-    VALUES($1,$2,'Synthetic editorial renewal actor','noisia_internal','noisia_admin',$3,'active')`,
-  [actor_user_id, `${actor_user_id}@example.test`, organization_id]);
-  const created = await saves.createBrand({ database, scoped, organization_id, actor_user_id,
+  const organization_id = args.identity?.organization_id ?? randomUUID();
+  const actor_user_id = args.identity?.actor_user_id ?? randomUUID();
+  if (args.identity) {
+    const actor = (await query(`SELECT actor.organization_id::text organization_id,actor.status,actor.user_type
+      FROM users actor WHERE actor.id=$1::uuid`, [actor_user_id])).rows[0];
+    assert.deepEqual(actor, { organization_id, status: "active", user_type: "noisia_internal" },
+      "shared synthetic workspace fixtures keep the same active internal actor and organization");
+  } else {
+    assert.equal((await query("SELECT count(*)::int count FROM organizations")).rows[0]?.count, 0,
+      "positive-source fixture requires an empty synthetic target before its first write");
+    await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic editorial renewal organization','active')",
+      [organization_id, `interest-review-${organization_id}`]);
+    await query(`INSERT INTO users(id,email,full_name,user_type,primary_role,organization_id,status)
+      VALUES($1,$2,'Synthetic editorial renewal actor','noisia_internal','noisia_admin',$3,'active')`,
+    [actor_user_id, `${actor_user_id}@example.test`, organization_id]);
+  }
+  const created = args.precreated_brand ?? await saves.createBrand({ database, scoped, organization_id, actor_user_id,
     intake: { ...BRAND_CONTEXT_SYNTHETIC_INTAKE_V1, slug: `interest-review-${randomUUID()}` } });
   const identity = { ...created, organization_id, actor_user_id };
+  if (!args.precreated_brand) await args.after_brand_created?.({
+    transaction: { database, scoped, query: query as never, cleanup: async () => {} }, identity, runtime,
+  });
   const access = { database, workspace_id: created.workspace_id, actor_user_id };
   const knowledge = await saves.saveKnowledge({ database, scoped, ...identity, title: "Synthetic bicycle knowledge",
     raw_text: BRAND_CONTEXT_SYNTHETIC_ADDITIONAL_KB_V1, idempotency_key: randomUUID() });
@@ -219,30 +256,46 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   // rollback, including failures. Its numerical records and receipts are real.
   const clusterIds = args.projection?.cluster_ids ?? [randomUUID(), randomUUID()] as const;
   const projection = await syntheticClientWorkspaceFixtureV1({ database, scoped, query, cleanup: async () => {} }, {
-    identity, projection: { ...args.projection, cluster_ids: clusterIds },
+    identity, root_count: args.root_count, long_text: args.long_text, skip_topic_prototypes: args.skip_topic_prototypes,
+    projection: { ...args.projection, cluster_ids: clusterIds,
+      ...(args.root_count && args.root_count > 10 ? { allow_large_population: true } : {}) },
   });
-  assert.equal(projection.roots.length, 3, "exactly three invented canonical roots are used");
-  assert.equal(projection.chunks.length, 3, "the tiny texts each occupy exactly one governed chunk");
+  assert.equal(projection.roots.length, args.root_count ?? 3, "the requested invented canonical root count is used");
+  if (args.long_text) assert.ok(projection.chunks.length >= projection.roots.length, "long synthetic text is represented by governed chunks");
+  else assert.equal(projection.chunks.length, args.root_count ?? 3, "each synthetic fixture text occupies one governed chunk");
   const source_execution_id = projection.engine_execution_id;
   const binding = (await query("SELECT signal_topic_consolidation_source_binding_v1($1::uuid) value", [source_execution_id])).rows[0]?.value;
   assert.ok(binding, "actual completed embedding and fit checkpoint must resolve the numerical source binding");
   assert.equal(binding.expected_group_count, 2, "source census contains the two sealed synthetic lanes");
 
+  await args.before_numeric_policy_activation?.({
+    transaction: { database, scoped, query: query as never, cleanup: async () => {} }, identity,
+  });
+
   // New synthetic policy version, preserving all old policy/receipt history.
   // It permits ONLY the free numeric action; no editorial send is authorized.
-  const policy_id = randomUUID();
-  await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,valid_from,valid_until,
+  let policy_id: string;
+  if (!args.defer_numeric_policy_activation) {
+    policy_id = randomUUID();
+    await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,valid_from,valid_until,
     budget_timezone,daily_cap_micro_usd,created_by_user_id)
     SELECT $1,$2,COALESCE(max(version),0)+1,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 day',
       COALESCE((SELECT budget_timezone FROM signal_processing_policy_versions WHERE organization_id=$2 ORDER BY version DESC LIMIT 1),'America/Mexico_City'),$4,$3
-    FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id, args.numeric_daily_cap_micro_usd ?? 0]);
-  await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
+    FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id, args.numeric_daily_cap_micro_usd ?? 999_999_999_999_999]);
+    await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
     configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
     SELECT $1,'topic_consolidation_numeric','free',NULL,NULL,configuration,
       signal_semantic_context_digest_json_v2(configuration),0,false
     FROM (SELECT signal_topic_consolidation_numeric_configuration_v1() configuration) configuration`, [policy_id]);
-  await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE organization_id=$1 AND status='active'", [organization_id]);
-  await query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [policy_id]);
+    await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE organization_id=$1 AND status='active'", [organization_id]);
+    await query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1", [policy_id]);
+  } else {
+    const active = (await query(`SELECT id::text FROM signal_processing_policy_versions
+      WHERE organization_id=$1::uuid AND status='active' AND valid_until>clock_timestamp() ORDER BY version DESC LIMIT 1`,
+    [organization_id])).rows[0] as { id: string } | undefined;
+    assert.ok(active, "deferred fixture resolves the active shared organization policy after the sibling activates it");
+    policy_id = active.id;
+  }
   const status = await loadSignalTopicConsolidationStatusV1({ ...access, source_execution_id });
   assert.equal(status.status, "ready_to_prepare", "real source and free policy must permit numeric admission");
   assert.ok(status.quote_reference, "numeric request requires the actual quote reference");
@@ -273,7 +326,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
       strength: 0.8, assignment_digest: digest(assignments.filter(item => item.root_id === root.root_id).map(item => ({ ...item, strength: 0.8 }))) })).sort((a, b) => a.root_id.localeCompare(b.root_id));
     const scope_counts = { brand: 0, competitor: 0, category: 0, unknown: 0 };
     for (const row of metadata) scope_counts[row.scope]++;
-    const evidence = projection.chunks.map(chunk => {
+    const evidence = projection.chunks.slice(0, 10).map(chunk => {
       const item = byRoot.get(chunk.root_id); assert.ok(item, "each governed root must retain actual metadata");
       const locator = { root_id: chunk.root_id, chunk_index: chunk.chunk_index, start: chunk.start, end: chunk.end, chunk_sha256: chunk.chunk_sha256 };
       return { ...locator, ref_id: digest(locator), locale: item.locale, platform: item.platform, occurred_at: item.occurred_at };

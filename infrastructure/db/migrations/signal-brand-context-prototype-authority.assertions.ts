@@ -8,7 +8,11 @@ type Scope={database:Pool;scoped:PoolClient;workspace_id:string;actor_user_id:st
 export async function assertBrandContextMissingPublicationFenceV1(args:Scope){
  await args.scoped.query('BEGIN');
  try{
-  await initializeSignalWorkspaceTopicPrototypeCatalogV1(args);
+  const initialized=await initializeSignalWorkspaceTopicPrototypeCatalogV1(args);
+  assert.equal(initialized.created,true,'a workspace with no prior topic history initializes one empty catalog');
+  const profile=(await args.scoped.query(`SELECT status,metadata->>'contract_version' contract FROM signal_taxonomy_profiles
+   WHERE id=$1::uuid AND workspace_id=$2::uuid AND kind='topic'`,[initialized.taxonomy_profile_id,args.workspace_id])).rows[0];
+  assert.deepEqual(profile,{status:'draft',contract:'signal-topic-catalog-v1'});
   const status=await loadSignalWorkspaceTopicPrototypesV1(args);
   assert.equal(status.availability,'context_required');assert.equal(status.current_plan_digest,null);
   await assert.rejects(quoteSignalWorkspaceTopicPrototypesV1(args),error=>error instanceof SignalTopicCatalogError

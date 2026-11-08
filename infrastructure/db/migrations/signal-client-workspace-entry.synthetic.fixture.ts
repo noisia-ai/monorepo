@@ -22,9 +22,12 @@ export type SyntheticTransactionV1={database:Pool;scoped:PoolClient;query:Worksp
 /** Accepted import only: no preparation, embeddings, execution or provider receipt.
  * The caller must own an approved synthetic-only transaction and its rollback. */
 export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactionV1,
- identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string}){
+ identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string},options:{root_count?:number;long_text?:boolean}={}){
  const {database,query}=tx;
  const roots:string[]=[];
+ const texts: string[]=options.root_count===undefined?[...NOI19_SYNTHETIC_TEXTS]:
+  Array.from({length:options.root_count},(_,index)=>`Synthetic fixture root ${index.toString().padStart(4,'0')}.`);
+ if(options.long_text&&texts.length)texts[0]=`${texts[0]} ${'Synthetic excerpt continuation. '.repeat(100)}`;
  const org=identity?.organization_id??randomUUID(),brand=identity?.brand_id??randomUUID(),actor_user_id=identity?.actor_user_id??randomUUID(),source=randomUUID(),batch=randomUUID();
  if(!identity){
  await query("INSERT INTO organizations(id,slug,legal_name,status) VALUES($1,$2,'Synthetic NOI-19 test organization','active')",[org,`noi19-${org}`]);
@@ -37,8 +40,8 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  VALUES($1,$2,$3,$4,'social_listening','synthetic','manual','Synthetic fixture source',$5,'active')`,[source,workspace_id,org,brand,`source-sha256-${fixtureSha(source).slice(7)}`]);
  await query(`INSERT INTO import_batches(id,workspace_id,data_source_id,source_system,source_file_name,source_file_hash,status,
  record_count,included_count,excluded_count,duplicate_count,imported_by_user_id)
- VALUES($1,$2,$3,'synthetic','invented-three-roots.txt',$4,'completed',3,3,0,0,$5)`,[batch,workspace_id,source,fixtureSha(NOI19_SYNTHETIC_TEXTS.join('\n')),actor_user_id]);
- for(const [index,text] of NOI19_SYNTHETIC_TEXTS.entries()){
+ VALUES($1,$2,$3,'synthetic','invented-synthetic-roots.txt',$4,'completed',$6,$6,0,0,$5)`,[batch,workspace_id,source,fixtureSha(texts.join('\n')),actor_user_id,texts.length]);
+ for(const [index,text] of texts.entries()){
   const root=randomUUID();roots.push(root);
   await query(`INSERT INTO mentions(id,workspace_id,data_source_id,canonical_mention_id,provider_record_id,external_id,source_system,
    source_file_id,text_hash,text_raw,text_clean,text_length,published_at,platform,resolved_platform,language,inclusion_status)
@@ -79,16 +82,19 @@ export async function syntheticImportedWorkspaceFixtureV1(tx:SyntheticTransactio
  * These invented rights and usage receipts are TEST DATA, never product grants. */
 export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV1,options:{
  identity?:{organization_id:string;brand_id:string;actor_user_id:string;workspace_id:string};
+ root_count?:number;
+ long_text?:boolean;
+ skip_topic_prototypes?:boolean;
  projection?:Parameters<typeof workspaceProjectionFixtureBodyV1>[1];
 }={}){
  const {database,query,scoped}=tx;
- const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity);
+ const {workspace_id,actor_user_id}=await syntheticImportedWorkspaceFixtureV1(tx,options.identity,{root_count:options.root_count,long_text:options.long_text});
  const access={database,workspace_id,actor_user_id};
  const prep=await requestSignalWorkspaceCorpusPreparationStoreV1({...access,idempotency_key:randomUUID()});
  const prepJob=(await query('SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1',[prep.run_id])).rows[0]!.worker_job_id;
  await signalWorkspaceCorpusPreparationJobV1({id:prepJob,data:{run_id:prep.run_id},updateProgress:async()=>{}},{database,page_size:3});
  const prepared=await loadSignalWorkspaceCorpusPreparationStoreV1({queryable:database,workspace_id});
- assert.equal(prepared.is_current,true);assert.equal(prepared.latest_completed?.counts.eligible_roots,3);
+ assert.equal(prepared.is_current,true);assert.equal(prepared.latest_completed?.counts.eligible_roots,options.root_count??3);
  const quoted=await quoteSignalWorkspaceEmbeddingsStoreV1({...access,profile});
  const embedded=await requestSignalWorkspaceEmbeddingsStoreV1({...access,profile,preparation_run_id:quoted.preparation_run_id,
   quote_digest:quoted.quote_digest,idempotency_key:randomUUID(),hard_cap_micro_usd:1_000_000,provider_available:true});
@@ -97,10 +103,12 @@ export async function syntheticClientWorkspaceFixtureV1(tx:SyntheticTransactionV
  await insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:fixtureSha('synthetic-empty-catalog'),terms:[],rules:{topics:[]},
   rule_set_metadata:{},provider:'operator',model_version:'synthetic-test',prompt_hash:fixtureSha('synthetic'),model_metadata:{},
   profile_metadata:{contract_version:'signal-topic-catalog-v1'},context_refs:context.context_refs});
- const guides=await quoteSignalWorkspaceTopicPrototypesV1(access);
- const requested=await requestSignalWorkspaceTopicPrototypesV1({...access,idempotency_key:randomUUID(),plan_digest:guides.plan_digest,
-  quote_digest:guides.quote_digest,hard_cap_micro_usd:1_000_000,max_run_cost_micro_usd:1_000_000,provider_available:true});
- await embedSyntheticRunV1(tx,requested.run_id);
+ if(!options.skip_topic_prototypes){
+  const guides=await quoteSignalWorkspaceTopicPrototypesV1(access);
+  const requested=await requestSignalWorkspaceTopicPrototypesV1({...access,idempotency_key:randomUUID(),plan_digest:guides.plan_digest,
+   quote_digest:guides.quote_digest,hard_cap_micro_usd:1_000_000,max_run_cost_micro_usd:1_000_000,provider_available:true});
+  await embedSyntheticRunV1(tx,requested.run_id);
+ }
  // No migrations: the private runner requires the restored current schema. The
  // existing projection body uses real guards/receipts with explicit numerical data.
  return workspaceProjectionFixtureBodyV1({...tx,workspace_id,actor_user_id,embedding_run_id:embedded.run_id},options.projection);

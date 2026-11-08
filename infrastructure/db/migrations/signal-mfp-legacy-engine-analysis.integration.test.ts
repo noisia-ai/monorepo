@@ -1,49 +1,33 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {randomUUID,createHash} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
-import pg from 'pg';
-import type {Pool,PoolClient} from 'pg';
 import {signalWorkspaceEmbeddingDigestV1,signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,buildSignalWorkspaceInterpretationRepairBatchV1,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
- type SignalTopicDefinitionV1,type SignalWorkspaceInterpretationClusterV1} from '@noisia/query-engine';
+ type SignalWorkspaceInterpretationClusterV1} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
 import * as money from '../signal-workspace-engine-interpretation';
-import {insertSignalTaxonomyDraftCoreV1} from '../signal-taxonomy-profile';
-import {loadSignalTopicInheritedContextStoreV1,materializeSignalWorkspaceEngineTopicsV1} from '../signal-topic-catalog';
-const enabled=process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED==='true';
+import {materializeSignalWorkspaceEngineTopicsV1} from '../signal-topic-catalog';
+import {signalMfpLegacyWorkspaceFixtureV1} from './signal-mfp-legacy-workspace.synthetic.fixture';
+const enabled=process.env.NOISIA_MFP_PG_CI==='true';
 const sha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf8').digest('hex')}`;
 const unitsDigest=(keys:string[])=>sha([...keys].sort().map(key=>JSON.stringify(key)+'\n').join(''));
 async function fixture(){
- const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_national_import_test_\d+$/u);
- const pool=new pg.Pool({connectionString:url.href,ssl:false,max:1}),client=await pool.connect();
- await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');await client.query('SET LOCAL search_path=public,extensions,pg_temp');
- const stack:string[]=[];let index=0;const query=async(sql:string,params?:unknown[])=>{
-  if(sql.startsWith('BEGIN')){const key=`analysis_${++index}`;stack.push(key);return client.query(`SAVEPOINT ${key}`);}
-  if(sql==='COMMIT')return client.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
-  if(sql==='ROLLBACK'){const key=stack.pop()!;await client.query(`ROLLBACK TO SAVEPOINT ${key}`);return client.query(`RELEASE SAVEPOINT ${key}`);}
-  return client.query(sql,params);
- };
- const scoped=Object.create(client) as PoolClient;scoped.query=query as PoolClient['query'];scoped.release=()=>{};
- const database=Object.assign(Object.create(pool) as Pool,{query:query as Pool['query'],connect:async()=>scoped});
- const workspace_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_WORKSPACE_ID!,actor_user_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_ACTOR_ID!,embedding_run_id=process.env.NOISIA_WORKSPACE_ENGINE_TEST_EMBEDDING_ID!;
- assert.ok(workspace_id&&actor_user_id&&embedding_run_id);
- const context=await loadSignalTopicInheritedContextStoreV1({queryable:database,workspace_id,complete_context:true});
- const catalog=async(terms:SignalTopicDefinitionV1[]=[],metadata:Record<string,unknown>={})=>insertSignalTaxonomyDraftCoreV1({client:scoped,workspace_id,kind:'topic',context_hash:sha('local-analysis-catalog'),
-  terms:terms.map(topic=>({term_key:topic.term_key,label:topic.label,definition:topic.definition,metadata:{topic}})),rules:{topics:terms},rule_set_metadata:{},provider:'operator',model_version:'local',
-  prompt_hash:sha('local'),model_metadata:{},profile_metadata:{contract_version:'signal-topic-catalog-v1',...metadata},context_refs:context.context_refs});
+ const seeded=await signalMfpLegacyWorkspaceFixtureV1();
+ const {query,database,workspace_id,actor_user_id,embedding_run_id,catalog,cleanup}=seeded;
  await catalog();
  const access={database,workspace_id,actor_user_id};
- const cleanup=async()=>{await client.query('ROLLBACK');client.release();await pool.end();};
  return{query,database,access,workspace_id,actor_user_id,embedding_run_id,catalog,cleanup};
 }
 for(const withRepair of [false,true]) test(`one analysis keeps fit and metered interpretation recoverable, rejects partial completion and preserves semantic input identity across own outputs${withRepair?' with an editorial repair':''}`, {skip:!enabled,timeout:90_000},async()=>{
  const f=await fixture();try{
-  if(withRepair)await f.query(await readFile(new URL('./0141_signal_workspace_editorial_repair.sql',import.meta.url),'utf8'));
   const configuration:money.SignalWorkspaceEngineInterpretationConfigurationV1=SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
-  const interpretation_config={call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000};
+  const baseline=Number((await f.query(`SELECT COALESCE(sum(workspace_engine_interpretation_effective_cost_v1(call)),0)::text total_micro_usd
+   FROM engine_cost_events call WHERE call.workspace_contract='workspace-engine-interpretation-v1' AND call.actor_user_id=$1::uuid
+    AND call.budget_date=(clock_timestamp() AT TIME ZONE 'America/Mexico_City')::date`,[f.actor_user_id])).rows[0]!.total_micro_usd);
+  const dailyCap=baseline+100_000_000;
+  const interpretation_config={call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:dailyCap};
   const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(f.access);assert.equal(preflight.missing_guides,0);
   const request={...f.access,embedding_run_id:f.embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
-   expected_context_digest:preflight.expected_context_digest,engine_config:{fixture:'transition-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,interpretation_config};
+   expected_context_digest:preflight.expected_context_digest,engine_config:{fixture:'transition-only'},parent_execution_id:null,claude_cap_micro_usd:dailyCap,interpretation_config};
   const started=await engine.beginSignalWorkspaceEngineV1(request);assert.equal((await engine.beginSignalWorkspaceEngineV1(request)).execution_id,started.execution_id);
   await assert.rejects(engine.beginSignalWorkspaceEngineV1({...request,interpretation_config:{...interpretation_config,daily_cap_micro_usd:1}}),/idempotency_conflict/u);
   let lease=await engine.claimSignalWorkspaceEngineV1({database:f.database,...started,worker_job_id:'local-integrated-analysis'});assert.ok(lease);
@@ -176,6 +160,10 @@ for(const withRepair of [false,true]) test(`one analysis keeps fit and metered i
   assert.equal(final.topic_count,2);const status=await engine.loadSignalWorkspaceEngineStatusV1(f.access);
   assert.equal(status.latest_run?.status,'ready');assert.equal(status.latest_run?.is_current,true);assert.equal(status.latest_run?.interpreted_units,2);assert.equal(status.latest_run?.materialized_topics,2);
   assert.deepEqual((await f.query('SELECT status FROM signal_tagging_model_version_events WHERE model_version_id=$1::uuid',[fit.model_version_id])).rows,[{status:'draft'}]);
-  const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});assert.equal(budget.confirmed_micro_usd,withRepair?5250:3500);assert.equal(budget.reserved_micro_usd,0);
+  const budget=await money.loadSignalWorkspaceEngineInterpretationBudgetV1({...f.access,...started});
+  const settled=(await f.query(`SELECT count(*)::int calls,COALESCE(sum(settled_micro_usd),0)::int settled_micro_usd
+   FROM engine_cost_events WHERE catalog_execution_id=$1::uuid AND workspace_contract='workspace-engine-interpretation-v1'`,[started.execution_id])).rows[0];
+  assert.equal(settled.calls,withRepair?3:2);assert.equal(budget.confirmed_micro_usd,settled.settled_micro_usd);
+  assert.equal(budget.reserved_micro_usd,0,'all exact receipts are settled with no outstanding reservation');
  }finally{await f.cleanup();}
 });

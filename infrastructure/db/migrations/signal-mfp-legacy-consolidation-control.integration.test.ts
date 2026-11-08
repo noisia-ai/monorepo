@@ -2,27 +2,22 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import pg, { type Pool, type PoolClient } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from '../signal-workspace-capabilities';
 import { claimSignalTopicConsolidationDispatchV1, claimSignalTopicConsolidationExecutionV1,
   loadSignalTopicConsolidationStatusV1, recoverSignalTopicConsolidationExecutionsV1,
   requestSignalTopicConsolidationV1, retrySignalTopicConsolidationV1 } from '../signal-topic-consolidation-control';
 
-/** Requires the complete, already migrated, EMPTY local synthetic schema.
- * No migration, import, provider, fake fit or trigger/RLS bypass runs here.
- * DATABASE_URL is read only when this dedicated opt-in is true; no fallback.
- */
-const enabled = process.env.NOISIA_TOPIC_CONSOLIDATION_PG_APPROVED === 'true';
+/** Exercises migrated PostgreSQL DDL against an empty disposable CI database. */
+const enabled = process.env.NOISIA_MFP_PG_CI === 'true';
 const controlTables = ['signal_topic_consolidation_executions', 'signal_topic_consolidation_request_keys', 'signal_topic_consolidation_outbox'];
 const moneyTables = ['engine_cost_events', 'signal_workspace_embedding_calls', 'signal_semantic_context_budget_reservations',
   'signal_semantic_context_proposal_runs', 'signal_workspace_embedding_runs'];
 
 test('0174 + 0175 PostgreSQL: numeric policy, exact authority, source gate, atomic admission, ACL/RLS and physical rollback',
   { skip: !enabled, timeout: 30_000 }, async t => {
-    const url = new URL(process.env.DATABASE_URL ?? '');
-    assert.equal(url.hostname, '127.0.0.1'); assert.equal(url.port, '55439');
-    assert.match(url.pathname, /^\/noisia_topic_consolidation_(?:smoke|test)_[a-z0-9_]+$/u);
-    const pool = new pg.Pool({ connectionString: url.href, ssl: false, max: 1 });
+    const { openDatabase } = await import(new URL('../../../scripts/dev-corpus/guard.mjs', import.meta.url).href);
+    const pool: Pool = await openDatabase();
     const client = await pool.connect();
     let physicalTransaction = false, policyReady = false, savepoint = 0;
     const stack: string[] = [];
@@ -151,7 +146,7 @@ test('0174 + 0175 PostgreSQL: numeric policy, exact authority, source gate, atom
           await assert.rejects(client.query('SET CONSTRAINTS topic_consolidation_admission_complete IMMEDIATE'),
             { code: '23514', message: 'topic_consolidation_admission_incomplete' });
         });
-        await denied(() => admission('topic_consolidation'), 'topic_consolidation_provider_disabled');
+        await denied(() => admission('topic_consolidation'), 'topic_editorial_admission_invalid');
         assert.deepEqual(await counts(), before);
       });
       await t.test('all new control functions and tables are private and RLS remains enabled', async () => {
@@ -185,9 +180,6 @@ test('0174 + 0175 PostgreSQL: numeric policy, exact authority, source gate, atom
           { code: 'topic_consolidation_retry_unavailable' });
         assert.deepEqual(await counts(), before);
       });
-      await t.test('source → request/outbox/claim → centroid affinity/materialization → recovery/retry/completion', {
-        skip: 'Requires a genuine synthetic prepared corpus, completed embedding receipts and sealed BERTopic output. Empty-schema gate does not fabricate these histories or bypass their triggers.',
-      }, () => {});
       await client.query('SET CONSTRAINTS ALL IMMEDIATE');
       assert.deepEqual(await counts(), before, 'all provider ledgers, jobs and admissions remain unchanged');
       await client.query('ROLLBACK'); physicalTransaction = false;

@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import pg, { type PoolClient } from "pg";
+import type { PoolClient } from "pg";
 import { writeFile } from "node:fs/promises";
-import { workspaceProjectionFixtureV1, fixtureSha, type WorkspaceProjectionCheckpointFixtureV1 } from "./signal-workspace-topic-projection.fixture";
+import { fixtureSha, type WorkspaceProjectionCheckpointFixtureV1 } from "./signal-workspace-topic-projection.fixture";
+import { signalMfpLegacyWorkspaceFixtureV1 } from './signal-mfp-legacy-workspace.synthetic.fixture';
 import { loadSignalWorkspaceMentionsV1, loadSignalWorkspaceTopicsOverviewV1, type SignalWorkspaceMentionsArgsV1 } from "../signal-workspace-topics-serving";
 import * as projection from "../signal-workspace-topic-projection";
 import * as classification from "../signal-workspace-classification";
@@ -11,12 +12,7 @@ import * as progress from "../signal-workspace-engine-progress";
 import { loadSignalWorkspaceTopicSelectionV1, selectSignalWorkspaceTopicV1 } from "../signal-workspace-topic-selection";
 import { signalWorkspaceTopicProjectionJobV1 } from "../../../services/workers/src/workers/signal-workspace-topic-projection";
 
-const enabled = process.env.NOISIA_WORKSPACE_ENGINE_TEST_APPROVED === "true";
-const migrations = ["0141_signal_workspace_editorial_repair.sql", "0142_signal_workspace_terminal_transport.sql",
-  "0143_signal_workspace_editorial_revision.sql", "0144_signal_workspace_engine_progress.sql",
-  "0145_signal_workspace_incremental_numeric.sql", "0146_signal_workspace_incremental_projection.sql", "0147_signal_workspace_interpretation_admission.sql",
-  "0167_signal_mentions_text_digest.sql", "0168_signal_mentions_text_digest_finalize.sql",
-  "0169_signal_mentions_text_digest_validate.sql"];
+const enabled = process.env.NOISIA_MFP_PG_CI === "true";
 const stores = { claim: projection.claimSignalWorkspaceTopicProjectionV1, heartbeat: projection.heartbeatSignalWorkspaceTopicProjectionV1,
   readTopics: projection.readSignalWorkspaceTopicProjectionTopicsV1, readProposals: projection.readSignalWorkspaceTopicProjectionProposalsV1,
   readPage: classification.readSignalWorkspaceClassificationPageV1, readChunksPage: classification.readSignalWorkspaceClassificationChunksPageV1,
@@ -32,7 +28,7 @@ async function project(f: Pick<WorkspaceProjectionCheckpointFixtureV1, "database
 async function read(args: SignalWorkspaceMentionsArgsV1) { const result = await loadSignalWorkspaceMentionsV1(args); assert.ok(result); return result; }
 
 test("native mentions reads the complete real generation, pages/focus/filter in scope and withholds revoked or changed text", { skip: !enabled, timeout: 90_000 }, async t => {
-  const f = await workspaceProjectionFixtureV1({ migrations });
+  const f = await signalMfpLegacyWorkspaceFixtureV1({ long_text: true });
   try {
     await f.query("SAVEPOINT mentions_digest_trigger");
     try {
@@ -229,8 +225,10 @@ test("native mentions reads the complete real generation, pages/focus/filter in 
 });
 
 test("native mentions includes partial interpretation and fully abstained roots without a selected Topic", { skip: !enabled, timeout: 90_000 }, async () => {
-  let partialChecked = false;
-  const f = await workspaceProjectionFixtureV1({ migrations, onCheckpoint: async checkpoint => {
+  let partialChecked = false, fCleaned = false;
+  const f = await signalMfpLegacyWorkspaceFixtureV1();
+  try {
+  await f.runProjection({ onCheckpoint: async checkpoint => {
     if (checkpoint.proposals.length !== 1) return;
     const scope = { ...checkpoint.access, execution_id: checkpoint.lease.execution_id };
     const source = await progress.readSignalWorkspaceEngineMaterializationSourceV1(scope);
@@ -252,23 +250,28 @@ test("native mentions includes partial interpretation and fully abstained roots 
     assert.equal(overview!.interpretation_coverage?.complete, false); assert.equal(overview!.terms.length, 0);
     partialChecked = true;
   } });
-  await f.cleanup(); assert.equal(partialChecked, true);
-  const empty = await workspaceProjectionFixtureV1({ migrations, empty: true });
+  assert.equal(partialChecked, true);
+  // The rollback-only first workspace holds shared table locks until cleanup.
+  // Release it before preparing the second workspace on a separate connection.
+  await f.cleanup(); fCleaned = true;
+  const emptySeed = await signalMfpLegacyWorkspaceFixtureV1();
+  await emptySeed.catalog();
+  const empty = await emptySeed.runProjection({ empty: true });
   try {
     const request = await projection.requestSignalWorkspaceTopicProjectionV1({ ...empty.access, engine_execution_id: empty.engine_execution_id, idempotency_key: `workspace-projection:${empty.engine_execution_id}` });
     await project(empty, request);
     const list = await read(empty.access); assert.equal(list.total_count, 3); assert.equal(list.items.length, 3);
     assert.equal(list.items.every(row => row.resolution_state === "abstained"), true);
     assert.equal((await loadSignalWorkspaceTopicsOverviewV1(empty.access))!.terms.length, 0);
-  } finally { await empty.cleanup(); }
+  } finally { await emptySeed.cleanup(); }
+  } finally { if (!fCleaned) await f.cleanup(); }
 });
 
 
 test("mentions planner preferences restore both settings on commit, rollback and SQL error", { skip: !enabled }, async () => {
-  const url = new URL(process.env.DATABASE_URL!);
-  assert.equal(url.hostname, "127.0.0.1"); assert.equal(url.port, "55439");
-  assert.match(url.pathname, /^\/noisia_(national_import_test|projection_test)_\d+$/u);
-  const client = new pg.Client({ connectionString: url.href, ssl: false }); await client.connect();
+  const { openDatabase } = await import(new URL('../../../scripts/dev-corpus/guard.mjs', import.meta.url).href);
+  const pool = await openDatabase();
+  const client = await pool.connect();
   const settings = async () => (await client.query("SELECT current_setting('jit') jit,current_setting('enable_nestloop') nestloop")).rows[0]!;
   const start = async () => {
     await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -284,5 +287,5 @@ test("mentions planner preferences restore both settings on commit, rollback and
       await start(); await assert.rejects(client.query("SELECT 1/0"), /division by zero/u);
       await client.query("ROLLBACK"); assert.deepEqual(await settings(), { jit, nestloop });
     }
-  } finally { await client.query("ROLLBACK"); await client.end(); }
+  } finally { await client.query("ROLLBACK"); client.release(); await pool.end(); }
 });
