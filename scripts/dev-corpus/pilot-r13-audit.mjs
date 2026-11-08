@@ -380,6 +380,9 @@ export function renderCorrectedPublicReceiptR13({ receipt, baseline, repaired, p
   const oldTriggers = baseline.historical_trigger_barrier_by_promotion.trigger;
   const oldBarriers = baseline.historical_trigger_barrier_by_promotion.barrier;
   const lines = [
+    '',
+    '## Revisión vigente R14 · costo de la ruta final', '',
+    'La proyección para siete preguntas base es **USD 107–112 por millón de raíces**. Cada interés activo añade **aproximadamente USD 7.50 por millón**; con dos intereses, la referencia es **USD 122–127 por millón**. Consulta el [anexo de costo R14](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R14_2026-11-08.md) para supuestos y comparación medida. La revisión R13 previa se conserva byte por byte en el [recibo histórico sellado](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R13_HISTORICO_2026-11-08.md).',
     '', '## Correcciones R13', '',
     `La relevancia genérica histórica se conserva como diagnóstico. Dio ${baseline.original_relevance.positive} positivas, ${baseline.original_relevance.intermediate} intermedias y ${baseline.original_relevance.negative} negativas.`,
     `El desglose histórico de motivadores y barreras, sin filtrar voz, separa promoción >0.7 y sin promoción: triggers ${oldTriggers.promoted} / ${oldTriggers.organic}; barriers ${oldBarriers.promoted} / ${oldBarriers.organic}.`,
