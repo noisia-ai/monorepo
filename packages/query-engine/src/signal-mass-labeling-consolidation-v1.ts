@@ -143,6 +143,7 @@ export function validateMassLabelingConsolidationOutputV1(
   const parsed = catalog.safeParse(value);
   if (!parsed.success) return fail();
   const expected = new Set(groups.map((group) => group.group_id));
+  const insufficient = new Set(groups.filter(group => group.status === "insufficient").map(group => group.group_id));
   const seen = new Set<string>(),
     keys = new Set<string>();
   const accept = (id: string) => {
@@ -150,7 +151,7 @@ export function validateMassLabelingConsolidationOutputV1(
     seen.add(id);
   };
   for (const topic of parsed.data.topics) {
-    if (keys.has(topic.topic_key)) return fail();
+    if (keys.has(topic.topic_key) || topic.group_ids.some(id => insufficient.has(id))) return fail();
     keys.add(topic.topic_key);
     topic.group_ids.forEach(accept);
     topic.group_ids.sort();
