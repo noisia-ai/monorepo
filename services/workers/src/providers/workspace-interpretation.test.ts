@@ -331,3 +331,33 @@ test("fixed endpoint never follows a third-party redirect", async () => {
       return new Response("redirect", { status: 302, headers: { location: "https://invalid.example/private" } }); }) });
   assert.equal(saved, true); assert.equal(sends, 1); assert.equal(result.outcome, "outcome_unknown");
 });
+
+
+test("exact-copy receipt recovery verifies metering and SHA while the ordinary receipt stays invalid", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot } = await import("@noisia/query-engine");
+  const { recoverWorkspaceInterpretationExactDuplicateReceiptV1: recover } = await import("./workspace-interpretation.js");
+  const groups = Array.from({ length: 4 }, (_, index) => ({ ...group, cluster_id: `guided:duplicate-${index}`, lane: "guided" as const,
+    representatives: Array.from({ length: 30 }, (_, r) => {
+      const text = `Supplied synthetic experience ${index} ${r}`;
+      const ref = { root_id: `00000000-0000-4000-8000-${String(index * 100 + r + 100).padStart(12, "0")}`,
+        chunk_index: 0, start: 0, end: text.length, chunk_sha256: sha(text) };
+      return { ...ref, ref_id: signalWorkspaceInterpretationReferenceIdV1(ref), text, strength: 0.9,
+        selection_reason: "high_affiliation" as const };
+    }) }));
+  const batch = buildSignalWorkspaceInterpretationBatchV1(context, groups, pilot);
+  const rows = groups.map(group => ({ ...output.interpretations[0], cluster_id: group.cluster_id, cluster_digest: group.cluster_digest }));
+  const raw = JSON.stringify(response({ content: [{ type: "text", text: JSON.stringify({ interpretations: [...rows, rows[0]] }) }] }));
+  const receipt = { bytes: Buffer.from(raw), sha256: sha(raw), http_status: 200, provider_request_id: "req_copy", complete: true };
+  const ordinary = validateWorkspaceInterpretationReceiptV1(batch, receipt);
+  assert.equal(ordinary.outcome, "known_response_invalid");
+  assert.equal(ordinary.error_code, "workspace_engine_interpretation_output_invalid");
+  const recovered = recover(batch, receipt);
+  assert.equal(recovered.outcome, "validated");
+  assert.equal(recovered.interpretations!.length, 4);
+  assert.deepEqual(recovered.usage, ordinary.usage);
+  assert.equal(recovered.receipt_sha256, receipt.sha256);
+  assert.equal(receipt.bytes.toString(), raw);
+  assert.deepEqual(validateWorkspaceInterpretationReceiptV1(batch, receipt), ordinary);
+  for (const change of [{ complete: false }, { bytes: Buffer.from(raw + " ") }, { http_status: 500 }])
+    assert.notEqual(recover(batch, { ...receipt, ...change }).outcome, "validated");
+});

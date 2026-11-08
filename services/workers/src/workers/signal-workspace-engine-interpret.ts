@@ -1,6 +1,6 @@
 import {assertMassLabelingEditorialPopulationV1} from "./signal-workspace-engine-evidence";
 import { consolidateMassLabelingGroupsV1 } from "./signal-mass-labeling-consolidation";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -24,7 +24,7 @@ import { batchSignalWorkspaceInterpretationV1, signalWorkspaceInterpretationUniv
   validateSignalWorkspaceInterpretationResultV1, parseSignalWorkspaceInterpretationEditorialRepairV1,
   SignalWorkspaceInterpretationErrorV1, recoverSignalWorkspaceInterpretationInsufficiencyV1,
   type SignalWorkspaceInterpretationBatchV1, type SignalWorkspaceInterpretationClusterV1 } from "@noisia/query-engine";
-import { sendWorkspaceInterpretationV1 } from "../providers/workspace-interpretation";
+import { sendWorkspaceInterpretationV1, recoverWorkspaceInterpretationExactDuplicateReceiptV1 } from "../providers/workspace-interpretation";
 import { executeWorkspaceInterpretationBatchV1 } from "./signal-workspace-interpretation-batch";
 import type { WorkspaceEngineStorageV1 } from "./signal-workspace-engine-storage";
 
@@ -236,7 +236,7 @@ export async function interpretWorkspaceEngineV1(args: {
 
   async function checkpointResponse(batch:SignalWorkspaceInterpretationBatchV1,
     call:SignalWorkspaceEngineInterpretationCallV1,response:Awaited<ReturnType<typeof executeBatch>>["response"],
-    operatorInsufficiency?: OperatorInsufficiencyPacketV1){
+    operatorInsufficiency?: OperatorInsufficiencyPacketV1, metadata: Record<string, unknown> = {}){
     if(!response.interpretations || response.outcome!=="validated")return fail("workspace_engine_interpretation_output_invalid");
     await args.heartbeat("interpreting");
     const filename = `interpretation-${call.call_id}.json`;
@@ -248,7 +248,7 @@ export async function interpretWorkspaceEngineV1(args: {
     const checkpoint = await store.checkpoint({ database, lease, call_id: call.call_id,
       ...(operatorInsufficiency ? { insufficiency_decision_id: operatorInsufficiency.decision_id, insufficiency_packet: body } : {}),
       unit_keys: batch.clusters.map(item => item.cluster_id), artifact: { ...stored, artifact_key: filename,
-        artifact_type: "engine_proposals", title: "Topic interpretations", metadata: {} } });
+        artifact_type: "engine_proposals", title: "Topic interpretations", metadata } });
     proposals.push({ artifact_id: checkpoint.artifact_id, file: join(args.directory, filename) });
     return batch.clusters.map(item=>item.cluster_id);
   }
@@ -259,6 +259,7 @@ export async function interpretWorkspaceEngineV1(args: {
     if (!store.recoveryCalls || !store.registerUnits || !store.recoveryReview)
       return fail("workspace_engine_interpretation_receipt_recovery_required");
     const calls = await store.recoveryCalls({ database, lease });
+    const exceptions = args.recovery_only ? await store.exceptions({ database, lease }) : [];
     recoveredCalls=calls;
     if (calls.some(call => ["in_flight", "outcome_unknown"].includes(call.state) && !call.response))
       return fail("workspace_engine_interpretation_outcome_unknown");
@@ -344,6 +345,39 @@ export async function interpretWorkspaceEngineV1(args: {
         });
         if (effective.request_digest !== repaired.request_digest)
           return fail("workspace_engine_interpretation_repair_invalid");
+        if (args.recovery_only) {
+          const matching = exceptions.filter(exception => exception.original_call_id === original.call_id
+            && exception.repair_call_id === repaired.call_id);
+          if (matching.length > 1) return fail("workspace_engine_interpretation_exception_invalid");
+          const exception = matching[0];
+          if (exception) {
+            if (exception.diagnostic_code !== "workspace_engine_interpretation_repair_invalid"
+              || exception.unit_digest !== signalWorkspaceInterpretationUniverseDigestV1([...keys].sort())
+              || signalWorkspaceEmbeddingDigestV1(repaired.editorial_repair) !== signalWorkspaceEmbeddingDigestV1(effective.editorial_repair)
+              || signalWorkspaceEmbeddingDigestV1(repaired.call_configuration) !== signalWorkspaceEmbeddingDigestV1(configuration)
+              || exception.original_request_digest !== batch.request_digest || exception.repair_request_digest !== effective.request_digest
+              || exception.original_response_sha256 !== original.response!.sha256
+              || exception.repair_response_sha256 !== repaired.response!.sha256
+              || exception.batch_digest !== signalWorkspaceEmbeddingDigestV1(batch)
+              || signalWorkspaceEmbeddingDigestV1(exception.unit_keys) !== signalWorkspaceEmbeddingDigestV1([...keys].sort()))
+              return fail("workspace_engine_interpretation_exception_invalid");
+            const raw = await readSettledReceipt(originalResult.call);
+            await readSettledReceipt(repaired);
+            const recovered = recoverWorkspaceInterpretationExactDuplicateReceiptV1(batch, {
+              bytes: Buffer.from(raw), sha256: original.response!.sha256, http_status: original.response!.http_status,
+              provider_request_id: original.response!.provider_request_id, complete: original.response!.complete,
+            });
+            if (recovered.outcome === "validated") {
+              for (const key of await checkpointResponse(batch, originalResult.call, recovered, undefined, {
+                receipt_normalization: { contract_version: "workspace-pilot-exact-duplicate-recovery-v1",
+                  exception_id: exception.exception_id, original_call_id: original.call_id, repair_call_id: repaired.call_id,
+                  original_response_sha256: original.response!.sha256, repair_response_sha256: repaired.response!.sha256,
+                  removed_exact_copies: 1 },
+              })) completedUnits.add(key);
+              continue;
+            }
+          }
+        }
         result = await executeBatch(effective, repaired);
         if (result.response.outcome !== "validated") {
           if(result.response.outcome!=="known_response_invalid"||!originalResult.call.response?.complete||!result.call.response?.complete)
@@ -357,8 +391,8 @@ export async function interpretWorkspaceEngineV1(args: {
               return fail("workspace_engine_interpretation_insufficiency_decision_invalid");
             operatorInsufficiency = {
               contract_version: "workspace-interpretation-operator-insufficiency-v1", decision_id: decision.decision_id,
-              original_response: await readInsufficiencyReceipt(originalResult.call),
-              repair_response: await readInsufficiencyReceipt(result.call),
+              original_response: await readSettledReceipt(originalResult.call),
+              repair_response: await readSettledReceipt(result.call),
             };
             result = { ...result, response: { ...result.response, outcome: "validated", error_code: null,
               interpretations: recoverSignalWorkspaceInterpretationInsufficiencyV1({ batch: effective,
@@ -459,15 +493,15 @@ export async function interpretWorkspaceEngineV1(args: {
     }
   }
 
-  async function readInsufficiencyReceipt(call: SignalWorkspaceEngineInterpretationCallV1) {
+  async function readSettledReceipt(call: SignalWorkspaceEngineInterpretationCallV1) {
     if (call.state !== "settled" || !call.response?.complete || call.response.http_status !== 200)
-      return fail("workspace_engine_interpretation_insufficiency_decision_invalid");
-    const path = join(args.directory, `insufficiency-${call.call_id}.json`);
+      return fail("workspace_engine_interpretation_receipt_recovery_required");
+    const path = join(args.directory, `settled-${call.call_id}-${randomUUID()}.json`);
     await storage.get({ workspace_id: lease.workspace_id, execution_id: lease.execution_id,
       stored: { ...call.response, media_type: "application/json" }, destination: path });
     const bytes = await readFile(path);
     if (bytes.byteLength !== call.response.size_bytes || sha(bytes) !== call.response.sha256)
-      return fail("workspace_engine_interpretation_insufficiency_decision_invalid");
+      return fail("workspace_engine_interpretation_receipt_recovery_required");
     return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   }
 

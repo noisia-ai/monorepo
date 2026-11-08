@@ -331,3 +331,45 @@ test("a recorded insufficiency decision accepts mixed/coherent receipts and reje
     assert.throws(() => recover({ ...args, repair_response: envelope(supported) }), /insufficiency_decision_invalid/u);
   }
 });
+
+
+test("offline exact-copy recovery retains four complete original interpretations and preserves ordinary rejection", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot,
+    decodeSignalWorkspaceInterpretationExactDuplicateV1: recover } = await import("./signal-workspace-interpretation-v1.js");
+  const groups = Array.from({ length: 4 }, (_, index) => cluster(index + 1, "guided")).map(group => ({ ...group,
+    representatives: Array.from({ length: 30 }, (_, index) => cluster(index + 10, "guided").representatives[0]!) }));
+  const batch = buildSignalWorkspaceInterpretationBatchV1(context, groups, pilot);
+  const rows = groups.map(group => ({ ...answer(group), citations: ["r1", "r30"],
+    inclusion: [{ text: "Supplied condition", citations: ["r2"] }] }));
+  const output = { interpretations: [...rows, structuredClone(rows[1]!)] };
+  const before = JSON.stringify(output), request = batch.request_digest;
+  const expected = decodeSignalWorkspaceInterpretationProviderResultV1(batch, { interpretations: rows });
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, output), /output_invalid/u);
+  assert.deepEqual(recover(batch, output), expected);
+  assert.deepEqual(recover(batch, output), expected);
+  assert.equal(JSON.stringify(output), before);
+  assert.equal(batch.request_digest, request);
+  const repair = buildSignalWorkspaceInterpretationRepairBatchV1(batch, {
+    source_call_id: context.workspace_id, source_response_sha256: sha("raw"), diagnostic: "output_invalid" });
+  assert.throws(() => recover(repair, output), /exact_duplicate_recovery_invalid/u);
+  const historical = buildSignalWorkspaceInterpretationBatchV1(context, groups.map(group => ({ ...group, representatives: group.representatives.slice(0, 10) })));
+  assert.throws(() => recover(historical, output), /exact_duplicate_recovery_invalid/u);
+  for (const change of [
+    { definition: "Different duplicate definition" }, { citations: ["r30", "r1"] },
+    { inclusion: [{ text: "Changed condition", citations: ["r2"] }] }, { extra: "different" },
+  ]) {
+    const invalid = structuredClone(output); Object.assign(invalid.interpretations[4]!, change);
+    assert.throws(() => recover(batch, invalid), /exact_duplicate_recovery_invalid/u);
+  }
+  for (const invalid of [
+    { interpretations: rows },
+    { interpretations: [...rows.slice(0, 3), rows[0], rows[0]] },
+    { interpretations: [...rows, rows[0], rows[0]] },
+    { interpretations: [...rows, { ...rows[0], cluster_id: "guided:foreign" }] },
+    { ...output, extra: true },
+  ]) assert.throws(() => recover(batch, invalid), /exact_duplicate_recovery_invalid/u);
+  for (const change of [{ citations: [] }, { citations: ["r31"] }, { cluster_digest: sha("different group") }]) {
+    const invalid = structuredClone(output); Object.assign(invalid.interpretations[0]!, change);
+    assert.throws(() => recover(batch, invalid), /evidence|citation|identity/u);
+  }
+});

@@ -5,6 +5,7 @@ import {
   buildSignalWorkspaceInterpretationRepairBatchV1,
   signalWorkspaceEmbeddingDigestV1,
   decodeSignalWorkspaceInterpretationProviderResultV1,
+  decodeSignalWorkspaceInterpretationExactDuplicateV1,
   type SignalWorkspaceInterpretationBatchV1,
   type SignalWorkspaceInterpretationUsageV1,
   type SignalWorkspaceInterpretationV1,
@@ -85,6 +86,25 @@ export function validateWorkspaceInterpretationReceiptV1(
     return { ...result, outcome: "validated" };
   } catch { return { ...result, error_code: "workspace_engine_interpretation_output_invalid" }; }
 }
+/** Called only by exception recovery after the operator has loaded a settled
+ * original and its sealed repair. This never sends or replaces provider bytes. */
+export function recoverWorkspaceInterpretationExactDuplicateReceiptV1(
+  batch: SignalWorkspaceInterpretationBatchV1, receipt: WorkspaceInterpretationRawReceiptV1,
+): WorkspaceInterpretationResponseV1 {
+  const ordinary = validateWorkspaceInterpretationReceiptV1(batch, receipt);
+  if (ordinary.outcome !== "known_response_invalid" || ordinary.error_code !== "workspace_engine_interpretation_output_invalid")
+    return ordinary;
+  try {
+    const body = object(JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(receipt.bytes)));
+    if (!body || !Array.isArray(body.content)) return ordinary;
+    const texts = body.content.map(object).filter(block => block?.type === "text");
+    if (texts.length !== 1 || typeof texts[0]?.text !== "string"
+      || body.content.some(item => !["text", "thinking", "redacted_thinking"].includes(String(object(item)?.type)))) return ordinary;
+    return { ...ordinary, outcome: "validated", error_code: null,
+      interpretations: decodeSignalWorkspaceInterpretationExactDuplicateV1(batch, JSON.parse(texts[0].text)) };
+  } catch { return ordinary; }
+}
+
 async function readReceipt(response: Response): Promise<WorkspaceInterpretationRawReceiptV1> {
   const rawId = response.headers.get("request-id");
   const provider_request_id = rawId && /^[A-Za-z0-9_.:-]{1,200}$/u.test(rawId) ? rawId : null;
