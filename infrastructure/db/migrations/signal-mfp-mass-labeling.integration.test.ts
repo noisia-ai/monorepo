@@ -34,12 +34,32 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
   try {
     await raw.query("BEGIN");
     let sequence = 0; const stack: string[] = [];
+    let massPlanChecked = false;
     const query = async (sql: string, values?: unknown[]) => {
       if (sql.startsWith("BEGIN")) {const save = `mass_${++sequence}`; stack.push(save); return raw.query(`SAVEPOINT ${save}`);}
       if (sql === "COMMIT") return raw.query(`RELEASE SAVEPOINT ${stack.pop()!}`);
       if (sql === "ROLLBACK") {const save = stack.pop()!; await raw.query(`ROLLBACK TO SAVEPOINT ${save}`); return raw.query(`RELEASE SAVEPOINT ${save}`);}
       // The outer transaction supplies the snapshot for exported/read-only entrypoints.
       if (sql.startsWith("SET TRANSACTION")) return raw.query("SELECT 1");
+      if (sql.includes("WITH source_generation AS MATERIALIZED") && sql.includes("mass_memberships AS MATERIALIZED")) {
+        assert.equal((sql.match(/FROM signal_mass_labeling_memberships_v1/gu) ?? []).length, 1,
+          "overview, detail and evidence each read the frozen membership view once");
+        assert.match(sql, /FROM signal_mass_labeling_memberships_v1\s+WHERE workspace_id=\$1::uuid AND map_id=\$2::uuid AND belongs/u);
+        assert.doesNotMatch(sql, /EXISTS\(SELECT 1 FROM signal_mass_labeling_memberships_v1/u,
+          "root resolution must reuse the shared membership roots");
+        if (!massPlanChecked) {
+          const explained = (await raw.query("EXPLAIN (FORMAT JSON) " + sql, values)).rows[0]!["QUERY PLAN"][0].Plan;
+          type Plan = { "Subplan Name"?: string; "Node Type": string; Plans?: Plan[] };
+          const nodes = (plan: Plan): Plan[] => [plan, ...(plan.Plans ?? []).flatMap(nodes)];
+          const roots = nodes(explained).find(node => node["Subplan Name"] === "CTE all_roots");
+          assert.ok(roots);
+          assert.equal(nodes(roots).some(node => node["Node Type"] === "Function Scan"), false,
+            "candidate arrays must be expanded outside the per-root resolution plan");
+          assert.equal(nodes(roots).some(node => node["Subplan Name"]?.startsWith("SubPlan")), false,
+            "the root plan must not rerun a correlated membership subquery");
+          massPlanChecked = true;
+        }
+      }
       return raw.query(sql, values);
     };
     const scoped = Object.assign(Object.create(raw), {query, release() {}});
@@ -672,6 +692,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
     assert.deepEqual((await query("SELECT id,usage,settled_micro_usd,raw_sha256 FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id", [run.id])).rows, booked);
     await selectMassLabelingTopicsV1({...access, map_id: map.map_id, topic_keys: ["bicycle_repairs"], expected_revision: 0});
     const view = await loadSignalWorkspaceTopicsOverviewV1(access); assert.ok(view?.is_current);
+    assert.equal(massPlanChecked,true,"the actual mass-labeling reader was planned and checked");
     assert.equal(view.denominator, 3);
     assert.equal(view.terms[0]!.mention_count, 2, "an exact 0.7 probability remains unclassified");
     const evidenceArgs = {...access, term_key: "bicycle_repairs", expected_scope_digest: view.scope_digest, limit: 1};

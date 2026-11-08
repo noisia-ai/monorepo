@@ -482,6 +482,20 @@ export const signalConsolidationRootsSourceV1 = (facetEnabled: boolean) => facet
     LEFT JOIN signal_topic_consolidation_decisions d ON d.revision_id=s.revision_id AND d.atomic_group_id=root.atomic_group_id
     WHERE s.workspace_id=$1::uuid
     GROUP BY s.id,s.workspace_id,p.root_id)`;
+/** Evaluate the frozen map, including human overrides, once per statement. */
+const massMembershipsSql = `mass_memberships AS MATERIALIZED (
+  SELECT root_id,concept_key,definition_digest,'[]'::jsonb citations,probability
+    FROM signal_mass_labeling_memberships_v1
+    WHERE workspace_id=$1::uuid AND map_id=$2::uuid AND belongs
+  UNION ALL
+  SELECT result.root_id,result.interest_key,visible.definition_digest,'[]'::jsonb,result.probability
+    FROM signal_mass_labeling_r13_interest_results result
+    JOIN jsonb_to_recordset($6::jsonb) visible(term_key text,definition_digest text)
+      ON visible.term_key=result.interest_key
+    WHERE result.workspace_id=$1::uuid AND result.map_id=$2::uuid AND result.probability>0.7
+), mass_roots_with_concept AS MATERIALIZED (
+  SELECT DISTINCT root_id FROM mass_memberships
+), `;
 const populationSql = (imported = false, definedInterest = false, consolidated = false, membership = false, facetEnabled = false,
   checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all") => `WITH source_generation AS MATERIALIZED (
   SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
@@ -527,21 +541,17 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   FROM received_imports batch JOIN signal_mention_import_memberships path ON path.import_batch_id=batch.id
     AND path.data_source_id=batch.data_source_id AND path.workspace_id=$1::uuid
   JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
-), all_roots AS MATERIALIZED (
+), ${massLabeling ? massMembershipsSql : ""}all_roots AS MATERIALIZED (
   ${imported ? `SELECT mention.id root_id,${massLabeling ? `CASE WHEN mass_outcome.status='labeled' THEN
-      CASE WHEN EXISTS(SELECT 1 FROM signal_mass_labeling_memberships_v1 member WHERE member.map_id=$2::uuid
-        AND member.root_id=mention.id AND member.belongs) OR EXISTS(
-        SELECT 1 FROM signal_mass_labeling_r13_interest_results interest WHERE interest.workspace_id=$1::uuid
-          AND interest.map_id=$2::uuid AND interest.root_id=mention.id AND interest.probability>0.7
-          AND EXISTS(SELECT 1 FROM jsonb_array_elements($6::jsonb) visible
-            WHERE visible->>'term_key'=interest.interest_key)) THEN 'resolved' ELSE 'abstained' END ELSE 'error' END` : "NULL::text"} resolution_state,
+      CASE WHEN mass_concept.root_id IS NOT NULL THEN 'resolved' ELSE 'abstained' END ELSE 'error' END` : "NULL::text"} resolution_state,
     mention.published_at,NULL::boolean has_unresolved_topics,
     ${massLabeling ? "signal_mass_labeling_r13_segment_v1(mention.text_clean,mass_outcome.probabilities) conversation_segment," : ""}
     COALESCE(rights.metrics,false) metrics,COALESCE(rights.evidence,false) evidence
   FROM received_roots received JOIN mentions mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
     AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
-    LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id` : ""}
+    LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id
+    LEFT JOIN mass_roots_with_concept mass_concept ON mass_concept.root_id=mention.id` : ""}
   LEFT JOIN root_rights rights ON rights.root_id=mention.id` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
     COALESCE(rights.metrics,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id metrics,
@@ -565,13 +575,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
 ), visible_terms AS MATERIALIZED (
   SELECT * FROM jsonb_to_recordset($6::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean${membership ? ",membership_concept boolean" : ""}${definedInterest ? ",interest_generation_id uuid,interest_taxonomy_term_id uuid" : ""})
 ), ${membership ? `mfp_memberships AS MATERIALIZED (
-  ${massLabeling ? `SELECT root_id,concept_key,definition_digest,'[]'::jsonb citations,probability
-    FROM signal_mass_labeling_memberships_v1 WHERE workspace_id=$1::uuid AND map_id=$2::uuid AND belongs
-    UNION ALL
-    SELECT result.root_id,result.interest_key,visible.definition_digest,
-      '[]'::jsonb,result.probability FROM signal_mass_labeling_r13_interest_results result
-    JOIN visible_terms visible ON visible.term_key=result.interest_key
-    WHERE result.workspace_id=$1::uuid AND result.map_id=$2::uuid AND result.probability>0.7`
+  ${massLabeling ? `SELECT * FROM mass_memberships`
     : `SELECT root_id,concept_key,definition_digest,citations,NULL::double precision probability
       FROM signal_workspace_concept_memberships_read_v1($1::uuid) WHERE workspace_id=$1::uuid AND verdict='belongs'`}
 ), mfp_facets AS MATERIALIZED (
@@ -585,7 +589,7 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
     : `SELECT f.workspace_id,f.root_id,f.input_digest,f.labeler_digest,f.entity_context_digest,f.facets,f.relevance
       FROM signal_workspace_mention_facets_read_v1($1::uuid) f WHERE f.workspace_id=$1::uuid`}
 ), mfp_roots_with_concept AS MATERIALIZED (
-  SELECT DISTINCT root_id FROM mfp_memberships
+  ${massLabeling ? "SELECT root_id FROM mass_roots_with_concept" : "SELECT DISTINCT root_id FROM mfp_memberships"}
 ), ` : ""}legacy_memberships AS MATERIALIZED (
   SELECT DISTINCT ON(assignment.canonical_root_id,term.term_key) assignment.canonical_root_id root_id,term.term_key,visible.visible,
     CASE WHEN assignment.membership_basis='computed_cluster' THEN assignment.membership_metadata->'evidence_fragment' ELSE NULL END evidence_fragment
