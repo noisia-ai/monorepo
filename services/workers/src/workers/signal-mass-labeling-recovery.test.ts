@@ -12,6 +12,7 @@ import {
   buildSignalWorkspaceInterpretationRepairBatchV1,
   signalWorkspaceInterpretationReferenceIdV1,
   signalWorkspaceEmbeddingDigestV1,
+  signalWorkspaceInterpretationUniverseDigestV1,
   type SignalWorkspaceInterpretationClusterV1,
   type SignalWorkspaceInterpretationBatchV1,
 } from "@noisia/query-engine";
@@ -103,6 +104,7 @@ const cases: Array<{
   invalidRepair?: boolean;
   originalSuccessor?: boolean;
   operatorInsufficient?: "approved" | "approved_coherent" | "wrong_hash" | "wrong_unit";
+  exactDuplicate?: "approved" | "unbound" | "wrong_hash" | "online";
 }> = [
   {},
   { state: "reserved" },
@@ -116,9 +118,13 @@ const cases: Array<{
   { operatorInsufficient: "approved_coherent" },
   { operatorInsufficient: "wrong_hash" },
   { operatorInsufficient: "wrong_unit" },
+  { exactDuplicate: "approved" },
+  { exactDuplicate: "unbound" },
+  { exactDuplicate: "wrong_hash" },
+  { exactDuplicate: "online" },
 ];
 for (const scenario of cases)
-  test(`pilot recovery preserves original batches and handles repair ${scenario.state ?? scenario.operatorInsufficient ?? (scenario.invalidRepair ? "invalid" : scenario.originalSuccessor ? "original_successor" : "unrequested")}`, async () => {
+  test(`pilot recovery preserves original batches and handles repair ${scenario.state ?? scenario.operatorInsufficient ?? scenario.exactDuplicate ?? (scenario.invalidRepair ? "invalid" : scenario.originalSuccessor ? "original_successor" : "unrequested")}`, async () => {
     const groups = Array.from(
       { length: scenario.invalidRepair ? 16 : 12 },
       (_, n) => group(n + 1),
@@ -186,6 +192,8 @@ for (const scenario of cases)
       sent: string[] = [],
       claimed: string[] = [],
       checkpointCalls: string[] = [];
+    const normalizations: Record<string, unknown>[] = [];
+    let duplicateExceptionOpen = true;
     let next = 100,
       unresolvedException = true,
       completed = 0;
@@ -277,8 +285,29 @@ for (const scenario of cases)
       existingRepair = seed(repair, true, repair.batch_key,
         scenario.operatorInsufficient === "approved_coherent" ? "coherent" : "mixed");
     }
+    if (scenario.exactDuplicate) {
+      const body = JSON.parse(raw(plan[2]!).toString());
+      const output = JSON.parse(body.content[0].text);
+      output.interpretations.push(structuredClone(output.interpretations[1]));
+      body.content[0].text = JSON.stringify(output);
+      last.response = { ...last.response!, ...storeBytes(Buffer.from(JSON.stringify(body))) };
+      existingRepair = seed(buildSignalWorkspaceInterpretationRepairBatchV1(plan[2]!, {
+        source_call_id: last.call_id, source_response_sha256: last.response.sha256, diagnostic: "output_invalid",
+      }), true);
+    }
+    const duplicateException = scenario.exactDuplicate ? {
+      exception_id: id(900), original_call_id: last.call_id, repair_call_id: existingRepair!.call_id,
+      original_request_digest: last.request_digest, repair_request_digest: existingRepair!.request_digest,
+      original_response_sha256: last.response!.sha256,
+      repair_response_sha256: scenario.exactDuplicate === "wrong_hash" ? sha("foreign repair") : existingRepair!.response!.sha256,
+      batch_digest: signalWorkspaceEmbeddingDigestV1(plan[2]!), unit_keys: plan[2]!.clusters.map(group => group.cluster_id),
+      unit_digest: signalWorkspaceInterpretationUniverseDigestV1(plan[2]!.clusters.map(group => group.cluster_id)), diagnostic_code: "workspace_engine_interpretation_repair_invalid" as const,
+      created_at: "2026-11-07T00:00:00.000Z",
+    } : null;
     const initialCalls = calls.size;
     const initialLedger = JSON.stringify([...calls.values()]);
+    const initialRawFiles = [...calls.values()].filter(call => call.response).map(call =>
+      [call.response!.storage_key, files.get(call.response!.storage_key)!.toString("hex")] as const);
     const decision = scenario.operatorInsufficient ? {
       decision_id: id(800), workspace_id: lease.workspace_id, execution_id: lease.execution_id,
       exception_id: id(801), unit_key: groups[scenario.operatorInsufficient === "wrong_unit" ? 9 : 8]!.cluster_id,
@@ -317,6 +346,7 @@ for (const scenario of cases)
       checkpointCalls.push(call.call_id);
       if (row.unit_keys.includes(groups[4]!.cluster_id))
         unresolvedException = false;
+      if (scenario.exactDuplicate && call.call_id === last.call_id) duplicateExceptionOpen = false;
       return {
         artifact_id: row.artifact_id,
         replayed: false,
@@ -367,12 +397,10 @@ for (const scenario of cases)
         };
       },
       recoverable: async () => [...calls.values()].map((c) => c.request_digest),
-      exceptions: async () =>
-        unresolvedException
-          ? ([
-              { unit_keys: plan[1]!.clusters.map((g) => g.cluster_id) },
-            ] as never)
-          : [],
+      exceptions: async () => [
+        ...(unresolvedException ? [{ unit_keys: plan[1]!.clusters.map(group => group.cluster_id) }] : []),
+        ...(duplicateException && duplicateExceptionOpen && scenario.exactDuplicate !== "unbound" ? [duplicateException] : []),
+      ] as never,
       insufficiencyDecisions: async () => decision ? [decision] : [],
       recoveryCalls: async () =>
         [...calls.values()].map((c) => ({
@@ -458,6 +486,17 @@ for (const scenario of cases)
       checkpoint: async (a) => {
         const c = calls.get(a.call_id)!;
         const body = files.get(a.artifact.storage_key)!.toString();
+        if (a.artifact.metadata?.receipt_normalization) {
+          const metadata = a.artifact.metadata.receipt_normalization as Record<string, unknown>;
+          normalizations.push(metadata);
+          assert.equal(a.call_id, last.call_id);
+          assert.equal(metadata.exception_id, duplicateException!.exception_id);
+          assert.equal(metadata.original_response_sha256, last.response!.sha256);
+          assert.equal(metadata.repair_response_sha256, existingRepair!.response!.sha256);
+          assert.equal(metadata.removed_exact_copies, 1);
+          assert.equal(JSON.parse(body).interpretations.length, 4);
+          assert.equal(JSON.parse(body).operator_insufficiency, undefined);
+        }
         if (a.insufficiency_decision_id) {
           assert.equal(a.insufficiency_packet, body);
           assert.equal(a.insufficiency_decision_id, decision!.decision_id);
@@ -470,7 +509,7 @@ for (const scenario of cases)
         return checkpoint(c, body);
       },
       quarantine: async (a) => {
-        assert.ok(scenario.invalidRepair);
+        assert.ok(scenario.invalidRepair || scenario.exactDuplicate);
         const replayed = quarantines.has(a.repair_call_id);
         quarantines.add(a.repair_call_id);
         return { replayed } as never;
@@ -557,6 +596,31 @@ for (const scenario of cases)
       await assert.rejects(run(false), /outcome_unknown/u);
       assert.equal(sent.length, 0);
       assert.equal(reservations.length, 0);
+      assert.equal(calls.size, initialCalls);
+      return;
+    }
+    if (scenario.exactDuplicate) {
+      if (scenario.exactDuplicate === "approved") {
+        await run(true);
+        const artifacts = JSON.stringify(checkpointRows);
+        await run(true);
+        await run(false);
+        assert.equal(checkpointed.size, 12);
+        assert.equal(JSON.stringify(checkpointRows), artifacts);
+        assert.equal(normalizations.length, 1);
+        assert.equal(checkpointCalls.includes(last.call_id), true);
+        assert.equal(checkpointCalls.includes(existingRepair!.call_id), false);
+        assert.equal(duplicateExceptionOpen, false);
+      } else {
+        await assert.rejects(run(scenario.exactDuplicate !== "online"),
+          scenario.exactDuplicate === "wrong_hash" ? /exception_invalid/u : /output_invalid/u);
+        assert.equal(checkpointed.size, 8);
+        assert.equal(normalizations.length, 0);
+      }
+      assert.equal(JSON.stringify([...calls.values()]), initialLedger);
+      for (const [key, bytes] of initialRawFiles) assert.equal(files.get(key)!.toString("hex"), bytes);
+      assert.equal(reservations.length, 0);
+      assert.equal(sent.length, 0);
       assert.equal(calls.size, initialCalls);
       return;
     }

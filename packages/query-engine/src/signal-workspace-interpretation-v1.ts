@@ -459,3 +459,31 @@ export function recoverSignalWorkspaceInterpretationInsufficiencyV1(args: {
   decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1(original, parse(args.original_response), args.unit_key);
   return decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1(batch, parse(args.repair_response), args.unit_key);
 }
+
+/** Offline recovery of a sealed four-group original with one exact repeated
+ * object. The ordinary provider decoder still validates every retained field. */
+export function decodeSignalWorkspaceInterpretationExactDuplicateV1(
+  batch: SignalWorkspaceInterpretationBatchV1, value: unknown,
+): SignalWorkspaceInterpretationV1[] {
+  const configuration = parseSignalWorkspaceInterpretationConfigurationV1(batch.configuration);
+  if (!("representative_count" in configuration) || batch.editorial_repair || batch.clusters.length !== 4)
+    return fail("exact_duplicate_recovery_invalid");
+  const parsed = z.object({ interpretations: z.array(z.unknown()).length(5) }).strict().safeParse(value);
+  if (!parsed.success) return fail("exact_duplicate_recovery_invalid");
+  const expected = new Set(batch.clusters.map(group => group.cluster_id));
+  const retained = new Map<string, { encoded: string; value: unknown }>();
+  let copies = 0;
+  for (const item of parsed.data.interpretations) {
+    const identity = z.object({ cluster_id: z.string() }).passthrough().safeParse(item);
+    if (!identity.success || !expected.has(identity.data.cluster_id)) return fail("exact_duplicate_recovery_invalid");
+    const encoded = JSON.stringify(item), previous = retained.get(identity.data.cluster_id);
+    if (previous) {
+      if (previous.encoded !== encoded) return fail("exact_duplicate_recovery_invalid");
+      copies++;
+    } else retained.set(identity.data.cluster_id, { encoded, value: item });
+  }
+  if (copies !== 1 || retained.size !== expected.size) return fail("exact_duplicate_recovery_invalid");
+  return decodeSignalWorkspaceInterpretationProviderResultV1(batch, {
+    interpretations: [...retained.values()].map(item => item.value),
+  });
+}
