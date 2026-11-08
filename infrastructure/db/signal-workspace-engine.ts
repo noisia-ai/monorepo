@@ -13,7 +13,7 @@ import {signalWorkspaceFeatureEnabledV1,signalWorkspaceFeatureEnabledWithDatabas
 import { loadSignalDiscoveryResidualRootsV1, buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceTopicPrototypePlanV1,
-  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
+  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
   signalTopicDefinitionSchemaV1, signalTopicGuidesDiscoveryV1, signalWorkspaceInterpretationUniverseDigestV1,
   signalWorkspaceMassLabelingConfigV3, isSignalWorkspaceMassLabelingConfigV1,
   type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
@@ -583,7 +583,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
         || signalWorkspaceEmbeddingDigestV1(args.engine_config) !== signalWorkspaceEmbeddingDigestV1(signalWorkspaceMassLabelingConfigV3(embedded.counts.eligible_roots))))
       return fail('workspace_engine_profile_invalid', 422);
     if (pilot && args.interpretation_config && ![
-      SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1,
+      SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
     ].some(configuration => signalWorkspaceEmbeddingDigestV1(args.interpretation_config!.call_configuration)
       === signalWorkspaceEmbeddingDigestV1(configuration)))
       return fail('workspace_engine_interpretation_config_invalid', 422);

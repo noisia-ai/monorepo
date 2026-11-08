@@ -54,6 +54,7 @@ export async function sendMassLabelingConsolidationV1(args: {
     source_engine_execution_id: args.batch.source_engine_execution_id,
     source_groups: args.batch.source_groups,
     configuration: args.batch.configuration,
+    ...(args.batch.category_context ? { category_context: args.batch.category_context } : {}),
   });
   if (
     rebuilt.request_digest !== args.batch.request_digest ||

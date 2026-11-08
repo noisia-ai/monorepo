@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   massLabelingJevIdentityV1,
+  massLabelingJevIdentityV2,
   entityContextDigestV1,
   labelerDigestV1,
   type MassLabelingInputV1,
@@ -12,7 +13,7 @@ import { processMassLabelingJevV1 } from "./signal-mass-labeling-jev";
 import type { JevProviderV1, JevRequestV1 } from "../providers/typesafe-jev";
 
 type Store = Parameters<typeof processMassLabelingJevV1>[0]["store"];
-function fixture(count: number) {
+function fixture(count: number, product = false) {
   const context = {
     entities: [
       {
@@ -24,7 +25,8 @@ function fixture(count: number) {
       },
     ],
   };
-  const identity = massLabelingJevIdentityV1();
+  const identity = product ? massLabelingJevIdentityV2({ category: "tea", candidate_language: "original",
+    interests: [{ key: "travel", name: "Travel", definition: "Travel and tourism" }] }) : massLabelingJevIdentityV1();
   const run: LabelingRunV1 = {
     id: "run",
     workspace_id: "workspace",
@@ -288,4 +290,20 @@ test("raw-only recovery never selects or reserves a new mention", async () => {
   assert.equal(inputs, 0);
   assert.equal(reservations, 0);
   assert.equal(f.transports(), 0);
+});
+
+test("product worker sends one durable request per root including interests and replays without spending", async () => {
+  const f = fixture(2, true);
+  await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider: f.provider });
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.transports(), 2);
+  for (const call of f.calls) {
+    assert.equal(call.inputs.length, 1);
+    assert.deepEqual(Object.keys((call.request as JevRequestV1).questions), ["promotion", "voice", "trigger_barrier", "topic_0", "interest_travel"]);
+    assert.match(JSON.stringify((call.request as JevRequestV1).questions.trigger_barrier), /consume or buy tea/u);
+  }
+  assert.deepEqual(f.results[0]?.probabilities?.interest_travel, { type: "noul", noul: .8 });
+  f.calls.forEach(call => { call.results_applied = false; }); f.run.status = "running";
+  await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider: f.provider });
+  assert.equal(f.transports(), 2);
 });

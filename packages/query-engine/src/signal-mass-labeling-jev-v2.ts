@@ -26,7 +26,8 @@ export function massLabelingConfigurationV2(value: unknown): MassLabelingConfigu
   const config = value as MassLabelingConfigurationV2 | null;
   if (!config || typeof config.category !== "string" || !config.category.trim() || config.category.length > 160
     || !["en", "original"].includes(config.candidate_language) || !Array.isArray(config.interests)
-    || config.interests.length > 50 || new Set(config.interests.map(interest => interest.key)).size !== config.interests.length
+    || config.interests.length > 50 || config.interests.some(interest => !interest)
+    || new Set(config.interests.map(interest => interest.key)).size !== config.interests.length
     || config.interests.some(interest => !interest || !/^[a-z][a-z0-9_]{0,63}$/u.test(interest.key)
       || typeof interest.name !== "string" || !interest.name.trim() || interest.name.length > 160
       || typeof interest.definition !== "string" || !interest.definition.trim() || interest.definition.length > 1200)) {
@@ -56,9 +57,9 @@ export function buildMassLabelingJevRequestV2(input: MassLabelingInputV1, _conte
   configuration: MassLabelingConfigurationV2, model = "jev-1.13.0"): JevRequestV1 {
   const config = massLabelingConfigurationV2(configuration);
   if (model !== "jev-1.13.0" || !input.text.trim() || !Number.isSafeInteger(input.chunk_index) || input.chunk_index < 0
-    || !input.candidates.length || new Set(input.candidates.map(c => c.topic_key)).size !== input.candidates.length
+    || !input.candidates.length || input.candidates.length > 8 || new Set(input.candidates.map(c => c.topic_key)).size !== input.candidates.length
     || input.candidates.some(c => !c.topic_key || !c.name.trim() || !c.definition.trim() || !Number.isFinite(c.similarity)
-      || c.similarity < -1 || c.similarity > 1)) throw new Error("mass_labeling_input_invalid");
+      || c.name.length > 160 || c.definition.length > 1200 || c.similarity < -1 || c.similarity > 1)) throw new Error("mass_labeling_input_invalid");
   const questions: Record<string, JevQuestionV1> = {
     promotion: { type: "noul", instructions, criteria: { true: "The text commercially promotes a product or service.", false: "Non-promotional content." } },
     voice: { type: "choice", instructions: "Who is speaking in the text?", criteria: voice },
