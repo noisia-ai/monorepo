@@ -23,7 +23,7 @@ import {
   type LabelingDatabaseV1,
 } from "./signal-mention-facets";
 export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
- max_execution_micro_usd:string|null;provider:string;model:string;action:string};
+ max_execution_micro_usd:string|null;provider:string;model:string;action:string;funding_receipt_id?:string|null;effective_total_cap_micro_usd?:string};
 export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
 export type LabelingAdmissionRefV1={receipt:{id:string};processing_admission_id?:string|null};
 export type LabelingRunV1 = {
@@ -576,7 +576,7 @@ export function createSignalLabelingStoreV1<
        FROM signal_workspaces WHERE id=$1`,
       [run.workspace_id],
     );
-    const policy = options.adapter?.policy ? await options.adapter.policy(c,run) : (
+    const policy: LabelingPolicyV1|null|undefined = options.adapter?.policy ? await options.adapter.policy(c,run) : (
       await c.query<{
         organization_id: string;
         budget_date: string;
@@ -625,9 +625,13 @@ export function createSignalLabelingStoreV1<
       )
     ).rows[0]!;
     const spent = Number(await readSignalLabelingRunExposureV1(c,run.id));
+    // Only the explicit scoped pilot successor can supersede its historical
+    // run ceiling. Native admissions and all other labelers retain their cap.
+    const effectiveRunCap = run.kind === "mass_labeling" && run.processing_admission_id === null && policy.funding_receipt_id
+      ? policy.effective_total_cap_micro_usd ?? run.cap_micro_usd : run.cap_micro_usd;
     if (
-      (run.cap_micro_usd !== null &&
-        spent + amount > Number(run.cap_micro_usd)) ||
+      (effectiveRunCap !== null &&
+        spent + amount > Number(effectiveRunCap)) ||
       (policy.max_execution_micro_usd !== null &&
         spent + amount > Number(policy.max_execution_micro_usd))
     )

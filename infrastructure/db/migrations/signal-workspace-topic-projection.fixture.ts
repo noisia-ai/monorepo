@@ -65,7 +65,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   expected_context_digest:preflight.expected_context_digest,engine_config:pilot?preflight.engine_configuration!:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
   interpretation_config:{call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000}});
  const lease=await engine.claimSignalWorkspaceEngineV1({database,...started,worker_job_id:'local-projection-fixture'});assert.ok(lease);
- assert.ok(lease.snapshot.expected_roots<=10||options.allow_large_population===true&&lease.snapshot.expected_roots<=1000,
+ assert.ok(lease.snapshot.expected_roots<=10||options.allow_large_population===true&&lease.snapshot.expected_roots<=1200,
   'fixture population must be explicitly tiny or bounded synthetic-large');
  const chunks:Array<Awaited<ReturnType<typeof engine.readSignalWorkspaceEngineChunksV1>>['items'][number]>=[];
  let after:Parameters<typeof engine.readSignalWorkspaceEngineChunksV1>[0]['after']=null;

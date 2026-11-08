@@ -274,12 +274,15 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
 
   // New synthetic policy version, preserving all old policy/receipt history.
   // It permits ONLY the free numeric action; no editorial send is authorized.
+  // Rollback-only harnesses keep now() at the physical BEGIN while a large
+  // source setup advances the wall clock. Anchor this invented base to the
+  // transaction clock so both real policy readers see the same valid window.
   let policy_id: string;
   if (!args.defer_numeric_policy_activation) {
     policy_id = randomUUID();
     await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,valid_from,valid_until,
     budget_timezone,daily_cap_micro_usd,created_by_user_id)
-    SELECT $1,$2,COALESCE(max(version),0)+1,clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 day',
+    SELECT $1,$2,COALESCE(max(version),0)+1,transaction_timestamp(),clock_timestamp()+interval '1 day',
       COALESCE((SELECT budget_timezone FROM signal_processing_policy_versions WHERE organization_id=$2 ORDER BY version DESC LIMIT 1),'America/Mexico_City'),$4,$3
     FROM signal_processing_policy_versions WHERE organization_id=$2`, [policy_id, organization_id, actor_user_id, args.numeric_daily_cap_micro_usd ?? 999_999_999_999_999]);
     await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
