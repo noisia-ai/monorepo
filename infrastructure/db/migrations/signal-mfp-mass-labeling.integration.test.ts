@@ -14,7 +14,7 @@ import {loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
 import * as editorialMoney from "../signal-workspace-engine-interpretation";
 import {SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1 as globalConfiguration,buildMassLabelingConsolidationRequestV1} from "@noisia/query-engine";
 import {verifyMassLabelingSourceCheckpointsV1,type MassLabelingSourceCheckpointV1} from "../signal-mass-labeling-source";
-import {persistSignalWorkspaceEngineArtifactV1} from "../signal-workspace-engine";
+import {persistSignalWorkspaceEngineArtifactV1,failSignalWorkspaceEngineV1,retrySignalWorkspaceEngineV1,claimSignalWorkspaceEngineV1} from "../signal-workspace-engine";
 import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-labeling-page";
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
@@ -38,7 +38,8 @@ test("mass labeling seals full population, bills once, and serves probability pa
     };
     const scoped = Object.assign(Object.create(raw), {query, release() {}});
     const database = Object.assign(Object.create(pool), {query, connect: async () => scoped}) as Pool;
-    let consolidationArtifactId="",consolidationRaw="";
+    let consolidationArtifactId="",consolidationRaw="",terminalCallId="",successorCallId="";
+    let terminalBefore:unknown;
     let sourceCheckpoints:MassLabelingSourceCheckpointV1[]=[];
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
@@ -73,13 +74,73 @@ test("mass labeling seals full population, bills once, and serves probability pa
           consolidationRaw=JSON.stringify({contract_version:"workspace-mass-labeling-consolidation-v1",workspace_id:fixture.access.workspace_id,
             source_engine_execution_id:fixture.lease.execution_id,source_groups:sourceGroups,source_groups_digest:sourceGroupsDigest,
             raw_response:rawResponse,output});
-          const call=await editorialMoney.reserveSignalWorkspaceEngineInterpretationV1({...fixture.access,execution_id:fixture.lease.execution_id,
+          const reservation={...fixture.access,execution_id:fixture.lease.execution_id,
             idempotency_key:randomUUID(),request_digest:batch.request_digest,
             configuration:batch.configuration,reserved_micro_usd:batch.reserved_micro_usd,
             budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,execution_token:fixture.lease.execution_token,
-            mass_labeling_stage:{stage:"global-consolidation-v1",source_groups_digest:sourceGroupsDigest}});
+            mass_labeling_stage:{stage:"global-consolidation-v1" as const,source_groups_digest:sourceGroupsDigest}};
+          const original=await editorialMoney.reserveSignalWorkspaceEngineInterpretationV1(reservation);
+          const originalToken={database,call_id:original.call_id,attempt_token:original.attempt_token};
+          await editorialMoney.markSignalWorkspaceEngineInterpretationSentV1({...originalToken,execution_token:fixture.lease.execution_token});
+          await editorialMoney.failSignalWorkspaceEngineInterpretationV1({...originalToken,outcome:"outcome_unknown",error_code:"workspace_engine_mass_consolidation_transport_failed"});
+          await failSignalWorkspaceEngineV1({database,lease:fixture.lease,error_code:"workspace_engine_mass_consolidation_transport_failed"});
+          const sentAt=(await query("SELECT sent_at FROM engine_cost_events WHERE id=$1",[original.call_id])).rows[0]!.sent_at;
+          await editorialMoney.reconcileSignalWorkspaceEngineTerminalV1({...originalToken,workspace_id:fixture.access.workspace_id,execution_id:fixture.lease.execution_id,
+            expected_request_digest:batch.request_digest,verifier_user_id:fixture.access.actor_user_id,terminal:{source:"anthropic_console",provider_request_id:"req_synthetic_global_terminal",
+              provider_model:batch.configuration.model,started_at:new Date(sentAt).toISOString(),ended_at:new Date().toISOString(),http_status:499,reason:"client_disconnected",
+              usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0},
+              evidence:{storage_key:`workspace-engine/${fixture.access.workspace_id}/${fixture.lease.execution_id}/terminal-proof.json`,sha256:digest("synthetic terminal proof"),size_bytes:24}}});
+          await retrySignalWorkspaceEngineV1({...fixture.access,execution_id:fixture.lease.execution_id,idempotency_key:randomUUID()});
+          const resumed=await claimSignalWorkspaceEngineV1({database,execution_id:fixture.lease.execution_id,worker_job_id:"synthetic-global-successor"});
+          assert.ok(resumed);Object.assign(fixture.lease,resumed);
+          const successorArgs={...reservation,execution_token:fixture.lease.execution_token,idempotency_key:`global:retry:${original.call_id}`,retry_of_call_id:original.call_id};
+          await assert.rejects(editorialMoney.reserveSignalWorkspaceEngineInterpretationV1(successorArgs),/mass_labeling_global_terminal_billing_required/);
+          await editorialMoney.settleSignalWorkspaceEngineTerminalBillingV1({...originalToken,workspace_id:fixture.access.workspace_id,execution_id:fixture.lease.execution_id,
+            expected_provider_request_id:"req_synthetic_global_terminal",verifier_user_id:fixture.access.actor_user_id});
+          terminalCallId=original.call_id;terminalBefore=(await query("SELECT row_to_json(call) body FROM engine_cost_events call WHERE id=$1",[original.call_id])).rows[0]!.body;
+          await assert.rejects(editorialMoney.reserveSignalWorkspaceEngineInterpretationV1({...successorArgs,mass_labeling_stage:{...reservation.mass_labeling_stage,source_groups_digest:digest("another source")}}),/mass_labeling_global_successor_stage_mismatch/);
+          await assert.rejects(editorialMoney.reserveSignalWorkspaceEngineInterpretationV1({...successorArgs,mass_labeling_stage:undefined}),/mass_labeling_global_successor_stage_mismatch/);
+          await assert.rejects(editorialMoney.reserveSignalWorkspaceEngineInterpretationV1({...successorArgs,execution_token:randomUUID()}),/workspace_engine_interpretation_lease_conflict/);
+          const budgetBefore=await editorialMoney.loadSignalWorkspaceEngineInterpretationBudgetV1({...fixture.access,execution_id:fixture.lease.execution_id});
+          assert.equal(budgetBefore.terminal_reserved_micro_usd,0,"audited billing replaces the terminal reservation with its exact charge");
+          const call=await editorialMoney.reserveSignalWorkspaceEngineInterpretationV1(successorArgs);
+          const budgetAfter=await editorialMoney.loadSignalWorkspaceEngineInterpretationBudgetV1({...fixture.access,execution_id:fixture.lease.execution_id});
+          assert.equal(budgetAfter.confirmed_micro_usd,budgetBefore.confirmed_micro_usd,"reserving the successor keeps all original charges");
+          assert.equal(budgetAfter.reserved_micro_usd,budgetBefore.reserved_micro_usd+call.reserved_micro_usd);
+          successorCallId=call.call_id;
+          assert.equal((await editorialMoney.reserveSignalWorkspaceEngineInterpretationV1(successorArgs)).call_id,call.call_id);
+          // Direct SQL cannot relabel a retry as another source or ordinary editorial work.
+          for(const stage of [undefined,{...reservation.mass_labeling_stage,source_groups_digest:digest("another source")}]){
+            await query("SAVEPOINT bad_global_stage");
+            await assert.rejects(query(`INSERT INTO engine_cost_events SELECT (jsonb_populate_record(NULL::engine_cost_events,to_jsonb(call)||$2::jsonb)).*
+              FROM engine_cost_events call WHERE id=$1`,[call.call_id,JSON.stringify({id:randomUUID(),idempotency_key:randomUUID(),attempt_token:randomUUID(),
+                metadata:stage?{mass_labeling_stage:stage}:{}})]),/mass_labeling_global_successor_stage_mismatch/);
+            await query("ROLLBACK TO SAVEPOINT bad_global_stage");await query("RELEASE SAVEPOINT bad_global_stage");
+          }
+          await query("SAVEPOINT duplicate_global_successor");
+          await assert.rejects(query(`INSERT INTO engine_cost_events SELECT (jsonb_populate_record(NULL::engine_cost_events,to_jsonb(call)||$2::jsonb)).*
+            FROM engine_cost_events call WHERE id=$1`,[call.call_id,JSON.stringify({id:randomUUID(),idempotency_key:randomUUID(),attempt_token:randomUUID()})]),/uq_workspace_interpretation_successor/);
+          await query("ROLLBACK TO SAVEPOINT duplicate_global_successor");await query("RELEASE SAVEPOINT duplicate_global_successor");
           const token={database,call_id:call.call_id,attempt_token:call.attempt_token};
-          await editorialMoney.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:fixture.lease.execution_token});
+          await query("SAVEPOINT revoked_global_actor");
+          await query("UPDATE users SET status='suspended' WHERE id=$1",[fixture.access.actor_user_id]);
+          await assert.rejects(editorialMoney.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:fixture.lease.execution_token}),/workspace_engine_interpretation_forbidden/);
+          await query("ROLLBACK TO SAVEPOINT revoked_global_actor");await query("RELEASE SAVEPOINT revoked_global_actor");
+          assert.equal((await editorialMoney.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:fixture.lease.execution_token})).send_authorized,true);
+          assert.equal((await editorialMoney.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:fixture.lease.execution_token})).send_authorized,false);
+          await query("SAVEPOINT second_global_terminal");
+          await editorialMoney.failSignalWorkspaceEngineInterpretationV1({...token,outcome:"outcome_unknown",error_code:"workspace_engine_mass_consolidation_transport_failed"});
+          await failSignalWorkspaceEngineV1({database,lease:fixture.lease,error_code:"workspace_engine_mass_consolidation_transport_failed"});
+          const childSent=(await query("SELECT sent_at FROM engine_cost_events WHERE id=$1",[call.call_id])).rows[0]!.sent_at;
+          await editorialMoney.reconcileSignalWorkspaceEngineTerminalV1({...token,workspace_id:fixture.access.workspace_id,execution_id:fixture.lease.execution_id,
+            expected_request_digest:batch.request_digest,verifier_user_id:fixture.access.actor_user_id,terminal:{source:"anthropic_console",provider_request_id:"req_synthetic_second_global_terminal",
+              provider_model:batch.configuration.model,started_at:new Date(childSent).toISOString(),ended_at:new Date().toISOString(),http_status:499,reason:"client_disconnected",
+              usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0},
+              evidence:{storage_key:`workspace-engine/${fixture.access.workspace_id}/${fixture.lease.execution_id}/second-terminal-proof.json`,sha256:digest("second terminal proof"),size_bytes:21}}});
+          await editorialMoney.settleSignalWorkspaceEngineTerminalBillingV1({...token,workspace_id:fixture.access.workspace_id,execution_id:fixture.lease.execution_id,
+            expected_provider_request_id:"req_synthetic_second_global_terminal",verifier_user_id:fixture.access.actor_user_id});
+          await assert.rejects(retrySignalWorkspaceEngineV1({...fixture.access,execution_id:fixture.lease.execution_id,idempotency_key:randomUUID()}),/workspace_engine_retry_unavailable/);
+          await query("ROLLBACK TO SAVEPOINT second_global_terminal");await query("RELEASE SAVEPOINT second_global_terminal");
           const responseSha=`sha256:${createHash("sha256").update(rawResponse).digest("hex")}`;
           await editorialMoney.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{
             storage_key:`workspace-engine/${fixture.access.workspace_id}/${fixture.lease.execution_id}/global-raw.json`,
@@ -94,6 +155,10 @@ test("mass labeling seals full population, bills once, and serves probability pa
                 contract_version:"workspace-mass-labeling-consolidation-v1",source_engine_execution_id:fixture.lease.execution_id,
                 stage:"global-consolidation-v1",source_groups_digest:sourceGroupsDigest,call_id:call.call_id,request_digest:call.request_digest,response_sha256:responseSha}}});
           consolidationArtifactId=artifact.artifact_id;
+          await query("SAVEPOINT global_already_persisted");
+          await assert.rejects(query(`INSERT INTO engine_cost_events SELECT (jsonb_populate_record(NULL::engine_cost_events,to_jsonb(call)||$2::jsonb)).*
+            FROM engine_cost_events call WHERE id=$1`,[call.call_id,JSON.stringify({id:randomUUID(),idempotency_key:randomUUID(),attempt_token:randomUUID()})]),/mass_labeling_global_artifact_already_persisted/);
+          await query("ROLLBACK TO SAVEPOINT global_already_persisted");await query("RELEASE SAVEPOINT global_already_persisted");
         }}});
     const access = {database, workspace_id: seed.scope.workspace_id, actor_user_id: seed.scope.actor_user_id};
     const foreignActor = randomUUID();
@@ -263,6 +328,25 @@ test("mass labeling seals full population, bills once, and serves probability pa
     await query("ROLLBACK TO SAVEPOINT excluded_root");
     const exported = await exportMassLabelingSnapshotV1({...access, map_id: map.map_id});
     assert.equal(exported.items.length, 3); assert.equal(exported.calls.length, 3);
+    const editorial=exported.stage_receipts.editorial_calls;
+    const terminal=editorial.find(row=>row.id===terminalCallId)!,successor=editorial.find(row=>row.id===successorCallId)!;
+    assert.equal(editorial.length,4);assert.equal(terminal.call_state,"terminal_confirmed");assert.equal(terminal.response_http_status,null);
+    assert.equal(terminal.response_complete,null);assert.equal(terminal.response_sha256,null);assert.equal(terminal.response_storage_key,null);assert.equal(terminal.response_size_bytes,null);
+    assert.equal(terminal.metadata.provider_terminal_receipt.http_status,499);
+    assert.equal(terminal.metadata.provider_terminal_receipt.reason,"client_disconnected");
+    assert.equal(terminal.metadata.provider_terminal_billing_reconciliation.method,"audited_usage_pricing");
+    assert.equal(terminal.settled_micro_usd,String(terminal.metadata.provider_terminal_billing_reconciliation.actual_micro_usd));
+    assert.equal(successor.retry_of_call_id,terminal.id);assert.equal(successor.request_digest,terminal.request_digest);
+    assert.deepEqual(successor.metadata.mass_labeling_stage,terminal.metadata.mass_labeling_stage);
+    assert.equal(successor.call_state,"settled");assert.equal(successor.response_http_status,200);assert.equal(successor.response_complete,true);
+    assert.ok(Number(successor.response_size_bytes)>0);assert.ok(successor.response_sha256);assert.ok(successor.response_storage_key);
+    assert.equal(exported.stage_receipts.consolidation_artifact!.id,mapArgs.consolidation_artifact_id);
+    assert.equal(exported.stage_receipts.consolidation_artifact!.metadata.call_id,successor.id);
+    assert.equal(exported.stage_receipts.consolidation_artifact!.metadata.response_sha256,successor.response_sha256);
+    assert.equal(exported.stage_receipts.consolidation_artifact!.content.sha256,exported.map.consolidation_digest);
+    const ledgerSum=(await query("SELECT sum(settled_micro_usd)::text n FROM engine_cost_events WHERE catalog_execution_id=$1",[seed.source_engine_execution_id])).rows[0]!.n;
+    assert.equal(editorial.reduce((total,row)=>total+BigInt(row.settled_micro_usd??0),0n).toString(),ledgerSum,"each distinct receipt is counted once");
+    assert.deepEqual((await query("SELECT row_to_json(call) body FROM engine_cost_events call WHERE id=$1",[terminalCallId])).rows[0]!.body,terminalBefore,"successor, adoption, export preserve the terminal parent byte for byte");
     await assert.rejects(exportMassLabelingSnapshotV1({...access, actor_user_id: foreignActor, map_id: map.map_id}), /mass_labeling_forbidden/);
     const privileges = (await query(`SELECT has_table_privilege('anon','signal_mass_labeling_results','SELECT') anon,
       has_table_privilege('authenticated','signal_mass_labeling_results','SELECT') authenticated`)).rows[0];

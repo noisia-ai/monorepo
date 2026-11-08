@@ -48,7 +48,7 @@ type Row={admission:SignalWorkspaceEngineInterpretationCallAdmissionV1|null;id:s
  call_state:SignalWorkspaceEngineInterpretationCallV1['state'];attempt_token:string;retry_of_call_id:string|null;reserved_micro_usd:string;settled_micro_usd:string|null;
  call_configuration:SignalWorkspaceEngineInterpretationConfigurationV1;response_storage_key:string|null;response_sha256:string|null;response_size_bytes:string|null;
  response_http_status:number|null;provider_request_id:string|null;response_complete:boolean;budget_date:string;budget_timezone:string;budget_daily_cap_micro_usd:string|null;failure_code:string|null;
- unit_keys?:string[]|null;interpretation_revision_digest:string|null;editorial_repair:SignalWorkspaceEngineEditorialRepairV1|null};
+ unit_keys?:string[]|null;mass_labeling_stage:{stage:string;source_groups_digest:string}|null;interpretation_revision_digest:string|null;editorial_repair:SignalWorkspaceEngineEditorialRepairV1|null};
 const view=(r:Row):SignalWorkspaceEngineInterpretationCallV1=>({admission:r.admission?{...r.admission,admission_not_after:new Date(r.admission.admission_not_after).toISOString()}:null,call_id:r.id,execution_id:r.catalog_execution_id,workspace_id:r.workspace_id,attempt_token:r.attempt_token,retry_of_call_id:r.retry_of_call_id,
  state:r.call_state,reserved_micro_usd:natural(r.reserved_micro_usd),settled_micro_usd:r.settled_micro_usd===null?null:natural(r.settled_micro_usd),request_digest:r.request_digest,interpretation_revision_digest:r.interpretation_revision_digest??null,editorial_repair:r.editorial_repair,
  response:r.response_storage_key?{storage_key:r.response_storage_key,sha256:r.response_sha256!,size_bytes:natural(r.response_size_bytes),http_status:r.response_http_status!,provider_request_id:r.provider_request_id,complete:r.response_complete}:null});
@@ -90,7 +90,7 @@ async function execution(c:PoolClient,workspace:string,id:string,actor:string,ch
 const rowSQL=`SELECT id,workspace_id,catalog_execution_id,actor_user_id,request_digest,request_seal,call_state,attempt_token,retry_of_call_id,
  reserved_micro_usd::text,settled_micro_usd::text,call_configuration,response_storage_key,response_sha256,response_size_bytes::text,
  response_http_status,provider_request_id,COALESCE((metadata->>'response_complete')::boolean,true) response_complete,budget_date::text,budget_timezone,budget_daily_cap_micro_usd::text,failure_code,
- metadata->'unit_manifest' unit_keys,metadata->'editorial_repair' editorial_repair,metadata->>'interpretation_revision_digest' interpretation_revision_digest,
+ metadata->'unit_manifest' unit_keys,metadata->'mass_labeling_stage' mass_labeling_stage,metadata->'editorial_repair' editorial_repair,metadata->>'interpretation_revision_digest' interpretation_revision_digest,
  CASE WHEN metadata ? 'interpretation_admission' THEN metadata->'interpretation_admission'||jsonb_build_object('admission_not_after',
  (SELECT result->>'admission_not_after' FROM signal_classification_operations WHERE id=(metadata->'interpretation_admission'->>'operation_id')::uuid)) END admission
  FROM engine_cost_events WHERE workspace_contract='workspace-engine-interpretation-v1'`;
@@ -150,6 +150,8 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   const active=attempts.find(row=>!['definitely_not_sent','terminal_confirmed'].includes(row.call_state));
   if(active){if(args.unit_keys&&active.unit_keys&&signalWorkspaceEmbeddingDigestV1([...args.unit_keys].sort())!==signalWorkspaceEmbeddingDigestV1(active.unit_keys))return fail('workspace_engine_interpretation_idempotency_conflict');if(active.actor_user_id!==args.actor_user_id||active.request_seal!==sealFor(active.admission?.operation_id))return fail('workspace_engine_interpretation_idempotency_conflict');return view(active);}
   if(args.retry_of_call_id){const prior=attempts.find(row=>row.id===args.retry_of_call_id);
+   if(prior&&signalWorkspaceEmbeddingDigestV1(prior.mass_labeling_stage??null)!==signalWorkspaceEmbeddingDigestV1(massStage??null))
+    return fail('mass_labeling_global_successor_stage_mismatch');
    if(!prior||prior.actor_user_id!==args.actor_user_id||!['definitely_not_sent','terminal_confirmed'].includes(prior.call_state)||prior.response_storage_key!==null
     ||natural(prior.reserved_micro_usd)!==args.reserved_micro_usd||signalWorkspaceEmbeddingDigestV1(prior.call_configuration)!==signalWorkspaceEmbeddingDigestV1(config)
     ||signalWorkspaceEmbeddingDigestV1(prior.editorial_repair)!==signalWorkspaceEmbeddingDigestV1(repair??null)
