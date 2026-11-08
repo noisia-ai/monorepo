@@ -24,6 +24,12 @@ function signalCallDigest(value) {
   }
   return canonicalDigest(ordered(value));
 }
+const fundingReceiptDigest = (funding) => {
+  const dto = { ...funding };
+  delete dto.quote;
+  delete dto.receipt_digest;
+  return signalCallDigest(dto);
+};
 const safeIntegerValue = (value) => (Number.isSafeInteger(value) && value >= 0)
   || (typeof value === 'string' && /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)));
 const normalizedIdentity = (value) => String(value).normalize('NFKD').replace(/[\u0300-\u036f]/gu, '')
@@ -248,7 +254,10 @@ export async function readPilotSnapshot(path) {
 
 export function validateOperatorReceipt(snapshot, receipt) {
   validatePilotSnapshot(snapshot);
+  const hasScopedFunding = Array.isArray(snapshot.scoped_authority?.funding_receipts)
+    && snapshot.scoped_authority.funding_receipts.length > 0;
   if (!record(receipt) || !['signal-mass-labeling-operator-receipt-v1', 'signal-mass-labeling-operator-receipt-v2'].includes(receipt.contract_version)
+    || (hasScopedFunding && receipt.contract_version !== 'signal-mass-labeling-operator-receipt-v2')
     || receipt.map_digest !== snapshot.map.map_digest
     || receipt.snapshot_sha256 !== computeSnapshotDigest(snapshot) || !Array.isArray(receipt.stages)) {
     throw new Error('pilot_audit_operator_receipt_invalid_or_wrong_map');
@@ -330,28 +339,48 @@ function validateScopedFundingLineage(snapshot, stages) {
     || !Array.isArray(authority.call_authorities) || !/^[0-9a-f-]{36}$/u.test(authority.extension.id)
     || !/^[0-9a-f-]{36}$/u.test(authority.admission.id)
     || authority.admission.extension_id !== authority.extension.id
-    || authority.admission.map_id !== snapshot.map.id || authority.admission.map_digest !== snapshot.map.map_digest
+    || authority.extension.workspace_id !== authority.admission.workspace_id
+    || authority.extension.workspace_id !== authority.funding_receipts[0]?.workspace_id
+    || authority.extension.map_id !== snapshot.map.id || authority.admission.map_id !== snapshot.map.id
+    || authority.extension.map_digest !== snapshot.map.map_digest
     || authority.admission.target_id !== snapshot.run.id || authority.admission.actor_user_id !== snapshot.run.actor_user_id
-    || String(authority.effective_total_cap_micro_usd) !== '9500000') {
+    || authority.extension.actor_user_id !== snapshot.run.actor_user_id
+    || authority.extension.base_policy_version_id !== authority.admission.policy_version_id
+    || authority.extension.organization_id !== authority.admission.organization_id) {
     throw new Error('pilot_audit_scoped_authority_invalid');
   }
   const funding = authority.funding_receipts[0];
   const priorCap = authority.extension.cap_micro_usd ?? authority.extension.max_execution_micro_usd;
   if (!record(funding) || !/^[0-9a-f-]{36}$/u.test(funding.id)
+    || funding.contract_version !== 'mass-labeling-prospective-total-budget-v1'
     || funding.extension_id !== authority.extension.id || funding.scoped_admission_id !== authority.admission.id
+    || funding.organization_id !== authority.extension.organization_id
     || funding.workspace_id !== authority.admission.workspace_id || funding.map_id !== snapshot.map.id
     || funding.map_digest !== snapshot.map.map_digest || funding.run_id !== snapshot.run.id
     || funding.actor_user_id !== snapshot.run.actor_user_id
+    || funding.created_by_user_id !== snapshot.run.actor_user_id
     || funding.base_policy_version_id !== authority.admission.policy_version_id
+    || funding.base_policy_version_id !== authority.extension.base_policy_version_id
+    || funding.base_policy_digest !== authority.extension.base_policy_digest
+    || !digest(funding.prior_admission_receipt_digest)
     || !digest(funding.base_policy_digest) || !digest(funding.labeler_digest)
     || !digest(funding.entity_context_digest) || !digest(funding.smoke_metrics_digest)
+    || typeof funding.smoke_metrics_canonical !== 'string'
+    || `sha256:${sha256(funding.smoke_metrics_canonical)}` !== funding.smoke_metrics_digest
     || funding.smoke_metrics_digest !== snapshot.run.smoke_metrics_digest
     || funding.smoke_root_count !== smokeCount || funding.smoke_call_count !== smokeCount
+    || funding.prior_budget_date !== authority.admission.budget_date
+    || funding.prior_budget_timezone !== authority.admission.budget_timezone
     || funding.prior_total_cap_micro_usd === undefined
     || String(funding.prior_total_cap_micro_usd) !== String(priorCap)
-    || String(funding.total_cap_micro_usd) !== '9500000'
+    || !microUsd(funding.prior_total_cap_micro_usd) || !microUsd(funding.total_cap_micro_usd)
+    || BigInt(funding.total_cap_micro_usd) <= BigInt(funding.prior_total_cap_micro_usd)
+    || !microUsd(authority.effective_total_cap_micro_usd)
+    || String(authority.effective_total_cap_micro_usd) !== String(funding.total_cap_micro_usd)
     || !digest(funding.smoke_calls_digest) || !digest(funding.quote_digest) || !digest(funding.receipt_digest)
     || !record(funding.quote) || funding.quote.contract_version !== 'mass-labeling-smoke-usage-quote-v1'
+    || funding.quote_digest !== signalCallDigest(funding.quote)
+    || funding.receipt_digest !== fundingReceiptDigest(funding)
     || funding.quote.basis !== 'ledger_usage_at_sealed_tariff'
     || !Number.isFinite(funding.quote.input_usd_per_mtok) || funding.quote.input_usd_per_mtok <= 0
     || !Number.isSafeInteger(funding.quote.population_roots) || funding.quote.population_roots !== snapshot.map.root_count
@@ -368,6 +397,12 @@ function validateScopedFundingLineage(snapshot, stages) {
     || !Number.isFinite(Date.parse(funding.created_at)) || !Number.isFinite(Date.parse(funding.admission_not_after))
     || Date.parse(funding.admission_not_after) <= Date.parse(funding.created_at)) {
     throw new Error('pilot_audit_funding_receipt_invalid');
+  }
+  let canonicalSmokeMetrics;
+  try { canonicalSmokeMetrics = JSON.parse(funding.smoke_metrics_canonical); }
+  catch { throw new Error('pilot_audit_funding_smoke_metrics_canonical_invalid'); }
+  if (canonicalJson(canonicalSmokeMetrics) !== canonicalJson(snapshot.run.smoke_metrics)) {
+    throw new Error('pilot_audit_funding_smoke_metrics_mismatch');
   }
   if (!Array.isArray(snapshot.calls) || authority.call_authorities.length !== snapshot.calls.length) {
     throw new Error('pilot_audit_scoped_call_authority_census_invalid');
@@ -389,7 +424,10 @@ function validateScopedFundingLineage(snapshot, stages) {
   for (const call of snapshot.calls) {
     const ordinal = itemOrdinals.get(call.id);
     const binding = byCall.get(call.id);
-    if (!Number.isSafeInteger(ordinal) || !/^\d{4}-\d{2}-\d{2}$/u.test(call.budget_date)
+    if (!Number.isSafeInteger(ordinal) || call.run_id !== snapshot.run.id
+      || (call.workspace_id !== undefined && call.workspace_id !== authority.extension.workspace_id)
+      || (call.actor_user_id !== undefined && call.actor_user_id !== snapshot.run.actor_user_id)
+      || !/^\d{4}-\d{2}-\d{2}$/u.test(call.budget_date)
       || typeof call.budget_timezone !== 'string' || !call.budget_timezone
       || binding.funding_receipt_id !== (ordinal <= smokeCount ? null : funding.id)
       || !(ordinal <= smokeCount ? smokeIds : fullIds).has(call.id)) {
@@ -1080,11 +1118,18 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
     : usageValues.reduce((sum, value) => sum + value, 0);
   const totalFreeTokens = freeTokens.some((value) => value === null) ? null
     : freeTokens.reduce((sum, value) => sum + value, 0);
+  const cashEstimateValues = costs.filter((stage) => stage.name === 'claude' || stage.name.startsWith('jev_'))
+    .map((stage) => stage.usage_value_micro_usd);
+  const estimatedCashUsageMicroUsd = cashEstimateValues.some((value) => value === null) ? null
+    : cashEstimateValues.reduce((sum, value) => sum + value, 0);
   const perThousand = (value) => value === null || rootCount === 0 ? null : value / rootCount * 1000;
   const perMillion = (value) => value === null || rootCount === 0 ? null : value / rootCount * 1_000_000;
   const topicRows = [...topics.values()].sort((a, b) => b.volume - a.volume || a.topic_key.localeCompare(b.topic_key));
 
   return {
+    operator_receipt_contract_version: operatorReceipt.contract_version,
+    scoped_funding_present: Array.isArray(snapshot.scoped_authority?.funding_receipts)
+      && snapshot.scoped_authority.funding_receipts.length > 0,
     map_digest: snapshot.map.map_digest,
     frozen_at: snapshot.map.created_at,
     root_count: rootCount,
@@ -1122,6 +1167,9 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
     charged_per_million_micro_usd: perMillion(totalChargedMicroUsd),
     usage_value_per_1000_micro_usd: perThousand(totalUsageValueMicroUsd),
     usage_value_per_million_micro_usd: perMillion(totalUsageValueMicroUsd),
+    estimated_cash_usage_micro_usd: estimatedCashUsageMicroUsd,
+    estimated_cash_usage_per_1000_micro_usd: perThousand(estimatedCashUsageMicroUsd),
+    estimated_cash_usage_per_million_micro_usd: perMillion(estimatedCashUsageMicroUsd),
     scoped_jev_cumulative_cap_micro_usd: operatorReceipt.contract_version === 'signal-mass-labeling-operator-receipt-v2'
       ? Number(snapshot.scoped_authority.effective_total_cap_micro_usd) : null,
     jev_charge_reconciliation: operatorReceipt.jev_charge_reconciliation ?? null,
@@ -1268,6 +1316,10 @@ export function renderPublicReceipt(summary, comparisonDate) {
   if (typeof comparisonDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/u.test(comparisonDate)) {
     throw new Error('pilot_audit_receipt_date_invalid');
   }
+  if (summary?.scoped_funding_present
+    && summary.operator_receipt_contract_version !== 'signal-mass-labeling-operator-receipt-v2') {
+    throw new Error('pilot_audit_v2_required_for_scoped_funding');
+  }
   const groupCount = summary.bertopic_group_count;
   const stageRows = summary.stages.map((stage) =>
     `| ${markdownCell(stage.name)} | ${stage.input_count} ${stage.input_unit} | ${dollars(stage.usage_value_micro_usd)} | ${dollars(stage.charged_micro_usd)} | ${stage.name === 'claude' ? dollars(stage.charged_per_input_unit_micro_usd) : '—'} | ${stage.free_tokens_used ?? 'n/d'} | ${stage.duration_seconds.toFixed(1)} s |`);
@@ -1288,7 +1340,14 @@ export function renderPublicReceipt(summary, comparisonDate) {
     ...stageRows,
     '',
     `Cargo total confirmado: ${dollars(summary.charged_micro_usd)}. Por 1,000 raíces: ${dollars(summary.charged_per_1000_micro_usd)}. Proyección a 1,000,000 raíces: ${dollars(summary.charged_per_million_micro_usd)}.`,
-    `Valor tarifario del uso: ${dollars(summary.usage_value_micro_usd)}. Tokens gratis consumidos: ${summary.free_tokens_used ?? 'n/d'}.`,
+    `Valor tarifario del uso: ${dollars(summary.usage_value_micro_usd)}. Por 1,000 raíces: ${dollars(summary.usage_value_per_1000_micro_usd)}; por 1,000,000: ${dollars(summary.usage_value_per_million_micro_usd)}.`,
+    `Estimación de caja con crédito de Voyage aplicado (Claude + JEV): ${dollars(summary.estimated_cash_usage_micro_usd)}; por 1,000 raíces: ${dollars(summary.estimated_cash_usage_per_1000_micro_usd)}; por 1,000,000: ${dollars(summary.estimated_cash_usage_per_million_micro_usd)}. Es una estimación, no un débito; no se suma al cargo confirmado.`,
+    `Tokens gratis consumidos: ${summary.free_tokens_used ?? 'n/d'}.`,
+    ...(() => {
+      const voyage = summary.stages.find((stage) => stage.name === 'voyage');
+      return voyage?.free_tokens_used > 0 && voyage.charged_micro_usd === 0
+        ? [`Voyage usó ${voyage.free_tokens_used.toLocaleString('en-US')} tokens gratis; su cargo efectivo confirmado fue ${dollars(voyage.charged_micro_usd)}.`] : [];
+    })(),
     ...(summary.scoped_jev_cumulative_cap_micro_usd === null ? [] : [
       `Techo acumulado JEV: ${dollars(summary.scoped_jev_cumulative_cap_micro_usd)} (incluye humo y corte completo; no es un cargo).`,
       ...(summary.jev_charge_reconciliation.status === 'delayed'
