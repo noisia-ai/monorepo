@@ -100,6 +100,20 @@ const SignalV2TriggersBarriers = dynamic(
   }
 );
 
+export function nativeWorkspaceNavigationQueryV1(filters: {
+  date_from?: string | null;
+  date_to?: string | null;
+  conversation_segment?: "all" | "conversation" | "advertising" | "hashtags";
+} | undefined, target: SignalStandardModule): URLSearchParams {
+  const query = new URLSearchParams();
+  if (filters?.date_from) query.set("date_from", filters.date_from);
+  if (filters?.date_to) query.set("date_to", filters.date_to);
+  if ((target === "monitoring" || target === "topics") && filters?.conversation_segment) {
+    query.set("conversation_segment", filters.conversation_segment);
+  }
+  return query;
+}
+
 const CHART_BLUE = "#1689f5";
 const CHART_BLUE_SOFT = "#8fcef9";
 const GRID = "#ebebeb";
@@ -163,7 +177,7 @@ export function SignalV2BrandMonitoring({
   workspaceSubjectId,
   viewKey = "brand"
 }: {
-  activeModule: "monitoring" | "mentions" | "topics" | "settings";
+  activeModule: "monitoring" | "mentions" | "topics" | "settings" | "study";
   activeStudy: SignalStrategicStudyNavigationItem | null;
   brandName: string;
   canRefreshInsights: boolean;
@@ -290,6 +304,9 @@ export function SignalV2BrandMonitoring({
     payload: SignalWorkspaceModulePayload
   ) => {
     beginContentArrival();
+    if (target === "study" && payload.contract_version === "signal-workspace-topics-serving-v1") {
+      setTopicsNarrativesData(payload as SignalWorkspaceOverviewV1); setCurrentStudy(null); return;
+    }
     if (target === "study") {
       const studyPayload = payload as SignalTriggersBarriersOverviewV2;
       setTriggersBarriersData(studyPayload);
@@ -363,12 +380,14 @@ export function SignalV2BrandMonitoring({
     return () => window.removeEventListener("pagehide", clear);
   }, [viewKey, hasNativeMentions, invalidateNativeTopicEvidence]);
 
-  const readNativeTopics = useCallback(async (selection?: SignalAnalyticsFilterSelection) => {
+  const readNativeTopics = useCallback(async (selection?: SignalAnalyticsFilterSelection, segment?: "all" | "conversation" | "advertising" | "hashtags") => {
     if (topicsNarrativesData?.contract_version !== "signal-workspace-topics-serving-v1"
-      || !["monitoring", "topics"].includes(currentModule) || pendingModule) return false;
+      || !["monitoring", "topics", "study"].includes(currentModule) || pendingModule) return false;
     filterRequestRef.current?.abort(); const controller = new AbortController(); filterRequestRef.current = controller;
     const ticket = ++filterSequenceRef.current; setLoading(true); setError(null);
     const params = new URLSearchParams({ view: "all_conversations", timezone: data.workspace.timezone, granularity: "day", compare: "none" });
+    const conversationSegment = segment ?? topicsNarrativesData.filters.conversation_segment;
+    if (conversationSegment) params.set("conversation_segment", conversationSegment);
     const from = selection?.start ?? topicsNarrativesData.filters.date_from;
     const to = selection?.end ?? topicsNarrativesData.filters.date_to;
     if (from) params.set("date_from", from); if (to) params.set("date_to", to);
@@ -396,7 +415,7 @@ export function SignalV2BrandMonitoring({
   }, [topicsNarrativesData, currentModule, pendingModule, data.workspace.id, data.workspace.timezone, invalidateNativeTopicEvidence, t, applyModulePayload]);
 
   const loadFilter = useCallback(async (selection: SignalAnalyticsFilterSelection) => {
-    if (topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && ["monitoring", "topics"].includes(currentModule)) return readNativeTopics(selection);
+    if (topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && ["monitoring", "topics", "study"].includes(currentModule)) return readNativeTopics(selection);
     filterRequestRef.current?.abort();
     const controller = new AbortController();
     filterRequestRef.current = controller;
@@ -546,14 +565,10 @@ export function SignalV2BrandMonitoring({
 
     const nativeTarget = (target === "monitoring" || target === "topics" || target === "mentions")
       && (viewKey === "all_conversations" || Boolean(mentionsData?.native) || topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1");
-    const query = requestedQuery ?? (nativeTarget ? new URLSearchParams() : buildModuleQuery(window.location.search, data, target));
+    const nativeFilters = currentModule === "mentions" ? mentionsData?.native?.filters
+      : topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? topicsNarrativesData.filters : undefined;
+    const query = requestedQuery ?? (nativeTarget ? nativeWorkspaceNavigationQueryV1(nativeFilters, target) : buildModuleQuery(window.location.search, data, target));
     if (nativeTarget) {
-      if (!requestedQuery) {
-        const filters = currentModule === "mentions" ? mentionsData?.native?.filters
-          : topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? topicsNarrativesData.filters : undefined;
-        if (filters?.date_from) query.set("date_from", filters.date_from);
-        if (filters?.date_to) query.set("date_to", filters.date_to);
-      }
       query.set("view", "all_conversations"); query.set("timezone", data.workspace.timezone); query.set("granularity", "day"); query.set("compare", "none");
       query.delete("comparison_start"); query.delete("comparison_end"); query.delete("compareStart"); query.delete("compareEnd");
       if (target !== "mentions" && target !== currentModule) {
@@ -743,6 +758,10 @@ export function SignalV2BrandMonitoring({
 
   useEffect(() => {
     const onPopState = () => {
+      if (window.location.pathname.endsWith("/reports/triggers-barriers")
+        && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && topicsNarrativesData.consumer_indicators) {
+        setCurrentModule("study"); setCurrentStudy(null); setPendingModule(null); void readNativeTopics(); return;
+      }
       const requestedStudy = window.location.pathname.endsWith("/reports/triggers-barriers")
         ? strategicStudies.find((study) => study.reportKey === "triggers-barriers")
         : null;
@@ -761,7 +780,7 @@ export function SignalV2BrandMonitoring({
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [navigateToModule, navigateToStudy, strategicStudies]);
+  }, [navigateToModule, navigateToStudy, readNativeTopics, strategicStudies, topicsNarrativesData]);
 
   const goToCorpus = useCallback(() => {
     void navigateToModule("mentions");
@@ -1149,6 +1168,7 @@ export function SignalV2BrandMonitoring({
   const canonicalSettings = `/signal/${data.workspace.slug}/settings${viewSuffix}`;
   const legacyReport = legacyOutputId ? `/signal/${legacyOutputId}` : canonicalHome;
   const firstStrategicStudy = strategicStudies[0] ?? null;
+  const nativeConsumers = topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" && Boolean(topicsNarrativesData.consumer_indicators);
   const activeGlobalFilterCount = Object.values(data.filter.dimensions)
     .reduce((total, values) => total + (values?.length ?? 0), 0)
     + Number(Boolean(data.filter.search_query));
@@ -1252,10 +1272,10 @@ export function SignalV2BrandMonitoring({
           />
           <NavLink
             active={(pendingModule ?? currentModule) === "study"}
-            href={firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`}
+            href={nativeConsumers ? moduleHref(data.workspace.slug, "study", new URLSearchParams({ conversation_segment: "conversation" })) : firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`}
             icon={<FileText />}
             label={t("nav.reports")}
-            onNavigate={firstStrategicStudy
+            onNavigate={!nativeConsumers && firstStrategicStudy
               ? () => void navigateToStudy(firstStrategicStudy)
               : undefined}
             pending={pendingModule === "study"}
@@ -1299,7 +1319,7 @@ export function SignalV2BrandMonitoring({
           <SignalV2WorkspaceTopics initialBundle={nativeTopicBundle} brandName={brandName} data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
             surface="topics" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref}
             workspaceTimezone={data.workspace.timezone}
-            onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenTopics={() => void navigateToModule("topics")}
+            onApplyFilter={loadFilter} onRefresh={readNativeTopics} onConversationSegment={segment => readNativeTopics(undefined, segment)} onOpenTopics={() => void navigateToModule("topics")}
             onOpenMentions={() => void navigateToModule("mentions")}
             onOpenMention={mentionId => {
               const params = new URLSearchParams({ view: "all_conversations", mention: mentionId });
@@ -1307,6 +1327,10 @@ export function SignalV2BrandMonitoring({
               if (topicsNarrativesData.filters.date_to) params.set("end", topicsNarrativesData.filters.date_to);
               void navigateToModule("mentions", "push", params);
             }} />
+        ) : currentModule === "study" && nativeConsumers && topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? (
+          <SignalV2WorkspaceTopics brandName={brandName} data={topicsNarrativesData} loading={loading || Boolean(pendingModule)}
+            surface="consumers" refreshFailed={Boolean(error)} manageTopicsHref={manageTopicsHref} workspaceTimezone={data.workspace.timezone}
+            onApplyFilter={loadFilter} onRefresh={readNativeTopics} onOpenMentions={() => void navigateToModule("mentions")} />
         ) : emptyWorkspace ? (
           <SignalV2EmptyWorkspace
             brandName={brandName}
@@ -1762,7 +1786,7 @@ export function SignalV2BrandMonitoring({
               <Link href={canonicalMentions} onClick={() => setSearchOpen(false)} prefetch={false}>
                 <ListMagnifyingGlass size={16} />{t("nav.mentions")}
               </Link>
-              <Link href={firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`} onClick={() => setSearchOpen(false)} prefetch={false}>
+              <Link href={nativeConsumers ? moduleHref(data.workspace.slug, "study", new URLSearchParams({ conversation_segment: "conversation" })) : firstStrategicStudy?.href ?? `${legacyReport}#tb-decision-field`} onClick={() => setSearchOpen(false)} prefetch={false}>
                 <FileText size={16} />{t("nav.reports")}
               </Link>
             </div>
