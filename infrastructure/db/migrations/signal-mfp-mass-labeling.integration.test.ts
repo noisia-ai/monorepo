@@ -21,6 +21,10 @@ import {validateJevResponseV1} from "../../../services/workers/src/providers/typ
 for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"] as const) test(`mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences (${authorization})`, {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 600_000,
 }, async () => {
+  const localization=authorization==="rotation"?{original_language:"pt-BR",
+    original:{name:"Reparos de bicicletas",definition:"Experiências reparando bicicletas."},
+    en:{name:"Bicycle repairs",definition:"Experiences repairing bicycles."},
+    es:{name:"Reparaciones de bicicletas",definition:"Experiencias reparando bicicletas."}}:undefined;
   const scopedMode=authorization!=="rotation",rootCount=authorization==="scoped-funding"?1002:authorization==="scoped-scale"?200:3;
   const {openDatabase} = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
   const pool: Pool = await openDatabase(), raw = await pool.connect();
@@ -72,7 +76,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
           const batch=buildMassLabelingConsolidationRequestV1({workspace_id:fixture.access.workspace_id,
             source_engine_execution_id:fixture.lease.execution_id,source_groups:sourceGroups});
           const sourceGroupsDigest=batch.source_groups_digest;
-          const output={topics:[{topic_key:"bicycle_repairs",name:"Bicycle repairs",definition:"Experiences repairing bicycles.",group_ids}],excluded_groups:[]};
+          const output={topics:[{topic_key:"bicycle_repairs",name:"Bicycle repairs",definition:"Experiences repairing bicycles.",group_ids,...(localization?{localization}:{})}],excluded_groups:[]};
           const rawResponse=JSON.stringify({id:"msg_synthetic_global",type:"message",role:"assistant",model:globalConfiguration.model,
             stop_reason:"end_turn",content:[{type:"text",text:JSON.stringify(output)}],usage:{input_tokens:100,output_tokens:50}});
           consolidationRaw=JSON.stringify({contract_version:"workspace-mass-labeling-consolidation-v1",workspace_id:fixture.access.workspace_id,
@@ -178,11 +182,18 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
     const mapArgs = {...access, source_engine_execution_id: seed.source_engine_execution_id,
       assignments_artifact_id: artifact.id, assignments_raw: assignmentsRaw,
       consolidation_artifact_id:consolidationArtifactId,consolidation_raw:consolidationRaw,source_checkpoints:sourceCheckpoints,
-      catalog: [{topic_key: "bicycle_repairs", name: "Bicycle repairs", definition: "Experiences repairing bicycles.", group_ids:groupIds}]};
+      catalog: [{topic_key: "bicycle_repairs", name: "Bicycle repairs", definition: "Experiences repairing bicycles.", group_ids:groupIds,...(localization?{localization}:{})}]};
     await assert.rejects(createMassLabelingMapV1({...mapArgs, actor_user_id: foreignActor}), /mass_labeling_forbidden/);
     await assert.rejects(createMassLabelingMapV1({...mapArgs, assignments_raw: assignmentsRaw+" "}), /mass_labeling_source_invalid/);
     await assert.rejects(createMassLabelingMapV1({...mapArgs,source_checkpoints:[]}),/mass_labeling_source_checkpoint_invalid/);
     const map = await createMassLabelingMapV1(mapArgs);
+    const candidateSample=(await query("SELECT candidates FROM signal_mass_labeling_items WHERE map_id=$1 ORDER BY ordinal LIMIT 1",[map.map_id])).rows[0]!.candidates[0];
+    assert.equal(candidateSample.name,localization?.original.name??"Bicycle repairs");
+    assert.equal(candidateSample.definition,localization?.original.definition??"Experiences repairing bicycles.");
+    const frozenCatalog=(await query("SELECT catalog FROM signal_mass_labeling_maps WHERE id=$1",[map.map_id])).rows[0]!.catalog;
+    assert.equal(frozenCatalog[0].name,"Bicycle repairs");
+    if(localization)assert.deepEqual(frozenCatalog[0].localization,localization);
+
     assert.equal((await createMassLabelingMapV1(mapArgs)).map_id, map.map_id);
     assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_items WHERE map_id=$1", [map.map_id])).rows[0].n, rootCount);
     const siblingFixture=scopedMode?await import("./signal-mfp-mass-labeling-sibling.synthetic.fixture"):null;

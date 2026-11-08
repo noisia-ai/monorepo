@@ -1,3 +1,4 @@
+import type { SignalEditorialTopicLocalizationV1 } from "./signal-topic-localization-v1";
 import type { FacetInput } from "./signal-mention-labeler-v1";
 import { entityContextDigestV1, type EntityContextV1 } from "./signal-entity-context-v1";
 import type { JevAnswerV1, JevQuestionV1, JevRequestV1, JevResponseV1 } from "./signal-mention-facets-jev-v1";
@@ -5,7 +6,7 @@ import { signalWorkspaceEmbeddingDigestV1 } from "./signal-workspace-embeddings-
 
 export const MASS_LABELING_JEV_REQUEST_VERSION_V1 = "mass-labeling-jev-v1" as const;
 export const MASS_LABELING_THRESHOLDS_V1 = Object.freeze({ positive: 0.7, negative: 0.3 });
-export type MassLabelingCandidateV1 = { topic_key: string; name: string; definition: string; similarity: number };
+export type MassLabelingCandidateV1 = { topic_key: string; name: string; definition: string; similarity: number; localization?: SignalEditorialTopicLocalizationV1 };
 export type MassLabelingInputV1 = FacetInput & {
   map_id: string; map_digest: string; chunk_index: number; candidates: MassLabelingCandidateV1[];
 };

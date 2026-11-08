@@ -232,8 +232,9 @@ export async function createMassLabelingMapV1(args: {
         JOIN signal_mass_labeling_topics topic ON topic.map_id=$2 AND topic.topic_key=score.topic_key
         ORDER BY chunk.root_id,chunk.embedding<=>topic.centroid,chunk.chunk_index,topic.topic_key
       ), candidates AS (
-        SELECT root_id,jsonb_agg(jsonb_build_object('topic_key',ranked.topic_key,'name',catalog->>'name',
-          'definition',catalog->>'definition','similarity',similarity) ORDER BY position) candidate_list
+        SELECT root_id,jsonb_agg(jsonb_build_object('topic_key',ranked.topic_key,
+          'name',COALESCE(catalog#>>'{localization,original,name}',catalog->>'name'),
+          'definition',COALESCE(catalog#>>'{localization,original,definition}',catalog->>'definition'),'similarity',similarity) ORDER BY position) candidate_list
         FROM mass_scores ranked CROSS JOIN LATERAL jsonb_array_elements($3::jsonb) catalog
         WHERE catalog->>'topic_key'=ranked.topic_key GROUP BY root_id
       ) SELECT $1,$2,chunk.root_id,row_number() OVER(ORDER BY chunk.root_id)::int,
