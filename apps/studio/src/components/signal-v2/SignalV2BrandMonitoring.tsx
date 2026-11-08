@@ -100,6 +100,20 @@ const SignalV2TriggersBarriers = dynamic(
   }
 );
 
+export function nativeWorkspaceNavigationQueryV1(filters: {
+  date_from?: string | null;
+  date_to?: string | null;
+  conversation_segment?: "all" | "conversation" | "advertising" | "hashtags";
+} | undefined, target: SignalStandardModule): URLSearchParams {
+  const query = new URLSearchParams();
+  if (filters?.date_from) query.set("date_from", filters.date_from);
+  if (filters?.date_to) query.set("date_to", filters.date_to);
+  if ((target === "monitoring" || target === "topics") && filters?.conversation_segment) {
+    query.set("conversation_segment", filters.conversation_segment);
+  }
+  return query;
+}
+
 const CHART_BLUE = "#1689f5";
 const CHART_BLUE_SOFT = "#8fcef9";
 const GRID = "#ebebeb";
@@ -551,14 +565,10 @@ export function SignalV2BrandMonitoring({
 
     const nativeTarget = (target === "monitoring" || target === "topics" || target === "mentions")
       && (viewKey === "all_conversations" || Boolean(mentionsData?.native) || topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1");
-    const query = requestedQuery ?? (nativeTarget ? new URLSearchParams() : buildModuleQuery(window.location.search, data, target));
+    const nativeFilters = currentModule === "mentions" ? mentionsData?.native?.filters
+      : topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? topicsNarrativesData.filters : undefined;
+    const query = requestedQuery ?? (nativeTarget ? nativeWorkspaceNavigationQueryV1(nativeFilters, target) : buildModuleQuery(window.location.search, data, target));
     if (nativeTarget) {
-      if (!requestedQuery) {
-        const filters = currentModule === "mentions" ? mentionsData?.native?.filters
-          : topicsNarrativesData?.contract_version === "signal-workspace-topics-serving-v1" ? topicsNarrativesData.filters : undefined;
-        if (filters?.date_from) query.set("date_from", filters.date_from);
-        if (filters?.date_to) query.set("date_to", filters.date_to);
-      }
       query.set("view", "all_conversations"); query.set("timezone", data.workspace.timezone); query.set("granularity", "day"); query.set("compare", "none");
       query.delete("comparison_start"); query.delete("comparison_end"); query.delete("compareStart"); query.delete("compareEnd");
       if (target !== "mentions" && target !== currentModule) {

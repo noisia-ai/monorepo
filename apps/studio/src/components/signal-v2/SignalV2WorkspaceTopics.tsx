@@ -31,6 +31,17 @@ export function workspaceTermsForSectionV1(data: ComputedTopics, section: "topic
     && (!data.population_segments || item.basis !== "defined_interest"));
 }
 
+/** Relationship links may cross the analyst-interest and topic sections. */
+export function selectWorkspaceTermV1(data: ComputedTopics, key: string,
+  selectSection: (section: NativeTopicSection) => void, selectKey: (key: string) => void): void {
+  const term = data.terms.find(item => item.term_key === key);
+  if (!term) return;
+  const next = term.basis === "defined_interest" && data.population_segments ? "interests"
+    : term.kind === "narrative" ? "narratives" : "topics";
+  selectSection(next);
+  selectKey(key);
+}
+
 type WorkspaceTopicsProps = {
   initialBundle?: SignalWorkspaceTopicReadBundleV1 | null;
   brandName: string;
@@ -180,11 +191,11 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
     return onRefresh ? onRefresh() : filter ? onApplyFilter({ start: filter.date_range.start, end: filter.date_range.end,
       comparisonMode: "none", dimensions: {}, searchQuery: "" }) : false;
   };
-  const select = (key: string) => { setSelectedKey(key); setDrawer(false); };
   const visibleTerms = sectionTerms.slice(0, surface === "summary" ? 10 : termLimit);
   const selectSection = (next: NativeTopicSection) => {
     request.current?.abort(); sequence.current++; setReading(false); setDrawer(false); setSection(next);
   };
+  const select = (key: string) => selectWorkspaceTermV1(data, key, selectSection, setSelectedKey);
   if (surface === "consumers") return <div className="signal-v2-tn signal-v2-tn--workspace">
     <SignalV2ModuleHeader icon={<Quotes size={20} weight="fill" />} title={t("consumers.title")}
       subtitle={t("consumers.scope")} status={t(data.is_current ? "current" : "stale")}

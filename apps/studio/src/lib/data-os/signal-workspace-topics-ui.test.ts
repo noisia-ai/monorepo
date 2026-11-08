@@ -9,7 +9,7 @@ import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, Signal
   SignalWorkspaceDefinedInterestOverviewV1 } from "@noisia/query-engine";
 import { todayForSignalTimezone } from "../../components/signal-v2/SignalAnalyticsFilter";
 import { SignalEvidenceDrawer } from "../../components/signal-v2/SignalEvidenceDrawer";
-import { validInitialTopicBundle, SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
+import { validInitialTopicBundle, SignalV2WorkspaceTopics, SignalWorkspaceTopicDisposition, nativeTopicsVolumeChartV1, workspaceTermsForSectionV1, selectWorkspaceTermV1 } from "../../components/signal-v2/SignalV2WorkspaceTopics";
 import { SignalTopicsRankingCard, SignalTopicsRankingList } from "../../components/signal-v2/SignalTopicsPrimitives";
 import { buildSignalTopicSentimentOption, buildSignalTopicTrendOption } from "../../components/signal-v2/SignalTopicChartOptions";
 Object.assign(globalThis, { React });
@@ -422,4 +422,31 @@ test("the native consumer report renders corrected indicators and keeps legacy r
   const shell = await readFile(new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url), "utf8");
   assert.match(shell, /surface="consumers"/);
   assert.match(shell, /currentModule === "study" && currentStudy && triggersBarriersData/);
+});
+
+test("relationship selection changes section before selecting an interest or topic key", () => {
+  const payload: SignalWorkspaceTopicsOverviewV1 = { ...data,
+    population_segments: { all: 10, conversation: 7, advertising: 2, hashtags: 1 },
+    terms: [...data.terms, { ...data.terms[0]!, term_key: "interest", label: "Synthetic interest", basis: "defined_interest" }],
+  };
+  let section: "topics" | "narratives" | "noise" | "unresolved" | "interests" = "topics";
+  let selected = "topic0";
+  const actions: string[] = [];
+  const choose = (key: string) => selectWorkspaceTermV1(payload, key, next => {
+    section = next; actions.push(`section:${next}`);
+  }, next => {
+    assert.equal(workspaceTermsForSectionV1(payload, section as "topics" | "narratives" | "interests").some(term => term.term_key === next), true);
+    selected = next; actions.push(`key:${next}`);
+  });
+  choose("interest");
+  assert.deepEqual(actions, ["section:interests", "key:interest"]);
+  assert.equal(selected, "interest");
+  actions.length = 0;
+  choose("topic1");
+  assert.deepEqual(actions, ["section:topics", "key:topic1"]);
+  assert.equal(selected, "topic1");
+  actions.length = 0;
+  choose("not-in-authorized-payload");
+  assert.deepEqual(actions, []);
+  assert.equal(selected, "topic1");
 });
