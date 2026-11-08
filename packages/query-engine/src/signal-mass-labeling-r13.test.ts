@@ -62,3 +62,24 @@ test('full-root hashtag flag takes precedence over a selected fragment', () => {
   assert.equal(isConsumerVoiceR13({ text: '#fragment', probabilities, root_hashtag_only: false }), true);
   assert.equal(isConsumerVoiceR13({ text: 'fragment', probabilities, root_hashtag_only: true }), false);
 });
+
+test('new Portuguese classification selects corpus wording while historical and language arms preserve their bytes',()=>{
+  const localization={original_language:'pt-BR',original:{name:'Encontros sociais',definition:'Pessoas descrevem encontros.'},
+    en:{name:'Social gatherings',definition:'People describe gatherings.'},es:{name:'Encuentros sociales',definition:'Personas describen reuniones.'}};
+  const multilingual={...item,candidates:item.candidates.map(candidate=>({...candidate,name:localization.en.name,
+    definition:localization.en.definition,localization}))};
+  const frozen=structuredClone(multilingual);
+  const historicalBytes=JSON.stringify(buildMassLabelingJevRequestV1(multilingual,context));
+  const ptVariant=JSON.stringify(buildR13JevRequest({stage:'language-pt',item:multilingual,category:'cerveja'}));
+  const enVariant=JSON.stringify(buildR13JevRequest({stage:'language-en',item:multilingual,category:'beer'}));
+  const current=buildMassLabelingJevRequestR13(multilingual,context,'cerveja');
+  assert.match(JSON.stringify(current.questions.topic_0),/Encontros sociais/);
+  assert.doesNotMatch(JSON.stringify(current.questions.topic_0),/Social gatherings/);
+  assert.equal(JSON.stringify(buildR13JevRequest({stage:'cost13',item:multilingual,context,category:'cerveja'})),historicalBytes);
+  assert.equal(JSON.stringify(buildR13JevRequest({stage:'language-pt',item:multilingual,category:'cerveja'})),ptVariant);
+  assert.equal(JSON.stringify(buildR13JevRequest({stage:'language-en',item:multilingual,category:'beer'})),enVariant);
+  assert.equal(JSON.stringify(buildMassLabelingJevRequestV1(multilingual,context)),historicalBytes);
+  assert.deepEqual(multilingual,frozen);
+  assert.deepEqual(buildMassLabelingJevRequestR13(item,context,'cerveja').questions.topic_0,
+    buildMassLabelingJevRequestV1(item,context).questions.topic_0);
+});

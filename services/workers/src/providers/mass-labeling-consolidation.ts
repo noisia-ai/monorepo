@@ -53,6 +53,7 @@ export async function sendMassLabelingConsolidationV1(args: {
     workspace_id: args.batch.workspace_id,
     source_engine_execution_id: args.batch.source_engine_execution_id,
     source_groups: args.batch.source_groups,
+    configuration: args.batch.configuration,
   });
   if (
     rebuilt.request_digest !== args.batch.request_digest ||

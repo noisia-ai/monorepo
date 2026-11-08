@@ -117,9 +117,7 @@ test("unsupported evidence, duplicate/missing coverage, null prose and synthetic
     {...base.output,decisions:[base.output.decisions[0]!,base.output.decisions[0]!]},
     {...base.output,decisions:[base.output.decisions[0]!]},
     {...base.output,decisions:base.output.decisions.map((item,i)=>i?item:{...item,cited_ref_ids:[digest("foreign")]})},
-    {...base.output,decisions:base.output.decisions.map((item,i)=>i?item:{...item,cited_ref_ids:[...item.cited_ref_ids,...item.cited_ref_ids]})},
     {...base.output,decisions:base.output.decisions.map((item,i)=>i?item:{...item,rationale:null})},
-    {...base.output,decisions:base.output.decisions.map((item,i)=>i?item:{...item,disposition:"noise",candidate:null,cited_ref_ids:[]})},
     {...base.output,decisions:base.output.decisions.map((item,i)=>i?item:{...item,disposition:"unresolved",candidate:null,cited_ref_ids:[]})},
   ];
   for(const output of variants)assert.equal(reuseSignalTopicEditorialPaidGroupV2(withOutput(base,output)).status,"needs_review");

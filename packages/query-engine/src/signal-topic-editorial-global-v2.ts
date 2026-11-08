@@ -26,7 +26,7 @@ export type SignalTopicEditorialGlobalReviewV2={
 export type SignalTopicEditorialGlobalResultV2={
   contract_version:'signal-topic-editorial-global-result-v2';request_digest:string;
   concepts:Array<{concept_key:string;kind:'topic'|'narrative';label:string;definition:string;locale:string;
-    priority_rank:number;priority_rationale:string;member_group_keys:string[];cited_ref_ids:string[]}>;
+    priority_rank:number;priority_rationale:string;member_group_keys:string[];cited_ref_ids:string[];warnings?:NonNullable<SignalTopicEditorialGroupDecisionV2["warnings"]>}>;
   noise_group_keys:string[];unresolved_group_keys:string[];
 };
 
@@ -78,9 +78,8 @@ export function buildSignalTopicEditorialGlobalReviewV2(args:{units:SignalTopicE
       ||(decision.confidence!==null&&(!Number.isFinite(decision.confidence)
         ||decision.confidence<0||decision.confidence>1)))return fail('topic_editorial_global_decision_invalid');
     const byRef=new Map(request.source_group.evidence.map(item=>[item.ref_id,item]));
-    if(new Set(decision.cited_ref_ids).size!==decision.cited_ref_ids.length
-      ||decision.cited_ref_ids.some(ref=>!byRef.has(ref))
-      ||(decision.disposition!=='unresolved'&&!decision.cited_ref_ids.length))
+    if(decision.cited_ref_ids.some(ref=>!byRef.has(ref))
+      ||decision.disposition!=='unresolved'&&!byRef.size)
       return fail('topic_editorial_global_citation_invalid');
     if(decision.disposition==='noise'){if(decision.candidate!==null)return fail('topic_editorial_global_decision_invalid');
       fixed_noise_group_keys.push(key);continue;}
@@ -133,15 +132,18 @@ export function validateSignalTopicEditorialGlobalResultV2(args:{review:SignalTo
       ||item.member_ids.some(id=>eligible.get(id)?.kind!==item.kind))return fail('topic_editorial_global_members_invalid');
     const members=item.member_ids.map(id=>eligible.get(id)!);
     const allowed=new Set(members.flatMap(member=>member.cited_ref_ids));
-    if(!item.cited_ref_ids.length||new Set(item.cited_ref_ids).size!==item.cited_ref_ids.length
-      ||item.cited_ref_ids.some(ref=>!allowed.has(ref)))return fail('topic_editorial_global_citation_invalid');
+    if(item.cited_ref_ids.some(ref=>!allowed.has(ref)))return fail('topic_editorial_global_citation_invalid');
     if(!validText(item.label)||!validText(item.definition)||!validText(item.priority_rationale))
       return fail('topic_editorial_global_text_invalid');
     const member_group_keys=members.map(member=>member.group_key).sort(cmp);
+    const warnings:NonNullable<SignalTopicEditorialGroupDecisionV2["warnings"]>=[];
+    if(!item.cited_ref_ids.length)warnings.push('references_missing');
+    if(item.cited_ref_ids.length>allowed.size)warnings.push('references_excess');
+    if(new Set(item.cited_ref_ids).size!==item.cited_ref_ids.length)warnings.push('references_repeated');
     concepts.push({concept_key:`${item.kind}-v2-${sha([item.kind,member_group_keys]).slice(7,31)}`,
       kind:item.kind,label:item.label,definition:item.definition,locale:review.default_locale,
       priority_rank:concepts.length+1,priority_rationale:item.priority_rationale,member_group_keys,
-      cited_ref_ids:[...item.cited_ref_ids]});
+      cited_ref_ids:[...item.cited_ref_ids],...(warnings.length?{warnings}:{})});
     assigned.push(...item.member_ids);
   }
   const noise=parsed.data.noise_ids,unresolved=parsed.data.unresolved_ids;
@@ -211,14 +213,14 @@ export type SignalTopicEditorialGlobalCatalogInputV2={contract_version:'signal-t
       source:'model';confidence:number|null;rationale:string|null}>;revision_digest:string}|null;
   concept_metadata:Map<string,{priority_rank:number;priority_rationale:string;global_request_digest:string;cited_ref_ids:string[]}>;
   group_evidence:Array<{group_key:string;status:SignalTopicEditorialGlobalGroupOutcomeV2['status'];concept_key:string|null;
-    cited_ref_ids:string[];rationale:string|null;error_code:string|null}>;
+    cited_ref_ids:string[];rationale:string|null;error_code:string|null;warnings?:NonNullable<SignalTopicEditorialGroupDecisionV2["warnings"]>}>;
   outcome_counts:{topic:number;narrative:number;noise:number;insufficient_evidence:number;technical_error:number};
   blocking_group_keys:string[]};
 const shardOutputSchema=z.object({contract_version:z.literal('signal-topic-editorial-global-shard-result-v2'),
   concepts:z.array(z.object({concept_key:z.string(),kind:z.enum(['topic','narrative']),label:z.string(),definition:z.string(),
-    members:z.array(z.object({group_key:z.string(),cited_ref_ids:z.array(z.string()),rationale:z.string()}).strict())}).strict()),
-  noise:z.array(z.object({group_key:z.string(),cited_ref_ids:z.array(z.string()),rationale:z.string()}).strict()),
-  unresolved:z.array(z.object({group_key:z.string(),cited_ref_ids:z.array(z.string()),rationale:z.string()}).strict()),
+    members:z.array(z.object({group_key:z.string(),cited_ref_ids:z.array(z.string()).default([]),rationale:z.string()}).strict())}).strict()),
+  noise:z.array(z.object({group_key:z.string(),cited_ref_ids:z.array(z.string()).default([]),rationale:z.string()}).strict()),
+  unresolved:z.array(z.object({group_key:z.string(),cited_ref_ids:z.array(z.string()).default([]),rationale:z.string()}).strict()),
 }).strict();
 const mergeOutputSchema=z.object({contract_version:z.literal('signal-topic-editorial-global-merge-result-v2'),
   concepts:z.array(z.object({concept_key:z.string(),kind:z.enum(['topic','narrative']),label:z.string(),definition:z.string(),
@@ -321,11 +323,11 @@ function validUnit(unit:SignalTopicEditorialGlobalUnitV2){
     ||sha(decision.identity)!==sha(request.identity)||decision.evidence_scope!=='cited_evidence_only'||!validText(decision.rationale)
     ||!['topic','narrative','noise','unresolved'].includes(decision.disposition))return fail('topic_editorial_global_decision_invalid');
   const evidence=request.source_group.evidence,refs=new Set(evidence.map(item=>item.ref_id));
-  if(new Set(decision.cited_ref_ids).size!==decision.cited_ref_ids.length||decision.cited_ref_ids.some(ref=>!refs.has(ref)))
+  if(decision.cited_ref_ids.some(ref=>!refs.has(ref))||decision.disposition!=='unresolved'&&!refs.size)
     return fail('topic_editorial_global_citation_invalid');
   if(decision.disposition==='topic'||decision.disposition==='narrative'){
     if(!decision.candidate||decision.candidate.locale!==request.source_context.default_locale||!validText(decision.candidate.label)
-      ||!validText(decision.candidate.definition)||!decision.cited_ref_ids.length)return fail('topic_editorial_global_decision_invalid');
+      ||!validText(decision.candidate.definition))return fail('topic_editorial_global_decision_invalid');
   }else if(decision.candidate!==null)return fail('topic_editorial_global_decision_invalid');
   return {group_key:key,technical_error_code:null};
 }
@@ -410,8 +412,7 @@ export function validateSignalTopicEditorialGlobalShardResultV2(args:{shard:Sign
     const members=concept.members.map(member=>{
       const group=byKey.get(member.group_key);if(!group)return fail('topic_editorial_global_shard_member_invalid');
       const refs=new Set(group.evidence.map(evidence=>evidence.ref_id));
-      if(!validText(member.rationale)||!member.cited_ref_ids.length||new Set(member.cited_ref_ids).size!==member.cited_ref_ids.length
-        ||member.cited_ref_ids.some(ref=>!refs.has(ref)))return fail('topic_editorial_global_shard_citation_invalid');
+      if(!validText(member.rationale)||!refs.size||member.cited_ref_ids.some(ref=>!refs.has(ref)))return fail('topic_editorial_global_shard_citation_invalid');
       assigned.push(member.group_key);return {group_key:member.group_key,cited_ref_ids:[...member.cited_ref_ids].sort(cmp),rationale:member.rationale,
         community_key:group.community_key,neighbors:group.neighbors};
     }).sort((a,b)=>cmp(a.group_key,b.group_key));
@@ -421,8 +422,7 @@ export function validateSignalTopicEditorialGlobalShardResultV2(args:{shard:Sign
   const classify=(items:typeof parsed.data.noise,kind:'noise'|'unresolved')=>items.map(item=>{
     const group=byKey.get(item.group_key);if(!group||!validText(item.rationale))return fail('topic_editorial_global_shard_member_invalid');
     const refs=new Set(group.evidence.map(evidence=>evidence.ref_id));
-    if(new Set(item.cited_ref_ids).size!==item.cited_ref_ids.length||item.cited_ref_ids.some(ref=>!refs.has(ref))
-      ||kind==='noise'&&!item.cited_ref_ids.length)return fail('topic_editorial_global_shard_citation_invalid');
+    if(item.cited_ref_ids.some(ref=>!refs.has(ref))||kind==='noise'&&!refs.size)return fail('topic_editorial_global_shard_citation_invalid');
     assigned.push(item.group_key);return {group_key:item.group_key,cited_ref_ids:[...item.cited_ref_ids].sort(cmp),rationale:item.rationale};
   }).sort((a,b)=>cmp(a.group_key,b.group_key));
   const noise=classify(parsed.data.noise,'noise'),unresolved=classify(parsed.data.unresolved,'unresolved');
@@ -442,9 +442,8 @@ export function repairSignalTopicEditorialGlobalShardFormattingV2(args:{shard:Si
   let removed=0,merged=0;
   const citations=(key:string,refs:string[],required:boolean):string[]|null=>{
     const allowed=byKey.get(key);if(!allowed)return null;
-    const valid=refs.filter(ref=>allowed.has(ref));removed+=refs.length-valid.length;
-    if((required&&!valid.length)||new Set(valid).size!==valid.length)return null;
-    return valid;
+    if(refs.some(ref=>!allowed.has(ref))||required&&!allowed.size)return null;
+    return refs;
   };
   const concepts=[] as typeof parsed.data.concepts;
   for(const concept of parsed.data.concepts){
@@ -507,7 +506,7 @@ export function buildSignalTopicEditorialGlobalMergeReviewsV2(args:{shards?:Sign
     ||node.priority_rank!==null&&(!Number.isSafeInteger(node.priority_rank)||node.priority_rank<1)
     ||!Array.isArray(node.source_concept_keys)||!node.source_concept_keys.length
     ||!Array.isArray(node.members)||!node.members.length||node.members.some(member=>!member.group_key
-      ||!Array.isArray(member.cited_ref_ids)||!member.cited_ref_ids.length||!validText(member.rationale)))
+      ||!Array.isArray(member.cited_ref_ids)||!validText(member.rationale)))
     ||new Set(nodes.map(node=>node.concept_key)).size!==nodes.length
     ||new Set(nodes.flatMap(node=>node.members.map(member=>member.group_key))).size!==nodes.reduce((n,node)=>n+node.members.length,0))
     return fail('topic_editorial_global_merge_lineage_invalid');
@@ -824,8 +823,8 @@ export function buildSignalTopicEditorialGlobalCatalogInputV2(args:{snapshot_dig
       ||outcome.concept_key!==null||outcome.cited_ref_ids.length||outcome.rationale!==null)
       return fail('topic_editorial_global_catalog_technical_error');continue;}
     if(outcome.status==='technical_error'||outcome.error_code!==null||!validText(outcome.rationale??'')
-      ||new Set(outcome.cited_ref_ids).size!==outcome.cited_ref_ids.length||outcome.cited_ref_ids.some(ref=>!refs.has(ref))
-      ||(['topic','narrative','noise'].includes(outcome.status)&&!outcome.cited_ref_ids.length)
+      ||outcome.cited_ref_ids.some(ref=>!refs.has(ref))
+      ||(['topic','narrative','noise'].includes(outcome.status)&&!refs.size)
       ||(['noise','insufficient_evidence'].includes(outcome.status)&&outcome.concept_key!==null))
       return fail('topic_editorial_global_catalog_evidence_invalid');}
   const concepts=args.root_concepts.map(concept=>({concept_key:concept.concept_key,kind:concept.kind,label:concept.label,
@@ -854,8 +853,15 @@ export function buildSignalTopicEditorialGlobalCatalogInputV2(args:{snapshot_dig
   const concept_metadata=new Map(args.root_concepts.map(concept=>[concept.concept_key,{priority_rank:concept.priority_rank!,
     priority_rationale:concept.priority_rationale!,global_request_digest,
     cited_ref_ids:[...new Set(concept.members.flatMap(member=>member.cited_ref_ids))].sort(cmp).slice(0,16)}]));
-  const group_evidence=projected.map(item=>({group_key:item.group_key,status:item.status,concept_key:item.concept_key,
-    cited_ref_ids:[...item.cited_ref_ids],rationale:item.rationale,error_code:item.error_code}));
+  const group_evidence=projected.map(item=>{
+    const maximum=original.get(item.group_key)!.request.source_group.evidence.length;
+    const warnings:NonNullable<SignalTopicEditorialGroupDecisionV2["warnings"]>=[];
+    if(['topic','narrative','noise'].includes(item.status)&&!item.cited_ref_ids.length)warnings.push('references_missing');
+    if(item.cited_ref_ids.length>maximum)warnings.push('references_excess');
+    if(new Set(item.cited_ref_ids).size!==item.cited_ref_ids.length)warnings.push('references_repeated');
+    return {group_key:item.group_key,status:item.status,concept_key:item.concept_key,cited_ref_ids:[...item.cited_ref_ids],
+      rationale:item.rationale,error_code:item.error_code,...(warnings.length?{warnings}:{})};
+  });
   if(blocking_group_keys.length)return {contract_version:'signal-topic-editorial-global-catalog-input-v2',snapshot_digest:args.snapshot_digest,
     global_request_digest,complete:true,ready_to_materialize:false,revision:null,concept_metadata,group_evidence,outcome_counts,blocking_group_keys};
   const body={contract_version:'signal-topic-consolidation-revision-v1' as const,revision:args.revision,concepts,decisions};

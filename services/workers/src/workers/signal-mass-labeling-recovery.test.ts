@@ -65,6 +65,7 @@ function raw(
   batch: SignalWorkspaceInterpretationBatchV1,
   missingTopReference = false,
   missingStatus: "mixed" | "coherent" = "mixed",
+  foreignReference = false,
 ) {
   const output = {
     interpretations: batch.clusters.map((g, n) => ({
@@ -75,7 +76,7 @@ function raw(
       definition: "Conversas sobre experiências de consumo.",
       citations:
         missingTopReference && n === 0
-          ? []
+          ? foreignReference ? ["r99"] : []
           : g.representatives.map((_, r) => `r${r + 1}`),
       inclusion: [
         {
@@ -226,7 +227,7 @@ for (const scenario of cases)
         interpretation_revision_digest: null,
         editorial_repair: batch.editorial_repair ?? null,
         response: {
-          ...storeBytes(raw(batch, invalid, missingStatus)),
+          ...storeBytes(raw(batch, invalid, missingStatus, invalid && !scenario.operatorInsufficient && !scenario.exactDuplicate)),
           http_status: 200,
           provider_request_id: "req_synthetic",
           complete: true,
@@ -579,7 +580,7 @@ for (const scenario of cases)
               ...a,
               api_key: "synthetic-key-for-unit-test",
               fetch_impl: async () =>
-                new Response(raw(a.batch, scenario.invalidRepair), {
+                new Response(raw(a.batch, scenario.invalidRepair, "mixed", scenario.invalidRepair), {
                   status: 200,
                 }),
             }),
@@ -611,11 +612,14 @@ for (const scenario of cases)
         assert.equal(checkpointCalls.includes(last.call_id), true);
         assert.equal(checkpointCalls.includes(existingRepair!.call_id), false);
         assert.equal(duplicateExceptionOpen, false);
+      } else if (scenario.exactDuplicate === "wrong_hash" || scenario.exactDuplicate === "online") {
+        await assert.rejects(run(scenario.exactDuplicate !== "online"), /exception_invalid/u);
+        assert.equal(checkpointed.size, scenario.exactDuplicate === "online" ? 12 : 8); assert.equal(normalizations.length, 0);
       } else {
-        await assert.rejects(run(scenario.exactDuplicate !== "online"),
-          scenario.exactDuplicate === "wrong_hash" ? /exception_invalid/u : /output_invalid/u);
-        assert.equal(checkpointed.size, 8);
-        assert.equal(normalizations.length, 0);
+        // The already paid repair is usable with an advisory missing-reference warning.
+        await run(true);
+        assert.equal(checkpointed.size, 12); assert.equal(normalizations.length, 0);
+        assert.ok(checkpointCalls.includes(existingRepair!.call_id));
       }
       assert.equal(JSON.stringify([...calls.values()]), initialLedger);
       for (const [key, bytes] of initialRawFiles) assert.equal(files.get(key)!.toString("hex"), bytes);

@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as config, signalWorkspaceEmbeddingDigestV1 as digest } from "@noisia/query-engine";
+import { SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1 as config, signalWorkspaceEmbeddingDigestV1 as digest } from "@noisia/query-engine";
 import { SignalWorkspaceEngineError } from "@noisia/db";
 
 export type IncrementalEditorialQuoteSource = {

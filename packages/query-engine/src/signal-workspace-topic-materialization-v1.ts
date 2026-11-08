@@ -59,7 +59,7 @@ export function mergeSignalWorkspaceTopicMaterializationV1(args: {
     const result = parseSignalWorkspaceInterpretationV1(proposal.result, args.interpretation_configuration);
     if (!z.string().uuid().safeParse(proposal.artifact_id).success || seen.has(result.cluster_id)) throw new Error("workspace_engine_materialization_proposal_invalid");
     seen.add(result.cluster_id);
-    if (result.status !== "insufficient" && (!result.name || !result.definition || !result.citations.length)) throw new Error("workspace_engine_materialization_evidence_missing");
+    if (result.status !== "insufficient" && (!result.name || !result.definition)) throw new Error("workspace_engine_materialization_evidence_missing");
     let definition = byUnit.get(result.cluster_id);
     if (!definition) {
       const term_key = signalWorkspaceMaterializedTopicKeyV1(result.cluster_id);
@@ -67,6 +67,7 @@ export function mergeSignalWorkspaceTopicMaterializationV1(args: {
       const fallback = result.name === null || result.definition === null ? insufficientInterpretationText(locale) : null;
       const draft = {
         term_key, label: result.name ?? fallback!.label, definition: result.definition ?? fallback!.definition,
+        ...(result.localization ? { localization: result.localization } : {}),
         scope: "all_conversations" as const, inclusion: result.inclusion.map(row => row.text), exclusion: result.exclusion.map(row => row.text),
         positive_examples: [], negative_examples: [], lifecycle: "draft" as const, origin: "workspace_discovery" as const,
         discovery_guidance: false, source: { run_key: `workspace-engine:${args.execution_id}`, candidate_key: result.cluster_id, candidate_digest: result.cluster_digest },

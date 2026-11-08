@@ -242,7 +242,7 @@ export const signalTopicEditorialScreeningOutputSchemaV1=z.object({
   contract_version:z.literal("signal-topic-editorial-screening-output-v1"),batch_index:z.number().int().nonnegative(),
   decisions:z.array(z.object({group_key:z.string(),disposition:z.enum(["topic","narrative","noise","unresolved"]),
     candidate:z.object({candidate_key:z.string(),label:z.string(),definition:z.string(),locale:z.string()}).strict().nullable(),
-    confidence:z.number().min(0).max(1).nullable(),rationale:z.string().nullable(),cited_ref_ids:z.array(z.string())}).strict()),
+    confidence:z.number().min(0).max(1).nullable(),rationale:z.string().nullable(),cited_ref_ids:z.array(z.string()).default([]),warnings:z.array(z.enum(["references_missing","references_excess","references_repeated"])).max(3).optional()}).strict()),
 }).strict();
 export type SignalTopicEditorialScreeningOutputV1=z.infer<typeof signalTopicEditorialScreeningOutputSchemaV1>;
 
@@ -261,8 +261,7 @@ export function quarantineSignalTopicEditorialUnsupportedCitationsV1(
   let quarantined=0;
   const decisions=parsed.data.decisions.map(item=>{
     const allowed=receipts.get(item.group_key)!;
-    const unsupported=item.cited_ref_ids.some(ref=>!allowed.has(ref))
-      ||(item.disposition==="topic"||item.disposition==="narrative")&&item.cited_ref_ids.length===0;
+    const unsupported=item.cited_ref_ids.some(ref=>!allowed.has(ref));
     if(!unsupported)return item;
     quarantined++;
     return {...item,disposition:"unresolved" as const,candidate:null,confidence:null,
@@ -303,14 +302,19 @@ export function validateSignalTopicEditorialScreeningOutputV1(batch:SignalTopicE
     if(candidate&&(!keyPattern.test(candidate.candidate_key)||!candidate.candidate_key.startsWith(candidatePrefix)))
       return fail("topic_editorial_output_target_invalid");
     const receipt=receipts.get(decision.group_key),allowed=new Set(receipt?.evidence_ref_ids??[]),
-      citations=strings(decision.cited_ref_ids,"topic_editorial_output_citation_invalid",10,71);
-    if(!receipt||citations.some(ref=>!digestPattern.test(ref)||!allowed.has(ref))||publishable&&citations.length<1)
+      citations=decision.cited_ref_ids.map(ref=>bounded(ref,"topic_editorial_output_citation_invalid",71));
+    if(!receipt||citations.some(ref=>!digestPattern.test(ref)||!allowed.has(ref))||publishable&&!allowed.size)
       return fail("topic_editorial_output_citation_invalid");
     if(candidate&&candidate.locale!==receipt.expected_locale)return fail("topic_editorial_output_locale_invalid");
     // Screening rationale is private review evidence, not final Signal copy.
     // Keep one compact explanatory paragraph bounded without rejecting valid
     // coverage and citations solely because UTF-8 prose exceeds 160 bytes.
-    return {...decision,candidate,rationale:decision.rationale===null?null:bounded(decision.rationale,"topic_editorial_output_invalid",512),
+    const warnings: NonNullable<typeof decision.warnings> = [];
+    if(publishable&&!citations.length)warnings.push("references_missing");
+    if(citations.length>10)warnings.push("references_excess");
+    if(new Set(citations).size!==citations.length)warnings.push("references_repeated");
+    const preserved={...decision};delete preserved.warnings;
+    return {...preserved,...(warnings.length?{warnings}:{}),candidate,rationale:decision.rationale===null?null:bounded(decision.rationale,"topic_editorial_output_invalid",512),
       cited_ref_ids:citations};
   }).sort((a,b)=>ascii(a.group_key,b.group_key));
   return {...parsed.data,decisions};

@@ -1,6 +1,6 @@
 import {randomUUID,createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
+import {SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,signalWorkspaceEmbeddingDigestV1 as digest} from '@noisia/query-engine';
 import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1,loadSignalWorkspaceEngineInputIdentityV1,isSignalWorkspaceEngineSemanticAuthorityUnavailableV1,type SignalWorkspaceEngineDatabaseV1} from './signal-workspace-engine';
 import {admitSignalProcessingWithClientV1} from './signal-processing-policy';
 import {discoveryStrictCapV1} from './signal-workspace-discovery-policy';
@@ -159,7 +159,7 @@ export async function beginSignalWorkspaceIncrementalEditorialWithClientV1(clien
    context_digest:numeric.input_snapshot.context_digest,catalog_input_digest:numeric.input_snapshot.catalog_digest,
    model_bank_artifact_id:numeric.checkpoint.model_bank_artifact_id,model_bank_sha256:numeric.bank_sha256,census_derivation_digest:numeric.census,
    expected_units:preview.expected_units,target_units:preview.target_units,target_unit_digest:preview.target_unit_digest,history_cut_digest:preview.history_cut_digest,
-   interpretation_configuration:SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,budget_policy:numeric.policy,
+   interpretation_configuration:SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,budget_policy:numeric.policy,
    budget_actor_user_id:numeric.actor_user_id,authorized_by_user_id:args.actor_user_id,claude_cap_micro_usd:strictCap};
   const plan=(await client.query<{metadata:{evidence_digest:string}}>('SELECT metadata FROM analysis_artifacts WHERE id=$1::uuid',[expected_evidence_plan_artifact_id])).rows[0]!;
   const sealedSnapshot={...snapshot,evidence_plan_artifact_id:expected_evidence_plan_artifact_id,evidence_digest:plan.metadata.evidence_digest,target_binding_digest:preview.target_binding_digest};

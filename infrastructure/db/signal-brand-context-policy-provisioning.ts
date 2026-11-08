@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1,
-  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 } from "@noisia/query-engine";
+  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1 } from "@noisia/query-engine";
 import { signalSemanticContextProposalRuntimeConfigurationFromEnvV1 } from "./signal-semantic-context-proposal";
 import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 
@@ -199,7 +199,7 @@ export async function provisionSignalBrandContextPolicyV1(args: {
         VALUES($1::uuid,'topic_interpretation','provider','anthropic',$2,$3::jsonb,
           signal_semantic_context_digest_json_v2($3::jsonb),NULL,false)
         ON CONFLICT(policy_version_id,action) DO NOTHING`,
-        [policy.id,SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1.model,JSON.stringify(SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1)]);
+        [policy.id,SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1.model,JSON.stringify(SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1)]);
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1::uuid,'topic_consolidation','provider','anthropic','claude-sonnet-4-6',signal_topic_editorial_configuration_v2(),

@@ -79,7 +79,6 @@ test("output must account for every cluster exactly once and cite only its own e
   for (const invalid of [
     [good[0]], [good[0], good[0]], [good[0], { ...good[1], cluster_digest: sha("wrong") }],
     [good[0], { ...good[1], citations: good[0]!.citations }],
-    [good[0], { ...good[1], inclusion: [{ text: "Unsupported", citations: [] }] }],
     [good[0], { ...good[1], percentage: 99 }], [good[0], { ...good[1], approved: true }],
   ]) assert.throws(() => validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: invalid }), /output|citation/u);
 });
@@ -168,9 +167,9 @@ test("short citation labels resolve only within the exact sealed group and never
     assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, changed), /citation|output_invalid/u);
   }
   const missing = structuredClone(wire); missing.interpretations[0]!.citations = [];
-  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, missing), /evidence_missing/u);
+  assert.equal(decodeSignalWorkspaceInterpretationProviderResultV1(batch, missing)[0]!.warnings?.[0]?.code, "references_missing");
   const duplicate = structuredClone(wire); duplicate.interpretations[0]!.citations = ["r1", "r1"];
-  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, duplicate), /output_invalid/u);
+  assert.equal(decodeSignalWorkspaceInterpretationProviderResultV1(batch, duplicate)[0]!.warnings?.[0]?.code, "references_repeated");
   const extra = { interpretations: [{ ...wire.interpretations[0], approved: true }, wire.interpretations[1]] };
   assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, extra), /output_invalid/u);
   const historical = buildSignalWorkspaceInterpretationBatchV1(context, [a], legacyOpus);
@@ -178,7 +177,7 @@ test("short citation labels resolve only within the exact sealed group and never
     a.representatives.map(ref => ref.ref_id));
 });
 
-test("pilot receipts keep thirty distinct references per field while historical profiles keep ten", async () => {
+test("pilot and historical reference counts are advisory while sealed membership stays exact", async () => {
   const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot,
     parseSignalWorkspaceInterpretationV1 } = await import("./signal-workspace-interpretation-v1.js");
   const group = cluster(1, "guided");
@@ -199,16 +198,14 @@ test("pilot receipts keep thirty distinct references per field while historical 
   const materialization={prior:[],interpretations:[{result:decoded[0]!,artifact_id:context.workspace_id}],
     execution_id:context.execution_id,now:"2026-11-07T00:00:00.000Z",locale:"pt-BR"};
   assert.equal(mergeSignalWorkspaceTopicMaterializationV1({...materialization,interpretation_configuration:pilot}).topic_count,1);
-  assert.throws(()=>mergeSignalWorkspaceTopicMaterializationV1(materialization),/output_invalid/u);
-  assert.throws(() => parseSignalWorkspaceInterpretationV1(decoded[0]), /output_invalid/u);
+  assert.equal(mergeSignalWorkspaceTopicMaterializationV1(materialization).topic_count, 1);
+  assert.equal(parseSignalWorkspaceInterpretationV1(decoded[0]).warnings?.[0]?.code, "references_excess");
   assert.equal(JSON.stringify(wire), raw);
   assert.equal(batch.request_digest, requestDigest);
   for (const change of [
     { citations: [...labels, "r31"] },
-    { citations: [...labels.slice(0, 29), "r1"] },
     { citations: ["r31"] },
     { cluster_digest: sha("another sealed group") },
-    { citations: [] },
   ]) assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch,
     { interpretations: [{ ...wire.interpretations[0], ...change }] }), /output|citation|evidence/u);
   const shorter = { ...group, representatives: group.representatives.slice(0, 20) };
@@ -236,7 +233,7 @@ test("operator insufficiency applies only to one pilot mixed group with missing 
     { interpretations: [wire.interpretations[1]] })[0]);
   assert.equal(JSON.stringify(wire), bytes);
   assert.equal(batch.request_digest, digest);
-  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, wire), /evidence_missing/u);
+  assert.equal(decodeSignalWorkspaceInterpretationProviderResultV1(batch, wire)[0]!.warnings?.[0]?.code, "references_missing");
   assert.throws(() => decide(batch, wire, groups[1]!.cluster_id), /insufficiency_decision_invalid/u);
   assert.throws(() => decide(batch, wire, "guided:unknown"), /insufficiency_decision_invalid/u);
   const historical = buildSignalWorkspaceInterpretationBatchV1(context, [cluster(1)]);
@@ -244,7 +241,7 @@ test("operator insufficiency applies only to one pilot mixed group with missing 
   for (const change of [
     { status: "coherent" }, { status: "insufficient" }, { citations: ["r1"] },
     { cluster_digest: sha("another group") }, { inclusion: [{ text: "Foreign", citations: ["r31"] }] },
-    { inclusion: [{ text: "Duplicate", citations: ["r1", "r1"] }] }, { name: null }, { definition: null },
+    { name: null }, { definition: null },
     { extra: true },
   ]) {
     const invalid = structuredClone(wire);
@@ -252,7 +249,7 @@ test("operator insufficiency applies only to one pilot mixed group with missing 
     assert.throws(() => decide(batch, invalid, groups[0]!.cluster_id));
   }
   const invalidSibling = structuredClone(wire); invalidSibling.interpretations[1]!.citations = [];
-  assert.throws(() => decide(batch, invalidSibling, groups[0]!.cluster_id), /evidence_missing/u);
+  assert.equal(decide(batch, invalidSibling, groups[0]!.cluster_id)[1]!.warnings?.[0]?.code, "references_missing");
 });
 
 test("insufficiency recovery binds both source envelopes and uses the repaired sibling", async () => {
@@ -317,8 +314,8 @@ test("a recorded insufficiency decision accepts mixed/coherent receipts and reje
       assert.throws(() => recover(args), /insufficiency_decision_invalid/u);
       continue;
     }
-    assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(original, sourceOutput), /evidence_missing/u);
-    assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, repairedOutput), /evidence_missing/u);
+    assert.equal(decodeSignalWorkspaceInterpretationProviderResultV1(original, sourceOutput)[0]!.warnings?.[0]?.code, "references_missing");
+    assert.equal(decodeSignalWorkspaceInterpretationProviderResultV1(batch, repairedOutput)[0]!.warnings?.[0]?.code, "references_missing");
     const recovered = recover(args);
     assert.deepEqual(recovered[0], { cluster_id: groups[0]!.cluster_id, cluster_digest: groups[0]!.cluster_digest,
       status: "insufficient", name: null, definition: null, inclusion: [], exclusion: [], citations: [] });
@@ -368,8 +365,52 @@ test("offline exact-copy recovery retains four complete original interpretations
     { interpretations: [...rows, { ...rows[0], cluster_id: "guided:foreign" }] },
     { ...output, extra: true },
   ]) assert.throws(() => recover(batch, invalid), /exact_duplicate_recovery_invalid/u);
-  for (const change of [{ citations: [] }, { citations: ["r31"] }, { cluster_digest: sha("different group") }]) {
+  for (const change of [{ citations: ["r31"] }, { cluster_digest: sha("different group") }]) {
     const invalid = structuredClone(output); Object.assign(invalid.interpretations[0]!, change);
     assert.throws(() => recover(batch, invalid), /evidence|citation|identity/u);
   }
+});
+
+test("missing and more than thirty valid references persist advisory warnings without modifying provider bytes", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot } = await import("./signal-workspace-interpretation-v1.js");
+  const group = cluster(1), batch = buildSignalWorkspaceInterpretationBatchV1(context, [group], pilot);
+  const output = { interpretations: [{ ...answer(group), citations: Array.from({ length: 61 }, () => "r1"),
+    inclusion: [{ text: "Observed experience", citations: [] }], exclusion: [] }] };
+  const bytes = JSON.stringify(output);
+  const result = decodeSignalWorkspaceInterpretationProviderResultV1(batch, output)[0]!;
+  assert.equal(result.citations.length, 61);
+  assert.ok(result.warnings?.some(warning => warning.code === "references_excess" && warning.count === 61));
+  assert.ok(result.warnings?.some(warning => warning.code === "references_missing" && warning.field === "inclusion.0.citations"));
+  assert.equal(JSON.stringify(output), bytes);
+  const missing = { interpretations: [{ ...answer(group), citations: undefined, inclusion: [{ text: "Observed experience" }], exclusion: [] }] };
+  assert.equal(decodeSignalWorkspaceInterpretationProviderResultV1(batch, missing)[0]!.warnings?.length, 2);
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch,
+    { interpretations: [{ ...output.interpretations[0], citations: ["r2"] }] }), /citation_invalid/);
+});
+
+test("multilingual editorial profiles validate English canonical wording and retain corpus originals through materialization", async () => {
+  const { SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1: multilingual } = await import("./signal-workspace-interpretation-v1.js");
+  const { mergeSignalWorkspaceTopicMaterializationV1 } = await import("./signal-workspace-topic-materialization-v1.js");
+  const group = cluster(1), historical = buildSignalWorkspaceInterpretationBatchV1(context, [group]);
+  const batch = buildSignalWorkspaceInterpretationBatchV1(context, [group], multilingual);
+  const localization = { original_language: "pt-BR", original: { name: "Experiências de entrega", definition: "Pessoas descrevem experiências de entrega." },
+    en: { name: "Delivery experiences", definition: "People describe delivery experiences." },
+    es: { name: "Experiencias de entrega", definition: "Personas describen experiencias de entrega." } };
+  const wire = { interpretations: [{ ...answer(group), name: localization.en.name, definition: localization.en.definition,
+    localization, citations: [], inclusion: [] }] };
+  const parsed = decodeSignalWorkspaceInterpretationProviderResultV1(batch, wire);
+  assert.deepEqual(parsed[0]!.localization, localization);
+  const materialized = mergeSignalWorkspaceTopicMaterializationV1({ prior: [], interpretations: [{ result: parsed[0]!, artifact_id: context.workspace_id }],
+    execution_id: context.execution_id, now: "2026-11-08T00:00:00.000Z", locale: "pt-BR", interpretation_configuration: multilingual });
+  assert.equal(materialized.definitions[0]!.label, localization.en.name);
+  assert.deepEqual(materialized.definitions[0]!.localization, localization);
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch,
+    { interpretations: [{ ...wire.interpretations[0], localization: undefined }] }), /localization_missing/);
+  assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch,
+    { interpretations: [{ ...wire.interpretations[0], name: localization.original.name }] }), /localization_invalid/);
+  assert.equal(JSON.parse(historical.request_body).output_config.format.schema.properties.interpretations.items.properties.localization, undefined);
+  assert.ok(JSON.parse(batch.request_body).output_config.format.schema.properties.interpretations.items.required.includes("localization"));
+  assert.equal(JSON.parse(batch.request_body).max_tokens,16384);
+  assert.equal(JSON.parse(historical.request_body).max_tokens,8192);
+  assert.deepEqual(buildSignalWorkspaceInterpretationBatchV1(context, [group]).request_body, historical.request_body);
 });

@@ -13,7 +13,7 @@ import {signalWorkspaceFeatureEnabledV1,signalWorkspaceFeatureEnabledWithDatabas
 import { loadSignalDiscoveryResidualRootsV1, buildSignalWorkspaceIncrementalDescriptorWithClientV1, readSignalWorkspaceNumericRecoveryWithQueryableV1, type SignalWorkspaceIncrementalDescriptorV1 } from "./signal-workspace-engine-incremental";
 import { createHash, randomUUID } from "node:crypto";
 import { assertSignalWorkspaceEmbeddingProfileV1, signalWorkspaceEmbeddingDigestV1, buildSignalWorkspaceTopicPrototypePlanV1,
-  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
+  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, parseSignalWorkspaceInterpretationConfigurationV1,
   signalTopicDefinitionSchemaV1, signalTopicGuidesDiscoveryV1, signalWorkspaceInterpretationUniverseDigestV1,
   signalWorkspaceMassLabelingConfigV3, isSignalWorkspaceMassLabelingConfigV1,
   type SignalWorkspaceEmbeddingProfileV1 } from "@noisia/query-engine";
@@ -583,7 +583,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
         || signalWorkspaceEmbeddingDigestV1(args.engine_config) !== signalWorkspaceEmbeddingDigestV1(signalWorkspaceMassLabelingConfigV3(embedded.counts.eligible_roots))))
       return fail('workspace_engine_profile_invalid', 422);
     if (pilot && args.interpretation_config && ![
-      SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1,
+      SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1,
     ].some(configuration => signalWorkspaceEmbeddingDigestV1(args.interpretation_config!.call_configuration)
       === signalWorkspaceEmbeddingDigestV1(configuration)))
       return fail('workspace_engine_interpretation_config_invalid', 422);
@@ -1340,7 +1340,7 @@ export async function reviseSignalWorkspaceEngineInterpretationV1(args:{database
  execution_id:string;idempotency_key:string;source_call_id:string;configuration:SignalWorkspaceEngineAnalysisConfigV1;admission_not_after:string}):Promise<{execution_id:string;revision_digest:string;replayed:boolean}>{
  if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(args.admission_not_after))return fail('workspace_engine_revision_invalid',422);
  const profile=parseSignalWorkspaceInterpretationConfigurationV1(args.configuration.call_configuration);
- if(signalWorkspaceEmbeddingDigestV1(profile)!==signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1))return fail('workspace_engine_revision_model_invalid',422);
+ if(![SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1].some(known=>signalWorkspaceEmbeddingDigestV1(profile)===signalWorkspaceEmbeddingDigestV1(known)))return fail('workspace_engine_revision_model_invalid',422);
  const requestDigest=signalWorkspaceEmbeddingDigestV1({action:'revise_interpretation',execution_id:args.execution_id,source_call_id:args.source_call_id,
   configuration:args.configuration,admission_not_after:args.admission_not_after});
  return transaction(args.database,async client=>{await authorize(client,args.workspace_id,args.actor_user_id);

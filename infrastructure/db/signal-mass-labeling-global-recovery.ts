@@ -40,7 +40,7 @@ async function binding(client:Pick<PoolClient,"query">,scope:Scope&{call_id:stri
 }
 function proof(row:Awaited<ReturnType<typeof binding>>,scope:Scope&{call_id:string},args:{batch:MassLabelingConsolidationBatchV1;raw_response:string;decision:unknown}){
  if(Buffer.byteLength(args.raw_response)>2*1024*1024||sha(args.raw_response)!==row.response_sha256||Buffer.byteLength(args.raw_response)!==Number(row.response_size_bytes))fail();
- const batch=buildMassLabelingConsolidationRequestV1({workspace_id:scope.workspace_id,source_engine_execution_id:scope.execution_id,source_groups:args.batch.source_groups});
+ const batch=buildMassLabelingConsolidationRequestV1({workspace_id:scope.workspace_id,source_engine_execution_id:scope.execution_id,source_groups:args.batch.source_groups,configuration:args.batch.configuration});
  if(digest(batch)!==digest(args.batch)||batch.request_digest!==row.request_digest||batch.source_groups_digest!==row.source_groups_digest
   ||digest(batch.configuration)!==digest(row.call_configuration))fail();
  const decision=parseMassLabelingConsolidationRecoveryDecisionV1(args.decision);

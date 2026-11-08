@@ -313,7 +313,7 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     const importedLocalizations = (await client.query<{topic_key:string;localization:SignalTopicLocalizationV1}>(
       "SELECT topic_key,localization FROM signal_mass_labeling_localizations WHERE workspace_id=$1 AND map_id=$2",
       [args.workspace_id,mass.map.id])).rows;
-    for (const row of importedLocalizations) localizations.set(row.topic_key,row.localization);
+    for (const row of importedLocalizations) if (!localizations.has(row.topic_key)) localizations.set(row.topic_key,row.localization);
     const interests = (await client.query<{interest_key:string;name:string;definition:string;localization:SignalTopicLocalizationV1|null}>(
       `SELECT interest.interest_key,interest.name,interest.definition,interest.localization FROM signal_mass_labeling_r13_interests interest
        JOIN signal_mass_labeling_r13_interest_results result ON result.workspace_id=interest.workspace_id

@@ -23,14 +23,17 @@ export function massLabelingJevIdentityR13(category: string): LabelerIdentity {
   const trigger_barrier = buildTriggerBarrierR13('pt', category);
   return {
     kind: 'mass_labeling', provider: 'typesafe', model: 'jev-1.13.0',
-    prompt_digest: signalWorkspaceEmbeddingDigestV1({ version: 'mass-labeling-r13', language: 'pt', trigger_barrier, inherited_prompt_digest: massLabelingJevIdentityV1().prompt_digest }),
+    prompt_digest: signalWorkspaceEmbeddingDigestV1({ version: 'mass-labeling-r13', language: 'pt', candidate_wording: 'corpus-original-v1', trigger_barrier, inherited_prompt_digest: massLabelingJevIdentityV1().prompt_digest }),
     schema_digest: signalWorkspaceEmbeddingDigestV1({ version: 'mass-labeling-r13', questions: ['promotion', 'spam', 'voice', 'trigger_barrier', 'topic_noul_per_candidate'], relevance: 'retired' }),
-    params: { request_version: 'mass-labeling-r13', category, language: 'pt', input_usd_per_mtok: 0.042, positive: 0.7, negative: 0.3 },
+    params: { request_version: 'mass-labeling-r13', category, language: 'pt', candidate_wording: 'corpus-original-v1', input_usd_per_mtok: 0.042, positive: 0.7, negative: 0.3 },
   };
 }
 
 export function buildMassLabelingJevRequestR13(input: MassLabelingInputV1, context: EntityContextV1, category: string): JevRequestV1 {
-  const request = buildMassLabelingJevRequestV1(input, context);
+  const originalWording = { ...input, candidates: input.candidates.map(candidate => candidate.localization
+    ? { ...candidate, name: candidate.localization.original.name, definition: candidate.localization.original.definition }
+    : candidate) };
+  const request = buildMassLabelingJevRequestV1(originalWording, context);
   const questions: Record<string, JevQuestionV1> = { ...request.questions, trigger_barrier: buildTriggerBarrierR13('pt', category) };
   delete questions.relevance;
   return { ...request, questions };

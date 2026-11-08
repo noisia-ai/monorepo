@@ -145,12 +145,12 @@ test("V2 validates snapshot, request, aliases and provider schema as one immutab
   assert.throws(()=>validateSignalTopicEditorialScreeningPlanV2({...plan,requests:[request,request]}),/plan_invalid/u);
 });
 
-test("V2 rejects foreign IDs, duplicate citations, mismatched locale and unsupported fields",()=>{
+test("V2 rejects foreign IDs, mismatched locale and unsupported fields while warning on reference counts",()=>{
   const plan=planFor([group(0),group(1)]),request=plan.requests[0]!,output=outputFor(request);
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,group_id:plan.requests[1]!.receipt.group_id}),/group_invalid/u);
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,cited_evidence_ids:[plan.requests[1]!.receipt.evidence[0]!.evidence_id]}),/citation_invalid/u);
-  assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,cited_evidence_ids:[...output.cited_evidence_ids,...output.cited_evidence_ids]}),/citation_invalid/u);
-  assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,cited_evidence_ids:[]}),/citation_invalid/u);
+  assert.ok(validateSignalTopicEditorialGroupOutputV2(request,{...output,cited_evidence_ids:[...output.cited_evidence_ids,...output.cited_evidence_ids]}).warnings?.includes("references_repeated"));
+  assert.ok(validateSignalTopicEditorialGroupOutputV2(request,{...output,cited_evidence_ids:[]}).warnings?.includes("references_missing"));
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,candidate:{...output.candidate,locale:"en-US"}}),/locale_invalid/u);
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,computed_count:100}),/output_invalid/u);
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,confidence:1.5}),/output_invalid/u);
@@ -174,9 +174,9 @@ test("V2 resolves unique case variations only in protocol enums and aliases, pre
   assert.equal(JSON.stringify(request),source);
   assert.deepEqual(result.cited_ref_ids,[request.receipt.evidence[0]!.ref_id]);
   assert.equal(classifySignalTopicEditorialMessageResultV2(request,messageFor(varied)).status,"accepted");
-  // Two spellings of the same citation are still duplicates, not two sources.
-  assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,
-    cited_evidence_ids:[output.cited_evidence_ids[0],output.cited_evidence_ids[0]!.toUpperCase()]}),/citation_invalid/u);
+  // Case normalization retains a warning about repeated references.
+  assert.ok(validateSignalTopicEditorialGroupOutputV2(request,{...output,
+    cited_evidence_ids:[output.cited_evidence_ids[0],output.cited_evidence_ids[0]!.toUpperCase()]}).warnings?.includes("references_repeated"));
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,group_id:` ${output.group_id}`}),/group_invalid/u);
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,disposition:"Topics"}),/output_invalid/u);
   assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,candidate:{...output.candidate!,locale:"es-ES"}}),/locale_invalid/u);
@@ -195,7 +195,7 @@ test("confidence range is stated in provider contract and never coerced from per
 test("Noise must be a supported semantic decision, never a technical fallback",()=>{
   const request=planFor().requests[0]!,output={...outputFor(request),disposition:"noise",candidate:null};
   assert.equal(validateSignalTopicEditorialGroupOutputV2(request,output).disposition,"noise");
-  assert.throws(()=>validateSignalTopicEditorialGroupOutputV2(request,{...output,cited_evidence_ids:[]}),/citation_invalid/u);
+  assert.ok(validateSignalTopicEditorialGroupOutputV2(request,{...output,cited_evidence_ids:[]}).warnings?.includes("references_missing"));
   const unresolved={...output,disposition:"unresolved",confidence:null,cited_evidence_ids:[],rationale:"Grupo mixto; falta evidencia para decidir."};
   assert.equal(validateSignalTopicEditorialGroupOutputV2(request,unresolved).disposition,"unresolved");
   const invalid=classifySignalTopicEditorialMessageResultV2(request,messageFor({...output,cited_evidence_ids:["inventado"]}));
