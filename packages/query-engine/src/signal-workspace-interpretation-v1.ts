@@ -400,7 +400,8 @@ function resolveSignalWorkspaceInterpretationProviderReferencesV1(batch: SignalW
 
 /** Apply an explicitly authorized pilot decision after the settled source receipt
  * has been bound to an exception by the operator store. Evidence remains in the
- * original receipt. Only the selected mixed group may lose its interpretation. */
+ * original receipt. The source must be mixed; its sealed repair may be mixed or
+ * coherent while still lacking general references. */
 export function decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1(
   batch: SignalWorkspaceInterpretationBatchV1, value: unknown, unit_key: string,
 ): SignalWorkspaceInterpretationV1[] {
@@ -408,7 +409,8 @@ export function decodeSignalWorkspaceInterpretationInsufficiencyDecisionV1(
   if (!("representative_count" in configuration)) return fail("insufficiency_decision_invalid");
   const interpretations = resolveSignalWorkspaceInterpretationProviderReferencesV1(batch, value);
   const selected = interpretations.filter(item => item.cluster_id === unit_key);
-  if (selected.length !== 1 || selected[0]!.status !== "mixed" || selected[0]!.citations.length
+  if (selected.length !== 1 || !(selected[0]!.status === "mixed"
+    || batch.editorial_repair && selected[0]!.status === "coherent") || selected[0]!.citations.length
     || selected[0]!.name === null || selected[0]!.definition === null) return fail("insufficiency_decision_invalid");
   return validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: interpretations.map(item =>
     item.cluster_id === unit_key ? { cluster_id: item.cluster_id, cluster_digest: item.cluster_digest,
