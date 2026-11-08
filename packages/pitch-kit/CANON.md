@@ -361,6 +361,12 @@ Y la revisión técnica pasa:
 - [ ] El PDF se revisó página por página, y después del último cambio se volvió a renderizar.
 - [ ] `builders/leak-check.py` pasó limpio sobre slides y notas del orador.
 - [ ] Cada verbatim tiene liga, plataforma y fecha.
+- [ ] Hay imágenes reales en el deck: posts, videos o anuncios con su pie, que pasaron el Quality
+      Gate y el Size Gate (`LAYOUTS.md`). En todo estudio y toda muestra, no solo en un pagado.
+- [ ] Cada marca nombrada lleva su logo real, y cada hallazgo principal su serie en el tiempo y su
+      corte por canal.
+- [ ] La retrospectiva del caso (`CAMBIOS_PROPUESTOS_AL_PITCH_KIT.md`) se escribió con el prompt de
+      retrospectiva de `PROMPTS.md`.
 - [ ] Ningún dato de cliente entró a este repo.
 
 ## 9. Deuda del kit
