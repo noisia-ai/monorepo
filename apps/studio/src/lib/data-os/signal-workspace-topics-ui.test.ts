@@ -23,7 +23,7 @@ const data: SignalWorkspaceTopicsOverviewV1 = {
     kind: "topic" as const, definition_revision: 1, definition_digest: "sha256:def", selected: true, mention_count: 7, share_of_corpus: 0.7, basis: "computed_cluster" })),
   series: [], limitations: ["computed_memberships_not_semantic_precision"]
 };
-async function render(locale: string, payload: SignalWorkspaceOverviewV1 = data, surface: "summary" | "topics" = "topics", refreshFailed = false) {
+async function render(locale: string, payload: SignalWorkspaceOverviewV1 = data, surface: "summary" | "topics" | "consumers" = "topics", refreshFailed = false) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
   return renderToStaticMarkup(createElement(NextIntlClientProvider,
     { locale, messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
@@ -347,4 +347,79 @@ test("SSR renders selected metrics and evidence together without an initial load
   assert.match(html, /Initial complete evidence/);
   assert.match(html, /Sin sentimiento disponible: 7/);
   assert.doesNotMatch(html, /Cargando…|Cargando\.\.\./);
+});
+
+test("English is the default while an explicit Spanish preference is preserved", async () => {
+  const { defaultLocale, getLocaleFromPreferences, resolveRequestLocale } = await import("../../i18n/locales");
+  assert.equal(defaultLocale, "en-US");
+  assert.equal(resolveRequestLocale(undefined), "en-US");
+  assert.equal(resolveRequestLocale("pt-BR"), "en-US");
+  assert.equal(resolveRequestLocale("es-MX"), "es-MX");
+  assert.equal(getLocaleFromPreferences({ locale: "es-MX" }), "es-MX");
+  const requestSource = await readFile(new URL("../../i18n/request.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(requestSource, /accept-language|pickLocaleFromAcceptLanguage/);
+});
+
+const localizedPilot: SignalWorkspaceTopicsOverviewV1 = {
+  ...data,
+  filters: { ...data.filters, conversation_segment: "conversation" },
+  population_segments: { all: 10, conversation: 6, advertising: 3, hashtags: 1 },
+  consumer_indicators: { eligible: 4, processed: 4, trigger: 2, barrier: 1, none: 0, intermediate: 1, unresolved: 0 },
+  terms: [
+    { ...data.terms[0]!, label: "Encontros com amigos", definition: "Pessoas descrevem encontros.",
+      localization: { original_language: "pt", original: { name: "Encontros com amigos", definition: "Pessoas descrevem encontros." },
+        en: { name: "Meeting friends", definition: "People describe gatherings." },
+        es: { name: "Encuentros con amigos", definition: "Personas describen reuniones." } } },
+    { ...data.terms[1]!, term_key: "defined-interest", label: "Apostas", definition: "Publicações sobre apostas.",
+      basis: "defined_interest", interest_generation_id: "interest-generation" }
+  ]
+};
+
+for (const locale of ["en-US", "es-MX"]) test(`${locale}: translated topics preserve the visible corpus original and separate interests`, async () => {
+  const html = await render(locale, localizedPilot);
+  assert.match(html, locale === "en-US" ? /Meeting friends/ : /Encuentros con amigos/);
+  assert.match(html, locale === "en-US" ? /People describe gatherings/ : /Personas describen reuniones/);
+  assert.match(html, /lang="pt">Encontros com amigos/);
+  assert.match(html, /lang="pt">Pessoas descrevem encontros/);
+  assert.match(html, locale === "en-US" ? /Defined interests<span>1<\/span>/ : /Intereses definidos<span>1<\/span>/);
+  assert.equal(workspaceTermsForSectionV1(localizedPilot, "topics").length, 1);
+  assert.equal(workspaceTermsForSectionV1(localizedPilot, "interests")[0]!.term_key, "defined-interest");
+  assert.match(html, locale === "en-US" ? /Consumer motivators and barriers/ : /Motivadores y barreras de consumidores/);
+});
+
+test("localized charts retain topic keys and memberships while presenting the selected interface language", () => {
+  const before = structuredClone(localizedPilot);
+  const chart = nativeTopicsVolumeChartV1(localizedPilot.terms, "topic0", "Mentions", "en-US");
+  assert.equal(chart.tooltip.formatter({ name: "topic0", value: 7 }), "Meeting friends: 7");
+  assert.deepEqual(chart.series[0]!.data.map(item => [item.name, item.value]), [["topic0", 7], ["defined-interest", 7]]);
+  assert.deepEqual(localizedPilot, before);
+});
+
+test("segment controls expose the population counts and requests preserve the selected segment", async () => {
+  const messages = JSON.parse(await readFile(new URL("../../../messages/en-US.json", import.meta.url), "utf8"));
+  const html = renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale: "en-US", messages, timeZone: "UTC" } as React.ComponentProps<typeof NextIntlClientProvider>,
+    createElement(SignalV2WorkspaceTopics, { brandName: "QA", data: localizedPilot, loading: false,
+      onConversationSegment: async () => true, onOpenMentions() {}, onApplyFilter: async () => true,
+      manageTopicsHref: null, workspaceTimezone: "UTC" })));
+  assert.match(html, /value="conversation" selected="">Conversation \(6\)/);
+  assert.match(html, /Advertising \(3\)/);
+  assert.match(html, /Hashtag-only posts \(1\)/);
+  const source = await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx", import.meta.url), "utf8");
+  assert.match(source, /params.set\("conversation_segment", data.filters.conversation_segment\)/);
+  const page = await readFile(new URL("../../components/signal-v2/SignalV2WorkspacePage.tsx", import.meta.url), "utf8");
+  assert.match(page, /!params.has\("conversation_segment"\).*params.set\("conversation_segment", "conversation"\)/);
+});
+
+
+test("the native consumer report renders corrected indicators and keeps legacy reports available", async () => {
+  const html = await render("en-US", localizedPilot, "consumers");
+  assert.match(html, /Consumer motivators and barriers/);
+  assert.match(html, /Individual consumers, excluding advertising/);
+  assert.doesNotMatch(html, /Selected Topics|Meeting friends|Encontros com amigos/);
+  const page = await readFile(new URL("../../components/signal-v2/SignalV2WorkspacePage.tsx", import.meta.url), "utf8");
+  assert.match(page, /native && \(!activeReportKey \|\| native.consumer_indicators\)/);
+  const shell = await readFile(new URL("../../components/signal-v2/SignalV2BrandMonitoring.tsx", import.meta.url), "utf8");
+  assert.match(shell, /surface="consumers"/);
+  assert.match(shell, /currentModule === "study" && currentStudy && triggersBarriersData/);
 });
