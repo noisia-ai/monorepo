@@ -1,6 +1,6 @@
 import {randomUUID,createHash} from 'node:crypto';
 import type {PoolClient} from 'pg';
-import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as sonnet,signalWorkspaceEmbeddingDigestV1 as digest,
+import {type SignalWorkspaceInterpretationConfigurationV1,signalWorkspaceEmbeddingDigestV1 as digest,
  buildSignalWorkspaceInterpretationBatchV1,buildSignalWorkspaceInterpretationRepairBatchV1,validateSignalWorkspaceInterpretationResultV1,
  type SignalWorkspaceInterpretationBatchV1,type SignalWorkspaceInterpretationContextV1,type SignalWorkspaceInterpretationV1} from '@noisia/query-engine';
 import {SignalWorkspaceEngineError,withSignalWorkspaceEngineTransactionV1 as tx,loadSignalWorkspaceEngineInputIdentityV1,type SignalWorkspaceEngineDatabaseV1,type SignalWorkspaceEngineAnalysisConfigV1} from './signal-workspace-engine';
@@ -21,7 +21,7 @@ export type SignalWorkspaceIncrementalEditorialRequestPlanV1={contract_version:'
  requests:SignalWorkspaceIncrementalEditorialRequestV1[];stream:{bytes:number;sha256:string};plan_digest:string};
 export type SignalWorkspaceIncrementalEditorialCheckpointV1={artifact_id:string;artifact_key:string;stored:SignalWorkspaceIncrementalEditorialStoredV1;call_id:string;request_digest:string;unit_keys:string[];response_sha256:string};
 type Scope=SignalWorkspaceIncrementalEditorialExecutionScopeV1;type Lease=SignalWorkspaceIncrementalEditorialLeaseV1;
-type Snapshot={discovery_population?:unknown;context_digest:string;catalog_input_digest:string;interpretation_configuration:typeof sonnet;budget_policy:{budget_timezone:string;daily_cap_micro_usd:number|null};numeric_execution_id:string;numeric_checkpoint_digest:string;evidence_plan_artifact_id:string;evidence_digest:string;target_unit_digest:string;target_binding_digest:string;target_units:number};
+type Snapshot={discovery_population?:unknown;context_digest:string;catalog_input_digest:string;interpretation_configuration:SignalWorkspaceInterpretationConfigurationV1;budget_policy:{budget_timezone:string;daily_cap_micro_usd:number|null};numeric_execution_id:string;numeric_checkpoint_digest:string;evidence_plan_artifact_id:string;evidence_digest:string;target_unit_digest:string;target_binding_digest:string;target_units:number};
 const fail=(suffix:string,status=409):never=>{throw new SignalWorkspaceEngineError(`workspace_incremental_editorial_${suffix}`,status);};
 const hash=/^sha256:[0-9a-f]{64}$/u;const MAX=8*1024*1024;
 const authority=(input:string,id:string)=>`sha256:${createHash('sha256').update(`${input}:${id}`).digest('hex')}`;
@@ -87,7 +87,7 @@ export async function persistSignalWorkspaceIncrementalEditorialRepairV1(args:{d
  if(digest(rebuilt)!==digest(args.batch))return fail('repair_invalid',422);storedValid(args.stored,args.lease);
  return tx(args.database,async c=>{await locked(c,args.lease,args.lease);return insertArtifact(c,args.lease,`editorial-repair-${repair.source_call_id}`,'engine_output',args.stored,{contract_version:'workspace-incremental-editorial-repair-request-v1',request_digest:args.batch.request_digest,unit_keys:args.batch.clusters.map(v=>v.cluster_id),reserved_micro_usd:args.batch.reserved_micro_usd,editorial_repair:repair});});}
 export async function persistSignalWorkspaceIncrementalEditorialCheckpointV1(args:{database:SignalWorkspaceEngineDatabaseV1;lease:Lease;batch:SignalWorkspaceInterpretationBatchV1;interpretations:SignalWorkspaceInterpretationV1[];call_id:string;response_sha256:string;stored:SignalWorkspaceIncrementalEditorialStoredV1}){
- storedValid(args.stored,args.lease);const original=buildSignalWorkspaceInterpretationBatchV1(args.batch.context,args.batch.clusters,sonnet);
+ storedValid(args.stored,args.lease);const original=buildSignalWorkspaceInterpretationBatchV1(args.batch.context,args.batch.clusters,args.batch.configuration);
  const rebuilt=args.batch.editorial_repair?buildSignalWorkspaceInterpretationRepairBatchV1(original,{source_call_id:args.batch.editorial_repair.source_call_id,source_response_sha256:args.batch.editorial_repair.source_response_sha256,diagnostic:'output_invalid'}):original;
  if(digest(rebuilt)!==digest(args.batch)||args.batch.context.execution_id!==args.lease.execution_id||args.batch.context.workspace_id!==args.lease.workspace_id)return fail('checkpoint_invalid',422);
  const interpretations=validateSignalWorkspaceInterpretationResultV1(args.batch,{interpretations:args.interpretations});

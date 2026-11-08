@@ -10,9 +10,12 @@ test("MFP null means no strict maximum and cannot remove or raise a server maxim
 });
 test("MFP reads the current server action/configuration and preserves nullable daily and run maxima",async()=>{
  for(const cap of [null,"100"]){
- const db={query:async(sql:string)=>{
+ const db={query:async(sql:string,values:unknown[])=>{
   assert.match(sql,/policy.status='active'/u);assert.match(sql,/action.action='topic_interpretation'/u);
   assert.match(sql,/action.configuration=\$3::jsonb/u);
+  const {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1:legacy,SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1:current}=await import("@noisia/query-engine");
+  assert.deepEqual(JSON.parse(String(values[2])),current);assert.deepEqual(JSON.parse(String(values[3])),legacy);
+  assert.notDeepEqual(current,legacy);
   return {rows:[{id:"policy",cap,daily:cap,budget_timezone:"UTC"}]};
  }} as unknown as Pool;
  const result=await loadSignalDiscoveryPolicyV1(db,"workspace");

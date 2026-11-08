@@ -179,3 +179,27 @@ test("insufficient source groups remain excluded when stored provider bytes are 
     });
   }
 });
+
+test("new consolidation retains translated originals and seals the multilingual configuration independently of legacy requests", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1: multilingual } = await import("./signal-workspace-interpretation-v1");
+  const selected = groups.slice(0, 1), historical = buildMassLabelingConsolidationRequestV1({ ...input, source_groups: selected });
+  const localization = { original_language: "pt-BR", original: { name: "Encontros sociais", definition: "Conversas sobre encontros sociais." },
+    en: { name: "Social gatherings", definition: "Conversations about social gatherings." },
+    es: { name: "Encuentros sociales", definition: "Conversaciones sobre encuentros sociales." } };
+  const source_groups = selected.map(group => ({ ...group, name: localization.en.name, definition: localization.en.definition, localization }));
+  const batch = buildMassLabelingConsolidationRequestV1({ ...input, source_groups, configuration: multilingual });
+  const output = { topics: [{ topic_key: "social_gatherings", name: localization.en.name, definition: localization.en.definition,
+    localization, group_ids: [selected[0]!.group_id] }], excluded_groups: [] };
+  const envelope = (value: unknown) => JSON.stringify({ model: multilingual.model, type: "message", role: "assistant", stop_reason: "end_turn",
+    content: [{ type: "text", text: JSON.stringify(value) }], usage: { input_tokens: 100, output_tokens: 100 } });
+  const { parseMassLabelingConsolidationResponseV1 } = await import("./signal-mass-labeling-consolidation-v1");
+  assert.deepEqual(parseMassLabelingConsolidationResponseV1(batch, envelope(output)).output.topics[0]!.localization, localization);
+  assert.throws(() => parseMassLabelingConsolidationResponseV1(batch, envelope({ ...output,
+    topics: [{ ...output.topics[0], localization: undefined }] })), /contract_invalid/);
+  assert.throws(() => validateMassLabelingConsolidationOutputV1(selected, { ...output,
+    topics: [{ ...output.topics[0], name: localization.original.name }] }), /contract_invalid/);
+  assert.equal(JSON.parse(batch.request_body).max_tokens, 65536);
+  assert.equal(JSON.parse(batch.request_body).messages[0].content.includes('"original_language":"pt-BR"'), true);
+  assert.equal(JSON.parse(historical.request_body).max_tokens, 32768);
+  assert.equal(buildMassLabelingConsolidationRequestV1({ ...input, source_groups: selected }).request_body, historical.request_body);
+});

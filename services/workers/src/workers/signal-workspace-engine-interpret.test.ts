@@ -53,7 +53,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   let providerEnabled = true;
   let checkpointWritten = false, catalogWritten = false;
   let firstMaterializationArtifact: unknown = null;
-  type ResponseMode = "valid" | "invalid" | "partial";
+  type ResponseMode = "valid" | "invalid" | "partial" | "references_missing" | "references_excess";
   let responseMode: ResponseMode = "valid", responseSaved = false;
   let repairMode: ResponseMode | null = null;
   const states: string[] = [];
@@ -206,7 +206,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
         const mode = args.batch.editorial_repair ? repairMode ?? responseMode : responseMode;
         const output = { interpretations: [{ cluster_id: cluster.cluster_id, cluster_digest: cluster.cluster_digest,
           status: "coherent", name: "Diferencias entre reserva y cobro", definition: "Conversaciones sobre diferencias en el cobro de una reserva.",
-          inclusion: [], exclusion: [], citations: [mode === "invalid" ? hash("invented citation") : "r1"] }] };
+          inclusion: [], exclusion: [], citations: mode === "references_missing" ? [] : mode === "references_excess" ? Array.from({length: 61}, () => "r1") : [mode === "invalid" ? hash("invented citation") : "r1"] }] };
         const bytes = JSON.stringify({ model: args.batch.configuration.model, type: "message", role: "assistant", stop_reason: "end_turn",
           usage: { input_tokens: 100, output_tokens: 10 }, content: [{ type: "text", text: JSON.stringify(output) }] });
         return new Response(bytes, { status: 200, headers: mode === "partial" ? { "content-length": String(bytes.length + 1) } : {} });
@@ -856,4 +856,13 @@ test("raw-only recovery refuses a terminal partial receipt without a successor r
   assert.equal(after.calls.length,1);assert.equal(after.sends,1);
   assert.deepEqual(after.calls[0],retained);
  }finally{await s.cleanup();}
+});
+
+for (const mode of ["references_missing", "references_excess"] as const) test(`${mode} completes one paid editorial call without a repair or quarantine`, async () => {
+  const s = await scenario();
+  try {
+    s.mode(mode); await s.execute(); const result = s.get();
+    assert.equal(result.sends, 1); assert.equal(result.calls.length, 1); assert.equal(result.checkpointCount, 1);
+    assert.equal(result.exceptions.length, 0); assert.equal(result.completed, 1); assert.equal(result.totalSettled, 450);
+  } finally { await s.cleanup(); }
 });

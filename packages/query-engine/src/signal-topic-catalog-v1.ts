@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
+import { signalTopicLocalizationSchemaV1 } from "./signal-topic-localization-v1";
 
 export const SIGNAL_TOPIC_CATALOG_CONTRACT_V1 = "signal-topic-catalog-v1" as const;
 export const SIGNAL_TOPIC_CLASSIFIER_CONTRACT_V1 = "signal-topic-hybrid-classifier-v1" as const;
@@ -39,6 +40,7 @@ export const signalTopicDefinitionSchemaV1 = z.object({
   term_key: termKey,
   label: z.string().trim().min(1).max(160),
   definition: z.string().trim().min(1).max(1500),
+  localization: signalTopicLocalizationSchemaV1.optional(),
   scope: signalTopicScopeSchemaV1,
   inclusion: z.array(line).max(16).default([]),
   exclusion: z.array(line).max(16).default([]),
@@ -250,6 +252,7 @@ export function signalTopicDefinitionDigestV1(input: Omit<SignalTopicDefinitionV
     contract_version: SIGNAL_TOPIC_CATALOG_CONTRACT_V1,
     term_key: input.term_key,
     definition: input.definition.trim(),
+    ...(input.localization ? { localization: input.localization } : {}),
     scope: input.scope,
     inclusion: normalizedLines(input.inclusion),
     exclusion: normalizedLines(input.exclusion),

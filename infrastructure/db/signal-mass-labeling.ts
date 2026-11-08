@@ -3,7 +3,7 @@ import {massLabelingRequestPolicyWithClientV1,admitMassLabelingScopedWithClientV
 import {createHash, randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
 import {labelerDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
-  buildMassLabelingConsolidationRequestV1,parseMassLabelingConsolidationResponseV1,type MassLabelingSourceGroupV1,
+  buildMassLabelingConsolidationRequestV1,parseMassLabelingConsolidationResponseV1,type MassLabelingSourceGroupV1,type SignalWorkspaceInterpretationConfigurationV1,
   type LabelerIdentity} from "@noisia/query-engine";
 import {massLabelingJevIdentityV1, type MassLabelingInputV1, type MassLabelingResultV1} from "@noisia/query-engine/src/signal-mass-labeling-jev-v1";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
@@ -88,10 +88,11 @@ export async function createMassLabelingMapV1(args: {
   }).sort((left, right) => left.topic_key.localeCompare(right.topic_key));
   const assignmentsDigest = sha(args.assignments_raw), consolidationDigest = sha(args.consolidation_raw);
   const consolidation = JSON.parse(args.consolidation_raw) as {workspace_id: string; source_engine_execution_id: string;
-    source_groups:MassLabelingSourceGroupV1[];source_groups_digest:string;raw_response:string;operator_receipt_recovery?:SignalWorkspaceMassLabelingOperatorReceiptRecoveryV1;
+    source_groups:MassLabelingSourceGroupV1[];source_groups_digest:string;raw_response:string;configuration?:SignalWorkspaceInterpretationConfigurationV1;operator_receipt_recovery?:SignalWorkspaceMassLabelingOperatorReceiptRecoveryV1;
     output: {topics: Array<Omit<MassLabelingTopicV1,"definition_digest">>}};
   const batch=buildMassLabelingConsolidationRequestV1({workspace_id:args.workspace_id,
-    source_engine_execution_id:args.source_engine_execution_id,source_groups:consolidation.source_groups});
+    source_engine_execution_id:args.source_engine_execution_id,source_groups:consolidation.source_groups,
+    ...(consolidation.configuration?{configuration:consolidation.configuration}:{})});
   const operator=consolidation.operator_receipt_recovery;
   if(operator&&(Object.keys(operator).sort().join(",")!=="contract_version,decision_digest,decision_id"
     ||operator.contract_version!=="workspace-mass-labeling-global-receipt-decision-v1"||!uuid.test(operator.decision_id)))fail("mass_labeling_consolidation_invalid");
