@@ -1,3 +1,4 @@
+import {massLabelingRequestPolicyWithClientV1,admitMassLabelingScopedWithClientV1,massLabelingRunPolicyWithClientV1} from "./signal-mass-labeling-scoped-policy";
 import {createHash, randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
 import {labelerDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
@@ -46,7 +47,7 @@ async function authorize(client: Pick<PoolClient, "query">, workspace: string, a
     fail("mass_labeling_not_enabled", 404);
   return caps;
 }
-async function mapCurrent(client: Pick<PoolClient, "query">, workspace: string, mapId: string): Promise<MassLabelingMapV1> {
+export async function mapCurrent(client: Pick<PoolClient, "query">, workspace: string, mapId: string): Promise<MassLabelingMapV1> {
   const row = (await client.query<MassLabelingMapV1>(`SELECT map.* FROM signal_mass_labeling_maps map
     JOIN signal_corpus_preparation_input_state state ON state.workspace_id=map.workspace_id
       AND state.input_revision=map.input_revision
@@ -254,6 +255,8 @@ export async function requestMassLabelingV1(args: {
     fail("mass_labeling_identity_invalid", 422);
   return requestMentionFacetsV1({...args, adapter: {
     request_identity: {version: MASS_LABELING_REQUEST_VERSION_V1, map_id: args.map_id, smoke: true},
+    policy: client=>massLabelingRequestPolicyWithClientV1(client,args),
+    admit: (client,request)=>admitMassLabelingScopedWithClientV1(client,{...request,map_id:args.map_id}),
     policy_action: "mass_labeling_jev", feature: "mass_labeling", select_labeler: false,
     validateIdentity: candidate => {if (labelerDigestV1(candidate) !== labelerDigestV1(args.identity)) fail("mass_labeling_identity_changed");},
     prepare: async (client, workspace) => {
@@ -287,6 +290,7 @@ export async function continueMassLabelingV1(args: {
       WHERE mass.workspace_id=$1 AND mass.run_id=$2 FOR UPDATE OF mass,run`, [args.workspace_id, args.run_id])).rows[0];
     if (!run) fail("mass_labeling_run_unavailable", 404);
     await mapCurrent(client, args.workspace_id, run.map_id);
+    await client.query("SELECT signal_mass_labeling_scoped_capacity_v1($1)",[args.run_id]);
     if (run.smoke_root_limit === null) return {run_id: args.run_id, replayed: true};
     if (run.status !== "completed") fail("mass_labeling_smoke_incomplete");
     const smoke = (await client.query<{smoke_metrics: {technical_failure: boolean} | null}>(
@@ -313,6 +317,7 @@ const itemPageSql = `SELECT item.root_id,item.input_digest,item.text,NULL::text 
 export function createMassLabelingStoreV1(options: Omit<Parameters<typeof createSignalLabelingStoreV1>[0], "adapter">) {
   return createSignalLabelingStoreV1<MassLabelingInputV1, MassLabelingResultV1>({...options, adapter: {
     kind: "mass_labeling", policy_action: "mass_labeling_jev", feature: "mass_labeling",
+    policy: massLabelingRunPolicyWithClientV1,
     pending_calls_only: true, persist_results_before_write: true,
     inputs: async (client, run) => (await client.query<MassLabelingInputV1>(itemPageSql, [run.id, run.workspace_id])).rows,
     authority: async (client, run) => {
@@ -489,7 +494,9 @@ export async function exportMassLabelingSnapshotV1(args: {
         'interpretation_admission',metadata->'interpretation_admission','interpretation_revision_digest',metadata->'interpretation_revision_digest')) metadata
       FROM engine_cost_events WHERE workspace_id=$1 AND catalog_execution_id=$2
         AND workspace_contract='workspace-engine-interpretation-v1' ORDER BY created_at,id`, [args.workspace_id, map.source_engine_execution_id])).rows;
-    return {contract_version: "mass-labeling-private-export-v1", exported_at: new Date().toISOString(),
+    const scopedAuthority=run?(await client.query(`SELECT to_jsonb(a) admission,to_jsonb(e) extension FROM signal_mass_labeling_scoped_admissions a
+      JOIN signal_mass_labeling_policy_extensions e ON e.id=a.extension_id WHERE a.target_id=$1 AND a.workspace_id=$2`,[run.id,args.workspace_id])).rows[0]??null:null;
+    return {scoped_authority:scopedAuthority,contract_version: "mass-labeling-private-export-v1", exported_at: new Date().toISOString(),
       map, run, items, calls, stage_receipts: {embeddings: embedding, engine, editorial_calls: editorialCalls, consolidation_artifact: consolidationArtifact, global_receipt_recovery_decision: globalReceiptDecision}};
   });
 }
