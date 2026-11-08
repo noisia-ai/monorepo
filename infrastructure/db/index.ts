@@ -127,3 +127,5 @@ export * from "./signal-mass-labeling-source";
 export * from "./signal-workspace-engine-recovery";
 
 export * from "./signal-workspace-engine-insufficiency";
+
+export * from "./signal-mass-labeling-global-recovery";

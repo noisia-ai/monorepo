@@ -21,6 +21,7 @@ type SourceArgs={
   source_checkpoints:MassLabelingSourceCheckpointV1[];expected_group_ids:string[];
   expected_cluster_digests?:Record<string,string>;lease?:SignalWorkspaceEngineLeaseV1;
   claimed_source_groups?:MassLabelingSourceGroupV1[];
+  failed_receipt_recovery?:boolean;
 };
 function fail():never {throw new SignalLabelingError("mass_labeling_source_checkpoint_invalid");}
 const sha=(text:string)=>`sha256:${createHash("sha256").update(text).digest("hex")}`;
@@ -61,7 +62,7 @@ export async function verifyMassLabelingSourceCheckpointsWithClientV1(client:Pic
   if(!engine||engine.actor_user_id!==args.actor_user_id||!engine.fit
     ||Number(engine.fit.interpretation_manifest.unit_count)!==keys.length
     ||engine.fit.interpretation_manifest.unit_digest!==signalWorkspaceInterpretationUniverseDigestV1(keys))fail();
-  if(engine.status!=="ready"&&(engine.status!=="running"||!args.lease||!engine.lease_live
+  if(engine.status!=="ready"&&!(engine.status==="failed"&&args.failed_receipt_recovery===true)&&(engine.status!=="running"||!args.lease||!engine.lease_live
     ||args.lease.workspace_id!==args.workspace_id||args.lease.execution_id!==args.source_engine_execution_id
     ||args.lease.execution_token!==engine.execution_token))fail();
   const receipts=(await client.query<{id:string;content:{sha256:string;size_bytes:number};metadata:{
