@@ -1,8 +1,7 @@
 /** Private operator entry point. Config and corpus files belong under .data.
  * Run with node --import tsx scripts/dev-corpus/pilot-r13-jev.ts check|run CONFIG.
  * Provider keys are read only from the process environment. */
-import { readFile, realpath, mkdir, open, rename, readdir } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { readFile, realpath, mkdir, open } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { resolve, relative, join, dirname } from 'node:path';
@@ -10,7 +9,7 @@ import type { EntityContextV1 } from '../../packages/query-engine/src/signal-ent
 import { buildR13JevRequest, R13_JEV_STAGES, type R13JevStage } from '../../packages/query-engine/src/signal-mass-labeling-r13';
 import { compareR13JevCosts } from '../../services/workers/src/providers/mass-labeling-r13-cost';
 import { createTypesafeJevClientV1 } from '../../services/workers/src/providers/typesafe-jev';
-import { runR13JevStage, type R13Input, type R13Result } from '../../services/workers/src/providers/mass-labeling-r13-runner';
+import { runR13JevStage, exportR13JevStage, type R13Input, type R13Result } from '../../services/workers/src/providers/mass-labeling-r13-runner';
 
 type Config = {
   stage: R13JevStage; items_file: string; directory: string;
@@ -33,28 +32,14 @@ async function main() {
   const checkedDirectory = await privatePath(config.directory, false);
   await mkdir(checkedDirectory, { recursive: true, mode: 0o700 });
   const directory = await privatePath(config.directory);
-  if (action === 'export') {
-    const temporary = join(directory, `results.${randomUUID()}.tmp`);
-    const file = await open(temporary, 'wx', 0o600);
-    let count = 0;
-    try {
-      for (const name of (await readdir(directory)).sort()) {
-        if (!/^[a-f0-9]{64}\.json$/u.test(name)) continue;
-        const result = await json<R13Result>(join(directory, name));
-        if (result.status !== 'settled' || result.stage !== config.stage) throw new Error('r13_export_incomplete');
-        await file.write(JSON.stringify(result) + '\n'); count++;
-      }
-      const summary = await json<{ completed: boolean; root_count: number }>(join(directory, 'summary.json'));
-      if (!summary.completed || summary.root_count !== count) throw new Error('r13_export_incomplete');
-      await file.sync();
-    } finally { await file.close(); }
-    await rename(temporary, join(directory, 'results.jsonl'));
-    console.log(JSON.stringify({ stage: config.stage, exported: count })); return;
-  }
   const items: Array<R13Input & { baseline_input_tokens?: number }> = [];
   const lines = createInterface({ input: createReadStream(await privatePath(config.items_file)), crlfDelay: Infinity });
   for await (const line of lines) if (line.trim()) items.push(JSON.parse(line));
   const context = config.context_file ? await json<EntityContextV1>(config.context_file) : undefined;
+  if (action === 'export') {
+    const count = await exportR13JevStage({ ...config, directory, items, context });
+    console.log(JSON.stringify({ stage: config.stage, exported: count })); return;
+  }
   if (action === 'compare') {
     if (!context || !config.arms) throw new Error('r13_cost_arms_required');
     async function results(file: string): Promise<R13Result[]> {
