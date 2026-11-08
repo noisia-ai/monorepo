@@ -239,7 +239,7 @@ export async function readPilotSnapshot(path) {
 
 export function validateOperatorReceipt(snapshot, receipt) {
   validatePilotSnapshot(snapshot);
-  if (!record(receipt) || receipt.contract_version !== 'signal-mass-labeling-operator-receipt-v1'
+  if (!record(receipt) || !['signal-mass-labeling-operator-receipt-v1', 'signal-mass-labeling-operator-receipt-v2'].includes(receipt.contract_version)
     || receipt.map_digest !== snapshot.map.map_digest
     || receipt.snapshot_sha256 !== computeSnapshotDigest(snapshot) || !Array.isArray(receipt.stages)) {
     throw new Error('pilot_audit_operator_receipt_invalid_or_wrong_map');
@@ -295,7 +295,233 @@ export function validateOperatorReceipt(snapshot, receipt) {
     || (engineGroupCount === undefined && suppliedGroupCount === undefined)) {
     throw new Error('pilot_audit_bertopic_group_census_required');
   }
+  if (receipt.contract_version === 'signal-mass-labeling-operator-receipt-v2') {
+    validateJevChargeReconciliation(receipt.jev_charge_reconciliation, stages);
+    validateScopedFundingLineage(snapshot, stages);
+    if (!record(receipt.jev_authorization)
+      || canonicalJson(receipt.jev_authorization) !== canonicalJson(derivePilotJevAuthorization(snapshot))) {
+      throw new Error('pilot_audit_jev_authorization_receipt_mismatch');
+    }
+  }
   return receipt;
+}
+
+function validateScopedFundingLineage(snapshot, stages) {
+  const authority = snapshot.scoped_authority;
+  const smokeStage = stages.get('jev_smoke');
+  const fullStage = stages.get('jev_full');
+  const smokeCount = snapshot.run.smoke_metrics.root_count;
+  const smokeIds = new Set(smokeStage.ledger_call_ids);
+  const fullIds = new Set(fullStage.ledger_call_ids);
+  const digest = (value) => typeof value === 'string' && /^sha256:[a-f0-9]{64}$/u.test(value);
+  const microUsd = (value) => (Number.isSafeInteger(value) && value >= 0)
+    || (typeof value === 'string' && /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)));
+  if (!record(authority) || !record(authority.extension) || !record(authority.admission)
+    || !Array.isArray(authority.funding_receipts) || authority.funding_receipts.length !== 1
+    || !Array.isArray(authority.call_authorities) || !/^[0-9a-f-]{36}$/u.test(authority.extension.id)
+    || !/^[0-9a-f-]{36}$/u.test(authority.admission.id)
+    || authority.admission.extension_id !== authority.extension.id
+    || authority.admission.map_id !== snapshot.map.id || authority.admission.map_digest !== snapshot.map.map_digest
+    || authority.admission.target_id !== snapshot.run.id || authority.admission.actor_user_id !== snapshot.run.actor_user_id
+    || String(authority.effective_total_cap_micro_usd) !== '9500000') {
+    throw new Error('pilot_audit_scoped_authority_invalid');
+  }
+  const funding = authority.funding_receipts[0];
+  const priorCap = authority.extension.cap_micro_usd ?? authority.extension.max_execution_micro_usd;
+  if (!record(funding) || !/^[0-9a-f-]{36}$/u.test(funding.id)
+    || funding.extension_id !== authority.extension.id || funding.scoped_admission_id !== authority.admission.id
+    || funding.workspace_id !== authority.admission.workspace_id || funding.map_id !== snapshot.map.id
+    || funding.map_digest !== snapshot.map.map_digest || funding.run_id !== snapshot.run.id
+    || funding.actor_user_id !== snapshot.run.actor_user_id
+    || funding.base_policy_version_id !== authority.admission.policy_version_id
+    || !digest(funding.base_policy_digest) || !digest(funding.labeler_digest)
+    || !digest(funding.entity_context_digest) || !digest(funding.smoke_metrics_digest)
+    || funding.smoke_metrics_digest !== snapshot.run.smoke_metrics_digest
+    || funding.smoke_root_count !== smokeCount || funding.smoke_call_count !== smokeCount
+    || funding.prior_total_cap_micro_usd === undefined
+    || String(funding.prior_total_cap_micro_usd) !== String(priorCap)
+    || String(funding.total_cap_micro_usd) !== '9500000'
+    || !digest(funding.smoke_calls_digest) || !digest(funding.quote_digest) || !digest(funding.receipt_digest)
+    || !record(funding.quote) || funding.quote.contract_version !== 'mass-labeling-smoke-usage-quote-v1'
+    || funding.quote.basis !== 'ledger_usage_at_sealed_tariff'
+    || !Number.isFinite(funding.quote.input_usd_per_mtok) || funding.quote.input_usd_per_mtok <= 0
+    || !Number.isSafeInteger(funding.quote.population_roots) || funding.quote.population_roots !== snapshot.map.root_count
+    || funding.quote.observed_smoke_roots !== smokeCount || funding.quote.observed_smoke_calls !== smokeCount
+    || !Number.isSafeInteger(funding.quote.observed_input_tokens) || funding.quote.observed_input_tokens < 0
+    || !microUsd(funding.quote.observed_settled_micro_usd)
+    || !microUsd(funding.quote.projected_total_usage_micro_usd)
+    || !microUsd(funding.quote.observed_max_page_reserved_micro_usd)
+    || funding.quote.page_size !== 200 || funding.quote.reserve_observation_basis !== 'max_200_call_window_from_smoke'
+    || !Object.hasOwn(funding.quote, 'provider_charged_micro_usd')
+    || (funding.quote.provider_charged_micro_usd !== null && !microUsd(funding.quote.provider_charged_micro_usd))
+    || String(funding.quote.total_cap_micro_usd) !== String(funding.total_cap_micro_usd)
+    || BigInt(funding.quote.projected_total_usage_micro_usd) > BigInt(funding.total_cap_micro_usd)
+    || !Number.isFinite(Date.parse(funding.created_at)) || !Number.isFinite(Date.parse(funding.admission_not_after))
+    || Date.parse(funding.admission_not_after) <= Date.parse(funding.created_at)) {
+    throw new Error('pilot_audit_funding_receipt_invalid');
+  }
+  if (!Array.isArray(snapshot.calls) || authority.call_authorities.length !== snapshot.calls.length) {
+    throw new Error('pilot_audit_scoped_call_authority_census_invalid');
+  }
+  const itemOrdinals = new Map(snapshot.items.map((item) => [item.call_id, item.ordinal]));
+  const byCall = new Map();
+  for (const binding of authority.call_authorities) {
+    if (!record(binding) || typeof binding.call_id !== 'string' || byCall.has(binding.call_id)
+      || binding.scoped_admission_id !== authority.admission.id
+      || ![null, funding.id].includes(binding.funding_receipt_id)) {
+      throw new Error('pilot_audit_scoped_call_authority_invalid');
+    }
+    byCall.set(binding.call_id, binding);
+  }
+  const actualIds = new Set(snapshot.calls.map((call) => call.id));
+  if (byCall.size !== actualIds.size || [...byCall.keys()].some((id) => !actualIds.has(id))) {
+    throw new Error('pilot_audit_scoped_call_authority_unassigned');
+  }
+  for (const call of snapshot.calls) {
+    const ordinal = itemOrdinals.get(call.id);
+    const binding = byCall.get(call.id);
+    if (!Number.isSafeInteger(ordinal)
+      || binding.funding_receipt_id !== (ordinal <= smokeCount ? null : funding.id)
+      || !(ordinal <= smokeCount ? smokeIds : fullIds).has(call.id)) {
+      throw new Error('pilot_audit_scoped_call_authority_stage_mismatch');
+    }
+  }
+  const exposure = snapshot.calls.reduce((sum, call) => {
+    if (!/^\d+$/u.test(String(call.settled_micro_usd))
+      || !/^\d+$/u.test(String(call.terminal_exposure_micro_usd))) {
+      throw new Error('pilot_audit_scoped_call_exposure_missing');
+    }
+    return sum + BigInt(call.settled_micro_usd) + BigInt(call.terminal_exposure_micro_usd);
+  }, 0n);
+  if (exposure > BigInt(funding.total_cap_micro_usd)) throw new Error('pilot_audit_scoped_total_cap_exceeded');
+  const smokeCalls = snapshot.calls.filter((call) => (itemOrdinals.get(call.id) ?? Number.MAX_SAFE_INTEGER) <= smokeCount);
+  const smokeTokens = smokeCalls.reduce((sum, call) => {
+    if (!Number.isSafeInteger(call.usage?.input_tokens) || call.usage.input_tokens < 0) {
+      throw new Error('pilot_audit_smoke_usage_tokens_missing');
+    }
+    return sum + call.usage.input_tokens;
+  }, 0);
+  const smokeUsage = smokeCalls.reduce((sum, call) => sum + BigInt(call.settled_micro_usd), 0n);
+  if (smokeTokens !== funding.quote.observed_input_tokens
+    || smokeUsage !== BigInt(funding.quote.observed_settled_micro_usd)
+    || BigInt(funding.quote.projected_total_usage_micro_usd) < smokeUsage) {
+    throw new Error('pilot_audit_funding_quote_not_bound_to_smoke_ledger');
+  }
+  return { funding, exposure_micro_usd: Number(exposure) };
+}
+
+/** Derive only money and aggregate counts from the private snapshot; never return workspace, run, map, or call IDs. */
+export function derivePilotJevAuthorization(snapshot) {
+  validatePilotSnapshot(snapshot);
+  const smokeCount = snapshot.run.smoke_metrics.root_count;
+  const itemOrdinals = new Map(snapshot.items.map((item) => [item.call_id, item.ordinal]));
+  const callIds = snapshot.calls.map((call) => call.id);
+  const stages = new Map([
+    ['jev_smoke', { name: 'jev_smoke', input_count: smokeCount, ledger_call_ids: callIds.filter((id) => itemOrdinals.get(id) <= smokeCount) }],
+    ['jev_full', { name: 'jev_full', input_count: snapshot.items.length - smokeCount,
+      ledger_call_ids: callIds.filter((id) => itemOrdinals.get(id) > smokeCount) }],
+  ]);
+  const { funding, exposure_micro_usd } = validateScopedFundingLineage(snapshot, stages);
+  const callsById = new Map(snapshot.calls.map((call) => [call.id, call]));
+  const usageValue = (ids) => {
+    let sum = 0n;
+    for (const id of ids) {
+      const amount = callsById.get(id).settled_micro_usd;
+      if (!/^\d+$/u.test(String(amount))) return null;
+      sum += BigInt(amount);
+    }
+    if (sum > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('pilot_audit_jev_usage_total_unsafe');
+    return Number(sum);
+  };
+  const smokeIds = stages.get('jev_smoke').ledger_call_ids;
+  const fullIds = stages.get('jev_full').ledger_call_ids;
+  return {
+    contract_version: 'signal-mass-labeling-jev-authorization-v1',
+    accounting_basis: 'one cumulative cap; previous cap superseded, not additive',
+    currency: 'USD',
+    smoke_root_count: smokeIds.length,
+    full_root_count: snapshot.items.length - smokeCount,
+    smoke_call_count: smokeIds.length,
+    full_call_count: fullIds.length,
+    previous_total_cap_micro_usd: Number(funding.prior_total_cap_micro_usd),
+    cumulative_total_cap_micro_usd: Number(funding.total_cap_micro_usd),
+    observed_smoke_usage_value_micro_usd: usageValue(smokeIds),
+    observed_full_usage_value_micro_usd: usageValue(fullIds),
+    observed_total_exposure_micro_usd: exposure_micro_usd,
+    estimate: {
+      basis: funding.quote.basis,
+      model: funding.quote.model,
+      input_usd_per_mtok: funding.quote.input_usd_per_mtok,
+      observed_smoke_input_tokens: funding.quote.observed_input_tokens,
+      observed_smoke_usage_value_micro_usd: Number(funding.quote.observed_settled_micro_usd),
+      projected_total_usage_value_micro_usd: Number(funding.quote.projected_total_usage_micro_usd),
+      observed_max_page_reserved_micro_usd: Number(funding.quote.observed_max_page_reserved_micro_usd),
+      provider_charged_micro_usd: funding.quote.provider_charged_micro_usd,
+      population_roots: funding.quote.population_roots,
+    },
+  };
+}
+
+function validateJevChargeReconciliation(reconciliation, stages) {
+  const boundaries = ['smoke_before', 'smoke_after', 'full_before', 'full_after'];
+  if (!record(reconciliation)
+    || !['confirmed', 'partially_confirmed', 'delayed', 'interval_unattributed'].includes(reconciliation.status)
+    || !Array.isArray(reconciliation.observations) || reconciliation.observations.length !== boundaries.length) {
+    throw new Error('pilot_audit_jev_charge_reconciliation_invalid');
+  }
+  const observations = new Map();
+  for (const row of reconciliation.observations) {
+    if (!record(row) || !boundaries.includes(row.boundary) || observations.has(row.boundary)
+      || !Number.isSafeInteger(row.balance_micro_usd) || row.balance_micro_usd < 0
+      || !Number.isFinite(Date.parse(row.observed_at)) || !/^[a-f0-9]{64}$/u.test(row.evidence_sha256)) {
+      throw new Error('pilot_audit_jev_charge_observation_invalid');
+    }
+    observations.set(row.boundary, row);
+  }
+  if (observations.size !== boundaries.length) throw new Error('pilot_audit_jev_charge_boundary_missing');
+  const observedAt = boundaries.map((boundary) => Date.parse(observations.get(boundary).observed_at));
+  if (observedAt.some((time, index) => index > 0 && time < observedAt[index - 1])) {
+    throw new Error('pilot_audit_jev_charge_boundaries_out_of_order');
+  }
+  for (const [stageName, field] of [['jev_smoke', 'attributed_smoke_micro_usd'], ['jev_full', 'attributed_full_micro_usd']]) {
+    const stage = stages.get(stageName);
+    const amount = reconciliation[field];
+    if (amount !== null && (!Number.isSafeInteger(amount) || amount < 0)) {
+      throw new Error('pilot_audit_jev_attributed_charge_invalid');
+    }
+    if (stage.charged_micro_usd !== amount) throw new Error('pilot_audit_jev_attributed_charge_mismatch');
+  }
+  const intervalChange = reconciliation.unattributed_interval_change_micro_usd;
+  if (intervalChange !== null && (!Number.isSafeInteger(intervalChange) || intervalChange < 0)) {
+    throw new Error('pilot_audit_jev_unattributed_interval_invalid');
+  }
+  const expectedIntervalChange = Math.max(0,
+    observations.get('smoke_after').balance_micro_usd - observations.get('full_before').balance_micro_usd);
+  if (intervalChange !== expectedIntervalChange) throw new Error('pilot_audit_jev_unattributed_interval_mismatch');
+  const attributed = [reconciliation.attributed_smoke_micro_usd, reconciliation.attributed_full_micro_usd];
+  const attributionProofs = reconciliation.attribution_evidence_sha256;
+  if (!record(attributionProofs)) throw new Error('pilot_audit_jev_attribution_evidence_missing');
+  for (const [index, key] of ['smoke', 'full'].entries()) {
+    const proof = attributionProofs[key];
+    if (attributed[index] === null ? proof !== null
+      : typeof proof !== 'string' || !/^[a-f0-9]{64}$/u.test(proof)) {
+      throw new Error('pilot_audit_jev_attribution_evidence_invalid');
+    }
+  }
+  if (reconciliation.status === 'confirmed' && attributed.some((value) => value === null)) {
+    throw new Error('pilot_audit_jev_confirmed_charge_missing');
+  }
+  if (reconciliation.status === 'partially_confirmed'
+    && (attributed.filter((value) => value !== null).length !== 1 || intervalChange !== 0)) {
+    throw new Error('pilot_audit_jev_partial_charge_conflict');
+  }
+  if (reconciliation.status === 'delayed' && (attributed.some((value) => value !== null) || intervalChange !== 0)) {
+    throw new Error('pilot_audit_jev_delayed_charge_conflict');
+  }
+  if (reconciliation.status === 'interval_unattributed' && intervalChange <= 0) {
+    throw new Error('pilot_audit_jev_unattributed_interval_missing');
+  }
+  return reconciliation;
 }
 
 function indexSnapshot(snapshot) {
@@ -876,6 +1102,9 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
     charged_per_million_micro_usd: perMillion(totalChargedMicroUsd),
     usage_value_per_1000_micro_usd: perThousand(totalUsageValueMicroUsd),
     usage_value_per_million_micro_usd: perMillion(totalUsageValueMicroUsd),
+    scoped_jev_cumulative_cap_micro_usd: operatorReceipt.contract_version === 'signal-mass-labeling-operator-receipt-v2'
+      ? Number(snapshot.scoped_authority.effective_total_cap_micro_usd) : null,
+    jev_charge_reconciliation: operatorReceipt.jev_charge_reconciliation ?? null,
     private_rows: validRows,
   };
 }
@@ -1040,6 +1269,17 @@ export function renderPublicReceipt(summary, comparisonDate) {
     '',
     `Cargo total confirmado: ${dollars(summary.charged_micro_usd)}. Por 1,000 raíces: ${dollars(summary.charged_per_1000_micro_usd)}. Proyección a 1,000,000 raíces: ${dollars(summary.charged_per_million_micro_usd)}.`,
     `Valor tarifario del uso: ${dollars(summary.usage_value_micro_usd)}. Tokens gratis consumidos: ${summary.free_tokens_used ?? 'n/d'}.`,
+    ...(summary.scoped_jev_cumulative_cap_micro_usd === null ? [] : [
+      `Techo acumulado JEV: ${dollars(summary.scoped_jev_cumulative_cap_micro_usd)} (incluye humo y corte completo; no es un cargo).`,
+      ...(summary.jev_charge_reconciliation.status === 'delayed'
+        ? ['La consola del proveedor aún no confirma débitos de JEV. El valor tarifario del uso se presenta por separado.'] : []),
+      ...(summary.jev_charge_reconciliation.status === 'partially_confirmed'
+        ? ['Se confirmó el débito de una etapa; el total queda pendiente hasta conciliar la otra.'] : []),
+      ...(summary.jev_charge_reconciliation.unattributed_interval_change_micro_usd > 0
+        ? [`Disminución del saldo entre lecturas de JEV: ${dollars(summary.jev_charge_reconciliation.unattributed_interval_change_micro_usd)} sin atribución a una etapa.`] : []),
+      ...(summary.jev_charge_reconciliation.status === 'interval_unattributed'
+        ? ['La observación de JEV no permite atribuir todo el cambio entre saldos; se omite del cargo de etapas.'] : []),
+    ]),
     'La proyección a 1,000,000 de raíces es lineal y supone la misma mezcla de procesamiento y tamaño del mapa. El costo de Claude se muestra por grupo porque puede cambiar al variar el número o tamaño de los grupos.',
     '',
     '## Cobertura',
