@@ -125,6 +125,19 @@ La revisión privada R13, sección 7, fija diez entregables. La fase A cubre los
 - **10.** En las 597 raíces ciegas originales, comparar definiciones en portugués e inglés con la categoría nombrada. Entregar probabilidades por raíz y variante en el JSONL privado previsto por el auditor, sin clave. El auditor decide el idioma tras calificar.
 - **7–8.** Emitir advertencias ante referencias editoriales faltantes o en exceso. Mantener comprobaciones de integridad y aislamiento. Operar únicamente en dev-test, con URLs introducidas directamente. Datos, autoridad de acceso, juicios ciegos y claves quedan en custodia privada.
 
+### Hito 6 · Configuración de producto y QA del fundador (R14)
+
+La sección 6 del informe privado R14 fija ocho entregables. Se usa el mapa congelado de 98 tópicos.
+
+1. Un estudio nuevo toma de Brand OS su categoría y usa una solicitud JEV por raíz con preguntas en inglés de promoción, voz, motivador o barrera de esa categoría, los cuatro candidatos más próximos y los intereses activos. Los posts compuestos sólo por hashtags se reconocen de forma determinista.
+2. Comparar definiciones de candidatos en inglés y en el original sobre las mismas 597 raíces, candidatos, preguntas y veredictos ciegos. En las cohortes etiquetadas de tópicos, seleccionar inglés si su precisión a probabilidad estrictamente superior a 0.7 queda a un máximo de tres puntos porcentuales por debajo de la del original. Conservar numeradores, denominadores y diferencia.
+3. Generar una propuesta de léxico en la etapa editorial desde categoría, sinónimos, jerga y marcas de Brand OS. El analista puede editarla por estudio. Signal exige una coincidencia con el texto para contar motivadores y barreras. Recalcular el piloto con los resultados ya pagados.
+4. Ajustar las definiciones de los dos intereses solicitados, reclasificar únicamente esos intereses y aplicar al conteo un umbral por estudio editable, inicialmente 0.85.
+5. Retirar el lote obsoleto de dev-test y verificar la configuración activa y la versión de Studio. Conservar la alternativa Docker documentada.
+6. Entregar una guía española de 10 a 15 pasos para QA en Signal, con resultados esperados y qué comunicar ante cada discrepancia.
+7. Incorporar al recibo la proyección por millón con siete preguntas y el costo incremental de los intereses dentro de la misma solicitud.
+8. Operar en dev-test con las cuentas autorizadas, custodia privada y URLs introducidas directamente. Verificar el recorrido normal de un estudio nuevo y los resultados del piloto en el dominio autenticado. Cerrar con revisión y CI/PostgreSQL sobre cada fusión.
+
 ## Organización con subagentes
 
 - **El orquestador (el chat principal) es el único que:**
@@ -192,6 +205,10 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H6 · Prueba pareada de idioma completada sobre las 597 raíces originales. Se verificaron 1,194 recibos con siete preguntas base y dos intereses por solicitud. Las diez cohortes de tópico aportaron 500 casos, de los cuales 333 tenían el tópico nominado entre los cuatro candidatos. A probabilidad >0.7, inglés obtuvo 220 aciertos en 316 positivos (69.62 %) y portugués 222 en 326 (68.10 %). La diferencia fue +1.52 puntos. Se eligió inglés. Los otros 100 casos eran de motivación o barrera.
+- [x] H6 · Se descartó el lote antiguo de dev-test. La consulta posterior de Railway devolvió cero recursos pendientes, Railpack activo y el mismo despliegue sano de Studio. La opción Docker sigue documentada en el repositorio.
+- [ ] H6 · R14 iniciada desde develop `51238bb1`. Se leyó el informe completo. Producto, persistencia y UI trabajan en ramas independientes. La aceptación del producto incluye un estudio nuevo que use la configuración por omisión.
+
 - [x] H5 · Fase B terminada en dev-test. Se cotejaron 171,118 recibos JEV y la única solicitud de traducción. El paquete privado contiene el anexo corregido, 100 nuevas muestras ciegas, las muestras históricas necesarias para interpretar los identificadores, la prueba pareada y 1,194 filas de variantes PT/EN. Cada distribución se verificó contra el cuerpo original del proveedor. La clave sellada se conserva aparte. El recibo y los manifiestos se reprodujeron con el mismo SHA-256. El auditor decide el idioma tras calificar.
 - [x] H5 · [#117](https://github.com/noisia-ai/monorepo/pull/117), [#118](https://github.com/noisia-ai/monorepo/pull/118), [#119](https://github.com/noisia-ai/monorepo/pull/119), [#120](https://github.com/noisia-ai/monorepo/pull/120), [#121](https://github.com/noisia-ai/monorepo/pull/121), [#122](https://github.com/noisia-ai/monorepo/pull/122) y [#123](https://github.com/noisia-ai/monorepo/pull/123) se revisaron y fusionaron a develop. En dev-test se verificaron las 262 migraciones, la proyección editorial y dos casos del worker que producen advertencias con una sola llamada simulada y cero reparaciones. PostgreSQL de CI probó las rutas V1/V2 sobre una base vacía.
 - [x] H5 · Studio sirve el commit revisado `0495cadd` en la URL habitual de dev-test. Railway confirmó el despliegue y el proceso en ejecución devolvió el SHA completo y salud HTTP 200. Una sesión autenticada abrió en inglés con conversación seleccionada y 98 tópicos. Se cotejaron el nombre y la definición en inglés y en portugués de dos tópicos con sus registros sellados. Los cuatro filtros respondieron. En «All content», los dos intereses mostraron 562 y 304 raíces. El comprobante de la sesión quedó en la custodia privada.
@@ -235,6 +252,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H6 · Los jueces de R13 coincidieron en 95 de 100 casos nuevos. En barreras, 22 de los 33 textos con término de categoría eran correctos, frente a 1 de 17 entre los que carecían de término. La auditoría motiva el filtro textual y una comprobación de sus ejemplos en Signal.
 
 - H5 · La sesión de prueba conservaba una preferencia explícita de español. Al retirar únicamente la cookie de idioma del navegador de dev-test, Signal abrió en inglés. Una petición nueva con preferencia HTTP de español también recibió el documento en inglés. En la sesión autenticada, publicidad y hashtags mostraron cero consumidores elegibles. Conversación y el total mostraron 50,273.
 
@@ -293,6 +312,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H6 · Para medir idioma y reclasificar intereses se incluyen ambos intereses activos en los dos brazos de las 597 raíces. Se conserva el brazo en inglés para la importación de ese subconjunto. Para las 83,365 raíces restantes sólo se preguntan los dos intereses. Se identifican los recibos por raíz y digest para que la contabilización de intereses cuente una única consulta compartida.
+- H6 · Usar inglés para las preguntas JEV de todos los corpus y umbral 0.7 para los tópicos. La política del idioma de las definiciones se determinará con la comparación pareada. Mantener los vectores, BERTopic y el mapa del piloto congelados.
 
 - H5 · Se publicó `0495cadd` una sola vez en `mfp-studio` de dev-test con la configuración activa. El CLI permite elegir un commit para ese despliegue. Railpack completó la construcción y el lote Docker quedó pendiente. La entrega documental de [#124](https://github.com/noisia-ai/monorepo/pull/124) conserva el recibo cuantitativo.
 
