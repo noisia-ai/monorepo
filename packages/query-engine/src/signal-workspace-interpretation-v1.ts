@@ -154,6 +154,7 @@ export const SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_SCHEMA_V1 = freezeDeep
 });
 export const SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1 = Object.freeze({
   ...SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,
+  max_output_tokens: 16384,
   output_language: "en-US" as const, localization_contract_version: "signal-topic-localization-v1" as const,
   prompt_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_PROMPT_V1),
   schema_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_SCHEMA_V1),
@@ -299,7 +300,7 @@ export function buildSignalWorkspaceInterpretationBatchV1(
     : shortReferences ? SIGNAL_WORKSPACE_INTERPRETATION_SONNET_PROMPT_V1 : SIGNAL_WORKSPACE_INTERPRETATION_PROMPT_V1;
   if (multilingual) system = pilot ? SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_PROMPT_V1 : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_PROMPT_V1;
   const request_body = stableJson({ model: configuration.model,
-    max_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, stream: false,
+    max_tokens: configuration.max_output_tokens, stream: false,
     thinking: { type: "disabled" }, system,
     output_config: { effort: "high", format: { type: "json_schema", schema: multilingual ? SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_SCHEMA_V1 : SIGNAL_WORKSPACE_INTERPRETATION_SCHEMA_V1 } },
     messages: [{ role: "user", content: stableJson({ contract_version: "workspace-engine-interpretation-packet-v1", context: safeContext, clusters: wireClusters }) }],
@@ -311,7 +312,7 @@ export function buildSignalWorkspaceInterpretationBatchV1(
   // settled from the receipt even if larger, then ledger blocks further sends.
   const input_token_upper_bound = bytes * 4 + 8192;
   const reserved_micro_usd = signalWorkspaceInterpretationCostV1({ input_tokens: input_token_upper_bound,
-    output_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, configuration);
+    output_tokens: configuration.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, configuration);
   const request_digest = signalWorkspaceEmbeddingDigestV1({ request_body, configuration });
   return { batch_key: `interpretation:${request_digest.slice(7)}`, request_digest, configuration,
     context: safeContext, clusters, request_body, input_token_upper_bound, reserved_micro_usd };
@@ -338,7 +339,7 @@ export function buildSignalWorkspaceInterpretationRepairBatchV1(original: Signal
   if (bytes > SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.repair_request_bytes) return fail("batch_capacity_exceeded");
   const input_token_upper_bound = bytes * 4 + 8192;
   const reserved_micro_usd = signalWorkspaceInterpretationCostV1({ input_tokens: input_token_upper_bound,
-    output_tokens: SIGNAL_WORKSPACE_INTERPRETATION_LIMITS_V1.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, original.configuration);
+    output_tokens: original.configuration.max_output_tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, original.configuration);
   const request_digest = signalWorkspaceEmbeddingDigestV1({ request_body, configuration: original.configuration });
   return { ...expected, editorial_repair, request_body, request_digest, batch_key: `interpretation-repair:${request_digest.slice(7)}`,
     input_token_upper_bound, reserved_micro_usd };

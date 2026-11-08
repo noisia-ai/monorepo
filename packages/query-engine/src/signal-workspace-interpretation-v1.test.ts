@@ -410,5 +410,7 @@ test("multilingual editorial profiles validate English canonical wording and ret
     { interpretations: [{ ...wire.interpretations[0], name: localization.original.name }] }), /localization_invalid/);
   assert.equal(JSON.parse(historical.request_body).output_config.format.schema.properties.interpretations.items.properties.localization, undefined);
   assert.ok(JSON.parse(batch.request_body).output_config.format.schema.properties.interpretations.items.required.includes("localization"));
+  assert.equal(JSON.parse(batch.request_body).max_tokens,16384);
+  assert.equal(JSON.parse(historical.request_body).max_tokens,8192);
   assert.deepEqual(buildSignalWorkspaceInterpretationBatchV1(context, [group]).request_body, historical.request_body);
 });

@@ -129,11 +129,11 @@ test('shard result rejects cross-group citations, omissions, duplicates, and ung
   assert.throws(()=>validateSignalTopicEditorialGlobalShardResultV2({shard,value:{...base,concepts:[{...base.concepts[0],members:[
     {group_key:a.group_key,cited_ref_ids:[b.evidence[0]!.ref_id],rationale:'foreign'}]}]}}),/citation_invalid/u);
   assert.throws(()=>validateSignalTopicEditorialGlobalShardResultV2({shard,value:{...base,concepts:[]}}),/coverage_invalid/u);
-  assert.throws(()=>validateSignalTopicEditorialGlobalShardResultV2({shard,value:{...base,concepts:[],noise:[
-    {group_key:a.group_key,cited_ref_ids:[],rationale:'No evidence'}],unresolved:[{group_key:b.group_key,cited_ref_ids:[],rationale:'uncertain'}]}}),/citation_invalid/u);
+  assert.equal(validateSignalTopicEditorialGlobalShardResultV2({shard,value:{...base,concepts:[],noise:[
+    {group_key:a.group_key,cited_ref_ids:[],rationale:'Reviewed group'}],unresolved:[{group_key:b.group_key,cited_ref_ids:[],rationale:'uncertain'}]}}).noise[0]!.cited_ref_ids.length,0);
 });
 
-test('format repair retains only own-group citations and merges duplicate Noise without changing disposition',()=>{
+test('format repair rejects foreign references and can merge duplicate Noise groups',()=>{
   const shard=buildSignalTopicEditorialGlobalShardsV2({units:makeUnits(2),expected_group_count:2,batch_size:2})[0]!;
   const [a,b]=shard.groups;const forged='sha256:'+ 'f'.repeat(64);
   const value={contract_version:'signal-topic-editorial-global-shard-result-v2',concepts:[],noise:[
@@ -141,8 +141,10 @@ test('format repair retains only own-group citations and merges duplicate Noise 
     {group_key:a!.group_key,cited_ref_ids:[a!.evidence[0]!.ref_id],rationale:'Racional A más completo'},
     {group_key:b!.group_key,cited_ref_ids:[b!.evidence[0]!.ref_id],rationale:'Racional B'}],unresolved:[]};
   assert.throws(()=>validateSignalTopicEditorialGlobalShardResultV2({shard,value}),/citation_invalid/u);
-  const fixed=repairSignalTopicEditorialGlobalShardFormattingV2({shard,value});
-  assert.equal(fixed?.removed_invalid_citations,1);assert.equal(fixed?.merged_noise_duplicates,1);
+  assert.equal(repairSignalTopicEditorialGlobalShardFormattingV2({shard,value}),null);
+  const ownReferences={...value,noise:value.noise.map(item=>({...item,cited_ref_ids:item.cited_ref_ids.filter(ref=>ref!==forged)}))};
+  const fixed=repairSignalTopicEditorialGlobalShardFormattingV2({shard,value:ownReferences});
+  assert.equal(fixed?.removed_invalid_citations,0);assert.equal(fixed?.merged_noise_duplicates,1);
   assert.deepEqual(fixed?.result.noise.map(item=>item.group_key).sort(),shard.group_keys.slice().sort());
   assert.deepEqual(fixed?.result.noise.find(item=>item.group_key===a!.group_key)?.cited_ref_ids,[a!.evidence[0]!.ref_id]);
   assert.equal(repairSignalTopicEditorialGlobalShardFormattingV2({shard,value:{...value,noise:[
@@ -383,4 +385,32 @@ test('rank preflight accepts 1,652 compact concepts and blocks oversized 5,000-c
   assert.ok(review.preflight.estimated_max_output_utf8_bytes<380_000);
   assert.throws(()=>buildSignalTopicEditorialGlobalRankingReviewV2({snapshot_digest:sha('snapshot'),context,
     concepts:makeConcepts(5000,500)}),/topic_editorial_global_ranking_preflight_(input|output)_oversize/u);
+});
+
+test('screening reference warnings survive shards, merge and final catalog without quarantining valid groups',()=>{
+  const source=makeUnits(2).map((unit,index)=>({...unit,decision:validateSignalTopicEditorialGroupOutputV2(unit.request,{
+    contract_version:'signal-topic-editorial-group-output-v2',group_id:unit.request.receipt.group_id,disposition:'topic',
+    candidate:{label:`Topic ${index}`,definition:`Definition ${index}`,locale:'es-MX'},confidence:0.8,rationale:'The supplied group was reviewed.',
+    cited_evidence_ids:index===0?[]:Array.from({length:61},()=>unit.request.receipt.evidence[0]!.evidence_id),
+  })}));
+  assert.deepEqual(source[0]!.decision!.warnings,['references_missing']);
+  assert.deepEqual(source[1]!.decision!.warnings,['references_excess','references_repeated']);
+  const shards=buildSignalTopicEditorialGlobalShardsV2({units:source,expected_group_count:2,batch_size:2}),shard=shards[0]!;
+  const result=validateSignalTopicEditorialGlobalShardResultV2({shard,value:{contract_version:'signal-topic-editorial-global-shard-result-v2',
+    concepts:shard.groups.map((group,index)=>({concept_key:`topic-${index}`,kind:'topic',label:`Topic ${index}`,definition:`Definition ${index}`,
+      members:[{group_key:group.group_key,cited_ref_ids:index===0?[]:Array.from({length:61},()=>group.evidence[0]!.ref_id),rationale:'Observed group.'}]})),
+    noise:[],unresolved:[]}});
+  const review=buildSignalTopicEditorialGlobalMergeReviewsV2({shards,results:[{batch_index:0,result}],round:1,fan_in:2})[0]!;
+  const root=validateSignalTopicEditorialGlobalMergeResultV2({review,value:{contract_version:'signal-topic-editorial-global-merge-result-v2',
+    concepts:[{concept_key:'combined',kind:'topic',label:'Combined topic',definition:'Related supplied conversations.',priority_rationale:'Same conversation.',
+      member_concept_keys:review.nodes.map(node=>node.concept_key)}]}}).concepts;
+  const outcomes=composeSignalTopicEditorialGlobalShardOutcomesV2({shards,results:[{batch_index:0,result}]});
+  const catalog=buildSignalTopicEditorialGlobalCatalogInputV2({snapshot_digest:shard.snapshot_digest,units:source,outcomes,
+    root_concepts:root,revision:1});
+  assert.equal(catalog.ready_to_materialize,true);
+  assert.equal(catalog.revision!.decisions.length,2);
+  assert.deepEqual(catalog.group_evidence.find(item=>item.cited_ref_ids.length===0)!.warnings,['references_missing']);
+  assert.deepEqual(catalog.group_evidence.find(item=>item.cited_ref_ids.length===61)!.warnings,['references_excess','references_repeated']);
+  const alien=structuredClone(source);alien[0]!.decision!.cited_ref_ids=['sha256:'+'f'.repeat(64)];
+  assert.throws(()=>buildSignalTopicEditorialGlobalShardsV2({units:alien,expected_group_count:2,batch_size:2}),/citation_invalid/);
 });
