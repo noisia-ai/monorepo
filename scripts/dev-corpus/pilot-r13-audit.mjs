@@ -143,7 +143,9 @@ export function buildR13LanguageVariants(portugueseRows, englishRows, blindRootT
         throw new Error('r13_variant_raw_mismatch');
       }
       const distribution = row.response.answers.trigger_barrier.probabilities;
-      if (!record(distribution) || Object.keys(distribution).sort().join(',') !== 'barrier,none,trigger'
+      if (row.response.answers.trigger_barrier.type !== 'choice'
+        || !['trigger', 'barrier', 'none'].includes(row.response.answers.trigger_barrier.choice)
+        || !record(distribution) || Object.keys(distribution).sort().join(',') !== 'barrier,none,trigger'
         || Object.values(distribution).some((value) => !Number.isFinite(value) || value < 0 || value > 1)
         || Math.abs(Object.values(distribution).reduce((sum, value) => sum + value, 0) - 1) > 0.010000000001) {
         throw new Error('r13_variant_probability_invalid');
