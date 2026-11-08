@@ -1,3 +1,4 @@
+import {MASS_LABELING_FUNDING_RECEIPT_SELECT_V1,type MassLabelingFundingReceiptV1} from "./signal-mass-labeling-funding";
 import {massLabelingRequestPolicyWithClientV1,admitMassLabelingScopedWithClientV1,massLabelingRunPolicyWithClientV1} from "./signal-mass-labeling-scoped-policy";
 import {createHash, randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
@@ -471,7 +472,7 @@ export async function exportMassLabelingSnapshotV1(args: {
       FROM signal_mass_labeling_items item LEFT JOIN signal_mass_labeling_results result ON result.map_id=item.map_id AND result.root_id=item.root_id
       WHERE item.workspace_id=$1 AND item.map_id=$2 ORDER BY item.ordinal`, [args.workspace_id, args.map_id])).rows;
     const calls = run ? (await client.query(`SELECT id,run_id,model,status,reserved_micro_usd::text,settled_micro_usd::text,
-      terminal_exposure_micro_usd::text,usage,created_at,updated_at,results_applied,request_digest,raw_sha256
+      terminal_exposure_micro_usd::text,usage,created_at,updated_at,results_applied,request_digest,raw_sha256,budget_date::text,budget_timezone
       FROM signal_labeling_calls WHERE workspace_id=$1 AND run_id=$2 ORDER BY created_at,id`, [args.workspace_id, run.id])).rows : [];
     const embedding = (await client.query(`SELECT embedded.id,embedded.created_at,embedded.completed_at,embedded.status,
       embedded.settled_micro_usd::text,embedded.counts,
@@ -496,7 +497,11 @@ export async function exportMassLabelingSnapshotV1(args: {
         AND workspace_contract='workspace-engine-interpretation-v1' ORDER BY created_at,id`, [args.workspace_id, map.source_engine_execution_id])).rows;
     const scopedAuthority=run?(await client.query(`SELECT to_jsonb(a) admission,to_jsonb(e) extension FROM signal_mass_labeling_scoped_admissions a
       JOIN signal_mass_labeling_policy_extensions e ON e.id=a.extension_id WHERE a.target_id=$1 AND a.workspace_id=$2`,[run.id,args.workspace_id])).rows[0]??null:null;
-    return {scoped_authority:scopedAuthority,contract_version: "mass-labeling-private-export-v1", exported_at: new Date().toISOString(),
+    const fundingReceipts=run?(await client.query<{receipt:MassLabelingFundingReceiptV1}>(`${MASS_LABELING_FUNDING_RECEIPT_SELECT_V1} WHERE f.run_id=$1 ORDER BY f.created_at,f.id`,[run.id])).rows.map(row=>row.receipt):[];
+    const callAuthorities=scopedAuthority?(await client.query<{call_id:string;scoped_admission_id:string;funding_receipt_id:string|null}>(`SELECT c.id call_id,a.id scoped_admission_id,b.funding_receipt_id FROM signal_labeling_calls c
+      JOIN signal_mass_labeling_scoped_admissions a ON a.target_id=c.run_id LEFT JOIN signal_mass_labeling_call_authorities b ON b.call_id=c.id WHERE c.run_id=$1 ORDER BY c.created_at,c.id`,[run.id])).rows:[];
+    return {scoped_authority:scopedAuthority?{...scopedAuthority,funding_receipts:fundingReceipts,call_authorities:callAuthorities,
+      effective_total_cap_micro_usd:fundingReceipts.at(-1)?.total_cap_micro_usd??String(run.cap_micro_usd)}:null,contract_version: "mass-labeling-private-export-v1", exported_at: new Date().toISOString(),
       map, run, items, calls, stage_receipts: {embeddings: embedding, engine, editorial_calls: editorialCalls, consolidation_artifact: consolidationArtifact, global_receipt_recovery_decision: globalReceiptDecision}};
   });
 }

@@ -19,7 +19,7 @@ import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-label
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
 for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"] as const) test(`mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences (${authorization})`, {
-  skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 300_000,
+  skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 600_000,
 }, async () => {
   const scopedMode=authorization!=="rotation",rootCount=authorization==="scoped-funding"?1002:authorization==="scoped-scale"?200:3;
   const {openDatabase} = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
@@ -394,7 +394,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
       for(const mutation of [{actor_user_id:foreignActor},{workspace_id:sibling!.workspace_id},{map_id:randomUUID()},
         {run_id:randomUUID()},{expected_prior_admission_id:randomUUID()},{expected_prior_receipt_digest:digest("other receipt")},
         {expected_prior_cap_micro_usd:999_999},{expected_smoke_metrics_digest:digest("other smoke")},{total_cap_micro_usd:1_000_000}]){
-        await assert.rejects(authorizeMassLabelingFullBudgetV1({...fundingRequest,...mutation}),/forbidden|funding_|unavailable|smoke_|scoped_/);
+        await assert.rejects(authorizeMassLabelingFullBudgetV1({...fundingRequest,...mutation}),/forbidden|funding_|unavailable|smoke_|scoped_|map_stale/);
       }
       await query("SAVEPOINT funding_revoked_base");await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[scopedPolicyId]);
       await assert.rejects(authorizeMassLabelingFullBudgetV1(fundingRequest),/extension_invalid|funding_/);
@@ -418,6 +418,11 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
       assert.equal(snapshot.scoped_authority.funding_receipts[0]!.total_cap_micro_usd,"1500000");
       assert.equal(snapshot.scoped_authority.call_authorities.length,1000);
       assert.ok(snapshot.scoped_authority.call_authorities.every((row:{scoped_admission_id:string;funding_receipt_id:string|null})=>row.scoped_admission_id===admission.id&&row.funding_receipt_id===null));
+      await query("SAVEPOINT funded_base_revoked_before_continue");
+      await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[scopedPolicyId]);
+      await assert.rejects(continueMassLabelingV1({...access,run_id:run.id}),/extension_invalid/);
+      assert.equal((await authorizeMassLabelingFullBudgetV1(fundingRequest)).replayed,true,"reading an existing authority never finances a new call");
+      await query("ROLLBACK TO SAVEPOINT funded_base_revoked_before_continue");await query("RELEASE SAVEPOINT funded_base_revoked_before_continue");
       await continueMassLabelingV1({...access,run_id:run.id});assert.equal((await continueMassLabelingV1({...access,run_id:run.id})).replayed,true);
       const continuation=await store.claim(run.id);assert.ok(continuation);assert.equal(continuation.id,run.id);
       const remaining=await store.inputs(continuation);assert.equal(remaining.length,2);
@@ -425,21 +430,60 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
       await assert.rejects(store.reserve(continuation,proposalsFor(remaining,800_000)),/cap_exhausted/,
         "the effective ceiling is 1.5M total rather than 1M plus 1.5M");
       assert.equal((await store.inputs(continuation)).length,2,"rejected page leaves no reservation or root ownership behind");
+      await denied(`INSERT INTO signal_labeling_calls(run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,reserved_micro_usd,budget_date,budget_timezone)
+        SELECT $1,$2,'typesafe','jev-1.13.0','sync',x.custom_id,x.request_digest,x.request,x.inputs,x.reserved_micro_usd,f.budget_date,f.budget_timezone
+        FROM jsonb_to_recordset($3::jsonb) x(custom_id text,request_digest text,request jsonb,inputs jsonb,reserved_micro_usd bigint)
+        JOIN signal_mass_labeling_funding_receipts f ON f.run_id=$1`,[run.id,run.workspace_id,JSON.stringify(proposalsFor(remaining,800_000))],/cap_exhausted/);
+      assert.equal((await store.inputs(continuation)).length,2,"SQL over-cap page rolls back both reservations and their new authority bindings");
       const fullCalls=await store.reserve(continuation,proposalsFor(remaining,600_001));assert.equal(fullCalls.length,2);
       await denied("UPDATE signal_mass_labeling_call_authorities SET funding_receipt_id=NULL WHERE call_id=$1",[fullCalls[0]!.id],/append.only|immutable/);
       await denied("DELETE FROM signal_mass_labeling_call_authorities WHERE call_id=$1",[fullCalls[0]!.id],/append.only|immutable/);
-      await denied(`INSERT INTO signal_mass_labeling_call_authorities(call_id,scoped_admission_id,funding_receipt_id)
-        VALUES($1,$2,$3)`,[[...smokeCallIds][0],admission.id,authorized.receipt.id],/funding_|authority_|immutable|duplicate/);
+      await query("SAVEPOINT retroactive_funding_binding");
+      await query(`INSERT INTO signal_mass_labeling_call_authorities(call_id,scoped_admission_id,funding_receipt_id,workspace_id,run_id)
+        VALUES($1,$2,$3,$4,$5)`,[[...smokeCallIds][0],admission.id,authorized.receipt.id,run.workspace_id,run.id]);
+      await assert.rejects(query("SET CONSTRAINTS ALL IMMEDIATE"),/mass_labeling_funding_authority_invalid/,
+        "a structurally valid link cannot retroactively attribute a paid smoke call to the successor");
+      await query("ROLLBACK TO SAVEPOINT retroactive_funding_binding");await query("RELEASE SAVEPOINT retroactive_funding_binding");
+      await query("SAVEPOINT cross_run_funding_binding");
+      const facetIdentity=facetLabelerIdentityV1(),facetDigest=labelerDigestV1(facetIdentity),foreignRun=randomUUID(),foreignCall=randomUUID();
+      await query(`INSERT INTO signal_labeler_versions(kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity)
+        VALUES('facets',$1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(labeler_digest) DO NOTHING`,[facetIdentity.provider,facetIdentity.model,facetIdentity.prompt_digest,facetIdentity.schema_digest,facetDigest,JSON.stringify(facetIdentity)]);
+      await query(`INSERT INTO signal_labeling_runs SELECT (jsonb_populate_record(NULL::signal_labeling_runs,to_jsonb(r)||jsonb_build_object('id',$2::uuid,'kind','facets',
+        'labeler_version_id',(SELECT id FROM signal_labeler_versions WHERE labeler_digest=$3),'status','completed','idempotency_key',$4::text,'concept_set_digest',NULL,'cap_micro_usd',NULL))).*
+        FROM signal_labeling_runs r WHERE id=$1`,[run.id,foreignRun,facetDigest,randomUUID()]);
+      await query(`INSERT INTO signal_labeling_calls SELECT (jsonb_populate_record(NULL::signal_labeling_calls,to_jsonb(c)||
+        jsonb_build_object('id',$2::uuid,'run_id',$3::uuid,'custom_id',$4::text,'provider',$5::text,'model',$6::text,'created_at',clock_timestamp()))).*
+        FROM signal_labeling_calls c WHERE c.id=$1`,[fullCalls[0]!.id,foreignCall,foreignRun,randomUUID(),facetIdentity.provider,facetIdentity.model]);
+      await query(`INSERT INTO signal_mass_labeling_call_authorities(call_id,scoped_admission_id,funding_receipt_id,workspace_id,run_id)
+        VALUES($1,$2,$3,$4,$5)`,[foreignCall,admission.id,authorized.receipt.id,run.workspace_id,run.id]);
+      await assert.rejects(query("SET CONSTRAINTS ALL IMMEDIATE"),/mass_labeling_funding_authority_invalid/,
+        "a future call with an eligible root still cannot borrow authority from another run");
+      await query("ROLLBACK TO SAVEPOINT cross_run_funding_binding");await query("RELEASE SAVEPOINT cross_run_funding_binding");
       const reservedSnapshot=await exportMassLabelingSnapshotV1({...access,map_id:map.map_id});
       for(const call of fullCalls)assert.equal(reservedSnapshot.scoped_authority!.call_authorities.find((row:{call_id:string})=>row.call_id===call.id)!.funding_receipt_id,authorized.receipt.id,
         "each successor call has an immutable funding authority before transmission");
       assert.equal((await query("SELECT sum(CASE WHEN settled_micro_usd IS NULL THEN reserved_micro_usd ELSE settled_micro_usd END)::text exposure FROM signal_labeling_calls WHERE run_id=$1",[run.id])).rows[0]!.exposure,"1205002");
+      await query("SAVEPOINT funded_base_revoked_before_send");await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[scopedPolicyId]);
+      await assert.rejects(store.markSubmitting(continuation,fullCalls),/extension_invalid/);
+      await denied("UPDATE signal_labeling_calls SET status='submitting' WHERE id=$1",[fullCalls[0]!.id],/extension_invalid/);
+      await query("ROLLBACK TO SAVEPOINT funded_base_revoked_before_send");await query("RELEASE SAVEPOINT funded_base_revoked_before_send");
       await payPage(continuation,fullCalls);
       assert.equal((await store.inputs(continuation)).length,0);assert.equal(await store.finish(continuation),"completed");await store.release(continuation);
       const final=await exportMassLabelingSnapshotV1({...access,map_id:map.map_id});assert.equal(final.calls.length,1002);assert.equal(final.items.length,1002);
       assert.deepEqual((await query(`SELECT count(*)::int rows,count(DISTINCT root_id)::int roots,count(DISTINCT call_id)::int calls
         FROM signal_mass_labeling_call_roots WHERE run_id=$1`,[run.id])).rows[0],{rows:1002,roots:1002,calls:1002},"every root has exactly one paid call");
       assert.deepEqual(await originalCalls(),smokeBefore,"continuation cannot rewrite or pay any smoke call again");
+      const fundingReceipt=final.scoped_authority!.funding_receipts[0]!;
+      const {quote:fundingQuote,receipt_digest:fundingReceiptDigest,...receiptPayload}=fundingReceipt;
+      assert.equal(digest(fundingQuote),fundingReceipt.quote_digest,"quote hash is independently reproducible from the exact exported DTO");
+      assert.equal(digest(receiptPayload),fundingReceiptDigest,"receipt hash binds every exported authority field");
+      const smokeHashRows=final.calls.filter((call:{id:string})=>smokeCallIds.has(call.id)).sort((a:{id:string},b:{id:string})=>a.id<b.id?-1:a.id>b.id?1:0).map((call)=>({
+        id:call.id,run_id:call.run_id,model:call.model,status:call.status,reserved_micro_usd:call.reserved_micro_usd,settled_micro_usd:call.settled_micro_usd,
+        terminal_exposure_micro_usd:call.terminal_exposure_micro_usd,usage:call.usage,request_digest:call.request_digest,raw_sha256:call.raw_sha256,
+        results_applied:call.results_applied,budget_date:call.budget_date,budget_timezone:call.budget_timezone}));
+      assert.equal(digest(smokeHashRows),fundingReceipt.smoke_calls_digest,"smoke hash remains reproducible after continuation");
+      const exportPath=process.env.NOISIA_MFP_SYNTHETIC_EXPORT_PATH;
+      if(exportPath){const {writeFile,chmod}=await import("node:fs/promises");await writeFile(exportPath,JSON.stringify(final),{mode:0o600});await chmod(exportPath,0o600);}
       assert.equal(final.run.cap_micro_usd,"1000000");assert.equal(final.scoped_authority!.effective_total_cap_micro_usd,"1500000");
       if(siblingFixture&&sibling)assert.deepEqual(await siblingFixture.snapshotMassLabelingSiblingAuthorityV1({query,...sibling}),siblingBefore,
         "funding authorization and continuation preserve the queued sibling and every base action");

@@ -1,3 +1,4 @@
+import {authorizeMassLabelingFullBudgetV1} from "../../infrastructure/db/signal-mass-labeling-funding";
 import {provisionMassLabelingScopedPolicyV1} from "../../infrastructure/db/signal-mass-labeling-scoped-policy";
 import { readFile } from "node:fs/promises";
 import {
@@ -22,6 +23,7 @@ async function main() {
       "map",
       "policy",
       "policy-scoped",
+      "authorize-full",
       "request",
       "step",
       "recover",
@@ -52,6 +54,11 @@ async function main() {
     "run_id",
     "topic_keys",
     "expected_revision",
+    "total_cap_micro_usd",
+    "expected_prior_admission_id",
+    "expected_prior_receipt_digest",
+    "expected_prior_cap_micro_usd",
+    "expected_smoke_metrics_digest",
   ];
   if (
     !input ||
@@ -91,6 +98,11 @@ async function main() {
         ),
         catalog: consolidation.output.topics,
       });
+    } else if (action === "authorize-full") {
+      result=await authorizeMassLabelingFullBudgetV1({...scopedRun,map_id:String(input.map_id),idempotency_key:String(input.idempotency_key),
+        total_cap_micro_usd:Number(input.total_cap_micro_usd),expected_prior_admission_id:String(input.expected_prior_admission_id),
+        expected_prior_receipt_digest:String(input.expected_prior_receipt_digest),expected_prior_cap_micro_usd:Number(input.expected_prior_cap_micro_usd),
+        expected_smoke_metrics_digest:String(input.expected_smoke_metrics_digest)});
     } else if (action === "policy-scoped") {
       result = await provisionMassLabelingScopedPolicyV1({...access,map_id:String(input.map_id),cap_micro_usd:Number(input.cap_micro_usd)});
     } else if (action === "policy") {
