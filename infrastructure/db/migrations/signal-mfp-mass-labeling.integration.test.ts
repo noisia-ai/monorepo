@@ -187,6 +187,13 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
     assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_items WHERE map_id=$1", [map.map_id])).rows[0].n, rootCount);
     const siblingFixture=scopedMode?await import("./signal-mfp-mass-labeling-sibling.synthetic.fixture"):null;
     const sibling=siblingFixture?await siblingFixture.seedMassLabelingSiblingEditorialV1({database,scoped,query,cleanup:async()=>{},identity:seed.identity}):null;
+    if(sibling){
+      const window=(await query(`SELECT valid_from<=transaction_timestamp() AND valid_until>transaction_timestamp() transaction_valid,
+        valid_from<=clock_timestamp() AND valid_until>clock_timestamp() wall_clock_valid
+        FROM signal_processing_policy_versions WHERE id=$1 AND status='active'`,[sibling.policy_id])).rows[0];
+      assert.deepEqual(window,{transaction_valid:true,wall_clock_valid:true},
+        "the synthetic base covers both clocks even when the large setup outlasts one minute");
+    }
     const siblingBefore=siblingFixture&&sibling?await siblingFixture.snapshotMassLabelingSiblingAuthorityV1({query,...sibling}):null;
     await query("SAVEPOINT semantic_sibling");
     const semantic=await seedComposedFixture(database,"mass-policy-sibling",{optionalStrictCaps:true});
