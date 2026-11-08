@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   buildBlindSamples,
   comparePilotSnapshot,
+  derivePilotJevAuthorization,
   computeSnapshotDigest,
   computeJsonStringifyDigest,
   loadPilotAuditInputs,
@@ -44,8 +45,11 @@ const result = (root_id, topic0, topic1, decision, decisionProbability) => ({
   },
 });
 
-function fixture() {
-  return {
+function fixture({ funded = false } = {}) {
+  const smokeMetrics = { root_count: 1, technical_failure: false };
+  const smokeMetricsCanonical = canonicalForTest(smokeMetrics);
+  const smokeMetricsDigest = `sha256:${createHash('sha256').update(smokeMetricsCanonical).digest('hex')}`;
+  const snapshot = {
     contract_version: 'mass-labeling-private-export-v1',
     exported_at: '2026-11-07T12:02:00.000Z',
     map: {
@@ -61,9 +65,10 @@ function fixture() {
         { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', group_ids: ['g2'] },
       ],
     },
-    run: { id: 'synthetic-label-run', run_id: 'synthetic-label-run', map_id: 'synthetic-map-id',
-      status: 'completed', smoke_root_limit: null, smoke_metrics: { root_count: 1, technical_failure: false },
-      smoke_metrics_digest: 'sha256:synthetic-smoke-digest', continued_at: '2026-11-07T12:01:00.000Z' },
+    run: { id: 'synthetic-label-run', run_id: 'synthetic-label-run', map_id: 'synthetic-map-id', workspace_id: 'synthetic-workspace',
+      actor_user_id: '00000000-0000-4000-8000-000000000003',
+      status: 'completed', smoke_root_limit: null, smoke_metrics: smokeMetrics,
+      smoke_metrics_digest: smokeMetricsDigest, continued_at: '2026-11-07T12:01:00.000Z' },
     items: [
       { map_id: 'synthetic-map-id', root_id: 'root-1', ordinal: 1, input_digest: 'sha256:synthetic-input-1',
         chunk_index: 0, text: 'Synthetic mention one', status: 'labeled', call_id: 'call-smoke',
@@ -96,20 +101,94 @@ function fixture() {
         error_code: null, result_created_at: '2026-11-07T12:01:05.000Z' },
     ],
     calls: [
-      { id: 'call-smoke', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 1000 } },
-      { id: 'call-full-root-2', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 3000 } },
-      { id: 'call-full-root-3', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '12340', terminal_exposure_micro_usd: '12340', usage: { input_tokens: 3000 } },
-      { id: 'call-full-root-5', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'succeeded',
-        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 4000 } },
+      { id: 'call-smoke', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'settled',
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 1000 },
+        request_digest: 'sha256:synthetic-request-1', raw_sha256: 'sha256:synthetic-raw-1', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
+      { id: 'call-full-root-2', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'settled',
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 3000 },
+        request_digest: 'sha256:synthetic-request-2', raw_sha256: 'sha256:synthetic-raw-2', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
+      { id: 'call-full-root-3', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'settled',
+        reserved_micro_usd: '10000', settled_micro_usd: '12340', terminal_exposure_micro_usd: '12340', usage: { input_tokens: 3000 },
+        request_digest: 'sha256:synthetic-request-3', raw_sha256: 'sha256:synthetic-raw-3', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
+      { id: 'call-full-root-5', run_id: 'synthetic-label-run', model: 'synthetic-jev-v1', status: 'settled',
+        reserved_micro_usd: '10000', settled_micro_usd: '0', terminal_exposure_micro_usd: '0', usage: { input_tokens: 4000 },
+        request_digest: 'sha256:synthetic-request-5', raw_sha256: 'sha256:synthetic-raw-5', results_applied: true,
+        budget_date: '2026-11-07', budget_timezone: 'UTC' },
     ],
     stage_receipts: {
       embeddings: { input_tokens: '5000' },
       engine: { id: 'synthetic-engine-run', status: 'completed', result_summary: { fit_checkpoint: { interpretation_manifest: { unit_count: 12 } } } },
       editorial_calls: [{ id: 'editorial-call', settled_micro_usd: '0', input_tokens: 0, usage: { input_tokens: 0 } }],
     },
+  };
+  if (funded) snapshot.scoped_authority = syntheticScopedAuthority(snapshot);
+  return snapshot;
+}
+
+const fundedFixture = () => fixture({ funded: true });
+
+function syntheticScopedAuthority(snapshot) {
+  const extensionId = '00000000-0000-4000-8000-000000000010';
+  const admissionId = '00000000-0000-4000-8000-000000000011';
+  const fundingId = '00000000-0000-4000-8000-000000000012';
+  const digest = (character) => `sha256:${character.repeat(64)}`;
+  const smokeDigestRows = snapshot.calls.filter((call) => call.id === 'call-smoke').map((call) => ({
+    id: call.id, run_id: call.run_id, model: call.model, status: call.status,
+    reserved_micro_usd: String(call.reserved_micro_usd), settled_micro_usd: String(call.settled_micro_usd),
+    terminal_exposure_micro_usd: String(call.terminal_exposure_micro_usd), usage: call.usage,
+    request_digest: call.request_digest, raw_sha256: call.raw_sha256, results_applied: call.results_applied,
+    budget_date: call.budget_date, budget_timezone: call.budget_timezone,
+  }));
+  const quote = {
+    contract_version: 'mass-labeling-smoke-usage-quote-v1', basis: 'ledger_usage_at_sealed_tariff',
+    model: 'synthetic-jev-v1', input_usd_per_mtok: 0.042, population_roots: snapshot.map.root_count,
+    observed_smoke_roots: 1, observed_smoke_calls: 1, observed_input_tokens: 1000,
+    observed_settled_micro_usd: '0', projected_total_usage_micro_usd: '8804000',
+    observed_max_page_reserved_micro_usd: '10000', page_size: 200,
+    reserve_observation_basis: 'max_200_call_window_from_smoke', total_cap_micro_usd: '9500000',
+    provider_charged_micro_usd: null,
+  };
+  const funding = {
+    contract_version: 'mass-labeling-prospective-total-budget-v1',
+    id: fundingId, scoped_admission_id: admissionId, extension_id: extensionId,
+    organization_id: 'synthetic-organization', workspace_id: 'synthetic-workspace',
+    map_id: snapshot.map.id, map_digest: snapshot.map.map_digest,
+    run_id: snapshot.run.id, actor_user_id: snapshot.run.actor_user_id,
+    base_policy_version_id: 'synthetic-base-policy', base_policy_digest: digest('a'),
+    labeler_digest: digest('b'), entity_context_digest: digest('c'),
+    smoke_metrics_canonical: canonicalForTest(snapshot.run.smoke_metrics),
+    prior_total_cap_micro_usd: '6970000', total_cap_micro_usd: '9500000',
+    prior_admission_receipt_digest: digest('d'), prior_budget_date: '2026-11-07', prior_budget_timezone: 'UTC',
+    smoke_metrics_digest: snapshot.run.smoke_metrics_digest, smoke_root_count: 1, smoke_call_count: 1,
+    smoke_calls_digest: `sha256:${createHash('sha256').update(canonicalForTest(smokeDigestRows)).digest('hex')}`,
+    budget_date: '2026-11-07', budget_timezone: 'UTC', admission_not_after: '2026-11-08T12:00:00.000000Z',
+    idempotency_key: 'synthetic-funding-idempotency',
+    quote, quote_digest: `sha256:${createHash('sha256').update(canonicalForTest(quote)).digest('hex')}`,
+    created_at: '2026-11-07T12:01:00.000000Z', created_by_user_id: snapshot.run.actor_user_id,
+  };
+  funding.receipt_digest = `sha256:${createHash('sha256').update(canonicalForTest(
+    Object.fromEntries(Object.entries(funding).filter(([key]) => key !== 'quote')),
+  )).digest('hex')}`;
+  return {
+    extension: { id: extensionId, organization_id: 'synthetic-organization', workspace_id: 'synthetic-workspace',
+      map_id: snapshot.map.id, map_digest: snapshot.map.map_digest, actor_user_id: snapshot.run.actor_user_id,
+      base_policy_version_id: 'synthetic-base-policy', base_policy_digest: digest('a'), cap_micro_usd: '6970000' },
+    admission: {
+      id: admissionId, extension_id: extensionId, organization_id: 'synthetic-organization',
+      workspace_id: 'synthetic-workspace', map_id: snapshot.map.id, target_id: snapshot.run.id,
+      actor_user_id: snapshot.run.actor_user_id, policy_version_id: 'synthetic-base-policy',
+      budget_date: '2026-11-07', budget_timezone: 'UTC',
+      receipt_digest: digest('d'),
+    },
+    effective_total_cap_micro_usd: '9500000',
+    funding_receipts: [funding],
+    call_authorities: snapshot.calls.map((call, index) => ({
+      call_id: call.id, scoped_admission_id: admissionId,
+      funding_receipt_id: index === 0 ? null : fundingId,
+    })),
   };
 }
 
@@ -163,6 +242,11 @@ function canonicalForTest(value) {
   if (value && typeof value === 'object') return `{${Object.keys(value).sort()
     .map((key) => `${JSON.stringify(key)}:${canonicalForTest(value[key])}`).join(',')}}`;
   return JSON.stringify(value);
+}
+
+function resealFundingReceipt(funding) {
+  const { quote: _quote, receipt_digest: _receiptDigest, ...dto } = funding;
+  funding.receipt_digest = `sha256:${createHash('sha256').update(canonicalForTest(dto)).digest('hex')}`;
 }
 
 function enrichedEditorialSnapshot() {
@@ -414,12 +498,212 @@ test('summarizes threshold coverage, calls, timing, and cost projections', () =>
   assert.equal(summary.charged_per_1000_micro_usd, 2_468_000);
   assert.equal(summary.charged_per_million_micro_usd, 2_468_000_000);
   assert.equal(summary.usage_value_micro_usd, 22_340);
+  assert.equal(summary.estimated_cash_usage_micro_usd, 12_340);
   assert.equal(summary.free_tokens_used, 5_000);
   assert.equal(summary.stages[0].duration_seconds, 2);
   assert.equal(summary.bertopic_group_count, 12);
   const duplicateCall = operatorReceipt();
   duplicateCall.stages[4].ledger_call_ids = ['call-smoke'];
   assert.throws(() => summarizePilotSnapshot(fixture(), duplicateCall), /input_count_mismatch/u);
+});
+
+function version2DelayedReceipt(snapshot = fundedFixture()) {
+  const receipt = operatorReceipt(snapshot);
+  receipt.contract_version = 'signal-mass-labeling-operator-receipt-v2';
+  receipt.jev_authorization = derivePilotJevAuthorization(snapshot);
+  for (const stage of receipt.stages.filter((row) => row.name.startsWith('jev_'))) stage.charged_micro_usd = null;
+  receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  const observations = ['smoke_before', 'smoke_after', 'full_before', 'full_after'].map((boundary, index) => ({
+    boundary, balance_micro_usd: 30_000_000, observed_at: `2026-11-07T12:0${index}:00.000Z`,
+    evidence_sha256: createHash('sha256').update(`synthetic-${boundary}`).digest('hex'),
+  }));
+  receipt.jev_charge_reconciliation = {
+    status: 'delayed', attributed_smoke_micro_usd: null, attributed_full_micro_usd: null,
+    attribution_evidence_sha256: { smoke: null, full: null },
+    unattributed_interval_change_micro_usd: 0, observations,
+  };
+  return receipt;
+}
+
+test('v2 reconciles one cumulative cap and discloses delayed cash separately from token-valued use', () => {
+  const snapshot = fundedFixture();
+  const receipt = version2DelayedReceipt(snapshot);
+  const summary = summarizePilotSnapshot(snapshot, receipt);
+  assert.equal(summary.charged_micro_usd, null);
+  assert.equal(summary.usage_value_micro_usd, 22_340);
+  assert.equal(summary.scoped_jev_cumulative_cap_micro_usd, 9_500_000);
+  assert.equal(summary.jev_charge_reconciliation.status, 'delayed');
+  const markdown = renderPublicReceipt(summary, '2026-11-07');
+  assert.match(markdown, /USD 9\.500000/u);
+  assert.match(markdown, /Cargo total confirmado: n\/d/u);
+  assert.match(markdown, /La consola del proveedor aún no confirma débitos de JEV/u);
+  assert.match(markdown, /Valor tarifario del uso: USD 0\.022340/u);
+  assert.match(markdown, /Valor tarifario del uso: USD 0\.022340\. Por 1,000 raíces: USD 4\.468000; por 1,000,000: USD 4468\.000000/u);
+  assert.match(markdown, /Voyage usó 5,000 tokens gratis; su cargo efectivo confirmado fue USD 0\.000000/u);
+  assert.match(markdown, /Estimación de caja con crédito de Voyage aplicado \(Claude \+ JEV\): USD 0\.012340; por 1,000 raíces: USD 2\.468000; por 1,000,000: USD 2468\.000000\. Es una estimación, no un débito; no se suma al cargo confirmado/u);
+  assert.doesNotMatch(markdown, /6\.970000 \+ 9\.500000/u);
+});
+
+test('derives a public-safe authorization summary without workspace, map, run, or call IDs', () => {
+  const authorization = derivePilotJevAuthorization(fundedFixture());
+  assert.deepEqual({
+    contract_version: authorization.contract_version,
+    currency: authorization.currency,
+    smoke_root_count: authorization.smoke_root_count,
+    full_root_count: authorization.full_root_count,
+    previous_total_cap_micro_usd: authorization.previous_total_cap_micro_usd,
+    cumulative_total_cap_micro_usd: authorization.cumulative_total_cap_micro_usd,
+    observed_smoke_usage_value_micro_usd: authorization.observed_smoke_usage_value_micro_usd,
+    observed_full_usage_value_micro_usd: authorization.observed_full_usage_value_micro_usd,
+    projected_total_usage_micro_usd: authorization.estimate.projected_total_usage_value_micro_usd,
+  }, {
+    contract_version: 'signal-mass-labeling-jev-authorization-v1', currency: 'USD',
+    smoke_root_count: 1, full_root_count: 4, previous_total_cap_micro_usd: 6_970_000,
+    cumulative_total_cap_micro_usd: 9_500_000, observed_smoke_usage_value_micro_usd: 0,
+    observed_full_usage_value_micro_usd: 12_340, projected_total_usage_micro_usd: 8_804_000,
+  });
+  assert.doesNotMatch(JSON.stringify(authorization), /synthetic-(?:workspace|label-run|map-id)|call-/u);
+});
+
+test('requires receipt v2 whenever the snapshot contains prospective funding, preserving v1 only for historical exports', () => {
+  const historicalSnapshot = fixture();
+  assert.doesNotThrow(() => summarizePilotSnapshot(historicalSnapshot, operatorReceipt(historicalSnapshot)));
+
+  const funded = fundedFixture();
+  const downgraded = operatorReceipt(funded);
+  downgraded.snapshot_sha256 = computeSnapshotDigest(funded);
+  assert.throws(() => summarizePilotSnapshot(funded, downgraded), /operator_receipt_invalid/u);
+  const validV2 = summarizePilotSnapshot(funded, version2DelayedReceipt(funded));
+  validV2.operator_receipt_contract_version = 'signal-mass-labeling-operator-receipt-v1';
+  assert.throws(() => renderPublicReceipt(validV2, '2026-11-07'), /v2_required_for_scoped_funding/u);
+});
+
+test('detects a stripped funding row from remaining full-call bindings and cap markers', () => {
+  const snapshot = fundedFixture();
+  snapshot.scoped_authority.funding_receipts = [];
+  snapshot.scoped_authority.call_authorities = snapshot.scoped_authority.call_authorities.map((binding) => ({
+    ...binding, funding_receipt_id: null,
+  }));
+  snapshot.scoped_authority.effective_total_cap_micro_usd = snapshot.scoped_authority.extension.cap_micro_usd;
+  const downgraded = operatorReceipt(snapshot);
+  downgraded.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  assert.throws(() => summarizePilotSnapshot(snapshot, downgraded), /operator_receipt_invalid/u);
+});
+
+test('v2 attributes only direct smoke evidence and leaves an intervening balance decrease unassigned', () => {
+  const snapshot = fundedFixture();
+  const receipt = version2DelayedReceipt(snapshot);
+  const smoke = receipt.stages.find((stage) => stage.name === 'jev_smoke');
+  smoke.charged_micro_usd = 100;
+  const [before, after, fullBefore, fullAfter] = receipt.jev_charge_reconciliation.observations;
+  before.balance_micro_usd = 30_000_000;
+  after.balance_micro_usd = 29_999_900;
+  fullBefore.balance_micro_usd = 28_999_900;
+  fullAfter.balance_micro_usd = 28_999_900;
+  receipt.jev_charge_reconciliation.status = 'interval_unattributed';
+  receipt.jev_charge_reconciliation.attributed_smoke_micro_usd = 100;
+  receipt.jev_charge_reconciliation.attribution_evidence_sha256.smoke = createHash('sha256').update('direct-smoke-evidence').digest('hex');
+  receipt.jev_charge_reconciliation.unattributed_interval_change_micro_usd = 1_000_000;
+  const summary = summarizePilotSnapshot(snapshot, receipt);
+  assert.equal(summary.stages.find((stage) => stage.name === 'jev_smoke').charged_micro_usd, 100);
+  assert.equal(summary.stages.find((stage) => stage.name === 'jev_full').charged_micro_usd, null);
+  assert.equal(summary.charged_micro_usd, null);
+  assert.equal(summary.jev_charge_reconciliation.unattributed_interval_change_micro_usd, 1_000_000);
+  assert.match(renderPublicReceipt(summary, '2026-11-07'), /USD 1\.000000 sin atribución a una etapa/u);
+});
+
+test('v2 rejects attributed cash without a hashed attribution record and rejects a credit as a charge', () => {
+  const snapshot = fundedFixture();
+  const missingProof = version2DelayedReceipt(snapshot);
+  missingProof.jev_charge_reconciliation.attributed_smoke_micro_usd = 100;
+  missingProof.jev_charge_reconciliation.status = 'interval_unattributed';
+  missingProof.stages.find((stage) => stage.name === 'jev_smoke').charged_micro_usd = 100;
+  missingProof.jev_charge_reconciliation.observations[0].balance_micro_usd = 30_000_000;
+  missingProof.jev_charge_reconciliation.observations[1].balance_micro_usd = 29_999_900;
+  missingProof.jev_charge_reconciliation.unattributed_interval_change_micro_usd = 0;
+  assert.throws(() => summarizePilotSnapshot(snapshot, missingProof), /pilot_audit_jev_attribution_evidence_invalid/u);
+
+  const credit = version2DelayedReceipt(snapshot);
+  credit.jev_charge_reconciliation.status = 'delayed';
+  credit.jev_charge_reconciliation.observations[2].balance_micro_usd = 30_100_000;
+  credit.jev_charge_reconciliation.unattributed_interval_change_micro_usd = 0;
+  assert.equal(summarizePilotSnapshot(snapshot, credit).jev_charge_reconciliation.unattributed_interval_change_micro_usd, 0);
+});
+
+test('v2 reports a directly evidenced stage charge with delayed balances and leaves the other stage unknown', () => {
+  const snapshot = fundedFixture();
+  const receipt = version2DelayedReceipt(snapshot);
+  receipt.jev_charge_reconciliation.status = 'partially_confirmed';
+  receipt.jev_charge_reconciliation.attributed_smoke_micro_usd = 100;
+  receipt.jev_charge_reconciliation.attribution_evidence_sha256.smoke = createHash('sha256').update('verified-ledger').digest('hex');
+  receipt.stages.find((stage) => stage.name === 'jev_smoke').charged_micro_usd = 100;
+  const summary = summarizePilotSnapshot(snapshot, receipt);
+  assert.equal(summary.stages.find((stage) => stage.name === 'jev_smoke').charged_micro_usd, 100);
+  assert.equal(summary.stages.find((stage) => stage.name === 'jev_full').charged_micro_usd, null);
+  assert.equal(summary.charged_micro_usd, null);
+  assert.match(renderPublicReceipt(summary, '2026-11-07'), /Se confirmó el débito de una etapa/u);
+});
+
+test('v2 rejects cross-tranche calls, an additive cap, duplicate authority rows, and exposure above the cumulative ceiling', () => {
+  const cases = [
+    (snapshot) => { snapshot.scoped_authority.call_authorities[0].funding_receipt_id = snapshot.scoped_authority.funding_receipts[0].id; },
+    (snapshot) => { snapshot.scoped_authority.effective_total_cap_micro_usd = '16470000'; },
+    (snapshot) => { snapshot.scoped_authority.call_authorities.push(snapshot.scoped_authority.call_authorities[0]); },
+    (snapshot) => { snapshot.calls[0].settled_micro_usd = '9500001'; },
+    (snapshot) => { snapshot.scoped_authority.funding_receipts[0].prior_total_cap_micro_usd = '9500000'; },
+    (snapshot) => { snapshot.scoped_authority.extension.map_digest = 'sha256:cross-map'; },
+    (snapshot) => { snapshot.scoped_authority.extension.base_policy_version_id = 'cross-policy'; },
+    (snapshot) => { snapshot.scoped_authority.funding_receipts[0].created_by_user_id = '00000000-0000-4000-8000-000000000099'; },
+    (snapshot) => { snapshot.calls.at(-1).run_id = 'cross-run'; },
+    (snapshot) => { snapshot.run.workspace_id = 'cross-workspace'; },
+    (snapshot) => { snapshot.scoped_authority.admission.receipt_digest = `sha256:${'e'.repeat(64)}`; },
+  ];
+  for (const corrupt of cases) {
+    const snapshot = fundedFixture();
+    const receipt = version2DelayedReceipt(snapshot);
+    corrupt(snapshot);
+    resealFundingReceipt(snapshot.scoped_authority.funding_receipts[0]);
+    receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
+    assert.throws(() => summarizePilotSnapshot(snapshot, receipt), /pilot_audit_(?:scoped|funding)/u);
+  }
+});
+
+test('binds quote fields to quote_digest and rejects a quote model substitution', () => {
+  const snapshot = fundedFixture();
+  const receipt = version2DelayedReceipt(snapshot);
+  snapshot.scoped_authority.funding_receipts[0].quote.model = 'synthetic-other-model';
+  receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  assert.throws(() => summarizePilotSnapshot(snapshot, receipt), /pilot_audit_funding_receipt_invalid/u);
+});
+
+test('binds native smoke metrics bytes and parsed content to the sealed metrics digest', () => {
+  const snapshot = fundedFixture();
+  const receipt = version2DelayedReceipt(snapshot);
+  const funding = snapshot.scoped_authority.funding_receipts[0];
+  funding.smoke_metrics_canonical = '{"root_count":1,"technical_failure":true}';
+  funding.smoke_metrics_digest = `sha256:${createHash('sha256').update(funding.smoke_metrics_canonical).digest('hex')}`;
+  snapshot.run.smoke_metrics_digest = funding.smoke_metrics_digest;
+  resealFundingReceipt(funding);
+  receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  assert.throws(() => summarizePilotSnapshot(snapshot, receipt), /smoke_metrics_mismatch/u);
+});
+
+test('derives authority from native finite prior and cumulative caps without assuming pilot-specific amounts', () => {
+  const snapshot = fundedFixture();
+  const authority = snapshot.scoped_authority;
+  const funding = authority.funding_receipts[0];
+  authority.extension.cap_micro_usd = '1000000';
+  funding.prior_total_cap_micro_usd = '1000000';
+  funding.total_cap_micro_usd = '1500000';
+  authority.effective_total_cap_micro_usd = '1500000';
+  funding.quote.total_cap_micro_usd = '1500000';
+  funding.quote.projected_total_usage_micro_usd = '1400000';
+  funding.quote_digest = `sha256:${createHash('sha256').update(canonicalForTest(funding.quote)).digest('hex')}`;
+  resealFundingReceipt(funding);
+  const receipt = version2DelayedReceipt(snapshot);
+  receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  assert.equal(receipt.jev_authorization.previous_total_cap_micro_usd, 1_000_000);
+  assert.equal(receipt.jev_authorization.cumulative_total_cap_micro_usd, 1_500_000);
 });
 
 test('compares frozen map keys and rejects mismatched study baseline map digest', async () => {
