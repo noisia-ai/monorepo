@@ -151,8 +151,8 @@ BEGIN
    ELSE RAISE EXCEPTION 'mass_labeling_question_invalid' USING ERRCODE='23514';
    END IF;
   END LOOP;
-  IF NOT NEW.probabilities ?& CASE WHEN product THEN ARRAY['promotion','voice','trigger_barrier']
-      ELSE ARRAY['relevance','promotion','spam','voice','trigger_barrier'] END
+  IF NOT (NEW.probabilities ?& (CASE WHEN product THEN ARRAY['promotion','voice','trigger_barrier']
+      ELSE ARRAY['relevance','promotion','spam','voice','trigger_barrier'] END))
     OR EXISTS(SELECT 1 FROM generate_series(0,topic_count-1) ordinal WHERE NOT NEW.probabilities ? ('topic_'||ordinal::text))
     OR product AND EXISTS(SELECT 1 FROM jsonb_array_elements(identity#>'{params,interests}') i WHERE NOT NEW.probabilities ? ('interest_'||(i->>'key'))) THEN
    RAISE EXCEPTION 'mass_labeling_probabilities_incomplete' USING ERRCODE='23514';
