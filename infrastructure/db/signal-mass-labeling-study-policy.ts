@@ -23,7 +23,7 @@ function fail(code:string,status=409):never{throw new SignalLabelingError(code,s
 function text(value:unknown,max:number){return typeof value==="string"&&value.trim().length>0&&value.length<=max;}
 function validate(value:Writable){
   if(!text(value.category,160)||!Array.isArray(value.lexicon_terms)||value.lexicon_terms.length>256
-    ||value.lexicon_terms.some(term=>!text(term,200))||!value.lexicon_terms.length
+    ||value.lexicon_terms.some(term=>!text(term,200))
     ||!["en","original"].includes(value.candidate_language)
     ||!Number.isFinite(value.interest_threshold)||value.interest_threshold<0||value.interest_threshold>1
     ||!Array.isArray(value.interests)||value.interests.length>32

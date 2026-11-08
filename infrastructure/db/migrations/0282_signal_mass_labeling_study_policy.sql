@@ -2,7 +2,7 @@
 CREATE TABLE signal_mass_labeling_study_policies (
  workspace_id uuid NOT NULL REFERENCES signal_workspaces(id), revision integer NOT NULL CHECK(revision>0),
  category text NOT NULL CHECK(length(btrim(category)) BETWEEN 1 AND 160),
- lexicon_terms text[] NOT NULL CHECK(cardinality(lexicon_terms) BETWEEN 1 AND 256),
+ lexicon_terms text[] NOT NULL CHECK(cardinality(lexicon_terms) BETWEEN 0 AND 256),
  candidate_language text NOT NULL CHECK(candidate_language IN('en','original')),
  interest_threshold double precision NOT NULL DEFAULT 0.85 CHECK(interest_threshold BETWEEN 0 AND 1),
  interests jsonb NOT NULL DEFAULT '[]' CHECK(jsonb_typeof(interests)='array' AND jsonb_array_length(interests)<=32),
@@ -209,4 +209,3 @@ CREATE OR REPLACE VIEW signal_mass_labeling_memberships_v1 AS
    WHERE correction.map_id=pair.map_id AND correction.root_id=pair.root_id AND correction.topic_key=pair.concept_key
    ORDER BY correction.created_at DESC,correction.id DESC LIMIT 1
  ) override ON true;
-
