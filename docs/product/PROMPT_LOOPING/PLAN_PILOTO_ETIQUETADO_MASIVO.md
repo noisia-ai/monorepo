@@ -112,6 +112,19 @@ Prueba PostgreSQL de que se selecciona el perfil correcto. Las semillas son sól
 
 El recibo, la comparación y las muestras de «Validación y aceptación».
 
+### Hito 5 · Ronda 13 de auditoría (dev-test)
+
+La revisión privada R13, sección 7, fija diez entregables. La fase A cubre los puntos 1, 2, 3, 6 y 9. La fase B arranca después y cubre 4, 5 y 10. El punto 7 corrige la validación editorial y el 8 gobierna toda la operación.
+
+- **1–2.** Reconsultar las 83,962 raíces sobre motivación o barrera de consumo nombrando la categoría (cerveza). Conservar la respuesta original y la revisada. Para el indicador usar sólo voz individual de consumidor, con promoción ≤0.7 y texto que no consista únicamente en hashtags. Retirar del nuevo cuestionario la relevancia genérica y publicar su distribución histórica.
+- **3.** Signal distingue conversación, publicidad (promoción >0.7) y publicaciones que son sólo hashtags mediante una regla determinista. Documentar los denominadores y comprobar el comportamiento autenticado.
+- **6.** Corregir el recibo y la comparación: mostrar relevancia histórica, cruces de motivación y promoción, coste por etapa y proyección con Voyage a tarifa, JEV por raíz y Claude por número de grupos. La comparación anterior acreditaba la presencia de dimensiones, no la recuperación de causas concretas. Entregar 100 nuevas muestras ciegas de motivadores y barreras de consumidor, con clave sellada aparte.
+- **9.** Guardar nombre y definición originales, ingleses y españoles como ampliación del mapa. El producto muestra inglés por omisión y deja visible el original. El selector conserva el español. Los mapas futuros generan inglés canónico junto al original. Traducir el mapa congelado con una única solicitud editorial, sin modificar ninguno de los 98 tópicos, su digest, los vectores ni las asignaciones.
+- **4.** Registrar Apostas y Racismo como intereses del analista, clasificar ambas dimensiones sobre todas las raíces y cuantificar la cobertura incremental sobre el corte anterior.
+- **5.** Comparar 13 y 6–7 preguntas sobre las mismas 1,000 raíces y el mismo texto. Medir uso facturado por raíz y cambios de probabilidades en las preguntas compartidas frente al corte histórico; documentar qué muestra la prueba sobre la sobrecarga por pregunta.
+- **10.** En las 597 raíces ciegas originales, comparar definiciones en portugués e inglés con la categoría nombrada. Entregar probabilidades por raíz y variante en el JSONL privado previsto por el auditor, sin clave. El auditor decide el idioma tras calificar.
+- **7–8.** Emitir advertencias ante referencias editoriales faltantes o en exceso. Mantener comprobaciones de integridad y aislamiento. Operar únicamente en dev-test, con URLs introducidas directamente. Datos, autoridad de acceso, juicios ciegos y claves quedan en custodia privada.
+
 ## Organización con subagentes
 
 - **El orquestador (el chat principal) es el único que:**
@@ -179,6 +192,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [ ] H5 · R13 abierta el 2026-11-08 desde la entrega aceptada (#116). Informe privado leído completo. El exportador autenticado del runner volvió a materializar las 83,962 raíces desde el mapa congelado, las 1,000 parejas de costo y las 597 raíces de idioma. Una única solicitud editorial tradujo los nombres y definiciones de los 98 tópicos al inglés y español: 10,774 tokens de entrada, 19,526 de salida y USD 0.325212 a tarifa. Se verificaron el catálogo de origen y la correspondencia de las 98 filas. En curso: reconsulta, producto, pruebas pareadas y entrega.
+
 - [x] Checkpoint histórico de las 12:49 UTC: 2,400/83,962 raíces liquidadas (1,000 del humo y 1,400 de continuación), USD 0.252198 de uso JEV y cero errores o exposición incierta. En esa fecha estaban verdes los 40 PR previamente integrados, antes y después de cada fusión. La clasificación y las verificaciones finales que allí quedaban pendientes se registran en hitos posteriores.
 
 - [x] Permiso JEV acotado al mapa congelado: [#111](https://github.com/noisia-ai/monorepo/pull/111), revisado sin P0/P1/P2 en `0577bad3`. En el SHA final pasaron 26/26 pruebas PostgreSQL específicas con 259 migraciones desde cero, además de 641 pruebas de DB y 870 del worker. La [suite PostgreSQL del PR](https://github.com/noisia-ai/monorepo/actions/runs/42474184344) pasó 71/71, sin omisiones. El fixture conserva íntegros la ejecución y el permiso del workspace hermano; el tope incluye tanto el humo como la continuación. Fusionado como `4a916c4c` tras CI y PostgreSQL verdes; a las 11:19 UTC Railway comenzó a construir exclusivamente el runner en ese commit. La propuesta de Studio permaneció pendiente. A las 11:23 UTC se aplicó sólo 0278 con el runner en ese SHA (40 hashes verificados) y Studio estable en `8cf28943`: 259 migraciones sin diferencias ni pendientes, mismo censo de 96,150 raíces, nueve huellas de aislamiento iguales y 66 filas editoriales intactas. El permiso y su repetición devolvieron la misma extensión; tras la admisión existe una sola ejecución para el mapa. Se releyó el saldo de USD 30.00 antes del humo (tope USD 6.97). Al cierre del humo (11:28 UTC) quedaron selladas las huellas de las 1,000 llamadas, sus raíces y resultados. En ese punto la continuación todavía no estaba autorizada; el estado del permiso cambió después, como registra el checkpoint de las 12:49 UTC.
@@ -210,6 +225,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- R13: el contraste ciego detectó publicidad y referencias a otras categorías en motivadores históricos. La relevancia genérica correlacionaba con la mención de marca. Se conserva el corte original para medir la diferencia. De las 34,403 decisiones históricas de motivación, 21,201 tenían promoción >0.7 y 13,202 quedaban por debajo o en el umbral; sólo 731 de 83,962 raíces superaban 0.7 en relevancia.
 
 - La prueba de sustitución de políticas usaba dos relojes distintos. Tras una preparación larga, la política sintética aparecía como futura para la transacción aunque ya estaba vigente en el reloj real. La fixture se ancló a la hora transaccional y se verificaron ambos relojes; después pasaron 72/72 pruebas, sin omisiones. No cambió la guarda de concurrencia.
 
@@ -258,6 +275,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- R13 (2026-11-08): retirar relevancia genérica en el cuestionario revisado y mantener su distribución como diagnóstico histórico. El punto 1 pregunta únicamente por la relación de consumo de cerveza; los filtros de voz y promoción reutilizan las probabilidades existentes. El mapa, los vectores y el ajuste de BERTopic permanecen congelados.
 
 - 2026-11-08 · Autorizar la continuación de la misma ejecución con techo JEV acumulado de USD 9.50 tras verde de CI/PostgreSQL, permiso prospectivo idempotente y nueva lectura del saldo por USD 29.89. Preservar las 1,000 raíces del humo bajo la primera autorización.
 - 2026-11-08 · Mantener sin atribución por etapa la disminución interetapas de USD 0.11; cotejar los contadores de uso autenticados con las raíces y tokens del ledger y no presentar el gasto estimado como cargo en efectivo.
