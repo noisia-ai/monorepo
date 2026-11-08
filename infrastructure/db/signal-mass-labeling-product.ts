@@ -27,14 +27,15 @@ export async function enableMassLabelingProductV2(args: {
 }) {
   if (!Number.isSafeInteger(args.cap_micro_usd) || args.cap_micro_usd <= 0) fail("mass_labeling_cap_invalid", 422);
   return transaction(args.database, async client => {
-    const capability = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args, lock_authority: true });
-    if (!capability.can_request_processing || !capability.can_edit_topics) fail("mass_labeling_forbidden", 403);
     const scope = (await client.query<{ organization_id: string }>("SELECT organization_id FROM signal_workspaces WHERE id=$1", [args.workspace_id])).rows[0];
     if (!scope) fail("mass_labeling_workspace_unavailable", 404);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||$1::text,0))", [scope.organization_id]);
     const prior = (await client.query<{ id: string; budget_timezone: string }>(`SELECT id,budget_timezone FROM signal_processing_policy_versions
       WHERE organization_id=$1 AND status='active' AND valid_from<=now() AND valid_until>now() FOR UPDATE`, [scope.organization_id])).rows[0];
     if (!prior) fail("mass_labeling_active_policy_required");
+    await client.query("SELECT signal_processing_lock_v1($1,(now() AT TIME ZONE $2)::date)", [scope.organization_id, prior.budget_timezone]);
+    const capability = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args, lock_authority: true });
+    if (!capability.can_request_processing || !capability.can_edit_topics) fail("mass_labeling_forbidden", 403);
     const existing = (await client.query<{ provider: string; model: string; configuration: unknown; max_execution_micro_usd: string | null }>(`SELECT provider,model,configuration,max_execution_micro_usd::text
       FROM signal_processing_policy_actions WHERE policy_version_id=$1 AND action='mass_labeling_jev'`, [prior.id])).rows[0];
     let policyId = prior.id;
