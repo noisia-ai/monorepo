@@ -1,3 +1,7 @@
+export type SignalConversationSegmentV1 = "all" | "conversation" | "advertising" | "hashtags";
+export type SignalTopicLocalizationV1 = {original_language: string;
+  original: {name: string; definition: string}; en: {name: string; definition: string}; es: {name: string; definition: string}};
+
 /** Workspace-native computed memberships. This contract does not imply calibrated
  * semantic precision, model approval, or activation of a legacy taxonomy profile. */
 export type SignalWorkspaceTopicsOverviewV1 = {
@@ -11,7 +15,7 @@ export type SignalWorkspaceTopicsOverviewV1 = {
   is_current: boolean;
   is_processing: boolean;
   selection_revision: number;
-  filters: { date_from: string | null; date_to: string | null; timezone?: string };
+  filters: { date_from: string | null; date_to: string | null; timezone?: string; conversation_segment?: SignalConversationSegmentV1 };
   available_dates: { date_from: string | null; date_to: string | null };
   scope_digest: string;
   observed_at: string;
@@ -32,12 +36,15 @@ export type SignalWorkspaceTopicsOverviewV1 = {
    * assigned_unique counts visible roots and is not an additional partition. */
   membership_population?: { relevant: number; unrelated: number; spam: number; unknown: number; without_concept: number };
   interpretation_coverage: { interpreted_unit_count: number; expected_unit_count: number; complete: boolean } | null;
+  population_segments?: {all: number; conversation: number; advertising: number; hashtags: number};
+  consumer_indicators?: {eligible: number; processed: number; trigger: number; barrier: number; none: number; intermediate: number; unresolved: number};
   quality: "not_calibrated";
   terms: Array<{
     term_key: string;
     kind: "topic" | "narrative";
     label: string;
     definition: string;
+    localization?: SignalTopicLocalizationV1;
     definition_revision: number;
     definition_digest: string;
     selected: boolean;
