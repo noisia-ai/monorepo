@@ -1,0 +1,101 @@
+name: MFP Studio container
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - apps/studio/Dockerfile.mfp-dev-test
+      - apps/studio/Dockerfile.mfp-dev-test.dockerignore
+      - apps/studio/railway.mfp-dev-test.json
+      - apps/studio/start-mfp-dev-test.sh
+      - .github/workflows/mfp-studio-container.yml
+  push:
+    branches: [develop]
+    paths:
+      - apps/studio/Dockerfile.mfp-dev-test
+      - apps/studio/Dockerfile.mfp-dev-test.dockerignore
+      - apps/studio/railway.mfp-dev-test.json
+      - apps/studio/start-mfp-dev-test.sh
+      - .github/workflows/mfp-studio-container.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mfp-studio-container-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  container-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      IMAGE: noisia-mfp-studio-container:ci
+      CONTAINER: noisia-mfp-studio-container-smoke
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Verify private-path exclusions during build
+        run: |
+          mkdir -p apps/studio/src/.data/container-smoke
+          printf 'synthetic private-path canary\n' > apps/studio/src/.data/container-smoke/private.json
+          printf 'SYNTHETIC_CANARY=not-a-credential\n' > apps/studio/src/.env.container-smoke
+
+      - name: Build opt-in Studio image
+        run: docker build --file apps/studio/Dockerfile.mfp-dev-test --tag "$IMAGE" .
+
+      - name: Start with synthetic runtime configuration and isolated networking
+        run: |
+          docker run --detach --name "$CONTAINER" --network none \
+            -e RAILWAY_ENVIRONMENT_NAME=dev-test -e RAILWAY_SERVICE_NAME=mfp-studio \
+            -e PORT=3001 -e DATABASE_URL=postgresql://test@127.0.0.1:1/noisia_runtime \
+            -e REDIS_URL=redis://127.0.0.1:1 \
+            -e KINDE_ISSUER_URL=https://runtime-auth.example.invalid \
+            -e KINDE_CLIENT_ID=runtime-placeholder -e KINDE_CLIENT_SECRET=runtime-placeholder \
+            -e KINDE_SITE_URL=http://127.0.0.1:3001 \
+            -e KINDE_POST_LOGOUT_REDIRECT_URL=http://127.0.0.1:3001 \
+            -e KINDE_POST_LOGIN_REDIRECT_URL=http://127.0.0.1:3001/auth/continue \
+            "$IMAGE"
+          for attempt in $(seq 1 60); do
+            if docker exec "$CONTAINER" node -e 'fetch("http://127.0.0.1:3001/api/health",{signal:AbortSignal.timeout(2000)}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Verify health, runtime auth, callbacks and OpenAPI
+        run: |
+          docker exec -i "$CONTAINER" node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { existsSync } from 'node:fs';
+          const origin = 'http://127.0.0.1:3001';
+          const get = path => fetch(`${origin}${path}`, { signal: AbortSignal.timeout(5000) });
+          const healthResponse = await get('/api/health');
+          assert.equal(healthResponse.status, 200);
+          assert.equal((await healthResponse.json()).status, 'ok');
+          const authResponse = await get('/api/auth/health');
+          assert.equal(authResponse.status, 200);
+          const auth = await authResponse.json();
+          assert.equal(auth.clientID, 'runtime-placeholder');
+          assert.equal(auth.issuerURL, 'https://runtime-auth.example.invalid');
+          assert.equal(auth.redirectURL, `${origin}/api/auth/kinde_callback`);
+          assert.equal(auth.postLoginRedirectURL, `${origin}/auth/continue`);
+          assert.equal(auth.postLogoutRedirectURL, origin);
+          const openapi = await get('/api/public/openapi.yaml');
+          assert.equal(openapi.status, 200);
+          assert.match(await openapi.text(), /openapi:/u);
+          assert.equal(existsSync('/app/apps/studio/src/.env.container-smoke'), false);
+          assert.equal(existsSync('/app/apps/studio/src/.data/container-smoke/private.json'), false);
+          console.log('Studio container health, runtime auth, callbacks, OpenAPI and private-path exclusions passed');
+          JS
+
+      - name: Report container logs
+        if: always()
+        run: docker logs "$CONTAINER" 2>/dev/null || true
+
+      - name: Remove smoke container
+        if: always()
+        run: docker rm --force "$CONTAINER" 2>/dev/null || true
