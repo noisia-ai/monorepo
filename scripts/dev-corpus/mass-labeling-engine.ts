@@ -13,7 +13,7 @@ import {
   readSignalWorkspaceMassLabelingGlobalReceiptDecisionV1,
 } from "../../infrastructure/db/index";
 import { assertMassLabelingEditorialAccessV1 } from "../../services/workers/src/providers/mass-labeling-consolidation";
-import { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, parseMassLabelingConsolidationRecoveryDecisionV1, type SignalWorkspaceInterpretationBatchV1, type MassLabelingConsolidationBatchV1 } from "../../packages/query-engine/src/index";
+import { SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1, parseMassLabelingConsolidationRecoveryDecisionV1, type SignalWorkspaceInterpretationBatchV1, type MassLabelingConsolidationBatchV1 } from "../../packages/query-engine/src/index";
 
 /** Operator-only CLI. Supply private identity/receipt JSON on stdin and redirect
  * stdout to private storage. The existing guard accepts only the MFP target. */
@@ -222,7 +222,7 @@ async function main() {
         claude_cap_micro_usd: Number(input.cap_micro_usd),
         interpretation_config: {
           call_configuration:
-            SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1,
+            SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1,
           daily_cap_micro_usd: Number(input.daily_cap_micro_usd),
           budget_timezone: String(input.budget_timezone ?? "UTC"),
         },

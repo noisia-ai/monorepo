@@ -312,9 +312,10 @@ export async function interpretWorkspaceEngineV1(args: {
       let effective = batch,
         result = await executeBatch(batch, original);
       const originalResult=result;
-      if (result.response.outcome !== "validated") {
+      const hasInsufficiencyDecision = insufficiencyDecisions.some(decision => decision.original_call_id === original.call_id);
+      if (result.response.outcome !== "validated" || hasInsufficiencyDecision) {
         if (
-          result.response.outcome !== "known_response_invalid" ||
+          !["known_response_invalid", "validated"].includes(result.response.outcome) ||
           !result.call.response?.complete
         )
           return fail("workspace_engine_interpretation_output_invalid");
@@ -379,8 +380,8 @@ export async function interpretWorkspaceEngineV1(args: {
           }
         }
         result = await executeBatch(effective, repaired);
-        if (result.response.outcome !== "validated") {
-          if(result.response.outcome!=="known_response_invalid"||!originalResult.call.response?.complete||!result.call.response?.complete)
+        if (result.response.outcome !== "validated" || hasInsufficiencyDecision) {
+          if(!["known_response_invalid","validated"].includes(result.response.outcome)||!originalResult.call.response?.complete||!result.call.response?.complete)
             return fail("workspace_engine_interpretation_repair_invalid");
           const decisions = insufficiencyDecisions.filter(decision =>
             decision.original_call_id === originalResult.call.call_id && decision.repair_call_id === result.call.call_id);

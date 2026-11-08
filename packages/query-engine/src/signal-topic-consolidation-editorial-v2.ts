@@ -246,7 +246,7 @@ export const signalTopicEditorialGroupOutputSchemaV2=z.object({
   contract_version:z.literal("signal-topic-editorial-group-output-v2"),group_id:z.string(),
   disposition:z.enum(["topic","narrative","noise","unresolved"]),
   candidate:z.object({label:z.string(),definition:z.string(),locale:z.string()}).strict().nullable(),
-  confidence:z.number().min(0).max(1).nullable(),rationale:z.string(),cited_evidence_ids:z.array(z.string()),
+  confidence:z.number().min(0).max(1).nullable(),rationale:z.string(),cited_evidence_ids:z.array(z.string()).default([]),
 }).strict();
 export type SignalTopicEditorialGroupOutputV2=z.infer<typeof signalTopicEditorialGroupOutputSchemaV2>;
 export type SignalTopicEditorialGroupDecisionV2 = {
@@ -256,6 +256,7 @@ export type SignalTopicEditorialGroupDecisionV2 = {
   disposition:SignalTopicEditorialGroupOutputV2["disposition"];
   candidate:({candidate_key:string}&NonNullable<SignalTopicEditorialGroupOutputV2["candidate"]>)|null;
   confidence:number|null;rationale:string;cited_ref_ids:string[];
+  warnings?:Array<"references_missing"|"references_excess"|"references_repeated">;
 };
 
 /** Anthropic documents case variation even for enum/const structured output.
@@ -293,15 +294,17 @@ export function validateSignalTopicEditorialGroupOutputV2(request:SignalTopicEdi
   const output=parsed.data,receipt=request.receipt;
   if(output.group_id!==receipt.group_id)return fail("topic_editorial_v2_group_invalid");
   const refs=new Map(receipt.evidence.map(item=>[item.evidence_id,item.ref_id]));
-  if(new Set(output.cited_evidence_ids).size!==output.cited_evidence_ids.length
-    ||output.cited_evidence_ids.some(id=>!refs.has(id))
-    ||(output.disposition!=="unresolved"&&!output.cited_evidence_ids.length))return fail("topic_editorial_v2_citation_invalid");
+  if(output.cited_evidence_ids.some(id=>!refs.has(id)) || !refs.size && output.disposition!=="unresolved")return fail("topic_editorial_v2_citation_invalid");
   const publishable=output.disposition==="topic"||output.disposition==="narrative";
   if(publishable!==(output.candidate!==null))return fail("topic_editorial_v2_candidate_invalid");
   if(output.candidate&&output.candidate.locale!==receipt.expected_locale)return fail("topic_editorial_v2_locale_invalid");
   const candidate=output.candidate?{candidate_key:`${output.disposition}-v2-${request.request_digest.slice(7,31)}`,
     label:prose(output.candidate.label),definition:prose(output.candidate.definition),locale:output.candidate.locale}:null;
-  return {contract_version:"signal-topic-editorial-group-decision-v2",identity:request.identity,request_digest:request.request_digest,
+  const warnings: NonNullable<SignalTopicEditorialGroupDecisionV2["warnings"]> = [];
+  if(output.disposition!=="unresolved"&&!output.cited_evidence_ids.length)warnings.push("references_missing");
+  if(output.cited_evidence_ids.length>receipt.evidence.length)warnings.push("references_excess");
+  if(new Set(output.cited_evidence_ids).size!==output.cited_evidence_ids.length)warnings.push("references_repeated");
+  return {...(warnings.length?{warnings}:{}),contract_version:"signal-topic-editorial-group-decision-v2",identity:request.identity,request_digest:request.request_digest,
     group_key:receipt.group_key,group_digest:receipt.group_digest,dossier_digest:receipt.dossier_digest,
     evidence_scope:"cited_evidence_only",
     disposition:output.disposition,candidate,confidence:output.confidence,rationale:prose(output.rationale),

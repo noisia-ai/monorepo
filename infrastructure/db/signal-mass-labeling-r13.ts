@@ -96,11 +96,14 @@ export async function importMassLabelingR13V1(args: {
     const catalog = new Map(map.catalog.map(t => [t.topic_key,t]));
     for (const row of translations) {
       const topic = catalog.get(row.topic_key);
-      if (!topic || topic.name !== row.original.name || topic.definition !== row.original.definition) fail('r13_original_changed');
+      if (!topic) fail('r13_original_changed');
+      if (topic.localization) {
+        if (digest(projectLocalization(row)) !== digest(topic.localization)) fail('r13_original_changed');
+      } else if (topic.name !== row.original.name || topic.definition !== row.original.definition) fail('r13_original_changed');
     }
     for (const interest of interests) if (catalog.has(interest.interest_key)) fail('r13_interest_conflicts_with_topic');
     const scope = {workspace_id:args.workspace_id,map_id:args.map_id,created_by_user_id:args.actor_user_id};
-    await insertReceipts(client,'signal_mass_labeling_localizations',translations.map(row =>
+    await insertReceipts(client,'signal_mass_labeling_localizations',translations.filter(row => !catalog.get(row.topic_key)!.localization).map(row =>
       ({topic_key:row.topic_key,localization:projectLocalization(row),...scope})), 'topic_key text,localization jsonb', ['topic_key','localization']);
     await insertReceipts(client,'signal_mass_labeling_r13_results',results.map(row => ({...projectReceipt(row),trigger_barrier:{type:row.trigger_barrier.type,
       choice:row.trigger_barrier.choice,confidence:row.trigger_barrier.confidence,

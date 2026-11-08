@@ -117,7 +117,8 @@ export async function verifyMassLabelingSourceCheckpointsWithClientV1(client:Pic
         ||args.expected_cluster_digests&&args.expected_cluster_digests[result.cluster_id]!==result.cluster_digest)fail();
       found.add(result.cluster_id);
       source_groups.push({group_id:result.cluster_id,cluster_digest:result.cluster_digest,name:result.name,
-        definition:result.definition,status:result.status,source_artifact_id:checkpoint.artifact_id});
+        definition:result.definition,status:result.status,source_artifact_id:checkpoint.artifact_id,
+        ...(result.localization ? {localization:result.localization} : {})});
     }
   }
   if(found.size!==keys.length)fail();

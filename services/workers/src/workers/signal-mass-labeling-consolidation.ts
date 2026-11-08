@@ -20,6 +20,7 @@ import {
   recoverMassLabelingConsolidationResponseV1,
   massLabelingConsolidationUsageV1,
   signalWorkspaceEmbeddingDigestV1 as digest,
+  parseSignalWorkspaceInterpretationConfigurationV1,
   type MassLabelingConsolidationOutputV1,
 } from "@noisia/query-engine";
 import { sendMassLabelingConsolidationV1 } from "../providers/mass-labeling-consolidation";
@@ -95,6 +96,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
     workspace_id: lease.workspace_id,
     source_engine_execution_id: lease.execution_id,
     source_groups: verified.source_groups,
+    configuration: parseSignalWorkspaceInterpretationConfigurationV1(config.call_configuration),
   });
   if (verified.source_groups_digest !== batch.source_groups_digest)
     return invalid();
@@ -262,6 +264,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
     source_groups: batch.source_groups,
     source_groups_digest: batch.source_groups_digest,
     raw_response: raw,
+    ...("localization_contract_version" in batch.configuration ? { configuration: batch.configuration } : {}),
     output,
     ...(operatorReceiptRecovery ? { operator_receipt_recovery: operatorReceiptRecovery } : {}),
   });

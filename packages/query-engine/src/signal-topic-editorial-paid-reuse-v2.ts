@@ -149,7 +149,6 @@ export function reuseSignalTopicEditorialPaidGroupV2(args:{request:SignalTopicEd
     if(!decision)return fail("source_decision_missing");
     if(decision.disposition==="unresolved")return fail("source_unresolved");
     if(decision.rationale===null)return fail("source_rationale_missing");
-    if(!decision.cited_ref_ids.length)return fail("source_evidence_missing");
     const aliases=new Map(request.receipt.evidence.map(item=>[item.ref_id,item.evidence_id]));
     if(decision.cited_ref_ids.some(ref=>!aliases.has(ref)))return fail("source_decision_invalid");
     let mapped:SignalTopicEditorialGroupDecisionV2;
