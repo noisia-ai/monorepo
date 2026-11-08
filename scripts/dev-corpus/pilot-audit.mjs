@@ -244,6 +244,7 @@ function reconcileEditorialLedger(snapshot, operatorReceipt) {
       || typeof call.workspace_id !== 'string' || !call.workspace_id
       || typeof call.execution_id !== 'string' || !call.execution_id
       || typeof call.provider !== 'string' || typeof call.model !== 'string'
+      || call.provider !== call.call_configuration.provider || call.model !== call.call_configuration.model
       || !record(call.metadata) || !record(call.metadata.mass_labeling_stage)) {
       throw new Error('pilot_audit_editorial_call_contract_invalid');
     }
@@ -302,12 +303,30 @@ function reconcileEditorialLedger(snapshot, operatorReceipt) {
 
 function validateSettledEditorialCall(call) {
   const complete = call.response_complete ?? call.metadata?.response_complete;
+  const usage = call.metadata?.usage;
+  const configuration = call.call_configuration;
+  const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+  const rates = ['input_micro_usd_per_million_tokens', 'output_micro_usd_per_million_tokens',
+    'cache_read_micro_usd_per_million_tokens', 'cache_creation_micro_usd_per_million_tokens'];
   if (call.response_http_status !== 200 || complete !== true
     || typeof call.response_storage_key !== 'string' || !call.response_storage_key
     || typeof call.response_sha256 !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(call.response_sha256)
     || !safeIntegerValue(call.response_size_bytes) || Number(call.response_size_bytes) < 1
-    || !call.settled_at || !Number.isFinite(Date.parse(call.settled_at))) {
+    || !call.settled_at || !Number.isFinite(Date.parse(call.settled_at))
+    || !record(usage) || Object.keys(usage).sort().join(',') !== 'cache_creation_input_tokens,cache_read_input_tokens,input_tokens,output_tokens'
+    || !Object.values(usage).every(integer) || !rates.every((key) => integer(configuration[key]))
+    || call.input_tokens !== usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+    || call.output_tokens !== usage.output_tokens
+    || call.total_tokens !== call.input_tokens + call.output_tokens) {
     throw new Error('pilot_audit_editorial_settled_response_invalid');
+  }
+  const expectedCost = (BigInt(usage.input_tokens) * BigInt(configuration.input_micro_usd_per_million_tokens)
+    + BigInt(usage.output_tokens) * BigInt(configuration.output_micro_usd_per_million_tokens)
+    + BigInt(usage.cache_read_input_tokens) * BigInt(configuration.cache_read_micro_usd_per_million_tokens)
+    + BigInt(usage.cache_creation_input_tokens) * BigInt(configuration.cache_creation_micro_usd_per_million_tokens)
+    + 999999n) / 1000000n;
+  if (BigInt(call.settled_micro_usd) !== expectedCost) {
+    throw new Error('pilot_audit_editorial_settled_cost_mismatch');
   }
 }
 
@@ -340,7 +359,7 @@ function validateBilledTerminalCall(call) {
     || billing.terminal_receipt_digest !== canonicalDigest(receipt)
     || billing.actual_micro_usd !== receipt.usage_cost_micro_usd
     || canonicalJson(billing.usage) !== canonicalJson(usage)
-    || !/^\d{4}-\d{2}-\d{2}T/u.test(billing.reconciled_at ?? '')
+    || !Number.isFinite(Date.parse(billing.reconciled_at))
     || !/^[0-9a-f-]{36}$/u.test(billing.verified_by_user_id ?? '')
     || canonicalJson(call.metadata.usage) !== canonicalJson(usage)
     || !integer(call.input_tokens) || !integer(call.output_tokens)
