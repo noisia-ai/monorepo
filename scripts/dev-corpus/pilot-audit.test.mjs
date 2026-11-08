@@ -65,7 +65,7 @@ function fixture({ funded = false } = {}) {
         { topic_key: 'product-b', name: 'Synthetic topic B', definition: 'Synthetic definition B', group_ids: ['g2'] },
       ],
     },
-    run: { id: 'synthetic-label-run', run_id: 'synthetic-label-run', map_id: 'synthetic-map-id',
+    run: { id: 'synthetic-label-run', run_id: 'synthetic-label-run', map_id: 'synthetic-map-id', workspace_id: 'synthetic-workspace',
       actor_user_id: '00000000-0000-4000-8000-000000000003',
       status: 'completed', smoke_root_limit: null, smoke_metrics: smokeMetrics,
       smoke_metrics_digest: smokeMetricsDigest, continued_at: '2026-11-07T12:01:00.000Z' },
@@ -181,6 +181,7 @@ function syntheticScopedAuthority(snapshot) {
       workspace_id: 'synthetic-workspace', map_id: snapshot.map.id, target_id: snapshot.run.id,
       actor_user_id: snapshot.run.actor_user_id, policy_version_id: 'synthetic-base-policy',
       budget_date: '2026-11-07', budget_timezone: 'UTC',
+      receipt_digest: digest('d'),
     },
     effective_total_cap_micro_usd: '9500000',
     funding_receipts: [funding],
@@ -577,6 +578,18 @@ test('requires receipt v2 whenever the snapshot contains prospective funding, pr
   assert.throws(() => renderPublicReceipt(validV2, '2026-11-07'), /v2_required_for_scoped_funding/u);
 });
 
+test('detects a stripped funding row from remaining full-call bindings and cap markers', () => {
+  const snapshot = fundedFixture();
+  snapshot.scoped_authority.funding_receipts = [];
+  snapshot.scoped_authority.call_authorities = snapshot.scoped_authority.call_authorities.map((binding) => ({
+    ...binding, funding_receipt_id: null,
+  }));
+  snapshot.scoped_authority.effective_total_cap_micro_usd = snapshot.scoped_authority.extension.cap_micro_usd;
+  const downgraded = operatorReceipt(snapshot);
+  downgraded.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  assert.throws(() => summarizePilotSnapshot(snapshot, downgraded), /operator_receipt_invalid/u);
+});
+
 test('v2 attributes only direct smoke evidence and leaves an intervening balance decrease unassigned', () => {
   const snapshot = fundedFixture();
   const receipt = version2DelayedReceipt(snapshot);
@@ -642,6 +655,8 @@ test('v2 rejects cross-tranche calls, an additive cap, duplicate authority rows,
     (snapshot) => { snapshot.scoped_authority.extension.base_policy_version_id = 'cross-policy'; },
     (snapshot) => { snapshot.scoped_authority.funding_receipts[0].created_by_user_id = '00000000-0000-4000-8000-000000000099'; },
     (snapshot) => { snapshot.calls.at(-1).run_id = 'cross-run'; },
+    (snapshot) => { snapshot.run.workspace_id = 'cross-workspace'; },
+    (snapshot) => { snapshot.scoped_authority.admission.receipt_digest = `sha256:${'e'.repeat(64)}`; },
   ];
   for (const corrupt of cases) {
     const snapshot = fundedFixture();

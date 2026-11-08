@@ -32,6 +32,22 @@ const fundingReceiptDigest = (funding) => {
 };
 const safeIntegerValue = (value) => (Number.isSafeInteger(value) && value >= 0)
   || (typeof value === 'string' && /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)));
+function hasProspectiveFundingEvidence(snapshot) {
+  const authority = snapshot?.scoped_authority;
+  if (!record(authority)) return false;
+  const extensionCap = authority.extension?.cap_micro_usd ?? authority.extension?.max_execution_micro_usd;
+  const effectiveCap = authority.effective_total_cap_micro_usd;
+  const fundingRows = authority.funding_receipts;
+  const bindings = authority.call_authorities;
+  const smokeCount = snapshot.run?.smoke_metrics?.root_count;
+  const ordinals = new Map(snapshot.items?.map((item) => [item.call_id, item.ordinal]) ?? []);
+  const fullCalls = snapshot.calls?.some((call) => Number.isSafeInteger(smokeCount)
+    && (ordinals.get(call.id) ?? 0) > smokeCount) ?? false;
+  return (Array.isArray(fundingRows) && fundingRows.length > 0)
+    || (Array.isArray(bindings) && bindings.some((binding) => binding?.funding_receipt_id != null))
+    || (effectiveCap != null && extensionCap != null && String(effectiveCap) !== String(extensionCap))
+    || (Array.isArray(bindings) && bindings.length > 0 && fullCalls);
+}
 const normalizedIdentity = (value) => String(value).normalize('NFKD').replace(/[\u0300-\u036f]/gu, '')
   .toLocaleLowerCase('en-US').replace(/[^a-z0-9]+/gu, ' ').trim();
 
@@ -254,8 +270,7 @@ export async function readPilotSnapshot(path) {
 
 export function validateOperatorReceipt(snapshot, receipt) {
   validatePilotSnapshot(snapshot);
-  const hasScopedFunding = Array.isArray(snapshot.scoped_authority?.funding_receipts)
-    && snapshot.scoped_authority.funding_receipts.length > 0;
+  const hasScopedFunding = hasProspectiveFundingEvidence(snapshot);
   if (!record(receipt) || !['signal-mass-labeling-operator-receipt-v1', 'signal-mass-labeling-operator-receipt-v2'].includes(receipt.contract_version)
     || (hasScopedFunding && receipt.contract_version !== 'signal-mass-labeling-operator-receipt-v2')
     || receipt.map_digest !== snapshot.map.map_digest
@@ -339,6 +354,7 @@ function validateScopedFundingLineage(snapshot, stages) {
     || !Array.isArray(authority.call_authorities) || !/^[0-9a-f-]{36}$/u.test(authority.extension.id)
     || !/^[0-9a-f-]{36}$/u.test(authority.admission.id)
     || authority.admission.extension_id !== authority.extension.id
+    || snapshot.run.workspace_id !== authority.extension.workspace_id
     || authority.extension.workspace_id !== authority.admission.workspace_id
     || authority.extension.workspace_id !== authority.funding_receipts[0]?.workspace_id
     || authority.extension.map_id !== snapshot.map.id || authority.admission.map_id !== snapshot.map.id
@@ -362,6 +378,7 @@ function validateScopedFundingLineage(snapshot, stages) {
     || funding.base_policy_version_id !== authority.admission.policy_version_id
     || funding.base_policy_version_id !== authority.extension.base_policy_version_id
     || funding.base_policy_digest !== authority.extension.base_policy_digest
+    || funding.prior_admission_receipt_digest !== authority.admission.receipt_digest
     || !digest(funding.prior_admission_receipt_digest)
     || !digest(funding.base_policy_digest) || !digest(funding.labeler_digest)
     || !digest(funding.entity_context_digest) || !digest(funding.smoke_metrics_digest)
@@ -1128,8 +1145,7 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
 
   return {
     operator_receipt_contract_version: operatorReceipt.contract_version,
-    scoped_funding_present: Array.isArray(snapshot.scoped_authority?.funding_receipts)
-      && snapshot.scoped_authority.funding_receipts.length > 0,
+    scoped_funding_present: hasProspectiveFundingEvidence(snapshot),
     map_digest: snapshot.map.map_digest,
     frozen_at: snapshot.map.created_at,
     root_count: rootCount,
