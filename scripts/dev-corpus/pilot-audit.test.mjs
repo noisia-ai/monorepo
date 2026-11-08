@@ -823,6 +823,142 @@ test('public receipt contains aggregate metrics and excludes mention text and ID
   assert.doesNotMatch(receipt, /root-[1-4]/u);
 });
 
+test('R13 receipt composition and phase A/B replay are idempotent with an H4 fixture', async () => {
+  const { mkdtemp, mkdir, readFile, rm, writeFile, chmod } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { dirname, join } = await import('node:path');
+  const { phaseA, phaseB } = await import('./pilot-r13-audit-export.mjs');
+  const { projectR13Cost, renderCorrectedPublicReceiptR13, summarizeR13Baseline, summarizeR13Repair } = await import('./pilot-r13-audit.mjs');
+  const { mkdtemp: mkdtempRepo, rm: rmRepo } = await import('node:fs/promises');
+  const receiptSnapshot = fixture();
+  const summary = summarizePilotSnapshot(receiptSnapshot, operatorReceipt(receiptSnapshot));
+  const snapshot = structuredClone(receiptSnapshot);
+  const sourceItems = snapshot.items.filter((item) => item.probabilities);
+  const items = [];
+  for (let index = 0; index < 100; index++) {
+    const item = structuredClone(sourceItems[index % sourceItems.length]);
+    item.root_id = `root-${index + 1}`;
+    item.ordinal = index + 1;
+    item.input_digest = `sha256:synthetic-input-${index + 1}`;
+    item.probabilities.voice.choice = index % 2 ? 'individual' : 'conversation';
+    items.push(item);
+  }
+  snapshot.items = items;
+  snapshot.map.root_count = items.length;
+  const repairRows = items.map((item, index) => ({ stage: 'repair', root_id: item.root_id,
+    status: 'settled', input_tokens: 10, micro_usd: 1, response: { usage: { input_tokens: 10, output_tokens: 2 },
+      answers: { trigger_barrier: { type: 'choice', choice: index % 2 ? 'trigger' : 'barrier', confidence: 0.9,
+        probabilities: { trigger: index % 2 ? 0.9 : 0.05, barrier: index % 2 ? 0.05 : 0.9, none: 0.05 } } } } }));
+  const repaired = summarizeR13Repair(snapshot, repairRows);
+  const baseline = summarizeR13Baseline(snapshot);
+  const projection = projectR13Cost({ roots: summary.root_count, voyageTokens: summary.stages.find((s) => s.name === 'voyage').free_tokens_used,
+    jevInputTokens: 2_000, observedEditorialUsd: 8, observedEditorialCalls: 12 });
+  const composed = renderCorrectedPublicReceiptR13({ receipt: renderPublicReceipt(summary, '2026-11-07'),
+    baseline, repaired, projection, r13StageUsage: [{ stage: 'repair', results: 100, input_tokens: 1000, output_tokens: 200, micro_usd: 100 }] });
+  assert.match(composed, /Proyección lineal por millón de raíces/u);
+  assert.match(composed, /Elegibles: 100/u);
+  assert.match(composed, /Uso medido de R13 en etapas completadas/u);
+
+  const temporary = await mkdtemp(join(tmpdir(), 'pilot-r13-phase-replay-'));
+  const dataRoot = join(temporary, '.data');
+  await mkdir(dataRoot, { mode: 0o755 });
+  await chmod(dataRoot, 0o755);
+  const r13 = join(dataRoot, 'pilot');
+  const inputDir = join(r13, 'inputs');
+  await mkdir(inputDir, { recursive: true, mode: 0o700 });
+  const stageDirs = {};
+  for (const name of ['repair', 'interests', 'cost13', 'cost7', 'language-pt', 'language-en']) {
+    stageDirs[name] = join(r13, name);
+    await mkdir(stageDirs[name], { mode: 0o700 });
+  }
+  const save = async (path, contents) => {
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await chmod(dirname(path), 0o700);
+    await writeFile(path, contents, { mode: 0o600 });
+  };
+  const saveRows = async (path, rows) => save(path, rows.map((row) => JSON.stringify(row)).join('\n') + '\n');
+  const interests = items.map((item) => ({ stage: 'interests', root_id: item.root_id, status: 'settled',
+    input_tokens: 12, micro_usd: 1, response: { usage: { input_tokens: 12, output_tokens: 2 },
+      answers: { apostas: { noul: 0.8 }, racismo: { noul: 0.2 } } } }));
+  const costArm = (stage) => Array.from({ length: 1000 }, (_, index) => ({ stage, root_id: `cost-${index}`,
+    status: 'settled', input_tokens: stage === 'cost13' ? 13 : 7, micro_usd: 1,
+    response: { usage: { input_tokens: stage === 'cost13' ? 13 : 7, output_tokens: 2 } } }));
+  const blindLinks = {};
+  const languageRows = async (stage) => Promise.all(Array.from({ length: 597 }, async (_, index) => {
+    const rootId = `variant-${index}`;
+    blindLinks[rootId] = [`blind-${index}`];
+    const response = { model: 'jev-r13', usage: { input_tokens: 10, output_tokens: 2 }, answers: {
+      trigger_barrier: { type: 'choice', choice: 'trigger', confidence: 0.8,
+        probabilities: { trigger: 0.8, barrier: 0.1, none: 0.1 } } } };
+    const body = JSON.stringify(response);
+    const rawSha = `sha256:${createHash('sha256').update(body).digest('hex')}`;
+    const rootDigest = createHash('sha256').update(rootId).digest('hex');
+    await save(join(stageDirs[stage], `${rootDigest}.raw.json`), JSON.stringify({ body, http_status: 200, latency_ms: 1 }));
+    return { stage, root_id: rootId, status: 'settled', input_digest: `input-${index}`, request_digest: `request-${stage}-${index}`,
+      input_tokens: 10, micro_usd: 1, raw_sha256: rawSha, response };
+  }));
+  const variantsPT = await languageRows('language-pt');
+  const variantsEN = await languageRows('language-en');
+  const compare = { contract_version: 'mass-labeling-r13-cost-comparison-v1', paired_roots: 1000,
+    same_text_and_shared_questions_verified: true, tokens_per_root: { full: 13, reduced: 7 }, token_reduction_fraction: 6 / 13,
+    probability_comparisons: { reduced_vs_full: { mean_absolute_delta: 0.1 } } };
+  const flags = Object.fromEntries(items.map((item) => [item.root_id, false]));
+  await save(join(inputDir, 'hashtag.json'), JSON.stringify(flags));
+  await save(join(inputDir, 'variant-links.json'), JSON.stringify(blindLinks));
+  await save(join(inputDir, 'translation-success.json'), JSON.stringify({ count: 98, cost_micro_usd: 750000,
+    usage: { input_tokens: 10774, output_tokens: 19526 } }));
+  await save(join(inputDir, 'translations.json'), JSON.stringify({ map_digest: snapshot.map.map_digest,
+    translations: Array.from({ length: 98 }, (_, index) => ({ topic: index })) }));
+  await saveRows(join(stageDirs.repair, 'results.jsonl'), repairRows);
+  await saveRows(join(stageDirs.interests, 'results.jsonl'), interests);
+  await saveRows(join(stageDirs.cost13, 'results.jsonl'), costArm('cost13'));
+  await saveRows(join(stageDirs.cost7, 'results.jsonl'), costArm('cost7'));
+  await saveRows(join(stageDirs['language-pt'], 'results.jsonl'), variantsPT);
+  await saveRows(join(stageDirs['language-en'], 'results.jsonl'), variantsEN);
+  await save(join(r13, 'cost-comparison.json'), JSON.stringify(compare));
+  const publicDir = await mkdtempRepo(join(process.cwd(), 'scripts/dev-corpus/.r13-replay-'));
+  const receiptPath = join(publicDir, 'DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_2026-11-08.md');
+  const audit = join(r13, 'auditor'), custody = join(r13, 'custody');
+  const config = { repository_root: process.cwd(), workspace_data_root: dataRoot, r13_data_root: dataRoot,
+    h4: {}, root_hashtag_flags: join(inputDir, 'hashtag.json'), variant_private_link: join(inputDir, 'variant-links.json'),
+    translation_receipt: join(inputDir, 'translation-success.json'), translation_translations: join(inputDir, 'translations.json'),
+    stages: { repair: join(stageDirs.repair, 'results.jsonl'), interests: join(stageDirs.interests, 'results.jsonl'),
+      cost13: join(stageDirs.cost13, 'results.jsonl'), cost7: join(stageDirs.cost7, 'results.jsonl'),
+      cost_comparison: join(r13, 'cost-comparison.json'), language_pt: join(stageDirs['language-pt'], 'results.jsonl'),
+      language_en: join(stageDirs['language-en'], 'results.jsonl') },
+    outputs: { audit_dir: audit, custody_dir: custody, new_blind_samples: join(audit, 'blind-r13.jsonl'),
+      new_blind_key: join(custody, 'key-r13.json'), comparison_addendum: join(audit, 'comparison.json'),
+      phase_a_evidence: join(audit, 'phase-a-evidence.json'), phase_a_manifest: join(audit, 'phase-a-manifest.json'),
+      phase_b_evidence: join(audit, 'phase-b-evidence.json'), phase_b_manifest: join(audit, 'phase-b-manifest.json'),
+      language_variants: join(audit, 'variantes-r13.jsonl') }, public_receipt_path: receiptPath };
+  const operator = operatorReceipt(snapshot);
+  const h4 = { snapshot, operator, comparison, priorRootSet: new Set(Array.from({ length: 597 }, (_, i) => `old-${i}`)),
+    summary, source: { snapshot_sha256: 'snapshot-sha', operator_receipt_sha256: 'operator-sha',
+      comparison_sha256: 'comparison-sha', h4_answer_key_sha256: 'answer-key-sha' } };
+  try {
+    const ctx = { config, r13Root: dataRoot, workspaceRoot: dataRoot, h4Override: h4 };
+    await phaseA(ctx); const receiptA = await readFile(receiptPath, 'utf8');
+    const evidenceA = await readFile(config.outputs.phase_a_evidence, 'utf8');
+    await phaseA(ctx); assert.equal(await readFile(receiptPath, 'utf8'), receiptA);
+    assert.equal(await readFile(config.outputs.phase_a_evidence, 'utf8'), evidenceA);
+    assert.ok(evidenceA.includes('r13_stage_usage') && evidenceA.includes('eligible_count'));
+    await phaseB(ctx); const receiptB = await readFile(receiptPath, 'utf8');
+    const evidenceB = await readFile(config.outputs.phase_b_evidence, 'utf8');
+    assert.ok(evidenceB.includes('750000'));
+    assert.match(receiptB, /Etiquetado en todo el corpus/u);
+    for (const stage of ['repair', 'interests', 'cost13', 'cost7', 'language-pt', 'language-en', 'translation']) {
+      assert.match(receiptB, new RegExp(`\\| ${stage} \\|`, 'u'));
+    }
+    await phaseB(ctx); assert.equal(await readFile(receiptPath, 'utf8'), receiptB);
+    assert.equal(await readFile(config.outputs.phase_b_evidence, 'utf8'), evidenceB);
+    await assert.rejects(phaseA(ctx), /already_superseded/u);
+    assert.equal(await readFile(receiptPath, 'utf8'), receiptB);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+    await rmRepo(publicDir, { recursive: true, force: true });
+  }
+});
+
 test('requires an explicitly sanitized public catalog and rejects private identity terms', () => {
   const snapshot = fixture();
   const receipt = operatorReceipt(snapshot);

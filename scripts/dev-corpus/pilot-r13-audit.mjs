@@ -73,26 +73,35 @@ export function summarizeR13Repair(snapshot, repairRows, { hashtagOnlyByRoot } =
   const result = indexedRows('repair', repairRows, items);
   const counts = { trigger: 0, barrier: 0, none: 0, intermediate: 0, unresolved: 0 };
   const consumerEligibility = { eligible: 0, excluded: 0 };
+  const eligibleVoiceCounts = Object.fromEntries(['individual', 'conversation'].map((voice) => [voice,
+    { trigger: 0, barrier: 0, none: 0, intermediate: 0, unresolved: 0 }]));
   const promotional = { trigger: 0, barrier: 0, none: 0, intermediate: 0, unresolved: 0 };
   const organic = { ...promotional };
   const rows = [];
   for (const item of snapshot.items) {
     const prior = item.probabilities ?? {};
     const isHashtag = hashtagOnlyByRoot?.[item.root_id] ?? isHashtagOnlyR13(item.full_text ?? item.text);
-    const eligible = prior.voice?.choice === 'individual' && prior.promotion?.noul <= 0.7 && !isHashtag;
+    const voice = prior.voice?.choice;
+    const eligible = ['individual', 'conversation'].includes(voice) && prior.promotion?.noul <= 0.7 && !isHashtag;
     if (eligible) consumerEligibility.eligible++;
     else consumerEligibility.excluded++;
     const decision = decisionOf(answerOf(result.get(item.root_id)));
     const label = !decision ? 'unresolved' : decision.confidence <= 0.7
       ? decision.confidence >= 0.3 ? 'intermediate' : 'unresolved' : decision.choice;
     counts[label]++;
-    if (eligible) (prior.promotion.noul > 0.7 ? promotional : organic)[label]++;
-    rows.push({ root_id: item.root_id, input_digest: item.input_digest, eligible, hashtag_only: isHashtag,
+    if (eligible) {
+      eligibleVoiceCounts[voice][label]++;
+      (prior.promotion.noul > 0.7 ? promotional : organic)[label]++;
+    }
+    rows.push({ root_id: item.root_id, input_digest: item.input_digest, eligible, voice, hashtag_only: isHashtag,
       label, confidence: decision?.confidence ?? null, text: item.full_text ?? item.text,
       response: result.get(item.root_id) ?? null });
   }
   return { root_count: snapshot.items.length, consumer_eligibility: consumerEligibility, counts,
     percentages: Object.fromEntries(Object.entries(counts).map(([key, value]) => [key, rate(value, snapshot.items.length)])),
+    consumer_voice_summary: { eligible_count: consumerEligibility.eligible, by_voice: eligibleVoiceCounts,
+      counts: Object.fromEntries(Object.keys(counts).map((label) => [label,
+        eligibleVoiceCounts.individual[label] + eligibleVoiceCounts.conversation[label]])) },
     consumer_voice_by_prior_promotion: { promotional, organic }, private_rows: rows };
 }
 
@@ -348,6 +357,8 @@ export function appendR13ComparisonCorrection(priorComparison, r13) {
     contract_version: 'pilot-comparison-r13-v1', roots: r13.root_count,
     prior_comparison_method: 'The earlier comparison checked whether the study dimensions were represented. It did not check individual consumer reasons or match individual triggers and barriers.',
     consumer_voice_eligibility: r13.consumer_eligibility,
+    consumer_eligible_count: r13.consumer_voice_summary.eligible_count,
+    consumer_voice_trigger_barrier_counts: r13.consumer_voice_summary,
     corrected_consumer_voice_trigger_barrier_counts: r13.consumer_voice_by_prior_promotion,
     corrected_trigger_barrier_counts_all_roots: r13.counts,
   } };
@@ -355,18 +366,14 @@ export function appendR13ComparisonCorrection(priorComparison, r13) {
 
 const money = (value) => `USD ${value.toFixed(6)}`;
 export function renderCorrectedPublicReceiptR13({ receipt, baseline, repaired, projection, interests, costComparison,
-  confirmedStageCharges = { voyage_usd: 0, claude_usd: 8.03, jev_usd: null } }) {
+  r13StageUsage = [], confirmedStageCharges = { voyage_usd: 0, claude_usd: 8.03, jev_usd: null } }) {
   if (typeof receipt !== 'string' || !receipt.startsWith('# Piloto de etiquetado masivo')
     || !baseline || !repaired || !projection || !Array.isArray(projection.per_million_roots)
     || projection.per_million_roots.length !== 3 || repaired.root_count !== baseline.root_count
     || repaired.root_count < 1 || Object.values(repaired.counts).reduce((sum, value) => sum + value, 0) !== repaired.root_count) {
     throw new Error('r13_public_receipt_input_invalid');
   }
-  const pattern = /La proyección a 1,000,000 de raíces[^\n]*/u;
-  if (!pattern.test(receipt)) throw new Error('r13_prior_projection_missing');
-  const revised = receipt.replace(pattern,
-    'La proyección separa Voyage y JEV por raíz, y Claude por grupos. Supone la misma mezcla de menciones y fragmentos al escalar el corpus.');
-  const retained = revised.split('\n').filter((line) => !/^Cargo total confirmado:/u.test(line)
+  const retained = receipt.split('\n').filter((line) => !/^Cargo total confirmado:/u.test(line)
     && !/^Valor tarifario del uso:/u.test(line) && !/^Estimación de caja con crédito/u.test(line)).join('\n');
   const forecasts = projection.per_million_roots.map((row) =>
     `| ${row.editorial_groups} | ${money(row.voyage_usage_usd)} | ${money(row.jev_usage_usd)} | ${money(row.editorial_usage_usd)} | ${money(row.combined_usage_value_usd)} |`);
@@ -375,8 +382,8 @@ export function renderCorrectedPublicReceiptR13({ receipt, baseline, repaired, p
   const lines = [
     '', '## Correcciones R13', '',
     `La relevancia genérica histórica se conserva como diagnóstico. Dio ${baseline.original_relevance.positive} positivas, ${baseline.original_relevance.intermediate} intermedias y ${baseline.original_relevance.negative} negativas.`,
-    `El trigger/barrier histórico marcó ${oldTriggers.promoted} triggers y ${oldBarriers.promoted} barriers con promoción superior a 0.7; el desglose completo por promoción está en el anexo privado.`,
-    `La pregunta corregida nombró cerveza y limitó el indicador a voz individual de consumidor, promoción ≤0.7 y texto del post que no sea sólo hashtags. Elegibles: ${repaired.consumer_eligibility.eligible}; excluidas: ${repaired.consumer_eligibility.excluded}. Resultados corregidos en el corpus: ${repaired.counts.trigger} triggers, ${repaired.counts.barrier} barriers, ${repaired.counts.none} none, ${repaired.counts.intermediate} intermedios y ${repaired.counts.unresolved} sin resolver.`,
+    `El desglose histórico de motivadores y barreras, sin filtrar voz, separa promoción >0.7 y sin promoción: triggers ${oldTriggers.promoted} / ${oldTriggers.organic}; barriers ${oldBarriers.promoted} / ${oldBarriers.organic}.`,
+    `La pregunta corregida nombró cerveza y el indicador usa voz individual o conversación, promoción ≤0.7 y texto del post que no sea sólo hashtags. Elegibles: ${repaired.consumer_voice_summary.eligible_count}; triggers ${repaired.consumer_voice_summary.counts.trigger}, barriers ${repaired.consumer_voice_summary.counts.barrier}, none ${repaired.consumer_voice_summary.counts.none}, intermedios ${repaired.consumer_voice_summary.counts.intermediate}, sin resolver ${repaired.consumer_voice_summary.counts.unresolved}. Desglose elegible: individual ${JSON.stringify(repaired.consumer_voice_summary.by_voice.individual)}; conversación ${JSON.stringify(repaired.consumer_voice_summary.by_voice.conversation)}. Etiquetado en todo el corpus, incluido el diagnóstico no elegible: ${repaired.counts.trigger} triggers, ${repaired.counts.barrier} barriers, ${repaired.counts.none} none, ${repaired.counts.intermediate} intermedios y ${repaired.counts.unresolved} sin resolver.`,
     'La comparación inicial verificó la presencia de las dimensiones trigger/barrier. No estableció la coincidencia de causas concretas.',
     '', '### Proyección corregida por millón de raíces', '',
     '| Grupos editoriales | Voyage a tarifa | JEV por raíz | Claude por grupo | Total a tarifa |',
@@ -396,6 +403,13 @@ export function renderCorrectedPublicReceiptR13({ receipt, baseline, repaired, p
       ? costComparison.relative_token_reduction_percent : costComparison.token_reduction_fraction * 100;
     lines.push('', '### Comparación de costo por número de preguntas',
       `En ${costComparison.paired_roots} raíces elegidas de forma pareada, el promedio fue ${fullTokens.toFixed(2)} tokens por raíz con trece preguntas y ${reducedTokens.toFixed(2)} con siete, una diferencia de ${savedTokens.toFixed(2)} tokens (${reductionPercent.toFixed(1)}%). Las probabilidades de las preguntas compartidas se comparan en el anexo privado.`);
+  }
+  if (r13StageUsage.length) {
+    lines.push('', '### Uso medido de R13 en etapas completadas', '',
+      '| Etapa completada | Resultados | Tokens de entrada | Tokens de salida | Uso tarifario |',
+      '|---|---:|---:|---:|---:|',
+      ...r13StageUsage.map((stage) => `| ${stage.stage} | ${stage.results} | ${stage.input_tokens} | ${stage.output_tokens ?? 'n/d'} | ${money(stage.micro_usd / 1_000_000)} |`),
+      'Los importes R13 son valores tarifarios del uso medido; no representan débitos de caja.');
   }
   return retained.trimEnd() + '\n' + lines.join('\n') + '\n';
 }

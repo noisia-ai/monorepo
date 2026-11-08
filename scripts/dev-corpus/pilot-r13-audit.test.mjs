@@ -56,17 +56,22 @@ test('historical summary separates generic relevance from promotion and voice', 
   assert.equal(summary.prior_jev_usage.input_tokens_per_root, 100);
 });
 
-test('corrected consumer summary requires individual organic non hashtag-only posts', () => {
+test('corrected consumer summary covers individual and conversation voices and separates all-root diagnosis', () => {
   const items = [
     makeItem('r1'),
     makeItem('r2', { voice: 'creator' }),
     makeItem('r3', { promo: 0.8 }),
     makeItem('r4', { text: '#brasil #cerveja' }),
+    makeItem('r5', { voice: 'conversation' }),
   ];
   const output = summarizeR13Repair({ items }, items.map((item) => result(item, 'repair')));
-  assert.deepEqual(output.consumer_eligibility, { eligible: 1, excluded: 3 });
-  assert.equal(output.consumer_voice_by_prior_promotion.organic.trigger, 1);
-  assert.equal(output.counts.trigger, 4);
+  assert.deepEqual(output.consumer_eligibility, { eligible: 2, excluded: 3 });
+  assert.equal(output.consumer_voice_summary.eligible_count, 2);
+  assert.equal(output.consumer_voice_summary.counts.trigger, 2);
+  assert.equal(output.consumer_voice_summary.by_voice.individual.trigger, 1);
+  assert.equal(output.consumer_voice_summary.by_voice.conversation.trigger, 1);
+  assert.equal(output.consumer_voice_by_prior_promotion.organic.trigger, 2);
+  assert.equal(output.counts.trigger, 5);
 });
 
 test('new blind samples are reproducible, balanced, and disjoint from the sealed H4 cases', () => {
@@ -184,10 +189,13 @@ test('R13 comparison addendum corrects provenance and public receipt removes sta
     observedEditorialUsd: 8, observedEditorialCalls: 144 });
   const rendered = renderCorrectedPublicReceiptR13({ receipt: '# Piloto de etiquetado masivo\n'
     + 'Cargo total confirmado: n/d.\nValor tarifario del uso: old wrong projection\n'
-    + 'Estimación de caja con crédito: wrong\nLa proyección a 1,000,000 de raíces antigua.', baseline, repaired, projection });
+    + 'Estimación de caja con crédito: wrong\nLa proyección a 1,000,000 de raíces antigua.', baseline, repaired, projection,
+    r13StageUsage: [{ stage: 'translation', results: 98, input_tokens: 10774, output_tokens: 19526, micro_usd: 325212 }] });
   assert.doesNotMatch(rendered, /old wrong projection|Cargo total confirmado|Estimación de caja con crédito/u);
   assert.match(rendered, /Claude por grupo/u);
   assert.match(rendered, /La comparación inicial verificó la presencia/u);
+  assert.match(rendered, /Uso tarifario \|\n[\s\S]*\| translation \| 98 \| 10774 \| 19526 \| USD 0\.325212 \|/u);
+  assert.match(rendered, /desglose histórico de motivadores y barreras, sin filtrar voz/u);
   const nativeCost = { paired_roots: 1000, tokens_per_root: { full: 150, reduced: 95 },
     token_reduction_fraction: 0.3667 };
   const nativeRendered = renderCorrectedPublicReceiptR13({ receipt: '# Piloto de etiquetado masivo\n'

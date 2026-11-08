@@ -24,6 +24,8 @@ Create the operator JSON config under the R13 `.data` directory with mode `0600`
   "stages": {
     "repair": "/absolute/path/to/private-data/.data/piloto-masivo/r13/repair/results.jsonl",
     "interests": "/absolute/path/to/private-data/.data/piloto-masivo/r13/interests/results.jsonl",
+    "cost13": "/absolute/path/to/private-data/.data/piloto-masivo/r13/cost13/results.jsonl",
+    "cost7": "/absolute/path/to/private-data/.data/piloto-masivo/r13/cost7/results.jsonl",
     "cost_comparison": "/absolute/path/to/private-data/.data/piloto-masivo/r13/cost-comparison.json",
     "language_pt": "/absolute/path/to/private-data/.data/piloto-masivo/r13/language-pt/results.jsonl",
     "language_en": "/absolute/path/to/private-data/.data/piloto-masivo/r13/language-en/results.jsonl"
