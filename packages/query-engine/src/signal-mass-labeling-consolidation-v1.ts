@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { signalWorkspaceEmbeddingDigestV1 as digest } from "./signal-workspace-embeddings-v1";
 import {
@@ -170,11 +171,14 @@ export function validateMassLabelingConsolidationOutputV1(
 
 /** Reparse the exact stored provider bytes when adopting the final map. */
 export function parseMassLabelingConsolidationResponseV1(
-  batch: MassLabelingConsolidationBatchV1,
-  raw: string,
-): {
-  output: MassLabelingConsolidationOutputV1;
-  usage: SignalWorkspaceInterpretationUsageV1;
+  batch: MassLabelingConsolidationBatchV1, raw: string,
+): { output: MassLabelingConsolidationOutputV1; usage: SignalWorkspaceInterpretationUsageV1 } {
+  const parsed = parseMassLabelingConsolidationEnvelopeV1(raw);
+  return { output: validateMassLabelingConsolidationOutputV1(batch.source_groups, parsed.value), usage: parsed.usage };
+}
+
+function parseMassLabelingConsolidationEnvelopeV1(raw: string): {
+  value: unknown; usage: SignalWorkspaceInterpretationUsageV1;
 } {
   if (Buffer.byteLength(raw) > 1_048_576)
     throw new Error("mass_consolidation_response_capacity_exceeded");
@@ -232,10 +236,7 @@ export function parseMassLabelingConsolidationResponseV1(
     cache_creation_input_tokens,
   } = response.data.usage;
   return {
-    output: validateMassLabelingConsolidationOutputV1(
-      batch.source_groups,
-      JSON.parse(blocks[0].text),
-    ),
+    value: JSON.parse(blocks[0].text),
     usage: {
       input_tokens,
       output_tokens,
@@ -269,4 +270,78 @@ export function massLabelingConsolidationUsageV1(
   } catch {
     return null;
   }
+}
+
+
+const receiptRecoveryDecision = z.object({
+  contract_version: z.literal("workspace-mass-labeling-receipt-recovery-v1"),
+  workspace_id: z.string().uuid(), execution_id: z.string().uuid(), call_id: z.string().uuid(),
+  request_digest: sha, response_sha256: sha, source_groups_digest: sha,
+  topic_key_changes: z.array(z.object({ from: text(120), to: catalog.shape.topics.element.shape.topic_key }).strict()).length(3),
+  assignment_resolution: z.object({
+    method: z.literal("source_segments_and_exact_remaining_summary"), group_id: groupId,
+    keep_topic_key: text(120), remove_topic_key: text(120),
+    definition_omission: z.object({ unit: z.literal("unicode_code_points"),
+      prefix_length: z.number().int().positive().max(1200), removed_length: z.number().int().positive().max(1200),
+      suffix_length: z.number().int().positive().max(1200) }).strict(),
+  }).strict(),
+}).strict();
+export type MassLabelingConsolidationRecoveryDecisionV1 = z.infer<typeof receiptRecoveryDecision>;
+
+export function parseMassLabelingConsolidationRecoveryDecisionV1(value: unknown): MassLabelingConsolidationRecoveryDecisionV1 {
+  const parsed = receiptRecoveryDecision.safeParse(value);
+  if (!parsed.success) return fail();
+  return parsed.data;
+}
+
+/** Replay a single explicitly authorized global receipt. The original envelope
+ * and strict historical parser remain the source of metering and validation. */
+export function recoverMassLabelingConsolidationResponseV1(
+  batch: MassLabelingConsolidationBatchV1, raw: string, decisionValue: unknown,
+): { output: MassLabelingConsolidationOutputV1; usage: SignalWorkspaceInterpretationUsageV1 } {
+  const decision = parseMassLabelingConsolidationRecoveryDecisionV1(decisionValue);
+  const rebuilt = buildMassLabelingConsolidationRequestV1({ workspace_id: batch.workspace_id,
+    source_engine_execution_id: batch.source_engine_execution_id, source_groups: batch.source_groups });
+  if (digest(rebuilt) !== digest(batch) || decision.workspace_id !== batch.workspace_id
+    || decision.execution_id !== batch.source_engine_execution_id || decision.request_digest !== batch.request_digest
+    || decision.source_groups_digest !== batch.source_groups_digest
+    || decision.response_sha256 !== `sha256:${createHash("sha256").update(raw).digest("hex")}`) return fail();
+  const parsed = parseMassLabelingConsolidationEnvelopeV1(raw);
+  const recoverable = catalog.extend({ topics: z.array(catalog.shape.topics.element.extend({ topic_key: text(120) })).max(200) })
+    .safeParse(parsed.value);
+  if (!recoverable.success) return fail();
+  const output = recoverable.data;
+  if (new Set(output.topics.map(topic => topic.topic_key)).size !== output.topics.length) return fail();
+  const changes = new Map<string, string>();
+  for (const change of decision.topic_key_changes) {
+    const decomposed = change.from.normalize("NFKD"), marks = decomposed.match(/\p{M}/gu) ?? [];
+    if (changes.has(change.from) || marks.length !== 1 || decomposed !== change.from.normalize("NFD")
+      || change.from === change.to || decomposed.replace(/\p{M}/gu, "") !== change.to
+      || output.topics.filter(topic => topic.topic_key === change.from).length !== 1) return fail();
+    changes.set(change.from, change.to);
+  }
+  const resolution = decision.assignment_resolution;
+  const keep = output.topics.find(topic => topic.topic_key === resolution.keep_topic_key);
+  const remove = output.topics.find(topic => topic.topic_key === resolution.remove_topic_key);
+  if (!keep || !remove || keep === remove || keep.group_ids.length !== 1 || remove.group_ids.length !== 2
+    || keep.group_ids[0] !== resolution.group_id || !remove.group_ids.includes(resolution.group_id)) return fail();
+  const memberships = new Map<string, string[]>();
+  for (const topic of output.topics) for (const group of topic.group_ids) {
+    const keys = memberships.get(group) ?? []; keys.push(topic.topic_key); memberships.set(group, keys);
+  }
+  const duplicated = [...memberships].filter(([, keys]) => keys.length > 1);
+  if (duplicated.length !== 1 || duplicated[0]![0] !== resolution.group_id || duplicated[0]![1].length !== 2) return fail();
+  const source = batch.source_groups.find(group => group.group_id === resolution.group_id);
+  const remainingId = remove.group_ids.find(group => group !== resolution.group_id);
+  const remaining = batch.source_groups.find(group => group.group_id === remainingId);
+  if (!source || source.status === "insufficient" || source.name !== keep.name || source.definition === null
+    || !remaining || remaining.status === "insufficient" || remaining.name !== remove.name || remaining.definition !== remove.definition)
+    return fail();
+  const original = Array.from(source.definition), omitted = resolution.definition_omission;
+  if (original.length !== omitted.prefix_length + omitted.removed_length + omitted.suffix_length
+    || original.slice(0, omitted.prefix_length).join("") + original.slice(-omitted.suffix_length).join("") !== keep.definition)
+    return fail();
+  remove.group_ids = remove.group_ids.filter(group => group !== resolution.group_id);
+  for (const topic of output.topics) topic.topic_key = changes.get(topic.topic_key) ?? topic.topic_key;
+  return { output: validateMassLabelingConsolidationOutputV1(batch.source_groups, output), usage: parsed.usage };
 }
