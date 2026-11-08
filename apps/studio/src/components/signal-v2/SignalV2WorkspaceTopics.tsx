@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { SignalWorkspaceTopicReadBundleV1, SignalWorkspaceTopicDetailV1 } from "@noisia/db";
 import { ArrowClockwise, Gauge, Quotes } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import type { SignalFilterV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1, SignalWorkspaceTopicsOverviewV1, SignalWorkspaceDefinedInterestOverviewV1, SignalWorkspaceTopicEvidencePageV1 } from "@noisia/query-engine";
+import { localizedSignalTopic } from "./signal-topic-localization";
 import { SignalV2ModuleHeader } from "./SignalV2ModuleHeader";
 import { SignalAnalyticsFilter, type SignalAnalyticsFilterSelection } from "./SignalAnalyticsFilter";
 import { SignalDataScopeFilter } from "./SignalDataScopeFilter";
@@ -16,15 +17,18 @@ import { SignalEvidenceDrawer } from "./SignalEvidenceDrawer";
 import { SignalTopicsKpi, SignalTopicsRankingCard, SignalTopicsRankingList } from "./SignalTopicsPrimitives";
 import { buildSignalTopicTrendOption } from "./SignalTopicChartOptions";
 
-const sections = ["topics", "narratives", "noise", "unresolved"] as const;
-type NativeTopicSection = typeof sections[number];
+const baseSections = ["topics", "narratives", "noise", "unresolved"] as const;
+type NativeTopicSection = typeof baseSections[number] | "interests";
+type ConversationSegment = "all" | "conversation" | "advertising" | "hashtags";
 type ComputedTopics = SignalWorkspaceTopicsOverviewV1 | SignalWorkspaceDefinedInterestOverviewV1;
 
 /** Older workspace catalogues did not carry a kind. Treat them as Topics while
  * consolidated catalogues preserve the server-owned editorial kind. */
-export function workspaceTermsForSectionV1(data: ComputedTopics, section: "topics" | "narratives") {
+export function workspaceTermsForSectionV1(data: ComputedTopics, section: "topics" | "narratives" | "interests") {
+  if (section === "interests") return data.terms.filter(item => item.basis === "defined_interest");
   const kind = section === "narratives" ? "narrative" : "topic";
-  return data.terms.filter(item => (item.kind === "narrative" ? "narrative" : "topic") === kind);
+  return data.terms.filter(item => (item.kind === "narrative" ? "narrative" : "topic") === kind
+    && (!data.population_segments || item.basis !== "defined_interest"));
 }
 
 type WorkspaceTopicsProps = {
@@ -32,7 +36,8 @@ type WorkspaceTopicsProps = {
   brandName: string;
   data: ComputedTopics; loading: boolean; manageTopicsHref: string | null;
   onApplyFilter: (selection: SignalAnalyticsFilterSelection) => Promise<boolean>;
-  onRefresh?: () => Promise<boolean>; surface?: "summary" | "topics"; onOpenTopics?: () => void; refreshFailed?: boolean;
+  onRefresh?: () => Promise<boolean>;
+  onConversationSegment?: (segment: ConversationSegment) => Promise<boolean>; surface?: "summary" | "topics" | "consumers"; onOpenTopics?: () => void; refreshFailed?: boolean;
   onOpenMention?: (mentionId: string) => void;
   onOpenMentions: () => void;
   workspaceTimezone: string;
@@ -74,7 +79,7 @@ function SignalImportedTopics({ data, loading, manageTopicsHref, onOpenMentions,
   </div>;
 }
 
-function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading, manageTopicsHref, onApplyFilter, onRefresh, surface = "topics", onOpenTopics, onOpenMention, onOpenMentions, refreshFailed = false, workspaceTimezone }: WorkspaceTopicsProps) {
+function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading, manageTopicsHref, onApplyFilter, onRefresh, onConversationSegment, surface = "topics", onOpenTopics, onOpenMention, onOpenMentions, refreshFailed = false, workspaceTimezone }: WorkspaceTopicsProps) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
   const [selectedKey, setSelectedKey] = useState<string | null>(data.terms[0]?.term_key ?? null);
   const [termLimit, setTermLimit] = useState(50);
@@ -92,8 +97,11 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   const request = useRef<AbortController | null>(null), sequence = useRef(0);
   const mfp = data.membership_population;
   const consolidated = data.coverage.noise !== null;
+  const sections: readonly NativeTopicSection[] = data.population_segments
+    ? ["topics", "interests", "narratives", "noise", "unresolved"] : baseSections;
   const sectionKind = section === "narratives" ? "narrative" : "topic";
-  const sectionTerms = workspaceTermsForSectionV1(data, section === "narratives" ? "narratives" : "topics");
+  const sectionTerms = useMemo(() => workspaceTermsForSectionV1(data, section === "narratives" ? "narratives" : section === "interests" ? "interests" : "topics")
+    .map(item => localizedSignalTopic(item, locale)), [data, section, locale]);
   const term = sectionTerms.find(item => item.term_key === selectedKey) ?? sectionTerms[0] ?? null;
   const termGeneration = term?.interest_generation_id ?? data.generation_id;
   const evidence = page?.scope_digest === data.scope_digest && page.kind === sectionKind && page.term_key === term?.term_key
@@ -106,10 +114,11 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   const share = (value: number | null) => value === null ? "—" : new Intl.NumberFormat(locale,
     { style: "percent", maximumFractionDigits: 1 }).format(value);
   const read = useCallback(async (cursor?: string) => {
-    if (!term || !data.is_current || (!termGeneration && term.basis !== "concept_membership")) return;
+    if (!term || !data.is_current || (!termGeneration && term.basis !== "concept_membership" && !data.population_segments)) return;
     request.current?.abort(); const controller = new AbortController(); request.current = controller;
     const version = ++sequence.current; setReading(true); setError(null);
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest, limit: "25" });
+    if (data.filters.conversation_segment) params.set("conversation_segment", data.filters.conversation_segment);
     if (data.filters.date_from) params.set("date_from", data.filters.date_from);
     if (data.filters.date_to) params.set("date_to", data.filters.date_to);
     if (cursor) params.set("cursor", cursor);
@@ -144,7 +153,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
     } catch (cause) {
       if (!controller.signal.aborted && version === sequence.current) setError(cause instanceof Error ? cause.message : "evidenceError");
     } finally { if (!controller.signal.aborted && version === sequence.current) setReading(false); }
-  }, [data.filters.date_from, data.filters.date_to, data.is_current, data.scope_digest, data.workspace_id, sectionKind, term, termGeneration]);
+  }, [data.filters.conversation_segment, data.filters.date_from, data.filters.date_to, data.is_current, data.population_segments, data.scope_digest, data.workspace_id, sectionKind, term, termGeneration]);
   useEffect(() => {
     const fence = sequence;
     sequence.current++; request.current?.abort(); setError(null); setReading(false);
@@ -152,7 +161,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
       consumedInitial.current = initial; setPage(initial.evidence); setDetail(initial.detail);
     } else {
       setPage(null); setDetail(null);
-      if ((section === "topics" || section === "narratives" || surface === "summary") && data.is_current) void read();
+      if (surface !== "consumers" && (section === "topics" || section === "interests" || section === "narratives" || surface === "summary") && data.is_current) void read();
     }
     return () => { fence.current++; request.current?.abort(); };
   }, [read, data.observed_at, section, surface, initial, term, sectionKind, data.is_current]);
@@ -176,11 +185,30 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   const selectSection = (next: NativeTopicSection) => {
     request.current?.abort(); sequence.current++; setReading(false); setDrawer(false); setSection(next);
   };
+  if (surface === "consumers") return <div className="signal-v2-tn signal-v2-tn--workspace">
+    <SignalV2ModuleHeader icon={<Quotes size={20} weight="fill" />} title={t("consumers.title")}
+      subtitle={t("consumers.scope")} status={t(data.is_current ? "current" : "stale")}
+      controls={<>{filter ? <SignalAnalyticsFilter boundedToCoverage filter={filter} comparison={{ mode: "none", date_range: null }}
+        coverage={{ date_from: data.available_dates.date_from, date_through: data.available_dates.date_to }} loading={loading}
+        showComparison={false} onApply={selection => onApplyFilter({ ...selection, comparisonMode: "none", dimensions: {}, searchQuery: "" })} /> : null}
+        <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button></>} />
+    {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
+    <SignalWorkspaceConsumerIndicators data={data} loading={loading} showHeading={false} />
+  </div>;
   return <div className="signal-v2-tn signal-v2-tn--workspace">
     <SignalV2ModuleHeader icon={surface === "summary" ? <Gauge size={20} weight="fill" /> : <Quotes size={20} weight="fill" />} title={t(surface === "summary" ? "summaryTitle" : "title")} subtitle={t("scope")}
       status={t(data.is_processing ? "updating" : data.is_current ? data.interpretation_coverage?.complete === false ? "partialCurrent" : "current" : "stale")}
       aside={manageTopicsHref ? <Link className="signal-v2-filter" href={manageTopicsHref} prefetch={false}>{t("manage")}</Link> : null}
-      controls={<>{filter ? <SignalAnalyticsFilter boundedToCoverage filter={filter} comparison={{ mode: "none", date_range: null }}
+      controls={<>{data.population_segments && onConversationSegment ? <label className="signal-v2-filter">
+        <span>{t("conversationSegment.label")}</span>
+        <select aria-label={t("conversationSegment.label")} disabled={loading}
+          value={data.filters.conversation_segment ?? "all"}
+          onChange={event => void onConversationSegment(event.target.value as ConversationSegment)}>
+          {(["conversation", "advertising", "hashtags", "all"] as const).map(segment => <option key={segment} value={segment}>
+            {t(`conversationSegment.${segment}`)} ({number(data.population_segments![segment])})
+          </option>)}
+        </select>
+      </label> : null}{filter ? <SignalAnalyticsFilter boundedToCoverage filter={filter} comparison={{ mode: "none", date_range: null }}
         coverage={{ date_from: data.available_dates.date_from, date_through: data.available_dates.date_to }} loading={loading}
         showComparison={false} onApply={selection => onApplyFilter({ ...selection, comparisonMode: "none", dimensions: {}, searchQuery: "" })} /> : null}
         {dateFrom && dateTo ? <SignalDataScopeFilter brandName={brandName} coverageFrom={dateFrom} coverageThrough={dateTo}
@@ -188,6 +216,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
         <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
+    {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading} /> : null}
     <div aria-busy={loading} className={`signal-v2-tn__data-stage${loading ? " signal-v2-dashboard-stage--loading" : ""}`}>
     {surface === "topics" ? <div className="signal-v2-tn__switch signal-v2-tn__switch--native" role="tablist" aria-label={t("sections.label")}>
       {sections.map((key, index) => <button key={key} type="button" role="tab" id={`${tabsId}-${key}`}
@@ -200,6 +229,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
           if (next === null) return;
           event.preventDefault(); selectSection(sections[next]!); tabButtons.current[next]?.focus();
         }}>{t(mfp && key === "noise" ? "mfp.unrelated" : mfp && key === "unresolved" ? "mfp.without_concept" : `sections.${key}`)}<span>{key === "topics" ? number(workspaceTermsForSectionV1(data, "topics").length)
+          : key === "interests" ? number(workspaceTermsForSectionV1(data, "interests").length)
           : key === "narratives" ? consolidated || mfp ? number(workspaceTermsForSectionV1(data, "narratives").length) : t("sections.unavailable")
           : key === "noise" ? mfp ? number(mfp.unrelated) : data.coverage.noise === null ? t("sections.unavailable") : number(data.coverage.noise)
           : mfp ? number(mfp.without_concept) : data.coverage.unresolved === null ? t("sections.unavailable") : number(data.coverage.unresolved)}</span></button>)}
@@ -213,7 +243,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <p>{t(data.is_processing ? "emptyPreparingBody" : section === "narratives" ? "emptyNarrativesBody" : "emptyBody")}</p>
       </section> : <div className="signal-v2-tn__grid">
       <SignalTopicsRankingCard activeView={rankingView} eyebrow={t("rankingEyebrow")} onViewChange={setRankingView}
-        title={t(sectionKind === "narrative" ? "selectedNarratives" : "selectedTopics")}
+        title={t(section === "interests" ? "selectedInterests" : sectionKind === "narrative" ? "selectedNarratives" : "selectedTopics")}
         viewLabel={t(sectionKind === "narrative" ? "narrativesRankingView" : "rankingView")} views={[
           { key: "chart", label: t("chart") }, { key: "list", label: t("list") }
         ]}>
@@ -222,13 +252,19 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
             label: item.label, count: item.mention_count, formattedCount: number(item.mention_count), share: share(item.share_of_corpus) }))} />
           : <><p className="signal-v2-tn__evidence-intro">{t(sectionKind === "narrative" ? "narrativesChartHelp" : "chartHelp")}</p>
             <SignalEChart ariaLabel={t(sectionKind === "narrative" ? "selectedNarratives" : "selectedTopics")} onDatumClick={select}
-              option={nativeTopicsVolumeChartV1(visibleTerms, term?.term_key ?? null, t("mentions"))} /></>}
+              option={nativeTopicsVolumeChartV1(visibleTerms, term?.term_key ?? null, t("mentions"), locale)} /></>}
         {surface === "topics" && sectionTerms.length > termLimit ? <button className="signal-v2-filter" type="button" onClick={() => setTermLimit(value => value + 50)}>{t("more")}</button> : null}
         {surface === "summary" && onOpenTopics ? <button className="signal-v2-filter" type="button" onClick={onOpenTopics}>{t("openTopics")}</button> : null}
       </SignalTopicsRankingCard>
       <section className="signal-v2-card signal-v2-tn__detail" aria-label={t(sectionKind === "narrative" ? "narrativeDetailTitle" : "detailTitle")}>
         <header className="signal-v2-card__heading"><div><small>{t("definition")}</small><h2>{t(sectionKind === "narrative" ? "narrativeDetailTitle" : "detailTitle")}</h2></div></header>
-        <div className="signal-v2-tn__definition"><strong>{term?.label}</strong><p>{term?.definition}</p></div>
+        <div className="signal-v2-tn__definition"><strong>{term?.label}</strong><p>{term?.definition}</p>
+          {term?.localization ? <div className="signal-v2-tn__original">
+            <small>{t("corpusOriginal", { language: term.localization.original_language })}</small>
+            <strong lang={term.localization.original_language}>{term.localization.original.name}</strong>
+            <p lang={term.localization.original_language}>{term.localization.original.definition}</p>
+          </div> : null}
+        </div>
         <div className="signal-v2-tn__term-metrics">
           <article><small>{t("mentions")}</small><strong>{number(term?.mention_count ?? 0)}</strong></article>
           <article><small>{t("share")}</small><strong>{share(term?.share_of_corpus ?? null)}</strong></article>
@@ -241,7 +277,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
           onClick={() => { setDrawer(true); if (!evidence && !reading) void read(); }}><Quotes size={15} />{t("evidence")}</button></div>
         {term?.evidence_available === false ? <p className="signal-v2-tn__evidence-intro">{t("definedEvidencePending")}</p> : null}
         {term ? <>{error ? <p role="alert">{t("detailMetrics.error")} <button className="signal-v2-filter" type="button" onClick={() => void read()}>{t("detailMetrics.retry")}</button></p> : null}
-          <SignalWorkspaceTopicDetailMetrics detail={data.is_current && detail && validNativeTopicDetail(detail, {
+          <SignalWorkspaceTopicDetailMetrics terms={data.terms} detail={data.is_current && detail && validNativeTopicDetail(detail, {
             workspace_id: data.workspace_id, generation_id: termGeneration, scope_digest: data.scope_digest, kind: sectionKind, term_key: term.term_key }) ? detail : null}
             loading={reading && !error} onSelect={select} /></> : null}
         {term?.evidence_available !== false ? <div className="signal-v2-tn__preview"><strong>{t(term?.basis !== "computed_cluster" ? "membershipEvidence" : "detailMetrics.evidence")}</strong>
@@ -254,7 +290,7 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
       </section>
     </div>}
     </div>
-    {(section === "topics" || section === "narratives" || surface === "summary") && data.series.length ? <section className="signal-v2-card"><header className="signal-v2-card__heading"><h2>{t(consolidated ? "editorialTrend" : "trend")}</h2></header>
+    {(section === "topics" || section === "interests" || section === "narratives" || surface === "summary") && data.series.length ? <section className="signal-v2-card"><header className="signal-v2-card__heading"><h2>{t(consolidated ? "editorialTrend" : "trend")}</h2></header>
       <SignalEChart ariaLabel={t(consolidated ? "editorialTrend" : "trend")} option={buildSignalTopicTrendOption(data.series.map(item => ({
         label: formatTopicDate(item.date, locale), value: item.assigned_unique
       })), t(consolidated ? "assignedEditorial" : "assigned"), false)} />
@@ -298,8 +334,19 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   </div>;
 }
 
+export function SignalWorkspaceConsumerIndicators({ data, loading, showHeading = true }: { data: ComputedTopics; loading: boolean; showHeading?: boolean }) {
+  const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
+  const indicators = data.consumer_indicators;
+  return <section className="signal-v2-card signal-v2-tn__consumers" aria-label={t("consumers.title")} aria-busy={loading}>
+    {showHeading ? <header className="signal-v2-card__heading"><div><h2>{t("consumers.title")}</h2><p>{t("consumers.scope")}</p></div></header> : null}
+    {indicators ? <div className="signal-v2-tn__term-metrics">{(["eligible", "processed", "trigger", "barrier", "none", "intermediate", "unresolved"] as const).map(key =>
+      <article key={key}><small>{t(`consumers.${key}`)}</small><strong>{indicators[key].toLocaleString(locale)}</strong></article>)}</div>
+      : <p>{t("consumers.pending")}</p>}
+  </section>;
+}
+
 export function SignalWorkspaceTopicDisposition({ section, data }: {
-  section: Exclude<NativeTopicSection, "topics">; data: ComputedTopics;
+  section: Exclude<NativeTopicSection, "topics" | "interests">; data: ComputedTopics;
 }) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
   if (data.membership_population && (section === "noise" || section === "unresolved")) {
@@ -324,8 +371,8 @@ export function SignalWorkspaceTopicDisposition({ section, data }: {
 }
 
 /** The chart encodes volume only. It does not infer semantic proximity or sentiment. */
-export function nativeTopicsVolumeChartV1(terms: SignalWorkspaceTopicsOverviewV1["terms"], selected: string | null, seriesName: string) {
-  const labels = new Map(terms.map(term => [term.term_key, term.label]));
+export function nativeTopicsVolumeChartV1(terms: SignalWorkspaceTopicsOverviewV1["terms"], selected: string | null, seriesName: string, locale = "en-US") {
+  const labels = new Map(terms.map(term => [term.term_key, localizedSignalTopic(term, locale).label]));
   return { animation: false, grid: { left: 12, right: 35, top: 15, bottom: 35, containLabel: true },
     tooltip: { trigger: "item", renderMode: "richText", formatter: (item: { name: string; value: number }) =>
       `${labels.get(item.name) ?? item.name}: ${item.value}` },
