@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1
+# Opt-in build for the existing mfp-studio service in dev-test.
+FROM node:20.20.1-bookworm-slim@sha256:17281e8d1dc4d671976c6b89a12f47a44c2f390b63a989e2e327631041f544fd
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN corepack enable pnpm && corepack prepare pnpm@10.33.2 --activate
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
+COPY apps/studio/package.json apps/studio/package.json
+COPY services/workers/package.json services/workers/package.json
+COPY infrastructure/db/package.json infrastructure/db/package.json
+COPY packages/query-engine/package.json packages/query-engine/package.json
+COPY packages/methodologies/package.json packages/methodologies/package.json
+COPY packages/types/package.json packages/types/package.json
+RUN pnpm install --frozen-lockfile --filter @noisia/studio... --filter @noisia/workers...
+COPY apps/studio/src apps/studio/src
+COPY apps/studio/messages apps/studio/messages
+COPY apps/studio/public apps/studio/public
+COPY apps/studio/next.config.mjs apps/studio/next-env.d.ts apps/studio/tsconfig.json apps/studio/eslint.config.mjs apps/studio/
+COPY apps/studio/start-mfp-dev-test.sh apps/studio/start-mfp-dev-test.sh
+COPY services/workers/src services/workers/src
+COPY services/workers/tsconfig.json services/workers/tsconfig.json
+COPY infrastructure/db/*.ts infrastructure/db/
+COPY infrastructure/db/schema infrastructure/db/schema
+COPY infrastructure/db/seeds/connection.ts infrastructure/db/seeds/connection.ts
+COPY packages/query-engine/src packages/query-engine/src
+COPY packages/query-engine/tsconfig.json packages/query-engine/tsconfig.json
+COPY packages/methodologies/src packages/methodologies/src
+COPY packages/methodologies/tsconfig.json packages/methodologies/tsconfig.json
+COPY packages/types/src packages/types/src
+COPY packages/types/tsconfig.json packages/types/tsconfig.json
+COPY docs/api/openapi.yaml docs/api/openapi.yaml
+# Public client code is compiled specifically for this opt-in dev-test image.
+# Server-only placeholders exist for route collection in this RUN, never ENV.
+RUN DATABASE_URL=postgresql://test@127.0.0.1:1/noisia_build \
+    KINDE_ISSUER_URL=https://build-auth.example.invalid \
+    KINDE_CLIENT_ID=build-placeholder KINDE_CLIENT_SECRET=build-placeholder \
+    KINDE_SITE_URL=https://build-studio.example.invalid \
+    KINDE_POST_LOGOUT_REDIRECT_URL=https://build-studio.example.invalid \
+    KINDE_POST_LOGIN_REDIRECT_URL=https://build-studio.example.invalid/auth/continue \
+    NEXT_PUBLIC_APP_URL=https://mfp-studio-dev-test.up.railway.app \
+    pnpm --filter @noisia/studio build
+ENV NODE_ENV=production
+EXPOSE 3001
+CMD ["sh", "apps/studio/start-mfp-dev-test.sh"]
