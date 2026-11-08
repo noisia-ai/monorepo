@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
 const POSITIVE_THRESHOLD = 0.7;
@@ -51,7 +52,189 @@ export function validatePilotSnapshot(snapshot) {
 
 export function computeSnapshotDigest(snapshot) {
   validatePilotSnapshot(snapshot);
-  return sha256(JSON.stringify(snapshot));
+  return computeJsonStringifyDigest(snapshot);
+}
+
+export function computeJsonStringifyDigest(value) {
+  const digest = createHash('sha256');
+  updateJsonStringified(digest, value);
+  return digest.digest('hex');
+}
+
+// JSON.stringify has a hard string-size ceiling in Node. Hash its exact output
+// incrementally so a private snapshot can exceed that ceiling without changing
+// the established digest bytes. Exotic prototypes and toJSON hooks are rejected
+// instead of silently hashing bytes different from JSON.stringify.
+function updateJsonStringified(hash, value, active = new Set()) {
+  if (value && typeof value === 'object') {
+    if (active.has(value)) throw new TypeError('pilot_audit_digest_rejects_circular_values');
+    active.add(value);
+  }
+  if (Array.isArray(value)) {
+    if (typeof value.toJSON === 'function') throw new TypeError('pilot_audit_digest_rejects_to_json_arrays');
+    hash.update('[');
+    for (let index = 0; index < value.length; index += 1) {
+      if (index) hash.update(',');
+      if (!Object.hasOwn(value, index) || value[index] === undefined
+        || typeof value[index] === 'function' || typeof value[index] === 'symbol') hash.update('null');
+      else updateJsonStringified(hash, value[index], active);
+    }
+    hash.update(']');
+  } else if (record(value)) {
+    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+      throw new TypeError('pilot_audit_digest_requires_json_plain_objects');
+    }
+    if (typeof value.toJSON === 'function') throw new TypeError('pilot_audit_digest_rejects_to_json_objects');
+    hash.update('{');
+    let propertyIndex = 0;
+    for (const key of Object.keys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+        throw new TypeError('pilot_audit_digest_rejects_accessor_properties');
+      }
+      const property = descriptor.value;
+      if (property === undefined || typeof property === 'function' || typeof property === 'symbol') continue;
+      if (propertyIndex++) hash.update(',');
+      hash.update(JSON.stringify(key));
+      hash.update(':');
+      if (typeof property === 'number' && !Number.isFinite(property)) hash.update('null');
+      else updateJsonStringified(hash, property, active);
+    }
+    hash.update('}');
+  } else if (typeof value === 'number' && !Number.isFinite(value)) hash.update('null');
+  else if (typeof value === 'bigint') throw new TypeError('pilot_audit_digest_rejects_bigint');
+  else if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    throw new TypeError('pilot_audit_digest_requires_json_value');
+  } else hash.update(JSON.stringify(value));
+  if (value && typeof value === 'object') active.delete(value);
+}
+
+// Parse the top-level item and call arrays record by record. Other snapshot
+// properties remain small and use JSON.parse's own grammar/semantics.
+export async function readPilotSnapshot(path) {
+  const input = createReadStream(path, { encoding: 'utf8' })[Symbol.asyncIterator]();
+  try {
+  let chunk = '';
+  let offset = 0;
+  let ended = false;
+  async function ensure() {
+    while (offset >= chunk.length) {
+      const next = await input.next();
+      if (next.done) { ended = true; return false; }
+      chunk = next.value;
+      offset = 0;
+    }
+    return true;
+  }
+  const peek = () => chunk[offset] ?? '';
+  const take = () => {
+    const value = peek();
+    if (value) offset += 1;
+    return value;
+  }
+  async function whitespace() {
+    while (true) {
+      if (offset >= chunk.length && !await ensure()) return;
+      if (!/[ \t\r\n]/u.test(peek())) return;
+      take();
+    }
+  }
+  async function rawValue() {
+    await whitespace();
+    if (offset >= chunk.length && !await ensure()) throw new SyntaxError('Unexpected end of pilot audit JSON');
+    const first = take();
+    if (!first) throw new SyntaxError('Unexpected end of pilot audit JSON');
+    const parts = [];
+    let part = first;
+    const flush = () => { if (part) { parts.push(part); part = ''; } };
+    const append = (character) => {
+      part += character;
+      if (part.length >= 65536) flush();
+    };
+    if (first === '"') {
+      let escaped = false;
+      while (true) {
+        if (offset >= chunk.length && !await ensure()) throw new SyntaxError('Unterminated JSON string');
+        const character = take();
+        append(character);
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') break;
+      }
+    } else if (first === '{' || first === '[') {
+      const stack = [first === '{' ? '}' : ']'];
+      let inString = false;
+      let escaped = false;
+      while (stack.length) {
+        if (offset >= chunk.length && !await ensure()) throw new SyntaxError('Unexpected end of pilot audit JSON value');
+        const character = take();
+        append(character);
+        if (inString) {
+          if (escaped) escaped = false;
+          else if (character === '\\') escaped = true;
+          else if (character === '"') inString = false;
+        } else if (character === '"') inString = true;
+        else if (character === '{') stack.push('}');
+        else if (character === '[') stack.push(']');
+        else if (character === '}' || character === ']') {
+          if (stack.pop() !== character) throw new SyntaxError('Mismatched JSON delimiter');
+        }
+      }
+    } else {
+      while (true) {
+        if (offset >= chunk.length && !await ensure()) break;
+        const character = peek();
+        if (!character || /[ \t\r\n,\]}]/u.test(character)) break;
+        append(take());
+      }
+    }
+    flush();
+    return parts.join('');
+  }
+  async function parseArrayRecords() {
+    await whitespace();
+    if (take() !== '[') throw new SyntaxError('Expected JSON array');
+    const values = [];
+    await whitespace();
+    if (peek() === ']') { take(); return values; }
+    while (true) {
+      values.push(JSON.parse(await rawValue()));
+      await whitespace();
+      const separator = take();
+      if (separator === ']') return values;
+      if (separator !== ',') throw new SyntaxError('Expected JSON array separator');
+      await whitespace();
+      if (peek() === ']') throw new SyntaxError('Trailing comma in JSON array');
+    }
+  }
+  await whitespace();
+  if (take() !== '{') throw new SyntaxError('Pilot audit snapshot must be a JSON object');
+  const snapshot = {};
+  const streamedArrays = new Set(['items', 'calls']);
+  await whitespace();
+  if (peek() !== '}') {
+    while (true) {
+      const key = JSON.parse(await rawValue());
+      if (typeof key !== 'string') throw new SyntaxError('Expected JSON object key');
+      await whitespace();
+      if (take() !== ':') throw new SyntaxError('Expected JSON object colon');
+      const value = streamedArrays.has(key) ? await parseArrayRecords() : JSON.parse(await rawValue());
+      Object.defineProperty(snapshot, key, { value, enumerable: true, configurable: true, writable: true });
+      await whitespace();
+      const separator = take();
+      if (separator === '}') break;
+      if (separator !== ',') throw new SyntaxError('Expected JSON object separator');
+      await whitespace();
+      if (peek() === '}') throw new SyntaxError('Trailing comma in JSON object');
+    }
+  } else take();
+  await whitespace();
+  if (offset < chunk.length || !ended && await ensure()) throw new SyntaxError('Trailing data after pilot audit JSON');
+  return snapshot;
+  } catch (error) {
+    await input.return?.();
+    throw error;
+  }
 }
 
 export function validateOperatorReceipt(snapshot, receipt) {
@@ -419,6 +602,103 @@ function validateConsolidationArtifact(snapshot, successfulRows) {
     || call.metadata.mass_labeling_stage?.source_groups_digest !== artifact.metadata.source_groups_digest) {
     throw new Error('pilot_audit_editorial_consolidation_call_mismatch');
   }
+  validateGlobalReceiptRecovery(snapshot, artifact, call);
+}
+
+function validateGlobalReceiptRecovery(snapshot, artifact, call) {
+  const decisionReceipt = snapshot.stage_receipts.global_receipt_recovery_decision;
+  const artifactDecisionId = artifact.metadata.recovery_decision_id;
+  const artifactDecisionDigest = artifact.metadata.recovery_decision_digest;
+  const hasRecovery = decisionReceipt !== null && decisionReceipt !== undefined
+    || artifactDecisionId !== undefined || artifactDecisionDigest !== undefined;
+  if (!hasRecovery) return;
+  const decision = decisionReceipt?.decision;
+  const engine = snapshot.stage_receipts.engine;
+  const checkpointDigest = engine.result_summary?.fit_checkpoint?.checkpoint_digest;
+  const digestPattern = /^sha256:[a-f0-9]{64}$/u;
+  if (!record(decisionReceipt) || !record(decision)
+    || decision.contract_version !== 'workspace-mass-labeling-receipt-recovery-v1'
+    || decision.workspace_id !== decisionReceipt.workspace_id
+    || decision.execution_id !== decisionReceipt.execution_id
+    || decision.call_id !== decisionReceipt.call_id
+    || decision.request_digest !== decisionReceipt.request_digest
+    || decision.response_sha256 !== decisionReceipt.response_sha256
+    || decision.source_groups_digest !== decisionReceipt.source_groups_digest
+    || decisionReceipt.decision_id !== artifactDecisionId
+    || decisionReceipt.decision_digest !== artifactDecisionDigest
+    || decisionReceipt.created_by_user_id !== call.actor_user_id
+    || engine.result_summary?.global_receipt_recovery_decision_id !== decisionReceipt.decision_id
+    || decisionReceipt.workspace_id !== call.workspace_id
+    || decisionReceipt.execution_id !== call.catalog_execution_id
+    || decisionReceipt.call_id !== call.id
+    || decisionReceipt.request_digest !== call.request_digest
+    || decisionReceipt.response_sha256 !== call.response_sha256
+    || decisionReceipt.source_groups_digest !== artifact.metadata.source_groups_digest
+    || decisionReceipt.input_digest !== engine.input_digest
+    || decisionReceipt.fit_checkpoint_digest !== checkpointDigest
+    || !digestPattern.test(decisionReceipt.input_digest ?? '')
+    || !digestPattern.test(decisionReceipt.fit_checkpoint_digest ?? '')
+    || !digestPattern.test(decisionReceipt.decision_digest ?? '')
+    || decisionReceipt.decision_digest !== canonicalDigest(decision)
+    || !/^[0-9a-f-]{36}$/u.test(decisionReceipt.created_by_user_id ?? '')
+    || !Number.isFinite(Date.parse(decisionReceipt.created_at))) {
+    throw new Error('pilot_audit_editorial_recovery_decision_invalid');
+  }
+  const changes = decision.topic_key_changes;
+  if (!Array.isArray(changes) || changes.length !== 3) {
+    throw new Error('pilot_audit_editorial_recovery_key_changes_invalid');
+  }
+  const keyChanges = new Map();
+  const targetKeys = new Set();
+  for (const change of changes) {
+    const normalizedKey = typeof change?.from === 'string'
+      ? change.from.normalize('NFKD').replace(/[\u0300-\u036f]/gu, '') : '';
+    if (!record(change) || typeof change.from !== 'string' || !change.from
+      || typeof change.to !== 'string' || !change.to
+      || keyChanges.has(change.from) || targetKeys.has(change.to)
+      || change.to === change.from || change.to !== normalizedKey
+      || normalizedKey === change.from) {
+      throw new Error('pilot_audit_editorial_recovery_key_changes_invalid');
+    }
+    keyChanges.set(change.from, change.to);
+    targetKeys.add(change.to);
+  }
+  const catalogKeys = new Set(snapshot.map.catalog.map((topic) => topic.topic_key));
+  if ([...keyChanges].some(([source, target]) => catalogKeys.has(source) || !catalogKeys.has(target))) {
+    throw new Error('pilot_audit_editorial_recovery_key_catalog_mismatch');
+  }
+  const resolution = decision.assignment_resolution;
+  const omission = resolution?.definition_omission;
+  const nonnegative = (value) => Number.isSafeInteger(value) && value >= 0;
+  if (!record(resolution) || resolution.method !== 'source_segments_and_exact_remaining_summary'
+    || typeof resolution.group_id !== 'string' || !resolution.group_id
+    || typeof resolution.keep_topic_key !== 'string' || !resolution.keep_topic_key
+    || typeof resolution.remove_topic_key !== 'string' || !resolution.remove_topic_key
+    || resolution.keep_topic_key === resolution.remove_topic_key
+    || !record(omission) || omission.unit !== 'unicode_code_points'
+    || !nonnegative(omission.prefix_length) || !nonnegative(omission.removed_length)
+    || !nonnegative(omission.suffix_length)) {
+    throw new Error('pilot_audit_editorial_recovery_assignment_invalid');
+  }
+  const finalKey = (key) => keyChanges.get(key) ?? key;
+  const keep = finalKey(resolution.keep_topic_key);
+  const remove = finalKey(resolution.remove_topic_key);
+  const topics = snapshot.map.catalog;
+  const keepTopic = topics.find((topic) => topic.topic_key === keep);
+  const removeTopic = topics.find((topic) => topic.topic_key === remove);
+  if (!keepTopic || !removeTopic || keep === remove) {
+    throw new Error('pilot_audit_editorial_recovery_topics_missing');
+  }
+  if (topics.some((topic) => !Array.isArray(topic.group_ids)
+    || topic.group_ids.some((id) => typeof id !== 'string' || !id)
+    || new Set(topic.group_ids).size !== topic.group_ids.length)) {
+    throw new Error('pilot_audit_editorial_recovery_membership_invalid');
+  }
+  const memberships = topics.flatMap((topic) => topic.group_ids
+    .filter((id) => id === resolution.group_id).map(() => topic.topic_key));
+  if (memberships.length !== 1 || memberships[0] !== keep) {
+    throw new Error('pilot_audit_editorial_recovery_assignment_mismatch');
+  }
 }
 
 function noul(answer) {
@@ -659,7 +939,7 @@ export function comparePilotSnapshot(snapshot, comparison) {
 }
 
 export async function loadPilotAuditInputs(snapshotPath, operatorReceiptPath, comparisonPath) {
-  const snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
+  const snapshot = await readPilotSnapshot(snapshotPath);
   validatePilotSnapshot(snapshot);
   const operatorReceipt = JSON.parse(await readFile(operatorReceiptPath, 'utf8'));
   validateOperatorReceipt(snapshot, operatorReceipt);

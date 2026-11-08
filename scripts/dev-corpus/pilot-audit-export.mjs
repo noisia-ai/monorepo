@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import {
   buildBlindSamples,
   comparePilotSnapshot,
+  computeSnapshotDigest,
+  readPilotSnapshot,
   renderBlindSamples,
   renderPrivateComparisonAnnex,
   renderPublicReceipt,
@@ -107,13 +109,13 @@ async function main() {
   const args = parseArguments(process.argv.slice(2));
   if (args['--snapshot-digest']) {
     const snapshotPath = await existingPrivateInput(args['--snapshot-digest']);
-    const snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
+    const snapshot = await readPilotSnapshot(snapshotPath);
     validatePilotSnapshot(snapshot);
-    process.stdout.write(`${createHash('sha256').update(JSON.stringify(snapshot)).digest('hex')}\n`);
+    process.stdout.write(`${computeSnapshotDigest(snapshot)}\n`);
     return;
   }
   const snapshotPath = await existingPrivateInput(args['--snapshot']);
-  const snapshot = JSON.parse(await readFile(snapshotPath, 'utf8'));
+  const snapshot = await readPilotSnapshot(snapshotPath);
   validatePilotSnapshot(snapshot);
   const operatorReceiptPath = await existingPrivateInput(args['--operator-receipt']);
   const operatorReceiptText = await readFile(operatorReceiptPath, 'utf8');
