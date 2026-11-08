@@ -43,12 +43,34 @@ CREATE TABLE signal_mass_labeling_r13_interest_results (
 
 CREATE INDEX signal_mass_labeling_r13_interest_positive_root ON signal_mass_labeling_r13_interest_results(workspace_id,map_id,root_id) WHERE probability>0.7;
 
-CREATE FUNCTION signal_mass_labeling_r13_hashtags_v1(body text) RETURNS boolean
- LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path=pg_catalog AS $$
- SELECT COALESCE(body COLLATE pg_c_utf8 ~ '#[[:alnum:]_]+',false) AND strpos(COALESCE(body,''),chr(133))=0 AND
-  replace(regexp_replace(regexp_replace(COALESCE(body,'') COLLATE pg_c_utf8,'#[[:alnum:]_]+','','g'),
-   '[[:space:].,;:!?()\[\]{}''"“”‘’«»…—–-]+','','g'),chr(65279),'')=''
-$$;
+-- PG17 supplies pg_c_utf8. PG16 smoke databases use an ICU or UTF-8 libc
+-- collation. Resolve Unicode support once at installation, keeping row reads static.
+-- PG17 is canonical. Older ICU classes can omit isolated Alphabetic combining marks.
+DO $install$
+DECLARE candidate record; unicode_collation text; supports_unicode boolean;
+BEGIN
+ FOR candidate IN SELECT c.collname FROM pg_catalog.pg_collation c
+  JOIN pg_catalog.pg_namespace n ON n.oid=c.collnamespace
+  WHERE n.nspname='pg_catalog' AND (c.collname IN('pg_c_utf8','und-x-icu','unicode','default')
+   OR c.collprovider='i' OR lower(COALESCE(c.collctype,'')) LIKE '%utf%8%')
+  ORDER BY CASE c.collname WHEN 'pg_c_utf8' THEN 0 WHEN 'und-x-icu' THEN 1 WHEN 'unicode' THEN 2
+   WHEN 'default' THEN 3 ELSE 4 END,c.collname LOOP
+  EXECUTE format('SELECT %L COLLATE %I ~ %L','açãoé中',candidate.collname,'^[[:alpha:]]+$')
+   INTO supports_unicode;
+  IF supports_unicode THEN unicode_collation:=candidate.collname; EXIT; END IF;
+ END LOOP;
+ IF unicode_collation IS NULL THEN
+  RAISE EXCEPTION 'r13_unicode_collation_unavailable' USING ERRCODE='23514';
+ END IF;
+ EXECUTE format($create$
+ CREATE FUNCTION signal_mass_labeling_r13_hashtags_v1(body text) RETURNS boolean
+  LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path=pg_catalog AS $fn$
+  SELECT COALESCE(body COLLATE %1$I ~ '#[[:alpha:]0-9_]+',false) AND strpos(COALESCE(body,''),chr(133))=0 AND
+   replace(regexp_replace(regexp_replace(COALESCE(body,'') COLLATE %1$I,'#[[:alpha:]0-9_]+','','g'),
+    '[[:space:].,;:!?()\[\]{}''"“”‘’«»…—–-]+','','g'),chr(65279),'')=''
+ $fn$;
+ $create$,unicode_collation);
+END $install$;
 CREATE FUNCTION signal_mass_labeling_r13_segment_v1(body text,probabilities jsonb) RETURNS text
  LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path=public,pg_catalog AS $$
  SELECT CASE WHEN signal_mass_labeling_r13_hashtags_v1(body) THEN 'hashtags'

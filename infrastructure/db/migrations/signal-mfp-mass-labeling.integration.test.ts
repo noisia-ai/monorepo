@@ -716,7 +716,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
       assert.equal(interestPage.items.length,1);
       assert.equal(interestPage.items[0]!.mention_id,calls[1]!.inputs[0]!.root_id);
       assert.deepEqual((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes,signal_mass_labeling_r13_hashtags_v1($2) no", ["#cerveja #futebol!", "#cerveja 🍻"])).rows[0], {yes: true, no: false});
-      const hashtagFixtures = [["#ação, #SãoPaulo",true],["#cerveja ordinary",false],["#cerveja\ufeff",true],["#cerveja\u0085",false],["#١",false],["#²",false]] as const;
+      const hashtagFixtures = [["#ação, #SãoPaulo",true],["#中文 #футбол",true],["#cerveja ordinary",false],["#cerveja\ufeff",true],["#cerveja\u0085",false],["#١",false],["#²",false]] as const;
       for (const [text,expected] of hashtagFixtures) assert.equal((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes",[text])).rows[0]!.yes,expected);
 
     }
