@@ -4,7 +4,7 @@ import {createHash, randomUUID} from "node:crypto";
 import type {PoolClient} from "pg";
 import {labelerDigestV1, signalWorkspaceEmbeddingDigestV1 as digest,
   buildMassLabelingConsolidationRequestV1,parseMassLabelingConsolidationResponseV1,type MassLabelingSourceGroupV1,
-  type LabelerIdentity} from "@noisia/query-engine";
+  type SignalTopicLocalizationV1, type LabelerIdentity} from "@noisia/query-engine";
 import {massLabelingJevIdentityV1, type MassLabelingInputV1, type MassLabelingResultV1} from "@noisia/query-engine/src/signal-mass-labeling-jev-v1";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
 import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
@@ -18,6 +18,7 @@ import {readClassicPolicyActiveWorkV1} from "./signal-classic-policy-completion"
 export const MASS_LABELING_REQUEST_VERSION_V1 = "mass-labeling-jev-v1";
 export type MassLabelingTopicV1 = {
   topic_key: string; name: string; definition: string; definition_digest: string; group_ids: string[];
+  localization?: SignalTopicLocalizationV1;
 };
 export type MassLabelingMapV1 = {
   id: string; workspace_id: string; source_engine_execution_id: string; preparation_run_id: string;
