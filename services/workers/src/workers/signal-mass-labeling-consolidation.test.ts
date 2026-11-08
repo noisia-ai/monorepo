@@ -503,3 +503,84 @@ test("a changed last checkpoint blocks global successor financing before reserva
     assert.equal(JSON.stringify(f.call), parent);
   } finally { await f.cleanup(); }
 });
+
+test("a bound global decision replays the paid raw with 48 checkpoints and immutable artifact provenance", async () => {
+  const { massLabelingReceiptRecoveryFixtureV1 } = await import("../../../../packages/query-engine/src/signal-mass-labeling-receipt-recovery.synthetic.fixture");
+  const { signalWorkspaceEmbeddingDigestV1: digest } = await import("@noisia/query-engine");
+  const full = massLabelingReceiptRecoveryFixtureV1(), f = await fixture();
+  full.decision.call_id = f.call.call_id;
+  const checkpoints = Array.from({ length: 48 }, (_, index) => ({ artifact_id: id(2000 + index),
+    file: join(f.args.directory, `sealed-source-${index}.json`),
+    body: JSON.stringify({ source_groups: full.batch.source_groups.slice(index * 3, index * 3 + 3) }) }));
+  await Promise.all(checkpoints.map(checkpoint => writeFile(checkpoint.file, checkpoint.body)));
+  f.args.proposals = checkpoints.map(({ artifact_id, file }) => ({ artifact_id, file }));
+  f.args.expected_group_ids = full.batch.source_groups.map(group => group.group_id);
+  f.args.expected_cluster_digests = Object.fromEntries(full.batch.source_groups.map(group => [group.group_id, group.cluster_digest]));
+  const rawPath = join(f.args.directory, "sealed-provider-response.json");
+  await writeFile(rawPath, full.raw);
+  const storedRaw = await f.args.storage.put({ workspace_id: f.call.workspace_id, execution_id: f.call.execution_id,
+    file: rawPath, sha256: sha(full.raw), size_bytes: Buffer.byteLength(full.raw), media_type: "application/json" });
+  f.call.state = "settled";
+  f.call.request_digest = full.batch.request_digest;
+  f.call.reserved_micro_usd = full.batch.reserved_micro_usd;
+  f.call.settled_micro_usd = 1;
+  f.call.response = { ...storedRaw, http_status: 200, provider_request_id: "req_synthetic", complete: true };
+  f.args.recovery_only = true;
+  f.args.provider_enabled = false;
+  f.args.recovery_call = structuredClone(f.call);
+  const record = { decision_id: id(3000), workspace_id: f.call.workspace_id, execution_id: f.call.execution_id,
+    call_id: f.call.call_id, request_digest: full.batch.request_digest, response_sha256: sha(full.raw),
+    source_groups_digest: full.batch.source_groups_digest, input_digest: f.args.lease.input_digest,
+    fit_checkpoint_digest: sha("fit"), decision_digest: digest(full.decision), decision: full.decision,
+    created_by_user_id: f.args.actor_user_id, created_at: "2026-11-08T00:00:00.000Z" };
+  const originalLedger = JSON.stringify(f.call), storedArtifacts: string[] = [];
+  let decisionReads = 0;
+  f.args.stores = { ...f.args.stores!,
+    verifySources: async input => {
+      assert.deepEqual(input.source_checkpoints, checkpoints.map(({ artifact_id, body }) => ({ artifact_id, body })));
+      assert.equal(input.expected_group_ids.length, 144);
+      return { source_groups: full.batch.source_groups, source_groups_digest: full.batch.source_groups_digest };
+    },
+    reserve: async () => { throw Error("offline_must_not_reserve"); },
+    receiptDecision: async () => { decisionReads++; return record; },
+    persist: async input => {
+      const artifactPath = join(f.args.directory, "mass-labeling-consolidation.json");
+      const body = await readFile(artifactPath, "utf8"), packet = JSON.parse(body);
+      assert.equal(packet.raw_response, full.raw);
+      assert.equal(packet.output.topics.length, 98);
+      assert.equal(packet.output.excluded_groups.length, 28);
+      assert.deepEqual(packet.operator_receipt_recovery, { contract_version: "workspace-mass-labeling-global-receipt-decision-v1",
+        decision_id: record.decision_id, decision_digest: record.decision_digest });
+      assert.equal(input.artifact.metadata.recovery_decision_id, record.decision_id);
+      assert.equal(input.artifact.metadata.recovery_decision_digest, record.decision_digest);
+      assert.equal(input.artifact.metadata.response_sha256, sha(full.raw));
+      storedArtifacts.push(body);
+      return { artifact_id: id(4000), replayed: storedArtifacts.length > 1 };
+    },
+  };
+  f.args.send = async () => { throw Error("offline_must_not_send"); };
+  try {
+    const first = await consolidateMassLabelingGroupsV1(f.args), second = await consolidateMassLabelingGroupsV1(f.args);
+    assert.deepEqual(first, second);
+    assert.equal(new Set(storedArtifacts).size, 1);
+    assert.equal(decisionReads, 2);
+    assert.equal(JSON.stringify(f.call), originalLedger);
+    assert.equal(await readFile(rawPath, "utf8"), full.raw);
+    for (const checkpoint of checkpoints) assert.equal(await readFile(checkpoint.file, "utf8"), checkpoint.body);
+    assert.equal(f.sends(), 0);
+    assert.equal(f.reservations.length, 0);
+    assert.equal(f.charges(), 0);
+    for (const changed of [null, { ...record, call_id: id(9999) }, { ...record, decision_digest: sha("different decision") },
+      { ...record, response_sha256: sha("different raw") }, { ...record, source_groups_digest: sha("different sources") }]) {
+      f.args.stores.receiptDecision = async () => changed;
+      await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /mass_consolidation_invalid/u);
+    }
+    f.args.recovery_only = false;
+    f.args.recovery_call = undefined;
+    f.args.stores.reserve = async () => f.call;
+    f.args.stores.receiptDecision = async () => { throw Error("online_must_not_normalize"); };
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /contract_invalid/u);
+    assert.equal(storedArtifacts.length, 2);
+    assert.equal(JSON.stringify(f.call), originalLedger);
+  } finally { await f.cleanup(); }
+});

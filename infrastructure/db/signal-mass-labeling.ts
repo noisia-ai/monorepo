@@ -10,6 +10,7 @@ import {inspectFacetContextChangeV1, type LabelingDatabaseV1} from "./signal-men
 import {createSignalLabelingStoreV1, requestMentionFacetsV1, SignalLabelingError,
   type LabelingRunV1} from "./signal-labeling-runs";
 import {verifyMassLabelingSourceCheckpointsWithClientV1,type MassLabelingSourceCheckpointV1} from "./signal-mass-labeling-source";
+import {verifySignalWorkspaceMassLabelingGlobalReceiptRecoveryWithClientV1,MASS_LABELING_GLOBAL_RECEIPT_DECISION_SELECT_V1,type SignalWorkspaceMassLabelingOperatorReceiptRecoveryV1} from "./signal-mass-labeling-global-recovery";
 import {readClassicPolicyActiveWorkV1} from "./signal-classic-policy-completion";
 
 export const MASS_LABELING_REQUEST_VERSION_V1 = "mass-labeling-jev-v1";
@@ -85,12 +86,15 @@ export async function createMassLabelingMapV1(args: {
   }).sort((left, right) => left.topic_key.localeCompare(right.topic_key));
   const assignmentsDigest = sha(args.assignments_raw), consolidationDigest = sha(args.consolidation_raw);
   const consolidation = JSON.parse(args.consolidation_raw) as {workspace_id: string; source_engine_execution_id: string;
-    source_groups:MassLabelingSourceGroupV1[];source_groups_digest:string;raw_response:string;
+    source_groups:MassLabelingSourceGroupV1[];source_groups_digest:string;raw_response:string;operator_receipt_recovery?:SignalWorkspaceMassLabelingOperatorReceiptRecoveryV1;
     output: {topics: Array<Omit<MassLabelingTopicV1,"definition_digest">>}};
   const batch=buildMassLabelingConsolidationRequestV1({workspace_id:args.workspace_id,
     source_engine_execution_id:args.source_engine_execution_id,source_groups:consolidation.source_groups});
-  const parsed=parseMassLabelingConsolidationResponseV1(batch,consolidation.raw_response);
-  if(consolidation.source_groups_digest!==batch.source_groups_digest||digest(parsed.output)!==digest(consolidation.output))
+  const operator=consolidation.operator_receipt_recovery;
+  if(operator&&(Object.keys(operator).sort().join(",")!=="contract_version,decision_digest,decision_id"
+    ||operator.contract_version!=="workspace-mass-labeling-global-receipt-decision-v1"||!uuid.test(operator.decision_id)))fail("mass_labeling_consolidation_invalid");
+  let parsed=operator?null:parseMassLabelingConsolidationResponseV1(batch,consolidation.raw_response);
+  if(consolidation.source_groups_digest!==batch.source_groups_digest||parsed&&digest(parsed.output)!==digest(consolidation.output))
     fail("mass_labeling_consolidation_invalid");
   if (consolidation.workspace_id !== args.workspace_id || consolidation.source_engine_execution_id !== args.source_engine_execution_id
     || digest(consolidation.output?.topics) !== digest(args.catalog)) fail("mass_labeling_consolidation_invalid");
@@ -116,8 +120,8 @@ export async function createMassLabelingMapV1(args: {
             AND guided.workspace_id=engine.workspace_id AND guided.artifact_key='assignments.guided.jsonl'))`,
       [args.workspace_id, args.source_engine_execution_id, args.assignments_artifact_id, assignmentsDigest])).rows[0];
     if (!source) fail("mass_labeling_source_invalid");
-    const editorial = (await client.query<{request_digest:string;response_sha256:string;call_configuration:unknown;usage:unknown}>(
-      `SELECT call.request_digest,call.response_sha256,call.call_configuration,call.metadata->'usage' usage FROM analysis_artifacts artifact
+    const editorial = (await client.query<{call_id:string;request_digest:string;response_sha256:string;call_configuration:unknown;usage:unknown;metadata:Record<string,unknown>}>(
+      `SELECT call.id call_id,artifact.metadata,call.request_digest,call.response_sha256,call.call_configuration,call.metadata->'usage' usage FROM analysis_artifacts artifact
       JOIN engine_cost_events call ON call.id::text=artifact.metadata->>'call_id'
         AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
         AND call.request_digest=artifact.metadata->>'request_digest'
@@ -133,7 +137,13 @@ export async function createMassLabelingMapV1(args: {
         AND artifact.metadata->>'source_engine_execution_id'=artifact.engine_execution_id::text
         AND artifact.content->>'sha256'=$4`,
       [args.workspace_id,args.source_engine_execution_id,args.consolidation_artifact_id,consolidationDigest])).rows[0];
-    if (!editorial||editorial.request_digest!==batch.request_digest||editorial.response_sha256!==sha(consolidation.raw_response)
+    if(!editorial)fail("mass_labeling_consolidation_receipt_invalid");
+    if(operator){
+      if(editorial.metadata.recovery_decision_id!==operator.decision_id||editorial.metadata.recovery_decision_digest!==operator.decision_digest)fail("mass_labeling_consolidation_receipt_invalid");
+      parsed=await verifySignalWorkspaceMassLabelingGlobalReceiptRecoveryWithClientV1(client,{workspace_id:args.workspace_id,execution_id:args.source_engine_execution_id,
+        actor_user_id:args.actor_user_id,call_id:editorial.call_id,decision_id:operator.decision_id,decision_digest:operator.decision_digest,batch,raw_response:consolidation.raw_response});
+    }else if(editorial.metadata.recovery_decision_id||editorial.metadata.recovery_decision_digest)fail("mass_labeling_consolidation_receipt_invalid");
+    if(!parsed||digest(parsed.output)!==digest(consolidation.output)||editorial.request_digest!==batch.request_digest||editorial.response_sha256!==sha(consolidation.raw_response)
       ||digest(editorial.call_configuration)!==digest(batch.configuration)||digest(editorial.usage)!==digest(parsed.usage)) fail("mass_labeling_consolidation_receipt_invalid");
     const lane = source.artifact_key === "assignments.guided.jsonl" ? "guided" : "open";
     if ([...groupKeys].some(group => !group.startsWith(`${lane}:`))) fail("mass_labeling_lane_invalid");
@@ -463,10 +473,12 @@ export async function exportMassLabelingSnapshotV1(args: {
       COALESCE((SELECT sum(observed_tokens)::text FROM signal_workspace_embedding_calls call WHERE call.run_id=embedded.id),'0') input_tokens
       FROM signal_topic_catalog_executions engine JOIN signal_workspace_embedding_runs embedded ON embedded.id=engine.embedding_run_id
       WHERE engine.id=$1 AND engine.workspace_id=$2`, [map.source_engine_execution_id, args.workspace_id])).rows[0] ?? null;
-    const engine = (await client.query(`SELECT id,created_at,completed_at,status,result_summary FROM signal_topic_catalog_executions
+    const engine = (await client.query(`SELECT id,input_digest,created_at,completed_at,status,result_summary FROM signal_topic_catalog_executions
       WHERE workspace_id=$1 AND id=$2`, [args.workspace_id, map.source_engine_execution_id])).rows[0]!;
     const consolidationArtifact = (await client.query(`SELECT id,artifact_key,content,metadata FROM analysis_artifacts
       WHERE id=$1 AND workspace_id=$2 AND engine_execution_id=$3`,[map.consolidation_artifact_id,args.workspace_id,map.source_engine_execution_id])).rows[0] ?? null;
+    const globalReceiptDecision = consolidationArtifact?.metadata?.recovery_decision_id ? (await client.query(`${MASS_LABELING_GLOBAL_RECEIPT_DECISION_SELECT_V1}
+      WHERE id=$1 AND workspace_id=$2 AND execution_id=$3`,[consolidationArtifact.metadata.recovery_decision_id,args.workspace_id,map.source_engine_execution_id])).rows[0] ?? null : null;
     const editorialCalls = (await client.query(`SELECT id,workspace_id,catalog_execution_id,actor_user_id,provider,model,call_state,request_digest,request_seal,retry_of_call_id,reserved_micro_usd::text,
       settled_micro_usd::text,created_at,sent_at,response_received_at response_at,settled_at,metadata->'usage' usage,input_tokens,output_tokens,total_tokens,call_configuration,
       budget_date,budget_timezone,budget_daily_cap_micro_usd::text,failure_code,
@@ -478,7 +490,7 @@ export async function exportMassLabelingSnapshotV1(args: {
       FROM engine_cost_events WHERE workspace_id=$1 AND catalog_execution_id=$2
         AND workspace_contract='workspace-engine-interpretation-v1' ORDER BY created_at,id`, [args.workspace_id, map.source_engine_execution_id])).rows;
     return {contract_version: "mass-labeling-private-export-v1", exported_at: new Date().toISOString(),
-      map, run, items, calls, stage_receipts: {embeddings: embedding, engine, editorial_calls: editorialCalls, consolidation_artifact: consolidationArtifact}};
+      map, run, items, calls, stage_receipts: {embeddings: embedding, engine, editorial_calls: editorialCalls, consolidation_artifact: consolidationArtifact, global_receipt_recovery_decision: globalReceiptDecision}};
   });
 }
 

@@ -266,7 +266,7 @@ export async function seedSignalTopicEditorialRenewalSourceV1(args: SignalTopicE
   const source_execution_id = projection.engine_execution_id;
   const binding = (await query("SELECT signal_topic_consolidation_source_binding_v1($1::uuid) value", [source_execution_id])).rows[0]?.value;
   assert.ok(binding, "actual completed embedding and fit checkpoint must resolve the numerical source binding");
-  assert.equal(binding.expected_group_count, 2, "source census contains the two sealed synthetic lanes");
+  assert.equal(binding.expected_group_count, args.projection?.split_guided_groups===3?3:2, "source census matches the chosen sealed synthetic lanes");
 
   await args.before_numeric_policy_activation?.({
     transaction: { database, scoped, query: query as never, cleanup: async () => {} }, identity,
