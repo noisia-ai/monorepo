@@ -15,20 +15,27 @@ Universo de menciones: 96,150 únicas, 12,188 excluidas y 83,962 elegibles.
 | jev_smoke | 1000 roots | USD 0.104857 | n/d | — | 0 | 210.2 s |
 | jev_full | 82962 roots | USD 8.716239 | n/d | — | 0 | 6245.9 s |
 
-Cargo total confirmado: n/d. Por 1,000 raíces: n/d. Proyección a 1,000,000 raíces: n/d.
-Valor tarifario del uso: USD 19.922213. Por 1,000 raíces: USD 0.237277; por 1,000,000: USD 237.276542.
-Estimación de caja con crédito de Voyage aplicado (Claude + JEV): USD 16.850578; por 1,000 raíces: USD 0.200693; por 1,000,000: USD 200.692909. Es una estimación, no un débito; no se suma al cargo confirmado.
+Uso a tarifa del piloto: Voyage USD 3.071156, JEV USD 8.778833, Claude USD 8.029482. Total USD 19.879471. Voyage se cubrió con tokens gratis y su cargo confirmado fue USD 0.000000.
+Claude confirmado por 144 grupos editoriales: USD 8.030000. Cargo JEV por etapa: no atribuible con las lecturas de saldo disponibles. Los costes a tarifa son estimaciones de uso, no débitos.
 Tokens gratis consumidos: 25592964.
 Voyage usó 25,592,964 tokens gratis; su cargo efectivo confirmado fue USD 0.000000.
 Techo acumulado JEV: USD 9.500000 (incluye humo y corte completo; no es un cargo).
 Disminución del saldo entre lecturas de JEV: USD 0.110000 sin atribución a una etapa.
 La observación de JEV no permite atribuir todo el cambio entre saldos; se omite del cargo de etapas.
-La proyección a 1,000,000 de raíces es lineal y supone la misma mezcla de procesamiento y tamaño del mapa. El costo de Claude se muestra por grupo porque puede cambiar al variar el número o tamaño de los grupos.
+Proyección lineal por millón de raíces con la misma longitud media de menciones y cantidad media de fragmentos. Voyage y JEV escalan por raíz; Claude escala por grupo editorial.
+
+| Grupos editoriales supuestos | Voyage a tarifa | JEV por raíz | Claude por grupo | Total a tarifa |
+|---:|---:|---:|---:|---:|
+| 180 | USD 36.577924 | USD 104.557215 | USD 10.036853 | USD 151.171991 |
+| 225 | USD 36.577924 | USD 104.557215 | USD 12.546066 | USD 153.681205 |
+| 270 | USD 36.577924 | USD 104.557215 | USD 15.055279 | USD 156.190418 |
 
 ## Cobertura
 
 Tópico > 0.7: 67.6%. Franja intermedia ([0.3, 0.7], sin tópico positivo): 20.7%. Sin tópico (< 0.3): 11.7%. Sin resultado válido: 0.0%.
 Promoción > 0.7: 26.5% de respuestas válidas. Spam o bot > 0.7: 1.4% de respuestas válidas.
+Relevancia genérica histórica (no mide voz del consumidor): 731 positivas, 11803 intermedias y 71428 negativas.
+Motivadores y barreras históricos por promoción >0.7 (pregunta anterior, sin filtro de voz): trigger 21201 promoción / 13202 sin promoción; barrier 28 promoción / 4265 sin promoción.
 Triggers: 34403 (41.0%). Barriers: 4293 (5.1%). None: 26160 (31.2%). Intermedio: 19106 (22.8%). Sin resolver: 0.
 
 ## Mapa de tópicos
@@ -137,3 +144,40 @@ Triggers: 34403 (41.0%). Barriers: 4293 (5.1%). None: 26160 (31.2%). Intermedio:
 | Crédito em bancos digitais | Discussões sobre limites de crédito, renegociação, cartões e reconstrução de histórico financeiro. | 44 |
 
 </details>
+
+## Correcciones R13
+
+La relevancia genérica histórica se conserva como diagnóstico. Dio 731 positivas, 11803 intermedias y 71428 negativas.
+El desglose histórico de motivadores y barreras, sin filtrar voz, separa promoción >0.7 y sin promoción: triggers 21201 / 13202; barriers 28 / 4265.
+La pregunta corregida nombró cerveza y el indicador usa voz individual o conversación, promoción ≤0.7 y texto del post que no sea sólo hashtags. Elegibles: 50273; triggers 4711, barriers 1163, none 36061, intermedios 8338, sin resolver 0. Desglose elegible: individual {"trigger":4711,"barrier":1163,"none":36061,"intermediate":8338,"unresolved":0}; conversación {"trigger":0,"barrier":0,"none":0,"intermediate":0,"unresolved":0}. Etiquetado en todo el corpus, incluido el diagnóstico no elegible: 4921 triggers, 1215 barriers, 68031 none, 9795 intermedios y 0 sin resolver.
+La comparación inicial verificó la presencia de las dimensiones trigger/barrier. No estableció la coincidencia de causas concretas.
+
+### Proyección corregida por millón de raíces
+
+| Grupos editoriales | Voyage a tarifa | JEV por raíz | Claude por grupo | Total a tarifa |
+|---:|---:|---:|---:|---:|
+| 180 | USD 36.577924 | USD 104.557215 | USD 10.036853 | USD 151.171991 |
+| 225 | USD 36.577924 | USD 104.557215 | USD 12.546066 | USD 153.681205 |
+| 270 | USD 36.577924 | USD 104.557215 | USD 15.055279 | USD 156.190418 |
+
+El uso histórico de Voyage costó USD 3.071156 a tarifa y su cargo confirmado fue USD 0. El uso tarifario de JEV es USD 8.778833. Claude costó USD 8.029482 para 144 grupos, USD 0.055760 por grupo. Total piloto a tarifa USD 19.879471.
+Cargo confirmado por etapa: Voyage USD 0.000000, Claude USD 8.030000, JEV no atribuible por etapa con la evidencia disponible.
+
+### Intereses definidos
+Apostas cubrió 562 raíces (0.67%); Racismo cubrió 304 (0.36%). La unión cubrió 866 raíces y la intersección 0.
+
+### Comparación de costo por número de preguntas
+En 1000 raíces elegidas de forma pareada, el promedio fue 2489.14 tokens por raíz con trece preguntas y 1411.38 con siete, una diferencia de 1077.76 tokens (43.3%). Las probabilidades de las preguntas compartidas se comparan en el anexo privado.
+
+### Uso medido de R13 en etapas completadas
+
+| Etapa completada | Resultados | Tokens de entrada | Tokens de salida | Uso tarifario |
+|---|---:|---:|---:|---:|
+| repair | 83962 | 47449091 | 3529017 | USD 2.033079 |
+| interests | 83962 | 51983039 | 3190556 | USD 2.226360 |
+| cost13 | 1000 | 2489144 | 305554 | USD 0.105042 |
+| cost7 | 1000 | 1411381 | 199559 | USD 0.059774 |
+| language-pt | 597 | 336042 | 25085 | USD 0.014394 |
+| language-en | 597 | 316341 | 25091 | USD 0.013593 |
+| translation | 98 | 10774 | 19526 | USD 0.325212 |
+Los importes R13 son valores tarifarios del uso medido; no representan débitos de caja.
