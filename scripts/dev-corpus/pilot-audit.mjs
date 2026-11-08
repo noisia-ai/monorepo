@@ -63,31 +63,57 @@ export function computeJsonStringifyDigest(value) {
 
 // JSON.stringify has a hard string-size ceiling in Node. Hash its exact output
 // incrementally so a private snapshot can exceed that ceiling without changing
-// the established digest bytes.
-function updateJsonStringified(hash, value) {
+// the established digest bytes. Exotic prototypes and toJSON hooks are rejected
+// instead of silently hashing bytes different from JSON.stringify.
+function updateJsonStringified(hash, value, active = new Set()) {
+  if (value && typeof value === 'object') {
+    if (active.has(value)) throw new TypeError('pilot_audit_digest_rejects_circular_values');
+    active.add(value);
+  }
   if (Array.isArray(value)) {
+    if (typeof value.toJSON === 'function') throw new TypeError('pilot_audit_digest_rejects_to_json_arrays');
     hash.update('[');
-    value.forEach((item, index) => {
+    for (let index = 0; index < value.length; index += 1) {
       if (index) hash.update(',');
-      updateJsonStringified(hash, item);
-    });
+      if (!Object.hasOwn(value, index) || value[index] === undefined
+        || typeof value[index] === 'function' || typeof value[index] === 'symbol') hash.update('null');
+      else updateJsonStringified(hash, value[index], active);
+    }
     hash.update(']');
   } else if (record(value)) {
+    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+      throw new TypeError('pilot_audit_digest_requires_json_plain_objects');
+    }
+    if (typeof value.toJSON === 'function') throw new TypeError('pilot_audit_digest_rejects_to_json_objects');
     hash.update('{');
-    Object.keys(value).forEach((key, index) => {
-      if (index) hash.update(',');
+    let propertyIndex = 0;
+    for (const key of Object.keys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+        throw new TypeError('pilot_audit_digest_rejects_accessor_properties');
+      }
+      const property = descriptor.value;
+      if (property === undefined || typeof property === 'function' || typeof property === 'symbol') continue;
+      if (propertyIndex++) hash.update(',');
       hash.update(JSON.stringify(key));
       hash.update(':');
-      updateJsonStringified(hash, value[key]);
-    });
+      if (typeof property === 'number' && !Number.isFinite(property)) hash.update('null');
+      else updateJsonStringified(hash, property, active);
+    }
     hash.update('}');
+  } else if (typeof value === 'number' && !Number.isFinite(value)) hash.update('null');
+  else if (typeof value === 'bigint') throw new TypeError('pilot_audit_digest_rejects_bigint');
+  else if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    throw new TypeError('pilot_audit_digest_requires_json_value');
   } else hash.update(JSON.stringify(value));
+  if (value && typeof value === 'object') active.delete(value);
 }
 
 // Parse the top-level item and call arrays record by record. Other snapshot
 // properties remain small and use JSON.parse's own grammar/semantics.
 export async function readPilotSnapshot(path) {
   const input = createReadStream(path, { encoding: 'utf8' })[Symbol.asyncIterator]();
+  try {
   let chunk = '';
   let offset = 0;
   let ended = false;
@@ -205,6 +231,10 @@ export async function readPilotSnapshot(path) {
   await whitespace();
   if (offset < chunk.length || !ended && await ensure()) throw new SyntaxError('Trailing data after pilot audit JSON');
   return snapshot;
+  } catch (error) {
+    await input.return?.();
+    throw error;
+  }
 }
 
 export function validateOperatorReceipt(snapshot, receipt) {
@@ -588,6 +618,12 @@ function validateGlobalReceiptRecovery(snapshot, artifact, call) {
   const digestPattern = /^sha256:[a-f0-9]{64}$/u;
   if (!record(decisionReceipt) || !record(decision)
     || decision.contract_version !== 'workspace-mass-labeling-receipt-recovery-v1'
+    || decision.workspace_id !== decisionReceipt.workspace_id
+    || decision.execution_id !== decisionReceipt.execution_id
+    || decision.call_id !== decisionReceipt.call_id
+    || decision.request_digest !== decisionReceipt.request_digest
+    || decision.response_sha256 !== decisionReceipt.response_sha256
+    || decision.source_groups_digest !== decisionReceipt.source_groups_digest
     || decisionReceipt.decision_id !== artifactDecisionId
     || decisionReceipt.decision_digest !== artifactDecisionDigest
     || decisionReceipt.workspace_id !== call.workspace_id
@@ -625,6 +661,10 @@ function validateGlobalReceiptRecovery(snapshot, artifact, call) {
     keyChanges.set(change.from, change.to);
     targetKeys.add(change.to);
   }
+  const catalogKeys = new Set(snapshot.map.catalog.map((topic) => topic.topic_key));
+  if ([...keyChanges].some(([source, target]) => catalogKeys.has(source) || !catalogKeys.has(target))) {
+    throw new Error('pilot_audit_editorial_recovery_key_catalog_mismatch');
+  }
   const resolution = decision.assignment_resolution;
   const omission = resolution?.definition_omission;
   const nonnegative = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -647,12 +687,15 @@ function validateGlobalReceiptRecovery(snapshot, artifact, call) {
   if (!keepTopic || !removeTopic || keep === remove) {
     throw new Error('pilot_audit_editorial_recovery_topics_missing');
   }
-  const hasMembershipEvidence = topics.every((topic) => Array.isArray(topic.group_ids));
-  if (hasMembershipEvidence) {
-    const count = (topic) => topic.group_ids.filter((id) => id === resolution.group_id).length;
-    if (count(keepTopic) !== 1 || count(removeTopic) !== 0) {
-      throw new Error('pilot_audit_editorial_recovery_assignment_mismatch');
-    }
+  if (topics.some((topic) => !Array.isArray(topic.group_ids)
+    || topic.group_ids.some((id) => typeof id !== 'string' || !id)
+    || new Set(topic.group_ids).size !== topic.group_ids.length)) {
+    throw new Error('pilot_audit_editorial_recovery_membership_invalid');
+  }
+  const memberships = topics.flatMap((topic) => topic.group_ids
+    .filter((id) => id === resolution.group_id).map(() => topic.topic_key));
+  if (memberships.length !== 1 || memberships[0] !== keep) {
+    throw new Error('pilot_audit_editorial_recovery_assignment_mismatch');
   }
 }
 

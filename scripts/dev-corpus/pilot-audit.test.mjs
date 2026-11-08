@@ -5,6 +5,7 @@ import {
   buildBlindSamples,
   comparePilotSnapshot,
   computeSnapshotDigest,
+  computeJsonStringifyDigest,
   loadPilotAuditInputs,
   renderBlindSamples,
   renderPrivateComparisonAnnex,
@@ -275,6 +276,8 @@ function recoveredGlobalEditorialSnapshot() {
     definition: 'Synthetic retained definition A', group_ids: ['synthetic-duplicate-group'] };
   catalog[1] = { topic_key: 'cafe', name: 'Synthetic retained topic B',
     definition: 'Synthetic retained definition B', group_ids: [] };
+  catalog[2] = { topic_key: 'bebidasn', name: 'Synthetic retained topic C',
+    definition: 'Synthetic retained definition C', group_ids: [] };
   snapshot.map.catalog = catalog;
   for (const item of snapshot.items) {
     item.candidates[0] = { ...item.candidates[0], topic_key: 'acucar', name: catalog[0].name,
@@ -352,6 +355,15 @@ test('streams item and call records while preserving JSON.stringify snapshot dig
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('incremental JSON digest matches JSON.stringify for JSON values and rejects toJSON objects', () => {
+  const sparse = [];
+  sparse.length = 2;
+  const value = { omitted: undefined, sparse, nested: [undefined, Number.NaN, -0] };
+  assert.equal(computeJsonStringifyDigest(value), createHash('sha256').update(JSON.stringify(value)).digest('hex'));
+  assert.throws(() => computeJsonStringifyDigest(new Date('2026-01-01T00:00:00.000Z')),
+    /json_plain_objects/u);
 });
 
 test('accepts the H2 full export with null smoke_root_limit and partitions calls by persisted smoke_metrics.root_count', () => {
@@ -584,9 +596,20 @@ test('attests recovery decision, normalized keys, retained topics, and duplicate
     ['missing DB decision', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision = null; }, /recovery_decision_invalid/u],
     ['decision digest mismatch', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision_digest = `sha256:${'0'.repeat(64)}`; }, /recovery_decision_invalid/u],
     ['wrong retry linkage', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.call_id = 'synthetic-terminal-call'; }, /recovery_decision_invalid/u],
+    ['internal decision workspace bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.workspace_id = 'foreign-workspace'; }, /recovery_decision_invalid/u],
+    ['internal decision execution bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.execution_id = 'foreign-execution'; }, /recovery_decision_invalid/u],
+    ['internal decision call bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.call_id = 'foreign-call'; }, /recovery_decision_invalid/u],
+    ['internal decision request bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.request_digest = `sha256:${'0'.repeat(64)}`; }, /recovery_decision_invalid/u],
+    ['internal decision response bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.response_sha256 = `sha256:${'0'.repeat(64)}`; }, /recovery_decision_invalid/u],
+    ['internal decision groups bypass', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.source_groups_digest = `sha256:${'0'.repeat(64)}`; }, /recovery_decision_invalid/u],
     ['key not NFKD normalized', (copy) => { copy.snapshot.stage_receipts.global_receipt_recovery_decision.decision.topic_key_changes[0].to = 'açucar'; }, /recovery_key_changes_invalid/u],
     ['duplicate remains assigned to removed topic', (copy) => { copy.snapshot.map.catalog[1].group_ids = ['synthetic-duplicate-group']; }, /recovery_assignment_mismatch/u],
-    ['retained topic missing', (copy) => { copy.snapshot.map.catalog.splice(1, 1); }, /recovery_topics_missing/u],
+    ['duplicate appears in third topic', (copy) => { copy.snapshot.map.catalog[2].group_ids = ['synthetic-duplicate-group']; }, /recovery_assignment_mismatch/u],
+    ['topic membership missing', (copy) => { delete copy.snapshot.map.catalog[2].group_ids; }, /recovery_membership_invalid/u],
+    ['invalid topic membership id', (copy) => { copy.snapshot.map.catalog[2].group_ids = [7]; }, /recovery_membership_invalid/u],
+    ['retained topic missing', (copy) => { copy.snapshot.map.catalog.splice(1, 1); }, /recovery_key_catalog_mismatch/u],
+    ['normalization destination missing', (copy) => { copy.snapshot.map.catalog[2].topic_key = 'synthetic-topic-3'; }, /recovery_key_catalog_mismatch/u],
+    ['original key retained after normalization', (copy) => { copy.snapshot.map.catalog[2].topic_key = 'bebidasñ'; }, /recovery_key_catalog_mismatch/u],
   ];
   for (const [name, mutate, pattern] of invalidCases) {
     const copy = structuredClone({ snapshot, receipt });
