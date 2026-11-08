@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import {randomUUID,createHash} from "node:crypto";
 import test from "node:test";
 import type {Pool} from "pg";
-import {buildMassLabelingJevRequestV1, mapMassLabelingJevResponseV1, massLabelingJevIdentityV1,
+import {buildMassLabelingJevRequestV1, mapMassLabelingJevResponseV1, massLabelingJevIdentityV1,labelerDigestV1,facetLabelerIdentityV1,
   signalWorkspaceEmbeddingDigestV1 as digest, llmPriceV1, llmCostMicroUsdV1} from "@noisia/query-engine";
 import {seedComposedFixture,quoteComposedFixture,startComposedFixture,semanticConfiguration} from "./signal-brand-context-composed.fixture";
 import {seedSignalTopicEditorialRenewalSourceV1,createSignalTopicEditorialRenewalSyntheticSavesV1,snapshotSignalTopicEditorialRenewalSyntheticHistoryV1} from "./signal-topic-editorial-renewal.synthetic.fixture";
@@ -18,9 +18,10 @@ import {persistSignalWorkspaceEngineArtifactV1,failSignalWorkspaceEngineV1,retry
 import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-labeling-page";
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
-test("mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences", {
+for(const authorization of ["rotation","scoped","scoped-scale"] as const) test(`mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences (${authorization})`, {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 300_000,
 }, async () => {
+  const scopedMode=authorization!=="rotation",rootCount=authorization==="scoped-scale"?200:3;
   const {openDatabase} = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
   const pool: Pool = await openDatabase(), raw = await pool.connect();
   const flag = process.env.NOISIA_MASS_LABELING_ENABLED;
@@ -38,13 +39,16 @@ test("mass labeling seals full population, bills once, and serves probability pa
     };
     const scoped = Object.assign(Object.create(raw), {query, release() {}});
     const database = Object.assign(Object.create(pool), {query, connect: async () => scoped}) as Pool;
+    const denied=async(sql:string,args:unknown[],pattern:RegExp)=>{await query("SAVEPOINT denied_scoped_write");
+      await assert.rejects(query(sql,args),pattern);await query("ROLLBACK TO SAVEPOINT denied_scoped_write");await query("RELEASE SAVEPOINT denied_scoped_write");};
+    let scopedExtensionId="",scopedPolicyId="";
     let consolidationArtifactId="",consolidationRaw="",terminalCallId="",successorCallId="";
     let terminalBefore:unknown;
     let sourceCheckpoints:MassLabelingSourceCheckpointV1[]=[];
     const syntheticSaves=createSignalTopicEditorialRenewalSyntheticSavesV1(undefined,{brand_name:"Synthetic fixture"});
     const seed = await seedSignalTopicEditorialRenewalSourceV1({database, scoped, query, cleanup: async () => {},
       saves:syntheticSaves,
-      numeric_daily_cap_micro_usd: 10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
+      root_count:rootCount,numeric_daily_cap_micro_usd: 10_000_000, projection: {split_guided_groups:true,interpretation_configuration:globalConfiguration,engine_config: {profile_version: "workspace-bertopic-mass-labeling-v1", fixture: true},
         onCheckpoint: async fixture => {
           if(fixture.proposals.length!==2)return;
           const assignment=[...fixture.bodies.entries()].find(([key])=>key.endsWith("/assignments.guided.jsonl"))![1];
@@ -180,7 +184,10 @@ test("mass labeling seals full population, bills once, and serves probability pa
     await assert.rejects(createMassLabelingMapV1({...mapArgs,source_checkpoints:[]}),/mass_labeling_source_checkpoint_invalid/);
     const map = await createMassLabelingMapV1(mapArgs);
     assert.equal((await createMassLabelingMapV1(mapArgs)).map_id, map.map_id);
-    assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_items WHERE map_id=$1", [map.map_id])).rows[0].n, 3);
+    assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_items WHERE map_id=$1", [map.map_id])).rows[0].n, rootCount);
+    const siblingFixture=scopedMode?await import("./signal-mfp-mass-labeling-sibling.synthetic.fixture"):null;
+    const sibling=siblingFixture?await siblingFixture.seedMassLabelingSiblingEditorialV1({database,scoped,query,cleanup:async()=>{},identity:seed.identity}):null;
+    const siblingBefore=siblingFixture&&sibling?await siblingFixture.snapshotMassLabelingSiblingAuthorityV1({query,...sibling}):null;
     await query("SAVEPOINT semantic_sibling");
     const semantic=await seedComposedFixture(database,"mass-policy-sibling",{optionalStrictCaps:true});
     const semanticQuote=await quoteComposedFixture(database,semantic);
@@ -213,23 +220,72 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const siblingBrand=randomUUID(),siblingPrep=randomUUID(),siblingLabeler=randomUUID(),siblingRun=randomUUID();
     await query(`INSERT INTO brands(id,organization_id,slug,name,status) VALUES($1,$2,$3,'Synthetic sibling','active')`,
       [siblingBrand,seed.identity.organization_id,`mass-sibling-${siblingBrand}`]);
-    const sibling=(await query("SELECT id FROM signal_workspaces WHERE brand_id=$1",[siblingBrand])).rows[0]!.id;
+    const siblingWorkspace=(await query("SELECT id FROM signal_workspaces WHERE brand_id=$1",[siblingBrand])).rows[0]!.id;
     await query(`INSERT INTO signal_corpus_preparation_runs(id,workspace_id,actor_user_id,worker_job_id)
-      VALUES($1,$2,$3,$4)`,[siblingPrep,sibling,access.actor_user_id,`mass-sibling-${siblingRun}`]);
+      VALUES($1,$2,$3,$4)`,[siblingPrep,siblingWorkspace,access.actor_user_id,`mass-sibling-${siblingRun}`]);
     await query(`INSERT INTO signal_labeler_versions(id,kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity)
       VALUES($1,'facets','anthropic','claude-sonnet-5-5',$2,$2,$3,'{}')`,[siblingLabeler,digest({fixture:true}),digest({siblingLabeler})]);
     await query(`INSERT INTO signal_entity_context_versions(workspace_id,version_no,digest,context,diff,affected_mode,affected_count)
-      VALUES($1,1,$2,'{"entities":[]}'::jsonb,'{}'::jsonb,'targeted',0)`,[sibling,digest({fixture:true})]);
+      VALUES($1,1,$2,'{"entities":[]}'::jsonb,'{}'::jsonb,'targeted',0)`,[siblingWorkspace,digest({fixture:true})]);
     await query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,preparation_run_id,
       entity_context_digest,entity_context_version_no,estimated_micro_usd,idempotency_key,request_digest,actor_user_id)
-      VALUES($1,$2,'facets',$3,$4,$5,1,0,$6,$5,$7)`,[siblingRun,sibling,siblingLabeler,siblingPrep,digest({fixture:true}),randomUUID(),access.actor_user_id]);
+      VALUES($1,$2,'facets',$3,$4,$5,1,0,$6,$5,$7)`,[siblingRun,siblingWorkspace,siblingLabeler,siblingPrep,digest({fixture:true}),randomUUID(),access.actor_user_id]);
     await assert.rejects(provisionMassLabelingPolicyV1({...access,cap_micro_usd:1_000_000}),/mass_labeling_policy_active_work/);
     await query("ROLLBACK TO SAVEPOINT active_sibling");
-    await provisionMassLabelingPolicyV1({...access, cap_micro_usd: 1_000_000});
+    if(scopedMode){
+      const api=await import("../signal-mass-labeling-scoped-policy");
+      const grantArgs={...access,map_id:map.map_id,cap_micro_usd:1_000_000};
+      const grant=await api.provisionMassLabelingScopedPolicyV1(grantArgs);scopedExtensionId=grant.extension_id;scopedPolicyId=grant.policy_id;
+      await assert.rejects(api.provisionMassLabelingScopedPolicyV1({...grantArgs,cap_micro_usd:1_000_001}),/scoped_policy_conflict/);
+      await denied("UPDATE signal_mass_labeling_policy_extensions SET cap_micro_usd=cap_micro_usd+1 WHERE id=$1",[grant.extension_id],/append-only/);
+      await denied("DELETE FROM signal_mass_labeling_policy_extensions WHERE id=$1",[grant.extension_id],/append-only/);
+      await denied("UPDATE signal_processing_policy_actions SET max_execution_micro_usd=1 WHERE policy_version_id=$1",[grant.policy_id],/immutable/);
+      await denied("DELETE FROM signal_processing_policy_actions WHERE policy_version_id=$1",[grant.policy_id],/immutable/);
+      await denied("DELETE FROM signal_processing_policy_versions WHERE id=$1",[grant.policy_id],/history_retained/);
+      await denied("UPDATE signal_processing_admissions SET execution_cap_micro_usd=1 WHERE id=$1",[sibling!.processing_admission_id],/immutable/);
+      await denied("DELETE FROM signal_processing_admissions WHERE id=$1",[sibling!.processing_admission_id],/immutable/);
+      const fk=(await query("SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid='signal_processing_admissions'::regclass AND conname='fk_processing_admission_policy_action'" )).rows[0];
+      assert.match(fk!.definition,/FOREIGN KEY \(policy_version_id, action\)/);
+      const contender=await pool.connect();try{
+        await contender.query("BEGIN");const held=(await contender.query(`SELECT pg_try_advisory_xact_lock(hashtextextended('signal-processing-policy:'||$1::text,0)) acquired`,[seed.identity.organization_id])).rows[0];
+        assert.equal(held!.acquired,false,"a second physical transaction cannot cross the common organization lock");
+      }finally{await contender.query("ROLLBACK");contender.release();}
+      await query("SAVEPOINT short_scoped_admission");
+      await (await import("../signal-mention-facets")).registerFacetContextV1(scoped,access.workspace_id);
+      const shortRun=randomUUID(),shortAdmission=randomUUID(),identity=massLabelingJevIdentityV1(),labelDigest=labelerDigestV1(identity);
+      await query(`INSERT INTO signal_labeler_versions(kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity)
+        VALUES('mass_labeling','typesafe','jev-1.13.0',$1,$2,$3,$4::jsonb) ON CONFLICT(labeler_digest) DO NOTHING`,[identity.prompt_digest,identity.schema_digest,labelDigest,JSON.stringify(identity)]);
+      await query(`INSERT INTO signal_mass_labeling_scoped_admissions(id,extension_id,organization_id,policy_version_id,workspace_id,map_id,actor_user_id,target_id,idempotency_key,request_digest,execution_cap_micro_usd,budget_date,budget_timezone,admission_not_after,receipt_digest)
+        SELECT $1,e.id,e.organization_id,p.id,e.workspace_id,e.map_id,e.actor_user_id,$2,$3,$4,1000000,(clock_timestamp() AT TIME ZONE p.budget_timezone)::date,p.budget_timezone,
+          least(p.valid_until,clock_timestamp()+interval '1 second'),'pending'
+        FROM signal_mass_labeling_policy_extensions e JOIN signal_processing_policy_versions p ON p.id=e.base_policy_version_id WHERE e.id=$5`,[shortAdmission,shortRun,randomUUID(),digest("short scoped admission"),grant.extension_id]);
+      await query(`INSERT INTO signal_labeling_runs(id,workspace_id,kind,labeler_version_id,preparation_run_id,concept_set_digest,entity_context_digest,entity_context_version_no,
+        estimated_micro_usd,cap_micro_usd,idempotency_key,request_digest,actor_user_id,status,lease_token,lease_until)
+        SELECT $1,m.workspace_id,'mass_labeling',l.id,m.preparation_run_id,m.map_digest,m.entity_context_digest,(SELECT max(version_no) FROM signal_entity_context_versions WHERE workspace_id=m.workspace_id),0,1000000,$2,$3,$4,'running',$5,clock_timestamp()+interval '1 hour'
+        FROM signal_mass_labeling_maps m JOIN signal_labeler_versions l ON l.labeler_digest=$6 WHERE m.id=$7`,[shortRun,randomUUID(),digest("short scoped run"),access.actor_user_id,randomUUID(),labelDigest,map.map_id]);
+      await query("INSERT INTO signal_mass_labeling_runs(workspace_id,map_id,run_id,smoke_root_limit) VALUES($1,$2,$3,1000)",[access.workspace_id,map.map_id,shortRun]);
+      await query("SET CONSTRAINTS ALL IMMEDIATE");await query("SET CONSTRAINTS ALL DEFERRED");
+      const shortCall=randomUUID();await query(`INSERT INTO signal_labeling_calls(id,run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,reserved_micro_usd,budget_date,budget_timezone)
+        SELECT $1,a.target_id,a.workspace_id,'typesafe','jev-1.13.0','sync',$2,$3,'{}',jsonb_build_array(jsonb_build_object('root_id',i.root_id,'input_digest',i.input_digest,'map_id',i.map_id)),50,a.budget_date,a.budget_timezone
+        FROM signal_mass_labeling_scoped_admissions a JOIN signal_mass_labeling_items i ON i.map_id=a.map_id WHERE a.id=$4 ORDER BY i.ordinal LIMIT 1`,[shortCall,randomUUID(),digest("never sent expiry fixture"),shortAdmission]);
+      await query("SELECT pg_sleep(1.05)");
+      await denied("UPDATE signal_labeling_calls SET status='submitting' WHERE id=$1",[shortCall],/scoped_admission_invalid/);
+      await denied("UPDATE signal_mass_labeling_runs SET smoke_root_limit=NULL,continued_at=clock_timestamp() WHERE run_id=$1",[shortRun],/scoped_admission_invalid|smoke_review_required/);
+      await query("ROLLBACK TO SAVEPOINT short_scoped_admission");await query("RELEASE SAVEPOINT short_scoped_admission");
+      assert.equal((await api.provisionMassLabelingScopedPolicyV1(grantArgs)).extension_id,grant.extension_id);
+      assert.equal((await query("SELECT signal_mass_labeling_scoped_identity_v1() digest")).rows[0]!.digest,labelerDigestV1(massLabelingJevIdentityV1()));
+      await query("SAVEPOINT finite_common_budget");
+      const otherAdmin=randomUUID();await query(`INSERT INTO users(id,email,user_type,primary_role,status,organization_id)
+        VALUES($1,$2,'noisia_internal','noisia_admin','active',$3)`,[otherAdmin,`${otherAdmin}@example.invalid`,seed.identity.organization_id]);
+      await assert.rejects(query(`INSERT INTO signal_mass_labeling_policy_extensions SELECT (jsonb_populate_record(NULL::signal_mass_labeling_policy_extensions,to_jsonb(e)||jsonb_build_object('id',$2::uuid,'actor_user_id',$3::uuid,'cap_micro_usd',p.daily_cap_micro_usd))).*
+        FROM signal_mass_labeling_policy_extensions e JOIN signal_processing_policy_versions p ON p.id=e.base_policy_version_id WHERE e.id=$1`,[grant.extension_id,randomUUID(),otherAdmin]),/processing_daily_cap_exhausted/);
+      await query("ROLLBACK TO SAVEPOINT finite_common_budget");await query("RELEASE SAVEPOINT finite_common_budget");
+      await assert.rejects(provisionMassLabelingPolicyV1({...access,cap_micro_usd:1_000_000}),/mass_labeling_policy_active_work/);
+    }else await provisionMassLabelingPolicyV1({...access, cap_micro_usd: 1_000_000});
     assert.deepEqual((await query("SELECT signal_topic_consolidation_source_binding_v1($1) binding",[seed.source_engine_execution_id])).rows[0]!.binding,sourceBefore);
     const historyAfter = await snapshotSignalTopicEditorialRenewalSyntheticHistoryV1({query});
     for(const [table,before] of Object.entries(historyBefore)) {
-      if(!["signal_processing_policy_versions","signal_processing_policy_actions"].includes(table))
+      if(scopedMode||!["signal_processing_policy_versions","signal_processing_policy_actions"].includes(table))
         assert.deepEqual(historyAfter[table],before,`policy rotation preserves ${table} byte for byte`);
     }
     assert.equal((await query(`SELECT count(*)::int n FROM signal_processing_policy_actions action
@@ -242,13 +298,40 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const request = {...access, map_id: map.map_id, idempotency_key: randomUUID(), identity: massLabelingJevIdentityV1(),
       provider_available: true, cap_micro_usd: 1_000_000};
     await query("SAVEPOINT missing_mass_owner");
-    await query("SELECT admit_signal_processing_v1($1,$2,'mass_labeling_jev',$3,$4,$5,1000000,false)",
-      [access.workspace_id,access.actor_user_id,randomUUID(),randomUUID(),digest({missing_owner:true})]);
-    await assert.rejects(query("SET CONSTRAINTS ALL IMMEDIATE"),/mass_labeling_admission_owner_required/);
+    if(scopedMode)await assert.rejects(query("SELECT admit_signal_processing_v1($1,$2,'mass_labeling_jev',$3,$4,$5,1000000,false)",
+      [access.workspace_id,access.actor_user_id,randomUUID(),randomUUID(),digest({missing_owner:true})]),/processing_action_unavailable/);
+    else{
+      await query("SELECT admit_signal_processing_v1($1,$2,'mass_labeling_jev',$3,$4,$5,1000000,false)",
+        [access.workspace_id,access.actor_user_id,randomUUID(),randomUUID(),digest({missing_owner:true})]);
+      await assert.rejects(query("SET CONSTRAINTS ALL IMMEDIATE"),/mass_labeling_admission_owner_required/);
+    }
     await query("ROLLBACK TO SAVEPOINT missing_mass_owner");await query("RELEASE SAVEPOINT missing_mass_owner");
+    if(scopedMode){
+      await assert.rejects(requestMassLabelingV1({...request,map_id:randomUUID(),idempotency_key:randomUUID()}),/policy_unavailable/);
+      await assert.rejects(requestMassLabelingV1({...request,actor_user_id:foreignActor,idempotency_key:randomUUID()}));
+    }
     const admitted = await requestMassLabelingV1(request);
     await query("SET CONSTRAINTS ALL IMMEDIATE");await query("SET CONSTRAINTS ALL DEFERRED");
     assert.equal((await requestMassLabelingV1({...request, provider_available: false})).run_id, admitted.run_id);
+    if(scopedMode){
+      const native=(await query("SELECT processing_admission_id FROM signal_labeling_runs WHERE id=$1",[admitted.run_id])).rows[0];assert.equal(native!.processing_admission_id,null);
+      assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_scoped_admissions WHERE target_id=$1 AND extension_id=$2",[admitted.run_id,scopedExtensionId])).rows[0]!.n,1);
+      await denied("UPDATE signal_labeling_runs SET cap_micro_usd=cap_micro_usd+1 WHERE id=$1",[admitted.run_id],/owner_immutable/);
+      await denied("UPDATE signal_mass_labeling_scoped_admissions SET execution_cap_micro_usd=2 WHERE target_id=$1",[admitted.run_id],/append-only/);
+      await denied("DELETE FROM signal_mass_labeling_scoped_admissions WHERE target_id=$1",[admitted.run_id],/append-only/);
+      for(const native of [null,sibling!.processing_admission_id]){
+        await query("SAVEPOINT null_is_not_authority");
+        await query(`INSERT INTO signal_labeling_runs SELECT (jsonb_populate_record(NULL::signal_labeling_runs,to_jsonb(r)||$2::jsonb)).*
+          FROM signal_labeling_runs r WHERE id=$1`,[admitted.run_id,JSON.stringify({id:randomUUID(),idempotency_key:randomUUID(),status:"failed",processing_admission_id:native})]);
+        await assert.rejects(query("SET CONSTRAINTS ALL IMMEDIATE"),/scoped_admission_required|native_admission_invalid/);
+        await query("ROLLBACK TO SAVEPOINT null_is_not_authority");await query("RELEASE SAVEPOINT null_is_not_authority");
+      }
+      for(const mutation of [{actor_user_id:foreignActor},{map_id:randomUUID()},{execution_cap_micro_usd:1_000_001}])await denied(
+        `INSERT INTO signal_mass_labeling_scoped_admissions SELECT (jsonb_populate_record(NULL::signal_mass_labeling_scoped_admissions,to_jsonb(a)||$2::jsonb)).*
+        FROM signal_mass_labeling_scoped_admissions a WHERE target_id=$1`,[admitted.run_id,JSON.stringify({id:randomUUID(),target_id:randomUUID(),idempotency_key:randomUUID(),...mutation})],/forbidden|scoped_admission_invalid/);
+      await denied(`INSERT INTO signal_mass_labeling_scoped_admissions SELECT (jsonb_populate_record(NULL::signal_mass_labeling_scoped_admissions,to_jsonb(a)||$2::jsonb)).*
+        FROM signal_mass_labeling_scoped_admissions a WHERE target_id=$1`,[admitted.run_id,JSON.stringify({id:randomUUID(),target_id:randomUUID(),idempotency_key:randomUUID()})],/extension_id_key/);
+    }
     const raws = new Map<string,string>();
     const store = createMassLabelingStoreV1({database,
       storeRaw: async ({call_id, raw_text}) => {raws.set(call_id, raw_text); return `private/${call_id}`;},
@@ -257,20 +340,68 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const {createSignalLabelingStoreV1} = await import("../signal-labeling-runs");
     assert.equal(await createSignalLabelingStoreV1({database, storeRaw: async () => "unused"}).claim(admitted.run_id), null);
     const run = await store.claim(admitted.run_id); assert.ok(run);
-    const inputs = await store.inputs(run); assert.equal(inputs.length, 3);
+    const inputs = await store.inputs(run); assert.equal(inputs.length,rootCount);
+    if(authorization==="scoped-scale"){
+      await query("SET LOCAL track_functions='pl'");
+      const count=async()=>Number((await query("SELECT pg_stat_get_xact_function_calls('signal_mass_labeling_scoped_capacity_v1(uuid)'::regprocedure) n")).rows[0]!.n);
+      const before=await count(),started=Date.now();
+      const page=inputs.map(input=>{const payload=buildMassLabelingJevRequestV1(input,run.context);return{custom_id:`scale_${randomUUID()}`,request_digest:digest(payload),request:payload,inputs:[input],reserved_micro_usd:50};});
+      const reserved=await store.reserve(run,page);assert.equal(reserved.length,200);
+      assert.equal(await count()-before,1,"a 200-row reservation performs one complete SQL exposure check");
+      await store.markSubmitting(run,reserved);
+      assert.equal(await count()-before,2,"a 200-row send performs one additional complete SQL exposure check");
+      console.log(`synthetic scoped page: 200 roots, reserve+send ${Date.now()-started}ms, 2 complete checks`);
+      if(siblingFixture&&sibling)assert.deepEqual(await siblingFixture.snapshotMassLabelingSiblingAuthorityV1({query,...sibling}),siblingBefore);
+      return;
+    }
     const price = llmPriceV1("typesafe", "jev-1.13.0", "sync", 0.042);
     const proposals = inputs.map(input => {
       const payload = buildMassLabelingJevRequestV1(input, run.context);
       return {custom_id: `mass_${digest({run: run.id, root: input.root_id}).slice(7)}`,
         request_digest: digest(payload), request: payload, inputs: [input], reserved_micro_usd: 50};
     });
+    if(scopedMode){
+      await assert.rejects(store.reserve(run,[{...proposals[0]!,reserved_micro_usd:1_000_001}]),/cap_exhausted/);
+      const rawInsert=`INSERT INTO signal_labeling_calls(run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,reserved_micro_usd,budget_date,budget_timezone)
+        SELECT $1,$2,'typesafe','jev-1.13.0','sync',$3,$4,$5::jsonb,$6::jsonb,$7,a.budget_date,a.budget_timezone FROM signal_mass_labeling_scoped_admissions a WHERE a.target_id=$1`;
+      await denied(rawInsert,[run.id,run.workspace_id,randomUUID(),proposals[0]!.request_digest,JSON.stringify(proposals[0]!.request),JSON.stringify(proposals[0]!.inputs),1_000_001],/cap_exhausted/);
+      await denied(rawInsert,[run.id,randomUUID(),randomUUID(),proposals[0]!.request_digest,JSON.stringify(proposals[0]!.request),JSON.stringify(proposals[0]!.inputs),50],/scoped_call_invalid/);
+      await denied(`INSERT INTO signal_labeling_calls(run_id,workspace_id,provider,model,transport,custom_id,request_digest,request,inputs,reserved_micro_usd,budget_date,budget_timezone)
+        SELECT a.target_id,a.workspace_id,'typesafe','jev-1.13.0','sync',gen_random_uuid()::text,$2,'{}',
+          jsonb_build_array(jsonb_build_object('root_id',i.root_id,'input_digest',i.input_digest,'map_id',i.map_id)),600001,a.budget_date,a.budget_timezone
+        FROM signal_mass_labeling_scoped_admissions a JOIN signal_mass_labeling_items i ON i.map_id=a.map_id WHERE a.target_id=$1 ORDER BY i.ordinal LIMIT 2`,
+        [run.id,digest("atomic double reservation")],/cap_exhausted/);
+      assert.equal((await query("SELECT count(*)::int n FROM signal_labeling_calls WHERE run_id=$1",[run.id])).rows[0]!.n,0,"an over-cap multi-row reservation rolls back every call and root link");
+    }
     const calls = await store.reserve(run, proposals); assert.equal(calls.length, 3);
     await query("SET LOCAL enable_seqscan=off");
     const plan=(await query("EXPLAIN (FORMAT JSON) SELECT 1 FROM signal_mass_labeling_call_roots WHERE run_id=$1 AND root_id=$2",
       [run.id,inputs[0]!.root_id])).rows[0]!["QUERY PLAN"];
     assert.match(JSON.stringify(plan),/signal_mass_labeling_call_roots_pkey/);
     await query("SET LOCAL enable_seqscan=on");
+    if(scopedMode){
+      await query("SAVEPOINT revoked_before_send");await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[scopedPolicyId]);
+      await assert.rejects(store.reserve(run,proposals),/extension_invalid/);
+      await assert.rejects(store.markSubmitting(run,calls),/extension_invalid/);
+      await denied("UPDATE signal_labeling_calls SET status='submitting' WHERE id=$1",[calls[0]!.id],/extension_invalid/);
+      await query("ROLLBACK TO SAVEPOINT revoked_before_send");await query("RELEASE SAVEPOINT revoked_before_send");
+    }
     await store.markSubmitting(run, calls);
+    if(scopedMode){
+      await denied("UPDATE signal_labeling_calls SET status='reserved' WHERE id=$1",[calls[0]!.id],/scoped_call_immutable/);
+      await query("SAVEPOINT response_after_revocation");
+      await query("UPDATE signal_labeling_calls SET status='unknown' WHERE id=$1",[calls[0]!.id]);
+      await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[scopedPolicyId]);
+      await denied("UPDATE signal_labeling_calls SET status='submitting' WHERE id=$1",[calls[0]!.id],/scoped_call_immutable/);
+      assert.equal((await query("SELECT status FROM signal_labeling_calls WHERE id=$1",[calls[0]!.id])).rows[0]!.status,"unknown");
+      await query("UPDATE signal_labeling_calls SET status='submitted' WHERE id=$1",[calls[0]!.id]);
+      const usage=jevUsageV1({input_tokens:100,output_tokens:0});
+      await store.persistRaw(run,calls[0]!,JSON.stringify({http_status:200,body:"synthetic paid raw"}));
+      await store.settle(run,calls[0]!,{usage,settled_micro_usd:5});
+      assert.equal((await query("SELECT status FROM signal_labeling_calls WHERE id=$1",[calls[0]!.id])).rows[0]!.status,"settled");
+      assert.ok((await store.calls(run)).find(call=>call.id===calls[0]!.id)!.raw_body,"paid evidence remains readable after revocation");
+      await query("ROLLBACK TO SAVEPOINT response_after_revocation");await query("RELEASE SAVEPOINT response_after_revocation");
+    }
     for (const [index,call] of calls.entries()) {
       const payload = call.request as ReturnType<typeof buildMassLabelingJevRequestV1>;
       const answers = Object.fromEntries(Object.entries(payload.questions).map(([key, question]) => {
@@ -285,6 +416,19 @@ test("mass labeling seals full population, bills once, and serves probability pa
       await store.settle(run, call, {usage, settled_micro_usd: llmCostMicroUsdV1(usage, price)});
       await store.apply(run, [{call, results: [mapMassLabelingJevResponseV1(call.inputs[0]!, run.context, parsed)]}]);
     }
+    if(scopedMode){
+      const facetIdentity=facetLabelerIdentityV1(),facetDigest=labelerDigestV1(facetIdentity),foreignRun=randomUUID();
+      await query(`INSERT INTO signal_labeler_versions(kind,provider,model,prompt_digest,schema_digest,labeler_digest,identity)
+        VALUES('facets',$1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(labeler_digest) DO NOTHING`,[facetIdentity.provider,facetIdentity.model,facetIdentity.prompt_digest,facetIdentity.schema_digest,facetDigest,JSON.stringify(facetIdentity)]);
+      await query(`INSERT INTO signal_labeling_runs SELECT (jsonb_populate_record(NULL::signal_labeling_runs,to_jsonb(r)||jsonb_build_object('id',$2::uuid,'kind','facets',
+        'labeler_version_id',(SELECT id FROM signal_labeler_versions WHERE labeler_digest=$3),'status','completed','idempotency_key',$4::text,'concept_set_digest',NULL,'cap_micro_usd',NULL))).*
+        FROM signal_labeling_runs r WHERE id=$1`,[run.id,foreignRun,facetDigest,randomUUID()]);
+      const spentBefore=await (await import("../signal-labeling-runs")).readSignalLabelingRunExposureV1(scoped,run.id);
+      await denied("UPDATE signal_labeling_calls SET run_id=$2 WHERE id=$1",[calls[0]!.id,foreignRun],/scoped_call_immutable/);
+      assert.equal(await (await import("../signal-labeling-runs")).readSignalLabelingRunExposureV1(scoped,run.id),spentBefore,"a paid call cannot leave its scoped owner or release its exposure");
+      await denied("UPDATE signal_labeling_calls SET settled_micro_usd=0 WHERE id=$1",[calls[0]!.id],/scoped_call_immutable/);
+      await denied("UPDATE signal_labeling_calls SET workspace_id=$2 WHERE id=$1",[calls[0]!.id,randomUUID()],/scoped_call_immutable/);
+    }
     assert.equal(await store.finish(run), "completed");
     await store.release(run);
     const booked = (await query("SELECT id,usage,settled_micro_usd,raw_sha256 FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id", [run.id])).rows;
@@ -292,6 +436,12 @@ test("mass labeling seals full population, bills once, and serves probability pa
     const smoke = await measureMassLabelingSmokeV1({...access,run_id:run.id});
     assert.equal(smoke.metrics.technical_failure,false);
     assert.equal(smoke.metrics.intermediate_roots,1);
+    if(scopedMode){
+      await query("SAVEPOINT revoked_before_continuation");await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[scopedPolicyId]);
+      await assert.rejects(continueMassLabelingV1({...access,run_id:run.id}),/extension_invalid/);
+      await denied("UPDATE signal_mass_labeling_runs SET smoke_root_limit=NULL,continued_at=clock_timestamp() WHERE run_id=$1",[run.id],/extension_invalid/);
+      await query("ROLLBACK TO SAVEPOINT revoked_before_continuation");await query("RELEASE SAVEPOINT revoked_before_continuation");
+    }
     await continueMassLabelingV1({...access, run_id: run.id});
     assert.equal((await continueMassLabelingV1({...access, run_id: run.id})).replayed, true);
     const continuation = await store.claim(run.id); assert.ok(continuation);
@@ -354,6 +504,24 @@ test("mass labeling seals full population, bills once, and serves probability pa
     await query("SAVEPOINT immutable");
     await assert.rejects(query("UPDATE signal_mass_labeling_results SET probabilities='{}' WHERE map_id=$1", [map.map_id]), /mass_labeling_history_is_immutable/);
     await query("ROLLBACK TO SAVEPOINT immutable");
+    if(scopedMode){
+      // Rollback-only simulation of an externally replaced, short-lived base.
+      await query("SAVEPOINT expired_scoped_base");
+      const shortBase=(await query(`INSERT INTO signal_processing_policy_versions(organization_id,version,status,valid_from,valid_until,budget_timezone,daily_cap_micro_usd,created_by_user_id)
+        SELECT organization_id,(SELECT max(version)+1 FROM signal_processing_policy_versions WHERE organization_id=p.organization_id),'draft',clock_timestamp(),clock_timestamp()+interval '1 second',budget_timezone,daily_cap_micro_usd,created_by_user_id
+        FROM signal_processing_policy_versions p WHERE p.id=$1 RETURNING id`,[scopedPolicyId])).rows[0]!.id;
+      await query(`INSERT INTO signal_processing_policy_actions SELECT $2,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
+        FROM signal_processing_policy_actions WHERE policy_version_id=$1`,[scopedPolicyId,shortBase]);
+      await query("UPDATE signal_processing_policy_versions SET status='revoked' WHERE id=$1",[scopedPolicyId]);
+      await query("UPDATE signal_processing_policy_versions SET status='active' WHERE id=$1",[shortBase]);
+      const api=await import("../signal-mass-labeling-scoped-policy"),grant=await api.provisionMassLabelingScopedPolicyV1({...access,map_id:map.map_id,cap_micro_usd:1_000_000});
+      await query("SELECT pg_sleep(1.05)");
+      await denied("SELECT signal_mass_labeling_extension_base_v1($1)",[grant.extension_id],/extension_invalid/);
+      await assert.rejects(requestMassLabelingV1({...request,idempotency_key:randomUUID()}),/extension_invalid/);
+      await query("ROLLBACK TO SAVEPOINT expired_scoped_base");await query("RELEASE SAVEPOINT expired_scoped_base");
+    }
+    if(siblingFixture&&sibling)assert.deepEqual(await siblingFixture.snapshotMassLabelingSiblingAuthorityV1({query,...sibling}),siblingBefore,
+      "scoped authority, smoke and continuation preserve every sibling row and base action");
     await query("UPDATE users SET status='suspended' WHERE id=$1", [access.actor_user_id]);
     await assert.rejects(loadSignalWorkspaceTopicsOverviewV1(access), /workspace_topics_forbidden/);
   } finally {

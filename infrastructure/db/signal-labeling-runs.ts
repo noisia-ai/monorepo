@@ -14,7 +14,7 @@ import {
 } from "@noisia/query-engine";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "./signal-workspace-capabilities";
 import { signalWorkspaceFeatureEnabledV1, type SignalWorkspaceFeatureV1 } from "./signal-workspace-features";
-import { admitSignalProcessingWithClientV1 } from "./signal-processing-policy";
+import { admitSignalProcessingWithClientV1, type SignalProcessingAdmitArgsV1 } from "./signal-processing-policy";
 import {
   inspectFacetContextChangeV1,
   registerFacetContextV1,
@@ -22,6 +22,10 @@ import {
   writeFacetResultsV1,
   type LabelingDatabaseV1,
 } from "./signal-mention-facets";
+export type LabelingPolicyV1={organization_id:string;budget_date:string;budget_timezone:string;daily_cap_micro_usd:string|null;
+ max_execution_micro_usd:string|null;provider:string;model:string;action:string};
+export type LabelingRequestPolicyV1=Pick<LabelingPolicyV1,"max_execution_micro_usd"|"provider"|"model">;
+export type LabelingAdmissionRefV1={receipt:{id:string};processing_admission_id?:string|null};
 export type LabelingRunV1 = {
   id: string;
   workspace_id: string;
@@ -35,7 +39,7 @@ export type LabelingRunV1 = {
   lease_token: string;
   cursor_root_id: string | null;
   cap_micro_usd: string | null;
-  processing_admission_id: string;
+  processing_admission_id: string | null;
   status: string;
   created_at?: Date | string;
   error_code?: string | null;
@@ -272,6 +276,8 @@ export async function requestMentionFacetsV1(args: {
   identity?: LabelerIdentity;
   adapter?: {
     request_identity: unknown;
+    policy?: (client:PoolClient)=>Promise<LabelingRequestPolicyV1|null>;
+    admit?: (client:PoolClient,args:SignalProcessingAdmitArgsV1)=>Promise<LabelingAdmissionRefV1>;
     /** A provider-specific membership stage must use its own governed action. */
     policy_action?: "concept_membership_jev" | "concept_membership_claude" | "mass_labeling_jev";
     feature?: SignalWorkspaceFeatureV1;
@@ -374,7 +380,7 @@ export async function requestMentionFacetsV1(args: {
     if (!prep) fail("labeling_preparation_required");
     const action = args.adapter?.policy_action ??
       (identity.kind === "facets" ? "mention_facets" : "concept_membership");
-    const policy = (
+    const policy = args.adapter?.policy ? await args.adapter.policy(c) : (
       await c.query<{
         max_execution_micro_usd: string | null;
         provider: string;
@@ -455,7 +461,7 @@ export async function requestMentionFacetsV1(args: {
       ));
     const pending = estimate.roots,
       estimated = estimate.estimated_micro_usd;
-    const admission = await admitSignalProcessingWithClientV1(c, {
+    const admission:LabelingAdmissionRefV1 = await (args.adapter?.admit??admitSignalProcessingWithClientV1)(c, {
       workspace_id: args.workspace_id,
       actor_user_id: args.actor_user_id,
       action,
@@ -481,7 +487,7 @@ export async function requestMentionFacetsV1(args: {
         args.idempotency_key,
         requestDigest,
         args.actor_user_id,
-        admission.receipt.id,
+        admission.processing_admission_id===undefined?admission.receipt.id:admission.processing_admission_id,
         args.full_recalculation ?? false,
         waiting,
         JSON.stringify({ pending, selected: 0 }),
@@ -513,6 +519,7 @@ export function createSignalLabelingStoreV1<
 >(options: {
   adapter?: {
     kind: "facets" | "membership" | "mass_labeling";
+    policy?: (client:PoolClient,run:LabelingRunV1)=>Promise<LabelingPolicyV1|null>;
     hybrid_stage?: "jev" | "claude" | "citation";
     feature?: SignalWorkspaceFeatureV1;
     pending_calls_only?: boolean;
@@ -569,7 +576,7 @@ export function createSignalLabelingStoreV1<
        FROM signal_workspaces WHERE id=$1`,
       [run.workspace_id],
     );
-    const policy = (
+    const policy = options.adapter?.policy ? await options.adapter.policy(c,run) : (
       await c.query<{
         organization_id: string;
         budget_date: string;

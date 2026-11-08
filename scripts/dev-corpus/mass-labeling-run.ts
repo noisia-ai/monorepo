@@ -1,3 +1,4 @@
+import {provisionMassLabelingScopedPolicyV1} from "../../infrastructure/db/signal-mass-labeling-scoped-policy";
 import { readFile } from "node:fs/promises";
 import {
   createMassLabelingMapV1,
@@ -20,6 +21,7 @@ async function main() {
     ![
       "map",
       "policy",
+      "policy-scoped",
       "request",
       "step",
       "recover",
@@ -89,6 +91,8 @@ async function main() {
         ),
         catalog: consolidation.output.topics,
       });
+    } else if (action === "policy-scoped") {
+      result = await provisionMassLabelingScopedPolicyV1({...access,map_id:String(input.map_id),cap_micro_usd:Number(input.cap_micro_usd)});
     } else if (action === "policy") {
       result = await provisionMassLabelingPolicyV1({
         ...access,
