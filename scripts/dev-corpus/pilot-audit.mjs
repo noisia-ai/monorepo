@@ -8,6 +8,14 @@ const OPERATOR_STAGES = ['voyage', 'bertopic', 'claude', 'jev_smoke', 'jev_full'
 const sha256 = (value) => createHash('sha256').update(value).digest('hex');
 const record = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const finite = (value) => typeof value === 'number' && Number.isFinite(value);
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (record(value)) return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+const canonicalDigest = (value) => `sha256:${sha256(canonicalJson(value))}`;
+const safeIntegerValue = (value) => (Number.isSafeInteger(value) && value >= 0)
+  || (typeof value === 'string' && /^\d+$/u.test(value) && Number.isSafeInteger(Number(value)));
 const normalizedIdentity = (value) => String(value).normalize('NFKD').replace(/[\u0300-\u036f]/gu, '')
   .toLocaleLowerCase('en-US').replace(/[^a-z0-9]+/gu, ' ').trim();
 
@@ -195,39 +203,221 @@ function reconcileJevLedger(snapshot, operatorReceipt) {
 }
 
 function reconcileEditorialLedger(snapshot, operatorReceipt) {
-  const calls = new Map(snapshot.stage_receipts.editorial_calls.map((call) => [call.id, call]));
+  const rows = snapshot.stage_receipts.editorial_calls;
+  const calls = new Map(rows.map((call) => [call.id, call]));
   if (calls.size !== snapshot.stage_receipts.editorial_calls.length
-    || snapshot.stage_receipts.editorial_calls.some((call) => typeof call.id !== 'string' || !call.id)) {
+    || rows.some((call) => typeof call.id !== 'string' || !call.id)) {
     throw new Error('pilot_audit_editorial_ledger_invalid');
   }
   const stage = operatorReceipt.stages.find((row) => row.name === 'claude');
-  if (!stage.ledger_call_ids.length) throw new Error('pilot_audit_editorial_call_ids_required');
+  if (!stage.ledger_call_ids.length || new Set(stage.ledger_call_ids).size !== stage.ledger_call_ids.length
+    || stage.ledger_call_ids.length !== rows.length
+    || stage.ledger_call_ids.some((id) => !calls.has(id))) {
+    throw new Error('pilot_audit_editorial_call_ids_required');
+  }
+
+  // Older H2 snapshots contain only successful calls. Keep that contract
+  // readable; once any transport fields are present, require the full ledger.
+  const enriched = rows.some((call) => Object.hasOwn(call, 'retry_of_call_id')
+    || Object.hasOwn(call, 'request_digest') || Object.hasOwn(call, 'response_http_status'));
   let settledTotal = 0n;
-  let settledComplete = true;
   let inputTokenTotal = 0;
-  let inputTokensComplete = true;
+  const terminalRows = [];
+  const successfulRows = [];
   for (const id of stage.ledger_call_ids) {
     const call = calls.get(id);
     if (!call) throw new Error('pilot_audit_editorial_call_reference_invalid');
-    if (call.settled_micro_usd === null || call.settled_micro_usd === undefined) settledComplete = false;
-    else if (!/^\d+$/u.test(String(call.settled_micro_usd))) throw new Error('pilot_audit_editorial_settlement_invalid');
-    else settledTotal += BigInt(call.settled_micro_usd);
-    const inputTokens = call.input_tokens ?? call.usage?.input_tokens;
-    if (!Number.isSafeInteger(inputTokens) || inputTokens < 0) inputTokensComplete = false;
-    else inputTokenTotal += inputTokens;
+    if (!enriched) {
+      if (call.settled_micro_usd === null || call.settled_micro_usd === undefined) {
+        throw new Error('pilot_audit_editorial_settlement_invalid');
+      }
+      if (!/^\d+$/u.test(String(call.settled_micro_usd))) throw new Error('pilot_audit_editorial_settlement_invalid');
+      settledTotal += BigInt(call.settled_micro_usd);
+      const inputTokens = call.input_tokens ?? call.usage?.input_tokens;
+      if (!Number.isSafeInteger(inputTokens) || inputTokens < 0) throw new Error('pilot_audit_editorial_input_tokens_invalid');
+      inputTokenTotal += inputTokens;
+      continue;
+    }
+    if (!record(call) || typeof call.call_state !== 'string' || !record(call.call_configuration)
+      || typeof call.request_digest !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(call.request_digest)
+      || typeof call.actor_user_id !== 'string' || !call.actor_user_id
+      || typeof call.workspace_id !== 'string' || !call.workspace_id
+      || typeof call.catalog_execution_id !== 'string' || !call.catalog_execution_id
+      || typeof call.provider !== 'string' || typeof call.model !== 'string'
+      || call.provider !== call.call_configuration.provider || call.model !== call.call_configuration.model
+      || !record(call.metadata)) {
+      throw new Error('pilot_audit_editorial_call_contract_invalid');
+    }
+    if (!/^\d+$/u.test(String(call.settled_micro_usd))) throw new Error('pilot_audit_editorial_settlement_invalid');
+    if (call.call_state === 'terminal_confirmed') {
+      validateBilledTerminalCall(call);
+      terminalRows.push(call);
+    } else if (call.call_state === 'settled') {
+      validateSettledEditorialCall(call);
+      successfulRows.push(call);
+    } else {
+      throw new Error('pilot_audit_editorial_call_unreconciled');
+    }
+    const tokens = call.input_tokens;
+    if (!Number.isSafeInteger(tokens) || tokens < 0) throw new Error('pilot_audit_editorial_input_tokens_invalid');
+    settledTotal += BigInt(call.settled_micro_usd);
+    inputTokenTotal += tokens;
   }
-  if (stage.ledger_call_ids.length !== calls.size) throw new Error('pilot_audit_editorial_call_unassigned');
-  const expectedUsage = settledComplete ? settledTotal : null;
+  if (enriched && new Set([...terminalRows, ...successfulRows].map((call) => call.id)).size !== rows.length) {
+    throw new Error('pilot_audit_editorial_call_unassigned');
+  }
+  if (enriched && (new Set(rows.map((call) => call.actor_user_id)).size !== 1
+    || new Set(rows.map((call) => call.workspace_id)).size !== 1
+    || rows.some((call) => call.catalog_execution_id !== snapshot.stage_receipts.engine.id))) {
+    throw new Error('pilot_audit_editorial_stage_scope_mismatch');
+  }
+  if (terminalRows.length) {
+    if (terminalRows.length !== 1) throw new Error('pilot_audit_editorial_terminal_duplicate');
+    const terminal = terminalRows[0];
+    const successors = rows.filter((call) => call.retry_of_call_id === terminal.id);
+    if (successors.length !== 1 || successors[0].call_state !== 'settled'
+      || successfulRows.filter((call) => call.id === successors[0].id).length !== 1) {
+      throw new Error('pilot_audit_editorial_terminal_successor_invalid');
+    }
+    const successor = successors[0];
+    const sameStage = canonicalJson(terminal.metadata.mass_labeling_stage) === canonicalJson(successor.metadata.mass_labeling_stage);
+    if (successor.retry_of_call_id !== terminal.id || successor.request_digest !== terminal.request_digest
+      || canonicalJson(successor.call_configuration) !== canonicalJson(terminal.call_configuration)
+      || successor.actor_user_id !== terminal.actor_user_id || successor.workspace_id !== terminal.workspace_id
+      || successor.catalog_execution_id !== terminal.catalog_execution_id || successor.provider !== terminal.provider
+      || successor.model !== terminal.model || successor.reserved_micro_usd !== terminal.reserved_micro_usd
+      || !record(terminal.metadata.mass_labeling_stage) || !record(successor.metadata.mass_labeling_stage)
+      || terminal.metadata.mass_labeling_stage.stage !== 'global-consolidation-v1' || !sameStage) {
+      throw new Error('pilot_audit_editorial_retry_scope_invalid');
+    }
+    if (rows.some((call) => call.id !== terminal.id && call.request_digest === terminal.request_digest
+      && call.id !== successor.id)) throw new Error('pilot_audit_editorial_retry_duplicate');
+  }
+  if (enriched && rows.some((call) => call.retry_of_call_id !== null && call.retry_of_call_id !== undefined
+    && !calls.has(call.retry_of_call_id))) throw new Error('pilot_audit_editorial_retry_parent_missing');
   const usage = stage.usage_value_micro_usd === null ? null : BigInt(stage.usage_value_micro_usd);
-  if (expectedUsage !== usage) throw new Error('pilot_audit_editorial_usage_value_mismatch');
-  const expectedTokens = inputTokensComplete ? inputTokenTotal : null;
-  if (expectedTokens !== stage.input_tokens) throw new Error('pilot_audit_editorial_input_tokens_mismatch');
+  if (usage !== settledTotal) throw new Error('pilot_audit_editorial_usage_value_mismatch');
+  if (stage.input_tokens !== inputTokenTotal) throw new Error('pilot_audit_editorial_input_tokens_mismatch');
+  if (enriched) validateConsolidationArtifact(snapshot, successfulRows);
   const embeddingTokens = snapshot.stage_receipts.embeddings.input_tokens;
   const voyageStage = operatorReceipt.stages.find((row) => row.name === 'voyage');
   const expectedEmbeddingTokens = embeddingTokens === null || embeddingTokens === undefined
     ? null : Number(embeddingTokens);
   if (!Number.isSafeInteger(expectedEmbeddingTokens) || voyageStage.input_tokens !== expectedEmbeddingTokens) {
     throw new Error('pilot_audit_voyage_input_tokens_mismatch');
+  }
+}
+
+function validateSettledEditorialCall(call) {
+  const complete = call.response_complete ?? call.metadata?.response_complete;
+  const usage = call.usage;
+  const configuration = call.call_configuration;
+  const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+  const rates = ['input_micro_usd_per_million_tokens', 'output_micro_usd_per_million_tokens',
+    'cache_read_micro_usd_per_million_tokens', 'cache_creation_micro_usd_per_million_tokens'];
+  if (call.response_http_status !== 200 || complete !== true
+    || typeof call.response_storage_key !== 'string' || !call.response_storage_key
+    || !call.response_storage_key.startsWith(`workspace-engine/${call.workspace_id}/${call.catalog_execution_id}/`)
+    || call.response_storage_key.includes('..')
+    || typeof call.response_sha256 !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(call.response_sha256)
+    || !safeIntegerValue(call.response_size_bytes) || Number(call.response_size_bytes) < 1
+    || !call.settled_at || !Number.isFinite(Date.parse(call.settled_at))
+    || !record(usage) || Object.keys(usage).sort().join(',') !== 'cache_creation_input_tokens,cache_read_input_tokens,input_tokens,output_tokens'
+    || !Object.values(usage).every(integer) || !rates.every((key) => integer(configuration[key]))
+    || call.input_tokens !== usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+    || call.output_tokens !== usage.output_tokens
+    || call.total_tokens !== call.input_tokens + call.output_tokens) {
+    throw new Error('pilot_audit_editorial_settled_response_invalid');
+  }
+  const expectedCost = (BigInt(usage.input_tokens) * BigInt(configuration.input_micro_usd_per_million_tokens)
+    + BigInt(usage.output_tokens) * BigInt(configuration.output_micro_usd_per_million_tokens)
+    + BigInt(usage.cache_read_input_tokens) * BigInt(configuration.cache_read_micro_usd_per_million_tokens)
+    + BigInt(usage.cache_creation_input_tokens) * BigInt(configuration.cache_creation_micro_usd_per_million_tokens)
+    + 999999n) / 1000000n;
+  if (BigInt(call.settled_micro_usd) !== expectedCost) {
+    throw new Error('pilot_audit_editorial_settled_cost_mismatch');
+  }
+}
+
+function validateBilledTerminalCall(call) {
+  const receipt = call.metadata.provider_terminal_receipt;
+  const billing = call.metadata.provider_terminal_billing_reconciliation;
+  const usage = receipt?.usage;
+  const configuration = call.call_configuration;
+  const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+  const rates = ['input_micro_usd_per_million_tokens', 'output_micro_usd_per_million_tokens',
+    'cache_read_micro_usd_per_million_tokens', 'cache_creation_micro_usd_per_million_tokens'];
+  if (call.response_storage_key !== null || call.response_sha256 !== null || call.response_size_bytes !== null
+    || call.response_http_status !== null && call.response_http_status !== 499
+    || call.response_complete !== null && call.response_complete !== false
+    || !record(receipt) || receipt.contract_version !== 'workspace-provider-terminal-evidence-v1'
+    || receipt.source !== 'anthropic_console' || receipt.http_status !== 499
+    || receipt.reason !== 'client_disconnected' || receipt.billing_status !== 'unreconciled'
+    || !Number.isFinite(Date.parse(receipt.started_at)) || !Number.isFinite(Date.parse(receipt.ended_at))
+    || !Number.isFinite(Date.parse(receipt.verified_at)) || Date.parse(receipt.ended_at) < Date.parse(receipt.started_at)
+    || !/^req_[A-Za-z0-9_-]{1,220}$/u.test(receipt.provider_request_id ?? '')
+    || receipt.call_id !== call.id || receipt.workspace_id !== call.workspace_id
+    || receipt.execution_id !== call.catalog_execution_id || receipt.request_digest !== call.request_digest
+    || receipt.provider_model !== call.model || receipt.configuration_digest !== canonicalDigest(configuration)
+    || !record(receipt.evidence) || typeof receipt.evidence.storage_key !== 'string'
+    || !receipt.evidence.storage_key.startsWith(`workspace-engine/${call.workspace_id}/${call.catalog_execution_id}/`)
+    || receipt.evidence.storage_key.includes('..') || !/^sha256:[a-f0-9]{64}$/u.test(receipt.evidence.sha256)
+    || !Number.isSafeInteger(receipt.evidence.size_bytes) || receipt.evidence.size_bytes < 1
+    || !record(usage) || Object.keys(usage).sort().join(',') !== 'cache_creation_input_tokens,cache_read_input_tokens,input_tokens,output_tokens'
+    || !Object.values(usage).every(integer)
+    || !record(billing) || billing.contract_version !== 'workspace-provider-terminal-billing-v1'
+    || billing.method !== 'audited_usage_pricing' || billing.provider_request_id !== receipt.provider_request_id
+    || billing.terminal_receipt_digest !== canonicalDigest(receipt)
+    || billing.actual_micro_usd !== receipt.usage_cost_micro_usd
+    || canonicalJson(billing.usage) !== canonicalJson(usage)
+    || !Number.isFinite(Date.parse(billing.reconciled_at))
+    || !/^[0-9a-f-]{36}$/u.test(billing.verified_by_user_id ?? '')
+    || canonicalJson(call.usage) !== canonicalJson(usage)
+    || !integer(call.input_tokens) || !integer(call.output_tokens)
+    || call.input_tokens !== usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
+    || call.output_tokens !== usage.output_tokens
+    || !/^[0-9a-f-]{36}$/u.test(call.actor_user_id)
+    || rates.some((key) => !integer(configuration[key]))) {
+    throw new Error('pilot_audit_editorial_terminal_billing_invalid');
+  }
+  const expectedCost = (BigInt(usage.input_tokens) * BigInt(configuration.input_micro_usd_per_million_tokens)
+    + BigInt(usage.output_tokens) * BigInt(configuration.output_micro_usd_per_million_tokens)
+    + BigInt(usage.cache_read_input_tokens) * BigInt(configuration.cache_read_micro_usd_per_million_tokens)
+    + BigInt(usage.cache_creation_input_tokens) * BigInt(configuration.cache_creation_micro_usd_per_million_tokens)
+    + 999999n) / 1000000n;
+  if (!Number.isSafeInteger(receipt.usage_cost_micro_usd) || receipt.usage_cost_micro_usd < 0
+    || BigInt(call.settled_micro_usd) !== expectedCost || BigInt(receipt.usage_cost_micro_usd) !== expectedCost) {
+    throw new Error('pilot_audit_editorial_terminal_cost_mismatch');
+  }
+}
+
+function validateConsolidationArtifact(snapshot, successfulRows) {
+  const artifact = snapshot.stage_receipts.consolidation_artifact;
+  const map = snapshot.map;
+  if (!record(artifact) || artifact.id !== map.consolidation_artifact_id
+    || artifact.artifact_key !== 'mass-labeling-consolidation.json'
+    || !record(artifact.content) || artifact.content.contract_version !== 'workspace-engine-private-artifact-v1'
+    || !/^sha256:[a-f0-9]{64}$/u.test(artifact.content.sha256 ?? '')
+    || artifact.content.sha256 !== map.consolidation_digest
+    || !Number.isSafeInteger(artifact.content.size_bytes) || artifact.content.size_bytes < 1
+    || artifact.content.media_type !== 'application/json'
+    || typeof artifact.content.storage_key !== 'string' || !artifact.content.storage_key
+    || artifact.content.storage_key.includes('..')
+    || !record(artifact.metadata) || artifact.metadata.contract_version !== 'workspace-mass-labeling-consolidation-v1'
+    || artifact.metadata.source_engine_execution_id !== snapshot.stage_receipts.engine.id
+    || artifact.metadata.source_engine_execution_id !== map.source_engine_execution_id
+    || artifact.metadata.stage !== 'global-consolidation-v1'
+    || !/^sha256:[a-f0-9]{64}$/u.test(artifact.metadata.source_groups_digest ?? '')) {
+    throw new Error('pilot_audit_editorial_consolidation_artifact_invalid');
+  }
+  const linked = successfulRows.filter((call) => call.id === artifact.metadata.call_id);
+  if (linked.length !== 1) throw new Error('pilot_audit_editorial_consolidation_call_missing');
+  const call = linked[0];
+  if (call.request_digest !== artifact.metadata.request_digest
+    || call.response_sha256 !== artifact.metadata.response_sha256
+    || call.metadata.mass_labeling_stage?.stage !== artifact.metadata.stage
+    || call.metadata.mass_labeling_stage?.source_groups_digest !== artifact.metadata.source_groups_digest) {
+    throw new Error('pilot_audit_editorial_consolidation_call_mismatch');
   }
 }
 

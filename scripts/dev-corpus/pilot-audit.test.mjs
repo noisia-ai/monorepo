@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import test from 'node:test';
 import {
   buildBlindSamples,
@@ -155,6 +155,110 @@ const comparison = {
   study_triggers: [{ key: 'trigger-a', label: 'Synthetic trigger', product_topic_keys: ['product-a'] }],
   study_barriers: [{ key: 'barrier-a', label: 'Synthetic barrier', product_topic_keys: [] }],
 };
+
+function canonicalForTest(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalForTest).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalForTest(value[key])}`).join(',')}}`;
+  return JSON.stringify(value);
+}
+
+function enrichedEditorialSnapshot() {
+  const snapshot = fixture();
+  const stage = { stage: 'global-consolidation-v1', source_groups_digest: `sha256:${'a'.repeat(64)}` };
+  const configuration = {
+    provider: 'anthropic', model: 'synthetic-model', prompt_digest: `sha256:${'b'.repeat(64)}`,
+    schema_digest: `sha256:${'c'.repeat(64)}`, pricing_version: 'synthetic-v1',
+    input_micro_usd_per_million_tokens: 1_000_000, output_micro_usd_per_million_tokens: 1_000_000,
+    cache_read_micro_usd_per_million_tokens: 1_000_000, cache_creation_micro_usd_per_million_tokens: 1_000_000,
+  };
+  const terminalUsage = {
+    input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 2, cache_creation_input_tokens: 3,
+  };
+  const terminalReceipt = {
+    contract_version: 'workspace-provider-terminal-evidence-v1', source: 'anthropic_console',
+    provider_request_id: 'req_synthetic_terminal', provider_model: configuration.model,
+    started_at: '2026-11-07T12:00:10.000Z', ended_at: '2026-11-07T12:00:11.000Z',
+    http_status: 499, reason: 'client_disconnected', billing_status: 'unreconciled',
+    usage: terminalUsage, usage_cost_micro_usd: 19, verified_by_user_id: '00000000-0000-4000-8000-000000000001',
+    call_id: 'synthetic-terminal-call', attempt_token: 'synthetic-attempt-1',
+    workspace_id: 'synthetic-workspace', execution_id: 'synthetic-engine-run',
+    request_digest: `sha256:${'d'.repeat(64)}`,
+    configuration_digest: `sha256:${createHash('sha256').update(canonicalForTest(configuration)).digest('hex')}`,
+    evidence: { storage_key: 'workspace-engine/synthetic-workspace/synthetic-engine-run/evidence.json',
+      sha256: `sha256:${'e'.repeat(64)}`, size_bytes: 240 },
+    verified_at: '2026-11-07T12:00:12.000Z',
+  };
+  const terminal = {
+    id: terminalReceipt.call_id, call_state: 'terminal_confirmed', retry_of_call_id: null,
+    request_digest: terminalReceipt.request_digest, actor_user_id: terminalReceipt.verified_by_user_id,
+    workspace_id: terminalReceipt.workspace_id, catalog_execution_id: terminalReceipt.execution_id,
+    provider: configuration.provider, model: configuration.model, call_configuration: configuration,
+    reserved_micro_usd: '100', settled_micro_usd: '19', input_tokens: 15, output_tokens: 4, total_tokens: 19,
+    response_http_status: null, response_storage_key: null, response_sha256: null, response_size_bytes: null,
+    response_complete: null, settled_at: '2026-11-07T12:00:13.000Z',
+    usage: terminalUsage,
+    metadata: {
+      mass_labeling_stage: stage,
+      provider_terminal_receipt: terminalReceipt,
+      provider_terminal_billing_reconciliation: {
+        contract_version: 'workspace-provider-terminal-billing-v1', method: 'audited_usage_pricing',
+        provider_request_id: terminalReceipt.provider_request_id,
+        terminal_receipt_digest: `sha256:${createHash('sha256').update(canonicalForTest(terminalReceipt)).digest('hex')}`,
+        actual_micro_usd: 19, usage: terminalUsage,
+        verified_by_user_id: terminalReceipt.verified_by_user_id, reconciled_at: '2026-11-07T12:00:14.000Z',
+      },
+    },
+  };
+  const successor = {
+    id: 'synthetic-successor-call', call_state: 'settled', retry_of_call_id: terminal.id,
+    request_digest: terminal.request_digest, actor_user_id: terminal.actor_user_id,
+    workspace_id: terminal.workspace_id, catalog_execution_id: terminal.catalog_execution_id,
+    provider: terminal.provider, model: terminal.model, call_configuration: structuredClone(configuration),
+    reserved_micro_usd: terminal.reserved_micro_usd, settled_micro_usd: '7', input_tokens: 5, output_tokens: 2, total_tokens: 7,
+    response_http_status: 200, response_storage_key: 'workspace-engine/synthetic-workspace/synthetic-engine-run/response.json',
+    response_sha256: `sha256:${'f'.repeat(64)}`, response_size_bytes: '800', response_complete: true,
+    settled_at: '2026-11-07T12:00:20.000Z',
+    usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    metadata: { mass_labeling_stage: stage, response_complete: true },
+  };
+  const groupCalls = Array.from({ length: 144 }, (_, index) => ({
+    id: `synthetic-group-call-${index + 1}`, call_state: 'settled', retry_of_call_id: null,
+    request_digest: `sha256:${String(index + 10).padStart(64, '0')}`,
+    actor_user_id: terminal.actor_user_id, workspace_id: terminal.workspace_id,
+    catalog_execution_id: terminal.catalog_execution_id, provider: terminal.provider, model: terminal.model,
+    call_configuration: structuredClone(configuration), reserved_micro_usd: '100', settled_micro_usd: '1',
+    input_tokens: 1, output_tokens: 0, total_tokens: 1,
+    response_http_status: 200, response_storage_key: `workspace-engine/synthetic-workspace/synthetic-engine-run/group-${index + 1}.json`,
+    response_sha256: `sha256:${String(index + 100).padStart(64, '0')}`, response_size_bytes: '100', response_complete: true,
+    settled_at: '2026-11-07T12:00:15.000Z', usage: { input_tokens: 1, output_tokens: 0,
+      cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, metadata: {},
+  }));
+  snapshot.stage_receipts.engine.result_summary.fit_checkpoint.interpretation_manifest.unit_count = 144;
+  snapshot.map.consolidation_artifact_id = 'synthetic-consolidation-artifact';
+  snapshot.map.consolidation_digest = `sha256:${'9'.repeat(64)}`;
+  snapshot.stage_receipts.editorial_calls = [...groupCalls, terminal, successor];
+  snapshot.stage_receipts.consolidation_artifact = {
+    id: snapshot.map.consolidation_artifact_id,
+    artifact_key: 'mass-labeling-consolidation.json',
+    content: { contract_version: 'workspace-engine-private-artifact-v1',
+      storage_key: 'workspace-engine/synthetic-workspace/synthetic-engine-run/consolidation.json',
+      sha256: snapshot.map.consolidation_digest, size_bytes: 900, media_type: 'application/json' },
+    metadata: { contract_version: 'workspace-mass-labeling-consolidation-v1',
+      source_engine_execution_id: snapshot.stage_receipts.engine.id, stage: stage.stage,
+      source_groups_digest: stage.source_groups_digest, call_id: successor.id,
+      request_digest: successor.request_digest, response_sha256: successor.response_sha256 },
+  };
+  const receipt = operatorReceipt(snapshot);
+  const claude = receipt.stages.find((row) => row.name === 'claude');
+  receipt.stages.find((row) => row.name === 'bertopic').group_count = 144;
+  claude.ledger_call_ids = snapshot.stage_receipts.editorial_calls.map((call) => call.id);
+  claude.usage_value_micro_usd = 170;
+  claude.input_tokens = 164;
+  claude.input_count = 144;
+  receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
+  return { snapshot, receipt };
+}
 
 test('rejects snapshots without a frozen map before baseline comparison can be read', async () => {
   const snapshot = fixture();
@@ -353,6 +457,33 @@ test('keeps unverified charges unknown instead of reporting free provider usage'
   assert.equal(summary.charged_micro_usd, null);
   assert.equal(summary.charged_per_million_micro_usd, null);
   assert.match(renderPublicReceipt(summary, '2026-11-07'), /Cargo total confirmado: n\/d/u);
+});
+
+test('reconciles a terminal billed attempt plus its exact successful consolidation retry', () => {
+  const { snapshot, receipt } = enrichedEditorialSnapshot();
+  const summary = summarizePilotSnapshot(snapshot, receipt);
+  assert.equal(summary.bertopic_group_count, 144);
+  assert.equal(summary.stages.find((row) => row.name === 'claude').usage_value_micro_usd, 170);
+  assert.equal(receipt.stages.find((row) => row.name === 'claude').input_count, 144);
+  assert.deepEqual(receipt.stages.find((row) => row.name === 'claude').ledger_call_ids,
+    snapshot.stage_receipts.editorial_calls.map((call) => call.id));
+  assert.equal(summary.topics.length, 2);
+  const invalidCases = [
+    ['unknown call state', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-terminal-call').call_state = 'outcome_unknown'; }, /unreconciled/u],
+    ['unreconciled terminal billing', (copy) => { delete copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-terminal-call').metadata.provider_terminal_billing_reconciliation; }, /terminal_billing_invalid/u],
+    ['duplicate ledger reference', (copy) => { copy.receipt.stages.find((row) => row.name === 'claude').ledger_call_ids.push('synthetic-successor-call'); }, /call_ids_required/u],
+    ['incoherent audited charge', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-terminal-call').metadata.provider_terminal_billing_reconciliation.actual_micro_usd = 20; }, /terminal_billing_invalid/u],
+    ['incoherent settled successor charge', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-successor-call').settled_micro_usd = '8'; }, /settled_cost_mismatch/u],
+    ['retry changes request', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-successor-call').request_digest = `sha256:${'8'.repeat(64)}`; }, /retry_scope_invalid/u],
+    ['result not linked to successful call', (copy) => { copy.snapshot.stage_receipts.consolidation_artifact.metadata.call_id = 'synthetic-terminal-call'; }, /consolidation_call_missing/u],
+    ['success missing HTTP 200 evidence', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-successor-call').response_http_status = 499; }, /settled_response_invalid/u],
+  ];
+  for (const [name, mutate, pattern] of invalidCases) {
+    const copy = structuredClone({ snapshot, receipt });
+    mutate(copy);
+    copy.receipt.snapshot_sha256 = computeSnapshotDigest(copy.snapshot);
+    assert.throws(() => summarizePilotSnapshot(copy.snapshot, copy.receipt), pattern, name);
+  }
 });
 
 test('exports the H2 JSON contract into private audit files and sanitized public receipt', async () => {
