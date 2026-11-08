@@ -1,6 +1,7 @@
 import { createHash, createHmac } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { projectR13Cost, summarizeR13Baseline } from './pilot-r13-audit.mjs';
 
 const POSITIVE_THRESHOLD = 0.7;
 const INTERMEDIATE_THRESHOLD = 0.3;
@@ -1135,6 +1136,7 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
     : usageValues.reduce((sum, value) => sum + value, 0);
   const totalFreeTokens = freeTokens.some((value) => value === null) ? null
     : freeTokens.reduce((sum, value) => sum + value, 0);
+  const r13Baseline = summarizeR13Baseline(snapshot);
   const cashEstimateValues = costs.filter((stage) => stage.name === 'claude' || stage.name.startsWith('jev_'))
     .map((stage) => stage.usage_value_micro_usd);
   const estimatedCashUsageMicroUsd = cashEstimateValues.some((value) => value === null) ? null
@@ -1168,6 +1170,7 @@ export function summarizePilotSnapshot(snapshot, operatorReceipt) {
       intermediate_percent: rate(triggerBarrier.intermediate, rootCount),
       unresolved_percent: rate(triggerBarrier.unresolved, rootCount),
     },
+    r13_baseline: r13Baseline,
     topics: topicRows,
     public_topics: topicRows.map((topic) => {
       const publicTopic = publicCatalog.get(topic.topic_key);
@@ -1337,6 +1340,22 @@ export function renderPublicReceipt(summary, comparisonDate) {
     throw new Error('pilot_audit_v2_required_for_scoped_funding');
   }
   const groupCount = summary.bertopic_group_count;
+  const voyageStage = summary.stages.find((stage) => stage.name === 'voyage');
+  const jevStages = summary.stages.filter((stage) => stage.name.startsWith('jev_'));
+  const claudeStage = summary.stages.find((stage) => stage.name === 'claude');
+  const jevInputTokens = jevStages.reduce((total, stage) => total + (stage.input_tokens ?? 0), 0);
+  const editorialCallCount = claudeStage?.input_count || groupCount;
+  const projection = voyageStage?.free_tokens_used > 0 && jevInputTokens > 0 && editorialCallCount > 0
+    ? projectR13Cost({
+      roots: summary.root_count,
+      voyageTokens: voyageStage.free_tokens_used,
+      jevInputTokens,
+      observedEditorialUsd: (claudeStage?.usage_value_micro_usd ?? 0) / 1_000_000,
+      observedEditorialCalls: editorialCallCount,
+      forecastGroups: [180, 225, 270],
+    }) : null;
+  const projectionRows = (projection?.per_million_roots ?? []).map((row) =>
+    `| ${row.editorial_groups} | ${dollars(Math.round(row.voyage_usage_usd * 1_000_000))} | ${dollars(Math.round(row.jev_usage_usd * 1_000_000))} | ${dollars(Math.round(row.editorial_usage_usd * 1_000_000))} | ${dollars(Math.round(row.combined_usage_value_usd * 1_000_000))} |`);
   const stageRows = summary.stages.map((stage) =>
     `| ${markdownCell(stage.name)} | ${stage.input_count} ${stage.input_unit} | ${dollars(stage.usage_value_micro_usd)} | ${dollars(stage.charged_micro_usd)} | ${stage.name === 'claude' ? dollars(stage.charged_per_input_unit_micro_usd) : '—'} | ${stage.free_tokens_used ?? 'n/d'} | ${stage.duration_seconds.toFixed(1)} s |`);
   const topicRows = summary.public_topics.map((topic) =>
@@ -1355,9 +1374,9 @@ export function renderPublicReceipt(summary, comparisonDate) {
     '|---|---:|---:|---:|---:|---:|---:|',
     ...stageRows,
     '',
-    `Cargo total confirmado: ${dollars(summary.charged_micro_usd)}. Por 1,000 raíces: ${dollars(summary.charged_per_1000_micro_usd)}. Proyección a 1,000,000 raíces: ${dollars(summary.charged_per_million_micro_usd)}.`,
-    `Valor tarifario del uso: ${dollars(summary.usage_value_micro_usd)}. Por 1,000 raíces: ${dollars(summary.usage_value_per_1000_micro_usd)}; por 1,000,000: ${dollars(summary.usage_value_per_million_micro_usd)}.`,
-    `Estimación de caja con crédito de Voyage aplicado (Claude + JEV): ${dollars(summary.estimated_cash_usage_micro_usd)}; por 1,000 raíces: ${dollars(summary.estimated_cash_usage_per_1000_micro_usd)}; por 1,000,000: ${dollars(summary.estimated_cash_usage_per_million_micro_usd)}. Es una estimación, no un débito; no se suma al cargo confirmado.`,
+    ...(projection ? [`Uso a tarifa del piloto: Voyage ${dollars(Math.round(projection.pilot.voyage_usage_usd * 1_000_000))}, JEV ${dollars(Math.round(projection.pilot.jev_usage_usd * 1_000_000))}, Claude ${dollars(Math.round(projection.pilot.editorial_usage_usd * 1_000_000))}. Total ${dollars(Math.round(projection.pilot.combined_usage_value_usd * 1_000_000))}. Voyage se cubrió con tokens gratis y su cargo confirmado fue ${dollars(voyageStage?.charged_micro_usd ?? null)}.`]
+      : ['Proyección no disponible porque el recibo no contiene los tokens reales medidos de las etapas.']),
+    `Claude confirmado por ${claudeStage?.input_count ?? 0} grupos: ${dollars(claudeStage?.charged_micro_usd ?? null)}. Cargo JEV por etapa: ${summary.jev_charge_reconciliation?.status === 'confirmed' ? dollars((summary.jev_charge_reconciliation.attributed_smoke_micro_usd ?? 0) + (summary.jev_charge_reconciliation.attributed_full_micro_usd ?? 0)) : 'no atribuible con las lecturas de saldo disponibles'}. Los costes a tarifa son estimaciones de uso, no débitos.`,
     `Tokens gratis consumidos: ${summary.free_tokens_used ?? 'n/d'}.`,
     ...(() => {
       const voyage = summary.stages.find((stage) => stage.name === 'voyage');
@@ -1375,12 +1394,17 @@ export function renderPublicReceipt(summary, comparisonDate) {
       ...(summary.jev_charge_reconciliation.status === 'interval_unattributed'
         ? ['La observación de JEV no permite atribuir todo el cambio entre saldos; se omite del cargo de etapas.'] : []),
     ]),
-    'La proyección a 1,000,000 de raíces es lineal y supone la misma mezcla de procesamiento y tamaño del mapa. El costo de Claude se muestra por grupo porque puede cambiar al variar el número o tamaño de los grupos.',
+    ...(projection ? ['Proyección lineal por millón de raíces con la misma longitud media de menciones y cantidad media de fragmentos. Voyage y JEV escalan por raíz; Claude escala por grupo editorial.'] : []),
+    '',
+    '| Grupos editoriales supuestos | Voyage a tarifa | JEV por raíz | Claude por grupo | Total a tarifa |',
+    ...(projection ? ['|---:|---:|---:|---:|---:|', ...projectionRows] : []),
     '',
     '## Cobertura',
     '',
     `Tópico > 0.7: ${percent(summary.coverage.covered_percent)}. Franja intermedia ([0.3, 0.7], sin tópico positivo): ${percent(summary.coverage.intermediate_percent)}. Sin tópico (< 0.3): ${percent(summary.coverage.no_topic_percent)}. Sin resultado válido: ${percent(summary.coverage.unresolved_percent)}.`,
     `Promoción > 0.7: ${percent(summary.promotion.percent)} de respuestas válidas. Spam o bot > 0.7: ${percent(summary.spam.percent)} de respuestas válidas.`,
+    `Relevancia genérica histórica (no mide voz del consumidor): ${summary.r13_baseline.original_relevance.positive} positivas, ${summary.r13_baseline.original_relevance.intermediate} intermedias y ${summary.r13_baseline.original_relevance.negative} negativas.`,
+    `Motivadores y barreras históricos por promoción >0.7 (pregunta anterior, sin filtro de voz): trigger ${summary.r13_baseline.historical_trigger_barrier_by_promotion.trigger.promoted} promoción / ${summary.r13_baseline.historical_trigger_barrier_by_promotion.trigger.organic} sin promoción; barrier ${summary.r13_baseline.historical_trigger_barrier_by_promotion.barrier.promoted} promoción / ${summary.r13_baseline.historical_trigger_barrier_by_promotion.barrier.organic} sin promoción.`,
     `Triggers: ${summary.trigger_barrier.trigger} (${percent(summary.trigger_barrier.trigger_percent)}). Barriers: ${summary.trigger_barrier.barrier} (${percent(summary.trigger_barrier.barrier_percent)}). None: ${summary.trigger_barrier.none} (${percent(summary.trigger_barrier.none_percent)}). Intermedio: ${summary.trigger_barrier.intermediate} (${percent(summary.trigger_barrier.intermediate_percent)}). Sin resolver: ${summary.trigger_barrier.unresolved}.`,
     '',
     '## Mapa de tópicos',

@@ -535,12 +535,10 @@ test('v2 reconciles one cumulative cap and discloses delayed cash separately fro
   assert.equal(summary.jev_charge_reconciliation.status, 'delayed');
   const markdown = renderPublicReceipt(summary, '2026-11-07');
   assert.match(markdown, /USD 9\.500000/u);
-  assert.match(markdown, /Cargo total confirmado: n\/d/u);
+  assert.match(markdown, /\| 180 \|/u);
   assert.match(markdown, /La consola del proveedor aún no confirma débitos de JEV/u);
-  assert.match(markdown, /Valor tarifario del uso: USD 0\.022340/u);
-  assert.match(markdown, /Valor tarifario del uso: USD 0\.022340\. Por 1,000 raíces: USD 4\.468000; por 1,000,000: USD 4468\.000000/u);
   assert.match(markdown, /Voyage usó 5,000 tokens gratis; su cargo efectivo confirmado fue USD 0\.000000/u);
-  assert.match(markdown, /Estimación de caja con crédito de Voyage aplicado \(Claude \+ JEV\): USD 0\.012340; por 1,000 raíces: USD 2\.468000; por 1,000,000: USD 2468\.000000\. Es una estimación, no un débito; no se suma al cargo confirmado/u);
+  assert.doesNotMatch(markdown, /Estimación de caja con crédito de Voyage aplicado/u);
   assert.doesNotMatch(markdown, /6\.970000 \+ 9\.500000/u);
 });
 
@@ -817,7 +815,7 @@ test('public receipt contains aggregate metrics and excludes mention text and ID
   const summary = summarizePilotSnapshot(fixture(), operatorReceipt());
   const receipt = renderPublicReceipt(summary, '2026-11-07');
   assert.match(receipt, /Estudio real A \(cerveza, Brasil\)/u);
-  assert.match(receipt, /USD 2\.468000/u);
+  assert.match(receipt, /\| 180 \|/u);
   assert.match(receipt, /Grupos BERTopic totales .*: 12/u);
   assert.match(receipt, /Public alias product-a/u);
   assert.doesNotMatch(receipt, /Synthetic topic A|Synthetic definition A/u);
@@ -841,7 +839,8 @@ test('keeps unverified charges unknown instead of reporting free provider usage'
   const summary = summarizePilotSnapshot(fixture(), receipt);
   assert.equal(summary.charged_micro_usd, null);
   assert.equal(summary.charged_per_million_micro_usd, null);
-  assert.match(renderPublicReceipt(summary, '2026-11-07'), /Cargo total confirmado: n\/d/u);
+  assert.match(renderPublicReceipt(summary, '2026-11-07'), /Uso a tarifa del piloto/u);
+  assert.doesNotMatch(renderPublicReceipt(summary, '2026-11-07'), /Cargo total confirmado:/u);
 });
 
 test('reconciles a terminal billed attempt plus its exact successful consolidation retry', () => {
