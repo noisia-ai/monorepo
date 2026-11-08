@@ -308,7 +308,6 @@ export async function phaseA(ctx) {
   });
   const finalReceipt = renderCorrectedPublicReceiptR13({ receipt: canonicalReceipt, baseline, repaired: revised,
     projection, r13StageUsage: stageUsage });
-  await publishReceipt(receiptPath, finalReceipt);
   const evidence = {
     contract_version: 'pilot-r13-phase-a-v1', map_digest: h4.snapshot.map.map_digest, roots: h4.snapshot.items.length,
     inputs: { ...h4.source, repair_sha256: repair.sha256, hashtag_flags_sha256: await fileHash(await inputFile(r13Root, config.root_hashtag_flags)) },
@@ -329,6 +328,7 @@ export async function phaseA(ctx) {
     receipt_sha256: evidence.corrected_receipt_sha256, comparison_sha256: comparisonHash,
     blind_samples_sha256: packet.sample_file_sha256, answer_key_sha256: packet.answer_key_sha256 };
   await writeImmutableJson(manifestPath, manifest);
+  await publishReceipt(receiptPath, finalReceipt);
   return { phase: 'phase-a', roots: evidence.roots, corrected_indicator: revised.counts,
     eligible_consumers: revised.consumer_eligibility.eligible, new_blind_samples: packet.sample_count,
     idempotent_key: packet.answer_key_sha256, receipt_sha256: evidence.corrected_receipt_sha256 };
@@ -393,7 +393,6 @@ export async function phaseB(ctx) {
     }),
     interests: interestMetrics, costComparison, r13StageUsage: stageUsage,
   });
-  await publishReceipt(config.public_receipt_path, revisedReceipt);
   const evidence = { contract_version: 'pilot-r13-phase-b-v1', map_digest: h4.snapshot.map.map_digest,
     roots: h4.snapshot.items.length, phase_a_manifest_sha256: hash(JSON.stringify(phaseAManifest)),
     inputs: { interests_sha256: interestRows.sha256, cost_comparison_sha256: await fileHash(costFile),
@@ -410,6 +409,7 @@ export async function phaseB(ctx) {
   await writeImmutableJson(await outputFile(r13Root, config.outputs.phase_b_manifest),
     { contract_version: 'pilot-r13-phase-b-manifest-v1', evidence_sha256: evidenceHash,
       receipt_sha256: evidence.corrected_receipt_sha256, variants_sha256: variantEvidence.sha256 });
+  await publishReceipt(config.public_receipt_path, revisedReceipt);
   return { phase: 'phase-b', interest_roots: { apostas: interestMetrics.interests.apostas.roots,
     racismo: interestMetrics.interests.racismo.roots }, paired_cost_roots: costComparison.paired_roots,
     language_rows: variantReceipt.rows, corrected_receipt_sha256: evidence.corrected_receipt_sha256 };

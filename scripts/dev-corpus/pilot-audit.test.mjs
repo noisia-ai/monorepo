@@ -942,6 +942,18 @@ test('R13 receipt composition and phase A/B replay are idempotent with an H4 fix
     await phaseA(ctx); assert.equal(await readFile(receiptPath, 'utf8'), receiptA);
     assert.equal(await readFile(config.outputs.phase_a_evidence, 'utf8'), evidenceA);
     assert.ok(evidenceA.includes('r13_stage_usage') && evidenceA.includes('eligible_count'));
+    const blindSamples = await readFile(config.outputs.new_blind_samples, 'utf8');
+    const blindKey = await readFile(config.outputs.new_blind_key, 'utf8');
+    const changedRepair = structuredClone(repairRows);
+    changedRepair[0].input_tokens++;
+    changedRepair[0].response.usage.input_tokens++;
+    await saveRows(config.stages.repair, changedRepair);
+    await assert.rejects(phaseA(ctx), /r13_existing_evidence_mismatch/u);
+    assert.equal(await readFile(config.outputs.new_blind_samples, 'utf8'), blindSamples);
+    assert.equal(await readFile(config.outputs.new_blind_key, 'utf8'), blindKey);
+    assert.equal(await readFile(receiptPath, 'utf8'), receiptA);
+    await saveRows(config.stages.repair, repairRows);
+    await phaseA(ctx);
     await phaseB(ctx); const receiptB = await readFile(receiptPath, 'utf8');
     const evidenceB = await readFile(config.outputs.phase_b_evidence, 'utf8');
     assert.ok(evidenceB.includes('750000'));
