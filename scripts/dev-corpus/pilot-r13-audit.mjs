@@ -10,7 +10,7 @@ const answerOf = (row) => row?.response?.answers?.trigger_barrier ?? row?.answer
   ?? row?.response?.trigger_barrier;
 const decisionOf = (answer) => {
   if (!answer || (answer.type && answer.type !== 'choice')) return null;
-  const confidence = answer.confidence ?? answer.probabilities?.[answer.choice];
+  const confidence = answer.probabilities?.[answer.choice];
   return ['trigger', 'barrier', 'none'].includes(answer.choice) && Number.isFinite(confidence)
     ? { choice: answer.choice, confidence } : null;
 };
@@ -131,7 +131,23 @@ export function buildR13LanguageVariants(portugueseRows, englishRows, blindRootT
     for (const row of rows) {
       if (row.stage !== stage || map.has(row.root_id) || row.status !== 'settled'
         || !record(row.response?.answers?.trigger_barrier) || !row.request_digest
-        || !row.input_digest || !Number.isSafeInteger(row.input_tokens)) throw new Error('r13_variant_row_invalid');
+        || !row.input_digest || !Number.isSafeInteger(row.input_tokens)
+        || !record(row.raw_response) || typeof row.raw_body !== 'string') throw new Error('r13_variant_row_invalid');
+      if (`sha256:${hash(row.raw_body)}` !== row.raw_sha256) throw new Error('r13_variant_raw_digest_mismatch');
+      let raw;
+      try { raw = JSON.parse(row.raw_body); } catch { throw new Error('r13_variant_raw_invalid'); }
+      if (JSON.stringify(raw) !== JSON.stringify(row.raw_response)
+        || raw.model !== row.response.model || JSON.stringify(raw.usage) !== JSON.stringify(row.response.usage)
+        || raw.usage?.input_tokens !== row.input_tokens
+        || JSON.stringify(raw.answers?.trigger_barrier) !== JSON.stringify(row.response.answers.trigger_barrier)) {
+        throw new Error('r13_variant_raw_mismatch');
+      }
+      const distribution = row.response.answers.trigger_barrier.probabilities;
+      if (!record(distribution) || Object.keys(distribution).sort().join(',') !== 'barrier,none,trigger'
+        || Object.values(distribution).some((value) => !Number.isFinite(value) || value < 0 || value > 1)
+        || Math.abs(Object.values(distribution).reduce((sum, value) => sum + value, 0) - 1) > 0.010000000001) {
+        throw new Error('r13_variant_probability_invalid');
+      }
       map.set(row.root_id, row);
     }
     return map;
@@ -149,6 +165,9 @@ export function buildR13LanguageVariants(portugueseRows, englishRows, blindRootT
     for (const [language, row] of [['pt', a], ['en', b]]) {
       output.push({ case_ids: blindRootToCases[root], input_digest: row.input_digest,
         question_language: language, request_digest: row.request_digest,
+        probabilities: { trigger: row.response.answers.trigger_barrier.probabilities.trigger,
+          barrier: row.response.answers.trigger_barrier.probabilities.barrier,
+          none: row.response.answers.trigger_barrier.probabilities.none },
         input_tokens: row.input_tokens, raw_sha256: row.raw_sha256 });
     }
   }
@@ -226,9 +245,13 @@ export async function writeR13VariantFile({ dataRoot, destination, rows }) {
   const seen = new Set();
   for (const row of rows) {
     const identity = `${[...(row.case_ids ?? [])].sort().join(',')}\0${row.question_language}`;
+    const probabilities = row.probabilities;
     if (!['pt', 'en'].includes(row.question_language) || !Array.isArray(row.case_ids) || !row.case_ids.length
       || row.case_ids.some((caseId) => typeof caseId !== 'string' || !caseId)
-      || seen.has(identity) || !row.request_digest || !row.input_digest || !Number.isSafeInteger(row.input_tokens)) {
+      || seen.has(identity) || !row.request_digest || !row.input_digest || !Number.isSafeInteger(row.input_tokens)
+      || !record(probabilities) || Object.keys(probabilities).sort().join(',') !== 'barrier,none,trigger'
+      || Object.values(probabilities).some((value) => !Number.isFinite(value) || value < 0 || value > 1)
+      || Math.abs(Object.values(probabilities).reduce((sum, value) => sum + value, 0) - 1) > 0.010000000001) {
       throw new Error('r13_variant_export_row_invalid');
     }
     seen.add(identity);

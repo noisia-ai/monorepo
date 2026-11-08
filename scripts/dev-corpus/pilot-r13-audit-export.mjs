@@ -37,20 +37,32 @@ const within = (parent, child) => {
   return childPath === '' || (!childPath.startsWith('..' + sep) && childPath !== '..' && !isAbsolute(childPath));
 };
 
+async function assertPrivateDescendantDirectories(dataRoot, location) {
+  let directory = dirname(location);
+  while (directory !== dataRoot) {
+    if (!within(dataRoot, directory) || (await stat(directory)).mode & 0o077) {
+      throw new Error('r13_private_directory_permissions_invalid');
+    }
+    directory = dirname(directory);
+  }
+}
+
 async function pathInDataRoot(root, requested, { mustExist = true, file = false } = {}) {
   const data = await realpath(root);
-  if (basename(data) !== '.data' || (await stat(data)).mode & 0o077) throw new Error('r13_data_root_permissions_invalid');
+  if (basename(data) !== '.data') throw new Error('r13_data_root_invalid');
   const absolute = resolve(requested);
   if (!within(data, absolute) || absolute === data) throw new Error('r13_private_path_invalid');
   if (mustExist) {
     const actual = await realpath(absolute);
     const metadata = await stat(actual);
     if (!within(data, actual) || (file && !metadata.isFile()) || (metadata.mode & 0o077)) throw new Error('r13_private_input_permissions_invalid');
+    await assertPrivateDescendantDirectories(data, actual);
     return actual;
   }
   await mkdir(dirname(absolute), { recursive: true, mode: 0o700 });
   const parent = await realpath(dirname(absolute));
   if (!within(data, parent) || parent === data) throw new Error('r13_private_output_invalid');
+  await assertPrivateDescendantDirectories(data, join(parent, 'child'));
   if ((await stat(parent)).mode & 0o077) throw new Error('r13_private_output_permissions_invalid');
   return join(parent, absolute.split(sep).at(-1));
 }
@@ -69,7 +81,8 @@ async function privateDirectory(root, requested) {
   if (!within(data, absolute) || absolute === data) throw new Error('r13_private_output_invalid');
   await mkdir(absolute, { recursive: true, mode: 0o700 });
   const directory = await realpath(absolute);
-  if (!within(data, directory) || (await stat(directory)).mode & 0o077) throw new Error('r13_private_output_permissions_invalid');
+  if (!within(data, directory)) throw new Error('r13_private_output_invalid');
+  await assertPrivateDescendantDirectories(data, join(directory, 'child'));
   return directory;
 }
 
@@ -89,15 +102,17 @@ async function readPrivateConfig(configArgument) {
   const configPath = resolve(configArgument);
   const dataAncestor = configPath.split(sep).slice(0, -1).reverse().map((part, index, pieces) => part === '.data'
     ? configPath.split(sep).slice(0, -1 - index).join(sep) : null).find(Boolean);
-  if (!dataAncestor || (await stat(await realpath(dataAncestor))).mode & 0o077) throw new Error('r13_config_must_be_private');
+  if (!dataAncestor) throw new Error('r13_config_must_be_private');
   const actualPath = await realpath(configPath);
-  if (!within(await realpath(dataAncestor), actualPath) || (await stat(actualPath)).mode & 0o077) throw new Error('r13_config_must_be_private');
+  const configDataRoot = await realpath(dataAncestor);
+  if (!within(configDataRoot, actualPath) || (await stat(actualPath)).mode & 0o077) throw new Error('r13_config_must_be_private');
+  await assertPrivateDescendantDirectories(configDataRoot, actualPath);
   const config = await readJson(actualPath);
   if (resolve(config.repository_root) !== repositoryRoot || resolve(config.workspace_data_root) !== repositoryPrivate) {
     throw new Error('r13_repository_binding_invalid');
   }
   const r13Root = await realpath(config.r13_data_root);
-  if (basename(r13Root) !== '.data' || (await stat(r13Root)).mode & 0o077) throw new Error('r13_data_root_permissions_invalid');
+  if (basename(r13Root) !== '.data') throw new Error('r13_data_root_invalid');
   return { config, r13Root, workspaceRoot: await realpath(repositoryPrivate) };
 }
 
@@ -131,6 +146,21 @@ async function loadH4({ config, workspaceRoot, r13Root }) {
 async function loadR13Rows(r13Root, config, key) {
   const rows = await readJsonLines(await inputFile(r13Root, config.stages[key]));
   return { rows, sha256: await fileHash(await inputFile(r13Root, config.stages[key])) };
+}
+
+async function loadVerifiedLanguageRows(r13Root, config, key) {
+  const resultsPath = await inputFile(r13Root, config.stages[key]);
+  const rows = await readJsonLines(resultsPath);
+  for (const row of rows) {
+    const stem = hash(row.root_id);
+    const rawPath = await inputFile(r13Root, join(dirname(resultsPath), `${stem}.raw.json`));
+    const rawReceipt = await readJson(rawPath);
+    if (typeof rawReceipt.body !== 'string' || rawReceipt.http_status !== 200
+      || `sha256:${hash(rawReceipt.body)}` !== row.raw_sha256) throw new Error('r13_variant_raw_digest_mismatch');
+    row.raw_body = rawReceipt.body;
+    row.raw_response = JSON.parse(rawReceipt.body);
+  }
+  return { rows, sha256: await fileHash(resultsPath) };
 }
 
 async function persistentSeed(dataRoot, directory) {
@@ -235,7 +265,7 @@ async function phaseA(ctx) {
     voyageTokens: h4.summary.stages.find((s) => s.name === 'voyage').free_tokens_used,
     jevInputTokens: h4.summary.stages.filter((s) => s.name.startsWith('jev_')).reduce((sum, s) => sum + (s.input_tokens ?? 0), 0),
     observedEditorialUsd: h4.summary.stages.find((s) => s.name === 'claude').usage_value_micro_usd / 1_000_000,
-    observedEditorialCalls: h4.summary.stages.find((s) => s.name === 'claude').input_count,
+    observedEditorialCalls: h4.summary.bertopic_group_count,
   });
   const finalReceipt = renderCorrectedPublicReceiptR13({ receipt: canonicalReceipt, baseline, repaired: revised, projection });
   await publishReceipt(receiptPath, finalReceipt);
@@ -279,8 +309,8 @@ async function phaseB(ctx) {
     || !Number.isFinite(costComparison.probability_comparisons?.reduced_vs_full?.mean_absolute_delta)) {
     throw new Error('r13_cost_comparison_incomplete');
   }
-  const languagePT = await loadR13Rows(r13Root, config, 'language_pt');
-  const languageEN = await loadR13Rows(r13Root, config, 'language_en');
+  const languagePT = await loadVerifiedLanguageRows(r13Root, config, 'language_pt');
+  const languageEN = await loadVerifiedLanguageRows(r13Root, config, 'language_en');
   const blindLinks = await readJson(await inputFile(r13Root, config.variant_private_link));
   const variants = buildR13LanguageVariants(languagePT.rows, languageEN.rows, blindLinks);
   const variantOut = await outputFile(r13Root, config.outputs.language_variants);
@@ -301,7 +331,7 @@ async function phaseB(ctx) {
       voyageTokens: h4.summary.stages.find((s) => s.name === 'voyage').free_tokens_used,
       jevInputTokens: h4.summary.stages.filter((s) => s.name.startsWith('jev_')).reduce((sum, s) => sum + (s.input_tokens ?? 0), 0),
       observedEditorialUsd: h4.summary.stages.find((s) => s.name === 'claude').usage_value_micro_usd / 1_000_000,
-      observedEditorialCalls: h4.summary.stages.find((s) => s.name === 'claude').input_count,
+      observedEditorialCalls: h4.summary.bertopic_group_count,
     }),
     interests: interestMetrics, costComparison,
   });

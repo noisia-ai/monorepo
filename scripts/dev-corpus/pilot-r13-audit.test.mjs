@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -91,20 +91,60 @@ test('new blind samples are reproducible, balanced, and disjoint from the sealed
 
 test('language export binds 597 paired blinded roots and emits no answer-key fields', () => {
   const pt = [], en = [], links = {};
+  const withRaw = (row) => {
+    row.raw_body = JSON.stringify(row.response);
+    row.raw_response = JSON.parse(row.raw_body);
+    row.raw_sha256 = `sha256:${createHash('sha256').update(row.raw_body).digest('hex')}`;
+    return row;
+  };
   for (let index = 0; index < 597; index++) {
     const root = `r${index}`;
     links[root] = [`case-${index}`];
     pt.push({ stage: 'language-pt', status: 'settled', root_id: root, input_digest: `d-${index}`,
-      request_digest: 'pt-request', input_tokens: 10, response: { answers: { trigger_barrier: { choice: 'none' } } } });
+      request_digest: 'pt-request', raw_sha256: '', input_tokens: 10, response: { model: 'jev-r13', usage: { input_tokens: 10 }, answers: {
+        trigger_barrier: { type: 'choice', choice: 'trigger', confidence: 0.8,
+          probabilities: { trigger: 0.8, barrier: 0.1, none: 0.1 } } } } });
     en.push({ stage: 'language-en', status: 'settled', root_id: root, input_digest: `d-${index}`,
-      request_digest: 'en-request', input_tokens: 9, response: { answers: { trigger_barrier: { choice: 'none' } } } });
+      request_digest: 'en-request', raw_sha256: '', input_tokens: 9, response: { model: 'jev-r13', usage: { input_tokens: 9 }, answers: {
+        trigger_barrier: { type: 'choice', choice: 'barrier', confidence: 0.7,
+          probabilities: { trigger: 0.2, barrier: 0.7, none: 0.1 } } } } });
   }
-  const rows = buildR13LanguageVariants(pt, en, links);
+  const rows = buildR13LanguageVariants(pt.map(withRaw), en.map(withRaw), links);
   assert.equal(rows.length, 1194);
   assert.equal(rows[0].question_language, 'pt');
   assert.equal(rows[1].question_language, 'en');
+  assert.deepEqual(rows[0].probabilities, { trigger: 0.8, barrier: 0.1, none: 0.1 });
+  assert.deepEqual(rows[1].probabilities, { trigger: 0.2, barrier: 0.7, none: 0.1 });
   assert.equal(rows.some((row) => 'answer_key' in row || 'verdict' in row), false);
-  assert.throws(() => buildR13LanguageVariants(pt.slice(1), en, links), /count_invalid/u);
+  assert.equal(rows.some((row) => Object.hasOwn(row, 'root_id') || Object.hasOwn(row, 'response')), false);
+  assert.throws(() => buildR13LanguageVariants(pt.slice(1).map(withRaw), en.map(withRaw), links), /count_invalid/u);
+  const missing = pt.map((row) => withRaw({ ...row, response: structuredClone(row.response) }));
+  delete missing[0].response.answers.trigger_barrier.probabilities;
+  missing[0].raw_response = structuredClone(missing[0].response);
+  missing[0].raw_body = JSON.stringify(missing[0].raw_response);
+  missing[0].raw_sha256 = `sha256:${createHash('sha256').update(missing[0].raw_body).digest('hex')}`;
+  assert.throws(() => buildR13LanguageVariants(missing, en.map((row) => withRaw({ ...row, response: structuredClone(row.response) })), links), /probability_invalid/u);
+  const malformed = pt.map((row) => withRaw({ ...row, response: structuredClone(row.response) }));
+  malformed[0].response.answers.trigger_barrier.probabilities.none = 0.4;
+  malformed[0].raw_response = structuredClone(malformed[0].response);
+  malformed[0].raw_body = JSON.stringify(malformed[0].raw_response);
+  malformed[0].raw_sha256 = `sha256:${createHash('sha256').update(malformed[0].raw_body).digest('hex')}`;
+  assert.throws(() => buildR13LanguageVariants(malformed, en.map((row) => withRaw({ ...row, response: structuredClone(row.response) })), links), /probability_invalid/u);
+  const tampered = pt.map(withRaw); tampered[0].raw_body = '{}';
+  assert.throws(() => buildR13LanguageVariants(tampered, en.map(withRaw), links), /raw_digest_mismatch/u);
+});
+
+test('decision threshold uses the selected option probability instead of conflicting confidence', () => {
+  const item = makeItem('r-threshold');
+  item.probabilities.trigger_barrier = { type: 'choice', choice: 'trigger', confidence: 0.99,
+    probabilities: { trigger: 0.2, barrier: 0.5, none: 0.3 } };
+  const baseline = summarizeR13Baseline({ items: [item], calls: [{ id: item.call_id,
+    usage: { input_tokens: 10, output_tokens: 1 } }] });
+  assert.equal(baseline.historical_trigger_barrier_by_promotion.unresolved.organic, 1);
+  const repaired = result(item, 'repair', { confidence: 0.99 });
+  repaired.response.answers.trigger_barrier.probabilities = { trigger: 0.2, barrier: 0.5, none: 0.3 };
+  const summary = summarizeR13Repair({ items: [item] }, [repaired]);
+  assert.equal(summary.counts.unresolved, 1);
 });
 
 test('defined-interest coverage reports individual counts and overlap with baseline topics', () => {
@@ -161,6 +201,7 @@ test('private audit artifacts stay separate, mode 0600, and cannot overwrite pri
   try {
     const data = join(root, '.data');
     await mkdir(data, { mode: 0o700 });
+    await chmod(data, 0o755);
     const samples = Array.from({ length: 100 }, (_, index) => ({ case_id: `case-${index}`, text: `private sample ${index}` }));
     const key = sealR13AnswerKey(Object.fromEntries(samples.map((row, index) => [row.case_id,
       { root_id: `root-${index}`, decision: index % 2 ? 'trigger' : 'barrier' }])));
@@ -178,7 +219,7 @@ test('private audit artifacts stay separate, mode 0600, and cannot overwrite pri
     for (let index = 0; index < 597; index++) for (const language of ['pt', 'en']) {
       variants.push({ case_ids: [`case-${index}`], input_digest: `d-${index}`,
         question_language: language, request_digest: `${language}-${index}`, input_tokens: 5,
-        raw_sha256: `raw-${language}-${index}` });
+        raw_sha256: `raw-${language}-${index}`, probabilities: { trigger: 0.6, barrier: 0.3, none: 0.1 } });
     }
     const variantFile = join(data, 'auditor', 'variantes-r13.jsonl');
     const exportReceipt = await writeR13VariantFile({ dataRoot: data, destination: variantFile, rows: variants });
@@ -187,6 +228,9 @@ test('private audit artifacts stay separate, mode 0600, and cannot overwrite pri
     assert.equal((await readFile(variantFile, 'utf8')).includes('root-'), false);
     assert.equal((await readFile(variantFile, 'utf8')).includes('"choice"'), false);
     assert.equal((await writeR13VariantFile({ dataRoot: data, destination: variantFile, rows: variants })).reused, true);
+    const invalidVariants = variants.map((row) => ({ ...row, probabilities: { trigger: 0.8, barrier: 0.8, none: 0.1 } }));
+    await assert.rejects(writeR13VariantFile({ dataRoot: data,
+      destination: variantFile, rows: invalidVariants }), /row_invalid/u);
     await assert.rejects(writeR13VariantFile({ dataRoot: data,
       destination: join(data, 'other.jsonl'), rows: variants }), /output_directory_invalid/u);
   } finally {

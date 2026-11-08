@@ -1344,7 +1344,7 @@ export function renderPublicReceipt(summary, comparisonDate) {
   const jevStages = summary.stages.filter((stage) => stage.name.startsWith('jev_'));
   const claudeStage = summary.stages.find((stage) => stage.name === 'claude');
   const jevInputTokens = jevStages.reduce((total, stage) => total + (stage.input_tokens ?? 0), 0);
-  const editorialCallCount = claudeStage?.input_count || groupCount;
+  const editorialCallCount = groupCount;
   const projection = voyageStage?.free_tokens_used > 0 && jevInputTokens > 0 && editorialCallCount > 0
     ? projectR13Cost({
       roots: summary.root_count,
@@ -1376,7 +1376,7 @@ export function renderPublicReceipt(summary, comparisonDate) {
     '',
     ...(projection ? [`Uso a tarifa del piloto: Voyage ${dollars(Math.round(projection.pilot.voyage_usage_usd * 1_000_000))}, JEV ${dollars(Math.round(projection.pilot.jev_usage_usd * 1_000_000))}, Claude ${dollars(Math.round(projection.pilot.editorial_usage_usd * 1_000_000))}. Total ${dollars(Math.round(projection.pilot.combined_usage_value_usd * 1_000_000))}. Voyage se cubrió con tokens gratis y su cargo confirmado fue ${dollars(voyageStage?.charged_micro_usd ?? null)}.`]
       : ['Proyección no disponible porque el recibo no contiene los tokens reales medidos de las etapas.']),
-    `Claude confirmado por ${claudeStage?.input_count ?? 0} grupos: ${dollars(claudeStage?.charged_micro_usd ?? null)}. Cargo JEV por etapa: ${summary.jev_charge_reconciliation?.status === 'confirmed' ? dollars((summary.jev_charge_reconciliation.attributed_smoke_micro_usd ?? 0) + (summary.jev_charge_reconciliation.attributed_full_micro_usd ?? 0)) : 'no atribuible con las lecturas de saldo disponibles'}. Los costes a tarifa son estimaciones de uso, no débitos.`,
+    `Claude confirmado por ${summary.bertopic_group_count} grupos editoriales: ${dollars(claudeStage?.charged_micro_usd ?? null)}. Cargo JEV por etapa: ${summary.jev_charge_reconciliation?.status === 'confirmed' ? dollars((summary.jev_charge_reconciliation.attributed_smoke_micro_usd ?? 0) + (summary.jev_charge_reconciliation.attributed_full_micro_usd ?? 0)) : 'no atribuible con las lecturas de saldo disponibles'}. Los costes a tarifa son estimaciones de uso, no débitos.`,
     `Tokens gratis consumidos: ${summary.free_tokens_used ?? 'n/d'}.`,
     ...(() => {
       const voyage = summary.stages.find((stage) => stage.name === 'voyage');

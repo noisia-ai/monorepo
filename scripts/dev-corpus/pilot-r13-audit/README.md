@@ -2,7 +2,7 @@
 
 `pilot-r13-audit-export.mjs` wires the repeatable private evidence exports for the two R13 audit phases. It reads only mode-restricted files under `.data`, writes private evidence with mode `0600`, and never prints source text, root IDs, the blind key, or per-case decisions. Phase A publishes the corrected public receipt and creates a reproducible 100-case consumer sample. Phase B adds interest coverage, the native paired cost comparison, and language-pair linkage for the historical blind cases.
 
-Create the operator JSON config under the R13 `.data` directory with mode `0600`. Paths below are absolute. `repository_root` must be this checkout; `workspace_data_root` and `r13_data_root` must each point to a mode `0700` `.data` directory.
+Create the operator JSON config under the R13 `.data` directory with mode `0600`. Paths below are absolute. `repository_root` must be this checkout; `workspace_data_root` and `r13_data_root` must each point to a `.data` directory. A shared `.data` root may be group-readable; every descendant directory containing private material must be mode `0700`, and private files must be mode `0600`. The exporter does not change permissions on the root.
 
 ```json
 {
@@ -11,8 +11,8 @@ Create the operator JSON config under the R13 `.data` directory with mode `0600`
   "r13_data_root": "/absolute/path/to/private-data/.data",
   "h4": {
     "snapshot": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/inputs/h2-snapshot.json",
-    "snapshot_proof": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/inputs/proof.json",
-    "operator_receipt": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/inputs/operator-receipt.json",
+    "snapshot_proof": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/inputs/h2-snapshot-proof.json",
+    "operator_receipt": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/output/operator-receipt-<snapshot-sha256>.json",
     "comparison": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/inputs/comparison.json",
     "answer_key": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/custodia/clave-sellada.json",
     "blind_samples": "/absolute/path/to/noisia-website/.data/pilot-audit-h4/auditor/muestras-ciegas.jsonl"
@@ -51,4 +51,6 @@ node scripts/dev-corpus/pilot-r13-audit-export.mjs --phase phase-a --config /abs
 node scripts/dev-corpus/pilot-r13-audit-export.mjs --phase phase-b --config /absolute/path/to/private-data/.data/piloto-masivo/r13/audit-config.json
 ```
 
-Phase A may be rerun to verify the exact same immutable packet and evidence. Phase A refuses to overwrite a receipt after Phase B has superseded it. Phase B reuses an identical variant export and evidence; changed source bytes fail closed. The public receipt is updated atomically. The new sample key remains in the separate custody directory. The language variant JSONL contains blinded case IDs, language, request/input digests and token/hash metadata; it omits root IDs and model answers.
+Phase A may be rerun to verify the exact same immutable packet and evidence. Phase A refuses to overwrite a receipt after Phase B has superseded it. Phase B reuses an identical variant export and evidence; changed source bytes fail closed. The public receipt is updated atomically. The new sample key remains in the separate custody directory. The language variant JSONL contains blinded case IDs, language, the full trigger/barrier/none probability distribution, request/input digests and token/hash metadata. Probabilities are checked against each result's raw response and sealed body hash. The export omits root IDs, choices, the blind key and answer-key decisions.
+
+Claude's observed pilot cost is divided by the 144 BERTopic groups in the measured run to estimate cost per editorial group. The public forecast shows 180, 225 and 270 groups, with Voyage and JEV scaled by root count. The central scenario is 225 groups; Claude's call count is not used as a proxy for group count.
