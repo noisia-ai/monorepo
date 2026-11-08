@@ -1,3 +1,5 @@
+import {assertMassLabelingProductNativeV2} from "./signal-mass-labeling-product.synthetic.fixture";
+import {assertMassLabelingStudyPolicyV1} from "./signal-mass-labeling-study-policy.assertions";
 import assert from "node:assert/strict";
 import {randomUUID,createHash} from "node:crypto";
 import test from "node:test";
@@ -19,14 +21,14 @@ import {persistSignalWorkspaceEngineArtifactV1,failSignalWorkspaceEngineV1,retry
 import {jevUsageV1} from "../../../services/workers/src/workers/signal-jev-labeling-page";
 import {validateJevResponseV1} from "../../../services/workers/src/providers/typesafe-jev";
 
-for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"] as const) test(`mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences (${authorization})`, {
+for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding","product"] as const) test(`mass labeling seals full population, bills once, and serves probability pages with live tenant/rights fences (${authorization})`, {
   skip: process.env.NOISIA_MFP_PG_CI !== "true", timeout: 600_000,
 }, async () => {
-  const localization=authorization==="rotation"?{original_language:"pt-BR",
+  const localization=(authorization==="rotation"||authorization==="product")?{original_language:"pt-BR",
     original:{name:"Reparos de bicicletas",definition:"Experiências reparando bicicletas."},
     en:{name:"Bicycle repairs",definition:"Experiences repairing bicycles."},
     es:{name:"Reparaciones de bicicletas",definition:"Experiencias reparando bicicletas."}}:undefined;
-  const scopedMode=authorization!=="rotation",rootCount=authorization==="scoped-funding"?1002:authorization==="scoped-scale"?200:3;
+  const scopedMode=authorization!=="rotation"&&authorization!=="product",rootCount=authorization==="scoped-funding"?1002:authorization==="scoped-scale"?200:3;
   const {openDatabase} = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
   const pool: Pool = await openDatabase(), raw = await pool.connect();
   const flag = process.env.NOISIA_MASS_LABELING_ENABLED;
@@ -208,6 +210,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
     await assert.rejects(createMassLabelingMapV1({...mapArgs, assignments_raw: assignmentsRaw+" "}), /mass_labeling_source_invalid/);
     await assert.rejects(createMassLabelingMapV1({...mapArgs,source_checkpoints:[]}),/mass_labeling_source_checkpoint_invalid/);
     const map = await createMassLabelingMapV1(mapArgs);
+    if(authorization==="product"){await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});return;}
     const candidateSample=(await query("SELECT candidates FROM signal_mass_labeling_items WHERE map_id=$1 ORDER BY ordinal LIMIT 1",[map.map_id])).rows[0]!.candidates[0];
     assert.equal(candidateSample.name,localization?.original.name??"Bicycle repairs");
     assert.equal(candidateSample.definition,localization?.original.definition??"Experiences repairing bicycles.");
@@ -725,7 +728,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
       await importMassLabelingR13V1({...access, map_id: map.map_id, translations: [localization], results: [revision]});
       const revised = await loadSignalWorkspaceTopicsOverviewV1(access);
       assert.equal(revised!.terms[0]!.localization?.en.name, "Bicycle repairs");
-      assert.deepEqual(revised!.consumer_indicators, {eligible: 2, processed: 1, trigger: 1, barrier: 0, none: 0, intermediate: 0, unresolved: 1});
+      assert.deepEqual(revised!.consumer_indicators, {eligible: 2, category_matched: 2, category_excluded: 0, processed: 1, trigger: 1, barrier: 0, none: 0, intermediate: 0, unresolved: 1});
       assert.deepEqual(revised!.population_segments, {all: 3, conversation: 2, advertising: 1, hashtags: 0});
       const empty = await loadSignalWorkspaceTopicsOverviewV1({...access, conversation_segment: "advertising"});
       assert.equal(empty!.denominator, 1);
@@ -758,6 +761,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
       assert.deepEqual((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes,signal_mass_labeling_r13_hashtags_v1($2) no", ["#cerveja #futebol!", "#cerveja 🍻"])).rows[0], {yes: true, no: false});
       const hashtagFixtures = [["#ação, #SãoPaulo",true],["#中文 #футбол",true],["#cerveja ordinary",false],["#cerveja\ufeff",true],["#cerveja\u0085",false],["#١",false],["#²",false]] as const;
       for (const [text,expected] of hashtagFixtures) assert.equal((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes",[text])).rows[0]!.yes,expected);
+      await assertMassLabelingStudyPolicyV1({...access,map_id:map.map_id,foreign_actor:foreignActor,root_id:first.root_id,input_digest:first.input_digest});
 
     }
     await correctMassLabelingTopicV1({...access, map_id: map.map_id, root_id: page1.items[0]!.mention_id,

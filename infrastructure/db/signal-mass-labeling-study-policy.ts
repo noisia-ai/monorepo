@@ -1,3 +1,4 @@
+import {loadSignalSemanticResolutionGovernedContextV1} from "./signal-semantic-resolution";
 import type {Pool, PoolClient} from "pg";
 import {signalWorkspaceEmbeddingDigestV1 as digest} from "@noisia/query-engine";
 import {loadSignalWorkspaceCapabilitiesStoreV1} from "./signal-workspace-capabilities";
@@ -54,8 +55,10 @@ export async function loadMassLabelingStudyPolicyWithClientV1(client:Pick<PoolCl
     FROM signal_mass_labeling_study_policies WHERE workspace_id=$1 ORDER BY revision DESC LIMIT 1`,[workspace_id])).rows[0];
   if(stored)return {...stored,contract_version:"mass-labeling-study-policy-v1"};
   const {seeds,context_digest}=await loadSignalWorkspaceMassLabelingSeedsV1({queryable:client,workspace_id});
+  const governed=await loadSignalSemanticResolutionGovernedContextV1(client,workspace_id);
+  const categories=[...new Set(governed.identities.filter(i=>i.scope==="category").map(i=>i.entity_label.trim()).filter(Boolean))];
   return {contract_version:"mass-labeling-study-policy-v1",workspace_id,revision:0,
-    category:seeds.find(s=>s.scope==="category")?.names[0]??"",
+    category:categories.length===1?categories[0]!:"",
     lexicon_terms:[...new Set(seeds.flatMap(s=>s.names))],candidate_language:"en",interest_threshold:.85,
     interests:[],lexicon_provenance:"brand_os",source_digest:context_digest,display_names:{}};
 }
@@ -90,7 +93,7 @@ export async function proposeMassLabelingStudyLexiconV1(args:Access&{expected_re
     await authorize(client,args.workspace_id,args.actor_user_id,true);
     const current=await loadMassLabelingStudyPolicyWithClientV1(client,args.workspace_id);
     if(current.lexicon_provenance==="analyst"||current.lexicon_provenance==="editorial")return current;
-    const proposed={...current,...args};validate(proposed);
+    const proposed={...current,...args,category:current.category||args.category};validate(proposed);
     return savePolicy(client,proposed,"editorial",args.source_digest);
   });
 }
@@ -103,16 +106,20 @@ async function savePolicy(client:PoolClient,args:Access&Writable&{expected_revis
   const topics=(await client.query<{topic_key:string}>(`SELECT DISTINCT topic.topic_key FROM signal_mass_labeling_topics topic
     WHERE workspace_id=$1 AND topic_key=ANY($2::text[])`,[args.workspace_id,keys])).rows.map(t=>t.topic_key);
   if(args.interests.some(i=>topics.includes(i.key))||Object.keys(display).some(k=>!topics.includes(k)))fail("study_policy_topic_conflict",422);
+  const terms=[...new Set(args.lexicon_terms.map(t=>t.trim()))];
+  const unchangedTerms=digest([...terms].sort())===digest([...current.lexicon_terms].sort());
+  const resolvedProvenance=provenance==="analyst"&&unchangedTerms?current.lexicon_provenance:provenance;
+  const resolvedSource=provenance==="analyst"&&unchangedTerms?current.source_digest:source;
   const policy:MassLabelingStudyPolicyV1={contract_version:"mass-labeling-study-policy-v1",workspace_id:args.workspace_id,
-    revision:current.revision+1,category:args.category.trim(),lexicon_terms:[...new Set(args.lexicon_terms.map(t=>t.trim()))],
+    revision:current.revision+1,category:args.category.trim(),lexicon_terms:terms,
     candidate_language:args.candidate_language,interest_threshold:args.interest_threshold,
     interests:args.interests.map(i=>({key:i.key,name:i.name.trim(),definition:i.definition.trim(),active:i.active})),
-    lexicon_provenance:provenance,source_digest:source,display_names:display};
+    lexicon_provenance:resolvedProvenance,source_digest:resolvedSource,display_names:display};
   await client.query(`INSERT INTO signal_mass_labeling_study_policies(workspace_id,revision,category,lexicon_terms,
     candidate_language,interest_threshold,interests,lexicon_provenance,source_digest,display_names,created_by_user_id)
     VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::jsonb,$11)`,[policy.workspace_id,policy.revision,policy.category,
     policy.lexicon_terms,policy.candidate_language,policy.interest_threshold,JSON.stringify(policy.interests),
-    provenance,source,JSON.stringify(display),args.actor_user_id]);
+    policy.lexicon_provenance,policy.source_digest,JSON.stringify(display),args.actor_user_id]);
   return policy;
 }
 export const massLabelingStudyInterestDigestV1=(interest:{name:string;definition:string})=>digest({name:interest.name,definition:interest.definition});

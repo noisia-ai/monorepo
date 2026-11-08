@@ -62,6 +62,11 @@ BEGIN
   AND i.map_id=NEW.map_id AND i.root_id=NEW.root_id AND i.input_digest=NEW.input_digest)
   OR NOT COALESCE(NEW.usage->>'input_tokens' ~ '^[0-9]+$' AND NEW.usage->>'output_tokens' ~ '^[0-9]+$',false) THEN
   RAISE EXCEPTION 'study_interest_receipt_invalid' USING ERRCODE='23514'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM signal_mass_labeling_study_policies policy
+   CROSS JOIN LATERAL jsonb_array_elements(policy.interests) interest
+   WHERE policy.workspace_id=NEW.workspace_id AND interest->>'key'=NEW.interest_key
+    AND signal_labeling_digest_v1(jsonb_build_object('name',interest->>'name','definition',interest->>'definition'))=NEW.definition_digest) THEN
+  RAISE EXCEPTION 'study_interest_definition_invalid' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
 CREATE TRIGGER mass_labeling_study_interest BEFORE INSERT OR UPDATE OR DELETE ON signal_mass_labeling_study_interest_results
@@ -83,15 +88,25 @@ BEGIN
  EXECUTE format($create$
   CREATE FUNCTION signal_mass_labeling_lexical_text_v1(body text) RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE
    SET search_path=pg_catalog AS $fn$
-   SELECT ' '||btrim(regexp_replace(lower(COALESCE(body,'')) COLLATE %1$I,'[^[:alnum:]]+',' ','g'))||' '
+   SELECT ' '||btrim(regexp_replace(lower(COALESCE(body,'') COLLATE %1$I),'[^[:alnum:]]+',' ','g'))||' '
   $fn$;
  $create$,unicode_collation);
 END $install$;
+CREATE FUNCTION signal_mass_labeling_category_pattern_v1(terms text[]) RETURNS text
+ LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path=public,pg_catalog AS $$
+ SELECT ' ('||string_agg(term,'|' ORDER BY term COLLATE "C")||') '
+ FROM (SELECT DISTINCT btrim(signal_mass_labeling_lexical_text_v1(value)) term FROM unnest(terms) value) normalized
+ WHERE term<>''
+$$;
+-- Every pattern is constructed from normalized letters, digits and spaces.
+-- A corpus body is normalized once, and query callers materialize the pattern once.
+CREATE FUNCTION signal_mass_labeling_category_pattern_matches_v1(body text,pattern text) RETURNS boolean
+ LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path=public,pg_catalog AS $$
+ SELECT COALESCE(signal_mass_labeling_lexical_text_v1(body) ~ pattern,false)
+$$;
 CREATE FUNCTION signal_mass_labeling_category_matches_v1(body text,terms text[]) RETURNS boolean
  LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path=public,pg_catalog AS $$
- SELECT EXISTS(SELECT 1 FROM unnest(terms) term
-  WHERE btrim(signal_mass_labeling_lexical_text_v1(term))<>''
-   AND strpos(signal_mass_labeling_lexical_text_v1(body),signal_mass_labeling_lexical_text_v1(term))>0)
+ SELECT signal_mass_labeling_category_pattern_matches_v1(body,signal_mass_labeling_category_pattern_v1(terms))
 $$;
 DO $$ DECLARE object_name text;role_name text;BEGIN
  FOREACH object_name IN ARRAY ARRAY['signal_mass_labeling_study_policies','signal_mass_labeling_study_interest_results'] LOOP
@@ -101,6 +116,7 @@ DO $$ DECLARE object_name text;role_name text;BEGIN
    IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=role_name) THEN EXECUTE format('REVOKE ALL ON TABLE %I FROM %I',object_name,role_name);END IF;
   END LOOP;
  END LOOP;
+ REVOKE ALL ON FUNCTION signal_mass_labeling_category_pattern_matches_v1(text,text) FROM PUBLIC;
  REVOKE ALL ON FUNCTION guard_signal_mass_labeling_study_policy_v1(),guard_signal_mass_labeling_study_interest_v1() FROM PUBLIC;
 END $$;
 
@@ -160,3 +176,37 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+-- Candidate ordinals come from the exact paid request, including the four-candidate route.
+CREATE OR REPLACE VIEW signal_mass_labeling_memberships_v1 AS
+ WITH pairs AS (
+  SELECT item.workspace_id,item.map_id,item.root_id,topic.topic_key concept_key,topic.definition_digest,
+    CASE WHEN receipt.id IS NULL THEN candidate.ordinality-1 ELSE (SELECT selected.ordinality-1
+      FROM jsonb_array_elements(receipt.inputs->0->'candidates') WITH ORDINALITY selected(value,ordinality)
+      WHERE selected.value->>'topic_key'=candidate.value->>'topic_key') END candidate_ordinal
+  FROM signal_mass_labeling_items item
+  CROSS JOIN LATERAL jsonb_array_elements(item.candidates) WITH ORDINALITY candidate(value,ordinality)
+  JOIN signal_mass_labeling_topics topic ON topic.map_id=item.map_id AND topic.topic_key=candidate.value->>'topic_key'
+  LEFT JOIN signal_mass_labeling_results outcome ON outcome.map_id=item.map_id AND outcome.root_id=item.root_id
+  LEFT JOIN signal_labeling_calls receipt ON receipt.id=outcome.call_id AND receipt.workspace_id=item.workspace_id
+  UNION
+  SELECT correction.workspace_id,correction.map_id,correction.root_id,topic.topic_key,topic.definition_digest,NULL::bigint
+  FROM signal_mass_labeling_overrides correction
+  JOIN signal_mass_labeling_topics topic ON topic.map_id=correction.map_id AND topic.topic_key=correction.topic_key
+  WHERE NOT EXISTS(SELECT 1 FROM signal_mass_labeling_items item
+    CROSS JOIN LATERAL jsonb_array_elements(item.candidates) candidate
+    WHERE item.map_id=correction.map_id AND item.root_id=correction.root_id AND candidate->>'topic_key'=correction.topic_key)
+ ) SELECT pair.*,COALESCE(override.belongs,
+   (result.probabilities->('topic_'||candidate_ordinal::text)->>'noul')::double precision>0.7) belongs,
+   CASE WHEN override.id IS NOT NULL THEN 1::double precision
+     ELSE (result.probabilities->('topic_'||candidate_ordinal::text)->>'noul')::double precision END probability,
+   override.id override_id
+ FROM pairs pair
+ LEFT JOIN signal_mass_labeling_results result ON result.map_id=pair.map_id AND result.root_id=pair.root_id
+   AND result.status IN('labeled','abstained')
+ LEFT JOIN LATERAL (
+   SELECT correction.id,correction.belongs FROM signal_mass_labeling_overrides correction
+   WHERE correction.map_id=pair.map_id AND correction.root_id=pair.root_id AND correction.topic_key=pair.concept_key
+   ORDER BY correction.created_at DESC,correction.id DESC LIMIT 1
+ ) override ON true;
+
