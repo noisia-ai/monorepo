@@ -68,7 +68,7 @@ function raw(
     interpretations: batch.clusters.map((g, n) => ({
       cluster_id: g.cluster_id,
       cluster_digest: g.cluster_digest,
-      status: "coherent",
+      status: missingTopReference && n === 0 ? "mixed" : "coherent",
       name: "Experiências de consumo",
       definition: "Conversas sobre experiências de consumo.",
       citations:
@@ -101,6 +101,7 @@ const cases: Array<{
   state?: SignalWorkspaceEngineInterpretationCallV1["state"];
   invalidRepair?: boolean;
   originalSuccessor?: boolean;
+  operatorInsufficient?: "approved" | "wrong_hash" | "wrong_unit";
 }> = [
   {},
   { state: "reserved" },
@@ -110,9 +111,12 @@ const cases: Array<{
   { state: "in_flight" },
   { invalidRepair: true },
   { originalSuccessor: true },
+  { operatorInsufficient: "approved" },
+  { operatorInsufficient: "wrong_hash" },
+  { operatorInsufficient: "wrong_unit" },
 ];
 for (const scenario of cases)
-  test(`pilot recovery preserves original batches and handles repair ${scenario.state ?? (scenario.invalidRepair ? "invalid" : scenario.originalSuccessor ? "original_successor" : "unrequested")}`, async () => {
+  test(`pilot recovery preserves original batches and handles repair ${scenario.state ?? scenario.operatorInsufficient ?? (scenario.invalidRepair ? "invalid" : scenario.originalSuccessor ? "original_successor" : "unrequested")}`, async () => {
     const groups = Array.from(
       { length: scenario.invalidRepair ? 16 : 12 },
       (_, n) => group(n + 1),
@@ -263,7 +267,22 @@ for (const scenario of cases)
       existingRepair.response = null;
       existingRepair.settled_micro_usd = null;
     }
+    if (scenario.operatorInsufficient) {
+      existingRepair = seed(buildSignalWorkspaceInterpretationRepairBatchV1(plan[2]!, {
+        source_call_id: last.call_id, source_response_sha256: last.response!.sha256, diagnostic: "output_invalid",
+      }), true);
+    }
     const initialCalls = calls.size;
+    const initialLedger = JSON.stringify([...calls.values()]);
+    const decision = scenario.operatorInsufficient ? {
+      decision_id: id(800), workspace_id: lease.workspace_id, execution_id: lease.execution_id,
+      exception_id: id(801), unit_key: groups[scenario.operatorInsufficient === "wrong_unit" ? 9 : 8]!.cluster_id,
+      original_call_id: last.call_id, repair_call_id: existingRepair!.call_id,
+      original_response_sha256: last.response!.sha256,
+      repair_response_sha256: scenario.operatorInsufficient === "wrong_hash" ? sha("foreign") : existingRepair!.response!.sha256,
+      input_digest: lease.input_digest, fit_checkpoint_digest: sha("fit"), reason: "missing_general_citations" as const,
+      created_by_user_id: id(7), created_at: "2026-11-07T00:00:00.000Z",
+    } : null;
     const storage: WorkspaceEngineStorageV1 = {
       put: async (a) => storeBytes(await readFile(a.file)),
       get: async (a) => {
@@ -286,6 +305,7 @@ for (const scenario of cases)
         call_configuration: configuration,
         unit_keys: batch.clusters.map((g) => g.cluster_id),
         interpretation_revision_digest: null,
+        insufficiency_decision_id: JSON.parse(body).operator_insufficiency?.decision_id ?? null,
       };
       checkpointRows.push(row);
       for (const key of row.unit_keys) checkpointed.add(key);
@@ -348,6 +368,7 @@ for (const scenario of cases)
               { unit_keys: plan[1]!.clusters.map((g) => g.cluster_id) },
             ] as never)
           : [],
+      insufficiencyDecisions: async () => decision ? [decision] : [],
       recoveryCalls: async () =>
         [...calls.values()].map((c) => ({
           ...c,
@@ -431,7 +452,17 @@ for (const scenario of cases)
       },
       checkpoint: async (a) => {
         const c = calls.get(a.call_id)!;
-        return checkpoint(c, files.get(a.artifact.storage_key)!.toString());
+        const body = files.get(a.artifact.storage_key)!.toString();
+        if (a.insufficiency_decision_id) {
+          assert.equal(a.insufficiency_packet, body);
+          assert.equal(a.insufficiency_decision_id, decision!.decision_id);
+          const packet = JSON.parse(body), selected = packet.interpretations.find((row: {cluster_id: string}) => row.cluster_id === decision!.unit_key);
+          assert.deepEqual(selected, { cluster_id: decision!.unit_key, cluster_digest: groups[8]!.cluster_digest,
+            status: "insufficient", name: null, definition: null, inclusion: [], exclusion: [], citations: [] });
+          assert.equal(packet.operator_insufficiency.original_response, files.get(last.response!.storage_key)!.toString());
+          assert.equal(packet.operator_insufficiency.repair_response, files.get(existingRepair!.response!.storage_key)!.toString());
+        }
+        return checkpoint(c, body);
       },
       quarantine: async (a) => {
         assert.ok(scenario.invalidRepair);
@@ -521,6 +552,31 @@ for (const scenario of cases)
       await assert.rejects(run(false), /outcome_unknown/u);
       assert.equal(sent.length, 0);
       assert.equal(reservations.length, 0);
+      assert.equal(calls.size, initialCalls);
+      return;
+    }
+    if (scenario.operatorInsufficient) {
+      if (scenario.operatorInsufficient !== "approved") {
+        await assert.rejects(run(true), /insufficiency_decision_invalid/u);
+        assert.equal(checkpointed.size, 8);
+        assert.equal(JSON.stringify([...calls.values()]), initialLedger);
+      } else {
+        await run(true);
+        assert.equal(checkpointed.size, 12);
+        assert.equal(checkpointRows.filter(row => row.insufficiency_decision_id).length, 1);
+        const firstPass = JSON.stringify(checkpointRows);
+        await run(true);
+        await run(false);
+        assert.equal(JSON.stringify(checkpointRows), firstPass);
+        assert.equal(JSON.stringify([...calls.values()]), initialLedger);
+        const operatorRow = checkpointRows.find(row => row.insufficiency_decision_id)!;
+        const operatorBody = JSON.parse(files.get(operatorRow.storage_key)!.toString());
+        operatorBody.interpretations[1].definition += " changed";
+        Object.assign(operatorRow, storeBytes(Buffer.from(JSON.stringify(operatorBody))));
+        await assert.rejects(run(true), /checkpoint_invalid/u);
+      }
+      assert.equal(reservations.length, 0);
+      assert.equal(sent.length, 0);
       assert.equal(calls.size, initialCalls);
       return;
     }

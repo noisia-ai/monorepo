@@ -439,12 +439,13 @@ export function recoverSignalWorkspaceInterpretationInsufficiencyV1(args: {
     if (!body || typeof body !== "object" || Array.isArray(body) || body.model !== batch.configuration.model
       || body.type !== "message" || body.role !== "assistant" || body.stop_reason !== "end_turn"
       || !Array.isArray(body.content)) return fail("insufficiency_decision_invalid");
-    const usage = z.object({ input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
-      cache_read_input_tokens: z.number().int().nonnegative().optional(),
-      cache_creation_input_tokens: z.number().int().nonnegative().optional(),
-      cache_creation: z.object({ ephemeral_1h_input_tokens: z.literal(0).optional() }).passthrough().optional(),
-    }).passthrough().safeParse(body.usage);
-    if (!usage.success || !Object.values(usage.data).filter(value => typeof value === "number").every(Number.isSafeInteger))
+    const usage = z.record(z.unknown()).safeParse(body.usage);
+    if (!usage.success || ![usage.data.input_tokens, usage.data.output_tokens,
+      usage.data.cache_read_input_tokens ?? 0, usage.data.cache_creation_input_tokens ?? 0]
+      .every(value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0))
+      return fail("insufficiency_decision_invalid");
+    const cache = z.record(z.unknown()).safeParse(usage.data.cache_creation);
+    if (cache.success && cache.data.ephemeral_1h_input_tokens !== undefined && cache.data.ephemeral_1h_input_tokens !== 0)
       return fail("insufficiency_decision_invalid");
     const blocks = z.array(z.object({ type: z.enum(["text", "thinking", "redacted_thinking"]),
       text: z.string().optional() }).passthrough()).safeParse(body.content);
