@@ -83,14 +83,16 @@ test("a denied lease sends nothing and a completed global response is persisted 
 });
 
 
-test("global transport uses one dedicated dispatcher with ten-minute header/body limits until persistence", async () => {
+test("global transport uses one dedicated dispatcher with twenty-minute header/body and total limits until persistence", async t => {
   let agent: Agent | undefined, factories = 0, fetches = 0, persisted = false;
+  const deadlines: number[] = [], actualTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, "timeout", (delay: number) => { deadlines.push(delay); return actualTimeout(delay); });
   const receipt = await sendMassLabelingConsolidationV1({ batch, api_key: "synthetic-key", enabled: true,
     authorize_send: async () => true,
     create_dispatcher: options => {
       factories++;
-      assert.equal(options.headersTimeout, 600_000);
-      assert.equal(options.bodyTimeout, 600_000);
+      assert.equal(options.headersTimeout, 1_200_000);
+      assert.equal(options.bodyTimeout, 1_200_000);
       assert.equal(options.connectTimeout, 10_000);
       assert.equal(options.connections, 1);
       assert.equal(options.pipelining, 0);
@@ -115,6 +117,7 @@ test("global transport uses one dedicated dispatcher with ten-minute header/body
   });
   assert.equal(receipt.complete, true);
   assert.equal(persisted, true);
+  assert.deepEqual(deadlines, [1_200_000]);
   assert.equal(factories, 1);
   assert.equal(fetches, 1);
   assert.equal(agent!.destroyed, true);
@@ -169,7 +172,7 @@ test("global transport deadline, disconnect and redirects never cause a second l
 
 test("invalid global deadlines stop before send authorization or dispatcher creation", async () => {
   let authorizations = 0, dispatchers = 0, requests = 0;
-  for (const timeout_ms of [0, -1, 600_001, Number.NaN]) {
+  for (const timeout_ms of [0, -1, 1_200_001, Number.NaN]) {
     await assert.rejects(sendMassLabelingConsolidationV1({ batch, api_key: "synthetic-key", enabled: true, timeout_ms,
       authorize_send: async () => { authorizations++; return true; },
       create_dispatcher: options => { dispatchers++; return new Agent(options); },

@@ -16,6 +16,8 @@ const denied = () =>
     "definitely_not_sent",
   );
 
+const consolidationTimeoutMs = 1_200_000;
+
 /** Read-only credential preflight. The operator runs this before admitting an
  * editorial execution, with the credential present only in process memory. */
 export async function assertMassLabelingEditorialAccessV1(args: {
@@ -45,8 +47,8 @@ export async function sendMassLabelingConsolidationV1(args: {
   create_dispatcher?: (options: Agent.Options) => Agent;
 }): Promise<WorkspaceInterpretationRawReceiptV1> {
   if (!args.enabled || !args.api_key.trim()) throw denied();
-  const timeout = args.timeout_ms ?? 600_000;
-  if (!Number.isInteger(timeout) || timeout < 1 || timeout > 600_000) throw denied();
+  const timeout = args.timeout_ms ?? consolidationTimeoutMs;
+  if (!Number.isInteger(timeout) || timeout < 1 || timeout > consolidationTimeoutMs) throw denied();
   const rebuilt = buildMassLabelingConsolidationRequestV1({
     workspace_id: args.batch.workspace_id,
     source_engine_execution_id: args.batch.source_engine_execution_id,
