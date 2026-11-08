@@ -21291,3 +21291,9 @@ body:has(.signal-report)::before { display: none; }
 .mfp-signal-selection { align-items: center; justify-content: space-between; padding: .75rem; background: #f2f6f3; border-radius: .5rem; }
 .mfp-signal-selection label { display: flex; gap: .5rem; align-items: center; }
 @media (max-width: 640px) { .mfp-filters { align-items: stretch; }.mfp-filters label { flex: 1 1 100%; }.mfp-membership { padding: .75rem; }.mfp-evidence { padding: .75rem; } }
+
+.signal-v2-tn__original { margin-top: 14px; padding-top: 12px; border-top: 1px solid #ebebeb; color: #626262; }
+.signal-v2-tn__original > small, .signal-v2-tn__original > strong { display: block; margin-bottom: 5px; }
+.signal-v2-tn__original > strong { font-size: 13px; }
+.signal-v2-tn__consumers { margin-bottom: 16px; }
+.signal-v2-tn__consumers .signal-v2-tn__term-metrics { grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }

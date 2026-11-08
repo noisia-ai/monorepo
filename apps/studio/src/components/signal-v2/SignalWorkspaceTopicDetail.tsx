@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { localizedSignalTopic } from "./signal-topic-localization";
 import { useLocale, useTranslations } from "next-intl";
 import type { SignalWorkspaceTopicDetailV1 } from "@noisia/db";
 import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceDefinedInterestOverviewV1 } from "@noisia/query-engine";
@@ -37,11 +38,12 @@ export function SignalWorkspaceTopicDetail({ data, termKey, kind = "topic", onSe
   const [failed, setFailed] = useState(false), [attempt, setAttempt] = useState(0);
   const selectedTerm = data.terms.find(term => term.term_key === termKey);
   const generationId = selectedTerm?.interest_generation_id ?? data.generation_id;
-  const membership = selectedTerm?.basis === "concept_membership";
+  const membership = selectedTerm?.basis === "concept_membership" || Boolean(data.population_segments);
   useEffect(() => {
     const controller = new AbortController(); setDetail(null); setFailed(false);
     if (!data.is_current || (!generationId && !membership)) return () => controller.abort();
     const params = new URLSearchParams({ view: "all_conversations", scope_digest: data.scope_digest });
+    if (data.filters.conversation_segment) params.set("conversation_segment", data.filters.conversation_segment);
     if (data.filters.date_from) params.set("date_from", data.filters.date_from);
     if (data.filters.date_to) params.set("date_to", data.filters.date_to);
     void fetch(`/api/data-os/signal/${data.workspace_id}/topics-narratives/${kind}/${encodeURIComponent(termKey)}?${params}`,
@@ -52,20 +54,22 @@ export function SignalWorkspaceTopicDetail({ data, termKey, kind = "topic", onSe
       if (!controller.signal.aborted) setDetail(value);
     }).catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => controller.abort();
-  }, [data.workspace_id, generationId, membership, data.scope_digest, data.is_current, data.filters.date_from, data.filters.date_to, kind, termKey, attempt]);
+  }, [data.workspace_id, generationId, membership, data.scope_digest, data.is_current, data.filters.conversation_segment, data.filters.date_from, data.filters.date_to, kind, termKey, attempt]);
   const current = data.is_current && detail && validNativeTopicDetail(detail, {
     workspace_id: data.workspace_id, generation_id: generationId, scope_digest: data.scope_digest, kind, term_key: termKey }) ? detail : null;
   return <>{failed ? <p role="alert">{t("error")} <button className="signal-v2-filter" type="button" onClick={() => setAttempt(value => value + 1)}>{t("retry")}</button></p> : null}
-    <SignalWorkspaceTopicDetailMetrics detail={current} loading={!current && !failed && data.is_current} onSelect={onSelect} />
+    <SignalWorkspaceTopicDetailMetrics terms={data.terms} detail={current} loading={!current && !failed && data.is_current} onSelect={onSelect} />
   </>;
 }
 
-export function SignalWorkspaceTopicDetailMetrics({ detail, loading = false, onSelect }: {
+export function SignalWorkspaceTopicDetailMetrics({ detail, terms, loading = false, onSelect }: {
+  terms?: SignalWorkspaceTopicsOverviewV1["terms"];
   detail: SignalWorkspaceTopicDetailV1 | null; loading?: boolean; onSelect: (key: string) => void;
 }) {
   const t = useTranslations("SignalV2.workspaceTopics.detailMetrics"), locale = useLocale();
   const number = (value: number) => value.toLocaleString(locale);
   const sentiment = detail?.sentiment;
+  const relatedLabels = new Map((terms ?? []).map(term => [term.term_key, localizedSignalTopic(term, locale).label]));
   const classified = sentiment ? sentiment.positive + sentiment.neutral + sentiment.negative : 0;
   const trendOption = useMemo(() => buildSignalTopicTrendOption((detail?.series ?? []).map((point) => ({
     label: formatTopicDate(point.date, locale),
@@ -94,7 +98,7 @@ export function SignalWorkspaceTopicDetailMetrics({ detail, loading = false, onS
     </div>
     <div className="signal-v2-tn__preview"><strong>{t("relationships")}</strong><p className="signal-v2-tn__evidence-intro">{t("relationshipMeaning")}</p>
       {detail?.related_topics.length ? detail.related_topics.map(topic => <button key={topic.term_key} type="button" onClick={() => onSelect(topic.term_key)}>
-        <span>{topic.label}</span><p>{t("shared", { count: number(topic.shared_mentions) })}</p>
+        <span>{relatedLabels.get(topic.term_key) ?? topic.label}</span><p>{t("shared", { count: number(topic.shared_mentions) })}</p>
       </button>) : <p>{t(loading ? "loading" : detail ? "noRelationships" : "unavailable")}</p>}
     </div>
   </div>;

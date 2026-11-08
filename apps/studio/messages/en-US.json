@@ -633,6 +633,27 @@
       "highlights": "There are no highlighted conversations for this period yet. You can explore the mentions."
     },
     "workspaceTopics": {
+      "selectedInterests": "Selected interests",
+      "corpusOriginal": "Corpus original ({language})",
+      "conversationSegment": {
+        "label": "Content",
+        "conversation": "Conversation",
+        "advertising": "Advertising",
+        "hashtags": "Hashtag-only posts",
+        "all": "All content"
+      },
+      "consumers": {
+        "pending": "Consumer review is pending.",
+        "title": "Consumer motivators and barriers",
+        "scope": "Individual consumers, excluding advertising and hashtag-only posts.",
+        "eligible": "Eligible consumers",
+        "processed": "Reviewed",
+        "trigger": "Motivators",
+        "barrier": "Barriers",
+        "none": "Neither",
+        "intermediate": "Intermediate",
+        "unresolved": "Pending"
+      },
       "mfp": {
         "source": "Concepts and memberships",
         "quality": "Adopted concepts use saved semantic decisions for their current definition. Discovery concepts retain their grouping. These experimental results do not establish accuracy or human approval.",
@@ -692,6 +713,7 @@
       "unavailableDimensionsBody": "This result does not include sentiment, relationships between Topics or verified narratives. Computed membership does not establish those dimensions.",
       "noiseAbstention": "There are {count, number} mentions without a stable cluster. This numerical abstention is not an editorial Noise decision.",
       "sections": {
+        "interests": "Defined interests",
         "label": "Explore classification",
         "topics": "Topics",
         "narratives": "Narratives",

@@ -13,7 +13,7 @@ import type { SignalBrandMonitoringV1 } from "../signal-v2/brand-monitoring";
 const require = createRequire(import.meta.url);
 const imageModule = require("next/image");
 Object.assign(imageModule, imageModule.default);
-const { SignalV2BrandMonitoring } = await import("../../components/signal-v2/SignalV2BrandMonitoring");
+const { SignalV2BrandMonitoring, nativeWorkspaceNavigationQueryV1 } = await import("../../components/signal-v2/SignalV2BrandMonitoring");
 import { buildNativeSignalMonitoringV1 } from "./signal-workspace-monitoring-native";
 Object.assign(globalThis, { React });
 // Deliberately synthetic empty monitoring contract, with imported volume below.
@@ -229,3 +229,19 @@ for (const locale of ["es-MX", "en-US"]) {
       : "Topic classification is still pending"));
   });
 }
+
+test("native SPA navigation retains the server-normalized conversation segment across monitoring and topics", () => {
+  for (const segment of ["conversation", "advertising", "hashtags", "all"] as const) {
+    const filters = { date_from: "2026-01-01", date_to: "2026-01-31", conversation_segment: segment };
+    for (const target of ["monitoring", "topics"] as const) {
+      const query = nativeWorkspaceNavigationQueryV1(filters, target);
+      assert.equal(query.get("conversation_segment"), segment);
+      assert.equal(query.get("date_from"), filters.date_from);
+      assert.equal(query.get("date_to"), filters.date_to);
+      assert.equal(query.get("cursor"), null);
+      assert.equal(query.get("scope_digest"), null);
+    }
+  }
+  assert.equal(nativeWorkspaceNavigationQueryV1(undefined, "topics").has("conversation_segment"), false);
+  assert.equal(nativeWorkspaceNavigationQueryV1({ conversation_segment: "advertising" }, "mentions").has("conversation_segment"), false);
+});

@@ -2,7 +2,7 @@ export const locales = ["es-MX", "en-US"] as const;
 
 export type AppLocale = (typeof locales)[number];
 
-export const defaultLocale: AppLocale = "es-MX";
+export const defaultLocale: AppLocale = "en-US";
 export const localeCookieName = "noisia_locale";
 
 export function isAppLocale(value: unknown): value is AppLocale {
@@ -17,6 +17,12 @@ export function normalizeLocale(value: unknown): AppLocale | null {
   if (normalized === "en" || normalized.startsWith("en-")) return "en-US";
 
   return null;
+}
+
+/** The interface language is an explicit user preference. Browser language does
+ * not override the product default when a preference has not been selected. */
+export function resolveRequestLocale(cookieLocale: unknown): AppLocale {
+  return isAppLocale(cookieLocale) ? cookieLocale : defaultLocale;
 }
 
 export function pickLocaleFromAcceptLanguage(value: string | null): AppLocale {
