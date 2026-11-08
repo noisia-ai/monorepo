@@ -11,6 +11,7 @@ import {createMassLabelingMapV1, createMassLabelingStoreV1, requestMassLabelingV
   correctMassLabelingTopicV1, exportMassLabelingSnapshotV1, measureMassLabelingSmokeV1} from "../signal-mass-labeling";
 import {loadSignalWorkspaceTopicsOverviewV1, loadSignalWorkspaceTopicEvidenceV1,
   loadSignalWorkspaceTopicDetailV1} from "../signal-workspace-topics-serving";
+import {importMassLabelingR13V1} from "../signal-mass-labeling-r13";
 import * as editorialMoney from "../signal-workspace-engine-interpretation";
 import {SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1 as globalConfiguration,buildMassLabelingConsolidationRequestV1} from "@noisia/query-engine";
 import {verifyMassLabelingSourceCheckpointsV1,type MassLabelingSourceCheckpointV1} from "../signal-mass-labeling-source";
@@ -560,7 +561,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
     for (const [index,call] of calls.entries()) {
       const payload = call.request as ReturnType<typeof buildMassLabelingJevRequestV1>;
       const answers = Object.fromEntries(Object.entries(payload.questions).map(([key, question]) => {
-        if (question.type === "noul") return [key, {type: "noul", noul: key === "topic_0" ? [0.95, 0.7, 0.9][index] : key === "relevance" ? 0.95 : 0.05}];
+        if (question.type === "noul") return [key, {type: "noul", noul: key === "topic_0" ? [0.95, 0.7, 0.9][index] : key === "relevance" ? 0.95 : key === "promotion" && authorization === "rotation" && index === 2 ? .95 : 0.05}];
         const keys = Object.keys(question.criteria), chosen = key === "voice" ? "individual" : "none";
         return [key, {type: "choice", choice: chosen, confidence: 0.99,
           probabilities: Object.fromEntries(keys.map(choice => [choice, choice === chosen ? 1 : 0]))}];
@@ -614,6 +615,65 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding"]
     assert.equal(page2.items[0]!.mention_id, calls[2]!.inputs[0]!.root_id);
     assert.equal(page1.items[0]!.quote, null);
     assert.equal((await loadSignalWorkspaceTopicDetailV1(evidenceArgs)).mention_count, 2);
+    if (authorization === "rotation") {
+      const topic = mapArgs.catalog[0]!;
+      const localization = {topic_key: topic.topic_key, original_language: "pt",
+        original: {name: topic.name, definition: topic.definition},
+        en: {name: "Bicycle repairs", definition: "Personal accounts of repairing bicycles"},
+        es: {name: "Reparación de bicicletas", definition: "Experiencias personales de reparación de bicicletas"}};
+      const first = calls[0]!.inputs[0]!;
+      const revision = {root_id: first.root_id, input_digest: first.input_digest,
+        trigger_barrier: {type: "choice" as const, choice: "trigger" as const, confidence: .9,
+          probabilities: {trigger: .9, barrier: .05, none: .05}},
+        request_digest: digest("revision request"), response_digest: digest("revision response"),
+        usage: {input_tokens: 80, output_tokens: 0}};
+      const imported = await importMassLabelingR13V1({...access, map_id: map.map_id,
+        translations: [localization], results: [revision]});
+      assert.equal(imported.results, 1);
+      await assert.rejects(importMassLabelingR13V1({...access,map_id:map.map_id,actor_user_id:foreignActor,
+        results:[revision]}),/r13_forbidden/);
+      await denied("UPDATE signal_mass_labeling_r13_results SET usage='{}' WHERE map_id=$1",[map.map_id],/r13_receipt_immutable/);
+      assert.equal((await query("SELECT relrowsecurity yes FROM pg_class WHERE oid='signal_mass_labeling_r13_results'::regclass")).rows[0]!.yes,true);
+      assert.equal((await query("SELECT has_table_privilege('anon','signal_mass_labeling_r13_results','SELECT') allowed")).rows[0]!.allowed,false);
+
+      await importMassLabelingR13V1({...access, map_id: map.map_id, translations: [localization], results: [revision]});
+      const revised = await loadSignalWorkspaceTopicsOverviewV1(access);
+      assert.equal(revised!.terms[0]!.localization?.en.name, "Bicycle repairs");
+      assert.deepEqual(revised!.consumer_indicators, {eligible: 2, processed: 1, trigger: 1, barrier: 0, none: 0, intermediate: 0, unresolved: 1});
+      assert.deepEqual(revised!.population_segments, {all: 3, conversation: 2, advertising: 1, hashtags: 0});
+      const empty = await loadSignalWorkspaceTopicsOverviewV1({...access, conversation_segment: "advertising"});
+      assert.equal(empty!.denominator, 1);
+      const adPage = await loadSignalWorkspaceTopicEvidenceV1({...evidenceArgs, conversation_segment: "advertising",
+        expected_scope_digest: empty!.scope_digest, cursor: undefined});
+      assert.equal(adPage.items.length, 1);
+      assert.equal(adPage.items[0]!.mention_id, calls[2]!.inputs[0]!.root_id);
+      assert.equal((await loadSignalWorkspaceTopicDetailV1({...evidenceArgs, conversation_segment: "advertising",
+        expected_scope_digest:empty!.scope_digest})).mention_count, 1);
+      assert.notEqual(empty!.scope_digest, revised!.scope_digest);
+      await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({...evidenceArgs, conversation_segment: "advertising",
+        expected_scope_digest: revised!.scope_digest, cursor: page1.next_cursor}), /workspace_topics_scope_changed/);
+      await assert.rejects(importMassLabelingR13V1({...access, map_id: map.map_id,
+        results: [{...revision, input_digest: digest("wrong")}]}), /r13_input_changed/);
+      await assert.rejects(importMassLabelingR13V1({...access, map_id: map.map_id,
+        translations: [{...localization, original: {...localization.original, name: "Altered"}}]}), /r13_original_changed/);
+      await assert.rejects(importMassLabelingR13V1({...access, map_id: map.map_id,
+        results: [{...revision, request_digest: digest("different")}]}), /r13_receipt_conflict/);
+      const interests = [{interest_key:"cycling_safety",name:"Cycling safety",definition:"Road safety and cycling precautions",
+        results:calls.map((call,k) => ({...revision,root_id:call.inputs[0]!.root_id,input_digest:call.inputs[0]!.input_digest,
+          probability:k===1?.95:.1}))}];
+      await importMassLabelingR13V1({...access,map_id:map.map_id,interests});
+      const enriched = await loadSignalWorkspaceTopicsOverviewV1(access);
+      assert.equal(enriched!.terms.find(t=>t.term_key==="cycling_safety")!.basis,"defined_interest");
+      assert.equal(enriched!.terms.find(t=>t.term_key==="cycling_safety")!.mention_count,1);
+      const interestPage = await loadSignalWorkspaceTopicEvidenceV1({...access,term_key:"cycling_safety",
+        expected_scope_digest:enriched!.scope_digest});
+      assert.equal(interestPage.items.length,1);
+      assert.equal(interestPage.items[0]!.mention_id,calls[1]!.inputs[0]!.root_id);
+      assert.deepEqual((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes,signal_mass_labeling_r13_hashtags_v1($2) no", ["#cerveja #futebol!", "#cerveja 🍻"])).rows[0], {yes: true, no: false});
+      const hashtagFixtures = [["#ação, #SãoPaulo",true],["#cerveja ordinary",false],["#cerveja\ufeff",true],["#cerveja\u0085",false],["#١",false],["#²",false]] as const;
+      for (const [text,expected] of hashtagFixtures) assert.equal((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes",[text])).rows[0]!.yes,expected);
+
+    }
     await correctMassLabelingTopicV1({...access, map_id: map.map_id, root_id: page1.items[0]!.mention_id,
       topic_key: "bicycle_repairs", belongs: false, decided_via: "human_ui"});
     const changed = await loadSignalWorkspaceTopicsOverviewV1(access); assert.equal(changed?.terms[0]!.mention_count, 1);

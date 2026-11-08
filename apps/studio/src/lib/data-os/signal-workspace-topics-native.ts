@@ -6,9 +6,11 @@ import { loadSignalWorkspaceTopicsPageV1, loadSignalWorkspaceTopicReadBundleV1, 
 import type { SignalWorkspaceTopicsOverviewV1 } from "@noisia/query-engine";
 import type { TopicSignalSelectionV1 } from "./signal-topic-selection-ui";
 
+import type { SignalConversationSegmentV1 } from "@noisia/query-engine";
+
 type ActorScope = { workspace_id: string; actor_user_id: string; timezone?: string };
 export function nativeTopicsQueryV1(params: URLSearchParams) {
-  const allowed = new Set(["view", "date_from", "date_to", "start", "end", "timezone", "granularity", "compare", "cursor", "scope_digest", "limit"]);
+  const allowed = new Set(["conversation_segment", "view", "date_from", "date_to", "start", "end", "timezone", "granularity", "compare", "cursor", "scope_digest", "limit"]);
   if ([...params.keys()].some(key => !allowed.has(key))
     || (params.has("granularity") && params.get("granularity") !== "day") || (params.has("compare") && params.get("compare") !== "none")) {
     throw Object.assign(new Error("Only the supported date filters can be applied to native Topics"), { code: "workspace_topic_filter_unsupported", status: 422 });
@@ -26,7 +28,11 @@ export function nativeTopicsQueryV1(params: URLSearchParams) {
     }
   }
   if (date_from && date_to && date_from > date_to) throw Object.assign(new Error("Invalid date range"), { code: "workspace_topic_filter_invalid", status: 422 });
-  return { ...(date_from ? { date_from } : {}), ...(date_to ? { date_to } : {}) };
+  const segment = params.get("conversation_segment");
+  if (segment !== null && !["all","conversation","advertising","hashtags"].includes(segment))
+    throw Object.assign(new Error("Invalid conversation segment"), {code:"workspace_topic_filter_invalid",status:422});
+  return { ...(date_from ? { date_from } : {}), ...(date_to ? { date_to } : {}),
+    ...(segment ? {conversation_segment:segment as SignalConversationSegmentV1} : {}) };
 }
 export const nativeTopicsViewV1 = (params: URLSearchParams) => !params.has("view") || params.get("view") === "all_conversations";
 export async function loadNativeSignalTopicsV1(scope: ActorScope & { imported_fallback?: boolean }, params = new URLSearchParams()) {
