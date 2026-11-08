@@ -1,3 +1,5 @@
+import { Agent } from "undici";
+import { createServer } from "node:http";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildMassLabelingConsolidationRequestV1 } from "@noisia/query-engine";
@@ -78,4 +80,107 @@ test("a denied lease sends nothing and a completed global response is persisted 
   assert.equal(requests, 1);
   assert.equal(persisted, true);
   assert.equal(receipt.complete, true);
+});
+
+
+test("global transport uses one dedicated dispatcher with twenty-minute header/body and total limits until persistence", async t => {
+  let agent: Agent | undefined, factories = 0, fetches = 0, persisted = false;
+  const deadlines: number[] = [], actualTimeout = AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal, "timeout", (delay: number) => { deadlines.push(delay); return actualTimeout(delay); });
+  const receipt = await sendMassLabelingConsolidationV1({ batch, api_key: "synthetic-key", enabled: true,
+    authorize_send: async () => true,
+    create_dispatcher: options => {
+      factories++;
+      assert.equal(options.headersTimeout, 1_200_000);
+      assert.equal(options.bodyTimeout, 1_200_000);
+      assert.equal(options.connectTimeout, 10_000);
+      assert.equal(options.connections, 1);
+      assert.equal(options.pipelining, 0);
+      assert.equal(options.maxRedirections, 0);
+      agent = new Agent(options);
+      return agent;
+    },
+    fetch_impl: async (url, init) => {
+      fetches++;
+      assert.equal(url, "https://api.anthropic.com/v1/messages");
+      assert.equal(init?.body, batch.request_body);
+      assert.equal(init?.redirect, "error");
+      assert.equal((init as RequestInit & { dispatcher: Agent }).dispatcher, agent);
+      assert.equal(agent!.destroyed, false);
+      return new Response('{"synthetic":"complete"}', { status: 200 });
+    },
+    persist_receipt: async value => {
+      assert.equal(agent!.destroyed, false);
+      assert.equal(value.complete, true);
+      persisted = true;
+    },
+  });
+  assert.equal(receipt.complete, true);
+  assert.equal(persisted, true);
+  assert.deepEqual(deadlines, [1_200_000]);
+  assert.equal(factories, 1);
+  assert.equal(fetches, 1);
+  assert.equal(agent!.destroyed, true);
+});
+
+test("global transport preserves partial bytes and closes its dedicated dispatcher after persisting", async () => {
+  let agent: Agent | undefined;
+  const receipt = await sendMassLabelingConsolidationV1({ batch, api_key: "synthetic-key", enabled: true,
+    authorize_send: async () => true,
+    create_dispatcher: options => { agent = new Agent(options); return agent; },
+    fetch_impl: async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(Buffer.from('{"partial":')); },
+      pull(controller) { controller.error(new Error("synthetic_interrupted_body")); },
+    })),
+    persist_receipt: async value => {
+      assert.equal(agent!.destroyed, false);
+      assert.equal(value.complete, false);
+      assert.equal(Buffer.from(value.bytes).toString(), '{"partial":');
+    },
+  });
+  assert.equal(receipt.complete, false);
+  assert.equal(agent!.destroyed, true);
+});
+
+test("global transport deadline, disconnect and redirects never cause a second local request", async () => {
+  for (const scenario of ["deadline", "redirect", "disconnect"] as const) {
+    let requests = 0, receipts = 0, agent: Agent | undefined;
+    const server = createServer((_request, response) => {
+      requests++;
+      if (scenario === "redirect") { response.writeHead(302, { Location: "/alternate" }); response.end(); }
+      if (scenario === "disconnect") response.destroy();
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    assert.ok(address && typeof address !== "string");
+    try {
+      await assert.rejects(sendMassLabelingConsolidationV1({ batch, api_key: "synthetic-key", enabled: true,
+        authorize_send: async () => true, timeout_ms: scenario === "deadline" ? 750 : 3000,
+        create_dispatcher: options => { agent = new Agent(options); return agent; },
+        fetch_impl: async (_url, init) => fetch(`http://127.0.0.1:${address.port}/initial`, init),
+        persist_receipt: async () => { receipts++; },
+      }), error => error instanceof Error && "outcome" in error && error.outcome === "outcome_unknown");
+      assert.equal(requests, 1);
+      assert.equal(receipts, 0);
+      assert.equal(agent!.destroyed, true);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+});
+
+test("invalid global deadlines stop before send authorization or dispatcher creation", async () => {
+  let authorizations = 0, dispatchers = 0, requests = 0;
+  for (const timeout_ms of [0, -1, 1_200_001, Number.NaN]) {
+    await assert.rejects(sendMassLabelingConsolidationV1({ batch, api_key: "synthetic-key", enabled: true, timeout_ms,
+      authorize_send: async () => { authorizations++; return true; },
+      create_dispatcher: options => { dispatchers++; return new Agent(options); },
+      fetch_impl: async () => { requests++; return new Response("{}"); },
+      persist_receipt: async () => { throw new Error("unexpected_receipt"); },
+    }), error => error instanceof Error && "outcome" in error && error.outcome === "definitely_not_sent");
+  }
+  assert.equal(authorizations, 0);
+  assert.equal(dispatchers, 0);
+  assert.equal(requests, 0);
 });

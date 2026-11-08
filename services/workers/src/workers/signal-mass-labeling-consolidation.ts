@@ -100,20 +100,10 @@ export async function consolidateMassLabelingGroupsV1(args: {
   if (args.recovery_call && (!args.recovery_only || args.recovery_call.workspace_id !== lease.workspace_id
     || args.recovery_call.execution_id !== lease.execution_id || args.recovery_call.request_digest !== batch.request_digest
     || !args.recovery_call.response || args.recovery_call.editorial_repair)) return invalid();
-  if (args.recovery_only && !args.recovery_call) {
-    const cached = await database.query(
-      `SELECT 1 FROM engine_cost_events
-      WHERE workspace_id=$1::uuid AND catalog_execution_id=$2::uuid AND request_digest=$3
-        AND response_storage_key IS NOT NULL`,
-      [lease.workspace_id, lease.execution_id, batch.request_digest],
-    );
-    if (!cached.rows.length)
-      throw new Error(
-        "workspace_engine_interpretation_receipt_recovery_required",
-      );
-  }
+  if (args.recovery_only && !args.recovery_call)
+    throw new Error("workspace_engine_interpretation_receipt_recovery_required");
   await storage.assertReady?.();
-  const call = args.recovery_call ?? await store.reserve({
+  const reservation = {
     database,
     workspace_id: lease.workspace_id,
     actor_user_id: args.actor_user_id,
@@ -129,10 +119,20 @@ export async function consolidateMassLabelingGroupsV1(args: {
       ? { interpretation_revision_digest: lease.interpretation_revision_digest }
       : {}),
     mass_labeling_stage: {
-      stage: "global-consolidation-v1",
+      stage: "global-consolidation-v1" as const,
       source_groups_digest: batch.source_groups_digest,
     },
-  });
+  };
+  let call = args.recovery_call ?? await store.reserve(reservation);
+  if (!args.recovery_only && call.state === "terminal_confirmed" && !call.response) {
+    if (call.retry_of_call_id || !Number.isSafeInteger(call.settled_micro_usd) || call.settled_micro_usd === null
+      || call.settled_micro_usd < 0)
+      throw new Error("workspace_engine_interpretation_retry_unavailable");
+    call = await store.reserve({ ...reservation,
+      idempotency_key: `${reservation.idempotency_key}:retry:${call.call_id}`, retry_of_call_id: call.call_id });
+    if (call.state === "terminal_confirmed" || call.state === "definitely_not_sent")
+      throw new Error("workspace_engine_interpretation_transport_retry_exhausted");
+  }
   const attempt = {
     database,
     call_id: call.call_id,

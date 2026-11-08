@@ -1,3 +1,4 @@
+import { WorkspaceInterpretationTransportErrorV1 } from "../providers/workspace-interpretation";
 import { sendMassLabelingConsolidationV1 } from "../providers/mass-labeling-consolidation";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -21,7 +22,7 @@ const id = (number: number) =>
   `00000000-0000-4000-8000-${String(number).padStart(12, "0")}`;
 const sha = (body: string | Uint8Array) =>
   `sha256:${createHash("sha256").update(body).digest("hex")}`;
-async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" = "coherent") {
+async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" = "coherent", groupCount = 1) {
   const directory = await mkdtemp(join(tmpdir(), "mass-global-test-"));
   const contextDigest = sha("context"),
     workspace = id(1),
@@ -56,34 +57,22 @@ async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" =
       },
     },
   };
-  const group = "guided:synthetic",
-    packet = join(directory, "group.json");
-  await writeFile(
-    packet,
-    JSON.stringify({
-      contract_version: "workspace-engine-interpretation-result-v1",
-      execution_id: execution,
+  const groupIds = Array.from({ length: groupCount }, (_, index) => `guided:synthetic-${index}`);
+  const clusters = groupIds.map(group_id => ({ cluster_id: group_id, cluster_digest: sha(group_id),
+    representatives: [{ text: "PRIVATE SYNTHETIC MENTION MUST STAY OUT OF GLOBAL INPUT" }] }));
+  const interpretations = clusters.map(cluster => ({ cluster_id: cluster.cluster_id, cluster_digest: cluster.cluster_digest,
+    status: sourceStatus, name: sourceStatus === "insufficient" ? null : "Consumo",
+    definition: sourceStatus === "insufficient" ? null : "Motivos de consumo." }));
+  const packets = groupIds.map((_, index) => ({ artifact_id: index === 0 ? id(7) : id(700 + index),
+    file: join(directory, `group-${index}.json`), body: JSON.stringify({
+      contract_version: "workspace-engine-interpretation-result-v1", execution_id: execution,
       context: { workspace_id: workspace, context_digest: contextDigest },
-      clusters: [
-        {
-          cluster_id: group,
-          cluster_digest: sha("cluster"),
-          representatives: [
-            { text: "PRIVATE SYNTHETIC MENTION MUST STAY OUT OF GLOBAL INPUT" },
-          ],
-        },
-      ],
-      interpretations: [
-        {
-          cluster_id: group,
-          cluster_digest: sha("cluster"),
-          status: sourceStatus,
-          name: sourceStatus === "insufficient" ? null : "Consumo",
-          definition: sourceStatus === "insufficient" ? null : "Motivos de consumo.",
-        },
-      ],
-    }),
-  );
+      clusters: [clusters[index]], interpretations: [interpretations[index]],
+    }) }));
+  await Promise.all(packets.map(packet => writeFile(packet.file, packet.body)));
+  const batch = buildMassLabelingConsolidationRequestV1({ workspace_id: workspace, source_engine_execution_id: execution,
+    source_groups: interpretations.map((result, index) => ({ group_id: result.cluster_id, cluster_digest: result.cluster_digest,
+      name: result.name, definition: result.definition, status: result.status, source_artifact_id: packets[index]!.artifact_id })) });
   const call: SignalWorkspaceEngineInterpretationCallV1 = {
     admission: null,
     call_id: id(4),
@@ -92,25 +81,27 @@ async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" =
     attempt_token: id(5),
     retry_of_call_id: null,
     state: "reserved",
-    reserved_micro_usd: 1,
+    reserved_micro_usd: batch.reserved_micro_usd,
     settled_micro_usd: null,
-    request_digest: sha("request"),
+    request_digest: batch.request_digest,
     interpretation_revision_digest: null,
     editorial_repair: null,
     response: null,
   };
-  let sends = 0,
-    charges = 0,
-    persisted = 0;
+  let sends = 0, charges = 0, persisted = 0, createdSuccessors = 0;
+  const calls = new Map([[call.call_id, call]]);
+  const reservations: Array<Parameters<NonNullable<Parameters<typeof consolidateMassLabelingGroupsV1>[0]["stores"]>["reserve"]>[0]> = [];
+  const sourceChecks: number[] = [];
+  const getCall = (call_id: string) => { const found = calls.get(call_id); assert.ok(found); return found; };
   const files = new Map<string, Buffer>();
   const args: Parameters<typeof consolidateMassLabelingGroupsV1>[0] = {
     database: {} as never,
     lease,
     actor_user_id: id(6),
-    proposals: [{ artifact_id: id(7), file: packet }],
+    proposals: packets.map(({ artifact_id, file }) => ({ artifact_id, file })),
     directory,
-    expected_group_ids: [group],
-    expected_cluster_digests: { [group]: sha("cluster") },
+    expected_group_ids: groupIds,
+    expected_cluster_digests: Object.fromEntries(clusters.map(cluster => [cluster.cluster_id, cluster.cluster_digest])),
     api_key: "synthetic-key",
     provider_enabled: true,
     storage: {
@@ -136,21 +127,13 @@ async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" =
     },
     stores: {
       async verifySources(input) {
-        assert.deepEqual(input.expected_group_ids, [group]);
-        assert.deepEqual(input.expected_cluster_digests, {
-          [group]: sha("cluster"),
-        });
-        const body = JSON.parse(input.source_checkpoints[0]!.body);
-        const groups = body.interpretations.map(
-          (result: Record<string, unknown>) => ({
-            group_id: result.cluster_id,
-            cluster_digest: result.cluster_digest,
-            name: result.name,
-            definition: result.definition,
-            status: result.status,
-            source_artifact_id: input.source_checkpoints[0]!.artifact_id,
-          }),
-        );
+        assert.deepEqual(input.expected_group_ids, groupIds);
+        assert.deepEqual(input.expected_cluster_digests, Object.fromEntries(clusters.map(cluster => [cluster.cluster_id, cluster.cluster_digest])));
+        assert.deepEqual(input.source_checkpoints, packets.map(({ artifact_id, body }) => ({ artifact_id, body })));
+        sourceChecks.push(input.source_checkpoints.length);
+        const groups = input.source_checkpoints.flatMap(checkpoint => JSON.parse(checkpoint.body).interpretations.map(
+          (result: Record<string, unknown>) => ({ group_id: result.cluster_id, cluster_digest: result.cluster_digest,
+            name: result.name, definition: result.definition, status: result.status, source_artifact_id: checkpoint.artifact_id })));
         const batch = buildMassLabelingConsolidationRequestV1({
           workspace_id: workspace,
           source_engine_execution_id: execution,
@@ -162,51 +145,67 @@ async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" =
         };
       },
       async reserve(input) {
-        call.request_digest = input.request_digest;
-        assert.equal(
-          input.mass_labeling_stage?.stage,
-          "global-consolidation-v1",
-        );
-        return call;
+        reservations.push(input);
+        assert.equal(input.request_digest, batch.request_digest);
+        assert.equal(input.workspace_id, workspace);
+        assert.equal(input.execution_id, execution);
+        assert.equal(input.actor_user_id, id(6));
+        assert.equal(input.execution_token, lease.execution_token);
+        assert.deepEqual(input.configuration, batch.configuration);
+        assert.equal(input.reserved_micro_usd, batch.reserved_micro_usd);
+        assert.equal(input.mass_labeling_stage?.stage, "global-consolidation-v1");
+        assert.equal(input.mass_labeling_stage?.source_groups_digest, batch.source_groups_digest);
+        if (!input.retry_of_call_id) return call;
+        assert.equal(input.retry_of_call_id, call.call_id);
+        assert.equal(input.idempotency_key, `mass-map:${batch.request_digest.slice(7)}:retry:${call.call_id}`);
+        if (!calls.has(id(40))) {
+          createdSuccessors++;
+          calls.set(id(40), { ...call, call_id: id(40), attempt_token: id(41), retry_of_call_id: call.call_id,
+            state: "reserved", settled_micro_usd: null, response: null });
+        }
+        return getCall(id(40));
       },
-      async sent() {
-        call.state = "in_flight";
-        return { call, send_authorized: true };
+      async sent(input) {
+        const active = getCall(input.call_id);
+        const allowed = active.state === "reserved";
+        if (allowed) active.state = "in_flight";
+        return { call: active, send_authorized: allowed };
       },
       async response(input) {
-        call.state = "response_persisted";
-        call.response = {
-          ...input.response,
-          complete: input.response.complete ?? true,
-        };
-        return call;
+        const active = getCall(input.call_id);
+        active.state = "response_persisted";
+        active.response = { ...input.response, complete: input.response.complete ?? true };
+        return active;
       },
-      async settle() {
-        if (call.state !== "settled") charges++;
-        call.state = "settled";
-        call.settled_micro_usd = 1;
-        return call;
+      async settle(input) {
+        const active = getCall(input.call_id);
+        if (active.state !== "settled") charges++;
+        active.state = "settled";
+        active.settled_micro_usd = 1;
+        return active;
       },
       async fail(input) {
-        call.state = input.outcome;
-        return call;
+        const active = getCall(input.call_id);
+        active.state = input.outcome;
+        return active;
       },
       async persist(input) {
         persisted++;
         assert.equal(
           input.artifact.metadata.response_sha256,
-          call.response?.sha256,
+          getCall(String(input.artifact.metadata.call_id)).response?.sha256,
         );
         return { artifact_id: id(8), replayed: persisted > 1 };
       },
     },
     send: async (input) => {
-      sends++;
       assert.equal(
         input.batch.request_body.includes("PRIVATE SYNTHETIC MENTION"),
         false,
       );
-      assert.equal(await input.authorize_send(), true);
+      if (!(await input.authorize_send()))
+        throw new WorkspaceInterpretationTransportErrorV1("workspace_engine_mass_consolidation_send_not_authorized", "outcome_unknown");
+      sends++;
       const raw = JSON.stringify({
         model: configuration.model,
         type: "message",
@@ -223,7 +222,7 @@ async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" =
                       topic_key: "consumo",
                       name: "Consumo",
                       definition: "Motivos de consumo.",
-                      group_ids: [group],
+                      group_ids: groupIds,
                     },
                   ]
                 : [],
@@ -245,7 +244,9 @@ async function fixture(valid = true, sourceStatus: "coherent" | "insufficient" =
   };
   return {
     args,
-    call,
+    call, batch, reservations, sourceChecks,
+    successor: () => calls.get(id(40)), createdSuccessors: () => createdSuccessors,
+    originalPacket: async () => JSON.stringify(await Promise.all(packets.map(packet => readFile(packet.file, "utf8")))),
     sends: () => sends,
     charges: () => charges,
     persisted: () => persisted,
@@ -337,7 +338,7 @@ test("failed send CAS preserves unknown exposure without fetching", async () => 
     );
     assert.equal(fetches, 0);
     assert.equal(f.call.state, "in_flight");
-    assert.equal(f.call.reserved_micro_usd, 1);
+    assert.equal(f.call.reserved_micro_usd, f.batch.reserved_micro_usd);
     assert.equal(f.charges(), 0);
   } finally {
     await f.cleanup();
@@ -387,4 +388,118 @@ test("a global response that includes an insufficient group keeps its settled ra
   } finally {
     await f.cleanup();
   }
+});
+
+
+test("one reconciled global successor preserves 144 checkpoints and replays without financing another call", async () => {
+  const f = await fixture(true, "coherent", 144);
+  f.call.state = "terminal_confirmed";
+  f.call.settled_micro_usd = 1250;
+  const parent = JSON.stringify(f.call), checkpoint = await f.originalPacket();
+  try {
+    for (let replay = 0; replay < 3; replay++) {
+      const result = await consolidateMassLabelingGroupsV1(f.args);
+      assert.equal(result.output.topics[0]!.group_ids.length, 144);
+    }
+    assert.equal(f.createdSuccessors(), 1);
+    assert.equal(f.sends(), 1);
+    assert.equal(f.charges(), 1);
+    assert.equal(f.successor()!.retry_of_call_id, f.call.call_id);
+    assert.equal(f.successor()!.request_digest, f.call.request_digest);
+    assert.equal(f.successor()!.state, "settled");
+    assert.equal(JSON.stringify(f.call), parent);
+    assert.equal(f.call.response, null);
+    assert.equal(await f.originalPacket(), checkpoint);
+    assert.deepEqual(f.sourceChecks, [144, 144, 144]);
+    const retryKeys = f.reservations.filter(input => input.retry_of_call_id).map(input => input.idempotency_key);
+    assert.equal(new Set(retryKeys).size, 1);
+    f.args.recovery_only = true;
+    f.args.recovery_call = structuredClone(f.successor()!);
+    f.args.stores = { ...f.args.stores!, reserve: async () => { throw Error("offline_must_not_reserve"); } };
+    f.args.send = async () => { throw Error("offline_must_not_send"); };
+    await consolidateMassLabelingGroupsV1(f.args);
+    assert.equal(f.sends(), 1);
+    assert.equal(f.charges(), 1);
+    assert.equal(JSON.stringify(f.call), parent);
+  } finally { await f.cleanup(); }
+});
+
+test("uncertain, unreconciled and offline global attempts cannot finance or send a successor", async () => {
+  for (const state of ["outcome_unknown", "in_flight", "response_persisted", "definitely_not_sent", "terminal_confirmed"] as const) {
+    const f = await fixture();
+    f.call.state = state;
+    const parent = JSON.stringify(f.call);
+    try {
+      await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /receipt_recovery_required|retry_unavailable/u);
+      assert.equal(f.createdSuccessors(), 0);
+      assert.equal(f.sends(), 0);
+      assert.equal(JSON.stringify(f.call), parent);
+      const reservations = f.reservations.length;
+      f.args.recovery_only = true;
+      await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /receipt_recovery_required/u);
+      assert.equal(f.reservations.length, reservations);
+    } finally { await f.cleanup(); }
+  }
+});
+
+test("a failed global successor remains uncertain and cannot create a second successor", async () => {
+  const f = await fixture(true, "coherent", 144);
+  f.call.state = "terminal_confirmed";
+  f.call.settled_micro_usd = 1250;
+  const parent = JSON.stringify(f.call);
+  let sends = 0;
+  f.args.send = async input => {
+    assert.equal(await input.authorize_send(), true);
+    sends++;
+    throw new WorkspaceInterpretationTransportErrorV1("workspace_engine_mass_consolidation_transport_failed", "outcome_unknown");
+  };
+  try {
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /transport_failed/u);
+    assert.equal(f.successor()!.state, "outcome_unknown");
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /receipt_recovery_required/u);
+    for (const state of ["terminal_confirmed", "definitely_not_sent"] as const) {
+      f.successor()!.state = state;
+      f.successor()!.settled_micro_usd = 400;
+      await assert.rejects(consolidateMassLabelingGroupsV1(f.args), /transport_retry_exhausted/u);
+    }
+    assert.equal(sends, 1);
+    assert.equal(f.createdSuccessors(), 1);
+    assert.equal(f.charges(), 0);
+    assert.equal(f.persisted(), 0);
+    assert.equal(JSON.stringify(f.call), parent);
+  } finally { await f.cleanup(); }
+});
+
+test("concurrent global successor invocations share one reservation and one send CAS", async () => {
+  const f = await fixture(true, "coherent", 144);
+  f.call.state = "terminal_confirmed";
+  f.call.settled_micro_usd = 1250;
+  const parent = JSON.stringify(f.call);
+  try {
+    const results = await Promise.allSettled([consolidateMassLabelingGroupsV1(f.args), consolidateMassLabelingGroupsV1(f.args)]);
+    assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
+    assert.equal(results.filter(result => result.status === "rejected").length, 1);
+    assert.equal(f.createdSuccessors(), 1);
+    assert.equal(f.sends(), 1);
+    assert.equal(f.charges(), 1);
+    assert.equal(f.successor()!.state, "settled");
+    assert.equal(JSON.stringify(f.call), parent);
+    assert.deepEqual(f.sourceChecks, [144, 144]);
+  } finally { await f.cleanup(); }
+});
+
+test("a changed last checkpoint blocks global successor financing before reservation", async () => {
+  const f = await fixture(true, "coherent", 144);
+  f.call.state = "terminal_confirmed";
+  f.call.settled_micro_usd = 1250;
+  const parent = JSON.stringify(f.call);
+  const last = f.args.proposals.at(-1)!;
+  await writeFile(last.file, (await readFile(last.file, "utf8")) + " ");
+  try {
+    await assert.rejects(consolidateMassLabelingGroupsV1(f.args), error => error instanceof assert.AssertionError);
+    assert.equal(f.reservations.length, 0);
+    assert.equal(f.createdSuccessors(), 0);
+    assert.equal(f.sends(), 0);
+    assert.equal(JSON.stringify(f.call), parent);
+  } finally { await f.cleanup(); }
 });
