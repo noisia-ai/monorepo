@@ -287,3 +287,47 @@ test("insufficiency recovery binds both source envelopes and uses the repaired s
   const different = structuredClone(output); different.interpretations[0]!.citations = ["r1"];
   assert.throws(() => recover({ ...args, repair_response: envelope(different) }), /insufficiency_decision_invalid/u);
 });
+
+
+test("a recorded insufficiency decision accepts mixed/coherent receipts and rejects other status pairs", async () => {
+  const { SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1: pilot,
+    recoverSignalWorkspaceInterpretationInsufficiencyV1: recover } = await import("./signal-workspace-interpretation-v1.js");
+  const groups = [cluster(1, "guided"), cluster(2, "guided")].map(group => ({ ...group,
+    representatives: Array.from({ length: 30 }, (_, index) => cluster(index + 10, "guided").representatives[0]!) }));
+  const original = buildSignalWorkspaceInterpretationBatchV1(context, groups, pilot);
+  const output = { interpretations: groups.map((group, index) => ({ ...answer(group), status: "mixed",
+    citations: index === 0 ? [] as string[] : ["r2"], inclusion: [{ text: "Condition", citations: ["r1", "r30"] }], exclusion: [] })) };
+  const envelope = (value: unknown) => JSON.stringify({ model: pilot.model, type: "message", role: "assistant",
+    stop_reason: "end_turn", usage: { input_tokens: 100, output_tokens: 10 },
+    content: [{ type: "text", text: JSON.stringify(value) }] });
+  for (const [sourceStatus, repairStatus, accepted] of [
+    ["mixed", "mixed", true], ["mixed", "coherent", true],
+    ["coherent", "mixed", false], ["coherent", "coherent", false],
+    ["insufficient", "mixed", false], ["mixed", "insufficient", false],
+  ] as const) {
+    const sourceOutput = structuredClone(output), repairedOutput = structuredClone(output);
+    sourceOutput.interpretations[0]!.status = sourceStatus;
+    repairedOutput.interpretations[0]!.status = repairStatus;
+    repairedOutput.interpretations[1]!.definition = "Definition from the sealed repair";
+    const original_response = envelope(sourceOutput), repair_response = envelope(repairedOutput);
+    const batch = buildSignalWorkspaceInterpretationRepairBatchV1(original, {
+      source_call_id: context.workspace_id, source_response_sha256: sha(original_response), diagnostic: "output_invalid" });
+    const args = { batch, original_response, repair_response, unit_key: groups[0]!.cluster_id };
+    if (!accepted) {
+      assert.throws(() => recover(args), /insufficiency_decision_invalid/u);
+      continue;
+    }
+    assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(original, sourceOutput), /evidence_missing/u);
+    assert.throws(() => decodeSignalWorkspaceInterpretationProviderResultV1(batch, repairedOutput), /evidence_missing/u);
+    const recovered = recover(args);
+    assert.deepEqual(recovered[0], { cluster_id: groups[0]!.cluster_id, cluster_digest: groups[0]!.cluster_digest,
+      status: "insufficient", name: null, definition: null, inclusion: [], exclusion: [], citations: [] });
+    const sibling = buildSignalWorkspaceInterpretationBatchV1(context, [groups[1]!], pilot);
+    assert.deepEqual(recovered[1], decodeSignalWorkspaceInterpretationProviderResultV1(sibling,
+      { interpretations: [repairedOutput.interpretations[1]] })[0]);
+    const changed = structuredClone(repairedOutput); changed.interpretations[0]!.inclusion[0]!.citations = ["r31"];
+    assert.throws(() => recover({ ...args, repair_response: envelope(changed) }), /citation_invalid/u);
+    const supported = structuredClone(repairedOutput); supported.interpretations[0]!.citations = ["r1"];
+    assert.throws(() => recover({ ...args, repair_response: envelope(supported) }), /insufficiency_decision_invalid/u);
+  }
+});

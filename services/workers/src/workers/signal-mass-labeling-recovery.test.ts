@@ -63,12 +63,13 @@ function group(n: number): SignalWorkspaceInterpretationClusterV1 {
 function raw(
   batch: SignalWorkspaceInterpretationBatchV1,
   missingTopReference = false,
+  missingStatus: "mixed" | "coherent" = "mixed",
 ) {
   const output = {
     interpretations: batch.clusters.map((g, n) => ({
       cluster_id: g.cluster_id,
       cluster_digest: g.cluster_digest,
-      status: missingTopReference && n === 0 ? "mixed" : "coherent",
+      status: missingTopReference && n === 0 ? missingStatus : "coherent",
       name: "Experiências de consumo",
       definition: "Conversas sobre experiências de consumo.",
       citations:
@@ -101,7 +102,7 @@ const cases: Array<{
   state?: SignalWorkspaceEngineInterpretationCallV1["state"];
   invalidRepair?: boolean;
   originalSuccessor?: boolean;
-  operatorInsufficient?: "approved" | "wrong_hash" | "wrong_unit";
+  operatorInsufficient?: "approved" | "approved_coherent" | "wrong_hash" | "wrong_unit";
 }> = [
   {},
   { state: "reserved" },
@@ -112,6 +113,7 @@ const cases: Array<{
   { invalidRepair: true },
   { originalSuccessor: true },
   { operatorInsufficient: "approved" },
+  { operatorInsufficient: "approved_coherent" },
   { operatorInsufficient: "wrong_hash" },
   { operatorInsufficient: "wrong_unit" },
 ];
@@ -201,6 +203,7 @@ for (const scenario of cases)
       batch: SignalWorkspaceInterpretationBatchV1,
       invalid = false,
       requestKey = batch.batch_key,
+      missingStatus: "mixed" | "coherent" = "mixed",
     ) {
       const call: SignalWorkspaceEngineInterpretationCallV1 = {
         call_id: id(next++),
@@ -215,7 +218,7 @@ for (const scenario of cases)
         interpretation_revision_digest: null,
         editorial_repair: batch.editorial_repair ?? null,
         response: {
-          ...storeBytes(raw(batch, invalid)),
+          ...storeBytes(raw(batch, invalid, missingStatus)),
           http_status: 200,
           provider_request_id: "req_synthetic",
           complete: true,
@@ -268,9 +271,11 @@ for (const scenario of cases)
       existingRepair.settled_micro_usd = null;
     }
     if (scenario.operatorInsufficient) {
-      existingRepair = seed(buildSignalWorkspaceInterpretationRepairBatchV1(plan[2]!, {
+      const repair = buildSignalWorkspaceInterpretationRepairBatchV1(plan[2]!, {
         source_call_id: last.call_id, source_response_sha256: last.response!.sha256, diagnostic: "output_invalid",
-      }), true);
+      });
+      existingRepair = seed(repair, true, repair.batch_key,
+        scenario.operatorInsufficient === "approved_coherent" ? "coherent" : "mixed");
     }
     const initialCalls = calls.size;
     const initialLedger = JSON.stringify([...calls.values()]);
@@ -556,7 +561,7 @@ for (const scenario of cases)
       return;
     }
     if (scenario.operatorInsufficient) {
-      if (scenario.operatorInsufficient !== "approved") {
+      if (!["approved", "approved_coherent"].includes(scenario.operatorInsufficient)) {
         await assert.rejects(run(true), /insufficiency_decision_invalid/u);
         assert.equal(checkpointed.size, 8);
         assert.equal(JSON.stringify([...calls.values()]), initialLedger);
