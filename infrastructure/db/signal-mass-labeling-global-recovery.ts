@@ -68,7 +68,7 @@ export async function recordSignalWorkspaceMassLabelingGlobalReceiptDecisionV1(a
   proof(row,args,{...args,decision});
   const sources=await verifyMassLabelingSourceCheckpointsWithClientV1(client,{workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
    source_engine_execution_id:args.execution_id,source_checkpoints:args.source_checkpoints,expected_group_ids:args.batch.source_groups.map(group=>group.group_id),
-   claimed_source_groups:args.batch.source_groups,failed_receipt_recovery:true});
+   claimed_source_groups:args.batch.source_groups,failed_receipt_recovery:{call_id:args.call_id,request_digest:row.request_digest,response_sha256:row.response_sha256}});
   if(sources.source_groups_digest!==row.source_groups_digest)fail();
   const id=randomUUID();await client.query(`INSERT INTO signal_mass_labeling_global_receipt_decisions(id,workspace_id,execution_id,call_id,request_digest,response_sha256,source_groups_digest,
    input_digest,fit_checkpoint_digest,decision_digest,decision,created_by_user_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12)`,
