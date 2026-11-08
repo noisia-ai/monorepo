@@ -242,10 +242,10 @@ function reconcileEditorialLedger(snapshot, operatorReceipt) {
       || typeof call.request_digest !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(call.request_digest)
       || typeof call.actor_user_id !== 'string' || !call.actor_user_id
       || typeof call.workspace_id !== 'string' || !call.workspace_id
-      || typeof call.execution_id !== 'string' || !call.execution_id
+      || typeof call.catalog_execution_id !== 'string' || !call.catalog_execution_id
       || typeof call.provider !== 'string' || typeof call.model !== 'string'
       || call.provider !== call.call_configuration.provider || call.model !== call.call_configuration.model
-      || !record(call.metadata) || !record(call.metadata.mass_labeling_stage)) {
+      || !record(call.metadata)) {
       throw new Error('pilot_audit_editorial_call_contract_invalid');
     }
     if (!/^\d+$/u.test(String(call.settled_micro_usd))) throw new Error('pilot_audit_editorial_settlement_invalid');
@@ -266,6 +266,11 @@ function reconcileEditorialLedger(snapshot, operatorReceipt) {
   if (enriched && new Set([...terminalRows, ...successfulRows].map((call) => call.id)).size !== rows.length) {
     throw new Error('pilot_audit_editorial_call_unassigned');
   }
+  if (enriched && (new Set(rows.map((call) => call.actor_user_id)).size !== 1
+    || new Set(rows.map((call) => call.workspace_id)).size !== 1
+    || rows.some((call) => call.catalog_execution_id !== snapshot.stage_receipts.engine.id))) {
+    throw new Error('pilot_audit_editorial_stage_scope_mismatch');
+  }
   if (terminalRows.length) {
     if (terminalRows.length !== 1) throw new Error('pilot_audit_editorial_terminal_duplicate');
     const terminal = terminalRows[0];
@@ -279,8 +284,10 @@ function reconcileEditorialLedger(snapshot, operatorReceipt) {
     if (successor.retry_of_call_id !== terminal.id || successor.request_digest !== terminal.request_digest
       || canonicalJson(successor.call_configuration) !== canonicalJson(terminal.call_configuration)
       || successor.actor_user_id !== terminal.actor_user_id || successor.workspace_id !== terminal.workspace_id
-      || successor.execution_id !== terminal.execution_id || successor.provider !== terminal.provider
-      || successor.model !== terminal.model || successor.reserved_micro_usd !== terminal.reserved_micro_usd || !sameStage) {
+      || successor.catalog_execution_id !== terminal.catalog_execution_id || successor.provider !== terminal.provider
+      || successor.model !== terminal.model || successor.reserved_micro_usd !== terminal.reserved_micro_usd
+      || !record(terminal.metadata.mass_labeling_stage) || !record(successor.metadata.mass_labeling_stage)
+      || terminal.metadata.mass_labeling_stage.stage !== 'global-consolidation-v1' || !sameStage) {
       throw new Error('pilot_audit_editorial_retry_scope_invalid');
     }
     if (rows.some((call) => call.id !== terminal.id && call.request_digest === terminal.request_digest
@@ -303,13 +310,15 @@ function reconcileEditorialLedger(snapshot, operatorReceipt) {
 
 function validateSettledEditorialCall(call) {
   const complete = call.response_complete ?? call.metadata?.response_complete;
-  const usage = call.metadata?.usage;
+  const usage = call.usage;
   const configuration = call.call_configuration;
   const integer = (value) => Number.isSafeInteger(value) && value >= 0;
   const rates = ['input_micro_usd_per_million_tokens', 'output_micro_usd_per_million_tokens',
     'cache_read_micro_usd_per_million_tokens', 'cache_creation_micro_usd_per_million_tokens'];
   if (call.response_http_status !== 200 || complete !== true
     || typeof call.response_storage_key !== 'string' || !call.response_storage_key
+    || !call.response_storage_key.startsWith(`workspace-engine/${call.workspace_id}/${call.catalog_execution_id}/`)
+    || call.response_storage_key.includes('..')
     || typeof call.response_sha256 !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(call.response_sha256)
     || !safeIntegerValue(call.response_size_bytes) || Number(call.response_size_bytes) < 1
     || !call.settled_at || !Number.isFinite(Date.parse(call.settled_at))
@@ -344,12 +353,14 @@ function validateBilledTerminalCall(call) {
     || !record(receipt) || receipt.contract_version !== 'workspace-provider-terminal-evidence-v1'
     || receipt.source !== 'anthropic_console' || receipt.http_status !== 499
     || receipt.reason !== 'client_disconnected' || receipt.billing_status !== 'unreconciled'
+    || !Number.isFinite(Date.parse(receipt.started_at)) || !Number.isFinite(Date.parse(receipt.ended_at))
+    || !Number.isFinite(Date.parse(receipt.verified_at)) || Date.parse(receipt.ended_at) < Date.parse(receipt.started_at)
     || !/^req_[A-Za-z0-9_-]{1,220}$/u.test(receipt.provider_request_id ?? '')
     || receipt.call_id !== call.id || receipt.workspace_id !== call.workspace_id
-    || receipt.execution_id !== call.execution_id || receipt.request_digest !== call.request_digest
+    || receipt.execution_id !== call.catalog_execution_id || receipt.request_digest !== call.request_digest
     || receipt.provider_model !== call.model || receipt.configuration_digest !== canonicalDigest(configuration)
     || !record(receipt.evidence) || typeof receipt.evidence.storage_key !== 'string'
-    || !receipt.evidence.storage_key.startsWith(`workspace-engine/${call.workspace_id}/${call.execution_id}/`)
+    || !receipt.evidence.storage_key.startsWith(`workspace-engine/${call.workspace_id}/${call.catalog_execution_id}/`)
     || receipt.evidence.storage_key.includes('..') || !/^sha256:[a-f0-9]{64}$/u.test(receipt.evidence.sha256)
     || !Number.isSafeInteger(receipt.evidence.size_bytes) || receipt.evidence.size_bytes < 1
     || !record(usage) || Object.keys(usage).sort().join(',') !== 'cache_creation_input_tokens,cache_read_input_tokens,input_tokens,output_tokens'
@@ -361,7 +372,7 @@ function validateBilledTerminalCall(call) {
     || canonicalJson(billing.usage) !== canonicalJson(usage)
     || !Number.isFinite(Date.parse(billing.reconciled_at))
     || !/^[0-9a-f-]{36}$/u.test(billing.verified_by_user_id ?? '')
-    || canonicalJson(call.metadata.usage) !== canonicalJson(usage)
+    || canonicalJson(call.usage) !== canonicalJson(usage)
     || !integer(call.input_tokens) || !integer(call.output_tokens)
     || call.input_tokens !== usage.input_tokens + usage.cache_read_input_tokens + usage.cache_creation_input_tokens
     || call.output_tokens !== usage.output_tokens

@@ -192,13 +192,14 @@ function enrichedEditorialSnapshot() {
   const terminal = {
     id: terminalReceipt.call_id, call_state: 'terminal_confirmed', retry_of_call_id: null,
     request_digest: terminalReceipt.request_digest, actor_user_id: terminalReceipt.verified_by_user_id,
-    workspace_id: terminalReceipt.workspace_id, execution_id: terminalReceipt.execution_id,
+    workspace_id: terminalReceipt.workspace_id, catalog_execution_id: terminalReceipt.execution_id,
     provider: configuration.provider, model: configuration.model, call_configuration: configuration,
     reserved_micro_usd: '100', settled_micro_usd: '19', input_tokens: 15, output_tokens: 4, total_tokens: 19,
     response_http_status: null, response_storage_key: null, response_sha256: null, response_size_bytes: null,
     response_complete: null, settled_at: '2026-11-07T12:00:13.000Z',
+    usage: terminalUsage,
     metadata: {
-      mass_labeling_stage: stage, usage: terminalUsage,
+      mass_labeling_stage: stage,
       provider_terminal_receipt: terminalReceipt,
       provider_terminal_billing_reconciliation: {
         contract_version: 'workspace-provider-terminal-billing-v1', method: 'audited_usage_pricing',
@@ -212,18 +213,31 @@ function enrichedEditorialSnapshot() {
   const successor = {
     id: 'synthetic-successor-call', call_state: 'settled', retry_of_call_id: terminal.id,
     request_digest: terminal.request_digest, actor_user_id: terminal.actor_user_id,
-    workspace_id: terminal.workspace_id, execution_id: terminal.execution_id,
+    workspace_id: terminal.workspace_id, catalog_execution_id: terminal.catalog_execution_id,
     provider: terminal.provider, model: terminal.model, call_configuration: structuredClone(configuration),
     reserved_micro_usd: terminal.reserved_micro_usd, settled_micro_usd: '7', input_tokens: 5, output_tokens: 2, total_tokens: 7,
     response_http_status: 200, response_storage_key: 'workspace-engine/synthetic-workspace/synthetic-engine-run/response.json',
     response_sha256: `sha256:${'f'.repeat(64)}`, response_size_bytes: '800', response_complete: true,
     settled_at: '2026-11-07T12:00:20.000Z',
-    metadata: { mass_labeling_stage: stage, response_complete: true,
-      usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } },
+    usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    metadata: { mass_labeling_stage: stage, response_complete: true },
   };
+  const groupCalls = Array.from({ length: 144 }, (_, index) => ({
+    id: `synthetic-group-call-${index + 1}`, call_state: 'settled', retry_of_call_id: null,
+    request_digest: `sha256:${String(index + 10).padStart(64, '0')}`,
+    actor_user_id: terminal.actor_user_id, workspace_id: terminal.workspace_id,
+    catalog_execution_id: terminal.catalog_execution_id, provider: terminal.provider, model: terminal.model,
+    call_configuration: structuredClone(configuration), reserved_micro_usd: '100', settled_micro_usd: '1',
+    input_tokens: 1, output_tokens: 0, total_tokens: 1,
+    response_http_status: 200, response_storage_key: `workspace-engine/synthetic-workspace/synthetic-engine-run/group-${index + 1}.json`,
+    response_sha256: `sha256:${String(index + 100).padStart(64, '0')}`, response_size_bytes: '100', response_complete: true,
+    settled_at: '2026-11-07T12:00:15.000Z', usage: { input_tokens: 1, output_tokens: 0,
+      cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }, metadata: {},
+  }));
+  snapshot.stage_receipts.engine.result_summary.fit_checkpoint.interpretation_manifest.unit_count = 144;
   snapshot.map.consolidation_artifact_id = 'synthetic-consolidation-artifact';
   snapshot.map.consolidation_digest = `sha256:${'9'.repeat(64)}`;
-  snapshot.stage_receipts.editorial_calls = [terminal, successor];
+  snapshot.stage_receipts.editorial_calls = [...groupCalls, terminal, successor];
   snapshot.stage_receipts.consolidation_artifact = {
     id: snapshot.map.consolidation_artifact_id,
     artifact_key: 'mass-labeling-consolidation.json',
@@ -237,9 +251,11 @@ function enrichedEditorialSnapshot() {
   };
   const receipt = operatorReceipt(snapshot);
   const claude = receipt.stages.find((row) => row.name === 'claude');
-  claude.ledger_call_ids = [terminal.id, successor.id];
-  claude.usage_value_micro_usd = 26;
-  claude.input_tokens = 20;
+  receipt.stages.find((row) => row.name === 'bertopic').group_count = 144;
+  claude.ledger_call_ids = snapshot.stage_receipts.editorial_calls.map((call) => call.id);
+  claude.usage_value_micro_usd = 170;
+  claude.input_tokens = 164;
+  claude.input_count = 144;
   receipt.snapshot_sha256 = computeSnapshotDigest(snapshot);
   return { snapshot, receipt };
 }
@@ -446,19 +462,21 @@ test('keeps unverified charges unknown instead of reporting free provider usage'
 test('reconciles a terminal billed attempt plus its exact successful consolidation retry', () => {
   const { snapshot, receipt } = enrichedEditorialSnapshot();
   const summary = summarizePilotSnapshot(snapshot, receipt);
-  assert.equal(summary.stages.find((row) => row.name === 'claude').usage_value_micro_usd, 26);
+  assert.equal(summary.bertopic_group_count, 144);
+  assert.equal(summary.stages.find((row) => row.name === 'claude').usage_value_micro_usd, 170);
+  assert.equal(receipt.stages.find((row) => row.name === 'claude').input_count, 144);
   assert.deepEqual(receipt.stages.find((row) => row.name === 'claude').ledger_call_ids,
-    ['synthetic-terminal-call', 'synthetic-successor-call']);
+    snapshot.stage_receipts.editorial_calls.map((call) => call.id));
   assert.equal(summary.topics.length, 2);
   const invalidCases = [
-    ['unknown call state', (copy) => { copy.snapshot.stage_receipts.editorial_calls[0].call_state = 'outcome_unknown'; }, /unreconciled/u],
-    ['unreconciled terminal billing', (copy) => { delete copy.snapshot.stage_receipts.editorial_calls[0].metadata.provider_terminal_billing_reconciliation; }, /terminal_billing_invalid/u],
+    ['unknown call state', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-terminal-call').call_state = 'outcome_unknown'; }, /unreconciled/u],
+    ['unreconciled terminal billing', (copy) => { delete copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-terminal-call').metadata.provider_terminal_billing_reconciliation; }, /terminal_billing_invalid/u],
     ['duplicate ledger reference', (copy) => { copy.receipt.stages.find((row) => row.name === 'claude').ledger_call_ids.push('synthetic-successor-call'); }, /call_ids_required/u],
-    ['incoherent audited charge', (copy) => { copy.snapshot.stage_receipts.editorial_calls[0].metadata.provider_terminal_billing_reconciliation.actual_micro_usd = 20; }, /terminal_billing_invalid/u],
-    ['incoherent settled successor charge', (copy) => { copy.snapshot.stage_receipts.editorial_calls[1].settled_micro_usd = '8'; }, /settled_cost_mismatch/u],
-    ['retry changes request', (copy) => { copy.snapshot.stage_receipts.editorial_calls[1].request_digest = `sha256:${'8'.repeat(64)}`; }, /retry_scope_invalid/u],
+    ['incoherent audited charge', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-terminal-call').metadata.provider_terminal_billing_reconciliation.actual_micro_usd = 20; }, /terminal_billing_invalid/u],
+    ['incoherent settled successor charge', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-successor-call').settled_micro_usd = '8'; }, /settled_cost_mismatch/u],
+    ['retry changes request', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-successor-call').request_digest = `sha256:${'8'.repeat(64)}`; }, /retry_scope_invalid/u],
     ['result not linked to successful call', (copy) => { copy.snapshot.stage_receipts.consolidation_artifact.metadata.call_id = 'synthetic-terminal-call'; }, /consolidation_call_missing/u],
-    ['success missing HTTP 200 evidence', (copy) => { copy.snapshot.stage_receipts.editorial_calls[1].response_http_status = 499; }, /settled_response_invalid/u],
+    ['success missing HTTP 200 evidence', (copy) => { copy.snapshot.stage_receipts.editorial_calls.find((call) => call.id === 'synthetic-successor-call').response_http_status = 499; }, /settled_response_invalid/u],
   ];
   for (const [name, mutate, pattern] of invalidCases) {
     const copy = structuredClone({ snapshot, receipt });
