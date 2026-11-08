@@ -158,8 +158,9 @@ export async function applyMassLabelingEditorialLexiconV1(args: {
       WHERE artifact.workspace_id=$1 AND artifact.engine_execution_id=$2 AND artifact.id=$3
         AND artifact.artifact_key='mass-labeling-consolidation.json' AND artifact.content->>'sha256'=$4
         AND call.call_state='settled' AND call.actor_user_id=$5 AND call.request_digest=$6
-        AND call.response_sha256=artifact.metadata->>'response_sha256'`,
-      [args.workspace_id, args.source_engine_execution_id, args.consolidation_artifact_id, sha, args.actor_user_id, batch.request_digest])).rows.length) fail("mass_labeling_editorial_lexicon_receipt_required");
+        AND call.response_sha256=artifact.metadata->>'response_sha256' AND call.response_sha256=$7`,
+      [args.workspace_id, args.source_engine_execution_id, args.consolidation_artifact_id, sha, args.actor_user_id, batch.request_digest,
+        `sha256:${createHash("sha256").update(parsed.raw_response).digest("hex")}`])).rows.length) fail("mass_labeling_editorial_lexicon_receipt_required");
     return loadMassLabelingStudyPolicyWithClientV1(client, args.workspace_id);
   });
   return proposeMassLabelingStudyLexiconV1({ ...args, expected_revision: policy.revision,

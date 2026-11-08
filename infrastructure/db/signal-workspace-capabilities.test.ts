@@ -208,3 +208,13 @@ test("discovery adoption has exactly the tenant-scoped manual editing authority"
   assert.equal(caps.can_adopt_topics,caps.can_edit_topics);
  }
 });
+
+test("product mass labeling defaults on for a durable new workspace and respects explicit disabling", async () => {
+  let durable = true;
+  const queryable = { async query<Row extends Record<string, unknown>>() { return { rows: [{ enabled: durable }] as unknown as Row[] }; } };
+  const args = { queryable, workspace_id: "workspace-id", feature: "mass_labeling" as const };
+  assert.equal(await signalWorkspaceFeatureEnabledV1({ ...args, env: {} }), true);
+  assert.equal(await signalWorkspaceFeatureEnabledV1({ ...args, env: { NOISIA_MASS_LABELING_ENABLED: "false" } }), false);
+  durable = false;
+  assert.equal(await signalWorkspaceFeatureEnabledV1({ ...args, env: {} }), false);
+});
