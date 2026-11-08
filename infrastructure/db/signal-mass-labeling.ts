@@ -465,12 +465,20 @@ export async function exportMassLabelingSnapshotV1(args: {
       WHERE engine.id=$1 AND engine.workspace_id=$2`, [map.source_engine_execution_id, args.workspace_id])).rows[0] ?? null;
     const engine = (await client.query(`SELECT id,created_at,completed_at,status,result_summary FROM signal_topic_catalog_executions
       WHERE workspace_id=$1 AND id=$2`, [args.workspace_id, map.source_engine_execution_id])).rows[0]!;
-    const editorialCalls = (await client.query(`SELECT id,provider,model,call_state,reserved_micro_usd::text,
-      settled_micro_usd::text,created_at,sent_at,response_received_at response_at,settled_at,metadata->'usage' usage,input_tokens,output_tokens,call_configuration
+    const consolidationArtifact = (await client.query(`SELECT id,artifact_key,content,metadata FROM analysis_artifacts
+      WHERE id=$1 AND workspace_id=$2 AND engine_execution_id=$3`,[map.consolidation_artifact_id,args.workspace_id,map.source_engine_execution_id])).rows[0] ?? null;
+    const editorialCalls = (await client.query(`SELECT id,workspace_id,catalog_execution_id,actor_user_id,provider,model,call_state,request_digest,request_seal,retry_of_call_id,reserved_micro_usd::text,
+      settled_micro_usd::text,created_at,sent_at,response_received_at response_at,settled_at,metadata->'usage' usage,input_tokens,output_tokens,total_tokens,call_configuration,
+      budget_date,budget_timezone,budget_daily_cap_micro_usd::text,failure_code,
+      response_http_status,response_storage_key,response_sha256,response_size_bytes::text,provider_request_id,
+      CASE WHEN response_storage_key IS NOT NULL THEN COALESCE((metadata->>'response_complete')::boolean,true) END response_complete,
+      jsonb_strip_nulls(jsonb_build_object('mass_labeling_stage',metadata->'mass_labeling_stage','editorial_repair',metadata->'editorial_repair',
+        'provider_terminal_receipt',metadata->'provider_terminal_receipt','provider_terminal_billing_reconciliation',metadata->'provider_terminal_billing_reconciliation',
+        'interpretation_admission',metadata->'interpretation_admission','interpretation_revision_digest',metadata->'interpretation_revision_digest')) metadata
       FROM engine_cost_events WHERE workspace_id=$1 AND catalog_execution_id=$2
         AND workspace_contract='workspace-engine-interpretation-v1' ORDER BY created_at,id`, [args.workspace_id, map.source_engine_execution_id])).rows;
     return {contract_version: "mass-labeling-private-export-v1", exported_at: new Date().toISOString(),
-      map, run, items, calls, stage_receipts: {embeddings: embedding, engine, editorial_calls: editorialCalls}};
+      map, run, items, calls, stage_receipts: {embeddings: embedding, engine, editorial_calls: editorialCalls, consolidation_artifact: consolidationArtifact}};
   });
 }
 
