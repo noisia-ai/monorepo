@@ -1,3 +1,4 @@
+import {verifySignalWorkspaceEngineInsufficiencyCheckpointWithClientV1} from "./signal-workspace-engine-insufficiency";
 import {createHash} from "node:crypto";
 import type {PoolClient} from "pg";
 import {
@@ -64,7 +65,7 @@ export async function verifyMassLabelingSourceCheckpointsWithClientV1(client:Pic
     ||args.lease.workspace_id!==args.workspace_id||args.lease.execution_id!==args.source_engine_execution_id
     ||args.lease.execution_token!==engine.execution_token))fail();
   const receipts=(await client.query<{id:string;content:{sha256:string;size_bytes:number};metadata:{
-    unit_keys:string[];fit_checkpoint_digest:string;execution_id:string};request_digest:string;call_configuration:unknown}>(
+    unit_keys:string[];fit_checkpoint_digest:string;execution_id:string;insufficiency_decision_id?:string;call_id:string};request_digest:string;call_configuration:unknown}>(
     `SELECT artifact.id,artifact.content,artifact.metadata,call.request_digest,call.call_configuration
      FROM analysis_artifacts artifact JOIN engine_cost_events call ON call.id::text=artifact.metadata->>'call_id'
        AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
@@ -84,8 +85,8 @@ export async function verifyMassLabelingSourceCheckpointsWithClientV1(client:Pic
       ||receipt.metadata.execution_id!==args.source_engine_execution_id||receipt.metadata.fit_checkpoint_digest!==engine.fit.checkpoint_digest)fail();
     const packet=JSON.parse(checkpoint.body) as {contract_version:string;execution_id:string;
       context:SignalWorkspaceInterpretationContextV1;clusters:SignalWorkspaceInterpretationClusterV1[];
-      interpretations:unknown[];editorial_repair?:unknown};
-    if(!packet||Object.keys(packet).some(key=>!["contract_version","execution_id","context","clusters","interpretations","editorial_repair"].includes(key))
+      interpretations:unknown[];editorial_repair?:unknown;operator_insufficiency?:unknown};
+    if(!packet||Object.keys(packet).some(key=>!["contract_version","execution_id","context","clusters","interpretations","editorial_repair","operator_insufficiency"].includes(key))
       ||packet.contract_version!=="workspace-engine-interpretation-result-v1"||packet.execution_id!==args.source_engine_execution_id
       ||packet.context?.workspace_id!==args.workspace_id||packet.context.execution_id!==args.source_engine_execution_id
       ||packet.context.context_digest!==engine.context_digest)fail();
@@ -97,6 +98,10 @@ export async function verifyMassLabelingSourceCheckpointsWithClientV1(client:Pic
       if(digest(batch.editorial_repair)!==digest(repair))fail();
     }
     if(batch.request_digest!==receipt.request_digest||digest(batch.clusters.map(group=>group.cluster_id).sort())!==digest(receipt.metadata.unit_keys))fail();
+    if(packet.operator_insufficiency||receipt.metadata.insufficiency_decision_id){
+      await verifySignalWorkspaceEngineInsufficiencyCheckpointWithClientV1(client,{workspace_id:args.workspace_id,execution_id:args.source_engine_execution_id,actor_user_id:args.actor_user_id,
+        call_id:receipt.metadata.call_id,decision_id:receipt.metadata.insufficiency_decision_id??"",body:checkpoint.body,sha256:receipt.content.sha256,size_bytes:receipt.content.size_bytes});
+    }
     const results=validateSignalWorkspaceInterpretationResultV1(batch,{interpretations:packet.interpretations});
     for(const result of results) {
       if(found.has(result.cluster_id)||!keys.includes(result.cluster_id)

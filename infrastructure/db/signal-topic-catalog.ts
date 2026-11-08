@@ -1,3 +1,4 @@
+import {verifySignalWorkspaceEngineInsufficiencyCheckpointWithClientV1} from "./signal-workspace-engine-insufficiency";
 import { loadSignalDiscoveryPolicyV1 } from "./signal-workspace-discovery-policy";
 import { signalWorkspaceFeatureEnabledV1 } from "./signal-workspace-features";
 import { createHash, randomUUID } from "node:crypto";
@@ -1629,7 +1630,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
       if (Buffer.byteLength(source.body) > 2 * 1024 * 1024 || seen.has(source.artifact_id)) throw new SignalTopicCatalogError("workspace_engine_proposal_invalid");
       seen.add(source.artifact_id);
       const artifact = (await client.query<{ request_digest: string; editorial_repair: unknown; call_configuration: import("@noisia/query-engine").SignalWorkspaceInterpretationConfigurationV1;
-        content: { sha256: string; size_bytes: number }; metadata: { unit_keys: string[]; fit_checkpoint_digest: string } }>(`
+        content: { sha256: string; size_bytes: number }; metadata: { unit_keys: string[]; fit_checkpoint_digest: string;insufficiency_decision_id?:string;call_id:string } }>(`
         SELECT artifact.content,artifact.metadata,call.request_digest,call.call_configuration,call.metadata->'editorial_repair' editorial_repair FROM analysis_artifacts artifact
         JOIN engine_cost_events call ON call.id=(artifact.metadata->>'call_id')::uuid
           AND call.workspace_id=artifact.workspace_id AND call.catalog_execution_id=artifact.engine_execution_id
@@ -1643,7 +1644,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
         || artifact.metadata.fit_checkpoint_digest !== fit.checkpoint_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_receipt_invalid");
       const packet = JSON.parse(source.body) as { contract_version: string; execution_id: string;
         context: SignalWorkspaceInterpretationBatchV1["context"]; clusters: SignalWorkspaceInterpretationBatchV1["clusters"];
-        interpretations: unknown; editorial_repair?: unknown };
+        interpretations: unknown; editorial_repair?: unknown;operator_insufficiency?:unknown };
       if (packet.contract_version !== "workspace-engine-interpretation-result-v1" || packet.execution_id !== lease.execution_id
         || packet.context.workspace_id !== lease.workspace_id || packet.context.execution_id !== lease.execution_id
         || packet.context.context_digest !== current.context_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_identity_invalid");
@@ -1664,6 +1665,10 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
         batch = buildSignalWorkspaceInterpretationRepairBatchV1(batch, repair);
       }
       if (batch.request_digest !== artifact.request_digest) throw new SignalTopicCatalogError("workspace_engine_proposal_request_mismatch");
+      if(packet.operator_insufficiency||artifact.metadata.insufficiency_decision_id){
+        await verifySignalWorkspaceEngineInsufficiencyCheckpointWithClientV1(client,{workspace_id:lease.workspace_id,execution_id:lease.execution_id,actor_user_id:run.actor_user_id,
+          call_id:artifact.metadata.call_id,decision_id:artifact.metadata.insufficiency_decision_id??"",body:source.body,sha256:artifact.content.sha256,size_bytes:artifact.content.size_bytes});
+      }
       const results = validateSignalWorkspaceInterpretationResultV1(batch, { interpretations: packet.interpretations });
       if (JSON.stringify(results.map(item => item.cluster_id)) !== JSON.stringify(artifact.metadata.unit_keys)) throw new SignalTopicCatalogError("workspace_engine_proposal_coverage_invalid");
       proposals.push(...results.map(result => ({ result, artifact_id: source.artifact_id })));
