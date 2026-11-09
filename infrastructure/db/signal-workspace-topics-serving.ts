@@ -426,11 +426,24 @@ async function publishedContext(client: PoolClient, args: Args, filters: CivilFi
   }).filter(topic => topic.lifecycle !== "archived");
   let isCurrent = false;
   if (generation?.taxonomy_profile_id && generation.identity) {
-    const input = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
+    let input = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
       taxonomy_profile_id: generation.taxonomy_profile_id, source_engine_execution_id: generation.source_engine_execution_id }).catch(error => {
       if (error instanceof SignalWorkspaceClassificationError && error.code === "workspace_classification_catalog_unavailable") return null;
       throw error;
     });
+    // Entity-context metadata was added after legacy projections were sealed.
+    // Reconstruct v1 only when the unchanged catalog, embeddings and corrections
+    // still match. Exact context/compiler equality below remains mandatory.
+    if (input && generation.identity.catalog_digest === input.catalog_digest
+      && generation.identity.embedding_config_digest === input.embedding_config_digest
+      && generation.correction_digest === input.correction_digest
+      && (generation.identity.context_digest !== input.context_digest
+        || generation.identity.compiler_digest !== input.compiler_digest)) {
+      const historical = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
+        taxonomy_profile_id: generation.taxonomy_profile_id, legacy_context_identity: true });
+      if (generation.identity.context_digest === historical.context_digest
+        && generation.identity.compiler_digest === historical.compiler_digest) input = historical;
+    }
     isCurrent = input !== null && generation.source_valid && generation.policy_live
       && await signalDiscoveryProjectionContextCurrentV1(client,args.workspace_id,generation.source_engine_execution_id)
       && generation.input_revision === generation.current_revision

@@ -829,8 +829,9 @@ export async function loadSignalSemanticResolutionChildRuntimeV2(
 export async function loadSignalSemanticResolutionGovernedContextV1(
   queryable: {query<R extends Record<string,unknown>>(text:string,values?:unknown[]):Promise<{rows:R[]}>},
   workspaceId: string,
-  options: { complete_brand_context?: boolean } = {}
+  options: { complete_brand_context?: boolean; legacy_topic_identity?: boolean } = {}
 ): Promise<SignalSemanticResolutionGovernedContextV1> {
+  const legacyTopicIdentity = options.legacy_topic_identity === true;
   const workspaceResult = await queryable.query<{
     workspace_id: string;
     brand_id: string;
@@ -863,7 +864,7 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
       COALESCE(brand.display_name, brand.name) AS entity_label,
       ARRAY(SELECT DISTINCT value FROM unnest(
         ARRAY[brand.name, brand.display_name, brand.slug] || COALESCE(brand.brand_seed_handles, ARRAY[]::text[])
-        || ARRAY(SELECT product.name FROM brand_os_products product JOIN brand_os_profiles p ON p.id=product.brand_os_profile_id WHERE p.brand_id=brand.id AND p.status='active' AND product.status='active')
+        ${legacyTopicIdentity ? "" : "|| ARRAY(SELECT product.name FROM brand_os_products product JOIN brand_os_profiles p ON p.id=product.brand_os_profile_id WHERE p.brand_id=brand.id AND p.status='active' AND product.status='active')"}
       ) value WHERE value IS NOT NULL AND btrim(value) <> '') AS aliases,
       (SELECT left(profile.metadata->>'entity_disambiguation',300) FROM brand_os_profiles profile WHERE profile.brand_id=brand.id AND profile.status='active' ORDER BY version DESC LIMIT 1) disambiguation
     FROM brands brand WHERE brand.id = $1::uuid
@@ -875,8 +876,7 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
     FROM competitors competitor
     JOIN brand_seeds seed ON seed.id = competitor.competitor_brand_seed_id
     WHERE competitor.brand_id = $1::uuid AND seed.active = true
-      AND competitor.status = 'current' AND competitor.effective_from <= clock_timestamp()
-      AND (competitor.effective_to IS NULL OR competitor.effective_to > clock_timestamp())
+      ${legacyTopicIdentity ? "" : "AND competitor.status = 'current' AND competitor.effective_from <= clock_timestamp() AND (competitor.effective_to IS NULL OR competitor.effective_to > clock_timestamp())"}
     UNION ALL
     SELECT entity.entity_type, entity.id::text, entity.canonical_name,
       ARRAY(SELECT alias.alias FROM entity_aliases alias WHERE alias.entity_id = entity.id ORDER BY alias.alias),
@@ -931,7 +931,13 @@ export async function loadSignalSemanticResolutionGovernedContextV1(
       brand_handles: workspace.brand_handles ?? [],
       countries: workspace.countries ?? []
     },
-    identities: identityResult.rows.map((row) => ({ ...row, aliases: row.aliases ?? [] })),
+    // Reconstruct the original serialized input only for an exact sealed
+    // historical topic identity. New work retains the entity-context metadata.
+    identities: identityResult.rows.map(({ disambiguation, ...row }) => ({
+      ...row,
+      aliases: row.aliases ?? [],
+      ...(legacyTopicIdentity || disambiguation === undefined ? {} : { disambiguation })
+    })),
     brand_context: brandContextResult.rows
   };
 }

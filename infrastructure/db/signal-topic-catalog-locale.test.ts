@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import type {Pool} from 'pg';
 import {loadSignalTopicInheritedContextStoreV1} from './signal-topic-catalog';
 import {loadSignalWorkspaceAutonomousContextInputsV1} from './signal-workspace-topic-prototype-inputs';
-import {signalSemanticContextProposalDigestV1,signalWorkspaceEmbeddingDigestV1,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1} from '@noisia/query-engine';
+import {compileSignalWorkspaceTopicInputsV1,signalTopicDefinitionDigestV1,type SignalTopicDefinitionV1,signalSemanticContextProposalDigestV1,signalWorkspaceEmbeddingDigestV1,SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1} from '@noisia/query-engine';
 import {brandContextSnapshotFixtureV1} from './signal-brand-context.test-helpers';
 import {signalBrandOsCanonicalSnapshotHashV1,type SignalBrandOsCanonicalSnapshotV1} from './signal-brand-os-snapshot';
 import {loadSignalWorkspaceTopicPrototypesV1,quoteSignalWorkspaceTopicPrototypesV1,requestSignalWorkspaceTopicPrototypesV1} from './signal-workspace-topic-prototypes-management';
@@ -22,6 +22,7 @@ function source(locale:Locale|null,brief:unknown=null,successor?:{status:string;
   let sources:Array<{id:string;source_kind:string;file_hash:null;content_digest:string}>=[];
   let currentBrief=brief;
   let databaseCurrent=true;
+  let identityDisambiguation:string|null|undefined;
   const canonical=(value:string)=>{try{return new Intl.Locale(value).toString();}catch{return value;}};
   const authority={brand_os_digest:profileDigest,knowledge_digest:signalSemanticContextProposalDigestV1({sources:[],chunks:[]}),
     locale_context_digest:signalSemanticContextProposalDigestV1({primary_locale:selected?.primary_locale==null?null:canonical(selected.primary_locale),
@@ -31,7 +32,7 @@ function source(locale:Locale|null,brief:unknown=null,successor?:{status:string;
     if(sql.includes('SELECT signal_brand_context_processing_source_current_v1'))rows=[{current:databaseCurrent}];
     else if(sql.includes('AS workspace_id, brand.id::text AS brand_id'))rows=[{workspace_id:workspaceId,brand_id:workspaceId,
       brand_name:'Synthetic brand',brand_slug:'synthetic',brand_handles:[],description:'Brand evidence',industry:null,industry_sub:null,countries:['MX']}];
-    else if(sql.includes("SELECT 'primary_brand'::text AS scope"))rows=[{scope:'primary_brand',entity_id:workspaceId,entity_label:'Synthetic brand',aliases:[]}];
+    else if(sql.includes("SELECT 'primary_brand'::text AS scope"))rows=[{scope:'primary_brand',entity_id:workspaceId,entity_label:'Synthetic brand',aliases:[],...(identityDisambiguation===undefined?{}:{disambiguation:identityDisambiguation})}];
     else if(sql.includes("SELECT 'brand_objective' AS kind"))rows=[];
     else if(sql.includes('SELECT plan.acquisition_brief,workspace.timezone'))rows=[{acquisition_brief:currentBrief,
       timezone:brief==null?selected?.timezone??'America/Mexico_City':'America/Mexico_City',organization_id:workspaceId,brand_id:workspaceId}];
@@ -58,13 +59,42 @@ function source(locale:Locale|null,brief:unknown=null,successor?:{status:string;
         id:item.id,kind:item.source_kind,digest:item.content_digest})),chunks:[]})}];
     else throw new Error('Unexpected context query');
     return{rows:rows as Row[],rowCount:rows.length};}};
-  return{queryable,queries,drift(kind:'brand_os'|'knowledge'|'locale'|'unreconciled'){
+  return{queryable,queries,setDisambiguation(value:string|null){identityDisambiguation=value;},drift(kind:'brand_os'|'knowledge'|'locale'|'unreconciled'){
     databaseCurrent=false;
     if(kind==='knowledge')sources=[{id:workspaceId,source_kind:'text',file_hash:null,content_digest:sha('new KB')}];
     else if(kind==='locale')currentBrief={primary_locale:'en-US',languages:['en-US'],countries:['US']};
     else{live={...live,description:'Changed description'};if(kind==='brand_os')profileDigest=signalBrandOsCanonicalSnapshotHashV1(live);}
   }};
 }
+test('sealed v1 topic inputs reconstruct the original context while new work retains entity metadata',async()=>{
+  const locale={primary_locale:'en-US',locale_variants:['en-US'],markets:['US'],timezone:'UTC'};
+  const fixture=source(locale);
+  const inherited=(legacy=false)=>loadSignalTopicInheritedContextStoreV1({...fixture,workspace_id:workspaceId,complete_context:true,
+    ...(legacy?{context_mode:"legacy-topic-v1" as const}:{})});
+  const original=await inherited();
+  const topic:SignalTopicDefinitionV1={term_key:'service',label:'Service',definition:'Service experiences.',
+    scope:'primary_brand',inclusion:[],exclusion:[],positive_examples:[],negative_examples:[],
+    origin:'manual',lifecycle:'draft',source:null,definition_revision:1,definition_digest:sha('pending'),
+    created_at:'2026-09-08T12:00:00.000Z',updated_at:'2026-09-08T12:00:00.000Z'};
+  topic.definition_digest=signalTopicDefinitionDigestV1(topic);
+  const compile=(context:typeof original)=>compileSignalWorkspaceTopicInputsV1({topic,
+    context:{...context.embedding_contexts.primary_brand,context_refs:context.context_refs}});
+  const originalInputs=compile(original);
+  fixture.setDisambiguation(null);
+  const modernEmpty=await inherited();
+  assert.notEqual(modernEmpty.context_digest,original.context_digest,
+    "modern generations keep their existing serialization of the entity metadata field");
+  const restored=await inherited(true);
+  assert.deepEqual(restored,original,'adding an empty optional SQL field preserves every sealed context input');
+  assert.deepEqual(compile(restored),originalInputs,'historical compiler and input digests retain their identities');
+  fixture.setDisambiguation('The service company, excluding a similarly named place.');
+  const changed=await inherited();
+  assert.notEqual(changed.context_digest,original.context_digest);
+  assert.notEqual(compile(changed).compiler_digest,originalInputs.compiler_digest,
+    'a real entity disambiguation still changes the modern semantic authority');
+  assert.deepEqual(await inherited(true),original,
+    'the legacy contract reconstructs only the identity fields originally compiled');
+});
 test('private editorial projection reuses the full canonical context without changing its source digest',async()=>{
   const locale={primary_locale:'es-MX',locale_variants:['es-MX'],markets:['MX'],timezone:'America/Mexico_City'};
   const original=await loadSignalTopicInheritedContextStoreV1({...source(locale),workspace_id:workspaceId,

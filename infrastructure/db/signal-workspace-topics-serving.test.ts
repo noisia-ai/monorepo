@@ -96,6 +96,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let selectedInterest = false;
   let interestCurrent = true;
   let semanticDrift = false;
+  let identityDisambiguation:string|null|undefined;
+  let identityAliases=["Example", "example"];
   let importedMode = false;
   let consolidatedMode = false;
   let noOverlap = false;
@@ -150,7 +152,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
         brand_handles: [], description: "Example brand", industry: "Retail", industry_sub: null, countries: ["MX"]
       }] };
       if (sql.includes("SELECT 'primary_brand'::text AS scope")) return { rows: [{
-        scope: "primary_brand", entity_id: id("8"), entity_label: "Example", aliases: ["Example", "example"]
+        scope: "primary_brand", entity_id: id("8"), entity_label: "Example", aliases: identityAliases,
+        ...(identityDisambiguation===undefined?{}:{disambiguation:identityDisambiguation})
       }] };
       if (sql.includes("SELECT 'brand_objective' AS kind")) return { rows: [] };
       if (sql.includes("SELECT plan.acquisition_brief")) return { rows: [{ acquisition_brief: {
@@ -247,6 +250,25 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.match(topicQueries[0]!.sql, /id=\$2::uuid/u);
   assert.deepEqual(topicQueries[1]!.params, [workspaceId, workingProfile]);
   assert.equal(overview?.is_current, true);
+  identityDisambiguation=null;
+  const compatible=await loadSignalWorkspaceTopicsOverviewV1({database:{async connect(){return client as never;}},
+    workspace_id:workspaceId,actor_user_id:actorId,timezone:"America/Mexico_City"});
+  assert.equal(compatible?.is_current,true,'an exact legacy identity survives added entity metadata');
+  const legacyIdentity=identity;
+  identity=await loadSignalWorkspaceClassificationInputV1({queryable:client as never,workspace_id:workspaceId,
+    actor_user_id:actorId,taxonomy_profile_id:profileA});
+  identityDisambiguation='Distinguish this service company from its homonym.';
+  const modernChanged=await loadSignalWorkspaceTopicsOverviewV1({database:{async connect(){return client as never;}},
+    workspace_id:workspaceId,actor_user_id:actorId,timezone:"America/Mexico_City"});
+  assert.equal(modernChanged?.is_current,false,'modern generations cannot fall back across a semantic metadata edit');
+  identity=legacyIdentity;
+  identityAliases=[...identityAliases,'New governed alias'];
+  const legacyChanged=await loadSignalWorkspaceTopicsOverviewV1({database:{async connect(){return client as never;}},
+    workspace_id:workspaceId,actor_user_id:actorId,timezone:"America/Mexico_City"});
+  assert.equal(legacyChanged?.is_current,false,'v1 fallback still requires the exact governed aliases');
+  identityAliases=["Example","example"];
+  identityDisambiguation=undefined;
+
   assert.equal(statements.some(statement => statement.includes("defined_interest_memberships")), false,
     "without durable selection the ordinary Signal path cannot expose interests");
   assert.equal(overview?.filters.timezone, "America/Mexico_City");
