@@ -584,3 +584,35 @@ test("a bound global decision replays the paid raw with 48 checkpoints and immut
     assert.equal(JSON.stringify(f.call), originalLedger);
   } finally { await f.cleanup(); }
 });
+
+
+test("mass consolidation and its category lexicon use the dedicated credential with explicit injection and legacy fallback", async () => {
+  const original = process.env.ANTHROPIC_API_KEY;
+  const dedicated = process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "synthetic_historical_credential";
+  try {
+    for (const [environment, injected, expected] of [
+      ["synthetic_mass_credential", undefined, "synthetic_mass_credential"],
+      ["synthetic_mass_credential", "synthetic_injected_credential", "synthetic_injected_credential"],
+      [undefined, undefined, "synthetic_historical_credential"],
+      ["", undefined, "synthetic_historical_credential"],
+    ] as const) {
+      if (environment === undefined) delete process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
+      else process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = environment;
+      const f = await fixture();
+      try {
+        const send = f.args.send!;
+        f.args.api_key = injected;
+        const seen: string[] = [];
+        f.args.send = input => { seen.push(input.api_key); return send(input); };
+        await consolidateMassLabelingGroupsV1(f.args);
+        assert.deepEqual(seen, [expected]);
+      } finally { await f.cleanup(); }
+    }
+  } finally {
+    if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = original;
+    if (dedicated === undefined) delete process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
+    else process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = dedicated;
+  }
+});

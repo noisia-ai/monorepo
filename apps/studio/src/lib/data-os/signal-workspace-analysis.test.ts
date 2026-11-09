@@ -3,7 +3,7 @@ import test from "node:test";
 import type { Pool } from "pg";
 import { SignalTopicCatalogError, SignalWorkspaceEngineError, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialAdmissionV1, type SignalWorkspaceIncrementalEditorialRenewalV1 } from "@noisia/db";
 import { loadWorkspaceAnalysisPreflightForReadV1, loadWorkspaceIncrementalEditorialForActorV1, workspaceIncrementalEditorialExecutionViewV1, loadWorkspaceAnalysisForActorV1, requestWorkspaceAnalysisForActorV1, validateWorkspaceAnalysisRequestV1,
-  workspaceAnalysisActiveRunV1, workspaceAnalysisAdmissionProviderAvailableV1, workspaceAnalysisContextPreflightStateV1, workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
+  workspaceAnalysisActiveRunV1, workspaceAnalysisAnthropicApiKeyV1, workspaceAnalysisAdmissionProviderAvailableV1, workspaceAnalysisContextPreflightStateV1, workspaceAnalysisInterpretationPolicyV1, workspaceAnalysisPreflightStateV1, workspaceAnalysisRequestScopeV1, workspaceAnalysisRunViewV1 } from "./signal-workspace-analysis";
 
 const id = "00000000-0000-4000-8000-000000000001", hash = `sha256:${"1".repeat(64)}`;
 const body = { action: "start", embedding_run_id: id, expected_context_digest: hash, expected_catalog_digest: hash, claude_cap_micro_usd: 0 };
@@ -543,4 +543,27 @@ test("bounded analysis resolves receipt-dependent reads sequentially", async () 
   }, { parallel: false });
   assert.equal(result, null);
   assert.deepEqual(order, ["admission", "preparation", "preparation_done", "execution"]);
+});
+
+
+test("mass study preflight and availability select the dedicated key without changing historical providers", () => {
+  const env = {
+    NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "true",
+    NOISIA_MASS_LABELING_ANTHROPIC_API_KEY: "synthetic_mass_credential",
+    ANTHROPIC_API_KEY: "synthetic_historical_credential",
+    NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD: "1000000",
+    NOISIA_WORKSPACE_INTERPRETATION_DAILY_CAP_MICRO_USD: "2000000",
+  };
+  assert.equal(workspaceAnalysisAnthropicApiKeyV1(true, env), "synthetic_mass_credential");
+  assert.equal(workspaceAnalysisAnthropicApiKeyV1(false, env), "synthetic_historical_credential");
+  for (const value of [undefined, ""]) {
+    const fallback = { ...env, NOISIA_MASS_LABELING_ANTHROPIC_API_KEY: value };
+    assert.equal(workspaceAnalysisAnthropicApiKeyV1(true, fallback), "synthetic_historical_credential");
+    const massOnly = { ...env, ANTHROPIC_API_KEY: value };
+    assert.equal(workspaceAnalysisAdmissionProviderAvailableV1(massOnly, true), true);
+    assert.equal(workspaceAnalysisAdmissionProviderAvailableV1(massOnly), false);
+    assert.equal(workspaceAnalysisInterpretationPolicyV1(massOnly, Date.now(), true).available, true);
+    assert.equal(workspaceAnalysisInterpretationPolicyV1(massOnly).available, false);
+  }
+  assert.equal(workspaceAnalysisAdmissionProviderAvailableV1({ ...env, NOISIA_WORKSPACE_INTERPRETATION_ENABLED: "false" }, true), false);
 });

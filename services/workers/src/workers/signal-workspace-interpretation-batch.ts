@@ -72,8 +72,11 @@ export async function executeWorkspaceInterpretationBatchV1(args:WorkspaceInterp
   } else if (call.state === "reserved") {
     if(args.recovery_only)return fail("workspace_engine_interpretation_receipt_recovery_required");
     try {
+      const profileApiKey = "representative_count" in batch.configuration
+        ? process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY
+        : undefined;
       response = await (args.send ?? sendWorkspaceInterpretationV1)({ batch,
-        api_key: args.api_key ?? process.env.ANTHROPIC_API_KEY ?? "",
+        api_key: args.api_key ?? (profileApiKey || process.env.ANTHROPIC_API_KEY) ?? "",
         provider_enabled: args.provider_enabled ?? process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
         // A prior reservation keeps its own admission receipt. The current
         // lease authorizes new reservations, never changes an old call's date.

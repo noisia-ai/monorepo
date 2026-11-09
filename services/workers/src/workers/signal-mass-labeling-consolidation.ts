@@ -170,7 +170,9 @@ export async function consolidateMassLabelingGroupsV1(args: {
     try {
       const receipt = await (args.send ?? sendMassLabelingConsolidationV1)({
         batch,
-        api_key: args.api_key ?? process.env.ANTHROPIC_API_KEY ?? "",
+        api_key: args.api_key
+          ?? (process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY)
+          ?? "",
         enabled:
           args.provider_enabled ??
           process.env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true",
