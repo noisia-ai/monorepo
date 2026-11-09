@@ -310,6 +310,13 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     const segment = args.conversation_segment ?? "all";
     if (!["all","conversation","advertising","hashtags"].includes(segment)) return fail("workspace_topics_segment_invalid",422);
     filters.conversation_segment = segment;
+    const projection=(await client.query<{roots:string;pairs:string;expected_pairs:string}>(`SELECT
+      (SELECT count(*) FROM signal_mass_labeling_root_segments WHERE workspace_id=$1 AND map_id=$2) roots,
+      (SELECT count(*) FROM signal_mass_labeling_topic_probabilities WHERE workspace_id=$1 AND map_id=$2) pairs,
+      (SELECT COALESCE(sum(jsonb_array_length(candidates)),0) FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2) expected_pairs`,
+      [args.workspace_id,mass.map.id])).rows[0]!;
+    if(Number(projection.roots)!==mass.map.root_count || projection.pairs!==projection.expected_pairs)
+      return fail("workspace_topics_materialization_incomplete",503);
     const studyPolicy=await loadMassLabelingStudyPolicyWithClientV1(client,args.workspace_id);
     const defaultLexicon=studyPolicy.revision===0 ? (await client.query<{lexicon_terms:string[]}>(
       "SELECT lexicon_terms FROM signal_mass_labeling_default_lexicons WHERE workspace_id=$1",[args.workspace_id])).rows[0] : null;
@@ -323,7 +330,7 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
       "SELECT topic_key,localization FROM signal_mass_labeling_localizations WHERE workspace_id=$1 AND map_id=$2",
       [args.workspace_id,mass.map.id])).rows;
     for (const row of importedLocalizations) if (!localizations.has(row.topic_key)) localizations.set(row.topic_key,row.localization);
-    const priorInterests = (await client.query<{interest_key:string;name:string;definition:string;localization:SignalTopicLocalizationV1|null}>(
+    const priorInterests = studyPolicy.revision>0 ? [] : (await client.query<{interest_key:string;name:string;definition:string;localization:SignalTopicLocalizationV1|null}>(
       `SELECT interest.interest_key,interest.name,interest.definition,interest.localization FROM signal_mass_labeling_r13_interests interest
        JOIN signal_mass_labeling_r13_interest_results result ON result.workspace_id=interest.workspace_id
          AND result.map_id=interest.map_id AND result.interest_key=interest.interest_key
@@ -581,12 +588,13 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   ${imported ? `SELECT mention.id root_id,${massLabeling ? `CASE WHEN mass_outcome.status='labeled' THEN
       ${includeMemberships ? "CASE WHEN mass_concept.root_id IS NOT NULL THEN 'resolved' ELSE 'abstained' END" : "'abstained'"} ELSE 'error' END` : "NULL::text"} resolution_state,
     mention.published_at,NULL::boolean has_unresolved_topics,
-    ${massLabeling ? "signal_mass_labeling_r13_segment_v1(mention.text_clean,mass_outcome.probabilities) conversation_segment," : ""}
+    ${massLabeling ? "segment.conversation_segment," : ""}
     COALESCE(rights.metrics,false) metrics,COALESCE(rights.evidence,false) evidence
   FROM received_roots received JOIN mentions mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
     AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
     LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id
+    JOIN signal_mass_labeling_root_segments segment ON segment.map_id=frozen.map_id AND segment.root_id=frozen.root_id AND segment.workspace_id=$1::uuid
     ${includeMemberships ? "LEFT JOIN mass_roots_with_concept mass_concept ON mass_concept.root_id=mention.id" : ""}` : ""}
   LEFT JOIN root_rights rights ON rights.root_id=mention.id` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
