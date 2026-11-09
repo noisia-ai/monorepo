@@ -31,9 +31,9 @@ test("synthetic editorial quote respects the native budget midnight and policy e
     // The primary context, embedding and engine admissions already use the
     // stable synthetic zone, before any downstream policy or sibling is made.
     const primary=(await query(`SELECT budget_timezone,extract(epoch FROM
-      ((((created_at AT TIME ZONE budget_timezone)::date+1)::timestamp AT TIME ZONE 'America/Mexico_City')-created_at)) seconds_left
+      ((((created_at AT TIME ZONE budget_timezone)::date+1)::timestamp AT TIME ZONE budget_timezone)-created_at)) seconds_left
       FROM signal_processing_policy_versions WHERE organization_id=$1 ORDER BY version LIMIT 1`,[seed.identity.organization_id])).rows[0]!;
-    assert.ok(Number(primary.seconds_left)>10*3600);
+    assert.ok(Number(primary.seconds_left)>10*3600&&Number(primary.seconds_left)<=12*3600);
     assert.equal(seed.projection.budget.timezone,primary.budget_timezone);
     assert.equal((await query("SELECT count(*)::int n FROM signal_processing_admissions WHERE workspace_id=$1 AND budget_timezone<>$2",[seed.identity.workspace_id,primary.budget_timezone])).rows[0]!.n,0);
     assert.equal((await query("SELECT count(*)::int n FROM engine_cost_events WHERE workspace_id=$1 AND budget_timezone<>$2",[seed.identity.workspace_id,primary.budget_timezone])).rows[0]!.n,0);
@@ -42,9 +42,12 @@ test("synthetic editorial quote respects the native budget midnight and policy e
       const timezone=await loadSyntheticBudgetTimezoneV1({query,at:before});
       const dates=(await query(`SELECT ($1::timestamptz AT TIME ZONE $2)::date::text before,
         (($1::timestamptz+interval '200 milliseconds') AT TIME ZONE $2)::date::text after,
+        extract(epoch FROM (((($1::timestamptz AT TIME ZONE $2)::date+1)::timestamp AT TIME ZONE $2)-$1::timestamptz)) seconds_left,
         ($1::timestamptz AT TIME ZONE 'America/Mexico_City')::date::text mexico_before,
         (($1::timestamptz+interval '200 milliseconds') AT TIME ZONE 'America/Mexico_City')::date::text mexico_after`,[before,timezone])).rows[0]!;
       assert.equal(dates.before,dates.after,"the chosen fixed zone spans the complete setup across every UTC hour boundary");
+      assert.ok(Number(dates.seconds_left)>11*3600&&Number(dates.seconds_left)<=12*3600,
+        `the synthetic budget window remains near noon at ${hour}:59 UTC, including hours 20–23`);
       if(hour===5)assert.notEqual(dates.mexico_before,dates.mexico_after,"the old Mexico fixture really crosses a budget date at this boundary");
     }
     const policyUntil=(await query("SELECT (clock_timestamp()+interval '2 days')::text until")).rows[0]!.until;
