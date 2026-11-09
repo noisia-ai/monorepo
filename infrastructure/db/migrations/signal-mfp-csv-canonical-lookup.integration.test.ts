@@ -4,20 +4,31 @@ import test from "node:test";
 import pg from "pg";
 
 import { createSignalSentioneCsvIngester } from "../sentione-csv-ingest";
+import { createMassLabelingProductDatabaseFixtureV1 } from "./signal-mass-labeling-product-database.synthetic.fixture";
 
-// Opt-in, disposable local PostgreSQL. No application data or provider is used.
+// The CI fixture pins PostgreSQL 17 and creates its own synthetic database.
+// Local opt-in targets must also be disposable and explicitly named for this test.
+const ci = process.env.GITHUB_ACTIONS === "true" && process.env.NOISIA_MFP_PG_CI === "true";
 const target = process.env.NOISIA_SENTIONE_LOOKUP_TEST_URL;
 
 test("canonical chunk lookup keeps recovery semantics and bounded reads with stale workspace statistics", {
-  skip: !target, timeout: 120_000
+  skip: !ci && !target, timeout: 240_000
 }, async (context) => {
-  const url = new URL(target!);
-  assert.ok(["127.0.0.1", "localhost"].includes(url.hostname));
-  assert.match(url.pathname, /^\/noisia_sentione_lookup_test_/u);
-  assert.equal(url.search, "", "connection overrides are prohibited");
-  assert.equal(url.hash, "", "connection fragments are prohibited");
-  const client = new pg.Client({ connectionString: url.toString(), ssl: false });
-  await client.connect();
+  const fixture = ci ? await createMassLabelingProductDatabaseFixtureV1() : null;
+  let local: pg.Client | undefined;
+  let client: pg.Client | pg.PoolClient;
+  if (fixture) {
+    client = await fixture.database.connect();
+  } else {
+    const url = new URL(target!);
+    assert.ok(["127.0.0.1", "localhost"].includes(url.hostname));
+    assert.match(url.pathname, /^\/noisia_sentione_lookup_test_/u);
+    assert.equal(url.search, "", "connection overrides are prohibited");
+    assert.equal(url.hash, "", "connection fragments are prohibited");
+    local = new pg.Client({ connectionString: url.toString(), ssl: false });
+    await local.connect();
+    client = local;
+  }
   const schema = `lookup_${randomUUID().replaceAll("-", "")}`;
   try {
     await client.query(`CREATE SCHEMA ${schema}; SET search_path TO ${schema}`);
@@ -114,8 +125,12 @@ test("canonical chunk lookup keeps recovery semantics and bounded reads with sta
       assert.equal(currentRow?.origin_disposition, "included");
     }
   } finally {
-    await client.query(`DROP SCHEMA ${schema} CASCADE`);
-    await client.end();
+    try { await client.query(`DROP SCHEMA ${schema} CASCADE`); }
+    finally {
+      if (local) await local.end();
+      else (client as pg.PoolClient).release();
+      await fixture?.cleanup();
+    }
   }
 });
 
