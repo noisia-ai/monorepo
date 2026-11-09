@@ -14,6 +14,7 @@ import { SignalEChart } from "./SignalEChart";
 import { SignalWorkspaceTopicDetailMetrics, validNativeTopicDetail } from "./SignalWorkspaceTopicDetail";
 import { SignalSourceIcon } from "./SignalSourceIcon";
 import { SignalEvidenceDrawer } from "./SignalEvidenceDrawer";
+import { SignalConsumerEvidence } from "./SignalConsumerEvidence";
 import { SignalTopicsKpi, SignalTopicsRankingCard, SignalTopicsRankingList } from "./SignalTopicsPrimitives";
 import { buildSignalTopicTrendOption } from "./SignalTopicChartOptions";
 
@@ -204,7 +205,8 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         showComparison={false} onApply={selection => onApplyFilter({ ...selection, comparisonMode: "none", dimensions: {}, searchQuery: "" })} /> : null}
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
-    <SignalWorkspaceConsumerIndicators data={data} loading={loading} showHeading={false} />
+    <SignalWorkspaceConsumerIndicators data={data} loading={loading} showHeading={false}
+      workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} />
   </div>;
   return <div className="signal-v2-tn signal-v2-tn--workspace">
     <SignalV2ModuleHeader icon={surface === "summary" ? <Gauge size={20} weight="fill" /> : <Quotes size={20} weight="fill" />} title={t(surface === "summary" ? "summaryTitle" : "title")} subtitle={t("scope")}
@@ -227,7 +229,8 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
         <button className="signal-v2-filter" type="button" disabled={loading} onClick={() => void refresh()}><ArrowClockwise size={16} />{t("refresh")}</button>
         <span>{t("workspaceTimezone", { timezone: workspaceTimezone })}</span></>} />
     {refreshFailed ? <div className="signal-v2-error" role="alert">{t("refreshError")}</div> : null}
-    {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading} /> : null}
+    {data.consumer_indicators ? <SignalWorkspaceConsumerIndicators data={data} loading={loading}
+      workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} /> : null}
     <div aria-busy={loading} className={`signal-v2-tn__data-stage${loading ? " signal-v2-dashboard-stage--loading" : ""}`}>
     {surface === "topics" ? <div className="signal-v2-tn__switch signal-v2-tn__switch--native" role="tablist" aria-label={t("sections.label")}>
       {sections.map((key, index) => <button key={key} type="button" role="tab" id={`${tabsId}-${key}`}
@@ -345,14 +348,20 @@ function SignalComputedWorkspaceTopics({ initialBundle, brandName, data, loading
   </div>;
 }
 
-export function SignalWorkspaceConsumerIndicators({ data, loading, showHeading = true }: { data: ComputedTopics; loading: boolean; showHeading?: boolean }) {
+export function SignalWorkspaceConsumerIndicators({ data, loading, showHeading = true, workspaceTimezone = "UTC", onOpenMention }: {
+  data: ComputedTopics; loading: boolean; showHeading?: boolean; workspaceTimezone?: string; onOpenMention?: (id: string) => void;
+}) {
   const t = useTranslations("SignalV2.workspaceTopics"), locale = useLocale();
   const indicators = data.consumer_indicators;
   return <section className="signal-v2-card signal-v2-tn__consumers" aria-label={t("consumers.title")} aria-busy={loading}>
     {showHeading ? <header className="signal-v2-card__heading"><div><h2>{t("consumers.title")}</h2><p>{t("consumers.scope")}</p></div></header> : null}
-    {indicators ? <div className="signal-v2-tn__term-metrics">{(["eligible", "processed", "trigger", "barrier", "none", "intermediate", "unresolved"] as const).map(key =>
+    {indicators ? <><div className="signal-v2-tn__term-metrics">{(["eligible", "processed", "trigger", "barrier", "none", "intermediate", "unresolved"] as const).map(key =>
       <article key={key}><small>{t(`consumers.${key}`)}</small><strong>{indicators[key].toLocaleString(locale)}</strong></article>)}</div>
+      {indicators.category_matched !== undefined && indicators.category_excluded !== undefined ? <p>
+        {t("consumers.categoryCoverage", { matched: indicators.category_matched, excluded: indicators.category_excluded })}</p> : null}</>
       : <p>{t("consumers.pending")}</p>}
+    <SignalConsumerEvidence key={`${data.workspace_id}:${data.scope_digest}`} data={data} loading={loading}
+      workspaceTimezone={workspaceTimezone} onOpenMention={onOpenMention} />
   </section>;
 }
 

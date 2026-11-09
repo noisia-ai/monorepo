@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ArrowClockwise, MagnifyingGlass } from "@phosphor-icons/react";
 import { useLocale, useTranslations } from "next-intl";
 import { formatEmbeddingMicroUsd, parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
-import { workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisHasRecoverablePartialCatalog, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, workspaceAnalysisUsesIncremental, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
+import { workspaceAnalysisUsesGovernedBudget, workspaceAnalysisCatalogReceiptKey, workspaceAnalysisErrorKey, workspaceAnalysisHasRecoverablePartialCatalog, workspaceAnalysisRecoveryFailure, workspaceAnalysisInterpretedComplete, workspaceAnalysisUnknown, workspaceAnalysisUsesIncremental, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 import { workspaceAnalysisAssociationReceipt, workspaceAnalysisUpdateState, workspaceNumericReadinessMessage } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { isWorkspaceAdmissionAction } from "@/lib/data-os/signal-workspace-interpretation-admission-ui";
 import { WorkspaceInterpretationAdmissionControls } from "./WorkspaceInterpretationAdmissionControls";
@@ -30,7 +30,8 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
     refreshedFacets.current=facetsReceipt;void refreshAnalysis();
   },[facetsReceipt,disabled,refreshAnalysis]);
   const status = analysis.data;
-  const hideLegacyActions = suppressLegacyActions && !status?.discovery_enabled;
+  const governedBudget = workspaceAnalysisUsesGovernedBudget(status);
+  const hideLegacyActions = suppressLegacyActions && !governedBudget;
   const usesIncremental = workspaceAnalysisUsesIncremental(status);
   const run = status?.request_run ?? status?.active_run ?? status?.latest_run ?? null;
   const complete = status?.latest_complete ?? null;
@@ -180,14 +181,14 @@ export function WorkspaceAnalysisControls({ brandId, workspaceId, catalogVersion
           : preflight.cost.claude.estimated_upper_micro_usd === null
           ? <>{t("estimateUnknown")}{capNumber !== null && capNumber > 0 ? <> {t("spendingLimit", { amount: money(capNumber) })}</> : null}</>
           : t("estimate", { amount: money(preflight.cost.claude.estimated_upper_micro_usd) })}
-          {status?.discovery_enabled && preflight.cost.claude.maximum_cap_micro_usd !== null ? <> {t("spendingLimit", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</> : null}
+          {governedBudget && preflight.cost.claude.maximum_cap_micro_usd !== null ? <> {t("spendingLimit", { amount: money(preflight.cost.claude.maximum_cap_micro_usd) })}</> : null}
           {!preflight.cost.claude.provider_available ? <> {t("noInterpretation")}</> : null}
         </p>
         {preflight.cost.voyage.estimated_upper_micro_usd > 0 ? <p className="admin-drawer-form__hint">{t("voyageEstimate", {
           amount: money(preflight.cost.voyage.estimated_upper_micro_usd)
         })}</p> : null}
-        {preflight.cost.claude.provider_available && !status?.discovery_enabled ? <details><summary>{t("changeCap")}</summary>
-          {!status?.discovery_enabled ? <label className="workspace-form__field"><span>{t("cap", { amount: money(preflight.cost.claude.maximum_cap_micro_usd ?? 0) })}</span>
+        {preflight.cost.claude.provider_available && !governedBudget ? <details><summary>{t("changeCap")}</summary>
+          {!governedBudget ? <label className="workspace-form__field"><span>{t("cap", { amount: money(preflight.cost.claude.maximum_cap_micro_usd ?? 0) })}</span>
             <input inputMode="decimal" value={analysis.cap} disabled={disabled || analysis.submitting}
               onChange={(event) => analysis.setCap(event.target.value)} /></label> : null}
         </details> : null}

@@ -63,8 +63,16 @@ test("manual and previous interests default to guidance, while emergent defaults
 
 for (const locale of ["es-MX", "en-US"]) {
   const messages = JSON.parse(await readFile(new URL(`../../../messages/${locale}.json`, import.meta.url), "utf8"));
-  const render = (data = base, mfpEnabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
-    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager, { brandId: "new-brand-id", workspaceId: "workspace-test", actorId: "00000000-0000-4000-8000-000000000001", initial: data, mfpEnabled })));
+  const render = (data = base, mfpEnabled = false, massLabelingEnabled = false) => renderToStaticMarkup(createElement(NextIntlClientProvider,
+    { locale, messages, timeZone: "UTC" } as ComponentProps<typeof NextIntlClientProvider>, createElement(TopicsManager, { brandId: "new-brand-id", workspaceId: "workspace-test", actorId: "00000000-0000-4000-8000-000000000001", initial: data, mfpEnabled, massLabelingEnabled })));
+  test(`${locale}: a mass-labeling study uses its settings and unified classification controls`, () => {
+    const html = render({ ...base, topics: [savedTopic] }, true, true);
+    assert.ok(html.includes(messages.LabelingStudySettings.title));
+    assert.ok(html.includes(messages.StudyLabeling.title));
+    assert.ok(!html.includes(messages.Mfp.experimental));
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.definedInterestDecision.title));
+    assert.ok(!html.includes(messages.AdminWorkspace.topics.actions.search));
+  });
   test(`${locale}: MFP replaces legacy decision and selection controls without enabling an unloaded action`, () => {
     const html=render({...base,topics:[savedTopic]},true);
     assert.ok(html.includes(messages.Mfp.journey.title));

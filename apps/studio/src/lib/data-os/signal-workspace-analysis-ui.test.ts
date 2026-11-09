@@ -23,6 +23,17 @@ const status: WorkspaceAnalysisStatus = {
     cost: { claude: { estimated_upper_micro_usd: 2_001, maximum_cap_micro_usd: 10_000, provider_available: true },
       voyage: { estimated_upper_micro_usd: 0 } } }
 };
+test("full-population labeling uses the governed budget without enabling discovery sampling", () => {
+  const mass: WorkspaceAnalysisStatus = { ...status, discovery_enabled: false, governed_enabled: true };
+  assert.equal(validWorkspaceAnalysisStatus(mass), true);
+  assert.equal(workspaceAnalysisDefaultCap(mass), "");
+  assert.equal(workspaceAnalysisCanStart(mass, ""), true);
+  assert.equal(workspaceAnalysisCanStart({ ...mass, can_execute: false }, ""), false);
+  assert.equal(workspaceAnalysisCanStart({ ...mass, preflight: { ...mass.preflight, cost: {
+    ...mass.preflight.cost, claude: { ...mass.preflight.cost.claude, provider_available: false }
+  } } }, ""), false);
+  assert.equal(validWorkspaceAnalysisStatus({ ...mass, governed_enabled: "injected" }), false);
+});
 const ready: WorkspaceAnalysisRun = { execution_id: id, status: "ready", phase: "complete", progress: 100,
   expected_roots: 100, expected_chunks: 130, expected_guides: 2, processed_roots: 100, processed_chunks: 130,
   error_code: null, is_current: true, model_version_id: id, artifact_count: 3, retryable: false, outcome_unknown: false, transport_recovery_eligible: false,

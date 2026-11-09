@@ -2,7 +2,7 @@ import { shareWorkspaceAnalysisRead } from "./workspace-analysis-read-sharing";
 import { readWorkspaceAnalysis } from "./mfp-population-read";
 import { createHash } from "node:crypto";
 import type { Pool } from "pg";
-import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1, signalWorkspaceFeatureEnabledV1,
+import { getMassLabelingStudyPolicyV1, loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspaceDiscoveryRequestV1, beginSignalWorkspaceEngineV1, loadSignalWorkspaceCapabilitiesStoreV1, signalWorkspaceFeatureEnabledV1,
   loadSignalWorkspaceCorpusPreparationStoreV1, loadSignalWorkspaceEnginePreflightV1,
   loadSignalWorkspaceEngineStatusV1, retrySignalWorkspaceEngineV1, isSignalWorkspaceEngineRetryableErrorV1, SignalWorkspaceEngineError,
   retrySignalWorkspaceEngineProgressV1, retrySignalWorkspaceNumericUpdateV1, retrySignalWorkspaceIncrementalDeliveryV1, loadSignalWorkspaceAnalysisUpdateV1, loadSignalWorkspaceNumericReadinessV1,
@@ -14,7 +14,7 @@ import { loadSignalDiscoveryPolicyV1, discoveryStrictCapV1, replaySignalWorkspac
   loadSignalWorkspaceEngineInterpretationBudgetV1,
   SignalTopicCatalogError,
   type SignalWorkspaceEngineInterpretationBudgetV1, type SignalWorkspaceEngineStatusV1, type SignalWorkspaceIncrementalEditorialStatusV1 } from "@noisia/db";
-import { assertAnthropicProviderAccessV1, signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1 } from "@noisia/query-engine";
+import { assertAnthropicProviderAccessV1, signalWorkspaceEmbeddingDigestV1, SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } from "@noisia/query-engine";
 import { parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
   type WorkspaceAnalysisRequest, type WorkspaceAnalysisRun, type WorkspaceAnalysisStatus } from "./signal-workspace-analysis-ui";
 import type { WorkspaceIncrementalEditorial } from "./signal-workspace-incremental-editorial-ui";
@@ -33,9 +33,17 @@ async function authorize(args: Access, execute: boolean) {
   const database = args.database ?? (await import("@/lib/db")).pool;
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database,
     workspace_id: args.workspaceId, actor_user_id: args.actorUserId });
-  const discoveryEnabled = await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id:args.workspaceId,feature:"mfp_discovery"});
-  if (!capabilities.can_view || execute && !(discoveryEnabled ? capabilities.can_request_processing : capabilities.can_execute_topics)) throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
-  return { database, capabilities, discoveryEnabled, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
+  if (!capabilities.can_view || execute && !capabilities.can_request_processing && !capabilities.can_execute_topics)
+    throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
+  const [discovery, mass] = await Promise.all([
+    signalWorkspaceFeatureEnabledV1({ queryable: database, workspace_id: args.workspaceId, feature: "mfp_discovery" }),
+    signalWorkspaceFeatureEnabledV1({ queryable: database, workspace_id: args.workspaceId, feature: "mass_labeling" })
+  ]);
+  const discoveryEnabled = discovery && !mass;
+  const governedEnabled = discovery || mass;
+  if (execute && !(governedEnabled ? capabilities.can_request_processing : capabilities.can_execute_topics))
+    throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
+  return { database, capabilities, discoveryEnabled, governedEnabled, massEnabled: mass, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
 }
 export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env, nowMilliseconds = Date.now()) {
   const maximum = Number(env.NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD ?? 0);
@@ -168,11 +176,11 @@ export async function loadWorkspaceAnalysisPreflightForReadV1<T>(loader: () => P
 export async function loadWorkspaceAnalysisForActorV1(args: Access & { idempotencyKey?: string }): Promise<WorkspaceAnalysisStatus> {
   if (args.idempotencyKey !== undefined && !requestKeyPattern.test(args.idempotencyKey)) throw new SignalWorkspaceEngineError("workspace_analysis_request_invalid", 422);
   const access = await authorize(args, false);
-  const authority = JSON.stringify({ capabilities: access.capabilities, discoveryEnabled: access.discoveryEnabled });
+  const authority = JSON.stringify({ capabilities: access.capabilities, discoveryEnabled: access.discoveryEnabled, governedEnabled: access.governedEnabled, massEnabled: access.massEnabled });
   const scope = JSON.stringify([args.workspaceId, args.actorUserId, args.idempotencyKey ?? null, authority]);
   return shareWorkspaceAnalysisRead(access.database, scope, () => loadAuthorizedWorkspaceAnalysisV1(args, access), async () => {
     const current = await authorize({ ...args, database: access.database }, false);
-    if (JSON.stringify({ capabilities: current.capabilities, discoveryEnabled: current.discoveryEnabled }) !== authority)
+    if (JSON.stringify({ capabilities: current.capabilities, discoveryEnabled: current.discoveryEnabled, governedEnabled: current.governedEnabled, massEnabled: current.massEnabled }) !== authority)
       throw new SignalWorkspaceEngineError("workspace_analysis_status_unavailable", 503);
   });
 }
@@ -188,7 +196,7 @@ async function loadAuthorizedWorkspaceAnalysisV1(args: Access & { idempotencyKey
     readWorkspaceAnalysis(() => access.database.query<{ received: boolean }>(`SELECT EXISTS(SELECT 1 FROM import_batches
       WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId])),
     readWorkspaceAnalysis(() => loadWorkspaceAnalysisPreflightForReadV1(() => loadSignalWorkspaceEnginePreflightV1(access))),
-    readWorkspaceAnalysis(async () => discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1()),
+    readWorkspaceAnalysis(async () => access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1()),
     readWorkspaceAnalysis(() => loadSignalWorkspaceInterpretationAdmissionV1({ ...access, idempotency_key: args.idempotencyKey })),
     readWorkspaceAnalysis(() => loadWorkspaceIncrementalEditorialForActorV1({ ...access, idempotency_key: args.idempotencyKey }, undefined, { parallel: false }))
   ]);
@@ -204,8 +212,7 @@ async function loadAuthorizedWorkspaceAnalysisV1(args: Access & { idempotencyKey
   const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1() } : null;
   const latest = view(raw.latest_run);
   const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
-    ...(["workspace-bertopic-mass-labeling-v1","workspace-bertopic-mass-labeling-v2","workspace-bertopic-mass-labeling-v3"].includes(String(preflight?.engine_configuration?.profile_version)) ? {execution_mode:"operator_cli" as const}:{}),
-    request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: discoveryEnabled ? access.capabilities.can_request_processing : access.capabilities.can_execute_topics, discovery_enabled: discoveryEnabled,
+    request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.governedEnabled ? access.capabilities.can_request_processing : access.capabilities.can_execute_topics, discovery_enabled: discoveryEnabled, governed_enabled: access.governedEnabled,
     latest_run: latest, active_run: workspaceAnalysisActiveRunV1(latest),
     latest_complete: view(raw.latest_complete), request_run: view(raw.request_run),
     preflight: {
@@ -230,18 +237,22 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       discovery_sample_cap: args.body.discovery_sample_cap ?? null, discovery_sample_seed: args.body.discovery_sample_seed ?? null }) : undefined;
     if (intentDigest && await replaySignalWorkspaceDiscoveryRequestV1({ ...access, idempotency_key: args.idempotencyKey, request_intent_digest: intentDigest }))
       return loadWorkspaceAnalysisForActorV1({ ...args, idempotencyKey: args.idempotencyKey });
-    const policy = discoveryEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
+    const policy = access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
   policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
     if (!policy.available) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
-    if (!discoveryEnabled && (args.body.claude_cap_micro_usd == null || args.body.claude_cap_micro_usd <= 0
+    if (!access.governedEnabled && (args.body.claude_cap_micro_usd == null || args.body.claude_cap_micro_usd <= 0
       || policy.maximum_cap_micro_usd === null || args.body.claude_cap_micro_usd > policy.maximum_cap_micro_usd)) {
       throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid", 422);
     }
     let effectiveCap: number | null;
     try { effectiveCap = discoveryStrictCapV1(args.body.claude_cap_micro_usd,policy.maximum_cap_micro_usd); }
     catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_cap_invalid",422); }
-    const enginePreflight = await signalWorkspaceFeatureEnabledV1({queryable:access.database,workspace_id:args.workspaceId,feature:"mass_labeling"})
-      ? await loadSignalWorkspaceEnginePreflightV1(access) : null;
+    const massEnabled = access.massEnabled;
+    if (massEnabled) {
+      const settings = await getMassLabelingStudyPolicyV1(access);
+      if (!settings.category.trim()) throw new SignalWorkspaceEngineError("workspace_analysis_category_required", 422);
+    }
+    const enginePreflight = massEnabled ? await loadSignalWorkspaceEnginePreflightV1(access) : null;
     if (enginePreflight?.engine_configuration) {
       try { await assertAnthropicProviderAccessV1({api_key:process.env.ANTHROPIC_API_KEY??"",enabled:policy.available}); }
       catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable",422); }
@@ -252,7 +263,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       discovery_request_intent_digest: intentDigest,
       discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
       engine_config: enginePreflight?.engine_configuration ?? SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
-        call_configuration: enginePreflight?.engine_configuration ? SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1 : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
+        call_configuration: enginePreflight?.engine_configuration ? SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
   } else if (args.body.action === "prepare_incremental_editorial") {
     await requestSignalWorkspaceIncrementalEditorialPreparationV1({ ...access, numeric_execution_id: args.body.run_id,

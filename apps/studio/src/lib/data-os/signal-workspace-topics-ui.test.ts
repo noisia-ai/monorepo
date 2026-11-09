@@ -416,6 +416,8 @@ test("the native consumer report renders corrected indicators and keeps legacy r
   const html = await render("en-US", localizedPilot, "consumers");
   assert.match(html, /Consumer motivators and barriers/);
   assert.match(html, /Individual consumers, excluding advertising/);
+  assert.match(html, /View motivator examples/);
+  assert.match(html, /View barrier examples/);
   assert.doesNotMatch(html, /Selected Topics|Meeting friends|Encontros com amigos/);
   const page = await readFile(new URL("../../components/signal-v2/SignalV2WorkspacePage.tsx", import.meta.url), "utf8");
   assert.match(page, /native && \(!activeReportKey \|\| native.consumer_indicators\)/);
