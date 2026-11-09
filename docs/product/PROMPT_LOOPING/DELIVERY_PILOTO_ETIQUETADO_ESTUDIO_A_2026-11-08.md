@@ -145,6 +145,10 @@ Triggers: 34403 (41.0%). Barriers: 4293 (5.1%). None: 26160 (31.2%). Intermedio:
 
 </details>
 
+## Revisión vigente R14 · costo de la ruta final
+
+La proyección para siete preguntas base es **USD 107–112 por millón de raíces**. Cada interés activo añade **aproximadamente USD 7.50 por millón**; con dos intereses, la referencia es **USD 122–127 por millón**. Consulta el [anexo de costo R14](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R14_2026-11-08.md) para supuestos y comparación medida. La revisión R13 previa se conserva byte por byte en el [recibo histórico sellado](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R13_HISTORICO_2026-11-08.md).
+
 ## Correcciones R13
 
 La relevancia genérica histórica se conserva como diagnóstico. Dio 731 positivas, 11803 intermedias y 71428 negativas.

@@ -1,112 +1,31 @@
-# QA final del fundador — MFP (R10)
+# QA del fundador · etiquetado de Signal en dev-test
 
-Redactada por el auditor el 1 de noviembre de 2026 a partir de la lista factual de Codex (`FACTUAL_STEPS_MFP_R10_2026-10-11.md`, en #57). Sustituye a la QA-1: el fundador eligió una sola QA final con R10 completa (opción B, §17.6).
+Entorno de prueba: [Noisia Studio en dev-test](https://mfp-studio-dev-test.up.railway.app). Inicia sesión con tu cuenta habitual y abre el workspace autorizado del Estudio real A. Los cambios de configuración de este recorrido se deben restaurar antes de terminar. No inicies un reetiquetado completo del corpus: revisa los resultados ya preparados.
 
-Versión del Studio de desarrollo: `0e84ddf6`, fijada y sin publicación automática. Dura unos 35 minutos y cuesta **USD 0**.
+Estado de aceptación: inglés por omisión, originales y los cuatro filtros se verificaron en R13 en la URL habitual. Los controles de etiquetado y la ruta R14 se probaron localmente; todavía requieren el recorrido autenticado después del despliegue R14. Usa esta guía como lista de comprobación postdespliegue y marca cada paso con su resultado observado.
 
-## Qué se revisa
+1. **Abrir el workspace.** Selecciona el Estudio real A y entra a **Topics / Tópicos**. Debería abrir Signal en inglés con sus tópicos disponibles. Si no aparecen los tópicos o ves un aviso de carga, recarga la página una vez y confirma que estás en dev-test. Si continúa, anota el estado y detente sin iniciar otra corrida.
 
-Codex llevó una marca nueva de principio a fin, toda por la interfaz:
+2. **Ver la traducción y su fuente.** Abre un tópico y mira su nombre y definición en inglés junto al bloque **Corpus original** en portugués. Alterna a español si el selector está disponible y regresa al inglés. Si falta la definición original o el nombre cambia de tópico al alternar, anota el tópico seleccionado sin copiar publicaciones y comunícalo para corregir la localización.
 
-1. Alta de la marca y tres intereses definidos por una persona.
-2. Primera carga de 1,000 filas.
-3. Fichas, temas, revisión editorial y pertenencia.
-4. Signal.
-5. Una segunda carga de 250 filas, procesada sin rehacer lo anterior.
-6. Un concepto nuevo adoptado del descubrimiento automático.
+3. **Comprobar el volumen completo.** Regresa a la lista y confirma que hay 98 tópicos. Mira su orden y los conteos. Si el total cambia, los nombres son cadenas internas o los conteos quedan vacíos, comprueba que el workspace seleccionado sea el estudio preparado y reporta el resultado.
 
-Gasto real de todo el recorrido: USD 8.61. Tú revisas el resultado; no se calcula nada nuevo.
+4. **Separar las poblaciones.** Cambia el selector **Content / Contenido** entre conversación, publicidad, sólo hashtags y todo el contenido. Los denominadores del Estudio real A son 61,524, 22,167, 271 y 83,962, respectivamente. Las categorías de conversación y publicidad deben tener poblaciones distintas; los posts compuestos sólo por hashtags quedan en su propio segmento. Si un filtro no responde o se repiten los mismos resultados, anota qué opción elegiste.
 
-## Antes de empezar
+5. **Revisar el denominador de consumidor.** En **Consumer motivators and barriers**, la lectura R14 debe mostrar 50,273 voces elegibles: 18,464 raíces con término del léxico y 31,809 excluidas por no contenerlo. Entre las 18,464, confirma 4,174 motivadores, 842 barreras, 7,889 sin ninguno y 5,559 intermedias. Los casos sin término no deben confundirse con respuestas que no expresan motivador ni barrera. Si Signal muestra cifras distintas o no distingue elegibles e incluidos, reporta los indicadores y no interpretes las proporciones.
 
-1. Abre <https://mfp-studio-dev-test.up.railway.app> con tu sesión habitual (rol Admin Noisia).
-2. Abre una nota con cuatro columnas: paso, ¿OK?, segundos si tardó más de 15, comentario. Si algo falla, toma una captura.
-3. **No pulses botones que inicien o autoricen trabajo:** «Calcular…», «Completar…», «Recalcular…», «Confirmar recálculo…», «Probar definición…», «Crear vectores…», «Analizar conversaciones», «Preparar…», «Ver estimación…», «Iniciar revisión editorial», «Autorizar…», «Recuperar respuestas guardadas», «Importar…», «Adoptar concepto», «Guardar cambios». Tampoco marques ni desmarques «Mostrar este concepto en Signal». Si pulsas uno por error, anota la hora y avísame.
-4. **Meta de tiempo:** cada pantalla termina de cargar en menos de 15 segundos sin recargar a mano. Si tarda más, espera hasta un minuto, anota cuánto y sigue.
+6. **Abrir evidencia de un motivador.** Abre uno de los ejemplos enlazados desde el indicador de motivadores. Comprueba que el texto corresponda al registro abierto y que contenga un término de categoría del léxico. La evidencia puede mostrar el original del corpus. Si el ejemplo no coincide, carece de acceso o no contiene un término, anota la decisión y el identificador que presenta Signal en el canal privado de QA.
 
-## Parte A · La marca y sus datos (≈ 5 min)
+7. **Abrir evidencia de una barrera.** Repite la revisión desde el indicador de barreras. El ejemplo debe contener un término de categoría y describir una razón para evitar o reducir el consumo, en voz individual. Una publicación promocional, una referencia casual a la categoría o una queja sobre otro asunto no debe contarse como barrera. Si ves una, anota el código del registro y la categoría, sin pegar el texto en una conversación pública.
 
-Marca: **Marca QA MFP Oct11 R10**.
+8. **Revisar Apostas y Racismo.** Abre **Defined interests / Intereses definidos**. Revisa que ambos intereses estén presentes y que las cantidades usen el umbral 0.85 o superior. Examina los ejemplos disponibles: una metáfora con “apostar” no debe clasificarse como una apuesta real; insultos sin dimensión racial no pertenecen a Racismo. Si faltan las definiciones ajustadas o el umbral mostrado y aplicado no coincide, reporta el interés y la vista.
 
-| Paso | Haz esto | Deberías ver |
-|---|---|---|
-| A1 | En Studio, entra a la marca «Marca QA MFP Oct11 R10» y abre Datos. | Dos archivos. El primero: 1,000 filas, 901 incluidas, 17 excluidas y 82 duplicadas. El segundo: 250 filas, 220 incluidas, 1 excluida y 29 duplicadas. |
-| A2 | Si el resumen de Datos no coincide con «Archivos por ámbito», pulsa «Actualizar» una vez. | Ambos cuadros coinciden. Si tuviste que pulsar, anótalo: es un problema conocido. |
+9. **Inspeccionar el léxico vigente.** En **Manage Topics / Gestionar topics**, abre **Study labeling settings / Configuración de etiquetado**. Comprueba la categoría y la lista vigente de 102 términos, además de las opciones de edición autorizadas. La lista debe incluir términos literales, sinónimos o jerga del estudio y marcas cuando correspondan. Los 156 términos de la propuesta previa son un dato del recibo; esta pantalla muestra la lista curada, no el historial de sugerencias. Si el total vigente difiere o mezcla categorías, no la edites durante esta revisión; anota la fuente que falta.
 
-## Parte B · Topics y resultados (≈ 10 min)
+10. **Probar y restaurar una edición del léxico.** Guarda una copia privada de la lista aprobada, edita un término de prueba reversible, guarda y recarga la página. Confirma que la edición persista y luego vuelve a guardar la lista original completa. Si no puedes recuperar exactamente la lista previa, detente y pide a un analista autorizado que la restaure antes de cualquier etiquetado.
 
-| Paso | Haz esto | Deberías ver |
-|---|---|---|
-| B1 | Abre <https://mfp-studio-dev-test.up.railway.app/studio/brands/[identificador privado]/topics>. | La página de Topics de la marca. Las fichas por mención están completas: 1,101 de 1,101. |
-| B2 | Mira la lista de conceptos. | Cuatro conceptos. Tres son intereses definidos a mano: «Atención y resolución de reclamaciones», «Cobros y depósitos en la renta» y «Reserva y entrega del vehículo». El cuarto, sobre el mercado de renta, salió del descubrimiento automático y se adoptó con ámbito Categoría. |
-| B3 | Pulsa «Ver resultados guardados». | La revisión editorial de los 23 grupos de la primera carga: ningún Topic ni Narrativa; 16 Noise y 7 con evidencia insuficiente. Después vienen 10 grupos nuevos de la segunda carga. |
-| B4 | Abre dos o tres de esos grupos. | Cada uno muestra su resultado y su evidencia. |
-| B5 | Selecciona «Cobros y depósitos en la renta». | Su ficha. «Guardar cambios» está apagado. No edites nada. |
-| B6 | En su evidencia, pulsa «Abrir mención». | El texto completo de la mención original, dentro de Studio. |
+11. **Cambiar y restaurar un nombre visible.** Elige uno de los pares de tópicos que el informe de auditoría señala como casi duplicados. En la sección de nombres visibles, edita el nombre de un tópico con un prefijo temporal “QA”. Comprueba que cambia la etiqueta mostrada y que la definición, el original y el volumen siguen asociados al tópico. Restaura inmediatamente el nombre que guardaste antes de la prueba. Si la edición cambia la pertenencia o fusiona tópicos, reporta el comportamiento y no guardes otros cambios.
 
-Anota tu opinión; no hay respuesta correcta:
+12. **Verificar la ruta normal de clasificación.** En un estudio de prueba existente que ya tenga mapa, abre **Classify study mentions / Clasificar menciones del estudio**. Comprueba sólo el tamaño de población, **Estimated classification cost / Costo estimado de clasificación**, el valor de **Classification budget cap (USD)** y el estado de la corrida. **Start classification** debe mostrarse antes de iniciar; **Continue classification** después de que la muestra inicial pase sus comprobaciones técnicas. La categoría, los términos y los intereses se revisan en el paso anterior, no en esta pantalla. Para este QA no pulses ninguno, no envíes solicitudes ni aumentes el límite. Si faltan población, estimación, tope o estado, captura la ruta y detente.
 
-- ¿Estás de acuerdo en que esos 23 grupos eran ruido o no alcanzaban para un Topic? Abre uno de los marcados Noise y dime si tú lo habrías descartado.
-- ¿Se entienden los nombres de los conceptos sin explicación?
-
-## Parte C · Signal (≈ 5 min)
-
-| Paso | Haz esto | Deberías ver |
-|---|---|---|
-| C1 | Abre <https://mfp-studio-dev-test.up.railway.app/signal/<workspace>/topics-narratives>. | En menos de 15 s: cuatro conceptos seleccionados, con 14 (Atención), 9 (Cobros), 11 (Reserva) y 225 (el de Categoría). En total, 235 menciones únicas de 1,101. |
-| C2 | Mira el resumen de poblaciones. | 1,101 en total: 647 relevantes, 343 ajenas, 85 con relevancia sin determinar y 26 spam o bots. |
-| C3 | Selecciona «Reserva y entrega del vehículo». | En menos de 15 s, su detalle con 11 menciones. Eran 12: Codex rechazó una a mano y Signal se actualizó sin otro cálculo. |
-| C4 | Lee la evidencia de una mención. | El fragmento citado («Cita de la decisión guardada»). La que corrigió una persona dice «Corrección humana». |
-| C5 | Selecciona el concepto de Categoría (225). | Su detalle y su evidencia. |
-
-Anota tu opinión:
-
-- ¿Te sirve un concepto de 225 menciones sobre el mercado de renta, o es demasiado amplio para un cliente?
-- ¿Se ve y se siente como el Signal de Laika? ¿Qué falta?
-
-## Parte D · Corregir dos casos dudosos (≈ 10 min)
-
-Entre los cuatro conceptos quedan **12 pares con evidencia insuficiente**: el sistema no pudo decidir si la mención pertenece y nadie los ha revisado. **La decisión es tuya.**
-
-| Paso | Haz esto | Deberías ver |
-|---|---|---|
-| D1 | Vuelve a Topics (enlace de B1) y selecciona «Cobros y depósitos en la renta». Lee qué incluye y qué excluye. | La definición del concepto. |
-| D2 | Baja a «Resultados y excepciones» y pulsa «Revisar insuficientes». | El filtro cambia a «Evidencia insuficiente». Si Cobros no tiene ninguna, prueba Atención, después Reserva y al final el de Categoría. |
-| D3 | En la primera mención, pulsa «Abrir mención» y léela completa. Después vuelve a la lista. | El texto completo. |
-| D4 | Decide: ¿el texto, por sí solo, cumple la definición? | Tu decisión: pertenece, no pertenece o no se puede saber. |
-| D5 | Si decidiste, marca **solo** su casilla «Seleccionar mención». No uses «Seleccionar esta página». | «Corregir 1 menciones seleccionadas» y dos botones. |
-| D6 | Pulsa «Aceptar pertenencia» si pertenece o «Rechazar pertenencia» si no. Si no se puede saber, no pulses nada. | Se guarda y el contador de insuficientes baja en uno. |
-| D7 | Repite D3 a D6 con una segunda mención. | — |
-| D8 | Si aceptaste alguna, vuelve a Signal (enlace de C1) y selecciona ese concepto. | Su número sube en uno y tu mención aparece en la evidencia, marcada «Corrección humana». **Si no cambia, anótalo: es un hallazgo.** |
-
-Si te equivocas, filtra por el veredicto que guardaste, selecciona la mención y pulsa el otro botón.
-
-## Parte E · Idioma (≈ 5 min)
-
-| Paso | Haz esto | Deberías ver |
-|---|---|---|
-| E1 | Abre <https://mfp-studio-dev-test.up.railway.app/studio/settings>. | El control «Idioma». |
-| E2 | Elige English. | La página se recarga sola y queda en inglés. |
-| E3 | Abre Signal (enlace de C1). | Títulos y botones en inglés. Los números son los mismos que en español. Los nombres de los conceptos pueden seguir en español: son datos de la marca. |
-| E4 | Vuelve a <https://mfp-studio-dev-test.up.railway.app/studio/settings> y, en «Language», elige Español. | Se recarga sola, en español. |
-
-## Al terminar, mándame
-
-1. Tu nota: OK o problema en cada paso.
-2. Las pantallas que tardaron más de 15 s.
-3. Tus decisiones de la Parte D, con una línea de por qué.
-4. Tus opiniones de las Partes B y C.
-5. Capturas de lo que falló.
-
-## Si algo sale mal
-
-- **«La consulta está ocupada»:** pulsa «Actualizar» una vez.
-- **Error de acceso:** recarga la página.
-- **Una corrección se queda guardando:** no la repitas. Si aparece «Recuperar la misma solicitud», púlsalo.
-
-## Problemas ya conocidos
-
-No hace falta reportarlos de nuevo, pero sí anotar sus tiempos:
-
-- Tras importar, «Datos recibidos» puede quedarse desactualizado hasta pulsar «Actualizar».
-- Un filtro de Signal tardó 14 s en la medición de Codex, al borde de la meta.
+13. **Cerrar la revisión.** Recarga el workspace en inglés y verifica que se haya restaurado el léxico, el umbral y el nombre visible original. Informa si cada paso pasó o falló e incluye la ruta de la pantalla, filtro e interés afectados. Envía ejemplos o identificadores sólo por el canal privado acordado con el equipo.

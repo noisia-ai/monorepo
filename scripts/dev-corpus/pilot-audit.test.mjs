@@ -856,6 +856,10 @@ test('R13 receipt composition and phase A/B replay are idempotent with an H4 fix
   const composed = renderCorrectedPublicReceiptR13({ receipt: renderPublicReceipt(summary, '2026-11-07'),
     baseline, repaired, projection, r13StageUsage: [{ stage: 'repair', results: 100, input_tokens: 1000, output_tokens: 200, micro_usd: 100 }] });
   assert.match(composed, /Proyección lineal por millón de raíces/u);
+  assert.match(composed, /USD 107–112 por millón de raíces/u);
+  assert.match(composed, /USD 7\.50 por millón/u);
+  assert.match(composed, /DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R14_2026-11-08\.md/u);
+  assert.match(composed, /DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R13_HISTORICO_2026-11-08\.md/u);
   assert.match(composed, /Elegibles: 100/u);
   assert.match(composed, /Uso medido de R13 en etapas completadas/u);
 
