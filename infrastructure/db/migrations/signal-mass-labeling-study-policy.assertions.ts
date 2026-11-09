@@ -36,6 +36,11 @@ export async function assertMassLabelingStudyPolicyV1(args: {
       WHERE cache.workspace_id=$1 AND cache.policy_revision=$2 ORDER BY cache.root_id`,[args.workspace_id,editorial.revision])).rows;
     assert.equal(cached.length,3,"saving a lexicon materializes the complete frozen population");
     assert.ok(cached.every(row=>row.matched===row.expected));
+    await cacheClient.query("SAVEPOINT explicit_lexicon_seed_edit");
+    await cacheClient.query("UPDATE brands SET industry='unrelated synthetic category' WHERE id=(SELECT brand_id FROM signal_workspaces WHERE id=$1)",[args.workspace_id]);
+    const unchanged=(await cacheClient.query("SELECT root_id,matched FROM signal_mass_labeling_category_matches WHERE workspace_id=$1 AND policy_revision=$2 ORDER BY root_id",[args.workspace_id,editorial.revision])).rows;
+    assert.deepEqual(unchanged,cached.map(({root_id,matched})=>({root_id,matched})),"explicit lexical policies retain their approved matches across Brand OS edits");
+    await cacheClient.query("ROLLBACK TO SAVEPOINT explicit_lexicon_seed_edit");await cacheClient.query("RELEASE SAVEPOINT explicit_lexicon_seed_edit");
     assert.equal((await cacheClient.query("SELECT has_table_privilege('anon','signal_mass_labeling_category_matches','SELECT') yes")).rows[0].yes,false);
   } finally {cacheClient.release();}
   const replay=await proposeMassLabelingStudyLexiconV1({...access,expected_revision:1,category:"bicycles",

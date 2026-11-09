@@ -43,6 +43,78 @@ CREATE FUNCTION signal_mass_labeling_default_lexicon_v1(target_workspace uuid) R
 $$;
 REVOKE ALL ON FUNCTION signal_mass_labeling_default_lexicon_v1(uuid) FROM PUBLIC;
 
+CREATE TABLE signal_mass_labeling_default_lexicons (
+ workspace_id uuid PRIMARY KEY REFERENCES signal_workspaces(id),
+ lexicon_terms text[] NOT NULL
+);
+ALTER TABLE signal_mass_labeling_default_lexicons ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON signal_mass_labeling_default_lexicons FROM PUBLIC;
+DO $$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='anon') THEN REVOKE ALL ON signal_mass_labeling_default_lexicons FROM anon; END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN REVOKE ALL ON signal_mass_labeling_default_lexicons FROM authenticated; END IF;
+END $$;
+
+-- The row lock makes concurrent REPEATABLE READ seed edits serialize or retry.
+-- READ COMMITTED refreshes derive the seed set after taking the shared lock.
+CREATE FUNCTION refresh_signal_mass_labeling_default_lexicon_v1(target_workspace uuid) RETURNS void
+ LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+DECLARE previous_terms text[]; current_terms text[]; pattern text;
+BEGIN
+ PERFORM pg_advisory_xact_lock(hashtextextended('mass-study-policy:'||target_workspace::text,0));
+ IF EXISTS(SELECT 1 FROM signal_mass_labeling_study_policies WHERE workspace_id=target_workspace) THEN RETURN; END IF;
+ IF NOT EXISTS(SELECT 1 FROM signal_mass_labeling_default_lexicons WHERE workspace_id=target_workspace)
+   AND NOT EXISTS(SELECT 1 FROM signal_mass_labeling_items WHERE workspace_id=target_workspace) THEN RETURN; END IF;
+ SELECT lexicon_terms INTO previous_terms FROM signal_mass_labeling_default_lexicons WHERE workspace_id=target_workspace FOR UPDATE;
+ current_terms:=signal_mass_labeling_default_lexicon_v1(target_workspace);
+ INSERT INTO signal_mass_labeling_default_lexicons(workspace_id,lexicon_terms) VALUES(target_workspace,current_terms)
+ ON CONFLICT(workspace_id) DO UPDATE SET lexicon_terms=EXCLUDED.lexicon_terms;
+ IF previous_terms IS DISTINCT FROM current_terms THEN
+  pattern:=signal_mass_labeling_category_pattern_v1(current_terms);
+  UPDATE signal_mass_labeling_category_matches SET matched=
+    signal_mass_labeling_category_pattern_matches_v1(mention.text_clean,pattern)
+  FROM mentions mention WHERE signal_mass_labeling_category_matches.workspace_id=target_workspace
+    AND signal_mass_labeling_category_matches.policy_revision=0
+    AND mention.workspace_id=target_workspace AND mention.id=signal_mass_labeling_category_matches.root_id;
+ END IF;
+END $$;
+REVOKE ALL ON FUNCTION refresh_signal_mass_labeling_default_lexicon_v1(uuid) FROM PUBLIC;
+
+-- Every table read by the inherited seed builder invalidates its workspaces.
+CREATE FUNCTION refresh_signal_mass_labeling_seed_defaults_v1() RETURNS trigger
+ LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
+DECLARE before_row jsonb; after_row jsonb; affected_brands uuid[]; target_workspace uuid;
+BEGIN
+ IF TG_OP<>'INSERT' THEN before_row:=to_jsonb(OLD); END IF;
+ IF TG_OP<>'DELETE' THEN after_row:=to_jsonb(NEW); END IF;
+ CASE TG_TABLE_NAME
+ WHEN 'brands' THEN affected_brands:=ARRAY[(before_row->>'id')::uuid,(after_row->>'id')::uuid];
+ WHEN 'signal_workspaces','brand_os_profiles','competitors','intelligence_entities' THEN
+  affected_brands:=ARRAY[(before_row->>'brand_id')::uuid,(after_row->>'brand_id')::uuid];
+ WHEN 'brand_os_products' THEN
+  SELECT array_agg(brand_id) INTO affected_brands FROM brand_os_profiles
+  WHERE id IN((before_row->>'brand_os_profile_id')::uuid,(after_row->>'brand_os_profile_id')::uuid);
+ WHEN 'brand_seeds' THEN
+  SELECT array_agg(brand_id) INTO affected_brands FROM competitors
+  WHERE competitor_brand_seed_id IN((before_row->>'id')::uuid,(after_row->>'id')::uuid);
+ WHEN 'entity_aliases' THEN
+  SELECT array_agg(brand_id) INTO affected_brands FROM intelligence_entities
+  WHERE id IN((before_row->>'entity_id')::uuid,(after_row->>'entity_id')::uuid);
+ END CASE;
+ FOR target_workspace IN SELECT workspace.id FROM signal_workspaces workspace
+  WHERE workspace.brand_id=ANY(affected_brands)
+  ORDER BY workspace.id LOOP
+  PERFORM refresh_signal_mass_labeling_default_lexicon_v1(target_workspace);
+ END LOOP;
+ RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION refresh_signal_mass_labeling_seed_defaults_v1() FROM PUBLIC;
+DO $$ DECLARE source_table text; BEGIN
+ FOREACH source_table IN ARRAY ARRAY['brands','signal_workspaces','brand_os_profiles','brand_os_products',
+   'competitors','brand_seeds','intelligence_entities','entity_aliases'] LOOP
+  EXECUTE format('CREATE TRIGGER mass_labeling_seed_defaults AFTER INSERT OR UPDATE OR DELETE ON %I FOR EACH ROW EXECUTE FUNCTION refresh_signal_mass_labeling_seed_defaults_v1()',source_table);
+ END LOOP;
+END $$;
+
 CREATE FUNCTION materialize_signal_mass_labeling_category_policy_v1() RETURNS trigger
  LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
 DECLARE pattern text; previous_revision integer;
@@ -72,6 +144,7 @@ DECLARE target_workspace uuid;
 BEGIN
  FOR target_workspace IN SELECT DISTINCT workspace_id FROM admitted_items ORDER BY workspace_id LOOP
   PERFORM pg_advisory_xact_lock(hashtextextended('mass-study-policy:'||target_workspace::text,0));
+  PERFORM refresh_signal_mass_labeling_default_lexicon_v1(target_workspace);
  END LOOP;
  WITH patterns AS MATERIALIZED (
   SELECT DISTINCT ON(policy.workspace_id) policy.workspace_id,policy.revision,
@@ -115,6 +188,10 @@ REVOKE ALL ON FUNCTION materialize_signal_mass_labeling_category_policy_v1(),
  materialize_signal_mass_labeling_category_item_v1(),refresh_signal_mass_labeling_category_text_v1() FROM PUBLIC;
 
 -- Populate existing policies once. No provider, admission or paid result changes.
+INSERT INTO signal_mass_labeling_default_lexicons(workspace_id,lexicon_terms)
+ SELECT workspace_id,signal_mass_labeling_default_lexicon_v1(workspace_id)
+ FROM(SELECT DISTINCT workspace_id FROM signal_mass_labeling_items) workspaces
+ WHERE NOT EXISTS(SELECT 1 FROM signal_mass_labeling_study_policies policy WHERE policy.workspace_id=workspaces.workspace_id);
 WITH patterns AS MATERIALIZED (
  SELECT workspace_id,revision,signal_mass_labeling_category_pattern_v1(lexicon_terms) pattern
  FROM signal_mass_labeling_study_policies

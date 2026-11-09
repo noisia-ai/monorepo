@@ -770,6 +770,20 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
       assert.deepEqual((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes,signal_mass_labeling_r13_hashtags_v1($2) no", ["#cerveja #futebol!", "#cerveja 🍻"])).rows[0], {yes: true, no: false});
       const hashtagFixtures = [["#ação, #SãoPaulo",true],["#中文 #футбол",true],["#cerveja ordinary",false],["#cerveja\ufeff",true],["#cerveja\u0085",false],["#١",false],["#²",false]] as const;
       for (const [text,expected] of hashtagFixtures) assert.equal((await query("SELECT signal_mass_labeling_r13_hashtags_v1($1) yes",[text])).rows[0]!.yes,expected);
+      await query("SAVEPOINT inherited_lexical_edit");
+      const brand=(await query("SELECT brand_id FROM signal_workspaces WHERE id=$1",[access.workspace_id])).rows[0]!.brand_id;
+      await query("UPDATE brands SET industry='repair',industry_sub='appointment' WHERE id=$1",[brand]);
+      const inherited=await loadSignalWorkspaceTopicsOverviewV1(access);
+      assert.equal(inherited!.is_current,true,"industry edits refresh the inherited lexical materialization");
+      assert.notEqual(inherited!.scope_digest,enriched!.scope_digest);
+      assert.ok((await query(`SELECT bool_and(cache.matched=signal_mass_labeling_category_matches_v1(mention.text_clean,defaults.lexicon_terms)) correct
+        FROM signal_mass_labeling_category_matches cache JOIN mentions mention ON mention.workspace_id=cache.workspace_id AND mention.id=cache.root_id
+        JOIN signal_mass_labeling_default_lexicons defaults ON defaults.workspace_id=cache.workspace_id
+        WHERE cache.workspace_id=$1 AND cache.policy_revision=0`,[access.workspace_id])).rows[0]!.correct);
+      await query("UPDATE signal_mass_labeling_default_lexicons SET lexicon_terms=ARRAY['outdated synthetic seed'] WHERE workspace_id=$1",[access.workspace_id]);
+      assert.equal((await loadSignalWorkspaceTopicsOverviewV1(access))!.is_current,false,"a changed inherited seed set cannot be served as current");
+      await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({...access,term_key:"bicycle_repairs"}),/workspace_topics_evidence_stale/);
+      await query("ROLLBACK TO SAVEPOINT inherited_lexical_edit");await query("RELEASE SAVEPOINT inherited_lexical_edit");
       await assertMassLabelingStudyPolicyV1({...access,map_id:map.map_id,foreign_actor:foreignActor,root_id:first.root_id,input_digest:first.input_digest});
 
     }

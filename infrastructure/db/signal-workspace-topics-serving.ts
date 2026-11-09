@@ -310,6 +310,12 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     if (!["all","conversation","advertising","hashtags"].includes(segment)) return fail("workspace_topics_segment_invalid",422);
     filters.conversation_segment = segment;
     const studyPolicy=await loadMassLabelingStudyPolicyWithClientV1(client,args.workspace_id);
+    const defaultLexicon=studyPolicy.revision===0 ? (await client.query<{lexicon_terms:string[]}>(
+      "SELECT lexicon_terms FROM signal_mass_labeling_default_lexicons WHERE workspace_id=$1",[args.workspace_id])).rows[0] : null;
+    // A scheduled competitor boundary can change inherited terms without a write.
+    // The old materialization remains historical until a seed edit or map refresh.
+    const lexicalCurrent=studyPolicy.revision>0 || Boolean(defaultLexicon &&
+      hash([...defaultLexicon.lexicon_terms].sort())===hash([...studyPolicy.lexicon_terms].sort()));
     const localizations = new Map<string,SignalTopicLocalizationV1>(mass.map.catalog.flatMap(topic =>
       topic.localization ? [[topic.topic_key,topic.localization] as const] : []));
     const importedLocalizations = (await client.query<{topic_key:string;localization:SignalTopicLocalizationV1}>(
@@ -354,7 +360,7 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     }),kind:"topic" as const,...(localizations.has(topic.topic_key)?{localization:localizations.get(topic.topic_key)}:{})}));
     return {generation:null,topics,selection:{revision:mass.revision,items:Object.fromEntries(topics.map(topic =>
       [topic.term_key,{selected:mass.selected_topic_keys.includes(topic.term_key)||interests.some(i=>i.interest_key===topic.term_key),definition_digest:topic.definition_digest,
-        definition_revision:1,generation_id:null}]))},is_current:mass.is_current,is_processing:false,filters,
+        definition_revision:1,generation_id:null}]))},is_current:mass.is_current&&lexicalCurrent,is_processing:false,filters,
       native:true,consolidated:false,concept_membership:true,membership_concept_keys:new Set(topics.map(topic=>topic.term_key)),
       membership_run_id:mass.run_id,membership_state_digest:mass.state_digest,mass_labeling:mass.map,
       mass_interest_keys:new Set(interests.map(i=>i.interest_key)),mass_r13_state:{...r13State,study_interests:studyInterestState},mass_study_policy:studyPolicy,mass_product:productRun?.product??false,mass_consumer_category_current:sourceCategory===studyPolicy.category,
