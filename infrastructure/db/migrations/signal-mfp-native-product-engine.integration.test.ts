@@ -102,7 +102,7 @@ test("the native product engine worker admits a new client study without a priva
       engine_config: preflight.engine_configuration!, parent_execution_id: null, claude_cap_micro_usd: 30_000_000,
       idempotency_key: randomUUID(), interpretation_config: { call_configuration: SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
         daily_cap_micro_usd: 100_000_000, budget_timezone: "America/Mexico_City" } });
-    const queued = (await database.query("SELECT status,actor_user_id,worker_job_id,input_snapshot,processing_admission_id FROM signal_topic_catalog_executions WHERE id=$1", [started.execution_id])).rows[0]!;
+    const queued = (await database.query("SELECT execution.status,execution.actor_user_id,outbox.worker_job_id,execution.input_snapshot,execution.processing_admission_id FROM signal_topic_catalog_executions execution JOIN signal_topic_classification_outbox outbox ON outbox.execution_id=execution.id WHERE execution.id=$1", [started.execution_id])).rows[0]!;
     assert.equal(queued.status, "queued"); assert.equal(queued.actor_user_id, clientActor); assert.ok(queued.processing_admission_id);
     assert.equal(queued.input_snapshot.mass_labeling_product, true); assert.equal(queued.input_snapshot.discovery_population, undefined);
     const bodies = new Map<string, Buffer>();
