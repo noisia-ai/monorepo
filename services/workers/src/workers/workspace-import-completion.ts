@@ -179,7 +179,7 @@ export async function completeWorkspaceImport(
     if (phase === "commit-sent" || error instanceof DatabaseResponseTimeout) {
       client.release(releaseError);
       released = true;
-      return await reconcileCommit(database, request, receipt, retryDelay, operationTimeout);
+      return await reconcileCommit(database, request, receipt, retryDelay, operationTimeout, error);
     }
     let rolledBack = !begun;
     if (begun) {
@@ -193,17 +193,29 @@ export async function completeWorkspaceImport(
     if (!rolledBack) {
       client.release(releaseError);
       released = true;
-      return await reconcileCommit(database, request, receipt, retryDelay, operationTimeout);
+      return await reconcileCommit(database, request, receipt, retryDelay, operationTimeout, error);
     }
-    throw error;
+    if (error instanceof WorkspaceImportClosureUnresolvedError) throw error;
+    // Even a confirmed rollback must use the durable fence: a later outage in
+    // the worker's ordinary failure writer would otherwise strand processing.
+    client.release(releaseError);
+    released = true;
+    return await reconcileCommit(database, request, receipt, retryDelay, operationTimeout, error, "closure_failed");
   } finally {
     if (!released) client.release(releaseError);
   }
 }
 
 async function reconcileCommit(
-  database: Database, request: WorkspaceImportClosureRequest, receipt: Completion[], retryDelay: number, operationTimeout: number
+  database: Database, request: WorkspaceImportClosureRequest, receipt: Completion[], retryDelay: number, operationTimeout: number,
+  originalFailure: unknown, failureCode = "closure_commit_unconfirmed"
 ): Promise<Result> {
+  const originalCode = (originalFailure as { code?: unknown })?.code;
+  const failureDetail = {
+    recoverable: true,
+    kind: failureCode,
+    ...(typeof originalCode === "string" && /^[0-9A-Z]{5}$/.test(originalCode) ? { sqlstate: originalCode } : {})
+  };
   for (;;) {
     let client: PoolClient | undefined;
     let releaseError: Error | undefined;
@@ -218,9 +230,10 @@ async function reconcileCommit(
       if (!target) throw new WorkspaceImportClosureUnresolvedError({ cause: new Error("workspace_import_closure_scope_invalid") });
       // The existing CAS waits for the original row lock. Completed is a no-op;
       // an aborted closure becomes failed and can use the existing UI recovery.
-      await queryWithin(client, `SELECT fail_signal_workspace_import_v1($1::uuid,$2,'closure_commit_unconfirmed',
-        '{"recoverable":true,"kind":"closure_commit_unconfirmed"}'::jsonb,$3,$4)`,
-        [request.importBatchId, request.workerJobId, request.stats.record_count, request.processedBytes], operationTimeout);
+      await queryWithin(client, `SELECT fail_signal_workspace_import_v1($1::uuid,$2,$3,$4::jsonb,$5,$6)`,
+        [request.importBatchId, request.workerJobId, failureCode,
+          JSON.stringify(failureDetail),
+          request.stats.record_count, request.processedBytes], operationTimeout);
       durableBatch = (await queryWithin<DurableBatch>(client, DURABLE_BATCH_SQL, scopeValues(request), operationTimeout)).rows[0];
       await queryWithin(client, "COMMIT", undefined, operationTimeout);
     } catch (error) {
@@ -241,7 +254,7 @@ async function reconcileCommit(
         && receipt[0]?.accepted === false && durableBatch.failure_detail?.accepted_batch_id === receipt[0].accepted_batch_id) {
       return { rows: receipt, replayed: true, transactional: true };
     }
-    if (durableBatch?.status === "failed") throw new WorkspaceImportClosureReconciledError();
+    if (durableBatch?.status === "failed") throw new WorkspaceImportClosureReconciledError({ cause: originalFailure });
     throw new WorkspaceImportClosureUnresolvedError();
   }
 }

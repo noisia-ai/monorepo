@@ -72,8 +72,8 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
     });
     await context.test('short local statement budget rolls back all publication',async()=>{
       const slow=await prepare('slow-timeout');
-      await assert.rejects(completeWorkspaceImport(closurePool,slow.request,{statementTimeoutMs:25}),{code:'57014'});
-      assert.equal(await scalar(setup,'SELECT status FROM import_batches WHERE id=$1',[slow.batch.id]),'processing');
+      await assert.rejects(completeWorkspaceImport(closurePool,slow.request,{statementTimeoutMs:25}),error=>error instanceof WorkspaceImportClosureReconciledError && (error.cause as {code:string}).code==='57014');
+      assert.equal(await scalar(setup,'SELECT status FROM import_batches WHERE id=$1',[slow.batch.id]),'failed');
       assert.equal(await scalar(setup,'SELECT count(*)::int FROM signal_mention_attributions WHERE import_batch_id=$1',[slow.batch.id]),0);
       assert.equal(await scalar(setup,'SELECT count(*)::int FROM source_sync_runs WHERE import_batch_id=$1',[slow.batch.id]),0);
       assert.equal((await closurePool.query("SHOW statement_timeout")).rows[0].statement_timeout,baseline.statement);
@@ -82,9 +82,9 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
       const blocked=await prepare('blocked-fk');
       await setup.query('BEGIN');
       await setup.query('SELECT id FROM mentions WHERE source_file_id=$1 FOR UPDATE',[blocked.batch.id]);
-      try{await assert.rejects(completeWorkspaceImport(closurePool,blocked.request,{statementTimeoutMs:2000,lockTimeoutMs:25}),{code:'55P03'});}
+      try{await assert.rejects(completeWorkspaceImport(closurePool,blocked.request,{statementTimeoutMs:2000,lockTimeoutMs:25}),error=>error instanceof WorkspaceImportClosureReconciledError && (error.cause as {code:string}).code==='55P03');}
       finally{await setup.query('ROLLBACK');}
-      assert.equal(await scalar(setup,'SELECT status FROM import_batches WHERE id=$1',[blocked.batch.id]),'processing');
+      assert.equal(await scalar(setup,'SELECT status FROM import_batches WHERE id=$1',[blocked.batch.id]),'failed');
     });
     await context.test('same-batch native completion keeps advisory-before-row lock order',async()=>{
       const pending=await prepare('concurrent-close');
@@ -159,7 +159,7 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
         for(const fault of ['progress','metrics','closure-sql','commit-applied','commit-not-sent']){
           const pending=await prepare('worker-'+fault);
           globalThis.fetch=async url=>{assert(String(url).startsWith('https://synthetic-storage.invalid/storage/'));return new Response(pending.content);};
-          let nativeCalls=0,metricsFailed=false,ackLost=false;
+          let nativeCalls=0,metricsFailed=false,ackLost=false,failureFenceAttempts=0;
           closurePool.connect=(async()=>{
             const client=await nativeConnect();
             let closingClient=false;
@@ -167,6 +167,9 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
               if(sql.includes('FROM complete_signal_workspace_import_v1')){
                 nativeCalls++;closingClient=true;
                 if(fault==='closure-sql')throw Object.assign(new Error('synthetic closure SQL timeout'),{code:'57014'});
+              }
+              if(fault==='closure-sql'&&sql.includes('fail_signal_workspace_import_v1')&&++failureFenceAttempts===1){
+                throw Object.assign(new Error('synthetic failure fence connection loss'),{code:'ECONNRESET'});
               }
               if(sql==='COMMIT'&&closingClient&&!ackLost&&fault.startsWith('commit-')){
                 ackLost=true;
@@ -183,9 +186,14 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
             workspaceId:fixture.workspace,dataSourceId:fixture.source,sourceFileName:'worker-'+fault+'.csv'},
             updateProgress:async(value:number)=>{if(fault==='progress'&&value===100)throw new Error('synthetic progress failure');}} as never);
           const failed=fault==='closure-sql'||fault==='commit-not-sent';
-          if(failed)await assert.rejects(operation);
+          if(fault==='closure-sql')await assert.rejects(operation,error=>error instanceof WorkspaceImportClosureReconciledError && (error.cause as {code:string}).code==='57014');
+          else if(failed)await assert.rejects(operation);
           else assert.equal((await operation).accepted,true);
           assert.equal(nativeCalls,1);
+          if(fault==='closure-sql'){
+            assert.equal(failureFenceAttempts,2,'only durable failure reconciliation retries after SQL rollback');
+            assert.equal(await scalar(setup,"SELECT failure_detail->>'sqlstate' FROM import_batches WHERE id=$1",[pending.batch.id]),'57014');
+          }
           assert.equal(await scalar(setup,'SELECT status FROM import_batches WHERE id=$1',[pending.batch.id]),failed?'failed':'completed');
           assert.equal(await scalar(setup,"SELECT count(*)::int FROM signal_workspace_import_events WHERE import_batch_id=$1 AND event_type='failed'",[pending.batch.id]),failed?1:0);
           closurePool.connect=nativeConnect as typeof closurePool.connect;

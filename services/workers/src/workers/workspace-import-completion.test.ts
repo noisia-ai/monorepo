@@ -39,7 +39,9 @@ test('invalid proof stops before acquiring or executing closure',async()=>{
  }
 });
 test('SQL timeout rolls back and destroys the connection without retrying the closure',async()=>{
- const f=fixture({queryError:true});await assert.rejects(completeWorkspaceImport(f.database,request()),{code:'57014'});
+ const f=fixture({queryError:true,reconcileLockFailures:2});
+ await assert.rejects(completeWorkspaceImport(f.database,request(),{reconciliationRetryDelayMs:0}),error=>error instanceof WorkspaceImportClosureReconciledError && (error.cause as {code:string}).code==='57014');
+ assert.equal(f.counts().reconciles,3);assert(f.events.indexOf('release:0')<f.events.indexOf('acquire:1'));
  assert.equal(f.counts().closures,1);assert(f.sql.includes('ROLLBACK'));assert(f.releases[0] instanceof Error);
 });
 test('lost COMMIT acknowledgement reconciles a durable completion without repeating closure',async()=>{
