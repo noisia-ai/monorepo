@@ -9,10 +9,11 @@ import {
   recordSignalWorkspaceDataAcceptance,
   SentioneTimestampError
 } from "@noisia/db";
-import { pool } from "../db/client";
+import { pool as workerPool } from "../db/client";
 import { advanceCorpusRevision } from "./corpus-revision";
 import { reconcileListeningDataOs } from "./listening-data-os";
 import { completePreviouslyAcceptedWorkspaceImport } from "./workspace-import-duplicate";
+import { createWorkspaceImportDatabase } from "./workspace-import-database";
 
 type IngestMentionsCsvJobData = {
   workspaceId?: string;
@@ -30,6 +31,7 @@ type IngestMentionsCsvJobData = {
   testCrashAfterRecords?: number;
 };
 
+const pool = createWorkspaceImportDatabase(workerPool);
 const { ingestSentioneCsvStream,inspectSentioneCsvStream } = createSignalSentioneCsvIngester(pool);
 
 export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
@@ -155,6 +157,7 @@ export async function ingestMentionsCsvJob(job: Job<IngestMentionsCsvJobData>) {
       sourceTimezone: legacySourceTimezone(existing.processing_metrics),
       entityLabel: job.data.entityLabel ?? null,
       stream: webStream,
+      tuning: { insertConcurrency: 1 },
       onProgress: async (progress) => {
         const pct = progress.record_count > 0 ? Math.min(90, 10 + Math.floor(progress.record_count / 5000)) : 10;
         await job.updateProgress(pct);
@@ -309,6 +312,7 @@ async function ingestWorkspaceAsyncImportJob(
       sourceTimezone: existing.capture_timezone,
       entityLabel: job.data.entityLabel ?? null,
       stream,
+      tuning: { insertConcurrency: 1 },
       onProgress: async (progress,processedBytes) => {
         lastRecords = progress.record_count;
         lastBytes = processedBytes;
