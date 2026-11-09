@@ -62,6 +62,10 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
           massPlanChecked = true;
         }
       }
+      if (sql.includes("consumer_indicators") || sql.includes("reviewed_consumers AS MATERIALIZED")) {
+        assert.doesNotMatch(sql,/signal_mass_labeling_category_(?:pattern|matches)_/u,"Signal joins materialized lexical matches");
+        assert.match(sql,/signal_mass_labeling_category_matches lexical/u);
+      }
       return raw.query(sql, values);
     };
     const scoped = Object.assign(Object.create(raw), {query, release() {}});
@@ -700,8 +704,13 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     assert.equal(view.terms[0]!.mention_count, 2, "an exact 0.7 probability remains unclassified");
     const evidenceArgs = {...access, term_key: "bicycle_repairs", expected_scope_digest: view.scope_digest, limit: 1};
     const page1 = await loadSignalWorkspaceTopicEvidenceV1(evidenceArgs), page2 = await loadSignalWorkspaceTopicEvidenceV1({...evidenceArgs, cursor: page1.next_cursor});
-    assert.equal(page1.items[0]!.mention_id, calls[0]!.inputs[0]!.root_id);
-    assert.equal(page2.items[0]!.mention_id, calls[2]!.inputs[0]!.root_id);
+    const sampled=[calls[0]!.inputs[0]!.root_id,calls[2]!.inputs[0]!.root_id].sort((a,b)=>
+      createHash("md5").update(view.scope_digest+"bicycle_repairs"+a).digest("hex").localeCompare(
+        createHash("md5").update(view.scope_digest+"bicycle_repairs"+b).digest("hex")));
+    assert.equal(page1.items[0]!.mention_id,sampled[0]);
+    assert.equal(page2.items[0]!.mention_id,sampled[1]);
+    assert.deepEqual((await loadSignalWorkspaceTopicEvidenceV1(evidenceArgs)).items,page1.items,"sample order is reproducible");
+    assert.equal(page2.next_cursor,null,"the sample cursor traverses every root once");
     assert.equal(page1.items[0]!.quote, null);
     assert.equal((await loadSignalWorkspaceTopicDetailV1(evidenceArgs)).mention_count, 2);
     if (authorization === "scoped") {

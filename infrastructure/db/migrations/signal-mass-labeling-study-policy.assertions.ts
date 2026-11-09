@@ -26,6 +26,18 @@ export async function assertMassLabelingStudyPolicyV1(args: {
     lexicon_terms:[...initial.lexicon_terms,"bicycle","bicycles"],source_digest:digest("editorial lexical evidence")});
   assert.equal(editorial.revision,2);
   assert.equal(editorial.lexicon_provenance,"editorial");
+  const cacheClient=await args.database.connect();
+  try {
+    const cached=(await cacheClient.query(`SELECT cache.root_id,cache.matched,
+      signal_mass_labeling_category_matches_v1(mention.text_clean,policy.lexicon_terms) expected
+      FROM signal_mass_labeling_category_matches cache
+      JOIN signal_mass_labeling_study_policies policy ON policy.workspace_id=cache.workspace_id AND policy.revision=cache.policy_revision
+      JOIN mentions mention ON mention.workspace_id=cache.workspace_id AND mention.id=cache.root_id
+      WHERE cache.workspace_id=$1 AND cache.policy_revision=$2 ORDER BY cache.root_id`,[args.workspace_id,editorial.revision])).rows;
+    assert.equal(cached.length,3,"saving a lexicon materializes the complete frozen population");
+    assert.ok(cached.every(row=>row.matched===row.expected));
+    assert.equal((await cacheClient.query("SELECT has_table_privilege('anon','signal_mass_labeling_category_matches','SELECT') yes")).rows[0].yes,false);
+  } finally {cacheClient.release();}
   const replay=await proposeMassLabelingStudyLexiconV1({...access,expected_revision:1,category:"bicycles",
     lexicon_terms:["altered"],source_digest:digest("other editorial evidence")});
   assert.equal(replay.revision,2);
@@ -62,6 +74,14 @@ export async function assertMassLabelingStudyPolicyV1(args: {
   assert.equal(excluded!.consumer_indicators!.category_matched,0);
   assert.equal(excluded!.consumer_indicators!.category_excluded,excluded!.consumer_indicators!.eligible);
   assert.equal(excluded!.consumer_indicators!.trigger,0);
+  const revisions=await args.database.connect();
+  try {
+    const materialized=(await revisions.query(`SELECT policy_revision,count(*)::int roots,bool_or(matched) any_match
+      FROM signal_mass_labeling_category_matches WHERE workspace_id=$1 AND policy_revision>0 GROUP BY policy_revision ORDER BY policy_revision`,[args.workspace_id])).rows;
+    assert.deepEqual(materialized.map(row=>row.roots),[3,3,3,3]);
+    assert.equal(materialized.at(-1)!.any_match,false,"new lexical revision is ready atomically with settings");
+    assert.equal(materialized[1]!.any_match,true,"older lexical revisions preserve their original matches");
+  } finally {revisions.release();}
   assert.equal((await loadMassLabelingConsumerEvidenceV1({...access,choice:"trigger"})).items.length,0);
   await assert.rejects(loadMassLabelingConsumerEvidenceV1({...access,choice:"trigger",expected_scope_digest:relaxed!.scope_digest}),/workspace_topics_scope_changed/);
 
