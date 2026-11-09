@@ -107,7 +107,8 @@ async function savePolicy(client:PoolClient,args:Access&Writable&{expected_revis
     WHERE workspace_id=$1 AND topic_key=ANY($2::text[])`,[args.workspace_id,keys])).rows.map(t=>t.topic_key);
   if(args.interests.some(i=>topics.includes(i.key))||Object.keys(display).some(k=>!topics.includes(k)))fail("study_policy_topic_conflict",422);
   const terms=[...new Set(args.lexicon_terms.map(t=>t.trim()))];
-  const unchangedTerms=digest([...terms].sort())===digest([...current.lexicon_terms].sort());
+  const unchangedTerms=digest([...terms].sort())===digest([...current.lexicon_terms].sort())
+    ||terms.length===0&&current.lexicon_provenance==="brand_os";
   const resolvedProvenance=provenance==="analyst"&&unchangedTerms?current.lexicon_provenance:provenance;
   const resolvedSource=provenance==="analyst"&&unchangedTerms?current.source_digest:source;
   const policy:MassLabelingStudyPolicyV1={contract_version:"mass-labeling-study-policy-v1",workspace_id:args.workspace_id,

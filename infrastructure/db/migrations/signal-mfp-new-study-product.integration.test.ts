@@ -38,8 +38,12 @@ test("a client creates a brand and admits and consumes the default product pipel
   if (process.env.NOISIA_MFP_NEW_STUDY_CHILD !== "true") {
     const env: NodeJS.ProcessEnv = { ...process.env, NOISIA_MFP_NEW_STUDY_CHILD: "true", TSX_TSCONFIG_PATH: resolve(fileURLToPath(new URL("../../../apps/studio/tsconfig.json", import.meta.url))) };
     for (const key of ["REDIS_URL", "UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN", "ANTHROPIC_API_KEY", "VOYAGE_API_KEY", "TYPESAFE_API_KEY", "NOISIA_MASS_LABELING_ENABLED"]) delete env[key];
+    delete env.NODE_TEST_CONTEXT;
     const child = spawnSync(process.execPath, ["--test", "--import", "tsx", fileURLToPath(import.meta.url)], { env, encoding: "utf8", timeout: 540_000, maxBuffer: 2_000_000 });
     assert.equal(child.status, 0, child.stdout + child.stderr);
+    assert.match(child.stdout,/product_journey_verified roots=5 questions=9 actor=client_admin/,child.stdout+child.stderr);
+    assert.match(child.stdout,/# skipped 0/u,child.stdout+child.stderr);
+    console.log("verified isolated client journey: 5 roots, 9 questions, 0 skipped tests");
     return;
   }
   const { openDatabase } = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
@@ -84,7 +88,7 @@ test("a client creates a brand and admits and consumes the default product pipel
     await updateMassLabelingStudyPolicyV1({ ...access, expected_revision: 0, category: "bicycles", lexicon_terms: [],
       candidate_language: "en", interest_threshold: .85, interests: [] });
     const imported = await syntheticImportedWorkspaceFixtureV1({ database, scoped: client, query: database.query.bind(database), cleanup: async () => {} },
-      { organization_id: organization, brand_id: created.brand.id, workspace_id: workspace, actor_user_id: clientActor }, { root_count: 5 });
+      { organization_id: organization, brand_id: created.data.id, workspace_id: workspace, actor_user_id: clientActor }, { root_count: 5 });
     const prep = await requestSignalWorkspaceCorpusPreparationStoreV1({ ...access, idempotency_key: randomUUID() });
     const prepJob = (await database.query("SELECT worker_job_id FROM signal_corpus_preparation_runs WHERE id=$1", [prep.run_id])).rows[0]!.worker_job_id;
     await signalWorkspaceCorpusPreparationJobV1({ id: prepJob, data: { run_id: prep.run_id }, updateProgress: async () => {} }, { database, page_size: 5 });
@@ -165,5 +169,6 @@ test("a client creates a brand and admits and consumes the default product pipel
     assert.ok(overview.terms.filter(term => term.basis === "defined_interest").every(term => term.mention_count === 5));
     const owner = (await database.query("SELECT actor_user_id FROM signal_labeling_runs WHERE id=$1", [admitted.run_id])).rows[0]!;
     assert.equal(owner.actor_user_id, clientActor);
+    console.log("product_journey_verified roots=5 questions=9 actor=client_admin");
   } finally { globalThis.fetch = originalFetch; client.release(); await database.end(); await rm(directory, { recursive: true, force: true }); }
 });

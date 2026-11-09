@@ -1,3 +1,11 @@
+-- Organization defaults may leave the policy ceiling open. Every JEV admission
+-- still requires its own positive execution cap in the guard below.
+ALTER TABLE signal_processing_policy_actions DROP CONSTRAINT processing_nullable_action_cap;
+ALTER TABLE signal_processing_policy_actions ADD CONSTRAINT processing_nullable_action_cap
+ CHECK(max_execution_micro_usd IS NOT NULL OR action IN('mention_facets','concept_membership','corpus_embeddings',
+  'topic_interpretation','topic_consolidation','concept_membership_jev','concept_membership_claude',
+  'brand_context_proposal','topic_prototype_embeddings','mass_labeling_jev'));
+
 -- Product runs use ordinary organization admissions. The historical pilot
 -- extension and its immutable identity retain their original checks.
 CREATE OR REPLACE FUNCTION guard_signal_mass_labeling_admission_v1() RETURNS trigger
