@@ -4825,6 +4825,17 @@
     "unavailable": "No se pudo completar la configuración. Revisa tus permisos y vuelve a intentarlo."
   },
   "LabelingStudySettings": {
+    "suggestionsTitle": "Términos sugeridos desde el corpus",
+    "suggestionsHelp": "Palabras y frases de dos palabras frecuentes en motivadores o barreras de consumidores individuales con probabilidad de al menos 0.90 cuyo texto no contiene ningún término de categoría vigente. Revisa su significado antes de agregarlos. Agrega los términos a la lista y guarda la configuración. Los descartes se conservan mientras no cambien la categoría ni el léxico. Usa resultados guardados y no tiene costo de proveedor.",
+    "suggestionsRefresh": "Actualizar sugerencias",
+    "suggestionsLoading": "Buscando términos frecuentes…",
+    "suggestionsUnavailable": "Las sugerencias estarán disponibles cuando el estudio tenga un mapa de tópicos vigente y clasificación de consumidor.",
+    "suggestionsEmpty": "No hay más sugerencias para el léxico vigente.",
+    "suggestionCounts": "{roots, number} raíces · {triggers, number} motivadores · {barriers, number} barreras",
+    "suggestionAccept": "Agregar a términos",
+    "suggestionDismiss": "Descartar",
+    "suggestionRetry": "Reintentar descarte",
+    "suggestionsError": "No se pudieron confirmar las sugerencias. Actualiza la configuración e inténtalo de nuevo.",
     "title": "Configuración de etiquetado",
     "body": "Define la categoría del estudio y las palabras que usa tu audiencia para referirse a ella.",
     "refresh": "Actualizar configuración",

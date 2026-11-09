@@ -10,6 +10,8 @@ import {
   SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_PROMPT_V1,
   SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_SCHEMA_V1,
   SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
+  SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2,
+  SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_LEGACY_PROMPT_V2,
   SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_PROMPT_V2,
   SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_SCHEMA_V2,
   parseSignalWorkspaceInterpretationConfigurationV1,
@@ -74,7 +76,7 @@ export type MassLabelingConsolidationBatchV1 = {
   source_groups_digest: string;
   request_digest: string;
   request_body: string;
-  configuration: typeof configuration | typeof SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1 | typeof SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2;
+  configuration: typeof configuration | typeof SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1 | typeof SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 | typeof SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2;
   category_context?: MassLabelingCategoryContextV2;
   reserved_micro_usd: number;
 };
@@ -92,7 +94,8 @@ export function buildMassLabelingConsolidationRequestV1(args: {
   category_context?: MassLabelingCategoryContextV2;
 }): MassLabelingConsolidationBatchV1 {
   const parsedConfiguration = parseSignalWorkspaceInterpretationConfigurationV1(args.configuration ?? configuration);
-  if (parsedConfiguration !== configuration && parsedConfiguration !== SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1 && parsedConfiguration !== SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2) return fail();
+  if (parsedConfiguration !== configuration && parsedConfiguration !== SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1 && parsedConfiguration !== SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2
+    && parsedConfiguration !== SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2) return fail();
   const selected = parsedConfiguration as MassLabelingConsolidationBatchV1["configuration"];
   const multilingual = "localization_contract_version" in selected;
   const product = "category_lexicon_contract_version" in selected;
@@ -114,12 +117,15 @@ export function buildMassLabelingConsolidationRequestV1(args: {
   if (new Set(groups.map((group) => group.group_id)).size !== groups.length)
     return fail();
   const source_groups_digest = digest(groups);
+  const productPrompt = selected === SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_LEGACY_CONFIGURATION_V2
+    ? SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_LEGACY_PROMPT_V2
+    : SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_PROMPT_V2;
   const request_body = JSON.stringify({
     model: selected.model,
     max_tokens: selected.consolidation_max_output_tokens,
     stream: false,
     thinking: { type: "disabled" },
-    system: product ? SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_PROMPT_V2 : multilingual ? SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_PROMPT_V1 : prompt,
+    system: product ? productPrompt : multilingual ? SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_PROMPT_V1 : prompt,
     output_config: { effort: "high", format: { type: "json_schema", schema: product ? SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_SCHEMA_V2 : multilingual ? SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_SCHEMA_V1 : schema } },
     messages: [
       {

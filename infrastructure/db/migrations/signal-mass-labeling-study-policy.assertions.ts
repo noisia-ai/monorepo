@@ -1,3 +1,5 @@
+import {dismissMassLabelingLexiconSuggestionV1} from "../signal-mass-labeling-lexicon-suggestions";
+import {loadMassLabelingLexiconSuggestionsV1} from "../signal-workspace-topics-serving";
 import {randomUUID} from "node:crypto";
 import assert from "node:assert/strict";
 import type {Pool} from "pg";
@@ -92,6 +94,33 @@ export async function assertMassLabelingStudyPolicyV1(args: {
 
   const query=await args.database.connect();
   try {
+    const beforeCalls=(await query.query("SELECT count(*)::int total FROM signal_labeling_calls WHERE workspace_id=$1",[args.workspace_id])).rows[0]!.total;
+    const suggested=await loadMassLabelingLexiconSuggestionsV1(access);
+    assert.equal(suggested.available,true);
+    assert.equal(suggested.revision,4);
+    assert.ok(suggested.items.length>0,"a 0.90 consumer answer excluded by the lexicon yields free suggestions");
+    assert.ok(suggested.items.some(item=>item.term.includes(" ")),"suggestions include bigrams");
+    assert.ok(suggested.items.every(item=>item.roots===1&&item.trigger_roots===1&&item.barrier_roots===0),
+      "only the single high-confidence consumer root contributes, once per term");
+    const term=suggested.items[0]!.term;
+    await dismissMassLabelingLexiconSuggestionV1({...access,expected_revision:4,term});
+    await dismissMassLabelingLexiconSuggestionV1({...access,expected_revision:4,term});
+    assert.ok(!(await loadMassLabelingLexiconSuggestionsV1(access)).items.some(item=>item.term===term));
+    await assert.rejects(dismissMassLabelingLexiconSuggestionV1({...access,expected_revision:3,term}),/study_policy_conflict/);
+    await assert.rejects(dismissMassLabelingLexiconSuggestionV1({...access,actor_user_id:args.foreign_actor,expected_revision:4,term}),/study_policy_forbidden/);
+    await assert.rejects(loadMassLabelingLexiconSuggestionsV1({...access,actor_user_id:args.foreign_actor}),/workspace_topics_forbidden/);
+    await query.query("SAVEPOINT lexicon_suggestion_acceptance");
+    await updateMassLabelingStudyPolicyV1({...policy,expected_revision:4,lexicon_terms:[term]});
+    assert.equal((await loadMassLabelingLexiconSuggestionsV1(access)).items.length,0,
+      "saving an accepted term materializes its match and removes the root from suggestions");
+    await query.query("ROLLBACK TO SAVEPOINT lexicon_suggestion_acceptance; RELEASE SAVEPOINT lexicon_suggestion_acceptance");
+    await query.query("SAVEPOINT lexicon_suggestion_rights");
+    await query.query("UPDATE data_sources SET status='archived' WHERE workspace_id=$1",[args.workspace_id]);
+    assert.equal((await loadMassLabelingLexiconSuggestionsV1(access)).items.length,0,"revoked source rights hide words as well as evidence");
+    await query.query("ROLLBACK TO SAVEPOINT lexicon_suggestion_rights; RELEASE SAVEPOINT lexicon_suggestion_rights");
+    assert.equal((await query.query("SELECT count(*)::int total FROM signal_labeling_calls WHERE workspace_id=$1",[args.workspace_id])).rows[0]!.total,beforeCalls,
+      "suggestions, dismissal and acceptance create no provider request");
+    assert.equal((await query.query("SELECT has_table_privilege('anon','signal_mass_labeling_lexicon_dismissals','SELECT') yes")).rows[0]!.yes,false);
     for(const [body,terms,yes] of [["I prefer bicycles",["bicycles"],true],
       ["BICYCLE!",["bicycle"],true],["bicycles",["bicycle"],false],
       ["#cerveja",["cerveja"],true],["futebol",["beer","cerveja"],false],
