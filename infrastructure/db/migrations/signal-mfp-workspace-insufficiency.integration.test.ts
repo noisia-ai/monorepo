@@ -60,7 +60,7 @@ test("operator insufficiency is scoped durable evidence and preserves the valid 
        definition:"Synthetic bounded group evidence.",inclusion:[{text:"Synthetic included condition",citations:[String(configuration.model)==="claude-opus-5"?cluster.representatives[0]!.ref_id:"r1"]}],exclusion:[],
        citations:cluster.cluster_id===selected?[]:[String(configuration.model)==="claude-opus-5"?cluster.representatives[0]!.ref_id:"r1"]}))})}]});
      const originalRaw=response("Original coherent sibling"),repairRaw=response("Repaired coherent sibling");
-     const reserve={...access,execution_token:lease.execution_token,configuration,budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,unit_keys:clusters.map(c=>c.cluster_id)};
+     const reserve={...access,execution_token:lease.execution_token,configuration,budget_timezone:fixture.budget.timezone,daily_cap_micro_usd:30_000_000,unit_keys:clusters.map(c=>c.cluster_id)};
      const paid=async(batch:typeof originalBatch,body:string)=>{
       const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...reserve,idempotency_key:batch.batch_key,request_digest:batch.request_digest,reserved_micro_usd:batch.reserved_micro_usd,
        ...(batch.editorial_repair?{editorial_repair:batch.editorial_repair}:{})});
@@ -131,7 +131,7 @@ test("operator insufficiency is scoped durable evidence and preserves the valid 
      const badOutput={topics:[{topic_key:"synthetic_combined",name:"Synthetic combined conversation",definition:"Synthetic combined definition.",group_ids:groupKeys}],excluded_groups:[]};
      const badRaw=JSON.stringify({type:"message",role:"assistant",model:configuration.model,stop_reason:"end_turn",content:[{type:"text",text:JSON.stringify(badOutput)}],usage:{input_tokens:100,output_tokens:50}});
      const globalCall=await money.reserveSignalWorkspaceEngineInterpretationV1({...access,execution_token:lease.execution_token,idempotency_key:randomUUID(),
-      request_digest:globalBatch.request_digest,configuration:globalBatch.configuration,reserved_micro_usd:globalBatch.reserved_micro_usd,budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,
+      request_digest:globalBatch.request_digest,configuration:globalBatch.configuration,reserved_micro_usd:globalBatch.reserved_micro_usd,budget_timezone:fixture.budget.timezone,daily_cap_micro_usd:30_000_000,
       mass_labeling_stage:{stage:"global-consolidation-v1",source_groups_digest:globalBatch.source_groups_digest}});
      const globalToken={database,call_id:globalCall.call_id,attempt_token:globalCall.attempt_token};
      await money.markSignalWorkspaceEngineInterpretationSentV1({...globalToken,execution_token:lease.execution_token});

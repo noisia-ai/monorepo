@@ -72,7 +72,7 @@ for(const mode of ["legacy_boolean","needs_repair","quarantine_original","quaran
           const batch=buildSignalWorkspaceInterpretationBatchV1(firstPacket.context,[cluster],configuration);
           const reserve={...access,execution_token:lease.execution_token,idempotency_key:batch.batch_key,
             request_digest:batch.request_digest,configuration,reserved_micro_usd:batch.reserved_micro_usd,
-            budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,unit_keys:[secondKey]};
+            budget_timezone:fixture.budget.timezone,daily_cap_micro_usd:30_000_000,unit_keys:[secondKey]};
           const original=await money.reserveSignalWorkspaceEngineInterpretationV1(reserve);
           const token={database,call_id:original.call_id,attempt_token:original.attempt_token};
           if(mode==="terminal_successor"||mode==="unsent_successor"){
