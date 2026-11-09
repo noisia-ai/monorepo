@@ -237,11 +237,12 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       discovery_sample_cap: args.body.discovery_sample_cap ?? null, discovery_sample_seed: args.body.discovery_sample_seed ?? null }) : undefined;
     if (intentDigest && await replaySignalWorkspaceDiscoveryRequestV1({ ...access, idempotency_key: args.idempotencyKey, request_intent_digest: intentDigest }))
       return loadWorkspaceAnalysisForActorV1({ ...args, idempotencyKey: args.idempotencyKey });
+    let productConfiguration = SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2;
     if (access.massEnabled) {
       if (!workspaceAnalysisAdmissionProviderAvailableV1()) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
       const settings = await getMassLabelingStudyPolicyV1(access);
       if (!settings.category.trim()) throw new SignalWorkspaceEngineError("workspace_analysis_category_required", 422);
-      await provisionMassLabelingProductEditorialPolicyV2(access);
+      productConfiguration = (await provisionMassLabelingProductEditorialPolicyV2(access)).configuration;
     }
     const policy = access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
   policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
@@ -265,7 +266,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       discovery_request_intent_digest: intentDigest,
       discovery_sample_cap: args.body.discovery_sample_cap, discovery_sample_seed: args.body.discovery_sample_seed,
       engine_config: enginePreflight?.engine_configuration ?? SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, interpretation_config: {
-        call_configuration: enginePreflight?.engine_configuration ? SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
+        call_configuration: enginePreflight?.engine_configuration ? productConfiguration : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1,
         budget_timezone: policy.budget_timezone, daily_cap_micro_usd: policy.daily_cap_micro_usd } });
   } else if (args.body.action === "prepare_incremental_editorial") {
     await requestSignalWorkspaceIncrementalEditorialPreparationV1({ ...access, numeric_execution_id: args.body.run_id,
