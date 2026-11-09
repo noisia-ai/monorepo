@@ -154,6 +154,14 @@ test("a client creates a brand and admits and consumes the default product pipel
     assert.equal(execution.input_snapshot.discovery_population, undefined);
     const materialized = await materializeMassLabelingProductMapV2({ database, storage });
     assert.equal(materialized.materialized, true);
+    const lexical=(await database.query(`SELECT cache.root_id,cache.matched,
+      signal_mass_labeling_category_matches_v1(mention.text_clean,policy.lexicon_terms) expected
+      FROM signal_mass_labeling_category_matches cache
+      JOIN signal_mass_labeling_study_policies policy ON policy.workspace_id=cache.workspace_id AND policy.revision=cache.policy_revision
+      JOIN mentions mention ON mention.workspace_id=cache.workspace_id AND mention.id=cache.root_id
+      WHERE cache.workspace_id=$1 AND cache.policy_revision=(SELECT max(revision) FROM signal_mass_labeling_study_policies WHERE workspace_id=$1)`,[workspace])).rows;
+    assert.equal(lexical.length,5,"roots admitted after settings receive category materialization");
+    assert.ok(lexical.every(row=>row.matched===row.expected));
     const settings = await getMassLabelingStudyPolicyV1(access);
     assert.equal(settings.lexicon_provenance, "editorial"); assert.ok(settings.lexicon_terms.includes("bicycle"));
     await updateMassLabelingStudyPolicyV1({ ...access, ...settings, expected_revision: settings.revision, interests: [
