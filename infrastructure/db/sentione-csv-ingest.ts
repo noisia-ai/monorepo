@@ -655,6 +655,26 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
             ON predecessor.id=lineage.supersedes_import_batch_id
           WHERE predecessor.workspace_id=$1::uuid AND predecessor.data_source_id=$6::uuid
             AND NOT predecessor.id=ANY(lineage.path)
+        ), candidate_rows AS MATERIALIZED (
+          -- The null-safe comparison is equivalent because id is NOT NULL. It
+          -- lets this branch use idx_mentions_text_hash instead of scanning a
+          -- partial canonical index by workspace when new-workspace stats lag.
+          SELECT mention.id,mention.workspace_id,mention.canonical_mention_id,mention.text_hash,
+            mention.provider_record_id,mention.data_source_id,mention.source_system,
+            mention.source_file_id,mention.inclusion_status
+          FROM mentions mention
+          WHERE $7::boolean=false AND mention.workspace_id=$1::uuid
+            AND mention.canonical_mention_id IS NOT DISTINCT FROM mention.id
+            AND mention.text_hash=ANY($3::text[])
+          UNION
+          SELECT mention.id,mention.workspace_id,mention.canonical_mention_id,mention.text_hash,
+            mention.provider_record_id,mention.data_source_id,mention.source_system,
+            mention.source_file_id,mention.inclusion_status
+          FROM mentions mention
+          WHERE mention.workspace_id=$1::uuid AND mention.canonical_mention_id=mention.id
+            AND mention.source_system='listening_csv'
+            AND mention.provider_record_id=ANY($4::text[])
+            AND ($7::boolean=false OR mention.data_source_id=$6::uuid)
         )
         SELECT mention.id,mention.text_hash,mention.provider_record_id,mention.data_source_id,mention.source_system,
           mention.inclusion_status,
@@ -682,14 +702,8 @@ export function createSignalSentioneCsvIngester(pool: Pick<Pool, "query">) {
               AND predecessor.mention_id=mention.id
               AND predecessor.import_batch_id=$5::uuid
           ) AS predecessor_disposition
-        FROM mentions mention
-        WHERE mention.workspace_id = $1::uuid
-          AND mention.canonical_mention_id = mention.id
-          AND (
-            ($7::boolean=false AND mention.text_hash = ANY($3::text[]))
-            OR (mention.source_system='listening_csv' AND mention.provider_record_id = ANY($4::text[])
-              AND ($7::boolean=false OR mention.data_source_id=$6::uuid))
-          )
+        FROM candidate_rows mention
+        WHERE mention.workspace_id=$1::uuid AND mention.canonical_mention_id=mention.id
       `,
       [workspaceId,importBatchId,hashes,providerRecordIds,supersedesImportBatchId,values[0]!.dataSourceId,revisionMode==="revise_existing"]
     );
