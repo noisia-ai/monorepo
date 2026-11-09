@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
-import { labelingStudySettingsInputV1, type LabelingStudySettingsV1 } from "@/lib/data-os/signal-labeling-settings";
+import { labelingStudySettingsInputV1, setLabelingTopicDisplayNameV1, type LabelingStudySettingsV1 } from "@/lib/data-os/signal-labeling-settings";
 import { useMfpMutation, useMfpResource } from "./useMfpResource";
 
 export function LabelingStudySettings({ workspaceId, onAccessDenied, onSaved, onReadyChange }: {
@@ -78,9 +78,7 @@ export function LabelingStudySettings({ workspaceId, onAccessDenied, onSaved, on
             <p>{t("originalName")} <strong>{topic.name}</strong></p>
             {(["en", "es"] as const).map(language => <label key={language}>{t(language === "en" ? "englishName" : "spanishName")}
               <input maxLength={160} disabled={disabled} value={draft.names[topicKey]?.[language] ?? topic[language]}
-                onChange={event => edit({ names: { ...draft.names, [topicKey]: {
-                  en: draft.names[topicKey]?.en ?? topic.en, es: draft.names[topicKey]?.es ?? topic.es,
-                  [language]: event.target.value } } })} /></label>)}
+                onChange={event => edit({ names: setLabelingTopicDisplayNameV1(draft.names, topic, language, event.target.value) })} /></label>)}
           </> : null}
         </details> : null}
         <div className="admin-form-actions"><button className="admin-button admin-button--primary" type="button"

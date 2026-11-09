@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { labelingStudySettingsInputSchemaV1, labelingStudySettingsInputV1, type LabelingStudySettingsV1 } from "./signal-labeling-settings";
+import { labelingStudySettingsInputSchemaV1, labelingStudySettingsInputV1, setLabelingTopicDisplayNameV1, type LabelingStudySettingsV1 } from "./signal-labeling-settings";
 
 const state: LabelingStudySettingsV1 = {
   contract_version: "mass-labeling-study-policy-v1", workspace_id: "workspace-a", revision: 4, can_edit: true,
@@ -37,4 +37,42 @@ test("a new brand can save its category before the editorial lexicon is proposed
   if (!result.success) return;
   assert.equal(result.data.category, "Coffee");
   assert.deepEqual(result.data.lexicon_terms, []);
+});
+
+const topic = { topic_key: "topic_a", en: "Coffee occasions", es: "Ocasiones de café" };
+test("restoring a canonical display-name pair removes its override from the draft and PUT payload", () => {
+  const other = { en: "Other edited topic", es: "Otro tópico editado" };
+  const original = { topic_a: { en: "Edited coffee occasions", es: topic.es }, topic_b: other };
+  const names = setLabelingTopicDisplayNameV1(original, topic, "en", topic.en);
+  assert.deepEqual(names, { topic_b: other });
+  assert.equal(names.topic_b, other);
+  assert.equal(original.topic_a.en, "Edited coffee occasions");
+  const result = labelingStudySettingsInputV1({ ...state, display_names: original }, {
+    category: state.category, terms: state.lexicon_terms.join("\n"), threshold: "0.85", interests: [], names
+  });
+  assert.equal(result.success, true);
+  if (result.success) assert.deepEqual(result.data.display_names, { topic_b: other });
+});
+
+test("single-language edits preserve the other language and restoring only one edited language keeps the pair", () => {
+  assert.deepEqual(setLabelingTopicDisplayNameV1({}, topic, "es", "Café de la mañana").topic_a,
+    { en: topic.en, es: "Café de la mañana" });
+  const english = setLabelingTopicDisplayNameV1({}, topic, "en", "Morning coffee");
+  assert.deepEqual(english.topic_a, { en: "Morning coffee", es: topic.es });
+  const both = setLabelingTopicDisplayNameV1(english, topic, "es", "Café de la mañana");
+  assert.deepEqual(both.topic_a, { en: "Morning coffee", es: "Café de la mañana" });
+  const restoredEnglish = setLabelingTopicDisplayNameV1(both, topic, "en", topic.en);
+  assert.deepEqual(restoredEnglish.topic_a, { en: topic.en, es: "Café de la mañana" });
+  const names = setLabelingTopicDisplayNameV1(restoredEnglish, topic, "es", topic.es);
+  assert.deepEqual(names, {});
+  const result = labelingStudySettingsInputV1({ ...state, display_names: both }, {
+    category: state.category, terms: state.lexicon_terms.join("\n"), threshold: "0.85", interests: [], names
+  });
+  assert.equal(result.success, true);
+  if (result.success) assert.deepEqual(result.data.display_names, {});
+});
+
+test("restoring canonical names uses the same trimming as saved display names", () => {
+  const names = { topic_a: { en: "Edited topic", es: topic.es } };
+  assert.deepEqual(setLabelingTopicDisplayNameV1(names, topic, "en", ` ${topic.en} `), {});
 });
