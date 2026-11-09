@@ -7,7 +7,7 @@ Inicia sesión en [Studio UAT](https://studio-uat-uat.up.railway.app) y abre [To
 1. Compara el nombre y la definición de un tópico en inglés con su original en portugués. Si no aparecen datos o la página marca que el workspace no está listo, registra el estado y vuelve a consultar más tarde.
 2. Cambia **Contenido** entre conversación, publicidad, sólo hashtags y todo el contenido. Espera a que cada vista termine de cargar antes de revisar los denominadores y los indicadores.
 3. Abre evidencia de un motivador y una barrera. Repite la consulta con los mismos filtros y comprueba que muestre las mismas menciones.
-4. Compara los conteos con los recibos privados de R15. Atribuye las variaciones temáticas al mapa nuevo y conserva ejemplos e identificadores en el canal privado del estudio.
+4. Coteja los denominadores, el mapa, el léxico y las definiciones de intereses con los recibos privados de R15. Documenta sólo las causas que respalden esos recibos y conserva ejemplos e identificadores en el canal privado del estudio.
 
 ## Dev-test · referencia de R14
 
