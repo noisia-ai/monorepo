@@ -72,6 +72,7 @@ export async function requestMassLabelingProductV2(args: {
     const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, ...args });
     if (!caps.can_request_processing || !caps.can_edit_topics) fail("mass_labeling_forbidden", 403);
     const policy = await loadMassLabelingStudyPolicyWithClientV1(client, args.workspace_id);
+    if (!policy.lexicon_terms.length) fail("study_lexicon_required", 422);
     return massLabelingConfigurationV2({ ...policy, interests: policy.interests.filter(interest => interest.active) });
   });
   const identity = massLabelingJevIdentityV2(config);
@@ -81,6 +82,7 @@ export async function requestMassLabelingProductV2(args: {
     validateIdentity: candidate => { if (labelerDigestV1(candidate) !== labelerDigestV1(identity)) fail("mass_labeling_identity_changed"); },
     prepare: async (client, workspace) => {
       const currentPolicy = await loadMassLabelingStudyPolicyWithClientV1(client, workspace);
+      if (!currentPolicy.lexicon_terms.length) fail("study_lexicon_required", 422);
       const currentConfig = massLabelingConfigurationV2({ ...currentPolicy, interests: currentPolicy.interests.filter(interest => interest.active) });
       if (digest(config) !== digest(currentConfig)) fail("mass_labeling_configuration_changed");
       const map = await mapCurrent(client, workspace, args.map_id);
@@ -132,7 +134,7 @@ export async function loadMassLabelingProductCategoryContextV2(args: {
     if (!caps.can_request_processing || !caps.can_edit_topics) fail("mass_labeling_forbidden", 403);
     const policy = await loadMassLabelingStudyPolicyWithClientV1(client, args.workspace_id);
     const brandOs = await loadSignalWorkspaceMassLabelingSeedsV1({ queryable: client, workspace_id: args.workspace_id });
-    return { category: policy.category, terms: [...new Set(brandOs.seeds.flatMap(seed => seed.names))].slice(0, 200) };
+    return { category: policy.category, terms: [...new Set([policy.category, ...brandOs.seeds.flatMap(seed => seed.names)])].filter(Boolean).slice(0, 200) };
   });
 }
 
