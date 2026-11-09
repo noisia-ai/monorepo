@@ -27,7 +27,7 @@ import { consolidateMassLabelingGroupsV1 } from "../../../services/workers/src/w
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
 import { authorizeMassEngineConsumerV1 } from "../../../services/workers/src/providers/mass-labeling-consumer";
 import { signalWorkspaceEngineJobV1 } from "../../../services/workers/src/workers/signal-workspace-engine";
-import { processMassLabelingProductPageV2 } from "../../../services/workers/src/workers/signal-mass-labeling-jev";
+import { signalMassLabelingJevJobV1 } from "../../../services/workers/src/workers/signal-mass-labeling-jev";
 import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/workers/signal-workspace-engine-storage";
 import type { JevRequestV1 } from "@noisia/query-engine/src/signal-mention-facets-jev-v1";
 import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
@@ -174,8 +174,19 @@ test("a client creates a brand and admits and consumes the default product pipel
         answers: Object.fromEntries(Object.entries(request.questions).map(([key, question]) => [key, question.type === "noul" ? { type: "noul", noul: key === "promotion" ? .1 : .9 }
           : { type: "choice", choice: key === "voice" ? "individual" : "none", confidence: .9, probabilities: Object.fromEntries(Object.keys(question.criteria).map(option => [option,
             option === (key === "voice" ? "individual" : "none") ? .9 : .1 / (Object.keys(question.criteria).length - 1)])) }])) }) }; } };
+    let preflight_probes=0;
+    const provider_preflight={api_key:'synthetic-not-used',fetch_impl:async(url:Parameters<typeof fetch>[0])=>{
+      assert.equal(String(url),'https://api.typesafe.ai/v1/models');preflight_probes++;return new Response('{}',{status:200});
+    }};
+    const job={data:{run_id:admitted.run_id}};
+    await assert.rejects(signalMassLabelingJevJobV1(job,{database,store,provider,provider_preflight:{api_key:'synthetic-not-used',fetch_impl:async()=>new Response('{}',{status:401})}}),/mass_labeling_provider_unavailable/u);
+    assert.equal(sends,0);
+    await database.query("DELETE FROM signal_workspace_features WHERE workspace_id=$1 AND feature='mass_labeling'",[workspace]);
+    await assert.rejects(signalMassLabelingJevJobV1(job,{database,store,provider,provider_preflight}),/mass_labeling_not_enabled/u);
+    assert.equal(sends,0);
+    await database.query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2)",[workspace,clientActor]);
     const crash = { query: database.query.bind(database), async connect() { throw new Error("synthetic_finalization_crash"); } };
-    await assert.rejects(processMassLabelingProductPageV2({ database: crash, run_id: admitted.run_id, store, provider }), /synthetic_finalization_crash/u);
+    await assert.rejects(signalMassLabelingJevJobV1(job,{database:crash,store,provider,provider_preflight}), /synthetic_finalization_crash/u);
     assert.equal(sends, 5);
     const completedSmoke = (await database.query(`SELECT run.status,mass.smoke_metrics FROM signal_labeling_runs run
       JOIN signal_mass_labeling_runs mass ON mass.run_id=run.id WHERE run.id=$1`, [admitted.run_id])).rows[0]!;
@@ -187,11 +198,12 @@ test("a client creates a brand and admits and consumes the default product pipel
     assert.equal(sends, 5);
     assert.ok((await database.query("SELECT smoke_metrics FROM signal_mass_labeling_runs WHERE run_id=$1", [admitted.run_id])).rows[0]!.smoke_metrics);
     await continueMassLabelingV1({ ...access, run_id: admitted.run_id });
-    await assert.rejects(processMassLabelingProductPageV2({ database: crash, run_id: admitted.run_id, store, provider }), /synthetic_finalization_crash/u);
+    await assert.rejects(signalMassLabelingJevJobV1(job,{database:crash,store,provider,provider_preflight}), /synthetic_finalization_crash/u);
     await database.query("UPDATE signal_labeling_runs SET next_poll_at=clock_timestamp() WHERE id=$1", [admitted.run_id]);
     assert.equal((await drainMassLabelingProductFinalizationV2({ database })).finalized, true);
-    assert.equal((await processMassLabelingProductPageV2({ database, run_id: admitted.run_id, store, provider })).status, "not_claimed");
+    assert.equal((await signalMassLabelingJevJobV1(job,{database,store,provider,provider_preflight})).status, "not_claimed");
     assert.equal(sends, 5);
+    assert.ok(preflight_probes>=4);
     const overview = await loadSignalWorkspaceTopicsOverviewV1({ ...access, conversation_segment: "all" });
     assert.ok(overview);
     assert.equal(overview.denominator, imported.roots.length);
