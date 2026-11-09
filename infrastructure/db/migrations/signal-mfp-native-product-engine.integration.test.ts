@@ -7,7 +7,7 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
-import type { Pool } from "pg";
+import { createMassLabelingProductDatabaseFixtureV1 } from "./signal-mass-labeling-product-database.synthetic.fixture";
 import { users } from "../schema";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "../signal-workspace-capabilities";
 import { loadSignalWorkspaceEnginePreflightV1, beginSignalWorkspaceEngineV1 } from "../signal-workspace-engine";
@@ -40,8 +40,7 @@ test("the native product engine worker admits a new client study without a priva
     assert.match(child.stdout, /# pass 1\b/u); assert.match(child.stdout, /# skipped 0\b/u); assert.match(child.stdout, /native_product_engine_signal_ready/u);
     return;
   }
-  const { openDatabase } = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
-  const database: Pool = await openDatabase();
+  const { database,cleanup:cleanupDatabase } = await createMassLabelingProductDatabaseFixtureV1();
   const client = await database.connect();
   const directory = await mkdtemp(join(tmpdir(), "noisia-native-product-engine-"));
   const originalFetch = globalThis.fetch;
@@ -209,6 +208,6 @@ test("the native product engine worker admits a new client study without a priva
     globalThis.fetch = originalFetch;
     for (const key of Object.keys(process.env)) if (!(key in originalEnvironment)) delete process.env[key];
     Object.assign(process.env, originalEnvironment);
-    client.release(); await database.end(); await rm(directory, { recursive: true, force: true });
+    client.release(); await cleanupDatabase(); await rm(directory, { recursive: true, force: true });
   }
 });

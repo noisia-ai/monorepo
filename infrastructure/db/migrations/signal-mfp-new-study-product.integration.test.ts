@@ -7,7 +7,7 @@ import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
-import type { Pool } from "pg";
+import { createMassLabelingProductDatabaseFixtureV1 } from "./signal-mass-labeling-product-database.synthetic.fixture";
 import { users } from "../schema";
 import { loadSignalWorkspaceCapabilitiesStoreV1 } from "../signal-workspace-capabilities";
 import { loadSignalWorkspaceEnginePreflightV1 } from "../signal-workspace-engine";
@@ -49,8 +49,7 @@ test("a client creates a brand and admits and consumes the default product pipel
     console.log("verified isolated client journey: 5 roots, 9 questions, 0 skipped tests");
     return;
   }
-  const { openDatabase } = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
-  const database: Pool = await openDatabase();
+  const { database,cleanup:cleanupDatabase } = await createMassLabelingProductDatabaseFixtureV1();
   const client = await database.connect();
   const directory = await mkdtemp(join(tmpdir(), "noisia-new-study-product-"));
   const originalFetch = globalThis.fetch;
@@ -212,5 +211,5 @@ test("a client creates a brand and admits and consumes the default product pipel
     const owner = (await database.query("SELECT actor_user_id FROM signal_labeling_runs WHERE id=$1", [admitted.run_id])).rows[0]!;
     assert.equal(owner.actor_user_id, clientActor);
     console.log("product_journey_verified roots=5 questions=9 actor=client_admin");
-  } finally { globalThis.fetch = originalFetch; client.release(); await database.end(); await rm(directory, { recursive: true, force: true }); }
+  } finally { globalThis.fetch = originalFetch; client.release(); await cleanupDatabase(); await rm(directory, { recursive: true, force: true }); }
 });
