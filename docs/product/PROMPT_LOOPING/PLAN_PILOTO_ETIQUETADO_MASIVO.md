@@ -211,6 +211,9 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H7 · Los PR #148 y #149 pasaron CI y PostgreSQL antes y después de la fusión. En UAT, el cotejo de lecturas por lote de 500 candidatos bajó de 10.7–11.8 s a 0.11–1.41 s, con igual número de filas. La prueba sintética verificó igualdad de campos y aislamiento entre workspaces.
+- [x] H7 · La migración 0291 se ensayó sobre la copia restaurada y se aplicó una vez en UAT. La repetición verificó los 59 asientos. Cambiaron las definiciones de dos funciones. Los permisos, los resultados históricos y el acceso a su evidencia coincidieron. GitHub midió 19.564 s para cerrar un lote sintético de 95,100 filas con una población semántica en borrador.
+
 - [x] H7 · Los PR #132–#145 pasaron CI y PostgreSQL en la solicitud y tras la fusión a develop. Studio y workers de UAT arrancaron con Railpack en `966528b3`. Se comprobaron la salud de Studio, el latido del worker y que Railway tenía cero cambios preparados.
 - [x] H7 · En dev-test, seis lecturas de la vista general tardaron entre 1.516 y 1.704 s. Tres recargas en el navegador tardaron 2.406, 2.035 y 2.938 s. La primera observación dio un límite superior de 3.156 s. Los indicadores mostraron 30 ejemplos en 1.485–1.826 s.
 - [ ] H7 · La marca y su Brand OS ya existen en UAT. Desde el producto se enviaron once archivos. Diez tienen recibo de importación completa. La aceptación del undécimo y las etapas posteriores quedan pendientes.
@@ -376,6 +379,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · El timeout del worker de UAT es 120 s. La prueba de escala conserva las 95,100 filas, un borrador semántico y los controles de derechos. Se fijó un límite de 90 s para GitHub después de que la primera ejecución agotara su límite sintético de 30 s. El tiempo observado se guarda con el perfil de PostgreSQL. El cierre del archivo real se acredita mediante su propio recibo.
 
 - H7 · Conservar los recibos fallidos y recuperar el archivo desde el historial de Studio. Ensayar el cierre en PostgreSQL con un lote de tamaño comparable, verificar la semántica de la reconciliación y confirmar los once recibos antes de iniciar las etapas con proveedor.
 
