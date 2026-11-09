@@ -27,7 +27,10 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
     { workspaceId: identity.workspaceId });
   if (!workspace) notFound();
   const initial = await loadSignalTopicsManagementProductV1({ workspace, actor: session.appUser });
-  const mfpEnabled = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.id,feature:"concept_membership"});
+  const [mfpEnabled, massLabelingEnabled] = await Promise.all([
+    signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.id,feature:"concept_membership"}),
+    signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:workspace.id,feature:"mass_labeling"})
+  ]);
   return (
     <div className="admin-workspace-page topics-workspace-page">
       <AdminWorkspaceHeader
@@ -40,7 +43,7 @@ export default async function BrandTopicsPage({ params }: { params: Promise<{ id
         title={t("title")}
       />
       <BrandMonitoringJourney brandId={id} current="topics" />
-      <TopicsManager mfpEnabled={mfpEnabled} brandId={id} initial={initial} workspaceId={workspace.id} actorId={session.appUser.id} />
+      <TopicsManager massLabelingEnabled={massLabelingEnabled} mfpEnabled={mfpEnabled} brandId={id} initial={initial} workspaceId={workspace.id} actorId={session.appUser.id} />
     </div>
   );
 }

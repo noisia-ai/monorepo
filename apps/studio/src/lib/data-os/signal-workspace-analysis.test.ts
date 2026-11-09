@@ -12,6 +12,10 @@ const granted = { workspace_status: "active", brand_status: "active", actor_stat
 function authorityDatabase(authority: unknown) {
   let queries = 0;
   return { async query(_sql: string, params: unknown[]) {
+    if (_sql.includes("FROM signal_workspace_features")) {
+      assert.deepEqual(params, [id, "mass_labeling"]);
+      return { rows: [{ enabled: false }] };
+    }
     assert.equal(++queries, 1, "Denied access stops before context, run, imports or queue reads");
     assert.deepEqual(params, [id, "actor"]); return { rows: authority ? [authority] : [] };
   }, async connect() { throw new Error("Denied before transaction"); } } as unknown as Pick<Pool, "query" | "connect">;
@@ -368,6 +372,7 @@ test("editorial recovery reaches its dedicated store while provider is disabled,
     const query = async (sql: string) => {
       queries.push(sql);
       if (sql.includes("workspace.status workspace_status")) return { rows: [{ ...granted, user_type: "noisia_internal", primary_role: "noisia_admin" }] };
+      if (sql.includes("FROM signal_workspace_features")) return { rows: [{ enabled: false }] };
       if (sql.startsWith("BEGIN") || sql.startsWith("SET LOCAL") || sql === "ROLLBACK") return { rows: [] };
       if (sql.includes("signal_workspace_incremental_editorial_actor_v1")) return { rows: [{ valid: false }] };
       throw new Error("Unexpected operation outside editorial recovery authority");

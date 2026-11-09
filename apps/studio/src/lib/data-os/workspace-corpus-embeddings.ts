@@ -24,9 +24,15 @@ async function authorize(args: AccessArgs, execute: boolean) {
   const database = args.database ?? (await import("@/lib/db")).pool;
   const caps = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: database,
     workspace_id: args.workspaceId, actor_user_id: args.actorUserId });
-  const mfp = await signalWorkspaceFeatureEnabledV1({queryable:database,workspace_id:args.workspaceId,feature:"mention_facets"});
-  const allowed = mfp ? caps.can_request_processing : caps.can_execute_topics;
-  if (!caps.can_view || execute && !allowed) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_forbidden", 403);
+  if (!caps.can_view || execute && !caps.can_request_processing && !caps.can_execute_topics)
+    throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_forbidden", 403);
+  const [facets, mass] = await Promise.all([
+    signalWorkspaceFeatureEnabledV1({ queryable: database, workspace_id: args.workspaceId, feature: "mention_facets" }),
+    signalWorkspaceFeatureEnabledV1({ queryable: database, workspace_id: args.workspaceId, feature: "mass_labeling" })
+  ]);
+  const governed = facets || mass;
+  const allowed = governed ? caps.can_request_processing : caps.can_execute_topics;
+  if (execute && !allowed) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_forbidden", 403);
   const runtime = workspaceEmbeddingRuntimeSettingsV1(process.env);
   let maximum = runtime.max_run_cost_micro_usd;
   let policyAllows = true;
@@ -35,7 +41,7 @@ async function authorize(args: AccessArgs, execute: boolean) {
       actor_user_id: args.actorUserId, action_availability: { corpus_embeddings: runtime.provider_available } });
     const action = policy.actions.find(item => item.action === "corpus_embeddings");
     const current = Boolean(action && !["missing", "expired", "revoked"].includes(policy.status));
-    if (mfp) policyAllows = current;
+    if (governed) policyAllows = current;
     if (current && action?.max_execution_micro_usd !== undefined && action.max_execution_micro_usd !== null) {
       const policyCap = Number(action.max_execution_micro_usd);
       if (!Number.isSafeInteger(policyCap) || policyCap < 0) throw new WorkspaceCorpusEmbeddingsError("workspace_embedding_budget_configuration_invalid", 503);

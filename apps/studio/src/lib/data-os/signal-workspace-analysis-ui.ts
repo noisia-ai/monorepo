@@ -14,7 +14,7 @@ export type WorkspaceAnalysisRun = NonNullable<SignalWorkspaceEngineStatusV1["la
 };
 export type WorkspaceAnalysisStatus = Omit<SignalWorkspaceEngineStatusV1, "latest_run" | "latest_complete"> & {
   contract_version: "signal-workspace-analysis-v1";
-  request_scope: string; execution_mode?: "operator_cli"; can_execute: boolean; discovery_enabled?: boolean;
+  request_scope: string; execution_mode?: "operator_cli"; can_execute: boolean; discovery_enabled?: boolean; governed_enabled?: boolean;
   update?: WorkspaceAnalysisUpdate | null;
   numeric_readiness?: WorkspaceNumericReadiness | null;
   admission?: WorkspaceInterpretationAdmission | null;
@@ -102,6 +102,7 @@ export function workspaceAnalysisHasRecoverablePartialCatalog(run: WorkspaceAnal
 export function validWorkspaceAnalysisStatus(value: unknown): value is WorkspaceAnalysisStatus {
   if (!object(value) || value.contract_version !== "signal-workspace-analysis-v1" || typeof value.workspace_id !== "string"
     || value.discovery_enabled !== undefined && typeof value.discovery_enabled !== "boolean"
+    || value.governed_enabled !== undefined && typeof value.governed_enabled !== "boolean"
     || typeof value.request_scope !== "string" || !value.request_scope || typeof value.can_execute !== "boolean"
     || typeof value.observed_at !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/u.test(value.observed_at)
     || !object(value.preflight) || !object(value.preflight.cost) || !object(value.preflight.cost.claude) || !object(value.preflight.cost.voyage)) return false;
@@ -152,7 +153,7 @@ export function workspaceAnalysisUnknown(status: WorkspaceAnalysisStatus | null)
 }
 export function workspaceAnalysisDefaultCap(status: WorkspaceAnalysisStatus | null) {
   const cost = status?.preflight.cost.claude;
-  if(status?.discovery_enabled)return "";
+  if(workspaceAnalysisUsesGovernedBudget(status))return "";
   return embeddingCapUsdInput(String(cost?.estimated_upper_micro_usd ?? cost?.maximum_cap_micro_usd ?? 0));
 }
 const recoveryFailureCodes = ["workspace_engine_interpretation_output_invalid", "workspace_engine_interpretation_repair_invalid",
@@ -174,10 +175,10 @@ export function workspaceAnalysisUsesIncremental(status: WorkspaceAnalysisStatus
 }
 export function workspaceAnalysisCanStart(status: WorkspaceAnalysisStatus | null, capInput: string) {
   const cap = parseEmbeddingCapMicroUsd(capInput);
-  if (!status || (!status.discovery_enabled && !cap) || !status.can_execute || status.active_run || status.update?.has_pending_work || workspaceIncrementalEditorialPending(status.incremental_editorial) || workspaceAnalysisUnknown(status)
+  if (!status || (!workspaceAnalysisUsesGovernedBudget(status) && !cap) || !status.can_execute || status.active_run || status.update?.has_pending_work || workspaceIncrementalEditorialPending(status.incremental_editorial) || workspaceAnalysisUnknown(status)
     || workspaceAnalysisUsesIncremental(status) || workspaceAnalysisRecoveryFailure(status) || status.preflight.state !== "ready") return false;
   const cost = status.preflight.cost.claude;
-  if(status.discovery_enabled)return cost.provider_available && (capInput.trim()==="" || cap!==null && BigInt(cap)>0n
+  if(workspaceAnalysisUsesGovernedBudget(status))return cost.provider_available && (capInput.trim()==="" || cap!==null && BigInt(cap)>0n
     && (cost.maximum_cap_micro_usd===null||BigInt(cap)<=BigInt(cost.maximum_cap_micro_usd)));
   return cost.provider_available && cap!==null && cost.maximum_cap_micro_usd!==null && cost.maximum_cap_micro_usd > 0 && BigInt(cap) > 0n
     && (cost.estimated_upper_micro_usd === null || BigInt(cap) >= BigInt(cost.estimated_upper_micro_usd))
@@ -248,7 +249,11 @@ export function workspaceAnalysisCanReplay(status: WorkspaceAnalysisStatus, requ
       && status.preflight.context_digest === request.body.expected_context_digest && status.preflight.catalog_digest === request.body.expected_catalog_digest
       && workspaceAnalysisCanStart(status, embeddingCapUsdInput(String(request.body.claude_cap_micro_usd)));
 }
+export function workspaceAnalysisUsesGovernedBudget(status: WorkspaceAnalysisStatus | null | undefined) {
+  return status?.governed_enabled ?? status?.discovery_enabled ?? false;
+}
 export function workspaceAnalysisErrorKey(code: string) {
+  if (code === "workspace_analysis_category_required") return "categoryRequired";
   if (["workspace_incremental_editorial_source_changed", "workspace_incremental_editorial_source_stale",
     "workspace_incremental_editorial_preparation_source_changed", "workspace_incremental_editorial_preparation_source_stale"].includes(code)) return "changed";
   if (code === "workspace_incremental_editorial_cap_or_deadline_invalid" || code === "workspace_incremental_editorial_admission_changed") return "admissionChanged";

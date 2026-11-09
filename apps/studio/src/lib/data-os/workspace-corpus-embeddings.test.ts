@@ -63,10 +63,31 @@ test('server recomputes the cache-only plan while disabled and refuses stale, mi
   const internal = {...granted,user_type:'noisia_internal',primary_role:'analyst'};
   const observed = '2026-09-09T00:00:00.000000Z';
   try {
-    for (const scenario of ['cache','stale','missing','unknown','reserved','resume_paid','wrong_cap'] as const) {
+    for (const scenario of ['cache','mass_client_cache','stale','missing','unknown','reserved','resume_paid','wrong_cap'] as const) {
       let mutations = 0, writes = 0, quoting = 0;
-      const query = async (sql: string) => {
-        if (sql.includes('workspace.status workspace_status')) return {rows:[internal]};
+      const query = async (sql: string, params?: unknown[]) => {
+        const massClient = scenario === 'mass_client_cache';
+        if (sql.includes('workspace.status workspace_status')) return {rows:[massClient
+          ? {...granted,organization_status:'active',brand_same_organization:true} : internal]};
+        if (sql.includes('FROM signal_workspace_features')) {
+          assert.equal(params?.[0],workspaceId);
+          return {rows:[{enabled:massClient&&params?.[1]==='mass_labeling'}]};
+        }
+        if (massClient && sql.includes('signal_processing_org_exposure_v1')) return {rows:[{
+          id:body.preparation_run_id,version:'1',status:'active',policy_digest:body.quote_digest,
+          valid_from:observed,valid_until:'2099-01-01T00:00:00Z',budget_timezone:'UTC',daily_cap_micro_usd:'1000000',
+          budget_date:'2026-09-09',current:true,
+          exposure:{confirmed_micro_usd:'0',reserved_micro_usd:'0',ambiguous_micro_usd:'0',total_micro_usd:'0'},
+          actions:[{action:'corpus_embeddings',kind:'provider',provider:'voyage',model:'voyage-4-large',
+            configuration_digest:body.quote_digest,max_execution_micro_usd:'1000000',automatic_allowed:false}]
+        }]};
+        if (massClient && sql.startsWith('SELECT a.action,a.max_execution_micro_usd'))
+          return {rows:[{action:'corpus_embeddings',max_execution_micro_usd:'1000000'}]};
+        if (massClient && sql.startsWith('SELECT admit_signal_processing_v1')) {
+          assert.deepEqual(params?.slice(0,3),[workspaceId,actorUserId,'corpus_embeddings']);
+          assert.equal(params?.[6],'0');
+          return {rows:[{result:{receipt:{id:body.preparation_run_id,execution_cap_micro_usd:'0'}}}]};
+        }
         if (sql.includes('WITH prepared AS MATERIALIZED')) {
           const missing = scenario === 'missing' || scenario === 'stale' && quoting++ > 0;
           return {rows:[{preparation_run_id:body.preparation_run_id,input_revision:1,policy_valid_until:null,observed_at:observed,
@@ -87,7 +108,7 @@ test('server recomputes the cache-only plan while disabled and refuses stale, mi
       const quoted = await quoteWorkspaceCorpusEmbeddingsForActorV1(args);
       const request = {...args,idempotencyKey:'cache-only-'+scenario,body:{preparation_run_id:quoted.preparation_run_id,
         quote_digest:quoted.quote_digest,hard_cap_micro_usd:scenario==='wrong_cap'?1:0}};
-      if (scenario === 'cache') { await requestWorkspaceCorpusEmbeddingsForActorV1(request); assert.equal(writes,1); }
+      if (scenario === 'cache' || scenario === 'mass_client_cache') { await requestWorkspaceCorpusEmbeddingsForActorV1(request); assert.equal(writes,1); }
       else {
         await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1(request),
           scenario==='stale'?/quote_changed/u:scenario==='unknown'?/outcome_unknown/u:scenario==='reserved'?/cache_only_unavailable/u:

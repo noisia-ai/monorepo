@@ -21,7 +21,10 @@ export default async function ClientBrandTopicsPage({ params }: { params: Promis
   const entry = await loadClientBrandWorkspaceEntryV1(session.appUser, outputId);
   if (!entry) notFound();
   const initial = await loadSignalTopicsManagementProductV1({ workspace: entry.workspace, actor: session.appUser });
-  const mfpEnabled = await signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:entry.workspaceId,feature:"concept_membership"});
+  const [mfpEnabled, massLabelingEnabled] = await Promise.all([
+    signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:entry.workspaceId,feature:"concept_membership"}),
+    signalWorkspaceFeatureEnabledV1({queryable:pool,workspace_id:entry.workspaceId,feature:"mass_labeling"})
+  ]);
   return <div className="topics-workspace-page">
     <SignalV2ModuleHeader title={t("title")} subtitle={t("subtitle")} icon={<Pulse aria-hidden size={21} weight="fill" />}
       aside={<Link className="admin-button" href={entry.navigation.dataHref} prefetch={false}>
@@ -29,7 +32,7 @@ export default async function ClientBrandTopicsPage({ params }: { params: Promis
     <BrandMonitoringJourney brandId={entry.brandId} current="topics" destinations={{
       topics: entry.navigation.topicsHref, data: entry.navigation.dataHref, signal: entry.navigation.signalHref,
       brandOs: entry.navigation.brandOsHref }} />
-    <TopicsManager mfpEnabled={mfpEnabled} key={entry.requestScope} brandId={entry.brandId} workspaceId={entry.workspaceId} actorId={session.appUser.id} initial={initial}
+    <TopicsManager massLabelingEnabled={massLabelingEnabled} mfpEnabled={mfpEnabled} key={entry.requestScope} brandId={entry.brandId} workspaceId={entry.workspaceId} actorId={session.appUser.id} initial={initial}
       navigation={entry.navigation} requestScope={entry.requestScope} />
   </div>;
 }

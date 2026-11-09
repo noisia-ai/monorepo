@@ -17,6 +17,8 @@ import { MfpFacetWorkspace } from "./MfpFacetWorkspace";
 import { MfpMembershipControls } from "./MfpMembershipControls";
 import { MfpDiscoveryAdoption } from "./MfpDiscoveryAdoption";
 import { ClientProcessingJourney } from "./ClientProcessingJourney";
+import { LabelingStudySettings } from "./LabelingStudySettings";
+import { StudyLabelingControls } from "./StudyLabelingControls";
 import { WorkspaceTopicConsolidationControls } from "./WorkspaceTopicConsolidationCard";
 import { WorkspaceTopicConsolidationActivationControls } from "./WorkspaceTopicConsolidationActivationCard";
 import type { WorkspaceTopicComputationStatus } from "@/lib/data-os/signal-workspace-topic-computation-ui";
@@ -34,7 +36,7 @@ type ResultItem = { canonical_root_id: string; text: string; platform: string; p
   correction_updated_at: string | null; definition_revision: number };
 
 type TopicsManagerProps = { brandId: string; initial: Management; workspaceId: string; actorId: string;
-  mfpEnabled?: boolean; initialComputation?: WorkspaceTopicComputationStatus | null; requestScope?: string;
+  mfpEnabled?: boolean; massLabelingEnabled?: boolean; initialComputation?: WorkspaceTopicComputationStatus | null; requestScope?: string;
   navigation?: { dataHref: string; signalHref: string; brandOsHref?: string | null };
 };
 function preferredTopic(topics: Topic[]) {
@@ -44,11 +46,15 @@ function preferredTopic(topics: Topic[]) {
 export function TopicsManager(props: TopicsManagerProps) {
   return <ScopedTopicsManager key={`${props.actorId}:${props.workspaceId}:${props.requestScope ?? "internal"}`} {...props} />;
 }
-function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialComputation = null, navigation, mfpEnabled = false }: TopicsManagerProps) {
+function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialComputation = null, navigation,
+  mfpEnabled: legacyMfpEnabled = false, massLabelingEnabled = false }: TopicsManagerProps) {
+  const mfpEnabled = legacyMfpEnabled && !massLabelingEnabled;
   const t = useTranslations("AdminWorkspace.topics");
   const tEvidence = useTranslations("AdminWorkspace.brandOs.fullEvidenceTopicCandidates");
   const locale = useLocale();
   const [data, setData] = useState(initial);
+  const [labelingRefresh, setLabelingRefresh] = useState(0);
+  const [labelingSettingsReady, setLabelingSettingsReady] = useState(false);
   const [tab, setTab] = useState<"topics" | "discovered" | "archived">("topics");
   const [query, setQuery] = useState("");
   const [discoveryLimit, setDiscoveryLimit] = useState(20);
@@ -71,11 +77,11 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
   const selected = data.topics.find((item) => item.term_key === selectedKey) ?? null;
   const selectedIsDiscovery = selected?.origin === "workspace_discovery";
   const processingVisible = !navigation || data.capabilities.can_execute;
-  const computation = useWorkspaceTopicComputation({ workspaceId, enabled: !mfpEnabled,
-    termKey: !mfpEnabled && processingVisible && !selectedIsDiscovery ? selectedKey : null,
+  const computation = useWorkspaceTopicComputation({ workspaceId, enabled: !mfpEnabled && !massLabelingEnabled,
+    termKey: !mfpEnabled && !massLabelingEnabled && processingVisible && !selectedIsDiscovery ? selectedKey : null,
     catalogVersion: `${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`, initial: initialComputation });
-  const workspaceSearch = !mfpEnabled && computation.data?.mode === "workspace";
-  const legacySearch = !mfpEnabled && computation.data?.mode === "legacy";
+  const workspaceSearch = !mfpEnabled && !massLabelingEnabled && computation.data?.mode === "workspace";
+  const legacySearch = !mfpEnabled && !massLabelingEnabled && computation.data?.mode === "legacy";
 
   const editorDirty = selected ? stableClientJson(editorPayload(editor)) !== stableClientJson(topicPayload(selected)) : creating && stableClientJson(editorPayload(editor)) !== stableClientJson(editorPayload(emptyEditor()));
   const requiresRecompute = data.requires_recompute;
@@ -169,6 +175,7 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
         || before.data.profile?.id !== now.data.profile?.id || before.data.profile?.version !== now.data.profile?.version) throw new Error("catalog_refresh_deferred");
       if (next.workspace.id !== workspaceId || !Array.isArray(next.topics)) throw new Error(loadError);
       setData(next);
+      setLabelingRefresh(value => value + 1);
       if (!now.creating) {
         const topic = next.topics.find(item => item.term_key === now.selectedKey)
           ?? preferredTopic(next.topics);
@@ -331,6 +338,16 @@ function ScopedTopicsManager({ brandId, initial, workspaceId, actorId, initialCo
   }
 
   if (!data.capabilities.can_view) return <p className="team-msg team-msg--error" role="alert">{t("requestErrors.forbidden")}</p>;
+  if (massLabelingEnabled) return <div className="topics-manager">
+    <LabelingStudySettings workspaceId={workspaceId} onAccessDenied={clearAccess}
+      onReadyChange={setLabelingSettingsReady} onSaved={() => setLabelingRefresh(value => value + 1)} />
+    {data.capabilities.can_request_processing ? <WorkspaceAnalysisControls brandId={brandId} workspaceId={workspaceId}
+      catalogVersion={`${data.profile?.id ?? "empty"}:${data.profile?.version ?? 0}`}
+      disabled={!labelingSettingsReady}
+      onCatalogAvailable={refreshAvailableCatalog} onAssociationsAvailable={setAssociationReceipt} signalHref={signalHref} /> : null}
+    <StudyLabelingControls workspaceId={workspaceId} signalHref={signalHref}
+      disabled={!labelingSettingsReady} refreshSignal={String(labelingRefresh)} onAccessDenied={clearAccess} />
+  </div>;
   return <div className="topics-manager">
     {mfpEnabled ? <MfpFacetWorkspace workspaceId={workspaceId} dataHref={dataHref} signalHref={signalHref} onAccessDenied={clearAccess} onFacetsChanged={setFacetsReceipt}/> : navigation ? <ClientProcessingJourney workspaceId={workspaceId} onAccessDenied={clearAccess}
       allowInterestPreparation={data.capabilities.can_request_processing}

@@ -8,7 +8,7 @@ import { isWorkspaceIncrementalEditorialAction, workspaceIncrementalEditorialCan
   type WorkspaceIncrementalEditorialRequest } from "@/lib/data-os/signal-workspace-incremental-editorial-ui";
 import { workspaceNumericAdmissionPoll } from "@/lib/data-os/signal-workspace-analysis-update-ui";
 import { parseEmbeddingCapMicroUsd } from "@/lib/data-os/workspace-corpus-embeddings-ui";
-import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus,
+import { latestWorkspaceAnalysis, parsePendingWorkspaceAnalysis, validWorkspaceAnalysisStatus, workspaceAnalysisUsesGovernedBudget,
   workspaceAnalysisCanReleaseChangedRequest, workspaceAnalysisCanReplay, workspaceAnalysisCanRetry, workspaceAnalysisCanRetryProgress, workspaceAnalysisProgressRequestConfirmed, workspaceAnalysisCanRetryNumeric, workspaceAnalysisNumericRequestConfirmed, workspaceAnalysisCanRetryDelivery, workspaceAnalysisDeliveryRequestConfirmed, workspaceAnalysisCanStart, workspaceAnalysisDefaultCap, workspaceAnalysisStorageKey,
   type PendingWorkspaceAnalysis, type WorkspaceAnalysisRequest, type WorkspaceAnalysisStatus } from "@/lib/data-os/signal-workspace-analysis-ui";
 
@@ -185,7 +185,7 @@ export function useWorkspaceAnalysis({ workspaceId, catalogVersion, disabled = f
     && (verifiedVersion === catalogVersion || isWorkspaceAdmissionAction(pending.body) || isWorkspaceIncrementalEditorialAction(pending.body)) && workspaceAnalysisCanReplay(data, pending));
   const start = useCallback(async () => {
     if (!canStart || !data) return;
-    const amount = data.discovery_enabled && cap.trim() === "" ? null : Number(parseEmbeddingCapMicroUsd(cap));
+    const amount = workspaceAnalysisUsesGovernedBudget(data) && cap.trim() === "" ? null : Number(parseEmbeddingCapMicroUsd(cap));
     await submit({ action: "start", embedding_run_id: data.preflight.embedding_run_id!,
       expected_context_digest: data.preflight.context_digest!, expected_catalog_digest: data.preflight.catalog_digest!, claude_cap_micro_usd: amount });
   }, [canStart, cap, data, submit]);
