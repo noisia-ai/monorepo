@@ -1,3 +1,4 @@
+import {assertMassLabelingServingProjectionV1,assertMassLabelingProjectionBackfillV1} from "./signal-mass-labeling-serving-projection.assertions";
 import {assertMassLabelingProductNativeV2} from "./signal-mass-labeling-product.synthetic.fixture";
 import {assertMassLabelingStudyPolicyV1} from "./signal-mass-labeling-study-policy.assertions";
 import assert from "node:assert/strict";
@@ -61,6 +62,10 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
             "the root plan must not rerun a correlated membership subquery");
           massPlanChecked = true;
         }
+      }
+      if (sql.includes("HAVING count(*)=$3") && sql.includes("signal_mass_labeling_r13_interest_results")) {
+        assert.equal((await raw.query("SELECT count(*)::int n FROM signal_mass_labeling_study_policies WHERE workspace_id=$1",[values?.[0]])).rows[0]!.n,0,
+          "explicit study interests never rescan superseded R13 receipts");
       }
       if (sql.includes("consumer_indicators") || sql.includes("reviewed_consumers AS MATERIALIZED")) {
         assert.doesNotMatch(sql,/signal_mass_labeling_category_(?:pattern|matches)_/u,"Signal joins materialized lexical matches");
@@ -214,13 +219,19 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     await assert.rejects(createMassLabelingMapV1({...mapArgs, assignments_raw: assignmentsRaw+" "}), /mass_labeling_source_invalid/);
     await assert.rejects(createMassLabelingMapV1({...mapArgs,source_checkpoints:[]}),/mass_labeling_source_checkpoint_invalid/);
     const map = await createMassLabelingMapV1(mapArgs);
-    if(authorization==="product"){await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});return;}
+    await assertMassLabelingServingProjectionV1(scoped.query,access.workspace_id,map.map_id);
+    if(authorization==="product"){await assertMassLabelingProductNativeV2({...access,query:scoped.query,map_id:map.map_id});await assertMassLabelingServingProjectionV1(scoped.query,access.workspace_id,map.map_id);return;}
     const candidateSample=(await query("SELECT candidates FROM signal_mass_labeling_items WHERE map_id=$1 ORDER BY ordinal LIMIT 1",[map.map_id])).rows[0]!.candidates[0];
     assert.equal(candidateSample.name,localization?.original.name??"Bicycle repairs");
     assert.equal(candidateSample.definition,localization?.original.definition??"Experiences repairing bicycles.");
     const frozenCatalog=(await query("SELECT catalog FROM signal_mass_labeling_maps WHERE id=$1",[map.map_id])).rows[0]!.catalog;
     assert.equal(frozenCatalog[0].name,"Bicycle repairs");
     if(localization)assert.deepEqual(frozenCatalog[0].localization,localization);
+    await query("SAVEPOINT projected_text_change");
+    const firstRoot=(await query("SELECT root_id FROM signal_mass_labeling_items WHERE map_id=$1 ORDER BY ordinal LIMIT 1",[map.map_id])).rows[0]!.root_id;
+    await query("UPDATE mentions SET text_clean='#synthetic' WHERE workspace_id=$1 AND id=$2",[access.workspace_id,firstRoot]);
+    assert.equal((await query("SELECT conversation_segment FROM signal_mass_labeling_root_segments WHERE map_id=$1 AND root_id=$2",[map.map_id,firstRoot])).rows[0]!.conversation_segment,"hashtags");
+    await query("ROLLBACK TO SAVEPOINT projected_text_change");await query("RELEASE SAVEPOINT projected_text_change");
     if(localization){
       await importMassLabelingR13V1({...access,map_id:map.map_id,translations:[{topic_key:"bicycle_repairs",...localization}]});
       assert.equal((await query("SELECT count(*)::int n FROM signal_mass_labeling_localizations WHERE map_id=$1",[map.map_id])).rows[0]!.n,0,
@@ -643,6 +654,9 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
         FROM signal_mass_labeling_maps map CROSS JOIN LATERAL (
           SELECT id,preparation_run_id FROM signal_topic_catalog_executions WHERE workspace_id=$3::uuid
             AND preparation_run_id IS NOT NULL LIMIT 1) engine WHERE map.id=$1`,[map.map_id,siblingMap,sibling.workspace_id]);
+      await query(`INSERT INTO signal_mass_labeling_topics(workspace_id,map_id,topic_key,definition_digest,centroid,group_ids)
+        SELECT $3,$2,topic_key,definition_digest,centroid,group_ids FROM signal_mass_labeling_topics WHERE map_id=$1`,
+        [map.map_id,siblingMap,sibling.workspace_id]);
       const siblingItem = (await query(`INSERT INTO signal_mass_labeling_items SELECT
         (jsonb_populate_record(NULL::signal_mass_labeling_items,to_jsonb(item)||jsonb_build_object(
           'workspace_id',$3::uuid,'map_id',$2::uuid,'root_id',mention.id))).*
@@ -698,6 +712,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     await store.release(continuation);
     assert.deepEqual((await query("SELECT id,usage,settled_micro_usd,raw_sha256 FROM signal_labeling_calls WHERE run_id=$1 ORDER BY id", [run.id])).rows, booked);
     await selectMassLabelingTopicsV1({...access, map_id: map.map_id, topic_keys: ["bicycle_repairs"], expected_revision: 0});
+    await assertMassLabelingServingProjectionV1(scoped.query,access.workspace_id,map.map_id);
     const view = await loadSignalWorkspaceTopicsOverviewV1(access); assert.ok(view?.is_current);
     assert.equal(massPlanChecked,true,"the actual mass-labeling reader was planned and checked");
     assert.equal(view.denominator, 3);
@@ -789,6 +804,12 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
     }
     await correctMassLabelingTopicV1({...access, map_id: map.map_id, root_id: page1.items[0]!.mention_id,
       topic_key: "bicycle_repairs", belongs: false, decided_via: "human_ui"});
+    await assertMassLabelingServingProjectionV1(scoped.query,access.workspace_id,map.map_id);
+    if(authorization==="scoped")await assertMassLabelingProjectionBackfillV1(scoped.query,access.workspace_id,map.map_id);
+    await query("SAVEPOINT missing_serving_projection");
+    await query("DELETE FROM signal_mass_labeling_topic_probabilities WHERE map_id=$1 AND root_id=$2",[map.map_id,page1.items[0]!.mention_id]);
+    await assert.rejects(loadSignalWorkspaceTopicsOverviewV1(access),/workspace_topics_materialization_incomplete/);
+    await query("ROLLBACK TO SAVEPOINT missing_serving_projection");await query("RELEASE SAVEPOINT missing_serving_projection");
     const changed = await loadSignalWorkspaceTopicsOverviewV1(access); assert.equal(changed?.terms[0]!.mention_count, 1);
     await assert.rejects(loadSignalWorkspaceTopicEvidenceV1({...evidenceArgs,cursor:page1.next_cursor}), /workspace_topics_scope_changed/);
     await query("SAVEPOINT rights_revoked");
