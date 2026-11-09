@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   createMassLabelingStoreV1,
-  publishMassLabelingProductResultV2,
+  finalizeMassLabelingProductRunV2,
+  drainMassLabelingProductFinalizationV2,
   signalWorkspaceFeatureEnabledV1,
   type LabelingRunV1,
 } from "@noisia/db";
@@ -120,6 +121,14 @@ export function processMassLabelingJevV1(args: {
   });
 }
 
+export async function processMassLabelingProductPageV2(args: Parameters<typeof processMassLabelingJevV1>[0] & {
+  database: Parameters<typeof createMassLabelingStoreV1>[0]["database"];
+}) {
+  const outcome = await processMassLabelingJevV1(args);
+  await finalizeMassLabelingProductRunV2({ database: args.database, run_id: args.run_id });
+  return outcome;
+}
+
 export function createMassLabelingRuntimeStoreV1(
   database: Parameters<typeof createMassLabelingStoreV1>[0]["database"],
 ) {
@@ -189,12 +198,11 @@ export async function signalMassLabelingJevJobV1(job: {
   )
     throw new Error("mass_labeling_not_enabled");
   runtimeProvider ??= createTypesafeJevClientV1({ enabled: process.env.NOISIA_JEV_PROVIDER_ENABLED !== "false" });
-  const outcome = await processMassLabelingJevV1({
-    run_id: job.data.run_id,
+  const outcome = await processMassLabelingProductPageV2({
+    database: pool, run_id: job.data.run_id,
     store: createMassLabelingRuntimeStoreV1(pool),
     provider: runtimeProvider,
   });
-  await publishMassLabelingProductResultV2({ database: pool, run_id: job.data.run_id });
   return outcome;
 }
 
@@ -202,8 +210,7 @@ export function startMassLabelingJevDrainerV1() {
   let active: Promise<void> | undefined;
   const tick = async () => {
     if (
-      process.env.NOISIA_MASS_LABELING_ENABLED === "false" ||
-      process.env.NOISIA_JEV_PROVIDER_ENABLED === "false"
+      process.env.NOISIA_MASS_LABELING_ENABLED === "false"
     )
       return;
     const { pool } = await import("../db/client");
@@ -218,6 +225,10 @@ export function startMassLabelingJevDrainerV1() {
     await materializeMassLabelingProductMapV2({ database: pool }).catch(() => {
       console.warn("[mass-labeling] product map materialization unavailable");
     });
+    await drainMassLabelingProductFinalizationV2({ database: pool }).catch(() => {
+      console.warn("[mass-labeling] product completion unavailable");
+    });
+    if (process.env.NOISIA_JEV_PROVIDER_ENABLED === "false") return;
     const runs = (
       await pool.query<{
         id: string;

@@ -14,8 +14,9 @@ import { loadSignalWorkspaceEnginePreflightV1 } from "../signal-workspace-engine
 import { requestSignalWorkspaceCorpusPreparationStoreV1 } from "../signal-workspace-corpus-preparation-management";
 import { quoteSignalWorkspaceEmbeddingsStoreV1, requestSignalWorkspaceEmbeddingsStoreV1 } from "../signal-workspace-embeddings-management";
 import { getMassLabelingStudyPolicyV1, updateMassLabelingStudyPolicyV1 } from "../signal-mass-labeling-study-policy";
-import { enableMassLabelingProductV2, requestMassLabelingProductV2, publishMassLabelingProductResultV2 } from "../signal-mass-labeling-product";
-import { createMassLabelingStoreV1, continueMassLabelingV1, measureMassLabelingSmokeV1 } from "../signal-mass-labeling";
+import { enableMassLabelingProductV2, requestMassLabelingProductV2 } from "../signal-mass-labeling-product";
+import { createMassLabelingStoreV1, continueMassLabelingV1 } from "../signal-mass-labeling";
+import { drainMassLabelingProductFinalizationV2 } from "../signal-mass-labeling-product-finalization";
 import { loadSignalWorkspaceTopicsOverviewV1 } from "../signal-workspace-topics-serving";
 import { syntheticImportedWorkspaceFixtureV1 } from "./signal-client-workspace-entry.synthetic.fixture";
 import { workspaceProjectionFixtureBodyV1 } from "./signal-workspace-topic-projection.fixture";
@@ -24,7 +25,7 @@ import { signalWorkspaceEmbeddingsJobV1 } from "../../../services/workers/src/wo
 import { createBrandContextSyntheticVoyageProviderV1 } from "./signal-brand-context.synthetic.fixture";
 import { consolidateMassLabelingGroupsV1 } from "../../../services/workers/src/workers/signal-mass-labeling-consolidation";
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
-import { processMassLabelingJevV1 } from "../../../services/workers/src/workers/signal-mass-labeling-jev";
+import { processMassLabelingProductPageV2 } from "../../../services/workers/src/workers/signal-mass-labeling-jev";
 import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/workers/signal-workspace-engine-storage";
 import type { JevRequestV1 } from "@noisia/query-engine/src/signal-mention-facets-jev-v1";
 import { SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
@@ -155,12 +156,23 @@ test("a client creates a brand and admits and consumes the default product pipel
         answers: Object.fromEntries(Object.entries(request.questions).map(([key, question]) => [key, question.type === "noul" ? { type: "noul", noul: key === "promotion" ? .1 : .9 }
           : { type: "choice", choice: key === "voice" ? "individual" : "none", confidence: .9, probabilities: Object.fromEntries(Object.keys(question.criteria).map(option => [option,
             option === (key === "voice" ? "individual" : "none") ? .9 : .1 / (Object.keys(question.criteria).length - 1)])) }])) }) }; } };
-    for (let page = 0; page < 3; page++) { if ((await processMassLabelingJevV1({ run_id: admitted.run_id, store, provider })).status === "completed") break; }
+    const crash = { query: database.query.bind(database), async connect() { throw new Error("synthetic_finalization_crash"); } };
+    await assert.rejects(processMassLabelingProductPageV2({ database: crash, run_id: admitted.run_id, store, provider }), /synthetic_finalization_crash/u);
     assert.equal(sends, 5);
-    await measureMassLabelingSmokeV1({ ...access, run_id: admitted.run_id });
+    const completedSmoke = (await database.query(`SELECT run.status,mass.smoke_metrics FROM signal_labeling_runs run
+      JOIN signal_mass_labeling_runs mass ON mass.run_id=run.id WHERE run.id=$1`, [admitted.run_id])).rows[0]!;
+    assert.equal(completedSmoke.status, "completed"); assert.equal(completedSmoke.smoke_metrics, null);
+    // Advance only the synthetic scheduling field, leaving every paid receipt intact.
+    await database.query("UPDATE signal_labeling_runs SET next_poll_at=clock_timestamp() WHERE id=$1", [admitted.run_id]);
+    const recoveredSmoke = await drainMassLabelingProductFinalizationV2({ database });
+    assert.equal(recoveredSmoke.finalized, true);
+    assert.equal(sends, 5);
+    assert.ok((await database.query("SELECT smoke_metrics FROM signal_mass_labeling_runs WHERE run_id=$1", [admitted.run_id])).rows[0]!.smoke_metrics);
     await continueMassLabelingV1({ ...access, run_id: admitted.run_id });
-    await processMassLabelingJevV1({ run_id: admitted.run_id, store, provider });
-    assert.equal((await publishMassLabelingProductResultV2({ database, run_id: admitted.run_id })).published, true);
+    await assert.rejects(processMassLabelingProductPageV2({ database: crash, run_id: admitted.run_id, store, provider }), /synthetic_finalization_crash/u);
+    await database.query("UPDATE signal_labeling_runs SET next_poll_at=clock_timestamp() WHERE id=$1", [admitted.run_id]);
+    assert.equal((await drainMassLabelingProductFinalizationV2({ database })).finalized, true);
+    assert.equal((await processMassLabelingProductPageV2({ database, run_id: admitted.run_id, store, provider })).status, "not_claimed");
     assert.equal(sends, 5);
     const overview = await loadSignalWorkspaceTopicsOverviewV1({ ...access, conversation_segment: "all" });
     assert.ok(overview);
