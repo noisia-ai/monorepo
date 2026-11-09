@@ -90,3 +90,13 @@ test("raw-only consumer rejects a missing pilot fit before any provider or claim
  }),/fit_required/u);
  assert.equal(probes,0);
 });
+
+
+test("governed product daemon admits only a currently authorized sealed actor without a private operator",async()=>{
+ for(const authorized of [true,false]){
+  const database={query:async()=>({rows:[{paid_pilot:true,status:'queued',product:true,product_actor:authorized}]})} as never;
+  assert.equal(await authorizeMassEngineConsumerV1({database,execution_id:crypto.randomUUID()}),authorized);
+ }
+ const legacy={query:async()=>({rows:[{paid_pilot:true,status:'queued',product:false,product_actor:true}]})} as never;
+ assert.equal(await authorizeMassEngineConsumerV1({database:legacy,execution_id:crypto.randomUUID()}),false);
+});

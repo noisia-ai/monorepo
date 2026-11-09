@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   verifyMassLabelingSourceCheckpointsV1,
+  loadMassLabelingProductCategoryContextV2,
   reserveSignalWorkspaceEngineInterpretationV1,
   markSignalWorkspaceEngineInterpretationSentV1,
   persistSignalWorkspaceEngineInterpretationResponseV1,
@@ -97,6 +98,8 @@ export async function consolidateMassLabelingGroupsV1(args: {
     source_engine_execution_id: lease.execution_id,
     source_groups: verified.source_groups,
     configuration: parseSignalWorkspaceInterpretationConfigurationV1(config.call_configuration),
+    ...("category_lexicon_contract_version" in config.call_configuration
+      ? { category_context: await loadMassLabelingProductCategoryContextV2({ database, workspace_id: lease.workspace_id, actor_user_id: args.actor_user_id }) } : {}),
   });
   if (verified.source_groups_digest !== batch.source_groups_digest)
     return invalid();
@@ -263,6 +266,7 @@ export async function consolidateMassLabelingGroupsV1(args: {
     source_engine_execution_id: lease.execution_id,
     source_groups: batch.source_groups,
     source_groups_digest: batch.source_groups_digest,
+    ...(batch.category_context ? { category_context: batch.category_context } : {}),
     raw_response: raw,
     ...("localization_contract_version" in batch.configuration ? { configuration: batch.configuration } : {}),
     output,

@@ -112,7 +112,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
       statements.push(sql);
       if (sql.includes("signal_workspace_concept_memberships_read_v1") || sql.includes("signal_workspace_mention_facets_read_v1"))
         assert.equal(params[0], workspaceId, "scoped MFP readers receive the authorized workspace");
-      if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
+      if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mass_labeling"?false:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
       if (membershipMode && sql.includes("FROM signal_membership_concepts_v1 c LEFT JOIN")) return {rows: [
         {topic:topicA,selected:true,selection_revision:1,selection_digest:sha("a"),mfp_discovery:mfpDiscovery},
         ...(membershipAdopted ? [{topic:adoptedTopic,selected:true,selection_revision:3,selection_digest:sha("d")}] : []),

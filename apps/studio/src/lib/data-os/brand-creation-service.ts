@@ -508,6 +508,11 @@ async function initializeBrandSignalWorkspace(
         .limit(1);
   if (!workspace) throw new Error("Signal workspace could not be created for the brand.");
 
+  // The brand INSERT trigger can create this workspace before this initializer runs.
+  // Both paths belong to the same new-brand transaction, after replay checks.
+  await tx.execute(sql`INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by)
+    VALUES(${workspace.id}::uuid,'mass_labeling',${args.createdByUserId}::uuid) ON CONFLICT DO NOTHING`);
+
   await tx.update(signalWorkspaces).set({
     timezone: args.timezone,
     metadata: sql`COALESCE(${signalWorkspaces.metadata}, '{}'::jsonb) || ${JSON.stringify({

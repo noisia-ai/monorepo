@@ -31,8 +31,8 @@ test("discovery catalog bootstrap needs live client authority, active action and
  const previous=process.env.NOISIA_MENTION_FACETS_ENABLED;process.env.NOISIA_MENTION_FACETS_ENABLED="true";
  const authority={workspace_status:"active",brand_status:"active",actor_status:"active",user_type:"client",primary_role:"client_admin",
   same_organization:true,brand_access_level:"admin",organization_status:"active",brand_same_organization:true};
- const clientFor=(overrides:Record<string,unknown>={},policy=true)=>({query:async(sql:string)=>{
-  if(sql.includes("FROM signal_workspace_features"))return {rows:[{enabled:true}]};
+ const clientFor=(overrides:Record<string,unknown>={},policy=true,mass=false)=>({query:async(sql:string,values:unknown[]=[])=>{
+  if(sql.includes("FROM signal_workspace_features"))return {rows:[{enabled:values[1]==="mass_labeling"?mass:true}]};
   if(sql.includes("actor.primary_role"))return {rows:[{...authority,...overrides}]};
   if(sql.includes("action.action='topic_interpretation'"))return{rows:policy?[{id:"policy",cap:null,daily:null,budget_timezone:"UTC"}]:[]};
   if(sql.includes("SELECT id::text,taxonomy_id::text,version,status"))return{rows:[{id:"existing-profile"}]};
@@ -48,5 +48,6 @@ test("discovery catalog bootstrap needs live client authority, active action and
   await assert.rejects(ensureSignalTopicCatalogStoreV1({...args,processing_mode:undefined,client:clientFor()}),/topic_processing_permissions_required/);
   process.env.NOISIA_MENTION_FACETS_ENABLED="false";
   await assert.rejects(ensureSignalTopicCatalogStoreV1({...args,client:clientFor()}),/topic_processing_permissions_required/);
+  assert.deepEqual(await ensureSignalTopicCatalogStoreV1({...args,client:clientFor({},true,true)}),{taxonomy_profile_id:"existing-profile",created:false});
  }finally{if(previous===undefined)delete process.env.NOISIA_MENTION_FACETS_ENABLED;else process.env.NOISIA_MENTION_FACETS_ENABLED=previous;}
 });

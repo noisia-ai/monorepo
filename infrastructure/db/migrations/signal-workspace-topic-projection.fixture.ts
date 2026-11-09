@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {randomUUID,createHash} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import pg,{type Pool,type PoolClient} from 'pg';
-import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,
+import {SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1,isSignalWorkspaceMassLabelingConfigV1,signalWorkspaceInterpretationReferenceIdV1,buildSignalWorkspaceInterpretationBatchV1,
  type SignalTopicDefinitionV1,type SignalWorkspaceInterpretationClusterV1,type SignalWorkspaceInterpretationConfigurationV1} from '@noisia/query-engine';
 import * as engine from '../signal-workspace-engine';
 import * as money from '../signal-workspace-engine-interpretation';
@@ -15,10 +15,13 @@ export const fixtureSha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf
 export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
  proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
-export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;allow_large_population?:boolean;complete_output_bundle?:boolean;split_guided_groups?:boolean|3;migrations?:string[];
+export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;allow_large_population?:boolean;complete_output_bundle?:boolean;split_guided_groups?:boolean|3|4;
+ budget?:{cap_micro_usd:number;daily_cap_micro_usd:number|null;timezone:string};migrations?:string[];
  interpretation_configuration?:SignalWorkspaceInterpretationConfigurationV1;interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;
  engine_config?:Record<string,unknown>;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
  onMaterialized?:(profile_id:string)=>Promise<void>;
+ onStarted?:(execution_id:string)=>Promise<void>;
+ onClaimed?:(execution_id:string)=>Promise<void>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
 export async function workspaceProjectionFixtureV1(options:WorkspaceProjectionFixtureOptionsV1={}){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_(national_import_test|projection_test)_\d+$/u);
@@ -57,16 +60,19 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   prompt_hash:fixtureSha('local'),model_metadata:{},profile_metadata:{contract_version:'signal-topic-catalog-v1',...metadata},context_refs:context.context_refs});
  if(!options.preserve_catalog)await catalog();
  const access={database,workspace_id,actor_user_id};
- const pilot=options.engine_config?.profile_version==='workspace-bertopic-mass-labeling-v1';
- if(pilot)await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2) ON CONFLICT DO NOTHING",[workspace_id,actor_user_id]);
+ const pilot=isSignalWorkspaceMassLabelingConfigV1(options.engine_config??{});
+ const budget=options.budget??{cap_micro_usd:30_000_000,daily_cap_micro_usd:30_000_000,timezone:'America/Mexico_City'};
+ if(pilot&&!options.preserve_catalog)await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2) ON CONFLICT DO NOTHING",[workspace_id,actor_user_id]);
  const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);assert.equal(preflight.missing_guides,0);
  const configuration=options.interpretation_configuration??SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
  const started=await engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
-  expected_context_digest:preflight.expected_context_digest,engine_config:pilot?preflight.engine_configuration!:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:30_000_000,
-  interpretation_config:{call_configuration:configuration,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000}});
+  expected_context_digest:preflight.expected_context_digest,engine_config:pilot?preflight.engine_configuration!:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:budget.cap_micro_usd,
+  interpretation_config:{call_configuration:configuration,budget_timezone:budget.timezone,daily_cap_micro_usd:budget.daily_cap_micro_usd}});
+ await options.onStarted?.(started.execution_id);
  const lease=await engine.claimSignalWorkspaceEngineV1({database,...started,worker_job_id:'local-projection-fixture'});assert.ok(lease);
  assert.ok(lease.snapshot.expected_roots<=10||options.allow_large_population===true&&lease.snapshot.expected_roots<=1200,
   'fixture population must be explicitly tiny or bounded synthetic-large');
+ await options.onClaimed?.(started.execution_id);
  const chunks:Array<Awaited<ReturnType<typeof engine.readSignalWorkspaceEngineChunksV1>>['items'][number]>=[];
  let after:Parameters<typeof engine.readSignalWorkspaceEngineChunksV1>[0]['after']=null;
  for(;;){const page=await engine.readSignalWorkspaceEngineChunksV1({database,lease,after,limit:128});chunks.push(...page.items);if(page.done)break;after=page.next_cursor;}
@@ -78,7 +84,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   return{artifact_key:key,artifact_type:type,title:'Explicit synthetic projection fixture',storage_key,sha256:fixtureSha(body),size_bytes:Buffer.byteLength(body),media_type:'application/json',metadata};
  };
  const [stableOne,stableTwo]=options.cluster_ids??['stable_one','stable_two'];
- const guidedCluster=(index:number)=>options.split_guided_groups&&index===0?`${stableTwo}_alternate`:options.split_guided_groups===3&&index===1?`${stableTwo}_third`:stableTwo;
+ const guidedCluster=(index:number)=>options.split_guided_groups&&index===0?`${stableTwo}_alternate`:(options.split_guided_groups===3||options.split_guided_groups===4)&&index===1?`${stableTwo}_third`:options.split_guided_groups===4&&index===2?`${stableTwo}_fourth`:stableTwo;
  const roots=new Map<string,{root_id:string;root_fingerprint:string;chunk_count:number;open:string[];guided:string[]}>();
  for(const [index,row] of chunks.entries()){let root=roots.get(row.root_id);if(!root){root={root_id:row.root_id,root_fingerprint:row.root_fingerprint,chunk_count:0,open:options.empty?[]:[stableOne],guided:options.empty?[]:[guidedCluster(index)]};roots.set(row.root_id,root);}root.chunk_count++;}
  const rootBody=[...roots.values()].map(row=>JSON.stringify(row)+'\n').join('');
@@ -93,7 +99,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  if(pilot||options.complete_output_bundle)await add('clusters.open.json','[]');
  const model=options.empty?null:await engine.persistSignalWorkspaceEngineArtifactV1({database,lease,artifact:artifact('model-manifest.json','engine_model',JSON.stringify({fixture:true}))});
  const outputBody=JSON.stringify({contract_version:'workspace-topic-engine-output-v1',workspace_id,quality:'uncalibrated',approval_policy:'none',counts:{occurrences:chunks.length,roots:roots.size},
-  lanes:(options.empty?['open']:['open','guided']).map(lane=>({lane,assignments_file:`assignments.${lane}.jsonl`,occurrences:chunks.length,roots:roots.size,clusters:options.empty?0:lane==='guided'&&options.split_guided_groups?options.split_guided_groups===3?3:2:1,outlier_occurrences:options.empty?chunks.length:0})),artifacts});
+  lanes:(options.empty?['open']:['open','guided']).map(lane=>({lane,assignments_file:`assignments.${lane}.jsonl`,occurrences:chunks.length,roots:roots.size,clusters:options.empty?0:lane==='guided'&&options.split_guided_groups?options.split_guided_groups===4?4:options.split_guided_groups===3?3:2:1,outlier_occurrences:options.empty?chunks.length:0})),artifacts});
  const outputArtifact=artifact('manifest.json','engine_output',outputBody);
  if(pilot||options.complete_output_bundle)outputArtifact.metadata!.bundle=[...bodies].map(([storage_key,body])=>({name:storage_key.split('/').at(-1)!,storage_key,
   sha256:fixtureSha(body),size_bytes:Buffer.byteLength(body),media_type:'application/json'}));
@@ -111,9 +117,13 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
    representatives:[{...identity,ref_id,text:row.text,strength:0.8,selection_reason:'high_affiliation'}]};
   const batch=buildSignalWorkspaceInterpretationBatchV1(governed.context,[cluster],configuration);
   const body=JSON.stringify({contract_version:'workspace-engine-interpretation-result-v1',execution_id:started.execution_id,context:batch.context,clusters:batch.clusters,
-   interpretations:[{cluster_id:key,cluster_digest:cluster.cluster_digest,status:'coherent',name:`Fixture ${key}`,definition:options.interpretation_definitions?.[key]??'Conversation evidenced by the full numerical fixture.',inclusion:[{text:'The documented conversation.',citations:[ref_id]}],exclusion:[],citations:[ref_id]}]});
+   interpretations:[{cluster_id:key,cluster_digest:cluster.cluster_digest,status:'coherent',name:`Fixture ${key}`,definition:options.interpretation_definitions?.[key]??'Conversation evidenced by the full numerical fixture.',
+    ...('localization_contract_version' in configuration?{localization:{original_language:'en',
+      original:{name:`Fixture ${key}`,definition:options.interpretation_definitions?.[key]??'Conversation evidenced by the full numerical fixture.'},
+      en:{name:`Fixture ${key}`,definition:options.interpretation_definitions?.[key]??'Conversation evidenced by the full numerical fixture.'},
+      es:{name:`Muestra ${key}`,definition:'Conversación respaldada por la muestra numérica sintética.'}}}:{}),inclusion:[{text:'The documented conversation.',citations:[ref_id]}],exclusion:[],citations:[ref_id]}]});
   const call=await money.reserveSignalWorkspaceEngineInterpretationV1({...access,...started,idempotency_key:randomUUID(),request_digest:batch.request_digest,configuration,...(pilot?{unit_keys:[key]}:{}),
-   reserved_micro_usd:batch.reserved_micro_usd,budget_timezone:'America/Mexico_City',daily_cap_micro_usd:30_000_000,execution_token:lease.execution_token});
+   reserved_micro_usd:batch.reserved_micro_usd,budget_timezone:budget.timezone,daily_cap_micro_usd:budget.daily_cap_micro_usd,execution_token:lease.execution_token});
   const token={database,call_id:call.call_id,attempt_token:call.attempt_token};
   await money.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:lease.execution_token});
   await money.persistSignalWorkspaceEngineInterpretationResponseV1({...token,response:{storage_key:`workspace-engine/${workspace_id}/${started.execution_id}/raw-${call.call_id}.json`,sha256:fixtureSha('local usage'),size_bytes:11,http_status:200,provider_request_id:null}});

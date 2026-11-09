@@ -11,6 +11,7 @@ function fixture() {
     text_snippet: `Synthetic root ${n}`, text_truncated: false, title: null, url: null, platform: "synthetic", language: "en",
     country: null, content_type: null, engagement: {}, thread_key: id(n + 10), resolution_state: null, has_unresolved_topics: null }));
   const client = { async query(sql: string, values: unknown[] = []) {
+    if (sql.includes("FROM signal_workspace_features")) return { rows: [{ enabled: false }] };
     statements.push(sql);
     if (/^(BEGIN|COMMIT|ROLLBACK)/u.test(sql)) return { rows: [] };
     if (sql.includes("brand_access_level")) return { rows: [{ workspace_status: "active", brand_status: "active",

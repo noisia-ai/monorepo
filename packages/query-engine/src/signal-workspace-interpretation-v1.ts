@@ -186,16 +186,35 @@ export const SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1 = Obje
   consolidation_schema_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_SCHEMA_V1),
   consolidation_max_output_tokens: 65536,
 });
+export const SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_PROMPT_V2 = `${SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_PROMPT_V1}
+Also propose category_lexicon once for the study from category_context, which contains only Brand OS category and identity names. Include category terms, synonyms, slang and brands in the corpus languages. Use literal words or phrases, never regular expressions. Exclude ambiguous generic terms such as beverage, bar or party, generic industries, and metadata identities that do not explicitly identify the category or a pertinent brand. These terms will require explicit category evidence for consumer motivators and barriers. Keep category_context.category as the category name. The analyst can edit this proposal.`;
+export const SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_SCHEMA_V2 = Object.freeze({
+  ...SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_SCHEMA_V1,
+  properties: { ...SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_SCHEMA_V1.properties,
+    category_lexicon: { type: "object", additionalProperties: false,
+      properties: { category: { type: "string", description: "The exact supplied category, 1 to 160 characters." },
+        terms: { type: "array", description: "Between 1 and 200 literal terms, each 1 to 160 characters.", items: { type: "string" } } },
+      required: ["category", "terms"] },
+  },
+  required: [...SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONSOLIDATION_SCHEMA_V1.required, "category_lexicon"],
+});
+export const SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 = Object.freeze({
+  ...SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1,
+  category_lexicon_contract_version: "mass-labeling-category-lexicon-v1",
+  consolidation_prompt_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_PROMPT_V2),
+  consolidation_schema_digest: signalWorkspaceEmbeddingDigestV1(SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONSOLIDATION_SCHEMA_V2),
+});
 export type SignalWorkspaceInterpretationConfigurationV1 = typeof SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1
   | typeof SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1
   | typeof SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1
   | typeof SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1
   | typeof SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1
-  | typeof SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1;
+  | typeof SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1
+  | typeof SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2;
 /** Exact known profiles only; old cost receipts cannot be repriced by a caller. */
 export function parseSignalWorkspaceInterpretationConfigurationV1(value: unknown): SignalWorkspaceInterpretationConfigurationV1 {
   const encoded = stableJson(value);
-  for (const config of [SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1]) {
+  for (const config of [SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_EDITORIAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2]) {
     if (stableJson(config) === encoded) return config;
   }
   return fail("config_mismatch");

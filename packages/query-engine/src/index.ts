@@ -1280,3 +1280,5 @@ export * from "./signal-mass-labeling-consolidation-v1";
 export * from "./anthropic-provider-access-v1";
 
 export * from "./signal-topic-localization-v1";
+export * from "./signal-mass-labeling-jev-v2";
+export * from "./signal-mass-labeling-category-lexicon-v1";

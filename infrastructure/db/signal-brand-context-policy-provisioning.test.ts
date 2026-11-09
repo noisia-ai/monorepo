@@ -16,7 +16,7 @@ const env = {
 };
 type Options = { role?: string; userType?: string; actorActive?: boolean; scopeValid?: boolean; sameOrganization?: boolean; sealedCreatorMatches?: boolean;
   grantLevel?: string; grantRevoked?: boolean; creatorType?: string; creatorRole?: string; creatorActive?: boolean; creatorMissing?: boolean;
-  history?: string[]; activeActions?: string[]; deadlineValid?: boolean; timezoneValid?: boolean; configurationValid?: boolean; failActions?: boolean; mfpEnabled?: boolean };
+  history?: string[]; activeActions?: string[]; deadlineValid?: boolean; timezoneValid?: boolean; configurationValid?: boolean; failActions?: boolean; mfpEnabled?: boolean; massEnabled?: boolean };
 function fixture(options: Options = {}) {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   let state = [...(options.history ?? [])], previous = [...state], releases = 0;
@@ -64,7 +64,7 @@ function fixture(options: Options = {}) {
       action,max_execution_micro_usd:action==="brand_context_proposal"?"1000000":action==="topic_prototype_embeddings"?"100000":null
     })) };
     if (sql.includes("FROM signal_processing_admissions") && sql.startsWith("SELECT")) return {rows:[{pending:false}]};
-    if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:mfpEnabled}]};
+    if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:values[1]==="mass_labeling"?options.massEnabled===true:mfpEnabled}]};
     if (sql.includes("pg_timezone_names")) return { rows: [{ deadline_valid: options.deadlineValid ?? true,
       timezone_valid: options.timezoneValid ?? true, configuration_valid: options.configurationValid ?? true }] };
     if (sql.startsWith("INSERT INTO signal_processing_policy_versions")) { state.push("draft"); return { rows: [{ id: id(5) }] }; }
@@ -275,4 +275,15 @@ test("a later ordinary brand leaves an MFP-first organization policy unchanged",
   assert.equal(f.calls.filter(call=>call.sql.startsWith("INSERT INTO signal_processing_policy_versions")).length,1);
   assert.ok(f.activeActions.includes("mention_facets"));
   assert.ok(f.activeActions.includes("concept_membership"));
+});
+
+test("ordinary product creation provisions the pinned unified actions for a client without an extra opt-in", async () => {
+  const f = fixture({ massEnabled: true });
+  const configured = { NOISIA_BRAND_CONTEXT_POLICY_CREATOR_USER_ID: id(6) };
+  assert.equal((await provisionSignalBrandContextPolicyV1({ ...request, env: configured, database: f.database })).status, "provisioned");
+  const editorial = f.calls.find(call => call.sql.startsWith("INSERT INTO signal_processing_policy_actions") && call.sql.includes("'topic_interpretation'"));
+  assert.equal(JSON.parse(String(editorial?.values[2])).category_lexicon_contract_version, "mass-labeling-category-lexicon-v1");
+  const unified = f.calls.find(call => call.sql.includes("VALUES($1::uuid,'mass_labeling_jev'"));
+  assert.equal(JSON.parse(String(unified?.values[1])).contract_version, "mass-labeling-jev-v2");
+  assert.ok(!f.activeActions.includes("mention_facets"));
 });

@@ -1,6 +1,6 @@
 import type { Pool } from "pg";
 import { SIGNAL_WORKSPACE_EMBEDDING_DEFAULT_MAX_COST_MICRO_USD_V1,
-  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1 } from "@noisia/query-engine";
+  SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } from "@noisia/query-engine";
 import { signalSemanticContextProposalRuntimeConfigurationFromEnvV1 } from "./signal-semantic-context-proposal";
 import {signalWorkspaceFeatureEnabledV1} from "./signal-workspace-features";
 
@@ -102,10 +102,11 @@ export async function provisionSignalBrandContextPolicyV1(args: {
       [scope.organization_id])).rows[0];
     // A creation retry must never reactivate a stopped policy or amend a draft.
     if (prior && prior.status !== "active") return await commit("configuration_required");
-    const mfpEnabled=await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,
+    const massEnabled=await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,feature:"mass_labeling",env:args.env});
+    const mfpEnabled=massEnabled||await signalWorkspaceFeatureEnabledV1({queryable:client,workspace_id:args.workspace_id,
       feature:"mention_facets",env:args.env});
     if (prior && !mfpEnabled) return await commit("existing_policy");
-    const required=mfpEnabled ? ["corpus_preparation","corpus_embeddings","topic_fit_incremental",
+    const required=massEnabled ? ["corpus_preparation","corpus_embeddings","topic_interpretation","mass_labeling_jev"] : mfpEnabled ? ["corpus_preparation","corpus_embeddings","topic_fit_incremental",
       "topic_interpretation","topic_consolidation_numeric","topic_consolidation","mention_facets","concept_membership"]
       : ["brand_context_proposal","topic_prototype_embeddings"];
     const requestedCap=mfpEnabled ? (args.env??process.env).NOISIA_MFP_PROCESSING_DAILY_CAP_MICRO_USD : undefined;
@@ -170,8 +171,10 @@ export async function provisionSignalBrandContextPolicyV1(args: {
       FROM signal_processing_policy_actions WHERE policy_version_id=$2::uuid`,[policy.id,prior.id]);
     for (const [action, provider, model, policyConfiguration, cap, automatic] of (configuration.mfp ? [
       ["corpus_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, false],
-      ["mention_facets", "anthropic", "claude-sonnet-5-5", {}, null, false],
-      ["concept_membership", "anthropic", "claude-sonnet-5-5", {}, null, false]
+      ...(massEnabled ? [] : [
+        ["mention_facets", "anthropic", "claude-sonnet-5-5", {}, null, false],
+        ["concept_membership", "anthropic", "claude-sonnet-5-5", {}, null, false]
+      ])
     ] : [
       ["brand_context_proposal", "anthropic", "claude-sonnet-4-6", configuration.semanticConfiguration, configuration.semanticCap, false],
       ["topic_prototype_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, true]
@@ -199,7 +202,13 @@ export async function provisionSignalBrandContextPolicyV1(args: {
         VALUES($1::uuid,'topic_interpretation','provider','anthropic',$2,$3::jsonb,
           signal_semantic_context_digest_json_v2($3::jsonb),NULL,false)
         ON CONFLICT(policy_version_id,action) DO NOTHING`,
-        [policy.id,SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1.model,JSON.stringify(SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1)]);
+        [policy.id,SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1.model,JSON.stringify(massEnabled
+          ? SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 : SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1)]);
+      if (massEnabled) await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
+        configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
+        VALUES($1::uuid,'mass_labeling_jev','provider','typesafe','jev-1.13.0',$2::jsonb,
+          signal_semantic_context_digest_json_v2($2::jsonb),NULL,false) ON CONFLICT(policy_version_id,action) DO NOTHING`,
+        [policy.id,JSON.stringify({contract_version:"mass-labeling-jev-v2",provider:"typesafe",model:"jev-1.13.0"})]);
       await client.query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,
         configuration,configuration_digest,max_execution_micro_usd,automatic_allowed)
         VALUES($1::uuid,'topic_consolidation','provider','anthropic','claude-sonnet-4-6',signal_topic_editorial_configuration_v2(),

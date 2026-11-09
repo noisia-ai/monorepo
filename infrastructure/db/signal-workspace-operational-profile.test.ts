@@ -7,6 +7,7 @@ const workspace='10000000-0000-4000-8000-000000000001',actor='10000000-0000-4000
 for(const reader of ['preflight','identity','classification'] as const)test(`${reader}: missing bound operational profile fails without falling back to a working draft`,async()=>{
  let boundReads=0;
  const client={release(){},async query(sql:string,values:unknown[]=[]){
+    if (sql.includes("FROM signal_workspace_features")) return { rows: [{ enabled: false }] };
   if(/^(BEGIN|SET|ROLLBACK|COMMIT)/u.test(sql))return{rows:[]};
   if(sql.includes('workspace.status workspace_status'))return{rows:[{workspace_status:'active',brand_status:'active',actor_status:'active',user_type:'noisia_internal',primary_role:'noisia_admin',same_organization:true,brand_access_level:null}]};
   if(sql.includes('SELECT id,taxonomy_id FROM signal_taxonomy_profiles')){boundReads++;assert.deepEqual(values,[workspace,profile]);return{rows:[]};}

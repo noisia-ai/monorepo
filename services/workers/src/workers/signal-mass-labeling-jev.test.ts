@@ -2,17 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   massLabelingJevIdentityV1,
+  massLabelingJevIdentityV2,
   entityContextDigestV1,
   labelerDigestV1,
   type MassLabelingInputV1,
   type MassLabelingResultV1,
 } from "@noisia/query-engine";
 import type { LabelingRunV1, LabelingCallV1 } from "@noisia/db";
-import { processMassLabelingJevV1 } from "./signal-mass-labeling-jev";
+import { processMassLabelingJevV1, signalMassLabelingJevJobV1 } from "./signal-mass-labeling-jev";
 import type { JevProviderV1, JevRequestV1 } from "../providers/typesafe-jev";
 
 type Store = Parameters<typeof processMassLabelingJevV1>[0]["store"];
-function fixture(count: number) {
+function fixture(count: number, product = false) {
   const context = {
     entities: [
       {
@@ -24,7 +25,8 @@ function fixture(count: number) {
       },
     ],
   };
-  const identity = massLabelingJevIdentityV1();
+  const identity = product ? massLabelingJevIdentityV2({ category: "tea", candidate_language: "original",
+    interests: [{ key: "travel", name: "Travel", definition: "Travel and tourism" }] }) : massLabelingJevIdentityV1();
   const run: LabelingRunV1 = {
     id: "run",
     workspace_id: "workspace",
@@ -288,4 +290,52 @@ test("raw-only recovery never selects or reserves a new mention", async () => {
   assert.equal(inputs, 0);
   assert.equal(reservations, 0);
   assert.equal(f.transports(), 0);
+});
+
+test("product worker sends one durable request per root including interests and replays without spending", async () => {
+  const f = fixture(2, true);
+  await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider: f.provider });
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.transports(), 2);
+  for (const call of f.calls) {
+    assert.equal(call.inputs.length, 1);
+    assert.deepEqual(Object.keys((call.request as JevRequestV1).questions), ["promotion", "voice", "trigger_barrier", "topic_0", "interest_travel"]);
+    assert.match(JSON.stringify((call.request as JevRequestV1).questions.trigger_barrier), /consume or buy tea/u);
+  }
+  assert.deepEqual(f.results[0]?.probabilities?.interest_travel, { type: "noul", noul: .8 });
+  f.calls.forEach(call => { call.results_applied = false; }); f.run.status = "running";
+  await processMassLabelingJevV1({ run_id: f.run.id, store: f.store, provider: f.provider });
+  assert.equal(f.transports(), 2);
+});
+
+for (const denial of ["none", "kill_switch", "provider", "workspace"] as const) test(`the actual mass-labeling job preserves all gates with injected runtime dependencies (${denial})`, async () => {
+  const f = fixture(1, true);
+  const priorMass = process.env.NOISIA_MASS_LABELING_ENABLED, priorJev = process.env.NOISIA_JEV_PROVIDER_ENABLED;
+  process.env.NOISIA_MASS_LABELING_ENABLED = denial === "kill_switch" ? "false" : "true";
+  process.env.NOISIA_JEV_PROVIDER_ENABLED = "true";
+  let preflights = 0;
+  const query = async (sql: string, params?: unknown[]) => {
+    if (sql.startsWith("SELECT workspace_id FROM signal_labeling_runs")) { assert.deepEqual(params, [f.run.id]); return { rows: [{ workspace_id: f.run.workspace_id }] }; }
+    if (sql.includes("FROM signal_workspace_features")) { assert.deepEqual(params, [f.run.workspace_id, "mass_labeling"]); return { rows: [{ enabled: denial !== "workspace" }] }; }
+    if (sql.startsWith("SELECT run.workspace_id,run.actor_user_id")) return { rows: [] };
+    throw new Error("unexpected_job_database_query");
+  };
+  const database = { query, async connect() { return { query, release() {} }; } } as unknown as NonNullable<Parameters<typeof signalMassLabelingJevJobV1>[1]>["database"];
+  const fetchImpl: typeof fetch = async (input, init) => {
+    preflights++;
+    assert.equal(input, "https://api.typesafe.ai/v1/models"); assert.equal(init?.method, "GET");
+    assert.deepEqual(init?.headers, { Authorization: "Bearer synthetic-not-a-secret" });
+    return new Response("{}", { status: denial === "provider" ? 401 : 200 });
+  };
+  const invoke = () => signalMassLabelingJevJobV1({ data: { run_id: f.run.id } }, {
+    database, store: f.store, provider: f.provider, provider_preflight: { api_key: "synthetic-not-a-secret", fetch_impl: fetchImpl },
+  });
+  try {
+    if (denial === "none") { assert.equal((await invoke()).status, "completed"); assert.equal(f.transports(), 1); }
+    else { await assert.rejects(invoke(), new RegExp(denial === "kill_switch" ? "provider_disabled" : denial === "provider" ? "provider_unavailable" : "not_enabled")); assert.equal(f.transports(), 0); }
+    assert.equal(preflights, denial === "kill_switch" ? 0 : 1);
+  } finally {
+    if (priorMass === undefined) delete process.env.NOISIA_MASS_LABELING_ENABLED; else process.env.NOISIA_MASS_LABELING_ENABLED = priorMass;
+    if (priorJev === undefined) delete process.env.NOISIA_JEV_PROVIDER_ENABLED; else process.env.NOISIA_JEV_PROVIDER_ENABLED = priorJev;
+  }
 });

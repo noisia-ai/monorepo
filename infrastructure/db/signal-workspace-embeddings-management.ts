@@ -90,7 +90,8 @@ export async function loadSignalWorkspaceEmbeddingsStoreV1(args: {
 
 async function authorize(queryable: SignalWorkspaceEmbeddingsQueryableV1, workspace: string, actor: string, execute: boolean) {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable, workspace_id: workspace, actor_user_id: actor });
-  const mfp = await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:workspace,feature:"mention_facets"});
+  const mfp = await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:workspace,feature:"mention_facets"})
+    || await signalWorkspaceFeatureEnabledV1({queryable,workspace_id:workspace,feature:"mass_labeling"});
   if (!capabilities.can_view || execute && !(mfp ? capabilities.can_request_processing : capabilities.can_execute_topics)) return fail("workspace_embedding_forbidden", 403);
   return mfp;
 }

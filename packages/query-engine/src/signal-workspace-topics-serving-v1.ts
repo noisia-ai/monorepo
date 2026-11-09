@@ -37,7 +37,7 @@ export type SignalWorkspaceTopicsOverviewV1 = {
   membership_population?: { relevant: number; unrelated: number; spam: number; unknown: number; without_concept: number };
   interpretation_coverage: { interpreted_unit_count: number; expected_unit_count: number; complete: boolean } | null;
   population_segments?: {all: number; conversation: number; advertising: number; hashtags: number};
-  consumer_indicators?: {eligible: number; processed: number; trigger: number; barrier: number; none: number; intermediate: number; unresolved: number};
+  consumer_indicators?: {eligible: number; category_matched?: number; category_excluded?: number; processed: number; trigger: number; barrier: number; none: number; intermediate: number; unresolved: number};
   quality: "not_calibrated";
   terms: Array<{
     term_key: string;

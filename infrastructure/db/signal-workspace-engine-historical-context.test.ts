@@ -34,6 +34,7 @@ function fixture(identityError:Error,denied=false){
   const queries:string[]=[];
   let identities=0,released=0;
   const client={release(){released++;},async query(sql:string,params:unknown[]=[]){
+    if (sql.includes("FROM signal_workspace_features")) return { rows: [{ enabled: false }] };
     queries.push(sql);
     assert.ok(!/\b(?:INSERT|UPDATE|DELETE)\s/iu.test(sql),'historical readers must not write');
     if(/^(?:BEGIN|SET|COMMIT|ROLLBACK)\b/u.test(sql)||sql.includes('pg_advisory_xact_lock')
