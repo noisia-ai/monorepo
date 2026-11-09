@@ -28,6 +28,16 @@ export type LabelingStudySettingsV1 = Omit<LabelingStudySettingsInputV1, "expect
   topics?: Array<{ topic_key: string; name: string; en: string; es: string }>;
 };
 
+export function setLabelingTopicDisplayNameV1(names: NonNullable<LabelingStudySettingsInputV1["display_names"]>,
+  topic: { topic_key: string; en: string; es: string }, language: "en" | "es", value: string) {
+  const pair = { en: names[topic.topic_key]?.en ?? topic.en, es: names[topic.topic_key]?.es ?? topic.es,
+    [language]: value };
+  const next = { ...names };
+  if (pair.en.trim() === topic.en && pair.es.trim() === topic.es) delete next[topic.topic_key];
+  else next[topic.topic_key] = pair;
+  return next;
+}
+
 export function labelingStudySettingsInputV1(state: LabelingStudySettingsV1,
   draft: { category: string; terms: string; threshold: string; interests: LabelingStudySettingsInputV1["interests"];
     names?: LabelingStudySettingsInputV1["display_names"] }) {
