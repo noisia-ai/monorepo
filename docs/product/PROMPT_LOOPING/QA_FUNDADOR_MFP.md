@@ -1,4 +1,15 @@
-# QA del fundador · etiquetado de Signal en dev-test
+# QA del fundador · etiquetado de Signal
+
+## UAT · Estudio real A en Brasil
+
+Inicia sesión en [Studio UAT](https://studio-uat-uat.up.railway.app) y abre [Topics y narrativas de Signal](https://studio-uat-uat.up.railway.app/signal/estudio-real-a-cerveza-brasil/topics-narratives).
+
+1. Compara el nombre y la definición de un tópico en inglés con su original en portugués. Si no aparecen datos o la página marca que el workspace no está listo, registra el estado y vuelve a consultar más tarde.
+2. Cambia **Contenido** entre conversación, publicidad, sólo hashtags y todo el contenido. Espera a que cada vista termine de cargar antes de revisar los denominadores y los indicadores.
+3. Abre evidencia de un motivador y una barrera. Repite la consulta con los mismos filtros y comprueba que muestre las mismas menciones.
+4. Coteja los denominadores, el mapa, el léxico y las definiciones de intereses con los recibos privados de R15. Documenta sólo las causas que respalden esos recibos y conserva ejemplos e identificadores en el canal privado del estudio.
+
+## Dev-test · referencia de R14
 
 Entorno de prueba: [Noisia Studio en dev-test](https://mfp-studio-dev-test.up.railway.app). Inicia sesión con tu cuenta habitual y abre el workspace autorizado del Estudio real A. Los cambios de configuración de este recorrido se deben restaurar antes de terminar. No inicies un reetiquetado completo del corpus: revisa los resultados ya preparados.
 
