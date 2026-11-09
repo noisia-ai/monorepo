@@ -1,4 +1,5 @@
 import { massLabelingLexiconDigestV1 } from "./signal-mass-labeling-lexicon-suggestions";
+import { sealedTopicContextBridgeMatchesV1 } from "./signal-topic-context-identity-cut";
 import {loadMassLabelingStudyPolicyWithClientV1,massLabelingStudyInterestDigestV1,type MassLabelingStudyPolicyV1} from "./signal-mass-labeling-study-policy";
 import {loadMassLabelingServingContextV1, type MassLabelingMapV1} from "./signal-mass-labeling";
 import { facetForcedAbstentionsSqlV1 } from "./signal-facet-normalizations";
@@ -432,13 +433,16 @@ async function publishedContext(client: PoolClient, args: Args, filters: CivilFi
       throw error;
     });
     // Entity-context metadata was added after legacy projections were sealed.
-    // Reconstruct v1 only when the unchanged catalog, embeddings and corrections
-    // still match. Exact context/compiler equality below remains mandatory.
+    // Reconstruct v1 only through the immutable transition sealed at migration.
+    // Later metadata or temporal-validity edits cannot reuse that transition.
     if (input && generation.identity.catalog_digest === input.catalog_digest
       && generation.identity.embedding_config_digest === input.embedding_config_digest
       && generation.correction_digest === input.correction_digest
       && (generation.identity.context_digest !== input.context_digest
-        || generation.identity.compiler_digest !== input.compiler_digest)) {
+        || generation.identity.compiler_digest !== input.compiler_digest)
+      && await sealedTopicContextBridgeMatchesV1(client, { workspace_id: args.workspace_id,
+        generation_id: generation.id, source_engine_execution_id: generation.source_engine_execution_id,
+        legacy: { ...generation.identity, correction_digest: generation.correction_digest }, modern: input })) {
       const historical = await loadSignalWorkspaceClassificationInputV1({ queryable: client, ...args,
         taxonomy_profile_id: generation.taxonomy_profile_id, legacy_context_identity: true });
       if (generation.identity.context_digest === historical.context_digest

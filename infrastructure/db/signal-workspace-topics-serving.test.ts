@@ -98,6 +98,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   let semanticDrift = false;
   let identityDisambiguation:string|null|undefined;
   let identityAliases=["Example", "example"];
+  let identityBridge:{legacy:string;modern:string}|null=null;
   let importedMode = false;
   let consolidatedMode = false;
   let noOverlap = false;
@@ -112,6 +113,8 @@ test("Signal keeps served semantics while applying a safe working label", async 
   const client = {
     async query(sql: string, params: unknown[] = []) {
       statements.push(sql);
+      if(sql.includes("signal_topic_context_identity_bridges_v1"))return{rows:[{matches:
+        identityBridge!==null&&identityBridge.legacy===params[3]&&identityBridge.modern===params[4]}]};
       if (sql.includes("signal_workspace_concept_memberships_read_v1") || sql.includes("signal_workspace_mention_facets_read_v1"))
         assert.equal(params[0], workspaceId, "scoped MFP readers receive the authorized workspace");
       if (sql.includes("FROM signal_workspace_features")) return {rows:[{enabled:params[1]==="mass_labeling"?false:params[1]==="mention_facets"?facetOptIn:membershipMode}]};
@@ -251,9 +254,23 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.deepEqual(topicQueries[1]!.params, [workspaceId, workingProfile]);
   assert.equal(overview?.is_current, true);
   identityDisambiguation=null;
+  const beforeCut=await loadSignalWorkspaceTopicsOverviewV1({database:{async connect(){return client as never;}},
+    workspace_id:workspaceId,actor_user_id:actorId,timezone:"America/Mexico_City"});
+  assert.equal(beforeCut?.is_current,false,'an unsealed migration cannot approve a legacy transition');
+  const identityFields=(v:NonNullable<typeof identity>)=>JSON.stringify({catalog_digest:v.catalog_digest,
+    context_digest:v.context_digest,compiler_digest:v.compiler_digest,
+    embedding_config_digest:v.embedding_config_digest,correction_digest:v.correction_digest});
+  const atCut=await loadSignalWorkspaceClassificationInputV1({queryable:client as never,workspace_id:workspaceId,
+    actor_user_id:actorId,taxonomy_profile_id:profileA});
+  identityBridge={legacy:identityFields(identity!),modern:identityFields(atCut)};
   const compatible=await loadSignalWorkspaceTopicsOverviewV1({database:{async connect(){return client as never;}},
     workspace_id:workspaceId,actor_user_id:actorId,timezone:"America/Mexico_City"});
-  assert.equal(compatible?.is_current,true,'an exact legacy identity survives added entity metadata');
+  assert.equal(compatible?.is_current,true,'the exact sealed transition restores the historical generation');
+  identityDisambiguation='A new distinction entered after the cut.';
+  const legacyMetadataChanged=await loadSignalWorkspaceTopicsOverviewV1({database:{async connect(){return client as never;}},
+    workspace_id:workspaceId,actor_user_id:actorId,timezone:"America/Mexico_City"});
+  assert.equal(legacyMetadataChanged?.is_current,false,'a legacy generation cannot absorb disambiguation added after the cut');
+  identityDisambiguation=null;
   const legacyIdentity=identity;
   identity=await loadSignalWorkspaceClassificationInputV1({queryable:client as never,workspace_id:workspaceId,
     actor_user_id:actorId,taxonomy_profile_id:profileA});
@@ -268,6 +285,7 @@ test("Signal keeps served semantics while applying a safe working label", async 
   assert.equal(legacyChanged?.is_current,false,'v1 fallback still requires the exact governed aliases');
   identityAliases=["Example","example"];
   identityDisambiguation=undefined;
+  identityBridge=null;
 
   assert.equal(statements.some(statement => statement.includes("defined_interest_memberships")), false,
     "without durable selection the ordinary Signal path cannot expose interests");
