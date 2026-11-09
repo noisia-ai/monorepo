@@ -170,11 +170,11 @@ export async function provisionSignalBrandContextPolicyV1(args: {
       SELECT $1::uuid,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
       FROM signal_processing_policy_actions WHERE policy_version_id=$2::uuid`,[policy.id,prior.id]);
     for (const [action, provider, model, policyConfiguration, cap, automatic] of (configuration.mfp ? [
+      ["corpus_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, false],
       ...(massEnabled ? [] : [
         ["mention_facets", "anthropic", "claude-sonnet-5-5", {}, null, false],
         ["concept_membership", "anthropic", "claude-sonnet-5-5", {}, null, false]
-      ]),
-      ["corpus_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, false]
+      ])
     ] : [
       ["brand_context_proposal", "anthropic", "claude-sonnet-4-6", configuration.semanticConfiguration, configuration.semanticCap, false],
       ["topic_prototype_embeddings", "voyage", "voyage-4-large", SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1, configuration.prototypeCap, true]
