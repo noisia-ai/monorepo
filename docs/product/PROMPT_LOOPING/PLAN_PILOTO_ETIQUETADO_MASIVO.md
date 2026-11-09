@@ -297,6 +297,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Sorpresas y descubrimientos
 
+- H7 · El cuarto intento leyó el CSV completo en unos 26 minutos. PostgreSQL alcanzó el límite de 120 s durante la verificación de una clave foránea al materializar las atribuciones de origen, antes de iniciar la reconciliación de poblaciones. Los cuatro cierres fallidos conservaron su historial.
+
 - H7 · El archivo de mayor tamaño falló dos veces al esperar una conexión. Tras desplegar el PR #144, el worker leyó el archivo completo. Durante el cierre, PostgreSQL devolvió `57014` al reconciliar por raíz la pertenencia a poblaciones semánticas. Studio conservó el archivo y los tres intentos.
 
 - H7 · La ruta autenticada de la versión de referencia tardó 19.537 s en mostrar la lista de tópicos. En los cuatro filtros, las consultas SQL original y optimizada devolvieron los mismos datos dentro de una misma lectura de PostgreSQL. En todo el contenido, la consulta optimizada tardó 2.545 s en la primera medición y entre 1.352 y 1.490 s en tres repeticiones.
@@ -379,6 +381,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · El PR #150 reserva un cliente de PostgreSQL únicamente para cerrar lotes verificados de al menos 50,000 registros. El tiempo local de ejecución se calcula a 12 ms por registro, con mínimo de 15 min y máximo de 25 min. La espera de locks se limita a 15 s. Si se pierde la confirmación, el worker consulta y reconcilia el resultado durable antes de habilitar la recuperación. Los archivos pequeños siguen la ruta previa. La prueba utiliza la misma autenticación SCRAM que CI.
 
 - H7 · El timeout del worker de UAT es 120 s. La prueba de escala conserva las 95,100 filas, un borrador semántico y los controles de derechos. Se fijó un límite de 90 s para GitHub después de que la primera ejecución agotara su límite sintético de 30 s. El tiempo observado se guarda con el perfil de PostgreSQL. El cierre del archivo real se acredita mediante su propio recibo.
 
