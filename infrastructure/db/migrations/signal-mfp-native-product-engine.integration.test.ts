@@ -187,8 +187,12 @@ test("the native product engine worker admits a new client study without a priva
     });
     assert.ok(!("operator_required" in result)); assert.equal(processes, 1); assert.equal(interpretedGroups.size, 4);
     assert.ok(groupRequests >= 1); assert.equal(consolidationRequests, 1);
-    const finished = (await database.query("SELECT status,actor_user_id,output_catalog_profile_id FROM signal_topic_catalog_executions WHERE id=$1", [started.execution_id])).rows[0]!;
-    assert.equal(finished.status, "ready"); assert.equal(finished.actor_user_id, clientActor); assert.ok(finished.output_catalog_profile_id);
+    const finished = (await database.query("SELECT status,actor_user_id FROM signal_topic_catalog_executions WHERE id=$1", [started.execution_id])).rows[0]!;
+    assert.equal(finished.status, "ready"); assert.equal(finished.actor_user_id, clientActor);
+    assert.ok("output_catalog_profile_id" in result && result.output_catalog_profile_id);
+    const catalogArtifact = (await database.query(`SELECT metadata FROM analysis_artifacts WHERE engine_execution_id=$1
+      AND artifact_key='materialization.json' AND metadata->>'contract_version'='workspace-topic-materialization-v1'`, [started.execution_id])).rows[0];
+    assert.ok(catalogArtifact); assert.equal(catalogArtifact.metadata.output_catalog_profile_id, result.output_catalog_profile_id);
     const ledger = (await database.query(`SELECT cost.actor_user_id,cost.call_state,execution.processing_admission_id,admission.actor_user_id admission_actor
       FROM engine_cost_events cost JOIN signal_topic_catalog_executions execution ON execution.id=cost.catalog_execution_id
       JOIN signal_processing_admissions admission ON admission.id=execution.processing_admission_id WHERE cost.catalog_execution_id=$1`, [started.execution_id])).rows;
