@@ -25,6 +25,8 @@ import { signalWorkspaceEmbeddingsJobV1 } from "../../../services/workers/src/wo
 import { createBrandContextSyntheticVoyageProviderV1 } from "./signal-brand-context.synthetic.fixture";
 import { consolidateMassLabelingGroupsV1 } from "../../../services/workers/src/workers/signal-mass-labeling-consolidation";
 import { materializeMassLabelingProductMapV2 } from "../../../services/workers/src/workers/signal-mass-labeling-product-map";
+import { authorizeMassEngineConsumerV1 } from "../../../services/workers/src/providers/mass-labeling-consumer";
+import { signalWorkspaceEngineJobV1 } from "../../../services/workers/src/workers/signal-workspace-engine";
 import { processMassLabelingProductPageV2 } from "../../../services/workers/src/workers/signal-mass-labeling-jev";
 import type { WorkspaceEngineStorageV1 } from "../../../services/workers/src/workers/signal-workspace-engine-storage";
 import type { JevRequestV1 } from "@noisia/query-engine/src/signal-mention-facets-jev-v1";
@@ -111,6 +113,22 @@ test("a client creates a brand and admits and consumes the default product pipel
       embedding_run_id: embedded.run_id, cleanup: async () => {} }, { preserve_catalog: true, split_guided_groups: 4,
       engine_config: signalWorkspaceMassLabelingConfigV3(5), interpretation_configuration: SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2,
       budget: { cap_micro_usd: 30_000_000, daily_cap_micro_usd: 100_000_000, timezone: "America/Mexico_City" },
+      onStarted: async execution_id => {
+        assert.equal((await database.query("SELECT status FROM signal_topic_catalog_executions WHERE id=$1",[execution_id])).rows[0]!.status,"queued");
+        assert.equal(await authorizeMassEngineConsumerV1({database,execution_id}),true);
+        await database.query("UPDATE users SET status='inactive' WHERE id=$1",[clientActor]);
+        assert.equal(await authorizeMassEngineConsumerV1({database,execution_id}),false);
+        assert.deepEqual(await signalWorkspaceEngineJobV1({id:'synthetic-revoked-engine',data:{execution_id},updateProgress:async()=>{}},{database}),{execution_id,operator_required:true});
+        assert.equal((await database.query("SELECT status FROM signal_topic_catalog_executions WHERE id=$1",[execution_id])).rows[0]!.status,"queued");
+        await database.query("UPDATE users SET status='active' WHERE id=$1",[clientActor]);
+      },
+      onClaimed: async execution_id => {
+        // The real handler must reach its native lease guard without an operator
+        // or injected stores. The fixture's existing live lease blocks a second
+        // numerical fit, preserving the independently tested numerical packet.
+        const job_id=(await database.query("SELECT worker_job_id FROM signal_topic_classification_outbox WHERE execution_id=$1",[execution_id])).rows[0]!.worker_job_id;
+        assert.deepEqual(await signalWorkspaceEngineJobV1({id:job_id,data:{execution_id},updateProgress:async()=>{}},{database}),{execution_id,replayed:true});
+      },
       onCheckpoint: async fixture => {
         if (fixture.proposals.length !== 4) return;
         for (const [key, body] of fixture.bodies) bodies.set(key, body);

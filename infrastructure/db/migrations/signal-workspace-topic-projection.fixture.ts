@@ -20,6 +20,8 @@ export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;allow_large_popu
  interpretation_configuration?:SignalWorkspaceInterpretationConfigurationV1;interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;
  engine_config?:Record<string,unknown>;model_configuration?:Record<string,unknown>;cluster_ids?:readonly[string,string];
  onMaterialized?:(profile_id:string)=>Promise<void>;
+ onStarted?:(execution_id:string)=>Promise<void>;
+ onClaimed?:(execution_id:string)=>Promise<void>;
  onCheckpoint?:(fixture:WorkspaceProjectionCheckpointFixtureV1)=>Promise<void>};
 export async function workspaceProjectionFixtureV1(options:WorkspaceProjectionFixtureOptionsV1={}){
  const url=new URL(process.env.DATABASE_URL!);assert.equal(url.hostname,'127.0.0.1');assert.equal(url.port,'55439');assert.match(url.pathname,/^\/noisia_(national_import_test|projection_test)_\d+$/u);
@@ -66,9 +68,11 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  const started=await engine.beginSignalWorkspaceEngineV1({...access,embedding_run_id,idempotency_key:randomUUID(),expected_catalog_digest:preflight.expected_catalog_digest,
   expected_context_digest:preflight.expected_context_digest,engine_config:pilot?preflight.engine_configuration!:options.engine_config??{fixture:'native-projection-only'},parent_execution_id:null,claude_cap_micro_usd:budget.cap_micro_usd,
   interpretation_config:{call_configuration:configuration,budget_timezone:budget.timezone,daily_cap_micro_usd:budget.daily_cap_micro_usd}});
+ await options.onStarted?.(started.execution_id);
  const lease=await engine.claimSignalWorkspaceEngineV1({database,...started,worker_job_id:'local-projection-fixture'});assert.ok(lease);
  assert.ok(lease.snapshot.expected_roots<=10||options.allow_large_population===true&&lease.snapshot.expected_roots<=1200,
   'fixture population must be explicitly tiny or bounded synthetic-large');
+ await options.onClaimed?.(started.execution_id);
  const chunks:Array<Awaited<ReturnType<typeof engine.readSignalWorkspaceEngineChunksV1>>['items'][number]>=[];
  let after:Parameters<typeof engine.readSignalWorkspaceEngineChunksV1>[0]['after']=null;
  for(;;){const page=await engine.readSignalWorkspaceEngineChunksV1({database,lease,after,limit:128});chunks.push(...page.items);if(page.done)break;after=page.next_cursor;}
