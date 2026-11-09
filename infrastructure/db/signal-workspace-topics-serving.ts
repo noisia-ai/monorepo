@@ -557,7 +557,7 @@ const massMembershipsSql = `mass_memberships AS MATERIALIZED (
   SELECT DISTINCT root_id FROM mass_memberships
 ), `;
 const populationSql = (imported = false, definedInterest = false, consolidated = false, membership = false, facetEnabled = false,
-  checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all", includeMemberships = true) => `WITH source_generation AS MATERIALIZED (
+  checkedProjectionSource?: boolean, massLabeling = false, segment: SignalConversationSegmentV1 = "all", includeMemberships = true, massOverview = false) => `WITH source_generation AS MATERIALIZED (
   SELECT generation.id,generation.workspace_id,generation.preparation_run_id,generation.input_snapshot
     FROM signal_classification_generations generation WHERE generation.id=$2::uuid
     AND generation.workspace_id=$1::uuid AND ${checkedProjectionSource === undefined
@@ -597,23 +597,33 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
   GROUP BY origin.canonical_mention_id
 ), received_roots AS MATERIALIZED (
-  SELECT DISTINCT origin.canonical_mention_id root_id
+  SELECT ${massOverview ? `origin.canonical_mention_id root_id,
+    bool_or(COALESCE(rights.metrics,false)) metrics,
+    bool_or(COALESCE(rights.metrics AND rights.evidence,false)) evidence` : "DISTINCT origin.canonical_mention_id root_id"}
   FROM received_imports batch JOIN signal_mention_import_memberships path ON path.import_batch_id=batch.id
     AND path.data_source_id=batch.data_source_id AND path.workspace_id=$1::uuid
   JOIN mentions origin ON origin.id=path.mention_id AND origin.workspace_id=$1::uuid
+  ${massOverview ? `LEFT JOIN authorized_imports rights ON rights.id=batch.id AND rights.data_source_id=batch.data_source_id
+  GROUP BY origin.canonical_mention_id` : ""}
 ), ${massLabeling && includeMemberships ? massMembershipsSql : ""}all_roots AS MATERIALIZED (
   ${imported ? `SELECT mention.id root_id,${massLabeling ? `CASE WHEN mass_outcome.status='labeled' THEN
       ${includeMemberships ? "CASE WHEN mass_concept.root_id IS NOT NULL THEN 'resolved' ELSE 'abstained' END" : "'abstained'"} ELSE 'error' END` : "NULL::text"} resolution_state,
     mention.published_at,NULL::boolean has_unresolved_topics,
     ${massLabeling ? "segment.conversation_segment," : ""}
-    COALESCE(rights.metrics,false) metrics,COALESCE(rights.evidence,false) evidence
+    ${massOverview ? `CASE WHEN mass_outcome.status='labeled' THEN
+      CASE WHEN (mass_outcome.probabilities#>>'{spam,noul}')::double precision>0.7 THEN 'spam'
+        WHEN (mass_outcome.probabilities#>>'{relevance,noul}')::double precision>0.7 THEN 'relevant'
+        WHEN (mass_outcome.probabilities#>>'{relevance,noul}')::double precision<0.3 THEN 'unrelated' ELSE 'unknown' END
+      ELSE 'unknown' END relevance,(mass_concept.root_id IS NOT NULL) has_concept,` : ""}
+    COALESCE(${massOverview ? "received.metrics" : "rights.metrics"},false) metrics,
+    COALESCE(${massOverview ? "received.evidence" : "rights.evidence"},false) evidence
   FROM received_roots received JOIN mentions mention ON mention.id=received.root_id AND mention.workspace_id=$1::uuid
     AND mention.canonical_mention_id=mention.id AND mention.inclusion_status='included'
   ${massLabeling ? `JOIN signal_mass_labeling_items frozen ON frozen.map_id=$2::uuid AND frozen.workspace_id=$1::uuid AND frozen.root_id=mention.id
     LEFT JOIN signal_mass_labeling_results mass_outcome ON mass_outcome.map_id=frozen.map_id AND mass_outcome.root_id=frozen.root_id
     JOIN signal_mass_labeling_root_segments segment ON segment.map_id=frozen.map_id AND segment.root_id=frozen.root_id AND segment.workspace_id=$1::uuid
     ${includeMemberships ? "LEFT JOIN mass_roots_with_concept mass_concept ON mass_concept.root_id=mention.id" : ""}` : ""}
-  LEFT JOIN root_rights rights ON rights.root_id=mention.id` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
+  ${massOverview ? "" : "LEFT JOIN root_rights rights ON rights.root_id=mention.id"}` : `SELECT item.canonical_root_id root_id,item.resolution_state,mention.published_at,
     COALESCE((item.outcome_metadata->>'has_unresolved_topics')::boolean,false) has_unresolved_topics,
     COALESCE(rights.metrics,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id metrics,
     COALESCE(rights.evidence,false) AND mention.inclusion_status='included' AND mention.canonical_mention_id=mention.id evidence
@@ -628,10 +638,10 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
   JOIN mentions mention ON mention.id=item.root_id AND mention.workspace_id=$1::uuid
   LEFT JOIN root_rights rights ON rights.root_id=item.root_id
   WHERE item.workspace_id=$1::uuid AND item.snapshot_id=$2::uuid`}
-), period_all_roots AS MATERIALIZED (
+), period_all_roots AS ${massOverview ? "NOT " : ""}MATERIALIZED (
   SELECT * FROM all_roots WHERE ($3::date IS NULL OR published_at>=($3::date::timestamp AT TIME ZONE $5::text))
     AND ($4::date IS NULL OR published_at<(($4::date+1)::timestamp AT TIME ZONE $5::text))
-), period_roots AS MATERIALIZED (
+), period_roots AS ${massOverview ? "NOT " : ""}MATERIALIZED (
   SELECT * FROM period_all_roots ${massLabeling && segment !== "all" ? `WHERE conversation_segment='${segment}'` : ""}
 ), visible_terms AS MATERIALIZED (
   SELECT * FROM jsonb_to_recordset($6::jsonb) term(term_key text,definition_digest text,definition_revision int,visible boolean${membership ? ",membership_concept boolean" : ""}${definedInterest ? ",interest_generation_id uuid,interest_taxonomy_term_id uuid" : ""})
@@ -729,9 +739,9 @@ const populationSql = (imported = false, definedInterest = false, consolidated =
 ), memberships AS MATERIALIZED (SELECT root_id,term_key,evidence_fragment FROM all_memberships WHERE visible),
 root_membership AS MATERIALIZED (SELECT root_id,bool_or(visible) visible FROM all_memberships GROUP BY root_id),
 population AS MATERIALIZED (
-  SELECT root.*,COALESCE(member.visible,false) visible${membership ? ",facet.relevance,(has_concept.root_id IS NOT NULL) has_concept" : ""}
+  SELECT root.*,COALESCE(member.visible,false) visible${membership && !massOverview ? ",facet.relevance,(has_concept.root_id IS NOT NULL) has_concept" : ""}
   FROM period_roots root LEFT JOIN root_membership member USING(root_id)
-  ${membership ? "LEFT JOIN mfp_facets facet ON facet.root_id=root.root_id LEFT JOIN mfp_roots_with_concept has_concept ON has_concept.root_id=root.root_id" : ""}
+  ${membership && !massOverview ? "LEFT JOIN mfp_facets facet ON facet.root_id=root.root_id LEFT JOIN mfp_roots_with_concept has_concept ON has_concept.root_id=root.root_id" : ""}
 )`;
 
 /** Source validity is immutable inside the same repeatable-read snapshot.
@@ -790,7 +800,9 @@ async function overview(client: PoolClient, args: Args, ctx: Context): Promise<S
   const params: unknown[] = populationParams(args, ctx);
   if (interestOnly) params.push(ctx.defined_interests!.map(item => item.generation_id));
   if(ctx.mass_labeling)params.push(ctx.mass_study_policy?.revision??0);
-  const summary = (await client.query<Aggregate>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling),ctx.filters.conversation_segment)}
+  // The mass overview reuses each root's complete provenance path and paid result
+  // instead of joining the same rights, facet and concept evidence again.
+  const summary = (await client.query<Aggregate>(`${populationSql(Boolean(ctx.imported),Boolean(ctx.defined_interests?.length),ctx.consolidated,ctx.concept_membership,ctx.facet_enabled,checkedProjectionSource(ctx),Boolean(ctx.mass_labeling),ctx.filters.conversation_segment,true,Boolean(ctx.mass_labeling))}
     SELECT count(*) FILTER(WHERE root.metrics AND root.evidence)::int evidence_visible_total,
       count(*) FILTER(WHERE root.metrics)::int denominator,count(*) FILTER(WHERE root.metrics${ctx.mass_labeling ? " AND root.resolution_state<>'error'" : ""})::int processed,
       count(*) FILTER(WHERE root.metrics AND root.visible)::int assigned_unique,
