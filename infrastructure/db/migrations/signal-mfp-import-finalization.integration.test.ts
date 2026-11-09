@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {createHash,randomUUID} from "node:crypto";
 import test from "node:test";
+import {availableParallelism,cpus,platform,arch,totalmem,loadavg} from "node:os";
 import type pg from "pg";
 import {seed,processingBatch,addRoots,complete,scalar,sha,byteLength} from "./signal-import-finalization.synthetic.fixture";
 
@@ -35,10 +36,48 @@ test("normal import completes 95,100 rows atomically with a semantic draft",{
   await client.query(`CREATE OR REPLACE FUNCTION reconcile_signal_semantic_candidate_population_mention(target_workspace_id uuid,target_mention_id uuid)
     RETURNS void LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'per_root_import_reconciliation'; END $$`);
   await client.query("SAVEPOINT completion");
-  await client.query("SET LOCAL statement_timeout='30s'");
+  // This is a synthetic performance gate, not a product timeout override.
+  // UAT's real worker role has 120s. Reserve at least 30s of that budget on CI;
+  // report the measured time instead of treating one developer machine as an SLO.
+  const gateMs=90_000,uatTimeoutMs=120_000;
+  await client.query("SET LOCAL statement_timeout='90s'; SET LOCAL track_functions='pl'");
+  const settings=(await client.query(`SELECT current_setting('server_version_num') version,
+   current_setting('shared_buffers') shared_buffers,current_setting('work_mem') work_mem,
+   current_setting('effective_cache_size') effective_cache_size,current_setting('jit') jit,
+   current_setting('max_parallel_workers_per_gather') max_parallel_workers_per_gather,
+   current_setting('random_page_cost') random_page_cost,current_setting('seq_page_cost') seq_page_cost`)).rows[0];
+  t.diagnostic(JSON.stringify({performance_workload:{roots:size,semantic_drafts:1,semantic_approvals:0,
+   legacy_source_intent_approved:true,gate_ms:gateMs,uat_role_timeout_ms:uatTimeoutMs},
+   hardware:{platform:platform(),arch:arch(),logical_cpus:cpus().length,available_parallelism:availableParallelism(),
+   memory_mb:Math.round(totalmem()/1024**2),load_average:loadavg()},postgres:settings}));
+  const sample=(await client.query<{mention_id:string}>("SELECT mention_id::text FROM signal_mention_import_memberships WHERE import_batch_id=$1 LIMIT 1",[batch.id])).rows[0]!;
+  const plan=(await client.query(`EXPLAIN(FORMAT JSON) SELECT EXISTS(
+   SELECT 1 FROM signal_mention_import_memberships membership WHERE membership.workspace_id=$1 AND membership.mention_id=$2)
+   AND NOT EXISTS(SELECT 1 FROM signal_mention_import_memberships membership JOIN import_batches b
+    ON b.id=membership.import_batch_id AND b.workspace_id=membership.workspace_id AND b.status='completed'
+    WHERE membership.workspace_id=$1 AND membership.mention_id=$2)`,[fixture.workspace,sample.mention_id])).rows[0]["QUERY PLAN"][0].Plan;
+  const scans:Array<Record<string,unknown>>=[];
+  function summarizePlan(node:Record<string,unknown>){
+   if(node["Relation Name"])scans.push({node:node["Node Type"],relation:node["Relation Name"],
+    index:node["Index Name"],estimated_rows:node["Plan Rows"],cost:node["Total Cost"]});
+   for(const child of (node.Plans??[]) as Array<Record<string,unknown>>)summarizePlan(child);
+  }
+  summarizePlan(plan);t.diagnostic(JSON.stringify({accepted_import_guard_plan:scans}));
   const started=performance.now();
-  const result=(await client.query(`SELECT * FROM complete_signal_workspace_import_v1($1::uuid,$2,$3,$4,$4,0,0,$5)`,[batch.id,batch.job,createHash('sha256').update('finalization:'+batch.id).digest('hex'),size,byteLength('synthetic finalization')])).rows[0];
-  const elapsed=performance.now()-started;t.diagnostic(`95,100 root finalization: ${Math.round(elapsed)} ms`);
+  let result;
+  try{
+   result=(await client.query(`SELECT * FROM complete_signal_workspace_import_v1($1::uuid,$2,$3,$4,$4,0,0,$5)`,[batch.id,batch.job,createHash('sha256').update('finalization:'+batch.id).digest('hex'),size,byteLength('synthetic finalization')])).rows[0];
+  }catch(error){
+   t.diagnostic(JSON.stringify({completion_failed_after_ms:Math.round(performance.now()-started)}));
+   await client.query("ROLLBACK TO SAVEPOINT completion");
+   t.diagnostic(JSON.stringify({failed_function_timings:(await client.query(`SELECT funcname,calls,total_time::int total_ms,self_time::int self_ms FROM pg_stat_xact_user_functions WHERE calls>0 ORDER BY total_time DESC LIMIT 20`)).rows}));
+   throw error;
+  }
+  const elapsed=performance.now()-started;
+  const timings=(await client.query(`SELECT funcname,calls,total_time::int total_ms,self_time::int self_ms
+   FROM pg_stat_xact_user_functions WHERE calls>0 ORDER BY total_time DESC LIMIT 20`)).rows;
+  t.diagnostic(JSON.stringify({completion_ms:Math.round(elapsed),uat_headroom_ms:Math.round(uatTimeoutMs-elapsed),function_timings:timings}));
+  assert.ok(elapsed<gateMs,`completion must retain at least 30s of the real worker budget; observed ${Math.round(elapsed)}ms`);
   assert.equal(result.accepted,true);
   assert.equal(await scalar(client,"SELECT count(*)::int FROM signal_population_memberships WHERE workspace_id=$1 AND membership_status='included' AND removed_at IS NULL",[fixture.workspace]),size);
   assert.equal(await scalar(client,"SELECT count(*)::int FROM source_sync_runs WHERE import_batch_id=$1",[batch.id]),1);
