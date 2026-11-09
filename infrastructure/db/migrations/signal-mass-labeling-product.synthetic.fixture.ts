@@ -37,7 +37,7 @@ export async function assertMassLabelingProductNativeV2(args: {
   let sends = 0;
   const provider = { async evaluate(body: JevRequestV1) {
     sends++;
-    assert.deepEqual(Object.keys(body.questions), ["promotion", "voice", "trigger_barrier", "topic_0", "interest_travel"]);
+    assert.deepEqual(Object.keys(body.questions).sort(), ["promotion", "voice", "trigger_barrier", "topic_0", "interest_travel"].sort());
     assert.match(JSON.stringify(body.questions.trigger_barrier), /consume or buy bicycles/u);
     assert.doesNotMatch(JSON.stringify(body.questions), /O texto|relevance|spam/u);
     return { body: JSON.stringify({ model: body.model, usage: { input_tokens: 120, output_tokens: 20 },

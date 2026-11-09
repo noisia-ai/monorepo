@@ -35,7 +35,7 @@ BEGIN
  PERFORM pg_advisory_xact_lock(hashtextextended('mass-study-policy:'||NEW.workspace_id::text,0));
  SELECT COALESCE(max(revision),0) INTO previous FROM signal_mass_labeling_study_policies WHERE workspace_id=NEW.workspace_id;
  IF NEW.revision<>previous+1 THEN RAISE EXCEPTION 'study_policy_conflict' USING ERRCODE='23514'; END IF;
- IF EXISTS(SELECT 1 FROM unnest(NEW.lexicon_terms) term WHERE length(btrim(term)) NOT BETWEEN 1 AND 200)
+ IF EXISTS(SELECT 1 FROM unnest(NEW.lexicon_terms) term WHERE term IS NULL OR length(btrim(term)) NOT BETWEEN 1 AND 200)
    OR (SELECT count(DISTINCT i->>'key') FROM jsonb_array_elements(NEW.interests)i)<>jsonb_array_length(NEW.interests)
    OR (SELECT count(*) FROM jsonb_object_keys(NEW.display_names))>200 THEN
   RAISE EXCEPTION 'study_policy_invalid' USING ERRCODE='23514'; END IF;
