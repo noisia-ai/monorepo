@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as config, signalWorkspaceInterpretationReferenceIdV1,
   SIGNAL_WORKSPACE_INTERPRETATION_LEGACY_OPUS_CONFIGURATION_V1 as legacyConfig, buildSignalWorkspaceInterpretationBatchV1,
   SIGNAL_WORKSPACE_ENGINE_CONFIG_V1, SIGNAL_WORKSPACE_EMBEDDING_PROFILE_V1,
+  SIGNAL_WORKSPACE_MASS_LABELING_INTERPRETATION_CONFIGURATION_V1 as massConfig,
   signalWorkspaceInterpretationCostV1,
   type SignalWorkspaceInterpretationClusterV1, type SignalWorkspaceInterpretationConfigurationV1 } from "@noisia/query-engine";
 import type { SignalWorkspaceEngineInterpretationCallV1, SignalWorkspaceEngineLeaseV1,
@@ -26,7 +27,8 @@ const cluster: SignalWorkspaceInterpretationClusterV1 = (() => {
       text, strength: 0.9, selection_reason: "high_affiliation" }] };
 })();
 
-async function scenario(configuration: SignalWorkspaceInterpretationConfigurationV1 = config) {
+async function scenario(configuration: SignalWorkspaceInterpretationConfigurationV1 = config,
+  credentials: { api_key?: string } = { api_key: "test_key_not_a_real_credential" }) {
   type Args = Parameters<typeof interpretWorkspaceEngineV1>[0];
   const directory = await mkdtemp(join(tmpdir(), "noisia-interpretation-test-"));
   const files = new Map<string, Buffer>(); let call: SignalWorkspaceEngineInterpretationCallV1 | null = null;
@@ -49,6 +51,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
   const checkpointCallIds: string[] = [];
   const seenBatches: Array<Parameters<typeof sendWorkspaceInterpretationV1>[0]["batch"]> = [];
   const seenAuthorizations: Array<string | undefined> = [];
+  const seenApiKeys: string[] = [];
   let callAdmission: SignalWorkspaceEngineInterpretationCallV1["admission"] | undefined;
   let providerEnabled = true;
   let checkpointWritten = false, catalogWritten = false;
@@ -65,6 +68,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       engine_config: { ...SIGNAL_WORKSPACE_ENGINE_CONFIG_V1 }, claude_cap_micro_usd: 30_000_000,
       interpretation_config: { call_configuration: configuration, daily_cap_micro_usd: 30_000_000, budget_timezone: "UTC" } } };
   const stores = {
+    recoveryCalls: async () => [], registerUnits: async () => undefined, recoveryReview: async () => undefined,
     context: async () => ({ actor_user_id: uuid(5), context: { workspace_id: lease.workspace_id,
       execution_id: lease.execution_id, context_digest: hash("context"), data: contextData } }),
     fit: async () => { fitCount++; states.push("fit"); return {}; },
@@ -191,7 +195,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       fit: { model_artifact_id: uuid(11), output_artifact_id: uuid(12), coverage: { roots: 3, chunks: 3, guides: 0 },
         model_configuration: {}, runtime_kind: "python", artifact_format: "workspace-model-bundle-v1", license_key: null,
         result_kind: "computational_grouping" }, clusters: executionClusters, heartbeat: async () => undefined,
-      api_key: "test_key_not_a_real_credential", provider_enabled: providerEnabled, authorization_expires_at,
+      api_key: credentials.api_key, provider_enabled: providerEnabled, authorization_expires_at,
       storage: {
         put: async args => { const bytes = await readFile(args.file); assert.equal(hash(bytes), args.sha256);
           const key = `workspace-engine/${lease.workspace_id}/${lease.execution_id}/${args.sha256.slice(7)}.parts.json`;
@@ -200,7 +204,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
         get: async args => { const bytes = files.get(args.stored.storage_key)!; assert.equal(hash(bytes), args.stored.sha256);
           await writeFile(args.destination, bytes, { flag: "wx" }); },
       },
-      send: async args => { seenBatches.push(args.batch); seenAuthorizations.push(args.authorization_expires_at); return sendWorkspaceInterpretationV1({ ...args,
+      send: async args => { seenApiKeys.push(args.api_key); seenBatches.push(args.batch); seenAuthorizations.push(args.authorization_expires_at); return sendWorkspaceInterpretationV1({ ...args,
         provider_enabled: args.batch.editorial_repair && disableRepair ? false : args.provider_enabled, fetch_impl: async () => {
         sends++; if (outcomeUnknown || args.batch.editorial_repair && unknownRepair) throw new Error("simulated socket close");
         const mode = args.batch.editorial_repair ? repairMode ?? responseMode : responseMode;
@@ -239,7 +243,7 @@ async function scenario(configuration: SignalWorkspaceInterpretationConfiguratio
       return { request_digest: historical.request_digest, body: historical.request_body };
     },
     get: () => ({ sends, fitCount, completed, partialCompleted, exceptions: structuredClone(exceptions), checkpointCount, materializationWrites, storedObjects: files.size, call, states,
-      calls: [...calls.values()], totalSettled, checkpointCallIds, seenBatches, seenAuthorizations, terminalReceipts, reservations,
+      calls: [...calls.values()], totalSettled, checkpointCallIds, seenBatches, seenAuthorizations, seenApiKeys, terminalReceipts, reservations,
       retainedExposure: [...calls.values()].reduce((sum, row) => sum + (row.state === "settled" ? row.settled_micro_usd!
         : row.state === "definitely_not_sent" ? 0 : row.reserved_micro_usd), 0) }),
     crashAfterReceipt: () => { failAfterReceipt = true; }, unknown: () => { outcomeUnknown = true; },
@@ -865,4 +869,50 @@ for (const mode of ["references_missing", "references_excess"] as const) test(`$
     assert.equal(result.sends, 1); assert.equal(result.calls.length, 1); assert.equal(result.checkpointCount, 1);
     assert.equal(result.exceptions.length, 0); assert.equal(result.completed, 1); assert.equal(result.totalSettled, 450);
   } finally { await s.cleanup(); }
+});
+
+
+test("mass editorial groups and repairs select their dedicated credential while historical profiles retain theirs", async () => {
+  const original = process.env.ANTHROPIC_API_KEY;
+  const dedicated = process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "synthetic_historical_credential";
+  process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = "synthetic_mass_credential";
+  try {
+    for (const [configuration, expected] of [
+      [massConfig, "synthetic_mass_credential"],
+      [config, "synthetic_historical_credential"],
+    ] as const) {
+      const s = await scenario(configuration, {});
+      try {
+        s.mode("invalid"); s.repairMode("valid");
+        await s.execute();
+        assert.deepEqual(s.get().seenApiKeys, [expected, expected]);
+      } finally { await s.cleanup(); }
+    }
+    for (const value of [undefined, ""]) {
+      if (value === undefined) delete process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
+      else process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = value;
+      const s = await scenario(massConfig, {});
+      try {
+        await s.execute();
+        assert.deepEqual(s.get().seenApiKeys, ["synthetic_historical_credential"]);
+      } finally { await s.cleanup(); }
+    }
+    process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = "synthetic_mass_credential";
+    const injected = await scenario(massConfig, { api_key: "synthetic_injected_credential" });
+    try {
+      await injected.execute();
+      assert.deepEqual(injected.get().seenApiKeys, ["synthetic_injected_credential"]);
+    } finally { await injected.cleanup(); }
+    const disabled = await scenario(massConfig, { api_key: "" });
+    try {
+      await assert.rejects(disabled.execute(), /provider_configuration_invalid/u);
+      assert.deepEqual(disabled.get().seenApiKeys, [""]);
+    } finally { await disabled.cleanup(); }
+  } finally {
+    if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = original;
+    if (dedicated === undefined) delete process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY;
+    else process.env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY = dedicated;
+  }
 });

@@ -45,7 +45,12 @@ async function authorize(args: Access, execute: boolean) {
     throw new SignalWorkspaceEngineError("workspace_engine_forbidden", 403);
   return { database, capabilities, discoveryEnabled, governedEnabled, massEnabled: mass, workspace_id: args.workspaceId, actor_user_id: args.actorUserId };
 }
-export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env, nowMilliseconds = Date.now()) {
+export function workspaceAnalysisAnthropicApiKeyV1(massEnabled = false,
+  env: Readonly<Record<string, string | undefined>> = process.env) {
+  return (massEnabled ? env.NOISIA_MASS_LABELING_ANTHROPIC_API_KEY : undefined)
+    || env.ANTHROPIC_API_KEY || "";
+}
+export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<string, string | undefined>> = process.env, nowMilliseconds = Date.now(), massEnabled = false) {
   const maximum = Number(env.NOISIA_WORKSPACE_INTERPRETATION_MAX_COST_MICRO_USD ?? 0);
   const daily = Number(env.NOISIA_WORKSPACE_INTERPRETATION_DAILY_CAP_MICRO_USD ?? 0);
   const timezone = env.NOISIA_WORKSPACE_INTERPRETATION_BUDGET_TIMEZONE ?? "UTC";
@@ -56,15 +61,15 @@ export function workspaceAnalysisInterpretationPolicyV1(env: Readonly<Record<str
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(expires)
     && Number.isFinite(Date.parse(expires)) && new Date(expires).toISOString() === expires
     && Number.isFinite(nowMilliseconds) && nowMilliseconds < Date.parse(expires);
-  const available = env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(env.ANTHROPIC_API_KEY)
+  const available = env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(workspaceAnalysisAnthropicApiKeyV1(massEnabled, env))
     && [maximum, daily].every(value => Number.isSafeInteger(value) && value > 0) && validTimezone && admissionOpen;
   return { available, maximum_cap_micro_usd: available ? Math.min(maximum, daily) : 0,
     daily_cap_micro_usd: daily, budget_timezone: timezone };
 }
 /** New DB admission receipts own their date and sealed budgets. The operating
  * kill switch still prevents new sends; an expired legacy env date is not a renewal veto. */
-export function workspaceAnalysisAdmissionProviderAvailableV1(env: Readonly<Record<string, string | undefined>> = process.env) {
-  return env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(env.ANTHROPIC_API_KEY);
+export function workspaceAnalysisAdmissionProviderAvailableV1(env: Readonly<Record<string, string | undefined>> = process.env, massEnabled = false) {
+  return env.NOISIA_WORKSPACE_INTERPRETATION_ENABLED === "true" && Boolean(workspaceAnalysisAnthropicApiKeyV1(massEnabled, env));
 }
 export function workspaceIncrementalEditorialExecutionViewV1(run: SignalWorkspaceIncrementalEditorialStatusV1 | null, providerAvailable: boolean) {
   return run ? { ...run, can_retry: run.can_retry && (providerAvailable || run.recorded_recovery_available),
@@ -196,20 +201,20 @@ async function loadAuthorizedWorkspaceAnalysisV1(args: Access & { idempotencyKey
     readWorkspaceAnalysis(() => access.database.query<{ received: boolean }>(`SELECT EXISTS(SELECT 1 FROM import_batches
       WHERE workspace_id=$1::uuid AND status='completed') received`, [args.workspaceId])),
     readWorkspaceAnalysis(() => loadWorkspaceAnalysisPreflightForReadV1(() => loadSignalWorkspaceEnginePreflightV1(access))),
-    readWorkspaceAnalysis(async () => access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1()),
+    readWorkspaceAnalysis(async () => access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1(process.env, Date.now(), access.massEnabled)),
     readWorkspaceAnalysis(() => loadSignalWorkspaceInterpretationAdmissionV1({ ...access, idempotency_key: args.idempotencyKey })),
     readWorkspaceAnalysis(() => loadWorkspaceIncrementalEditorialForActorV1({ ...access, idempotency_key: args.idempotencyKey }, undefined, { parallel: false }))
   ]);
   const received = receivedResult.rows[0]?.received === true;
   const preflight = preflightRead.value;
-  policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
+  policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1(process.env, access.massEnabled);
   const budgets = new Map<string, SignalWorkspaceEngineInterpretationBudgetV1>();
   const runs = [raw.latest_run, raw.latest_complete, raw.request_run].filter((run) => run && run.claude_cap_micro_usd !== 0);
   await Promise.all([...new Set(runs.map(run => run!.execution_id))].map(async execution_id => {
     budgets.set(execution_id, await readWorkspaceAnalysis(() => loadSignalWorkspaceEngineInterpretationBudgetV1({ ...access, execution_id })));
   }));
   const view = (run: SignalWorkspaceEngineStatusV1["latest_run"]) => workspaceAnalysisRunViewV1(run, run ? budgets.get(run.execution_id) : undefined);
-  const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1() } : null;
+  const admission = loadedAdmission ? { ...loadedAdmission, provider_available: workspaceAnalysisAdmissionProviderAvailableV1(process.env, access.massEnabled) } : null;
   const latest = view(raw.latest_run);
   const result: WorkspaceAnalysisStatus = { ...raw, update, numeric_readiness, admission, incremental_editorial, contract_version: "signal-workspace-analysis-v1",
     request_scope: workspaceAnalysisRequestScopeV1(args.workspaceId, args.actorUserId), can_execute: access.governedEnabled ? access.capabilities.can_request_processing : access.capabilities.can_execute_topics, discovery_enabled: discoveryEnabled, governed_enabled: access.governedEnabled,
@@ -238,13 +243,13 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     if (intentDigest && await replaySignalWorkspaceDiscoveryRequestV1({ ...access, idempotency_key: args.idempotencyKey, request_intent_digest: intentDigest }))
       return loadWorkspaceAnalysisForActorV1({ ...args, idempotencyKey: args.idempotencyKey });
     if (access.massEnabled) {
-      if (!workspaceAnalysisAdmissionProviderAvailableV1()) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
+      if (!workspaceAnalysisAdmissionProviderAvailableV1(process.env, access.massEnabled)) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
       const settings = await getMassLabelingStudyPolicyV1(access);
       if (!settings.category.trim()) throw new SignalWorkspaceEngineError("workspace_analysis_category_required", 422);
       await provisionMassLabelingProductEditorialPolicyV2(access);
     }
-    const policy = access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1();
-  policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1();
+    const policy = access.governedEnabled ? { ...await loadSignalDiscoveryPolicyV1(access.database,args.workspaceId) } : workspaceAnalysisInterpretationPolicyV1(process.env, Date.now(), access.massEnabled);
+  policy.available = policy.available && workspaceAnalysisAdmissionProviderAvailableV1(process.env, access.massEnabled);
     if (!policy.available) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
     if (!access.governedEnabled && (args.body.claude_cap_micro_usd == null || args.body.claude_cap_micro_usd <= 0
       || policy.maximum_cap_micro_usd === null || args.body.claude_cap_micro_usd > policy.maximum_cap_micro_usd)) {
@@ -256,7 +261,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
     const massEnabled = access.massEnabled;
     const enginePreflight = massEnabled ? await loadSignalWorkspaceEnginePreflightV1(access) : null;
     if (enginePreflight?.engine_configuration) {
-      try { await assertAnthropicProviderAccessV1({api_key:process.env.ANTHROPIC_API_KEY??"",enabled:policy.available}); }
+      try { await assertAnthropicProviderAccessV1({api_key:workspaceAnalysisAnthropicApiKeyV1(access.massEnabled),enabled:policy.available}); }
       catch { throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable",422); }
     }
     await beginSignalWorkspaceEngineV1({ ...access, idempotency_key: args.idempotencyKey,
@@ -292,7 +297,7 @@ export async function requestWorkspaceAnalysisForActorV1(args: Access & { idempo
       expected_worker_job_id: args.body.expected_worker_job_id, idempotency_key: args.idempotencyKey,
       provider_available: workspaceAnalysisAdmissionProviderAvailableV1() });
   } else if (args.body.action === "authorize_interpretation") {
-    if (!workspaceAnalysisAdmissionProviderAvailableV1()) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
+    if (!workspaceAnalysisAdmissionProviderAvailableV1(process.env, access.massEnabled)) throw new SignalWorkspaceEngineError("workspace_analysis_interpretation_unavailable", 422);
     await authorizeSignalWorkspaceInterpretationAdmissionV1({ ...access, execution_id: args.body.run_id, idempotency_key: args.idempotencyKey,
       expected_admission_operation_id: args.body.expected_admission_operation_id, grant_cap_micro_usd: args.body.grant_cap_micro_usd,
       admission_not_after: args.body.admission_not_after });
