@@ -66,6 +66,9 @@ const nextConfig = {
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
+      // Email signature images (photos and logo). Public so Gmail and Outlook can load them, never
+      // linked from the site and kept out of search results.
+      { source: "/email/:path*", headers: [...publicAssetCache, { key: "X-Robots-Tag", value: "noindex, nofollow, noimageindex" }] },
       ...["/brand/:path*", "/assets/:path*", "/fonts/:path*", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"].map((source) => ({ source, headers: publicAssetCache }))
     ];
   },
