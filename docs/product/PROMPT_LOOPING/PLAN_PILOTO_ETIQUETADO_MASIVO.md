@@ -211,7 +211,11 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
-- [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La comprobación de la página completa desplegada sigue pendiente. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
+- [x] H7 · Los PR #132–#145 pasaron CI y PostgreSQL en la solicitud y tras la fusión a develop. Studio y workers de UAT arrancaron con Railpack en `966528b3`. Se comprobaron la salud de Studio, el latido del worker y que Railway tenía cero cambios preparados.
+- [x] H7 · En dev-test, seis lecturas de la vista general tardaron entre 1.516 y 1.704 s. Tres recargas en el navegador tardaron 2.406, 2.035 y 2.938 s. La primera observación dio un límite superior de 3.156 s. Los indicadores mostraron 30 ejemplos en 1.485–1.826 s.
+- [ ] H7 · La marca y su Brand OS ya existen en UAT. Desde el producto se enviaron once archivos. Diez tienen recibo de importación completa. La aceptación del undécimo y las etapas posteriores quedan pendientes.
+
+- [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
 - [x] H7 · UAT aplicó las 58 migraciones ensayadas desde 0221 hasta 0290, una vez cada una. La comprobación antes de la primera escritura cubrió 371 tablas y 2,611,029 filas. PostgreSQL confirmó que seguían coincidiendo con el respaldo. Al terminar, la huella del catálogo y las nueve vistas coincidían con la copia ensayada. Los lectores históricos conservaron sus datos y se verificó la repetición del sello de dos generaciones. CI y PostgreSQL pasaron para el PR y la integración 13b6330c.
 
@@ -225,7 +229,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 - [x] H7 · El respaldo completo de UAT se restauró en una copia con PostgreSQL 17.6, la misma distribución, locale y permisos efectivos. Coincidieron las huellas de datos de las 371 tablas comprobadas (2,611,029 filas). La primera tanda de 53 migraciones pasó en la copia. Una segunda ejecución verificó los 53 recibos sin volver a aplicar DDL.
 - [x] H7 · El inventario separó los 17 commits exclusivos del Studio desplegado en UAT del recibo posterior en la rama. El plan de producción documenta 69 commits exclusivos de main y 1,034 de develop al corte R14, además del cotejo del catálogo real en una transacción de sólo lectura. Véase [línea de UAT y plan de producción](R15_UAT_LINEAGE_AND_PRODUCTION_PLAN.md).
-- [ ] H7 · La migración 0286 ya materializa el léxico en dev-test. En conversación, la evidencia de motivador bajó de 40.280 s a 4.701 s y la de barrera de 39.586 s a 4.352 s. La vista general aún tardó 19.411 s. Las metas siguen abiertas.
+- [x] H7 · La migración 0286 ya materializa el léxico en dev-test. En conversación, la evidencia de motivador bajó de 40.280 s a 4.701 s y la de barrera de 39.586 s a 4.352 s. La vista general aún tardó 19.411 s. Las consultas y la página se volvieron a medir después de optimizar el lector.
 
 - [x] H7 · Se leyó la auditoría R15, se identificaron los destinos de Railway y Supabase y se midió la referencia en dev-test. Conversación tardó 18.925 s en la vista, 40.280 s en evidencia de motivador y 39.586 s en barrera. Con todo el contenido tardaron 24.036, 33.646 y 37.632 s respectivamente.
 - [ ] H7 · Respaldar, restaurar y ensayar en una copia, preservar las tres marcas históricas, aplicar una vez en UAT, verificar el producto y entregar la comparación con sus recibos.
@@ -289,6 +293,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · El archivo de mayor tamaño falló dos veces al esperar una conexión. Tras desplegar el PR #144, el worker leyó el archivo completo. Durante el cierre, PostgreSQL devolvió `57014` al reconciliar por raíz la pertenencia a poblaciones semánticas. Studio conservó el archivo y los tres intentos.
 
 - H7 · La ruta autenticada de la versión de referencia tardó 19.537 s en mostrar la lista de tópicos. En los cuatro filtros, las consultas SQL original y optimizada devolvieron los mismos datos dentro de una misma lectura de PostgreSQL. En todo el contenido, la consulta optimizada tardó 2.545 s en la primera medición y entre 1.352 y 1.490 s en tres repeticiones.
 
@@ -371,6 +377,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H7 · Conservar los recibos fallidos y recuperar el archivo desde el historial de Studio. Ensayar el cierre en PostgreSQL con un lote de tamaño comparable, verificar la semántica de la reconciliación y confirmar los once recibos antes de iniciar las etapas con proveedor.
+
 - H7 · El corte de UAT se fijó en el último commit ensayado que incluye DDL. La optimización SQL de lectura pudo integrarse en paralelo una vez verdes los dos checks de ese corte, porque el manifiesto de migraciones permanecía idéntico.
 
 - H7 · Ajustar la solicitud sintética al cierre de la política y probar el borde de medianoche con un reloj controlado. La caducidad que aplica el producto sigue vigente. Antes de desplegar la consulta optimizada se verifican el alcance de permisos, los cuatro segmentos y la página autenticada completa.
@@ -446,7 +454,7 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Resultado y retrospectiva
 
-El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. El despliegue de los dos servicios y el estudio nuevo por la interfaz son los siguientes hitos de aceptación.
+El corte de base de datos de R15 terminó en UAT con el mismo catálogo que la copia ensayada. Los resultados y el acceso a evidencia de las marcas históricas coincidieron antes y después. Studio y workers ya sirven desde la misma revisión. El nuevo estudio llegó por la interfaz a diez archivos aceptados de once. El cierre del archivo restante es la etapa en curso.
 
 ### Ronda 14
 
