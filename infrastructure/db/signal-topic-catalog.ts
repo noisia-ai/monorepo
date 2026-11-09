@@ -1411,8 +1411,9 @@ export async function ensureSignalTopicCatalogStoreV1(args: {
 }): Promise<{ taxonomy_profile_id: string; created: boolean }> {
   const capabilities = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: args.client,
     workspace_id: args.workspace_id, actor_user_id: args.actor_user_id });
-  const discovery = args.processing_mode === "workspace-discovery-v1" &&
-    await signalWorkspaceFeatureEnabledV1({queryable:args.client,workspace_id:args.workspace_id,feature:"mfp_discovery"});
+  const discovery = args.processing_mode === "workspace-discovery-v1" && (
+    await signalWorkspaceFeatureEnabledV1({queryable:args.client,workspace_id:args.workspace_id,feature:"mass_labeling"})
+    || await signalWorkspaceFeatureEnabledV1({queryable:args.client,workspace_id:args.workspace_id,feature:"mfp_discovery"}));
   if (discovery ? !capabilities.can_request_processing || !(await loadSignalDiscoveryPolicyV1(args.client,args.workspace_id)).available
     : !capabilities.can_execute_topics) throw new SignalTopicCatalogError("topic_processing_permissions_required", 403);
   await args.client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`signal-taxonomy:${args.workspace_id}:topic`]);
@@ -1616,7 +1617,7 @@ async function materializeSignalWorkspaceEngineTopicsCoreV1(args: {
         AND (execution.policy_valid_until IS NULL OR execution.policy_valid_until>clock_timestamp()) FOR UPDATE OF execution`,
     [lease.execution_id,lease.workspace_id,lease.input_digest,lease.execution_token])).rows[0];
     if (!run) throw new SignalTopicCatalogError("workspace_engine_lease_conflict");
-    await assertActor(client, lease.workspace_id, run.actor_user_id, run.input_snapshot.discovery_population ? "can_request_processing" : "can_execute_topics");
+    await assertActor(client, lease.workspace_id, run.actor_user_id, run.input_snapshot.discovery_population || run.input_snapshot.mass_labeling_product ? "can_request_processing" : "can_execute_topics");
     const fit = run.result_summary.fit_checkpoint as import("./signal-workspace-engine").SignalWorkspaceEngineFitCheckpointV1|undefined;
     if (!fit || !run.input_snapshot.interpretation_config) throw new SignalTopicCatalogError("workspace_engine_fit_checkpoint_required");
     const { loadSignalWorkspaceEngineInputIdentityV1 } = await import("./signal-workspace-engine");

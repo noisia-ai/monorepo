@@ -135,3 +135,4 @@ export * from './signal-mass-labeling-r13';
 
 export * from "./signal-mass-labeling-study-policy";
 export * from "./signal-mass-labeling-product";
+export * from "./signal-mass-labeling-editorial-policy";

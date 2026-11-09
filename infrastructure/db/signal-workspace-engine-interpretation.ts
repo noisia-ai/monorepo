@@ -53,7 +53,7 @@ const view=(r:Row):SignalWorkspaceEngineInterpretationCallV1=>({admission:r.admi
  state:r.call_state,reserved_micro_usd:natural(r.reserved_micro_usd),settled_micro_usd:r.settled_micro_usd===null?null:natural(r.settled_micro_usd),request_digest:r.request_digest,interpretation_revision_digest:r.interpretation_revision_digest??null,editorial_repair:r.editorial_repair,
  response:r.response_storage_key?{storage_key:r.response_storage_key,sha256:r.response_sha256!,size_bytes:natural(r.response_size_bytes),http_status:r.response_http_status!,provider_request_id:r.provider_request_id,complete:r.response_complete}:null});
 async function authorize(c:PoolClient,workspace:string,actor:string,execute=true,executionId?:string){const cap=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:c,workspace_id:workspace,actor_user_id:actor});
- const discovery=execute&&!cap.can_execute_topics&&executionId&&(await c.query<{discovery:boolean}>("SELECT input_snapshot ? 'discovery_population' discovery FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract IN('workspace-topic-engine-v1','workspace-incremental-editorial-v1')",[executionId,workspace])).rows[0]?.discovery===true;
+ const discovery=execute&&!cap.can_execute_topics&&executionId&&(await c.query<{discovery:boolean}>("SELECT (input_snapshot ? 'discovery_population' OR input_snapshot->>'mass_labeling_product'='true') discovery FROM signal_topic_catalog_executions WHERE id=$1::uuid AND workspace_id=$2::uuid AND input_contract IN('workspace-topic-engine-v1','workspace-incremental-editorial-v1')",[executionId,workspace])).rows[0]?.discovery===true;
  if(!(execute?(discovery?cap.can_request_processing:cap.can_execute_topics):cap.can_view))return fail('workspace_engine_interpretation_forbidden',403);}
 async function actorLock(c:PoolClient,actor:string){await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`workspace-interpretation-budget:${actor}`]);}
 async function execution(c:PoolClient,workspace:string,id:string,actor:string,checkCurrent=true,executionToken?:string){
@@ -161,7 +161,7 @@ export async function reserveSignalWorkspaceEngineInterpretationV1(args:{databas
   }else if(attempts.length){const prior=attempts[0]!;
    if(prior.actor_user_id!==args.actor_user_id||prior.request_seal!==sealFor(prior.admission?.operation_id))return fail('workspace_engine_interpretation_idempotency_conflict');return view(prior);}
   const run=await execution(c,args.workspace_id,args.execution_id,args.actor_user_id,true,args.execution_token);
-  if(args.daily_cap_micro_usd===null&&!('discovery_population' in run.input_snapshot))return fail('workspace_engine_interpretation_request_invalid',422);
+  if(args.daily_cap_micro_usd===null&&!('discovery_population' in run.input_snapshot || 'mass_labeling_product' in run.input_snapshot))return fail('workspace_engine_interpretation_request_invalid',422);
   const sealed=run.interpretation_revision?.configuration??run.input_snapshot.interpretation_config;
   if((run.interpretation_revision?.revision_digest??null)!==(args.interpretation_revision_digest??null))return fail('workspace_engine_interpretation_revision_mismatch');
   if(sealed&&(signalWorkspaceEmbeddingDigestV1(config)!==signalWorkspaceEmbeddingDigestV1(sealed.call_configuration)
@@ -234,7 +234,7 @@ export async function markSignalWorkspaceEngineInterpretationSentV1(args:{databa
   const admission=await assertSignalWorkspaceInterpretationAdmissionWithClientV1(c,{execution_id:row.catalog_execution_id,admission_operation_id:row.admission?.operation_id});
   if(!admission)await assertEditorialAdmission(c,run.interpretation_revision);
   const today=(await c.query<{date:string}>("SELECT to_char(clock_timestamp() AT TIME ZONE $1,'YYYY-MM-DD') date",[row.budget_timezone])).rows[0]!.date;
-  if(today!==row.budget_date&&(!('discovery_population' in run.input_snapshot)||row.budget_daily_cap_micro_usd!==null))return fail('workspace_engine_interpretation_daily_authority_expired');
+  if(today!==row.budget_date&&(!('discovery_population' in run.input_snapshot || 'mass_labeling_product' in run.input_snapshot)||row.budget_daily_cap_micro_usd!==null))return fail('workspace_engine_interpretation_daily_authority_expired');
   const spent=(await c.query<{run_spent:string;day_spent:string}>(`SELECT
    COALESCE(sum(${exposureSQL}) FILTER(WHERE catalog_execution_id=$1::uuid),0)::text run_spent,
    COALESCE(sum(${exposureSQL}) FILTER(WHERE budget_date=$3::date),0)::text day_spent

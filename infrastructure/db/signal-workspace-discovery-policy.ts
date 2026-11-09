@@ -1,5 +1,5 @@
 import type { Pool } from "pg";
-import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as legacyConfiguration, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1 } from "@noisia/query-engine";
+import { SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1 as legacyConfiguration, SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1, SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2 } from "@noisia/query-engine";
 
 export type SignalDiscoveryPolicyV1 = {
   available: boolean; policy_id: string | null; maximum_cap_micro_usd: number | null;
@@ -19,9 +19,9 @@ export async function loadSignalDiscoveryPolicyV1(queryable: Pick<Pool, "query">
     FROM signal_workspaces workspace JOIN signal_processing_policy_versions policy ON policy.organization_id=workspace.organization_id
     JOIN signal_processing_policy_actions action ON action.policy_version_id=policy.id AND action.action='topic_interpretation'
     WHERE workspace.id=$1::uuid AND policy.status='active' AND policy.valid_from<=clock_timestamp() AND policy.valid_until>clock_timestamp()
-      AND action.provider='anthropic' AND action.model=$2 AND (action.configuration=$3::jsonb OR action.configuration=$4::jsonb)
+      AND action.provider='anthropic' AND action.model=$2 AND (action.configuration=$3::jsonb OR action.configuration=$4::jsonb OR action.configuration=$5::jsonb)
     ORDER BY (action.configuration=$3::jsonb) DESC LIMIT 1`,
-  [workspaceId,SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1.model,JSON.stringify(SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1),JSON.stringify(legacyConfiguration)])).rows[0];
+  [workspaceId,SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1.model,JSON.stringify(SIGNAL_WORKSPACE_INTERPRETATION_MULTILINGUAL_CONFIGURATION_V1),JSON.stringify(legacyConfiguration),JSON.stringify(SIGNAL_WORKSPACE_MASS_LABELING_PRODUCT_CONFIGURATION_V2)])).rows[0];
   if (!row) return { available: false, policy_id: null, maximum_cap_micro_usd: null, daily_cap_micro_usd: null, budget_timezone: "UTC" };
   const cap = row.cap === null ? null : Number(row.cap), daily = row.daily === null ? null : Number(row.daily);
   discoveryStrictCapV1(cap, daily === null ? null : Number.MAX_SAFE_INTEGER);

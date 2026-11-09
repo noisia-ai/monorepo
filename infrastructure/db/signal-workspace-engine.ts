@@ -57,6 +57,7 @@ export type SignalWorkspaceEngineFitCheckpointV1 = {
 };
 export type SignalWorkspaceEngineSnapshotV1 = {
   contract_version: "workspace-topic-engine-v1"; workspace_id: string; taxonomy_profile_id: string;
+  mass_labeling_product?: true;
   preparation_run_id: string; embedding_run_id: string; input_revision: string;
   embedding_profile: SignalWorkspaceEmbeddingProfileV1; context_digest: string; catalog_digest: string;
   prototype_plan_digest: string; expected_roots: number; expected_chunks: number; expected_guides: number;
@@ -242,7 +243,9 @@ async function transaction<T>(database: SignalWorkspaceEngineDatabaseV1, work: (
 }
 async function authorize(client: PoolClient, workspace_id: string, actor_user_id: string, execute = true, discovery = false) {
   const capability = await loadSignalWorkspaceCapabilitiesStoreV1({ queryable: client, workspace_id, actor_user_id });
-  if (!(execute ? (discovery ? capability.can_request_processing : capability.can_execute_topics) : capability.can_view)) return fail("workspace_engine_forbidden", 403);
+  const mass = execute && await signalWorkspaceMassLabelingEnabledV1({ queryable: client, workspace_id });
+  if (!(execute ? mass ? capability.can_request_processing && capability.can_edit_topics
+    : discovery ? capability.can_request_processing : capability.can_execute_topics : capability.can_view)) return fail("workspace_engine_forbidden", 403);
 }
 async function completeDispatch(client: PoolClient, execution_id: string) {
   await client.query(`UPDATE signal_topic_classification_outbox SET status='completed',completed_at=clock_timestamp(),
@@ -519,16 +522,19 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
   interpretation_config?:SignalWorkspaceEngineAnalysisConfigV1;
   incremental_options?:{close_requested:boolean;parent_execution_id?:string;taxonomy_profile_id?:string;
     automatic_admission?:import('./signal-workspace-numeric-producer').SignalWorkspaceNumericAdmissionV1}}):Promise<{execution_id:string;replayed:boolean}> {
-  const discoveryEnabled=await signalWorkspaceFeatureEnabledWithDatabaseV1({database:args.database,workspace_id:args.workspace_id,feature:"mfp_discovery"});
+  const massEnabled=await signalWorkspaceFeatureEnabledWithDatabaseV1({database:args.database,workspace_id:args.workspace_id,feature:"mass_labeling"});
+  const productEnabled=massEnabled && Boolean(args.interpretation_config && "category_lexicon_contract_version" in args.interpretation_config.call_configuration);
+  const discoveryEnabled=!massEnabled && await signalWorkspaceFeatureEnabledWithDatabaseV1({database:args.database,workspace_id:args.workspace_id,feature:"mfp_discovery"});
+  const governedEnabled=discoveryEnabled||productEnabled;
   if(args.discovery_request_intent_digest!==undefined&&(!discoveryEnabled||!digestPattern.test(args.discovery_request_intent_digest)))return fail("workspace_engine_request_invalid",422);
   if(args.incremental_options&&(args.claude_cap_micro_usd!==0||args.interpretation_config))return fail('workspace_engine_incremental_numeric_only',422);
   if(!/^[A-Za-z0-9._:-]{8,200}$/u.test(args.idempotency_key)||!digestPattern.test(args.expected_context_digest)||!digestPattern.test(args.expected_catalog_digest)
-    ||!(discoveryEnabled&&args.interpretation_config&&args.claude_cap_micro_usd===null)
+    ||!(governedEnabled&&args.interpretation_config&&args.claude_cap_micro_usd===null)
       &&(!Number.isSafeInteger(args.claude_cap_micro_usd)||args.claude_cap_micro_usd===null||args.claude_cap_micro_usd<0)||Buffer.byteLength(JSON.stringify(args.engine_config),'utf8')>65536)
     return fail("workspace_engine_request_invalid",422);
   if(args.interpretation_config){const c=args.interpretation_config,p=c.call_configuration;
-    if((args.claude_cap_micro_usd===null?!discoveryEnabled:args.claude_cap_micro_usd<=0)||!p||p.provider!=='anthropic'||!p.model||p.model.length>120||!p.pricing_version
-      ||!digestPattern.test(p.prompt_digest)||!digestPattern.test(p.schema_digest)||(c.daily_cap_micro_usd===null?!discoveryEnabled:!Number.isSafeInteger(c.daily_cap_micro_usd)||c.daily_cap_micro_usd<=0)
+    if((args.claude_cap_micro_usd===null?!governedEnabled:args.claude_cap_micro_usd<=0)||!p||p.provider!=='anthropic'||!p.model||p.model.length>120||!p.pricing_version
+      ||!digestPattern.test(p.prompt_digest)||!digestPattern.test(p.schema_digest)||(c.daily_cap_micro_usd===null?!governedEnabled:!Number.isSafeInteger(c.daily_cap_micro_usd)||c.daily_cap_micro_usd<=0)
       ||![p.input_micro_usd_per_million_tokens,p.output_micro_usd_per_million_tokens,p.cache_read_micro_usd_per_million_tokens,p.cache_creation_micro_usd_per_million_tokens].every(n=>Number.isSafeInteger(n)&&n>=0)
       ||typeof c.budget_timezone!=='string'||c.budget_timezone.length>100||Buffer.byteLength(JSON.stringify(c),'utf8')>16384)return fail('workspace_engine_interpretation_config_invalid',422);
   }
@@ -547,7 +553,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       args.parent_execution_id===undefined?"latest-compatible-complete-v1":args.parent_execution_id});
   return transaction(args.database,async client=>{
     await authorize(client,args.workspace_id,args.actor_user_id,true,discoveryEnabled);
-    if(discoveryEnabled)await client.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||organization_id::text,0)) FROM signal_workspaces WHERE id=$1::uuid",[args.workspace_id]);
+    if(governedEnabled)await client.query("SELECT pg_advisory_xact_lock(hashtextextended('signal-processing-policy:'||organization_id::text,0)) FROM signal_workspaces WHERE id=$1::uuid",[args.workspace_id]);
     if(args.interpretation_config&&!(await client.query('SELECT name FROM pg_timezone_names WHERE name=$1',[args.interpretation_config.budget_timezone])).rows[0])return fail('workspace_engine_interpretation_config_invalid',422);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`signal-taxonomy:${args.workspace_id}:topic`]);
     const prior=(await client.query<{id:string;actor_user_id:string;request_digest:string;input_contract:string}>(
@@ -557,7 +563,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
         if(!caps.can_request_processing)return fail("workspace_engine_forbidden",403);}
       if(prior.actor_user_id!==args.actor_user_id||prior.request_digest!==requestDigest||prior.input_contract!=='workspace-topic-engine-v1')return fail('workspace_engine_idempotency_conflict');
       return{execution_id:prior.id,replayed:true};}
-    if(discoveryEnabled&&!args.incremental_options){
+    if(governedEnabled&&!args.incremental_options){
       if(!args.interpretation_config)return fail('workspace_engine_interpretation_config_invalid',422);
       const policy=await loadSignalDiscoveryPolicyV1(client,args.workspace_id);
       if(!policy.available)return fail('workspace_analysis_interpretation_unavailable',422);
@@ -566,7 +572,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
         ||args.interpretation_config.budget_timezone!==policy.budget_timezone)return fail('workspace_engine_interpretation_config_mismatch');
     }
     if(!args.incremental_options)await ensureSignalTopicCatalogStoreV1({client,workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,
-      ...(discoveryEnabled?{processing_mode:"workspace-discovery-v1" as const}:{})});
+      ...(governedEnabled?{processing_mode:"workspace-discovery-v1" as const}:{})});
     await client.query("SELECT workspace_id FROM signal_corpus_preparation_input_state WHERE workspace_id=$1::uuid FOR UPDATE",[args.workspace_id]);
     const embedded=(await client.query<{id:string;preparation_run_id:string;input_revision:string;profile:SignalWorkspaceEmbeddingProfileV1;
       policy_valid_until:string|null;counts:{eligible_roots:number;completed_roots:number;total_chunk_references:number;processed_chunk_references:number}}>(`
@@ -653,6 +659,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
     if((await client.query(`SELECT id FROM signal_topic_catalog_executions WHERE taxonomy_profile_id=$1::uuid AND status IN('queued','running')
       AND ($2::uuid IS NULL OR id<>$2::uuid)`,[input.plan.taxonomy_profile_id,numericDescriptor?.parent.execution_id??null])).rows[0])return fail('workspace_engine_execution_active');
     const snapshot={contract_version:'workspace-topic-engine-v1',workspace_id:args.workspace_id,taxonomy_profile_id:input.plan.taxonomy_profile_id,
+      ...(productEnabled?{mass_labeling_product:true as const}:{}),
       preparation_run_id:embedded.preparation_run_id,embedding_run_id:embedded.id,input_revision:embedded.input_revision,embedding_profile:embedded.profile,
       context_digest:input.context_digest,catalog_digest:input.catalog_digest,prototype_plan_digest:input.plan.plan_digest,
       expected_roots:discovery?.population.root_ids.length??embedded.counts.eligible_roots,expected_chunks:discovery?.expected_chunks??embedded.counts.total_chunk_references,expected_guides:input.guides.length,
@@ -660,7 +667,7 @@ export async function beginSignalWorkspaceEngineV1(args:{database:SignalWorkspac
       parent_execution_id:parentId,context_refs:input.context_refs,...(discoveryEnabled?{discovery_context_revision:input.context_revision}:{}),guides:input.guides,engine_config:args.engine_config,claude_cap_micro_usd:args.claude_cap_micro_usd,
       ...(args.interpretation_config?{interpretation_config:args.interpretation_config}:{}),...(numericDescriptor?{numeric_descriptor:numericDescriptor}:{})};
     const id=randomUUID();
-    const processingAdmission=discoveryEnabled?await admitSignalProcessingWithClientV1(client,{
+    const processingAdmission=governedEnabled?await admitSignalProcessingWithClientV1(client,{
       workspace_id:args.workspace_id,actor_user_id:args.actor_user_id,action:numericDescriptor?'topic_fit_incremental':'topic_interpretation',target_id:id,
       idempotency_key:args.idempotency_key,request_digest:requestDigest,
       execution_cap_micro_usd:args.claude_cap_micro_usd===null?null:String(args.claude_cap_micro_usd),
@@ -1211,7 +1218,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
       catch(error){if(!isSignalWorkspaceEngineSemanticAuthorityUnavailableV1(error)
         && (!(error instanceof Error)||!['workspace_topic_catalog_required','workspace_topic_catalog_empty'].includes(error.message)))throw error;}
       const actorCapability=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:args.workspace_id,actor_user_id:row.actor_user_id});
-      const actorCanExecute=row.input_snapshot.discovery_population?actorCapability.can_request_processing:actorCapability.can_execute_topics;
+      const actorCanExecute=row.input_snapshot.discovery_population||row.input_snapshot.mass_labeling_product?actorCapability.can_request_processing:actorCapability.can_execute_topics;
       const isCurrent=row.revision_live&&row.policy_live&&inputIdentity?.context_digest===row.input_snapshot.context_digest&&inputIdentity?.catalog_digest===row.input_snapshot.catalog_digest&&actorCanExecute;
       const progressCheckpoint=row.latest_materialization_progress;
       const fullProfile=(row.result_summary.analysis_checkpoint as {output_catalog_profile_id?:string}|undefined)?.output_catalog_profile_id;
@@ -1236,7 +1243,7 @@ export async function loadSignalWorkspaceEngineStatusV1(args:{database:SignalWor
         materialization_progress:progressCheckpoint,
         materialization_pending:needsProgress&&!exhausted,
         materialization_error_code:materializationError,
-        materialization_retry_available:Boolean(needsProgress&&exhausted&&currentDispatch&&dispatch&&['failed','dead_letter'].includes(dispatch.status)&&(row.input_snapshot.discovery_population?callerCapability.can_request_processing:callerCapability.can_execute_topics)&&row.actor_user_id===args.actor_user_id),
+        materialization_retry_available:Boolean(needsProgress&&exhausted&&currentDispatch&&dispatch&&['failed','dead_letter'].includes(dispatch.status)&&(row.input_snapshot.discovery_population||row.input_snapshot.mass_labeling_product?callerCapability.can_request_processing:callerCapability.can_execute_topics)&&row.actor_user_id===args.actor_user_id),
         fit_completed:!!row.result_summary.fit_checkpoint,
         expected_interpretation_units:natural((row.result_summary.fit_checkpoint as SignalWorkspaceEngineFitCheckpointV1|undefined)?.interpretation_manifest.unit_count??0),
         interpreted_units:natural(row.result_summary.interpreted_units??0),materialized_topics:natural(progressCheckpoint?.output_catalog_profile_id===row.latest_catalog_profile_id?progressCheckpoint.topic_count:row.result_summary.materialized_topics??0),
