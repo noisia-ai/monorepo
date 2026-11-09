@@ -4,6 +4,9 @@ import React, { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import test from "node:test";
+import ts from "typescript";
+import {localizedSignalTopic} from "../../components/signal-v2/signal-topic-localization";
+import {validNativeTopicDetail} from "../../components/signal-v2/SignalWorkspaceTopicDetail";
 import type { SignalWorkspaceTopicReadBundleV1 } from "@noisia/db";
 import type { SignalWorkspaceTopicsOverviewV1, SignalWorkspaceOverviewV1, SignalWorkspaceImportedOverviewV1,
   SignalWorkspaceDefinedInterestOverviewV1 } from "@noisia/query-engine";
@@ -451,4 +454,107 @@ test("relationship selection changes section before selecting an interest or top
   choose("not-in-authorized-payload");
   assert.deepEqual(actions, []);
   assert.equal(selected, "topic1");
+});
+
+
+test("mass overview SSR shows loading and original topic copy while consumers and stale views avoid inspection",async()=>{
+ const html=await render("en-US",localizedPilot);
+ assert.match(html,/Meeting friends/);assert.match(html,/Encontros com amigos/);assert.match(html,/Loading/);
+ assert.doesNotMatch(html,/No evidence available/);
+ const stale=await render("en-US",{...localizedPilot,is_current:false});
+ assert.doesNotMatch(stale,/Loading…|Loading\.\.\./);
+ const consumers=await render("en-US",localizedPilot,"consumers");
+ assert.doesNotMatch(consumers,/Loading…|Loading\.\.\./);
+});
+
+type InspectionElement={type:unknown;props:Record<string,unknown>};
+type InspectionSlot={initial:unknown;value:unknown};
+/** Execute the component's own mount effect with controlled hooks and transport. */
+async function initialInspectionFixture(payload:SignalWorkspaceTopicsOverviewV1,bundle:SignalWorkspaceTopicReadBundleV1|null=null,surface="topics"){
+ const effects:Array<()=>void|(()=>void)>=[],slots:InspectionSlot[]=[];
+ const jsx=(type:unknown,props:Record<string,unknown>):InspectionElement=>({type,props});
+ const hooks={
+  useId:()=>"synthetic-tabs",useMemo:(value:()=>unknown)=>value(),useCallback:(value:unknown)=>value,
+  useRef:(value:unknown)=>({current:value}),useEffect:(effect:()=>void|(()=>void))=>effects.push(effect),
+  useState:(initial:unknown)=>{
+   const value=typeof initial==="function"?initial():initial,slot={initial:value,value};slots.push(slot);
+   return [value,(next:unknown)=>{slot.value=typeof next==="function"?next(slot.value):next;}];
+  }
+ };
+ const presentation=new Set(["next/link","@phosphor-icons/react","./SignalV2ModuleHeader","./SignalAnalyticsFilter",
+  "./SignalDataScopeFilter","./SignalEChart","./SignalSourceIcon","./SignalEvidenceDrawer","./SignalConsumerEvidence",
+  "./SignalTopicsPrimitives","./SignalTopicChartOptions"]);
+ const dependencies:Record<string,unknown>={
+  "react":hooks,"react/jsx-runtime":{jsx,jsxs:jsx,Fragment:"fragment"},
+  "next-intl":{useLocale:()=>"en-US",useTranslations:()=>(key:string)=>key},
+  "./signal-topic-localization":{localizedSignalTopic},"./SignalWorkspaceTopicDetail":{validNativeTopicDetail}
+ };
+ const exports:Record<string,unknown>={},source=await readFile(new URL("../../components/signal-v2/SignalV2WorkspaceTopics.tsx",import.meta.url),"utf8");
+ new Function("require","exports",ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText)(
+  (name:string)=>{if(name in dependencies)return dependencies[name];assert.ok(presentation.has(name),name);return new Proxy({},{get:()=>()=>null});},exports);
+ const props={brandName:"Synthetic QA",data:payload,initialBundle:bundle,surface,loading:false,workspaceTimezone:"UTC",onOpenMentions:()=>{}};
+ const render=exports.SignalV2WorkspaceTopics as (value:typeof props)=>InspectionElement;
+ const element=render(props),tree=(element.type as (value:Record<string,unknown>)=>InspectionElement)(element.props);
+ const cleanup:Array<()=>void>=[];
+ return {slots,tree,start(){for(const effect of effects){const dispose=effect();if(dispose)cleanup.push(dispose);}},
+  cleanup(){for(const dispose of cleanup)dispose();}};
+}
+function inspectionAction(value:unknown):InspectionElement|undefined{
+ if(!value||typeof value!=="object")return;
+ const element=value as InspectionElement,children=element.props?.children;
+ if(element.type==="button"&&Array.isArray(children)&&children.includes("evidence"))return element;
+ for(const child of Array.isArray(children)?children:[children]){const found=inspectionAction(child);if(found)return found;}
+}
+const deferredMassData:SignalWorkspaceTopicsOverviewV1={...localizedPilot,generation_id:null,
+ terms:localizedPilot.terms.map((term,index)=>index===0?{...term,basis:"concept_membership"}:term)};
+const inspectedMassBundle:SignalWorkspaceTopicReadBundleV1={...initialBundle,overview:deferredMassData,
+ detail:{...initialBundle.detail!,generation_id:null},evidence:{...initialBundle.evidence!,generation_id:null}};
+
+test("deferred mass mount issues one scoped inspection, hydrates both responses and avoids an early drawer duplicate",async()=>{
+ const prior=globalThis.fetch,calls:Array<{url:string;signal:AbortSignal|null|undefined}>=[];
+ let respond!:(value:Response)=>void;
+ globalThis.fetch=(async(url,options)=>{calls.push({url:String(url),signal:options?.signal});return new Promise<Response>(resolve=>{respond=resolve;});}) as typeof fetch;
+ const fixture=await initialInspectionFixture(deferredMassData);
+ try{
+  assert.equal(calls.length,0);
+  const button=inspectionAction(fixture.tree);assert.ok(button);(button.props.onClick as ()=>void)();
+  fixture.start();assert.equal(calls.length,1);
+  const url=new URL(calls[0]!.url,"https://synthetic.invalid");
+  assert.match(url.pathname,/topic\/topic0\/inspection$/u);assert.equal(url.searchParams.get("scope_digest"),deferredMassData.scope_digest);
+  assert.equal(url.searchParams.get("conversation_segment"),"conversation");
+  respond(Response.json(inspectedMassBundle));await new Promise(resolve=>setImmediate(resolve));
+  assert.ok(fixture.slots.some(slot=>JSON.stringify(slot.value)===JSON.stringify(inspectedMassBundle.detail)));
+  assert.ok(fixture.slots.some(slot=>JSON.stringify(slot.value)===JSON.stringify(inspectedMassBundle.evidence)));
+  assert.equal(calls.length,1);
+ }finally{fixture.cleanup();globalThis.fetch=prior;}
+});
+test("complete initial bundles, consumers, stale views and empty mass selections do not fetch inspection",async()=>{
+ const prior=globalThis.fetch;let calls=0;
+ globalThis.fetch=(async()=>{calls++;throw Error("unexpected inspection");}) as typeof fetch;
+ try{
+  const cases:Array<[SignalWorkspaceTopicsOverviewV1,SignalWorkspaceTopicReadBundleV1|null,string]>=[
+   [deferredMassData,inspectedMassBundle,"topics"],[deferredMassData,null,"consumers"],
+   [{...deferredMassData,is_current:false},null,"topics"],[{...deferredMassData,terms:[]},null,"topics"]];
+  for(const [payload,bundle,surface] of cases){
+   const fixture=await initialInspectionFixture(payload,bundle,surface);fixture.start();fixture.cleanup();
+  }
+  assert.equal(calls,0);
+ }finally{globalThis.fetch=prior;}
+});
+test("deferred inspection clears revoked or mismatched responses and aborts on cleanup",async()=>{
+ const prior=globalThis.fetch;
+ try{
+  for(const outcome of [403,"foreign-scope","aborted"] as const){
+   let respond!:(value:Response)=>void,signal:AbortSignal|null|undefined;
+   globalThis.fetch=(async(_url,options)=>{signal=options?.signal;return new Promise<Response>(resolve=>{respond=resolve;});}) as typeof fetch;
+   const fixture=await initialInspectionFixture(deferredMassData);fixture.start();
+   if(outcome==="aborted"){fixture.cleanup();assert.equal(signal?.aborted,true);}
+   respond(outcome===403?Response.json({},{status:403}):Response.json({...inspectedMassBundle,
+    evidence:{...inspectedMassBundle.evidence!,scope_digest:outcome==="foreign-scope"?"foreign":deferredMassData.scope_digest}}));
+   await new Promise(resolve=>setImmediate(resolve));
+   assert.equal(fixture.slots.some(slot=>typeof slot.value==="object"&&slot.value!==null&&"contract_version" in slot.value),false);
+   if(outcome!=="aborted")assert.ok(fixture.slots.some(slot=>slot.value==="evidenceStale"));
+   fixture.cleanup();
+  }
+ }finally{globalThis.fetch=prior;}
 });

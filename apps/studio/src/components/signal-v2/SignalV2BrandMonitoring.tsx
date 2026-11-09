@@ -391,8 +391,10 @@ export function SignalV2BrandMonitoring({
     const from = selection?.start ?? topicsNarrativesData.filters.date_from;
     const to = selection?.end ?? topicsNarrativesData.filters.date_to;
     if (from) params.set("date_from", from); if (to) params.set("date_to", to);
+    const requestParams = new URLSearchParams(params);
+    if (topicsNarrativesData.population_segments) requestParams.set("initial_inspection", "deferred");
     try {
-      const response = await fetch(`/api/data-os/signal/${data.workspace.id}/topics-narratives/page?${params}`, { cache: "no-store", signal: controller.signal });
+      const response = await fetch(`/api/data-os/signal/${data.workspace.id}/topics-narratives/page?${requestParams}`, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || ticket !== filterSequenceRef.current) return false;
       if (!response.ok) {
         if ([401, 403, 404, 409].includes(response.status)) invalidateNativeTopicEvidence();
