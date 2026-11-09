@@ -215,7 +215,9 @@ export function startMassLabelingJevDrainerV1() {
       ).rows[0]?.ready
     )
       return;
-    await materializeMassLabelingProductMapV2({ database: pool });
+    await materializeMassLabelingProductMapV2({ database: pool }).catch(() => {
+      console.warn("[mass-labeling] product map materialization unavailable");
+    });
     const runs = (
       await pool.query<{
         id: string;
