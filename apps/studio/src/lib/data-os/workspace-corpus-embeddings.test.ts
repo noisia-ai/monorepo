@@ -115,11 +115,11 @@ test("without workspace opt-in, classic authority stays unchanged and missing po
   try {
     for(const flag of ["false","true"]){
       process.env.NOISIA_MENTION_FACETS_ENABLED=flag;
-      let featureReads=0,writes=0;
+      const featureReads:Record<string,number>={};let writes=0;
       let authority:Record<string,unknown>={...granted,organization_status:"active",brand_same_organization:true};
-      const query=async(sql:string)=>{
+      const query=async(sql:string,params?:unknown[])=>{
         if(sql.includes("workspace.status workspace_status"))return {rows:[authority]};
-        if(sql.includes("FROM signal_workspace_features")){featureReads++;return {rows:[{enabled:false}]};}
+        if(sql.includes("FROM signal_workspace_features")){const feature=String(params?.[1]);featureReads[feature]=(featureReads[feature]??0)+1;return {rows:[{enabled:false}]};}
         if(/^(INSERT|UPDATE|DELETE)/u.test(sql.trim()))writes++;
         return {rows:[]};
       };
@@ -131,7 +131,8 @@ test("without workspace opt-in, classic authority stays unchanged and missing po
       await assert.rejects(requestWorkspaceCorpusEmbeddingsForActorV1({database,workspaceId:"10000000-0000-4000-8000-000000000001",actorUserId:"10000000-0000-4000-8000-000000000002",
         idempotencyKey:"legacy-request",body:{...body,hard_cap_micro_usd:null}}),
       (error:unknown)=>error instanceof Error&&error.message==="workspace_embedding_preparation_required");
-      assert.equal(featureReads>0,flag==="true");
+      assert.ok((featureReads.mass_labeling??0)>0,"the default-on product checks its durable workspace feature");
+      assert.equal((featureReads.mention_facets??0)>0,flag==="true");
       assert.equal(writes,0);
     }
   }finally{

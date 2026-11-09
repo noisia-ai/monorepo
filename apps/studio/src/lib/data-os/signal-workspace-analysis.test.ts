@@ -294,6 +294,7 @@ test("numeric recovery reaches the dedicated DB discriminator and rejects an edi
   const query = async (sql: string, params?: unknown[]) => {
     queries.push(sql);
     if (sql.includes("workspace.status workspace_status")) return { rows: [authority] };
+    if (sql.includes("FROM signal_workspace_features")) return { rows: [{ enabled: false }] };
     if (/^(BEGIN|SET LOCAL|ROLLBACK)/u.test(sql) || sql.includes("pg_advisory_xact_lock")) return { rows: [] };
     if (sql.includes("engine_request_keys->$2 alias")) { assert.deepEqual(params, [id, "numeric-exact-request"]); return { rows: [] }; }
     if (sql.startsWith("SELECT workspace_id FROM signal_topic_catalog_executions")) { assert.deepEqual(params, [numericId]); return { rows: [{ workspace_id: id }] }; }
