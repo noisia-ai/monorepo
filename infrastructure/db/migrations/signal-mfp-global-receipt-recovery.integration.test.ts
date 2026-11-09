@@ -76,7 +76,7 @@ test("a scoped paid global receipt decision replays offline and is recomputed at
       content:[{type:"text",text:JSON.stringify(output)}],usage:{input_tokens:100,output_tokens:50}});
      assert.throws(()=>parseMassLabelingConsolidationResponseV1(batch,response),"ordinary parsing remains strict");
      const reservation={...fixture.access,execution_id:fixture.lease.execution_id,idempotency_key:randomUUID(),request_digest:batch.request_digest,
-      configuration:batch.configuration,reserved_micro_usd:batch.reserved_micro_usd,budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,
+      configuration:batch.configuration,reserved_micro_usd:batch.reserved_micro_usd,budget_timezone:fixture.budget.timezone,daily_cap_micro_usd:30_000_000,
       execution_token:fixture.lease.execution_token,mass_labeling_stage:{stage:"global-consolidation-v1" as const,source_groups_digest:batch.source_groups_digest}};
      const call=await money.reserveSignalWorkspaceEngineInterpretationV1(reservation),token={database,call_id:call.call_id,attempt_token:call.attempt_token};
      await money.markSignalWorkspaceEngineInterpretationSentV1({...token,execution_token:fixture.lease.execution_token});

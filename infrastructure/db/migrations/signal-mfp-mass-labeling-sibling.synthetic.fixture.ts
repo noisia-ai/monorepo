@@ -20,7 +20,7 @@ export type MassLabelingSiblingEditorialFixtureV1 = Identity & {
  * action roster exactly, adding context/numeric/editorial actions needed to
  * exercise the real admission path. Nothing here changes a live owner's policy.
  * The caller owns an isolated invented-data transaction and physical rollback. */
-async function prepareSharedSyntheticPolicy(args: SiblingSeedArgs) {
+export async function prepareSyntheticSiblingEditorialPolicyV1(args: SiblingSeedArgs) {
   const { query, identity } = args;
   const actor = (await query(`SELECT o.slug,o.legal_name,u.email FROM organizations o JOIN users u ON u.organization_id=o.id
     WHERE o.id=$1 AND u.id=$2 AND u.status='active' AND u.user_type='noisia_internal' AND u.primary_role='noisia_admin'`,
@@ -91,17 +91,17 @@ async function prepareSharedSyntheticPolicy(args: SiblingSeedArgs) {
 }
 
 /** The invented sibling obeys the same policy/day cutoff as the native quote.
- * `at` is only a controlled clock for synthetic PostgreSQL acceptance tests. */
+ * `at` and `budget_timezone` are controlled data only for synthetic PostgreSQL acceptance tests. */
 export async function loadSyntheticSiblingEditorialDeadlineV1(args: Pick<SyntheticTransactionV1, "query"> & {
-  policy_id: string; at?: string;
+  policy_id: string; at?: string; budget_timezone?: string;
 }): Promise<number> {
   const row = (await args.query(`WITH reference AS MATERIALIZED (
       SELECT COALESCE($2::timestamptz,clock_timestamp()) AS at
     ) SELECT floor(extract(epoch FROM least(reference.at+interval '30 minutes',p.valid_until,
-      (((reference.at AT TIME ZONE p.budget_timezone)::date+1)::timestamp AT TIME ZONE p.budget_timezone))))::bigint::text deadline,
+      (((reference.at AT TIME ZONE COALESCE($3::text,p.budget_timezone))::date+1)::timestamp AT TIME ZONE COALESCE($3::text,p.budget_timezone)))))::bigint::text deadline,
       extract(epoch FROM reference.at)::text reference_epoch
     FROM signal_processing_policy_versions p CROSS JOIN reference WHERE p.id=$1 AND p.status='active'
-      AND p.valid_from<=reference.at AND p.valid_until>reference.at`, [args.policy_id,args.at ?? null])).rows[0];
+      AND p.valid_from<=reference.at AND p.valid_until>reference.at`, [args.policy_id,args.at ?? null,args.budget_timezone??null])).rows[0];
   const deadline = Number(row?.deadline);
   assert.ok(row && Number.isSafeInteger(deadline) && deadline>Number(row.reference_epoch),
     "the synthetic sibling requires a live policy and a future whole-second quote window");
@@ -117,7 +117,7 @@ export async function seedMassLabelingSiblingEditorialV1(
 ): Promise<MassLabelingSiblingEditorialFixtureV1> {
   const { query, identity } = args;
   assert.equal((await query("SHOW transaction_isolation")).rows[0]?.transaction_isolation, "read committed");
-  const policy_id = await prepareSharedSyntheticPolicy(args);
+  const policy_id = await prepareSyntheticSiblingEditorialPolicyV1(args);
   // Nested COMMIT is a savepoint release in this rollback-only harness. The
   // first completed fixture therefore retains ON COMMIT DROP scratch tables.
   // Drop only these consumed pg_temp objects, never persistent source/history.
@@ -138,14 +138,18 @@ export async function seedMassLabelingSiblingEditorialV1(
   await query("SET CONSTRAINTS ALL IMMEDIATE");
   await query("SET CONSTRAINTS ALL DEFERRED");
   const owner = (await query(`SELECT e.processing_admission_id,e.status,a.policy_version_id,
-    a.admission_not_after>clock_timestamp() admission_valid,e.execution_token,e.attempt_count
+    a.admission_not_after>clock_timestamp() admission_valid,e.execution_token,e.attempt_count,
+    a.budget_date=(clock_timestamp() AT TIME ZONE p.budget_timezone)::date admission_day_current,
+    a.budget_timezone=p.budget_timezone admission_timezone_current,
+    a.admission_not_after<=least(p.valid_until,(((clock_timestamp() AT TIME ZONE p.budget_timezone)::date+1)::timestamp AT TIME ZONE p.budget_timezone)) admission_deadline_bounded
     FROM signal_topic_editorial_executions e JOIN signal_processing_admissions a ON a.workspace_id=e.workspace_id
-      AND a.id=e.processing_admission_id WHERE e.id=$1 AND e.workspace_id=$2`,
+      AND a.id=e.processing_admission_id JOIN signal_processing_policy_versions p ON p.id=a.policy_version_id WHERE e.id=$1 AND e.workspace_id=$2`,
   [admitted.execution_id, access.workspace_id])).rows[0];
   assert.ok(owner);
   assert.deepEqual({ status: owner.status, policy_id: owner.policy_version_id, admission_valid: owner.admission_valid,
     execution_token: owner.execution_token, attempt_count: owner.attempt_count },
   { status: "queued", policy_id, admission_valid: true, execution_token: null, attempt_count: 0 });
+  assert.equal(owner.admission_day_current,true);assert.equal(owner.admission_timezone_current,true);assert.equal(owner.admission_deadline_bounded,true);
   assert.equal((await query("SELECT count(*)::int n FROM signal_topic_editorial_calls WHERE execution_id=$1",
     [admitted.execution_id])).rows[0]?.n, 0, "the sibling is authorized but no provider work is reserved or sent");
   return { ...identity, policy_id, workspace_id: access.workspace_id, execution_id: admitted.execution_id,

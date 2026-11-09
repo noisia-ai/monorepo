@@ -9,12 +9,20 @@ import * as money from '../signal-workspace-engine-interpretation';
 import {insertSignalTaxonomyDraftCoreV1} from '../signal-taxonomy-profile';
 import {loadSignalTopicInheritedContextStoreV1,materializeSignalWorkspaceEngineTopicsV1} from '../signal-topic-catalog';
 export const fixtureSha=(s:string)=>`sha256:${createHash('sha256').update(s,'utf8').digest('hex')}`;
+/** Pick a fixed-offset zone whose synthetic budget day starts near local noon.
+ * Choose before provisioning the first policy; never retime an owned admission. */
+export async function loadSyntheticBudgetTimezoneV1(args:{query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;at?:string}){
+ const row=(await args.query(`WITH reference AS (SELECT extract(hour FROM COALESCE($1::timestamptz,clock_timestamp()) AT TIME ZONE 'UTC')::int utc_hour)
+  SELECT CASE WHEN utc_hour=12 THEN 'Etc/GMT' WHEN utc_hour<12 THEN 'Etc/GMT-'||(12-utc_hour)::text ELSE 'Etc/GMT+'||(utc_hour-12)::text END timezone FROM reference`,[args.at??null])).rows[0]!;
+ return row.timezone as string;
+}
+
 /** Local disposable, existing 3-root complete embedding fixture. No provider or fit.
  * Construct genuine metered-receipt/catalog transactions with explicit synthetic
  * numerical memberships, kept in an outer rollback for independent consumers. */
 export type WorkspaceProjectionCheckpointFixtureV1={database:Pool;query:(sql:string,params?:unknown[])=>Promise<pg.QueryResult>;
  access:{database:Pool;workspace_id:string;actor_user_id:string};lease:engine.SignalWorkspaceEngineLeaseV1;
- proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>};
+ proposals:Array<{artifact_id:string;body:string}>;bodies:Map<string,string>;budget:{cap_micro_usd:number;daily_cap_micro_usd:number|null;timezone:string}};
 export type WorkspaceProjectionFixtureOptionsV1={empty?:boolean;allow_large_population?:boolean;complete_output_bundle?:boolean;split_guided_groups?:boolean|3|4;
  budget?:{cap_micro_usd:number;daily_cap_micro_usd:number|null;timezone:string};migrations?:string[];
  interpretation_configuration?:SignalWorkspaceInterpretationConfigurationV1;interpretation_definitions?:Readonly<Record<string,string>>;preserve_catalog?:boolean;
@@ -61,7 +69,9 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
  if(!options.preserve_catalog)await catalog();
  const access={database,workspace_id,actor_user_id};
  const pilot=isSignalWorkspaceMassLabelingConfigV1(options.engine_config??{});
- const budget=options.budget??{cap_micro_usd:30_000_000,daily_cap_micro_usd:30_000_000,timezone:'America/Mexico_City'};
+ const policyTimezone=(await query(`SELECT p.budget_timezone FROM signal_processing_policy_versions p JOIN signal_workspaces w ON w.organization_id=p.organization_id
+  WHERE w.id=$1 AND p.status='active'`,[workspace_id])).rows[0]?.budget_timezone as string|undefined;
+ const budget=options.budget??{cap_micro_usd:30_000_000,daily_cap_micro_usd:30_000_000,timezone:policyTimezone??await loadSyntheticBudgetTimezoneV1({query})};
  if(pilot&&!options.preserve_catalog)await query("INSERT INTO signal_workspace_features(workspace_id,feature,enabled_by) VALUES($1,'mass_labeling',$2) ON CONFLICT DO NOTHING",[workspace_id,actor_user_id]);
  const preflight=await engine.loadSignalWorkspaceEnginePreflightV1(access);assert.equal(preflight.missing_guides,0);
  const configuration=options.interpretation_configuration??SIGNAL_WORKSPACE_INTERPRETATION_CONFIGURATION_V1;
@@ -130,7 +140,7 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   await money.settleSignalWorkspaceEngineInterpretationV1({...token,usage:{input_tokens:100,output_tokens:50,cache_read_input_tokens:0,cache_creation_input_tokens:0}});
   const checkpoint=await engine.checkpointSignalWorkspaceEngineInterpretationV1({database,lease,call_id:call.call_id,unit_keys:[key],artifact:artifact(`interpretation-${proposals.length}.json`,'engine_proposals',body)});
   proposals.push({artifact_id:checkpoint.artifact_id,body});
-  await options.onCheckpoint?.({database,query,access,lease,proposals,bodies});
+  await options.onCheckpoint?.({database,query,access,lease,proposals,bodies,budget});
  }
  async function* pages(){yield* proposals;}
  const materialization=await materializeSignalWorkspaceEngineTopicsV1({database,lease,proposals:pages()});
@@ -140,6 +150,6 @@ export async function workspaceProjectionFixtureBodyV1(seed:{database:Pool;query
   output_catalog_revision:materialization.output_catalog_revision,topic_count:materialization.topic_count,mapping_digest:materialization.mapping_digest})});
  await engine.completeSignalWorkspaceEngineAnalysisV1({database,lease,materialization_artifact_id:materialized.artifact_id});
  return{database,query,access,workspace_id,actor_user_id,embedding_run_id,engine_execution_id:started.execution_id,roots:[...roots.values()],chunks,materialization,bodies,
-  assignment_artifact_ids,materialization_artifact_id:materialized.artifact_id,catalog,cleanup};
+  assignment_artifact_ids,materialization_artifact_id:materialized.artifact_id,catalog,cleanup,budget};
  }catch(error){await cleanup();throw error;}
 }

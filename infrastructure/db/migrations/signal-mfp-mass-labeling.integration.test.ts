@@ -120,7 +120,7 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
           const reservation={...fixture.access,execution_id:fixture.lease.execution_id,
             idempotency_key:randomUUID(),request_digest:batch.request_digest,
             configuration:batch.configuration,reserved_micro_usd:batch.reserved_micro_usd,
-            budget_timezone:"America/Mexico_City",daily_cap_micro_usd:30_000_000,execution_token:fixture.lease.execution_token,
+            budget_timezone:fixture.budget.timezone,daily_cap_micro_usd:30_000_000,execution_token:fixture.lease.execution_token,
             mass_labeling_stage:{stage:"global-consolidation-v1" as const,source_groups_digest:sourceGroupsDigest}};
           const original=await editorialMoney.reserveSignalWorkspaceEngineInterpretationV1(reservation);
           const originalToken={database,call_id:original.call_id,attempt_token:original.attempt_token};

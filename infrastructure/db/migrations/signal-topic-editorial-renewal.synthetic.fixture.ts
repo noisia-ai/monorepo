@@ -29,7 +29,7 @@ import {
 } from "./signal-brand-context.synthetic.fixture";
 import type { BrandContextSyntheticSaveBindingsV1 } from "./signal-brand-context.integration.assertions";
 import { syntheticClientWorkspaceFixtureV1, type SyntheticTransactionV1 } from "./signal-client-workspace-entry.synthetic.fixture";
-import { fixtureSha, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-workspace-topic-projection.fixture";
+import { fixtureSha, loadSyntheticBudgetTimezoneV1, type WorkspaceProjectionFixtureOptionsV1 } from "./signal-workspace-topic-projection.fixture";
 
 export type SignalTopicEditorialRenewalSyntheticSeedArgsV1 = SyntheticTransactionV1 & {
   identity?: { organization_id: string; actor_user_id: string };
@@ -92,8 +92,11 @@ export function createSignalTopicEditorialRenewalSyntheticSavesV1(
       const workspace = (await args.scoped.query<{ id: string }>("SELECT id FROM signal_workspaces WHERE brand_id=$1 AND organization_id=$2",
         [brand_id, args.organization_id])).rows[0];
       assert.ok(workspace, "real brand provisioning trigger must create the synthetic workspace");
+      const existingTimezone=(await args.scoped.query<{budget_timezone:string}>(`SELECT budget_timezone FROM signal_processing_policy_versions
+        WHERE organization_id=$1 AND status='active'`,[args.organization_id])).rows[0]?.budget_timezone;
+      const budgetTimezone=existingTimezone??await loadSyntheticBudgetTimezoneV1({query:args.scoped.query.bind(args.scoped)});
       await args.scoped.query(`UPDATE signal_workspaces SET timezone=$2,metadata=metadata||$3::jsonb WHERE id=$1`,
-        [workspace.id, args.intake.timezone, JSON.stringify({ created_by_user_id: args.actor_user_id,
+        [workspace.id, budgetTimezone, JSON.stringify({ created_by_user_id: args.actor_user_id,
           creation_request_digest: digest({ contract_version: "synthetic-interest-review-base-intake-v1", brand_id, intake: args.intake }) })]);
       await refreshSnapshot({ ...args, brand_id, title: "Synthetic base identity", raw_text: "" });
       const config = runtime.semantic;
