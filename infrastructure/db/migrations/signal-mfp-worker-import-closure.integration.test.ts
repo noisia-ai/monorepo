@@ -12,8 +12,17 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
 },async context=>{
   const {database,cleanup}=await createMassLabelingProductDatabaseFixtureV1();
   const setup=await database.connect();
-  const closurePool=new pg.Pool({...database.options,max:1,statement_timeout:50,lock_timeout:0});
+  // pg-pool intentionally makes options.password non-enumerable. Copy the
+  // verified fixture's endpoint and credential explicitly, never via spread.
+  const closurePool=new pg.Pool({
+    host:database.options.host,port:database.options.port,database:database.options.database,
+    user:database.options.user,password:database.options.password,ssl:database.options.ssl,
+    connectionTimeoutMillis:database.options.connectionTimeoutMillis,
+    max:1,statement_timeout:50,lock_timeout:0
+  });
   try{
+    assert.ok(typeof database.options.password==='string' && database.options.password.length>0,
+      'the guarded fixture must provide its SCRAM credential');
     const fixture=await seed(setup);
     await setup.query(`CREATE FUNCTION synthetic_closure_delay() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN IF NEW.status='completed' AND NEW.source_file_name LIKE 'slow-%' THEN
@@ -51,7 +60,10 @@ test("worker large closure has local budgets, native FK locks and durable COMMIT
         verifiedBytes:verified.sizeBytes,expectedBytes:Buffer.byteLength(content),processedBytes,progressRecords,stats:parsed.stats};
       return{batch,request,content};
     }
-    const baseline=(await closurePool.query("SELECT pg_backend_pid() pid,current_setting('statement_timeout') statement,current_setting('lock_timeout') lock")).rows[0];
+    const baseline=(await closurePool.query("SELECT pg_backend_pid() pid,current_database() database,current_user role,current_setting('statement_timeout') statement,current_setting('lock_timeout') lock")).rows[0];
+
+    assert.ok(baseline.database===database.options.database && baseline.role===database.options.user,
+      'closure pool must use the guarded fixture database and role');
 
     await context.test('small typed CSV keeps the original role timeout',async()=>{
       const small=await prepare('slow-small-typed',1,true);
