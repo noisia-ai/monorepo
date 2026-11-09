@@ -8,6 +8,10 @@ import type { SyntheticTransactionV1 } from "./signal-client-workspace-entry.syn
 import { seedSignalTopicEditorialRenewalSourceV1 } from "./signal-topic-editorial-renewal.synthetic.fixture";
 
 type Identity = { organization_id: string; actor_user_id: string };
+type SiblingSeedArgs = SyntheticTransactionV1 & { identity: Identity;
+  /** Finite invented policy window for controlled-clock acceptance, before any owner. */
+  policy_valid_until?: string;
+};
 export type MassLabelingSiblingEditorialFixtureV1 = Identity & {
   policy_id: string; workspace_id: string; execution_id: string; processing_admission_id: string;
 };
@@ -16,7 +20,7 @@ export type MassLabelingSiblingEditorialFixtureV1 = Identity & {
  * action roster exactly, adding context/numeric/editorial actions needed to
  * exercise the real admission path. Nothing here changes a live owner's policy.
  * The caller owns an isolated invented-data transaction and physical rollback. */
-async function prepareSharedSyntheticPolicy(args: SyntheticTransactionV1 & { identity: Identity }) {
+async function prepareSharedSyntheticPolicy(args: SiblingSeedArgs) {
   const { query, identity } = args;
   const actor = (await query(`SELECT o.slug,o.legal_name,u.email FROM organizations o JOIN users u ON u.organization_id=o.id
     WHERE o.id=$1 AND u.id=$2 AND u.status='active' AND u.user_type='noisia_internal' AND u.primary_role='noisia_admin'`,
@@ -32,10 +36,10 @@ async function prepareSharedSyntheticPolicy(args: SyntheticTransactionV1 & { ide
   await query(`INSERT INTO signal_processing_policy_versions(id,organization_id,version,status,valid_from,valid_until,
     budget_timezone,daily_cap_micro_usd,created_by_user_id)
     SELECT $1,organization_id,(SELECT max(version)+1 FROM signal_processing_policy_versions WHERE organization_id=$2),
-      'draft',valid_from,valid_until,budget_timezone,
+      'draft',valid_from,COALESCE($5::timestamptz,valid_until),budget_timezone,
       CASE WHEN daily_cap_micro_usd IS NULL THEN NULL ELSE greatest(daily_cap_micro_usd,100000000) END,$3
     FROM signal_processing_policy_versions WHERE id=$4`,
-  [policy_id, identity.organization_id, identity.actor_user_id, prior.id]);
+  [policy_id, identity.organization_id, identity.actor_user_id, prior.id, args.policy_valid_until ?? null]);
   await query(`INSERT INTO signal_processing_policy_actions(policy_version_id,action,kind,provider,model,configuration,
     configuration_digest,max_execution_micro_usd,automatic_allowed)
     SELECT $1,action,kind,provider,model,configuration,configuration_digest,max_execution_micro_usd,automatic_allowed
@@ -86,12 +90,30 @@ async function prepareSharedSyntheticPolicy(args: SyntheticTransactionV1 & { ide
   return policy_id;
 }
 
+/** The invented sibling obeys the same policy/day cutoff as the native quote.
+ * `at` is only a controlled clock for synthetic PostgreSQL acceptance tests. */
+export async function loadSyntheticSiblingEditorialDeadlineV1(args: Pick<SyntheticTransactionV1, "query"> & {
+  policy_id: string; at?: string;
+}): Promise<number> {
+  const row = (await args.query(`WITH reference AS MATERIALIZED (
+      SELECT COALESCE($2::timestamptz,clock_timestamp()) AS at
+    ) SELECT floor(extract(epoch FROM least(reference.at+interval '30 minutes',p.valid_until,
+      (((reference.at AT TIME ZONE p.budget_timezone)::date+1)::timestamp AT TIME ZONE p.budget_timezone))))::bigint::text deadline,
+      extract(epoch FROM reference.at)::text reference_epoch
+    FROM signal_processing_policy_versions p CROSS JOIN reference WHERE p.id=$1 AND p.status='active'
+      AND p.valid_from<=reference.at AND p.valid_until>reference.at`, [args.policy_id,args.at ?? null])).rows[0];
+  const deadline = Number(row?.deadline);
+  assert.ok(row && Number.isSafeInteger(deadline) && deadline>Number(row.reference_epoch),
+    "the synthetic sibling requires a live policy and a future whole-second quote window");
+  return deadline;
+}
+
 /** Queue a genuine editorial owner in a different workspace of the same
  * synthetic organization. Real source, quote, admission, request and deferred
  * guards run; no provider transport or monetary call is created. Capture the
  * baseline AFTER this setup, before testing any scoped JEV authorization. */
 export async function seedMassLabelingSiblingEditorialV1(
-  args: SyntheticTransactionV1 & { identity: Identity },
+  args: SiblingSeedArgs,
 ): Promise<MassLabelingSiblingEditorialFixtureV1> {
   const { query, identity } = args;
   assert.equal((await query("SHOW transaction_isolation")).rows[0]?.transaction_isolation, "read committed");
@@ -107,8 +129,8 @@ export async function seedMassLabelingSiblingEditorialV1(
   const input = await loadSignalTopicConsolidationEditorialInputV1(seed.scope);
   const plan = buildSignalTopicEditorialBatchPlanFromPreparedInputV2({ input, run_id: seed.scope.numeric_run_id });
   const access = { database: args.database, workspace_id: seed.identity.workspace_id, actor_user_id: identity.actor_user_id };
-  const quote = await quoteSignalTopicEditorialChunkedAdmissionV3({ ...access, plan,
-    deadline: Math.floor(Date.now() / 1000) + 1800 });
+  const deadline = await loadSyntheticSiblingEditorialDeadlineV1({ query, policy_id });
+  const quote = await quoteSignalTopicEditorialChunkedAdmissionV3({ ...access, plan, deadline });
   assert.equal(quote.status, "ready_to_authorize");
   assert.ok(quote.quote_reference);
   const admitted = await requestSignalTopicEditorialChunkedAdmissionV3({ ...access, plan,
