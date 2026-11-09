@@ -1,3 +1,4 @@
+import {randomUUID} from "node:crypto";
 import assert from "node:assert/strict";
 import type {Pool} from "pg";
 import {signalWorkspaceEmbeddingDigestV1 as digest} from "@noisia/query-engine";
@@ -73,6 +74,26 @@ export async function assertMassLabelingStudyPolicyV1(args: {
       const result=(await query.query("SELECT signal_mass_labeling_category_matches_v1($1,$2::text[]) yes",[body,terms])).rows[0];
       assert.equal(result.yes,yes);
     }
+    const scope=(await query.query<{organization_id:string;brand_id:string}>("SELECT organization_id,brand_id FROM signal_workspaces WHERE id=$1",[args.workspace_id])).rows[0]!;
+    const commentActor=randomUUID(),viewerActor=randomUUID(),readAdmin=randomUUID(),analyst=randomUUID();
+    for(const [id,kind,role,grant] of [[commentActor,"client","client_admin","comment"],[viewerActor,"client","client_viewer","read"],
+      [readAdmin,"client","client_admin","read"],[analyst,"noisia_internal","analyst",null]] as const){
+      await query.query("INSERT INTO users(id,email,user_type,primary_role,status,organization_id) VALUES($1,$2,$3,$4,'active',$5)",
+        [id,`${id}@example.invalid`,kind,role,scope.organization_id]);
+      if(grant)await query.query("INSERT INTO user_brand_access(user_id,brand_id,access_level) VALUES($1,$2,$3)",[id,scope.brand_id,grant]);
+    }
+    const commentAccess={...access,actor_user_id:commentActor};
+    assert.equal((await getMassLabelingStudyPolicyV1(commentAccess)).can_edit,true,"editorial permission is independent from paid processing");
+    await updateMassLabelingStudyPolicyV1({...policy,...commentAccess,expected_revision:4,lexicon_terms:["absent category token"]});
+    await assert.rejects(importMassLabelingInterestsV2({...commentAccess,map_id:args.map_id,interests:[]}),/study_policy_forbidden/);
+    assert.equal((await getMassLabelingStudyPolicyV1({...access,actor_user_id:analyst})).can_edit,true);
+    await updateMassLabelingStudyPolicyV1({...policy,actor_user_id:analyst,expected_revision:5,lexicon_terms:["absent category token"]});
+    for(const actor_user_id of [viewerActor,readAdmin]){
+      assert.equal((await getMassLabelingStudyPolicyV1({...access,actor_user_id})).can_edit,false);
+      await assert.rejects(updateMassLabelingStudyPolicyV1({...policy,actor_user_id,expected_revision:6}),/study_policy_forbidden/);
+    }
+    await query.query("UPDATE user_brand_access SET revoked_at=now() WHERE user_id=$1",[commentActor]);
+    await assert.rejects(updateMassLabelingStudyPolicyV1({...policy,...commentAccess,expected_revision:6}),/study_policy_forbidden/);
     assert.equal((await query.query("SELECT has_table_privilege('anon','signal_mass_labeling_study_policies','SELECT') yes")).rows[0].yes,false);
   } finally {query.release();}
 }

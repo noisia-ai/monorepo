@@ -41,11 +41,11 @@ async function transaction<T>(database:Database,work:(client:PoolClient)=>Promis
     const result=await work(client);await client.query("COMMIT");return result;
   }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
 }
-async function authorize(client:Pick<PoolClient,"query">,workspace:string,actor:string,edit:boolean){
+async function authorize(client:Pick<PoolClient,"query">,workspace:string,actor:string,edit:boolean,processing=false){
   if(!uuid.test(workspace)||!uuid.test(actor))fail("study_policy_scope_invalid",422);
   const caps=await loadSignalWorkspaceCapabilitiesStoreV1({queryable:client,workspace_id:workspace,
     actor_user_id:actor,lock_authority:edit});
-  if(edit?!caps.can_edit_topics||!caps.can_request_processing:!caps.can_view)fail("study_policy_forbidden",403);
+  if((edit?!caps.can_edit_topics:!caps.can_view)||processing&&!caps.can_request_processing)fail("study_policy_forbidden",403);
   return caps;
 }
 /** The caller supplies authorization. Workers use this inside their admission transaction. */
@@ -76,7 +76,7 @@ export async function getMassLabelingStudyPolicyV1(args:Access){
       LEFT JOIN signal_mass_labeling_localizations local ON local.workspace_id=map.workspace_id
         AND local.map_id=map.id AND local.topic_key=topic->>'topic_key'
       WHERE selected.workspace_id=$1 ORDER BY topic->>'topic_key'`,[args.workspace_id])).rows;
-    return {...policy,can_edit:caps.can_edit_topics&&caps.can_request_processing,topics:rows};
+    return {...policy,can_edit:caps.can_edit_topics,topics:rows};
   });
 }
 export async function updateMassLabelingStudyPolicyV1(args:Access&Writable&{expected_revision:number}){
@@ -129,7 +129,7 @@ export async function importMassLabelingInterestsV2(args:Access&{map_id:string;i
   interest_key:string;name:string;definition:string;results:MassLabelingInterestReceiptV2[]}>}){
   if(!uuid.test(args.map_id)||args.interests.length>32||args.interests.some(i=>i.results.length>2000||new Set(i.results.map(r=>r.root_id)).size!==i.results.length))fail("study_interest_batch_invalid",422);
   return transaction(args.database,async client=>{
-    await authorize(client,args.workspace_id,args.actor_user_id,true);
+    await authorize(client,args.workspace_id,args.actor_user_id,true,true);
     await mapCurrent(client,args.workspace_id,args.map_id);
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended('mass-study-interests:'||$1,0))",[args.map_id]);
     const policy=await loadMassLabelingStudyPolicyWithClientV1(client,args.workspace_id);

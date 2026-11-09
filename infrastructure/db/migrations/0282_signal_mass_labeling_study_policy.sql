@@ -25,12 +25,24 @@ CREATE TABLE signal_mass_labeling_study_interest_results (
  FOREIGN KEY(workspace_id,map_id,root_id) REFERENCES signal_mass_labeling_items(workspace_id,map_id,root_id)
 );
 CREATE INDEX signal_mass_labeling_study_interest_root ON signal_mass_labeling_study_interest_results(workspace_id,map_id,root_id);
+CREATE FUNCTION signal_mass_labeling_study_editor_v1(target_workspace uuid,target_actor uuid) RETURNS boolean
+ LANGUAGE sql STABLE SET search_path=public,extensions,pg_temp AS $$
+ SELECT EXISTS(SELECT 1 FROM signal_workspaces w JOIN brands b ON b.id=w.brand_id
+  JOIN organizations o ON o.id=w.organization_id JOIN users u ON u.id=target_actor
+  WHERE w.id=target_workspace AND w.status='active' AND b.status='active' AND u.status='active'
+   AND (u.user_type='noisia_internal' AND u.primary_role IN('noisia_admin','analyst','founder','admin','kam','insights_manager','ux_data_specialist')
+    OR u.user_type='client' AND u.primary_role='client_admin' AND u.organization_id=w.organization_id
+      AND b.organization_id=w.organization_id AND o.status='active'
+      AND EXISTS(SELECT 1 FROM user_brand_access a WHERE a.user_id=u.id AND a.brand_id=b.id
+        AND a.revoked_at IS NULL AND a.access_level IN('comment','admin'))))
+$$;
+REVOKE ALL ON FUNCTION signal_mass_labeling_study_editor_v1(uuid,uuid) FROM PUBLIC;
 CREATE FUNCTION guard_signal_mass_labeling_study_policy_v1() RETURNS trigger
  LANGUAGE plpgsql SET search_path=public,extensions,pg_temp AS $$
 DECLARE item jsonb; field text; previous integer;
 BEGIN
  IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'study_policy_history_immutable' USING ERRCODE='23514'; END IF;
- IF NOT signal_workspace_classification_actor_v1(NEW.workspace_id,NEW.created_by_user_id) THEN
+ IF NOT signal_mass_labeling_study_editor_v1(NEW.workspace_id,NEW.created_by_user_id) THEN
   RAISE EXCEPTION 'study_policy_forbidden' USING ERRCODE='23514'; END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('mass-study-policy:'||NEW.workspace_id::text,0));
  SELECT COALESCE(max(revision),0) INTO previous FROM signal_mass_labeling_study_policies WHERE workspace_id=NEW.workspace_id;
