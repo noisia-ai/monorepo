@@ -4,20 +4,28 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import pg, { type Pool } from "pg";
 
+/** Pure endpoint validation runs before importing the guard or acquiring a pool. */
+export function massLabelingProductCiTargetV1(env:Readonly<NodeJS.ProcessEnv>){
+  assert.equal(env.GITHUB_ACTIONS, "true");
+  assert.equal(env.NOISIA_MFP_PG_CI, "true");
+  const pinned = new URL(env.DATABASE_URL ?? "");
+  assert.equal(pinned.search,"","CI database URLs cannot override connection parameters");
+  assert.equal(pinned.hash,"","CI database URLs cannot contain fragments");
+  assert.equal(pinned.protocol, "postgresql:");
+  assert.equal(pinned.hostname, "127.0.0.1");
+  assert.equal(pinned.port, "5432");
+  assert.equal(pinned.pathname, "/noisia_mfp_ci");
+  assert.equal(pinned.username, "postgres");
+  return pinned;
+}
+
 /** Cross-connection product journeys need real commits. Keep them outside the
  * migrated CI database used by legacy rollback fixtures and their empty census.
  * No caller-provided host, database name, or cleanup target is accepted. */
 export async function createMassLabelingProductDatabaseFixtureV1(): Promise<{
   database: Pool; cleanup: () => Promise<void>;
 }> {
-  assert.equal(process.env.GITHUB_ACTIONS, "true");
-  assert.equal(process.env.NOISIA_MFP_PG_CI, "true");
-  const pinned = new URL(process.env.DATABASE_URL ?? "");
-  assert.equal(pinned.protocol, "postgresql:");
-  assert.equal(pinned.hostname, "127.0.0.1");
-  assert.equal(pinned.port, "5432");
-  assert.equal(pinned.pathname, "/noisia_mfp_ci");
-  assert.equal(pinned.username, "postgres");
+  const pinned=massLabelingProductCiTargetV1(process.env);
   const { openDatabase } = await import(new URL("../../../scripts/dev-corpus/guard.mjs", import.meta.url).href);
   const owner: Pool = await openDatabase(); // Existing PG17/vector/identity guard.
   const census=async()=>(await owner.query(`SELECT (SELECT count(*) FROM organizations)::text organizations,
@@ -55,7 +63,8 @@ export async function createMassLabelingProductDatabaseFixtureV1(): Promise<{
       { env, encoding: "utf8", timeout: 180_000, maxBuffer: 2_000_000 });
     assert.equal(migration.status, 0, migration.stdout + migration.stderr);
     assert.match(migration.stdout, /"ok": true/u);
-    database = new pg.Pool({ connectionString: target.href, ssl: false, max: 4, connectionTimeoutMillis: 10_000 });
+    database = new pg.Pool({ host:"127.0.0.1",port:5432,database:name,user:"postgres",
+      password:decodeURIComponent(pinned.password),ssl:false,max:4,connectionTimeoutMillis:10_000 });
     const identity = (await database.query(`SELECT current_database() name,current_user role,
       current_setting('server_version_num')::int version,EXISTS(SELECT 1 FROM pg_extension WHERE extname='vector') vector`)).rows[0]!;
     assert.equal(identity.name, name); assert.equal(identity.role, "postgres");
