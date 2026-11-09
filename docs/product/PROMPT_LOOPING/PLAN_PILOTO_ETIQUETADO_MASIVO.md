@@ -216,7 +216,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 - [x] H7 · Los PR #132–#145 pasaron CI y PostgreSQL en la solicitud y tras la fusión a develop. Studio y workers de UAT arrancaron con Railpack en `966528b3`. Se comprobaron la salud de Studio, el latido del worker y que Railway tenía cero cambios preparados.
 - [x] H7 · En dev-test, seis lecturas de la vista general tardaron entre 1.516 y 1.704 s. Tres recargas en el navegador tardaron 2.406, 2.035 y 2.938 s. La primera observación dio un límite superior de 3.156 s. Los indicadores mostraron 30 ejemplos en 1.485–1.826 s.
-- [ ] H7 · La marca y su Brand OS ya existen en UAT. Desde el producto se enviaron once archivos. Diez tienen recibo de importación completa. La aceptación del undécimo y las etapas posteriores quedan pendientes.
+- [x] H7 · La marca y su Brand OS existen en UAT. Studio aceptó once archivos con 113,338 registros. El cotejo privado verificó los once SHA-256, tamaños y conteos contra los originales. El archivo de 95,100 filas tiene un recibo aceptado y conserva sus cuatro intentos fallidos. Studio y workers sirven el commit de integración `b9dbd456` del PR #150, con CI y PostgreSQL verdes antes y después de la fusión.
+- [ ] H7 · Preparar el texto y verificar las etapas posteriores en la interfaz del estudio nuevo.
 
 - [x] H7 · La lectura optimizada de Signal pasó la comprobación en los cuatro segmentos del estudio de dev-test. En seis mediciones intercaladas, la vista general tardó de 1.570 a 2.570 s y la evidencia de 1.027 a 1.621 s. La medición posterior de la página desplegada figura arriba. [PR de la consulta](https://github.com/noisia-ai/monorepo/pull/142)
 
@@ -296,6 +297,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H7 · Después de aceptar los once archivos, la pantalla de importación mostró las 113,338 filas. El panel «Datos recibidos» falló al cargar en dos intentos y ocultó el botón para preparar el texto.
 
 - H7 · El cuarto intento leyó el CSV completo en unos 26 minutos. PostgreSQL alcanzó el límite de 120 s durante la verificación de una clave foránea al materializar las atribuciones de origen, antes de iniciar la reconciliación de poblaciones. Los cuatro cierres fallidos conservaron su historial.
 
@@ -381,6 +384,8 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - Dos lotes devolvieron referencias válidas dentro de la muestra de 30 pero superaron el máximo de diez referencias por campo. La comprobación privada de las respuestas originales y de reparación encontró entre 11 y 30 referencias en los campos rechazados.
 
 ## Registro de decisiones
+
+- H7 · Conservar la única importación aceptada por archivo. Investigar la consulta del resumen y usar los controles autorizados del producto para preparar el corpus.
 
 - H7 · El PR #150 reserva un cliente de PostgreSQL únicamente para cerrar lotes verificados de al menos 50,000 registros. El tiempo local de ejecución se calcula a 12 ms por registro, con mínimo de 15 min y máximo de 25 min. La espera de locks se limita a 15 s. Si se pierde la confirmación, el worker consulta y reconcilia el resultado durable antes de habilitar la recuperación. Los archivos pequeños siguen la ruta previa. La prueba utiliza la misma autenticación SCRAM que CI.
 
