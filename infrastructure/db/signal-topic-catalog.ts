@@ -140,14 +140,14 @@ export async function loadSignalTopicInheritedContextStoreV1(args: {
   include_editorial_context?: boolean;
   /** Server-only alternative to rebuilding the same mutable authority in JS. */
   semantic_authority_check?: "database";
-  /** Internal mode derived from a native MFP discovery owner, never browser input. */
-  context_mode?: "workspace-discovery-v1";
+  /** Server-only identity chosen from a discovery owner or an exact sealed legacy comparison. */
+  context_mode?: "workspace-discovery-v1" | "legacy-topic-v1";
 }): Promise<SignalTopicInheritedContextStoreV1> {
   if (args.include_editorial_context && (!args.complete_context || !args.require_current_semantic_authority)) {
     throw new SignalTopicCatalogError("topic_editorial_complete_context_required");
   }
   const governed = await loadSignalSemanticResolutionGovernedContextV1(args.queryable, args.workspace_id,
-    { complete_brand_context: args.complete_context });
+    { complete_brand_context: args.complete_context, legacy_topic_identity: args.context_mode === "legacy-topic-v1" });
   const contextRows = <T>(rows: T[], limit: number) => args.complete_context ? rows : rows.slice(0, limit);
   const contextText = (text: string) => args.complete_context ? text : text.slice(0, 4_000);
   const acquisition = (await args.queryable.query<{ acquisition_brief: unknown; timezone: string | null;

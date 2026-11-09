@@ -12,8 +12,8 @@ function fixture(mode:"legacy"|"same"|"narrative"|"alias"|"outside"|"removed"){
    aliases:mode==="removed"?[]:mode==="same"||mode==="narrative"?["Example"]:["Example","New Alias"],disambiguation:null}]};
   if(sql.includes("SELECT 'brand_objective' AS kind"))return{rows:mode==="narrative"?[{kind:"brand_brief",title:"Changed narrative",content:"Different objectives"}]:[]};
   if(sql.includes("SELECT context,digest,version_no"))return{rows:[{context:previous,digest:entityContextDigestV1(previous),version_no:1}]};
-  if(sql.includes("SELECT root_id,title,full_text,facets"))return{rows:[{root_id:mode==="outside"?"outside":"selected",title:null,
-   full_text:"A New Alias discussion",facets:{entities:{value:[{entity_id:"brand"}]}}}]};
+  if(sql.includes("WITH labeled_entities AS ("))return{rows:[{root_id:mode==="outside"?"outside":"selected",title:null,
+   full_text:"A New Alias discussion",entity_ids:["brand"]}]};
   throw new Error("Unexpected query");
  };
  return {query} as never;

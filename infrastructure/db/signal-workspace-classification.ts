@@ -112,7 +112,7 @@ export function scopeSignalWorkspaceClassificationTopicsV1(topics:CompiledTopic[
 }
 /** Semantic identities deliberately omit profile/term row IDs and ingestion run IDs. */
 export async function loadSignalWorkspaceClassificationInputV1(args: {queryable: Queryable; workspace_id: string; actor_user_id: string;
-  taxonomy_profile_id?: string; interest_term_key?: string; source_engine_execution_id?: string}) {
+  taxonomy_profile_id?: string; interest_term_key?: string; source_engine_execution_id?: string; legacy_context_identity?: true}) {
   if(args.interest_term_key!==undefined&&!interestTermKey.test(args.interest_term_key))return fail("workspace_classification_interest_invalid",422);
   if (!(await loadSignalWorkspaceCapabilitiesStoreV1(args)).can_view) return fail("workspace_classification_forbidden",403);
   const discovery = args.source_engine_execution_id && (await args.queryable.query<{discovery:boolean}>(`SELECT EXISTS(SELECT 1
@@ -120,7 +120,8 @@ export async function loadSignalWorkspaceClassificationInputV1(args: {queryable:
       AND jsonb_typeof(input_snapshot->'discovery_population')='object') discovery`,
     [args.source_engine_execution_id,args.workspace_id])).rows[0]?.discovery === true;
   const built = await loadSignalWorkspaceTopicInputSnapshotWithQueryableV1({...args,allow_empty:true,
-    ...(discovery ? {context_mode:"workspace-discovery-v1" as const} : {}),
+    ...(args.legacy_context_identity ? {context_mode:"legacy-topic-v1" as const}
+      : discovery ? {context_mode:"workspace-discovery-v1" as const} : {}),
     input_interests_only:args.interest_term_key!==undefined}).catch(error=>{
     if(error instanceof SignalWorkspaceTopicComputationError&&["workspace_topic_catalog_required","workspace_topic_catalog_empty"].includes(error.code))
       return fail("workspace_classification_catalog_unavailable");
