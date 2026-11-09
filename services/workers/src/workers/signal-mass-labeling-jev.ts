@@ -173,15 +173,23 @@ export const SIGNAL_MASS_LABELING_JEV_JOB_V1 = "signal-mass-labeling-jev-v1";
 let runtimeProvider: JevProviderV1 | undefined;
 export async function signalMassLabelingJevJobV1(job: {
   data: { run_id: string };
-}) {
+}, options: {
+  database?: Parameters<typeof createMassLabelingStoreV1>[0]["database"];
+  store?: Store;
+  provider?: JevProviderV1;
+  provider_preflight?: { api_key?: string; fetch_impl?: typeof fetch };
+} = {}) {
   if (
     process.env.NOISIA_MASS_LABELING_ENABLED === "false" ||
     process.env.NOISIA_JEV_PROVIDER_ENABLED === "false"
   )
     throw new Error("mass_labeling_provider_disabled");
-  await assertMassJevConsumerV1({api_key:process.env.TYPESAFE_API_KEY??"",
-    enabled:process.env.NOISIA_JEV_PROVIDER_ENABLED!=="false"});
-  const { pool } = await import("../db/client");
+  await assertMassJevConsumerV1({
+    api_key: options.provider_preflight?.api_key ?? process.env.TYPESAFE_API_KEY ?? "",
+    enabled: process.env.NOISIA_JEV_PROVIDER_ENABLED !== "false",
+    fetch_impl: options.provider_preflight?.fetch_impl,
+  });
+  const pool = options.database ?? (await import("../db/client")).pool;
   const run = (
     await pool.query<{ workspace_id: string }>(
       "SELECT workspace_id FROM signal_labeling_runs WHERE id=$1::uuid AND kind='mass_labeling'",
@@ -197,11 +205,11 @@ export async function signalMassLabelingJevJobV1(job: {
     }))
   )
     throw new Error("mass_labeling_not_enabled");
-  runtimeProvider ??= createTypesafeJevClientV1({ enabled: process.env.NOISIA_JEV_PROVIDER_ENABLED !== "false" });
+  if (!options.provider) runtimeProvider ??= createTypesafeJevClientV1({ enabled: process.env.NOISIA_JEV_PROVIDER_ENABLED !== "false" });
   const outcome = await processMassLabelingProductPageV2({
     database: pool, run_id: job.data.run_id,
-    store: createMassLabelingRuntimeStoreV1(pool),
-    provider: runtimeProvider,
+    store: options.store ?? createMassLabelingRuntimeStoreV1(pool),
+    provider: options.provider ?? runtimeProvider!,
   });
   return outcome;
 }
