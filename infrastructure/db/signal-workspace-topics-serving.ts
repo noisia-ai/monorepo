@@ -312,9 +312,9 @@ async function context(client: PoolClient, args: Args): Promise<Context> {
     if (!["all","conversation","advertising","hashtags"].includes(segment)) return fail("workspace_topics_segment_invalid",422);
     filters.conversation_segment = segment;
     const projection=(await client.query<{roots:string;pairs:string;expected_pairs:string}>(`SELECT
-      (SELECT count(*) FROM signal_mass_labeling_root_segments WHERE workspace_id=$1 AND map_id=$2) roots,
-      (SELECT count(*) FROM signal_mass_labeling_topic_probabilities WHERE workspace_id=$1 AND map_id=$2) pairs,
-      (SELECT COALESCE(sum(jsonb_array_length(candidates)),0) FROM signal_mass_labeling_items WHERE workspace_id=$1 AND map_id=$2) expected_pairs`,
+      count(*) roots,COALESCE(sum(candidate_count),0) expected_pairs,
+      (SELECT count(*) FROM signal_mass_labeling_topic_probabilities WHERE workspace_id=$1 AND map_id=$2) pairs
+      FROM signal_mass_labeling_root_segments WHERE workspace_id=$1 AND map_id=$2`,
       [args.workspace_id,mass.map.id])).rows[0]!;
     if(Number(projection.roots)!==mass.map.root_count || projection.pairs!==projection.expected_pairs)
       return fail("workspace_topics_materialization_incomplete",503);

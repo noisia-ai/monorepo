@@ -14,7 +14,7 @@ export async function assertMassLabelingServingProjectionV1(query:PoolClient["qu
    SELECT count(*)::int n FROM differences`,[workspace,map])).rows[0]!;
  assert.equal(checked.n,0,"projection preserves every original membership column, including unasked candidates and overrides");
  const segments=(await query(`SELECT count(*)::int roots,bool_and(segment.conversation_segment=
-   signal_mass_labeling_r13_segment_v1(mention.text_clean,result.probabilities)) correct
+   signal_mass_labeling_r13_segment_v1(mention.text_clean,result.probabilities) AND segment.candidate_count=jsonb_array_length(item.candidates)) correct
    FROM signal_mass_labeling_items item JOIN signal_mass_labeling_root_segments segment
     ON segment.map_id=item.map_id AND segment.root_id=item.root_id
    JOIN mentions mention ON mention.workspace_id=item.workspace_id AND mention.id=item.root_id
@@ -34,6 +34,7 @@ export async function assertMassLabelingProjectionBackfillV1(query:PoolClient["q
    DROP FUNCTION materialize_signal_mass_labeling_serving_items_v1(),materialize_signal_mass_labeling_serving_results_v1(),refresh_signal_mass_labeling_serving_text_v1();
    DROP TABLE signal_mass_labeling_root_segments,signal_mass_labeling_topic_probabilities CASCADE`);
  await query(migration);
+ await query(await readFile(new URL("./0290_signal_mass_labeling_candidate_counts.sql",import.meta.url),"utf8"));
  await assertMassLabelingServingProjectionV1(query,workspace,map);
  await query("ROLLBACK TO SAVEPOINT projection_backfill_rehearsal");
  await query("RELEASE SAVEPOINT projection_backfill_rehearsal");

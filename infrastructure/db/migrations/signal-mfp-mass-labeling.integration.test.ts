@@ -67,6 +67,9 @@ for(const authorization of ["rotation","scoped","scoped-scale","scoped-funding",
         assert.equal((await raw.query("SELECT count(*)::int n FROM signal_mass_labeling_study_policies WHERE workspace_id=$1",[values?.[0]])).rows[0]!.n,0,
           "explicit study interests never rescan superseded R13 receipts");
       }
+      if (sql.includes("expected_pairs") && sql.includes("signal_mass_labeling_root_segments")) {
+        assert.doesNotMatch(sql,/jsonb_array_length|signal_mass_labeling_items/u,"coverage uses the cardinalities materialized with each frozen root");
+      }
       if (sql.includes("consumer_indicators") || sql.includes("reviewed_consumers AS MATERIALIZED")) {
         assert.doesNotMatch(sql,/signal_mass_labeling_category_(?:pattern|matches)_/u,"Signal joins materialized lexical matches");
         assert.match(sql,/signal_mass_labeling_category_matches lexical/u);
