@@ -205,9 +205,21 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Progreso
 
+- [x] H6 · El despliegue de Studio y del worker de dev-test desde `0c33eb05` sirvió los resultados desde el dominio habitual. Se probaron los cuatro filtros, cinco ejemplos por indicador y ambos intereses. Se dio de alta una marca ficticia en su propia organización desde el formulario normal, con el etiquetado activo y umbral inicial de 0.85.
+
+- [x] H6 · Dev-test aplicó las migraciones 0282–0285 tras verificar las 262 huellas anteriores. La importación validó 167,924 puntuaciones contra sus entradas y recibos. Las huellas del mapa, los centroides y las asignaciones históricas volvieron a coincidir con R13.
+- [x] H6 · El lector de Signal devolvió los mismos 98 tópicos con sus traducciones y volúmenes en los cuatro filtros. Los primeros cinco ejemplos de cada indicador coincidieron en identidad y orden con la consulta independiente. En conversación, 18,464 de las 50,273 voces elegibles mencionan un término del léxico.
+
+- [x] H6 · Una segunda prueba, con 80 raíces sintéticas en cuatro grupos de 20, ejecutó el worker desde la cola hasta el mapa y el léxico editorial bajo el mismo cliente. La prueba usó PostgreSQL 17 con las 266 migraciones y sustituyó sólo el proceso numérico y los transportes externos. El motor, los permisos y el registro de costos siguieron su ruta de producto.
+
+- [x] H6 · Un cliente administrador creó una marca por la misma función que usa el formulario. En PostgreSQL migrado, el flujo procesó cinco raíces sintéticas mediante cinco solicitudes de nueve preguntas cada una. El mismo actor conservó la autoridad hasta la publicación en Signal. La prueba recuperó dos interrupciones y verificó el conteo de envíos.
+
+- [x] H6 · Se verificaron 83,962 raíces únicas con las dos definiciones ajustadas. A probabilidad ≥0.85 hubo 436 positivas para apuestas, 153 para racismo, una en ambas y 588 en la unión. El costo tarifario de las tres etapas JEV fue USD 2.365666. La única propuesta editorial de léxico costó USD 0.011658. Total medido R14 USD 2.377324.
+- [x] H6 · La propuesta de 156 términos se revisó hasta dejar 102. La comprobación independiente del texto completo encontró 18,464 coincidencias y 31,809 exclusiones entre 50,273 voces elegibles. Se conservaron 4,174 motivadores, 842 barreras, 7,889 respuestas negativas y 5,559 intermedias.
+
 - [x] H6 · Prueba pareada de idioma completada sobre las 597 raíces originales. Se verificaron 1,194 recibos con siete preguntas base y dos intereses por solicitud. Las diez cohortes de tópico aportaron 500 casos, de los cuales 333 tenían el tópico nominado entre los cuatro candidatos. A probabilidad >0.7, inglés obtuvo 220 aciertos en 316 positivos (69.62 %) y portugués 222 en 326 (68.10 %). La diferencia fue +1.52 puntos. Se eligió inglés. Los otros 100 casos eran de motivación o barrera.
 - [x] H6 · Se descartó el lote antiguo de dev-test. La consulta posterior de Railway devolvió cero recursos pendientes, Railpack activo y el mismo despliegue sano de Studio. La opción Docker sigue documentada en el repositorio.
-- [ ] H6 · R14 iniciada desde develop `51238bb1`. Se leyó el informe completo. Producto, persistencia y UI trabajan en ramas independientes. La aceptación del producto incluye un estudio nuevo que use la configuración por omisión.
+- [x] H6 · Se completaron los ocho puntos de la sección 6. El worker de dev-test quedó en `0c33eb05` y Studio en `489ea782`. La guía del fundador reúne 13 pasos de QA. El último despliegue se verificó en el dominio habitual con la configuración activa de Railway.
 
 - [x] H5 · Fase B terminada en dev-test. Se cotejaron 171,118 recibos JEV y la única solicitud de traducción. El paquete privado contiene el anexo corregido, 100 nuevas muestras ciegas, las muestras históricas necesarias para interpretar los identificadores, la prueba pareada y 1,194 filas de variantes PT/EN. Cada distribución se verificó contra el cuerpo original del proveedor. La clave sellada se conserva aparte. El recibo y los manifiestos se reprodujeron con el mismo SHA-256. El auditor decide el idioma tras calificar.
 - [x] H5 · [#117](https://github.com/noisia-ai/monorepo/pull/117), [#118](https://github.com/noisia-ai/monorepo/pull/118), [#119](https://github.com/noisia-ai/monorepo/pull/119), [#120](https://github.com/noisia-ai/monorepo/pull/120), [#121](https://github.com/noisia-ai/monorepo/pull/121), [#122](https://github.com/noisia-ai/monorepo/pull/122) y [#123](https://github.com/noisia-ai/monorepo/pull/123) se revisaron y fusionaron a develop. En dev-test se verificaron las 262 migraciones, la proyección editorial y dos casos del worker que producen advertencias con una sola llamada simulada y cero reparaciones. PostgreSQL de CI probó las rutas V1/V2 sobre una base vacía.
@@ -252,6 +264,13 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 - [x] Hito 4 · Recibo, comparación y muestras ciegas verificados. Se entregan el recibo público de una página y, en custodia privada, el anexo comparativo, método/fuentes, 600 casos en 11 cohortes y la clave sellada por separado. Son 597 raíces distintas por los solapamientos entre cohortes; cada cohorte cumple sus cuotas de 50 raíces por tópico para los 10 tópicos mayores y 100 de triggers/barriers. Las cohortes no representan evaluación de precisión humana.
 
 ## Sorpresas y descubrimientos
+
+- H6 · Al volver a escribir el nombre canónico de T3, Signal recuperó el texto visible pero conservó una personalización redundante. La prueba comprobó el volumen y la huella del mapa y motivó verificar la eliminación del alias desde la interfaz.
+
+- H6 · La primera prueba del estudio nuevo omitía el cuerpo del proceso hijo. Se exigió un marcador posterior a la publicación y cero pruebas omitidas. El recorrido descubrió fallos en el alta de la política, el acceso a embeddings y la validación automática de la muestra inicial.
+- H6 · Una prueba histórica de revisión editorial falló a las 23:58 UTC al dar diez minutos de autorización que excedían la medianoche presupuestaria. Se corrigió el huso horario del dato sintético. El contrato de vencimiento conservó sus comprobaciones.
+
+- H6 · La industria amplia del perfil no siempre corresponde a la categoría que debe nombrar la pregunta de consumo. Se usó la categoría específica del estudio y se conservaron los nombres de Brand OS como insumos editoriales. Las exclusiones por léxico quedan visibles en el denominador.
 
 - H6 · Los jueces de R13 coincidieron en 95 de 100 casos nuevos. En barreras, 22 de los 33 textos con término de categoría eran correctos, frente a 1 de 17 entre los que carecían de término. La auditoría motiva el filtro textual y una comprobación de sus ejemplos en Signal.
 
@@ -313,8 +332,15 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 
 ## Registro de decisiones
 
+- H6 · Aislar los fallos de materialización por ejecución. Un mapa vacío tiene un estado terminal y una lectura fallida se reintenta con espera. El worker recupera la medición de la muestra y la publicación a partir de los recibos del mismo actor y estudio.
+
+- H6 · Cuando el analista restaura ambos nombres canónicos de un tópico, el guardado elimina la personalización. Una prueba autenticada en Studio confirmó el cambio temporal y su restauración. La lectura posterior en PostgreSQL verificó que la personalización quedó vacía y el mapa conservó su huella.
+- H6 · Elegir las definiciones canónicas en inglés con la regla preestablecida de diferencia ≥ −3 puntos. El comparativo dio +1.52 puntos. El original sigue disponible para consulta.
+- H6 · Conservar como léxico términos de categoría, variantes lingüísticas y nombres inequívocos. Retirar expresiones de consumo genéricas, locales y marcas ambiguas. Contar sólo raíces cuyo texto completo contiene un término y mantener el umbral de interés inclusivo en 0.85.
+- H6 · La alternativa Docker usa `apps/studio/Dockerfile.mfp-dev-test` y `apps/studio/start-mfp-dev-test.sh` con el commit revisado. Railpack sigue siendo la configuración activa de dev-test.
+
 - H6 · Para medir idioma y reclasificar intereses se incluyen ambos intereses activos en los dos brazos de las 597 raíces. Se conserva el brazo en inglés para la importación de ese subconjunto. Para las 83,365 raíces restantes sólo se preguntan los dos intereses. Se identifican los recibos por raíz y digest para que la contabilización de intereses cuente una única consulta compartida.
-- H6 · Usar inglés para las preguntas JEV de todos los corpus y umbral 0.7 para los tópicos. La política del idioma de las definiciones se determinará con la comparación pareada. Mantener los vectores, BERTopic y el mapa del piloto congelados.
+- H6 · Usar inglés para las preguntas JEV de todos los corpus y umbral 0.7 para los tópicos. La comparación pareada determina el idioma de las definiciones. Mantener los vectores, BERTopic y el mapa del piloto congelados.
 
 - H5 · Se publicó `0495cadd` una sola vez en `mfp-studio` de dev-test con la configuración activa. El CLI permite elegir un commit para ese despliegue. Railpack completó la construcción y el lote Docker quedó pendiente. La entrega documental de [#124](https://github.com/noisia-ai/monorepo/pull/124) conserva el recibo cuantitativo.
 
@@ -368,6 +394,15 @@ Lo demás se resuelve de forma autónoma y se anota en el registro de decisiones
 | 2026-11-07 | Ruta canónica ADR 015 con JEV como clasificador por mención; Claude sólo por grupo | Costo < USD 100 por estudio y alcance sobre el corpus completo | Fundador y auditor |
 
 ## Resultado y retrospectiva
+
+### Ronda 14
+
+En una marca nueva, el alta crea la configuración de etiquetado por omisión. El clasificador reúne promoción, voz, motivador o barrera de la categoría y cuatro candidatos en una solicitud en inglés por raíz. Los intereses activos se añaden a esa misma solicitud. Si Brand OS ofrece varias categorías posibles, el analista especifica la categoría del estudio en **Labeling settings**. En una organización ficticia creada desde la interfaz se comprobó el umbral inicial de 0.85 y su edición.
+
+Se eligieron las definiciones inglesas por la diferencia observada de +1.52 puntos sobre el original en las diez cohortes de tópico. Con el léxico de 102 términos, los motivadores y las barreras representan 4,174 y 842 de 18,464 raíces con mención de categoría. Las dos definiciones de interés ajustadas cubren 588 raíces distintas a 0.85. Estos conteos describen el piloto y la comparación de idiomas conserva su denominador propio.
+
+El [recibo canónico](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_2026-11-08.md) enlaza el [detalle de R14](DELIVERY_PILOTO_ETIQUETADO_ESTUDIO_A_R14_2026-11-08.md). El uso tarifario medido de R14 fue USD 2.377324. La proyección de siete preguntas es USD 107–112 por millón de raíces, más USD 7.50 por interés. Con los dos intereses usados en el piloto, es USD 122–127. El paquete privado conserva la comparación, las huellas de validación y las muestras ciegas de las rondas anteriores.
+
 
 En R13 el recibo público corrige la proyección histórica a USD 151.17–156.19 por millón de raíces para 180–270 grupos, con USD 153.68 en el escenario de 225. Las 171,118 solicitudes JEV adicionales consumieron USD 4.452242 a tarifa. La traducción consumió USD 0.325212 y la ronda sumó USD 4.777454. El saldo visible JEV pasó de USD 21.22 antes de la ronda a USD 17.04 después de los experimentos. El panel actualizó el saldo con retraso. Los recibos del proveedor sustentan los importes tarifarios por etapa.
 
