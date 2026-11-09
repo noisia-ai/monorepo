@@ -1,3 +1,19 @@
+-- Immutable maps permit an aggregate-size cache without repeating full-corpus scans on status polls.
+CREATE TABLE signal_mass_labeling_product_estimates (
+ workspace_id uuid NOT NULL,map_id uuid NOT NULL,root_count integer NOT NULL CHECK(root_count>0),
+ input_characters bigint NOT NULL CHECK(input_characters>=0),created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(map_id),FOREIGN KEY(workspace_id,map_id) REFERENCES signal_mass_labeling_maps(workspace_id,id)
+);
+ALTER TABLE signal_mass_labeling_product_estimates ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE signal_mass_labeling_product_estimates FROM PUBLIC;
+DO $$ DECLARE role_name text;BEGIN
+ FOREACH role_name IN ARRAY ARRAY['anon','authenticated'] LOOP
+  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname=role_name) THEN
+   EXECUTE format('REVOKE ALL ON TABLE signal_mass_labeling_product_estimates FROM %I',role_name);
+  END IF;
+ END LOOP;
+END $$;
+
 -- Product mass labeling uses the native processing policy on its complete prepared corpus.
 -- This marker grants the existing governed actor path only to the pinned product profile.
 CREATE FUNCTION signal_mass_labeling_product_engine_v2(target_workspace uuid,contract text,snapshot jsonb) RETURNS boolean

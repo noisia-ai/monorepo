@@ -1,3 +1,4 @@
+import {loadMassLabelingProductEstimateWithClientV2} from "./signal-mass-labeling-product-estimate";
 import type { PoolClient } from "pg";
 import { createHash, randomUUID } from "node:crypto";
 import { labelerDigestV1, massLabelingJevIdentityV2, massLabelingConfigurationV2,
@@ -87,10 +88,8 @@ export async function requestMassLabelingProductV2(args: {
       if (digest(config) !== digest(currentConfig)) fail("mass_labeling_configuration_changed");
       const map = await mapCurrent(client, workspace, args.map_id);
       if ((await client.query("SELECT 1 FROM signal_mass_labeling_runs WHERE map_id=$1", [args.map_id])).rows.length) fail("mass_labeling_map_already_admitted");
-      const size = (await client.query<{ characters: string }>(`SELECT COALESCE(sum(length(text)+length(candidates::text)),0)::text characters
-        FROM signal_mass_labeling_items WHERE map_id=$1`, [args.map_id])).rows[0]!;
-      const interestsSize = JSON.stringify(config.interests).length;
-      return { roots: map.root_count, estimated_micro_usd: Math.ceil((Number(size.characters) / 3.5 + map.root_count * (600 + interestsSize / 3.5)) * .042),
+      const estimated=await loadMassLabelingProductEstimateWithClientV2(client,{workspace_id:workspace,map_id:map.id,configuration:config});
+      return { roots: map.root_count, estimated_micro_usd:estimated,
         concept_set_digest: map.map_digest, snapshot: { map_id: map.id, map_digest: map.map_digest, configuration: config } };
     },
     persist: async (client, runId, prepared) => {
@@ -119,9 +118,17 @@ export async function loadMassLabelingProductStatusV2(args: {
       WHERE workspace.id=$1 AND policy.status='active' AND policy.valid_from<=now() AND policy.valid_until>now()`, [args.workspace_id])).rows[0];
     const enabled = (await client.query<{ enabled: boolean }>(`SELECT EXISTS(SELECT 1 FROM signal_workspace_features
       WHERE workspace_id=$1 AND feature='mass_labeling') enabled`, [args.workspace_id])).rows[0]?.enabled === true;
+    let estimate=run?Number(run.estimated_micro_usd):null;
+    if(map&&!run){
+      const settings=await loadMassLabelingStudyPolicyWithClientV1(client,args.workspace_id);
+      if(settings.category.trim()&&settings.lexicon_terms.length){
+        const configuration=massLabelingConfigurationV2({...settings,interests:settings.interests.filter(i=>i.active)});
+        estimate=await loadMassLabelingProductEstimateWithClientV2(client,{workspace_id:args.workspace_id,map_id:map.id,configuration});
+      }
+    }
     return { contract_version: "mass-labeling-product-status-v2" as const, workspace_id: args.workspace_id, enabled,
       can_request_processing: caps.can_request_processing && caps.can_edit_topics, map, run,
-      estimated_micro_usd: run ? Number(run.estimated_micro_usd) : map ? Math.ceil(map.root_count * 60) : null,
+      estimated_micro_usd:estimate,
       cap_micro_usd: policy?.max_execution_micro_usd === null ? null : policy ? Number(policy.max_execution_micro_usd) : null };
   });
 }

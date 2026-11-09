@@ -1,3 +1,5 @@
+import {estimateMassLabelingProductV2} from "../signal-mass-labeling-product-estimate";
+import {massLabelingConfigurationV2} from "@noisia/query-engine";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { JevRequestV1 } from "@noisia/query-engine/src/signal-mention-facets-jev-v1";
@@ -20,11 +22,23 @@ export async function assertMassLabelingProductNativeV2(args: {
   const activation = await enableMassLabelingProductV2({ ...args, cap_micro_usd: 1_000_000 });
   assert.equal(activation.request_version, "mass-labeling-jev-v2");
   const request = { ...args, idempotency_key: randomUUID(), cap_micro_usd: 1_000_000, provider_available: true };
+  const preview=await loadMassLabelingProductStatusV2(args);
   const admitted = await requestMassLabelingProductV2(request);
   assert.equal((await requestMassLabelingProductV2(request)).run_id, admitted.run_id);
   const recorded = (await args.query(`SELECT run.processing_admission_id,run.membership_snapshot,labeler.identity
     FROM signal_labeling_runs run JOIN signal_labeler_versions labeler ON labeler.id=run.labeler_version_id WHERE run.id=$1`, [admitted.run_id])).rows[0]!;
   assert.ok(recorded.processing_admission_id);
+  assert.equal(preview.estimated_micro_usd,Number((await args.query("SELECT estimated_micro_usd FROM signal_labeling_runs WHERE id=$1",[admitted.run_id])).rows[0].estimated_micro_usd),
+    "the status preview and admission share one estimate for the exact active configuration");
+  assert.equal((await args.query("SELECT count(*)::int n FROM signal_mass_labeling_product_estimates WHERE workspace_id=$1 AND map_id=$2",[args.workspace_id,args.map_id])).rows[0].n,1);
+  const cached=(await args.query("SELECT root_count roots,input_characters::text characters FROM signal_mass_labeling_product_estimates WHERE workspace_id=$1 AND map_id=$2",[args.workspace_id,args.map_id])).rows[0];
+  const dimensions={roots:cached.roots,characters:Number(cached.characters)};
+  const config=massLabelingConfigurationV2(recorded.identity.params);
+  assert.equal(estimateMassLabelingProductV2(dimensions,config),preview.estimated_micro_usd);
+  assert.ok(estimateMassLabelingProductV2({...dimensions,characters:dimensions.characters+1000},config)>preview.estimated_micro_usd!);
+  assert.ok(estimateMassLabelingProductV2(dimensions,{...config,interests:[...config.interests,
+    {key:"additional",name:"Additional interest",definition:"A longer active interest definition.".repeat(10)}]})>preview.estimated_micro_usd!);
+
   assert.equal(recorded.identity.params.request_version, "mass-labeling-jev-v2");
   assert.equal(recorded.identity.params.question_language, "en");
   assert.equal(recorded.identity.params.category, "bicycles");
