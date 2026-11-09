@@ -14,6 +14,7 @@ import { advanceCorpusRevision } from "./corpus-revision";
 import { reconcileListeningDataOs } from "./listening-data-os";
 import { completePreviouslyAcceptedWorkspaceImport } from "./workspace-import-duplicate";
 import { createWorkspaceImportDatabase } from "./workspace-import-database";
+import {completeWorkspaceImport,WorkspaceImportClosureReconciledError,WorkspaceImportClosureUnresolvedError} from "./workspace-import-completion";
 
 type IngestMentionsCsvJobData = {
   workspaceId?: string;
@@ -267,6 +268,7 @@ async function ingestWorkspaceAsyncImportJob(
   let lastRecords = 0;
   let lastBytes = 0;
   let parserMetrics: Record<string,unknown> | null=null;
+  let durableLargeResult: Record<string,unknown>|null=null;
   const processingStartedAt=performance.now();
   try {
     const verificationStartedAt=performance.now();
@@ -338,15 +340,38 @@ async function ingestWorkspaceAsyncImportJob(
       throw new Error("Workspace import storage changed during ingestion.");
     }
     const closureStartedAt=performance.now();
-    const completion = await pool.query<{
-      import_batch_id: string;accepted: boolean;accepted_batch_id: string;
-    }>(`
-      SELECT import_batch_id::text,accepted,accepted_batch_id::text
-      FROM complete_signal_workspace_import_v1(
-        $1::uuid,$2,$3,$4,$5,$6,$7,$8
-      )
-    `,[job.data.importBatchId,workerJobId,fileHash,stats.record_count,
-      stats.included_count,stats.excluded_count,stats.duplicate_count,lastBytes]);
+    const completion = await completeWorkspaceImport(pool, {
+      workspaceId: ingestion.workspaceId,
+      dataSourceId: ingestion.dataSourceId,
+      importBatchId: job.data.importBatchId,
+      workerJobId,
+      fileHash,
+      verifiedHash: verified.fileHash,
+      verifiedBytes: verified.sizeBytes,
+      expectedBytes,
+      processedBytes: lastBytes,
+      progressRecords: lastRecords,
+      stats
+    });
+    if (completion.transactional) {
+      const accepted = completion.rows[0]?.accepted === true;
+      durableLargeResult = {
+        import_batch_id: job.data.importBatchId,
+        accepted_batch_id: completion.rows[0]?.accepted_batch_id ?? null,
+        accepted,
+        stats,
+        corpus_revision: null,
+        data_os: null,
+        signal_data_acceptances: 0,
+        workspace_data_acceptance: accepted,
+        ...(accepted ? { status: "completed" } : {}),
+        replayed: true
+      };
+      if (completion.replayed) {
+        await job.updateProgress(100).catch(() => undefined);
+        return durableLargeResult;
+      }
+    }
     const closureMs=performance.now()-closureStartedAt;
     await pool.query(`
       SELECT record_signal_workspace_import_metrics_v1($1::uuid,$2,$3::jsonb)
@@ -390,6 +415,17 @@ async function ingestWorkspaceAsyncImportJob(
     // processing and the deterministic BullMQ identity may resume it. This
     // branch is reachable only from the local rehearsal-only job field.
     if (error instanceof IntentionalWorkspaceWorkerCrash) throw error;
+    // Reconciliation has already preserved completed or made failure recoverable;
+    // an unresolved permanent authority error must not be overwritten here.
+    if (error instanceof WorkspaceImportClosureReconciledError
+        || error instanceof WorkspaceImportClosureUnresolvedError) throw error;
+    if (durableLargeResult) {
+      // Acceptance is already durable. Auxiliary metrics/progress or legacy
+      // reconciliation cannot turn it into a failed import or replay its writes.
+      console.warn("[workspace-import] post_completion_auxiliary_failed");
+      await job.updateProgress(100).catch(()=>undefined);
+      return { ...durableLargeResult, post_completion_auxiliary_failed: true };
+    }
     const failureCode = error instanceof IntentionalWorkspaceImportAbort
       ? "intentional_rehearsal_abort" : classifyImportFailure(error);
     if (parserMetrics) {
